@@ -11,6 +11,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.io.*;
@@ -18,7 +19,10 @@ import java.text.SimpleDateFormat;
 import java.util.*;
 
 /**
- * Heap Dump Analyzer 컨트롤러 (MAT CLI 연동 버전)
+ * Heap Dump Analyzer 컨트롤러
+ * - /analyze/{filename}        : 진행 상황 화면 (progress.html)
+ * - /analyze/progress/{filename} : SSE 스트림 (실시간 로그)
+ * - /analyze/result/{filename} : 완료 후 결과 화면 (analyze.html)
  */
 @Controller
 public class HeapDumpController {
@@ -53,45 +57,65 @@ public class HeapDumpController {
             }
             String filename = analyzerService.uploadFile(file);
             redirectAttributes.addFlashAttribute("success", "File uploaded successfully: " + filename);
-            logger.info("Uploaded: {}", filename);
         } catch (IllegalArgumentException e) {
             redirectAttributes.addFlashAttribute("error", e.getMessage());
         } catch (IOException e) {
             redirectAttributes.addFlashAttribute("error", "Failed to upload file: " + e.getMessage());
-            logger.error("Upload failed", e);
         }
         return "redirect:/";
     }
 
-    // ── 파일 분석 (MAT CLI) ───────────────────────────────────
+    // ── [NEW] 분석 진행 화면 ──────────────────────────────────
+    // Analyze 버튼 클릭 시 → 진행 상황 페이지로 이동
 
     @GetMapping("/analyze/{filename:.+}")
-    public String analyzeFile(@PathVariable String filename, Model model) {
-        try {
-            logger.info("Analyzing: {}", filename);
+    public String analyzeProgress(@PathVariable String filename, Model model) {
+        model.addAttribute("filename", filename);
+        return "progress";   // progress.html 렌더링
+    }
 
-            HeapAnalysisResult result = analyzerService.analyzeHeapDump(filename);
+    // ── [NEW] SSE 스트림 — MAT CLI 진행 상황 실시간 전송 ──────
 
-            if (result.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.ERROR) {
-                model.addAttribute("error", result.getErrorMessage());
-                model.addAttribute("filename", filename);
-                model.addAttribute("matLog", result.getMatLog());
-                return "analyze";
-            }
+    @GetMapping(value = "/analyze/progress/{filename:.+}",
+                produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @ResponseBody
+    public SseEmitter streamProgress(@PathVariable String filename) {
+        // 타임아웃: MAT_TIMEOUT(30분) + 여유 5분
+        SseEmitter emitter = new SseEmitter(35L * 60 * 1000);
 
-            // 날짜 포맷
-            String formattedDate = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-                    .format(new Date(result.getLastModified()));
-            model.addAttribute("formattedDate", formattedDate);
-            model.addAttribute("result", result);
+        emitter.onTimeout(emitter::complete);
+        emitter.onError(e -> {
+            logger.warn("SSE error for {}: {}", filename, e.getMessage());
+            emitter.complete();
+        });
 
-            logger.info("Analysis done: {} in {}ms", filename, result.getAnalysisTime());
+        // 비동기 분석 시작
+        analyzerService.analyzeWithProgress(filename, emitter);
+        return emitter;
+    }
 
-        } catch (Exception e) {
-            logger.error("Analysis exception for {}", filename, e);
-            model.addAttribute("error", "Failed to analyze file: " + e.getMessage());
-            model.addAttribute("filename", filename);
+    // ── [NEW] 분석 결과 화면 (캐시에서 조회) ─────────────────
+
+    @GetMapping("/analyze/result/{filename:.+}")
+    public String analyzeResult(@PathVariable String filename, Model model) {
+        HeapAnalysisResult result = analyzerService.getCachedResult(filename);
+
+        if (result == null) {
+            // 캐시 미스 → 진행 화면으로 리다이렉트
+            return "redirect:/analyze/" + filename;
         }
+
+        if (result.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.ERROR) {
+            model.addAttribute("error", result.getErrorMessage());
+            model.addAttribute("filename", filename);
+            model.addAttribute("matLog", result.getMatLog());
+            return "analyze";
+        }
+
+        String formattedDate = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+                .format(new Date(result.getLastModified()));
+        model.addAttribute("formattedDate", formattedDate);
+        model.addAttribute("result", result);
         return "analyze";
     }
 
@@ -102,14 +126,12 @@ public class HeapDumpController {
         try {
             File file = analyzerService.getFile(filename);
             Resource resource = new FileSystemResource(file);
-            logger.info("Downloading: {}", filename);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .contentLength(file.length())
                     .body(resource);
         } catch (IOException e) {
-            logger.error("Download failed: {}", filename, e);
             return ResponseEntity.notFound().build();
         }
     }
@@ -122,44 +144,39 @@ public class HeapDumpController {
         try {
             analyzerService.deleteFile(filename);
             redirectAttributes.addFlashAttribute("success", "File deleted: " + filename);
-            logger.info("Deleted: {}", filename);
         } catch (IOException e) {
             redirectAttributes.addFlashAttribute("error", "Failed to delete file: " + e.getMessage());
-            logger.error("Delete failed: {}", filename, e);
         }
         return "redirect:/";
     }
 
-    // ── MAT 리포트 HTML 원문 반환 (팝업/iframe용) ─────────────
+    // ── MAT 리포트 HTML 원문 반환 ─────────────────────────────
 
     @GetMapping("/report/{filename:.+}/overview")
     @ResponseBody
     public ResponseEntity<String> overviewHtml(@PathVariable String filename) {
-        HeapAnalysisResult r = analyzerService.analyzeHeapDump(filename);
-        return htmlResponse(r.getOverviewHtml());
+        HeapAnalysisResult r = analyzerService.getCachedResult(filename);
+        return htmlResponse(r != null ? r.getOverviewHtml() : null);
     }
 
     @GetMapping("/report/{filename:.+}/suspects")
     @ResponseBody
     public ResponseEntity<String> suspectsHtml(@PathVariable String filename) {
-        HeapAnalysisResult r = analyzerService.analyzeHeapDump(filename);
-        return htmlResponse(r.getSuspectsHtml());
+        HeapAnalysisResult r = analyzerService.getCachedResult(filename);
+        return htmlResponse(r != null ? r.getSuspectsHtml() : null);
     }
 
     @GetMapping("/report/{filename:.+}/top_components")
     @ResponseBody
     public ResponseEntity<String> topComponentsHtml(@PathVariable String filename) {
-        HeapAnalysisResult r = analyzerService.analyzeHeapDump(filename);
-        return htmlResponse(r.getTopComponentsHtml());
+        HeapAnalysisResult r = analyzerService.getCachedResult(filename);
+        return htmlResponse(r != null ? r.getTopComponentsHtml() : null);
     }
 
     private ResponseEntity<String> htmlResponse(String html) {
-        if (html == null || html.isBlank()) {
-            return ResponseEntity.notFound().build();
-        }
+        if (html == null || html.isBlank()) return ResponseEntity.notFound().build();
         return ResponseEntity.ok()
-                .contentType(new MediaType("text", "html",
-                        java.nio.charset.StandardCharsets.UTF_8))
+                .contentType(new MediaType("text", "html", java.nio.charset.StandardCharsets.UTF_8))
                 .body(html);
     }
 }
