@@ -424,8 +424,11 @@ function switchTab(id, btn) {
         const top10sizes = OBJ_SIZES.slice(0, 10);
 
         // 클래스명 말줄임
-        const labels = top10names.map(n =>
-            n.length > 38 ? '…' + n.slice(-38) : n);
+        const shortLabels = top10names.map(n => {
+            const parts = n.split('.');
+            const simple = parts[parts.length - 1] || n;
+            return simple.length > 32 ? simple.slice(0, 32) + '…' : simple;
+        });
 
         const maxSize = Math.max(...top10sizes) || 1;
         const bgColors = top10sizes.map(s => {
@@ -437,7 +440,7 @@ function switchTab(id, btn) {
         new Chart(bCtx, {
             type: 'bar',
             data: {
-                labels: labels,
+                labels: shortLabels,
                 datasets: [{
                     label: 'Memory (MB)',
                     data: sizesMB,

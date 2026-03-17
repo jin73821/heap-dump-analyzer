@@ -358,7 +358,17 @@ public class MatReportParser {
             }
         }
 
-        // percent 재계산
+        // 중복 클래스명 병합: 동일 클래스는 최대 retained heap 유지
+        Map<String, MemoryObject> dedup = new java.util.LinkedHashMap<>();
+        for (MemoryObject o : objects) {
+            String key = o.getClassName();
+            MemoryObject exist = dedup.get(key);
+            if (exist == null) { dedup.put(key, o); }
+            else if (o.getTotalSize() > exist.getTotalSize()) { dedup.put(key, o); }
+        }
+        objects = new ArrayList<>(dedup.values());
+
+                // percent 재계산
         if (!objects.isEmpty() && result.getTotalHeapSize() > 0) {
             objects.forEach(o -> o.setPercentOfHeap(
                     (o.getTotalSize() * 100.0) / result.getTotalHeapSize()));
