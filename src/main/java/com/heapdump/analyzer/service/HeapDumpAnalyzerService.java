@@ -220,15 +220,25 @@ public class HeapDumpAnalyzerService {
                 String matLog = runMatCliWithProgress(
                         dumpFile.getAbsolutePath(), safe, resultDir, emitter);
 
-                // ZIP 파싱 — resultDir 우선, 없으면 heapDumpDir 폴백
+                // MAT가 생성한 ZIP을 heapDumpDir → resultDir로 이동
                 sendProgress(emitter, AnalysisProgress.parsing(safe, 85, "분석 리포트 파싱 중..."));
                 Thread.sleep(300);
+
+                String base = stripExtension(safe);
+                moveZipsToResultDir(base, resultDir);
+
                 sendProgress(emitter, AnalysisProgress.parsing(safe, 88, "Overview 리포트 파싱 중..."));
 
-                String base   = stripExtension(safe);
+                // ZIP 파싱 — resultDir 우선, 없으면 heapDumpDir 폴백
                 MatParseResult parsed = parser.parse(resultDir.getAbsolutePath(), base);
                 if (!parsed.hasData()) {
+                    logger.warn("ZIP not found in resultDir, falling back to heapDumpDir");
                     parsed = parser.parse(config.getHeapDumpDirectory(), base);
+                }
+                if (!parsed.hasData()) {
+                    logger.error("Heap data parsing FAILED for {}. " +
+                            "Check if MAT generated ZIP files in: {} or {}",
+                            safe, resultDir.getAbsolutePath(), config.getHeapDumpDirectory());
                 }
 
                 sendProgress(emitter, AnalysisProgress.parsing(safe, 93, "Top Components 분석 중..."));
@@ -421,6 +431,54 @@ public class HeapDumpAnalyzerService {
     private String getExtension(String name) {
         int dot = name.lastIndexOf('.');
         return (dot > 0 && dot < name.length() - 1) ? name.substring(dot + 1) : "";
+    }
+
+    // ─── ZIP 파일 이동 (heapDumpDir → resultDir) ────────────────
+
+    /**
+     * MAT CLI는 dumpFile 위치(/opt/heapdumps/)에 ZIP을 생성합니다.
+     * 이 메서드로 해당 ZIP들을 resultDir로 이동하여 분석 결과와 함께 관리합니다.
+     */
+    private void moveZipsToResultDir(String base, File resultDir) {
+        File heapDir = new File(config.getHeapDumpDirectory());
+        File[] zips = heapDir.listFiles((d, n) -> {
+            String lower = n.toLowerCase();
+            return lower.endsWith(".zip") && lower.contains(base.toLowerCase());
+        });
+
+        if (zips == null || zips.length == 0) {
+            logger.warn("[ZIP Move] No ZIP files found in {} matching base='{}'",
+                    heapDir.getAbsolutePath(), base);
+            // heapDumpDir 내 전체 ZIP 목록을 로그로 출력 (디버깅용)
+            File[] allZips = heapDir.listFiles((d, n) -> n.toLowerCase().endsWith(".zip"));
+            if (allZips != null && allZips.length > 0) {
+                logger.info("[ZIP Move] All ZIPs in heapDumpDir: {}",
+                        java.util.Arrays.stream(allZips)
+                                .map(File::getName)
+                                .collect(java.util.stream.Collectors.joining(", ")));
+            } else {
+                logger.warn("[ZIP Move] No ZIP files found at all in {}", heapDir.getAbsolutePath());
+            }
+            return;
+        }
+
+        for (File zip : zips) {
+            File dest = new File(resultDir, zip.getName());
+            try {
+                java.nio.file.Files.move(zip.toPath(), dest.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                logger.info("[ZIP Move] Moved: {} → {}", zip.getName(), resultDir.getAbsolutePath());
+            } catch (IOException e) {
+                logger.warn("[ZIP Move] Failed to move {}: {} — trying copy", zip.getName(), e.getMessage());
+                try {
+                    java.nio.file.Files.copy(zip.toPath(), dest.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    logger.info("[ZIP Move] Copied (fallback): {}", zip.getName());
+                } catch (IOException ex) {
+                    logger.error("[ZIP Move] Copy also failed for {}: {}", zip.getName(), ex.getMessage());
+                }
+            }
+        }
     }
 
     private String formatSize(long bytes) {

@@ -173,11 +173,19 @@
                 </div>
             </div>
 
-            <div th:if="${!hasHeapData}" class="no-data-box" style="height:280px;">
+            <div th:if="${!hasHeapData}" class="no-data-box" style="height:300px;">
                 <div style="text-align:center">
                     <div style="font-size:40px;margin-bottom:12px">⚠️</div>
-                    <div style="font-weight:600;margin-bottom:8px">힙 메모리 데이터를 파싱하지 못했습니다</div>
-                    <div style="font-size:13px;color:#6B7280">MAT Overview ZIP이 생성되었는지 확인하거나 재분석을 시도하세요</div>
+                    <div style="font-weight:600;margin-bottom:10px;font-size:16px">힙 메모리 데이터를 파싱하지 못했습니다</div>
+                    <div style="font-size:13px;color:#6B7280;margin-bottom:16px">
+                        MAT ZIP 파일이 /opt/heapdumps/ 에 있다면 재분석을 실행하세요.<br>
+                        재분석 시 ZIP 파일을 결과 디렉토리로 이동하여 파싱합니다.
+                    </div>
+                    <a th:href="@{/analyze/rerun/{f}(f=${result.filename})}"
+                       style="background:#3B82F6;color:#fff;padding:10px 24px;border-radius:6px;
+                              text-decoration:none;font-weight:600;font-size:14px;">
+                        🔄 재분석 실행
+                    </a>
                 </div>
             </div>
 

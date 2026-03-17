@@ -74,12 +74,28 @@ public class MatReportParser {
     public MatParseResult parse(String heapDumpDir, String dumpBaseName) {
         MatParseResult result = new MatParseResult();
 
+        logger.info("[Parser] Starting parse: dir={}, base={}", heapDumpDir, dumpBaseName);
+
+        // 디렉토리 내 파일 목록 로그 출력 (디버깅)
+        File dir = new File(heapDumpDir);
+        if (dir.exists()) {
+            File[] files = dir.listFiles();
+            if (files != null) {
+                logger.info("[Parser] Files in dir: {}",
+                    java.util.Arrays.stream(files)
+                        .map(File::getName)
+                        .collect(java.util.stream.Collectors.joining(", ")));
+            }
+        } else {
+            logger.error("[Parser] Directory does not exist: {}", heapDumpDir);
+        }
+
         // 1) Overview ZIP 파싱
         File overviewZip = findZip(heapDumpDir, dumpBaseName, "overview");
         if (overviewZip != null) {
             parseOverviewZip(overviewZip, result);
         } else {
-            logger.warn("overview ZIP not found for: {}", dumpBaseName);
+            logger.warn("[Parser] overview ZIP not found in: {} for base: {}", heapDumpDir, dumpBaseName);
         }
 
         // 2) Top Components ZIP 파싱
@@ -87,7 +103,7 @@ public class MatReportParser {
         if (topZip != null) {
             parseTopComponentsZip(topZip, result);
         } else {
-            logger.warn("top_components ZIP not found for: {}", dumpBaseName);
+            logger.warn("[Parser] top_components ZIP not found in: {} for base: {}", heapDumpDir, dumpBaseName);
         }
 
         // 3) Suspects ZIP 파싱
@@ -95,8 +111,12 @@ public class MatReportParser {
         if (suspectsZip != null) {
             parseSuspectsZip(suspectsZip, result);
         } else {
-            logger.warn("suspects ZIP not found for: {}", dumpBaseName);
+            logger.warn("[Parser] suspects ZIP not found in: {} for base: {}", heapDumpDir, dumpBaseName);
         }
+
+        logger.info("[Parser] Parse complete: totalHeap={}, usedHeap={}, freeHeap={}, topObjects={}, suspects={}",
+            result.getTotalHeapSize(), result.getUsedHeapSize(), result.getFreeHeapSize(),
+            result.getTopMemoryObjects().size(), result.getLeakSuspects().size());
 
         return result;
     }
