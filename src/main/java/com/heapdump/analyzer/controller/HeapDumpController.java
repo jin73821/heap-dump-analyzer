@@ -83,7 +83,16 @@ public class HeapDumpController {
         return "progress";
     }
 
-    // ── [NEW] SSE 스트림 — MAT CLI 진행 상황 실시간 전송 ──────
+    // ── 캐시 삭제 후 재분석 ──────────────────────────────────
+
+    @GetMapping("/analyze/rerun/{filename:.+}")
+    public String rerunAnalysis(@PathVariable String filename) {
+        analyzerService.clearCache(filename);
+        logger.info("Cache cleared for {} -> restarting analysis", filename);
+        return "redirect:/analyze/" + filename;
+    }
+
+    // ── SSE 스트림 — MAT CLI 진행 상황 실시간 전송 ───────────
 
     @GetMapping(value = "/analyze/progress/{filename:.+}",
                 produces = MediaType.TEXT_EVENT_STREAM_VALUE)
