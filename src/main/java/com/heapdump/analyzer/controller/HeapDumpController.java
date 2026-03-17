@@ -110,22 +110,75 @@ public class HeapDumpController {
         HeapAnalysisResult result = analyzerService.getCachedResult(filename);
 
         if (result == null) {
-            // 캐시 미스 → 진행 화면으로 리다이렉트
             return "redirect:/analyze/" + filename;
         }
 
         if (result.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.ERROR) {
             model.addAttribute("error", result.getErrorMessage());
             model.addAttribute("filename", filename);
-            model.addAttribute("matLog", result.getMatLog());
+            model.addAttribute("matLog", truncateLog(result.getMatLog(), 5000));
+            model.addAttribute("hasHeapData", false);
+            model.addAttribute("matLogTotalLen", 0);
             return "analyze";
         }
 
+        // 날짜 포맷
         String formattedDate = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
                 .format(new Date(result.getLastModified()));
         model.addAttribute("formattedDate", formattedDate);
         model.addAttribute("result", result);
+
+        // ── 차트 데이터: 개별 배열로 분리 주입 ─────────────────
+        // (Thymeleaf inline JS 객체 직렬화 불안정 → 각 필드를 직접 List로 전달)
+        boolean hasHeapData = result.getTotalHeapSize() > 0 || result.getUsedHeapSize() > 0;
+        model.addAttribute("hasHeapData", hasHeapData);
+
+        List<String> topObjNames  = new java.util.ArrayList<>();
+        List<Long>   topObjSizes  = new java.util.ArrayList<>();
+        List<Long>   topObjCounts = new java.util.ArrayList<>();
+        List<Double> topObjPcts   = new java.util.ArrayList<>();
+
+        if (result.getTopMemoryObjects() != null) {
+            result.getTopMemoryObjects().stream().limit(10).forEach(o -> {
+                topObjNames .add(o.getClassName()    != null ? o.getClassName() : "");
+                topObjSizes .add(o.getTotalSize());
+                topObjCounts.add(o.getObjectCount());
+                topObjPcts  .add(o.getPercentOfHeap());
+            });
+        }
+        model.addAttribute("topObjNames",  topObjNames);
+        model.addAttribute("topObjSizes",  topObjSizes);
+        model.addAttribute("topObjCounts", topObjCounts);
+        model.addAttribute("topObjPcts",   topObjPcts);
+
+        // 로그는 lazy 로딩 — 전체 길이만 전달
+        model.addAttribute("matLogTotalLen",
+                result.getMatLog() != null ? result.getMatLog().length() : 0);
         return "analyze";
+    }
+
+    // ── 로그 청크 API (lazy 로딩용) ──────────────────────────
+
+    @GetMapping(value = "/analyze/log/{filename:.+}", produces = MediaType.TEXT_PLAIN_VALUE)
+    @ResponseBody
+    public ResponseEntity<String> getMatLog(
+            @PathVariable String filename,
+            @RequestParam(defaultValue = "0")     int offset,
+            @RequestParam(defaultValue = "10000") int limit) {
+
+        HeapAnalysisResult result = analyzerService.getCachedResult(filename);
+        if (result == null || result.getMatLog() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        String log   = result.getMatLog();
+        int    start = Math.min(offset, log.length());
+        int    end   = Math.min(start + limit, log.length());
+
+        return ResponseEntity.ok()
+                .header("X-Log-Total-Length", String.valueOf(log.length()))
+                .header("X-Log-Offset",       String.valueOf(start))
+                .header("X-Log-Has-More",     String.valueOf(end < log.length()))
+                .body(log.substring(start, end));
     }
 
     // ── 파일 다운로드 ─────────────────────────────────────────
@@ -187,5 +240,13 @@ public class HeapDumpController {
         return ResponseEntity.ok()
                 .contentType(new MediaType("text", "html", java.nio.charset.StandardCharsets.UTF_8))
                 .body(html);
+    }
+
+    /** 로그를 maxLen 자 이내로 자르고 초과 시 안내 메시지 추가 */
+    private String truncateLog(String log, int maxLen) {
+        if (log == null) return "";
+        if (log.length() <= maxLen) return log;
+        return log.substring(0, maxLen)
+                + "\n\n... [전체 " + log.length() + " chars. 전체 로그는 MAT Log 탭에서 확인하세요] ...";
     }
 }

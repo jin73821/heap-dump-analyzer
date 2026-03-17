@@ -166,13 +166,15 @@
             padding: 16px;
             border-radius: 8px;
             height: 240px;
-            overflow-y: auto;
+            overflow-y: scroll;      /* scroll 고정 — auto는 reflow 유발 */
+            overflow-x: hidden;
             white-space: pre-wrap;
             word-break: break-all;
-            display: none;   /* 기본 숨김, 토글로 열림 */
+            display: none;
+            will-change: scroll-position;  /* GPU 레이어 분리 */
+            contain: content;              /* 외부 레이아웃 영향 차단 */
         }
         .log-console.visible { display: block; }
-        .log-line-new { color: #7DD3FC; }
 
         /* 완료 배너 */
         .complete-banner {
@@ -460,32 +462,37 @@
         logFlushTimer = null;
         if (!logBuffer.length) return;
 
-        // 이번 배치 텍스트 + 실제 줄 수 계산
         const batchText  = logBuffer.join('\n') + '\n';
         const batchLines = logBuffer.length;
         logBuffer = [];
 
-        // DocumentFragment 로 한 번에 삽입
+        // ── DOM 삽입: DocumentFragment로 reflow 최소화 ────
         const frag = document.createDocumentFragment();
         frag.appendChild(document.createTextNode(batchText));
         logConsole.appendChild(frag);
         logLineCount += batchLines;
 
-        // 최대 줄 수 초과 시 앞쪽 노드를 실제 줄 수 기준으로 제거
+        // ── 오래된 노드 제거: 실제 줄 수 기반 ───────────
         while (logLineCount > MAX_LOG_LINES && logConsole.firstChild) {
-            const node     = logConsole.firstChild;
-            // TextNode의 실제 줄 수를 정확히 셈
-            const nodeText = node.nodeValue || node.textContent || '';
+            const node      = logConsole.firstChild;
+            const nodeText  = node.nodeValue || node.textContent || '';
             const nodeLines = (nodeText.match(/\n/g) || []).length || 1;
             logConsole.removeChild(node);
             logLineCount = Math.max(0, logLineCount - nodeLines);
         }
 
-        // scrollHeight 접근은 rAF 한 번만
+        // ── 스크롤: 사용자가 직접 위로 올리지 않았을 때만 ──
+        // scrollHeight를 직접 읽지 않고 scrollTop을 큰 값으로 설정
+        // → 브라우저가 자동으로 최대값으로 clamp → reflow 없음
         if (!scrollPending) {
             scrollPending = true;
             requestAnimationFrame(() => {
-                logConsole.scrollTop = logConsole.scrollHeight;
+                // 사용자가 스크롤을 올려놓은 경우(200px 이상 위) 자동 스크롤 안 함
+                const distFromBottom = logConsole.scrollHeight
+                    - logConsole.scrollTop - logConsole.clientHeight;
+                if (distFromBottom < 200) {
+                    logConsole.scrollTop = 999999; // clamp to max — scrollHeight 읽기 없음
+                }
                 scrollPending = false;
             });
         }

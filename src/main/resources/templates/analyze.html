@@ -7,52 +7,45 @@
     <link rel="stylesheet" th:href="@{/css/style.css}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
-        /* ── 로그 뷰어 전용 ─────────────────────────────── */
-        .log-viewer-wrap {
-            background: #111827;
-            border-radius: 8px;
-            overflow: hidden;
-        }
+        .log-viewer-wrap { background:#111827; border-radius:8px; overflow:hidden; }
         .log-viewer-toolbar {
-            display: flex; align-items: center; justify-content: space-between;
-            background: #1F2937; padding: 10px 16px;
-            font-size: 13px; color: #9CA3AF;
+            display:flex; align-items:center; justify-content:space-between;
+            background:#1F2937; padding:10px 16px; font-size:13px; color:#9CA3AF;
         }
-        .log-viewer-toolbar span { font-family: 'Courier New', monospace; }
-        .log-viewer-toolbar .log-btns { display: flex; gap: 8px; }
+        .log-viewer-toolbar .log-btns { display:flex; gap:8px; }
         .log-viewer-toolbar button {
-            background: #374151; color: #D1D5DB; border: none;
-            padding: 4px 12px; border-radius: 4px; cursor: pointer;
-            font-size: 12px; transition: background .2s;
+            background:#374151; color:#D1D5DB; border:none;
+            padding:4px 12px; border-radius:4px; cursor:pointer; font-size:12px;
         }
-        .log-viewer-toolbar button:hover { background: #4B5563; }
-        .log-viewer-toolbar button:disabled { opacity: .4; cursor: default; }
+        .log-viewer-toolbar button:hover  { background:#4B5563; }
+        .log-viewer-toolbar button:disabled { opacity:.4; cursor:default; }
         .log-content {
-            color: #D1FAE5;
-            font-family: 'Courier New', monospace;
-            font-size: 12px; line-height: 1.55;
-            padding: 16px; max-height: 520px;
-            overflow-y: auto; white-space: pre-wrap;
-            word-break: break-all;
+            color:#D1FAE5; font-family:'Courier New',monospace;
+            font-size:12px; line-height:1.55; padding:16px;
+            max-height:520px; overflow-y:scroll; overflow-x:hidden;
+            white-space:pre-wrap; word-break:break-all;
+            will-change:scroll-position; contain:content;
         }
-        .log-loading {
-            color: #60A5FA; font-size: 13px;
-            padding: 20px 16px; text-align: center;
-        }
-        /* 재분석 버튼 */
+        .log-loading { color:#60A5FA; font-size:13px; padding:20px 16px; text-align:center; }
         .btn-rerun {
-            background: #F59E0B; color: #fff;
-            border: none; border-radius: 6px;
-            padding: 8px 16px; font-size: 13px; font-weight: 600;
-            cursor: pointer; text-decoration: none;
-            transition: background .2s;
+            background:#F59E0B; color:#fff; border:none; border-radius:6px;
+            padding:8px 16px; font-size:13px; font-weight:600;
+            cursor:pointer; text-decoration:none; transition:background .2s;
         }
-        .btn-rerun:hover { background: #D97706; color: #fff; }
+        .btn-rerun:hover { background:#D97706; color:#fff; }
+        /* 차트 컨테이너 고정 높이 */
+        .chart-container { position:relative; }
+        .chart-container canvas { max-height:320px !important; }
+        /* 데이터 없을 때 빈 박스 */
+        .no-data-box {
+            display:flex; align-items:center; justify-content:center;
+            height:200px; background:#F9FAFB; border-radius:8px;
+            color:#9CA3AF; font-size:14px; border:2px dashed #E5E7EB;
+        }
     </style>
 </head>
 <body>
 
-<!-- ── Header ─────────────────────────────────────────────── -->
 <header class="header">
     <div class="container header-flex">
         <div>
@@ -60,53 +53,57 @@
             <p class="header-subtitle" th:text="${result != null ? result.filename : ''}"></p>
         </div>
         <div style="display:flex;gap:10px;align-items:center;">
-            <a th:if="${result != null}" th:href="@{/analyze/rerun/{f}(f=${result.filename})}"
+            <a th:if="${result != null}"
+               th:href="@{/analyze/rerun/{f}(f=${result.filename})}"
                class="btn-rerun">🔄 재분석</a>
             <a href="/" class="btn btn-outline">← Back</a>
         </div>
     </div>
 </header>
 
-<!-- ── Main ───────────────────────────────────────────────── -->
 <div class="container main-content">
 
-    <!-- ── 에러 ──────────────────────────────────────────── -->
+    <!-- ── 에러 ──────────────────────────────────── -->
     <div th:if="${error}" class="alert alert-error">
         <h3>⚠ Analysis Failed</h3>
         <p th:text="${error}"></p>
         <details th:if="${matLog != null and !#strings.isEmpty(matLog)}" style="margin-top:12px">
-            <summary style="cursor:pointer;font-weight:600">MAT CLI Log (preview)</summary>
+            <summary style="cursor:pointer;font-weight:600">MAT CLI Log</summary>
             <pre class="log-block" th:text="${matLog}"></pre>
         </details>
         <a href="/" class="btn btn-primary" style="margin-top:16px">Go Back</a>
     </div>
 
-    <!-- ── 성공 결과 ──────────────────────────────────────── -->
+    <!-- ── 성공 결과 ──────────────────────────────── -->
     <div th:if="${result != null and result.analysisStatus.name() == 'SUCCESS'}">
 
-        <!-- ①  파일 정보 -->
+        <!-- ① 파일 정보 -->
         <section class="section">
             <div class="info-grid">
                 <div class="info-item">
                     <div class="info-label">Filename</div>
-                    <div class="info-value" th:text="${result.filename}">dump.hprof</div>
+                    <div class="info-value" th:text="${result.filename}">-</div>
                 </div>
                 <div class="info-item">
                     <div class="info-label">File Size</div>
-                    <div class="info-value" th:text="${result.formattedFileSize}">460 MB</div>
+                    <div class="info-value" th:text="${result.formattedFileSize}">-</div>
                 </div>
                 <div class="info-item">
                     <div class="info-label">Format</div>
-                    <div class="info-value" th:text="${result.format}">HPROF</div>
+                    <div class="info-value" th:text="${result.format}">-</div>
                 </div>
                 <div class="info-item">
                     <div class="info-label">Last Modified</div>
-                    <div class="info-value" th:text="${formattedDate}">2024-01-15</div>
+                    <div class="info-value" th:text="${formattedDate}">-</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Analysis Time</div>
+                    <div class="info-value" th:text="${result.analysisTime} + ' ms'">-</div>
                 </div>
             </div>
         </section>
 
-        <!-- ②  통계 박스 -->
+        <!-- ② 통계 박스 -->
         <section class="section">
             <div class="stats-grid">
                 <div class="stat-box stat-box-blue1">
@@ -136,47 +133,80 @@
             </div>
         </section>
 
-        <!-- ③  탭 네비게이션 -->
+        <!-- ③ 탭 -->
         <div class="tab-nav">
-            <button class="tab-btn active" onclick="switchTab('tab-charts', this)">📈 Charts</button>
-            <button class="tab-btn" onclick="switchTab('tab-top-objects', this)">🔍 Top Objects</button>
-            <button class="tab-btn" onclick="switchTab('tab-suspects', this)"
+            <button class="tab-btn active" onclick="switchTab('tab-charts',this)">📈 Charts</button>
+            <button class="tab-btn" onclick="switchTab('tab-top-objects',this)">🔍 Top Objects</button>
+            <button class="tab-btn" onclick="switchTab('tab-suspects',this)"
                     th:classappend="${result.hasLeakSuspects()} ? ' tab-btn-warn' : ''">
                 🚨 Leak Suspects
                 <span th:if="${result.hasLeakSuspects()}" class="badge-warn"
-                      th:text="${#lists.size(result.leakSuspects)}">0</span>
+                      th:text="${#lists.size(result.leakSuspects)}"></span>
             </button>
-            <button class="tab-btn" onclick="switchTab('tab-mat-overview', this)"
+            <button class="tab-btn" onclick="switchTab('tab-mat-overview',this)"
                     th:if="${!#strings.isEmpty(result.overviewHtml)}">📄 MAT Overview</button>
-            <button class="tab-btn" onclick="switchTab('tab-mat-top', this)"
+            <button class="tab-btn" onclick="switchTab('tab-mat-top',this)"
                     th:if="${!#strings.isEmpty(result.topComponentsHtml)}">📦 MAT Top Components</button>
-            <button class="tab-btn" onclick="switchTab('tab-mat-suspects', this)"
+            <button class="tab-btn" onclick="switchTab('tab-mat-suspects',this)"
                     th:if="${!#strings.isEmpty(result.suspectsHtml)}">🔬 MAT Suspects</button>
-            <button class="tab-btn" onclick="switchTab('tab-log', this); loadLog()"
+            <button class="tab-btn" onclick="switchTab('tab-log',this);loadLog()"
                     th:if="${matLogTotalLen != null and matLogTotalLen > 0}">🖥 MAT Log</button>
         </div>
 
-        <!-- ③-a  차트 탭 -->
+        <!-- ③-a Charts 탭 ─────────────────────────────── -->
         <div id="tab-charts" class="tab-content active section">
             <h2 class="section-title">📈 Memory Visualization</h2>
-            <div class="chart-grid">
+
+            <div th:if="${hasHeapData}" class="chart-grid">
+                <!-- Doughnut: 서버에서 직접 그림 -->
                 <div class="chart-container">
                     <h3 class="chart-title">Memory Distribution</h3>
                     <canvas id="doughnutChart"></canvas>
                 </div>
+                <!-- Bar: Top Objects -->
                 <div class="chart-container">
-                    <h3 class="chart-title">Top 10 Memory Objects</h3>
-                    <canvas id="barChart"></canvas>
+                    <h3 class="chart-title">Top 10 Memory Objects (MB)</h3>
+                    <div th:if="${#lists.isEmpty(result.topMemoryObjects)}" class="no-data-box">
+                        Top Objects 데이터가 없습니다
+                    </div>
+                    <canvas th:if="${!#lists.isEmpty(result.topMemoryObjects)}" id="barChart"></canvas>
+                </div>
+            </div>
+
+            <div th:if="${!hasHeapData}" class="no-data-box" style="height:280px;">
+                <div style="text-align:center">
+                    <div style="font-size:40px;margin-bottom:12px">⚠️</div>
+                    <div style="font-weight:600;margin-bottom:8px">힙 메모리 데이터를 파싱하지 못했습니다</div>
+                    <div style="font-size:13px;color:#6B7280">MAT Overview ZIP이 생성되었는지 확인하거나 재분석을 시도하세요</div>
+                </div>
+            </div>
+
+            <!-- 힙 통계 수치 요약 (항상 표시) -->
+            <div style="margin-top:20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+                <div style="background:#F0F9FF;border-radius:8px;padding:14px;border-left:4px solid #3B82F6">
+                    <div style="font-size:12px;color:#6B7280">Total Heap</div>
+                    <div style="font-size:18px;font-weight:700;color:#1F2937" th:text="${result.formattedTotalHeapSize}">-</div>
+                </div>
+                <div style="background:#FFF7ED;border-radius:8px;padding:14px;border-left:4px solid #F59E0B">
+                    <div style="font-size:12px;color:#6B7280">Used Memory</div>
+                    <div style="font-size:18px;font-weight:700;color:#1F2937" th:text="${result.formattedUsedHeapSize}">-</div>
+                </div>
+                <div style="background:#F0FDF4;border-radius:8px;padding:14px;border-left:4px solid #10B981">
+                    <div style="font-size:12px;color:#6B7280">Free Memory</div>
+                    <div style="font-size:18px;font-weight:700;color:#1F2937" th:text="${result.formattedFreeHeapSize}">-</div>
+                </div>
+                <div style="background:#FDF4FF;border-radius:8px;padding:14px;border-left:4px solid #9333EA">
+                    <div style="font-size:12px;color:#6B7280">Heap Usage</div>
+                    <div style="font-size:18px;font-weight:700;color:#1F2937" th:text="${result.formattedHeapUsagePercent}">-</div>
                 </div>
             </div>
         </div>
 
-        <!-- ③-b  Top Objects 테이블 탭 -->
+        <!-- ③-b Top Objects 탭 ──────────────────────────── -->
         <div id="tab-top-objects" class="tab-content section" style="display:none">
             <h2 class="section-title">🔍 Top Memory Consuming Objects</h2>
             <div th:if="${#lists.isEmpty(result.topMemoryObjects)}" class="empty-state">
-                <p>Top component data is not available.<br>
-                   Please check that MAT generated the <code>top_components</code> ZIP report.</p>
+                <p>Top component data is not available.</p>
             </div>
             <div th:if="${!#lists.isEmpty(result.topMemoryObjects)}" class="table-responsive">
                 <table class="data-table">
@@ -187,16 +217,17 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr th:each="obj, s : ${result.topMemoryObjects}">
+                        <tr th:each="obj,s : ${result.topMemoryObjects}">
                             <td><span class="rank-badge" th:text="${s.count}">1</span></td>
-                            <td><code class="class-name" th:text="${obj.className}">java.lang.String</code></td>
+                            <td><code class="class-name" th:text="${obj.className}">-</code></td>
                             <td th:text="${obj.formattedObjectCount}">0</td>
                             <td th:text="${obj.formattedSize}">0 B</td>
                             <td>
                                 <div class="progress-bar-container">
                                     <div class="progress-bar"
-                                         th:style="'width: ' + ${obj.percentOfHeap} + '%'"></div>
-                                    <span class="progress-text" th:text="${obj.formattedPercent}">0%</span>
+                                         th:style="'width:' + ${obj.percentOfHeap} + '%'"></div>
+                                    <span class="progress-text"
+                                          th:text="${obj.formattedPercent}">0%</span>
                                 </div>
                             </td>
                         </tr>
@@ -205,43 +236,42 @@
             </div>
         </div>
 
-        <!-- ③-c  Leak Suspects 탭 -->
+        <!-- ③-c Leak Suspects 탭 ────────────────────────── -->
         <div id="tab-suspects" class="tab-content section" style="display:none">
             <h2 class="section-title">🚨 Leak Suspects</h2>
             <div th:if="${!result.hasLeakSuspects()}" class="empty-state">
-                <p>No leak suspects found — heap appears healthy,<br>
-                   or the MAT suspects report was not generated.</p>
+                <p>No leak suspects found.</p>
             </div>
             <div th:if="${result.hasLeakSuspects()}" class="suspects-list">
                 <div th:each="s : ${result.leakSuspects}" class="suspect-card">
                     <div class="suspect-title" th:text="${s.title}">Suspect #1</div>
-                    <div class="suspect-desc" th:text="${s.description}">Description.</div>
+                    <div class="suspect-desc" th:text="${s.description}">-</div>
                 </div>
             </div>
         </div>
 
-        <!-- ③-d  MAT Overview HTML 탭 -->
+        <!-- ③-d MAT Overview ────────────────────────────── -->
         <div id="tab-mat-overview" class="tab-content section" style="display:none"
              th:if="${!#strings.isEmpty(result.overviewHtml)}">
-            <h2 class="section-title">📄 MAT System Overview Report</h2>
+            <h2 class="section-title">📄 MAT System Overview</h2>
             <div class="mat-report-frame" th:utext="${result.overviewHtml}"></div>
         </div>
 
-        <!-- ③-e  MAT Top Components HTML 탭 -->
+        <!-- ③-e MAT Top Components ──────────────────────── -->
         <div id="tab-mat-top" class="tab-content section" style="display:none"
              th:if="${!#strings.isEmpty(result.topComponentsHtml)}">
-            <h2 class="section-title">📦 MAT Top Components Report</h2>
+            <h2 class="section-title">📦 MAT Top Components</h2>
             <div class="mat-report-frame" th:utext="${result.topComponentsHtml}"></div>
         </div>
 
-        <!-- ③-f  MAT Suspects HTML 탭 -->
+        <!-- ③-f MAT Suspects ────────────────────────────── -->
         <div id="tab-mat-suspects" class="tab-content section" style="display:none"
              th:if="${!#strings.isEmpty(result.suspectsHtml)}">
-            <h2 class="section-title">🔬 MAT Leak Suspects Report</h2>
+            <h2 class="section-title">🔬 MAT Leak Suspects</h2>
             <div class="mat-report-frame" th:utext="${result.suspectsHtml}"></div>
         </div>
 
-        <!-- ③-g  MAT 실행 로그 탭 — Lazy Loading (hang 방지) -->
+        <!-- ③-g MAT Log (Lazy) ──────────────────────────── -->
         <div id="tab-log" class="tab-content section" style="display:none"
              th:if="${matLogTotalLen != null and matLogTotalLen > 0}">
             <h2 class="section-title">🖥 MAT CLI Execution Log</h2>
@@ -250,210 +280,305 @@
                     <span id="logStatusTxt">로그 탭을 클릭하면 로드됩니다.</span>
                     <div class="log-btns">
                         <button id="btnLoadMore" onclick="loadMoreLog()" disabled>▼ 더 보기</button>
-                        <button id="btnLoadAll"  onclick="loadAllLog()"  disabled>⬇ 전체 로드</button>
+                        <button id="btnLoadAll"  onclick="loadAllLog()"  disabled>⬇ 전체</button>
                         <button onclick="scrollLogBottom()">↓ 끝으로</button>
                     </div>
                 </div>
                 <div class="log-content" id="logContent">
-                    <div class="log-loading">🔄 로그를 불러오는 중입니다...</div>
+                    <div class="log-loading">🔄 로딩 중...</div>
                 </div>
             </div>
         </div>
 
-        <!-- ④  분석 정보 -->
-        <section class="section">
-            <div class="analysis-info">
-                <p><strong>Analysis Time:</strong>
-                   <span th:text="${result.analysisTime} + ' ms'">0 ms</span></p>
-                <p><strong>MAT CLI:</strong> /opt/mat/ParseHeapDump.sh</p>
-            </div>
-        </section>
-
     </div><!-- /SUCCESS -->
-</div><!-- /container -->
+</div>
 
-<!-- ── Footer ─────────────────────────────────────────────── -->
 <footer class="footer">
     <div class="container">
         <p>© 2024 Heap Dump Analyzer v2.0.0 | Powered by Eclipse MAT CLI</p>
     </div>
 </footer>
 
-<!-- ── Chart Data (Thymeleaf inline) ──────────────────────── -->
-<script th:if="${result != null and result.analysisStatus.name() == 'SUCCESS'}"
-        th:inline="javascript">
-    const FILENAME      = /*[[${result.filename}]]*/ '';
-    const LOG_TOTAL_LEN = /*[[${matLogTotalLen}]]*/ 0;
-    const usedMemory    = /*[[${result.usedHeapSize}]]*/ 0;
-    const freeMemory    = /*[[${result.freeHeapSize}]]*/ 0;
-    const topObjects    = /*[[${result.topMemoryObjects}]]*/ [];
-    const top10         = topObjects.slice(0, 10);
-    const classNames    = top10.map(o => o.className);
-    const memorySizes   = top10.map(o => o.totalSize);
+<!-- ── 차트 데이터: 서버사이드에서 직접 주입 ─────────────── -->
+<th:block th:if="${result != null and result.analysisStatus.name() == 'SUCCESS' and hasHeapData}">
+<script th:inline="javascript">
+/*<![CDATA[*/
+// 서버에서 직접 Long 값으로 주입 (JSON 직렬화 우회)
+var USED_BYTES  = /*[[${result.usedHeapSize}]]*/ 0;
+var FREE_BYTES  = /*[[${result.freeHeapSize}]]*/ 0;
+var TOTAL_BYTES = /*[[${result.totalHeapSize}]]*/ 0;
+var FILENAME    = /*[[${result.filename}]]*/ '';
+var LOG_TOTAL_LEN = /*[[${matLogTotalLen}]]*/ 0;
+
+// Top Objects: 각 필드를 개별 배열로 주입 (객체 직렬화 문제 완전 우회)
+var OBJ_NAMES   = /*[[${topObjNames}]]*/ [];
+var OBJ_SIZES   = /*[[${topObjSizes}]]*/ [];
+var OBJ_COUNTS  = /*[[${topObjCounts}]]*/ [];
+var OBJ_PCTS    = /*[[${topObjPcts}]]*/ [];
+/*]]>*/
 </script>
+</th:block>
 
-<script th:src="@{/js/chart.js}"></script>
-<script th:src="@{/js/main.js}"></script>
+<th:block th:if="${result != null and result.analysisStatus.name() == 'SUCCESS' and !hasHeapData}">
+<script th:inline="javascript">
+/*<![CDATA[*/
+var FILENAME      = /*[[${result.filename}]]*/ '';
+var LOG_TOTAL_LEN = /*[[${matLogTotalLen}]]*/ 0;
+var USED_BYTES = 0; var FREE_BYTES = 0; var TOTAL_BYTES = 0;
+var OBJ_NAMES = []; var OBJ_SIZES = []; var OBJ_COUNTS = []; var OBJ_PCTS = [];
+/*]]>*/
+</script>
+</th:block>
 
-<!-- ── 탭 전환 + 로그 Lazy Loading 스크립트 (성능 최적화) ────── -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
 <script>
 // ── 탭 전환 ──────────────────────────────────────────────────
 function switchTab(id, btn) {
     document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-    const target = document.getElementById(id);
-    if (target) target.style.display = 'block';
+    const t = document.getElementById(id);
+    if (t) t.style.display = 'block';
     if (btn) btn.classList.add('active');
 }
 
-// ── 로그 Lazy Loading (성능 최적화) ─────────────────────────
-// ∙ textContent += 방식 대신 DocumentFragment + TextNode 사용
-// ∙ 청크 크기 10 KB — 한 번에 너무 많은 텍스트를 DOM에 삽입하지 않음
-// ∙ scrollHeight 접근을 rAF로 제한
+// ── 차트 초기화 ──────────────────────────────────────────────
+(function initCharts() {
+    // Doughnut
+    const dCtx = document.getElementById('doughnutChart');
+    if (dCtx && (USED_BYTES > 0 || FREE_BYTES > 0)) {
+        const usedMB  = (USED_BYTES  / 1048576).toFixed(1);
+        const freeMB  = (FREE_BYTES  / 1048576).toFixed(1);
+        const totalMB = (TOTAL_BYTES / 1048576).toFixed(1);
+        const usedPct = TOTAL_BYTES > 0
+            ? ((USED_BYTES / TOTAL_BYTES) * 100).toFixed(1) : '0.0';
+
+        new Chart(dCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Used (' + usedMB + ' MB)', 'Free (' + freeMB + ' MB)'],
+                datasets: [{
+                    data: [USED_BYTES, FREE_BYTES],
+                    backgroundColor: ['#3B82F6', '#E5E7EB'],
+                    borderColor: '#fff',
+                    borderWidth: 3,
+                    hoverOffset: 10
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                cutout: '65%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { padding: 16, font: { size: 13 }, color: '#374151' }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(17,24,39,.9)',
+                        padding: 10,
+                        callbacks: {
+                            label: ctx => {
+                                const mb  = (ctx.parsed / 1048576).toFixed(1);
+                                const tot = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                const pct = ((ctx.parsed / tot) * 100).toFixed(1);
+                                return ' ' + ctx.label.split(' ')[0] + ': ' + mb + ' MB (' + pct + '%)';
+                            }
+                        }
+                    }
+                },
+                animation: { duration: 800, easing: 'easeInOutQuart' }
+            },
+            plugins: [{
+                id: 'center',
+                afterDraw(chart) {
+                    const { ctx, chartArea: { width, height, left, top } } = chart;
+                    const cx = left + width / 2, cy = top + height / 2;
+                    const sz = Math.min(width, height);
+                    ctx.save();
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillStyle = '#1F2937';
+                    ctx.font = 'bold ' + (sz * 0.13) + 'px Segoe UI';
+                    ctx.fillText(usedPct + '%', cx, cy - 8);
+                    ctx.fillStyle = '#6B7280';
+                    ctx.font = (sz * 0.07) + 'px Segoe UI';
+                    ctx.fillText('Used', cx, cy + 14);
+                    ctx.restore();
+                }
+            }]
+        });
+    }
+
+    // Bar — Top Objects
+    const bCtx = document.getElementById('barChart');
+    if (bCtx && OBJ_NAMES.length > 0) {
+        const top10names = OBJ_NAMES.slice(0, 10);
+        const top10sizes = OBJ_SIZES.slice(0, 10);
+
+        // 클래스명 말줄임
+        const labels = top10names.map(n =>
+            n.length > 38 ? '…' + n.slice(-38) : n);
+
+        const maxSize = Math.max(...top10sizes) || 1;
+        const bgColors = top10sizes.map(s => {
+            const a = (0.35 + (s / maxSize) * 0.65).toFixed(2);
+            return 'rgba(59,130,246,' + a + ')';
+        });
+        const sizesMB = top10sizes.map(s => (s / 1048576).toFixed(3));
+
+        new Chart(bCtx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Memory (MB)',
+                    data: sizesMB,
+                    backgroundColor: bgColors,
+                    borderColor: '#2563EB',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    hoverBackgroundColor: '#1D4ED8'
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(17,24,39,.9)',
+                        padding: 10,
+                        callbacks: {
+                            title: items => top10names[items[0].dataIndex] || items[0].label,
+                            label: ctx  => ' ' + ctx.parsed.x + ' MB'
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        grid: { color: '#E5E7EB' },
+                        ticks: { color: '#6B7280', font: { size: 11 },
+                                 callback: v => v + ' MB' },
+                        title: { display: true, text: 'Memory Size (MB)',
+                                 color: '#374151', font: { size: 12, weight: '600' } }
+                    },
+                    y: {
+                        grid: { display: false },
+                        ticks: { color: '#1F2937',
+                                 font: { size: 11, family: "'Courier New',monospace" },
+                                 autoSkip: false }
+                    }
+                },
+                animation: { duration: 900, easing: 'easeInOutQuart' }
+            }
+        });
+    }
+
+    // Progress bar 애니메이션
+    setTimeout(() => {
+        document.querySelectorAll('.progress-bar').forEach(bar => {
+            const w = bar.style.width;
+            bar.style.width = '0%';
+            bar.style.transition = 'none';
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                bar.style.transition = 'width .8s ease';
+                bar.style.width = w;
+            }));
+        });
+    }, 300);
+})();
+
+// ── 로그 Lazy Loading ─────────────────────────────────────────
 const LOG_CHUNK = 10000;
-let logOffset  = 0;
-let logLoaded  = false;
-let logLoading = false;
+let logOffset = 0, logLoaded = false, logLoading = false;
+let _lc = null, _lst = null, _blm = null, _bla = null;
 
-// DOM 참조 캐시 (함수 호출마다 getElementById 방지)
-let _logContent   = null;
-let _logStatusTxt = null;
-let _btnLoadMore  = null;
-let _btnLoadAll   = null;
-
-function getLogEls() {
-    if (!_logContent)   _logContent   = document.getElementById('logContent');
-    if (!_logStatusTxt) _logStatusTxt = document.getElementById('logStatusTxt');
-    if (!_btnLoadMore)  _btnLoadMore  = document.getElementById('btnLoadMore');
-    if (!_btnLoadAll)   _btnLoadAll   = document.getElementById('btnLoadAll');
+function _getLogEls() {
+    if (!_lc)  _lc  = document.getElementById('logContent');
+    if (!_lst) _lst = document.getElementById('logStatusTxt');
+    if (!_blm) _blm = document.getElementById('btnLoadMore');
+    if (!_bla) _bla = document.getElementById('btnLoadAll');
 }
-
-/** 텍스트를 TextNode로 추가 — innerHTML/textContent+= 보다 빠름 */
-function appendTextChunk(text) {
-    getLogEls();
-    // DocumentFragment 사용으로 reflow 최소화
-    const frag = document.createDocumentFragment();
-    frag.appendChild(document.createTextNode(text));
-    _logContent.appendChild(frag);
+function _appendText(text) {
+    _getLogEls();
+    const f = document.createDocumentFragment();
+    f.appendChild(document.createTextNode(text));
+    _lc.appendChild(f);
 }
-
-function updateLogStatus(loaded, total, hasMore) {
-    getLogEls();
-    const lKB = Math.round(loaded / 1024);
-    const tKB = Math.round(total  / 1024);
-    _logStatusTxt.textContent = lKB + ' KB / ' + tKB + ' KB 로드됨';
-    _btnLoadMore.disabled = !hasMore;
-    _btnLoadAll.disabled  = !hasMore;
+function _updateStatus(loaded, total, hasMore) {
+    _getLogEls();
+    _lst.textContent = Math.round(loaded/1024) + ' KB / ' + Math.round(total/1024) + ' KB';
+    _blm.disabled = !hasMore;
+    _bla.disabled  = !hasMore;
 }
 
 function loadLog() {
     if (logLoaded || logLoading) return;
-    logLoading = true;
-    getLogEls();
-    _logStatusTxt.textContent = '로그 로딩 중...';
-
-    fetch('/analyze/log/' + encodeURIComponent(FILENAME)
-            + '?offset=0&limit=' + LOG_CHUNK)
+    logLoading = true; _getLogEls();
+    _lst.textContent = '로그 로딩 중...';
+    fetch('/analyze/log/' + encodeURIComponent(FILENAME) + '?offset=0&limit=' + LOG_CHUNK)
         .then(r => {
-            const total   = parseInt(r.headers.get('X-Log-Total-Length') || '0', 10);
-            const hasMore = r.headers.get('X-Log-Has-More') === 'true';
-            return r.text().then(text => ({ text, total, hasMore }));
+            const total = parseInt(r.headers.get('X-Log-Total-Length')||'0',10);
+            const more  = r.headers.get('X-Log-Has-More') === 'true';
+            return r.text().then(t => ({t,total,more}));
         })
-        .then(({ text, total, hasMore }) => {
-            // 초기 로드는 textContent로 교체 (기존 내용 제거)
-            _logContent.textContent = '';
-            appendTextChunk(text);
-            logOffset = text.length;
-            logLoading = false;
-            logLoaded  = true;
-            updateLogStatus(logOffset, total, hasMore);
-            // 스크롤 최상단 (rAF)
-            requestAnimationFrame(() => { _logContent.scrollTop = 0; });
+        .then(({t,total,more}) => {
+            _lc.textContent = '';
+            _appendText(t);
+            logOffset = t.length; logLoading = false; logLoaded = true;
+            _updateStatus(logOffset, total, more);
+            requestAnimationFrame(() => { _lc.scrollTop = 0; });
         })
-        .catch(err => {
-            _logContent.textContent = '로그 로드 실패: ' + err.message;
-            logLoading = false;
-        });
+        .catch(e => { _lc.textContent = '로드 실패: ' + e.message; logLoading = false; });
 }
 
 function loadMoreLog() {
     if (logLoading) return;
-    logLoading = true;
-    getLogEls();
-    _logStatusTxt.textContent = '추가 로딩 중...';
-
+    logLoading = true; _getLogEls(); _lst.textContent = '추가 로딩 중...';
     fetch('/analyze/log/' + encodeURIComponent(FILENAME)
-            + '?offset=' + logOffset + '&limit=' + LOG_CHUNK)
+          + '?offset=' + logOffset + '&limit=' + LOG_CHUNK)
         .then(r => {
-            const total   = parseInt(r.headers.get('X-Log-Total-Length') || '0', 10);
-            const hasMore = r.headers.get('X-Log-Has-More') === 'true';
-            return r.text().then(text => ({ text, total, hasMore }));
+            const total = parseInt(r.headers.get('X-Log-Total-Length')||'0',10);
+            const more  = r.headers.get('X-Log-Has-More') === 'true';
+            return r.text().then(t => ({t,total,more}));
         })
-        .then(({ text, total, hasMore }) => {
-            appendTextChunk(text);
-            logOffset += text.length;
-            logLoading = false;
-            updateLogStatus(logOffset, total, hasMore);
-            requestAnimationFrame(() => {
-                _logContent.scrollTop = _logContent.scrollHeight;
-            });
+        .then(({t,total,more}) => {
+            _appendText(t); logOffset += t.length; logLoading = false;
+            _updateStatus(logOffset, total, more);
+            requestAnimationFrame(() => { _lc.scrollTop = 999999; });
         })
-        .catch(err => {
-            _logStatusTxt.textContent = '추가 로드 실패: ' + err.message;
-            logLoading = false;
-        });
+        .catch(e => { _lst.textContent = '실패: ' + e.message; logLoading = false; });
 }
 
 function loadAllLog() {
     if (logLoading) return;
-    const sizeKB = Math.round(LOG_TOTAL_LEN / 1024);
-    if (!confirm('전체 로그 크기: ' + sizeKB + ' KB\n브라우저 성능에 영향을 줄 수 있습니다. 계속 로드할까요?')) return;
-
-    logLoading = true;
-    getLogEls();
-    _logStatusTxt.textContent = '전체 로그 로딩 중...';
-
-    // 전체를 한 번에 받지 않고 청크 단위로 재귀 로드
-    loadAllChunks();
+    if (!confirm('전체 로그 (' + Math.round(LOG_TOTAL_LEN/1024) + ' KB) 로드?')) return;
+    logLoading = true; _getLogEls(); _chunkAll();
 }
-
-function loadAllChunks() {
+function _chunkAll() {
     if (logOffset >= LOG_TOTAL_LEN) {
-        logLoading = false;
-        getLogEls();
-        _logStatusTxt.textContent = '전체 로그 로드 완료 (' + Math.round(LOG_TOTAL_LEN / 1024) + ' KB)';
-        _btnLoadMore.disabled = true;
-        _btnLoadAll.disabled  = true;
-        return;
+        logLoading = false; _getLogEls();
+        _lst.textContent = '전체 로드 완료';
+        _blm.disabled = true; _bla.disabled = true; return;
     }
     fetch('/analyze/log/' + encodeURIComponent(FILENAME)
-            + '?offset=' + logOffset + '&limit=' + LOG_CHUNK)
+          + '?offset=' + logOffset + '&limit=' + LOG_CHUNK)
         .then(r => r.text())
-        .then(text => {
-            appendTextChunk(text);
-            logOffset += text.length;
-            getLogEls();
-            _logStatusTxt.textContent = Math.round(logOffset / 1024) + ' KB / '
-                + Math.round(LOG_TOTAL_LEN / 1024) + ' KB 로드됨...';
-            // 다음 청크는 setTimeout 0으로 태스크 큐에 넣어
-            // 브라우저가 렌더링 기회를 가질 수 있게 함
-            setTimeout(loadAllChunks, 0);
+        .then(t => {
+            _appendText(t); logOffset += t.length;
+            _getLogEls();
+            _lst.textContent = Math.round(logOffset/1024) + '/' + Math.round(LOG_TOTAL_LEN/1024) + ' KB';
+            setTimeout(_chunkAll, 0);
         })
-        .catch(err => {
-            getLogEls();
-            _logStatusTxt.textContent = '전체 로드 실패: ' + err.message;
-            logLoading = false;
-        });
+        .catch(e => { _lst.textContent = '실패: ' + e.message; logLoading = false; });
 }
-
 function scrollLogBottom() {
-    if (_logContent) {
-        requestAnimationFrame(() => {
-            _logContent.scrollTop = _logContent.scrollHeight;
-        });
-    }
+    if (_lc) requestAnimationFrame(() => { _lc.scrollTop = 999999; });
 }
 </script>
 
+<script th:src="@{/js/main.js}"></script>
 </body>
 </html>
