@@ -295,7 +295,7 @@
 <script th:src="@{/js/chart.js}"></script>
 <script th:src="@{/js/main.js}"></script>
 
-<!-- ── 탭 전환 + 로그 Lazy Loading 스크립트 ───────────────── -->
+<!-- ── 탭 전환 + 로그 Lazy Loading 스크립트 (성능 최적화) ────── -->
 <script>
 // ── 탭 전환 ──────────────────────────────────────────────────
 function switchTab(id, btn) {
@@ -306,44 +306,72 @@ function switchTab(id, btn) {
     if (btn) btn.classList.add('active');
 }
 
-// ── 로그 Lazy Loading ────────────────────────────────────────
-const LOG_CHUNK = 10000;   // 한 번에 10,000 자씩 로드
-let logOffset   = 0;
-let logLoaded   = false;
-let logLoading  = false;
+// ── 로그 Lazy Loading (성능 최적화) ─────────────────────────
+// ∙ textContent += 방식 대신 DocumentFragment + TextNode 사용
+// ∙ 청크 크기 10 KB — 한 번에 너무 많은 텍스트를 DOM에 삽입하지 않음
+// ∙ scrollHeight 접근을 rAF로 제한
+const LOG_CHUNK = 10000;
+let logOffset  = 0;
+let logLoaded  = false;
+let logLoading = false;
+
+// DOM 참조 캐시 (함수 호출마다 getElementById 방지)
+let _logContent   = null;
+let _logStatusTxt = null;
+let _btnLoadMore  = null;
+let _btnLoadAll   = null;
+
+function getLogEls() {
+    if (!_logContent)   _logContent   = document.getElementById('logContent');
+    if (!_logStatusTxt) _logStatusTxt = document.getElementById('logStatusTxt');
+    if (!_btnLoadMore)  _btnLoadMore  = document.getElementById('btnLoadMore');
+    if (!_btnLoadAll)   _btnLoadAll   = document.getElementById('btnLoadAll');
+}
+
+/** 텍스트를 TextNode로 추가 — innerHTML/textContent+= 보다 빠름 */
+function appendTextChunk(text) {
+    getLogEls();
+    // DocumentFragment 사용으로 reflow 최소화
+    const frag = document.createDocumentFragment();
+    frag.appendChild(document.createTextNode(text));
+    _logContent.appendChild(frag);
+}
+
+function updateLogStatus(loaded, total, hasMore) {
+    getLogEls();
+    const lKB = Math.round(loaded / 1024);
+    const tKB = Math.round(total  / 1024);
+    _logStatusTxt.textContent = lKB + ' KB / ' + tKB + ' KB 로드됨';
+    _btnLoadMore.disabled = !hasMore;
+    _btnLoadAll.disabled  = !hasMore;
+}
 
 function loadLog() {
     if (logLoaded || logLoading) return;
     logLoading = true;
-
-    const content   = document.getElementById('logContent');
-    const statusTxt = document.getElementById('logStatusTxt');
-    statusTxt.textContent = '로그 로딩 중...';
+    getLogEls();
+    _logStatusTxt.textContent = '로그 로딩 중...';
 
     fetch('/analyze/log/' + encodeURIComponent(FILENAME)
-          + '?offset=0&limit=' + LOG_CHUNK)
+            + '?offset=0&limit=' + LOG_CHUNK)
         .then(r => {
-            const total  = parseInt(r.headers.get('X-Log-Total-Length') || '0', 10);
+            const total   = parseInt(r.headers.get('X-Log-Total-Length') || '0', 10);
             const hasMore = r.headers.get('X-Log-Has-More') === 'true';
             return r.text().then(text => ({ text, total, hasMore }));
         })
         .then(({ text, total, hasMore }) => {
-            content.textContent = text;
+            // 초기 로드는 textContent로 교체 (기존 내용 제거)
+            _logContent.textContent = '';
+            appendTextChunk(text);
             logOffset = text.length;
             logLoading = false;
             logLoaded  = true;
-
-            const loadedKB = Math.round(logOffset / 1024);
-            const totalKB  = Math.round(total / 1024);
-            statusTxt.textContent = loadedKB + ' KB / ' + totalKB + ' KB 로드됨';
-
-            document.getElementById('btnLoadMore').disabled = !hasMore;
-            document.getElementById('btnLoadAll').disabled  = !hasMore;
-
-            content.scrollTop = 0;
+            updateLogStatus(logOffset, total, hasMore);
+            // 스크롤 최상단 (rAF)
+            requestAnimationFrame(() => { _logContent.scrollTop = 0; });
         })
         .catch(err => {
-            content.textContent = '로그 로드 실패: ' + err.message;
+            _logContent.textContent = '로그 로드 실패: ' + err.message;
             logLoading = false;
         });
 }
@@ -351,68 +379,79 @@ function loadLog() {
 function loadMoreLog() {
     if (logLoading) return;
     logLoading = true;
-
-    const content   = document.getElementById('logContent');
-    const statusTxt = document.getElementById('logStatusTxt');
-    statusTxt.textContent = '추가 로딩 중...';
+    getLogEls();
+    _logStatusTxt.textContent = '추가 로딩 중...';
 
     fetch('/analyze/log/' + encodeURIComponent(FILENAME)
-          + '?offset=' + logOffset + '&limit=' + LOG_CHUNK)
+            + '?offset=' + logOffset + '&limit=' + LOG_CHUNK)
         .then(r => {
             const total   = parseInt(r.headers.get('X-Log-Total-Length') || '0', 10);
             const hasMore = r.headers.get('X-Log-Has-More') === 'true';
             return r.text().then(text => ({ text, total, hasMore }));
         })
         .then(({ text, total, hasMore }) => {
-            content.textContent += text;
+            appendTextChunk(text);
             logOffset += text.length;
             logLoading = false;
-
-            const loadedKB = Math.round(logOffset / 1024);
-            const totalKB  = Math.round(total / 1024);
-            statusTxt.textContent = loadedKB + ' KB / ' + totalKB + ' KB 로드됨';
-
-            document.getElementById('btnLoadMore').disabled = !hasMore;
-            document.getElementById('btnLoadAll').disabled  = !hasMore;
-
-            content.scrollTop = content.scrollHeight;
+            updateLogStatus(logOffset, total, hasMore);
+            requestAnimationFrame(() => {
+                _logContent.scrollTop = _logContent.scrollHeight;
+            });
         })
         .catch(err => {
-            statusTxt.textContent = '추가 로드 실패: ' + err.message;
+            _logStatusTxt.textContent = '추가 로드 실패: ' + err.message;
             logLoading = false;
         });
 }
 
 function loadAllLog() {
     if (logLoading) return;
-    if (!confirm('전체 로그가 매우 클 수 있습니다 (' + Math.round(LOG_TOTAL_LEN / 1024) + ' KB). 계속 로드할까요?')) return;
+    const sizeKB = Math.round(LOG_TOTAL_LEN / 1024);
+    if (!confirm('전체 로그 크기: ' + sizeKB + ' KB\n브라우저 성능에 영향을 줄 수 있습니다. 계속 로드할까요?')) return;
 
     logLoading = true;
-    const content   = document.getElementById('logContent');
-    const statusTxt = document.getElementById('logStatusTxt');
-    statusTxt.textContent = '전체 로그 로딩 중...';
+    getLogEls();
+    _logStatusTxt.textContent = '전체 로그 로딩 중...';
 
+    // 전체를 한 번에 받지 않고 청크 단위로 재귀 로드
+    loadAllChunks();
+}
+
+function loadAllChunks() {
+    if (logOffset >= LOG_TOTAL_LEN) {
+        logLoading = false;
+        getLogEls();
+        _logStatusTxt.textContent = '전체 로그 로드 완료 (' + Math.round(LOG_TOTAL_LEN / 1024) + ' KB)';
+        _btnLoadMore.disabled = true;
+        _btnLoadAll.disabled  = true;
+        return;
+    }
     fetch('/analyze/log/' + encodeURIComponent(FILENAME)
-          + '?offset=' + logOffset + '&limit=' + (LOG_TOTAL_LEN - logOffset + 1))
+            + '?offset=' + logOffset + '&limit=' + LOG_CHUNK)
         .then(r => r.text())
         .then(text => {
-            content.textContent += text;
-            logOffset = LOG_TOTAL_LEN;
-            logLoading = false;
-            statusTxt.textContent = '전체 로그 로드 완료 (' + Math.round(LOG_TOTAL_LEN / 1024) + ' KB)';
-            document.getElementById('btnLoadMore').disabled = true;
-            document.getElementById('btnLoadAll').disabled  = true;
-            content.scrollTop = content.scrollHeight;
+            appendTextChunk(text);
+            logOffset += text.length;
+            getLogEls();
+            _logStatusTxt.textContent = Math.round(logOffset / 1024) + ' KB / '
+                + Math.round(LOG_TOTAL_LEN / 1024) + ' KB 로드됨...';
+            // 다음 청크는 setTimeout 0으로 태스크 큐에 넣어
+            // 브라우저가 렌더링 기회를 가질 수 있게 함
+            setTimeout(loadAllChunks, 0);
         })
         .catch(err => {
-            statusTxt.textContent = '전체 로드 실패: ' + err.message;
+            getLogEls();
+            _logStatusTxt.textContent = '전체 로드 실패: ' + err.message;
             logLoading = false;
         });
 }
 
 function scrollLogBottom() {
-    const c = document.getElementById('logContent');
-    if (c) c.scrollTop = c.scrollHeight;
+    if (_logContent) {
+        requestAnimationFrame(() => {
+            _logContent.scrollTop = _logContent.scrollHeight;
+        });
+    }
 }
 </script>
 
