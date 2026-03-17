@@ -406,12 +406,26 @@
         if (desc && descEl) descEl.textContent = desc;
     }
 
-    // ── 로그 콘솔에 라인 추가 ─────────────────────────────
+    // ── 로그 콘솔에 라인 추가 (최대 500줄 유지 → 대용량 hang 방지) ──
+    const MAX_LOG_LINES = 500;
+    let logLineCount = 0;
+
     function appendLog(line) {
+        // 너무 긴 줄은 잘라서 표시 (렌더링 부하 방지)
+        const displayLine = line.length > 300 ? line.substring(0, 300) + '...' : line;
+
         const span = document.createElement('span');
         span.className = 'log-line-new';
-        span.textContent = line + '\n';
+        span.textContent = displayLine + '\n';
         logConsole.appendChild(span);
+        logLineCount++;
+
+        // 최대 줄 수 초과 시 오래된 줄 삭제
+        if (logLineCount > MAX_LOG_LINES) {
+            const first = logConsole.firstChild;
+            if (first) logConsole.removeChild(first);
+        }
+
         // 스크롤 최하단 유지
         logConsole.scrollTop = logConsole.scrollHeight;
         // 새 줄 색상 잠시 후 일반 색으로

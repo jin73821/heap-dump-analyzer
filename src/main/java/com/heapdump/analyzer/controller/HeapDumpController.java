@@ -65,13 +65,22 @@ public class HeapDumpController {
         return "redirect:/";
     }
 
-    // ── [NEW] 분석 진행 화면 ──────────────────────────────────
-    // Analyze 버튼 클릭 시 → 진행 상황 페이지로 이동
+    // ── 분석 진행 화면 ───────────────────────────────────────
+    // Analyze 버튼 클릭 시:
+    //   캐시에 결과 있으면 -> 바로 결과 페이지로 이동 (재분석 불필요)
+    //   없으면            -> 진행 상황 페이지(progress.html) 표시
 
     @GetMapping("/analyze/{filename:.+}")
     public String analyzeProgress(@PathVariable String filename, Model model) {
+        // 이미 분석된 결과가 캐시에 있으면 바로 결과 페이지로
+        HeapAnalysisResult cached = analyzerService.getCachedResult(filename);
+        if (cached != null && cached.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+            logger.info("Cache hit for {}, skipping re-analysis", filename);
+            return "redirect:/analyze/result/" + filename;
+        }
+        // 없으면 진행 화면으로
         model.addAttribute("filename", filename);
-        return "progress";   // progress.html 렌더링
+        return "progress";
     }
 
     // ── [NEW] SSE 스트림 — MAT CLI 진행 상황 실시간 전송 ──────
