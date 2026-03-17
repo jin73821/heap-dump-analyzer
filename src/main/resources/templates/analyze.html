@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis Result - Heap Dump Analyzer</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container header-flex">
+            <div>
+                <h1 class="header-title">📊 Heap Analysis Result</h1>
+            </div>
+            <div>
+                <a href="/" class="btn btn-outline">← Back</a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container main-content">
+        
+        <!-- Error Message -->
+        <div th:if="${error}" class="alert alert-error">
+            <h3>Analysis Failed</h3>
+            <p th:text="${error}"></p>
+            <a href="/" class="btn btn-primary">Go Back</a>
+        </div>
+
+        <!-- Analysis Result -->
+        <div th:if="${result != null and result.analysisStatus.name() == 'SUCCESS'}">
+            
+            <!-- File Information -->
+            <section class="section">
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">Filename</div>
+                        <div class="info-value" th:text="${result.filename}">dump.hprof</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">File Size</div>
+                        <div class="info-value" th:text="${result.formattedFileSize}">460 MB</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Format</div>
+                        <div class="info-value" th:text="${result.format}">HPROF</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Last Modified</div>
+                        <div class="info-value" th:text="${formattedDate}">2024-01-15 10:30:00</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Statistics Boxes -->
+            <section class="section">
+                <div class="stats-grid">
+                    <div class="stat-box stat-box-blue1">
+                        <div class="stat-label">Total Heap Size</div>
+                        <div class="stat-value" th:text="${result.formattedTotalHeapSize}">368 MB</div>
+                    </div>
+                    <div class="stat-box stat-box-blue2">
+                        <div class="stat-label">Used Memory</div>
+                        <div class="stat-value" th:text="${result.formattedUsedHeapSize}">276 MB</div>
+                    </div>
+                    <div class="stat-box stat-box-gray">
+                        <div class="stat-label">Free Memory</div>
+                        <div class="stat-value" th:text="${result.formattedFreeHeapSize}">92 MB</div>
+                    </div>
+                    <div class="stat-box stat-box-blue3">
+                        <div class="stat-label">Heap Usage</div>
+                        <div class="stat-value" th:text="${result.formattedHeapUsagePercent}">75.00%</div>
+                    </div>
+                    <div class="stat-box stat-box-cyan">
+                        <div class="stat-label">Classes</div>
+                        <div class="stat-value" th:text="${result.formattedTotalClasses}">1,234</div>
+                    </div>
+                    <div class="stat-box stat-box-purple">
+                        <div class="stat-label">Objects</div>
+                        <div class="stat-value" th:text="${result.formattedTotalObjects}">567,890</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Charts -->
+            <section class="section">
+                <h2 class="section-title">📈 Memory Visualization</h2>
+                <div class="chart-grid">
+                    <div class="chart-container">
+                        <h3 class="chart-title">Memory Distribution</h3>
+                        <canvas id="doughnutChart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3 class="chart-title">Top 10 Memory Objects</h3>
+                        <canvas id="barChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Top Memory Objects Table -->
+            <section class="section">
+                <h2 class="section-title">🔍 Top Memory Consuming Objects</h2>
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>Class Name</th>
+                                <th>Objects</th>
+                                <th>Size</th>
+                                <th>Percentage</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="obj, iterStat : ${result.topMemoryObjects}">
+                                <td>
+                                    <span class="rank-badge" th:text="${iterStat.count}">1</span>
+                                </td>
+                                <td>
+                                    <code class="class-name" th:text="${obj.className}">java.lang.String</code>
+                                </td>
+                                <td th:text="${obj.formattedObjectCount}">45,678</td>
+                                <td th:text="${obj.formattedSize}">2.5 MB</td>
+                                <td>
+                                    <div class="progress-bar-container">
+                                        <div class="progress-bar" 
+                                             th:style="'width: ' + ${obj.percentOfHeap} + '%'">
+                                        </div>
+                                        <span class="progress-text" th:text="${obj.formattedPercent}">15.50%</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Analysis Info -->
+            <section class="section">
+                <div class="analysis-info">
+                    <p>
+                        <strong>Analysis Time:</strong> 
+                        <span th:text="${result.analysisTime} + ' ms'">1234 ms</span>
+                    </p>
+                </div>
+            </section>
+
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>© 2024 Heap Dump Analyzer v1.0.0 | Java Memory Analysis Tool</p>
+        </div>
+    </footer>
+
+    <!-- Chart Data -->
+    <script th:if="${result != null and result.analysisStatus.name() == 'SUCCESS'}" th:inline="javascript">
+        // Doughnut Chart Data
+        const usedMemory = /*[[${result.usedHeapSize}]]*/ 0;
+        const freeMemory = /*[[${result.freeHeapSize}]]*/ 0;
+        
+        // Bar Chart Data
+        const topObjects = /*[[${result.topMemoryObjects}]]*/ [];
+        const top10 = topObjects.slice(0, 10);
+        const classNames = top10.map(obj => obj.className);
+        const memorySizes = top10.map(obj => obj.totalSize);
+    </script>
+    <script th:src="@{/js/chart.js}"></script>
+</body>
+</html>
