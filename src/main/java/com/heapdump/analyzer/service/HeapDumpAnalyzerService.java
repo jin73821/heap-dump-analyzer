@@ -278,12 +278,22 @@ public class HeapDumpAnalyzerService {
                                           File resultDir, SseEmitter emitter)
             throws IOException, InterruptedException {
 
-        List<String> cmd = List.of(
-                "sh", config.getMatCliPath(), dumpPath,
-                "org.eclipse.mat.api:suspects",
-                "org.eclipse.mat.api:overview",
-                "org.eclipse.mat.api:top_components"
-        );
+        // MAT CLI 명령 구성
+        List<String> cmd = new ArrayList<>();
+        cmd.add("sh");
+        cmd.add(config.getMatCliPath());
+        cmd.add(dumpPath);
+
+        // -keep_unreachable_objects: GC Root 도달 불가 객체도 분석에 포함
+        if (config.isKeepUnreachableObjects()) {
+            cmd.add("-keep_unreachable_objects");
+            logger.info("MAT option: -keep_unreachable_objects ENABLED");
+        }
+
+        cmd.add("org.eclipse.mat.api:suspects");
+        cmd.add("org.eclipse.mat.api:overview");
+        cmd.add("org.eclipse.mat.api:top_components");
+
         logger.info("Running MAT CLI: {}", String.join(" ", cmd));
         sendProgress(emitter, AnalysisProgress.step(filename, 15, "MAT CLI 실행 중..."));
 

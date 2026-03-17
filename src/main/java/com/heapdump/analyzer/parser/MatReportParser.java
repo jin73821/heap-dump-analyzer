@@ -316,12 +316,10 @@ public class MatReportParser {
 
             try {
                 // 클래스명: 첫 번째 셀에서 추출 (링크 텍스트, @ 주소 제거)
-                String rawClass = cells.get(0);
-                // "com.example.Foo @ 0xc04ff6d8" → "com.example.Foo"
-                String className = rawClass.replaceAll("@\\s*0x[0-9a-fA-F]+", "").trim();
+                
+                
+                String className = extractCleanClassName(cells.get(0));
                 // "First 10 of N objects" 같은 부가 텍스트 제거
-                className = className.split("\\n")[0].trim();
-                className = className.replaceAll("\\s+", " ");
                 // 빈 값 / 헤더 스킵
                 if (className.isEmpty() || className.equalsIgnoreCase("Class Name")
                         || className.equalsIgnoreCase("Label")
