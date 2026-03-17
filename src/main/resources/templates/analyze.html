@@ -8,168 +8,255 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
-    <!-- Header -->
-    <header class="header">
-        <div class="container header-flex">
-            <div>
-                <h1 class="header-title">📊 Heap Analysis Result</h1>
-            </div>
-            <div>
-                <a href="/" class="btn btn-outline">← Back</a>
-            </div>
+
+<!-- ── Header ─────────────────────────────────────────────── -->
+<header class="header">
+    <div class="container header-flex">
+        <div>
+            <h1 class="header-title">📊 Heap Analysis Result</h1>
+            <p class="header-subtitle" th:text="${result != null ? result.filename : ''}"></p>
         </div>
-    </header>
-
-    <!-- Main Content -->
-    <div class="container main-content">
-        
-        <!-- Error Message -->
-        <div th:if="${error}" class="alert alert-error">
-            <h3>Analysis Failed</h3>
-            <p th:text="${error}"></p>
-            <a href="/" class="btn btn-primary">Go Back</a>
-        </div>
-
-        <!-- Analysis Result -->
-        <div th:if="${result != null and result.analysisStatus.name() == 'SUCCESS'}">
-            
-            <!-- File Information -->
-            <section class="section">
-                <div class="info-grid">
-                    <div class="info-item">
-                        <div class="info-label">Filename</div>
-                        <div class="info-value" th:text="${result.filename}">dump.hprof</div>
-                    </div>
-                    <div class="info-item">
-                        <div class="info-label">File Size</div>
-                        <div class="info-value" th:text="${result.formattedFileSize}">460 MB</div>
-                    </div>
-                    <div class="info-item">
-                        <div class="info-label">Format</div>
-                        <div class="info-value" th:text="${result.format}">HPROF</div>
-                    </div>
-                    <div class="info-item">
-                        <div class="info-label">Last Modified</div>
-                        <div class="info-value" th:text="${formattedDate}">2024-01-15 10:30:00</div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Statistics Boxes -->
-            <section class="section">
-                <div class="stats-grid">
-                    <div class="stat-box stat-box-blue1">
-                        <div class="stat-label">Total Heap Size</div>
-                        <div class="stat-value" th:text="${result.formattedTotalHeapSize}">368 MB</div>
-                    </div>
-                    <div class="stat-box stat-box-blue2">
-                        <div class="stat-label">Used Memory</div>
-                        <div class="stat-value" th:text="${result.formattedUsedHeapSize}">276 MB</div>
-                    </div>
-                    <div class="stat-box stat-box-gray">
-                        <div class="stat-label">Free Memory</div>
-                        <div class="stat-value" th:text="${result.formattedFreeHeapSize}">92 MB</div>
-                    </div>
-                    <div class="stat-box stat-box-blue3">
-                        <div class="stat-label">Heap Usage</div>
-                        <div class="stat-value" th:text="${result.formattedHeapUsagePercent}">75.00%</div>
-                    </div>
-                    <div class="stat-box stat-box-cyan">
-                        <div class="stat-label">Classes</div>
-                        <div class="stat-value" th:text="${result.formattedTotalClasses}">1,234</div>
-                    </div>
-                    <div class="stat-box stat-box-purple">
-                        <div class="stat-label">Objects</div>
-                        <div class="stat-value" th:text="${result.formattedTotalObjects}">567,890</div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Charts -->
-            <section class="section">
-                <h2 class="section-title">📈 Memory Visualization</h2>
-                <div class="chart-grid">
-                    <div class="chart-container">
-                        <h3 class="chart-title">Memory Distribution</h3>
-                        <canvas id="doughnutChart"></canvas>
-                    </div>
-                    <div class="chart-container">
-                        <h3 class="chart-title">Top 10 Memory Objects</h3>
-                        <canvas id="barChart"></canvas>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Top Memory Objects Table -->
-            <section class="section">
-                <h2 class="section-title">🔍 Top Memory Consuming Objects</h2>
-                <div class="table-responsive">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Rank</th>
-                                <th>Class Name</th>
-                                <th>Objects</th>
-                                <th>Size</th>
-                                <th>Percentage</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr th:each="obj, iterStat : ${result.topMemoryObjects}">
-                                <td>
-                                    <span class="rank-badge" th:text="${iterStat.count}">1</span>
-                                </td>
-                                <td>
-                                    <code class="class-name" th:text="${obj.className}">java.lang.String</code>
-                                </td>
-                                <td th:text="${obj.formattedObjectCount}">45,678</td>
-                                <td th:text="${obj.formattedSize}">2.5 MB</td>
-                                <td>
-                                    <div class="progress-bar-container">
-                                        <div class="progress-bar" 
-                                             th:style="'width: ' + ${obj.percentOfHeap} + '%'">
-                                        </div>
-                                        <span class="progress-text" th:text="${obj.formattedPercent}">15.50%</span>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </section>
-
-            <!-- Analysis Info -->
-            <section class="section">
-                <div class="analysis-info">
-                    <p>
-                        <strong>Analysis Time:</strong> 
-                        <span th:text="${result.analysisTime} + ' ms'">1234 ms</span>
-                    </p>
-                </div>
-            </section>
-
+        <div>
+            <a href="/" class="btn btn-outline">← Back</a>
         </div>
     </div>
+</header>
 
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="container">
-            <p>© 2024 Heap Dump Analyzer v1.0.0 | Java Memory Analysis Tool</p>
+<!-- ── Main ───────────────────────────────────────────────── -->
+<div class="container main-content">
+
+    <!-- ── 에러 ──────────────────────────────────────────── -->
+    <div th:if="${error}" class="alert alert-error">
+        <h3>⚠ Analysis Failed</h3>
+        <p th:text="${error}"></p>
+        <details th:if="${matLog != null and !#strings.isEmpty(matLog)}" style="margin-top:12px">
+            <summary style="cursor:pointer;font-weight:600">MAT CLI Log</summary>
+            <pre class="log-block" th:text="${matLog}"></pre>
+        </details>
+        <a href="/" class="btn btn-primary" style="margin-top:16px">Go Back</a>
+    </div>
+
+    <!-- ── 성공 결과 ──────────────────────────────────────── -->
+    <div th:if="${result != null and result.analysisStatus.name() == 'SUCCESS'}">
+
+        <!-- ①  파일 정보 -->
+        <section class="section">
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Filename</div>
+                    <div class="info-value" th:text="${result.filename}">dump.hprof</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">File Size</div>
+                    <div class="info-value" th:text="${result.formattedFileSize}">460 MB</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Format</div>
+                    <div class="info-value" th:text="${result.format}">HPROF</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Last Modified</div>
+                    <div class="info-value" th:text="${formattedDate}">2024-01-15</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ②  통계 박스 -->
+        <section class="section">
+            <div class="stats-grid">
+                <div class="stat-box stat-box-blue1">
+                    <div class="stat-label">Total Heap Size</div>
+                    <div class="stat-value" th:text="${result.formattedTotalHeapSize}">-</div>
+                </div>
+                <div class="stat-box stat-box-blue2">
+                    <div class="stat-label">Used Memory</div>
+                    <div class="stat-value" th:text="${result.formattedUsedHeapSize}">-</div>
+                </div>
+                <div class="stat-box stat-box-gray">
+                    <div class="stat-label">Free Memory</div>
+                    <div class="stat-value" th:text="${result.formattedFreeHeapSize}">-</div>
+                </div>
+                <div class="stat-box stat-box-blue3">
+                    <div class="stat-label">Heap Usage</div>
+                    <div class="stat-value" th:text="${result.formattedHeapUsagePercent}">-</div>
+                </div>
+                <div class="stat-box stat-box-cyan">
+                    <div class="stat-label">Classes</div>
+                    <div class="stat-value" th:text="${result.formattedTotalClasses}">-</div>
+                </div>
+                <div class="stat-box stat-box-purple">
+                    <div class="stat-label">Objects</div>
+                    <div class="stat-value" th:text="${result.formattedTotalObjects}">-</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ③  탭 네비게이션 -->
+        <div class="tab-nav">
+            <button class="tab-btn active" onclick="switchTab('tab-charts')">📈 Charts</button>
+            <button class="tab-btn" onclick="switchTab('tab-top-objects')">🔍 Top Objects</button>
+            <button class="tab-btn" onclick="switchTab('tab-suspects')"
+                    th:classappend="${result.hasLeakSuspects()} ? ' tab-btn-warn' : ''">
+                🚨 Leak Suspects
+                <span th:if="${result.hasLeakSuspects()}" class="badge-warn"
+                      th:text="${#lists.size(result.leakSuspects)}">0</span>
+            </button>
+            <button class="tab-btn" onclick="switchTab('tab-mat-overview')"
+                    th:if="${!#strings.isEmpty(result.overviewHtml)}">📄 MAT Overview</button>
+            <button class="tab-btn" onclick="switchTab('tab-mat-top')"
+                    th:if="${!#strings.isEmpty(result.topComponentsHtml)}">📦 MAT Top Components</button>
+            <button class="tab-btn" onclick="switchTab('tab-mat-suspects')"
+                    th:if="${!#strings.isEmpty(result.suspectsHtml)}">🔬 MAT Suspects</button>
+            <button class="tab-btn" onclick="switchTab('tab-log')"
+                    th:if="${!#strings.isEmpty(result.matLog)}">🖥 MAT Log</button>
         </div>
-    </footer>
 
-    <!-- Chart Data -->
-    <script th:if="${result != null and result.analysisStatus.name() == 'SUCCESS'}" th:inline="javascript">
-        // Doughnut Chart Data
-        const usedMemory = /*[[${result.usedHeapSize}]]*/ 0;
-        const freeMemory = /*[[${result.freeHeapSize}]]*/ 0;
-        
-        // Bar Chart Data
-        const topObjects = /*[[${result.topMemoryObjects}]]*/ [];
-        const top10 = topObjects.slice(0, 10);
-        const classNames = top10.map(obj => obj.className);
-        const memorySizes = top10.map(obj => obj.totalSize);
-    </script>
-    <script th:src="@{/js/chart.js}"></script>
+        <!-- ③-a  차트 탭 -->
+        <div id="tab-charts" class="tab-content active section">
+            <h2 class="section-title">📈 Memory Visualization</h2>
+            <div class="chart-grid">
+                <div class="chart-container">
+                    <h3 class="chart-title">Memory Distribution</h3>
+                    <canvas id="doughnutChart"></canvas>
+                </div>
+                <div class="chart-container">
+                    <h3 class="chart-title">Top 10 Memory Objects</h3>
+                    <canvas id="barChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- ③-b  Top Objects 테이블 탭 -->
+        <div id="tab-top-objects" class="tab-content section" style="display:none">
+            <h2 class="section-title">🔍 Top Memory Consuming Objects</h2>
+
+            <!-- 데이터 없음 안내 -->
+            <div th:if="${#lists.isEmpty(result.topMemoryObjects)}" class="empty-state">
+                <p>Top component data is not available.<br>
+                   Please check that MAT generated the <code>top_components</code> ZIP report.</p>
+            </div>
+
+            <div th:if="${!#lists.isEmpty(result.topMemoryObjects)}" class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Class Name</th>
+                            <th>Objects</th>
+                            <th>Size</th>
+                            <th>% of Heap</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="obj, s : ${result.topMemoryObjects}">
+                            <td><span class="rank-badge" th:text="${s.count}">1</span></td>
+                            <td><code class="class-name" th:text="${obj.className}">java.lang.String</code></td>
+                            <td th:text="${obj.formattedObjectCount}">0</td>
+                            <td th:text="${obj.formattedSize}">0 B</td>
+                            <td>
+                                <div class="progress-bar-container">
+                                    <div class="progress-bar"
+                                         th:style="'width: ' + ${obj.percentOfHeap} + '%'"></div>
+                                    <span class="progress-text" th:text="${obj.formattedPercent}">0%</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ③-c  Leak Suspects 탭 -->
+        <div id="tab-suspects" class="tab-content section" style="display:none">
+            <h2 class="section-title">🚨 Leak Suspects</h2>
+
+            <div th:if="${!result.hasLeakSuspects()}" class="empty-state">
+                <p>No leak suspects found — heap appears healthy,<br>
+                   or the MAT suspects report was not generated.</p>
+            </div>
+
+            <div th:if="${result.hasLeakSuspects()}" class="suspects-list">
+                <div th:each="s : ${result.leakSuspects}" class="suspect-card">
+                    <div class="suspect-title" th:text="${s.title}">Suspect #1</div>
+                    <div class="suspect-desc" th:text="${s.description}">Description here.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ③-d  MAT Overview HTML 탭 -->
+        <div id="tab-mat-overview" class="tab-content section" style="display:none"
+             th:if="${!#strings.isEmpty(result.overviewHtml)}">
+            <h2 class="section-title">📄 MAT System Overview Report</h2>
+            <div class="mat-report-frame" th:utext="${result.overviewHtml}"></div>
+        </div>
+
+        <!-- ③-e  MAT Top Components HTML 탭 -->
+        <div id="tab-mat-top" class="tab-content section" style="display:none"
+             th:if="${!#strings.isEmpty(result.topComponentsHtml)}">
+            <h2 class="section-title">📦 MAT Top Components Report</h2>
+            <div class="mat-report-frame" th:utext="${result.topComponentsHtml}"></div>
+        </div>
+
+        <!-- ③-f  MAT Suspects HTML 탭 -->
+        <div id="tab-mat-suspects" class="tab-content section" style="display:none"
+             th:if="${!#strings.isEmpty(result.suspectsHtml)}">
+            <h2 class="section-title">🔬 MAT Leak Suspects Report</h2>
+            <div class="mat-report-frame" th:utext="${result.suspectsHtml}"></div>
+        </div>
+
+        <!-- ③-g  MAT 실행 로그 탭 -->
+        <div id="tab-log" class="tab-content section" style="display:none"
+             th:if="${!#strings.isEmpty(result.matLog)}">
+            <h2 class="section-title">🖥 MAT CLI Execution Log</h2>
+            <pre class="log-block" th:text="${result.matLog}"></pre>
+        </div>
+
+        <!-- ④  분석 정보 -->
+        <section class="section">
+            <div class="analysis-info">
+                <p><strong>Analysis Time:</strong>
+                   <span th:text="${result.analysisTime} + ' ms'">0 ms</span></p>
+                <p><strong>MAT CLI:</strong> /opt/mat/ParseHeapDump.sh</p>
+            </div>
+        </section>
+
+    </div><!-- /SUCCESS -->
+</div><!-- /container -->
+
+<!-- ── Footer ─────────────────────────────────────────────── -->
+<footer class="footer">
+    <div class="container">
+        <p>© 2024 Heap Dump Analyzer v2.0.0 | Powered by Eclipse MAT CLI</p>
+    </div>
+</footer>
+
+<!-- ── Chart Data (Thymeleaf inline) ──────────────────────── -->
+<script th:if="${result != null and result.analysisStatus.name() == 'SUCCESS'}"
+        th:inline="javascript">
+    const usedMemory  = /*[[${result.usedHeapSize}]]*/  0;
+    const freeMemory  = /*[[${result.freeHeapSize}]]*/ 0;
+    const topObjects  = /*[[${result.topMemoryObjects}]]*/ [];
+    const top10       = topObjects.slice(0, 10);
+    const classNames  = top10.map(o => o.className);
+    const memorySizes = top10.map(o => o.totalSize);
+</script>
+
+<script th:src="@{/js/chart.js}"></script>
+<script th:src="@{/js/main.js}"></script>
+
+<!-- ── 탭 전환 스크립트 ────────────────────────────────────── -->
+<script>
+function switchTab(id) {
+    document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+    const target = document.getElementById(id);
+    if (target) target.style.display = 'block';
+
+    // 클릭된 버튼 활성화
+    event.currentTarget.classList.add('active');
+}
+</script>
+
 </body>
 </html>
