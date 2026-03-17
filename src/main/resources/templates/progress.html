@@ -460,28 +460,32 @@
         logFlushTimer = null;
         if (!logBuffer.length) return;
 
-        // 버퍼 전체를 하나의 텍스트 노드로 합쳐 한 번만 DOM append
-        const fragment = document.createDocumentFragment();
-        const text     = document.createTextNode(logBuffer.join('\n') + '\n');
-        fragment.appendChild(text);
-        logConsole.appendChild(fragment);
-
-        logLineCount += logBuffer.length;
+        // 이번 배치 텍스트 + 실제 줄 수 계산
+        const batchText  = logBuffer.join('\n') + '\n';
+        const batchLines = logBuffer.length;
         logBuffer = [];
 
-        // 최대 줄 수 초과 시 앞쪽 노드 일괄 제거
+        // DocumentFragment 로 한 번에 삽입
+        const frag = document.createDocumentFragment();
+        frag.appendChild(document.createTextNode(batchText));
+        logConsole.appendChild(frag);
+        logLineCount += batchLines;
+
+        // 최대 줄 수 초과 시 앞쪽 노드를 실제 줄 수 기준으로 제거
         while (logLineCount > MAX_LOG_LINES && logConsole.firstChild) {
-            logConsole.removeChild(logConsole.firstChild);
-            logLineCount -= 20; // 노드 하나가 여러 줄일 수 있으므로 근사값 감소
+            const node     = logConsole.firstChild;
+            // TextNode의 실제 줄 수를 정확히 셈
+            const nodeText = node.nodeValue || node.textContent || '';
+            const nodeLines = (nodeText.match(/\n/g) || []).length || 1;
+            logConsole.removeChild(node);
+            logLineCount = Math.max(0, logLineCount - nodeLines);
         }
 
-        // 스크롤은 rAF로 한 번만 처리
+        // scrollHeight 접근은 rAF 한 번만
         if (!scrollPending) {
             scrollPending = true;
             requestAnimationFrame(() => {
-                if (logConsole.scrollHeight - logConsole.scrollTop < 1200) {
-                    logConsole.scrollTop = logConsole.scrollHeight;
-                }
+                logConsole.scrollTop = logConsole.scrollHeight;
                 scrollPending = false;
             });
         }

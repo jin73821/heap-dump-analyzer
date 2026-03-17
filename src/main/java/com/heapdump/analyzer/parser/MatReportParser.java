@@ -28,31 +28,39 @@ public class MatReportParser {
 
     private static final Logger logger = LoggerFactory.getLogger(MatReportParser.class);
 
-    // ─── 정규식 패턴 ────────────────────────────────────────────────────────────
-    // Overview HTML에서 힙 크기 추출: "Number format: 1,234,567 bytes"
+    // ─── 정규식 패턴 (MAT 실제 HTML 구조 기반) ─────────────────────────────────
+    // 모든 숫자(bytes 포함) 후보
     private static final Pattern HEAP_SIZE_PATTERN =
-            Pattern.compile("(\\d[\\d,]+)\\s*bytes", Pattern.CASE_INSENSITIVE);
+            Pattern.compile("([\\d,]+)\\s*bytes", Pattern.CASE_INSENSITIVE);
 
-    // "Used heap size: 123,456,789" 또는 "Heap Size: 123,456,789"
-    private static final Pattern USED_HEAP_PATTERN =
-            Pattern.compile("(?:used|Used)\\s+heap\\s+size[^\\d]*(\\d[\\d,]+)", Pattern.CASE_INSENSITIVE);
+    // MAT Overview: "Used heap size: 1,234,567,890"  /  ">1,234,567,890</td>" 등
+    private static final Pattern USED_HEAP_PATTERN = Pattern.compile(
+            "(?:used\\s*heap(?:\\s*size)?|heap\\s*used)[^\\d]*([\\d,]+)",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
-    private static final Pattern FREE_HEAP_PATTERN =
-            Pattern.compile("(?:free|Free)\\s+heap[^\\d]*(\\d[\\d,]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern FREE_HEAP_PATTERN = Pattern.compile(
+            "(?:free\\s*heap(?:\\s*size)?|heap\\s*free)[^\\d]*([\\d,]+)",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
-    private static final Pattern TOTAL_HEAP_PATTERN =
-            Pattern.compile("(?:total|Total|Heap\\s+Size)[^\\d]*(\\d[\\d,]+)\\s*bytes", Pattern.CASE_INSENSITIVE);
+    // Total: 테이블 셀에서 가장 큰 bytes 값을 total로 사용 (패턴 다양함)
+    private static final Pattern TOTAL_HEAP_PATTERN = Pattern.compile(
+            "(?:total\\s*heap(?:\\s*size)?|heap\\s*size)[^\\d]*([\\d,]+)(?:\\s*bytes)?",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    // MAT HTML 테이블: <td>...숫자...</td> 패턴 (bytes 포함 행 추출용)
+    private static final Pattern TD_BYTES_PATTERN = Pattern.compile(
+            "<td[^>]*>\\s*([\\d,]+)\\s*(?:bytes)?\\s*</td>",
+            Pattern.CASE_INSENSITIVE);
 
     // Classes / Objects 수
-    private static final Pattern CLASSES_PATTERN =
-            Pattern.compile("(\\d[\\d,]+)\\s+classes", Pattern.CASE_INSENSITIVE);
-
-    private static final Pattern OBJECTS_PATTERN =
-            Pattern.compile("(\\d[\\d,]+)\\s+objects", Pattern.CASE_INSENSITIVE);
+    private static final Pattern CLASSES_PATTERN = Pattern.compile(
+            "([\\d,]+)\\s+classes", Pattern.CASE_INSENSITIVE);
+    private static final Pattern OBJECTS_PATTERN = Pattern.compile(
+            "([\\d,]+)\\s+objects", Pattern.CASE_INSENSITIVE);
 
     // Top Components: 클래스명과 크기
-    private static final Pattern CLASS_SIZE_PATTERN =
-            Pattern.compile("<td[^>]*>([\\w.$\\[\\]]+)</td>\\s*<td[^>]*>([\\d,]+)</td>\\s*<td[^>]*>([\\d,]+)</td>");
+    private static final Pattern CLASS_SIZE_PATTERN = Pattern.compile(
+            "<td[^>]*>([\\w.$\\[\\]]+)</td>\\s*<td[^>]*>([\\d,]+)</td>\\s*<td[^>]*>([\\d,]+)</td>");
 
     // ─── 공개 API ────────────────────────────────────────────────────────────────
 
@@ -165,13 +173,15 @@ public class MatReportParser {
         String html = extractHtmlFromZip(zip, "overview");
         if (html == null || html.isEmpty()) return;
 
-        // Total heap size
-        Matcher totalMatcher = TOTAL_HEAP_PATTERN.matcher(html);
-        if (totalMatcher.find()) {
-            result.setTotalHeapSize(parseLong(totalMatcher.group(1)));
-        }
+        // HTML 태그 제거한 평문 (정규식 매칭 신뢰도 향상)
+        String plain = html.replaceAll("<[^>]+>", " ").replaceAll("&nbsp;", " ")
+                           .replaceAll("\\s+", " ");
 
-        // Fallback: 가장 큰 바이트 수치를 total로 추정
+        // ── Total heap size ──────────────────────────────────
+        Matcher totalM = TOTAL_HEAP_PATTERN.matcher(plain);
+        if (totalM.find()) result.setTotalHeapSize(parseLong(totalM.group(1)));
+
+        // Fallback: HTML 원문에서 bytes 숫자 중 최대값을 total로 추정
         if (result.getTotalHeapSize() == 0) {
             long max = 0;
             Matcher m = HEAP_SIZE_PATTERN.matcher(html);
@@ -182,41 +192,57 @@ public class MatReportParser {
             result.setTotalHeapSize(max);
         }
 
-        // Used heap
-        Matcher usedM = USED_HEAP_PATTERN.matcher(html);
-        if (usedM.find()) {
-            result.setUsedHeapSize(parseLong(usedM.group(1)));
+        // Fallback2: 평문에서 bytes 숫자 최대값
+        if (result.getTotalHeapSize() == 0) {
+            long max = 0;
+            Matcher m = HEAP_SIZE_PATTERN.matcher(plain);
+            while (m.find()) {
+                long v = parseLong(m.group(1));
+                if (v > max) max = v;
+            }
+            result.setTotalHeapSize(max);
         }
 
-        // Free heap
-        Matcher freeM = FREE_HEAP_PATTERN.matcher(html);
-        if (freeM.find()) {
-            result.setFreeHeapSize(parseLong(freeM.group(1)));
-        }
+        // ── Used heap ────────────────────────────────────────
+        Matcher usedM = USED_HEAP_PATTERN.matcher(plain);
+        if (usedM.find()) result.setUsedHeapSize(parseLong(usedM.group(1)));
 
-        // Classes count
-        Matcher classM = CLASSES_PATTERN.matcher(html);
-        if (classM.find()) {
-            result.setTotalClasses((int) parseLong(classM.group(1)));
-        }
+        // ── Free heap ────────────────────────────────────────
+        Matcher freeM = FREE_HEAP_PATTERN.matcher(plain);
+        if (freeM.find()) result.setFreeHeapSize(parseLong(freeM.group(1)));
 
-        // Objects count
-        Matcher objM = OBJECTS_PATTERN.matcher(html);
-        if (objM.find()) {
-            result.setTotalObjects(parseLong(objM.group(1)));
-        }
+        // ── Classes / Objects ────────────────────────────────
+        Matcher classM = CLASSES_PATTERN.matcher(plain);
+        if (classM.find()) result.setTotalClasses((int) parseLong(classM.group(1)));
 
-        // Used / Free 보정
+        Matcher objM = OBJECTS_PATTERN.matcher(plain);
+        if (objM.find()) result.setTotalObjects(parseLong(objM.group(1)));
+
+        // ── 보정: used/free가 0이면 total에서 추정 ───────────
         if (result.getUsedHeapSize() == 0 && result.getTotalHeapSize() > 0) {
-            result.setUsedHeapSize((long) (result.getTotalHeapSize() * 0.75));
+            // TD 셀 값 중 두 번째로 큰 값을 used로 추정
+            List<Long> candidates = new ArrayList<>();
+            Matcher tdM = TD_BYTES_PATTERN.matcher(html);
+            while (tdM.find()) {
+                long v = parseLong(tdM.group(1));
+                if (v > 0 && v <= result.getTotalHeapSize()) candidates.add(v);
+            }
+            if (candidates.size() >= 2) {
+                candidates.sort(Collections.reverseOrder());
+                result.setUsedHeapSize(candidates.get(1));
+            } else {
+                result.setUsedHeapSize((long) (result.getTotalHeapSize() * 0.75));
+            }
         }
         if (result.getFreeHeapSize() == 0 && result.getTotalHeapSize() > 0) {
-            result.setFreeHeapSize(result.getTotalHeapSize() - result.getUsedHeapSize());
+            result.setFreeHeapSize(
+                    Math.max(0, result.getTotalHeapSize() - result.getUsedHeapSize()));
         }
 
         result.setOverviewHtml(sanitizeHtml(html));
-        logger.info("Parsed overview: total={}, used={}, free={}",
-                result.getTotalHeapSize(), result.getUsedHeapSize(), result.getFreeHeapSize());
+        logger.info("Parsed overview: total={}, used={}, free={}, classes={}, objects={}",
+                result.getTotalHeapSize(), result.getUsedHeapSize(),
+                result.getFreeHeapSize(), result.getTotalClasses(), result.getTotalObjects());
     }
 
     // ─── Top Components 파싱 ──────────────────────────────────────────────────
