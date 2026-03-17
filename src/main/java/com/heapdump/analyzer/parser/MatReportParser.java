@@ -519,4 +519,38 @@ public class MatReportParser {
             return 0L;
         }
     }
+
+    private String extractCleanClassName(String raw) {
+        if (raw == null) return "";
+        String s = decodeHtmlEntities(raw);
+        // 16진수 주소 제거: @ 0xc04ff6d8
+        s = s.replaceAll("@?\\s*0x[0-9a-fA-F]+", "");
+        // 화살표 문자 제거 (» \u00BB)
+        s = s.replaceAll("\u00BB\\s*", " ");
+        s = s.replaceAll("[\u00BB\u203A\u2039\u00AB]", "");
+        // 부가 설명 제거 (콤마 포함 숫자 지원)
+        s = s.replaceAll("(?i)\\bOnly\\s+object\\b.*", "");
+        s = s.replaceAll("(?i)\\bFirst\\s+[\\d,]+\\s+of\\s+[\\d,]+\\s+objects?\\b.*", "");
+        s = s.replaceAll("(?i)\\bAll\\s+[\\d,]+\\s+objects?\\b.*", "");
+        s = s.replaceAll("(?i)\\bOnly\\s+[\\d,]+\\s+objects?\\b.*", "");
+        // 공백 정리
+        s = s.replaceAll("\\s+", " ").trim();
+        return s;
+    }
+
+    private String decodeHtmlEntities(String s) {
+        if (s == null) return "";
+        return s
+            .replace("&raquo;",  "\u00BB")
+            .replace("&laquo;",  "\u00AB")
+            .replace("&rsaquo;", "\u203A")
+            .replace("&gt;",     ">")
+            .replace("&lt;",     "<")
+            .replace("&amp;",    "&")
+            .replace("&nbsp;",   " ")
+            .replace("&quot;",   "\"")
+            .replace("&#187;",   "\u00BB")
+            .replace("&#171;",   "\u00AB");
+    }
+
 }
