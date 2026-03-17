@@ -97,35 +97,60 @@ public class MatReportParser {
 
     /**
      * MAT가 생성하는 ZIP 파일을 탐색합니다.
-     * 파일명 패턴: {base}_overview.zip, {base}0x*.overview.zip 등 여러 형식 지원
+     *
+     * MAT CLI 실제 출력 파일명 예시:
+     *   tomcat_heapdump_System_Overview.zip
+     *   tomcat_heapdump_Top_Components.zip
+     *   tomcat_heapdump_Leak_Suspects.zip
+     *
+     * @param reportType  "overview" | "top_components" | "suspects"
      */
     private File findZip(String dir, String base, String reportType) {
         File directory = new File(dir);
         if (!directory.exists()) return null;
 
-        // MAT ZIP 파일 이름 후보 패턴들
-        String[] candidates = {
-            base + "_" + reportType + ".zip",
-            base + "." + reportType + ".zip",
-            base + "_" + reportType + "s.zip",   // suspects → suspects
-        };
+        // reportType → MAT 실제 파일명에 포함되는 키워드 목록 (대소문자 무관 비교)
+        List<String> keywords;
+        switch (reportType) {
+            case "overview":
+                keywords = Arrays.asList("system_overview", "overview");
+                break;
+            case "top_components":
+                keywords = Arrays.asList("top_components", "top_component");
+                break;
+            case "suspects":
+                keywords = Arrays.asList("leak_suspects", "suspects");
+                break;
+            default:
+                keywords = Collections.singletonList(reportType);
+        }
 
-        for (String name : candidates) {
-            File f = new File(directory, name);
-            if (f.exists()) {
-                logger.debug("Found {} ZIP: {}", reportType, f.getAbsolutePath());
-                return f;
+        // 1) baseName 포함 + keyword 포함 파일 우선 탐색 (대소문자 무시)
+        String baseLower = stripExt(base).toLowerCase();
+        File[] allZips = directory.listFiles((d, n) -> n.toLowerCase().endsWith(".zip"));
+        if (allZips != null) {
+            for (File f : allZips) {
+                String nameLower = f.getName().toLowerCase();
+                boolean baseMatch    = nameLower.contains(baseLower);
+                boolean keywordMatch = keywords.stream().anyMatch(nameLower::contains);
+                if (baseMatch && keywordMatch) {
+                    logger.info("Found {} ZIP: {}", reportType, f.getAbsolutePath());
+                    return f;
+                }
+            }
+
+            // 2) baseName 없이 keyword만으로 폴백 탐색
+            for (File f : allZips) {
+                String nameLower = f.getName().toLowerCase();
+                boolean keywordMatch = keywords.stream().anyMatch(nameLower::contains);
+                if (keywordMatch) {
+                    logger.info("Fallback-matched {} ZIP: {}", reportType, f.getAbsolutePath());
+                    return f;
+                }
             }
         }
 
-        // 패턴 매칭 폴백
-        File[] matches = directory.listFiles((d, n) ->
-                n.contains(stripExt(base)) && n.contains(reportType) && n.endsWith(".zip"));
-        if (matches != null && matches.length > 0) {
-            logger.debug("Pattern-matched {} ZIP: {}", reportType, matches[0].getAbsolutePath());
-            return matches[0];
-        }
-
+        logger.warn("No ZIP found for reportType='{}', base='{}'", reportType, base);
         return null;
     }
 
