@@ -5,98 +5,777 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/style.css}">
+    <style>
+        /* ── Reset & Base ─────────────────────────────────── */
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5; }
+
+        /* ── Top Bar ──────────────────────────────────────── */
+        .topbar {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            height: 52px; background: #fff;
+            border-bottom: 1px solid #E5E7EB;
+            display: flex; align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.06);
+        }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; }
+        .topbar-logo {
+            width: 30px; height: 30px; background: #2563EB;
+            border-radius: 7px; display: flex; align-items: center;
+            justify-content: center;
+        }
+        .topbar-logo svg { width: 16px; height: 16px; fill: white; }
+        .topbar-title { font-size: 16px; font-weight: 700; color: #1F2937; }
+        .topbar-subtitle { font-size: 12px; color: #9CA3AF; margin-left: 4px; }
+        .topbar-badge {
+            font-size: 11px; padding: 2px 8px;
+            background: #DBEAFE; color: #1D4ED8;
+            border-radius: 20px; font-weight: 500;
+        }
+        .topbar-right { display: flex; align-items: center; gap: 6px; }
+        .topbar-btn {
+            font-size: 12px; padding: 5px 12px;
+            border: 1px solid #E5E7EB; border-radius: 6px;
+            background: transparent; color: #6B7280; cursor: pointer;
+            transition: all .2s;
+        }
+        .topbar-btn:hover { background: #F9FAFB; color: #374151; }
+
+        /* ── Layout ───────────────────────────────────────── */
+        .app-layout {
+            display: grid;
+            grid-template-columns: 268px 1fr;
+            min-height: 100vh;
+            padding-top: 52px;
+        }
+
+        /* ── Sidebar ──────────────────────────────────────── */
+        .sidebar {
+            background: #fff;
+            border-right: 1px solid #E5E7EB;
+            display: flex; flex-direction: column;
+            height: calc(100vh - 52px);
+            position: sticky; top: 52px;
+            overflow-y: auto;
+        }
+        .sidebar-section { padding: 16px; border-bottom: 1px solid #F3F4F6; }
+        .sidebar-section:last-child { border-bottom: none; }
+        .sidebar-section-title {
+            font-size: 10px; font-weight: 600;
+            color: #9CA3AF; text-transform: uppercase;
+            letter-spacing: .07em; margin-bottom: 10px;
+        }
+
+        /* Upload zone */
+        .upload-zone {
+            border: 1.5px dashed #93C5FD; border-radius: 10px;
+            padding: 18px 14px; text-align: center;
+            cursor: pointer; transition: all .2s;
+            background: #F8FAFF;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #2563EB; background: #EFF6FF;
+        }
+        .upload-icon {
+            width: 38px; height: 38px; background: #DBEAFE;
+            border-radius: 8px; margin: 0 auto 10px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .upload-icon svg { width: 20px; height: 20px; stroke: #2563EB; fill: none; stroke-width: 1.5; }
+        .upload-zone-title { font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+        .upload-zone-sub { font-size: 11px; color: #9CA3AF; margin-bottom: 12px; }
+        .upload-zone-btn {
+            width: 100%; padding: 7px; background: #2563EB;
+            color: white; border: none; border-radius: 6px;
+            font-size: 12px; cursor: pointer; transition: background .2s;
+        }
+        .upload-zone-btn:hover { background: #1D4ED8; }
+        .upload-progress-wrap { display: none; margin-top: 10px; }
+        .upload-progress-bar-bg { background: #E5E7EB; border-radius: 4px; height: 6px; overflow: hidden; }
+        .upload-progress-bar { height: 100%; background: #2563EB; border-radius: 4px; width: 0%; transition: width .3s; }
+        .upload-progress-label { font-size: 11px; color: #6B7280; margin-top: 4px; text-align: center; }
+
+        /* File list */
+        .file-item {
+            display: flex; align-items: center; gap: 8px;
+            padding: 9px 10px; border-radius: 8px;
+            border: 1px solid #E5E7EB; background: #F9FAFB;
+            margin-bottom: 6px; cursor: pointer;
+            transition: all .2s;
+        }
+        .file-item:hover { border-color: #93C5FD; background: #EFF6FF; }
+        .file-item.active { border-color: #2563EB; background: #EFF6FF; }
+        .file-ext-badge {
+            width: 32px; height: 38px; background: #DBEAFE;
+            border-radius: 4px; display: flex; align-items: center;
+            justify-content: center; font-size: 9px; font-weight: 700;
+            color: #1D4ED8; flex-shrink: 0; letter-spacing: .03em;
+        }
+        .file-info { flex: 1; overflow: hidden; min-width: 0; }
+        .file-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .file-meta { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+        .file-actions { display: flex; gap: 3px; flex-shrink: 0; }
+        .file-action-btn {
+            width: 26px; height: 26px; border: 1px solid #E5E7EB;
+            border-radius: 5px; background: #fff; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: all .15s; text-decoration: none;
+        }
+        .file-action-btn:hover { border-color: #93C5FD; }
+        .file-action-btn.danger:hover { border-color: #FCA5A5; background: #FEF2F2; }
+        .file-action-btn svg { width: 12px; height: 12px; stroke: #6B7280; fill: none; stroke-width: 1.5; }
+        .file-action-btn.danger:hover svg { stroke: #EF4444; }
+        .file-action-btn.primary { background: #2563EB; border-color: #2563EB; }
+        .file-action-btn.primary svg { stroke: white; }
+        .file-action-btn.primary:hover { background: #1D4ED8; }
+
+        .empty-files {
+            text-align: center; padding: 20px 10px;
+            color: #9CA3AF; font-size: 12px;
+        }
+
+        /* Settings toggles */
+        .setting-row {
+            display: flex; align-items: center;
+            justify-content: space-between; margin-bottom: 10px;
+        }
+        .setting-label { font-size: 12px; color: #374151; }
+        .setting-desc { font-size: 10px; color: #9CA3AF; }
+        .toggle-wrap { flex-shrink: 0; }
+        .toggle-input { display: none; }
+        .toggle-track {
+            width: 34px; height: 19px; background: #D1D5DB;
+            border-radius: 10px; position: relative;
+            cursor: pointer; transition: background .2s;
+        }
+        .toggle-input:checked + .toggle-track { background: #2563EB; }
+        .toggle-track::after {
+            content: ''; width: 15px; height: 15px; background: #fff;
+            border-radius: 50%; position: absolute; top: 2px; left: 2px;
+            transition: left .2s; box-shadow: 0 1px 2px rgba(0,0,0,.2);
+        }
+        .toggle-input:checked + .toggle-track::after { left: 17px; }
+
+        /* Compare */
+        .compare-btn {
+            width: 100%; padding: 8px 12px;
+            border: 1px dashed #D1D5DB; border-radius: 8px;
+            background: transparent; color: #6B7280;
+            font-size: 12px; cursor: pointer; transition: all .2s;
+            display: flex; align-items: center; justify-content: center; gap: 6px;
+        }
+        .compare-btn:hover { border-color: #93C5FD; color: #2563EB; background: #F0F9FF; }
+        .new-badge {
+            font-size: 10px; padding: 1px 6px;
+            background: #DBEAFE; color: #1D4ED8;
+            border-radius: 10px; font-weight: 600;
+        }
+
+        /* ── Main Content ──────────────────────────────────── */
+        .main-content { padding: 20px; overflow-y: auto; }
+
+        /* Alerts */
+        .alert {
+            padding: 12px 16px; border-radius: 8px;
+            margin-bottom: 16px; border-left: 4px solid;
+            font-size: 13px;
+        }
+        .alert-success { background: #D1FAE5; color: #065F46; border-color: #10B981; }
+        .alert-error   { background: #FEE2E2; color: #7F1D1D; border-color: #EF4444; }
+
+        /* Stats row */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px; margin-bottom: 20px;
+        }
+        .stat-card {
+            background: #fff; border: 1px solid #E5E7EB;
+            border-radius: 10px; padding: 14px 16px;
+        }
+        .stat-card-label { font-size: 11px; color: #9CA3AF; margin-bottom: 5px; }
+        .stat-card-value { font-size: 22px; font-weight: 700; line-height: 1; }
+        .stat-card-sub { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+        .stat-blue  { color: #2563EB; }
+        .stat-amber { color: #B45309; }
+        .stat-green { color: #059669; }
+        .stat-gray  { color: #6B7280; }
+
+        /* Content area */
+        .content-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .panel {
+            background: #fff; border: 1px solid #E5E7EB;
+            border-radius: 10px; padding: 16px;
+        }
+        .panel-header {
+            display: flex; align-items: center;
+            justify-content: space-between; margin-bottom: 14px;
+        }
+        .panel-title { font-size: 13px; font-weight: 600; }
+
+        /* History list */
+        .history-item {
+            display: flex; align-items: center; gap: 10px;
+            padding: 9px 0; border-bottom: 1px solid #F3F4F6;
+        }
+        .history-item:last-child { border-bottom: none; }
+        .history-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .history-dot.success { background: #10B981; }
+        .history-dot.warning { background: #F59E0B; }
+        .history-dot.error   { background: #EF4444; }
+        .history-name { font-size: 12px; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .history-size { font-size: 11px; color: #9CA3AF; flex-shrink: 0; }
+        .history-date { font-size: 11px; color: #9CA3AF; flex-shrink: 0; }
+        .history-status {
+            font-size: 10px; padding: 2px 7px;
+            border-radius: 20px; flex-shrink: 0; font-weight: 500;
+        }
+        .status-done    { background: #D1FAE5; color: #065F46; }
+        .status-warning { background: #FEF3C7; color: #92400E; }
+        .status-error   { background: #FEE2E2; color: #7F1D1D; }
+
+        /* Quick actions */
+        .quick-actions {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px; margin-top: 16px;
+        }
+        .quick-action-btn {
+            padding: 12px; border: 1px solid #E5E7EB;
+            border-radius: 8px; background: #F9FAFB;
+            cursor: pointer; text-align: left; transition: all .2s;
+        }
+        .quick-action-btn:hover { border-color: #93C5FD; background: #EFF6FF; }
+        .quick-action-title { font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+        .quick-action-desc  { font-size: 11px; color: #9CA3AF; }
+
+        /* Compare modal */
+        .modal-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,.45); z-index: 200;
+            align-items: center; justify-content: center;
+        }
+        .modal-overlay.open { display: flex; }
+        .modal {
+            background: #fff; border-radius: 12px;
+            padding: 24px; width: 440px;
+            box-shadow: 0 20px 40px rgba(0,0,0,.15);
+        }
+        .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+        .modal-close {
+            float: right; background: none; border: none;
+            font-size: 18px; cursor: pointer; color: #9CA3AF;
+        }
+        .modal-select {
+            width: 100%; padding: 8px 10px;
+            border: 1px solid #E5E7EB; border-radius: 6px;
+            font-size: 13px; margin-bottom: 10px;
+        }
+        .modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+        .btn-primary { padding: 8px 18px; background: #2563EB; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; }
+        .btn-secondary-sm { padding: 8px 18px; background: #fff; color: #374151; border: 1px solid #E5E7EB; border-radius: 6px; font-size: 13px; cursor: pointer; }
+
+        /* Welcome state */
+        .welcome-panel {
+            background: #fff; border: 1px solid #E5E7EB;
+            border-radius: 10px; padding: 48px 32px;
+            text-align: center; grid-column: 1 / -1;
+        }
+        .welcome-icon {
+            width: 56px; height: 56px; background: #DBEAFE;
+            border-radius: 14px; margin: 0 auto 16px;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .welcome-icon svg { width: 28px; height: 28px; stroke: #2563EB; fill: none; stroke-width: 1.5; }
+        .welcome-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+        .welcome-sub { font-size: 13px; color: #6B7280; max-width: 360px; margin: 0 auto 20px; line-height: 1.6; }
+        .welcome-upload-btn {
+            padding: 10px 24px; background: #2563EB; color: #fff;
+            border: none; border-radius: 8px; font-size: 14px;
+            cursor: pointer; transition: background .2s;
+        }
+        .welcome-upload-btn:hover { background: #1D4ED8; }
+
+        .full-width { grid-column: 1 / -1; }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .app-layout { grid-template-columns: 1fr; }
+            .sidebar { display: none; }
+            .stats-row { grid-template-columns: repeat(2, 1fr); }
+            .content-grid { grid-template-columns: 1fr; }
+            .quick-actions { grid-template-columns: repeat(2, 1fr); }
+        }
+    </style>
 </head>
 <body>
-    <!-- Header -->
-    <header class="header">
-        <div class="container">
-            <h1 class="header-title">📊 Heap Dump Analyzer</h1>
-            <p class="header-subtitle">Java Memory Analysis Tool</p>
-        </div>
-    </header>
 
-    <!-- Main Content -->
-    <div class="container main-content">
-        
-        <!-- Messages -->
-        <div th:if="${success}" class="alert alert-success">
-            <span th:text="${success}"></span>
+<!-- ── Top Bar ──────────────────────────────────────────────── -->
+<header class="topbar">
+    <div class="topbar-brand">
+        <div class="topbar-logo">
+            <svg viewBox="0 0 16 16"><rect x="1" y="8" width="3" height="7" rx="1"/><rect x="6" y="5" width="3" height="10" rx="1"/><rect x="11" y="2" width="3" height="13" rx="1"/></svg>
         </div>
-        
-        <div th:if="${error}" class="alert alert-error">
-            <span th:text="${error}"></span>
-        </div>
+        <span class="topbar-title">Heap Dump Analyzer</span>
+        <span class="topbar-subtitle">by MAT CLI</span>
+        <span class="topbar-badge">v2.0</span>
+    </div>
+    <div class="topbar-right">
+        <button class="topbar-btn" onclick="document.getElementById('compareModal').classList.add('open')">
+            Compare dumps
+        </button>
+        <button class="topbar-btn" onclick="window.location.href='/'">Refresh</button>
+    </div>
+</header>
+
+<!-- ── App Layout ───────────────────────────────────────────── -->
+<div class="app-layout">
+
+    <!-- ── Sidebar ──────────────────────────────────────────── -->
+    <aside class="sidebar">
 
         <!-- Upload Section -->
-        <section class="section">
-            <h2 class="section-title">📤 Upload Heap Dump File</h2>
-            <div class="upload-box">
-                <form id="uploadForm" method="post" action="/upload" enctype="multipart/form-data">
-                    <div class="file-input-wrapper">
-                        <input type="file" 
-                               id="fileInput" 
-                               name="file" 
-                               accept=".hprof,.bin,.dump"
-                               required
-                               class="file-input">
-                        <label for="fileInput" class="file-label">
-                            <span class="file-icon">📁</span>
-                            <span id="fileName">Choose a file or drag it here</span>
-                            <span class="file-hint">Supported: .hprof, .bin, .dump (Max: 2GB)</span>
-                        </label>
+        <div class="sidebar-section">
+            <div class="sidebar-section-title">Upload</div>
+            <form id="uploadForm" method="post" action="/upload" enctype="multipart/form-data">
+                <div class="upload-zone" id="uploadZone">
+                    <div class="upload-icon">
+                        <svg viewBox="0 0 20 20"><path d="M10 13V5M6 8l4-4 4 4"/><path d="M3 16h14"/></svg>
                     </div>
-                    <button type="submit" class="btn btn-primary">
-                        <span>Upload File</span>
+                    <div class="upload-zone-title">Drop file here</div>
+                    <div class="upload-zone-sub">.hprof · .bin · .dump · Max 2 GB</div>
+                    <input type="file" id="fileInput" name="file"
+                           accept=".hprof,.bin,.dump" style="display:none" required>
+                    <button type="button" class="upload-zone-btn" onclick="document.getElementById('fileInput').click()">
+                        Choose file
                     </button>
-                </form>
-            </div>
-        </section>
-
-        <!-- File List Section -->
-        <section class="section">
-            <h2 class="section-title">📁 Available Files (<span th:text="${fileCount}">0</span>)</h2>
-            
-            <div th:if="${#lists.isEmpty(files)}" class="empty-state">
-                <p>No files uploaded yet. Upload a heap dump file to get started.</p>
-            </div>
-            
-            <div th:if="${!#lists.isEmpty(files)}" class="file-list">
-                <div th:each="file : ${files}" class="file-card">
-                    <div class="file-info">
-                        <div class="file-name" th:text="${file.name}">dump.hprof</div>
-                        <div class="file-meta">
-                            <span class="file-size" th:text="${file.formattedSize}">460 MB</span>
-                            <span class="file-separator">•</span>
-                            <span class="file-date" th:text="${#dates.format(file.lastModified, 'yyyy-MM-dd HH:mm:ss')}">2024-01-15 10:30:00</span>
+                    <div class="upload-progress-wrap" id="uploadProgressWrap">
+                        <div class="upload-progress-bar-bg">
+                            <div class="upload-progress-bar" id="uploadProgressBar"></div>
                         </div>
-                    </div>
-                    <div class="file-actions">
-                        <a th:href="@{/analyze/{filename}(filename=${file.name})}" 
-                           class="btn btn-primary btn-sm">
-                            Analyze
-                        </a>
-                        <a th:href="@{/download/{filename}(filename=${file.name})}" 
-                           class="btn btn-secondary btn-sm">
-                            Download
-                        </a>
-                        <a th:href="@{/delete/{filename}(filename=${file.name})}" 
-                           class="btn btn-danger btn-sm"
-                           onclick="return confirm('Are you sure you want to delete this file?');">
-                            Delete
-                        </a>
+                        <div class="upload-progress-label" id="uploadProgressLabel">Uploading...</div>
                     </div>
                 </div>
-            </div>
-        </section>
-    </div>
-
-    <!-- Footer -->
-    <footer class="footer">
-        <div class="container">
-            <p>© 2024 Heap Dump Analyzer v1.0.0 | Java Memory Analysis Tool</p>
+            </form>
         </div>
-    </footer>
 
-    <script th:src="@{/js/main.js}"></script>
+        <!-- File List -->
+        <div class="sidebar-section" style="flex:1;">
+            <div class="sidebar-section-title">
+                Files (<span th:text="${fileCount}">0</span>)
+            </div>
+
+            <div th:if="${#lists.isEmpty(files)}" class="empty-files">
+                No files yet.<br>Upload a heap dump to start.
+            </div>
+
+            <div th:each="file : ${files}" class="file-item"
+                 th:classappend="">
+                <div class="file-ext-badge"
+                     th:text="${file.extension}">HPROF</div>
+                <div class="file-info">
+                    <div class="file-name" th:text="${file.name}">dump.hprof</div>
+                    <div class="file-meta">
+                        <span th:text="${file.formattedSize}">157 MB</span>
+                        <span> · </span>
+                        <span th:text="${file.formattedDate}">03-18</span>
+                    </div>
+                </div>
+                <div class="file-actions">
+                    <a th:href="@{/analyze/{f}(f=${file.name})}"
+                       class="file-action-btn primary" title="Analyze">
+                        <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                    </a>
+                    <a th:href="@{/download/{f}(f=${file.name})}"
+                       class="file-action-btn" title="Download">
+                        <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
+                    </a>
+                    <a th:href="@{/delete/{f}(f=${file.name})}"
+                       class="file-action-btn danger" title="Delete"
+                       onclick="return confirm('Delete this file?')">
+                        <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <!-- MAT Options -->
+        <div class="sidebar-section">
+            <div class="sidebar-section-title">MAT Options</div>
+
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">Keep unreachable objects</div>
+                    <div class="setting-desc">Include GC-unreachable objects</div>
+                </div>
+                <div class="toggle-wrap">
+                    <input type="checkbox" class="toggle-input" id="toggleUnreachable"
+                           th:checked="${matKeepUnreachable}"
+                           onchange="saveSetting('keepUnreachable', this.checked)">
+                    <label class="toggle-track" for="toggleUnreachable"></label>
+                </div>
+            </div>
+
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">Auto-analyze on upload</div>
+                    <div class="setting-desc">Start analysis immediately</div>
+                </div>
+                <div class="toggle-wrap">
+                    <input type="checkbox" class="toggle-input" id="toggleAutoAnalyze"
+                           onchange="saveSetting('autoAnalyze', this.checked)">
+                    <label class="toggle-track" for="toggleAutoAnalyze"></label>
+                </div>
+            </div>
+
+            <div class="setting-row" style="margin-bottom:0;">
+                <div>
+                    <div class="setting-label">Cache results to disk</div>
+                    <div class="setting-desc">Persist analysis across restarts</div>
+                </div>
+                <div class="toggle-wrap">
+                    <input type="checkbox" class="toggle-input" id="toggleCache"
+                           checked onchange="saveSetting('cacheResults', this.checked)">
+                    <label class="toggle-track" for="toggleCache"></label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Compare -->
+        <div class="sidebar-section">
+            <div class="sidebar-section-title">
+                Compare <span class="new-badge">New</span>
+            </div>
+            <button class="compare-btn"
+                    onclick="document.getElementById('compareModal').classList.add('open')">
+                <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M2 7h10M9 4l3 3-3 3M5 4L2 7l3 3"/>
+                </svg>
+                Compare two dumps
+            </button>
+        </div>
+
+    </aside>
+
+    <!-- ── Main Content ──────────────────────────────────────── -->
+    <main class="main-content">
+
+        <!-- Alerts -->
+        <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
+        <div th:if="${error}"   class="alert alert-error"   th:text="${error}"></div>
+
+        <!-- Stats Row (shown when files exist) -->
+        <div th:if="${!#lists.isEmpty(files)}" class="stats-row">
+            <div class="stat-card">
+                <div class="stat-card-label">Total files</div>
+                <div class="stat-card-value stat-blue" th:text="${fileCount}">0</div>
+                <div class="stat-card-sub">heap dumps</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Total size</div>
+                <div class="stat-card-value stat-gray" th:text="${totalSize ?: '—'}">—</div>
+                <div class="stat-card-sub">on disk</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Analyzed</div>
+                <div class="stat-card-value stat-green" th:text="${analyzedCount ?: 0}">0</div>
+                <div class="stat-card-sub">cached results</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-label">Leak suspects</div>
+                <div class="stat-card-value stat-amber" th:text="${totalSuspects ?: '—'}">—</div>
+                <div class="stat-card-sub">across all files</div>
+            </div>
+        </div>
+
+        <!-- Welcome state (no files) -->
+        <div th:if="${#lists.isEmpty(files)}" class="content-grid">
+            <div class="welcome-panel">
+                <div class="welcome-icon">
+                    <svg viewBox="0 0 28 28"><path d="M14 3v18M6 10l8-8 8 8"/><path d="M4 22h20"/></svg>
+                </div>
+                <div class="welcome-title">No heap dumps yet</div>
+                <div class="welcome-sub">
+                    Upload a .hprof, .bin, or .dump file to begin analysis.<br>
+                    Eclipse MAT CLI will generate leak suspects, memory overview, and top components.
+                </div>
+                <button class="welcome-upload-btn"
+                        onclick="document.getElementById('fileInput').click()">
+                    Upload heap dump
+                </button>
+            </div>
+        </div>
+
+        <!-- Content when files exist -->
+        <div th:if="${!#lists.isEmpty(files)}" class="content-grid">
+
+            <!-- Analysis History -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Analysis history</span>
+                    <span class="new-badge">New</span>
+                </div>
+
+                <div th:if="${#lists.isEmpty(analysisHistory)}"
+                     style="text-align:center;padding:20px;color:#9CA3AF;font-size:12px;">
+                    No analysis results yet.<br>Click Analyze on a file to start.
+                </div>
+
+                <div th:each="h : ${analysisHistory}" class="history-item">
+                    <div class="history-dot"
+                         th:classappend="${h.status == 'SUCCESS'} ? ' success' : (${h.status == 'ERROR'} ? ' error' : ' warning')">
+                    </div>
+                    <div class="history-name" th:text="${h.filename}" th:title="${h.filename}">dump.hprof</div>
+                    <div class="history-size" th:text="${h.formattedSize}">157 MB</div>
+                    <div class="history-date" th:text="${h.formattedDate}">03-18</div>
+                    <a th:href="@{/analyze/result/{f}(f=${h.filename})}"
+                       th:if="${h.status == 'SUCCESS'}"
+                       class="history-status status-done">view</a>
+                    <span th:if="${h.status != 'SUCCESS'}"
+                          class="history-status"
+                          th:classappend="${h.status == 'ERROR'} ? ' status-error' : ' status-warning'"
+                          th:text="${h.status == 'ERROR'} ? 'error' : 'running'">—</span>
+                </div>
+            </div>
+
+            <!-- File Summary Cards -->
+            <div class="panel">
+                <div class="panel-header">
+                    <span class="panel-title">Files overview</span>
+                </div>
+                <div th:each="file : ${files}" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #F3F4F6;">
+                    <div class="file-ext-badge" style="width:28px;height:32px;font-size:8px;"
+                         th:text="${file.extension}">HPROF</div>
+                    <div style="flex:1;min-width:0;">
+                        <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" th:text="${file.name}">file.hprof</div>
+                        <div style="font-size:11px;color:#9CA3AF;" th:text="${file.formattedSize}">157 MB</div>
+                    </div>
+                    <a th:href="@{/analyze/{f}(f=${file.name})}"
+                       style="font-size:11px;padding:4px 10px;background:#2563EB;color:white;border-radius:5px;text-decoration:none;flex-shrink:0;">
+                        Analyze
+                    </a>
+                </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="panel full-width">
+                <div class="panel-title" style="margin-bottom:4px;">Quick actions</div>
+                <div style="font-size:12px;color:#9CA3AF;margin-bottom:12px;">Common tasks and features</div>
+                <div class="quick-actions">
+                    <button class="quick-action-btn"
+                            onclick="document.getElementById('compareModal').classList.add('open')">
+                        <div class="quick-action-title">Compare dumps <span class="new-badge">New</span></div>
+                        <div class="quick-action-desc">Diff two heap snapshots</div>
+                    </button>
+                    <button class="quick-action-btn"
+                            onclick="exportHistory()">
+                        <div class="quick-action-title">Export history</div>
+                        <div class="quick-action-desc">Download analysis log as JSON</div>
+                    </button>
+                    <button class="quick-action-btn"
+                            onclick="clearAllCache()">
+                        <div class="quick-action-title">Clear all cache</div>
+                        <div class="quick-action-desc">Remove all cached results</div>
+                    </button>
+                    <button class="quick-action-btn"
+                            onclick="window.open('/api/settings', '_blank')">
+                        <div class="quick-action-title">API settings</div>
+                        <div class="quick-action-desc">View MAT config / paths</div>
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </main>
+</div>
+
+<!-- ── Compare Modal ─────────────────────────────────────────── -->
+<div class="modal-overlay" id="compareModal">
+    <div class="modal">
+        <div class="modal-title">
+            Compare heap dumps
+            <button class="modal-close" onclick="document.getElementById('compareModal').classList.remove('open')">×</button>
+        </div>
+        <div style="font-size:12px;color:#6B7280;margin-bottom:14px;">
+            Select two analyzed heap dumps to compare retained heap differences.
+        </div>
+        <label style="font-size:12px;color:#374151;margin-bottom:4px;display:block;">Baseline dump (before)</label>
+        <select class="modal-select" id="compareBase">
+            <option value="">— select file —</option>
+            <option th:each="f : ${files}" th:value="${f.name}" th:text="${f.name}">file.hprof</option>
+        </select>
+        <label style="font-size:12px;color:#374151;margin-bottom:4px;display:block;">Target dump (after)</label>
+        <select class="modal-select" id="compareTarget">
+            <option value="">— select file —</option>
+            <option th:each="f : ${files}" th:value="${f.name}" th:text="${f.name}">file.hprof</option>
+        </select>
+        <div class="modal-footer">
+            <button class="btn-secondary-sm" onclick="document.getElementById('compareModal').classList.remove('open')">Cancel</button>
+            <button class="btn-primary" onclick="startCompare()">Compare</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── 파일 선택 / 드래그앤드롭 ────────────────────────────────────
+const fileInput  = document.getElementById('fileInput');
+const uploadZone = document.getElementById('uploadZone');
+const uploadForm = document.getElementById('uploadForm');
+const autoAnalyze = () => localStorage.getItem('autoAnalyze') === 'true';
+
+if (fileInput) {
+    fileInput.addEventListener('change', e => {
+        const file = e.target.files[0];
+        if (file) submitUpload(file);
+    });
+}
+
+if (uploadZone) {
+    uploadZone.addEventListener('dragover', e => {
+        e.preventDefault();
+        uploadZone.classList.add('dragover');
+    });
+    uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+    uploadZone.addEventListener('drop', e => {
+        e.preventDefault();
+        uploadZone.classList.remove('dragover');
+        const file = e.dataTransfer.files[0];
+        if (!file) return;
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (!['hprof','bin','dump'].includes(ext)) {
+            showToast('Invalid file type. Use .hprof, .bin, or .dump', 'error');
+            return;
+        }
+        try { fileInput.files = e.dataTransfer.files; } catch(_) {
+            const dt = new DataTransfer(); dt.items.add(file); fileInput.files = dt.files;
+        }
+        submitUpload(file);
+    });
+}
+
+function submitUpload(file) {
+    if (file.size > 2 * 1024 * 1024 * 1024) {
+        showToast('File exceeds 2 GB limit', 'error'); return;
+    }
+    document.getElementById('uploadProgressWrap').style.display = 'block';
+    const label = document.getElementById('uploadProgressLabel');
+    label.textContent = 'Uploading ' + file.name + '…';
+
+    const xhr = new XMLHttpRequest();
+    xhr.upload.addEventListener('progress', e => {
+        if (e.lengthComputable) {
+            const pct = Math.round(e.loaded / e.total * 100);
+            document.getElementById('uploadProgressBar').style.width = pct + '%';
+            label.textContent = pct + '% — ' + formatBytes(e.loaded) + ' / ' + formatBytes(e.total);
+        }
+    });
+    xhr.addEventListener('load', () => {
+        if (autoAnalyze()) {
+            window.location.href = '/analyze/' + encodeURIComponent(file.name);
+        } else {
+            window.location.reload();
+        }
+    });
+    xhr.addEventListener('error', () => showToast('Upload failed', 'error'));
+
+    const fd = new FormData(uploadForm);
+    xhr.open('POST', '/upload');
+    xhr.send(fd);
+}
+
+// ── Settings 저장 (localStorage) ────────────────────────────────
+function saveSetting(key, value) {
+    localStorage.setItem(key, value);
+    // keepUnreachable은 서버 설정이므로 API 호출
+    if (key === 'keepUnreachable') {
+        fetch('/api/settings/unreachable?enabled=' + value, { method: 'POST' })
+            .catch(() => {});
+    }
+    showToast('Setting saved', 'success');
+}
+
+// 페이지 로드 시 localStorage 설정 복원
+document.addEventListener('DOMContentLoaded', () => {
+    const autoEl = document.getElementById('toggleAutoAnalyze');
+    if (autoEl && localStorage.getItem('autoAnalyze') === 'true') autoEl.checked = true;
+
+    // Alert 자동 숨김
+    document.querySelectorAll('.alert').forEach(el => {
+        setTimeout(() => {
+            el.style.transition = 'opacity .5s';
+            el.style.opacity = '0';
+            setTimeout(() => el.remove(), 500);
+        }, 5000);
+    });
+});
+
+// ── Compare ──────────────────────────────────────────────────────
+function startCompare() {
+    const base   = document.getElementById('compareBase').value;
+    const target = document.getElementById('compareTarget').value;
+    if (!base || !target) { showToast('Please select both files', 'error'); return; }
+    if (base === target)  { showToast('Please select different files', 'error'); return; }
+    document.getElementById('compareModal').classList.remove('open');
+    window.location.href = '/compare?base=' + encodeURIComponent(base) + '&target=' + encodeURIComponent(target);
+}
+
+// ── Quick Actions ────────────────────────────────────────────────
+function exportHistory() {
+    fetch('/api/history')
+        .then(r => r.json())
+        .then(data => {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url  = URL.createObjectURL(blob);
+            const a    = document.createElement('a');
+            a.href     = url; a.download = 'heap-analysis-history.json';
+            a.click(); URL.revokeObjectURL(url);
+        })
+        .catch(() => showToast('No history available', 'error'));
+}
+
+function clearAllCache() {
+    if (!confirm('Clear all cached analysis results?')) return;
+    fetch('/api/cache/clear', { method: 'POST' })
+        .then(r => r.ok ? window.location.reload() : showToast('Failed to clear cache', 'error'))
+        .catch(() => showToast('Error clearing cache', 'error'));
+}
+
+// ── Helpers ──────────────────────────────────────────────────────
+function formatBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+    if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+    return (b / 1073741824).toFixed(2) + ' GB';
+}
+
+function showToast(msg, type) {
+    const existing = document.querySelector('.toast-msg');
+    if (existing) existing.remove();
+    const t = document.createElement('div');
+    t.className = 'toast-msg';
+    t.textContent = msg;
+    t.style.cssText = [
+        'position:fixed','bottom:20px','right:20px','z-index:9999',
+        'padding:12px 18px','border-radius:8px','font-size:13px','font-weight:500',
+        'box-shadow:0 4px 12px rgba(0,0,0,.15)','transition:opacity .4s',
+        type === 'error'
+            ? 'background:#FEE2E2;color:#7F1D1D;border-left:4px solid #EF4444'
+            : 'background:#D1FAE5;color:#065F46;border-left:4px solid #10B981'
+    ].join(';');
+    document.body.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; }, 3500);
+    setTimeout(() => t.remove(), 4000);
+}
+
+// ESC로 모달 닫기
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape')
+        document.querySelectorAll('.modal-overlay.open').forEach(m => m.classList.remove('open'));
+});
+</script>
 </body>
 </html>

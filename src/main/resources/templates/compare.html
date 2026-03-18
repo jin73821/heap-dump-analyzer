@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compare Dumps - Heap Dump Analyzer</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #F3F4F6; color: #1F2937; }
+        .topbar { height: 52px; background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; position: sticky; top: 0; z-index: 10; }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; }
+        .topbar-logo { width: 28px; height: 28px; background: #2563EB; border-radius: 6px;
+                       display: flex; align-items: center; justify-content: center; }
+        .topbar-logo svg { width: 14px; height: 14px; fill: white; }
+        .topbar-title { font-size: 15px; font-weight: 700; }
+        .back-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                    border-radius: 6px; background: transparent; color: #6B7280;
+                    cursor: pointer; text-decoration: none; }
+        .main { max-width: 1100px; margin: 0 auto; padding: 24px 20px; }
+
+        .compare-header { display: grid; grid-template-columns: 1fr 60px 1fr; gap: 12px;
+                          align-items: center; margin-bottom: 20px; }
+        .dump-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px; }
+        .dump-card-label { font-size: 10px; font-weight: 600; color: #9CA3AF;
+                           text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+        .dump-card-name { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+        .dump-card-meta { font-size: 12px; color: #6B7280; }
+        .vs-circle { width: 48px; height: 48px; border-radius: 50%; background: #2563EB;
+                     color: white; font-size: 13px; font-weight: 700;
+                     display: flex; align-items: center; justify-content: center; margin: 0 auto; }
+
+        .delta-banner { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                        padding: 14px 20px; margin-bottom: 20px;
+                        display: flex; align-items: center; gap: 20px; }
+        .delta-item { text-align: center; }
+        .delta-label { font-size: 11px; color: #9CA3AF; margin-bottom: 4px; }
+        .delta-value { font-size: 20px; font-weight: 700; }
+        .delta-up   { color: #DC2626; }
+        .delta-down { color: #059669; }
+        .delta-neutral { color: #6B7280; }
+        .delta-sep { width: 1px; height: 40px; background: #E5E7EB; }
+
+        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                 padding: 16px; margin-bottom: 16px; }
+        .panel-title { font-size: 13px; font-weight: 700; margin-bottom: 14px;
+                       padding-bottom: 10px; border-bottom: 1px solid #F3F4F6; }
+
+        .diff-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .diff-table th { padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600;
+                         color: #6B7280; background: #F9FAFB;
+                         border-bottom: 1px solid #E5E7EB; }
+        .diff-table td { padding: 9px 12px; border-bottom: 1px solid #F9FAFB; }
+        .diff-table tr:hover td { background: #F9FAFB; }
+        .class-name { font-family: 'Courier New', monospace; font-size: 11px;
+                      background: #F3F4F6; padding: 2px 6px; border-radius: 4px; }
+        .delta-cell { font-weight: 600; }
+        .delta-cell.up   { color: #DC2626; }
+        .delta-cell.down { color: #059669; }
+        .delta-bar-wrap { display: flex; align-items: center; gap: 6px; }
+        .delta-bar { height: 8px; border-radius: 4px; min-width: 2px; }
+        .delta-bar.up   { background: #FCA5A5; }
+        .delta-bar.down { background: #6EE7B7; }
+
+        .error-box { background: #FEE2E2; border: 1px solid #FCA5A5; border-radius: 10px;
+                     padding: 20px; color: #7F1D1D; font-size: 13px; }
+        .no-data { text-align: center; padding: 40px; color: #9CA3AF; font-size: 13px; }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-brand">
+        <div class="topbar-logo">
+            <svg viewBox="0 0 14 14"><rect x="1" y="7" width="2" height="6" rx="1"/><rect x="5" y="4" width="2" height="9" rx="1"/><rect x="9" y="1" width="2" height="12" rx="1"/></svg>
+        </div>
+        <span class="topbar-title">Heap Dump Compare</span>
+    </div>
+    <a href="/" class="back-btn">← Back</a>
+</div>
+
+<div class="main">
+
+    <!-- Error state -->
+    <div th:if="${error}" class="error-box" th:text="${error}"></div>
+
+    <!-- Compare results -->
+    <div th:if="${baseResult != null and targetResult != null}">
+
+        <!-- Header: base vs target -->
+        <div class="compare-header">
+            <div class="dump-card">
+                <div class="dump-card-label">Baseline (before)</div>
+                <div class="dump-card-name" th:text="${baseFile}">base.hprof</div>
+                <div class="dump-card-meta">
+                    <span th:text="${baseResult.formattedUsedHeapSize}">—</span>
+                    used · <span th:text="${baseResult.formattedTotalObjects}">—</span> objects
+                </div>
+            </div>
+            <div class="vs-circle">VS</div>
+            <div class="dump-card">
+                <div class="dump-card-label">Target (after)</div>
+                <div class="dump-card-name" th:text="${targetFile}">target.hprof</div>
+                <div class="dump-card-meta">
+                    <span th:text="${targetResult.formattedUsedHeapSize}">—</span>
+                    used · <span th:text="${targetResult.formattedTotalObjects}">—</span> objects
+                </div>
+            </div>
+        </div>
+
+        <!-- Delta summary -->
+        <div class="delta-banner">
+            <div class="delta-item">
+                <div class="delta-label">Heap change</div>
+                <div class="delta-value"
+                     th:classappend="${heapDeltaUp} ? ' delta-up' : ' delta-down'"
+                     th:text="${heapDeltaSign} + ${heapDelta}">+0 B</div>
+            </div>
+            <div class="delta-sep"></div>
+            <div class="delta-item">
+                <div class="delta-label">Classes changed</div>
+                <div class="delta-value delta-neutral"
+                     th:text="${#lists.size(classDiffs)}">0</div>
+            </div>
+            <div class="delta-sep"></div>
+            <div class="delta-item">
+                <div class="delta-label">Base heap</div>
+                <div class="delta-value delta-neutral"
+                     th:text="${baseResult.formattedUsedHeapSize}">—</div>
+            </div>
+            <div class="delta-sep"></div>
+            <div class="delta-item">
+                <div class="delta-label">Target heap</div>
+                <div class="delta-value delta-neutral"
+                     th:text="${targetResult.formattedUsedHeapSize}">—</div>
+            </div>
+        </div>
+
+        <!-- Class-level diff table -->
+        <div class="panel">
+            <div class="panel-title">Top class memory changes (retained heap)</div>
+
+            <div th:if="${#lists.isEmpty(classDiffs)}" class="no-data">
+                No significant differences found between the two dumps.
+            </div>
+
+            <table th:if="${!#lists.isEmpty(classDiffs)}" class="diff-table">
+                <thead>
+                    <tr>
+                        <th style="width:40px;">#</th>
+                        <th>Class name</th>
+                        <th>Base</th>
+                        <th>Target</th>
+                        <th>Delta</th>
+                        <th>Trend</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="diff, s : ${classDiffs}">
+                        <td th:text="${s.count}" style="color:#9CA3AF;">1</td>
+                        <td><span class="class-name" th:text="${diff.className}">—</span></td>
+                        <td th:text="${diff.baseSize > 0} ? ${#numbers.formatDecimal(diff.baseSize / 1048576.0, 1, 2)} + ' MB' : '—'">—</td>
+                        <td th:text="${diff.targetSize > 0} ? ${#numbers.formatDecimal(diff.targetSize / 1048576.0, 1, 2)} + ' MB' : '—'">—</td>
+                        <td class="delta-cell"
+                            th:classappend="${diff.increase} ? ' up' : ' down'"
+                            th:text="${diff.formattedDelta}">+0 B</td>
+                        <td>
+                            <div class="delta-bar-wrap">
+                                <div class="delta-bar"
+                                     th:classappend="${diff.increase} ? ' up' : ' down'"
+                                     th:style="'width:' + ${T(java.lang.Math).min(80, T(java.lang.Math).abs(diff.delta) / 1048576)} + 'px'">
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+    </div>
+
+    <!-- No results yet -->
+    <div th:if="${baseResult == null and error == null}" class="panel">
+        <div class="no-data">Select two analyzed files to compare.</div>
+    </div>
+</div>
+</body>
+</html>

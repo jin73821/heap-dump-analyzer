@@ -4,6 +4,9 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
 /**
  * 힙 덤프 파일 정보 모델
  */
@@ -11,40 +14,30 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class HeapDumpFile {
-    
-    /**
-     * 파일명
-     */
+
     private String name;
-    
-    /**
-     * 파일 경로
-     */
     private String path;
-    
-    /**
-     * 파일 크기 (바이트)
-     */
-    private long size;
-    
-    /**
-     * 수정 시간 (밀리초)
-     */
-    private long lastModified;
-    
-    /**
-     * 파일 크기를 읽기 쉬운 형식으로 변환
-     * @return 형식화된 파일 크기 (예: 460 MB, 2.5 GB)
-     */
+    private long   size;
+    private long   lastModified;
+
+    /** 파일 크기 포맷 */
     public String getFormattedSize() {
-        if (size < 1024) {
-            return size + " B";
-        } else if (size < 1024 * 1024) {
-            return String.format("%.2f KB", size / 1024.0);
-        } else if (size < 1024 * 1024 * 1024) {
-            return String.format("%.2f MB", size / (1024.0 * 1024.0));
-        } else {
-            return String.format("%.2f GB", size / (1024.0 * 1024.0 * 1024.0));
-        }
+        if (size < 1024)                return size + " B";
+        if (size < 1024 * 1024)         return String.format("%.2f KB", size / 1024.0);
+        if (size < 1024L * 1024 * 1024) return String.format("%.2f MB", size / (1024.0 * 1024));
+        return String.format("%.2f GB", size / (1024.0 * 1024 * 1024));
+    }
+
+    /** 수정 날짜 포맷 (MM-dd HH:mm) — Thymeleaf에서 new java.util.Date() 호출 회피용 */
+    public String getFormattedDate() {
+        return new SimpleDateFormat("MM-dd HH:mm").format(new Date(lastModified));
+    }
+
+    /** 파일 확장자 대문자 — Thymeleaf substringAfterLast 미지원 대응 */
+    public String getExtension() {
+        if (name == null) return "DUMP";
+        int dot = name.lastIndexOf('.');
+        if (dot < 0 || dot >= name.length() - 1) return "DUMP";
+        return name.substring(dot + 1).toUpperCase();
     }
 }
