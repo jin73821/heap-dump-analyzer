@@ -117,6 +117,44 @@ public class MatReportParser {
         return result;
     }
 
+    /**
+     * 기존 캐시에 histogramHtml/threadOverviewHtml이 없을 때 ZIP에서 재추출하는 공개 메서드.
+     */
+    public void reparseActions(String heapDumpDir, String dumpBaseName, MatParseResult result) {
+        File overviewZip = findZip(heapDumpDir, dumpBaseName, "overview");
+        if (overviewZip == null) return;
+
+        String histHtml = extractNamedPageFromZip(overviewZip, "class_histogram");
+        if (histHtml != null) {
+            result.setHistogramHtml(sanitizeHtml(histHtml));
+            parseHistogramEntries(histHtml, result);
+        }
+
+        String threadHtml = extractNamedPageFromZip(overviewZip, "thread_overview");
+        if (threadHtml != null) {
+            result.setThreadOverviewHtml(sanitizeHtml(threadHtml));
+            parseThreadInfoEntries(threadHtml, result);
+        }
+
+        logger.info("[Parser] Re-extracted actions: histogram={}, threadOverview={}",
+                result.getHistogramHtml() != null && !result.getHistogramHtml().isEmpty(),
+                result.getThreadOverviewHtml() != null && !result.getThreadOverviewHtml().isEmpty());
+    }
+
+    /**
+     * 기존 캐시에 componentDetailHtmlMap이 없을 때 ZIP에서 재추출하는 공개 메서드.
+     */
+    public void reparseComponentDetails(String heapDumpDir, String dumpBaseName, MatParseResult result) {
+        File topZip = findZip(heapDumpDir, dumpBaseName, "top_components");
+        if (topZip == null) return;
+
+        String indexHtml = extractHtmlFromZip(topZip, "top_components_index");
+        if (indexHtml != null && !indexHtml.isEmpty()) {
+            // objects 리스트는 result에서 가져옴 (이미 파싱된 것 사용)
+            extractComponentDetailPages(topZip, indexHtml, result.getTopMemoryObjects(), result);
+        }
+    }
+
     // ─── ZIP 탐색 ─────────────────────────────────────────────────────────────
 
     /**
@@ -239,8 +277,24 @@ public class MatReportParser {
         }
 
         result.setOverviewHtml(sanitizeHtml(html));
-        logger.info("[Parser] Overview parsed: totalHeap={} ({} objects, {} classes)",
-                result.getTotalHeapSize(), result.getTotalObjects(), result.getTotalClasses());
+
+        // ── Histogram / Thread Overview 추출 ─────────────
+        String histHtml = extractNamedPageFromZip(zip, "class_histogram");
+        if (histHtml != null) {
+            result.setHistogramHtml(sanitizeHtml(histHtml));
+            parseHistogramEntries(histHtml, result);
+        }
+
+        String threadHtml = extractNamedPageFromZip(zip, "thread_overview");
+        if (threadHtml != null) {
+            result.setThreadOverviewHtml(sanitizeHtml(threadHtml));
+            parseThreadInfoEntries(threadHtml, result);
+        }
+
+        logger.info("[Parser] Overview parsed: totalHeap={} ({} objects, {} classes), histogram={}, threadOverview={}",
+                result.getTotalHeapSize(), result.getTotalObjects(), result.getTotalClasses(),
+                result.getHistogramHtml() != null && !result.getHistogramHtml().isEmpty(),
+                result.getThreadOverviewHtml() != null && !result.getThreadOverviewHtml().isEmpty());
     }
 
     /**
@@ -269,39 +323,95 @@ public class MatReportParser {
 
     // ─── Top Components 파싱 ──────────────────────────────────────────────────
 
+    // index.html <h2> 패턴: <a href="...">ComponentName (43%)</a>
+    private static final Pattern H2_COMPONENT_PATTERN = Pattern.compile(
+            "<h2[^>]*>.*?<a[^>]*>([^<]+?)\\((\\d+)%\\)</a>",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    // index.html <h2> + href 패턴: href="pages/xxx.html"
+    private static final Pattern H2_COMPONENT_LINK_PATTERN = Pattern.compile(
+            "<h2[^>]*>.*?<a\\s+href=\"([^\"]+)\"[^>]*>([^<]+?)\\((\\d+)%\\)</a>",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
     private void parseTopComponentsZip(File zip, MatParseResult result) {
-        // Top_Consumers5.html 구조 (Biggest Objects 테이블):
-        // <thead><tr><th>Class Name</th><th>Shallow Heap</th><th>Retained Heap</th></tr></thead>
-        // <tbody><tr>
-        //   <td>...<a href="...">com.example.Foo @ 0x...</a>...</td>
-        //   <td align="right">40</td>          ← Shallow Heap (bytes)
-        //   <td align="right">31,858,488</td>  ← Retained Heap (bytes)
-        // </tr></tbody>
+        // ── 1단계: index.html의 <h2> 태그에서 최상위 컴포넌트 추출 ──
         //
-        // 또는 Biggest Top-Level Dominator Classes 테이블:
-        // <thead><tr><th>Label</th><th>Number of Objects</th>
-        //             <th>Used Heap Size</th><th>Retained Heap Size</th>
-        //             <th>Retained Heap, %</th></tr></thead>
-        // <tbody><tr>
-        //   <td>...<a>ClassName</a>...</td>
-        //   <td align="right">1</td>            ← Number of Objects
-        //   <td align="right">40</td>           ← Used Heap Size
-        //   <td align="right">31,858,488</td>   ← Retained Heap Size
-        //   <td align="right">32.44%</td>       ← %
-        // </tr></tbody>
+        // MAT Top_Components.zip의 index.html 구조:
+        //   <h2><a href="pages/xxx.html">&lt;system class loader&gt; (43%)</a></h2>
+        //   <h2><a href="pages/xxx.html">com.example.ClassLoader @ 0x... (33%)</a></h2>
+        //
+        // 이 비율은 전체 힙 대비 각 Top-Level Dominator Component의 retained heap 비율.
 
-        String html = extractHtmlFromZip(zip, "top_components");
-        if (html == null || html.isEmpty()) return;
+        String indexHtml = extractHtmlFromZip(zip, "top_components_index");
+        List<MemoryObject> objects = new ArrayList<>();
 
+        if (indexHtml != null && !indexHtml.isEmpty() && result.getTotalHeapSize() > 0) {
+            Matcher hm = H2_COMPONENT_PATTERN.matcher(indexHtml);
+            while (hm.find() && objects.size() < 15) {
+                String rawName = decodeHtmlEntities(hm.group(1)).trim();
+                int pctInt = Integer.parseInt(hm.group(2));
+                if (pctInt <= 0) continue;
+
+                // 컴포넌트명 정리: @ 주소 제거
+                String className = rawName.replaceAll("@?\\s*0x[0-9a-fA-F]+", "").trim();
+                if (className.isEmpty()) continue;
+
+                // 비율에서 실제 바이트 크기 계산
+                long retainedHeap = (long) (result.getTotalHeapSize() * pctInt / 100.0);
+                double pct = (double) pctInt;
+
+                objects.add(new MemoryObject(className, 0L, retainedHeap, pct));
+                logger.info("[Parser] Top component from index: {} = {}% ({} bytes)",
+                        className, pctInt, retainedHeap);
+            }
+        }
+
+        // ── 2단계: index.html 파싱 실패 시 → 하위 페이지 테이블 폴백 ──
+        if (objects.isEmpty()) {
+            logger.info("[Parser] No components in index.html, falling back to sub-page table parsing");
+            String subPageHtml = extractHtmlFromZip(zip, "top_components");
+            if (subPageHtml != null && !subPageHtml.isEmpty()) {
+                objects = parseTopComponentsFromTable(subPageHtml, result);
+            }
+        }
+
+        // 크기 기준 내림차순 정렬
+        objects.sort((a, b) -> Long.compare(b.getTotalSize(), a.getTotalSize()));
+
+        // 상위 10개만 유지
+        if (objects.size() > 10) objects = new ArrayList<>(objects.subList(0, 10));
+
+        result.setTopMemoryObjects(objects);
+
+        // 표시용 HTML은 index.html 사용 (전체 개요)
+        if (indexHtml != null && !indexHtml.isEmpty()) {
+            result.setTopComponentsHtml(sanitizeHtml(indexHtml));
+        } else {
+            String subHtml = extractHtmlFromZip(zip, "top_components");
+            if (subHtml != null) result.setTopComponentsHtml(sanitizeHtml(subHtml));
+        }
+
+        // ── 3단계: 각 컴포넌트의 하위 페이지 HTML 추출 ──
+        if (indexHtml != null && !indexHtml.isEmpty()) {
+            extractComponentDetailPages(zip, indexHtml, objects, result);
+        }
+
+        logger.info("[Parser] Parsed {} top component objects (total retained: {} bytes), {} detail pages",
+                objects.size(),
+                objects.stream().mapToLong(MemoryObject::getTotalSize).sum(),
+                result.getComponentDetailHtmlMap().size());
+    }
+
+    /**
+     * 하위 페이지 Top_Consumers*.html의 테이블에서 Top Objects 추출 (폴백)
+     */
+    private List<MemoryObject> parseTopComponentsFromTable(String html, MatParseResult result) {
         List<MemoryObject> objects = new ArrayList<>();
 
         Matcher rowM = TR_PATTERN.matcher(html);
         while (rowM.find() && objects.size() < 20) {
             String row = rowM.group(1);
-
-            // 헤더 행 스킵
             if (row.contains("<th")) continue;
-            // totals 행 스킵
             if (row.contains("totals") || row.contains("Total:")) continue;
 
             List<String> cells = new ArrayList<>();
@@ -311,78 +421,99 @@ public class MatReportParser {
                         .replaceAll(" ").replaceAll("\\s+", " ").trim();
                 cells.add(cell);
             }
-
             if (cells.size() < 2) continue;
 
             try {
-                // 클래스명: 첫 번째 셀에서 추출 (링크 텍스트, @ 주소 제거)
-                
-                
                 String className = extractCleanClassName(cells.get(0));
-                // "First 10 of N objects" 같은 부가 텍스트 제거
-                // 빈 값 / 헤더 스킵
                 if (className.isEmpty() || className.equalsIgnoreCase("Class Name")
                         || className.equalsIgnoreCase("Label")
                         || className.equalsIgnoreCase("Package")
                         || className.startsWith("<")) continue;
 
-                // 숫자 셀에서 Retained Heap 추출
-                // 셀이 3개: [ClassName, ShallowHeap, RetainedHeap]
-                // 셀이 5개: [Label, NumObjects, UsedHeapSize, RetainedHeapSize, Pct%]
                 long retainedHeap = 0L;
-                long objCount     = 0L;
+                long objCount = 0L;
 
                 if (cells.size() >= 5) {
-                    // 5열 형식: Label | NumObj | UsedSize | RetainedSize | Pct
                     objCount     = parseLong(cells.get(1).replaceAll("[^\\d]", ""));
                     retainedHeap = parseLong(cells.get(3).replaceAll("[^\\d]", ""));
                 } else if (cells.size() >= 3) {
-                    // 3열 형식: ClassName | ShallowHeap | RetainedHeap
                     retainedHeap = parseLong(cells.get(2).replaceAll("[^\\d]", ""));
                     objCount     = 1L;
                 } else if (cells.size() == 2) {
                     retainedHeap = parseLong(cells.get(1).replaceAll("[^\\d]", ""));
                 }
-
                 if (retainedHeap == 0) continue;
 
                 double pct = result.getTotalHeapSize() > 0
                         ? (retainedHeap * 100.0) / result.getTotalHeapSize() : 0.0;
-
                 objects.add(new MemoryObject(className, objCount, retainedHeap, pct));
-                logger.debug("[Parser] Top object: {} = {} bytes ({} objs)",
-                        className, retainedHeap, objCount);
-
             } catch (Exception e) {
                 logger.debug("[Parser] Skip row: {}", e.getMessage());
             }
         }
 
-        // 중복 클래스명 병합: 동일 클래스는 최대 retained heap 유지
+        // 중복 병합
         Map<String, MemoryObject> dedup = new java.util.LinkedHashMap<>();
         for (MemoryObject o : objects) {
-            String key = o.getClassName();
-            MemoryObject exist = dedup.get(key);
-            if (exist == null) { dedup.put(key, o); }
-            else if (o.getTotalSize() > exist.getTotalSize()) { dedup.put(key, o); }
+            MemoryObject exist = dedup.get(o.getClassName());
+            if (exist == null || o.getTotalSize() > exist.getTotalSize())
+                dedup.put(o.getClassName(), o);
         }
-        objects = new ArrayList<>(dedup.values());
+        return new ArrayList<>(dedup.values());
+    }
 
-                // percent 재계산
-        if (!objects.isEmpty() && result.getTotalHeapSize() > 0) {
-            objects.forEach(o -> o.setPercentOfHeap(
-                    (o.getTotalSize() * 100.0) / result.getTotalHeapSize()));
+    // ─── Top Component 하위 페이지 추출 ────────────────────────────────────────
+
+    /**
+     * index.html의 h2 링크에서 각 컴포넌트의 하위 페이지 경로를 찾고,
+     * ZIP에서 해당 HTML을 추출하여 componentDetailHtmlMap에 저장.
+     */
+    private void extractComponentDetailPages(File zip, String indexHtml,
+                                              List<MemoryObject> objects, MatParseResult result) {
+        // index.html에서 href → 키(className#순번) 매핑 구성
+        // 같은 클래스명이 여러 인스턴스일 수 있으므로 순번으로 구분
+        Map<String, String> hrefToKey = new java.util.LinkedHashMap<>();
+        Map<String, Integer> nameCount = new java.util.HashMap<>();
+        Matcher lm = H2_COMPONENT_LINK_PATTERN.matcher(indexHtml);
+        int idx = 0;
+        while (lm.find()) {
+            String href = lm.group(1);
+            String rawName = decodeHtmlEntities(lm.group(2)).trim();
+            String className = rawName.replaceAll("@?\\s*0x[0-9a-fA-F]+", "").trim();
+            if (!className.isEmpty()) {
+                int count = nameCount.getOrDefault(className, 0);
+                nameCount.put(className, count + 1);
+                // 키: 순번 기반 (프론트엔드에서 #idx 로 조회)
+                String key = className + "#" + idx;
+                hrefToKey.put(href, key);
+                idx++;
+            }
         }
 
-        // 크기 기준 내림차순 정렬
-        objects.sort((a, b) -> Long.compare(b.getTotalSize(), a.getTotalSize()));
+        if (hrefToKey.isEmpty()) return;
 
-        // 상위 10개만 유지
-        if (objects.size() > 10) objects = objects.subList(0, 10);
+        // ZIP에서 하위 페이지 HTML 읽기
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zip))) {
+            ZipEntry entry;
+            Set<String> targetPaths = hrefToKey.keySet();
+            while ((entry = zis.getNextEntry()) != null) {
+                String entryName = entry.getName();
+                if (targetPaths.contains(entryName)) {
+                    String html = readZipEntry(zis);
+                    String key = hrefToKey.get(entryName);
+                    if (html != null && !html.isEmpty()) {
+                        result.getComponentDetailHtmlMap().put(key, sanitizeHtml(html));
+                        logger.debug("[Parser] Extracted detail page for: {} ({} chars)",
+                                key, html.length());
+                    }
+                }
+                zis.closeEntry();
+            }
+        } catch (IOException e) {
+            logger.warn("[Parser] Failed to extract component detail pages: {}", e.getMessage());
+        }
 
-        result.setTopMemoryObjects(objects);
-        result.setTopComponentsHtml(sanitizeHtml(html));
-        logger.info("[Parser] Parsed {} top component objects", objects.size());
+        logger.info("[Parser] Extracted {} component detail pages", result.getComponentDetailHtmlMap().size());
     }
 
     // ─── Suspects 파싱 ────────────────────────────────────────────────────────
@@ -445,7 +576,9 @@ public class MatReportParser {
             // 리포트 타입별 우선 파일 선택
             switch (reportType) {
                 case "overview":
-                    // index.html 우선 (Heap Dump Overview 테이블)
+                case "top_components_index":
+                case "suspects":
+                    // index.html 우선
                     for (Map.Entry<String, String> e : htmlFiles.entrySet()) {
                         if (e.getKey().toLowerCase().equals("index.html")) return e.getValue();
                     }
@@ -479,12 +612,6 @@ public class MatReportParser {
                     }
                     if (largestPage != null) return largestPage;
                     break;
-                case "suspects":
-                    // index.html 우선
-                    for (Map.Entry<String, String> e : htmlFiles.entrySet()) {
-                        if (e.getKey().toLowerCase().equals("index.html")) return e.getValue();
-                    }
-                    break;
             }
 
             // 최후 폴백: 첫 번째 HTML
@@ -492,6 +619,35 @@ public class MatReportParser {
 
         } catch (IOException e) {
             logger.error("[Parser] Failed to extract HTML from ZIP {}: {}", zip.getName(), e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * ZIP 파일에서 이름(대소문자 무관)에 pattern이 포함된 HTML 엔트리를 찾아 반환.
+     * pages/ 하위에서 먼저 탐색.
+     */
+    private String extractNamedPageFromZip(File zip, String namePattern) {
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zip))) {
+            ZipEntry entry;
+            String patternLower = namePattern.toLowerCase();
+            String bestMatch = null;
+            while ((entry = zis.getNextEntry()) != null) {
+                String entryName = entry.getName().toLowerCase();
+                if ((entryName.endsWith(".html") || entryName.endsWith(".htm"))
+                        && entryName.contains(patternLower)) {
+                    String html = readZipEntry(zis);
+                    // pages/ 하위 파일 우선, 없으면 첫 매칭
+                    if (entryName.startsWith("pages/")) {
+                        return html;
+                    }
+                    if (bestMatch == null) bestMatch = html;
+                }
+                zis.closeEntry();
+            }
+            return bestMatch;
+        } catch (IOException e) {
+            logger.warn("[Parser] Failed to extract '{}' from ZIP {}: {}", namePattern, zip.getName(), e.getMessage());
             return null;
         }
     }
@@ -512,11 +668,163 @@ public class MatReportParser {
      */
     private String sanitizeHtml(String html) {
         if (html == null) return "";
+
+        // <body> 내부 콘텐츠만 추출 (MAT HTML은 완전한 HTML 문서)
+        Matcher bodyMatcher = Pattern.compile(
+                "<body[^>]*>(.*)</body>",
+                Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(html);
+        if (bodyMatcher.find()) {
+            html = bodyMatcher.group(1);
+        }
+
         // script 태그 제거 (XSS 방지)
         html = html.replaceAll("(?i)<script[^>]*>.*?</script>", "");
+        // 외부 CSS link 제거 (깨진 참조 방지)
+        html = html.replaceAll("(?i)<link[^>]*>", "");
         // 절대 경로 이미지 제거
         html = html.replaceAll("(?i)<img[^>]+src\\s*=\\s*['\"][^'\"]*['\"][^>]*>", "");
-        return html;
+        // hidden input 제거 (MAT의 imageBase 등)
+        html = html.replaceAll("(?i)<input[^>]+type\\s*=\\s*['\"]hidden['\"][^>]*>", "");
+        // onload 등 이벤트 핸들러 제거 (중첩 따옴표 처리: onclick="fn('arg')")
+        html = html.replaceAll("(?i)\\s+on\\w+\\s*=\\s*\"[^\"]*\"", "");
+        html = html.replaceAll("(?i)\\s+on\\w+\\s*=\\s*'[^']*'", "");
+        // mat:// 프로토콜 href 제거
+        html = html.replaceAll("(?i)href\\s*=\\s*\"mat://[^\"]*\"", "href=\"javascript:void(0)\"");
+        // 깨진 href 정리 (MAT 내부 페이지 링크 — #, https 제외)
+        html = html.replaceAll("(?i)href\\s*=\\s*\"(?!https?://|javascript:|#\")[^\"]*\"", "href=\"javascript:void(0)\"");
+        html = html.replaceAll("(?i)href\\s*=\\s*'(?!https?://|javascript:|#')[^']*'", "href=\"javascript:void(0)\"");
+        // href="#" → javascript:void(0)로 변경 (페이지 상단 이동 방지)
+        html = html.replaceAll("(?i)href\\s*=\\s*['\"]#['\"]", "href=\"javascript:void(0)\"");
+
+        return html.trim();
+    }
+
+    // ─── Histogram 파싱 ─────────────────────────────────────────────────────────
+
+    /**
+     * Histogram HTML 테이블에서 엔트리를 추출합니다.
+     */
+    private void parseHistogramEntries(String html, MatParseResult result) {
+        List<HistogramEntry> entries = new ArrayList<>();
+        int totalClasses = 0;
+
+        Matcher rowM = TR_PATTERN.matcher(html);
+        while (rowM.find()) {
+            String row = rowM.group(1);
+            // 헤더 행 스킵
+            if (row.contains("<th")) continue;
+
+            // Total 행에서 전체 클래스 수 추출
+            if (row.toLowerCase().contains("total:") || row.toLowerCase().contains("total")) {
+                String plainRow = TAG_PATTERN.matcher(row).replaceAll(" ").trim();
+                // "Total: 25 of 25,086 entries" 패턴 매칭
+                java.util.regex.Matcher totalM = java.util.regex.Pattern.compile(
+                        "Total:\\s*\\d+\\s+of\\s+([\\d,]+)\\s+entries",
+                        java.util.regex.Pattern.CASE_INSENSITIVE).matcher(plainRow);
+                if (totalM.find()) {
+                    totalClasses = (int) parseLong(totalM.group(1));
+                }
+                continue;
+            }
+
+            List<String> cells = new ArrayList<>();
+            Matcher cellM = TD_PATTERN.matcher(row);
+            while (cellM.find()) {
+                String cell = TAG_PATTERN.matcher(cellM.group(1))
+                        .replaceAll(" ").replaceAll("\\s+", " ").trim();
+                cells.add(cell);
+            }
+
+            // 최소 4개 컬럼 필요 (className, objectCount, shallowHeap, retainedHeap)
+            if (cells.size() < 4) continue;
+
+            try {
+                String className = cells.get(0).trim();
+                // "All objects" 접미사 제거
+                className = className.replaceAll("(?i)\\s*All\\s+objects\\s*$", "").trim();
+                if (className.isEmpty() || className.equalsIgnoreCase("Class Name")) continue;
+
+                long objectCount = parseLong(cells.get(1).replaceAll("[^\\d]", ""));
+                long shallowHeap = parseLong(cells.get(2).replaceAll("[^\\d]", ""));
+
+                // retainedHeap: ">= NNN" 형식 처리
+                String retainedRaw = cells.get(3).trim();
+                String retainedDisplay = retainedRaw;
+                long retainedHeap = parseLong(retainedRaw.replaceAll("[^\\d]", ""));
+
+                entries.add(new HistogramEntry(className, objectCount, shallowHeap, retainedHeap, retainedDisplay));
+            } catch (Exception e) {
+                logger.debug("[Parser] Skip histogram row: {}", e.getMessage());
+            }
+        }
+
+        result.setHistogramEntries(entries);
+        result.setTotalHistogramClasses(totalClasses);
+        logger.info("[Parser] Parsed {} histogram entries, totalClasses={}", entries.size(), totalClasses);
+    }
+
+    // ─── Thread Overview 파싱 ──────────────────────────────────────────────────
+
+    /**
+     * Thread Overview HTML 테이블에서 스레드 정보를 추출합니다.
+     */
+    private void parseThreadInfoEntries(String html, MatParseResult result) {
+        List<ThreadInfo> threads = new ArrayList<>();
+
+        Matcher rowM = TR_PATTERN.matcher(html);
+        while (rowM.find()) {
+            String row = rowM.group(1);
+            // 헤더 행 스킵
+            if (row.contains("<th")) continue;
+            // Total 행 스킵
+            if (row.toLowerCase().contains("total:") || row.toLowerCase().contains("totals")) continue;
+
+            List<String> cells = new ArrayList<>();
+            Matcher cellM = TD_PATTERN.matcher(row);
+            while (cellM.find()) {
+                String cell = TAG_PATTERN.matcher(cellM.group(1))
+                        .replaceAll(" ").replaceAll("\\s+", " ").trim();
+                cells.add(cell);
+            }
+
+            // 최소 4개 컬럼 필요
+            if (cells.size() < 4) continue;
+
+            try {
+                String objectType = cells.get(0).trim();
+                if (objectType.isEmpty() || objectType.equalsIgnoreCase("Object / Stack Frame")) continue;
+
+                String name = cells.size() > 1 ? cells.get(1).trim() : "";
+                long shallowHeap = parseLong(cells.get(2).replaceAll("[^\\d]", ""));
+                long retainedHeap = parseLong(cells.get(3).replaceAll("[^\\d]", ""));
+
+                String contextClassLoader = cells.size() > 5 ? cells.get(5).trim() : "";
+
+                // objectType에서 주소 추출: "java.lang.Thread @ 0xc1299f88 »"
+                String address = "";
+                java.util.regex.Matcher addrM = java.util.regex.Pattern.compile(
+                        "0x([0-9a-fA-F]+)").matcher(objectType);
+                if (addrM.find()) {
+                    address = "0x" + addrM.group(1);
+                }
+
+                ThreadInfo ti = new ThreadInfo();
+                ti.setName(name);
+                ti.setObjectType(objectType);
+                ti.setShallowHeap(shallowHeap);
+                ti.setRetainedHeap(retainedHeap);
+                ti.setContextClassLoader(contextClassLoader);
+                ti.setDaemon(false);
+                ti.setAddress(address);
+
+                threads.add(ti);
+            } catch (Exception e) {
+                logger.debug("[Parser] Skip thread row: {}", e.getMessage());
+            }
+        }
+
+        result.setThreadInfos(threads);
+        logger.info("[Parser] Parsed {} thread info entries", threads.size());
     }
 
     // ─── 유틸리티 ─────────────────────────────────────────────────────────────

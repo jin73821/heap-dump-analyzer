@@ -11,6 +11,7 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import javax.annotation.PostConstruct;
+import javax.annotation.PreDestroy;
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
@@ -34,6 +35,7 @@ public class HeapDumpAnalyzerService {
     private static final int    MAT_TIMEOUT_MINUTES = 30;
     private static final String RESULT_JSON  = "result.json";
     private static final String MAT_LOG_FILE = "mat.log";
+    private static final String TMP_DIR_NAME = "tmp";
 
     private final HeapDumpConfig  config;
     private final MatReportParser parser;
@@ -76,6 +78,8 @@ public class HeapDumpAnalyzerService {
                     r.setMatLog(new String(Files.readAllBytes(logFile.toPath()),
                             java.nio.charset.StandardCharsets.UTF_8));
                 }
+                // 기존 캐시의 MAT HTML 재정제 (body 추출 등)
+                sanitizeCachedHtml(r);
                 memCache.put(r.getFilename(), r);
                 loaded++;
             } catch (Exception e) {
@@ -83,6 +87,227 @@ public class HeapDumpAnalyzerService {
             }
         }
         logger.info("Restored {} cached results from disk", loaded);
+
+        // 이전 실행에서 남은 tmp 파일 정리
+        cleanupTmpDir();
+    }
+
+    private File tmpDirectory() {
+        return new File(config.getHeapDumpDirectory(), TMP_DIR_NAME);
+    }
+
+    /**
+     * 기존 캐시에 저장된 MAT HTML에서 &lt;body&gt; 내부만 추출하여 재정제.
+     * 이전 버전에서 전체 HTML 문서가 저장된 경우를 처리.
+     */
+    private void sanitizeCachedHtml(HeapAnalysisResult r) {
+        r.setOverviewHtml(extractBodyContent(r.getOverviewHtml()));
+        r.setTopComponentsHtml(extractBodyContent(r.getTopComponentsHtml()));
+        r.setSuspectsHtml(extractBodyContent(r.getSuspectsHtml()));
+        if (r.getComponentDetailHtmlMap() != null && !r.getComponentDetailHtmlMap().isEmpty()) {
+            r.getComponentDetailHtmlMap().replaceAll((k, v) -> extractBodyContent(v));
+        }
+        r.setHistogramHtml(extractBodyContent(r.getHistogramHtml()));
+        r.setThreadOverviewHtml(extractBodyContent(r.getThreadOverviewHtml()));
+
+        // componentDetailHtmlMap이 비어있으면 ZIP에서 재파싱 시도
+        if (r.getComponentDetailHtmlMap() == null || r.getComponentDetailHtmlMap().isEmpty()) {
+            reparsComponentDetails(r);
+        }
+
+        // histogramHtml이 없으면 ZIP에서 재추출 시도
+        if (r.getHistogramHtml() == null || r.getHistogramHtml().isEmpty()) {
+            reparseActions(r);
+        }
+
+        // .threads 파일 로드
+        loadThreadStacksText(r);
+    }
+
+    /**
+     * 기존 캐시에 componentDetailHtmlMap이 없을 때 ZIP에서 재추출.
+     */
+    private void reparsComponentDetails(HeapAnalysisResult r) {
+        if (r.getFilename() == null) return;
+        String baseName = stripExtension(r.getFilename());
+        File resultDir = resultDirectory(r.getFilename());
+        if (!resultDir.exists()) return;
+        try {
+            MatParseResult tmp = new MatParseResult();
+            tmp.setTotalHeapSize(r.getTotalHeapSize());
+            tmp.setTopMemoryObjects(r.getTopMemoryObjects());
+            // parser.parse는 전체 파싱이므로 ZIP만 직접 처리
+            parser.reparseComponentDetails(resultDir.getAbsolutePath(), baseName, tmp);
+            if (!tmp.getComponentDetailHtmlMap().isEmpty()) {
+                r.setComponentDetailHtmlMap(tmp.getComponentDetailHtmlMap());
+                logger.info("Re-extracted {} component detail pages for {}",
+                        tmp.getComponentDetailHtmlMap().size(), r.getFilename());
+            }
+        } catch (Exception e) {
+            logger.debug("Could not re-extract component details for {}: {}", r.getFilename(), e.getMessage());
+        }
+    }
+
+    /**
+     * 기존 캐시에 histogramHtml/threadOverviewHtml이 없을 때 ZIP에서 재추출.
+     */
+    private void reparseActions(HeapAnalysisResult r) {
+        if (r.getFilename() == null) return;
+        String baseName = stripExtension(r.getFilename());
+        File resultDir = resultDirectory(r.getFilename());
+        if (!resultDir.exists()) return;
+        try {
+            MatParseResult tmp = new MatParseResult();
+            parser.reparseActions(resultDir.getAbsolutePath(), baseName, tmp);
+            if (tmp.getHistogramHtml() != null && !tmp.getHistogramHtml().isEmpty()) {
+                r.setHistogramHtml(tmp.getHistogramHtml());
+                r.setHistogramEntries(tmp.getHistogramEntries());
+                r.setTotalHistogramClasses(tmp.getTotalHistogramClasses());
+            }
+            if (tmp.getThreadOverviewHtml() != null && !tmp.getThreadOverviewHtml().isEmpty()) {
+                r.setThreadOverviewHtml(tmp.getThreadOverviewHtml());
+                r.setThreadInfos(tmp.getThreadInfos());
+            }
+        } catch (Exception e) {
+            logger.debug("Could not re-extract actions for {}: {}", r.getFilename(), e.getMessage());
+        }
+    }
+
+    /**
+     * .threads 파일을 찾아 threadStacksText에 로드.
+     */
+    private void loadThreadStacksText(HeapAnalysisResult r) {
+        if (r.getFilename() == null) return;
+        String baseName = stripExtension(r.getFilename());
+        File threadsFile = new File(config.getHeapDumpDirectory(), baseName + ".threads");
+        if (threadsFile.exists() && threadsFile.isFile()) {
+            try {
+                String content = new String(Files.readAllBytes(threadsFile.toPath()),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                r.setThreadStacksText(content);
+                matchThreadStackTraces(r, content);
+                logger.debug("Loaded .threads file for {}: {} chars", r.getFilename(), content.length());
+            } catch (IOException e) {
+                logger.debug("Failed to read .threads file for {}: {}", r.getFilename(), e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * .threads 파일 내용을 파싱하여 각 ThreadInfo에 스택트레이스를 매칭합니다.
+     * 형식: "Thread 0xADDRESS\n  at method...\n  ...\n\n  locals:\n  ..."
+     */
+    private void matchThreadStackTraces(HeapAnalysisResult r, String threadsText) {
+        if (r.getThreadInfos() == null || r.getThreadInfos().isEmpty()) return;
+
+        // 주소 → ThreadInfo 매핑
+        Map<String, com.heapdump.analyzer.model.ThreadInfo> addrMap = new java.util.HashMap<>();
+        for (com.heapdump.analyzer.model.ThreadInfo ti : r.getThreadInfos()) {
+            if (ti.getAddress() != null && !ti.getAddress().isEmpty()) {
+                addrMap.put(ti.getAddress().toLowerCase(), ti);
+            }
+        }
+
+        // .threads 파일을 "Thread 0x..." 단위로 분할
+        String[] blocks = threadsText.split("(?=Thread 0x)");
+        int matched = 0;
+        for (String block : blocks) {
+            block = block.trim();
+            if (!block.startsWith("Thread 0x")) continue;
+
+            // 주소 추출
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                    "Thread (0x[0-9a-fA-F]+)").matcher(block);
+            if (!m.find()) continue;
+            String addr = m.group(1).toLowerCase();
+
+            com.heapdump.analyzer.model.ThreadInfo ti = addrMap.get(addr);
+            if (ti == null) continue;
+
+            // 스택트레이스만 추출 (locals: 이전까지)
+            String stackPart = block;
+            int localsIdx = stackPart.indexOf("locals:");
+            if (localsIdx > 0) {
+                stackPart = stackPart.substring(0, localsIdx).trim();
+            }
+
+            // 첫 줄(Thread 0x...) 제거하고 "at ..." 부분만
+            int firstNewline = stackPart.indexOf('\n');
+            if (firstNewline > 0) {
+                stackPart = stackPart.substring(firstNewline + 1).trim();
+            }
+
+            if (!stackPart.isEmpty()) {
+                ti.setStackTrace(stackPart);
+                matched++;
+            }
+        }
+        logger.debug("Matched {} thread stack traces out of {} threads", matched, r.getThreadInfos().size());
+    }
+
+    private String extractBodyContent(String html) {
+        if (html == null || html.isEmpty()) return html;
+        // 이미 body만 추출된 경우 (<!DOCTYPE 없음) 그대로 반환
+        if (!html.contains("<!DOCTYPE") && !html.contains("<html")) return html;
+
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "<body[^>]*>(.*)</body>",
+                java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL).matcher(html);
+        if (m.find()) {
+            html = m.group(1);
+        }
+        // script 태그 제거
+        html = html.replaceAll("(?i)<script[^>]*>.*?</script>", "");
+        // 외부 CSS link 제거
+        html = html.replaceAll("(?i)<link[^>]*>", "");
+        // 이미지 제거
+        html = html.replaceAll("(?i)<img[^>]+src\\s*=\\s*['\"][^'\"]*['\"][^>]*>", "");
+        // hidden input 제거
+        html = html.replaceAll("(?i)<input[^>]+type\\s*=\\s*['\"]hidden['\"][^>]*>", "");
+        // 이벤트 핸들러 제거 (중첩 따옴표 처리)
+        html = html.replaceAll("(?i)\\s+on\\w+\\s*=\\s*\"[^\"]*\"", "");
+        html = html.replaceAll("(?i)\\s+on\\w+\\s*=\\s*'[^']*'", "");
+        // mat:// 프로토콜 href 제거
+        html = html.replaceAll("(?i)href\\s*=\\s*\"mat://[^\"]*\"", "href=\"javascript:void(0)\"");
+        // 깨진 href 정리
+        html = html.replaceAll("(?i)href\\s*=\\s*\"(?!https?://|javascript:|#\")[^\"]*\"", "href=\"javascript:void(0)\"");
+        html = html.replaceAll("(?i)href\\s*=\\s*'(?!https?://|javascript:|#')[^']*'", "href=\"javascript:void(0)\"");
+        // href="#" → javascript:void(0)
+        html = html.replaceAll("(?i)href\\s*=\\s*['\"]#['\"]", "href=\"javascript:void(0)\"");
+        return html.trim();
+    }
+
+    private void cleanupTmpDir() {
+        File tmpDir = tmpDirectory();
+        if (!tmpDir.exists()) return;
+        File[] files = tmpDir.listFiles();
+        if (files == null || files.length == 0) return;
+        int cleaned = 0;
+        for (File f : files) {
+            if (f.isFile() && f.delete()) cleaned++;
+        }
+        if (cleaned > 0) {
+            logger.info("[Cleanup] Removed {} leftover tmp files", cleaned);
+        }
+    }
+
+    @PreDestroy
+    public void shutdown() {
+        logger.info("[Shutdown] HeapDumpAnalyzerService shutting down — cached results: {}, terminating thread pool...",
+                memCache.size());
+        executor.shutdownNow();
+        try {
+            if (executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                logger.info("[Shutdown] Thread pool terminated gracefully");
+            } else {
+                logger.warn("[Shutdown] Thread pool did not terminate within 5 seconds");
+            }
+        } catch (InterruptedException e) {
+            logger.warn("[Shutdown] Thread pool termination interrupted");
+            Thread.currentThread().interrupt();
+        }
+        cleanupTmpDir();
+        logger.info("[Shutdown] HeapDumpAnalyzerService shutdown complete");
     }
 
     // ── 설정 Getter/Setter ───────────────────────────────────────
@@ -99,44 +324,150 @@ public class HeapDumpAnalyzerService {
     // ── 파일 관리 ────────────────────────────────────────────────
 
     public String uploadFile(MultipartFile file) throws IOException {
-        if (file.isEmpty()) throw new IllegalArgumentException("File is empty");
-        String filename = Optional.ofNullable(file.getOriginalFilename())
+        if (file.isEmpty()) {
+            logger.warn("[Upload] Rejected: empty file");
+            throw new IllegalArgumentException("File is empty");
+        }
+
+        String originalName = file.getOriginalFilename();
+        String filename = Optional.ofNullable(originalName)
                 .map(n -> new File(n).getName()).filter(n -> !n.isEmpty())
-                .orElseThrow(() -> new IllegalArgumentException("Invalid filename"));
-        if (!isValidHeapDumpFile(filename))
+                .orElseThrow(() -> {
+                    logger.warn("[Upload] Rejected: invalid or missing filename");
+                    return new IllegalArgumentException("Invalid filename");
+                });
+
+        logger.info("[Upload] Started: filename={}, size={}, contentType={}",
+                filename, formatBytes(file.getSize()), file.getContentType());
+
+        if (!isValidHeapDumpFile(filename)) {
+            String ext = getExtension(filename);
+            logger.warn("[Upload] Rejected: invalid extension '{}' for file '{}'. Allowed: .hprof, .bin, .dump",
+                    ext, filename);
             throw new IllegalArgumentException(
-                    "Invalid file type. Only .hprof, .bin, .dump files are allowed");
-        Path target = Paths.get(config.getHeapDumpDirectory(), filename);
-        Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
-        logger.info("Uploaded: {}", filename);
+                    "'" + ext + "' is not a supported file type. Only .hprof, .bin, .dump files are allowed.");
+        }
+
+        File tmpDir = tmpDirectory();
+        Files.createDirectories(tmpDir.toPath());
+        Path target = tmpDir.toPath().resolve(filename);
+        try {
+            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException e) {
+            logger.error("[Upload] Failed to write file '{}' to tmp: {}", filename, e.getMessage(), e);
+            throw e;
+        }
+
+        long writtenSize = Files.size(target);
+        logger.info("[Upload] Completed: filename={}, writtenSize={}, path={} (tmp)",
+                filename, formatBytes(writtenSize), target.toAbsolutePath());
         return filename;
     }
 
+    private String formatBytes(long bytes) {
+        if (bytes <= 0)                      return "0 B";
+        if (bytes < 1024)                    return bytes + " B";
+        if (bytes < 1024 * 1024)             return String.format("%.1f KB", bytes / 1024.0);
+        if (bytes < 1024L * 1024 * 1024)     return String.format("%.2f MB", bytes / (1024.0 * 1024));
+        return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
+    }
+
     public List<HeapDumpFile> listFiles() {
+        List<HeapDumpFile> result = new ArrayList<>();
+
+        // 기존 heapdump 디렉토리 파일
         File dir = new File(config.getHeapDumpDirectory());
         File[] files = dir.listFiles((d, n) -> isValidHeapDumpFile(n));
-        if (files == null) return Collections.emptyList();
-        return Arrays.stream(files)
-                .map(f -> new HeapDumpFile(f.getName(), f.getAbsolutePath(),
-                        f.length(), f.lastModified()))
-                .sorted(Comparator.comparingLong(HeapDumpFile::getLastModified).reversed())
-                .collect(Collectors.toList());
+        Set<String> existing = new HashSet<>();
+        if (files != null) {
+            for (File f : files) {
+                result.add(new HeapDumpFile(f.getName(), f.getAbsolutePath(),
+                        f.length(), f.lastModified()));
+                existing.add(f.getName());
+            }
+        }
+
+        // tmp 디렉토리 파일 (분석 대기 중)
+        File tmpDir = tmpDirectory();
+        File[] tmpFiles = tmpDir.exists() ? tmpDir.listFiles((d, n) -> isValidHeapDumpFile(n)) : null;
+        if (tmpFiles != null) {
+            for (File f : tmpFiles) {
+                if (!existing.contains(f.getName())) {
+                    result.add(new HeapDumpFile(f.getName(), f.getAbsolutePath(),
+                            f.length(), f.lastModified()));
+                }
+            }
+        }
+
+        result.sort(Comparator.comparingLong(HeapDumpFile::getLastModified).reversed());
+        return result;
     }
 
     public File getFile(String filename) throws IOException {
         filename = new File(filename).getName();
         File file = new File(config.getHeapDumpDirectory(), filename);
-        if (!file.exists() || !file.isFile())
-            throw new FileNotFoundException("File not found: " + filename);
-        return file;
+        if (file.exists() && file.isFile()) return file;
+        // tmp에서도 탐색
+        File tmpFile = new File(tmpDirectory(), filename);
+        if (tmpFile.exists() && tmpFile.isFile()) return tmpFile;
+        throw new FileNotFoundException("File not found: " + filename);
     }
 
     public void deleteFile(String filename) throws IOException {
-        filename = new File(filename).getName();
-        File file = new File(config.getHeapDumpDirectory(), filename);
-        if (!file.exists()) throw new FileNotFoundException("File not found: " + filename);
-        if (!file.delete()) throw new IOException("Failed to delete: " + filename);
-        clearCache(filename);
+        String safe = new File(filename).getName();
+        File file = new File(config.getHeapDumpDirectory(), safe);
+        File tmpFile = new File(tmpDirectory(), safe);
+
+        logger.info("[Delete] Started: filename={}", safe);
+
+        // tmp에 있으면 tmp에서 삭제
+        if (tmpFile.exists()) {
+            long tmpSize = tmpFile.length();
+            if (tmpFile.delete()) {
+                logger.info("[Delete] Tmp file deleted: filename={}, size={}", safe, formatBytes(tmpSize));
+            } else {
+                logger.warn("[Delete] Failed to delete tmp file: {}", safe);
+            }
+        }
+
+        if (!file.exists() && !tmpFile.exists()) {
+            logger.warn("[Delete] File not found: {}", safe);
+            throw new FileNotFoundException("File not found: " + safe);
+        }
+
+        if (file.exists()) {
+            long fileSize = file.length();
+            if (!file.delete()) {
+                logger.error("[Delete] Failed to delete heap dump file: {}", safe);
+                throw new IOException("Failed to delete: " + safe);
+            }
+            logger.info("[Delete] Heap dump file deleted: filename={}, size={}", safe, formatBytes(fileSize));
+        }
+
+        // MAT 인덱스 파일 삭제 (예: heapdump.a2s.index, heapdump.threads 등)
+        String baseName = stripExtension(safe);
+        File parentDir = new File(config.getHeapDumpDirectory());
+        File[] relatedFiles = parentDir.listFiles((dir, name) ->
+                name.startsWith(baseName + ".") && !name.equals(safe));
+        int relatedCount = 0;
+        if (relatedFiles != null) {
+            for (File related : relatedFiles) {
+                if (related.isFile()) {
+                    if (related.delete()) {
+                        relatedCount++;
+                        logger.debug("[Delete] Related file deleted: {}", related.getName());
+                    } else {
+                        logger.warn("[Delete] Failed to delete related file: {}", related.getName());
+                    }
+                }
+            }
+        }
+        if (relatedCount > 0) {
+            logger.info("[Delete] {} related index files deleted for '{}'", relatedCount, safe);
+        }
+
+        clearCache(safe);
+        logger.info("[Delete] Completed: all files and cache cleared for '{}'", safe);
     }
 
     // ── 캐시 조회 / 삭제 ─────────────────────────────────────────
@@ -155,6 +486,7 @@ public class HeapDumpAnalyzerService {
                     if (logFile.exists())
                         r.setMatLog(new String(Files.readAllBytes(logFile.toPath()),
                                 java.nio.charset.StandardCharsets.UTF_8));
+                    sanitizeCachedHtml(r);
                     memCache.put(safe, r);
                     return r;
                 }
@@ -168,27 +500,54 @@ public class HeapDumpAnalyzerService {
     public void clearCache(String filename) {
         String safe = new File(filename).getName();
         memCache.remove(safe);
-        File resultFile = resultJsonFile(safe);
-        if (resultFile.exists()) {
-            resultFile.delete();
-            logger.info("Disk cache deleted: {}", resultFile.getAbsolutePath());
+        File resultDir = resultDirectory(safe);
+        if (resultDir.exists() && resultDir.isDirectory()) {
+            deleteDirectoryRecursively(resultDir);
+            logger.info("Result directory deleted: {}", resultDir.getAbsolutePath());
         }
         logger.info("Cache cleared: {}", safe);
     }
 
+    private void deleteDirectoryRecursively(File dir) {
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                if (f.isDirectory()) {
+                    deleteDirectoryRecursively(f);
+                } else {
+                    f.delete();
+                }
+            }
+        }
+        dir.delete();
+    }
+
     // ── SSE 기반 비동기 분석 ─────────────────────────────────────
 
-    public void analyzeWithProgress(String filename, SseEmitter emitter) {
+    public Future<?> analyzeWithProgress(String filename, SseEmitter emitter) {
         final String safe = new File(filename).getName();
-        executor.submit(() -> {
+        return executor.submit(() -> {
             long startTime = System.currentTimeMillis();
+            File tmpFile = new File(tmpDirectory(), safe);
+            boolean analysisSuccess = false;
             try {
-                sendProgress(emitter, AnalysisProgress.step(safe, 5, "힙 덤프 파일 확인 중..."));
-                File dumpFile = new File(config.getHeapDumpDirectory(), safe);
-                if (!dumpFile.exists()) {
-                    sendProgress(emitter, AnalysisProgress.error(safe, "파일을 찾을 수 없습니다: " + safe));
-                    emitter.complete(); return;
+                sendProgress(emitter, AnalysisProgress.step(safe, 3, "힙 덤프 파일 확인 중..."));
+
+                // tmp에 파일이 있으면 tmp에서, 아니면 heapdump 디렉토리에서 탐색
+                File dumpFile;
+                if (tmpFile.exists()) {
+                    dumpFile = tmpFile;
+                    logger.info("[Analysis] File found in tmp: {}", safe);
+                } else {
+                    dumpFile = new File(config.getHeapDumpDirectory(), safe);
+                    if (!dumpFile.exists()) {
+                        sendProgress(emitter, AnalysisProgress.error(safe, "파일을 찾을 수 없습니다: " + safe));
+                        emitter.complete(); return;
+                    }
+                    logger.info("[Analysis] File found in heapdump dir (re-analysis): {}", safe);
                 }
+
+                sendProgress(emitter, AnalysisProgress.step(safe, 5, "파일 확인 완료"));
 
                 File resultDir = resultDirectory(safe);
                 Files.createDirectories(resultDir.toPath());
@@ -217,6 +576,14 @@ public class HeapDumpAnalyzerService {
                 Thread.sleep(200);
                 sendProgress(emitter, AnalysisProgress.parsing(safe, 99, "결과 조립 중..."));
 
+                // tmp 파일이면 최종 위치로 이동
+                if (tmpFile.exists()) {
+                    Path finalPath = Paths.get(config.getHeapDumpDirectory(), safe);
+                    Files.move(tmpFile.toPath(), finalPath, StandardCopyOption.REPLACE_EXISTING);
+                    dumpFile = finalPath.toFile();
+                    logger.info("[Analysis] Moved tmp → final: {}", finalPath);
+                }
+
                 HeapAnalysisResult result = buildResult(safe, dumpFile, parsed, matLog);
                 result.setAnalysisTime(System.currentTimeMillis() - startTime);
                 result.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.SUCCESS);
@@ -224,16 +591,29 @@ public class HeapDumpAnalyzerService {
                 memCache.put(safe, result);
                 saveResultToDisk(result, resultDir);
 
+                analysisSuccess = true;
                 sendProgress(emitter, AnalysisProgress.completed(safe, "/analyze/result/" + safe));
-                logger.info("Analysis done: {} in {}ms", safe, result.getAnalysisTime());
+                logger.info("[Analysis] Done: {} in {}ms", safe, result.getAnalysisTime());
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                sendProgress(emitter, AnalysisProgress.error(safe, "분석이 중단되었습니다."));
+                logger.info("[Analysis] Interrupted (client disconnect or shutdown): {}", safe);
             } catch (Exception e) {
-                logger.error("Analysis failed for {}", safe, e);
-                sendProgress(emitter, AnalysisProgress.error(safe, e.getMessage()));
+                if (Thread.currentThread().isInterrupted()) {
+                    logger.info("[Analysis] Interrupted during processing: {}", safe);
+                } else {
+                    logger.error("[Analysis] Failed for {}", safe, e);
+                    sendProgress(emitter, AnalysisProgress.error(safe, e.getMessage()));
+                }
             } finally {
+                // 분석 실패/중단 시 tmp 파일 삭제
+                if (!analysisSuccess && tmpFile.exists()) {
+                    if (tmpFile.delete()) {
+                        logger.info("[Analysis] Tmp file cleaned up: {}", safe);
+                    } else {
+                        logger.warn("[Analysis] Failed to clean up tmp file: {}", safe);
+                    }
+                }
                 try { emitter.complete(); } catch (Exception ignored) {}
             }
         });
@@ -271,12 +651,14 @@ public class HeapDumpAnalyzerService {
         final int[] pct = {15};
         StringBuilder output = new StringBuilder();
 
+        final Thread callerThread = Thread.currentThread();
         CompletableFuture<Void> reader = CompletableFuture.runAsync(() -> {
             try (BufferedReader br = new BufferedReader(
                     new InputStreamReader(process.getInputStream()))) {
                 String line;
                 while ((line = br.readLine()) != null) {
                     output.append(line).append('\n');
+                    if (callerThread.isInterrupted()) break;
                     if (pct[0] < 80) pct[0] = Math.min(80, pct[0] + 1);
                     sendProgress(emitter, AnalysisProgress.log(filename, pct[0], line));
                 }
@@ -330,6 +712,12 @@ public class HeapDumpAnalyzerService {
         c.setAnalysisTime(r.getAnalysisTime());   c.setAnalysisStatus(r.getAnalysisStatus());
         c.setOverviewHtml(r.getOverviewHtml());   c.setTopComponentsHtml(r.getTopComponentsHtml());
         c.setSuspectsHtml(r.getSuspectsHtml());   c.setMatLog(null);
+        c.setHistogramHtml(r.getHistogramHtml());
+        c.setThreadOverviewHtml(r.getThreadOverviewHtml());
+        c.setHistogramEntries(r.getHistogramEntries());
+        c.setThreadInfos(r.getThreadInfos());
+        c.setTotalHistogramClasses(r.getTotalHistogramClasses());
+        // threadStacksText는 @JsonIgnore이므로 저장하지 않음
         return c;
     }
 
@@ -343,10 +731,27 @@ public class HeapDumpAnalyzerService {
         r.setFormat(getExtension(filename).toUpperCase());
         r.setMatLog(matLog);
         r.setTotalHeapSize(parsed.getTotalHeapSize());
-        r.setUsedHeapSize(parsed.getUsedHeapSize());
-        r.setFreeHeapSize(parsed.getFreeHeapSize());
-        if (parsed.getTotalHeapSize() > 0)
-            r.setHeapUsagePercent(parsed.getUsedHeapSize() * 100.0 / parsed.getTotalHeapSize());
+
+        // Top Objects의 retained heap 합산으로 실제 사용량 계산
+        long topObjTotal = 0;
+        if (parsed.getTopMemoryObjects() != null) {
+            for (com.heapdump.analyzer.model.MemoryObject obj : parsed.getTopMemoryObjects()) {
+                topObjTotal += obj.getTotalSize();
+            }
+        }
+
+        if (parsed.getTotalHeapSize() > 0 && topObjTotal > 0) {
+            // Top Objects 합산이 total보다 작으면 나머지가 Others (free 아님, 미분류 used)
+            // MAT GUI 방식: total = "Used heap dump", Top Objects는 그 중 주요 소비자
+            r.setUsedHeapSize(topObjTotal);
+            r.setFreeHeapSize(parsed.getTotalHeapSize() - topObjTotal);
+            r.setHeapUsagePercent(topObjTotal * 100.0 / parsed.getTotalHeapSize());
+        } else {
+            r.setUsedHeapSize(parsed.getUsedHeapSize());
+            r.setFreeHeapSize(parsed.getFreeHeapSize());
+            if (parsed.getTotalHeapSize() > 0)
+                r.setHeapUsagePercent(parsed.getUsedHeapSize() * 100.0 / parsed.getTotalHeapSize());
+        }
         r.setTopMemoryObjects(parsed.getTopMemoryObjects());
         r.setLeakSuspects(parsed.getLeakSuspects());
         r.setTotalClasses(parsed.getTotalClasses());
@@ -354,6 +759,16 @@ public class HeapDumpAnalyzerService {
         r.setOverviewHtml(parsed.getOverviewHtml());
         r.setTopComponentsHtml(parsed.getTopComponentsHtml());
         r.setSuspectsHtml(parsed.getSuspectsHtml());
+        r.setComponentDetailHtmlMap(parsed.getComponentDetailHtmlMap());
+        r.setHistogramHtml(parsed.getHistogramHtml());
+        r.setThreadOverviewHtml(parsed.getThreadOverviewHtml());
+        r.setHistogramEntries(parsed.getHistogramEntries());
+        r.setThreadInfos(parsed.getThreadInfos());
+        r.setTotalHistogramClasses(parsed.getTotalHistogramClasses());
+
+        // .threads 파일 로드
+        loadThreadStacksText(r);
+
         return r;
     }
 
@@ -366,12 +781,22 @@ public class HeapDumpAnalyzerService {
         return new File(resultDirectory(filename), RESULT_JSON);
     }
 
+    /**
+     * SSE 진행 전송. emitter가 이미 완료된 경우 조용히 스킵.
+     * 클라이언트 disconnect 감지 시 분석 스레드를 인터럽트한다.
+     */
     private void sendProgress(SseEmitter emitter, AnalysisProgress progress) {
+        if (Thread.currentThread().isInterrupted()) return;
         try {
             emitter.send(SseEmitter.event().name("progress")
                     .data(objectMapper.writeValueAsString(progress)));
+        } catch (IllegalStateException e) {
+            // ResponseBodyEmitter has already completed — 클라이언트 disconnect
+            // 현재 스레드 인터럽트하여 분석 중단 유도
+            logger.info("[SSE] Client disconnected during analysis, interrupting thread");
+            Thread.currentThread().interrupt();
         } catch (Exception e) {
-            logger.debug("SSE send failed: {}", e.getMessage());
+            logger.debug("[SSE] Send failed: {}", e.getMessage());
         }
     }
 

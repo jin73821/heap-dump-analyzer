@@ -4,7 +4,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * MAT CLI 리포트 파싱 결과를 담는 중간 모델
@@ -30,6 +32,18 @@ public class MatParseResult {
     private String overviewHtml      = "";
     private String topComponentsHtml = "";
     private String suspectsHtml      = "";
+
+    // ── Top Component 별 상세 HTML (className → HTML) ──
+    private Map<String, String> componentDetailHtmlMap = new LinkedHashMap<>();
+
+    // ── MAT Actions (Histogram / Thread Overview) ─────
+    private String histogramHtml = "";
+    private String threadOverviewHtml = "";
+
+    // ── Parsed Histogram / Thread data ──────────────────
+    private List<HistogramEntry> histogramEntries = new ArrayList<>();
+    private List<ThreadInfo> threadInfos = new ArrayList<>();
+    private int totalHistogramClasses;
 
     // ── 파싱 성공 여부 ───────────────────────────────
     public boolean hasData() {

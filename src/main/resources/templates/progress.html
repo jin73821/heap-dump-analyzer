@@ -241,6 +241,27 @@
         .countdown-text {
             font-size: 13px; opacity: .8; margin-top: 6px;
         }
+
+        /* ── Desktop enhancement ──────────────────── */
+        @media (min-width: 1024px) {
+            .file-banner-name { font-size: 24px; }
+            .file-banner-sub  { font-size: 16px; }
+            .steps-title      { font-size: 20px; }
+            .step-label       { font-size: 16px; }
+            .step-desc        { font-size: 15px; }
+            .main-progress-label { font-size: 17px; }
+            .main-progress-pct   { font-size: 26px; }
+            .status-msg       { font-size: 16px; }
+            .log-title        { font-size: 17px; }
+            .log-toggle       { font-size: 14px; }
+            .log-console      { font-size: 14px; }
+            .complete-title   { font-size: 28px; }
+            .complete-sub     { font-size: 17px; }
+            .complete-btn     { font-size: 18px; }
+            .error-banner h3  { font-size: 20px; }
+            .error-banner p   { font-size: 16px; }
+            .countdown-text   { font-size: 15px; }
+        }
     </style>
 </head>
 <body>
@@ -252,7 +273,7 @@
             <h1 class="header-title">📊 Heap Dump Analyzer</h1>
             <p class="header-subtitle">MAT CLI 분석 진행 중</p>
         </div>
-        <a href="/" class="btn btn-outline">← Back</a>
+        <a href="/" class="btn btn-outline" onclick="if(typeof analysisRunning!=='undefined'&&analysisRunning){if(!confirm('Analysis is in progress. Are you sure you want to leave?'))return false;}">← Back</a>
     </div>
 </header>
 
@@ -519,6 +540,7 @@
 
     // ── 완료 처리 + 카운트다운 ────────────────────────────
     function showComplete(url) {
+        disableLeaveWarning();
         // 남은 버퍼 즉시 flush
         if (logBuffer.length) flushLog();
 
@@ -602,6 +624,7 @@
             }
             if (status === 'ERROR') {
                 evtSource.close();
+                disableLeaveWarning();
                 // 남은 버퍼 flush
                 if (logBuffer.length) flushLog();
                 errorMsg.textContent = errorMessage || '알 수 없는 오류가 발생했습니다.';
@@ -618,6 +641,20 @@
                     .catch(() => {});
             }, 2000);
         };
+    }
+
+    // ── 페이지 이탈 경고 (분석 중일 때만) ────────────────
+    let analysisRunning = true;
+
+    window.addEventListener('beforeunload', function(e) {
+        if (analysisRunning) {
+            e.preventDefault();
+            e.returnValue = '';
+        }
+    });
+
+    function disableLeaveWarning() {
+        analysisRunning = false;
     }
 
     startSSE();

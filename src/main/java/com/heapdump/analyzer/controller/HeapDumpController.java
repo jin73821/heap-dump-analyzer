@@ -66,6 +66,13 @@ public class HeapDumpController {
             .sum();
         model.addAttribute("totalSuspects", totalSuspects > 0 ? totalSuspects : null);
 
+        // 분석 완료 파일 Set (View 버튼 표시용)
+        Set<String> analyzedFiles = history.stream()
+                .filter(h -> "SUCCESS".equals(h.getStatus()))
+                .map(AnalysisHistoryItem::getFilename)
+                .collect(Collectors.toSet());
+        model.addAttribute("analyzedFiles", analyzedFiles);
+
         // MAT 설정
         model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
 
@@ -77,17 +84,24 @@ public class HeapDumpController {
     @PostMapping("/upload")
     public String uploadFile(@RequestParam("file") MultipartFile file,
                              RedirectAttributes redirectAttributes) {
+        String originalName = file.getOriginalFilename();
+        logger.info("[Upload] Request received: filename={}, size={}", originalName, formatBytes(file.getSize()));
+
         try {
             if (file.isEmpty()) {
+                logger.warn("[Upload] Rejected: empty file submitted");
                 redirectAttributes.addFlashAttribute("error", "Please select a file to upload");
                 return "redirect:/";
             }
             String filename = analyzerService.uploadFile(file);
+            logger.info("[Upload] Success: {}", filename);
             redirectAttributes.addFlashAttribute("success",
                     "Uploaded: " + filename + " (" + formatBytes(file.getSize()) + ")");
         } catch (IllegalArgumentException e) {
+            logger.warn("[Upload] Validation failed for '{}': {}", originalName, e.getMessage());
             redirectAttributes.addFlashAttribute("error", e.getMessage());
         } catch (IOException e) {
+            logger.error("[Upload] IO error for '{}': {}", originalName, e.getMessage(), e);
             redirectAttributes.addFlashAttribute("error", "Upload failed: " + e.getMessage());
         }
         return "redirect:/";
@@ -122,9 +136,19 @@ public class HeapDumpController {
     @ResponseBody
     public SseEmitter streamProgress(@PathVariable String filename) {
         SseEmitter emitter = new SseEmitter(35L * 60 * 1000);
-        emitter.onTimeout(emitter::complete);
-        emitter.onError(e -> emitter.complete());
-        analyzerService.analyzeWithProgress(filename, emitter);
+        java.util.concurrent.Future<?> task = analyzerService.analyzeWithProgress(filename, emitter);
+
+        // 클라이언트 disconnect / 타임아웃 시 분석 스레드 중단
+        Runnable cancelTask = () -> {
+            if (task != null && !task.isDone()) {
+                logger.info("[SSE] Client disconnected, cancelling analysis for: {}", filename);
+                task.cancel(true);
+            }
+        };
+        emitter.onTimeout(cancelTask);
+        emitter.onError(e -> cancelTask.run());
+        emitter.onCompletion(cancelTask);
+
         return emitter;
     }
 
@@ -172,6 +196,26 @@ public class HeapDumpController {
         model.addAttribute("matLogTotalLen",
                 result.getMatLog() != null ? result.getMatLog().length() : 0);
 
+        // Actions: Histogram / Thread Overview / Thread Stacks
+        model.addAttribute("hasHistogram", result.getHistogramHtml() != null && !result.getHistogramHtml().isEmpty());
+        model.addAttribute("hasThreadOverview", result.getThreadOverviewHtml() != null && !result.getThreadOverviewHtml().isEmpty());
+        model.addAttribute("hasThreadStacks", result.getThreadStacksText() != null && !result.getThreadStacksText().isEmpty());
+
+        // Parsed Histogram / Thread data
+        model.addAttribute("histogramEntries", result.getHistogramEntries());
+        model.addAttribute("threadInfos", result.getThreadInfos());
+        model.addAttribute("totalHistogramClasses", result.getTotalHistogramClasses());
+        model.addAttribute("threadCount", result.getThreadInfos() != null ? result.getThreadInfos().size() : 0);
+
+        // Thread stack traces as list for JS injection
+        List<String> threadStacks = new ArrayList<>();
+        if (result.getThreadInfos() != null) {
+            for (com.heapdump.analyzer.model.ThreadInfo ti : result.getThreadInfos()) {
+                threadStacks.add(ti.getStackTrace() != null ? ti.getStackTrace() : "");
+            }
+        }
+        model.addAttribute("threadStacks", threadStacks);
+
         return "analyze";
     }
 
@@ -218,10 +262,13 @@ public class HeapDumpController {
     @GetMapping("/delete/{filename:.+}")
     public String deleteFile(@PathVariable String filename,
                              RedirectAttributes redirectAttributes) {
+        logger.info("[Delete] Request received: filename={}", filename);
         try {
             analyzerService.deleteFile(filename);
+            logger.info("[Delete] Success: {}", filename);
             redirectAttributes.addFlashAttribute("success", "Deleted: " + filename);
         } catch (IOException e) {
+            logger.error("[Delete] Failed for '{}': {}", filename, e.getMessage());
             redirectAttributes.addFlashAttribute("error", "Delete failed: " + e.getMessage());
         }
         return "redirect:/";
@@ -248,6 +295,66 @@ public class HeapDumpController {
     public ResponseEntity<String> topComponentsHtml(@PathVariable String filename) {
         HeapAnalysisResult r = analyzerService.getCachedResult(filename);
         return htmlResponse(r != null ? r.getTopComponentsHtml() : null);
+    }
+
+    // ── Top Component 상세 HTML ──────────────────────────────────
+
+    @GetMapping("/report/{filename:.+}/component-detail")
+    @ResponseBody
+    public ResponseEntity<String> componentDetailHtml(
+            @PathVariable String filename,
+            @RequestParam String className,
+            @RequestParam(defaultValue = "-1") int index) {
+        HeapAnalysisResult r = analyzerService.getCachedResult(filename);
+        if (r == null || r.getComponentDetailHtmlMap() == null) {
+            logger.warn("[ComponentDetail] Not found: file={}, className={}, index={}, reason={}",
+                    filename, className, index,
+                    r == null ? "no cached result" : "componentDetailHtmlMap is null");
+            return ResponseEntity.notFound().build();
+        }
+
+        logger.debug("[ComponentDetail] Request: file={}, className={}, index={}, mapKeys={}",
+                filename, className, index, r.getComponentDetailHtmlMap().keySet());
+
+        // index 기반 키로 먼저 조회: "className#index"
+        if (index >= 0) {
+            String key = className + "#" + index;
+            String html = r.getComponentDetailHtmlMap().get(key);
+            if (html != null && !html.isBlank()) return htmlResponse(html);
+        }
+
+        // 키에 className이 포함된 첫 번째 항목 매칭
+        for (Map.Entry<String, String> e : r.getComponentDetailHtmlMap().entrySet()) {
+            String mapKey = e.getKey().contains("#")
+                    ? e.getKey().substring(0, e.getKey().lastIndexOf('#'))
+                    : e.getKey();
+            if (mapKey.equals(className)) {
+                return htmlResponse(e.getValue());
+            }
+        }
+
+        logger.warn("[ComponentDetail] Detail not found: file={}, className={}, index={}, availableKeys={}",
+                filename, className, index, r.getComponentDetailHtmlMap().keySet());
+        return ResponseEntity.notFound().build();
+    }
+
+    @GetMapping("/report/{filename:.+}/component-list")
+    @ResponseBody
+    public ResponseEntity<List<String>> componentList(@PathVariable String filename) {
+        HeapAnalysisResult r = analyzerService.getCachedResult(filename);
+        if (r == null || r.getComponentDetailHtmlMap() == null)
+            return ResponseEntity.ok(Collections.emptyList());
+        return ResponseEntity.ok(new ArrayList<>(r.getComponentDetailHtmlMap().keySet()));
+    }
+
+    // ── Thread Stacks API ──────────────────────────────────────────
+
+    @GetMapping(value = "/report/{filename:.+}/thread-stacks", produces = MediaType.TEXT_PLAIN_VALUE)
+    @ResponseBody
+    public ResponseEntity<String> threadStacks(@PathVariable String filename) {
+        HeapAnalysisResult r = analyzerService.getCachedResult(filename);
+        if (r == null || r.getThreadStacksText() == null) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(r.getThreadStacksText());
     }
 
     // ── [NEW] Compare ────────────────────────────────────────────

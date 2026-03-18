@@ -25,7 +25,7 @@
                       border-radius: 6px; background: transparent; color: #6B7280;
                       cursor: pointer; text-decoration: none; display: inline-block; }
         .topbar-btn:hover { background: #F9FAFB; }
-        .app-layout { display: grid; grid-template-columns: 268px 1fr;
+        .app-layout { display: grid; grid-template-columns: 300px 1fr;
                       min-height: 100vh; padding-top: 52px; }
         .sidebar { background: #fff; border-right: 1px solid #E5E7EB;
                    display: flex; flex-direction: column;
@@ -49,14 +49,27 @@
         .upload-pw-bar { height: 100%; background: #2563EB; border-radius: 4px; width: 0%; transition: width .3s; }
         .upload-pw-lbl { font-size: 11px; color: #6B7280; margin-top: 4px; text-align: center; }
         .file-item { display: flex; align-items: center; gap: 8px; padding: 9px 10px;
-                     border-radius: 8px; border: 1px solid #E5E7EB; background: #F9FAFB; margin-bottom: 6px; }
-        .file-item:hover { border-color: #93C5FD; background: #EFF6FF; }
+                     border-radius: 8px; border: 1px solid #E5E7EB; background: #F9FAFB; margin-bottom: 6px;
+                     position: relative; }
+        .file-item:hover { border-color: #93C5FD; background: #EFF6FF; z-index: 10; }
         .ext-badge { width: 32px; height: 38px; background: #DBEAFE; border-radius: 4px;
                      display: flex; align-items: center; justify-content: center;
                      font-size: 9px; font-weight: 700; color: #1D4ED8; flex-shrink: 0; }
         .file-info { flex: 1; overflow: hidden; min-width: 0; }
         .fname { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .fmeta { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+        .file-item .fname-tooltip {
+            display: none; position: absolute; left: 0; top: 100%; margin-top: 4px;
+            background: #1e293b; color: #fff; font-size: 12px; font-weight: 500;
+            padding: 10px 14px; border-radius: 8px; white-space: nowrap; z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,.25); pointer-events: none;
+            max-width: 420px;
+        }
+        .file-item:hover .fname-tooltip { display: block; }
+        .fname-tooltip .tt-row { display: flex; gap: 8px; margin-bottom: 3px; }
+        .fname-tooltip .tt-row:last-child { margin-bottom: 0; }
+        .fname-tooltip .tt-label { color: #94a3b8; flex-shrink: 0; min-width: 50px; }
+        .fname-tooltip .tt-val { color: #fff; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
         .file-btns { display: flex; gap: 3px; flex-shrink: 0; }
         .fb { width: 26px; height: 26px; border: 1px solid #E5E7EB; border-radius: 5px;
               background: #fff; cursor: pointer; display: flex; align-items: center;
@@ -64,6 +77,9 @@
         .fb:hover { border-color: #93C5FD; }
         .fb.p  { background: #2563EB; border-color: #2563EB; }
         .fb.p:hover { background: #1D4ED8; }
+        .fb.v  { background: #059669; border-color: #059669; }
+        .fb.v:hover { background: #047857; }
+        .fb.v svg { stroke: white; }
         .fb.d:hover { border-color: #FCA5A5; background: #FEF2F2; }
         .fb svg { width: 12px; height: 12px; stroke: #6B7280; fill: none; stroke-width: 1.5; }
         .fb.p svg { stroke: white; }
@@ -140,7 +156,9 @@
         .modal-ov { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45);
                     z-index: 200; align-items: center; justify-content: center; }
         .modal-ov.open { display: flex; }
-        .modal { background: #fff; border-radius: 12px; padding: 24px; width: 440px; }
+        .modal { background: #fff; border-radius: 12px; padding: 24px; width: 440px;
+                 box-shadow: 0 12px 40px rgba(0,0,0,.2); animation: modalIn .2s ease; }
+        @keyframes modalIn { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:translateY(0); } }
         .modal-ttl { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
         .modal-close { float: right; background: none; border: none; font-size: 22px;
                        cursor: pointer; color: #9CA3AF; line-height: 1; margin-top: -4px; }
@@ -154,6 +172,43 @@
         .btn-s { padding: 8px 18px; background: #fff; color: #374151;
                  border: 1px solid #E5E7EB; border-radius: 6px; font-size: 13px; cursor: pointer; }
         .no-data { text-align: center; padding: 20px; color: #9CA3AF; font-size: 12px; }
+        @media (min-width: 1024px) {
+            body { font-size: 16px; line-height: 1.6; }
+            .topbar-title { font-size: 18px; }
+            .topbar-badge { font-size: 13px; }
+            .topbar-btn { font-size: 14px; padding: 6px 14px; }
+            .s-title { font-size: 12px; }
+            .upload-zone-title { font-size: 15px; }
+            .upload-zone-sub { font-size: 13px; }
+            .upload-zone-btn { font-size: 14px; padding: 9px; }
+            .fname { font-size: 14px; }
+            .fmeta { font-size: 13px; }
+            .setting-label { font-size: 14px; }
+            .setting-desc { font-size: 12px; }
+            .stat-lbl { font-size: 13px; }
+            .stat-val { font-size: 26px; }
+            .stat-sub { font-size: 13px; }
+            .panel-ttl { font-size: 15px; }
+            .hname { font-size: 14px; }
+            .hsize { font-size: 13px; }
+            .hdate { font-size: 13px; }
+            .hbadge { font-size: 12px; }
+            .qa-t { font-size: 14px; }
+            .qa-d { font-size: 13px; }
+            .welcome-title { font-size: 22px; }
+            .welcome-sub { font-size: 15px; }
+            .welcome-btn { font-size: 16px; padding: 12px 28px; }
+            .modal-ttl { font-size: 18px; }
+            .modal-desc { font-size: 14px; }
+            .modal-lbl { font-size: 14px; }
+            .modal-sel { font-size: 15px; }
+            .btn-p { font-size: 15px; padding: 10px 22px; }
+            .btn-s { font-size: 15px; padding: 10px 22px; }
+            .no-data { font-size: 14px; }
+            .empty-files { font-size: 14px; }
+            .compare-btn { font-size: 14px; }
+            .alert { font-size: 15px; }
+        }
         @media (max-width: 900px) {
             .app-layout { grid-template-columns: 1fr; }
             .sidebar { display: none; }
@@ -219,15 +274,34 @@
                         <span th:text="${file.formattedDate}">03-18</span>
                     </div>
                 </div>
+                <div class="fname-tooltip">
+                    <div class="tt-row"><span class="tt-label">File</span><span class="tt-val" th:text="${file.name}">dump.hprof</span></div>
+                    <div class="tt-row"><span class="tt-label">Size</span><span class="tt-val" th:text="${file.formattedSize}">157 MB</span></div>
+                    <div class="tt-row"><span class="tt-label">Date</span><span class="tt-val" th:text="${file.formattedDate}">03-18</span></div>
+                    <div class="tt-row"><span class="tt-label">Status</span>
+                        <span class="tt-val" th:if="${analyzedFiles.contains(file.name)}" style="color:#6ee7b7">Analyzed</span>
+                        <span class="tt-val" th:if="${!analyzedFiles.contains(file.name)}" style="color:#fca5a5">Not analyzed</span>
+                    </div>
+                </div>
                 <div class="file-btns">
-                    <a th:href="@{/analyze/{f}(f=${file.name})}" class="fb p" title="Analyze">
+                    <!-- View: 분석 완료 -->
+                    <a th:if="${analyzedFiles.contains(file.name)}"
+                       th:href="@{/analyze/result/{f}(f=${file.name})}" class="fb v" title="View Result">
+                        <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
+                    </a>
+                    <!-- Analyze: 미분석 -->
+                    <a th:if="${!analyzedFiles.contains(file.name)}"
+                       th:href="@{/analyze/{f}(f=${file.name})}" class="fb p" title="Analyze">
                         <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                     </a>
-                    <a th:href="@{/download/{f}(f=${file.name})}" class="fb" title="Download">
+                    <a href="#" class="fb dl-btn" title="Download"
+                       th:data-name="${file.name}" th:data-size="${file.formattedSize}"
+                       onclick="showDownloadModal(this.dataset.name,this.dataset.size);return false;">
                         <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
                     </a>
-                    <a th:href="@{/delete/{f}(f=${file.name})}" class="fb d" title="Delete"
-                       onclick="return confirm('Delete this file and its cache?')">
+                    <a href="#" class="fb d" title="Delete"
+                       th:data-name="${file.name}" th:data-url="@{/delete/{f}(f=${file.name})}"
+                       onclick="showDeleteModal(this.dataset.name,this.dataset.url);return false;">
                         <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                     </a>
                 </div>
@@ -244,7 +318,7 @@
                 <div>
                     <input type="checkbox" class="tog" id="togUR"
                            th:checked="${matKeepUnreachable}"
-                           onchange="saveSetting('keepUnreachable',this.checked)">
+                           onchange="confirmKeepUnreachable(this)">
                     <label class="tog-track" for="togUR"></label>
                 </div>
             </div>
@@ -255,7 +329,7 @@
                 </div>
                 <div>
                     <input type="checkbox" class="tog" id="togAA"
-                           onchange="saveSetting('autoAnalyze',this.checked)">
+                           onchange="confirmAutoAnalyze(this)">
                     <label class="tog-track" for="togAA"></label>
                 </div>
             </div>
@@ -433,13 +507,164 @@
     </div>
 </div>
 
+<div class="modal-ov" id="exportHistoryModal" onclick="if(event.target===this)closeExportHistory()">
+    <div class="modal">
+        <div class="modal-ttl">
+            Export History
+            <button class="modal-close" onclick="closeExportHistory()">&#215;</button>
+        </div>
+        <div class="modal-desc">Analysis history will be exported as a JSON file.</div>
+        <div style="background:#f9fafb;border-radius:8px;padding:12px 16px;margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
+                <span style="color:#6b7280">Filename</span>
+                <span style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px">heap-history.json</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
+                <span style="color:#6b7280">Files</span>
+                <span id="exportHistoryCount" style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px" th:text="${fileCount}">0</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:12px">
+                <span style="color:#6b7280">Format</span>
+                <span style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px">JSON</span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-s" onclick="closeExportHistory()">Cancel</button>
+            <button class="btn-p" onclick="doExportHistory()">Download</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-ov" id="downloadModal" onclick="if(event.target===this)closeDownloadModal()">
+    <div class="modal">
+        <div class="modal-ttl">
+            Download File
+            <button class="modal-close" onclick="closeDownloadModal()">&#215;</button>
+        </div>
+        <div class="modal-desc">Heap dump file will be downloaded to your device.</div>
+        <div style="background:#f9fafb;border-radius:8px;padding:12px 16px;margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
+                <span style="color:#6b7280">Filename</span>
+                <span id="dlModalFilename" style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">-</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:12px">
+                <span style="color:#6b7280">File Size</span>
+                <span id="dlModalSize" style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px">-</span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-s" onclick="closeDownloadModal()">Cancel</button>
+            <button class="btn-p" id="dlModalBtn" onclick="doDownload()">Download</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-ov" id="clearCacheModal" onclick="if(event.target===this)closeClearCacheModal()">
+    <div class="modal">
+        <div class="modal-ttl">
+            Clear All Cache
+            <button class="modal-close" onclick="closeClearCacheModal()">&#215;</button>
+        </div>
+        <div class="modal-desc">All cached analysis results will be permanently deleted. You will need to re-analyze each heap dump file.</div>
+        <div style="background:#fef2f2;border-radius:8px;padding:12px 16px;margin-bottom:14px;border-left:4px solid #EF4444">
+            <div style="font-size:13px;color:#7f1d1d;display:flex;align-items:center;gap:8px">
+                <span style="font-size:18px">&#9888;</span>
+                <span>This action cannot be undone.</span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-s" onclick="closeClearCacheModal()">Cancel</button>
+            <button class="btn-p" style="background:#EF4444" onmouseover="this.style.background='#DC2626'" onmouseout="this.style.background='#EF4444'" onclick="doClearAllCache()">Clear All</button>
+        </div>
+    </div>
+</div>
+
+<!-- Keep Unreachable Objects 경고 모달 -->
+<div class="modal-ov" id="keepUnreachableModal" onclick="if(event.target===this)closeKeepUnreachableModal()">
+    <div class="modal">
+        <div class="modal-ttl">
+            Keep Unreachable Objects
+            <button class="modal-close" onclick="closeKeepUnreachableModal()">&#215;</button>
+        </div>
+        <div class="modal-desc">이 옵션을 비활성화하면 GC에 의해 수집 가능한(unreachable) 객체가 분석에서 제외됩니다.</div>
+        <div style="background:#fffbeb;border-radius:8px;padding:12px 16px;margin-bottom:14px;border-left:4px solid #F59E0B">
+            <div style="font-size:13px;color:#92400e;line-height:1.7">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span style="font-size:18px">&#9888;</span>
+                    <strong>메모리 분석 정확도가 저하될 수 있습니다.</strong>
+                </div>
+                <ul style="margin:0;padding-left:20px">
+                    <li>메모리 누수(Leak) 의심 객체를 탐지하지 못할 수 있습니다.</li>
+                    <li>불필요한 메모리 사용 패턴을 놓칠 수 있습니다.</li>
+                    <li>Heap 사용량이 실제보다 적게 보고될 수 있습니다.</li>
+                </ul>
+            </div>
+        </div>
+        <div style="font-size:12px;color:#6b7280;margin-bottom:14px">변경 사항은 다음 분석부터 적용됩니다.</div>
+        <div class="modal-footer">
+            <button class="btn-s" onclick="closeKeepUnreachableModal()">Cancel</button>
+            <button class="btn-p" style="background:#F59E0B" onmouseover="this.style.background='#D97706'" onmouseout="this.style.background='#F59E0B'" onclick="doDisableKeepUnreachable()">Disable</button>
+        </div>
+    </div>
+</div>
+
+<!-- Auto-Analyze 경고 모달 -->
+<div class="modal-ov" id="autoAnalyzeModal" onclick="if(event.target===this)closeAutoAnalyzeModal()">
+    <div class="modal">
+        <div class="modal-ttl">
+            Auto-Analyze on Upload
+            <button class="modal-close" onclick="closeAutoAnalyzeModal()">&#215;</button>
+        </div>
+        <div class="modal-desc">업로드 시 자동으로 MAT CLI 분석이 실행됩니다.</div>
+        <div style="background:#fffbeb;border-radius:8px;padding:12px 16px;margin-bottom:14px;border-left:4px solid #F59E0B">
+            <div style="font-size:13px;color:#92400e;display:flex;align-items:center;gap:8px">
+                <span style="font-size:18px">&#9888;</span>
+                <span>이 기능은 시스템에 부하를 줄 수 있습니다. 진행하시겠습니까?</span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-s" onclick="closeAutoAnalyzeModal()">Cancel</button>
+            <button class="btn-p" onclick="doEnableAutoAnalyze()">Enable</button>
+        </div>
+    </div>
+</div>
+
+<!-- 파일 삭제 확인 모달 -->
+<div class="modal-ov" id="deleteModal" onclick="if(event.target===this)closeDeleteModal()">
+    <div class="modal">
+        <div class="modal-ttl">
+            Delete File
+            <button class="modal-close" onclick="closeDeleteModal()">&#215;</button>
+        </div>
+        <div class="modal-desc">선택한 파일과 관련된 모든 캐시 데이터가 삭제됩니다.</div>
+        <div style="background:#f9fafb;border-radius:8px;padding:12px 16px;margin-bottom:14px">
+            <div style="display:flex;justify-content:space-between;font-size:12px">
+                <span style="color:#6b7280">Filename</span>
+                <span id="delModalFilename" style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">-</span>
+            </div>
+        </div>
+        <div style="background:#fef2f2;border-radius:8px;padding:12px 16px;margin-bottom:14px;border-left:4px solid #EF4444">
+            <div style="font-size:13px;color:#7f1d1d;display:flex;align-items:center;gap:8px">
+                <span style="font-size:18px">&#9888;</span>
+                <span>This action cannot be undone.</span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn-s" onclick="closeDeleteModal()">Cancel</button>
+            <button class="btn-p" id="delModalBtn" style="background:#EF4444" onmouseover="this.style.background='#DC2626'" onmouseout="this.style.background='#EF4444'">Delete</button>
+        </div>
+    </div>
+</div>
+
 <script>
 const fileInput = document.getElementById('fileInput');
 const uploadForm = document.getElementById('uploadForm');
 
 fileInput && fileInput.addEventListener('change', e => {
     const f = e.target.files[0];
-    if (f) doUpload(f);
+    if (!f) return;
+    if (!validateFileExt(f)) return;
+    doUpload(f);
 });
 
 const zone = document.getElementById('uploadZone');
@@ -450,12 +675,52 @@ if (zone) {
         e.preventDefault(); zone.style.borderColor='#93C5FD';
         const f = e.dataTransfer.files[0];
         if (!f) return;
-        const ext = f.name.split('.').pop().toLowerCase();
-        if (!['hprof','bin','dump'].includes(ext)) { toast('Invalid file type','error'); return; }
+        if (!validateFileExt(f)) return;
         try { const dt=new DataTransfer(); dt.items.add(f); fileInput.files=dt.files; } catch(_){}
         doUpload(f);
     });
 }
+
+function validateFileExt(file) {
+    const allowed = ['hprof','bin','dump'];
+    const ext = file.name.split('.').pop().toLowerCase();
+    if (allowed.includes(ext)) return true;
+    // 파일 input 초기화
+    if (fileInput) fileInput.value = '';
+    toast('Unsupported file type: .' + ext + '\nAllowed: .hprof, .bin, .dump', 'error');
+    // 확장자 경고 모달 표시
+    showExtWarning(file.name, ext);
+    return false;
+}
+
+function showExtWarning(filename, ext) {
+    let overlay = document.getElementById('extWarningOverlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'extWarningOverlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    overlay.innerHTML =
+        '<div style="background:#fff;border-radius:12px;padding:28px 32px;max-width:440px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,.2)">'
+        + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
+        + '<div style="width:40px;height:40px;border-radius:50%;background:#FEE2E2;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">&#9888;</div>'
+        + '<h3 style="font-size:16px;font-weight:700;color:#1F2937;margin:0">Unsupported File Type</h3>'
+        + '</div>'
+        + '<p style="font-size:13px;color:#374151;margin-bottom:12px">Selected file: <strong>' + escapeHtml(filename) + '</strong></p>'
+        + '<p style="font-size:13px;color:#DC2626;margin-bottom:16px">Extension <strong>.' + escapeHtml(ext) + '</strong> is not supported for heap dump analysis.</p>'
+        + '<div style="background:#F9FAFB;border-radius:8px;padding:12px 16px;margin-bottom:20px">'
+        + '<div style="font-size:11px;font-weight:700;color:#6B7280;text-transform:uppercase;margin-bottom:6px">Supported Formats</div>'
+        + '<div style="display:flex;gap:8px">'
+        + '<span style="padding:4px 10px;background:#DBEAFE;color:#1D4ED8;border-radius:4px;font-size:12px;font-weight:600">.hprof</span>'
+        + '<span style="padding:4px 10px;background:#DBEAFE;color:#1D4ED8;border-radius:4px;font-size:12px;font-weight:600">.bin</span>'
+        + '<span style="padding:4px 10px;background:#DBEAFE;color:#1D4ED8;border-radius:4px;font-size:12px;font-weight:600">.dump</span>'
+        + '</div></div>'
+        + '<button onclick="this.closest(\'#extWarningOverlay\').remove()" style="width:100%;padding:10px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">OK</button>'
+        + '</div>';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+}
+
+function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
 function doUpload(file) {
     if (file.size > 2*1024*1024*1024) { toast('File exceeds 2 GB limit','error'); return; }
@@ -479,6 +744,48 @@ function doUpload(file) {
     xhr.addEventListener('error', () => toast('Upload failed','error'));
     xhr.open('POST','/upload');
     xhr.send(new FormData(uploadForm));
+}
+
+function confirmKeepUnreachable(el) {
+    if (!el.checked) {
+        el.checked = true;
+        document.getElementById('keepUnreachableModal').classList.add('open');
+    } else {
+        saveSetting('keepUnreachable', true);
+    }
+}
+function closeKeepUnreachableModal() {
+    document.getElementById('keepUnreachableModal').classList.remove('open');
+}
+function doDisableKeepUnreachable() {
+    closeKeepUnreachableModal();
+    document.getElementById('togUR').checked = false;
+    saveSetting('keepUnreachable', false);
+}
+
+function confirmAutoAnalyze(el) {
+    if (el.checked) {
+        el.checked = false;
+        document.getElementById('autoAnalyzeModal').classList.add('open');
+    } else {
+        saveSetting('autoAnalyze', false);
+    }
+}
+function closeAutoAnalyzeModal() {
+    document.getElementById('autoAnalyzeModal').classList.remove('open');
+}
+function doEnableAutoAnalyze() {
+    closeAutoAnalyzeModal();
+    document.getElementById('togAA').checked = true;
+    saveSetting('autoAnalyze', true);
+}
+function showDeleteModal(filename, url) {
+    document.getElementById('delModalFilename').textContent = filename;
+    document.getElementById('delModalBtn').onclick = function() { location.href = url; };
+    document.getElementById('deleteModal').classList.add('open');
+}
+function closeDeleteModal() {
+    document.getElementById('deleteModal').classList.remove('open');
 }
 
 function saveSetting(k,v) {
@@ -508,7 +815,29 @@ function startCompare() {
     location.href = '/compare?base='+encodeURIComponent(b)+'&target='+encodeURIComponent(t);
 }
 
+var _dlFilename = '';
+function showDownloadModal(filename, size) {
+    _dlFilename = filename;
+    document.getElementById('dlModalFilename').textContent = filename;
+    document.getElementById('dlModalSize').textContent = size;
+    document.getElementById('downloadModal').classList.add('open');
+}
+function closeDownloadModal() {
+    document.getElementById('downloadModal').classList.remove('open');
+}
+function doDownload() {
+    closeDownloadModal();
+    window.location.href = '/download/' + encodeURIComponent(_dlFilename);
+}
+
 function exportHistory() {
+    document.getElementById('exportHistoryModal').classList.add('open');
+}
+function closeExportHistory() {
+    document.getElementById('exportHistoryModal').classList.remove('open');
+}
+function doExportHistory() {
+    closeExportHistory();
     fetch('/api/history').then(r=>r.json()).then(d=>{
         const a=Object.assign(document.createElement('a'),{
             href: URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'})),
@@ -518,7 +847,13 @@ function exportHistory() {
     }).catch(()=>toast('No history available','error'));
 }
 function clearAllCache() {
-    if (!confirm('Clear all cached analysis results?')) return;
+    document.getElementById('clearCacheModal').classList.add('open');
+}
+function closeClearCacheModal() {
+    document.getElementById('clearCacheModal').classList.remove('open');
+}
+function doClearAllCache() {
+    closeClearCacheModal();
     fetch('/api/cache/clear',{method:'POST'})
         .then(r=>r.ok?location.reload():toast('Failed','error'))
         .catch(()=>toast('Error','error'));

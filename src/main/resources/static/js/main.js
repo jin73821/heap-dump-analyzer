@@ -11,7 +11,19 @@ document.addEventListener('DOMContentLoaded', function () {
     if (fileInput && fileNameSpan) {
         fileInput.addEventListener('change', function (e) {
             const file = e.target.files[0];
-            fileNameSpan.textContent = file ? file.name : 'Choose a file or drag it here';
+            if (file) {
+                const ext = file.name.split('.').pop().toLowerCase();
+                const allowed = ['hprof', 'bin', 'dump'];
+                if (!allowed.includes(ext)) {
+                    fileNameSpan.textContent = 'Choose a file or drag it here';
+                    fileInput.value = '';
+                    showToast('Unsupported file type: .' + ext + '. Allowed: .hprof, .bin, .dump', 'error');
+                    return;
+                }
+                fileNameSpan.textContent = file.name;
+            } else {
+                fileNameSpan.textContent = 'Choose a file or drag it here';
+            }
         });
     }
 
@@ -71,6 +83,14 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!file) {
                 e.preventDefault();
                 showToast('Please select a file to upload.', 'error');
+                return;
+            }
+
+            // 확장자 검증
+            const ext = file.name.split('.').pop().toLowerCase();
+            if (!['hprof', 'bin', 'dump'].includes(ext)) {
+                e.preventDefault();
+                showToast('Unsupported file type: .' + ext + '. Allowed: .hprof, .bin, .dump', 'error');
                 return;
             }
 
