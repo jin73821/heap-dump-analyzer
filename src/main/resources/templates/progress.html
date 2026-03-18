@@ -166,15 +166,18 @@
             padding: 16px;
             border-radius: 8px;
             height: 240px;
-            overflow-y: scroll;      /* scroll 고정 — auto는 reflow 유발 */
+            overflow-y: scroll;        /* auto → scroll: scrollHeight 변화 시 reflow 억제 */
             overflow-x: hidden;
             white-space: pre-wrap;
             word-break: break-all;
             display: none;
-            will-change: scroll-position;  /* GPU 레이어 분리 */
-            contain: content;              /* 외부 레이아웃 영향 차단 */
+            /* 깜빡임 방지 핵심 3종 */
+            contain: strict;           /* 레이아웃 격리: 내부 변화가 외부 reflow 유발 안 함 */
+            will-change: scroll-position; /* 스크롤을 GPU 레이어로 분리 */
+            transform: translateZ(0);  /* 컴포지터 레이어 강제 생성 */
         }
         .log-console.visible { display: block; }
+        .log-line-new { color: #7DD3FC; }
 
         /* 완료 배너 */
         .complete-banner {
@@ -377,6 +380,13 @@
         logVisible = !logVisible;
         logConsole.classList.toggle('visible', logVisible);
         document.querySelector('.log-toggle').textContent = logVisible ? '로그 숨기기 ▲' : '로그 보기 ▼';
+        if (logVisible) {
+            // 버퍼에 남은 것 즉시 반영
+            if (logBuffer.length) { clearTimeout(logFlushId); logFlushId = null; flushLog(); }
+            // scrollHeight 읽기 없이 바닥으로
+            logConsole.scrollTop = 999999;
+            autoScroll = true;
+        }
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -434,67 +444,76 @@
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // 로그 버퍼링: SSE 이벤트마다 DOM 조작 대신 배열에 모아
-    // 100ms마다 한 번에 반영 (렌더링 횟수 대폭 감소)
+    // 로그 렌더링 — 깜빡임 완전 제거 버전
+    //
+    // 핵심 원칙:
+    //   1) scrollHeight 읽기 금지 → scrollTop = 999999 (브라우저가 clamp)
+    //   2) 버퍼는 logVisible 무관하게 항상 누적 (열면 이전 로그 보임)
+    //   3) 150ms 타이머: DOM append는 한 프레임에 한 번
+    //   4) 노드 제거 시 실제 줄 수 정확히 카운트 (근사값 오차 없음)
+    //   5) contain:strict + will-change로 reflow 외부 전파 차단
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    const LOG_FLUSH_INTERVAL = 100; // ms
-    const MAX_LOG_LINES      = 300; // DOM 최대 줄 수
-    const MAX_LINE_LEN       = 200; // 줄당 최대 문자 수
-    let   logBuffer          = [];
-    let   logLineCount       = 0;
-    let   logFlushTimer      = null;
-    let   scrollPending      = false;
+    const LOG_FLUSH_MS  = 150;   // 플러시 간격 (ms)
+    const MAX_LOG_LINES = 500;   // DOM 최대 줄 수
+    const MAX_LINE_LEN  = 200;   // 줄당 최대 글자
+    const TRIM_TO_LINES = 300;   // 초과 시 이 줄 수로 줄임
+
+    let logBuffer    = [];       // 미반영 줄 목록
+    let logLineCount = 0;        // 현재 DOM 줄 수 (정확히 추적)
+    let logFlushId   = null;     // setTimeout ID
+    let autoScroll   = true;     // 사용자가 위로 올리면 false
+
+    // 사용자가 직접 스크롤하면 자동 스크롤 중단
+    logConsole.addEventListener('scroll', () => {
+        // 콘솔 바닥에서 40px 이내이면 자동 스크롤 유지
+        // scrollHeight 읽기 없이: scrollTop이 매우 크면 바닥 근처
+        // → 스크롤바가 맨 위에 있을 때만 자동 스크롤 끔
+        autoScroll = logConsole.scrollTop > 50;
+    }, { passive: true });
 
     function appendLog(line) {
-        // 너무 긴 줄은 잘라서 버퍼에 추가
         const trimmed = line.length > MAX_LINE_LEN
-            ? line.substring(0, MAX_LINE_LEN) + '…'
+            ? line.slice(0, MAX_LINE_LEN) + '…'
             : line;
         logBuffer.push(trimmed);
 
-        // 타이머가 없으면 새로 등록 (이미 있으면 무시)
-        if (!logFlushTimer) {
-            logFlushTimer = setTimeout(flushLog, LOG_FLUSH_INTERVAL);
+        if (!logFlushId) {
+            logFlushId = setTimeout(flushLog, LOG_FLUSH_MS);
         }
     }
 
     function flushLog() {
-        logFlushTimer = null;
+        logFlushId = null;
         if (!logBuffer.length) return;
 
-        const batchText  = logBuffer.join('\n') + '\n';
-        const batchLines = logBuffer.length;
-        logBuffer = [];
-
-        // ── DOM 삽입: DocumentFragment로 reflow 최소화 ────
-        const frag = document.createDocumentFragment();
-        frag.appendChild(document.createTextNode(batchText));
-        logConsole.appendChild(frag);
-        logLineCount += batchLines;
-
-        // ── 오래된 노드 제거: 실제 줄 수 기반 ───────────
-        while (logLineCount > MAX_LOG_LINES && logConsole.firstChild) {
-            const node      = logConsole.firstChild;
-            const nodeText  = node.nodeValue || node.textContent || '';
-            const nodeLines = (nodeText.match(/\n/g) || []).length || 1;
-            logConsole.removeChild(node);
-            logLineCount = Math.max(0, logLineCount - nodeLines);
+        // ── 줄 수 초과 → 앞쪽 노드 정확히 제거 ─────────────
+        const incoming = logBuffer.length;
+        if (logLineCount + incoming > MAX_LOG_LINES) {
+            const removeCount = (logLineCount + incoming) - TRIM_TO_LINES;
+            let removed = 0;
+            while (removed < removeCount && logConsole.firstChild) {
+                const node = logConsole.firstChild;
+                // 실제 줄 수 = 텍스트 내 
+ 개수 + 1
+                const nodeLines = node.nodeType === Node.TEXT_NODE
+                    ? (node.nodeValue.match(/\n/g) || []).length
+                    : 1;
+                logConsole.removeChild(node);
+                removed    += nodeLines;
+                logLineCount = Math.max(0, logLineCount - nodeLines);
+            }
         }
 
-        // ── 스크롤: 사용자가 직접 위로 올리지 않았을 때만 ──
-        // scrollHeight를 직접 읽지 않고 scrollTop을 큰 값으로 설정
-        // → 브라우저가 자동으로 최대값으로 clamp → reflow 없음
-        if (!scrollPending) {
-            scrollPending = true;
-            requestAnimationFrame(() => {
-                // 사용자가 스크롤을 올려놓은 경우(200px 이상 위) 자동 스크롤 안 함
-                const distFromBottom = logConsole.scrollHeight
-                    - logConsole.scrollTop - logConsole.clientHeight;
-                if (distFromBottom < 200) {
-                    logConsole.scrollTop = 999999; // clamp to max — scrollHeight 읽기 없음
-                }
-                scrollPending = false;
-            });
+        // ── 버퍼를 단일 텍스트 노드로 append (reflow 1회) ───
+        const chunk = logBuffer.join('\n') + '\n';
+        logConsole.appendChild(document.createTextNode(chunk));
+        logLineCount += incoming;
+        logBuffer     = [];
+
+        // ── 스크롤: scrollHeight 읽기 없이 큰 값으로 설정 ───
+        // 브라우저가 자동으로 max(scrollHeight - clientHeight) 로 clamp
+        if (autoScroll && logVisible) {
+            logConsole.scrollTop = 999999;
         }
     }
 
@@ -509,9 +528,10 @@
 
         const DELAY = 3000;
         countdownFill.style.transition = 'width ' + (DELAY / 1000) + 's linear';
-        requestAnimationFrame(() => requestAnimationFrame(() => {
+        // rAF 단일 사용: transition 시작 전 width=100% 확정 후 다음 프레임에서 0%로 전환
+        requestAnimationFrame(() => {
             countdownFill.style.width = '0%';
-        }));
+        });
 
         let remaining = Math.ceil(DELAY / 1000);
         const timer = setInterval(() => {
@@ -573,8 +593,8 @@
                 });
             }
 
-            // 로그 버퍼에 추가 (콘솔 열려있을 때만)
-            if (logLine && logVisible) appendLog(logLine);
+            // 로그는 항상 버퍼링 (콘솔 열려있지 않아도 누적)
+            if (logLine) appendLog(logLine);
 
             if (status === 'COMPLETED') {
                 evtSource.close();
