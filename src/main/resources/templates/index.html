@@ -55,6 +55,13 @@
         .ext-badge { width: 32px; height: 38px; background: #DBEAFE; border-radius: 4px;
                      display: flex; align-items: center; justify-content: center;
                      font-size: 9px; font-weight: 700; color: #1D4ED8; flex-shrink: 0; }
+        .file-item.file-err { border-color: #FCA5A5; background: #FEF2F2; }
+        .file-item.file-err:hover { border-color: #F87171; background: #FEE2E2; }
+        .file-item.file-err .ext-badge { background: #FEE2E2; color: #DC2626; }
+        .file-item.file-err .fname { color: #DC2626; }
+        .fb.e  { background: #EF4444; border-color: #EF4444; }
+        .fb.e:hover { background: #DC2626; }
+        .fb.e svg { stroke: white; }
         .file-info { flex: 1; overflow: hidden; min-width: 0; }
         .fname { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .fmeta { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
@@ -108,14 +115,37 @@
                  border-left: 4px solid; font-size: 13px; }
         .alert-success { background: #D1FAE5; color: #065F46; border-color: #10B981; }
         .alert-error   { background: #FEE2E2; color: #7F1D1D; border-color: #EF4444; }
-        .stats-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
-                     gap: 12px; margin-bottom: 20px; }
-        .stat-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 14px 16px; }
-        .stat-lbl { font-size: 11px; color: #9CA3AF; margin-bottom: 5px; }
-        .stat-val { font-size: 22px; font-weight: 700; line-height: 1; }
-        .stat-sub { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+        .dashboard-top { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+        .dashboard-left { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .dashboard-right { display: flex; flex-direction: column; gap: 10px; }
+        .stats-bar { display: flex; align-items: center; gap: 0; background: #fff;
+                     border: 1px solid #E5E7EB; border-radius: 10px; padding: 10px 0;
+                     margin-bottom: 0; flex-wrap: wrap; }
+        .stat-item { flex: 1; display: flex; align-items: center; gap: 8px;
+                     padding: 2px 16px; border-right: 1px solid #F3F4F6; min-width: 0; }
+        .stat-item:last-child { border-right: none; }
+        .stat-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                     padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
+        .stat-icon { width: 32px; height: 32px; border-radius: 8px; display: flex;
+                     align-items: center; justify-content: center; flex-shrink: 0; }
+        .stat-icon svg { width: 16px; height: 16px; }
+        .si-blue { background: #EFF6FF; color: #2563EB; }
+        .si-gray { background: #F3F4F6; color: #6B7280; }
+        .si-green { background: #ECFDF5; color: #059669; }
+        .si-amber { background: #FFFBEB; color: #B45309; }
+        .stat-info { min-width: 0; }
+        .stat-val { font-size: 18px; font-weight: 700; line-height: 1.2; }
+        .stat-lbl { font-size: 10px; color: #9CA3AF; letter-spacing: 0.03em; }
         .c-blue { color: #2563EB; } .c-amber { color: #B45309; }
         .c-green { color: #059669; } .c-gray  { color: #6B7280; }
+        .progress-bar-wrap { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                             padding: 10px 16px; margin-bottom: 0; display: flex;
+                             align-items: center; gap: 12px; }
+        .progress-label { font-size: 11px; color: #6B7280; white-space: nowrap; font-weight: 500; }
+        .progress-track { flex: 1; height: 6px; background: #F3F4F6; border-radius: 3px; overflow: hidden; }
+        .progress-fill { height: 100%; border-radius: 3px; transition: width .3s ease;
+                         background: linear-gradient(90deg, #2563EB, #059669); }
+        .progress-pct { font-size: 12px; font-weight: 700; color: #1F2937; min-width: 36px; text-align: right; }
         .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
         .full { grid-column: 1 / -1; }
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px; }
@@ -130,6 +160,7 @@
         .hd-err  { background: #EF4444; }
         .hname { font-size: 12px; font-weight: 500; flex: 1; min-width: 0;
                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .hname-err { color: #DC2626; }
         .hsize { font-size: 11px; color: #9CA3AF; flex-shrink: 0; }
         .hdate { font-size: 11px; color: #9CA3AF; flex-shrink: 0; }
         .hbadge { font-size: 10px; padding: 2px 7px; border-radius: 20px;
@@ -137,6 +168,21 @@
         .hb-ok   { background: #D1FAE5; color: #065F46; }
         .hb-warn { background: #FEF3C7; color: #92400E; }
         .hb-err  { background: #FEE2E2; color: #7F1D1D; }
+        .hb-analyze { background: #DBEAFE; color: #1E40AF; text-decoration: none; }
+        .more-link { font-size: 12px; color: #2563EB; text-decoration: none; font-weight: 500; }
+        .more-link:hover { text-decoration: underline; }
+        .ra-item { padding: 10px 0; border-bottom: 1px solid #F3F4F6; }
+        .ra-item:last-child { border-bottom: none; }
+        .ra-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+        .ra-name { font-size: 12px; font-weight: 600; flex: 1; min-width: 0;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ra-badge { font-size: 10px; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; font-weight: 500; }
+        .ra-ok { background: #D1FAE5; color: #065F46; }
+        .ra-err { background: #FEE2E2; color: #7F1D1D; }
+        .ra-meta { display: flex; gap: 12px; font-size: 11px; color: #9CA3AF; padding-left: 16px; }
+        .ra-meta span { display: flex; align-items: center; gap: 3px; }
+        .ra-meta svg { width: 12px; height: 12px; stroke: #9CA3AF; fill: none; stroke-width: 1.5; }
+        .ra-empty { font-size: 12px; color: #9CA3AF; text-align: center; padding: 24px 0; }
         .quick-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
         .qa { padding: 12px; border: 1px solid #E5E7EB; border-radius: 8px;
               background: #F9FAFB; cursor: pointer; text-align: left; }
@@ -172,6 +218,130 @@
         .btn-s { padding: 8px 18px; background: #fff; color: #374151;
                  border: 1px solid #E5E7EB; border-radius: 6px; font-size: 13px; cursor: pointer; }
         .no-data { text-align: center; padding: 20px; color: #9CA3AF; font-size: 12px; }
+
+        /* ── Queue Status Panel ────────────────────── */
+        .queue-panel {
+            background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+            padding: 14px 16px; margin-bottom: 0; display: none; flex: 1;
+        }
+        .queue-panel.visible { display: flex; flex-direction: column; }
+        .queue-panel-hdr {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .queue-panel-ttl {
+            font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px;
+        }
+        .queue-dot { width: 8px; height: 8px; border-radius: 50%; background: #7C3AED;
+                     animation: queueDotPulse 1.5s infinite; flex-shrink: 0; }
+        @keyframes queueDotPulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
+        .queue-refresh-btn {
+            background: none; border: 1px solid #E5E7EB; border-radius: 6px;
+            padding: 4px 10px; font-size: 11px; cursor: pointer; color: #6B7280;
+            display: flex; align-items: center; gap: 4px; transition: all .15s;
+        }
+        .queue-refresh-btn:hover { border-color: #7C3AED; color: #7C3AED; }
+        .queue-refresh-btn.spinning svg { animation: spin .6s linear; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .queue-body { display: flex; flex-direction: column; gap: 8px; }
+        .queue-stat-row {
+            display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+            background: #F9FAFB; border-radius: 8px; border: 1px solid #F3F4F6;
+        }
+        .queue-stat-icon { width: 32px; height: 32px; border-radius: 8px;
+                           display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .queue-stat-icon svg { width: 14px; height: 14px; fill: none; stroke-width: 1.5; }
+        .qsi-purple { background: #F3E8FF; }
+        .qsi-purple svg { stroke: #7C3AED; }
+        .qsi-blue { background: #EFF6FF; }
+        .qsi-blue svg { stroke: #2563EB; }
+        .queue-stat-info { flex: 1; min-width: 0; }
+        .queue-stat-label { font-size: 10px; color: #9CA3AF; text-transform: uppercase;
+                            letter-spacing: .04em; }
+        .queue-stat-val { font-size: 14px; font-weight: 700; color: #1F2937;
+                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .queue-stat-val.running { color: #2563EB; }
+        .queue-items { margin-top: 6px; }
+        .queue-item {
+            display: flex; align-items: center; gap: 8px; padding: 6px 12px;
+            background: #FEFCE8; border: 1px solid #FEF3C7; border-radius: 6px; margin-bottom: 4px;
+        }
+        .queue-item:last-child { margin-bottom: 0; }
+        .queue-item-pos { font-size: 11px; font-weight: 700; color: #B45309;
+                          background: #FEF3C7; border-radius: 10px; padding: 1px 7px; flex-shrink: 0; }
+        .queue-item-name { font-size: 12px; color: #1F2937; font-weight: 500;
+                           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+        .queue-item-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px;
+                            background: #FEF3C7; color: #92400E; font-weight: 500; flex-shrink: 0; }
+        .queue-idle { display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+                      background: #F0FDF4; border: 1px solid #D1FAE5; border-radius: 8px; }
+        .queue-idle-icon { font-size: 16px; }
+        .queue-idle-text { font-size: 12px; color: #065F46; font-weight: 500; }
+        .queue-updated { font-size: 10px; color: #D1D5DB; text-align: right; margin-top: 6px; }
+
+        /* ── Settings Modal ────────────────────────── */
+        .settings-modal { width: 560px; height: 520px; max-height: 85vh; display: flex; flex-direction: column; padding: 0; }
+        .settings-header { padding: 18px 22px 0; }
+        .settings-tabs { display: flex; gap: 0; border-bottom: 2px solid #E5E7EB; padding: 0 22px; margin-top: 14px; }
+        .settings-tab {
+            padding: 8px 16px; font-size: 13px; font-weight: 600; color: #9CA3AF; cursor: pointer;
+            border-bottom: 2px solid transparent; margin-bottom: -2px; transition: all .15s;
+            background: none; border-top: none; border-left: none; border-right: none;
+        }
+        .settings-tab:hover { color: #374151; }
+        .settings-tab.active { color: #2563EB; border-bottom-color: #2563EB; }
+        .settings-body { padding: 18px 22px; overflow-y: auto; flex: 1; }
+        .settings-panel { display: none; }
+        .settings-panel.active { display: block; }
+        .s-group { margin-bottom: 18px; }
+        .s-group:last-child { margin-bottom: 0; }
+        .s-group-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+                         color: #6B7280; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #F3F4F6; }
+        .s-row { display: flex; justify-content: space-between; align-items: center; padding: 9px 0;
+                 border-bottom: 1px solid #F3F4F6; gap: 12px; }
+        .s-row:last-child { border-bottom: none; }
+        .s-key { font-size: 13px; color: #374151; flex-shrink: 0; font-weight: 500; }
+        .s-val { font-size: 13px; font-weight: 600; color: #1F2937; text-align: right;
+                 word-break: break-all; min-width: 0; }
+        .s-val-mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px; }
+        .s-val-path { font-size: 12px; background: #F3F4F6; padding: 4px 10px; border-radius: 5px;
+                      max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                      font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; }
+        .s-status { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600;
+                    padding: 3px 10px; border-radius: 10px; }
+        .s-status-ok { background: #D1FAE5; color: #065F46; }
+        .s-status-err { background: #FEE2E2; color: #7F1D1D; }
+        .s-meter { flex: 1; max-width: 120px; }
+        .s-meter-track { height: 6px; background: #F3F4F6; border-radius: 3px; overflow: hidden; }
+        .s-meter-fill { height: 100%; border-radius: 3px; transition: width .5s ease; }
+        .s-meter-text { font-size: 11px; color: #9CA3AF; margin-top: 2px; text-align: right; }
+        .s-api-card { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px;
+                      padding: 12px 14px; margin-bottom: 10px; }
+        .s-api-method { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px;
+                        border-radius: 4px; margin-right: 6px; vertical-align: middle; }
+        .s-api-get { background: #DBEAFE; color: #1D4ED8; }
+        .s-api-post { background: #FEF3C7; color: #92400E; }
+        .s-api-path { font-size: 13px; font-weight: 600; font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace;
+                      color: #1F2937; vertical-align: middle; }
+        .s-api-desc { font-size: 12px; color: #6B7280; margin-top: 5px; line-height: 1.4; }
+        .s-copy-btn { background: none; border: 1px solid #E5E7EB; border-radius: 4px; padding: 4px 10px;
+                      font-size: 11px; cursor: pointer; color: #6B7280; transition: all .15s; vertical-align: middle; }
+        .s-copy-btn:hover { border-color: #2563EB; color: #2563EB; }
+        .settings-footer { padding: 14px 22px; border-top: 1px solid #E5E7EB; display: flex;
+                           justify-content: space-between; align-items: center; }
+        .settings-footer .s-refresh { background: none; border: 1px solid #E5E7EB; border-radius: 6px;
+                                       padding: 6px 14px; font-size: 13px; cursor: pointer; color: #6B7280; }
+        .settings-footer .s-refresh:hover { border-color: #2563EB; color: #2563EB; }
+
+        @media (max-width: 900px) {
+            .settings-modal { width: calc(100vw - 32px); }
+        }
+        @media (max-width: 480px) {
+            .settings-modal { width: calc(100vw - 16px); max-height: 90vh; }
+            .settings-tab { padding: 6px 10px; font-size: 11px; }
+            .s-val-path { max-width: 160px; }
+        }
+
         @media (min-width: 1024px) {
             body { font-size: 16px; line-height: 1.6; }
             .topbar-title { font-size: 18px; }
@@ -185,9 +355,12 @@
             .fmeta { font-size: 13px; }
             .setting-label { font-size: 14px; }
             .setting-desc { font-size: 12px; }
-            .stat-lbl { font-size: 13px; }
-            .stat-val { font-size: 26px; }
-            .stat-sub { font-size: 13px; }
+            .stat-lbl { font-size: 11px; }
+            .stat-val { font-size: 22px; }
+            .stat-icon { width: 36px; height: 36px; }
+            .stat-icon svg { width: 18px; height: 18px; }
+            .progress-label { font-size: 12px; }
+            .progress-pct { font-size: 13px; }
             .panel-ttl { font-size: 15px; }
             .hname { font-size: 14px; }
             .hsize { font-size: 13px; }
@@ -195,6 +368,10 @@
             .hbadge { font-size: 12px; }
             .qa-t { font-size: 14px; }
             .qa-d { font-size: 13px; }
+            .ra-name { font-size: 14px; }
+            .ra-meta { font-size: 13px; }
+            .ra-badge { font-size: 12px; }
+            .ra-empty { font-size: 14px; }
             .welcome-title { font-size: 22px; }
             .welcome-sub { font-size: 15px; }
             .welcome-btn { font-size: 16px; padding: 12px 28px; }
@@ -207,20 +384,89 @@
             .no-data { font-size: 14px; }
             .empty-files { font-size: 14px; }
             .compare-btn { font-size: 14px; }
+            .queue-panel-ttl { font-size: 15px; }
+            .queue-stat-val { font-size: 15px; }
+            .queue-stat-label { font-size: 11px; }
+            .settings-tab { font-size: 14px; }
+            .s-group-title { font-size: 12px; }
+            .s-key { font-size: 14px; }
+            .s-val { font-size: 14px; }
+            .s-val-mono { font-size: 13px; }
+            .s-val-path { font-size: 13px; }
+            .s-status { font-size: 14px; }
+            .s-api-method { font-size: 12px; }
+            .s-api-path { font-size: 14px; }
+            .s-api-desc { font-size: 13px; }
+            .s-copy-btn { font-size: 12px; }
+            .s-meter-text { font-size: 12px; }
+            .settings-footer .s-refresh { font-size: 14px; }
             .alert { font-size: 15px; }
         }
+        /* ── Mobile menu button ──────────────────── */
+        .mobile-menu-btn {
+            display: none; width: 44px; height: 44px; background: none; border: none;
+            cursor: pointer; padding: 8px; border-radius: 6px; flex-shrink: 0;
+        }
+        .mobile-menu-btn:hover { background: #F3F4F6; }
+        .mobile-menu-btn span {
+            display: block; width: 20px; height: 2.5px; background: #1F2937;
+            margin: 4px auto; border-radius: 2px; transition: all .25s;
+        }
+        /* X shape when open */
+        .mobile-menu-btn.open span:nth-child(1) { transform: rotate(45deg) translate(4px, 5px); }
+        .mobile-menu-btn.open span:nth-child(2) { opacity: 0; }
+        .mobile-menu-btn.open span:nth-child(3) { transform: rotate(-45deg) translate(4px, -5px); }
+
+        .sidebar-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 150;
+            opacity: 0; transition: opacity .25s ease;
+        }
+        .sidebar-overlay.open { display: block; opacity: 1; }
+
+        .mobile-sidebar-header {
+            display: none; padding: 16px; background: linear-gradient(135deg, #2563EB, #1D4ED8);
+            color: #fff;
+        }
+        .mobile-sidebar-header .ms-title { font-size: 15px; font-weight: 700; }
+        .mobile-sidebar-header .ms-sub { font-size: 11px; opacity: .8; margin-top: 2px; }
+
         @media (max-width: 900px) {
             .app-layout { grid-template-columns: 1fr; }
-            .sidebar { display: none; }
-            .stats-row { grid-template-columns: repeat(2, 1fr); }
+            .sidebar {
+                display: flex; position: fixed; top: 0; left: 0; bottom: 0;
+                width: 300px; z-index: 160;
+                height: 100vh;
+                transform: translateX(-100%); transition: transform .3s cubic-bezier(.4,0,.2,1);
+                box-shadow: none; border-right: none;
+            }
+            .sidebar.mobile-open {
+                transform: translateX(0);
+                box-shadow: 4px 0 24px rgba(0,0,0,.18);
+            }
+            .mobile-sidebar-header { display: block; flex-shrink: 0; }
+            .mobile-menu-btn { display: flex !important; align-items: center; justify-content: center; flex-direction: column; }
+            .dashboard-top { grid-template-columns: 1fr; }
+            .dashboard-left { grid-template-columns: 1fr 1fr; }
             .grid2 { grid-template-columns: 1fr; }
             .quick-grid { grid-template-columns: repeat(2, 1fr); }
+            .topbar-badge { display: none; }
+        }
+        @media (max-width: 480px) {
+            .sidebar.mobile-open, .sidebar { width: calc(100vw - 56px); max-width: 300px; }
+            .stat-icon { width: 28px; height: 28px; }
+            .stat-val { font-size: 16px; }
+            .quick-grid { grid-template-columns: 1fr; }
+            .topbar-right .topbar-btn { font-size: 11px; padding: 5px 8px; }
+            .modal { width: calc(100vw - 32px); margin: 0 16px; }
         }
     </style>
 </head>
 <body>
 
 <header class="topbar">
+    <button class="mobile-menu-btn" id="menuBtn" onclick="toggleMobileSidebar()" aria-label="Menu">
+        <span></span><span></span><span></span>
+    </button>
     <div class="topbar-brand">
         <div class="topbar-logo">
             <svg viewBox="0 0 16 16"><rect x="1" y="8" width="3" height="7" rx="1"/><rect x="6" y="5" width="3" height="10" rx="1"/><rect x="11" y="2" width="3" height="13" rx="1"/></svg>
@@ -229,13 +475,18 @@
         <span class="topbar-badge">v2.0 · MAT CLI</span>
     </div>
     <div class="topbar-right">
-        <button class="topbar-btn" onclick="openCompare()">Compare dumps</button>
         <a class="topbar-btn" href="/">Refresh</a>
     </div>
 </header>
 
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="closeMobileSidebar()"></div>
 <div class="app-layout">
-    <aside class="sidebar">
+    <aside class="sidebar" id="mobileSidebar">
+
+        <div class="mobile-sidebar-header">
+            <div class="ms-title">Heap Dump Analyzer</div>
+            <div class="ms-sub">v2.0 · MAT CLI Edition</div>
+        </div>
 
         <div class="sidebar-section">
             <div class="s-title">Upload</div>
@@ -258,13 +509,13 @@
         </div>
 
         <div class="sidebar-section" style="flex:1;">
-            <div class="s-title">Files (<span th:text="${fileCount}">0</span>)</div>
+            <div class="s-title">Recent Files (<span th:text="${fileCount}">0</span>)</div>
 
             <div th:if="${#lists.isEmpty(files)}" class="empty-files">
                 No files yet.<br>Upload a heap dump to start.
             </div>
 
-            <div th:each="file : ${files}" class="file-item">
+            <div th:each="file : ${files}" class="file-item" th:classappend="${errorFiles.contains(file.name)} ? 'file-err'">
                 <div class="ext-badge" th:text="${file.extension}">HPROF</div>
                 <div class="file-info">
                     <div class="fname" th:text="${file.name}">dump.hprof</div>
@@ -280,17 +531,23 @@
                     <div class="tt-row"><span class="tt-label">Date</span><span class="tt-val" th:text="${file.formattedDate}">03-18</span></div>
                     <div class="tt-row"><span class="tt-label">Status</span>
                         <span class="tt-val" th:if="${analyzedFiles.contains(file.name)}" style="color:#6ee7b7">Analyzed</span>
-                        <span class="tt-val" th:if="${!analyzedFiles.contains(file.name)}" style="color:#fca5a5">Not analyzed</span>
+                        <span class="tt-val" th:if="${errorFiles.contains(file.name)}" style="color:#f87171">Failed</span>
+                        <span class="tt-val" th:if="${!analyzedFiles.contains(file.name) and !errorFiles.contains(file.name)}" style="color:#fca5a5">Not analyzed</span>
                     </div>
                 </div>
                 <div class="file-btns">
-                    <!-- View: 분석 완료 -->
+                    <!-- View: 분석 완료 (SUCCESS) -->
                     <a th:if="${analyzedFiles.contains(file.name)}"
                        th:href="@{/analyze/result/{f}(f=${file.name})}" class="fb v" title="View Result">
                         <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
                     </a>
+                    <!-- 분석 실패 (ERROR) — 빨간 버튼 → 실패 결과 페이지 -->
+                    <a th:if="${errorFiles.contains(file.name)}"
+                       th:href="@{/analyze/result/{f}(f=${file.name})}" class="fb e" title="View Error">
+                        <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                    </a>
                     <!-- Analyze: 미분석 -->
-                    <a th:if="${!analyzedFiles.contains(file.name)}"
+                    <a th:if="${!analyzedFiles.contains(file.name) and !errorFiles.contains(file.name)}"
                        th:href="@{/analyze/{f}(f=${file.name})}" class="fb p" title="Analyze">
                         <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                     </a>
@@ -363,27 +620,75 @@
         <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
         <div th:if="${error}"   class="alert alert-error"   th:text="${error}"></div>
 
-        <!-- Stats row -->
-        <div th:if="${not #lists.isEmpty(files)}" class="stats-row">
-            <div class="stat-card">
-                <div class="stat-lbl">Total files</div>
-                <div class="stat-val c-blue" th:text="${fileCount}">0</div>
-                <div class="stat-sub">heap dumps</div>
+        <!-- Dashboard Top: Stats + Progress/Queue -->
+        <div th:if="${not #lists.isEmpty(files)}" class="dashboard-top">
+            <div class="dashboard-left">
+                <div class="stat-card">
+                    <div class="stat-icon si-blue">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-val c-blue" th:text="${fileCount}">0</div>
+                        <div class="stat-lbl">FILES</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon si-gray">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-val c-gray" th:text="${totalSize}">--</div>
+                        <div class="stat-lbl">DISK</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon si-green">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-val c-green"><span th:text="${analyzedCount}">0</span><span style="font-size:12px;color:#9CA3AF;font-weight:400;" th:text="' / ' + ${fileCount}"> / 0</span></div>
+                        <div class="stat-lbl">ANALYZED</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon si-amber">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-val c-amber" th:text="${totalSuspects}">--</div>
+                        <div class="stat-lbl">SUSPECTS</div>
+                    </div>
+                </div>
             </div>
-            <div class="stat-card">
-                <div class="stat-lbl">Total size</div>
-                <div class="stat-val c-gray" th:text="${totalSize}">—</div>
-                <div class="stat-sub">on disk</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-lbl">Analyzed</div>
-                <div class="stat-val c-green" th:text="${analyzedCount}">0</div>
-                <div class="stat-sub">cached results</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-lbl">Leak suspects</div>
-                <div class="stat-val c-amber" th:text="${totalSuspects}">—</div>
-                <div class="stat-sub">across all files</div>
+            <div class="dashboard-right">
+                <!-- Analysis progress bar -->
+                <div th:if="${fileCount > 0}" class="progress-bar-wrap">
+                    <span class="progress-label">Analysis completed</span>
+                    <div class="progress-track">
+                        <div class="progress-fill" th:style="'width:' + ${fileCount > 0 ? (analyzedCount * 100 / fileCount) : 0} + '%'"></div>
+                    </div>
+                    <span class="progress-pct" th:text="${fileCount > 0 ? (analyzedCount * 100 / fileCount) : 0} + '%'">0%</span>
+                </div>
+                <!-- Queue Status Panel -->
+                <div class="queue-panel" id="queuePanel">
+                    <div class="queue-panel-hdr">
+                        <div class="queue-panel-ttl">
+                            <span class="queue-dot" id="queueDot"></span>
+                            Analysis Queue
+                        </div>
+                        <button class="queue-refresh-btn" id="queueRefreshBtn" onclick="refreshQueueStatus()">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+                                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                            </svg>
+                            Refresh
+                        </button>
+                    </div>
+                    <div class="queue-body" id="queueBody">
+                        <!-- JS로 동적 렌더링 -->
+                    </div>
+                    <div class="queue-updated" id="queueUpdated"></div>
+                </div>
             </div>
         </div>
 
@@ -407,11 +712,12 @@
         <!-- Main panels (files exist) -->
         <div th:if="${not #lists.isEmpty(files)}" class="grid2">
 
-            <!-- Analysis history -->
+            <!-- Analysis Files -->
             <div class="panel">
                 <div class="panel-hdr">
-                    <span class="panel-ttl">Analysis history</span>
-                    <span class="new-badge">New</span>
+                    <span class="panel-ttl">Analysis Files</span>
+                    <a th:href="@{/files}" class="more-link"
+                       th:text="'View all ' + ${totalFileCount} + ' files →'">View all →</a>
                 </div>
                 <div th:if="${#lists.isEmpty(analysisHistory)}" class="no-data">
                     No results yet. Click Analyze on a file to start.
@@ -421,37 +727,58 @@
                     <div class="hdot hd-err"  th:if="${h.status == 'ERROR'}"></div>
                     <div class="hdot hd-warn" th:if="${h.status == 'NOT_ANALYZED'}"></div>
                     <div class="hdot hd-warn" th:unless="${h.status == 'SUCCESS' or h.status == 'ERROR' or h.status == 'NOT_ANALYZED'}"></div>
-                    <div class="hname" th:text="${h.filename}">dump.hprof</div>
+                    <div class="hname" th:classappend="${h.status == 'ERROR'} ? 'hname-err'" th:text="${h.filename}">dump.hprof</div>
                     <div class="hsize" th:text="${h.formattedSize}">157 MB</div>
                     <div class="hdate" th:text="${h.formattedDate}">03-18</div>
                     <a th:if="${h.status == 'SUCCESS'}"
                        th:href="@{/analyze/result/{f}(f=${h.filename})}"
                        class="hbadge hb-ok">view</a>
-                    <span th:if="${h.status == 'ERROR'}"
-                          class="hbadge hb-err">error</span>
-                    <span th:if="${h.status == 'NOT_ANALYZED'}"
-                          class="hbadge hb-warn">pending</span>
+                    <a th:if="${h.status == 'ERROR'}"
+                       th:href="@{/analyze/result/{f}(f=${h.filename})}"
+                       class="hbadge hb-err" style="text-decoration:none;">failed</a>
+                    <a th:if="${h.status == 'NOT_ANALYZED'}"
+                       th:href="@{/analyze/{f}(f=${h.filename})}"
+                       class="hbadge hb-analyze">analyze</a>
                 </div>
             </div>
 
-            <!-- Files overview -->
+            <!-- Recent Analysis History -->
             <div class="panel">
                 <div class="panel-hdr">
-                    <span class="panel-ttl">Files overview</span>
+                    <span class="panel-ttl">Recent Analysis</span>
+                    <span style="font-size:11px;color:#9CA3AF;" th:text="${#lists.size(recentAnalyses)} + ' results'">0 results</span>
                 </div>
-                <div th:each="file : ${files}"
-                     style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #F3F4F6;">
-                    <div class="ext-badge" style="width:28px;height:32px;font-size:8px;"
-                         th:text="${file.extension}">HPROF</div>
-                    <div style="flex:1;min-width:0;">
-                        <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                             th:text="${file.name}">file.hprof</div>
-                        <div style="font-size:11px;color:#9CA3AF;" th:text="${file.formattedSize}">—</div>
+                <div th:if="${#lists.isEmpty(recentAnalyses)}" class="ra-empty">
+                    No analysis performed yet.
+                </div>
+                <div th:each="ra : ${recentAnalyses}" class="ra-item">
+                    <div class="ra-top">
+                        <div class="hdot hd-ok"  th:if="${ra.status == 'SUCCESS'}"></div>
+                        <div class="hdot hd-err" th:if="${ra.status == 'ERROR'}"></div>
+                        <a th:if="${ra.status == 'SUCCESS'}"
+                           th:href="@{/analyze/result/{f}(f=${ra.filename})}"
+                           class="ra-name" th:text="${ra.filename}" style="color:#2563EB;text-decoration:none;">dump.hprof</a>
+                        <a th:if="${ra.status == 'ERROR'}"
+                           th:href="@{/analyze/{f}(f=${ra.filename})}"
+                           class="ra-name" th:text="${ra.filename}" style="color:#EF4444;text-decoration:none;">dump.hprof</a>
+                        <span class="ra-badge ra-ok" th:if="${ra.status == 'SUCCESS'}">success</span>
+                        <span class="ra-badge ra-err" th:if="${ra.status == 'ERROR'}">failed</span>
                     </div>
-                    <a th:href="@{/analyze/{f}(f=${file.name})}"
-                       style="font-size:11px;padding:4px 10px;background:#2563EB;color:white;border-radius:5px;text-decoration:none;flex-shrink:0;">
-                        Analyze
-                    </a>
+                    <div class="ra-meta">
+                        <span>
+                            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                            <span th:text="${ra.formattedAnalysisTime}">-</span>
+                        </span>
+                        <span>
+                            <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/></svg>
+                            <span th:text="${ra.heapUsed != null ? ra.heapUsed : '-'}">-</span>
+                        </span>
+                        <span>
+                            <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                            <span th:text="${ra.suspectCount}">0</span> suspects
+                        </span>
+                        <span th:text="${ra.formattedDate}">03-18</span>
+                    </div>
                 </div>
             </div>
 
@@ -471,9 +798,9 @@
                         <div class="qa-t">Clear all cache</div>
                         <div class="qa-d">Remove all cached results</div>
                     </button>
-                    <button class="qa" onclick="window.open('/api/settings','_blank')">
+                    <button class="qa" onclick="openSettingsModal()">
                         <div class="qa-t">API / Settings</div>
-                        <div class="qa-d">View MAT config &amp; paths</div>
+                        <div class="qa-d">System info, config &amp; paths</div>
                     </button>
                 </div>
             </div>
@@ -513,7 +840,7 @@
             Export History
             <button class="modal-close" onclick="closeExportHistory()">&#215;</button>
         </div>
-        <div class="modal-desc">Analysis history will be exported as a JSON file.</div>
+        <div class="modal-desc">Analysis files will be exported as a JSON file.</div>
         <div style="background:#f9fafb;border-radius:8px;padding:12px 16px;margin-bottom:14px">
             <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
                 <span style="color:#6b7280">Filename</span>
@@ -656,7 +983,193 @@
     </div>
 </div>
 
+<!-- Settings Modal -->
+<div class="modal-ov" id="settingsModal" onclick="if(event.target===this)closeSettingsModal()">
+    <div class="modal settings-modal">
+        <div class="settings-header">
+            <div class="modal-ttl">
+                Settings &amp; System Info
+                <button class="modal-close" onclick="closeSettingsModal()">&#215;</button>
+            </div>
+            <div class="modal-desc">MAT 설정, 시스템 상태, API 엔드포인트를 확인합니다.</div>
+            <div class="settings-tabs">
+                <button class="settings-tab active" onclick="showSettingsTab('general',this)">General</button>
+                <button class="settings-tab" onclick="showSettingsTab('system',this)">System</button>
+                <button class="settings-tab" onclick="showSettingsTab('api',this)">API</button>
+            </div>
+        </div>
+
+        <div class="settings-body">
+            <!-- General Tab -->
+            <div id="stab-general" class="settings-panel active">
+                <div class="s-group">
+                    <div class="s-group-title">MAT Configuration</div>
+                    <div class="s-row">
+                        <span class="s-key">MAT CLI Path</span>
+                        <span class="s-val s-val-path" id="sMatPath">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">MAT CLI Status</span>
+                        <span id="sMatStatus" class="s-status">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">Keep Unreachable Objects</span>
+                        <span id="sKeepUnreachable" class="s-val">-</span>
+                    </div>
+                </div>
+                <div class="s-group">
+                    <div class="s-group-title">Storage</div>
+                    <div class="s-row">
+                        <span class="s-key">Heap Dump Directory</span>
+                        <span class="s-val s-val-path" id="sDumpDir">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">Cached Results</span>
+                        <span class="s-val s-val-mono" id="sCachedResults">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">Total Files</span>
+                        <span class="s-val s-val-mono" id="sTotalFiles">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">Total Dump Size</span>
+                        <span class="s-val s-val-mono" id="sTotalDumpSize">-</span>
+                    </div>
+                </div>
+                <div class="s-group">
+                    <div class="s-group-title">Disk Usage</div>
+                    <div class="s-row">
+                        <span class="s-key">Used / Total</span>
+                        <span class="s-val s-val-mono" id="sDiskUsed">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">Free Space</span>
+                        <span class="s-val s-val-mono" id="sDiskFree">-</span>
+                    </div>
+                    <div class="s-row" style="padding-top:4px">
+                        <span class="s-key">Usage</span>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <div class="s-meter">
+                                <div class="s-meter-track"><div class="s-meter-fill" id="sDiskBar" style="width:0%;background:#2563EB"></div></div>
+                            </div>
+                            <span class="s-val s-val-mono" id="sDiskPct" style="min-width:36px;text-align:right">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Tab -->
+            <div id="stab-system" class="settings-panel">
+                <div class="s-group">
+                    <div class="s-group-title">Java Runtime</div>
+                    <div class="s-row">
+                        <span class="s-key">Java Version</span>
+                        <span class="s-val s-val-mono" id="sJavaVer">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">Java Vendor</span>
+                        <span class="s-val" id="sJavaVendor">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">OS</span>
+                        <span class="s-val" id="sOs">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">CPU Cores</span>
+                        <span class="s-val s-val-mono" id="sCpuCores">-</span>
+                    </div>
+                </div>
+                <div class="s-group">
+                    <div class="s-group-title">JVM Memory</div>
+                    <div class="s-row">
+                        <span class="s-key">Max Memory</span>
+                        <span class="s-val s-val-mono" id="sJvmMax">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">Used Memory</span>
+                        <span class="s-val s-val-mono" id="sJvmUsed">-</span>
+                    </div>
+                    <div class="s-row">
+                        <span class="s-key">Free Memory</span>
+                        <span class="s-val s-val-mono" id="sJvmFree">-</span>
+                    </div>
+                    <div class="s-row" style="padding-top:4px">
+                        <span class="s-key">JVM Usage</span>
+                        <div style="display:flex;align-items:center;gap:8px">
+                            <div class="s-meter">
+                                <div class="s-meter-track"><div class="s-meter-fill" id="sJvmBar" style="width:0%;background:#7c3aed"></div></div>
+                            </div>
+                            <span class="s-val s-val-mono" id="sJvmPct" style="min-width:36px;text-align:right">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Tab -->
+            <div id="stab-api" class="settings-panel">
+                <div class="s-group">
+                    <div class="s-group-title">Available Endpoints</div>
+                    <div class="s-api-card">
+                        <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/api/settings</span>
+                            <button class="s-copy-btn" onclick="copyApi('/api/settings')">Copy</button></div>
+                        <div class="s-api-desc">현재 설정, 시스템 정보, 디스크 상태를 JSON으로 반환</div>
+                    </div>
+                    <div class="s-api-card">
+                        <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/api/history</span>
+                            <button class="s-copy-btn" onclick="copyApi('/api/history')">Copy</button></div>
+                        <div class="s-api-desc">전체 파일의 분석 히스토리를 JSON 배열로 반환</div>
+                    </div>
+                    <div class="s-api-card">
+                        <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/api/settings/unreachable?enabled=true|false</span></div>
+                        <div class="s-api-desc">keep_unreachable_objects 옵션을 런타임에 변경</div>
+                    </div>
+                    <div class="s-api-card">
+                        <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/api/cache/clear</span></div>
+                        <div class="s-api-desc">모든 캐시된 분석 결과를 삭제</div>
+                    </div>
+                    <div class="s-api-card">
+                        <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/upload</span></div>
+                        <div class="s-api-desc">힙 덤프 파일 업로드 (multipart/form-data, field: file)</div>
+                    </div>
+                    <div class="s-api-card">
+                        <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/download/{filename}</span></div>
+                        <div class="s-api-desc">힙 덤프 원본 파일 다운로드</div>
+                    </div>
+                </div>
+                <div class="s-group">
+                    <div class="s-group-title">Raw JSON</div>
+                    <div style="text-align:center">
+                        <button class="s-copy-btn" style="padding:6px 14px" onclick="window.open('/api/settings','_blank')">Open /api/settings in new tab</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-footer">
+            <button class="s-refresh" onclick="loadSettingsData()">&#8635; Refresh</button>
+            <button class="btn-s" onclick="closeSettingsModal()">Close</button>
+        </div>
+    </div>
+</div>
+
 <script>
+/* ── Mobile sidebar toggle ─────────────────────── */
+function toggleMobileSidebar() {
+    var sb = document.getElementById('mobileSidebar');
+    var ov = document.getElementById('sidebarOverlay');
+    var btn = document.getElementById('menuBtn');
+    var opening = !sb.classList.contains('mobile-open');
+    sb.classList.toggle('mobile-open');
+    ov.classList.toggle('open');
+    if (btn) btn.classList.toggle('open', opening);
+}
+function closeMobileSidebar() {
+    document.getElementById('mobileSidebar').classList.remove('mobile-open');
+    document.getElementById('sidebarOverlay').classList.remove('open');
+    var btn = document.getElementById('menuBtn');
+    if (btn) btn.classList.remove('open');
+}
+
 const fileInput = document.getElementById('fileInput');
 const uploadForm = document.getElementById('uploadForm');
 
@@ -878,7 +1391,193 @@ function toast(msg,type) {
     setTimeout(()=>{t.style.opacity='0';},3500);
     setTimeout(()=>t.remove(),4000);
 }
-document.addEventListener('keydown', e => { if(e.key==='Escape') closeCompare(); });
+document.addEventListener('keydown', e => { if(e.key==='Escape') { closeCompare(); closeSettingsModal(); } });
+
+/* ── Queue Status ──────────────────────────── */
+var _queuePollTimer = null;
+var _queueActive = false;
+
+function refreshQueueStatus() {
+    var btn = document.getElementById('queueRefreshBtn');
+    btn.classList.add('spinning');
+    setTimeout(function() { btn.classList.remove('spinning'); }, 600);
+
+    fetch('/api/queue/status').then(function(r) { return r.json(); }).then(function(d) {
+        renderQueuePanel(d);
+    }).catch(function() {});
+}
+
+function renderQueuePanel(d) {
+    var panel = document.getElementById('queuePanel');
+    var body = document.getElementById('queueBody');
+    var dot = document.getElementById('queueDot');
+    var updated = document.getElementById('queueUpdated');
+    var qSize = d.queueSize || 0;
+    var current = d.currentAnalysis || null;
+
+    panel.classList.add('visible');
+
+    if (qSize === 0 && !current) {
+        // 큐 비활성 — idle 상태 표시, 폴링 중지
+        body.innerHTML = '<div class="queue-idle">' +
+            '<div class="queue-idle-icon">✅</div>' +
+            '<div class="queue-idle-text">대기 중인 분석 작업이 없습니다</div></div>';
+        dot.style.background = '#10B981';
+        dot.style.animation = 'none';
+        var now = new Date();
+        updated.textContent = 'Updated ' + String(now.getHours()).padStart(2,'0') + ':' +
+            String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
+        stopQueuePolling();
+        return;
+    }
+
+    dot.style.background = '#7C3AED';
+    dot.style.animation = '';
+    startQueuePolling();
+
+    var html = '';
+    // 현재 분석 중
+    if (current) {
+        html += '<div class="queue-stat-row">' +
+            '<div class="queue-stat-icon qsi-blue">' +
+            '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>' +
+            '<div class="queue-stat-info">' +
+            '<div class="queue-stat-label">ANALYZING</div>' +
+            '<div class="queue-stat-val running">' + escHtml(current) + '</div>' +
+            '</div></div>';
+    }
+    // 대기 중
+    var waiting = current ? qSize - 1 : qSize;
+    if (waiting > 0) {
+        html += '<div class="queue-stat-row">' +
+            '<div class="queue-stat-icon qsi-purple">' +
+            '<svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg></div>' +
+            '<div class="queue-stat-info">' +
+            '<div class="queue-stat-label">QUEUED</div>' +
+            '<div class="queue-stat-val">' + waiting + '개 대기 중</div>' +
+            '</div></div>';
+    }
+
+    body.innerHTML = html;
+
+    var now = new Date();
+    var hh = String(now.getHours()).padStart(2, '0');
+    var mm = String(now.getMinutes()).padStart(2, '0');
+    var ss = String(now.getSeconds()).padStart(2, '0');
+    updated.textContent = 'Updated ' + hh + ':' + mm + ':' + ss;
+}
+
+function escHtml(s) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(s));
+    return div.innerHTML;
+}
+
+function startQueuePolling() {
+    if (_queuePollTimer) return;
+    _queueActive = true;
+    _queuePollTimer = setInterval(function() {
+        fetch('/api/queue/status').then(function(r) { return r.json(); }).then(function(d) {
+            renderQueuePanel(d);
+        }).catch(function() {});
+    }, 5000);
+}
+
+function stopQueuePolling() {
+    _queueActive = false;
+    if (_queuePollTimer) {
+        clearInterval(_queuePollTimer);
+        _queuePollTimer = null;
+    }
+}
+
+// 페이지 로드 시 큐 상태 확인
+refreshQueueStatus();
+
+/* ── Settings Modal ─────────────────────────── */
+function openSettingsModal() {
+    document.getElementById('settingsModal').classList.add('open');
+    loadSettingsData();
+}
+function closeSettingsModal() {
+    document.getElementById('settingsModal').classList.remove('open');
+}
+function showSettingsTab(tab, btn) {
+    document.querySelectorAll('.settings-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('stab-' + tab).classList.add('active');
+    btn.classList.add('active');
+}
+function loadSettingsData() {
+    fetch('/api/settings').then(r => r.json()).then(d => {
+        // General tab
+        document.getElementById('sMatPath').textContent = d.mat.path || '-';
+        document.getElementById('sMatPath').title = d.mat.path || '';
+        var matOk = d.mat.ready;
+        var matEl = document.getElementById('sMatStatus');
+        matEl.className = 's-status ' + (matOk ? 's-status-ok' : 's-status-err');
+        matEl.textContent = matOk ? 'Ready' : (d.mat.statusMessage || 'Not available');
+        matEl.title = d.mat.statusMessage || '';
+        document.getElementById('sKeepUnreachable').textContent = d.keepUnreachableObjects ? 'Enabled' : 'Disabled';
+        document.getElementById('sKeepUnreachable').style.color = d.keepUnreachableObjects ? '#059669' : '#6B7280';
+        document.getElementById('sDumpDir').textContent = d.heapDumpDirectory;
+        document.getElementById('sDumpDir').title = d.heapDumpDirectory;
+        document.getElementById('sCachedResults').textContent = d.cachedResults;
+        if (d.files) {
+            document.getElementById('sTotalFiles').textContent = d.files.totalFiles;
+            document.getElementById('sTotalDumpSize').textContent = d.files.totalSize;
+        }
+        if (d.disk) {
+            document.getElementById('sDiskUsed').textContent = (d.disk.usedSpace||'-') + ' / ' + (d.disk.totalSpace||'-');
+            document.getElementById('sDiskFree').textContent = d.disk.freeSpace || '-';
+            var pct = d.disk.usedPercent || 0;
+            document.getElementById('sDiskPct').textContent = pct + '%';
+            var bar = document.getElementById('sDiskBar');
+            bar.style.width = pct + '%';
+            bar.style.background = pct > 90 ? '#DC2626' : pct > 70 ? '#D97706' : '#2563EB';
+        }
+        // System tab
+        if (d.system) {
+            document.getElementById('sJavaVer').textContent = d.system.javaVersion || '-';
+            document.getElementById('sJavaVendor').textContent = d.system.javaVendor || '-';
+            document.getElementById('sOs').textContent = (d.system.osName||'') + ' ' + (d.system.osArch||'');
+            document.getElementById('sCpuCores').textContent = d.system.availableProcessors || '-';
+            document.getElementById('sJvmMax').textContent = d.system.jvmMaxMemory || '-';
+            document.getElementById('sJvmUsed').textContent = d.system.jvmUsedMemory || '-';
+            document.getElementById('sJvmFree').textContent = d.system.jvmFreeMemory || '-';
+            // compute JVM usage percent
+            var maxStr = d.system.jvmMaxMemory || '';
+            var usedStr = d.system.jvmUsedMemory || '';
+            var totalStr = d.system.jvmTotalMemory || '';
+            // approximate from formatted strings isn't great, so use raw
+            // We parse approximate values
+            var totalMem = parseMemStr(totalStr);
+            var usedMem = parseMemStr(usedStr);
+            var jvmPct = totalMem > 0 ? Math.round(usedMem * 100 / totalMem) : 0;
+            document.getElementById('sJvmPct').textContent = jvmPct + '%';
+            var jvmBar = document.getElementById('sJvmBar');
+            jvmBar.style.width = jvmPct + '%';
+            jvmBar.style.background = jvmPct > 85 ? '#DC2626' : jvmPct > 60 ? '#D97706' : '#7c3aed';
+        }
+    }).catch(() => toast('Failed to load settings', 'error'));
+}
+function parseMemStr(s) {
+    if (!s) return 0;
+    var m = s.match(/([\d.]+)\s*(GB|MB|KB|B)/i);
+    if (!m) return 0;
+    var v = parseFloat(m[1]);
+    switch(m[2].toUpperCase()) {
+        case 'GB': return v * 1073741824;
+        case 'MB': return v * 1048576;
+        case 'KB': return v * 1024;
+        default: return v;
+    }
+}
+function copyApi(path) {
+    var url = location.origin + path;
+    navigator.clipboard.writeText(url).then(() => toast('Copied: ' + url, 'success'))
+        .catch(() => { toast('Copy failed', 'error'); });
+}
 </script>
 </body>
 </html>

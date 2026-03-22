@@ -221,6 +221,48 @@
             to   { opacity: 1; transform: translateY(0); }
         }
 
+        /* 큐 대기 배너 */
+        .queue-banner {
+            background: linear-gradient(135deg, #7C3AED, #A78BFA);
+            border-radius: 14px;
+            padding: 28px 32px;
+            color: #fff;
+            display: none;
+            margin-bottom: 24px;
+            align-items: center;
+            gap: 20px;
+            animation: fadeIn .5s ease;
+        }
+        .queue-banner.visible { display: flex; }
+        .queue-icon { font-size: 44px; flex-shrink: 0; }
+        .queue-content { flex: 1; }
+        .queue-content h3 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+        .queue-content p { font-size: 14px; opacity: .85; margin-bottom: 12px; }
+        .queue-info {
+            background: rgba(255,255,255,.15);
+            border-radius: 10px;
+            padding: 12px 16px;
+        }
+        .queue-info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13px;
+            padding: 4px 0;
+        }
+        .queue-info-row + .queue-info-row { border-top: 1px solid rgba(255,255,255,.15); padding-top: 8px; margin-top: 4px; }
+        .queue-info-label { opacity: .8; }
+        .queue-info-value { font-weight: 700; font-size: 14px; }
+        .queue-current-file {
+            max-width: 200px; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap;
+        }
+        @keyframes queuePulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .6; }
+        }
+        .queue-banner.visible .queue-icon { animation: queuePulse 2s infinite; }
+
         /* 자동 이동 카운트다운 */
         .countdown-bar {
             height: 4px;
@@ -260,7 +302,32 @@
             .complete-btn     { font-size: 18px; }
             .error-banner h3  { font-size: 20px; }
             .error-banner p   { font-size: 16px; }
+            .queue-content h3 { font-size: 20px; }
+            .queue-content p  { font-size: 16px; }
+            .queue-info-row   { font-size: 15px; }
+            .queue-info-value { font-size: 16px; }
             .countdown-text   { font-size: 15px; }
+        }
+        /* ── Mobile responsive ────────────────────── */
+        @media (max-width: 480px) {
+            .progress-page { margin: 30px auto; padding: 0 12px; }
+            .file-banner { padding: 18px 16px; gap: 12px; }
+            .file-banner-icon { font-size: 32px; }
+            .file-banner-name { font-size: 16px; }
+            .file-banner-sub { font-size: 12px; }
+            .steps-card { padding: 18px 16px; }
+            .main-progress-wrap { padding: 16px; }
+            .log-card { padding: 14px 16px; }
+            .queue-banner { padding: 18px 16px; gap: 12px; }
+            .queue-icon { font-size: 32px; }
+            .queue-content h3 { font-size: 16px; }
+            .queue-content p { font-size: 12px; }
+            .complete-banner { padding: 24px 16px; }
+            .complete-title { font-size: 20px; }
+            .complete-btn { padding: 12px 28px; font-size: 14px; min-height: 44px; }
+            .log-toggle { min-height: 44px; padding: 8px 12px; }
+            .header-title { font-size: 20px; }
+            .btn.btn-outline { min-height: 44px; padding: 8px 14px; }
         }
     </style>
 </head>
@@ -286,6 +353,25 @@
         <div>
             <div class="file-banner-name" th:text="${filename}">dump.hprof</div>
             <div class="file-banner-sub">Eclipse MAT CLI로 메모리 분석 중...</div>
+        </div>
+    </div>
+
+    <!-- 큐 대기 배너 (숨김) -->
+    <div class="queue-banner" id="queueBanner">
+        <div class="queue-icon">⏳</div>
+        <div class="queue-content">
+            <h3>분석 대기 중</h3>
+            <p>현재 다른 파일이 분석 중입니다. 순서가 되면 자동으로 시작됩니다.</p>
+            <div class="queue-info">
+                <div class="queue-info-row">
+                    <span class="queue-info-label">대기 순서</span>
+                    <span class="queue-info-value" id="queuePosition">-</span>
+                </div>
+                <div class="queue-info-row">
+                    <span class="queue-info-label">현재 분석 중</span>
+                    <span class="queue-info-value queue-current-file" id="queueCurrentFile">-</span>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -390,6 +476,9 @@
     const completeBanner = document.getElementById('completeBanner');
     const errorBanner    = document.getElementById('errorBanner');
     const errorMsg       = document.getElementById('errorMsg');
+    const queueBanner    = document.getElementById('queueBanner');
+    const queuePosition  = document.getElementById('queuePosition');
+    const queueCurrentFile = document.getElementById('queueCurrentFile');
     const resultLink     = document.getElementById('resultLink');
     const countdownFill  = document.getElementById('countdownFill');
     const countdownText  = document.getElementById('countdownText');
@@ -576,7 +665,20 @@
 
         evtSource.addEventListener('progress', function (e) {
             const data = JSON.parse(e.data);
-            const { status, percent, message, logLine, errorMessage, resultUrl } = data;
+            const { status, percent, message, logLine, errorMessage, resultUrl, queuePosition: qPos, currentAnalysis } = data;
+
+            // ── QUEUED 상태: 큐 대기 배너 표시 ──
+            if (status === 'QUEUED') {
+                queueBanner.classList.add('visible');
+                queuePosition.textContent = (qPos || 1) + '번째';
+                queueCurrentFile.textContent = currentAnalysis || '-';
+                setProgress(0, message, 'running', '분석 대기 중...');
+                return;
+            }
+            // QUEUED → RUNNING 전환 시 큐 배너 숨기기
+            if (queueBanner.classList.contains('visible')) {
+                queueBanner.classList.remove('visible');
+            }
 
             // 로그 라인만 있고 진행률 변화 없으면 UI 업데이트 스킵
             const pctChanged = percent !== lastPercent;

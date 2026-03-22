@@ -47,6 +47,11 @@ public class HeapDumpAnalyzerService {
     // 비동기 실행 스레드 풀
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
+    // 분석 동시 실행 제한: 한 번에 1개만 실행, 나머지는 큐 대기
+    private final java.util.concurrent.Semaphore analysisSemaphore = new java.util.concurrent.Semaphore(1);
+    private final java.util.concurrent.atomic.AtomicInteger queueSize = new java.util.concurrent.atomic.AtomicInteger(0);
+    private volatile String currentAnalysisFilename = null;
+
     // 런타임 설정 (application.properties 초기값, API로 변경 가능)
     private volatile boolean keepUnreachableObjects;
 
@@ -72,14 +77,33 @@ public class HeapDumpAnalyzerService {
             try {
                 HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
                 if (r == null || r.getFilename() == null) continue;
-                if (r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS) continue;
+                if (r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS
+                        && r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.ERROR) continue;
                 File logFile = new File(dir, MAT_LOG_FILE);
                 if (logFile.exists()) {
                     r.setMatLog(new String(Files.readAllBytes(logFile.toPath()),
                             java.nio.charset.StandardCharsets.UTF_8));
                 }
+                // Heap 데이터 없는 SUCCESS → ERROR로 보정
+                if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS
+                        && r.getTotalHeapSize() <= 0 && r.getUsedHeapSize() <= 0) {
+                    r.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
+                    if (r.getErrorMessage() == null || r.getErrorMessage().isEmpty()) {
+                        r.setErrorMessage("Heap data not available — MAT ZIP 파싱 결과에 힙 데이터가 없습니다.");
+                    }
+                    logger.info("Corrected status to ERROR for {} (no heap data)", r.getFilename());
+                    // 디스크에도 보정된 상태 저장
+                    try {
+                        objectMapper.writerWithDefaultPrettyPrinter()
+                                .writeValue(resultFile, r);
+                    } catch (Exception ex) {
+                        logger.warn("Failed to update result.json for {}", r.getFilename());
+                    }
+                }
                 // 기존 캐시의 MAT HTML 재정제 (body 추출 등)
-                sanitizeCachedHtml(r);
+                if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+                    sanitizeCachedHtml(r);
+                }
                 memCache.put(r.getFilename(), r);
                 loaded++;
             } catch (Exception e) {
@@ -88,8 +112,40 @@ public class HeapDumpAnalyzerService {
         }
         logger.info("Restored {} cached results from disk", loaded);
 
+        // 상위 디렉토리에 남은 .index/.threads 파일을 결과 디렉토리로 이동
+        migrateStrayArtifacts(baseDir);
+
         // 이전 실행에서 남은 tmp 파일 정리
         cleanupTmpDir();
+    }
+
+    /**
+     * 상위 디렉토리에 남아있는 .index/.threads 파일을 결과 디렉토리로 이동 (마이그레이션).
+     */
+    private void migrateStrayArtifacts(File baseDir) {
+        File[] stray = baseDir.listFiles((d, n) ->
+                n.endsWith(".index") || n.endsWith(".threads"));
+        if (stray == null || stray.length == 0) return;
+        int moved = 0;
+        for (File f : stray) {
+            // 파일명에서 base 추출: "tomcat_heapdump.a2s.index" → "tomcat_heapdump"
+            String name = f.getName();
+            int firstDot = name.indexOf('.');
+            if (firstDot <= 0) continue;
+            String base = name.substring(0, firstDot);
+            File resultDir = new File(baseDir, base);
+            if (!resultDir.exists() || !resultDir.isDirectory()) continue;
+            try {
+                Files.move(f.toPath(), new File(resultDir, name).toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+                moved++;
+            } catch (IOException e) {
+                logger.warn("[Migrate] Failed to move {}: {}", name, e.getMessage());
+            }
+        }
+        if (moved > 0) {
+            logger.info("[Migrate] Moved {} stray index/threads files to result directories", moved);
+        }
     }
 
     private File tmpDirectory() {
@@ -179,7 +235,11 @@ public class HeapDumpAnalyzerService {
     private void loadThreadStacksText(HeapAnalysisResult r) {
         if (r.getFilename() == null) return;
         String baseName = stripExtension(r.getFilename());
-        File threadsFile = new File(config.getHeapDumpDirectory(), baseName + ".threads");
+        // 결과 디렉토리 우선, 없으면 상위 디렉토리에서 탐색
+        File threadsFile = new File(resultDirectory(r.getFilename()), baseName + ".threads");
+        if (!threadsFile.exists()) {
+            threadsFile = new File(config.getHeapDumpDirectory(), baseName + ".threads");
+        }
         if (threadsFile.exists() && threadsFile.isFile()) {
             try {
                 String content = new String(Files.readAllBytes(threadsFile.toPath()),
@@ -320,6 +380,8 @@ public class HeapDumpAnalyzerService {
     public String  getHeapDumpDirectory()          { return config.getHeapDumpDirectory(); }
     public String  getMatCliPath()                 { return config.getMatCliPath(); }
     public int     getCachedResultCount()          { return memCache.size(); }
+    public boolean isMatCliReady()                 { return config.isMatCliReady(); }
+    public String  getMatCliStatusMessage()        { return config.getMatCliStatusMessage(); }
 
     // ── 파일 관리 ────────────────────────────────────────────────
 
@@ -481,12 +543,15 @@ public class HeapDumpAnalyzerService {
         if (resultFile.exists()) {
             try {
                 HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
-                if (r != null && r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+                if (r != null && (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS
+                        || r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.ERROR)) {
                     File logFile = new File(resultDirectory(safe), MAT_LOG_FILE);
                     if (logFile.exists())
                         r.setMatLog(new String(Files.readAllBytes(logFile.toPath()),
                                 java.nio.charset.StandardCharsets.UTF_8));
-                    sanitizeCachedHtml(r);
+                    if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+                        sanitizeCachedHtml(r);
+                    }
                     memCache.put(safe, r);
                     return r;
                 }
@@ -524,13 +589,40 @@ public class HeapDumpAnalyzerService {
 
     // ── SSE 기반 비동기 분석 ─────────────────────────────────────
 
+    /** 현재 큐 대기 수 (API 노출용) */
+    public int getQueueSize() { return queueSize.get(); }
+
+    /** 현재 분석 중인 파일명 (API 노출용) */
+    public String getCurrentAnalysisFilename() { return currentAnalysisFilename; }
+
     public Future<?> analyzeWithProgress(String filename, SseEmitter emitter) {
         final String safe = new File(filename).getName();
+        queueSize.incrementAndGet();
         return executor.submit(() -> {
             long startTime = System.currentTimeMillis();
             File tmpFile = new File(tmpDirectory(), safe);
             boolean analysisSuccess = false;
+            boolean semaphoreAcquired = false;
             try {
+                // ── 큐 대기: 세마포어를 즉시 획득할 수 없으면 대기 상태를 SSE로 전송 ──
+                if (!analysisSemaphore.tryAcquire()) {
+                    logger.info("[Analysis] Queued: {} (queue size: {}, running: {})",
+                            safe, queueSize.get(), currentAnalysisFilename);
+                    // 대기 중 SSE 업데이트를 주기적으로 전송
+                    while (!analysisSemaphore.tryAcquire(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                        int pos = queueSize.get() - 1; // 현재 실행 중인 것 제외
+                        String current = currentAnalysisFilename;
+                        sendProgress(emitter, AnalysisProgress.queued(safe, pos, current));
+                        if (Thread.currentThread().isInterrupted()) {
+                            throw new InterruptedException("Cancelled while queued");
+                        }
+                    }
+                    logger.info("[Analysis] Dequeued, starting: {} (waited {}ms)",
+                            safe, System.currentTimeMillis() - startTime);
+                }
+                semaphoreAcquired = true;
+                currentAnalysisFilename = safe;
+
                 sendProgress(emitter, AnalysisProgress.step(safe, 3, "힙 덤프 파일 확인 중..."));
 
                 // tmp에 파일이 있으면 tmp에서, 아니면 heapdump 디렉토리에서 탐색
@@ -549,6 +641,17 @@ public class HeapDumpAnalyzerService {
 
                 sendProgress(emitter, AnalysisProgress.step(safe, 5, "파일 확인 완료"));
 
+                // MAT CLI 사전 검증
+                if (!config.isMatCliReady()) {
+                    String matErr = config.getMatCliStatusMessage();
+                    logger.error("[Analysis] MAT CLI is not ready: {}", matErr);
+                    sendProgress(emitter, AnalysisProgress.error(safe,
+                            "MAT CLI를 사용할 수 없습니다: " + matErr
+                            + " — 관리자에게 MAT CLI 설치 상태를 확인해 주세요."));
+                    emitter.complete();
+                    return;
+                }
+
                 File resultDir = resultDirectory(safe);
                 Files.createDirectories(resultDir.toPath());
 
@@ -562,12 +665,18 @@ public class HeapDumpAnalyzerService {
 
                 String base = stripExtension(safe);
                 moveZipsToResultDir(base, resultDir);
+                moveArtifactsToResultDir(base, safe, resultDir);
 
                 sendProgress(emitter, AnalysisProgress.parsing(safe, 88, "Overview 파싱 중..."));
                 MatParseResult parsed = parser.parse(resultDir.getAbsolutePath(), base);
                 if (!parsed.hasData()) {
-                    logger.warn("ZIP not in resultDir, fallback to heapDumpDir");
+                    // heapDumpDir fallback은 정확히 base 이름이 일치하는 ZIP만 사용
+                    // (다른 분석 결과의 ZIP을 잘못 매칭하는 것을 방지)
+                    logger.warn("ZIP not in resultDir, fallback to heapDumpDir (strict match for base='{}')", base);
                     parsed = parser.parse(config.getHeapDumpDirectory(), base);
+                    if (!parsed.hasData()) {
+                        logger.warn("[Analysis] No matching ZIPs found for '{}' in heapDumpDir either", base);
+                    }
                 }
 
                 sendProgress(emitter, AnalysisProgress.parsing(safe, 93, "Top Components 분석 중..."));
@@ -586,14 +695,25 @@ public class HeapDumpAnalyzerService {
 
                 HeapAnalysisResult result = buildResult(safe, dumpFile, parsed, matLog);
                 result.setAnalysisTime(System.currentTimeMillis() - startTime);
-                result.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.SUCCESS);
 
-                memCache.put(safe, result);
-                saveResultToDisk(result, resultDir);
-
-                analysisSuccess = true;
-                sendProgress(emitter, AnalysisProgress.completed(safe, "/analyze/result/" + safe));
-                logger.info("[Analysis] Done: {} in {}ms", safe, result.getAnalysisTime());
+                // Heap 데이터가 없으면 분석 실패로 처리
+                boolean hasHeapData = result.getTotalHeapSize() > 0 || result.getUsedHeapSize() > 0;
+                if (!hasHeapData) {
+                    result.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
+                    result.setErrorMessage("Heap data not available — MAT ZIP 파싱 결과에 힙 데이터가 없습니다.");
+                    memCache.put(safe, result);
+                    saveResultToDisk(result, resultDir);
+                    analysisSuccess = true; // tmp 파일 삭제 방지 (결과는 저장됨)
+                    sendProgress(emitter, AnalysisProgress.error(safe, "Heap data not available"));
+                    logger.warn("[Analysis] No heap data for {}, marked as ERROR", safe);
+                } else {
+                    result.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.SUCCESS);
+                    memCache.put(safe, result);
+                    saveResultToDisk(result, resultDir);
+                    analysisSuccess = true;
+                    sendProgress(emitter, AnalysisProgress.completed(safe, "/analyze/result/" + safe));
+                    logger.info("[Analysis] Done: {} in {}ms", safe, result.getAnalysisTime());
+                }
 
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -604,8 +724,57 @@ public class HeapDumpAnalyzerService {
                 } else {
                     logger.error("[Analysis] Failed for {}", safe, e);
                     sendProgress(emitter, AnalysisProgress.error(safe, e.getMessage()));
+
+                    // 분석 실패 결과를 memCache + 디스크에 저장 (파일 삭제 전까지 유지)
+                    try {
+                        // tmp 파일이면 최종 위치로 이동하여 보존
+                        File finalFile;
+                        if (tmpFile.exists()) {
+                            Path finalPath = Paths.get(config.getHeapDumpDirectory(), safe);
+                            Files.move(tmpFile.toPath(), finalPath, StandardCopyOption.REPLACE_EXISTING);
+                            finalFile = finalPath.toFile();
+                            logger.info("[Analysis] Moved failed tmp → final: {}", finalPath);
+                        } else {
+                            finalFile = new File(config.getHeapDumpDirectory(), safe);
+                        }
+
+                        HeapAnalysisResult errorResult = new HeapAnalysisResult();
+                        errorResult.setFilename(safe);
+                        errorResult.setFileSize(finalFile.exists() ? finalFile.length() : 0);
+                        errorResult.setLastModified(finalFile.exists() ? finalFile.lastModified() : System.currentTimeMillis());
+                        errorResult.setFormat(getExtension(safe).toUpperCase());
+                        errorResult.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
+                        errorResult.setErrorMessage(e.getMessage());
+                        errorResult.setAnalysisTime(System.currentTimeMillis() - startTime);
+
+                        // MAT CLI 로그가 있으면 에러 결과에도 포함
+                        File errorResultDir = resultDirectory(safe);
+                        File matLogFile = new File(errorResultDir, MAT_LOG_FILE);
+                        if (matLogFile.exists()) {
+                            try {
+                                errorResult.setMatLog(new String(Files.readAllBytes(matLogFile.toPath()),
+                                        java.nio.charset.StandardCharsets.UTF_8));
+                            } catch (Exception logEx) {
+                                logger.warn("[Analysis] Failed to read mat.log for error result: {}", logEx.getMessage());
+                            }
+                        }
+                        Files.createDirectories(errorResultDir.toPath());
+                        memCache.put(safe, errorResult);
+                        saveResultToDisk(errorResult, errorResultDir);
+                        analysisSuccess = true; // tmp 파일 삭제 방지 (이미 이동 완료)
+                        logger.info("[Analysis] Error result saved for: {}", safe);
+                    } catch (Exception saveEx) {
+                        logger.warn("[Analysis] Failed to save error result for {}: {}", safe, saveEx.getMessage());
+                    }
                 }
             } finally {
+                // 세마포어 해제 및 큐 카운터 감소
+                if (semaphoreAcquired) {
+                    currentAnalysisFilename = null;
+                    analysisSemaphore.release();
+                }
+                queueSize.decrementAndGet();
+
                 // 분석 실패/중단 시 tmp 파일 삭제
                 if (!analysisSuccess && tmpFile.exists()) {
                     if (tmpFile.delete()) {
@@ -672,15 +841,32 @@ public class HeapDumpAnalyzerService {
 
         if (!finished) {
             process.destroyForcibly();
-            throw new RuntimeException("MAT CLI timed out after " + MAT_TIMEOUT_MINUTES + " min");
+            logger.error("[MAT CLI] Process timed out after {} minutes for file: {}", MAT_TIMEOUT_MINUTES, filename);
+            throw new RuntimeException("MAT CLI가 " + MAT_TIMEOUT_MINUTES + "분 제한 시간을 초과했습니다. "
+                    + "힙 덤프 파일이 너무 크거나 시스템 메모리가 부족할 수 있습니다.");
         }
 
         int exitCode = process.exitValue();
-        if (exitCode != 0) logger.warn("MAT CLI exit={}", exitCode);
+        String matOutput = output.toString();
+
+        if (exitCode != 0) {
+            logger.error("[MAT CLI] Exited with code {} for file: {}", exitCode, filename);
+            // 출력에서 핵심 에러 메시지 추출
+            String errorHint = extractMatErrorHint(matOutput);
+            if (!errorHint.isEmpty()) {
+                logger.error("[MAT CLI] Error detail: {}", errorHint);
+            }
+            // MAT CLI 실패 시 즉시 예외 발생 — 잘못된 파일의 분석 성공 방지
+            String errorMsg = !errorHint.isEmpty() ? errorHint
+                    : "MAT CLI가 오류 코드 " + exitCode + "로 종료되었습니다. 유효한 힙 덤프 파일인지 확인하세요.";
+            throw new RuntimeException(errorMsg);
+        } else {
+            logger.info("[MAT CLI] Completed successfully for file: {} (exit=0)", filename);
+        }
 
         sendProgress(emitter, AnalysisProgress.step(filename, 82,
                 "MAT CLI 완료 (exit=" + exitCode + ")"));
-        return output.toString();
+        return matOutput;
     }
 
     // ── 디스크 저장 ──────────────────────────────────────────────
@@ -710,6 +896,7 @@ public class HeapDumpAnalyzerService {
         c.setLeakSuspects(r.getLeakSuspects());
         c.setTotalClasses(r.getTotalClasses());   c.setTotalObjects(r.getTotalObjects());
         c.setAnalysisTime(r.getAnalysisTime());   c.setAnalysisStatus(r.getAnalysisStatus());
+        c.setErrorMessage(r.getErrorMessage());
         c.setOverviewHtml(r.getOverviewHtml());   c.setTopComponentsHtml(r.getTopComponentsHtml());
         c.setSuspectsHtml(r.getSuspectsHtml());   c.setMatLog(null);
         c.setHistogramHtml(r.getHistogramHtml());
@@ -841,9 +1028,75 @@ public class HeapDumpAnalyzerService {
         }
     }
 
+    /**
+     * MAT 인덱스 파일(.index)과 .threads 파일을 결과 디렉토리로 이동.
+     * 분석 완료 후 상위 디렉토리를 깨끗하게 유지한다.
+     */
+    private void moveArtifactsToResultDir(String base, String safe, File resultDir) {
+        File heapDir = new File(config.getHeapDumpDirectory());
+        File[] artifacts = heapDir.listFiles((d, n) ->
+                n.startsWith(base + ".") && !n.equals(safe)
+                && (n.endsWith(".index") || n.endsWith(".threads")));
+        if (artifacts == null || artifacts.length == 0) return;
+        int moved = 0;
+        for (File f : artifacts) {
+            File dest = new File(resultDir, f.getName());
+            try {
+                Files.move(f.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                moved++;
+            } catch (IOException e) {
+                logger.warn("[Artifact Move] Failed to move {}: {}", f.getName(), e.getMessage());
+            }
+        }
+        if (moved > 0) {
+            logger.info("[Artifact Move] Moved {} index/threads files → {}", moved, resultDir.getName());
+        }
+    }
+
     private String formatSize(long bytes) {
         if (bytes < 1048576)         return String.format("%.1f KB", bytes / 1024.0);
         if (bytes < 1073741824L)     return String.format("%.1f MB", bytes / (1024.0 * 1024));
         return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
+    }
+
+    /**
+     * MAT CLI 출력에서 핵심 에러 힌트를 추출합니다.
+     * OutOfMemoryError, SnapshotException, 권한 오류 등 주요 패턴을 감지합니다.
+     */
+    private String extractMatErrorHint(String matOutput) {
+        if (matOutput == null || matOutput.isEmpty()) return "";
+
+        String lower = matOutput.toLowerCase();
+
+        if (lower.contains("outofmemoryerror") || lower.contains("java.lang.outofmemory")) {
+            return "Java OutOfMemoryError — MAT 실행에 더 많은 힙 메모리가 필요합니다. "
+                    + "MemoryAnalyzer.ini의 -Xmx 값을 늘려주세요.";
+        }
+        if (lower.contains("snapshotexception") || lower.contains("error opening heap dump")) {
+            return "힙 덤프 파일이 손상되었거나 지원하지 않는 형식입니다. "
+                    + "유효한 HPROF/PHD 형식인지 확인하세요.";
+        }
+        if (lower.contains("permission denied") || lower.contains("access denied")) {
+            return "파일 또는 디렉토리 접근 권한이 부족합니다. 파일 권한을 확인하세요.";
+        }
+        if (lower.contains("no such file") || lower.contains("file not found")
+                || lower.contains("cannot find")) {
+            return "파일을 찾을 수 없습니다. 경로가 올바른지 확인하세요.";
+        }
+        if (lower.contains("disk full") || lower.contains("no space left")) {
+            return "디스크 공간이 부족합니다. 불필요한 파일을 정리한 후 다시 시도하세요.";
+        }
+        if (lower.contains("exception") || lower.contains("error")) {
+            // 마지막 Exception/Error 라인 추출
+            String[] lines = matOutput.split("\n");
+            for (int i = lines.length - 1; i >= 0; i--) {
+                String line = lines[i].trim();
+                if (line.toLowerCase().contains("exception") || line.toLowerCase().contains("error")) {
+                    if (line.length() > 200) line = line.substring(0, 200) + "...";
+                    return line;
+                }
+            }
+        }
+        return "";
     }
 }

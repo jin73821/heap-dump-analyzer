@@ -40,12 +40,20 @@ public class AnalysisProgress {
     /** 분석 완료 후 결과 페이지 URL */
     private String resultUrl;
 
-    public static AnalysisProgress queued(String filename) {
+    /** 큐 대기 위치 (1 = 다음 실행 예정) */
+    private int queuePosition;
+
+    /** 현재 분석 중인 파일명 */
+    private String currentAnalysis;
+
+    public static AnalysisProgress queued(String filename, int queuePosition, String currentAnalysis) {
         AnalysisProgress p = new AnalysisProgress();
         p.filename = filename;
         p.status   = Status.QUEUED;
         p.percent  = 0;
-        p.message  = "분석 대기 중...";
+        p.queuePosition = queuePosition;
+        p.currentAnalysis = currentAnalysis;
+        p.message  = "분석 대기 중... (대기 순서: " + queuePosition + "번째)";
         return p;
     }
 

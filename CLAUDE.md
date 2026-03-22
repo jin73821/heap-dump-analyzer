@@ -45,7 +45,7 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 ```
 
 **Key layers:**
-- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks. SSE `Future` tracking per emitter for client disconnect cancellation.
+- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, queue status (`/api/queue/status`). SSE `Future` tracking per emitter for client disconnect cancellation.
 - **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (tmp staging → final), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). On disk cache restore, auto-reparses missing data from ZIPs (`reparseComponentDetails`, `reparseActions`).
 - **Parser** (`parser/MatReportParser.java`) — Multi-tier extraction from MAT ZIP files:
   - Overview ZIP: heap stats from `<td>` key-value pairs, Class Histogram from `Class_Histogram*.html`, Thread Overview from `Thread_Overview*.html`
@@ -61,13 +61,13 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 - `ThreadInfo` — thread name, type, heap sizes, address, stack trace (matched from `.threads` file)
 - `MemoryObject`, `LeakSuspect`, `AnalysisProgress`, `HeapDumpFile`
 
-**Frontend:** Thymeleaf templates + vanilla JS + Chart.js. No build step. All styles are **inline `<style>` blocks** inside each template (NOT in `style.css` — `index.html` and `analyze.html` each have their own complete inline styles). Modals use `.modal-ov.open` CSS pattern with `animation: modalIn .2s ease`.
+**Frontend:** Thymeleaf templates + vanilla JS + Chart.js. No build step. `index.html`, `analyze.html`, `files.html` have **complete inline `<style>` blocks**. `progress.html` and `compare.html` link `/css/style.css` plus additional inline styles. Modals use `.modal-ov.open` CSS pattern with `animation: modalIn .2s ease`.
 
 **External dependency:** Eclipse MAT CLI binary at `/opt/mat/ParseHeapDump.sh`, invoked with reports: `org.eclipse.mat.api:suspects`, `org.eclipse.mat.api:overview`, `org.eclipse.mat.api:top_components`. 30-minute timeout.
 
 ## Frontend Structure
 
-**index.html** — Dashboard with sidebar (upload, file list, MAT settings). Files list shows tooltips on hover. Modals for: Download, Compare, Export History, Clear Cache, Delete, Auto-Analyze warning, Keep Unreachable warning.
+**index.html** — Dashboard with sidebar (upload, file list, MAT settings). Files list shows tooltips on hover. Analysis Queue panel (auto-polls `/api/queue/status` every 5s when active, idle state when empty). Modals for: Download, Compare, Export History, Clear Cache, Delete, Auto-Analyze warning, Keep Unreachable warning. Settings modal has fixed height (520px) across tabs.
 
 **analyze.html** — Analysis result page with sidebar navigation sections:
 - **Analysis**: Overview (KPI cards, charts), Top Consumers (sortable/searchable table with click-for-detail modal), Leak Suspects (accordion)
@@ -75,7 +75,9 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 - **Tools**: MAT Log (chunked loading), Export CSV, Print
 - **Raw Data**: MAT original HTML for System Overview, Top Components, Suspect Details, Histogram, Thread Overview
 
-**progress.html** — SSE-driven analysis progress with step indicators.
+**progress.html** — SSE-driven analysis progress with step indicators. Queue waiting banner (purple gradient) shown when analysis is queued behind another, with position and current analysis filename.
+
+**files.html** — Full file listing page (`/files`). Search filter, status dots, SVG icon buttons (view/analyze/download/delete) matching `index.html` sidebar style. Delete confirmation modal. Download confirmation modal (filename + size).
 
 **compare.html** — Side-by-side dump comparison.
 
@@ -97,7 +99,7 @@ On startup (`@PostConstruct`): disk results restored, missing data re-parsed fro
 ## Key Design Decisions
 
 - **Two-tier cache:** In-memory `ConcurrentHashMap` restored from disk (`result.json`) on startup. Missing fields (componentDetailHtmlMap, histogramHtml, threadOverviewHtml) are lazily re-extracted from ZIPs via `reparseComponentDetails()` / `reparseActions()`.
-- **Async analysis with cancellation:** `CachedThreadPool` executor returns `Future<?>`. SSE emitter callbacks call `task.cancel(true)` on client disconnect.
+- **Serial analysis with queue:** `Semaphore(1)` ensures only one MAT CLI analysis runs at a time. Additional requests queue via `CachedThreadPool` and send `QUEUED` status via SSE every 3 seconds while waiting. `AtomicInteger queueSize` and `volatile currentAnalysisFilename` track queue state. `GET /api/queue/status` exposes queue info. SSE emitter callbacks call `task.cancel(true)` on client disconnect (safe for both queued and running tasks via `semaphoreAcquired` flag).
 - **Tmp staging:** Uploads go to `{heapdump.directory}/tmp/` first. Only moved to final location after successful analysis.
 - **Component detail pages:** Keyed as `className#index` in `componentDetailHtmlMap` to handle multiple instances of the same class (e.g., multiple `ParallelWebappClassLoader` instances).
 - **Thread stack matching:** `.threads` file parsed by splitting on `Thread 0x...` blocks; matched to `ThreadInfo` entries by hex address extracted from the Thread Overview HTML.
@@ -106,3 +108,14 @@ On startup (`@PostConstruct`): disk results restored, missing data re-parsed fro
 - **`@JsonIgnore` on `threadStacksText`:** Not persisted to `result.json` (can be large); loaded on demand from `.threads` file.
 - **Models use Lombok:** `@Data`, `@NoArgsConstructor`, `@AllArgsConstructor` throughout.
 - **Desktop font scaling:** `@media (min-width: 1024px)` blocks in each template's inline styles for desktop readability. Mobile sizes are the base.
+- **Mobile sidebar pattern:** `index.html` and `analyze.html` use a slide-in drawer sidebar on mobile (≤900px / ≤768px). Hamburger button (`#menuBtn`) toggles `.mobile-open` on `#mobileSidebar` + `.open` on `#sidebarOverlay`. Sidebar slides via `transform: translateX(-100%)` → `translateX(0)` with cubic-bezier easing. Hamburger animates to X via `.open` class on button. Sidebar includes `.mobile-sidebar-header` (blue gradient branding) visible only on mobile.
+- **Thread Stacks auto-load:** `showPanel('thread-stacks')` triggers automatic first-load (`_threadStacksLoaded` flag). Server-side logging with `[ThreadStacks]` prefix in `HeapDumpController`.
+- **MAT CLI startup validation:** `HeapDumpConfig.init()` runs 5-step validation (exists → isFile → readable → executable → non-empty). Results stored in `isMatCliReady()` / `getMatCliStatusMessage()`. Service checks `config.isMatCliReady()` before analysis.
+- **MAT CLI error extraction:** `extractMatErrorHint()` in service detects OOM, SnapshotException, permission denied, disk full patterns from MAT output and logs Korean-language remediation hints.
+- **Settings Modal:** `index.html` "API / Settings" button opens a 3-tab modal (General / System / API) instead of raw JSON. Data loaded via `GET /api/settings` which returns system, disk, mat, files info.
+- **Thymeleaf security restriction:** `th:onclick` with string variables is blocked by Thymeleaf's restricted expression policy. Use `th:data-*` attributes + plain `onclick="fn(this.dataset.x)"` pattern instead.
+- **SVG icon button pattern:** `index.html` and `files.html` share the `.fb` icon button style (26×26px, 1px border, SVG stroke icons). Variants: `.fb.v` (green/view), `.fb.p` (blue/analyze), `.fb.d` (red hover/delete), plain (download). When adding file action buttons to new pages, replicate this pattern.
+
+## Changelog
+
+모든 변경 내용은 `CHANGELOG.txt` 파일에 누적 기록합니다. 작업 완료 후 반드시 해당 파일에 변경 내용을 날짜, 대상 파일, 상세 내역과 함께 추가하세요.

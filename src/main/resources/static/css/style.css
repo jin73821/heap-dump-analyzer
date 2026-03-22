@@ -365,4 +365,12 @@ canvas { max-height: 340px; }
     .stats-grid { grid-template-columns: 1fr; }
     .upload-box { padding: 20px; }
     .stat-value { font-size: 24px; }
+    .section { padding: 16px; }
+    .btn { min-height: 44px; }
+    .btn-sm { min-height: 44px; }
+    .mat-report-frame { padding: 10px; }
+    .mat-report-frame table { font-size: 12px; }
+    .mat-report-frame th,
+    .mat-report-frame td { padding: 4px 6px; }
+    .chart-grid { grid-template-columns: 1fr; }
 }

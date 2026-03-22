@@ -87,6 +87,22 @@
             .error-box { font-size: 15px; }
             .no-data { font-size: 15px; }
         }
+        /* ── Mobile responsive ────────────────────── */
+        @media (max-width: 600px) {
+            .main { padding: 16px 12px; }
+            .compare-header { grid-template-columns: 1fr; gap: 8px; }
+            .vs-circle { width: 36px; height: 36px; font-size: 11px; }
+            .dump-card { padding: 12px; }
+            .dump-card-name { font-size: 13px; word-break: break-all; }
+            .delta-banner { flex-wrap: wrap; gap: 10px; padding: 12px 14px; }
+            .delta-item { flex: 1 1 calc(50% - 10px); min-width: 80px; }
+            .delta-sep { display: none; }
+            .delta-value { font-size: 16px; }
+            .panel { padding: 12px; overflow-x: auto; }
+            .diff-table th, .diff-table td { padding: 6px 8px; white-space: nowrap; }
+            .class-name { font-size: 10px; }
+            .back-btn { min-height: 44px; display: inline-flex; align-items: center; }
+        }
     </style>
 </head>
 <body>

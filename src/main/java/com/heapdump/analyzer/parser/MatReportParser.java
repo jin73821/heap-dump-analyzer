@@ -201,15 +201,9 @@ public class MatReportParser {
                 }
             }
 
-            // 2) baseName 없이 keyword만으로 폴백 탐색
-            for (File f : allZips) {
-                String nameLower = f.getName().toLowerCase();
-                boolean keywordMatch = keywords.stream().anyMatch(nameLower::contains);
-                if (keywordMatch) {
-                    logger.info("Fallback-matched {} ZIP: {}", reportType, f.getAbsolutePath());
-                    return f;
-                }
-            }
+            // 2) baseName 없이 keyword만으로 폴백 탐색은 제거
+            //    다른 분석 결과의 ZIP을 잘못 매칭하는 심각한 버그 방지
+            //    (예: ssh-to-pgp_234 분석 시 tomcat_heapdump ZIP이 매칭되는 문제)
         }
 
         logger.warn("No ZIP found for reportType='{}', base='{}'", reportType, base);
