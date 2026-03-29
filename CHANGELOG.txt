@@ -3,318 +3,211 @@
 ================================================================================
 
 ────────────────────────────────────────────────────────────────────────────────
- 2026-03-22  분석 완료 후 .index/.threads 파일을 결과 디렉토리로 이동
+ 2026-03-27  분석 완료 후 덤프 파일 gzip 압축
 ────────────────────────────────────────────────────────────────────────────────
 
 [HeapDumpAnalyzerService.java]
-- moveArtifactsToResultDir() 추가: 분석 완료 후 .index/.threads 파일을 결과 디렉토리로 이동
-- migrateStrayArtifacts() 추가: 서버 시작 시 상위 디렉토리에 남은 기존 파일 마이그레이션
-- loadThreadStacksText(): 결과 디렉토리 우선 탐색 후 상위 디렉토리 fallback
+- 분석 성공 후 덤프 파일을 자동으로 gzip 압축 (compressDumpFile 메서드 추가)
+- 압축 전 디스크 여유 공간이 원본 파일 크기 이상인지 점검, 부족 시 압축 건너뜀
+- isValidHeapDumpFile()에 .hprof.gz, .bin.gz, .dump.gz 확장자 추가
+- getFile()에서 .gz 압축 파일도 탐색하도록 수정
+- deleteFile()에서 .gz 압축 파일도 함께 삭제하도록 수정
+- stripExtension()에서 .gz 이중 확장자 처리 (.hprof.gz → base name)
+- 재분석(re-analyze) 시 .gz 압축 파일 자동 감지 → 압축 해제 후 분석 → 완료 후 재압축
+- decompressDumpFile 메서드 추가 (디스크 여유 공간 점검 포함)
+- 원본과 .gz 동시 존재 시 중복 처리:
+  · cleanupDuplicateGzFiles(): 원본이 있으면 .gz 삭제 (디스크 절약)
+  · @PostConstruct 기동 시 중복 파일 자동 정리
+  · analyzeWithProgress(): 분석 시작 시 원본+.gz 동시 존재하면 .gz 삭제
+  · compressDumpFile(): 기존 .gz 존재 시 삭제 후 재압축
+  · listFiles(): 원본과 .gz 중복 노출 방지, .gz는 원본 이름으로 표시
+
+[HeapDumpController.java]
+- downloadFile()에서 실제 파일명(.gz 포함)을 다운로드 파일명으로 사용하도록 수정
 
 ────────────────────────────────────────────────────────────────────────────────
- 2026-03-22  에러 페이지 MAT Log 항상 표시 + 분석 실패 일자/상세 정보 추가
+ 2026-03-27  디스크 용량 부족 업로드 차단 + 90% 이상 경고 배너
 ────────────────────────────────────────────────────────────────────────────────
 
 [HeapDumpController.java]
-- 에러 시 errorDate(실패 일시), errorAnalysisTime(소요 시간), errorFileSize(파일 크기) 모델에 추가
-
-[analyze.html — ERROR STATE]
-- 분석 실패 상세 정보 표시: Failed at / Duration / File Size
-- MAT Log 카드를 항상 표시 (로그가 없으면 "MAT CLI 로그가 없습니다" 안내 메시지)
-- 기존 th:if 조건 제거하여 MAT Log 영역이 항상 보이도록 변경
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-22  분석 실패 결과 페이지에서도 MAT Log 접근 보장
-────────────────────────────────────────────────────────────────────────────────
-
-[HeapDumpAnalyzerService.java]
-- 분석 exception 시 에러 결과에 mat.log 파일 내용 포함 (기존: matLog 미설정)
-- getCachedResult에서 ERROR 결과도 디스크에서 복원 (기존: SUCCESS만 복원)
-  → 서버 재시작 후에도 에러 결과의 MAT Log를 /analyze/log/ API로 접근 가능
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-22  분석 실패 화면에 Re-Analyze 버튼 및 전체 MAT Log 보기 기능 추가
-────────────────────────────────────────────────────────────────────────────────
-
-[HeapDumpController.java]
-- 에러 상태 시 matLogTotalLen에 실제 로그 길이 전달 (기존: 0 고정)
-
-[analyze.html — ERROR STATE]
-- 에러 카드에 Re-Analyze 버튼 추가 (/analyze/rerun/{filename}으로 이동)
-- MAT CLI Log를 별도 카드로 분리 (기존: <details> 접기)
-- 로그가 5000자 초과 시 "Load Full Log" 버튼으로 전체 로그 비동기 로딩
-- 헤더에도 에러 상태에서 filename badge + Re-Analyze 버튼 표시
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-22  분석 실패 파일 클릭 시 실패 결과 페이지로 이동
-────────────────────────────────────────────────────────────────────────────────
-
-[index.html — 사이드바 Recent Files]
-- ERROR 파일 빨간 버튼: /analyze/{f} → /analyze/result/{f} 변경 (실패 결과 페이지로 이동)
-
-[index.html — Analysis History]
-- "failed" 배지: /analyze/{f} → /analyze/result/{f} 변경
-
-[files.html — Analysis Files]
-- ERROR/NOT_ANALYZED 공용 버튼을 분리:
-  - ERROR: /analyze/result/{f}로 이동하는 빨간 버튼 (.fb.e)
-  - NOT_ANALYZED: /analyze/{f}로 이동하는 파란 버튼 (.fb.p)
-- .fb.e 스타일 추가 (빨간 배경 #EF4444)
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-22  분석 실패 결과 영속화 (파일 삭제 전까지 유지)
-────────────────────────────────────────────────────────────────────────────────
-
-[HeapDumpAnalyzerService.java]
-- 분석 실패(Exception) 시 ERROR 상태의 HeapAnalysisResult를 생성하여 memCache + 디스크(result.json)에 저장
-  - 기존: catch 블록에서 SSE 에러 메시지만 전송, 실패 정보 유실
-  - 수정: 실패 파일도 tmp→final 이동 후 ERROR 결과 저장, 파일 삭제 시 함께 정리
-- cloneWithoutLog()에 errorMessage 필드 복사 누락 수정
-  - 기존: 디스크 저장 시 errorMessage가 null로 저장됨
-  - 수정: errorMessage도 정상 복사되어 서버 재시작 후에도 에러 메시지 유지
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-22  메인 페이지 사이드바 분석 실패 파일 빨간색 표시
-────────────────────────────────────────────────────────────────────────────────
-
-[HeapDumpController.java]
-- `errorFiles` Set 추가: ERROR 상태 파일명을 템플릿에 전달
-
-[index.html — 사이드바 Recent Files]
-- ERROR 파일: 행 전체 빨간 배경/테두리 (`.file-err`), 파일명 빨간색, ext-badge 빨간색
-- ERROR 파일: 빨간 Re-Analyze 버튼 (`.fb.e`) — 기존 파란 Analyze 버튼 대신 표시
-- Tooltip Status: Analyzed / Failed / Not analyzed 3단계 구분
-- 미분석 Analyze 버튼: analyzedFiles와 errorFiles 모두 아닌 경우에만 표시
-
-[index.html — Analysis History 패널]
-- ERROR 상태 파일명에 `.hname-err` 빨간색 적용
-
-[files.html — Analysis Files 목록]
-- ERROR 상태 파일명에 `.fname-err` 빨간색 적용
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-22  잘못된 파일 분석 시 성공으로 표시되는 버그 수정
-────────────────────────────────────────────────────────────────────────────────
-
-[HeapDumpAnalyzerService.java]
-- MAT CLI가 0이 아닌 exit code로 종료 시 즉시 RuntimeException 발생하도록 수정
-  - 기존: exit code만 로그하고 파싱 단계로 계속 진행 → 다른 파일 결과를 매칭하여 성공으로 표시
-  - 수정: 에러 메시지와 함께 예외 발생 → catch 블록에서 분석 실패 메시지를 클라이언트에 전송
-
-[MatReportParser.java]
-- findZipFile()에서 baseName 없이 keyword만으로 ZIP을 매칭하는 fallback 로직 제거
-  - 기존: base 이름 불일치해도 keyword(overview, suspects 등)만 일치하면 다른 파일의 ZIP 반환
-  - 수정: 반드시 baseName + keyword가 모두 일치하는 ZIP만 매칭
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  메인 페이지 대시보드 레이아웃 리팩토링
-────────────────────────────────────────────────────────────────────────────────
+- /api/disk/check 응답에 usableSpaceBytes (raw bytes) 필드 추가
 
 [index.html]
-- 대시보드 상단 레이아웃을 2컬럼 구조로 변경:
-  - 왼쪽: FILES, DISK, ANALYZED, SUSPECTS 스탯 카드 2×2 그리드
-  - 오른쪽: Analysis completed 프로그레스 바 + Analysis Queue 패널 세로 스택
-- 기존 가로 일렬 stats-bar를 개별 stat-card 컴포넌트로 분리
-- 모바일(≤900px): 1컬럼으로 폴백, 스탯 카드 2열 유지
-- 모바일(≤480px): 스탯 카드 2열 유지
-
-- Settings 모달 전면 폰트/스타일 개선:
-  - General/System/API 탭 간 폰트 크기 통일: s-key 13px, s-val 13px, s-status 13px
-  - s-val에서 모노스페이스 제거 → 경로(s-val-path)와 수치(s-val-mono)에만 선별 적용
-  - 새 클래스 s-val-mono 추가: 숫자/버전/메모리 값에 모노스페이스 12px 적용
-  - s-key에 font-weight:500 추가로 라벨 가독성 향상
-  - s-group-title에 하단 구분선(border-bottom) 추가
-  - s-api-method, s-api-path, s-copy-btn에 vertical-align:middle 정렬
-  - 데스크톱(≥1024px) 미디어 쿼리에 Settings 폰트 스케일링 추가
+- 업로드 시 파일 크기가 디스크 여유 공간보다 클 경우 업로드 차단 모달 표시
+  (빨간 X 아이콘, 파일 크기 vs 여유 공간 비교, 한국어 안내 메시지)
+- doUpload()에서 usableSpaceBytes와 file.size 비교 로직 추가
+- 메인 홈페이지 대시보드 상단에 디스크 사용률 90% 이상 경고 배너 추가
+  (노란 그라데이션 배경, 경고 아이콘, 사용률 수치 표시)
+- disk-warn-banner CSS 스타일 추가
 
 ────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  메인 페이지 큐 상태 패널 + Settings 모달 크기 고정
+ 2026-03-27  분석 실패 UI 개선 — 파스텔 배경 + 실패 단계 강조
 ────────────────────────────────────────────────────────────────────────────────
-
-[index.html]
-- 메인 페이지에 Analysis Queue 패널 추가: 현재 분석 중인 파일과 대기 수를 실시간 표시
-- 큐 활성 시 5초 간격 자동 폴링, 큐 비활성 시 패널 자동 숨김 + 폴링 중지
-- Refresh 버튼으로 수동 새로고침 가능 (회전 애니메이션)
-- Settings 모달에 height: 520px 고정하여 탭 전환 시 크기 변동 방지
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  분석 동시 실행 제한 — 큐 기반 순차 처리
-────────────────────────────────────────────────────────────────────────────────
-
-[HeapDumpAnalyzerService.java]
-- Semaphore(1) 기반 동시 분석 제한: 한 번에 1개 파일만 MAT CLI 분석 실행
-- 추가 분석 요청은 자동으로 큐에 적재, 순서대로 처리
-- 큐 대기 중 3초 간격으로 SSE를 통해 대기 상태(순서, 현재 분석 파일) 전송
-- 클라이언트 연결 해제/인터럽트 시 큐에서도 안전하게 제거
-- getQueueSize(), getCurrentAnalysisFilename() API 메서드 추가
-
-[HeapDumpController.java]
-- GET /api/queue/status 엔드포인트 추가 (큐 크기, 현재 분석 중인 파일 조회)
-
-[AnalysisProgress.java]
-- queuePosition, currentAnalysis 필드 추가
-- queued() 팩토리 메서드에 큐 위치/현재 분석 파일 파라미터 추가
 
 [progress.html]
-- QUEUED 상태 처리: 큐 대기 배너 UI 추가 (보라색 그라디언트, 대기 순서/현재 분석 파일 표시)
-- 큐 대기 → 분석 시작 전환 시 배너 자동 숨김
-- 데스크톱/모바일 반응형 스타일 적용
+- 에러 배너 배경을 파스텔 빨간색 그라데이션으로 변경 (FFF5F5 → FEE2E2)
+- 에러 아이콘을 빨간 원형 ✗ 마크로 변경 (기존 노란 경고)
+- 에러 메시지를 반투명 배경 박스로 감싸 가독성 향상
+- 실패 단계 표시를 헤더 바로 아래에 배치, 빨간 텍스트로 명확히 표시
+- 에러 시 프로그레스 카드 전체에 파스텔 빨간 배경 적용 (.card-error)
+- 실패한 타임라인 단계: 빨간 배경/테두리로 강조, 라벨/설명 빨간색
+- 실패 단계 이후 대기 중인 단계들을 흐리게 처리 (opacity: 0.35)
+- active 단계 없이 에러 발생 시 마지막 비완료 단계를 에러로 처리
+- 실패 단계의 desc를 "{단계명} 실패"로 변경 (예: "파일 확인 실패", "MAT CLI 실행 실패")
 
 ────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  Analysis Files 페이지 다운로드 모달 추가
-────────────────────────────────────────────────────────────────────────────────
-
-[files.html]
-- 파일 다운로드 버튼 클릭 시 확인 모달 표시 (파일명, 파일 크기 정보 포함)
-- index.html의 다운로드 모달 패턴과 동일한 UX 적용
-- 다운로드 버튼 스타일(.btn-download) 추가
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  Heap 데이터 없는 분석 결과를 ERROR(failed)로 표시
+ 2026-03-27  분석 진행 화면 — 리포트별 실시간 프로그레스 표시
 ────────────────────────────────────────────────────────────────────────────────
 
 [HeapDumpAnalyzerService.java]
-- 분석 완료 후 Heap 데이터가 없으면 (totalHeapSize=0, usedHeapSize=0) ERROR 상태로 저장
-- SSE에 error 이벤트 전송 → progress.html에서 에러 배너 표시
-- 디스크 복원 시 ERROR 상태 결과도 캐시에 로드 (기존에는 SUCCESS만 로드)
-- 기존에 SUCCESS로 저장된 Heap 데이터 없는 결과를 자동으로 ERROR로 보정 + result.json 업데이트
+- MAT CLI 리포트 phase 감지 패턴 수정 (기존 "org.eclipse.mat.api:*" → 실제 출력 패턴)
+  - "Subtask: System Overview" → overview phase
+  - "Subtask: Top Component" (Reports/s) → top_components phase
+  - "Subtask: Leak Suspects" → suspects phase
+- 동일 phase 재진입 방지 (이미 감지된 phase는 스킵)
+- SSE 전송 최적화: 진행률 변경 시 또는 50줄마다 1회 전송 (과도한 SSE 방지)
+- lineCount 추적 추가
+
+[progress.html]
+- 리포트 서브스텝에 미니 프로그레스 바 추가 (overview/topcomp/suspects)
+- MAT CLI 시작(init phase) 시 세 개의 빈 프로그레스 트랙 미리 표시
+- 각 리포트 실행 중 해당 바가 파란색으로 채워지고, 완료 시 초록색 전환
+- 리포트 순서 독립적 처리 (_lastReportPhase 기반, MAT CLI 실행 순서 변동 대응)
+- setSubProgress(), completeSubProgress(), showSubProgressTracks() 함수 추가
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-27  Analysis History 전용 페이지 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpController.java]
+- GET /history 엔드포인트 추가 (분석 수행된 항목만 필터하여 표시)
+- successCount, errorCount, totalCount 통계 제공
+
+[history.html] (신규)
+- 분석 이력 전용 페이지: SUCCESS/ERROR 항목만 표시 (NOT_ANALYZED 제외)
+- 각 항목에 분석 시간, 힙 사용량, suspect 수, 파일 크기, 날짜 표시
+- 삭제된 파일 표시 (deleted 배지, 흐린 스타일)
+- 검색 필터 기능
+- SUCCESS 항목은 결과 보기 링크, ERROR+파일존재는 재분석 링크 제공
 
 [index.html]
-- Analysis Files: ERROR 상태 파일에 "failed" 배지 표시 (클릭 시 재분석 페이지 이동)
-- Recent Analysis: ERROR 항목에 "failed" 배지 + 빨간색 파일명 (클릭 시 재분석)
+- "View all history" 링크 대상을 /files → /history 로 변경
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-27  분석 이력 영속화 및 데이터 디렉토리 분리
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpConfig.java]
+- getDataDirectory() 메서드 추가 (heapdump.directory/data)
+- initHeapDumpDirectory()에서 data 디렉토리 자동 생성
+
+[HeapDumpAnalyzerService.java]
+- resultDirectory() 경로를 /opt/heapdumps/data/{basename}/ 으로 변경
+- deleteFile()에서 clearCache() 호출 제거 → 힙덤프만 삭제, 분석 결과 보존
+- restoreResultsFromDisk() 리팩토링: data 디렉토리 스캔
+- migrateOldResultDirs() 추가: 기존 결과 디렉토리를 data/로 자동 마이그레이션
+- migrateStrayArtifacts() 타겟을 data 디렉토리로 변경
+- getAllCachedResults(), getCacheKeys() 메서드 추가
+
+[HeapDumpController.java]
+- AnalysisHistoryItem에 fileDeleted, lastModified 필드 추가
+- buildHistory(): 물리 파일 외 캐시에만 남은 분석 결과도 포함 (fileDeleted=true)
+- getHistory() API: fileDeleted 필드 포함
+- clearAllCache(): 캐시 키 기반으로 전체 삭제 방식 변경
+
+[index.html]
+- "Recent Analysis" → "Analysis history" 이름 변경
+- "View all history →" 버튼 추가
+- 삭제된 파일 표시: ra-deleted 스타일, "deleted" 배지
+- Analysis Files 패널에서 삭제된 파일 표시 (hi-deleted, hb-del)
+- 삭제 모달 메시지 변경 ("분석 결과는 보존됩니다")
 
 [files.html]
-- ERROR 상태 파일에도 Analyze(Re-Analyze) 버튼 표시
+- 삭제된 파일 분석 이력 표시 (fi-deleted 스타일, fi-del-badge)
+- 삭제된 파일: download/delete/analyze 버튼 숨김, view만 표시
+- 삭제 모달 메시지 변경
 
 ────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  메인페이지 레이아웃 개선: Analysis completed + Recent Analysis 패널
-────────────────────────────────────────────────────────────────────────────────
-
-[index.html]
-- "Analysis coverage" 프로그레스 바 라벨을 "Analysis completed"로 변경
-- 메인 영역 2열 그리드 활용: 좌측 Analysis Files, 우측 Recent Analysis 패널 배치
-- Recent Analysis 패널: 분석 수행 이력(성공/에러) 최근 10건 표시
-  - 파일명(클릭 시 결과 페이지 이동), 상태 배지, 소요 시간, Heap 사용량, Suspect 수, 날짜
-  - 데스크탑/모바일 반응형 스타일 적용
-
-[HeapDumpController.java]
-- AnalysisHistoryItem에 analysisTime, formattedAnalysisTime, heapUsed 필드 추가
-- buildHistory()에서 분석 시간/Heap 사용량 데이터 설정
-- formatDuration() 유틸 메서드 추가 (ms → 사람이 읽기 쉬운 형태)
-- recentAnalyses 모델 속성 추가 (성공+에러 이력, 최대 10건)
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  Analysis Files 페이지에 다운로드/삭제 기능 추가
-────────────────────────────────────────────────────────────────────────────────
-
-[files.html]
-- 각 파일 항목에 다운로드/삭제 SVG 아이콘 버튼 추가 (index.html Recent Files와 동일한 스타일)
-  - View(눈 아이콘, 녹색), Analyze(돋보기, 파란색), Download(화살표), Delete(휴지통, hover 빨간색)
-- 삭제 확인 모달 (파일명 표시, 취소/삭제 버튼, 배경 클릭으로 닫기)
-- Thymeleaf 보안 정책 대응: th:onclick → th:data-filename + onclick 방식으로 변경
-
-[HeapDumpController.java]
-- deleteFile() 메서드에 Referer 헤더 확인 추가 — /files 페이지에서 삭제 시 /files로 리다이렉트
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  사이드바 Files → Recent Files 이름 변경, 상단 Compare dumps 버튼 제거
+ 2026-03-27  Settings 버튼 통일 (Quick Actions에서 제거, 상단 Settings로 통일)
 ────────────────────────────────────────────────────────────────────────────────
 
 [index.html]
-- 좌측 사이드바 "Files" → "Recent Files"로 이름 변경
-- 상단 topbar에서 "Compare dumps" 버튼 제거 (Quick actions 및 사이드바 Compare 섹션으로 접근 가능)
+- Quick Actions에서 "API / Settings" 버튼 삭제
+- 상단 topbar의 Settings 버튼을 모바일/데스크탑 모두 항상 표시하도록 변경
+  (기존: 모바일에서 display:none → 변경: 항상 inline-flex)
+- 모바일 미디어쿼리 내 중복 topbar-settings-btn 선언 제거
 
 ────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  View all 링크 상시 표시 + stats-bar 모바일 2x2 레이아웃
-────────────────────────────────────────────────────────────────────────────────
-
-[index.html]
-- "View all N files →" 링크: 5개 초과 조건 제거, 항상 표시
-- stats-bar 모바일(≤768px): 2x2 그리드 레이아웃 (위 2개 + 아래 2개)
-- stats-bar 초소형(≤480px): 기존 세로 1열 → 2x2 유지, 아이콘/폰트 축소
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  Analysis Files 전체 목록 페이지 추가
+ 2026-03-27  메인 페이지 DISK 카드에 사용량 퍼센트 표시
 ────────────────────────────────────────────────────────────────────────────────
 
 [HeapDumpController.java]
-- GET /files 엔드포인트 추가 — 전체 파일 목록 페이지
-- 메인 페이지: analysisHistory를 최대 5개만 표시, hasMoreFiles/totalFileCount 모델 속성 추가
-
-[files.html] (신규)
-- 전체 파일 목록 전용 페이지
-- 검색(필터) 기능 포함 — 파일명 실시간 필터링
-- 상단에 파일 수, 분석 완료 수, 전체 용량 표시
-- 상태별 아이콘 + view/error/analyze 배지
-- 반응형 대응 (모바일에서 날짜 컬럼 숨김)
+- index() 메서드에 diskUsedPercent, diskUsed, diskTotal 모델 속성 추가
 
 [index.html]
-- Analysis Files 패널에 "View all N files →" 링크 추가 (5개 초과 시 표시)
+- DISK 카드 라벨 옆에 사용량 퍼센트 배지 표시
+- 70% 미만: 초록색, 70~89%: 노란색, 90% 이상: 빨간색 배지
 
 ────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  메인페이지 패널 통합 (Files overview 제거)
-────────────────────────────────────────────────────────────────────────────────
-
-[index.html]
-- "Files overview" 패널 삭제 — "Analysis history"와 역할 중복
-- "Analysis history" → "Analysis Files"로 이름 변경
-- Analysis Files 패널을 full-width로 변경 (grid2 내 full 클래스 적용)
-- pending 상태 파일에 "analyze" 링크 버튼 추가 (기존 Files overview의 Analyze 기능 통합)
-- .hb-analyze 스타일 추가 (파란색 배지)
-- "New" 배지 제거
-- Export 모달 텍스트 "Analysis history" → "Analysis files"로 변경
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  메인페이지 Stats 레이아웃 개선
-────────────────────────────────────────────────────────────────────────────────
-
-[index.html]
-- Stats 영역: 4개 개별 카드(stats-row) → 아이콘 포함 가로 1줄 바(stats-bar)로 변경
-  · 파일/디스크/체크/경고 SVG 아이콘 + 컬러 배경 추가
-  · Analyzed 항목에 "분석완료 / 전체" 형식 표시 (예: 3 / 5)
-  · 세로 공간 약 60% 절약
-- Analysis coverage 프로그레스 바 추가
-  · 전체 파일 대비 분석 완료율을 시각적으로 표시
-  · 파란색→초록색 그라데이션
-- 반응형: 태블릿(≤900px) 2x2 그리드, 모바일(≤480px) 세로 1열 스택
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  분석 화면(analyze.html) 레이아웃 개선
-────────────────────────────────────────────────────────────────────────────────
-
-[analyze.html]
-- KPI 영역: 6개 개별 카드(kpi-grid) → 아이콘 포함 가로 1줄 바(kpi-bar)로 통합
-  · 각 항목에 컬러 배경 아이콘(차트/삼각형/퍼센트/톱니/경고 등)
-  · label을 값 아래로 이동하여 시선 흐름 개선
-  · 세로 공간 약 60% 절약
-- 차트 영역 최적화
-  · 차트 최대 높이 320px → 260px
-  · 카드 padding 24px → 16px, margin 20px → 14px
-  · Stacked Bar 높이 36px → 28px
-  · Treemap 높이 200px → 160px
-  · 전체 컨텐츠 padding 24px → 16px/20px
-- 반응형: 태블릿(≤768px) KPI 2열 래핑, 모바일(≤480px) 1열 세로 스택
-
-────────────────────────────────────────────────────────────────────────────────
- 2026-03-20  API/Settings 기능 고도화
+ 2026-03-27  파일 업로드 전 디스크 사용량 사전 체크 추가
 ────────────────────────────────────────────────────────────────────────────────
 
 [HeapDumpController.java]
-- GET /api/settings 응답 확장:
-  · system: Java 버전/벤더, OS, CPU 코어, JVM 메모리(max/total/used/free)
-  · disk: 전체/사용/여유 공간, 사용률(%)
-  · mat: 파일 존재, 실행 가능, 읽기 가능, ready 상태, statusMessage
-  · files: 총 파일 수, 총 크기, 분석 완료 수
+- GET /api/disk/check API 추가: 디스크 사용률, 전체/가용 용량, 90% 이상 warning 플래그 반환
 
 [index.html]
-- Quick Actions의 "API / Settings" 버튼: window.open(raw JSON) → 3탭 Settings 모달
-  · General 탭: MAT CLI 경로/상태(Ready/Not found), Keep Unreachable 설정,
-    저장소 경로, 캐시 수, 디스크 사용량 프로그레스바
-  · System 탭: Java 버전/벤더, OS, CPU 코어, JVM 메모리 사용량 프로그레스바
-  · API 탭: 6개 API 엔드포인트 카드(GET/POST 뱃지, 설명, Copy 버튼), Raw JSON 링크
-- Refresh 버튼으로 서버에서 최신 데이터 재조회
-- 디스크/JVM 사용률 바에 임계값별 색상 변경 (파랑→주황→빨강)
-- 반응형: 모바일/태블릿 대응
+- doUpload()에서 업로드 전 /api/disk/check 호출하여 사전 체크
+- 90% 이상 시 경고 모달(showDiskWarningModal) 표시: 사용률, 가용 공간, 파일 정보 안내
+- Cancel / Upload anyway 버튼으로 사용자 선택 가능
+- 기존 업로드 로직을 startUpload()로 분리
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-27  파일 업로드 시 디스크 사용량 90% 이상 경고
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpController.java]
+- 업로드 성공 후 파일시스템 사용량 체크, 90% 이상이면 warning flash attribute로 경고 메시지 표시
+
+[index.html]
+- .alert-warning 스타일 추가 (노란색 배경, 주황색 테두리)
+- warning flash attribute 표시 영역 추가
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-27  모바일 topbar에 Settings 버튼 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- 모바일(≤900px)에서 Quick actions까지 스크롤하지 않아도 Settings 모달에 접근할 수 있도록
+  topbar 우측에 Settings 버튼 추가 (데스크탑에서는 숨김)
+- 톱니바퀴 SVG 아이콘 포함
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-27  토스트 메시지 위치를 상단 중앙으로 변경
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- toast() 함수의 위치를 우측하단(bottom:20px;right:20px)에서 상단 중앙(top:20px;left:50%;transform:translateX(-50%))으로 변경
+- box-shadow 추가로 가시성 향상
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-27  모바일 대시보드 통계 카드 2x2 그리드 레이아웃 적용
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- 480px 이하 모바일에서 FILES, DISK, ANALYZED, SUSPECTS 통계 카드가 1열(1fr)로
+  세로 배열되던 것을 2x2 그리드(1fr 1fr)로 변경
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-27  모바일 홈페이지 가로 스크롤 오버플로우 수정
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- html, body에 overflow-x: hidden 추가하여 가로 스크롤 방지
+- 900px 이하: main-content에 max-width: 100vw 적용, fname-tooltip 비활성화
+- 480px 이하: dashboard-left를 1열 레이아웃으로 변경 (stat-card 가로 넘침 방지)
+- 480px 이하: ra-meta에 flex-wrap 적용 (분석 메타정보 줄바꿈)
+- 480px 이하: history-item에 flex-wrap 적용 (파일명이 한 줄 전체 사용)
+- 480px 이하: main-content 패딩 20px → 12px 축소
 
 ────────────────────────────────────────────────────────────────────────────────
  2026-03-20  MAT CLI 시작 로그 및 에러 메시지 정비
@@ -344,3 +237,386 @@
   · No space left → 디스크 정리 안내
   · 기타 Exception/Error → 마지막 에러 라인 추출
 - MAT CLI exit code != 0 시 상세 에러 로깅 (WARN → ERROR 레벨)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  API/Settings 기능 고도화
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpController.java]
+- GET /api/settings 응답 확장:
+  · system: Java 버전/벤더, OS, CPU 코어, JVM 메모리(max/total/used/free)
+  · disk: 전체/사용/여유 공간, 사용률(%)
+  · mat: 파일 존재, 실행 가능, 읽기 가능, ready 상태, statusMessage
+  · files: 총 파일 수, 총 크기, 분석 완료 수
+
+[index.html]
+- Quick Actions의 "API / Settings" 버튼: window.open(raw JSON) → 3탭 Settings 모달
+  · General 탭: MAT CLI 경로/상태(Ready/Not found), Keep Unreachable 설정,
+    저장소 경로, 캐시 수, 디스크 사용량 프로그레스바
+  · System 탭: Java 버전/벤더, OS, CPU 코어, JVM 메모리 사용량 프로그레스바
+  · API 탭: 6개 API 엔드포인트 카드(GET/POST 뱃지, 설명, Copy 버튼), Raw JSON 링크
+- Refresh 버튼으로 서버에서 최신 데이터 재조회
+- 디스크/JVM 사용률 바에 임계값별 색상 변경 (파랑→주황→빨강)
+- 반응형: 모바일/태블릿 대응
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  분석 화면(analyze.html) 레이아웃 개선
+────────────────────────────────────────────────────────────────────────────────
+
+[analyze.html]
+- KPI 영역: 6개 개별 카드(kpi-grid) → 아이콘 포함 가로 1줄 바(kpi-bar)로 통합
+  · 각 항목에 컬러 배경 아이콘(차트/삼각형/퍼센트/톱니/경고 등)
+  · label을 값 아래로 이동하여 시선 흐름 개선
+  · 세로 공간 약 60% 절약
+- 차트 영역 최적화
+  · 차트 최대 높이 320px → 260px
+  · 카드 padding 24px → 16px, margin 20px → 14px
+  · Stacked Bar 높이 36px → 28px
+  · Treemap 높이 200px → 160px
+  · 전체 컨텐츠 padding 24px → 16px/20px
+- 반응형: 태블릿(≤768px) KPI 2열 래핑, 모바일(≤480px) 1열 세로 스택
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  메인페이지 Stats 레이아웃 개선
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- Stats 영역: 4개 개별 카드(stats-row) → 아이콘 포함 가로 1줄 바(stats-bar)로 변경
+  · 파일/디스크/체크/경고 SVG 아이콘 + 컬러 배경 추가
+  · Analyzed 항목에 "분석완료 / 전체" 형식 표시 (예: 3 / 5)
+  · 세로 공간 약 60% 절약
+- Analysis coverage 프로그레스 바 추가
+  · 전체 파일 대비 분석 완료율을 시각적으로 표시
+  · 파란색→초록색 그라데이션
+- 반응형: 태블릿(≤900px) 2x2 그리드, 모바일(≤480px) 세로 1열 스택
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  메인페이지 패널 통합 (Files overview 제거)
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- "Files overview" 패널 삭제 — "Analysis history"와 역할 중복
+- "Analysis history" → "Analysis Files"로 이름 변경
+- Analysis Files 패널을 full-width로 변경 (grid2 내 full 클래스 적용)
+- pending 상태 파일에 "analyze" 링크 버튼 추가 (기존 Files overview의 Analyze 기능 통합)
+- .hb-analyze 스타일 추가 (파란색 배지)
+- "New" 배지 제거
+- Export 모달 텍스트 "Analysis history" → "Analysis files"로 변경
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  Analysis Files 전체 목록 페이지 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpController.java]
+- GET /files 엔드포인트 추가 — 전체 파일 목록 페이지
+- 메인 페이지: analysisHistory를 최대 5개만 표시, hasMoreFiles/totalFileCount 모델 속성 추가
+
+[files.html] (신규)
+- 전체 파일 목록 전용 페이지
+- 검색(필터) 기능 포함 — 파일명 실시간 필터링
+- 상단에 파일 수, 분석 완료 수, 전체 용량 표시
+- 상태별 아이콘 + view/error/analyze 배지
+- 반응형 대응 (모바일에서 날짜 컬럼 숨김)
+
+[index.html]
+- Analysis Files 패널에 "View all N files →" 링크 추가 (5개 초과 시 표시)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  View all 링크 상시 표시 + stats-bar 모바일 2x2 레이아웃
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- "View all N files →" 링크: 5개 초과 조건 제거, 항상 표시
+- stats-bar 모바일(≤768px): 2x2 그리드 레이아웃 (위 2개 + 아래 2개)
+- stats-bar 초소형(≤480px): 기존 세로 1열 → 2x2 유지, 아이콘/폰트 축소
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  사이드바 Files → Recent Files 이름 변경, 상단 Compare dumps 버튼 제거
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- 좌측 사이드바 "Files" → "Recent Files"로 이름 변경
+- 상단 topbar에서 "Compare dumps" 버튼 제거 (Quick actions 및 사이드바 Compare 섹션으로 접근 가능)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  Analysis Files 페이지에 다운로드/삭제 기능 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[files.html]
+- 각 파일 항목에 다운로드/삭제 SVG 아이콘 버튼 추가 (index.html Recent Files와 동일한 스타일)
+  - View(눈 아이콘, 녹색), Analyze(돋보기, 파란색), Download(화살표), Delete(휴지통, hover 빨간색)
+- 삭제 확인 모달 (파일명 표시, 취소/삭제 버튼, 배경 클릭으로 닫기)
+- Thymeleaf 보안 정책 대응: th:onclick → th:data-filename + onclick 방식으로 변경
+
+[HeapDumpController.java]
+- deleteFile() 메서드에 Referer 헤더 확인 추가 — /files 페이지에서 삭제 시 /files로 리다이렉트
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  메인페이지 레이아웃 개선: Analysis completed + Recent Analysis 패널
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- "Analysis coverage" 프로그레스 바 라벨을 "Analysis completed"로 변경
+- 메인 영역 2열 그리드 활용: 좌측 Analysis Files, 우측 Recent Analysis 패널 배치
+- Recent Analysis 패널: 분석 수행 이력(성공/에러) 최근 10건 표시
+  - 파일명(클릭 시 결과 페이지 이동), 상태 배지, 소요 시간, Heap 사용량, Suspect 수, 날짜
+  - 데스크탑/모바일 반응형 스타일 적용
+
+[HeapDumpController.java]
+- AnalysisHistoryItem에 analysisTime, formattedAnalysisTime, heapUsed 필드 추가
+- buildHistory()에서 분석 시간/Heap 사용량 데이터 설정
+- formatDuration() 유틸 메서드 추가 (ms → 사람이 읽기 쉬운 형태)
+- recentAnalyses 모델 속성 추가 (성공+에러 이력, 최대 10건)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  Heap 데이터 없는 분석 결과를 ERROR(failed)로 표시
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpAnalyzerService.java]
+- 분석 완료 후 Heap 데이터가 없으면 (totalHeapSize=0, usedHeapSize=0) ERROR 상태로 저장
+- SSE에 error 이벤트 전송 → progress.html에서 에러 배너 표시
+- 디스크 복원 시 ERROR 상태 결과도 캐시에 로드 (기존에는 SUCCESS만 로드)
+- 기존에 SUCCESS로 저장된 Heap 데이터 없는 결과를 자동으로 ERROR로 보정 + result.json 업데이트
+
+[index.html]
+- Analysis Files: ERROR 상태 파일에 "failed" 배지 표시 (클릭 시 재분석 페이지 이동)
+- Recent Analysis: ERROR 항목에 "failed" 배지 + 빨간색 파일명 (클릭 시 재분석)
+
+[files.html]
+- ERROR 상태 파일에도 Analyze(Re-Analyze) 버튼 표시
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  Analysis Files 페이지 다운로드 모달 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[files.html]
+- 파일 다운로드 버튼 클릭 시 확인 모달 표시 (파일명, 파일 크기 정보 포함)
+- index.html의 다운로드 모달 패턴과 동일한 UX 적용
+- 다운로드 버튼 스타일(.btn-download) 추가
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  분석 동시 실행 제한 — 큐 기반 순차 처리
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpAnalyzerService.java]
+- Semaphore(1) 기반 동시 분석 제한: 한 번에 1개 파일만 MAT CLI 분석 실행
+- 추가 분석 요청은 자동으로 큐에 적재, 순서대로 처리
+- 큐 대기 중 3초 간격으로 SSE를 통해 대기 상태(순서, 현재 분석 파일) 전송
+- 클라이언트 연결 해제/인터럽트 시 큐에서도 안전하게 제거
+- getQueueSize(), getCurrentAnalysisFilename() API 메서드 추가
+
+[HeapDumpController.java]
+- GET /api/queue/status 엔드포인트 추가 (큐 크기, 현재 분석 중인 파일 조회)
+
+[AnalysisProgress.java]
+- queuePosition, currentAnalysis 필드 추가
+- queued() 팩토리 메서드에 큐 위치/현재 분석 파일 파라미터 추가
+
+[progress.html]
+- QUEUED 상태 처리: 큐 대기 배너 UI 추가 (보라색 그라디언트, 대기 순서/현재 분석 파일 표시)
+- 큐 대기 → 분석 시작 전환 시 배너 자동 숨김
+- 데스크톱/모바일 반응형 스타일 적용
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  메인 페이지 큐 상태 패널 + Settings 모달 크기 고정
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- 메인 페이지에 Analysis Queue 패널 추가: 현재 분석 중인 파일과 대기 수를 실시간 표시
+- 큐 활성 시 5초 간격 자동 폴링, 큐 비활성 시 패널 자동 숨김 + 폴링 중지
+- Refresh 버튼으로 수동 새로고침 가능 (회전 애니메이션)
+- Settings 모달에 height: 520px 고정하여 탭 전환 시 크기 변동 방지
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-20  메인 페이지 대시보드 레이아웃 리팩토링
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- 대시보드 상단 레이아웃을 2컬럼 구조로 변경:
+  - 왼쪽: FILES, DISK, ANALYZED, SUSPECTS 스탯 카드 2×2 그리드
+  - 오른쪽: Analysis completed 프로그레스 바 + Analysis Queue 패널 세로 스택
+- 기존 가로 일렬 stats-bar를 개별 stat-card 컴포넌트로 분리
+- 모바일(≤900px): 1컬럼으로 폴백, 스탯 카드 2열 유지
+- 모바일(≤480px): 스탯 카드 2열 유지
+
+- Settings 모달 전면 폰트/스타일 개선:
+  - General/System/API 탭 간 폰트 크기 통일: s-key 13px, s-val 13px, s-status 13px
+  - s-val에서 모노스페이스 제거 → 경로(s-val-path)와 수치(s-val-mono)에만 선별 적용
+  - 새 클래스 s-val-mono 추가: 숫자/버전/메모리 값에 모노스페이스 12px 적용
+  - s-key에 font-weight:500 추가로 라벨 가독성 향상
+  - s-group-title에 하단 구분선(border-bottom) 추가
+  - s-api-method, s-api-path, s-copy-btn에 vertical-align:middle 정렬
+  - 데스크톱(≥1024px) 미디어 쿼리에 Settings 폰트 스케일링 추가
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-22  잘못된 파일 분석 시 성공으로 표시되는 버그 수정
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpAnalyzerService.java]
+- MAT CLI가 0이 아닌 exit code로 종료 시 즉시 RuntimeException 발생하도록 수정
+  - 기존: exit code만 로그하고 파싱 단계로 계속 진행 → 다른 파일 결과를 매칭하여 성공으로 표시
+  - 수정: 에러 메시지와 함께 예외 발생 → catch 블록에서 분석 실패 메시지를 클라이언트에 전송
+
+[MatReportParser.java]
+- findZipFile()에서 baseName 없이 keyword만으로 ZIP을 매칭하는 fallback 로직 제거
+  - 기존: base 이름 불일치해도 keyword(overview, suspects 등)만 일치하면 다른 파일의 ZIP 반환
+  - 수정: 반드시 baseName + keyword가 모두 일치하는 ZIP만 매칭
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-22  메인 페이지 사이드바 분석 실패 파일 빨간색 표시
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpController.java]
+- `errorFiles` Set 추가: ERROR 상태 파일명을 템플릿에 전달
+
+[index.html — 사이드바 Recent Files]
+- ERROR 파일: 행 전체 빨간 배경/테두리 (`.file-err`), 파일명 빨간색, ext-badge 빨간색
+- ERROR 파일: 빨간 Re-Analyze 버튼 (`.fb.e`) — 기존 파란 Analyze 버튼 대신 표시
+- Tooltip Status: Analyzed / Failed / Not analyzed 3단계 구분
+- 미분석 Analyze 버튼: analyzedFiles와 errorFiles 모두 아닌 경우에만 표시
+
+[index.html — Analysis History 패널]
+- ERROR 상태 파일명에 `.hname-err` 빨간색 적용
+
+[files.html — Analysis Files 목록]
+- ERROR 상태 파일명에 `.fname-err` 빨간색 적용
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-22  분석 실패 결과 영속화 (파일 삭제 전까지 유지)
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpAnalyzerService.java]
+- 분석 실패(Exception) 시 ERROR 상태의 HeapAnalysisResult를 생성하여 memCache + 디스크(result.json)에 저장
+  - 기존: catch 블록에서 SSE 에러 메시지만 전송, 실패 정보 유실
+  - 수정: 실패 파일도 tmp→final 이동 후 ERROR 결과 저장, 파일 삭제 시 함께 정리
+- cloneWithoutLog()에 errorMessage 필드 복사 누락 수정
+  - 기존: 디스크 저장 시 errorMessage가 null로 저장됨
+  - 수정: errorMessage도 정상 복사되어 서버 재시작 후에도 에러 메시지 유지
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-22  분석 실패 파일 클릭 시 실패 결과 페이지로 이동
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html — 사이드바 Recent Files]
+- ERROR 파일 빨간 버튼: /analyze/{f} → /analyze/result/{f} 변경 (실패 결과 페이지로 이동)
+
+[index.html — Analysis History]
+- "failed" 배지: /analyze/{f} → /analyze/result/{f} 변경
+
+[files.html — Analysis Files]
+- ERROR/NOT_ANALYZED 공용 버튼을 분리:
+  - ERROR: /analyze/result/{f}로 이동하는 빨간 버튼 (.fb.e)
+  - NOT_ANALYZED: /analyze/{f}로 이동하는 파란 버튼 (.fb.p)
+- .fb.e 스타일 추가 (빨간 배경 #EF4444)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-22  분석 실패 결과 페이지에서도 MAT Log 접근 보장
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpAnalyzerService.java]
+- 분석 exception 시 에러 결과에 mat.log 파일 내용 포함 (기존: matLog 미설정)
+- getCachedResult에서 ERROR 결과도 디스크에서 복원 (기존: SUCCESS만 복원)
+  → 서버 재시작 후에도 에러 결과의 MAT Log를 /analyze/log/ API로 접근 가능
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-22  분석 실패 화면에 Re-Analyze 버튼 및 전체 MAT Log 보기 기능 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpController.java]
+- 에러 상태 시 matLogTotalLen에 실제 로그 길이 전달 (기존: 0 고정)
+
+[analyze.html — ERROR STATE]
+- 에러 카드에 Re-Analyze 버튼 추가 (/analyze/rerun/{filename}으로 이동)
+- MAT CLI Log를 별도 카드로 분리 (기존: <details> 접기)
+- 로그가 5000자 초과 시 "Load Full Log" 버튼으로 전체 로그 비동기 로딩
+- 헤더에도 에러 상태에서 filename badge + Re-Analyze 버튼 표시
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-22  에러 페이지 MAT Log 항상 표시 + 분석 실패 일자/상세 정보 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpController.java]
+- 에러 시 errorDate(실패 일시), errorAnalysisTime(소요 시간), errorFileSize(파일 크기) 모델에 추가
+
+[analyze.html — ERROR STATE]
+- 분석 실패 상세 정보 표시: Failed at / Duration / File Size
+- MAT Log 카드를 항상 표시 (로그가 없으면 "MAT CLI 로그가 없습니다" 안내 메시지)
+- 기존 th:if 조건 제거하여 MAT Log 영역이 항상 보이도록 변경
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-22  분석 완료 후 .index/.threads 파일을 결과 디렉토리로 이동
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpAnalyzerService.java]
+- moveArtifactsToResultDir() 추가: 분석 완료 후 .index/.threads 파일을 결과 디렉토리로 이동
+- migrateStrayArtifacts() 추가: 서버 시작 시 상위 디렉토리에 남은 기존 파일 마이그레이션
+- loadThreadStacksText(): 결과 디렉토리 우선 탐색 후 상위 디렉토리 fallback
+
+────────────────────────────────────────────────────────────────────────────────
+[2026-03-23] MAT CLI 리포트별 진행률 개별 표시 기능
+
+▶ 대상 파일:
+  - src/main/java/com/heapdump/analyzer/model/AnalysisProgress.java
+  - src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java
+  - src/main/resources/templates/progress.html
+
+▶ 변경 내역:
+  1. AnalysisProgress 모델에 reportPhase 필드 추가 (overview, top_components, suspects)
+     - reportLog() 팩토리 메서드 추가: 리포트 단계 정보 포함 SSE 이벤트 전송
+  2. HeapDumpAnalyzerService - MAT CLI 출력 실시간 파싱으로 리포트 단계 감지
+     - MAT CLI 출력에서 "org.eclipse.mat.api:overview/top_components/suspects" 문자열 감지
+     - 단계별 진행률 범위 설정: init(15-40%), overview(40-55%), top_components(55-68%), suspects(68-80%)
+     - 명령어 실행 순서 변경: overview → top_components → suspects (UI 흐름에 맞게)
+  3. progress.html - 3개 리포트 하위 단계(sub-step) UI 추가
+     - Overview 리포트 (📊), Top Components 리포트 (🔝), Leak Suspects 리포트 (🕵️)
+     - 하위 단계 CSS 스타일 (들여쓰기, 작은 아이콘, 축소 폰트)
+     - SSE 이벤트의 reportPhase 필드 기반 단계별 아이콘 상태 전환 (waiting → active → done)
+
+────────────────────────────────────────────────────────────────────────────────
+[2026-03-25] 분석 진행 페이지(progress.html) 전면 개편
+
+▶ 대상 파일:
+  - src/main/resources/templates/progress.html
+
+▶ 스타일 개편:
+  1. 헤더 영역 통합 — 기존 큰 <header> + 파일 배너를 52px 고정 상단바(progress-topbar)로 전환
+     - 파일명을 pill-chip 형태로 컴팩트하게 표시
+     - 경과 시간(elapsed-chip) 모노스페이스로 표시
+  2. 진행바 + 단계 리스트를 하나의 통합 카드(progress-card)로 합침
+  3. 타임라인 스타일 단계 리스트 — 수직 연결선(timeline-line)으로 단계 시각 연결
+     - 이모지 아이콘 → 숫자 표시, 완료 시 ✓ 체크 애니메이션(scaleIn)
+     - 완료된 단계의 연결선 초록색으로 변경
+  4. 에러 배너 — 그라디언트에서 카드 스타일(border-left: 4px solid red)로 변경
+     - 실패 단계명 표시, 재분석/홈 버튼 추가
+  5. 진행바 높이 18px → 12px로 슬림화
+  6. 반응형 개선 — 600px/480px 브레이크포인트 추가, 모바일 터치 타겟 44px 보장
+
+▶ 기능 추가:
+  1. 경과 시간 표시 — 상단바에 MM:SS 형식 실시간 타이머 (RUNNING 첫 수신 시 시작)
+  2. 단계별 소요 시간 — 각 단계 완료 시 소요 시간 표시 (예: "2.3s")
+  3. 페이지 타이틀 진행률 — 브라우저 탭에 "(45%) 분석 중..." 형식으로 표시
+  4. 취소 버튼 — SSE 닫기 + 확인 다이얼로그 후 홈 이동
+  5. 에러 시 재분석 버튼 — /analyze/rerun/{filename} 링크 활용
+  6. 로그 라인 수 표시 — 로그 헤더에 "N lines" 실시간 카운트
+
+▶ 버그 수정:
+  1. 로그 자동 스크롤 로직 반전 수정
+     - 기존: autoScroll = scrollTop > 50 (맨 위에서 auto-scroll 꺼짐 역설)
+     - 수정: scrollHeight - scrollTop - clientHeight < 60 (바닥 근처 감지)
+  2. 로그 라인 카운트(lines) 리셋 버그 수정
+     - 기존: DOM 트리밍 시 logLineCount 감소 → UI 카운트도 감소 후 재누적
+     - 수정: 총 수신 수(logTotalCount) 별도 분리, UI에는 감소하지 않는 총 수 표시
+
+────────────────────────────────────────────────────────────────────────────────
+[2026-03-25] 분석 진행 페이지 2열 레이아웃 (진행 카드 + MAT CLI 로그)
+
+▶ 대상 파일:
+  - src/main/resources/templates/progress.html
+
+▶ 변경 내역:
+  1. 진행 카드(좌) + MAT CLI 로그(우) 2열 그리드 레이아웃(progress-grid) 적용
+     - max-width 780px → 1200px 확대
+     - 데스크톱(>900px): 로그 콘솔 항상 표시, 토글 버튼 숨김
+     - 로그 콘솔이 진행 카드 높이에 맞춰 flex 확장
+  2. 태블릿/모바일(≤900px): 1열 폴백, 기존처럼 토글 버튼으로 로그 열기/닫기
+  3. 화면 크기 변경 시 logVisible 상태 자동 동기화

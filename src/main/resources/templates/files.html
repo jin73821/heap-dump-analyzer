@@ -70,6 +70,9 @@
         .fb.d:hover svg { stroke: #EF4444; }
         .fb svg { width: 12px; height: 12px; stroke: #6B7280; fill: none; stroke-width: 1.5; }
         .no-match { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; display: none; }
+        .fi-deleted { opacity: 0.65; }
+        .fi-del-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px;
+                        background: #F3F4F6; color: #6B7280; flex-shrink: 0; margin-left: 2px; }
 
         /* Delete confirm modal */
         .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
@@ -128,36 +131,42 @@
            placeholder="Search files..." oninput="filterFiles()">
 
     <div class="panel">
-        <div th:each="h : ${analysisHistory}" class="file-item" th:data-name="${h.filename}">
+        <div th:each="h : ${analysisHistory}" class="file-item" th:classappend="${h.fileDeleted} ? 'fi-deleted'"
+             th:data-name="${h.filename}">
             <div class="hdot hd-ok"   th:if="${h.status == 'SUCCESS'}"></div>
             <div class="hdot hd-err"  th:if="${h.status == 'ERROR'}"></div>
             <div class="hdot hd-warn" th:if="${h.status == 'NOT_ANALYZED'}"></div>
             <div class="hdot hd-warn" th:unless="${h.status == 'SUCCESS' or h.status == 'ERROR' or h.status == 'NOT_ANALYZED'}"></div>
             <div class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</div>
+            <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
             <div class="fsize" th:text="${h.formattedSize}">157 MB</div>
             <div class="fdate" th:text="${h.formattedDate}">03-18 10:00</div>
             <div class="file-actions">
+                <!-- 결과 보기 (SUCCESS — 파일 삭제 여부 무관) -->
                 <a th:if="${h.status == 'SUCCESS'}"
                    th:href="@{/analyze/result/{f}(f=${h.filename})}"
                    class="fb v" title="View Result">
                     <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
                 </a>
-                <a th:if="${h.status == 'ERROR'}"
+                <!-- 에러 보기 (ERROR + 파일 존재) -->
+                <a th:if="${h.status == 'ERROR' and !h.fileDeleted}"
                    th:href="@{/analyze/result/{f}(f=${h.filename})}"
                    class="fb e" title="View Error">
                     <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                 </a>
-                <a th:if="${h.status == 'NOT_ANALYZED'}"
+                <!-- 분석 (미분석 + 파일 존재) -->
+                <a th:if="${h.status == 'NOT_ANALYZED' and !h.fileDeleted}"
                    th:href="@{/analyze/{f}(f=${h.filename})}"
                    class="fb p" title="Analyze">
                     <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                 </a>
-                <a href="#" class="fb" title="Download"
+                <!-- 다운로드/삭제 (파일 존재 시에만) -->
+                <a th:if="${!h.fileDeleted}" href="#" class="fb" title="Download"
                    th:data-filename="${h.filename}" th:data-size="${h.formattedSize}"
                    onclick="showDownloadModal(this.dataset.filename,this.dataset.size);return false;">
                     <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
                 </a>
-                <a href="#" class="fb d" title="Delete"
+                <a th:if="${!h.fileDeleted}" href="#" class="fb d" title="Delete"
                    th:data-filename="${h.filename}"
                    onclick="confirmDelete(this.dataset.filename);return false;">
                     <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
@@ -172,7 +181,7 @@
 <div class="modal-ov" id="deleteModal">
     <div class="modal-box">
         <h3>파일 삭제</h3>
-        <p>정말 <strong id="delFileName"></strong> 파일을 삭제하시겠습니까?<br>분석 결과도 함께 삭제됩니다.</p>
+        <p>정말 <strong id="delFileName"></strong> 파일을 삭제하시겠습니까?<br>힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.</p>
         <div class="modal-btns">
             <button class="btn-cancel" onclick="closeDeleteModal()">취소</button>
             <button class="btn-delete" id="btnConfirmDel">삭제</button>

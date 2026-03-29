@@ -91,6 +91,17 @@ public class HeapDumpController {
                 .collect(Collectors.toList());
         model.addAttribute("recentAnalyses", recentAnalyses);
 
+        // 디스크 사용량
+        File dumpDir = new File(analyzerService.getHeapDumpDirectory());
+        if (dumpDir.exists() && dumpDir.getTotalSpace() > 0) {
+            long total = dumpDir.getTotalSpace();
+            long usable = dumpDir.getUsableSpace();
+            long used = total - usable;
+            model.addAttribute("diskUsedPercent", Math.round(used * 100.0 / total));
+            model.addAttribute("diskUsed", formatBytes(used));
+            model.addAttribute("diskTotal", formatBytes(total));
+        }
+
         // MAT 설정
         model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
 
@@ -116,6 +127,30 @@ public class HeapDumpController {
         return "files";
     }
 
+    // ── 분석 이력 페이지 ─────────────────────────────────────────
+
+    @GetMapping("/history")
+    public String historyPage(Model model) {
+        List<HeapDumpFile> files = analyzerService.listFiles();
+        List<AnalysisHistoryItem> history = buildHistory(files);
+
+        // 분석 수행된 항목만 필터 (SUCCESS + ERROR)
+        List<AnalysisHistoryItem> analysisOnly = history.stream()
+            .filter(h -> "SUCCESS".equals(h.getStatus()) || "ERROR".equals(h.getStatus()))
+            .collect(Collectors.toList());
+        model.addAttribute("analysisHistory", analysisOnly);
+
+        long successCount = analysisOnly.stream()
+            .filter(h -> "SUCCESS".equals(h.getStatus())).count();
+        long errorCount = analysisOnly.stream()
+            .filter(h -> "ERROR".equals(h.getStatus())).count();
+        model.addAttribute("totalCount", analysisOnly.size());
+        model.addAttribute("successCount", successCount);
+        model.addAttribute("errorCount", errorCount);
+
+        return "history";
+    }
+
     // ── 파일 업로드 ──────────────────────────────────────────────
 
     @PostMapping("/upload")
@@ -132,8 +167,25 @@ public class HeapDumpController {
             }
             String filename = analyzerService.uploadFile(file);
             logger.info("[Upload] Success: {}", filename);
-            redirectAttributes.addFlashAttribute("success",
-                    "Uploaded: " + filename + " (" + formatBytes(file.getSize()) + ")");
+            String successMsg = "Uploaded: " + filename + " (" + formatBytes(file.getSize()) + ")";
+            redirectAttributes.addFlashAttribute("success", successMsg);
+
+            // 디스크 사용량 90% 이상 경고
+            try {
+                java.io.File dumpDir = new java.io.File(analyzerService.getHeapDumpDirectory());
+                long totalSpace = dumpDir.getTotalSpace();
+                long usableSpace = dumpDir.getUsableSpace();
+                if (totalSpace > 0) {
+                    double usagePercent = (double)(totalSpace - usableSpace) / totalSpace * 100;
+                    if (usagePercent >= 90) {
+                        logger.warn("[Upload] Disk usage warning: {}%", String.format("%.1f", usagePercent));
+                        redirectAttributes.addFlashAttribute("warning",
+                                String.format("디스크 사용량이 %.1f%%입니다. 불필요한 파일을 삭제해 주세요.", usagePercent));
+                    }
+                }
+            } catch (Exception ex) {
+                logger.debug("[Upload] Failed to check disk usage", ex);
+            }
         } catch (IllegalArgumentException e) {
             logger.warn("[Upload] Validation failed for '{}': {}", originalName, e.getMessage());
             redirectAttributes.addFlashAttribute("error", e.getMessage());
@@ -290,9 +342,10 @@ public class HeapDumpController {
     public ResponseEntity<Resource> downloadFile(@PathVariable String filename) {
         try {
             File file = analyzerService.getFile(filename);
+            String downloadName = file.getName();
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION,
-                            "attachment; filename=\"" + filename + "\"")
+                            "attachment; filename=\"" + downloadName + "\"")
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .contentLength(file.length())
                     .body(new FileSystemResource(file));
@@ -470,24 +523,20 @@ public class HeapDumpController {
     @ResponseBody
     public ResponseEntity<List<Map<String, Object>>> getHistory() {
         List<HeapDumpFile> files = analyzerService.listFiles();
+        List<AnalysisHistoryItem> items = buildHistory(files);
         List<Map<String, Object>> history = new ArrayList<>();
 
-        for (HeapDumpFile file : files) {
-            HeapAnalysisResult result = analyzerService.getCachedResult(file.getName());
+        for (AnalysisHistoryItem h : items) {
             Map<String, Object> item = new LinkedHashMap<>();
-            item.put("filename",     file.getName());
-            item.put("size",         file.getSize());
-            item.put("formattedSize", file.getFormattedSize());
-            item.put("lastModified", file.getLastModified());
-            if (result != null) {
-                item.put("status",        result.getAnalysisStatus().name());
-                item.put("totalHeap",     result.getTotalHeapSize());
-                item.put("usedHeap",      result.getUsedHeapSize());
-                item.put("suspectCount",  result.getLeakSuspects() != null
-                                           ? result.getLeakSuspects().size() : 0);
-                item.put("analysisTime",  result.getAnalysisTime());
-            } else {
-                item.put("status", "NOT_ANALYZED");
+            item.put("filename",      h.getFilename());
+            item.put("formattedSize", h.getFormattedSize());
+            item.put("lastModified",  h.getLastModified());
+            item.put("status",        h.getStatus());
+            item.put("fileDeleted",   h.isFileDeleted());
+            if (!"NOT_ANALYZED".equals(h.getStatus())) {
+                item.put("suspectCount",  h.getSuspectCount());
+                item.put("analysisTime",  h.getAnalysisTime());
+                item.put("heapUsed",      h.getHeapUsed());
             }
             history.add(item);
         }
@@ -499,10 +548,10 @@ public class HeapDumpController {
     @PostMapping("/api/cache/clear")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> clearAllCache() {
-        List<HeapDumpFile> files = analyzerService.listFiles();
+        Set<String> keys = new HashSet<>(analyzerService.getCacheKeys());
         int cleared = 0;
-        for (HeapDumpFile file : files) {
-            analyzerService.clearCache(file.getName());
+        for (String key : keys) {
+            analyzerService.clearCache(key);
             cleared++;
         }
         Map<String, Object> resp = new LinkedHashMap<>();
@@ -533,6 +582,27 @@ public class HeapDumpController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("queueSize", analyzerService.getQueueSize());
         resp.put("currentAnalysis", analyzerService.getCurrentAnalysisFilename());
+        return ResponseEntity.ok(resp);
+    }
+
+    // ── [NEW] API: 디스크 사용량 체크 ────────────────────────────
+    @GetMapping("/api/disk/check")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> checkDisk() {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        File dumpDir = new File(analyzerService.getHeapDumpDirectory());
+        if (dumpDir.exists()) {
+            long totalSpace = dumpDir.getTotalSpace();
+            long usableSpace = dumpDir.getUsableSpace();
+            double usagePercent = totalSpace > 0 ? (double)(totalSpace - usableSpace) / totalSpace * 100 : 0;
+            resp.put("usagePercent", Math.round(usagePercent * 10) / 10.0);
+            resp.put("totalSpace", formatBytes(totalSpace));
+            resp.put("usableSpace", formatBytes(usableSpace));
+            resp.put("usableSpaceBytes", usableSpace);
+            resp.put("warning", usagePercent >= 90);
+        } else {
+            resp.put("warning", false);
+        }
         return ResponseEntity.ok(resp);
     }
 
@@ -637,12 +707,18 @@ public class HeapDumpController {
     private List<AnalysisHistoryItem> buildHistory(List<HeapDumpFile> files) {
         List<AnalysisHistoryItem> history = new ArrayList<>();
         SimpleDateFormat sdf = new SimpleDateFormat("MM-dd HH:mm");
+        Set<String> fileNames = new HashSet<>();
+
+        // 1. 물리 파일이 존재하는 항목
         for (HeapDumpFile file : files) {
+            fileNames.add(file.getName());
             HeapAnalysisResult result = analyzerService.getCachedResult(file.getName());
             AnalysisHistoryItem item = new AnalysisHistoryItem();
             item.setFilename(file.getName());
             item.setFormattedSize(file.getFormattedSize());
             item.setFormattedDate(sdf.format(new Date(file.getLastModified())));
+            item.setLastModified(file.getLastModified());
+            item.setFileDeleted(false);
             if (result != null) {
                 item.setStatus(result.getAnalysisStatus().name());
                 item.setSuspectCount(result.getLeakSuspects() != null
@@ -655,6 +731,28 @@ public class HeapDumpController {
             }
             history.add(item);
         }
+
+        // 2. 소스 파일이 삭제되었지만 분석 결과가 남아있는 항목
+        for (HeapAnalysisResult result : analyzerService.getAllCachedResults()) {
+            if (result.getFilename() != null && !fileNames.contains(result.getFilename())) {
+                AnalysisHistoryItem item = new AnalysisHistoryItem();
+                item.setFilename(result.getFilename());
+                item.setFormattedSize(formatBytes(result.getFileSize()));
+                item.setFormattedDate(sdf.format(new Date(result.getLastModified())));
+                item.setLastModified(result.getLastModified());
+                item.setFileDeleted(true);
+                item.setStatus(result.getAnalysisStatus().name());
+                item.setSuspectCount(result.getLeakSuspects() != null
+                        ? result.getLeakSuspects().size() : 0);
+                item.setAnalysisTime(result.getAnalysisTime());
+                item.setFormattedAnalysisTime(formatDuration(result.getAnalysisTime()));
+                item.setHeapUsed(result.getFormattedUsedHeapSize());
+                history.add(item);
+            }
+        }
+
+        // lastModified 기준 내림차순 정렬
+        history.sort(Comparator.comparingLong(AnalysisHistoryItem::getLastModified).reversed());
         return history;
     }
 
@@ -671,31 +769,37 @@ public class HeapDumpController {
     // ── Inner DTOs ────────────────────────────────────────────────
 
     public static class AnalysisHistoryItem {
-        private String filename;
-        private String formattedSize;
-        private String formattedDate;
-        private String status;
-        private int    suspectCount;
-        private long   analysisTime;
-        private String formattedAnalysisTime;
-        private String heapUsed;
+        private String  filename;
+        private String  formattedSize;
+        private String  formattedDate;
+        private String  status;
+        private int     suspectCount;
+        private long    analysisTime;
+        private String  formattedAnalysisTime;
+        private String  heapUsed;
+        private boolean fileDeleted;
+        private long    lastModified;
 
-        public String getFilename()      { return filename; }
-        public void   setFilename(String v)      { filename = v; }
-        public String getFormattedSize() { return formattedSize; }
-        public void   setFormattedSize(String v) { formattedSize = v; }
-        public String getFormattedDate() { return formattedDate; }
-        public void   setFormattedDate(String v) { formattedDate = v; }
-        public String getStatus()        { return status; }
-        public void   setStatus(String v)        { status = v; }
-        public int    getSuspectCount()  { return suspectCount; }
-        public void   setSuspectCount(int v)     { suspectCount = v; }
-        public long   getAnalysisTime()  { return analysisTime; }
-        public void   setAnalysisTime(long v)    { analysisTime = v; }
-        public String getFormattedAnalysisTime() { return formattedAnalysisTime; }
-        public void   setFormattedAnalysisTime(String v) { formattedAnalysisTime = v; }
-        public String getHeapUsed()      { return heapUsed; }
-        public void   setHeapUsed(String v)      { heapUsed = v; }
+        public String  getFilename()      { return filename; }
+        public void    setFilename(String v)      { filename = v; }
+        public String  getFormattedSize() { return formattedSize; }
+        public void    setFormattedSize(String v) { formattedSize = v; }
+        public String  getFormattedDate() { return formattedDate; }
+        public void    setFormattedDate(String v) { formattedDate = v; }
+        public String  getStatus()        { return status; }
+        public void    setStatus(String v)        { status = v; }
+        public int     getSuspectCount()  { return suspectCount; }
+        public void    setSuspectCount(int v)     { suspectCount = v; }
+        public long    getAnalysisTime()  { return analysisTime; }
+        public void    setAnalysisTime(long v)    { analysisTime = v; }
+        public String  getFormattedAnalysisTime() { return formattedAnalysisTime; }
+        public void    setFormattedAnalysisTime(String v) { formattedAnalysisTime = v; }
+        public String  getHeapUsed()      { return heapUsed; }
+        public void    setHeapUsed(String v)      { heapUsed = v; }
+        public boolean isFileDeleted()    { return fileDeleted; }
+        public void    setFileDeleted(boolean v)  { fileDeleted = v; }
+        public long    getLastModified()  { return lastModified; }
+        public void    setLastModified(long v)    { lastModified = v; }
     }
 
     public static class ClassDiff {

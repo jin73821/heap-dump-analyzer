@@ -6,105 +6,183 @@
     <title>Analyzing... - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/style.css}">
     <style>
-        /* ── 진행 화면 전용 스타일 ──────────────────────── */
+        /* ── 상단바 ─────────────────────────────────────── */
+        .progress-topbar {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            height: 52px; background: #fff; border-bottom: 1px solid #E5E7EB;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+        }
+        .topbar-left {
+            display: flex; align-items: center; gap: 10px;
+        }
+        .topbar-back {
+            display: flex; align-items: center; justify-content: center;
+            width: 32px; height: 32px; border-radius: 8px;
+            color: #374151; text-decoration: none; font-size: 16px;
+            transition: background .15s;
+        }
+        .topbar-back:hover { background: #F3F4F6; }
+        .topbar-brand { font-size: 15px; font-weight: 700; color: #1F2937; }
+        .topbar-center {
+            display: flex; align-items: center; gap: 8px;
+            position: absolute; left: 50%; transform: translateX(-50%);
+        }
+        .file-chip {
+            background: #DBEAFE; color: #1D4ED8; border-radius: 20px;
+            padding: 4px 14px; font-size: 13px; font-weight: 600;
+            max-width: 280px; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .elapsed-chip {
+            background: #F3F4F6; color: #374151; border-radius: 12px;
+            padding: 4px 10px; font-size: 12px; font-weight: 600;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        }
+        .topbar-right { display: flex; align-items: center; gap: 8px; }
+        .cancel-btn {
+            border: 1px solid #FCA5A5; color: #DC2626; background: #fff;
+            border-radius: 6px; padding: 5px 14px; font-size: 12px;
+            font-weight: 600; cursor: pointer; transition: all .15s;
+        }
+        .cancel-btn:hover { background: #FEF2F2; }
+
+        /* ── 메인 영역 ──────────────────────────────────── */
         .progress-page {
-            max-width: 860px;
-            margin: 60px auto;
+            max-width: 1200px;
+            margin: 72px auto 40px;
             padding: 0 20px;
         }
 
-        /* 파일 정보 배너 */
-        .file-banner {
-            background: linear-gradient(135deg, #1E3A5F, #2563EB);
-            border-radius: 14px;
-            padding: 28px 32px;
-            color: #fff;
-            margin-bottom: 28px;
-            display: flex;
-            align-items: center;
+        /* ── 2열 그리드 레이아웃 ────────────────────────── */
+        .progress-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
             gap: 20px;
-        }
-        .file-banner-icon { font-size: 44px; }
-        .file-banner-name { font-size: 20px; font-weight: 700; word-break: break-all; }
-        .file-banner-sub  { font-size: 14px; opacity: .75; margin-top: 4px; }
-
-        /* 단계 리스트 */
-        .steps-card {
-            background: #fff;
-            border-radius: 14px;
-            padding: 28px 32px;
-            box-shadow: 0 2px 12px rgba(0,0,0,.08);
-            margin-bottom: 24px;
-        }
-        .steps-title {
-            font-size: 17px; font-weight: 700;
-            color: #1F2937; margin-bottom: 20px;
-            display: flex; align-items: center; gap: 8px;
+            align-items: stretch;
         }
 
-        .step-list { list-style: none; }
-        .step-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 14px;
-            padding: 10px 0;
-            border-bottom: 1px solid #F3F4F6;
-            transition: all .3s;
+        /* ── 큐 대기 배너 ───────────────────────────────── */
+        .queue-banner {
+            background: linear-gradient(135deg, #7C3AED, #A78BFA);
+            border-radius: 14px; padding: 24px 28px;
+            color: #fff; display: none; margin-bottom: 20px;
+            align-items: center; gap: 18px;
+            animation: fadeIn .5s ease;
         }
-        .step-item:last-child { border-bottom: none; }
-
-        .step-icon {
-            width: 32px; height: 32px;
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 15px; flex-shrink: 0;
-            transition: all .3s;
+        .queue-banner.visible { display: flex; }
+        .queue-icon { font-size: 36px; flex-shrink: 0; }
+        .queue-content { flex: 1; }
+        .queue-content h3 { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+        .queue-content p { font-size: 13px; opacity: .85; margin-bottom: 10px; }
+        .queue-info {
+            background: rgba(255,255,255,.15); border-radius: 10px; padding: 10px 14px;
         }
-        .step-icon.waiting  { background: #F3F4F6; color: #9CA3AF; }
-        .step-icon.active   { background: #DBEAFE; color: #2563EB; animation: pulse 1.2s infinite; }
-        .step-icon.done     { background: #D1FAE5; color: #059669; }
-        .step-icon.error    { background: #FEE2E2; color: #DC2626; }
-
-        @keyframes pulse {
-            0%,100% { box-shadow: 0 0 0 0 rgba(37,99,235,.35); }
-            50%      { box-shadow: 0 0 0 8px rgba(37,99,235,0); }
-        }
-
-        .step-text { flex: 1; }
-        .step-label { font-size: 14px; font-weight: 600; color: #1F2937; }
-        .step-desc  { font-size: 13px; color: #6B7280; margin-top: 2px; }
-
-        /* 전체 진행바 */
-        .main-progress-wrap {
-            background: #fff;
-            border-radius: 14px;
-            padding: 24px 32px;
-            box-shadow: 0 2px 12px rgba(0,0,0,.08);
-            margin-bottom: 24px;
-        }
-        .main-progress-header {
+        .queue-info-row {
             display: flex; justify-content: space-between; align-items: center;
-            margin-bottom: 14px;
+            font-size: 13px; padding: 3px 0;
         }
-        .main-progress-label { font-size: 15px; font-weight: 600; color: #1F2937; }
-        .main-progress-pct   { font-size: 22px; font-weight: 800; color: #2563EB; }
+        .queue-info-row + .queue-info-row {
+            border-top: 1px solid rgba(255,255,255,.15); padding-top: 6px; margin-top: 3px;
+        }
+        .queue-info-label { opacity: .8; }
+        .queue-info-value { font-weight: 700; font-size: 13px; }
+        .queue-current-file {
+            max-width: min(200px, 40vw); overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap;
+        }
+        @keyframes queuePulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: .6; }
+        }
+        .queue-banner.visible .queue-icon { animation: queuePulse 2s infinite; }
 
-        .main-bar-bg {
-            background: #E5E7EB;
-            border-radius: 999px;
-            height: 18px;
-            overflow: hidden;
+        /* ── 에러 배너 ──────────────────────────────────── */
+        .error-banner {
+            background: linear-gradient(135deg, #FFF5F5, #FEE2E2);
+            border: 1px solid #FECACA;
+            border-left: 4px solid #DC2626;
+            border-radius: 12px; padding: 24px 28px;
+            display: none; margin-bottom: 20px;
+            animation: fadeIn .5s ease;
         }
-        .main-bar-fill {
-            height: 100%;
-            border-radius: 999px;
+        .error-banner.visible { display: block; }
+        .error-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+        .error-header-icon {
+            width: 40px; height: 40px; border-radius: 50%;
+            background: #DC2626; color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; flex-shrink: 0;
+        }
+        .error-header h3 { font-size: 17px; font-weight: 700; color: #991B1B; margin: 0; line-height: 1.3; }
+        .error-message {
+            font-size: 14px; color: #7F1D1D; margin-bottom: 10px; line-height: 1.6;
+            background: rgba(255,255,255,.6); border-radius: 8px; padding: 12px 14px;
+            border: 1px solid #FECACA;
+        }
+        .error-failed-step {
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: 12px; font-weight: 600; color: #DC2626;
+            margin-top: 4px;
+        }
+        .error-actions { display: flex; gap: 10px; }
+        .error-retry-btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 10px 20px; background: #2563EB; color: #fff;
+            border-radius: 8px; font-size: 14px; font-weight: 600;
+            text-decoration: none; transition: all .15s;
+        }
+        .error-retry-btn:hover { background: #1D4ED8; }
+        .error-home-btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 10px 20px; background: rgba(255,255,255,.7); color: #374151;
+            border: 1px solid #E5E7EB;
+            border-radius: 8px; font-size: 14px; font-weight: 600;
+            text-decoration: none; transition: all .15s;
+        }
+        .error-home-btn:hover { background: #fff; }
+
+        /* 에러 시 타임라인 실패 단계 강조 */
+        .timeline-item.step-error .timeline-content {
+            background: #FFF5F5; border-radius: 8px; padding: 8px 12px !important;
+            border: 1px solid #FECACA;
+        }
+        .timeline-item.step-error .timeline-label { color: #DC2626; }
+        .timeline-item.step-error .timeline-desc { color: #B91C1C; }
+        .timeline-item.step-error .timeline-line { background: #FECACA; }
+
+        /* ── 통합 진행 카드 ─────────────────────────────── */
+        .progress-card {
+            background: #fff; border-radius: 14px;
+            box-shadow: 0 2px 12px rgba(0,0,0,.08);
+            margin-bottom: 20px; overflow: hidden;
+            transition: background .5s, border-color .5s;
+        }
+        .progress-card.card-error {
+            background: linear-gradient(180deg, #FFF5F5, #FEE2E2);
+            border: 1px solid #FECACA;
+        }
+        .progress-card-header {
+            padding: 24px 28px 20px; border-bottom: 1px solid #F3F4F6;
+        }
+        .progress-info {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 12px;
+        }
+        .progress-label { font-size: 15px; font-weight: 600; color: #1F2937; }
+        .progress-pct { font-size: 22px; font-weight: 800; color: #2563EB; }
+
+        .progress-track {
+            background: #E5E7EB; border-radius: 999px;
+            height: 12px; overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%; border-radius: 999px;
             background: linear-gradient(90deg, #3B82F6, #60A5FA);
-            width: 0%;
-            transition: width .5s ease;
-            position: relative;
-            overflow: hidden;
+            width: 0%; transition: width .5s ease;
+            position: relative; overflow: hidden;
         }
-        .main-bar-fill::after {
+        .progress-fill::after {
             content: '';
             position: absolute; top: 0; left: -100%;
             width: 60%; height: 100%;
@@ -115,18 +193,17 @@
             0%   { left: -60%; }
             100% { left: 160%; }
         }
-        .main-bar-fill.done {
+        .progress-fill.done {
             background: linear-gradient(90deg, #059669, #34D399);
         }
-        .main-bar-fill.done::after { animation: none; }
-        .main-bar-fill.error {
+        .progress-fill.done::after { animation: none; }
+        .progress-fill.error {
             background: linear-gradient(90deg, #DC2626, #F87171);
         }
+        .progress-fill.error::after { animation: none; }
 
         .status-msg {
-            margin-top: 12px;
-            font-size: 14px; color: #374151;
-            min-height: 20px;
+            margin-top: 10px; font-size: 13px; color: #6B7280; min-height: 18px;
         }
         .status-msg .dot-anim::after {
             content: '';
@@ -139,226 +216,256 @@
             100% { content: '.'; }
         }
 
-        /* MAT 로그 콘솔 */
+        /* ── 타임라인 단계 ──────────────────────────────── */
+        .timeline { padding: 20px 28px 24px; }
+        .timeline-item {
+            display: flex; align-items: flex-start; gap: 14px;
+            position: relative; padding-bottom: 4px; padding-top: 4px;
+        }
+        /* 수직 연결선 */
+        .timeline-line {
+            position: absolute; left: 15px; top: 32px; bottom: 0;
+            width: 2px; background: #E5E7EB;
+            transition: background .4s;
+        }
+        .timeline-item:last-child .timeline-line { display: none; }
+        .timeline-item.step-done .timeline-line { background: #86EFAC; }
+        .timeline-item.step-active .timeline-line { background: #93C5FD; }
+
+        .timeline-dot {
+            width: 32px; height: 32px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px; font-weight: 700; flex-shrink: 0;
+            transition: all .4s cubic-bezier(.4,0,.2,1);
+            z-index: 1; position: relative;
+        }
+        .timeline-dot.waiting { background: #F3F4F6; color: #9CA3AF; }
+        .timeline-dot.active  { background: #DBEAFE; color: #2563EB; animation: pulse 1.2s infinite; }
+        .timeline-dot.done    { background: #D1FAE5; color: #059669; }
+        .timeline-dot.error   { background: #FEE2E2; color: #DC2626; }
+        @keyframes pulse {
+            0%,100% { box-shadow: 0 0 0 0 rgba(37,99,235,.3); }
+            50%      { box-shadow: 0 0 0 8px rgba(37,99,235,0); }
+        }
+        .timeline-dot .dot-num   { display: block; }
+        .timeline-dot .dot-check { display: none; }
+        .timeline-dot .dot-error { display: none; }
+        .timeline-dot.done .dot-num   { display: none; }
+        .timeline-dot.done .dot-check { display: block; animation: scaleIn .3s ease; }
+        .timeline-dot.error .dot-num   { display: none; }
+        .timeline-dot.error .dot-error { display: block; animation: scaleIn .3s ease; }
+        @keyframes scaleIn {
+            from { transform: scale(0); }
+            to   { transform: scale(1); }
+        }
+
+        .timeline-content { flex: 1; padding: 5px 0 12px; }
+        .timeline-label { font-size: 14px; font-weight: 600; color: #1F2937; }
+        .timeline-desc  { font-size: 12px; color: #6B7280; margin-top: 2px; }
+        .timeline-dur {
+            font-size: 11px; color: #9CA3AF;
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+            margin-top: 2px; opacity: 0; transition: opacity .3s;
+        }
+        .timeline-dur.visible { opacity: 1; }
+
+        /* 서브 단계 */
+        .timeline-item.sub-step { padding-left: 24px; }
+        .timeline-item.sub-step .timeline-dot {
+            width: 24px; height: 24px; font-size: 10px;
+        }
+        .timeline-item.sub-step .timeline-line { left: 35px; }
+        .timeline-item.sub-step .timeline-label { font-size: 13px; }
+        .timeline-item.sub-step .timeline-desc  { font-size: 11px; }
+        .timeline-item.sub-step .timeline-content { padding: 3px 0 8px; }
+
+        /* 서브 단계 미니 프로그레스 바 */
+        .sub-progress {
+            height: 3px; border-radius: 2px;
+            background: #E5E7EB; margin-top: 5px;
+            overflow: hidden; opacity: 0;
+            transition: opacity .3s;
+        }
+        .sub-progress.visible { opacity: 1; }
+        .sub-progress-fill {
+            height: 100%; width: 0;
+            background: linear-gradient(90deg, #3B82F6, #60A5FA);
+            border-radius: 2px;
+            transition: width .4s ease;
+        }
+        .sub-progress.done .sub-progress-fill {
+            width: 100% !important;
+            background: #10B981;
+        }
+
+        /* ── 로그 콘솔 ──────────────────────────────────── */
         .log-card {
-            background: #fff;
-            border-radius: 14px;
-            padding: 20px 24px;
-            box-shadow: 0 2px 12px rgba(0,0,0,.08);
-            margin-bottom: 24px;
+            background: #fff; border-radius: 14px;
+            padding: 18px 20px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
+            display: flex; flex-direction: column;
         }
         .log-header {
             display: flex; justify-content: space-between; align-items: center;
-            margin-bottom: 12px;
+            margin-bottom: 12px; flex-shrink: 0;
         }
-        .log-title { font-size: 15px; font-weight: 700; color: #1F2937; }
+        .log-left { display: flex; align-items: center; gap: 8px; }
+        .log-title { font-size: 14px; font-weight: 700; color: #1F2937; }
+        .log-count {
+            font-size: 11px; color: #9CA3AF; background: #F3F4F6;
+            padding: 2px 8px; border-radius: 10px;
+            font-family: 'JetBrains Mono', 'Consolas', monospace;
+        }
         .log-toggle {
             font-size: 12px; color: #6B7280; cursor: pointer;
             background: #F3F4F6; border: none;
-            padding: 4px 10px; border-radius: 6px;
+            padding: 5px 12px; border-radius: 6px; transition: all .15s;
+            display: none; /* 모바일에서만 표시 */
         }
+        .log-toggle:hover { background: #E5E7EB; }
         .log-console {
-            background: #0F172A;
-            color: #94A3B8;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-            line-height: 1.6;
-            padding: 16px;
-            border-radius: 8px;
-            height: 240px;
-            overflow-y: scroll;        /* auto → scroll: scrollHeight 변화 시 reflow 억제 */
-            overflow-x: hidden;
-            white-space: pre-wrap;
-            word-break: break-all;
-            display: none;
-            /* 깜빡임 방지 핵심 3종 */
-            contain: strict;           /* 레이아웃 격리: 내부 변화가 외부 reflow 유발 안 함 */
-            will-change: scroll-position; /* 스크롤을 GPU 레이어로 분리 */
-            transform: translateZ(0);  /* 컴포지터 레이어 강제 생성 */
+            background: #0F172A; color: #94A3B8;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: 12px; line-height: 1.6;
+            padding: 14px; border-radius: 8px;
+            flex: 1; min-height: 200px;
+            overflow-y: scroll; overflow-x: hidden;
+            white-space: pre-wrap; word-break: break-all;
+            display: block;
+            contain: strict;
+            will-change: scroll-position;
+            transform: translateZ(0);
         }
-        .log-console.visible { display: block; }
-        .log-line-new { color: #7DD3FC; }
+        .log-console.collapsed { display: none; }
 
-        /* 완료 배너 */
+        /* ── 완료 배너 ──────────────────────────────────── */
         .complete-banner {
             background: linear-gradient(135deg, #065F46, #059669);
-            border-radius: 14px;
-            padding: 32px;
-            color: #fff;
-            text-align: center;
-            display: none;
+            border-radius: 14px; padding: 32px;
+            color: #fff; text-align: center; display: none;
         }
         .complete-banner.visible { display: block; animation: fadeIn .5s ease; }
-        .complete-icon  { font-size: 56px; margin-bottom: 12px; }
-        .complete-title { font-size: 24px; font-weight: 800; margin-bottom: 8px; }
-        .complete-sub   { font-size: 15px; opacity: .85; margin-bottom: 24px; }
+        .complete-icon  { font-size: 48px; margin-bottom: 10px; }
+        .complete-title { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
+        .complete-sub   { font-size: 14px; opacity: .85; margin-bottom: 20px; }
         .complete-btn {
             display: inline-block;
             background: #fff; color: #059669;
-            font-size: 16px; font-weight: 700;
-            padding: 14px 36px; border-radius: 10px;
-            text-decoration: none;
-            transition: all .2s;
+            font-size: 15px; font-weight: 700;
+            padding: 12px 32px; border-radius: 10px;
+            text-decoration: none; transition: all .2s;
             box-shadow: 0 4px 12px rgba(0,0,0,.15);
         }
         .complete-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,.2); }
-
-        /* 에러 배너 */
-        .error-banner {
-            background: linear-gradient(135deg, #7F1D1D, #DC2626);
-            border-radius: 14px;
-            padding: 28px 32px;
-            color: #fff;
-            display: none;
-            margin-bottom: 24px;
+        .countdown-bar {
+            height: 4px; background: rgba(255,255,255,.3);
+            border-radius: 2px; margin-top: 16px;
+            overflow: hidden; display: none;
         }
-        .error-banner.visible { display: block; animation: fadeIn .5s ease; }
-        .error-banner h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
-        .error-banner p  { font-size: 14px; opacity: .9; }
+        .countdown-bar.visible { display: block; }
+        .countdown-fill {
+            height: 100%; background: #fff; border-radius: 2px;
+            width: 100%; transition: width linear;
+        }
+        .countdown-text { font-size: 13px; opacity: .8; margin-top: 6px; }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(12px); }
             to   { opacity: 1; transform: translateY(0); }
         }
 
-        /* 큐 대기 배너 */
-        .queue-banner {
-            background: linear-gradient(135deg, #7C3AED, #A78BFA);
-            border-radius: 14px;
-            padding: 28px 32px;
-            color: #fff;
-            display: none;
-            margin-bottom: 24px;
-            align-items: center;
-            gap: 20px;
-            animation: fadeIn .5s ease;
-        }
-        .queue-banner.visible { display: flex; }
-        .queue-icon { font-size: 44px; flex-shrink: 0; }
-        .queue-content { flex: 1; }
-        .queue-content h3 { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
-        .queue-content p { font-size: 14px; opacity: .85; margin-bottom: 12px; }
-        .queue-info {
-            background: rgba(255,255,255,.15);
-            border-radius: 10px;
-            padding: 12px 16px;
-        }
-        .queue-info-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-size: 13px;
-            padding: 4px 0;
-        }
-        .queue-info-row + .queue-info-row { border-top: 1px solid rgba(255,255,255,.15); padding-top: 8px; margin-top: 4px; }
-        .queue-info-label { opacity: .8; }
-        .queue-info-value { font-weight: 700; font-size: 14px; }
-        .queue-current-file {
-            max-width: 200px; overflow: hidden;
-            text-overflow: ellipsis; white-space: nowrap;
-        }
-        @keyframes queuePulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: .6; }
-        }
-        .queue-banner.visible .queue-icon { animation: queuePulse 2s infinite; }
-
-        /* 자동 이동 카운트다운 */
-        .countdown-bar {
-            height: 4px;
-            background: rgba(255,255,255,.3);
-            border-radius: 2px;
-            margin-top: 18px;
-            overflow: hidden;
-            display: none;
-        }
-        .countdown-bar.visible { display: block; }
-        .countdown-fill {
-            height: 100%;
-            background: #fff;
-            border-radius: 2px;
-            width: 100%;
-            transition: width linear;
-        }
-        .countdown-text {
-            font-size: 13px; opacity: .8; margin-top: 6px;
+        /* ── 푸터 ───────────────────────────────────────── */
+        .progress-footer {
+            text-align: center; padding: 20px;
+            font-size: 12px; color: #9CA3AF;
         }
 
-        /* ── Desktop enhancement ──────────────────── */
+        /* ── Desktop ────────────────────────────────────── */
         @media (min-width: 1024px) {
-            .file-banner-name { font-size: 24px; }
-            .file-banner-sub  { font-size: 16px; }
-            .steps-title      { font-size: 20px; }
-            .step-label       { font-size: 16px; }
-            .step-desc        { font-size: 15px; }
-            .main-progress-label { font-size: 17px; }
-            .main-progress-pct   { font-size: 26px; }
-            .status-msg       { font-size: 16px; }
-            .log-title        { font-size: 17px; }
-            .log-toggle       { font-size: 14px; }
-            .log-console      { font-size: 14px; }
-            .complete-title   { font-size: 28px; }
-            .complete-sub     { font-size: 17px; }
-            .complete-btn     { font-size: 18px; }
-            .error-banner h3  { font-size: 20px; }
-            .error-banner p   { font-size: 16px; }
-            .queue-content h3 { font-size: 20px; }
-            .queue-content p  { font-size: 16px; }
-            .queue-info-row   { font-size: 15px; }
-            .queue-info-value { font-size: 16px; }
-            .countdown-text   { font-size: 15px; }
+            .topbar-brand { font-size: 16px; }
+            .file-chip { font-size: 14px; max-width: 360px; }
+            .elapsed-chip { font-size: 13px; }
+            .progress-label { font-size: 17px; }
+            .progress-pct { font-size: 26px; }
+            .status-msg { font-size: 14px; }
+            .timeline-label { font-size: 16px; }
+            .timeline-desc { font-size: 14px; }
+            .timeline-item.sub-step .timeline-label { font-size: 14px; }
+            .timeline-item.sub-step .timeline-desc { font-size: 12px; }
+            .log-title { font-size: 16px; }
+            .log-console { font-size: 13px; }
+            .complete-title { font-size: 26px; }
+            .complete-sub { font-size: 16px; }
+            .complete-btn { font-size: 17px; }
+            .error-header h3 { font-size: 19px; }
+            .error-message { font-size: 15px; }
+            .queue-content h3 { font-size: 19px; }
+            .queue-content p { font-size: 15px; }
+            .queue-info-row { font-size: 14px; }
+            .countdown-text { font-size: 14px; }
         }
-        /* ── Mobile responsive ────────────────────── */
+
+        /* ── Tablet (1열 폴백) ──────────────────────────── */
+        @media (max-width: 900px) {
+            .progress-grid {
+                grid-template-columns: 1fr;
+            }
+            /* 모바일에서는 로그 토글 버튼 표시 + 기본 접힘 */
+            .log-toggle { display: block; }
+            .log-console { display: none; min-height: 180px; flex: none; height: 220px; }
+            .log-console.visible { display: block; }
+        }
+
+        /* ── Mobile ─────────────────────────────────────── */
+        @media (max-width: 600px) {
+            .topbar-center { position: static; transform: none; flex: 1; justify-content: center; }
+            .topbar-brand { display: none; }
+            .file-chip { max-width: 36vw; font-size: 11px; padding: 3px 10px; }
+            .elapsed-chip { font-size: 11px; padding: 3px 8px; }
+        }
         @media (max-width: 480px) {
-            .progress-page { margin: 30px auto; padding: 0 12px; }
-            .file-banner { padding: 18px 16px; gap: 12px; }
-            .file-banner-icon { font-size: 32px; }
-            .file-banner-name { font-size: 16px; }
-            .file-banner-sub { font-size: 12px; }
-            .steps-card { padding: 18px 16px; }
-            .main-progress-wrap { padding: 16px; }
+            .progress-topbar { padding: 0 12px; }
+            .progress-page { margin: 64px auto 30px; padding: 0 12px; }
+            .progress-card-header { padding: 18px 16px 16px; }
+            .timeline { padding: 14px 16px 18px; }
+            .timeline-item.sub-step { padding-left: 14px; }
             .log-card { padding: 14px 16px; }
             .queue-banner { padding: 18px 16px; gap: 12px; }
-            .queue-icon { font-size: 32px; }
-            .queue-content h3 { font-size: 16px; }
+            .queue-icon { font-size: 28px; }
+            .queue-content h3 { font-size: 15px; }
             .queue-content p { font-size: 12px; }
             .complete-banner { padding: 24px 16px; }
             .complete-title { font-size: 20px; }
             .complete-btn { padding: 12px 28px; font-size: 14px; min-height: 44px; }
+            .cancel-btn { min-height: 44px; padding: 8px 12px; }
             .log-toggle { min-height: 44px; padding: 8px 12px; }
-            .header-title { font-size: 20px; }
-            .btn.btn-outline { min-height: 44px; padding: 8px 14px; }
+            .error-actions { flex-direction: column; }
+            .error-retry-btn, .error-home-btn { justify-content: center; min-height: 44px; }
         }
     </style>
 </head>
 <body>
 
-<!-- ── Header ─────────────────────────────────────────────── -->
-<header class="header">
-    <div class="container header-flex">
-        <div>
-            <h1 class="header-title">📊 Heap Dump Analyzer</h1>
-            <p class="header-subtitle">MAT CLI 분석 진행 중</p>
-        </div>
-        <a href="/" class="btn btn-outline" onclick="if(typeof analysisRunning!=='undefined'&&analysisRunning){if(!confirm('Analysis is in progress. Are you sure you want to leave?'))return false;}">← Back</a>
+<!-- ── 상단바 ──────────────────────────────────────────────── -->
+<div class="progress-topbar">
+    <div class="topbar-left">
+        <a href="/" class="topbar-back" onclick="if(typeof analysisRunning!=='undefined'&&analysisRunning){if(!confirm('분석이 진행 중입니다. 페이지를 떠나시겠습니까?'))return false;}">&#8592;</a>
+        <span class="topbar-brand">Heap Dump Analyzer</span>
     </div>
-</header>
+    <div class="topbar-center">
+        <span class="file-chip" th:text="${filename}">dump.hprof</span>
+        <span class="elapsed-chip" id="elapsedTime">--:--</span>
+    </div>
+    <div class="topbar-right">
+        <button class="cancel-btn" id="cancelBtn" onclick="cancelAnalysis()">취소</button>
+    </div>
+</div>
 
 <!-- ── Progress Page ──────────────────────────────────────── -->
 <div class="progress-page">
 
-    <!-- 파일 정보 배너 -->
-    <div class="file-banner">
-        <div class="file-banner-icon">🗂</div>
-        <div>
-            <div class="file-banner-name" th:text="${filename}">dump.hprof</div>
-            <div class="file-banner-sub">Eclipse MAT CLI로 메모리 분석 중...</div>
-        </div>
-    </div>
-
     <!-- 큐 대기 배너 (숨김) -->
     <div class="queue-banner" id="queueBanner">
-        <div class="queue-icon">⏳</div>
+        <div class="queue-icon">&#9203;</div>
         <div class="queue-content">
             <h3>분석 대기 중</h3>
             <p>현재 다른 파일이 분석 중입니다. 순서가 되면 자동으로 시작됩니다.</p>
@@ -377,74 +484,156 @@
 
     <!-- 에러 배너 (숨김) -->
     <div class="error-banner" id="errorBanner">
-        <h3>⚠ 분석 실패</h3>
-        <p id="errorMsg"></p>
-    </div>
-
-    <!-- 전체 진행바 -->
-    <div class="main-progress-wrap">
-        <div class="main-progress-header">
-            <span class="main-progress-label" id="statusLabel">분석 준비 중...</span>
-            <span class="main-progress-pct" id="pctText">0%</span>
+        <div class="error-header">
+            <div class="error-header-icon">&#10007;</div>
+            <div>
+                <h3>분석 실패</h3>
+                <div class="error-failed-step" id="errorFailedStep"></div>
+            </div>
         </div>
-        <div class="main-bar-bg">
-            <div class="main-bar-fill" id="mainBar"></div>
-        </div>
-        <div class="status-msg">
-            <span id="statusMsg">MAT CLI 연결 대기 중</span><span class="dot-anim" id="dotAnim"></span>
+        <p class="error-message" id="errorMsg"></p>
+        <div class="error-actions">
+            <a href="#" class="error-retry-btn" id="retryBtn">&#8635; 재분석</a>
+            <a href="/" class="error-home-btn">&#8592; 홈으로</a>
         </div>
     </div>
 
-    <!-- 단계 리스트 -->
-    <div class="steps-card">
-        <div class="steps-title">🔄 분석 단계</div>
-        <ul class="step-list">
-            <li class="step-item" id="step-file">
-                <div class="step-icon waiting" id="icon-file">📁</div>
-                <div class="step-text">
-                    <div class="step-label">파일 확인</div>
-                    <div class="step-desc" id="desc-file">힙 덤프 파일 존재 여부 확인</div>
+    <!-- 2열 그리드: 진행 카드(좌) + 로그(우) -->
+    <div class="progress-grid">
+
+    <!-- 통합 진행 카드 -->
+    <div class="progress-card">
+        <!-- 진행바 -->
+        <div class="progress-card-header">
+            <div class="progress-info">
+                <span class="progress-label" id="statusLabel">분석 준비 중...</span>
+                <span class="progress-pct" id="pctText">0%</span>
+            </div>
+            <div class="progress-track">
+                <div class="progress-fill" id="mainBar"></div>
+            </div>
+            <div class="status-msg">
+                <span id="statusMsg">MAT CLI 연결 대기 중</span><span class="dot-anim" id="dotAnim"></span>
+            </div>
+        </div>
+
+        <!-- 타임라인 단계 -->
+        <div class="timeline">
+            <div class="timeline-item" id="step-file">
+                <div class="timeline-dot waiting" id="icon-file">
+                    <span class="dot-num">1</span>
+                    <span class="dot-check">&#10003;</span>
+                    <span class="dot-error">!</span>
                 </div>
-            </li>
-            <li class="step-item" id="step-mat">
-                <div class="step-icon waiting" id="icon-mat">⚙️</div>
-                <div class="step-text">
-                    <div class="step-label">MAT CLI 실행</div>
-                    <div class="step-desc" id="desc-mat">ParseHeapDump.sh 실행 (suspects / overview / top_components)</div>
+                <div class="timeline-content">
+                    <div class="timeline-label">파일 확인</div>
+                    <div class="timeline-desc" id="desc-file">힙 덤프 파일 존재 여부 확인</div>
+                    <div class="timeline-dur" id="dur-file"></div>
                 </div>
-            </li>
-            <li class="step-item" id="step-parse">
-                <div class="step-icon waiting" id="icon-parse">🔍</div>
-                <div class="step-text">
-                    <div class="step-label">리포트 파싱</div>
-                    <div class="step-desc" id="desc-parse">ZIP 리포트 파싱 및 데이터 추출</div>
+                <div class="timeline-line"></div>
+            </div>
+            <div class="timeline-item" id="step-mat">
+                <div class="timeline-dot waiting" id="icon-mat">
+                    <span class="dot-num">2</span>
+                    <span class="dot-check">&#10003;</span>
+                    <span class="dot-error">!</span>
                 </div>
-            </li>
-            <li class="step-item" id="step-done">
-                <div class="step-icon waiting" id="icon-done">✅</div>
-                <div class="step-text">
-                    <div class="step-label">분석 완료</div>
-                    <div class="step-desc" id="desc-done">결과 페이지 이동</div>
+                <div class="timeline-content">
+                    <div class="timeline-label">MAT CLI 실행</div>
+                    <div class="timeline-desc" id="desc-mat">힙 덤프 파싱 및 인덱스 생성</div>
+                    <div class="timeline-dur" id="dur-mat"></div>
                 </div>
-            </li>
-        </ul>
+                <div class="timeline-line"></div>
+            </div>
+            <div class="timeline-item sub-step" id="step-overview">
+                <div class="timeline-dot waiting" id="icon-overview">
+                    <span class="dot-num">&#183;</span>
+                    <span class="dot-check">&#10003;</span>
+                    <span class="dot-error">!</span>
+                </div>
+                <div class="timeline-content">
+                    <div class="timeline-label">Overview 리포트</div>
+                    <div class="timeline-desc" id="desc-overview">힙 메모리 요약 정보 생성</div>
+                    <div class="timeline-dur" id="dur-overview"></div>
+                    <div class="sub-progress" id="prog-overview"><div class="sub-progress-fill" id="prog-fill-overview"></div></div>
+                </div>
+                <div class="timeline-line"></div>
+            </div>
+            <div class="timeline-item sub-step" id="step-topcomp">
+                <div class="timeline-dot waiting" id="icon-topcomp">
+                    <span class="dot-num">&#183;</span>
+                    <span class="dot-check">&#10003;</span>
+                    <span class="dot-error">!</span>
+                </div>
+                <div class="timeline-content">
+                    <div class="timeline-label">Top Components 리포트</div>
+                    <div class="timeline-desc" id="desc-topcomp">메모리 상위 컴포넌트 분석</div>
+                    <div class="timeline-dur" id="dur-topcomp"></div>
+                    <div class="sub-progress" id="prog-topcomp"><div class="sub-progress-fill" id="prog-fill-topcomp"></div></div>
+                </div>
+                <div class="timeline-line"></div>
+            </div>
+            <div class="timeline-item sub-step" id="step-suspects">
+                <div class="timeline-dot waiting" id="icon-suspects">
+                    <span class="dot-num">&#183;</span>
+                    <span class="dot-check">&#10003;</span>
+                    <span class="dot-error">!</span>
+                </div>
+                <div class="timeline-content">
+                    <div class="timeline-label">Leak Suspects 리포트</div>
+                    <div class="timeline-desc" id="desc-suspects">메모리 누수 의심 항목 분석</div>
+                    <div class="timeline-dur" id="dur-suspects"></div>
+                    <div class="sub-progress" id="prog-suspects"><div class="sub-progress-fill" id="prog-fill-suspects"></div></div>
+                </div>
+                <div class="timeline-line"></div>
+            </div>
+            <div class="timeline-item" id="step-parse">
+                <div class="timeline-dot waiting" id="icon-parse">
+                    <span class="dot-num">3</span>
+                    <span class="dot-check">&#10003;</span>
+                    <span class="dot-error">!</span>
+                </div>
+                <div class="timeline-content">
+                    <div class="timeline-label">리포트 파싱</div>
+                    <div class="timeline-desc" id="desc-parse">ZIP 리포트 파싱 및 데이터 추출</div>
+                    <div class="timeline-dur" id="dur-parse"></div>
+                </div>
+                <div class="timeline-line"></div>
+            </div>
+            <div class="timeline-item" id="step-done">
+                <div class="timeline-dot waiting" id="icon-done">
+                    <span class="dot-num">4</span>
+                    <span class="dot-check">&#10003;</span>
+                    <span class="dot-error">!</span>
+                </div>
+                <div class="timeline-content">
+                    <div class="timeline-label">분석 완료</div>
+                    <div class="timeline-desc" id="desc-done">결과 페이지 이동</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- MAT 로그 콘솔 -->
     <div class="log-card">
         <div class="log-header">
-            <span class="log-title">🖥 MAT CLI 실행 로그</span>
-            <button class="log-toggle" onclick="toggleLog()">로그 보기 ▼</button>
+            <div class="log-left">
+                <span class="log-title">MAT CLI 로그</span>
+                <span class="log-count" id="logCount">0 lines</span>
+            </div>
+            <button class="log-toggle" onclick="toggleLog()">&#9660; 펼치기</button>
         </div>
         <div class="log-console" id="logConsole"></div>
     </div>
 
+    </div><!-- /.progress-grid -->
+
     <!-- 완료 배너 -->
     <div class="complete-banner" id="completeBanner">
-        <div class="complete-icon">🎉</div>
+        <div class="complete-icon">&#127881;</div>
         <div class="complete-title">분석 완료!</div>
         <div class="complete-sub">힙 덤프 분석이 성공적으로 완료되었습니다.</div>
-        <a href="#" class="complete-btn" id="resultLink">📊 결과 보기</a>
+        <a href="#" class="complete-btn" id="resultLink">&#128202; 결과 보기</a>
         <div class="countdown-bar visible" id="countdownBar">
             <div class="countdown-fill" id="countdownFill"></div>
         </div>
@@ -454,17 +643,16 @@
 </div>
 
 <!-- ── Footer ─────────────────────────────────────────────── -->
-<footer class="footer">
-    <div class="container">
-        <p>© 2024 Heap Dump Analyzer v2.0.0 | Powered by Eclipse MAT CLI</p>
-    </div>
-</footer>
+<div class="progress-footer">
+    &copy; 2026 Heap Dump Analyzer v2.0.0 | Powered by Eclipse MAT CLI
+</div>
 
 <!-- ── SSE 진행 상황 처리 스크립트 (성능 최적화) ───────────── -->
 <script th:inline="javascript">
     const FILENAME    = /*[[${filename}]]*/ '';
     const SSE_URL     = '/analyze/progress/' + encodeURIComponent(FILENAME);
     const RESULT_URL  = '/analyze/result/'   + encodeURIComponent(FILENAME);
+    const RERUN_URL   = '/analyze/rerun/'    + encodeURIComponent(FILENAME);
 
     // ── DOM 참조 (캐시) ────────────────────────────────────
     const mainBar        = document.getElementById('mainBar');
@@ -477,26 +665,82 @@
     const errorBanner    = document.getElementById('errorBanner');
     const errorMsg       = document.getElementById('errorMsg');
     const queueBanner    = document.getElementById('queueBanner');
-    const queuePosition  = document.getElementById('queuePosition');
+    const queuePositionEl = document.getElementById('queuePosition');
     const queueCurrentFile = document.getElementById('queueCurrentFile');
     const resultLink     = document.getElementById('resultLink');
     const countdownFill  = document.getElementById('countdownFill');
     const countdownText  = document.getElementById('countdownText');
+    const elapsedTimeEl  = document.getElementById('elapsedTime');
+    const logCountEl     = document.getElementById('logCount');
+    const retryBtn       = document.getElementById('retryBtn');
+    const errorFailedStep = document.getElementById('errorFailedStep');
 
-    let logVisible = false;
+    // 데스크톱(>900px)에서는 로그 항상 표시, 모바일에서는 토글
+    let logVisible = window.innerWidth > 900;
 
-    // ── 로그 토글 ──────────────────────────────────────────
+    // ── 경과 시간 타이머 ──────────────────────────────────
+    let analysisStartTime = null;
+    let elapsedTimerId    = null;
+
+    function startElapsedTimer() {
+        if (analysisStartTime) return;
+        analysisStartTime = Date.now();
+        updateElapsed();
+        elapsedTimerId = setInterval(updateElapsed, 1000);
+    }
+    function updateElapsed() {
+        const elapsed = Date.now() - analysisStartTime;
+        const mins = Math.floor(elapsed / 60000);
+        const secs = Math.floor((elapsed % 60000) / 1000);
+        elapsedTimeEl.textContent =
+            String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+    }
+    function stopElapsedTimer() {
+        if (elapsedTimerId) { clearInterval(elapsedTimerId); elapsedTimerId = null; }
+    }
+
+    // ── 단계별 소요 시간 추적 ─────────────────────────────
+    const stepStartTimes = {};
+
+    function markStepStart(id) {
+        if (!stepStartTimes[id]) stepStartTimes[id] = Date.now();
+    }
+    function markStepDone(id) {
+        const t = stepStartTimes[id];
+        if (!t) return;
+        const dur = ((Date.now() - t) / 1000).toFixed(1);
+        const el = document.getElementById('dur-' + id);
+        if (el) { el.textContent = dur + 's'; el.classList.add('visible'); }
+    }
+
+    // ── 로그 토글 (모바일에서만 사용) ────────────────────
     function toggleLog() {
         logVisible = !logVisible;
         logConsole.classList.toggle('visible', logVisible);
-        document.querySelector('.log-toggle').textContent = logVisible ? '로그 숨기기 ▲' : '로그 보기 ▼';
+        document.querySelector('.log-toggle').innerHTML = logVisible ? '&#9650; 접기' : '&#9660; 펼치기';
         if (logVisible) {
-            // 버퍼에 남은 것 즉시 반영
             if (logBuffer.length) { clearTimeout(logFlushId); logFlushId = null; flushLog(); }
-            // scrollHeight 읽기 없이 바닥으로
             logConsole.scrollTop = 999999;
             autoScroll = true;
         }
+    }
+
+    // 화면 크기 변경 시 로그 visible 상태 동기화
+    window.addEventListener('resize', () => {
+        const isDesktop = window.innerWidth > 900;
+        if (isDesktop && !logVisible) {
+            logVisible = true;
+        }
+    });
+
+    // ── 취소 기능 ──────────────────────────────────────────
+    let evtSourceRef = null;
+
+    function cancelAnalysis() {
+        if (!confirm('분석을 취소하시겠습니까?')) return;
+        if (evtSourceRef) evtSourceRef.close();
+        disableLeaveWarning();
+        window.location.href = '/';
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -524,66 +768,106 @@
         statusMsg.textContent = msg || '';
         if (label) statusLabel.textContent = label;
 
+        // 페이지 타이틀 업데이트
         if (state === 'done') {
             mainBar.classList.add('done');
             mainBar.classList.remove('error');
             dotAnim.style.display = 'none';
+            document.title = '\u2705 분석 완료 - Heap Dump Analyzer';
         } else if (state === 'error') {
             mainBar.classList.add('error');
             mainBar.classList.remove('done');
             dotAnim.style.display = 'none';
+            document.title = '\u274C 분석 실패 - Heap Dump Analyzer';
         } else {
             mainBar.classList.remove('done', 'error');
             dotAnim.style.display = '';
+            document.title = '(' + pct + '%) 분석 중... - Heap Dump Analyzer';
         }
     }
 
     // ── 단계 아이콘 상태 변경 ──────────────────────────────
-    // 이전 상태와 동일하면 DOM 조작 스킵
-    const stepState = { file: '', mat: '', parse: '', done: '' };
+    const stepState = { file: '', mat: '', overview: '', topcomp: '', suspects: '', parse: '', done: '' };
+    var _lastReportPhase = null;
 
     function setStep(id, state, desc) {
-        if (stepState[id] === state && !desc) return; // 변화 없으면 스킵
+        if (stepState[id] === state && !desc) return;
+        const prevState = stepState[id];
         stepState[id] = state;
+
+        // 소요 시간 추적
+        if (state === 'active' && prevState !== 'active') markStepStart(id);
+        if (state === 'done' && prevState !== 'done') markStepDone(id);
+
         requestAnimationFrame(() => {
-            const icon  = document.getElementById('icon-' + id);
+            const dot   = document.getElementById('icon-' + id);
             const descEl = document.getElementById('desc-' + id);
-            if (icon)  icon.className = 'step-icon ' + state;
+            const item  = document.getElementById('step-' + id);
+
+            if (dot) dot.className = 'timeline-dot ' + state;
             if (desc && descEl) descEl.textContent = desc;
+
+            // 타임라인 아이템 클래스 (연결선 색상용)
+            if (item) {
+                item.classList.remove('step-waiting', 'step-active', 'step-done', 'step-error');
+                item.classList.add('step-' + state);
+            }
         });
+    }
+
+    // ── 서브 단계 프로그레스 바 ──────────────────────────────
+    var _tracksShown = false;
+    function showSubProgressTracks() {
+        if (_tracksShown) return;
+        _tracksShown = true;
+        ['overview', 'topcomp', 'suspects'].forEach(function(id) {
+            var progEl = document.getElementById('prog-' + id);
+            if (progEl) progEl.classList.add('visible');
+        });
+    }
+    function setSubProgress(id, currentPct, minPct, maxPct) {
+        showSubProgressTracks();
+        var fillEl = document.getElementById('prog-fill-' + id);
+        if (!fillEl) return;
+        var range = maxPct - minPct;
+        var localPct = range > 0 ? Math.min(100, Math.max(0, Math.round((currentPct - minPct) / range * 100))) : 0;
+        fillEl.style.width = localPct + '%';
+    }
+    function completeSubProgress(id) {
+        var progEl = document.getElementById('prog-' + id);
+        if (!progEl) return;
+        progEl.classList.add('visible', 'done');
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     // 로그 렌더링 — 깜빡임 완전 제거 버전
     //
     // 핵심 원칙:
-    //   1) scrollHeight 읽기 금지 → scrollTop = 999999 (브라우저가 clamp)
-    //   2) 버퍼는 logVisible 무관하게 항상 누적 (열면 이전 로그 보임)
-    //   3) 150ms 타이머: DOM append는 한 프레임에 한 번
-    //   4) 노드 제거 시 실제 줄 수 정확히 카운트 (근사값 오차 없음)
-    //   5) contain:strict + will-change로 reflow 외부 전파 차단
+    //   1) 버퍼는 logVisible 무관하게 항상 누적
+    //   2) 150ms 타이머: DOM append는 한 프레임에 한 번
+    //   3) 노드 제거 시 실제 줄 수 정확히 카운트
+    //   4) contain:strict + will-change로 reflow 외부 전파 차단
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    const LOG_FLUSH_MS  = 150;   // 플러시 간격 (ms)
-    const MAX_LOG_LINES = 500;   // DOM 최대 줄 수
-    const MAX_LINE_LEN  = 200;   // 줄당 최대 글자
-    const TRIM_TO_LINES = 300;   // 초과 시 이 줄 수로 줄임
+    const LOG_FLUSH_MS  = 150;
+    const MAX_LOG_LINES = 500;
+    const MAX_LINE_LEN  = 200;
+    const TRIM_TO_LINES = 300;
 
-    let logBuffer    = [];       // 미반영 줄 목록
-    let logLineCount = 0;        // 현재 DOM 줄 수 (정확히 추적)
-    let logFlushId   = null;     // setTimeout ID
-    let autoScroll   = true;     // 사용자가 위로 올리면 false
+    let logBuffer      = [];
+    let logLineCount   = 0;   // DOM에 있는 줄 수 (트리밍 시 감소)
+    let logTotalCount  = 0;   // 총 수신된 줄 수 (UI 표시용, 감소 안 함)
+    let logFlushId     = null;
+    let autoScroll     = true;
 
-    // 사용자가 직접 스크롤하면 자동 스크롤 중단
+    // 사용자가 직접 스크롤하면 자동 스크롤 중단/재개
     logConsole.addEventListener('scroll', () => {
-        // 콘솔 바닥에서 40px 이내이면 자동 스크롤 유지
-        // scrollHeight 읽기 없이: scrollTop이 매우 크면 바닥 근처
-        // → 스크롤바가 맨 위에 있을 때만 자동 스크롤 끔
-        autoScroll = logConsole.scrollTop > 50;
+        const atBottom = (logConsole.scrollHeight - logConsole.scrollTop - logConsole.clientHeight) < 60;
+        autoScroll = atBottom;
     }, { passive: true });
 
     function appendLog(line) {
         const trimmed = line.length > MAX_LINE_LEN
-            ? line.slice(0, MAX_LINE_LEN) + '…'
+            ? line.slice(0, MAX_LINE_LEN) + '\u2026'
             : line;
         logBuffer.push(trimmed);
 
@@ -603,8 +887,6 @@
             let removed = 0;
             while (removed < removeCount && logConsole.firstChild) {
                 const node = logConsole.firstChild;
-                // 실제 줄 수 = 텍스트 내 
- 개수 + 1
                 const nodeLines = node.nodeType === Node.TEXT_NODE
                     ? (node.nodeValue.match(/\n/g) || []).length
                     : 1;
@@ -617,11 +899,14 @@
         // ── 버퍼를 단일 텍스트 노드로 append (reflow 1회) ───
         const chunk = logBuffer.join('\n') + '\n';
         logConsole.appendChild(document.createTextNode(chunk));
-        logLineCount += incoming;
-        logBuffer     = [];
+        logLineCount  += incoming;
+        logTotalCount += incoming;
+        logBuffer      = [];
 
-        // ── 스크롤: scrollHeight 읽기 없이 큰 값으로 설정 ───
-        // 브라우저가 자동으로 max(scrollHeight - clientHeight) 로 clamp
+        // ── 로그 라인 수 표시 (총 수신 수 기준) ──────────
+        if (logCountEl) logCountEl.textContent = logTotalCount + ' lines';
+
+        // ── 스크롤 ──────────────────────────────────────────
         if (autoScroll && logVisible) {
             logConsole.scrollTop = 999999;
         }
@@ -630,7 +915,7 @@
     // ── 완료 처리 + 카운트다운 ────────────────────────────
     function showComplete(url) {
         disableLeaveWarning();
-        // 남은 버퍼 즉시 flush
+        stopElapsedTimer();
         if (logBuffer.length) flushLog();
 
         resultLink.href = url || RESULT_URL;
@@ -639,7 +924,6 @@
 
         const DELAY = 3000;
         countdownFill.style.transition = 'width ' + (DELAY / 1000) + 's linear';
-        // rAF 단일 사용: transition 시작 전 width=100% 확정 후 다음 프레임에서 0%로 전환
         requestAnimationFrame(() => {
             countdownFill.style.width = '0%';
         });
@@ -656,12 +940,13 @@
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // SSE 이벤트 처리: 상태(진행바/단계) 업데이트도 throttle
+    // SSE 이벤트 처리
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     let lastPercent = -1;
 
     function startSSE() {
         const evtSource = new EventSource(SSE_URL);
+        evtSourceRef = evtSource;
 
         evtSource.addEventListener('progress', function (e) {
             const data = JSON.parse(e.data);
@@ -670,14 +955,20 @@
             // ── QUEUED 상태: 큐 대기 배너 표시 ──
             if (status === 'QUEUED') {
                 queueBanner.classList.add('visible');
-                queuePosition.textContent = (qPos || 1) + '번째';
+                queuePositionEl.textContent = (qPos || 1) + '번째';
                 queueCurrentFile.textContent = currentAnalysis || '-';
                 setProgress(0, message, 'running', '분석 대기 중...');
+                document.title = '\u23F3 대기 중... - Heap Dump Analyzer';
                 return;
             }
             // QUEUED → RUNNING 전환 시 큐 배너 숨기기
             if (queueBanner.classList.contains('visible')) {
                 queueBanner.classList.remove('visible');
+            }
+
+            // 첫 RUNNING 수신 시 타이머 시작
+            if (!analysisStartTime && (status === 'RUNNING' || status === 'PARSING')) {
+                startElapsedTimer();
             }
 
             // 로그 라인만 있고 진행률 변화 없으면 UI 업데이트 스킵
@@ -695,26 +986,116 @@
             // 단계 아이콘 갱신 (setStep 내부에서 중복 스킵)
             if (pctChanged) {
                 if (percent >= 5  && percent < 10)  setStep('file', 'done', '파일 확인 완료');
-                else if (percent < 15)               setStep('file', 'active');
+                else if (percent < 5)               setStep('file', 'active');
 
-                if (percent >= 15 && percent < 82)  setStep('mat', 'active');
-                if (percent >= 82 && status === 'RUNNING') setStep('mat', 'done', 'MAT CLI 실행 완료');
+                if (percent >= 15 && percent < 40 && !data.reportPhase) {
+                    setStep('mat', 'active');
+                    showSubProgressTracks();
+                }
+                if (percent >= 82 && status === 'RUNNING') {
+                    setStep('mat', 'done', 'MAT CLI 실행 완료');
+                    setStep('overview',  'done', 'Overview 리포트 완료');
+                    setStep('topcomp',   'done', 'Top Components 리포트 완료');
+                    setStep('suspects',  'done', 'Leak Suspects 리포트 완료');
+                    completeSubProgress('overview');
+                    completeSubProgress('topcomp');
+                    completeSubProgress('suspects');
+                }
+            }
+
+            // 리포트 단계 처리 + 서브 프로그레스 바 (순서 독립적)
+            if (data.reportPhase) {
+                const rp = data.reportPhase;
+                const phaseMap = {
+                    overview:       { step: 'overview', label: 'Overview 리포트',         min: 40, max: 55 },
+                    top_components: { step: 'topcomp',  label: 'Top Components 리포트',   min: 55, max: 68 },
+                    suspects:       { step: 'suspects', label: 'Leak Suspects 리포트',    min: 68, max: 80 }
+                };
+                var pi = phaseMap[rp];
+                if (pi) {
+                    // init → 리포트 전환 시 MAT 파싱 완료
+                    if (_lastReportPhase === 'init' || !_lastReportPhase) {
+                        setStep('mat', 'done', '힙 덤프 파싱 완료');
+                    }
+                    // 이전 리포트 phase가 변경되었으면 이전 것 완료 처리
+                    if (_lastReportPhase && _lastReportPhase !== rp && phaseMap[_lastReportPhase]) {
+                        var prev = phaseMap[_lastReportPhase];
+                        setStep(prev.step, 'done', prev.label + ' 완료');
+                        completeSubProgress(prev.step);
+                    }
+                    setStep(pi.step, 'active', pi.label + ' 생성 중...');
+                    setSubProgress(pi.step, percent, pi.min, pi.max);
+                    _lastReportPhase = rp;
+                } else if (rp === 'init') {
+                    setStep('mat', 'active');
+                    showSubProgressTracks();
+                    _lastReportPhase = 'init';
+                }
             }
 
             if (status === 'PARSING') {
-                setStep('mat',   'done', 'MAT CLI 실행 완료');
-                setStep('parse', 'active');
+                setStep('mat',      'done', 'MAT CLI 실행 완료');
+                setStep('overview', 'done', 'Overview 리포트 완료');
+                setStep('topcomp',  'done', 'Top Components 리포트 완료');
+                setStep('suspects', 'done', 'Leak Suspects 리포트 완료');
+                completeSubProgress('overview');
+                completeSubProgress('topcomp');
+                completeSubProgress('suspects');
+                setStep('parse',    'active');
             }
             if (status === 'COMPLETED') {
-                setStep('file',  'done');
-                setStep('mat',   'done');
-                setStep('parse', 'done', '파싱 완료');
-                setStep('done',  'active');
+                setStep('file',     'done');
+                setStep('mat',      'done');
+                setStep('overview', 'done');
+                setStep('topcomp',  'done');
+                setStep('suspects', 'done');
+                setStep('parse',    'done', '파싱 완료');
+                setStep('done',     'active');
+                completeSubProgress('overview');
+                completeSubProgress('topcomp');
+                completeSubProgress('suspects');
             }
             if (status === 'ERROR') {
-                ['file','mat','parse','done'].forEach(s => {
-                    if (stepState[s] === 'active') setStep(s, 'error');
+                // 실패한 단계 찾기
+                const stepNames = { file: '파일 확인', mat: 'MAT CLI 실행', overview: 'Overview 리포트',
+                                    topcomp: 'Top Components 리포트', suspects: 'Leak Suspects 리포트',
+                                    parse: '리포트 파싱', done: '완료' };
+                const stepOrder = ['file','mat','overview','topcomp','suspects','parse','done'];
+                let failedName = '';
+                let failedIdx = -1;
+                stepOrder.forEach(function(s, idx) {
+                    if (stepState[s] === 'active') {
+                        setStep(s, 'error', stepNames[s] + ' 실패');
+                        if (!failedName) { failedName = stepNames[s] || s; failedIdx = idx; }
+                    }
                 });
+                // active인 단계가 없으면 마지막 non-done 단계를 에러로 처리
+                if (!failedName) {
+                    for (var i = stepOrder.length - 1; i >= 0; i--) {
+                        if (stepState[stepOrder[i]] !== 'done' && stepState[stepOrder[i]] !== '') {
+                            setStep(stepOrder[i], 'error', stepNames[stepOrder[i]] + ' 실패');
+                            failedName = stepNames[stepOrder[i]];
+                            failedIdx = i;
+                            break;
+                        }
+                    }
+                }
+                // 실패 단계 이후의 대기 단계들을 시각적으로 건너뜀 처리
+                if (failedIdx >= 0) {
+                    for (var j = failedIdx + 1; j < stepOrder.length; j++) {
+                        var s = stepOrder[j];
+                        if (stepState[s] !== 'done') {
+                            var item = document.getElementById('step-' + s);
+                            if (item) item.style.opacity = '0.35';
+                        }
+                    }
+                }
+                if (failedName) {
+                    errorFailedStep.textContent = '\u26A0 ' + failedName + ' 단계에서 실패';
+                }
+                // 프로그레스 카드 에러 스타일 적용
+                var progressCard = document.querySelector('.progress-card');
+                if (progressCard) progressCard.classList.add('card-error');
             }
 
             // 로그는 항상 버퍼링 (콘솔 열려있지 않아도 누적)
@@ -727,9 +1108,10 @@
             if (status === 'ERROR') {
                 evtSource.close();
                 disableLeaveWarning();
-                // 남은 버퍼 flush
+                stopElapsedTimer();
                 if (logBuffer.length) flushLog();
                 errorMsg.textContent = errorMessage || '알 수 없는 오류가 발생했습니다.';
+                retryBtn.href = RERUN_URL;
                 errorBanner.classList.add('visible');
                 dotAnim.style.display = 'none';
             }

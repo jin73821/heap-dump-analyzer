@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analysis History — Heap Dump Analyzer</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5; }
+        .topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 52px;
+                  background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; }
+        .topbar-logo { width: 30px; height: 30px; background: #2563EB; border-radius: 7px;
+                       display: flex; align-items: center; justify-content: center; }
+        .topbar-logo svg { width: 16px; height: 16px; fill: white; }
+        .topbar-title { font-size: 16px; font-weight: 700; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; }
+        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                      border-radius: 6px; background: transparent; color: #6B7280;
+                      cursor: pointer; text-decoration: none; display: inline-block; }
+        .topbar-btn:hover { background: #F9FAFB; }
+        .container { max-width: 960px; margin: 0 auto; padding: 68px 20px 40px; }
+        .page-hdr { display: flex; align-items: center; justify-content: space-between;
+                    margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+        .page-ttl { font-size: 18px; font-weight: 700; }
+        .page-stats { display: flex; gap: 16px; }
+        .page-stat { font-size: 12px; color: #6B7280; }
+        .page-stat strong { color: #1F2937; }
+        .search-bar { width: 100%; padding: 10px 14px; border: 1px solid #E5E7EB;
+                      border-radius: 8px; font-size: 13px; margin-bottom: 16px;
+                      outline: none; background: #fff; }
+        .search-bar:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px; }
+        .no-match { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; display: none; }
+        .empty-msg { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; }
+
+        /* History item — 카드형 */
+        .hi { padding: 12px 0; border-bottom: 1px solid #F3F4F6; }
+        .hi:last-child { border-bottom: none; }
+        .hi-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+        .hdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .hd-ok  { background: #10B981; }
+        .hd-err { background: #EF4444; }
+        .hi-name { font-size: 13px; font-weight: 500; flex: 1; min-width: 0;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                   text-decoration: none; }
+        .hi-name-link { color: #2563EB; }
+        .hi-name-link:hover { text-decoration: underline; }
+        .hi-name-err { color: #EF4444; }
+        .hi-name-err:hover { text-decoration: underline; }
+        .hi-name-plain { color: #EF4444; }
+        .hi-badge { font-size: 10px; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; font-weight: 500; }
+        .hb-ok  { background: #D1FAE5; color: #065F46; }
+        .hb-err { background: #FEE2E2; color: #7F1D1D; }
+        .hb-del { background: #F3F4F6; color: #6B7280; }
+        .hi-meta { display: flex; gap: 14px; margin-top: 5px; padding-left: 16px;
+                   font-size: 11px; color: #9CA3AF; flex-wrap: wrap; }
+        .hi-meta span { display: inline-flex; align-items: center; gap: 3px; }
+        .hi-meta svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+        .hi-deleted { opacity: 0.65; }
+
+        @media (min-width: 1024px) {
+            .hi-name { font-size: 14px; }
+            .hi-meta { font-size: 12px; }
+        }
+        @media (max-width: 640px) {
+            .page-stats { gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-brand">
+        <div class="topbar-logo">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        </div>
+        <span class="topbar-title">Heap Dump Analyzer</span>
+    </div>
+    <div class="topbar-right">
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-hdr">
+        <div class="page-ttl">Analysis History</div>
+        <div class="page-stats">
+            <span class="page-stat"><strong th:text="${totalCount}">0</strong> total</span>
+            <span class="page-stat" style="color:#059669"><strong th:text="${successCount}">0</strong> success</span>
+            <span class="page-stat" style="color:#EF4444"><strong th:text="${errorCount}">0</strong> failed</span>
+        </div>
+    </div>
+
+    <input type="text" class="search-bar" id="searchInput"
+           placeholder="Search analysis history..." oninput="filterItems()">
+
+    <div class="panel">
+        <div th:if="${#lists.isEmpty(analysisHistory)}" class="empty-msg">
+            No analysis history yet.
+        </div>
+        <div th:each="h : ${analysisHistory}" class="hi" th:classappend="${h.fileDeleted} ? 'hi-deleted'"
+             th:data-name="${h.filename}">
+            <div class="hi-top">
+                <div class="hdot hd-ok"  th:if="${h.status == 'SUCCESS'}"></div>
+                <div class="hdot hd-err" th:if="${h.status == 'ERROR'}"></div>
+                <!-- SUCCESS: 결과 보기 링크 (파일 삭제 여부 무관) -->
+                <a th:if="${h.status == 'SUCCESS'}"
+                   th:href="@{/analyze/result/{f}(f=${h.filename})}"
+                   class="hi-name hi-name-link" th:text="${h.filename}">dump.hprof</a>
+                <!-- ERROR + 파일 존재: 재분석 링크 -->
+                <a th:if="${h.status == 'ERROR' and !h.fileDeleted}"
+                   th:href="@{/analyze/{f}(f=${h.filename})}"
+                   class="hi-name hi-name-err" th:text="${h.filename}">dump.hprof</a>
+                <!-- ERROR + 파일 삭제됨: 텍스트만 -->
+                <span th:if="${h.status == 'ERROR' and h.fileDeleted}"
+                      class="hi-name hi-name-plain" th:text="${h.filename}">dump.hprof</span>
+                <span class="hi-badge hb-ok" th:if="${h.status == 'SUCCESS'}">success</span>
+                <span class="hi-badge hb-err" th:if="${h.status == 'ERROR'}">failed</span>
+                <span class="hi-badge hb-del" th:if="${h.fileDeleted}">deleted</span>
+            </div>
+            <div class="hi-meta">
+                <span>
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                    <span th:text="${h.formattedAnalysisTime}">-</span>
+                </span>
+                <span>
+                    <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/></svg>
+                    <span th:text="${h.heapUsed != null ? h.heapUsed : '-'}">-</span>
+                </span>
+                <span>
+                    <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    <span th:text="${h.suspectCount}">0</span> suspects
+                </span>
+                <span>
+                    <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    <span th:text="${h.formattedSize}">-</span>
+                </span>
+                <span th:text="${h.formattedDate}">03-18</span>
+            </div>
+        </div>
+        <div class="no-match" id="noMatch">No results matching your search.</div>
+    </div>
+</div>
+
+<script>
+function filterItems() {
+    var q = document.getElementById('searchInput').value.toLowerCase();
+    var items = document.querySelectorAll('.hi');
+    var visible = 0;
+    items.forEach(function(el) {
+        var name = el.getAttribute('data-name').toLowerCase();
+        var show = name.indexOf(q) !== -1;
+        el.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+    document.getElementById('noMatch').style.display = visible === 0 ? 'block' : 'none';
+}
+</script>
+
+</body>
+</html>

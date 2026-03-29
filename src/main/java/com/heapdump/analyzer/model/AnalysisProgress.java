@@ -46,6 +46,9 @@ public class AnalysisProgress {
     /** 현재 분석 중인 파일명 */
     private String currentAnalysis;
 
+    /** MAT CLI 리포트 단계 (overview, top_components, suspects) */
+    private String reportPhase;
+
     public static AnalysisProgress queued(String filename, int queuePosition, String currentAnalysis) {
         AnalysisProgress p = new AnalysisProgress();
         p.filename = filename;
@@ -73,6 +76,18 @@ public class AnalysisProgress {
         p.percent  = percent;
         p.message  = "MAT CLI 실행 중...";
         p.logLine  = logLine;
+        return p;
+    }
+
+    public static AnalysisProgress reportLog(String filename, int percent, String logLine,
+                                              String reportPhase, String message) {
+        AnalysisProgress p = new AnalysisProgress();
+        p.filename    = filename;
+        p.status      = Status.RUNNING;
+        p.percent     = percent;
+        p.logLine     = logLine;
+        p.reportPhase = reportPhase;
+        p.message     = message != null ? message : "MAT CLI 실행 중...";
         return p;
     }
 

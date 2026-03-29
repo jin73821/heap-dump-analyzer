@@ -14,6 +14,8 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.io.*;
 import java.nio.file.*;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
@@ -67,56 +69,132 @@ public class HeapDumpAnalyzerService {
     public void restoreResultsFromDisk() {
         File baseDir = new File(config.getHeapDumpDirectory());
         if (!baseDir.exists()) return;
-        File[] subDirs = baseDir.listFiles(File::isDirectory);
-        if (subDirs == null) return;
+        File dataDir = new File(config.getDataDirectory());
 
+        // 기존 결과 디렉토리를 data/로 마이그레이션
+        migrateOldResultDirs(baseDir, dataDir);
+
+        // data 디렉토리에서 결과 복원
         int loaded = 0;
-        for (File dir : subDirs) {
-            File resultFile = new File(dir, RESULT_JSON);
-            if (!resultFile.exists()) continue;
-            try {
-                HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
-                if (r == null || r.getFilename() == null) continue;
-                if (r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS
-                        && r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.ERROR) continue;
-                File logFile = new File(dir, MAT_LOG_FILE);
-                if (logFile.exists()) {
-                    r.setMatLog(new String(Files.readAllBytes(logFile.toPath()),
-                            java.nio.charset.StandardCharsets.UTF_8));
+        if (dataDir.exists()) {
+            File[] subDirs = dataDir.listFiles(File::isDirectory);
+            if (subDirs != null) {
+                for (File dir : subDirs) {
+                    if (loadResultFromDir(dir)) loaded++;
                 }
-                // Heap 데이터 없는 SUCCESS → ERROR로 보정
-                if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS
-                        && r.getTotalHeapSize() <= 0 && r.getUsedHeapSize() <= 0) {
-                    r.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
-                    if (r.getErrorMessage() == null || r.getErrorMessage().isEmpty()) {
-                        r.setErrorMessage("Heap data not available — MAT ZIP 파싱 결과에 힙 데이터가 없습니다.");
-                    }
-                    logger.info("Corrected status to ERROR for {} (no heap data)", r.getFilename());
-                    // 디스크에도 보정된 상태 저장
-                    try {
-                        objectMapper.writerWithDefaultPrettyPrinter()
-                                .writeValue(resultFile, r);
-                    } catch (Exception ex) {
-                        logger.warn("Failed to update result.json for {}", r.getFilename());
-                    }
-                }
-                // 기존 캐시의 MAT HTML 재정제 (body 추출 등)
-                if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
-                    sanitizeCachedHtml(r);
-                }
-                memCache.put(r.getFilename(), r);
-                loaded++;
-            } catch (Exception e) {
-                logger.warn("Failed to restore {}: {}", resultFile, e.getMessage());
             }
         }
-        logger.info("Restored {} cached results from disk", loaded);
+        logger.info("Restored {} cached results from disk (data directory)", loaded);
 
         // 상위 디렉토리에 남은 .index/.threads 파일을 결과 디렉토리로 이동
         migrateStrayArtifacts(baseDir);
 
+        // 원본과 .gz가 동시에 존재하는 중복 파일 정리
+        File[] dumpFiles = baseDir.listFiles((d, n) -> isValidHeapDumpFile(n));
+        if (dumpFiles != null && dumpFiles.length > 0) {
+            cleanupDuplicateGzFiles(dumpFiles);
+        }
+
         // 이전 실행에서 남은 tmp 파일 정리
         cleanupTmpDir();
+    }
+
+    /**
+     * 개별 결과 디렉토리에서 result.json을 로드하여 memCache에 적재.
+     */
+    private boolean loadResultFromDir(File dir) {
+        File resultFile = new File(dir, RESULT_JSON);
+        if (!resultFile.exists()) return false;
+        try {
+            HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
+            if (r == null || r.getFilename() == null) return false;
+            if (r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS
+                    && r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.ERROR) return false;
+            File logFile = new File(dir, MAT_LOG_FILE);
+            if (logFile.exists()) {
+                r.setMatLog(new String(Files.readAllBytes(logFile.toPath()),
+                        java.nio.charset.StandardCharsets.UTF_8));
+            }
+            // Heap 데이터 없는 SUCCESS → ERROR로 보정
+            if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS
+                    && r.getTotalHeapSize() <= 0 && r.getUsedHeapSize() <= 0) {
+                r.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
+                if (r.getErrorMessage() == null || r.getErrorMessage().isEmpty()) {
+                    r.setErrorMessage("Heap data not available — MAT ZIP 파싱 결과에 힙 데이터가 없습니다.");
+                }
+                logger.info("Corrected status to ERROR for {} (no heap data)", r.getFilename());
+                try {
+                    objectMapper.writerWithDefaultPrettyPrinter()
+                            .writeValue(resultFile, r);
+                } catch (Exception ex) {
+                    logger.warn("Failed to update result.json for {}", r.getFilename());
+                }
+            }
+            // 기존 캐시의 MAT HTML 재정제 (body 추출 등)
+            if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+                sanitizeCachedHtml(r);
+            }
+            memCache.put(r.getFilename(), r);
+            return true;
+        } catch (Exception e) {
+            logger.warn("Failed to restore {}: {}", resultFile, e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * 기존 결과 디렉토리(baseDir/{basename}/)를 data 디렉토리로 마이그레이션.
+     */
+    private void migrateOldResultDirs(File baseDir, File dataDir) {
+        File[] subDirs = baseDir.listFiles(File::isDirectory);
+        if (subDirs == null) return;
+        int migrated = 0;
+        for (File dir : subDirs) {
+            String name = dir.getName();
+            // tmp, data 디렉토리는 스킵
+            if (name.equals(TMP_DIR_NAME) || name.equals("data")) continue;
+            File resultFile = new File(dir, RESULT_JSON);
+            if (!resultFile.exists()) continue;
+
+            File target = new File(dataDir, name);
+            if (target.exists()) {
+                logger.debug("[Migrate] Target already exists, skipping: {}", target);
+                continue;
+            }
+            try {
+                Files.move(dir.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE);
+                migrated++;
+                logger.info("[Migrate] Moved result directory: {} → {}", dir.getAbsolutePath(), target.getAbsolutePath());
+            } catch (IOException e) {
+                // 다른 파일시스템이면 atomic move 실패 → copy + delete
+                try {
+                    copyDirectoryRecursively(dir.toPath(), target.toPath());
+                    deleteDirectoryRecursively(dir);
+                    migrated++;
+                    logger.info("[Migrate] Copied result directory: {} → {}", dir.getAbsolutePath(), target.getAbsolutePath());
+                } catch (Exception ex) {
+                    logger.error("[Migrate] Failed to migrate {}: {}", name, ex.getMessage());
+                }
+            }
+        }
+        if (migrated > 0) {
+            logger.info("[Migrate] Moved {} result directories to data/", migrated);
+        }
+    }
+
+    private void copyDirectoryRecursively(Path source, Path target) throws IOException {
+        Files.walk(source).forEach(s -> {
+            try {
+                Path t = target.resolve(source.relativize(s));
+                if (Files.isDirectory(s)) {
+                    if (!Files.exists(t)) Files.createDirectories(t);
+                } else {
+                    Files.copy(s, t, StandardCopyOption.REPLACE_EXISTING);
+                }
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
     }
 
     /**
@@ -133,7 +211,7 @@ public class HeapDumpAnalyzerService {
             int firstDot = name.indexOf('.');
             if (firstDot <= 0) continue;
             String base = name.substring(0, firstDot);
-            File resultDir = new File(baseDir, base);
+            File resultDir = new File(config.getDataDirectory(), base);
             if (!resultDir.exists() || !resultDir.isDirectory()) continue;
             try {
                 Files.move(f.toPath(), new File(resultDir, name).toPath(),
@@ -380,6 +458,8 @@ public class HeapDumpAnalyzerService {
     public String  getHeapDumpDirectory()          { return config.getHeapDumpDirectory(); }
     public String  getMatCliPath()                 { return config.getMatCliPath(); }
     public int     getCachedResultCount()          { return memCache.size(); }
+    public Collection<HeapAnalysisResult> getAllCachedResults() { return Collections.unmodifiableCollection(memCache.values()); }
+    public Set<String> getCacheKeys()               { return Collections.unmodifiableSet(memCache.keySet()); }
     public boolean isMatCliReady()                 { return config.isMatCliReady(); }
     public String  getMatCliStatusMessage()        { return config.getMatCliStatusMessage(); }
 
@@ -442,10 +522,24 @@ public class HeapDumpAnalyzerService {
         File[] files = dir.listFiles((d, n) -> isValidHeapDumpFile(n));
         Set<String> existing = new HashSet<>();
         if (files != null) {
-            for (File f : files) {
-                result.add(new HeapDumpFile(f.getName(), f.getAbsolutePath(),
-                        f.length(), f.lastModified()));
-                existing.add(f.getName());
+            // 원본과 .gz가 동시에 존재하면 .gz 삭제 (원본 우선)
+            cleanupDuplicateGzFiles(files);
+
+            // 정리 후 다시 조회
+            files = dir.listFiles((d, n) -> isValidHeapDumpFile(n));
+            if (files != null) {
+                for (File f : files) {
+                    // .gz 파일은 원본 이름으로 표시
+                    String displayName = f.getName();
+                    if (displayName.toLowerCase().endsWith(".gz")) {
+                        displayName = displayName.substring(0, displayName.length() - 3);
+                    }
+                    if (!existing.contains(displayName)) {
+                        result.add(new HeapDumpFile(displayName, f.getAbsolutePath(),
+                                f.length(), f.lastModified()));
+                        existing.add(displayName);
+                    }
+                }
             }
         }
 
@@ -465,10 +559,44 @@ public class HeapDumpAnalyzerService {
         return result;
     }
 
+    /**
+     * 원본 덤프 파일과 .gz 파일이 동시에 존재하면 .gz 파일을 삭제한다.
+     * 원본이 있으면 .gz는 중복이므로 제거하여 디스크 공간을 절약한다.
+     */
+    private void cleanupDuplicateGzFiles(File[] files) {
+        Set<String> originals = new HashSet<>();
+        List<File> gzFiles = new ArrayList<>();
+
+        for (File f : files) {
+            String name = f.getName();
+            if (name.toLowerCase().endsWith(".gz")) {
+                gzFiles.add(f);
+            } else {
+                originals.add(name);
+            }
+        }
+
+        for (File gz : gzFiles) {
+            // example.hprof.gz → example.hprof
+            String originalName = gz.getName().substring(0, gz.getName().length() - 3);
+            if (originals.contains(originalName)) {
+                long gzSize = gz.length();
+                if (gz.delete()) {
+                    logger.info("[Cleanup] 중복 .gz 파일 삭제: {} ({})", gz.getName(), formatBytes(gzSize));
+                } else {
+                    logger.warn("[Cleanup] 중복 .gz 파일 삭제 실패: {}", gz.getName());
+                }
+            }
+        }
+    }
+
     public File getFile(String filename) throws IOException {
         filename = new File(filename).getName();
         File file = new File(config.getHeapDumpDirectory(), filename);
         if (file.exists() && file.isFile()) return file;
+        // .gz 압축 파일도 탐색
+        File gzFile = new File(config.getHeapDumpDirectory(), filename + ".gz");
+        if (gzFile.exists() && gzFile.isFile()) return gzFile;
         // tmp에서도 탐색
         File tmpFile = new File(tmpDirectory(), filename);
         if (tmpFile.exists() && tmpFile.isFile()) return tmpFile;
@@ -492,8 +620,11 @@ public class HeapDumpAnalyzerService {
             }
         }
 
-        if (!file.exists() && !tmpFile.exists()) {
-            logger.warn("[Delete] File not found: {}", safe);
+        // .gz 압축 파일도 확인
+        File gzFile = new File(config.getHeapDumpDirectory(), safe + ".gz");
+
+        if (!file.exists() && !tmpFile.exists() && !gzFile.exists()) {
+            logger.warn("[Delete] Heap dump file not found: {}", safe);
             throw new FileNotFoundException("File not found: " + safe);
         }
 
@@ -506,7 +637,17 @@ public class HeapDumpAnalyzerService {
             logger.info("[Delete] Heap dump file deleted: filename={}, size={}", safe, formatBytes(fileSize));
         }
 
-        // MAT 인덱스 파일 삭제 (예: heapdump.a2s.index, heapdump.threads 등)
+        // .gz 압축 파일 삭제
+        if (gzFile.exists()) {
+            long gzSize = gzFile.length();
+            if (gzFile.delete()) {
+                logger.info("[Delete] Compressed file deleted: filename={}, size={}", gzFile.getName(), formatBytes(gzSize));
+            } else {
+                logger.warn("[Delete] Failed to delete compressed file: {}", gzFile.getName());
+            }
+        }
+
+        // 상위 디렉토리의 MAT 인덱스 파일 삭제 (예: heapdump.a2s.index, heapdump.threads 등)
         String baseName = stripExtension(safe);
         File parentDir = new File(config.getHeapDumpDirectory());
         File[] relatedFiles = parentDir.listFiles((dir, name) ->
@@ -528,8 +669,8 @@ public class HeapDumpAnalyzerService {
             logger.info("[Delete] {} related index files deleted for '{}'", relatedCount, safe);
         }
 
-        clearCache(safe);
-        logger.info("[Delete] Completed: all files and cache cleared for '{}'", safe);
+        // 분석 결과(data/ 디렉토리)와 메모리 캐시는 보존 — 이력 유지
+        logger.info("[Delete] Completed: heap dump file deleted for '{}', analysis data preserved in data/", safe);
     }
 
     // ── 캐시 조회 / 삭제 ─────────────────────────────────────────
@@ -632,7 +773,20 @@ public class HeapDumpAnalyzerService {
                     logger.info("[Analysis] File found in tmp: {}", safe);
                 } else {
                     dumpFile = new File(config.getHeapDumpDirectory(), safe);
-                    if (!dumpFile.exists()) {
+                    File gzFile = new File(config.getHeapDumpDirectory(), safe + ".gz");
+
+                    if (dumpFile.exists() && gzFile.exists()) {
+                        // 원본과 .gz가 동시에 존재 → .gz 삭제 (원본 우선)
+                        long gzSize = gzFile.length();
+                        if (gzFile.delete()) {
+                            logger.info("[Analysis] 중복 .gz 파일 삭제: {} ({})", gzFile.getName(), formatBytes(gzSize));
+                        }
+                    } else if (!dumpFile.exists() && gzFile.exists()) {
+                        // 원본 없고 .gz만 존재 → 압축 해제 후 분석
+                        sendProgress(emitter, AnalysisProgress.step(safe, 4, "압축 해제 중..."));
+                        decompressDumpFile(gzFile, dumpFile);
+                        logger.info("[Analysis] Decompressed .gz file for re-analysis: {}", safe);
+                    } else if (!dumpFile.exists()) {
                         sendProgress(emitter, AnalysisProgress.error(safe, "파일을 찾을 수 없습니다: " + safe));
                         emitter.complete(); return;
                     }
@@ -711,6 +865,10 @@ public class HeapDumpAnalyzerService {
                     memCache.put(safe, result);
                     saveResultToDisk(result, resultDir);
                     analysisSuccess = true;
+
+                    // 분석 완료 후 덤프 파일 gzip 압축
+                    compressDumpFile(dumpFile);
+
                     sendProgress(emitter, AnalysisProgress.completed(safe, "/analyze/result/" + safe));
                     logger.info("[Analysis] Done: {} in {}ms", safe, result.getAnalysisTime());
                 }
@@ -804,9 +962,9 @@ public class HeapDumpAnalyzerService {
             logger.info("MAT option: -keep_unreachable_objects ENABLED");
         }
 
-        cmd.add("org.eclipse.mat.api:suspects");
         cmd.add("org.eclipse.mat.api:overview");
         cmd.add("org.eclipse.mat.api:top_components");
+        cmd.add("org.eclipse.mat.api:suspects");
 
         logger.info("Running MAT CLI: {}", String.join(" ", cmd));
         sendProgress(emitter, AnalysisProgress.step(filename, 15, "MAT CLI 실행 중..."));
@@ -818,6 +976,8 @@ public class HeapDumpAnalyzerService {
 
         Process process = pb.start();
         final int[] pct = {15};
+        final int[] lineCount = {0};
+        final String[] phase = {"init"};  // init → overview → top_components → suspects
         StringBuilder output = new StringBuilder();
 
         final Thread callerThread = Thread.currentThread();
@@ -827,9 +987,48 @@ public class HeapDumpAnalyzerService {
                 String line;
                 while ((line = br.readLine()) != null) {
                     output.append(line).append('\n');
+                    lineCount[0]++;
                     if (callerThread.isInterrupted()) break;
-                    if (pct[0] < 80) pct[0] = Math.min(80, pct[0] + 1);
-                    sendProgress(emitter, AnalysisProgress.log(filename, pct[0], line));
+
+                    // 리포트 단계 감지 (MAT CLI Subtask 출력 패턴 기반)
+                    if (line.startsWith("Subtask: System Overview") && !"overview".equals(phase[0])) {
+                        phase[0] = "overview";
+                        pct[0] = 40;
+                        logger.info("[MAT CLI] Report phase: overview (line {})", lineCount[0]);
+                        sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line,
+                                "overview", "Overview 리포트 생성 중..."));
+                        continue;
+                    } else if ((line.startsWith("Subtask: Top Component"))
+                               && !"top_components".equals(phase[0])) {
+                        phase[0] = "top_components";
+                        pct[0] = 55;
+                        logger.info("[MAT CLI] Report phase: top_components (line {})", lineCount[0]);
+                        sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line,
+                                "top_components", "Top Components 리포트 생성 중..."));
+                        continue;
+                    } else if (line.startsWith("Subtask: Leak Suspects") && !"suspects".equals(phase[0])) {
+                        phase[0] = "suspects";
+                        pct[0] = 68;
+                        logger.info("[MAT CLI] Report phase: suspects (line {})", lineCount[0]);
+                        sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line,
+                                "suspects", "Leak Suspects 리포트 생성 중..."));
+                        continue;
+                    }
+
+                    // 현재 단계별 최대 진행률 제한
+                    int maxPct;
+                    switch (phase[0]) {
+                        case "overview":       maxPct = 55; break;
+                        case "top_components": maxPct = 68; break;
+                        case "suspects":       maxPct = 80; break;
+                        default:               maxPct = 40; break; // init
+                    }
+                    int prevPct = pct[0];
+                    if (pct[0] < maxPct) pct[0] = Math.min(maxPct, pct[0] + 1);
+                    // 진행률이 변경되었거나 50줄마다 한 번씩 전송 (로그 라인 누적용)
+                    if (pct[0] != prevPct || lineCount[0] % 50 == 0) {
+                        sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line, phase[0], null));
+                    }
                 }
             } catch (IOException e) {
                 logger.warn("MAT output read error: {}", e.getMessage());
@@ -962,7 +1161,7 @@ public class HeapDumpAnalyzerService {
     // ── 경로 / 유틸리티 ──────────────────────────────────────────
 
     private File resultDirectory(String filename) {
-        return new File(config.getHeapDumpDirectory(), stripExtension(filename));
+        return new File(config.getDataDirectory(), stripExtension(filename));
     }
     private File resultJsonFile(String filename) {
         return new File(resultDirectory(filename), RESULT_JSON);
@@ -987,13 +1186,123 @@ public class HeapDumpAnalyzerService {
         }
     }
 
+    /**
+     * 분석 완료된 덤프 파일을 gzip으로 압축한다.
+     * 압축 전 디스크 여유 공간이 원본 파일 크기 이상인지 점검한다.
+     */
+    private void compressDumpFile(File dumpFile) {
+        if (dumpFile == null || !dumpFile.exists() || !dumpFile.isFile()) {
+            return;
+        }
+
+        // 이미 .gz 파일이면 스킵
+        if (dumpFile.getName().toLowerCase().endsWith(".gz")) {
+            return;
+        }
+
+        long fileSize = dumpFile.length();
+        long usableSpace = dumpFile.getParentFile().getUsableSpace();
+
+        if (usableSpace < fileSize) {
+            logger.warn("[Compress] 디스크 여유 공간 부족으로 압축 건너뜀: 필요={}, 여유={}, 파일={}",
+                    formatBytes(fileSize), formatBytes(usableSpace), dumpFile.getName());
+            return;
+        }
+
+        File gzFile = new File(dumpFile.getAbsolutePath() + ".gz");
+
+        // 이미 .gz 파일이 존재하면 삭제 후 재압축
+        if (gzFile.exists()) {
+            logger.info("[Compress] 기존 .gz 파일 삭제 후 재압축: {}", gzFile.getName());
+            gzFile.delete();
+        }
+
+        logger.info("[Compress] 덤프 파일 gzip 압축 시작: {} ({})", dumpFile.getName(), formatBytes(fileSize));
+
+        try (FileInputStream fis = new FileInputStream(dumpFile);
+             FileOutputStream fos = new FileOutputStream(gzFile);
+             GZIPOutputStream gzos = new GZIPOutputStream(fos, 8192)) {
+
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = fis.read(buffer)) != -1) {
+                gzos.write(buffer, 0, len);
+            }
+            gzos.finish();
+        } catch (IOException e) {
+            logger.error("[Compress] gzip 압축 실패: {}", dumpFile.getName(), e);
+            // 실패 시 불완전한 .gz 파일 삭제
+            if (gzFile.exists()) {
+                gzFile.delete();
+            }
+            return;
+        }
+
+        // 원본 파일 삭제
+        if (dumpFile.delete()) {
+            logger.info("[Compress] 압축 완료: {} → {} ({}→{})",
+                    dumpFile.getName(), gzFile.getName(),
+                    formatBytes(fileSize), formatBytes(gzFile.length()));
+        } else {
+            logger.warn("[Compress] 원본 파일 삭제 실패: {}", dumpFile.getName());
+        }
+    }
+
+    /**
+     * gzip 압축된 덤프 파일을 원본으로 복원한다.
+     * 복원 전 디스크 여유 공간을 점검한다 (압축 파일 크기의 3배 이상 필요).
+     */
+    private void decompressDumpFile(File gzFile, File destFile) throws IOException {
+        long gzSize = gzFile.length();
+        long usableSpace = gzFile.getParentFile().getUsableSpace();
+
+        // 압축 해제 시 원본은 압축 파일보다 클 수 있으므로 여유 있게 점검
+        if (usableSpace < gzSize * 3) {
+            throw new IOException("디스크 여유 공간 부족으로 압축 해제 불가: 여유=" +
+                    formatBytes(usableSpace) + ", 압축파일=" + formatBytes(gzSize));
+        }
+
+        logger.info("[Decompress] gzip 압축 해제 시작: {} ({})", gzFile.getName(), formatBytes(gzSize));
+
+        try (GZIPInputStream gzis = new GZIPInputStream(new FileInputStream(gzFile), 8192);
+             FileOutputStream fos = new FileOutputStream(destFile)) {
+
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = gzis.read(buffer)) != -1) {
+                fos.write(buffer, 0, len);
+            }
+        } catch (IOException e) {
+            // 실패 시 불완전한 파일 삭제
+            if (destFile.exists()) {
+                destFile.delete();
+            }
+            throw e;
+        }
+
+        // 압축 파일 삭제
+        if (gzFile.delete()) {
+            logger.info("[Decompress] 압축 해제 완료: {} → {} ({}→{})",
+                    gzFile.getName(), destFile.getName(),
+                    formatBytes(gzSize), formatBytes(destFile.length()));
+        } else {
+            logger.warn("[Decompress] 압축 파일 삭제 실패: {}", gzFile.getName());
+        }
+    }
+
     private boolean isValidHeapDumpFile(String name) {
         if (name == null) return false;
         String l = name.toLowerCase();
-        return l.endsWith(".hprof") || l.endsWith(".bin") || l.endsWith(".dump");
+        return l.endsWith(".hprof") || l.endsWith(".bin") || l.endsWith(".dump")
+                || l.endsWith(".hprof.gz") || l.endsWith(".bin.gz") || l.endsWith(".dump.gz");
     }
 
     private String stripExtension(String name) {
+        // .hprof.gz → base name (strip .gz first, then .hprof)
+        String l = name.toLowerCase();
+        if (l.endsWith(".gz")) {
+            name = name.substring(0, name.length() - 3);
+        }
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(0, dot) : name;
     }

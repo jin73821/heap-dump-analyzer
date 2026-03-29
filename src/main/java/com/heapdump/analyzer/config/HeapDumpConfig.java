@@ -84,6 +84,14 @@ public class HeapDumpConfig {
                     logger.info("[Config] Heap dump directory OK (writable, free: {} MB)", freeSpaceMB);
                 }
             }
+            // data 디렉토리 생성 (분석 결과 영속 저장)
+            Path dataPath = Paths.get(heapDumpDirectory, "data");
+            if (!Files.exists(dataPath)) {
+                Files.createDirectories(dataPath);
+                logger.info("[Config] Created data directory: {}", dataPath);
+            } else {
+                logger.info("[Config] Data directory: {}", dataPath);
+            }
         } catch (IOException e) {
             logger.error("[Config] Failed to create heap dump directory: {} — {}", heapDumpDirectory, e.getMessage());
             throw new RuntimeException("Failed to initialize heap dump directory: " + heapDumpDirectory, e);
@@ -168,6 +176,7 @@ public class HeapDumpConfig {
     }
 
     public String  getHeapDumpDirectory()      { return heapDumpDirectory; }
+    public String  getDataDirectory()          { return heapDumpDirectory + File.separator + "data"; }
     public String  getMatCliPath()             { return matCliPath; }
     public boolean isKeepUnreachableObjects()  { return keepUnreachableObjects; }
     public boolean isMatCliReady()             { return matCliReady; }

@@ -6,7 +6,7 @@
     <title>Heap Dump Analyzer</title>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { height: 100%; }
+        html, body { height: 100%; overflow-x: hidden; }
         body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
                color: #1F2937; background: #F3F4F6; line-height: 1.5; }
         .topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 52px;
@@ -25,6 +25,7 @@
                       border-radius: 6px; background: transparent; color: #6B7280;
                       cursor: pointer; text-decoration: none; display: inline-block; }
         .topbar-btn:hover { background: #F9FAFB; }
+        .topbar-settings-btn { display: inline-flex; align-items: center; }
         .app-layout { display: grid; grid-template-columns: 300px 1fr;
                       min-height: 100vh; padding-top: 52px; }
         .sidebar { background: #fff; border-right: 1px solid #E5E7EB;
@@ -115,6 +116,9 @@
                  border-left: 4px solid; font-size: 13px; }
         .alert-success { background: #D1FAE5; color: #065F46; border-color: #10B981; }
         .alert-error   { background: #FEE2E2; color: #7F1D1D; border-color: #EF4444; }
+        .alert-warning { background: #FEF3C7; color: #92400E; border-color: #F59E0B; }
+        .disk-warn-banner { display:flex; align-items:center; gap:10px; padding:12px 16px; background:linear-gradient(135deg,#FFFBEB,#FEF3C7); border:1px solid #FCD34D; border-radius:10px; margin-bottom:12px; font-size:13px; color:#92400E; font-weight:500; }
+        .disk-warn-banner b { color:#DC2626; }
         .dashboard-top { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
         .dashboard-left { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .dashboard-right { display: flex; flex-direction: column; gap: 10px; }
@@ -135,7 +139,11 @@
         .si-amber { background: #FFFBEB; color: #B45309; }
         .stat-info { min-width: 0; }
         .stat-val { font-size: 18px; font-weight: 700; line-height: 1.2; }
-        .stat-lbl { font-size: 10px; color: #9CA3AF; letter-spacing: 0.03em; }
+        .stat-lbl { font-size: 10px; color: #9CA3AF; letter-spacing: 0.03em; display: flex; align-items: center; gap: 4px; }
+        .disk-usage-badge { font-size: 9px; font-weight: 600; padding: 1px 5px; border-radius: 4px;
+                            background: #D1FAE5; color: #065F46; letter-spacing: 0; }
+        .dub-warn { background: #FEF3C7; color: #92400E; }
+        .dub-danger { background: #FEE2E2; color: #DC2626; }
         .c-blue { color: #2563EB; } .c-amber { color: #B45309; }
         .c-green { color: #059669; } .c-gray  { color: #6B7280; }
         .progress-bar-wrap { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
@@ -169,6 +177,8 @@
         .hb-warn { background: #FEF3C7; color: #92400E; }
         .hb-err  { background: #FEE2E2; color: #7F1D1D; }
         .hb-analyze { background: #DBEAFE; color: #1E40AF; text-decoration: none; }
+        .hb-del { background: #F3F4F6; color: #6B7280; }
+        .hi-deleted { opacity: 0.7; }
         .more-link { font-size: 12px; color: #2563EB; text-decoration: none; font-weight: 500; }
         .more-link:hover { text-decoration: underline; }
         .ra-item { padding: 10px 0; border-bottom: 1px solid #F3F4F6; }
@@ -179,6 +189,8 @@
         .ra-badge { font-size: 10px; padding: 2px 7px; border-radius: 20px; flex-shrink: 0; font-weight: 500; }
         .ra-ok { background: #D1FAE5; color: #065F46; }
         .ra-err { background: #FEE2E2; color: #7F1D1D; }
+        .ra-del { background: #F3F4F6; color: #6B7280; font-size: 9px; }
+        .ra-deleted { opacity: 0.7; }
         .ra-meta { display: flex; gap: 12px; font-size: 11px; color: #9CA3AF; padding-left: 16px; }
         .ra-meta span { display: flex; align-items: center; gap: 3px; }
         .ra-meta svg { width: 12px; height: 12px; stroke: #9CA3AF; fill: none; stroke-width: 1.5; }
@@ -432,6 +444,8 @@
 
         @media (max-width: 900px) {
             .app-layout { grid-template-columns: 1fr; }
+            .main-content { max-width: 100vw; }
+            .fname-tooltip { display: none !important; }
             .sidebar {
                 display: flex; position: fixed; top: 0; left: 0; bottom: 0;
                 width: 300px; z-index: 160;
@@ -458,6 +472,11 @@
             .quick-grid { grid-template-columns: 1fr; }
             .topbar-right .topbar-btn { font-size: 11px; padding: 5px 8px; }
             .modal { width: calc(100vw - 32px); margin: 0 16px; }
+            .dashboard-left { grid-template-columns: 1fr 1fr; }
+            .ra-meta { flex-wrap: wrap; gap: 6px 12px; }
+            .history-item { flex-wrap: wrap; gap: 4px 8px; }
+            .hname { flex-basis: calc(100% - 20px); }
+            .main-content { padding: 12px; }
         }
     </style>
 </head>
@@ -475,6 +494,10 @@
         <span class="topbar-badge">v2.0 · MAT CLI</span>
     </div>
     <div class="topbar-right">
+        <button class="topbar-btn topbar-settings-btn" onclick="openSettingsModal()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:2px"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            Settings
+        </button>
         <a class="topbar-btn" href="/">Refresh</a>
     </div>
 </header>
@@ -618,7 +641,14 @@
     <main class="main-content">
 
         <div th:if="${success}" class="alert alert-success" th:text="${success}"></div>
+        <div th:if="${warning}" class="alert alert-warning" th:text="${warning}"></div>
         <div th:if="${error}"   class="alert alert-error"   th:text="${error}"></div>
+
+        <!-- Disk Usage Warning Banner (90%+) -->
+        <div th:if="${diskUsedPercent != null and diskUsedPercent >= 90}" class="disk-warn-banner">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;flex-shrink:0"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <span>디스크 사용률이 <b th:text="${diskUsedPercent + '%'}">90%</b>입니다. 불필요한 파일을 삭제하여 디스크 공간을 확보해 주세요.</span>
+        </div>
 
         <!-- Dashboard Top: Stats + Progress/Queue -->
         <div th:if="${not #lists.isEmpty(files)}" class="dashboard-top">
@@ -638,7 +668,7 @@
                     </div>
                     <div class="stat-info">
                         <div class="stat-val c-gray" th:text="${totalSize}">--</div>
-                        <div class="stat-lbl">DISK</div>
+                        <div class="stat-lbl">DISK <span th:if="${diskUsedPercent != null}" class="disk-usage-badge" th:classappend="${diskUsedPercent >= 90 ? ' dub-danger' : (diskUsedPercent >= 70 ? ' dub-warn' : '')}" th:text="${diskUsedPercent + '%'}">0%</span></div>
                     </div>
                 </div>
                 <div class="stat-card">
@@ -722,7 +752,7 @@
                 <div th:if="${#lists.isEmpty(analysisHistory)}" class="no-data">
                     No results yet. Click Analyze on a file to start.
                 </div>
-                <div th:each="h : ${analysisHistory}" class="history-item">
+                <div th:each="h : ${analysisHistory}" class="history-item" th:classappend="${h.fileDeleted} ? 'hi-deleted'">
                     <div class="hdot hd-ok"   th:if="${h.status == 'SUCCESS'}"></div>
                     <div class="hdot hd-err"  th:if="${h.status == 'ERROR'}"></div>
                     <div class="hdot hd-warn" th:if="${h.status == 'NOT_ANALYZED'}"></div>
@@ -733,36 +763,45 @@
                     <a th:if="${h.status == 'SUCCESS'}"
                        th:href="@{/analyze/result/{f}(f=${h.filename})}"
                        class="hbadge hb-ok">view</a>
-                    <a th:if="${h.status == 'ERROR'}"
+                    <a th:if="${h.status == 'ERROR' and !h.fileDeleted}"
                        th:href="@{/analyze/result/{f}(f=${h.filename})}"
                        class="hbadge hb-err" style="text-decoration:none;">failed</a>
-                    <a th:if="${h.status == 'NOT_ANALYZED'}"
+                    <span th:if="${h.status == 'ERROR' and h.fileDeleted}"
+                          class="hbadge hb-err" style="text-decoration:none;">failed</span>
+                    <a th:if="${h.status == 'NOT_ANALYZED' and !h.fileDeleted}"
                        th:href="@{/analyze/{f}(f=${h.filename})}"
                        class="hbadge hb-analyze">analyze</a>
+                    <span th:if="${h.fileDeleted}" class="hbadge hb-del">deleted</span>
                 </div>
             </div>
 
-            <!-- Recent Analysis History -->
+            <!-- Analysis History -->
             <div class="panel">
                 <div class="panel-hdr">
-                    <span class="panel-ttl">Recent Analysis</span>
-                    <span style="font-size:11px;color:#9CA3AF;" th:text="${#lists.size(recentAnalyses)} + ' results'">0 results</span>
+                    <span class="panel-ttl">Analysis history</span>
+                    <a th:href="@{/history}" class="more-link">View all history &rarr;</a>
                 </div>
                 <div th:if="${#lists.isEmpty(recentAnalyses)}" class="ra-empty">
                     No analysis performed yet.
                 </div>
-                <div th:each="ra : ${recentAnalyses}" class="ra-item">
+                <div th:each="ra : ${recentAnalyses}" class="ra-item" th:classappend="${ra.fileDeleted} ? 'ra-deleted'">
                     <div class="ra-top">
                         <div class="hdot hd-ok"  th:if="${ra.status == 'SUCCESS'}"></div>
                         <div class="hdot hd-err" th:if="${ra.status == 'ERROR'}"></div>
+                        <!-- SUCCESS: 삭제 여부와 관계없이 결과 보기 가능 -->
                         <a th:if="${ra.status == 'SUCCESS'}"
                            th:href="@{/analyze/result/{f}(f=${ra.filename})}"
                            class="ra-name" th:text="${ra.filename}" style="color:#2563EB;text-decoration:none;">dump.hprof</a>
-                        <a th:if="${ra.status == 'ERROR'}"
+                        <!-- ERROR + 파일 존재: 재분석 가능 -->
+                        <a th:if="${ra.status == 'ERROR' and !ra.fileDeleted}"
                            th:href="@{/analyze/{f}(f=${ra.filename})}"
                            class="ra-name" th:text="${ra.filename}" style="color:#EF4444;text-decoration:none;">dump.hprof</a>
+                        <!-- ERROR + 파일 삭제됨: 링크 없이 텍스트만 -->
+                        <span th:if="${ra.status == 'ERROR' and ra.fileDeleted}"
+                              class="ra-name" th:text="${ra.filename}" style="color:#EF4444;">dump.hprof</span>
                         <span class="ra-badge ra-ok" th:if="${ra.status == 'SUCCESS'}">success</span>
                         <span class="ra-badge ra-err" th:if="${ra.status == 'ERROR'}">failed</span>
+                        <span class="ra-badge ra-del" th:if="${ra.fileDeleted}">deleted</span>
                     </div>
                     <div class="ra-meta">
                         <span>
@@ -797,10 +836,6 @@
                     <button class="qa" onclick="clearAllCache()">
                         <div class="qa-t">Clear all cache</div>
                         <div class="qa-d">Remove all cached results</div>
-                    </button>
-                    <button class="qa" onclick="openSettingsModal()">
-                        <div class="qa-t">API / Settings</div>
-                        <div class="qa-d">System info, config &amp; paths</div>
                     </button>
                 </div>
             </div>
@@ -963,7 +998,7 @@
             Delete File
             <button class="modal-close" onclick="closeDeleteModal()">&#215;</button>
         </div>
-        <div class="modal-desc">선택한 파일과 관련된 모든 캐시 데이터가 삭제됩니다.</div>
+        <div class="modal-desc">힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.</div>
         <div style="background:#f9fafb;border-radius:8px;padding:12px 16px;margin-bottom:14px">
             <div style="display:flex;justify-content:space-between;font-size:12px">
                 <span style="color:#6b7280">Filename</span>
@@ -1237,6 +1272,63 @@ function escapeHtml(s) { var d = document.createElement('div'); d.textContent = 
 
 function doUpload(file) {
     if (file.size > 2*1024*1024*1024) { toast('File exceeds 2 GB limit','error'); return; }
+    // 업로드 전 디스크 사용량 체크
+    fetch('/api/disk/check').then(r=>r.json()).then(d=>{
+        if (d.usableSpaceBytes != null && file.size > d.usableSpaceBytes) {
+            showDiskFullModal(d, file);
+        } else if (d.warning) {
+            showDiskWarningModal(d, file);
+        } else {
+            startUpload(file);
+        }
+    }).catch(()=>startUpload(file));
+}
+function showDiskFullModal(diskInfo, file) {
+    var overlay = document.createElement('div');
+    overlay.id = 'diskFullOverlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    overlay.innerHTML = '<div style="background:#fff;border-radius:12px;padding:24px;max-width:380px;width:90%;text-align:center">'
+        + '<div style="width:48px;height:48px;background:#FEE2E2;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 12px">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" style="width:24px;height:24px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
+        + '</div>'
+        + '<div style="font-size:16px;font-weight:700;color:#DC2626;margin-bottom:8px">디스크 용량 부족</div>'
+        + '<div style="font-size:13px;color:#78716C;margin-bottom:6px">'
+        + '파일 크기: <b style="color:#1D4ED8">' + fmtB(file.size) + '</b>'
+        + ' &nbsp;/ 디스크 여유: <b style="color:#DC2626">' + diskInfo.usableSpace + '</b>'
+        + '</div>'
+        + '<div style="font-size:13px;color:#92400E;margin-bottom:16px">'
+        + '업로드할 파일의 용량이 디스크 여유 공간보다 큽니다.<br>불필요한 파일을 삭제한 후 다시 시도해 주세요.'
+        + '</div>'
+        + '<button onclick="document.getElementById(\'diskFullOverlay\').remove()" style="width:100%;padding:10px;background:#DC2626;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">확인</button>'
+        + '</div>';
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+}
+function showDiskWarningModal(diskInfo, file) {
+    var overlay = document.createElement('div');
+    overlay.id = 'diskWarningOverlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    overlay.innerHTML = '<div style="background:#fff;border-radius:12px;padding:24px;max-width:380px;width:90%;text-align:center">'
+        + '<div style="width:48px;height:48px;background:#FEF3C7;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 12px">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" style="width:24px;height:24px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+        + '</div>'
+        + '<div style="font-size:16px;font-weight:700;color:#92400E;margin-bottom:8px">Disk Usage Warning</div>'
+        + '<div style="font-size:13px;color:#78716C;margin-bottom:6px">'
+        + 'Usage: <b style="color:#DC2626">' + diskInfo.usagePercent + '%</b>'
+        + ' &nbsp;(Free: ' + diskInfo.usableSpace + ' / Total: ' + diskInfo.totalSpace + ')'
+        + '</div>'
+        + '<div style="font-size:13px;color:#92400E;margin-bottom:16px">'
+        + 'Upload file: <b>' + escapeHtml(file.name) + '</b> (' + fmtB(file.size) + ')'
+        + '</div>'
+        + '<div style="display:flex;gap:8px">'
+        + '<button onclick="document.getElementById(\'diskWarningOverlay\').remove()" style="flex:1;padding:10px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Cancel</button>'
+        + '<button onclick="document.getElementById(\'diskWarningOverlay\').remove();startUpload(window._pendingUploadFile)" style="flex:1;padding:10px;background:#F59E0B;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Upload anyway</button>'
+        + '</div></div>';
+    window._pendingUploadFile = file;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+}
+function startUpload(file) {
     document.getElementById('upPW').style.display = 'block';
     const lbl = document.getElementById('upLbl');
     const bar = document.getElementById('upBar');
@@ -1382,8 +1474,8 @@ function toast(msg,type) {
     const old=document.querySelector('.toast-msg'); if(old) old.remove();
     const t=document.createElement('div');
     t.className='toast-msg'; t.textContent=msg;
-    t.style.cssText='position:fixed;bottom:20px;right:20px;z-index:9999;padding:12px 18px;'
-        +'border-radius:8px;font-size:13px;font-weight:500;transition:opacity .4s;'
+    t.style.cssText='position:fixed;top:20px;left:50%;transform:translateX(-50%);z-index:9999;padding:12px 18px;'
+        +'border-radius:8px;font-size:13px;font-weight:500;transition:opacity .4s;box-shadow:0 4px 12px rgba(0,0,0,.15);'
         +(type==='error'
             ?'background:#FEE2E2;color:#7F1D1D;border-left:4px solid #EF4444'
             :'background:#D1FAE5;color:#065F46;border-left:4px solid #10B981');

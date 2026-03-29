@@ -45,7 +45,7 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 ```
 
 **Key layers:**
-- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, queue status (`/api/queue/status`). SSE `Future` tracking per emitter for client disconnect cancellation.
+- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history` (JSON history list), `/api/cache/clear`, `/api/settings/unreachable`, `/api/queue/status`, `/api/disk/check`, `/api/settings`. `GET /analyze/rerun/{filename}` clears cache and restarts analysis.
 - **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (tmp staging → final), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). On disk cache restore, auto-reparses missing data from ZIPs (`reparseComponentDetails`, `reparseActions`).
 - **Parser** (`parser/MatReportParser.java`) — Multi-tier extraction from MAT ZIP files:
   - Overview ZIP: heap stats from `<td>` key-value pairs, Class Histogram from `Class_Histogram*.html`, Thread Overview from `Thread_Overview*.html`
@@ -78,6 +78,8 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 **progress.html** — SSE-driven analysis progress with step indicators. Queue waiting banner (purple gradient) shown when analysis is queued behind another, with position and current analysis filename.
 
 **files.html** — Full file listing page (`/files`). Search filter, status dots, SVG icon buttons (view/analyze/download/delete) matching `index.html` sidebar style. Delete confirmation modal. Download confirmation modal (filename + size).
+
+**history.html** — Full analysis history page (`/history`). Topbar navigation, search filter, status dots (success/error/pending), analysis metadata (file size, date, analysis time, heap size, suspect count), total statistics. Complete inline `<style>` block like `index.html`.
 
 **compare.html** — Side-by-side dump comparison.
 
