@@ -1,6 +1,7 @@
 package com.heapdump.analyzer.parser;
 
 import com.heapdump.analyzer.model.*;
+import com.heapdump.analyzer.util.HtmlSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -57,6 +58,30 @@ public class MatReportParser {
             Pattern.compile("<td[^>]*>(.*?)</td>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
     private static final Pattern TAG_PATTERN =
             Pattern.compile("<[^>]+>");
+
+    // ─── 인라인 replaceAll 대체용 사전 컴파일 패턴 ──────────────────────────────
+    private static final Pattern NON_DIGIT_PATTERN = Pattern.compile("[^\\d]");
+    private static final Pattern COMMA_SPACE_PATTERN = Pattern.compile("[,\\s]");
+    private static final Pattern WHITESPACE_PATTERN = Pattern.compile("\\s+");
+    private static final Pattern HEX_ADDR_PATTERN = Pattern.compile("@?\\s*0x[0-9a-fA-F]+");
+    private static final Pattern HEX_ADDR_EXTRACT_PATTERN = Pattern.compile("0x([0-9a-fA-F]+)");
+    private static final Pattern TOTAL_ENTRIES_PATTERN = Pattern.compile(
+            "Total:\\s*\\d+\\s+of\\s+([\\d,]+)\\s+entries", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ALL_OBJECTS_SUFFIX_PATTERN = Pattern.compile(
+            "(?i)\\s*All\\s+objects\\s*$");
+    private static final Pattern PROBLEM_SUSPECT_PATTERN = Pattern.compile(
+            "(?:Problem|Suspect)\\s*\\d+[^<]*<.*?>(.*?)(?=(?:Problem|Suspect)\\s*\\d+|$)",
+            Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+    // extractCleanClassName 용
+    private static final Pattern ARROW_CHAR_PATTERN = Pattern.compile("[\u00BB\u203A\u2039\u00AB]");
+    private static final Pattern ARROW_SPACE_PATTERN = Pattern.compile("\u00BB\\s*");
+    private static final Pattern ONLY_OBJECT_PATTERN = Pattern.compile("(?i)\\bOnly\\s+object\\b.*");
+    private static final Pattern FIRST_N_OF_PATTERN = Pattern.compile(
+            "(?i)\\bFirst\\s+[\\d,]+\\s+of\\s+[\\d,]+\\s+objects?\\b.*");
+    private static final Pattern ALL_N_OBJECTS_PATTERN = Pattern.compile(
+            "(?i)\\bAll\\s+[\\d,]+\\s+objects?\\b.*");
+    private static final Pattern ONLY_N_OBJECTS_PATTERN = Pattern.compile(
+            "(?i)\\bOnly\\s+[\\d,]+\\s+objects?\\b.*");
 
     // ─── 공개 API ────────────────────────────────────────────────────────────────
 
@@ -247,11 +272,11 @@ public class MatReportParser {
             }
             // "Number of objects"
             else if (keyL.contains("number of objects") || keyL.equals("objects")) {
-                result.setTotalObjects(parseLong(val.replaceAll("[^\\d]", "")));
+                result.setTotalObjects(parseLong(digitsOnly(val)));
             }
             // "Number of classes"
             else if (keyL.contains("number of classes") || keyL.equals("classes")) {
-                result.setTotalClasses((int) parseLong(val.replaceAll("[^\\d]", "")));
+                result.setTotalClasses((int) parseLong(digitsOnly(val)));
             }
         }
 
@@ -347,7 +372,7 @@ public class MatReportParser {
                 if (pctInt <= 0) continue;
 
                 // 컴포넌트명 정리: @ 주소 제거
-                String className = rawName.replaceAll("@?\\s*0x[0-9a-fA-F]+", "").trim();
+                String className = HEX_ADDR_PATTERN.matcher(rawName).replaceAll("").trim();
                 if (className.isEmpty()) continue;
 
                 // 비율에서 실제 바이트 크기 계산
@@ -411,8 +436,7 @@ public class MatReportParser {
             List<String> cells = new ArrayList<>();
             Matcher cellM = TD_PATTERN.matcher(row);
             while (cellM.find()) {
-                String cell = TAG_PATTERN.matcher(cellM.group(1))
-                        .replaceAll(" ").replaceAll("\\s+", " ").trim();
+                String cell = stripTags(cellM.group(1));
                 cells.add(cell);
             }
             if (cells.size() < 2) continue;
@@ -428,13 +452,13 @@ public class MatReportParser {
                 long objCount = 0L;
 
                 if (cells.size() >= 5) {
-                    objCount     = parseLong(cells.get(1).replaceAll("[^\\d]", ""));
-                    retainedHeap = parseLong(cells.get(3).replaceAll("[^\\d]", ""));
+                    objCount     = parseLong(digitsOnly(cells.get(1)));
+                    retainedHeap = parseLong(digitsOnly(cells.get(3)));
                 } else if (cells.size() >= 3) {
-                    retainedHeap = parseLong(cells.get(2).replaceAll("[^\\d]", ""));
+                    retainedHeap = parseLong(digitsOnly(cells.get(2)));
                     objCount     = 1L;
                 } else if (cells.size() == 2) {
-                    retainedHeap = parseLong(cells.get(1).replaceAll("[^\\d]", ""));
+                    retainedHeap = parseLong(digitsOnly(cells.get(1)));
                 }
                 if (retainedHeap == 0) continue;
 
@@ -473,7 +497,7 @@ public class MatReportParser {
         while (lm.find()) {
             String href = lm.group(1);
             String rawName = decodeHtmlEntities(lm.group(2)).trim();
-            String className = rawName.replaceAll("@?\\s*0x[0-9a-fA-F]+", "").trim();
+            String className = HEX_ADDR_PATTERN.matcher(rawName).replaceAll("").trim();
             if (!className.isEmpty()) {
                 int count = nameCount.getOrDefault(className, 0);
                 nameCount.put(className, count + 1);
@@ -519,15 +543,10 @@ public class MatReportParser {
         List<LeakSuspect> suspects = new ArrayList<>();
 
         // Problem X 섹션별 추출
-        Pattern problemPattern = Pattern.compile(
-                "(?:Problem|Suspect)\\s*\\d+[^<]*<.*?>(.*?)(?=(?:Problem|Suspect)\\s*\\d+|$)",
-                Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
-        Pattern tagPattern = Pattern.compile("<[^>]+>");
-
-        Matcher pm = problemPattern.matcher(html);
+        Matcher pm = PROBLEM_SUSPECT_PATTERN.matcher(html);
         int idx = 1;
         while (pm.find() && suspects.size() < 5) {
-            String section = tagPattern.matcher(pm.group(1)).replaceAll(" ").replaceAll("\\s+", " ").trim();
+            String section = stripTags(pm.group(1));
             if (section.length() > 30) {
                 suspects.add(new LeakSuspect("Suspect #" + idx, section.substring(0, Math.min(section.length(), 500))));
                 idx++;
@@ -536,7 +555,7 @@ public class MatReportParser {
 
         // 섹션 파싱 실패 시 전체 HTML에서 의심 패턴 추출
         if (suspects.isEmpty()) {
-            String plain = tagPattern.matcher(html).replaceAll(" ").replaceAll("\\s+", " ");
+            String plain = stripTags(html);
             if (plain.length() > 100) {
                 suspects.add(new LeakSuspect("Leak Analysis", plain.substring(0, Math.min(plain.length(), 1000))));
             }
@@ -660,37 +679,13 @@ public class MatReportParser {
      * MAT HTML에서 외부 리소스 참조를 상대 경로로 정리하고
      * 기본 스타일을 보강합니다.
      */
+    /**
+     * MAT HTML 새니타이즈 — OWASP whitelist 기반.
+     * script, 이벤트 핸들러, 외부 리소스 참조 등 위험 요소를 제거합니다.
+     */
     private String sanitizeHtml(String html) {
         if (html == null) return "";
-
-        // <body> 내부 콘텐츠만 추출 (MAT HTML은 완전한 HTML 문서)
-        Matcher bodyMatcher = Pattern.compile(
-                "<body[^>]*>(.*)</body>",
-                Pattern.CASE_INSENSITIVE | Pattern.DOTALL).matcher(html);
-        if (bodyMatcher.find()) {
-            html = bodyMatcher.group(1);
-        }
-
-        // script 태그 제거 (XSS 방지)
-        html = html.replaceAll("(?i)<script[^>]*>.*?</script>", "");
-        // 외부 CSS link 제거 (깨진 참조 방지)
-        html = html.replaceAll("(?i)<link[^>]*>", "");
-        // 절대 경로 이미지 제거
-        html = html.replaceAll("(?i)<img[^>]+src\\s*=\\s*['\"][^'\"]*['\"][^>]*>", "");
-        // hidden input 제거 (MAT의 imageBase 등)
-        html = html.replaceAll("(?i)<input[^>]+type\\s*=\\s*['\"]hidden['\"][^>]*>", "");
-        // onload 등 이벤트 핸들러 제거 (중첩 따옴표 처리: onclick="fn('arg')")
-        html = html.replaceAll("(?i)\\s+on\\w+\\s*=\\s*\"[^\"]*\"", "");
-        html = html.replaceAll("(?i)\\s+on\\w+\\s*=\\s*'[^']*'", "");
-        // mat:// 프로토콜 href 제거
-        html = html.replaceAll("(?i)href\\s*=\\s*\"mat://[^\"]*\"", "href=\"javascript:void(0)\"");
-        // 깨진 href 정리 (MAT 내부 페이지 링크 — #, https 제외)
-        html = html.replaceAll("(?i)href\\s*=\\s*\"(?!https?://|javascript:|#\")[^\"]*\"", "href=\"javascript:void(0)\"");
-        html = html.replaceAll("(?i)href\\s*=\\s*'(?!https?://|javascript:|#')[^']*'", "href=\"javascript:void(0)\"");
-        // href="#" → javascript:void(0)로 변경 (페이지 상단 이동 방지)
-        html = html.replaceAll("(?i)href\\s*=\\s*['\"]#['\"]", "href=\"javascript:void(0)\"");
-
-        return html.trim();
+        return HtmlSanitizer.sanitize(html);
     }
 
     // ─── Histogram 파싱 ─────────────────────────────────────────────────────────
@@ -712,9 +707,7 @@ public class MatReportParser {
             if (row.toLowerCase().contains("total:") || row.toLowerCase().contains("total")) {
                 String plainRow = TAG_PATTERN.matcher(row).replaceAll(" ").trim();
                 // "Total: 25 of 25,086 entries" 패턴 매칭
-                java.util.regex.Matcher totalM = java.util.regex.Pattern.compile(
-                        "Total:\\s*\\d+\\s+of\\s+([\\d,]+)\\s+entries",
-                        java.util.regex.Pattern.CASE_INSENSITIVE).matcher(plainRow);
+                Matcher totalM = TOTAL_ENTRIES_PATTERN.matcher(plainRow);
                 if (totalM.find()) {
                     totalClasses = (int) parseLong(totalM.group(1));
                 }
@@ -724,8 +717,7 @@ public class MatReportParser {
             List<String> cells = new ArrayList<>();
             Matcher cellM = TD_PATTERN.matcher(row);
             while (cellM.find()) {
-                String cell = TAG_PATTERN.matcher(cellM.group(1))
-                        .replaceAll(" ").replaceAll("\\s+", " ").trim();
+                String cell = stripTags(cellM.group(1));
                 cells.add(cell);
             }
 
@@ -735,16 +727,16 @@ public class MatReportParser {
             try {
                 String className = cells.get(0).trim();
                 // "All objects" 접미사 제거
-                className = className.replaceAll("(?i)\\s*All\\s+objects\\s*$", "").trim();
+                className = ALL_OBJECTS_SUFFIX_PATTERN.matcher(className).replaceAll("").trim();
                 if (className.isEmpty() || className.equalsIgnoreCase("Class Name")) continue;
 
-                long objectCount = parseLong(cells.get(1).replaceAll("[^\\d]", ""));
-                long shallowHeap = parseLong(cells.get(2).replaceAll("[^\\d]", ""));
+                long objectCount = parseLong(digitsOnly(cells.get(1)));
+                long shallowHeap = parseLong(digitsOnly(cells.get(2)));
 
                 // retainedHeap: ">= NNN" 형식 처리
                 String retainedRaw = cells.get(3).trim();
                 String retainedDisplay = retainedRaw;
-                long retainedHeap = parseLong(retainedRaw.replaceAll("[^\\d]", ""));
+                long retainedHeap = parseLong(digitsOnly(retainedRaw));
 
                 entries.add(new HistogramEntry(className, objectCount, shallowHeap, retainedHeap, retainedDisplay));
             } catch (Exception e) {
@@ -776,8 +768,7 @@ public class MatReportParser {
             List<String> cells = new ArrayList<>();
             Matcher cellM = TD_PATTERN.matcher(row);
             while (cellM.find()) {
-                String cell = TAG_PATTERN.matcher(cellM.group(1))
-                        .replaceAll(" ").replaceAll("\\s+", " ").trim();
+                String cell = stripTags(cellM.group(1));
                 cells.add(cell);
             }
 
@@ -789,15 +780,14 @@ public class MatReportParser {
                 if (objectType.isEmpty() || objectType.equalsIgnoreCase("Object / Stack Frame")) continue;
 
                 String name = cells.size() > 1 ? cells.get(1).trim() : "";
-                long shallowHeap = parseLong(cells.get(2).replaceAll("[^\\d]", ""));
-                long retainedHeap = parseLong(cells.get(3).replaceAll("[^\\d]", ""));
+                long shallowHeap = parseLong(digitsOnly(cells.get(2)));
+                long retainedHeap = parseLong(digitsOnly(cells.get(3)));
 
                 String contextClassLoader = cells.size() > 5 ? cells.get(5).trim() : "";
 
                 // objectType에서 주소 추출: "java.lang.Thread @ 0xc1299f88 »"
                 String address = "";
-                java.util.regex.Matcher addrM = java.util.regex.Pattern.compile(
-                        "0x([0-9a-fA-F]+)").matcher(objectType);
+                Matcher addrM = HEX_ADDR_EXTRACT_PATTERN.matcher(objectType);
                 if (addrM.find()) {
                     address = "0x" + addrM.group(1);
                 }
@@ -826,27 +816,39 @@ public class MatReportParser {
     private long parseLong(String s) {
         if (s == null || s.isBlank()) return 0L;
         try {
-            return Long.parseLong(s.replaceAll("[,\\s]", ""));
+            return Long.parseLong(COMMA_SPACE_PATTERN.matcher(s).replaceAll(""));
         } catch (NumberFormatException e) {
             return 0L;
         }
+    }
+
+    /** HTML 태그 제거 + 공백 정규화 */
+    private String stripTags(String s) {
+        if (s == null) return "";
+        return WHITESPACE_PATTERN.matcher(TAG_PATTERN.matcher(s).replaceAll(" ")).replaceAll(" ").trim();
+    }
+
+    /** 숫자 외 문자 제거 (사전 컴파일 패턴 사용) */
+    private String digitsOnly(String s) {
+        if (s == null) return "";
+        return NON_DIGIT_PATTERN.matcher(s).replaceAll("");
     }
 
     private String extractCleanClassName(String raw) {
         if (raw == null) return "";
         String s = decodeHtmlEntities(raw);
         // 16진수 주소 제거: @ 0xc04ff6d8
-        s = s.replaceAll("@?\\s*0x[0-9a-fA-F]+", "");
+        s = HEX_ADDR_PATTERN.matcher(s).replaceAll("");
         // 화살표 문자 제거 (» \u00BB)
-        s = s.replaceAll("\u00BB\\s*", " ");
-        s = s.replaceAll("[\u00BB\u203A\u2039\u00AB]", "");
+        s = ARROW_SPACE_PATTERN.matcher(s).replaceAll(" ");
+        s = ARROW_CHAR_PATTERN.matcher(s).replaceAll("");
         // 부가 설명 제거 (콤마 포함 숫자 지원)
-        s = s.replaceAll("(?i)\\bOnly\\s+object\\b.*", "");
-        s = s.replaceAll("(?i)\\bFirst\\s+[\\d,]+\\s+of\\s+[\\d,]+\\s+objects?\\b.*", "");
-        s = s.replaceAll("(?i)\\bAll\\s+[\\d,]+\\s+objects?\\b.*", "");
-        s = s.replaceAll("(?i)\\bOnly\\s+[\\d,]+\\s+objects?\\b.*", "");
+        s = ONLY_OBJECT_PATTERN.matcher(s).replaceAll("");
+        s = FIRST_N_OF_PATTERN.matcher(s).replaceAll("");
+        s = ALL_N_OBJECTS_PATTERN.matcher(s).replaceAll("");
+        s = ONLY_N_OBJECTS_PATTERN.matcher(s).replaceAll("");
         // 공백 정리
-        s = s.replaceAll("\\s+", " ").trim();
+        s = WHITESPACE_PATTERN.matcher(s).replaceAll(" ").trim();
         return s;
     }
 

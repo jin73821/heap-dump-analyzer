@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.*;
 import com.heapdump.analyzer.parser.MatReportParser;
+import com.heapdump.analyzer.util.FormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -34,7 +35,7 @@ import java.util.stream.Collectors;
 public class HeapDumpAnalyzerService {
 
     private static final Logger logger = LoggerFactory.getLogger(HeapDumpAnalyzerService.class);
-    private static final int    MAT_TIMEOUT_MINUTES = 30;
+    // MAT_TIMEOUT_MINUTES → config.getMatTimeoutMinutes()로 이동
     private static final String RESULT_JSON  = "result.json";
     private static final String MAT_LOG_FILE = "mat.log";
     private static final String TMP_DIR_NAME = "tmp";
@@ -46,15 +47,19 @@ public class HeapDumpAnalyzerService {
     // 메모리 1차 캐시
     private final ConcurrentHashMap<String, HeapAnalysisResult> memCache = new ConcurrentHashMap<>();
 
-    // 비동기 실행 스레드 풀
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    // 비동기 실행 스레드 풀 (core=2, max=4, queue=8 — 세마포어와 함께 동시 분석 제한)
+    private final ExecutorService executor = new java.util.concurrent.ThreadPoolExecutor(
+            2, 4, 60L, TimeUnit.SECONDS,
+            new java.util.concurrent.LinkedBlockingQueue<>(8),
+            new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
 
     // 분석 동시 실행 제한: 한 번에 1개만 실행, 나머지는 큐 대기
     private final java.util.concurrent.Semaphore analysisSemaphore = new java.util.concurrent.Semaphore(1);
     private final java.util.concurrent.atomic.AtomicInteger queueSize = new java.util.concurrent.atomic.AtomicInteger(0);
     private volatile String currentAnalysisFilename = null;
 
-    // 런타임 설정 (application.properties 초기값, API로 변경 가능)
+    // 런타임 설정 (application.properties 초기값 → settings.json으로 영속화)
+    private static final String SETTINGS_FILE = "settings.json";
     private volatile boolean keepUnreachableObjects;
 
     public HeapDumpAnalyzerService(HeapDumpConfig config, MatReportParser parser) {
@@ -67,6 +72,9 @@ public class HeapDumpAnalyzerService {
 
     @PostConstruct
     public void restoreResultsFromDisk() {
+        // 영속 설정 복원 (application.properties 기본값을 settings.json으로 덮어씀)
+        loadPersistedSettings();
+
         File baseDir = new File(config.getHeapDumpDirectory());
         if (!baseDir.exists()) return;
         File dataDir = new File(config.getDataDirectory());
@@ -84,7 +92,7 @@ public class HeapDumpAnalyzerService {
                 }
             }
         }
-        logger.info("Restored {} cached results from disk (data directory)", loaded);
+        logger.info("Restored {} saved results from disk (data directory)", loaded);
 
         // 상위 디렉토리에 남은 .index/.threads 파일을 결과 디렉토리로 이동
         migrateStrayArtifacts(baseDir);
@@ -383,36 +391,13 @@ public class HeapDumpAnalyzerService {
         logger.debug("Matched {} thread stack traces out of {} threads", matched, r.getThreadInfos().size());
     }
 
+    /**
+     * MAT HTML 새니타이즈 — OWASP whitelist 기반.
+     * 이전 버전에서 전체 HTML 문서가 저장된 경우 body 추출 후 정제.
+     */
     private String extractBodyContent(String html) {
         if (html == null || html.isEmpty()) return html;
-        // 이미 body만 추출된 경우 (<!DOCTYPE 없음) 그대로 반환
-        if (!html.contains("<!DOCTYPE") && !html.contains("<html")) return html;
-
-        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
-                "<body[^>]*>(.*)</body>",
-                java.util.regex.Pattern.CASE_INSENSITIVE | java.util.regex.Pattern.DOTALL).matcher(html);
-        if (m.find()) {
-            html = m.group(1);
-        }
-        // script 태그 제거
-        html = html.replaceAll("(?i)<script[^>]*>.*?</script>", "");
-        // 외부 CSS link 제거
-        html = html.replaceAll("(?i)<link[^>]*>", "");
-        // 이미지 제거
-        html = html.replaceAll("(?i)<img[^>]+src\\s*=\\s*['\"][^'\"]*['\"][^>]*>", "");
-        // hidden input 제거
-        html = html.replaceAll("(?i)<input[^>]+type\\s*=\\s*['\"]hidden['\"][^>]*>", "");
-        // 이벤트 핸들러 제거 (중첩 따옴표 처리)
-        html = html.replaceAll("(?i)\\s+on\\w+\\s*=\\s*\"[^\"]*\"", "");
-        html = html.replaceAll("(?i)\\s+on\\w+\\s*=\\s*'[^']*'", "");
-        // mat:// 프로토콜 href 제거
-        html = html.replaceAll("(?i)href\\s*=\\s*\"mat://[^\"]*\"", "href=\"javascript:void(0)\"");
-        // 깨진 href 정리
-        html = html.replaceAll("(?i)href\\s*=\\s*\"(?!https?://|javascript:|#\")[^\"]*\"", "href=\"javascript:void(0)\"");
-        html = html.replaceAll("(?i)href\\s*=\\s*'(?!https?://|javascript:|#')[^']*'", "href=\"javascript:void(0)\"");
-        // href="#" → javascript:void(0)
-        html = html.replaceAll("(?i)href\\s*=\\s*['\"]#['\"]", "href=\"javascript:void(0)\"");
-        return html.trim();
+        return com.heapdump.analyzer.util.HtmlSanitizer.sanitize(html);
     }
 
     private void cleanupTmpDir() {
@@ -431,7 +416,7 @@ public class HeapDumpAnalyzerService {
 
     @PreDestroy
     public void shutdown() {
-        logger.info("[Shutdown] HeapDumpAnalyzerService shutting down — cached results: {}, terminating thread pool...",
+        logger.info("[Shutdown] HeapDumpAnalyzerService shutting down — saved results: {}, terminating thread pool...",
                 memCache.size());
         executor.shutdownNow();
         try {
@@ -454,6 +439,91 @@ public class HeapDumpAnalyzerService {
     public void    setKeepUnreachableObjects(boolean v) {
         this.keepUnreachableObjects = v;
         logger.info("keep_unreachable_objects set to {}", v);
+        persistSettings();
+    }
+
+    // ── 런타임 설정 영속화 (settings.json) ─────────────────────────
+
+    private File getSettingsFile() {
+        return new File(config.getDataDirectory(), SETTINGS_FILE);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void loadPersistedSettings() {
+        File file = getSettingsFile();
+
+        // 1) 파일이 없으면 기본값으로 새로 생성
+        if (!file.exists()) {
+            logger.info("[Settings] No persisted settings file found — creating with application.properties defaults");
+            persistSettings();
+            return;
+        }
+
+        // 2) 빈 파일(0 bytes) → 기본값으로 재생성
+        if (file.length() == 0) {
+            logger.warn("[Settings] settings.json is empty (0 bytes) — recreating with defaults");
+            persistSettings();
+            return;
+        }
+
+        // 3) JSON 파싱
+        try {
+            Map<String, Object> saved = objectMapper.readValue(file, Map.class);
+
+            // 4) null 또는 빈 맵 → 기본값으로 재생성
+            if (saved == null || saved.isEmpty()) {
+                logger.warn("[Settings] settings.json contains no settings — recreating with defaults");
+                persistSettings();
+                return;
+            }
+
+            // 5) 개별 설정 복원 (타입 안전 처리)
+            if (saved.containsKey("keepUnreachableObjects")) {
+                Object val = saved.get("keepUnreachableObjects");
+                if (val instanceof Boolean) {
+                    this.keepUnreachableObjects = (Boolean) val;
+                } else {
+                    // 문자열 "true"/"false" 등 비정상 타입 대응
+                    this.keepUnreachableObjects = Boolean.parseBoolean(String.valueOf(val));
+                    logger.warn("[Settings] keepUnreachableObjects had unexpected type '{}', parsed as {}",
+                            val.getClass().getSimpleName(), keepUnreachableObjects);
+                }
+                logger.info("[Settings] Restored keepUnreachableObjects={}", keepUnreachableObjects);
+            }
+
+            logger.info("[Settings] Persisted settings loaded from {}", file.getAbsolutePath());
+        } catch (Exception e) {
+            // 6) 파싱 실패 (깨진 JSON 등) → 백업 후 기본값으로 재생성
+            logger.error("[Settings] Failed to parse settings.json: {} — recreating with defaults", e.getMessage());
+            File backup = new File(file.getParent(), SETTINGS_FILE + ".corrupted");
+            if (file.renameTo(backup)) {
+                logger.info("[Settings] Corrupted file backed up to {}", backup.getName());
+            }
+            persistSettings();
+        }
+    }
+
+    private void persistSettings() {
+        File file = getSettingsFile();
+        try {
+            // data 디렉토리가 없으면 생성
+            File parentDir = file.getParentFile();
+            if (parentDir != null && !parentDir.exists()) {
+                if (parentDir.mkdirs()) {
+                    logger.info("[Settings] Created data directory: {}", parentDir.getAbsolutePath());
+                } else {
+                    logger.error("[Settings] Failed to create data directory: {}", parentDir.getAbsolutePath());
+                    return;
+                }
+            }
+
+            Map<String, Object> settings = new LinkedHashMap<>();
+            settings.put("keepUnreachableObjects", keepUnreachableObjects);
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
+            logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
+        } catch (IOException e) {
+            logger.error("[Settings] Failed to persist settings: {}", e.getMessage());
+        }
     }
     public String  getHeapDumpDirectory()          { return config.getHeapDumpDirectory(); }
     public String  getMatCliPath()                 { return config.getMatCliPath(); }
@@ -462,6 +532,131 @@ public class HeapDumpAnalyzerService {
     public Set<String> getCacheKeys()               { return Collections.unmodifiableSet(memCache.keySet()); }
     public boolean isMatCliReady()                 { return config.isMatCliReady(); }
     public String  getMatCliStatusMessage()        { return config.getMatCliStatusMessage(); }
+
+    // ── MAT JVM 힙 메모리 설정 ───────────────────────────────────
+
+    /**
+     * MemoryAnalyzer.ini에서 현재 -Xmx 값을 읽어서 바이트 단위로 반환
+     */
+    public long getMatHeapSize() {
+        return readIniJvmArg("-Xmx");
+    }
+
+    /**
+     * MemoryAnalyzer.ini에서 현재 -Xmx 문자열 반환 (예: "2048m", "8g")
+     */
+    public String getMatHeapSizeString() {
+        return readIniJvmArgString("-Xmx");
+    }
+
+    /**
+     * MemoryAnalyzer.ini에서 현재 -Xms 값을 바이트 단위로 반환
+     */
+    public long getMatInitialHeapSize() {
+        return readIniJvmArg("-Xms");
+    }
+
+    /**
+     * MemoryAnalyzer.ini에서 현재 -Xms 문자열 반환
+     */
+    public String getMatInitialHeapSizeString() {
+        return readIniJvmArgString("-Xms");
+    }
+
+    /**
+     * MemoryAnalyzer.ini의 -Xmx 값을 변경
+     */
+    public void setMatHeapSize(String newXmx) throws IOException {
+        writeIniJvmArg("-Xmx", newXmx);
+    }
+
+    /**
+     * MemoryAnalyzer.ini의 -Xms 값을 변경
+     */
+    public void setMatInitialHeapSize(String newXms) throws IOException {
+        writeIniJvmArg("-Xms", newXms);
+    }
+
+    private long readIniJvmArg(String prefix) {
+        File iniFile = getMatIniFile();
+        if (iniFile == null || !iniFile.exists()) return -1;
+        try {
+            for (String line : Files.readAllLines(iniFile.toPath())) {
+                String trimmed = line.trim();
+                if (trimmed.startsWith(prefix) && !trimmed.startsWith(prefix + "x") && !trimmed.startsWith(prefix + "s")) {
+                    // -Xmx → prefix="-Xmx", 뒤에 값만 추출
+                    return parseXmxValue(trimmed.substring(prefix.length()));
+                }
+            }
+        } catch (IOException e) {
+            logger.warn("[MAT] Failed to read MemoryAnalyzer.ini: {}", e.getMessage());
+        }
+        return -1;
+    }
+
+    private String readIniJvmArgString(String prefix) {
+        File iniFile = getMatIniFile();
+        if (iniFile == null || !iniFile.exists()) return null;
+        try {
+            for (String line : Files.readAllLines(iniFile.toPath())) {
+                String trimmed = line.trim();
+                if (trimmed.startsWith(prefix) && !trimmed.startsWith(prefix + "x") && !trimmed.startsWith(prefix + "s")) {
+                    return trimmed.substring(prefix.length());
+                }
+            }
+        } catch (IOException e) {
+            logger.warn("[MAT] Failed to read MemoryAnalyzer.ini: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    private void writeIniJvmArg(String prefix, String newVal) throws IOException {
+        File iniFile = getMatIniFile();
+        if (iniFile == null || !iniFile.exists()) {
+            throw new FileNotFoundException("MemoryAnalyzer.ini not found");
+        }
+        List<String> lines = Files.readAllLines(iniFile.toPath());
+        boolean found = false;
+        for (int i = 0; i < lines.size(); i++) {
+            String trimmed = lines.get(i).trim();
+            if (trimmed.startsWith(prefix) && !trimmed.startsWith(prefix + "x") && !trimmed.startsWith(prefix + "s")) {
+                String oldVal = trimmed;
+                lines.set(i, prefix + newVal);
+                found = true;
+                logger.info("[MAT] Changed: {} → {}{}", oldVal, prefix, newVal);
+                break;
+            }
+        }
+        if (!found) {
+            lines.add(prefix + newVal);
+            logger.info("[MAT] Added: {}{}", prefix, newVal);
+        }
+        Files.write(iniFile.toPath(), lines);
+    }
+
+    private File getMatIniFile() {
+        String cliPath = config.getMatCliPath();
+        if (cliPath == null) return null;
+        File matDir = new File(cliPath).getParentFile();
+        return new File(matDir, "MemoryAnalyzer.ini");
+    }
+
+    private long parseXmxValue(String val) {
+        val = val.trim().toLowerCase();
+        try {
+            if (val.endsWith("g")) {
+                return Long.parseLong(val.substring(0, val.length() - 1)) * 1024L * 1024L * 1024L;
+            } else if (val.endsWith("m")) {
+                return Long.parseLong(val.substring(0, val.length() - 1)) * 1024L * 1024L;
+            } else if (val.endsWith("k")) {
+                return Long.parseLong(val.substring(0, val.length() - 1)) * 1024L;
+            } else {
+                return Long.parseLong(val);
+            }
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
 
     // ── 파일 관리 ────────────────────────────────────────────────
 
@@ -507,11 +702,7 @@ public class HeapDumpAnalyzerService {
     }
 
     private String formatBytes(long bytes) {
-        if (bytes <= 0)                      return "0 B";
-        if (bytes < 1024)                    return bytes + " B";
-        if (bytes < 1024 * 1024)             return String.format("%.1f KB", bytes / 1024.0);
-        if (bytes < 1024L * 1024 * 1024)     return String.format("%.2f MB", bytes / (1024.0 * 1024));
-        return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
+        return FormatUtils.formatBytes(bytes);
     }
 
     public List<HeapDumpFile> listFiles() {
@@ -673,6 +864,60 @@ public class HeapDumpAnalyzerService {
         logger.info("[Delete] Completed: heap dump file deleted for '{}', analysis data preserved in data/", safe);
     }
 
+    /**
+     * 히스토리 삭제: 힙덤프 파일 + 분석 결과 디렉토리 + 인덱스 파일 + 메모리 캐시 모두 삭제
+     */
+    public void deleteHistory(String filename) throws IOException {
+        String safe = new File(filename).getName();
+        logger.info("[DeleteHistory] Started: filename={}", safe);
+
+        // 1) 힙덤프 파일 삭제 (존재하면)
+        File file = new File(config.getHeapDumpDirectory(), safe);
+        if (file.exists() && file.isFile()) {
+            long fileSize = file.length();
+            if (file.delete()) {
+                logger.info("[DeleteHistory] Heap dump deleted: {}, size={}", safe, formatBytes(fileSize));
+            }
+        }
+
+        // tmp 파일 삭제
+        File tmpFile = new File(tmpDirectory(), safe);
+        if (tmpFile.exists()) {
+            tmpFile.delete();
+        }
+
+        // .gz 압축 파일 삭제
+        File gzFile = new File(config.getHeapDumpDirectory(), safe + ".gz");
+        if (gzFile.exists()) {
+            gzFile.delete();
+        }
+
+        // 2) MAT 인덱스 파일 삭제 (baseName.*.index, baseName.threads 등)
+        String baseName = stripExtension(safe);
+        File parentDir = new File(config.getHeapDumpDirectory());
+        File[] relatedFiles = parentDir.listFiles((dir, name) ->
+                name.startsWith(baseName + ".") && !name.equals(safe));
+        if (relatedFiles != null) {
+            for (File related : relatedFiles) {
+                if (related.isFile()) {
+                    related.delete();
+                }
+            }
+        }
+
+        // 3) 분석 결과 디렉토리 삭제 (result.json, mat.log, ZIPs 등)
+        File resultDir = resultDirectory(safe);
+        if (resultDir.exists() && resultDir.isDirectory()) {
+            deleteDirectoryRecursively(resultDir);
+            logger.info("[DeleteHistory] Result directory deleted: {}", resultDir.getAbsolutePath());
+        }
+
+        // 4) 메모리 캐시 제거
+        memCache.remove(safe);
+
+        logger.info("[DeleteHistory] Completed: all data removed for '{}'", safe);
+    }
+
     // ── 캐시 조회 / 삭제 ─────────────────────────────────────────
 
     public HeapAnalysisResult getCachedResult(String filename) {
@@ -697,7 +942,7 @@ public class HeapDumpAnalyzerService {
                     return r;
                 }
             } catch (Exception e) {
-                logger.warn("Failed to read disk cache {}: {}", safe, e.getMessage());
+                logger.warn("Failed to read saved result {}: {}", safe, e.getMessage());
             }
         }
         return null;
@@ -1026,7 +1271,7 @@ public class HeapDumpAnalyzerService {
                     int prevPct = pct[0];
                     if (pct[0] < maxPct) pct[0] = Math.min(maxPct, pct[0] + 1);
                     // 진행률이 변경되었거나 50줄마다 한 번씩 전송 (로그 라인 누적용)
-                    if (pct[0] != prevPct || lineCount[0] % 50 == 0) {
+                    if (pct[0] != prevPct || lineCount[0] % config.getProgressLogUpdateLines() == 0) {
                         sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line, phase[0], null));
                     }
                 }
@@ -1035,13 +1280,14 @@ public class HeapDumpAnalyzerService {
             }
         }, executor);
 
-        boolean finished = process.waitFor(MAT_TIMEOUT_MINUTES, TimeUnit.MINUTES);
+        int matTimeout = config.getMatTimeoutMinutes();
+        boolean finished = process.waitFor(matTimeout, TimeUnit.MINUTES);
         reader.join();
 
         if (!finished) {
             process.destroyForcibly();
-            logger.error("[MAT CLI] Process timed out after {} minutes for file: {}", MAT_TIMEOUT_MINUTES, filename);
-            throw new RuntimeException("MAT CLI가 " + MAT_TIMEOUT_MINUTES + "분 제한 시간을 초과했습니다. "
+            logger.error("[MAT CLI] Process timed out after {} minutes for file: {}", matTimeout, filename);
+            throw new RuntimeException("MAT CLI가 " + matTimeout + "분 제한 시간을 초과했습니다. "
                     + "힙 덤프 파일이 너무 크거나 시스템 메모리가 부족할 수 있습니다.");
         }
 

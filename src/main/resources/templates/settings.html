@@ -1,0 +1,918 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings — Heap Dump Analyzer</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5; overflow-x: hidden; }
+
+        /* ── Topbar ──────────────────────────────────────── */
+        .topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 52px;
+                  background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; }
+        .topbar-logo { width: 30px; height: 30px; background: #2563EB; border-radius: 7px;
+                       display: flex; align-items: center; justify-content: center; }
+        .topbar-logo svg { width: 16px; height: 16px; fill: white; }
+        .topbar-title { font-size: 16px; font-weight: 700; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; }
+        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                      border-radius: 6px; background: transparent; color: #6B7280;
+                      cursor: pointer; text-decoration: none; display: inline-block; }
+        .topbar-btn:hover { background: #F9FAFB; }
+
+        /* ── Layout ──────────────────────────────────────── */
+        .container { max-width: 1080px; margin: 0 auto; padding: 68px 20px 40px; }
+        .page-hdr { display: flex; align-items: center; justify-content: space-between;
+                    margin-bottom: 24px; flex-wrap: wrap; gap: 8px; }
+        .page-ttl { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        .page-ttl svg { width: 22px; height: 22px; stroke: #6B7280; fill: none; stroke-width: 2; }
+        .refresh-btn { background: none; border: 1px solid #E5E7EB; border-radius: 6px;
+                       padding: 6px 14px; font-size: 13px; cursor: pointer; color: #6B7280; }
+        .refresh-btn:hover { border-color: #2563EB; color: #2563EB; }
+
+        /* ── 2-column grid ───────────────────────────────── */
+        .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+        /* ── Card ────────────────────────────────────────── */
+        .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 20px; }
+        .card-full { grid-column: 1 / -1; }
+        .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+                      color: #6B7280; margin-bottom: 14px; padding-bottom: 8px;
+                      border-bottom: 1px solid #F3F4F6;
+                      display: flex; align-items: center; gap: 8px; }
+        .card-title svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+
+        /* ── Key-value rows ──────────────────────────────── */
+        .s-row { display: flex; justify-content: space-between; align-items: center;
+                 padding: 10px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
+        .s-row:last-child { border-bottom: none; }
+        .s-key { font-size: 13px; color: #374151; font-weight: 500; flex-shrink: 0; }
+        .s-val { font-size: 13px; font-weight: 600; color: #1F2937; text-align: right;
+                 word-break: break-all; min-width: 0; }
+        .s-val-mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px; }
+        .s-val-path { font-size: 12px; background: #F3F4F6; padding: 4px 10px; border-radius: 5px;
+                      max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                      font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; }
+        .s-status { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600;
+                    padding: 3px 10px; border-radius: 10px; }
+        .s-status-ok { background: #D1FAE5; color: #065F46; }
+        .s-status-err { background: #FEE2E2; color: #7F1D1D; }
+
+        /* ── Toggle switch ───────────────────────────────── */
+        .setting-row { display: flex; align-items: center; justify-content: space-between;
+                       padding: 12px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
+        .setting-row:last-child { border-bottom: none; }
+        .setting-label { font-size: 13px; font-weight: 500; color: #374151; }
+        .setting-desc { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+        .tog { display: none; }
+        .tog-track { position: relative; display: inline-block; width: 38px; height: 22px;
+                     background: #D1D5DB; border-radius: 11px; cursor: pointer; transition: background .2s; }
+        .tog-track::after { content: ''; position: absolute; top: 3px; left: 3px;
+                            width: 16px; height: 16px; background: #fff; border-radius: 50%;
+                            transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+        .tog:checked + .tog-track { background: #2563EB; }
+        .tog:checked + .tog-track::after { transform: translateX(16px); }
+
+        /* ── Meter bar ───────────────────────────────────── */
+        .s-meter { flex: 1; max-width: 140px; }
+        .s-meter-track { height: 6px; background: #F3F4F6; border-radius: 3px; overflow: hidden; }
+        .s-meter-fill { height: 100%; border-radius: 3px; transition: width .5s ease; }
+
+        /* ── MAT Heap edit ───────────────────────────────── */
+        .s-edit-btn { width: 24px; height: 24px; border: 1px solid #E5E7EB; border-radius: 5px;
+                      background: transparent; cursor: pointer; font-size: 13px; color: #9CA3AF;
+                      display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+        .s-edit-btn:hover { border-color: #93C5FD; color: #2563EB; background: #EFF6FF; }
+        .heap-edit-panel { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px;
+                           padding: 12px 14px; margin-top: 8px; display: none; }
+        .heap-edit-panel.open { display: block; }
+        .heap-edit-row { display: flex; align-items: center; gap: 6px; }
+        .heap-select { flex: 1; padding: 6px 10px; border: 1px solid #D1D5DB; border-radius: 6px; font-size: 13px; }
+        .heap-btn-apply { padding: 6px 14px; border: none; border-radius: 6px; background: #2563EB;
+                          color: #fff; font-size: 12px; cursor: pointer; font-weight: 600; }
+        .heap-btn-apply:hover { background: #1D4ED8; }
+        .heap-btn-cancel { padding: 6px 14px; border: 1px solid #D1D5DB; border-radius: 6px;
+                           background: #fff; font-size: 12px; cursor: pointer; }
+        .heap-btn-cancel:hover { background: #F3F4F6; }
+        .heap-hint { font-size: 11px; color: #9CA3AF; margin-top: 6px; line-height: 1.4; }
+
+        /* ── API card ────────────────────────────────────── */
+        .s-api-card { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px;
+                      padding: 12px 14px; margin-bottom: 10px; }
+        .s-api-card:last-child { margin-bottom: 0; }
+        .s-api-method { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px;
+                        border-radius: 4px; margin-right: 6px; vertical-align: middle; }
+        .s-api-get { background: #DBEAFE; color: #1D4ED8; }
+        .s-api-post { background: #FEF3C7; color: #92400E; }
+        .s-api-path { font-size: 13px; font-weight: 600;
+                      font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace;
+                      color: #1F2937; vertical-align: middle; }
+        .s-api-desc { font-size: 12px; color: #6B7280; margin-top: 5px; line-height: 1.4; }
+        .s-copy-btn { background: none; border: 1px solid #E5E7EB; border-radius: 4px; padding: 4px 10px;
+                      font-size: 11px; cursor: pointer; color: #6B7280; transition: all .15s; vertical-align: middle; }
+        .s-copy-btn:hover { border-color: #2563EB; color: #2563EB; }
+
+        /* ── Danger zone ─────────────────────────────────── */
+        .danger-zone { border-color: #FECACA; }
+        .danger-zone .card-title { color: #DC2626; }
+        .danger-btn { padding: 8px 18px; border: 1px solid #FECACA; border-radius: 7px;
+                      background: #fff; color: #DC2626; font-size: 13px; font-weight: 600;
+                      cursor: pointer; }
+        .danger-btn:hover { background: #FEF2F2; border-color: #EF4444; }
+
+        /* ── Toast ───────────────────────────────────────── */
+        .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+                 padding: 10px 22px; border-radius: 8px; font-size: 13px; font-weight: 500;
+                 z-index: 500; animation: toastIn .3s ease; pointer-events: none; }
+        .toast-success { background: #065F46; color: #fff; }
+        .toast-error { background: #7F1D1D; color: #fff; }
+        @keyframes toastIn { from { opacity: 0; transform: translate(-50%, 10px); }
+                             to   { opacity: 1; transform: translate(-50%, 0); } }
+
+        /* ── Confirm modal ───────────────────────────────── */
+        .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
+                    background: rgba(0,0,0,.45); align-items: center; justify-content: center; }
+        .modal-ov.open { display: flex; }
+        .modal-box { background: #fff; border-radius: 12px; padding: 28px 30px; width: 92%; max-width: 500px;
+                     box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease; }
+        @keyframes modalIn { from { opacity: 0; transform: translateY(12px); }
+                             to   { opacity: 1; transform: translateY(0); } }
+        .modal-ttl { font-size: 16px; font-weight: 700; margin-bottom: 14px; line-height: 1.4; }
+        .modal-desc { font-size: 14px; color: #4B5563; margin-bottom: 16px; line-height: 1.7;
+                      word-break: keep-all; }
+        .modal-warn { background: #FEF2F2; border-radius: 8px; padding: 14px 18px; margin-bottom: 18px;
+                      border-left: 4px solid #EF4444; font-size: 13px; color: #7F1D1D; line-height: 1.6; }
+        .modal-btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+        .modal-btns button { font-size: 13px; padding: 8px 20px; border-radius: 7px; border: none;
+                             cursor: pointer; font-weight: 600; }
+        .mbtn-cancel { background: #F3F4F6; color: #374151; }
+        .mbtn-cancel:hover { background: #E5E7EB; }
+        .mbtn-danger { background: #EF4444; color: #fff; }
+        .mbtn-danger:hover { background: #DC2626; }
+        .mbtn-primary { background: #2563EB; color: #fff; }
+        .mbtn-primary:hover { background: #1D4ED8; }
+
+        /* ── Desktop ─────────────────────────────────────── */
+        @media (min-width: 1024px) {
+            .page-ttl { font-size: 22px; }
+            .s-key { font-size: 14px; }
+            .s-val { font-size: 14px; }
+            .s-val-mono { font-size: 13px; }
+            .setting-label { font-size: 14px; }
+            .setting-desc { font-size: 12px; }
+        }
+
+        /* ── Mobile: 1 column ────────────────────────────── */
+        @media (max-width: 768px) {
+            .settings-grid { grid-template-columns: 1fr; }
+            .container { padding: 60px 12px 32px; }
+            .s-val-path { max-width: 100%; white-space: normal; word-break: break-all; }
+            .s-row { flex-wrap: wrap; gap: 4px; }
+            .s-key { flex-shrink: 1; min-width: 0; }
+            .s-val { text-align: left; }
+            .card { padding: 16px 14px; }
+            .api-grid-2col { grid-template-columns: 1fr !important; }
+            .s-api-path { font-size: 12px; word-break: break-all; }
+            .heap-edit-row { flex-wrap: wrap; }
+            .heap-select { min-width: 0; }
+            .modal-box { padding: 22px 20px; }
+            .page-ttl { font-size: 18px; }
+        }
+        @media (max-width: 400px) {
+            .container { padding: 58px 8px 24px; }
+            .card { padding: 14px 12px; }
+            .s-key { font-size: 12px; }
+            .s-val { font-size: 12px; }
+            .s-val-mono { font-size: 11px; }
+            .setting-label { font-size: 13px; }
+            .s-api-path { font-size: 11px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ── Topbar ─────────────────────────────────────────────── -->
+<div class="topbar">
+    <div class="topbar-brand">
+        <div class="topbar-logo">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        </div>
+        <span class="topbar-title">Heap Dump Analyzer</span>
+    </div>
+    <div class="topbar-right">
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+    </div>
+</div>
+
+<!-- ── Content ────────────────────────────────────────────── -->
+<div class="container">
+    <div class="page-hdr">
+        <div class="page-ttl">
+            <svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+            Settings
+        </div>
+        <button class="refresh-btn" onclick="loadAllData(true)">&#8635; Refresh</button>
+    </div>
+
+    <div class="settings-grid">
+
+        <!-- ══════════════════════════════════════════════════ -->
+        <!-- LEFT COLUMN                                       -->
+        <!-- ══════════════════════════════════════════════════ -->
+
+        <!-- MAT Configuration -->
+        <div class="card">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+                MAT Configuration
+            </div>
+            <div class="s-row">
+                <span class="s-key">MAT CLI Path</span>
+                <span class="s-val s-val-path" id="sMatPath">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">MAT CLI Status</span>
+                <span id="sMatStatus" class="s-status">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">MAT JVM Heap (-Xmx)</span>
+                <span class="s-val" style="display:flex;align-items:center;gap:6px">
+                    <span id="sMatHeap" class="s-val-mono">-</span>
+                    <button class="s-edit-btn" onclick="toggleHeapEdit()" title="변경">&#9998;</button>
+                </span>
+            </div>
+            <div class="heap-edit-panel" id="heapEditPanel">
+                <div class="heap-edit-row">
+                    <select class="heap-select" id="matHeapSelect">
+                        <option value="1024m">1 GB (1024m)</option>
+                        <option value="2048m">2 GB (2048m)</option>
+                        <option value="4096m">4 GB (4096m)</option>
+                        <option value="6144m">6 GB (6144m)</option>
+                        <option value="8192m">8 GB (8192m)</option>
+                        <option value="12288m">12 GB (12288m)</option>
+                        <option value="16384m">16 GB (16384m)</option>
+                    </select>
+                    <button class="heap-btn-apply" onclick="saveMatHeap()">Apply</button>
+                    <button class="heap-btn-cancel" onclick="toggleHeapEdit()">Cancel</button>
+                </div>
+                <div class="heap-hint">권장: 분석할 힙덤프 파일 크기의 2배 이상. 변경 후 다음 분석부터 적용됩니다.</div>
+            </div>
+            <div class="s-row">
+                <span class="s-key">MAT JVM Initial Heap (-Xms)</span>
+                <span class="s-val" style="display:flex;align-items:center;gap:6px">
+                    <span id="sMatXms" class="s-val-mono">-</span>
+                    <button class="s-edit-btn" onclick="toggleXmsEdit()" title="변경">&#9998;</button>
+                </span>
+            </div>
+            <div class="heap-edit-panel" id="xmsEditPanel">
+                <div class="heap-edit-row">
+                    <select class="heap-select" id="matXmsSelect">
+                        <option value="128m">128 MB (128m)</option>
+                        <option value="256m">256 MB (256m)</option>
+                        <option value="512m">512 MB (512m)</option>
+                        <option value="1024m">1 GB (1024m)</option>
+                        <option value="2048m">2 GB (2048m)</option>
+                        <option value="4096m">4 GB (4096m)</option>
+                        <option value="6144m">6 GB (6144m)</option>
+                        <option value="8192m">8 GB (8192m)</option>
+                        <option value="12288m">12 GB (12288m)</option>
+                    </select>
+                    <button class="heap-btn-apply" onclick="saveMatXms()">Apply</button>
+                    <button class="heap-btn-cancel" onclick="toggleXmsEdit()">Cancel</button>
+                </div>
+                <div class="heap-hint">JVM 시작 시 초기 할당 메모리. -Xmx 이하로 설정해야 합니다.</div>
+            </div>
+            <div class="s-row">
+                <span class="s-key">System Physical Memory</span>
+                <span class="s-val s-val-mono" id="sPhysMem">-</span>
+            </div>
+        </div>
+
+        <!-- Analysis Options -->
+        <div class="card">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                Analysis Options
+            </div>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">Keep unreachable objects</div>
+                    <div class="setting-desc">GC Root에서 도달 불가능한 객체도 분석에 포함</div>
+                </div>
+                <div>
+                    <input type="checkbox" class="tog" id="togUR"
+                           th:checked="${matKeepUnreachable}"
+                           onchange="confirmKeepUnreachable(this)">
+                    <label class="tog-track" for="togUR"></label>
+                </div>
+            </div>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">Auto-analyze on upload</div>
+                    <div class="setting-desc">업로드 시 자동으로 분석 시작</div>
+                </div>
+                <div>
+                    <input type="checkbox" class="tog" id="togAA"
+                           onchange="confirmAutoAnalyze(this)">
+                    <label class="tog-track" for="togAA"></label>
+                </div>
+            </div>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">Save results to disk</div>
+                    <div class="setting-desc">분석 결과를 디스크에 저장하여 재시작 후에도 유지</div>
+                </div>
+                <div>
+                    <input type="checkbox" class="tog" id="togCache" checked
+                           onchange="confirmSaveResults(this)">
+                    <label class="tog-track" for="togCache"></label>
+                </div>
+            </div>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">Skip heap memory warning</div>
+                    <div class="setting-desc">덤프 분석 시 힙 메모리 부족 경고를 건너뛰고 바로 진행</div>
+                </div>
+                <div>
+                    <input type="checkbox" class="tog" id="togSkipHeapWarn"
+                           onchange="saveSetting('skipHeapWarning',this.checked)">
+                    <label class="tog-track" for="togSkipHeapWarn"></label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storage -->
+        <div class="card">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                Storage
+            </div>
+            <div class="s-row">
+                <span class="s-key">Heap Dump Directory</span>
+                <span class="s-val s-val-path" id="sDumpDir">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Saved Results</span>
+                <span class="s-val s-val-mono" id="sCachedResults">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Total Files</span>
+                <span class="s-val s-val-mono" id="sTotalFiles">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Total Dump Size</span>
+                <span class="s-val s-val-mono" id="sTotalDumpSize">-</span>
+            </div>
+        </div>
+
+        <!-- Disk Usage -->
+        <div class="card">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+                Disk Usage
+            </div>
+            <div class="s-row">
+                <span class="s-key">Used / Total</span>
+                <span class="s-val s-val-mono" id="sDiskUsed">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Free Space</span>
+                <span class="s-val s-val-mono" id="sDiskFree">-</span>
+            </div>
+            <div class="s-row" style="padding-top:4px">
+                <span class="s-key">Usage</span>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <div class="s-meter">
+                        <div class="s-meter-track"><div class="s-meter-fill" id="sDiskBar" style="width:0%"></div></div>
+                    </div>
+                    <span class="s-val s-val-mono" id="sDiskPct" style="min-width:36px;text-align:right">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Info -->
+        <div class="card">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg>
+                System Info
+            </div>
+            <div class="s-row">
+                <span class="s-key">Java Version</span>
+                <span class="s-val s-val-mono" id="sJavaVer">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">CPU Cores</span>
+                <span class="s-val s-val-mono" id="sCpuCores">-</span>
+            </div>
+        </div>
+
+        <!-- JVM Memory -->
+        <div class="card">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/></svg>
+                JVM Memory (Web Application)
+            </div>
+            <div class="s-row">
+                <span class="s-key">Max Memory</span>
+                <span class="s-val s-val-mono" id="sJvmMax">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Used Memory</span>
+                <span class="s-val s-val-mono" id="sJvmUsed">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Free Memory</span>
+                <span class="s-val s-val-mono" id="sJvmFree">-</span>
+            </div>
+            <div class="s-row" style="padding-top:4px">
+                <span class="s-key">JVM Usage</span>
+                <div style="display:flex;align-items:center;gap:8px">
+                    <div class="s-meter">
+                        <div class="s-meter-track"><div class="s-meter-fill" id="sJvmBar" style="width:0%;background:#7c3aed"></div></div>
+                    </div>
+                    <span class="s-val s-val-mono" id="sJvmPct" style="min-width:36px;text-align:right">-</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- API Endpoints -->
+        <div class="card card-full">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                API Endpoints
+            </div>
+            <div class="api-grid-2col" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+                <div class="s-api-card">
+                    <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/api/settings</span>
+                        <button class="s-copy-btn" onclick="copyApi('/api/settings')">Copy</button></div>
+                    <div class="s-api-desc">현재 설정, 시스템 정보, 디스크 상태를 JSON으로 반환</div>
+                </div>
+                <div class="s-api-card">
+                    <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/api/history</span>
+                        <button class="s-copy-btn" onclick="copyApi('/api/history')">Copy</button></div>
+                    <div class="s-api-desc">전체 파일의 분석 히스토리를 JSON 배열로 반환</div>
+                </div>
+                <div class="s-api-card">
+                    <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/api/settings/unreachable</span></div>
+                    <div class="s-api-desc">keep_unreachable_objects 옵션을 런타임에 변경</div>
+                </div>
+                <div class="s-api-card">
+                    <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/api/results/clear</span></div>
+                    <div class="s-api-desc">모든 저장된 분석 결과를 삭제</div>
+                </div>
+                <div class="s-api-card">
+                    <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/upload</span></div>
+                    <div class="s-api-desc">힙 덤프 파일 업로드 (multipart/form-data, field: file)</div>
+                </div>
+                <div class="s-api-card">
+                    <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/download/{filename}</span></div>
+                    <div class="s-api-desc">힙 덤프 원본 파일 다운로드</div>
+                </div>
+                <div class="s-api-card">
+                    <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/api/mat/heap</span>
+                        <button class="s-copy-btn" onclick="copyApi('/api/mat/heap')">Copy</button></div>
+                    <div class="s-api-desc">MAT CLI 힙 메모리 설정 조회</div>
+                </div>
+                <div class="s-api-card">
+                    <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/api/mat/heap?size=4096m</span></div>
+                    <div class="s-api-desc">MAT CLI 힙 메모리 설정 변경</div>
+                </div>
+            </div>
+            <div style="text-align:center;margin-top:12px">
+                <button class="s-copy-btn" style="padding:6px 14px" onclick="window.open('/api/settings','_blank')">Open /api/settings in new tab</button>
+            </div>
+        </div>
+
+        <!-- Danger Zone -->
+        <div class="card card-full danger-zone">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                Danger Zone
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+                <div>
+                    <div style="font-size:14px;font-weight:600;color:#1F2937">Clear all results</div>
+                    <div style="font-size:12px;color:#6B7280;margin-top:2px">모든 저장된 분석 결과를 삭제합니다. 힙덤프 파일은 유지됩니다.</div>
+                </div>
+                <button class="danger-btn" onclick="openClearModal()">Clear All Results</button>
+            </div>
+        </div>
+
+    </div><!-- /.settings-grid -->
+</div>
+
+<!-- ── Heap 경고 모달 ─────────────────────────────────────── -->
+<div class="modal-ov" id="heapWarnModal" onclick="if(event.target===this)closeHeapWarnModal()">
+    <div class="modal-box">
+        <div class="modal-ttl" id="heapWarnTitle">경고</div>
+        <div class="modal-desc" id="heapWarnDesc"></div>
+        <div class="modal-warn" id="heapWarnDetail"></div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeHeapWarnModal()">Cancel</button>
+            <button class="mbtn-danger" id="heapWarnApplyBtn" onclick="forceApplyHeap()">강제 적용</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Clear confirm modal ────────────────────────────────── -->
+<div class="modal-ov" id="clearModal" onclick="if(event.target===this)closeClearModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">Clear All Results</div>
+        <div class="modal-desc">모든 저장된 분석 결과가 영구적으로 삭제됩니다. 삭제 후 각 힙덤프 파일을 다시 분석해야 합니다.</div>
+        <div class="modal-warn">&#9888; This action cannot be undone.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeClearModal()">Cancel</button>
+            <button class="mbtn-danger" onclick="doClearAll()">Clear All</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Keep Unreachable confirm modal ─────────────────────── -->
+<div class="modal-ov" id="keepURModal" onclick="if(event.target===this)closeKeepURModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">Keep Unreachable Objects 해제</div>
+        <div class="modal-desc">이 옵션을 해제하면 GC Root에서 도달 불가능한 객체가 분석에서 제외됩니다. 기존 분석 결과에는 영향이 없으며, 변경 사항은 다음 분석부터 적용됩니다.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeKeepURModal()">Cancel</button>
+            <button class="mbtn-primary" onclick="doDisableKeepUR()">Disable</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Save results disable confirm modal ─────────────────── -->
+<div class="modal-ov" id="saveResultsModal" onclick="if(event.target===this)closeSaveResultsModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">Save results to disk 비활성화</div>
+        <div class="modal-desc">이 옵션을 비활성화하면 이후 분석되는 결과가 디스크에 저장되지 않습니다.</div>
+        <div class="modal-warn">&#9888; 어플리케이션이 재시작될 경우 저장되지 않은 분석 결과는 모두 사라집니다.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeSaveResultsModal()">Cancel</button>
+            <button class="mbtn-danger" onclick="doDisableSaveResults()">Disable</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Auto-analyze confirm modal ─────────────────────────── -->
+<div class="modal-ov" id="autoAnalyzeModal" onclick="if(event.target===this)closeAAModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">Auto-analyze 활성화</div>
+        <div class="modal-desc">업로드된 파일이 자동으로 분석됩니다. 대용량 파일 업로드 시 서버 리소스를 많이 사용할 수 있습니다.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeAAModal()">Cancel</button>
+            <button class="mbtn-primary" onclick="doEnableAA()">Enable</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── JavaScript ─────────────────────────────────────────── -->
+<script>
+// ── Toast ──────────────────────────────────────────────
+function toast(msg, type) {
+    var t = document.createElement('div');
+    t.className = 'toast toast-' + (type || 'success');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function() { t.style.transition='opacity .4s'; t.style.opacity='0';
+        setTimeout(function(){ t.remove(); }, 400); }, 2500);
+}
+
+// ── State ──────────────────────────────────────────────
+var _physMem = -1, _xmsBytes = -1, _xmxBytes = -1;
+var _pendingHeapAction = null; // {type:'xmx'|'xms', val:'4096m'}
+
+function selectOption(id, val) {
+    var sel = document.getElementById(id);
+    for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === val) { sel.selectedIndex = i; return; }
+    }
+}
+
+function parseSizeToBytes(val) {
+    val = val.trim().toLowerCase();
+    var num = parseInt(val);
+    if (isNaN(num)) return 0;
+    if (val.endsWith('g')) return num * 1024 * 1024 * 1024;
+    if (val.endsWith('m')) return num * 1024 * 1024;
+    if (val.endsWith('k')) return num * 1024;
+    return num;
+}
+
+function formatBytesJS(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b / 1024).toFixed(0) + ' KB';
+    if (b < 1073741824) return (b / 1048576).toFixed(0) + ' MB';
+    return (b / 1073741824).toFixed(2) + ' GB';
+}
+
+// ── Data loading ───────────────────────────────────────
+function loadAllData(showToast) {
+    fetch('/api/settings').then(function(r){
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    }).then(function(d) {
+        // MAT Configuration
+        document.getElementById('sMatPath').textContent = d.mat.path || '-';
+        document.getElementById('sMatPath').title = d.mat.path || '';
+        var matEl = document.getElementById('sMatStatus');
+        matEl.className = 's-status ' + (d.mat.ready ? 's-status-ok' : 's-status-err');
+        matEl.textContent = d.mat.ready ? 'Ready' : (d.mat.statusMessage || 'Not available');
+        matEl.title = d.mat.statusMessage || '';
+        if (d.mat.heapSize && d.mat.heapSize !== 'unknown') {
+            document.getElementById('sMatHeap').textContent = d.mat.heapFormatted + ' (' + d.mat.heapSize + ')';
+            selectOption('matHeapSelect', d.mat.heapSize.toLowerCase());
+        } else {
+            document.getElementById('sMatHeap').textContent = '-';
+        }
+        // Xms
+        if (d.mat.xmsSize && d.mat.xmsSize !== 'none') {
+            document.getElementById('sMatXms').textContent = d.mat.xmsFormatted + ' (' + d.mat.xmsSize + ')';
+            selectOption('matXmsSelect', d.mat.xmsSize.toLowerCase());
+        } else {
+            document.getElementById('sMatXms').textContent = 'not set';
+        }
+        // 물리 메모리는 /api/mat/heap에서 가져오기
+        _xmsBytes = d.mat.xmsBytes || -1;
+        _xmxBytes = d.mat.heapBytes || -1;
+
+        // Storage
+        document.getElementById('sDumpDir').textContent = d.heapDumpDirectory;
+        document.getElementById('sDumpDir').title = d.heapDumpDirectory;
+        document.getElementById('sCachedResults').textContent = d.cachedResults;
+        if (d.files) {
+            document.getElementById('sTotalFiles').textContent = d.files.totalFiles;
+            document.getElementById('sTotalDumpSize').textContent = d.files.totalSize;
+        }
+
+        // Disk
+        if (d.disk) {
+            document.getElementById('sDiskUsed').textContent = (d.disk.usedSpace||'-') + ' / ' + (d.disk.totalSpace||'-');
+            document.getElementById('sDiskFree').textContent = d.disk.freeSpace || '-';
+            var pct = d.disk.usedPercent || 0;
+            document.getElementById('sDiskPct').textContent = pct + '%';
+            var bar = document.getElementById('sDiskBar');
+            bar.style.width = pct + '%';
+            bar.style.background = pct > 90 ? '#DC2626' : pct > 70 ? '#D97706' : '#2563EB';
+        }
+
+        // System
+        if (d.system) {
+            document.getElementById('sJavaVer').textContent = d.system.javaVersion || '-';
+            document.getElementById('sCpuCores').textContent = d.system.availableProcessors || '-';
+            document.getElementById('sJvmMax').textContent = d.system.jvmMaxMemory || '-';
+            document.getElementById('sJvmUsed').textContent = d.system.jvmUsedMemory || '-';
+            document.getElementById('sJvmFree').textContent = d.system.jvmFreeMemory || '-';
+            var maxMem = parseMemStr(d.system.jvmMaxMemory || '');
+            var usedMem = parseMemStr(d.system.jvmUsedMemory || '');
+            var jvmPct = maxMem > 0 ? Math.round(usedMem * 100 / maxMem) : 0;
+            document.getElementById('sJvmPct').textContent = jvmPct + '%';
+            var jvmBar = document.getElementById('sJvmBar');
+            jvmBar.style.width = jvmPct + '%';
+            jvmBar.style.background = jvmPct > 85 ? '#DC2626' : jvmPct > 60 ? '#D97706' : '#7c3aed';
+        }
+        if (showToast) toast('Settings refreshed', 'success');
+    }).catch(function(e) { toast('Failed to load settings: ' + e.message, 'error'); });
+
+    // 물리 메모리 (별도 API)
+    fetch('/api/mat/heap').then(function(r){ return r.json(); }).then(function(h) {
+        _physMem = h.physicalMemory || -1;
+        document.getElementById('sPhysMem').textContent =
+            h.physicalMemoryFormatted && h.physicalMemoryFormatted !== 'unknown'
+                ? h.physicalMemoryFormatted : '-';
+    }).catch(function(){});
+}
+
+function parseMemStr(s) {
+    if (!s) return 0;
+    var m = s.match(/([\d.]+)\s*(GB|MB|KB|B)/i);
+    if (!m) return 0;
+    var v = parseFloat(m[1]);
+    switch(m[2].toUpperCase()) {
+        case 'GB': return v * 1073741824;
+        case 'MB': return v * 1048576;
+        case 'KB': return v * 1024;
+        default: return v;
+    }
+}
+
+// ── Settings save ──────────────────────────────────────
+function saveSetting(k, v) {
+    localStorage.setItem(k, v);
+    if (k === 'keepUnreachable') {
+        fetch('/api/settings/unreachable?enabled=' + v, {method:'POST'})
+            .then(function(r){
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                toast('Setting saved: ' + k, 'success');
+            })
+            .catch(function(e){ toast('Setting save failed: ' + e.message, 'error'); });
+    } else {
+        toast('Setting saved: ' + k, 'success');
+    }
+}
+
+// ── MAT Heap edit ──────────────────────────────────────
+function toggleHeapEdit() {
+    var p = document.getElementById('heapEditPanel');
+    p.classList.toggle('open');
+}
+function toggleXmsEdit() {
+    var p = document.getElementById('xmsEditPanel');
+    p.classList.toggle('open');
+}
+function saveMatHeap() {
+    var val = document.getElementById('matHeapSelect').value;
+    var newBytes = parseSizeToBytes(val);
+
+    // 경고 1: 시스템 물리 메모리 초과
+    if (_physMem > 0 && newBytes > _physMem) {
+        showHeapWarnModal('xmx', val,
+            '시스템 물리 메모리 초과',
+            '-Xmx ' + formatBytesJS(newBytes) + '는 시스템 물리 메모리(' + formatBytesJS(_physMem) + ')보다 큽니다. MAT CLI 실행 시 스왑이 발생하여 성능이 크게 저하되거나 OOM Killer에 의해 프로세스가 종료될 수 있습니다.',
+            '&#9888; 물리 메모리: ' + formatBytesJS(_physMem) + ' / 설정값: ' + formatBytesJS(newBytes));
+        return;
+    }
+    // 경고 2: Xms보다 작음
+    if (_xmsBytes > 0 && newBytes < _xmsBytes) {
+        showHeapWarnModal('xmx', val,
+            '-Xmx가 -Xms보다 작습니다',
+            '-Xmx(' + formatBytesJS(newBytes) + ')가 -Xms(' + formatBytesJS(_xmsBytes) + ')보다 작습니다. JVM이 시작되지 않을 수 있습니다.',
+            '&#9888; -Xms: ' + formatBytesJS(_xmsBytes) + ' / -Xmx: ' + formatBytesJS(newBytes));
+        return;
+    }
+    doApplyHeap('xmx', val);
+}
+
+function saveMatXms() {
+    var val = document.getElementById('matXmsSelect').value;
+    var newBytes = parseSizeToBytes(val);
+
+    // 경고: Xmx보다 큼
+    if (_xmxBytes > 0 && newBytes > _xmxBytes) {
+        showHeapWarnModal('xms', val,
+            '-Xms가 -Xmx보다 큽니다',
+            '-Xms(' + formatBytesJS(newBytes) + ')가 -Xmx(' + formatBytesJS(_xmxBytes) + ')보다 큽니다. JVM이 시작되지 않을 수 있습니다.',
+            '&#9888; -Xms: ' + formatBytesJS(newBytes) + ' / -Xmx: ' + formatBytesJS(_xmxBytes));
+        return;
+    }
+    // 경고: 물리 메모리 초과
+    if (_physMem > 0 && newBytes > _physMem) {
+        showHeapWarnModal('xms', val,
+            '시스템 물리 메모리 초과',
+            '-Xms ' + formatBytesJS(newBytes) + '는 시스템 물리 메모리(' + formatBytesJS(_physMem) + ')보다 큽니다.',
+            '&#9888; 물리 메모리: ' + formatBytesJS(_physMem) + ' / 설정값: ' + formatBytesJS(newBytes));
+        return;
+    }
+    doApplyHeap('xms', val);
+}
+
+function doApplyHeap(type, val) {
+    var url = '/api/mat/heap?size=' + encodeURIComponent(val) + '&type=' + type;
+    fetch(url, {method:'POST'})
+        .then(function(r){
+            if (!r.ok && r.status !== 400) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function(d){
+            if (d.error) { toast(d.error, 'error'); return; }
+            var label = type === 'xms' ? '-Xms' : '-Xmx';
+            toast('MAT ' + label + ' 변경: ' + val, 'success');
+            if (type === 'xms') toggleXmsEdit(); else toggleHeapEdit();
+            loadAllData(false);
+        })
+        .catch(function(e){ toast('변경 실패: ' + e.message, 'error'); });
+}
+
+// ── Heap 경고 모달 ─────────────────────────────────────
+function showHeapWarnModal(type, val, title, desc, detail) {
+    _pendingHeapAction = {type: type, val: val};
+    document.getElementById('heapWarnTitle').textContent = title;
+    document.getElementById('heapWarnDesc').textContent = desc;
+    document.getElementById('heapWarnDetail').innerHTML = detail;
+    document.getElementById('heapWarnModal').classList.add('open');
+}
+function closeHeapWarnModal() {
+    document.getElementById('heapWarnModal').classList.remove('open');
+    _pendingHeapAction = null;
+}
+function forceApplyHeap() {
+    if (_pendingHeapAction) {
+        var action = _pendingHeapAction;
+        closeHeapWarnModal();
+        doApplyHeap(action.type, action.val);
+    }
+}
+
+// ── Save results toggle ────────────────────────────────
+function confirmSaveResults(el) {
+    if (!el.checked) {
+        el.checked = true;
+        document.getElementById('saveResultsModal').classList.add('open');
+    } else {
+        saveSetting('cacheResults', true);
+    }
+}
+function closeSaveResultsModal() {
+    document.getElementById('saveResultsModal').classList.remove('open');
+}
+function doDisableSaveResults() {
+    closeSaveResultsModal();
+    document.getElementById('togCache').checked = false;
+    saveSetting('cacheResults', false);
+}
+
+// ── Keep Unreachable toggle ────────────────────────────
+function confirmKeepUnreachable(el) {
+    if (!el.checked) {
+        el.checked = true;
+        document.getElementById('keepURModal').classList.add('open');
+    } else {
+        saveSetting('keepUnreachable', true);
+    }
+}
+function closeKeepURModal() { document.getElementById('keepURModal').classList.remove('open'); }
+function doDisableKeepUR() {
+    closeKeepURModal();
+    document.getElementById('togUR').checked = false;
+    saveSetting('keepUnreachable', false);
+}
+
+// ── Auto-analyze toggle ────────────────────────────────
+function confirmAutoAnalyze(el) {
+    if (el.checked) {
+        el.checked = false;
+        document.getElementById('autoAnalyzeModal').classList.add('open');
+    } else {
+        saveSetting('autoAnalyze', false);
+    }
+}
+function closeAAModal() { document.getElementById('autoAnalyzeModal').classList.remove('open'); }
+function doEnableAA() {
+    closeAAModal();
+    document.getElementById('togAA').checked = true;
+    saveSetting('autoAnalyze', true);
+}
+
+// ── Clear all results ──────────────────────────────────
+function openClearModal() { document.getElementById('clearModal').classList.add('open'); }
+function closeClearModal() { document.getElementById('clearModal').classList.remove('open'); }
+function doClearAll() {
+    closeClearModal();
+    fetch('/api/results/clear', {method:'POST'})
+        .then(function(r){
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function(d){
+            toast('All results cleared (' + (d.cleared || 0) + ' files)', 'success');
+            loadAllData(false);
+        })
+        .catch(function(e){ toast('Clear failed: ' + e.message, 'error'); });
+}
+
+// ── Copy API ───────────────────────────────────────────
+function copyApi(path) {
+    var url = location.origin + path;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url)
+            .then(function(){ toast('Copied: ' + url, 'success'); })
+            .catch(function(){ fallbackCopy(url); });
+    } else {
+        fallbackCopy(url);
+    }
+}
+function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        toast('Copied: ' + text, 'success');
+    } catch (e) {
+        toast('Copy failed — please copy manually: ' + text, 'error');
+    }
+    document.body.removeChild(ta);
+}
+
+// ── Init ───────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+    loadAllData();
+    var aa = document.getElementById('togAA');
+    if (aa && localStorage.getItem('autoAnalyze') === 'true') aa.checked = true;
+    var shw = document.getElementById('togSkipHeapWarn');
+    if (shw && localStorage.getItem('skipHeapWarning') === 'true') shw.checked = true;
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') { closeClearModal(); closeKeepURModal(); closeAAModal(); closeHeapWarnModal(); closeSaveResultsModal(); }
+});
+</script>
+
+</body>
+</html>

@@ -3,6 +3,360 @@
 ================================================================================
 
 ────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  settings.json 방어 로직 강화
+────────────────────────────────────────────────────────────────────────────────
+
+[service/HeapDumpAnalyzerService.java]
+- loadPersistedSettings() 방어 시나리오 6가지:
+  1. 파일 미존재 → 기본값으로 새로 생성
+  2. 빈 파일 (0 bytes) → 기본값으로 재생성
+  3. null/빈 맵 → 기본값으로 재생성
+  4. 예상 외 타입 (String 등) → Boolean.parseBoolean 변환 + 경고 로그
+  5. 정상 Boolean → 직접 캐스팅
+  6. 깨진 JSON → .corrupted 백업 후 기본값으로 재생성
+- persistSettings() 방어:
+  - data 디렉토리 미존재 시 자동 생성 (mkdirs)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  웹 Settings 변경 시 설정 영속화 (settings.json)
+────────────────────────────────────────────────────────────────────────────────
+
+[service/HeapDumpAnalyzerService.java]
+- 런타임 설정 영속화: {heapdump.directory}/data/settings.json에 저장/로드
+- loadPersistedSettings(): @PostConstruct에서 settings.json 로드
+  → application.properties 기본값을 settings.json 값으로 덮어씀
+- persistSettings(): 설정 변경 시 즉시 settings.json에 기록
+- setKeepUnreachableObjects() 변경 시 자동 영속화
+- 기존 문제: 웹에서 Keep unreachable 변경 후 서버 재시작 시 유실 → 해결
+
+설정 우선순위: settings.json (웹 변경) > application.properties (기본값)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  application.properties에 Phase 3B 설정값 8개 명시 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[resources/application.properties]
+- MAT CLI 실행 설정 섹션 추가: mat.timeout.minutes, sse.emitter.timeout.minutes,
+  analysis.progress.log-update-lines
+- 분석 결과 표시 설정 섹션 추가: dashboard.history.max-display,
+  analysis.top-objects.max-display, analysis.mat-log.max-display-chars
+- 디스크 모니터링 임계값 섹션 추가: disk.warning.usage-percent, disk.warning.free-space-mb
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  [리팩토링] 하드코딩 값 설정 추출 (Phase 3B)
+────────────────────────────────────────────────────────────────────────────────
+
+[config/HeapDumpConfig.java]
+- 8개 @Value 프로퍼티 추가 (application.properties로 재정의 가능):
+  - mat.timeout.minutes (기본 30) — MAT CLI 실행 타임아웃
+  - sse.emitter.timeout.minutes (기본 35) — SSE Emitter 타임아웃
+  - dashboard.history.max-display (기본 5) — 대시보드 히스토리 표시 수
+  - disk.warning.usage-percent (기본 90) — 디스크 사용률 경고 임계값
+  - disk.warning.free-space-mb (기본 500) — 디스크 여유 공간 경고 임계값
+  - analysis.top-objects.max-display (기본 10) — Top Memory Objects 표시 수
+  - analysis.mat-log.max-display-chars (기본 5000) — 에러 시 MAT 로그 표시 길이
+  - analysis.progress.log-update-lines (기본 50) — 진행률 로그 업데이트 빈도
+- initHeapDumpDirectory() 내 500MB 하드코딩 → diskWarningFreeSpaceMb 참조
+
+[service/HeapDumpAnalyzerService.java]
+- MAT_TIMEOUT_MINUTES 상수 제거 → config.getMatTimeoutMinutes()
+- lineCount % 50 → config.getProgressLogUpdateLines()
+
+[controller/HeapDumpController.java]
+- config 의존성 주입 추가
+- maxDisplay 5 → config.getDashboardHistoryMaxDisplay()
+- SSE 35분 → config.getSseEmitterTimeoutMinutes()
+- 디스크 경고 90% → config.getDiskWarningUsagePercent()
+- MAT 로그 5000자 → config.getMatLogMaxDisplayChars()
+- Top Objects limit(10) → config.getTopObjectsMaxDisplay()
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  [리팩토링] formatBytes() 통합 (Phase 3A)
+────────────────────────────────────────────────────────────────────────────────
+
+[신규: util/FormatUtils.java]
+- public static formatBytes(long) — 바이트 크기를 B/KB/MB/GB 문자열로 변환
+- KB: %.1f, MB/GB: %.2f 포맷 통일
+
+[controller/HeapDumpController.java]
+- private formatBytes() → FormatUtils.formatBytes() 위임
+
+[service/HeapDumpAnalyzerService.java]
+- private formatBytes() → FormatUtils.formatBytes() 위임
+
+[model/HeapAnalysisResult.java]
+- private formatBytes() → FormatUtils.formatBytes() 위임
+- (기존 KB %.2f → %.1f로 통일)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  [성능] Regex 패턴 사전 컴파일 (Phase 2B)
+────────────────────────────────────────────────────────────────────────────────
+
+[parser/MatReportParser.java]
+- 12개 static final Pattern 상수 추가:
+  NON_DIGIT_PATTERN, COMMA_SPACE_PATTERN, WHITESPACE_PATTERN, HEX_ADDR_PATTERN,
+  HEX_ADDR_EXTRACT_PATTERN, TOTAL_ENTRIES_PATTERN, ALL_OBJECTS_SUFFIX_PATTERN,
+  PROBLEM_SUSPECT_PATTERN, ARROW_CHAR_PATTERN, ARROW_SPACE_PATTERN,
+  ONLY_OBJECT_PATTERN, FIRST_N_OF_PATTERN, ALL_N_OBJECTS_PATTERN, ONLY_N_OBJECTS_PATTERN
+- parseSuspectsZip() 로컬 Pattern.compile 2개 → PROBLEM_SUSPECT_PATTERN, TAG_PATTERN 재사용
+- parseHistogramEntries() 로컬 Pattern.compile 1개 → TOTAL_ENTRIES_PATTERN
+- parseThreadInfoEntries() 로컬 Pattern.compile 1개 → HEX_ADDR_EXTRACT_PATTERN
+- 인라인 String.replaceAll() 전체 → Pattern.matcher().replaceAll() 전환
+- stripTags() 헬퍼: HTML 태그 제거 + 공백 정규화 (5곳 중복 제거)
+- digitsOnly() 헬퍼: 숫자 외 문자 제거 (11곳 중복 제거)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  [안전성] 스레드 풀 바운딩 (Phase 2A)
+────────────────────────────────────────────────────────────────────────────────
+
+[service/HeapDumpAnalyzerService.java]
+- Executors.newCachedThreadPool() → ThreadPoolExecutor(core=2, max=4, queue=8) 전환
+  - core 2: 평상시 유지되는 스레드 (분석 1 + SSE 1)
+  - max 4: 동시 요청 폭주 시 최대 스레드 수 제한
+  - queue 8: 대기 작업 큐 크기 제한
+  - CallerRunsPolicy: 큐 포화 시 호출자 스레드에서 실행 (요청 거부 대신 백프레셔)
+  - keepAlive 60초: 유휴 스레드 자동 회수
+- 기존 Semaphore(1) 분석 직렬화 + shutdown 로직은 그대로 유지
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  [보안] 파괴적 GET → POST 전환 (Phase 1D)
+────────────────────────────────────────────────────────────────────────────────
+
+[controller/HeapDumpController.java]
+- GET /delete/{filename} → POST 전환 (파일 삭제)
+- GET /history/delete/{filename} → POST 전환 (히스토리 삭제)
+- GET /analyze/rerun/{filename} → POST 전환 (캐시 삭제 후 재분석)
+  → CSRF, 크롤러 오삭제, 링크 프리페치 등에 의한 의도치 않은 파괴적 동작 방지
+
+[templates/index.html]
+- showDeleteModal() → postRedirect() 헬퍼로 POST form 제출
+
+[templates/files.html]
+- btnConfirmDel 클릭 → 동적 form POST 제출로 변경
+
+[templates/history.html]
+- deleteLink <a> 태그 → submitDelete() 함수 + 동적 form POST 제출로 변경
+
+[templates/analyze.html]
+- Re-Analyze Thymeleaf <a> 링크 2개 → <form method="post"> + <button> 전환
+- doReanalyze() JS 함수 → 동적 form POST 제출로 변경
+
+[templates/progress.html]
+- retryBtn → onclick="postRerun()" + 동적 form POST 제출로 변경
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  [보안] 정보 노출 축소 — /api/settings 응답 최소화 (Phase 1C)
+────────────────────────────────────────────────────────────────────────────────
+
+[controller/HeapDumpController.java]
+- 절대 경로 마스킹: heapDumpDirectory, mat.path → "***/파일명" 형태로 변환
+  - maskPath() 헬퍼 메서드 추가
+- 서버 상세 정보 제거: javaVendor, osName, osArch 필드 삭제
+- MAT 파일 권한 상세 제거: exists, executable, readable 필드 삭제
+  - ready + statusMessage만 유지 (운영 상태 확인에 충분)
+- matCliPath 최상위 필드 제거 (mat.path에서 마스킹된 값으로 제공)
+
+[templates/settings.html]
+- System Info 카드에서 Java Vendor, OS 행 제거
+- JS loadAllData()에서 javaVendor, osName, osArch 참조 제거
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  [보안] Path Traversal 차단 — Controller 파일명 검증 (Phase 1B)
+────────────────────────────────────────────────────────────────────────────────
+
+[신규: util/FilenameValidator.java]
+- 파일명 검증 유틸리티: null/empty, path traversal(.., /, \), null byte 차단
+- 허용 확장자 whitelist: .hprof, .bin, .dump (+.gz 변형)
+- Paths.get().getFileName()으로 경로 구성요소 제거
+
+[controller/HeapDumpController.java]
+- 16개 엔드포인트 + compare의 2개 파라미터에 FilenameValidator.validate() 적용
+- @ExceptionHandler(IllegalArgumentException.class) 추가 → 400 응답
+- 검증 실패 시 로그 기록: "[Validation] Rejected request: ..."
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  [보안] XSS 방어 강화 — OWASP HTML Sanitizer 도입 (Phase 1A)
+────────────────────────────────────────────────────────────────────────────────
+
+[pom.xml]
+- owasp-java-html-sanitizer 20220608.1 의존성 추가
+
+[신규: util/HtmlSanitizer.java]
+- OWASP PolicyFactory 기반 whitelist HTML 새니타이저
+- MAT 리포트에서 사용하는 태그만 허용 (table, div, span, a, 서식 태그 등)
+- body 추출 패턴 사전 컴파일 (static final Pattern)
+- 깨진 href → javascript:void(0) 치환
+
+[parser/MatReportParser.java]
+- sanitizeHtml(): regex 기반 제거 → HtmlSanitizer.sanitize() 위임
+- 약 30줄의 regex 체인 제거
+
+[service/HeapDumpAnalyzerService.java]
+- extractBodyContent(): 동일한 regex 기반 제거 → HtmlSanitizer.sanitize() 위임
+- MatReportParser와의 중복 코드 완전 제거
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  분석 페이지 헤더/사이드바를 메인 페이지 기준으로 통일
+────────────────────────────────────────────────────────────────────────────────
+
+[analyze.html]
+- 헤더 높이 56px → 52px (메인 페이지와 동일)
+- 사이드바 너비 290px → 300px (메인 페이지와 동일)
+- 헤더에 box-shadow, justify-content:space-between 추가
+- 헤더 HTML을 메인 페이지와 동일한 로고 아이콘(파란 둥근 사각형 + 체크) + 제목 구조로 변경
+- 파일명 뱃지를 브랜드 영역에 포함
+- 버튼 스타일 통일 (색상 #6B7280, hover 배경)
+- 데스크톱/태블릿/모바일 미디어쿼리 조정
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  MAT -Xms 설정 추가 + 힙 메모리 경고 검증
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpAnalyzerService.java]
+- readIniJvmArg/writeIniJvmArg 공통 메서드로 리팩토링
+- getMatInitialHeapSize(), getMatInitialHeapSizeString(), setMatInitialHeapSize() 추가
+
+[HeapDumpController.java]
+- GET /api/mat/heap: xmsSize, xmsBytes, xmsFormatted, physicalMemory 정보 추가
+- POST /api/mat/heap: type=xms 파라미터 지원 (-Xms 변경)
+- GET /api/settings: mat 섹션에 xmsSize, xmsBytes, xmsFormatted 추가
+
+[settings.html]
+- MAT Configuration에 "MAT JVM Initial Heap (-Xms)" 행 + 인라인 편집 추가
+- "System Physical Memory" 표시 행 추가
+- -Xmx Apply 시 경고 모달:
+  · 시스템 물리 메모리 초과 시 경고 (스왑/OOM Killer 위험)
+  · -Xms보다 작을 경우 경고 (JVM 시작 불가)
+- -Xms Apply 시 경고 모달:
+  · -Xmx보다 클 경우 경고
+  · 시스템 물리 메모리 초과 시 경고
+- 경고 모달에서 "강제 적용" 또는 "Cancel" 선택 가능
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  Settings 별도 페이지 분리 + 홈페이지 레이아웃 개편
+────────────────────────────────────────────────────────────────────────────────
+
+[settings.html] — 신규 생성
+- 별도 전용 페이지로 Settings 전면 개편 (기존 모달 방식에서 분리)
+- 2-column 그리드 레이아웃으로 관리자 친화적 배치:
+  · MAT Configuration: CLI 경로, 상태, JVM Heap 설정 (인라인 편집)
+  · Analysis Options: Keep Unreachable, Auto-analyze, Save to disk, Skip heap warning (토글)
+  · Storage: 덤프 디렉토리, 저장된 결과 수, 파일 수, 총 크기
+  · Disk Usage: 사용량/전체, 여유 공간, 프로그레스바
+  · System Info: Java, OS, CPU
+  · JVM Memory: Max/Used/Free, 프로그레스바
+  · API Endpoints: 2-column 카드 레이아웃
+  · Danger Zone: Clear All Results (빨간 경계선)
+- 확인 모달: Keep Unreachable 해제, Auto-analyze 활성화, Clear All Results
+
+[HeapDumpController.java]
+- GET /settings 엔드포인트 추가 → settings.html 반환
+
+[index.html] — 구조 개편
+- MAT OPTIONS 사이드바 섹션 제거 (Settings 페이지로 이관)
+- Quick Actions를 왼쪽 사이드바로 이동 (Compare, Export History, Settings 링크)
+- Quick Actions 메인 패널 제거
+- topbar Settings 버튼을 /settings 페이지 링크로 변경 (모달 방식 폐지)
+- Settings 모달 HTML/CSS/JS 전체 제거
+- Keep Unreachable, Auto-Analyze, Clear Cache 모달 제거
+- 관련 JS 함수 정리 (confirmKeepUnreachable, toggleMatHeapEdit, saveMatHeap 등)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  분석 전 힙 메모리 부족 경고 모달 및 전역 설정 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpController.java]
+- GET /api/mat/heap-check?filename= 추가: 분석 전 덤프 크기 × 2 vs MAT 힙 사전 체크
+
+[progress.html]
+- SSE 시작 전 /api/mat/heap-check 호출로 사전 체크
+- 힙 부족 시 경고 모달 표시: 덤프 크기, 권장 힙, 현재 설정 정보
+- "분석 계속" / "취소" 버튼으로 사용자 선택
+- "다음부터 이 경고를 표시하지 않고 바로 분석 진행" 체크박스
+- skipHeapWarning=true면 경고 없이 바로 분석 시작
+
+[index.html]
+- Settings 사이드바에 "Skip heap memory warning" 토글 추가
+- localStorage 기반 전역 설정 (skipHeapWarning)
+
+[HeapDumpAnalyzerService.java]
+- 서버 측 SSE 경고 제거 (클라이언트 사전 체크로 대체)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  MAT JVM 힙 메모리 설정 기능 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpAnalyzerService.java]
+- getMatHeapSize(): MemoryAnalyzer.ini에서 -Xmx 값을 바이트 단위로 읽기
+- getMatHeapSizeString(): -Xmx 문자열 반환 (예: "2048m")
+- setMatHeapSize(): MemoryAnalyzer.ini의 -Xmx 값 변경
+- 분석 시작 시 덤프 크기 × 2 > MAT 힙 설정이면 SSE 경고 메시지 전송
+
+[AnalysisProgress.java]
+- warningMessage 필드 추가
+- warning() 팩토리 메서드 추가 (분석 계속 진행하면서 경고 전달)
+
+[HeapDumpController.java]
+- GET /api/mat/heap: 현재 MAT 힙 설정 조회
+- POST /api/mat/heap?size=4096m: MAT 힙 설정 변경
+- GET /api/settings 응답에 mat.heapSize, mat.heapBytes, mat.heapFormatted 추가
+
+[index.html]
+- Settings 모달 MAT Configuration에 "MAT JVM Heap (-Xmx)" 표시 및 편집 UI 추가
+- 프리셋 선택 (1GB ~ 16GB) + Apply/Cancel 버튼
+- 권장 사항 안내 문구 표시
+
+[progress.html]
+- 경고 배너 (warn-banner) 추가: 노란색 그라데이션, 경고 아이콘
+- SSE warningMessage 수신 시 경고 배너 표시
+- Dashboard Settings 링크 안내
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  Analysis History 페이지 히스토리 삭제 기능 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[HeapDumpAnalyzerService.java]
+- deleteHistory() 메서드 추가: 힙덤프 파일 + 분석 결과 디렉토리 + 인덱스 파일 + 메모리 캐시 일괄 삭제
+
+[HeapDumpController.java]
+- GET /history/delete/{filename} 엔드포인트 추가
+- 삭제 성공/실패 시 flash 메시지로 결과 전달 후 /history로 리다이렉트
+
+[history.html]
+- 각 히스토리 항목에 삭제 버튼(휴지통 아이콘) 추가
+- 삭제 확인 모달 추가 (파일명 표시, 경고 메시지, 취소/삭제 버튼)
+- 힙덤프 파일이 이미 삭제된 경우 모달 내 파일명 옆에 "힙덤프 파일 이미 삭제됨" 뱃지 표시
+
+[HeapDumpController.java]
+- Settings API 디스크 사용량 계산을 getFreeSpace() → getUsableSpace()로 통일
+  (홈페이지 DISK %와 Settings Disk Usage % 수치 불일치 해소)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-29  Cache → Save 용어 통일 (디스크 저장이므로 Cache가 아님)
+────────────────────────────────────────────────────────────────────────────────
+
+[index.html]
+- "Cache results to disk" → "Save results to disk"
+- "Clear all cache" → "Clear all results"
+- "Remove all cached results" → "Remove all saved results"
+- "Clear All Cache" 모달 제목 → "Clear All Results"
+- "All cached analysis results..." → "All saved analysis results..."
+- "Cached Results" (Settings) → "Saved Results"
+- API 문서 /api/cache/clear → /api/results/clear
+- fetch 호출 경로 /api/cache/clear → /api/results/clear
+
+[analyze.html]
+- "Cached results will be cleared..." → "Saved results will be cleared..."
+
+[HeapDumpController.java]
+- API 엔드포인트 /api/results/clear 추가 (기존 /api/cache/clear도 호환 유지)
+- 주석 및 로그 메시지의 "캐시" → "저장 결과"로 변경
+
+[HeapDumpAnalyzerService.java]
+- 로그 메시지의 "cached results" → "saved results" 변경
+- "disk cache" → "saved result" 변경
+
+────────────────────────────────────────────────────────────────────────────────
  2026-03-27  분석 완료 후 덤프 파일 gzip 압축
 ────────────────────────────────────────────────────────────────────────────────
 

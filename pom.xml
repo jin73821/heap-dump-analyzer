@@ -43,6 +43,13 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- OWASP Java HTML Sanitizer (XSS 방어) -->
+        <dependency>
+            <groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
+            <artifactId>owasp-java-html-sanitizer</artifactId>
+            <version>20220608.1</version>
+        </dependency>
+
         <!-- commons-io (FileUtils 등 유틸리티) -->
         <dependency>
             <groupId>commons-io</groupId>

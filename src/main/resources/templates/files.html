@@ -222,7 +222,11 @@ function closeDeleteModal() {
     _delTarget = '';
 }
 document.getElementById('btnConfirmDel').onclick = function() {
-    if (_delTarget) window.location.href = '/delete/' + encodeURIComponent(_delTarget);
+    if (_delTarget) {
+        var f = document.createElement('form');
+        f.method = 'POST'; f.action = '/delete/' + encodeURIComponent(_delTarget); f.style.display = 'none';
+        document.body.appendChild(f); f.submit();
+    }
 };
 document.getElementById('deleteModal').addEventListener('click', function(e) {
     if (e.target === this) closeDeleteModal();

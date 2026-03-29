@@ -9,8 +9,8 @@
         /* ── Reset & Base ─────────────────────────── */
         *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
         :root {
-            --sidebar-w: 290px;
-            --header-h: 56px;
+            --sidebar-w: 300px;
+            --header-h: 52px;
             --bg: #f5f6fa;
             --surface: #fff;
             --border: #e2e5ec;
@@ -34,21 +34,29 @@
         .app-header {
             position:fixed; top:0; left:0; right:0; height:var(--header-h); z-index:100;
             background:var(--surface); border-bottom:1px solid var(--border);
-            display:flex; align-items:center; padding:0 20px; gap:16px;
+            display:flex; align-items:center; justify-content:space-between;
+            padding:0 20px; box-shadow:0 1px 3px rgba(0,0,0,.06);
         }
-        .app-header .logo { font-size:18px; font-weight:700; color:var(--text); white-space:nowrap; }
+        .app-header .header-brand { display:flex; align-items:center; gap:10px; min-width:0; }
+        .app-header .header-logo {
+            width:30px; height:30px; background:var(--primary); border-radius:7px;
+            display:flex; align-items:center; justify-content:center; flex-shrink:0;
+        }
+        .app-header .header-logo svg { width:16px; height:16px; fill:#fff; }
+        .app-header .logo { font-size:16px; font-weight:700; color:var(--text); white-space:nowrap; }
         .app-header .filename-badge {
-            background:var(--primary-light); color:var(--primary); font-size:13px; font-weight:600;
-            padding:4px 12px; border-radius:20px; max-width:400px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+            background:var(--primary-light); color:var(--primary); font-size:12px; font-weight:600;
+            padding:3px 10px; border-radius:20px; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
         }
-        .app-header .header-actions { margin-left:auto; display:flex; gap:8px; align-items:center; }
+        .app-header .header-actions { display:flex; gap:6px; align-items:center; flex-shrink:0; }
         .app-header .btn-sm {
-            padding:6px 14px; font-size:12px; font-weight:600; border:1px solid var(--border);
-            border-radius:6px; cursor:pointer; transition:all .15s; background:var(--surface); color:var(--text);
+            padding:5px 12px; font-size:12px; font-weight:600; border:1px solid var(--border);
+            border-radius:6px; cursor:pointer; transition:all .15s; background:var(--surface); color:#6B7280;
+            text-decoration:none; display:inline-block;
         }
-        .app-header .btn-sm:hover { border-color:var(--primary); color:var(--primary); }
+        .app-header .btn-sm:hover { background:#F9FAFB; border-color:var(--primary); color:var(--primary); text-decoration:none; }
         .app-header .btn-sm.btn-warn { background:var(--warning); color:#fff; border-color:var(--warning); }
-        .app-header .btn-sm.btn-warn:hover { background:#b45309; }
+        .app-header .btn-sm.btn-warn:hover { background:#b45309; text-decoration:none; }
 
         .sidebar {
             position:fixed; top:var(--header-h); left:0; bottom:0; width:var(--sidebar-w);
@@ -357,9 +365,9 @@
         /* ── Desktop enhancement ──────────────────── */
         @media (min-width:1200px) {
             body { font-size:16px; line-height:1.6; }
-            .app-header .logo { font-size:20px; }
-            .app-header .filename-badge { font-size:15px; }
-            .app-header .btn-sm { font-size:14px; padding:8px 16px; }
+            .app-header .logo { font-size:18px; }
+            .app-header .filename-badge { font-size:13px; }
+            .app-header .btn-sm { font-size:14px; padding:6px 14px; }
             .sidebar-section-title { font-size:12px; }
             .nav-item { font-size:15px; padding:10px 14px; }
             .sidebar-stat { font-size:14px; }
@@ -397,7 +405,7 @@
 
         /* ── Responsive ───────────────────────────── */
         @media (max-width:1024px) {
-            :root { --sidebar-w:220px; }
+            :root { --sidebar-w:240px; }
         }
         /* ── Mobile menu button ──────────────────── */
         .mobile-menu-btn {
@@ -443,8 +451,9 @@
             .kpi-bar { flex-wrap:wrap; }
             .kpi-item { flex:1 1 45%; border-bottom:1px solid #f3f4f6; }
             .kpi-item:nth-last-child(-n+2) { border-bottom:none; }
-            .app-header { padding:0 10px; gap:8px; }
-            .app-header .logo { font-size:15px; }
+            .app-header { padding:0 12px; }
+            .app-header .header-brand { gap:8px; }
+            .app-header .logo { font-size:14px; }
             .app-header .filename-badge { display:none; }
             .app-header .header-actions { gap:4px; }
             .app-header .btn-sm { font-size:11px; padding:5px 8px; white-space:nowrap; }
@@ -464,7 +473,8 @@
             .card { padding:14px; }
             .suspect-body { padding:0 14px 14px 14px; }
             .modal-content { width:calc(100vw - 32px); margin:0 16px; max-height:80vh; overflow-y:auto; }
-            .app-header .logo { font-size:14px; }
+            .app-header .header-logo { width:26px; height:26px; }
+            .app-header .logo { font-size:13px; }
             .app-header .btn-sm { font-size:10px; padding:4px 6px; }
         }
     </style>
@@ -473,15 +483,20 @@
 
 <!-- ════════════════ HEADER ════════════════ -->
 <header class="app-header">
-    <button class="mobile-menu-btn" id="menuBtn" onclick="toggleMobileSidebar()" aria-label="Menu">
-        <span></span><span></span><span></span>
-    </button>
-    <a href="/" class="logo">Heap Analyzer</a>
-    <span th:if="${result != null}" class="filename-badge" th:text="${result.filename}"></span>
-    <span th:if="${result == null and filename != null}" class="filename-badge" th:text="${filename}"></span>
+    <div class="header-brand">
+        <button class="mobile-menu-btn" id="menuBtn" onclick="toggleMobileSidebar()" aria-label="Menu">
+            <span></span><span></span><span></span>
+        </button>
+        <a href="/" class="header-logo" style="text-decoration:none">
+            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        </a>
+        <a href="/" class="logo" style="text-decoration:none">Heap Dump Analyzer</a>
+        <span th:if="${result != null}" class="filename-badge" th:text="${result.filename}"></span>
+        <span th:if="${result == null and filename != null}" class="filename-badge" th:text="${filename}"></span>
+    </div>
     <div class="header-actions">
         <a th:if="${result != null}" href="#" class="btn-sm btn-warn" onclick="showReanalyzeModal();return false;">Re-Analyze</a>
-        <a th:if="${result == null and filename != null}" th:href="@{'/analyze/rerun/' + ${filename}}" class="btn-sm btn-warn">Re-Analyze</a>
+        <form th:if="${result == null and filename != null}" th:action="@{'/analyze/rerun/' + ${filename}}" method="post" style="display:inline"><button type="submit" class="btn-sm btn-warn">Re-Analyze</button></form>
         <a th:if="${result != null}" href="#" class="btn-sm" onclick="showDownloadModal();return false;">Download</a>
         <a href="/" class="btn-sm">Home</a>
     </div>
@@ -508,7 +523,7 @@
             </span>
         </div>
         <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
-            <a th:href="@{'/analyze/rerun/' + ${filename}}" style="display:inline-block;padding:8px 20px;background:var(--warning);color:#fff;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer">&#8635; Re-Analyze</a>
+            <form th:action="@{'/analyze/rerun/' + ${filename}}" method="post" style="display:inline"><button type="submit" style="padding:8px 20px;background:var(--warning);color:#fff;border:none;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer">&#8635; Re-Analyze</button></form>
             <a href="/" style="display:inline-block;padding:8px 20px;background:var(--primary);color:#fff;border-radius:6px;font-weight:600;font-size:13px">Back to Home</a>
         </div>
     </div>
@@ -1054,7 +1069,7 @@ function loadFullErrorLog() {
             <div class="modal-title">Re-Analyze</div>
         </div>
         <div class="modal-body">
-            Cached results will be cleared and the heap dump will be re-analyzed with MAT CLI. This may take several minutes.
+            Saved results will be cleared and the heap dump will be re-analyzed with MAT CLI. This may take several minutes.
             <div class="modal-filename" th:text="${result.filename}">-</div>
             <div class="modal-info">
                 <div>File Size: <span th:text="${result.formattedFileSize}">-</span></div>
@@ -1331,7 +1346,9 @@ function closeReanalyzeModal() {
 }
 function doReanalyze() {
     closeReanalyzeModal();
-    window.location.href = '/analyze/rerun/' + encodeURIComponent(FILENAME);
+    var f = document.createElement('form');
+    f.method = 'POST'; f.action = '/analyze/rerun/' + encodeURIComponent(FILENAME); f.style.display = 'none';
+    document.body.appendChild(f); f.submit();
 }
 
 // ── Download File Modal ───────────────────────────────

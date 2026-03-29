@@ -39,6 +39,38 @@ public class HeapDumpConfig {
     @Value("${mat.keep.unreachable.objects:false}")
     private boolean keepUnreachableObjects;
 
+    /** MAT CLI 실행 타임아웃 (분) */
+    @Value("${mat.timeout.minutes:30}")
+    private int matTimeoutMinutes;
+
+    /** SSE Emitter 타임아웃 (분) — MAT 타임아웃보다 길어야 함 */
+    @Value("${sse.emitter.timeout.minutes:35}")
+    private int sseEmitterTimeoutMinutes;
+
+    /** 대시보드 히스토리 최대 표시 수 */
+    @Value("${dashboard.history.max-display:5}")
+    private int dashboardHistoryMaxDisplay;
+
+    /** 디스크 경고 사용률 임계값 (%) */
+    @Value("${disk.warning.usage-percent:90}")
+    private int diskWarningUsagePercent;
+
+    /** 디스크 최소 여유 공간 경고 임계값 (MB) */
+    @Value("${disk.warning.free-space-mb:500}")
+    private long diskWarningFreeSpaceMb;
+
+    /** 분석 결과 페이지 Top Memory Objects 최대 표시 수 */
+    @Value("${analysis.top-objects.max-display:10}")
+    private int topObjectsMaxDisplay;
+
+    /** MAT 로그 에러 시 최대 표시 길이 (문자 수) */
+    @Value("${analysis.mat-log.max-display-chars:5000}")
+    private int matLogMaxDisplayChars;
+
+    /** MAT 진행률 로그 업데이트 빈도 (줄 단위) */
+    @Value("${analysis.progress.log-update-lines:50}")
+    private int progressLogUpdateLines;
+
     /** MAT CLI 유효성 상태 (init 후 설정) */
     private boolean matCliReady;
     private String  matCliStatusMessage;
@@ -78,8 +110,8 @@ public class HeapDumpConfig {
                 // 디스크 여유 공간 확인
                 long freeSpace = dir.getUsableSpace();
                 long freeSpaceMB = freeSpace / (1024 * 1024);
-                if (freeSpaceMB < 500) {
-                    logger.warn("[Config] Heap dump directory free space is low: {} MB — 최소 500 MB 이상 권장", freeSpaceMB);
+                if (freeSpaceMB < diskWarningFreeSpaceMb) {
+                    logger.warn("[Config] Heap dump directory free space is low: {} MB — 최소 {} MB 이상 권장", freeSpaceMB, diskWarningFreeSpaceMb);
                 } else {
                     logger.info("[Config] Heap dump directory OK (writable, free: {} MB)", freeSpaceMB);
                 }
@@ -175,10 +207,18 @@ public class HeapDumpConfig {
         logger.info("└─────────────────────────────────────────────────┘");
     }
 
-    public String  getHeapDumpDirectory()      { return heapDumpDirectory; }
-    public String  getDataDirectory()          { return heapDumpDirectory + File.separator + "data"; }
-    public String  getMatCliPath()             { return matCliPath; }
-    public boolean isKeepUnreachableObjects()  { return keepUnreachableObjects; }
-    public boolean isMatCliReady()             { return matCliReady; }
-    public String  getMatCliStatusMessage()    { return matCliStatusMessage; }
+    public String  getHeapDumpDirectory()        { return heapDumpDirectory; }
+    public String  getDataDirectory()            { return heapDumpDirectory + File.separator + "data"; }
+    public String  getMatCliPath()               { return matCliPath; }
+    public boolean isKeepUnreachableObjects()    { return keepUnreachableObjects; }
+    public boolean isMatCliReady()               { return matCliReady; }
+    public String  getMatCliStatusMessage()      { return matCliStatusMessage; }
+    public int     getMatTimeoutMinutes()        { return matTimeoutMinutes; }
+    public int     getSseEmitterTimeoutMinutes() { return sseEmitterTimeoutMinutes; }
+    public int     getDashboardHistoryMaxDisplay(){ return dashboardHistoryMaxDisplay; }
+    public int     getDiskWarningUsagePercent()  { return diskWarningUsagePercent; }
+    public long    getDiskWarningFreeSpaceMb()   { return diskWarningFreeSpaceMb; }
+    public int     getTopObjectsMaxDisplay()     { return topObjectsMaxDisplay; }
+    public int     getMatLogMaxDisplayChars()    { return matLogMaxDisplayChars; }
+    public int     getProgressLogUpdateLines()   { return progressLogUpdateLines; }
 }

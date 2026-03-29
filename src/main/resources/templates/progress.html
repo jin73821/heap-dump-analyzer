@@ -97,6 +97,36 @@
         }
         .queue-banner.visible .queue-icon { animation: queuePulse 2s infinite; }
 
+        /* ── 힙 메모리 경고 모달 ─────────────────────────── */
+        .heap-warn-ov {
+            display: none; position: fixed; inset: 0; z-index: 300;
+            background: rgba(0,0,0,.5); align-items: center; justify-content: center;
+        }
+        .heap-warn-ov.open { display: flex; }
+        .heap-warn-box {
+            background: #fff; border-radius: 14px; padding: 28px; width: 92%; max-width: 460px;
+            box-shadow: 0 20px 60px rgba(0,0,0,.25); animation: modalIn .25s ease;
+        }
+        @keyframes modalIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .hw-icon { font-size: 36px; text-align: center; margin-bottom: 12px; }
+        .hw-title { font-size: 17px; font-weight: 700; color: #92400E; text-align: center; margin-bottom: 12px; }
+        .hw-info {
+            background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 10px;
+            padding: 14px 16px; margin-bottom: 14px; font-size: 13px; line-height: 1.7;
+        }
+        .hw-info-row { display: flex; justify-content: space-between; }
+        .hw-info-label { color: #78350F; }
+        .hw-info-val { font-weight: 600; color: #92400E; font-family: 'JetBrains Mono','SF Mono',monospace; }
+        .hw-info-val.hw-danger { color: #DC2626; }
+        .hw-desc { font-size: 13px; color: #6B7280; line-height: 1.6; margin-bottom: 16px; }
+        .hw-btns { display: flex; gap: 10px; justify-content: flex-end; }
+        .hw-btns button { font-size: 13px; padding: 8px 20px; border-radius: 8px; border: none;
+                          cursor: pointer; font-weight: 600; }
+        .hw-btn-cancel { background: #F3F4F6; color: #374151; }
+        .hw-btn-cancel:hover { background: #E5E7EB; }
+        .hw-btn-proceed { background: #D97706; color: #fff; }
+        .hw-btn-proceed:hover { background: #B45309; }
+
         /* ── 에러 배너 ──────────────────────────────────── */
         .error-banner {
             background: linear-gradient(135deg, #FFF5F5, #FEE2E2);
@@ -493,7 +523,7 @@
         </div>
         <p class="error-message" id="errorMsg"></p>
         <div class="error-actions">
-            <a href="#" class="error-retry-btn" id="retryBtn">&#8635; 재분석</a>
+            <a href="#" class="error-retry-btn" id="retryBtn" onclick="postRerun();return false;">&#8635; 재분석</a>
             <a href="/" class="error-home-btn">&#8592; 홈으로</a>
         </div>
     </div>
@@ -642,6 +672,36 @@
 
 </div>
 
+<!-- 힙 메모리 경고 모달 -->
+<div class="heap-warn-ov" id="heapWarnModal">
+    <div class="heap-warn-box">
+        <div class="hw-icon">&#9888;&#65039;</div>
+        <div class="hw-title">MAT 힙 메모리 부족 경고</div>
+        <div class="hw-info">
+            <div class="hw-info-row">
+                <span class="hw-info-label">덤프 파일 크기</span>
+                <span class="hw-info-val" id="hwDumpSize">-</span>
+            </div>
+            <div class="hw-info-row">
+                <span class="hw-info-label">권장 힙 메모리 (2배)</span>
+                <span class="hw-info-val hw-danger" id="hwRecommended">-</span>
+            </div>
+            <div class="hw-info-row">
+                <span class="hw-info-label">현재 MAT 힙 설정</span>
+                <span class="hw-info-val" id="hwCurrentHeap">-</span>
+            </div>
+        </div>
+        <div class="hw-desc">
+            MAT CLI 힙 메모리가 부족하여 분석이 실패할 수 있습니다.<br>
+            Dashboard Settings에서 MAT JVM Heap 설정을 변경할 수 있습니다.
+        </div>
+        <div class="hw-btns">
+            <button class="hw-btn-cancel" onclick="cancelAnalysis()">취소</button>
+            <button class="hw-btn-proceed" onclick="proceedAnalysis()">분석 계속</button>
+        </div>
+    </div>
+</div>
+
 <!-- ── Footer ─────────────────────────────────────────────── -->
 <div class="progress-footer">
     &copy; 2026 Heap Dump Analyzer v2.0.0 | Powered by Eclipse MAT CLI
@@ -653,6 +713,11 @@
     const SSE_URL     = '/analyze/progress/' + encodeURIComponent(FILENAME);
     const RESULT_URL  = '/analyze/result/'   + encodeURIComponent(FILENAME);
     const RERUN_URL   = '/analyze/rerun/'    + encodeURIComponent(FILENAME);
+    function postRerun() {
+        var f = document.createElement('form');
+        f.method = 'POST'; f.action = RERUN_URL; f.style.display = 'none';
+        document.body.appendChild(f); f.submit();
+    }
 
     // ── DOM 참조 (캐시) ────────────────────────────────────
     const mainBar        = document.getElementById('mainBar');
@@ -966,6 +1031,8 @@
                 queueBanner.classList.remove('visible');
             }
 
+
+
             // 첫 RUNNING 수신 시 타이머 시작
             if (!analysisStartTime && (status === 'RUNNING' || status === 'PARSING')) {
                 startElapsedTimer();
@@ -1111,7 +1178,6 @@
                 stopElapsedTimer();
                 if (logBuffer.length) flushLog();
                 errorMsg.textContent = errorMessage || '알 수 없는 오류가 발생했습니다.';
-                retryBtn.href = RERUN_URL;
                 errorBanner.classList.add('visible');
                 dotAnim.style.display = 'none';
             }
@@ -1141,7 +1207,38 @@
         analysisRunning = false;
     }
 
-    startSSE();
+    // ── 분석 전 힙 메모리 사전 체크 ────────────────────
+    function checkHeapAndStart() {
+        var skipWarn = localStorage.getItem('skipHeapWarning') === 'true';
+        if (skipWarn) { startSSE(); return; }
+
+        fetch('/api/mat/heap-check?filename=' + encodeURIComponent(FILENAME))
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.warning) {
+                    document.getElementById('hwDumpSize').textContent = d.dumpSizeFormatted;
+                    document.getElementById('hwRecommended').textContent = d.recommendedHeap;
+                    document.getElementById('hwCurrentHeap').textContent = d.matHeapFormatted;
+                    document.getElementById('heapWarnModal').classList.add('open');
+                } else {
+                    startSSE();
+                }
+            })
+            .catch(function() { startSSE(); }); // 체크 실패 시 그냥 진행
+    }
+
+    function proceedAnalysis() {
+        document.getElementById('heapWarnModal').classList.remove('open');
+        startSSE();
+    }
+
+    function cancelAnalysis() {
+        document.getElementById('heapWarnModal').classList.remove('open');
+        analysisRunning = false;
+        window.location.href = '/';
+    }
+
+    checkHeapAndStart();
 </script>
 
 </body>

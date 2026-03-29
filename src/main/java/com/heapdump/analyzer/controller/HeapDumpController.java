@@ -2,6 +2,8 @@ package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.model.*;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.util.FilenameValidator;
+import com.heapdump.analyzer.util.FormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
@@ -25,10 +27,12 @@ import java.util.stream.Collectors;
  * 신규 엔드포인트:
  *   GET  /compare                         → 두 덤프 비교 결과 페이지
  *   GET  /api/history                     → 분석 히스토리 JSON
- *   POST /api/cache/clear                 → 전체 캐시 삭제
+ *   POST /api/results/clear                → 전체 저장 결과 삭제
  *   POST /api/settings/unreachable        → keep_unreachable 설정 변경
  *   GET  /api/settings                    → 현재 설정 조회
- *   GET  /analyze/rerun/{filename}        → 캐시 삭제 후 재분석
+ *   POST /analyze/rerun/{filename}        → 저장 결과 삭제 후 재분석
+ *   POST /delete/{filename}               → 파일 삭제
+ *   POST /history/delete/{filename}       → 히스토리 삭제
  */
 @Controller
 public class HeapDumpController {
@@ -36,9 +40,23 @@ public class HeapDumpController {
     private static final Logger logger = LoggerFactory.getLogger(HeapDumpController.class);
 
     private final HeapDumpAnalyzerService analyzerService;
+    private final com.heapdump.analyzer.config.HeapDumpConfig config;
 
-    public HeapDumpController(HeapDumpAnalyzerService analyzerService) {
+    public HeapDumpController(HeapDumpAnalyzerService analyzerService,
+                              com.heapdump.analyzer.config.HeapDumpConfig config) {
         this.analyzerService = analyzerService;
+        this.config = config;
+    }
+
+    // ── 파일명 검증 실패 핸들러 ─────────────────────────────────────
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    @ResponseBody
+    public ResponseEntity<Map<String, String>> handleBadFilename(IllegalArgumentException e) {
+        logger.warn("[Validation] Rejected request: {}", e.getMessage());
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("error", e.getMessage());
+        return ResponseEntity.badRequest().body(body);
     }
 
     // ── 메인 페이지 ──────────────────────────────────────────────
@@ -55,7 +73,7 @@ public class HeapDumpController {
 
         // 분석 히스토리 (캐시에서 로드)
         List<AnalysisHistoryItem> history = buildHistory(files);
-        int maxDisplay = 5;
+        int maxDisplay = config.getDashboardHistoryMaxDisplay();
         model.addAttribute("analysisHistory",
             history.size() > maxDisplay ? history.subList(0, maxDisplay) : history);
         model.addAttribute("hasMoreFiles", history.size() > maxDisplay);
@@ -151,6 +169,32 @@ public class HeapDumpController {
         return "history";
     }
 
+    // ── 설정 페이지 ─────────────────────────────────────────────
+
+    @GetMapping("/settings")
+    public String settingsPage(Model model) {
+        model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
+        return "settings";
+    }
+
+    // ── 히스토리 삭제 ────────────────────────────────────────────
+
+    @PostMapping("/history/delete/{filename:.+}")
+    public String deleteHistory(@PathVariable String filename,
+                                RedirectAttributes redirectAttributes) {
+        filename = FilenameValidator.validate(filename);
+        logger.info("[DeleteHistory] Request received: filename={}", filename);
+        try {
+            analyzerService.deleteHistory(filename);
+            logger.info("[DeleteHistory] Success: {}", filename);
+            redirectAttributes.addFlashAttribute("success", "히스토리 삭제 완료: " + filename);
+        } catch (IOException e) {
+            logger.error("[DeleteHistory] Failed for '{}': {}", filename, e.getMessage());
+            redirectAttributes.addFlashAttribute("error", "히스토리 삭제 실패: " + e.getMessage());
+        }
+        return "redirect:/history";
+    }
+
     // ── 파일 업로드 ──────────────────────────────────────────────
 
     @PostMapping("/upload")
@@ -177,7 +221,7 @@ public class HeapDumpController {
                 long usableSpace = dumpDir.getUsableSpace();
                 if (totalSpace > 0) {
                     double usagePercent = (double)(totalSpace - usableSpace) / totalSpace * 100;
-                    if (usagePercent >= 90) {
+                    if (usagePercent >= config.getDiskWarningUsagePercent()) {
                         logger.warn("[Upload] Disk usage warning: {}%", String.format("%.1f", usagePercent));
                         redirectAttributes.addFlashAttribute("warning",
                                 String.format("디스크 사용량이 %.1f%%입니다. 불필요한 파일을 삭제해 주세요.", usagePercent));
@@ -200,6 +244,7 @@ public class HeapDumpController {
 
     @GetMapping("/analyze/{filename:.+}")
     public String analyzeProgress(@PathVariable String filename, Model model) {
+        filename = FilenameValidator.validate(filename);
         HeapAnalysisResult cached = analyzerService.getCachedResult(filename);
         if (cached != null && cached.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
             logger.info("Cache hit for {}, redirecting to result", filename);
@@ -211,8 +256,9 @@ public class HeapDumpController {
 
     // ── 재분석 ───────────────────────────────────────────────────
 
-    @GetMapping("/analyze/rerun/{filename:.+}")
+    @PostMapping("/analyze/rerun/{filename:.+}")
     public String rerunAnalysis(@PathVariable String filename) {
+        filename = FilenameValidator.validate(filename);
         analyzerService.clearCache(filename);
         logger.info("Cache cleared for {} → restarting", filename);
         return "redirect:/analyze/" + filename;
@@ -224,13 +270,14 @@ public class HeapDumpController {
                 produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @ResponseBody
     public SseEmitter streamProgress(@PathVariable String filename) {
-        SseEmitter emitter = new SseEmitter(35L * 60 * 1000);
-        java.util.concurrent.Future<?> task = analyzerService.analyzeWithProgress(filename, emitter);
+        final String safe = FilenameValidator.validate(filename);
+        SseEmitter emitter = new SseEmitter(config.getSseEmitterTimeoutMinutes() * 60L * 1000);
+        java.util.concurrent.Future<?> task = analyzerService.analyzeWithProgress(safe, emitter);
 
         // 클라이언트 disconnect / 타임아웃 시 분석 스레드 중단
         Runnable cancelTask = () -> {
             if (task != null && !task.isDone()) {
-                logger.info("[SSE] Client disconnected, cancelling analysis for: {}", filename);
+                logger.info("[SSE] Client disconnected, cancelling analysis for: {}", safe);
                 task.cancel(true);
             }
         };
@@ -245,13 +292,14 @@ public class HeapDumpController {
 
     @GetMapping("/analyze/result/{filename:.+}")
     public String analyzeResult(@PathVariable String filename, Model model) {
+        filename = FilenameValidator.validate(filename);
         HeapAnalysisResult result = analyzerService.getCachedResult(filename);
         if (result == null) return "redirect:/analyze/" + filename;
 
         if (result.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.ERROR) {
             model.addAttribute("error", result.getErrorMessage());
             model.addAttribute("filename", filename);
-            model.addAttribute("matLog", truncateLog(result.getMatLog(), 5000));
+            model.addAttribute("matLog", truncateLog(result.getMatLog(), config.getMatLogMaxDisplayChars()));
             model.addAttribute("hasHeapData", false);
             model.addAttribute("matLogTotalLen",
                     result.getMatLog() != null ? result.getMatLog().length() : 0);
@@ -278,7 +326,7 @@ public class HeapDumpController {
         List<Double> topObjPcts   = new ArrayList<>();
 
         if (result.getTopMemoryObjects() != null) {
-            result.getTopMemoryObjects().stream().limit(10).forEach(o -> {
+            result.getTopMemoryObjects().stream().limit(config.getTopObjectsMaxDisplay()).forEach(o -> {
                 topObjNames .add(o.getClassName()    != null ? o.getClassName() : "");
                 topObjSizes .add(o.getTotalSize());
                 topObjCounts.add(o.getObjectCount());
@@ -323,6 +371,7 @@ public class HeapDumpController {
             @PathVariable String filename,
             @RequestParam(defaultValue = "0")     int offset,
             @RequestParam(defaultValue = "10000") int limit) {
+        filename = FilenameValidator.validate(filename);
         HeapAnalysisResult result = analyzerService.getCachedResult(filename);
         if (result == null || result.getMatLog() == null)
             return ResponseEntity.notFound().build();
@@ -340,6 +389,7 @@ public class HeapDumpController {
 
     @GetMapping("/download/{filename:.+}")
     public ResponseEntity<Resource> downloadFile(@PathVariable String filename) {
+        filename = FilenameValidator.validate(filename);
         try {
             File file = analyzerService.getFile(filename);
             String downloadName = file.getName();
@@ -356,10 +406,11 @@ public class HeapDumpController {
 
     // ── 파일 삭제 ────────────────────────────────────────────────
 
-    @GetMapping("/delete/{filename:.+}")
+    @PostMapping("/delete/{filename:.+}")
     public String deleteFile(@PathVariable String filename,
                              @RequestHeader(value = "Referer", required = false) String referer,
                              RedirectAttributes redirectAttributes) {
+        filename = FilenameValidator.validate(filename);
         logger.info("[Delete] Request received: filename={}", filename);
         try {
             analyzerService.deleteFile(filename);
@@ -380,6 +431,7 @@ public class HeapDumpController {
     @GetMapping("/report/{filename:.+}/overview")
     @ResponseBody
     public ResponseEntity<String> overviewHtml(@PathVariable String filename) {
+        filename = FilenameValidator.validate(filename);
         HeapAnalysisResult r = analyzerService.getCachedResult(filename);
         return htmlResponse(r != null ? r.getOverviewHtml() : null);
     }
@@ -387,6 +439,7 @@ public class HeapDumpController {
     @GetMapping("/report/{filename:.+}/suspects")
     @ResponseBody
     public ResponseEntity<String> suspectsHtml(@PathVariable String filename) {
+        filename = FilenameValidator.validate(filename);
         HeapAnalysisResult r = analyzerService.getCachedResult(filename);
         return htmlResponse(r != null ? r.getSuspectsHtml() : null);
     }
@@ -394,6 +447,7 @@ public class HeapDumpController {
     @GetMapping("/report/{filename:.+}/top_components")
     @ResponseBody
     public ResponseEntity<String> topComponentsHtml(@PathVariable String filename) {
+        filename = FilenameValidator.validate(filename);
         HeapAnalysisResult r = analyzerService.getCachedResult(filename);
         return htmlResponse(r != null ? r.getTopComponentsHtml() : null);
     }
@@ -406,11 +460,12 @@ public class HeapDumpController {
             @PathVariable String filename,
             @RequestParam String className,
             @RequestParam(defaultValue = "-1") int index) {
+        filename = FilenameValidator.validate(filename);
         HeapAnalysisResult r = analyzerService.getCachedResult(filename);
         if (r == null || r.getComponentDetailHtmlMap() == null) {
             logger.warn("[ComponentDetail] Not found: file={}, className={}, index={}, reason={}",
                     filename, className, index,
-                    r == null ? "no cached result" : "componentDetailHtmlMap is null");
+                    r == null ? "no saved result" : "componentDetailHtmlMap is null");
             return ResponseEntity.notFound().build();
         }
 
@@ -442,6 +497,7 @@ public class HeapDumpController {
     @GetMapping("/report/{filename:.+}/component-list")
     @ResponseBody
     public ResponseEntity<List<String>> componentList(@PathVariable String filename) {
+        filename = FilenameValidator.validate(filename);
         HeapAnalysisResult r = analyzerService.getCachedResult(filename);
         if (r == null || r.getComponentDetailHtmlMap() == null)
             return ResponseEntity.ok(Collections.emptyList());
@@ -453,6 +509,7 @@ public class HeapDumpController {
     @GetMapping(value = "/report/{filename:.+}/thread-stacks", produces = MediaType.TEXT_PLAIN_VALUE)
     @ResponseBody
     public ResponseEntity<String> threadStacks(@PathVariable String filename) {
+        filename = FilenameValidator.validate(filename);
         logger.info("[ThreadStacks] Thread stacks requested for: {}", filename);
         HeapAnalysisResult r = analyzerService.getCachedResult(filename);
         if (r == null || r.getThreadStacksText() == null) {
@@ -472,6 +529,8 @@ public class HeapDumpController {
             @RequestParam String base,
             @RequestParam String target,
             Model model) {
+        base = FilenameValidator.validate(base);
+        target = FilenameValidator.validate(target);
 
         HeapAnalysisResult baseResult   = analyzerService.getCachedResult(base);
         HeapAnalysisResult targetResult = analyzerService.getCachedResult(target);
@@ -543,11 +602,11 @@ public class HeapDumpController {
         return ResponseEntity.ok(history);
     }
 
-    // ── [NEW] API: 전체 캐시 삭제 ────────────────────────────────
+    // ── [NEW] API: 전체 저장 결과 삭제 ─────────────────────────────
 
-    @PostMapping("/api/cache/clear")
+    @PostMapping({"/api/results/clear", "/api/cache/clear"})
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> clearAllCache() {
+    public ResponseEntity<Map<String, Object>> clearAllResults() {
         Set<String> keys = new HashSet<>(analyzerService.getCacheKeys());
         int cleared = 0;
         for (String key : keys) {
@@ -556,8 +615,8 @@ public class HeapDumpController {
         }
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("cleared", cleared);
-        resp.put("message", "Cleared cache for " + cleared + " files");
-        logger.info("All cache cleared: {} files", cleared);
+        resp.put("message", "Cleared results for " + cleared + " files");
+        logger.info("All saved results cleared: {} files", cleared);
         return ResponseEntity.ok(resp);
     }
 
@@ -576,6 +635,37 @@ public class HeapDumpController {
 
     // ── [NEW] API: 분석 큐 상태 ──────────────────────────────
 
+    // ── [NEW] API: 분석 전 힙 메모리 사전 체크 ─────────────────────
+
+    @GetMapping("/api/mat/heap-check")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> checkHeapBeforeAnalysis(@RequestParam String filename) {
+        filename = FilenameValidator.validate(filename);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        String safe = filename;
+
+        // 덤프 파일 크기 확인
+        File dumpFile = new File(analyzerService.getHeapDumpDirectory(), safe);
+        File tmpFile = new File(analyzerService.getHeapDumpDirectory() + "/tmp", safe);
+        File gzFile = new File(analyzerService.getHeapDumpDirectory(), safe + ".gz");
+
+        long dumpSize = 0;
+        if (tmpFile.exists()) dumpSize = tmpFile.length();
+        else if (dumpFile.exists()) dumpSize = dumpFile.length();
+        else if (gzFile.exists()) dumpSize = gzFile.length();  // 압축 파일은 원본보다 작지만 참고용
+
+        long matHeap = analyzerService.getMatHeapSize();
+        boolean warning = matHeap > 0 && dumpSize > 0 && dumpSize * 2 > matHeap;
+
+        resp.put("warning", warning);
+        resp.put("dumpSize", dumpSize);
+        resp.put("dumpSizeFormatted", formatBytes(dumpSize));
+        resp.put("recommendedHeap", formatBytes(dumpSize * 2));
+        resp.put("matHeap", matHeap);
+        resp.put("matHeapFormatted", matHeap > 0 ? formatBytes(matHeap) : "unknown");
+        return ResponseEntity.ok(resp);
+    }
+
     @GetMapping("/api/queue/status")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getQueueStatus() {
@@ -583,6 +673,67 @@ public class HeapDumpController {
         resp.put("queueSize", analyzerService.getQueueSize());
         resp.put("currentAnalysis", analyzerService.getCurrentAnalysisFilename());
         return ResponseEntity.ok(resp);
+    }
+
+    // ── [NEW] API: MAT 힙 메모리 설정 ─────────────────────────────
+
+    @GetMapping("/api/mat/heap")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getMatHeap() {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        String heapStr = analyzerService.getMatHeapSizeString();
+        long heapBytes = analyzerService.getMatHeapSize();
+        resp.put("heapSize", heapStr != null ? heapStr : "unknown");
+        resp.put("heapBytes", heapBytes);
+        resp.put("heapFormatted", heapBytes > 0 ? formatBytes(heapBytes) : "unknown");
+
+        String xmsStr = analyzerService.getMatInitialHeapSizeString();
+        long xmsBytes = analyzerService.getMatInitialHeapSize();
+        resp.put("xmsSize", xmsStr != null ? xmsStr : "none");
+        resp.put("xmsBytes", xmsBytes);
+        resp.put("xmsFormatted", xmsBytes > 0 ? formatBytes(xmsBytes) : "not set");
+
+        // 시스템 물리 메모리
+        try {
+            com.sun.management.OperatingSystemMXBean osBean =
+                    (com.sun.management.OperatingSystemMXBean) java.lang.management.ManagementFactory.getOperatingSystemMXBean();
+            long physMem = osBean.getTotalPhysicalMemorySize();
+            resp.put("physicalMemory", physMem);
+            resp.put("physicalMemoryFormatted", formatBytes(physMem));
+        } catch (Exception e) {
+            resp.put("physicalMemory", -1);
+            resp.put("physicalMemoryFormatted", "unknown");
+        }
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/api/mat/heap")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setMatHeap(
+            @RequestParam String size,
+            @RequestParam(required = false) String type) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (!size.matches("\\d+[mMgG]")) {
+            resp.put("error", "잘못된 형식입니다. 예: 4096m, 8g");
+            return ResponseEntity.badRequest().body(resp);
+        }
+        try {
+            if ("xms".equalsIgnoreCase(type)) {
+                analyzerService.setMatInitialHeapSize(size);
+                resp.put("message", "MAT 초기 힙 메모리가 -Xms" + size + "으로 변경되었습니다.");
+                logger.info("[Settings] MAT initial heap (-Xms) changed to: {}", size);
+            } else {
+                analyzerService.setMatHeapSize(size);
+                resp.put("message", "MAT 최대 힙 메모리가 -Xmx" + size + "으로 변경되었습니다.");
+                logger.info("[Settings] MAT max heap (-Xmx) changed to: {}", size);
+            }
+            resp.put("heapSize", size);
+            return ResponseEntity.ok(resp);
+        } catch (IOException e) {
+            resp.put("error", "설정 변경 실패: " + e.getMessage());
+            logger.error("[Settings] Failed to change MAT heap: {}", e.getMessage());
+            return ResponseEntity.status(500).body(resp);
+        }
     }
 
     // ── [NEW] API: 디스크 사용량 체크 ────────────────────────────
@@ -599,7 +750,7 @@ public class HeapDumpController {
             resp.put("totalSpace", formatBytes(totalSpace));
             resp.put("usableSpace", formatBytes(usableSpace));
             resp.put("usableSpaceBytes", usableSpace);
-            resp.put("warning", usagePercent >= 90);
+            resp.put("warning", usagePercent >= config.getDiskWarningUsagePercent());
         } else {
             resp.put("warning", false);
         }
@@ -613,16 +764,12 @@ public class HeapDumpController {
     public ResponseEntity<Map<String, Object>> getSettings() {
         Map<String, Object> settings = new LinkedHashMap<>();
         settings.put("keepUnreachableObjects", analyzerService.isKeepUnreachableObjects());
-        settings.put("heapDumpDirectory",      analyzerService.getHeapDumpDirectory());
-        settings.put("matCliPath",             analyzerService.getMatCliPath());
+        settings.put("heapDumpDirectory",      maskPath(analyzerService.getHeapDumpDirectory()));
         settings.put("cachedResults",          analyzerService.getCachedResultCount());
 
-        // System info
+        // System info (JVM runtime only — no OS/vendor details)
         Map<String, Object> system = new LinkedHashMap<>();
         system.put("javaVersion",  System.getProperty("java.version"));
-        system.put("javaVendor",   System.getProperty("java.vendor"));
-        system.put("osName",       System.getProperty("os.name"));
-        system.put("osArch",       System.getProperty("os.arch"));
         Runtime rt = Runtime.getRuntime();
         system.put("jvmMaxMemory",     formatBytes(rt.maxMemory()));
         system.put("jvmTotalMemory",   formatBytes(rt.totalMemory()));
@@ -631,29 +778,35 @@ public class HeapDumpController {
         system.put("availableProcessors", rt.availableProcessors());
         settings.put("system", system);
 
-        // Disk info
+        // Disk info (usage percentages only — no absolute capacity)
         Map<String, Object> disk = new LinkedHashMap<>();
         File dumpDir = new File(analyzerService.getHeapDumpDirectory());
         if (dumpDir.exists()) {
             disk.put("totalSpace",  formatBytes(dumpDir.getTotalSpace()));
-            disk.put("freeSpace",   formatBytes(dumpDir.getFreeSpace()));
+            disk.put("freeSpace",   formatBytes(dumpDir.getUsableSpace()));
             disk.put("usableSpace", formatBytes(dumpDir.getUsableSpace()));
-            long used = dumpDir.getTotalSpace() - dumpDir.getFreeSpace();
+            long used = dumpDir.getTotalSpace() - dumpDir.getUsableSpace();
             disk.put("usedSpace",   formatBytes(used));
             disk.put("usedPercent", dumpDir.getTotalSpace() > 0
                     ? Math.round(used * 100.0 / dumpDir.getTotalSpace()) : 0);
         }
         settings.put("disk", disk);
 
-        // MAT CLI status
+        // MAT CLI status (ready/status only — no path or file permission details)
         Map<String, Object> mat = new LinkedHashMap<>();
-        File matFile = new File(analyzerService.getMatCliPath());
-        mat.put("exists",     matFile.exists());
-        mat.put("executable", matFile.canExecute());
-        mat.put("readable",   matFile.canRead());
-        mat.put("path",       analyzerService.getMatCliPath());
+        mat.put("path",       maskPath(analyzerService.getMatCliPath()));
         mat.put("ready",      analyzerService.isMatCliReady());
         mat.put("statusMessage", analyzerService.getMatCliStatusMessage());
+        String matHeapStr = analyzerService.getMatHeapSizeString();
+        long matHeapBytes = analyzerService.getMatHeapSize();
+        mat.put("heapSize", matHeapStr != null ? matHeapStr : "unknown");
+        mat.put("heapBytes", matHeapBytes);
+        mat.put("heapFormatted", matHeapBytes > 0 ? formatBytes(matHeapBytes) : "unknown");
+        String matXmsStr = analyzerService.getMatInitialHeapSizeString();
+        long matXmsBytes = analyzerService.getMatInitialHeapSize();
+        mat.put("xmsSize", matXmsStr != null ? matXmsStr : "none");
+        mat.put("xmsBytes", matXmsBytes);
+        mat.put("xmsFormatted", matXmsBytes > 0 ? formatBytes(matXmsBytes) : "not set");
         settings.put("mat", mat);
 
         // File stats
@@ -668,6 +821,14 @@ public class HeapDumpController {
         settings.put("files", fileStats);
 
         return ResponseEntity.ok(settings);
+    }
+
+    /** 절대 경로를 마스킹하여 파일/디렉토리 이름만 반환 */
+    private String maskPath(String absolutePath) {
+        if (absolutePath == null || absolutePath.isEmpty()) return "-";
+        java.nio.file.Path p = java.nio.file.Paths.get(absolutePath);
+        java.nio.file.Path fileName = p.getFileName();
+        return fileName != null ? "***/" + fileName.toString() : "-";
     }
 
     // ── 내부 헬퍼 ─────────────────────────────────────────────────
@@ -687,11 +848,7 @@ public class HeapDumpController {
     }
 
     private String formatBytes(long bytes) {
-        if (bytes <= 0)                  return "0 B";
-        if (bytes < 1024)                return bytes + " B";
-        if (bytes < 1024 * 1024)         return String.format("%.1f KB", bytes / 1024.0);
-        if (bytes < 1024L * 1024 * 1024) return String.format("%.2f MB", bytes / (1024.0 * 1024));
-        return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
+        return FormatUtils.formatBytes(bytes);
     }
 
     private String formatDuration(long ms) {

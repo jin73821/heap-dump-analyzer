@@ -88,10 +88,6 @@ public class HeapAnalysisResult {
     }
 
     private String formatBytes(long bytes) {
-        if (bytes <= 0)                return "0 B";
-        if (bytes < 1024)              return bytes + " B";
-        if (bytes < 1024 * 1024)       return String.format("%.2f KB", bytes / 1024.0);
-        if (bytes < 1024L * 1024 * 1024) return String.format("%.2f MB", bytes / (1024.0 * 1024));
-        return String.format("%.2f GB", bytes / (1024.0 * 1024 * 1024));
+        return com.heapdump.analyzer.util.FormatUtils.formatBytes(bytes);
     }
 }

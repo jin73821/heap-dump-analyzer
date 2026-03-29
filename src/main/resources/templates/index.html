@@ -316,6 +316,10 @@
         .s-val { font-size: 13px; font-weight: 600; color: #1F2937; text-align: right;
                  word-break: break-all; min-width: 0; }
         .s-val-mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px; }
+        .s-edit-btn { width: 24px; height: 24px; border: 1px solid #E5E7EB; border-radius: 5px;
+                      background: transparent; cursor: pointer; font-size: 13px; color: #9CA3AF;
+                      display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+        .s-edit-btn:hover { border-color: #93C5FD; color: #2563EB; background: #EFF6FF; }
         .s-val-path { font-size: 12px; background: #F3F4F6; padding: 4px 10px; border-radius: 5px;
                       max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                       font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; }
@@ -494,10 +498,10 @@
         <span class="topbar-badge">v2.0 · MAT CLI</span>
     </div>
     <div class="topbar-right">
-        <button class="topbar-btn topbar-settings-btn" onclick="openSettingsModal()">
+        <a class="topbar-btn topbar-settings-btn" href="/settings">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:2px"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
             Settings
-        </button>
+        </a>
         <a class="topbar-btn" href="/">Refresh</a>
     </div>
 </header>
@@ -589,51 +593,25 @@
         </div>
 
         <div class="sidebar-section">
-            <div class="s-title">MAT Options</div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">Keep unreachable objects</div>
-                    <div class="setting-desc">Include GC-unreachable objects</div>
-                </div>
-                <div>
-                    <input type="checkbox" class="tog" id="togUR"
-                           th:checked="${matKeepUnreachable}"
-                           onchange="confirmKeepUnreachable(this)">
-                    <label class="tog-track" for="togUR"></label>
-                </div>
-            </div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">Auto-analyze on upload</div>
-                    <div class="setting-desc">Start analysis immediately</div>
-                </div>
-                <div>
-                    <input type="checkbox" class="tog" id="togAA"
-                           onchange="confirmAutoAnalyze(this)">
-                    <label class="tog-track" for="togAA"></label>
-                </div>
-            </div>
-            <div class="setting-row" style="margin-bottom:0;">
-                <div>
-                    <div class="setting-label">Cache results to disk</div>
-                    <div class="setting-desc">Persist across restarts</div>
-                </div>
-                <div>
-                    <input type="checkbox" class="tog" id="togCache" checked
-                           onchange="saveSetting('cacheResults',this.checked)">
-                    <label class="tog-track" for="togCache"></label>
-                </div>
-            </div>
-        </div>
-
-        <div class="sidebar-section">
-            <div class="s-title">Compare <span class="new-badge">New</span></div>
-            <button class="compare-btn" onclick="openCompare()">
+            <div class="s-title">Quick Actions</div>
+            <button class="compare-btn" onclick="openCompare()" style="margin-bottom:6px">
                 <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M2 7h10M9 4l3 3-3 3M5 4L2 7l3 3"/>
                 </svg>
                 Compare two dumps
             </button>
+            <button class="compare-btn" onclick="exportHistory()" style="margin-bottom:6px">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                Export history (JSON)
+            </button>
+            <a class="compare-btn" href="/settings" style="text-decoration:none;display:flex;align-items:center;gap:8px;justify-content:center">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/>
+                </svg>
+                Settings
+            </a>
         </div>
 
     </aside>
@@ -821,24 +799,6 @@
                 </div>
             </div>
 
-            <!-- Quick actions -->
-            <div class="panel full">
-                <div class="panel-ttl">Quick actions</div>
-                <div class="quick-grid">
-                    <button class="qa" onclick="openCompare()">
-                        <div class="qa-t">Compare dumps <span class="new-badge">New</span></div>
-                        <div class="qa-d">Diff two heap snapshots</div>
-                    </button>
-                    <button class="qa" onclick="exportHistory()">
-                        <div class="qa-t">Export history</div>
-                        <div class="qa-d">Download analysis log as JSON</div>
-                    </button>
-                    <button class="qa" onclick="clearAllCache()">
-                        <div class="qa-t">Clear all cache</div>
-                        <div class="qa-d">Remove all cached results</div>
-                    </button>
-                </div>
-            </div>
 
         </div>
     </main>
@@ -921,75 +881,6 @@
     </div>
 </div>
 
-<div class="modal-ov" id="clearCacheModal" onclick="if(event.target===this)closeClearCacheModal()">
-    <div class="modal">
-        <div class="modal-ttl">
-            Clear All Cache
-            <button class="modal-close" onclick="closeClearCacheModal()">&#215;</button>
-        </div>
-        <div class="modal-desc">All cached analysis results will be permanently deleted. You will need to re-analyze each heap dump file.</div>
-        <div style="background:#fef2f2;border-radius:8px;padding:12px 16px;margin-bottom:14px;border-left:4px solid #EF4444">
-            <div style="font-size:13px;color:#7f1d1d;display:flex;align-items:center;gap:8px">
-                <span style="font-size:18px">&#9888;</span>
-                <span>This action cannot be undone.</span>
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button class="btn-s" onclick="closeClearCacheModal()">Cancel</button>
-            <button class="btn-p" style="background:#EF4444" onmouseover="this.style.background='#DC2626'" onmouseout="this.style.background='#EF4444'" onclick="doClearAllCache()">Clear All</button>
-        </div>
-    </div>
-</div>
-
-<!-- Keep Unreachable Objects 경고 모달 -->
-<div class="modal-ov" id="keepUnreachableModal" onclick="if(event.target===this)closeKeepUnreachableModal()">
-    <div class="modal">
-        <div class="modal-ttl">
-            Keep Unreachable Objects
-            <button class="modal-close" onclick="closeKeepUnreachableModal()">&#215;</button>
-        </div>
-        <div class="modal-desc">이 옵션을 비활성화하면 GC에 의해 수집 가능한(unreachable) 객체가 분석에서 제외됩니다.</div>
-        <div style="background:#fffbeb;border-radius:8px;padding:12px 16px;margin-bottom:14px;border-left:4px solid #F59E0B">
-            <div style="font-size:13px;color:#92400e;line-height:1.7">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                    <span style="font-size:18px">&#9888;</span>
-                    <strong>메모리 분석 정확도가 저하될 수 있습니다.</strong>
-                </div>
-                <ul style="margin:0;padding-left:20px">
-                    <li>메모리 누수(Leak) 의심 객체를 탐지하지 못할 수 있습니다.</li>
-                    <li>불필요한 메모리 사용 패턴을 놓칠 수 있습니다.</li>
-                    <li>Heap 사용량이 실제보다 적게 보고될 수 있습니다.</li>
-                </ul>
-            </div>
-        </div>
-        <div style="font-size:12px;color:#6b7280;margin-bottom:14px">변경 사항은 다음 분석부터 적용됩니다.</div>
-        <div class="modal-footer">
-            <button class="btn-s" onclick="closeKeepUnreachableModal()">Cancel</button>
-            <button class="btn-p" style="background:#F59E0B" onmouseover="this.style.background='#D97706'" onmouseout="this.style.background='#F59E0B'" onclick="doDisableKeepUnreachable()">Disable</button>
-        </div>
-    </div>
-</div>
-
-<!-- Auto-Analyze 경고 모달 -->
-<div class="modal-ov" id="autoAnalyzeModal" onclick="if(event.target===this)closeAutoAnalyzeModal()">
-    <div class="modal">
-        <div class="modal-ttl">
-            Auto-Analyze on Upload
-            <button class="modal-close" onclick="closeAutoAnalyzeModal()">&#215;</button>
-        </div>
-        <div class="modal-desc">업로드 시 자동으로 MAT CLI 분석이 실행됩니다.</div>
-        <div style="background:#fffbeb;border-radius:8px;padding:12px 16px;margin-bottom:14px;border-left:4px solid #F59E0B">
-            <div style="font-size:13px;color:#92400e;display:flex;align-items:center;gap:8px">
-                <span style="font-size:18px">&#9888;</span>
-                <span>이 기능은 시스템에 부하를 줄 수 있습니다. 진행하시겠습니까?</span>
-            </div>
-        </div>
-        <div class="modal-footer">
-            <button class="btn-s" onclick="closeAutoAnalyzeModal()">Cancel</button>
-            <button class="btn-p" onclick="doEnableAutoAnalyze()">Enable</button>
-        </div>
-    </div>
-</div>
 
 <!-- 파일 삭제 확인 모달 -->
 <div class="modal-ov" id="deleteModal" onclick="if(event.target===this)closeDeleteModal()">
@@ -1018,174 +909,6 @@
     </div>
 </div>
 
-<!-- Settings Modal -->
-<div class="modal-ov" id="settingsModal" onclick="if(event.target===this)closeSettingsModal()">
-    <div class="modal settings-modal">
-        <div class="settings-header">
-            <div class="modal-ttl">
-                Settings &amp; System Info
-                <button class="modal-close" onclick="closeSettingsModal()">&#215;</button>
-            </div>
-            <div class="modal-desc">MAT 설정, 시스템 상태, API 엔드포인트를 확인합니다.</div>
-            <div class="settings-tabs">
-                <button class="settings-tab active" onclick="showSettingsTab('general',this)">General</button>
-                <button class="settings-tab" onclick="showSettingsTab('system',this)">System</button>
-                <button class="settings-tab" onclick="showSettingsTab('api',this)">API</button>
-            </div>
-        </div>
-
-        <div class="settings-body">
-            <!-- General Tab -->
-            <div id="stab-general" class="settings-panel active">
-                <div class="s-group">
-                    <div class="s-group-title">MAT Configuration</div>
-                    <div class="s-row">
-                        <span class="s-key">MAT CLI Path</span>
-                        <span class="s-val s-val-path" id="sMatPath">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">MAT CLI Status</span>
-                        <span id="sMatStatus" class="s-status">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">Keep Unreachable Objects</span>
-                        <span id="sKeepUnreachable" class="s-val">-</span>
-                    </div>
-                </div>
-                <div class="s-group">
-                    <div class="s-group-title">Storage</div>
-                    <div class="s-row">
-                        <span class="s-key">Heap Dump Directory</span>
-                        <span class="s-val s-val-path" id="sDumpDir">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">Cached Results</span>
-                        <span class="s-val s-val-mono" id="sCachedResults">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">Total Files</span>
-                        <span class="s-val s-val-mono" id="sTotalFiles">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">Total Dump Size</span>
-                        <span class="s-val s-val-mono" id="sTotalDumpSize">-</span>
-                    </div>
-                </div>
-                <div class="s-group">
-                    <div class="s-group-title">Disk Usage</div>
-                    <div class="s-row">
-                        <span class="s-key">Used / Total</span>
-                        <span class="s-val s-val-mono" id="sDiskUsed">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">Free Space</span>
-                        <span class="s-val s-val-mono" id="sDiskFree">-</span>
-                    </div>
-                    <div class="s-row" style="padding-top:4px">
-                        <span class="s-key">Usage</span>
-                        <div style="display:flex;align-items:center;gap:8px">
-                            <div class="s-meter">
-                                <div class="s-meter-track"><div class="s-meter-fill" id="sDiskBar" style="width:0%;background:#2563EB"></div></div>
-                            </div>
-                            <span class="s-val s-val-mono" id="sDiskPct" style="min-width:36px;text-align:right">-</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- System Tab -->
-            <div id="stab-system" class="settings-panel">
-                <div class="s-group">
-                    <div class="s-group-title">Java Runtime</div>
-                    <div class="s-row">
-                        <span class="s-key">Java Version</span>
-                        <span class="s-val s-val-mono" id="sJavaVer">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">Java Vendor</span>
-                        <span class="s-val" id="sJavaVendor">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">OS</span>
-                        <span class="s-val" id="sOs">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">CPU Cores</span>
-                        <span class="s-val s-val-mono" id="sCpuCores">-</span>
-                    </div>
-                </div>
-                <div class="s-group">
-                    <div class="s-group-title">JVM Memory</div>
-                    <div class="s-row">
-                        <span class="s-key">Max Memory</span>
-                        <span class="s-val s-val-mono" id="sJvmMax">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">Used Memory</span>
-                        <span class="s-val s-val-mono" id="sJvmUsed">-</span>
-                    </div>
-                    <div class="s-row">
-                        <span class="s-key">Free Memory</span>
-                        <span class="s-val s-val-mono" id="sJvmFree">-</span>
-                    </div>
-                    <div class="s-row" style="padding-top:4px">
-                        <span class="s-key">JVM Usage</span>
-                        <div style="display:flex;align-items:center;gap:8px">
-                            <div class="s-meter">
-                                <div class="s-meter-track"><div class="s-meter-fill" id="sJvmBar" style="width:0%;background:#7c3aed"></div></div>
-                            </div>
-                            <span class="s-val s-val-mono" id="sJvmPct" style="min-width:36px;text-align:right">-</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- API Tab -->
-            <div id="stab-api" class="settings-panel">
-                <div class="s-group">
-                    <div class="s-group-title">Available Endpoints</div>
-                    <div class="s-api-card">
-                        <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/api/settings</span>
-                            <button class="s-copy-btn" onclick="copyApi('/api/settings')">Copy</button></div>
-                        <div class="s-api-desc">현재 설정, 시스템 정보, 디스크 상태를 JSON으로 반환</div>
-                    </div>
-                    <div class="s-api-card">
-                        <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/api/history</span>
-                            <button class="s-copy-btn" onclick="copyApi('/api/history')">Copy</button></div>
-                        <div class="s-api-desc">전체 파일의 분석 히스토리를 JSON 배열로 반환</div>
-                    </div>
-                    <div class="s-api-card">
-                        <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/api/settings/unreachable?enabled=true|false</span></div>
-                        <div class="s-api-desc">keep_unreachable_objects 옵션을 런타임에 변경</div>
-                    </div>
-                    <div class="s-api-card">
-                        <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/api/cache/clear</span></div>
-                        <div class="s-api-desc">모든 캐시된 분석 결과를 삭제</div>
-                    </div>
-                    <div class="s-api-card">
-                        <div><span class="s-api-method s-api-post">POST</span><span class="s-api-path">/upload</span></div>
-                        <div class="s-api-desc">힙 덤프 파일 업로드 (multipart/form-data, field: file)</div>
-                    </div>
-                    <div class="s-api-card">
-                        <div><span class="s-api-method s-api-get">GET</span><span class="s-api-path">/download/{filename}</span></div>
-                        <div class="s-api-desc">힙 덤프 원본 파일 다운로드</div>
-                    </div>
-                </div>
-                <div class="s-group">
-                    <div class="s-group-title">Raw JSON</div>
-                    <div style="text-align:center">
-                        <button class="s-copy-btn" style="padding:6px 14px" onclick="window.open('/api/settings','_blank')">Open /api/settings in new tab</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="settings-footer">
-            <button class="s-refresh" onclick="loadSettingsData()">&#8635; Refresh</button>
-            <button class="btn-s" onclick="closeSettingsModal()">Close</button>
-        </div>
-    </div>
-</div>
 
 <script>
 /* ── Mobile sidebar toggle ─────────────────────── */
@@ -1351,43 +1074,15 @@ function startUpload(file) {
     xhr.send(new FormData(uploadForm));
 }
 
-function confirmKeepUnreachable(el) {
-    if (!el.checked) {
-        el.checked = true;
-        document.getElementById('keepUnreachableModal').classList.add('open');
-    } else {
-        saveSetting('keepUnreachable', true);
-    }
-}
-function closeKeepUnreachableModal() {
-    document.getElementById('keepUnreachableModal').classList.remove('open');
-}
-function doDisableKeepUnreachable() {
-    closeKeepUnreachableModal();
-    document.getElementById('togUR').checked = false;
-    saveSetting('keepUnreachable', false);
-}
-
-function confirmAutoAnalyze(el) {
-    if (el.checked) {
-        el.checked = false;
-        document.getElementById('autoAnalyzeModal').classList.add('open');
-    } else {
-        saveSetting('autoAnalyze', false);
-    }
-}
-function closeAutoAnalyzeModal() {
-    document.getElementById('autoAnalyzeModal').classList.remove('open');
-}
-function doEnableAutoAnalyze() {
-    closeAutoAnalyzeModal();
-    document.getElementById('togAA').checked = true;
-    saveSetting('autoAnalyze', true);
-}
 function showDeleteModal(filename, url) {
     document.getElementById('delModalFilename').textContent = filename;
-    document.getElementById('delModalBtn').onclick = function() { location.href = url; };
+    document.getElementById('delModalBtn').onclick = function() { postRedirect(url); };
     document.getElementById('deleteModal').classList.add('open');
+}
+function postRedirect(url) {
+    var f = document.createElement('form');
+    f.method = 'POST'; f.action = url; f.style.display = 'none';
+    document.body.appendChild(f); f.submit();
 }
 function closeDeleteModal() {
     document.getElementById('deleteModal').classList.remove('open');
@@ -1451,18 +1146,6 @@ function doExportHistory() {
         a.click();
     }).catch(()=>toast('No history available','error'));
 }
-function clearAllCache() {
-    document.getElementById('clearCacheModal').classList.add('open');
-}
-function closeClearCacheModal() {
-    document.getElementById('clearCacheModal').classList.remove('open');
-}
-function doClearAllCache() {
-    closeClearCacheModal();
-    fetch('/api/cache/clear',{method:'POST'})
-        .then(r=>r.ok?location.reload():toast('Failed','error'))
-        .catch(()=>toast('Error','error'));
-}
 
 function fmtB(b) {
     if (b<1024) return b+' B';
@@ -1483,7 +1166,7 @@ function toast(msg,type) {
     setTimeout(()=>{t.style.opacity='0';},3500);
     setTimeout(()=>t.remove(),4000);
 }
-document.addEventListener('keydown', e => { if(e.key==='Escape') { closeCompare(); closeSettingsModal(); } });
+document.addEventListener('keydown', e => { if(e.key==='Escape') { closeCompare(); } });
 
 /* ── Queue Status ──────────────────────────── */
 var _queuePollTimer = null;
@@ -1586,90 +1269,10 @@ function stopQueuePolling() {
 // 페이지 로드 시 큐 상태 확인
 refreshQueueStatus();
 
-/* ── Settings Modal ─────────────────────────── */
-function openSettingsModal() {
-    document.getElementById('settingsModal').classList.add('open');
-    loadSettingsData();
-}
-function closeSettingsModal() {
-    document.getElementById('settingsModal').classList.remove('open');
-}
-function showSettingsTab(tab, btn) {
-    document.querySelectorAll('.settings-panel').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-    document.getElementById('stab-' + tab).classList.add('active');
-    btn.classList.add('active');
-}
-function loadSettingsData() {
-    fetch('/api/settings').then(r => r.json()).then(d => {
-        // General tab
-        document.getElementById('sMatPath').textContent = d.mat.path || '-';
-        document.getElementById('sMatPath').title = d.mat.path || '';
-        var matOk = d.mat.ready;
-        var matEl = document.getElementById('sMatStatus');
-        matEl.className = 's-status ' + (matOk ? 's-status-ok' : 's-status-err');
-        matEl.textContent = matOk ? 'Ready' : (d.mat.statusMessage || 'Not available');
-        matEl.title = d.mat.statusMessage || '';
-        document.getElementById('sKeepUnreachable').textContent = d.keepUnreachableObjects ? 'Enabled' : 'Disabled';
-        document.getElementById('sKeepUnreachable').style.color = d.keepUnreachableObjects ? '#059669' : '#6B7280';
-        document.getElementById('sDumpDir').textContent = d.heapDumpDirectory;
-        document.getElementById('sDumpDir').title = d.heapDumpDirectory;
-        document.getElementById('sCachedResults').textContent = d.cachedResults;
-        if (d.files) {
-            document.getElementById('sTotalFiles').textContent = d.files.totalFiles;
-            document.getElementById('sTotalDumpSize').textContent = d.files.totalSize;
-        }
-        if (d.disk) {
-            document.getElementById('sDiskUsed').textContent = (d.disk.usedSpace||'-') + ' / ' + (d.disk.totalSpace||'-');
-            document.getElementById('sDiskFree').textContent = d.disk.freeSpace || '-';
-            var pct = d.disk.usedPercent || 0;
-            document.getElementById('sDiskPct').textContent = pct + '%';
-            var bar = document.getElementById('sDiskBar');
-            bar.style.width = pct + '%';
-            bar.style.background = pct > 90 ? '#DC2626' : pct > 70 ? '#D97706' : '#2563EB';
-        }
-        // System tab
-        if (d.system) {
-            document.getElementById('sJavaVer').textContent = d.system.javaVersion || '-';
-            document.getElementById('sJavaVendor').textContent = d.system.javaVendor || '-';
-            document.getElementById('sOs').textContent = (d.system.osName||'') + ' ' + (d.system.osArch||'');
-            document.getElementById('sCpuCores').textContent = d.system.availableProcessors || '-';
-            document.getElementById('sJvmMax').textContent = d.system.jvmMaxMemory || '-';
-            document.getElementById('sJvmUsed').textContent = d.system.jvmUsedMemory || '-';
-            document.getElementById('sJvmFree').textContent = d.system.jvmFreeMemory || '-';
-            // compute JVM usage percent
-            var maxStr = d.system.jvmMaxMemory || '';
-            var usedStr = d.system.jvmUsedMemory || '';
-            var totalStr = d.system.jvmTotalMemory || '';
-            // approximate from formatted strings isn't great, so use raw
-            // We parse approximate values
-            var totalMem = parseMemStr(totalStr);
-            var usedMem = parseMemStr(usedStr);
-            var jvmPct = totalMem > 0 ? Math.round(usedMem * 100 / totalMem) : 0;
-            document.getElementById('sJvmPct').textContent = jvmPct + '%';
-            var jvmBar = document.getElementById('sJvmBar');
-            jvmBar.style.width = jvmPct + '%';
-            jvmBar.style.background = jvmPct > 85 ? '#DC2626' : jvmPct > 60 ? '#D97706' : '#7c3aed';
-        }
-    }).catch(() => toast('Failed to load settings', 'error'));
-}
-function parseMemStr(s) {
-    if (!s) return 0;
-    var m = s.match(/([\d.]+)\s*(GB|MB|KB|B)/i);
-    if (!m) return 0;
-    var v = parseFloat(m[1]);
-    switch(m[2].toUpperCase()) {
-        case 'GB': return v * 1073741824;
-        case 'MB': return v * 1048576;
-        case 'KB': return v * 1024;
-        default: return v;
-    }
-}
-function copyApi(path) {
-    var url = location.origin + path;
-    navigator.clipboard.writeText(url).then(() => toast('Copied: ' + url, 'success'))
-        .catch(() => { toast('Copy failed', 'error'); });
-}
+/* ── Settings (now separate page) ──────────────── */
+function openSettingsModal() { window.location.href = '/settings'; }
+function closeSettingsModal() {}
+function loadSettingsData() {}
 </script>
 </body>
 </html>

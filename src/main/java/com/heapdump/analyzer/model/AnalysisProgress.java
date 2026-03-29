@@ -110,6 +110,19 @@ public class AnalysisProgress {
         return p;
     }
 
+    /** 경고 메시지 (분석은 계속 진행) */
+    private String warningMessage;
+
+    public static AnalysisProgress warning(String filename, String warningMessage) {
+        AnalysisProgress p = new AnalysisProgress();
+        p.filename       = filename;
+        p.status         = Status.RUNNING;
+        p.percent        = 8;
+        p.message        = "경고 확인 중...";
+        p.warningMessage = warningMessage;
+        return p;
+    }
+
     public static AnalysisProgress error(String filename, String errorMessage) {
         AnalysisProgress p = new AnalysisProgress();
         p.filename     = filename;
