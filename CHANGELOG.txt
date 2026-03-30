@@ -3,6 +3,198 @@
 ================================================================================
 
 ────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  application.properties ↔ settings.json 동기화
+────────────────────────────────────────────────────────────────────────────────
+
+[service/HeapDumpAnalyzerService.java]
+- syncApplicationProperties() 추가: 런타임 설정 변경 시 application.properties도 동기화
+- findExternalPropertiesFile() 추가: JAR 디렉토리 → 소스 디렉토리 순으로 탐색
+- 줄 단위 치환으로 주석/포맷 보존하며 해당 키 값만 교체
+- persistSettings(), loadPersistedSettings() 양쪽에서 호출
+- 동기화 대상: mat.keep.unreachable.objects, analysis.compress-after-analysis
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  MAT CLI 출력물(ZIP/인덱스) tmp 디렉토리 탐색 누락 수정
+────────────────────────────────────────────────────────────────────────────────
+
+[service/HeapDumpAnalyzerService.java]
+- moveZipsToResultDir(): MAT CLI가 tmp에서 실행되므로 ZIP이 tmp에 생성됨
+  → tmp + 루트 디렉토리 모두 탐색하도록 변경
+- moveArtifactsToResultDir(): 동일하게 tmp + 루트 탐색으로 변경
+- 원인: 디렉토리 구조 개편으로 MAT CLI 실행 위치가 변경되었으나
+  ZIP/인덱스 파일 수집 로직이 기존 루트만 탐색하여 "Heap data not available" 발생
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  힙덤프 파일 보호 — 디렉토리 구조 개편 + 압축 검증 + 설정 UI
+────────────────────────────────────────────────────────────────────────────────
+
+[디렉토리 구조]
+- /opt/heapdumps/dumpfiles/ 신규: 원본 힙덤프 저장 (업로드, 감지 대상)
+- data/, tmp/ 역할 기존 유지
+- 기동 시 루트의 .hprof/.bin/.dump 파일 → dumpfiles/ 자동 마이그레이션
+
+[service/HeapDumpAnalyzerService.java]
+- 업로드: tmp/ → dumpfiles/로 변경
+- 분석: dumpfiles/ → tmp/ copy → MAT CLI → tmp 삭제 (원본 안전)
+- 디스크 여유 공간 체크: tmp copy 전 sourceSize*2 이상 확인
+- compressDumpFile() .gz 검증 강화 (0바이트 방지, 검증 실패 시 원본 보존)
+- compressAfterAnalysis 설정으로 압축 ON/OFF 제어 (settings.json 영속)
+- listFiles()에서 cleanupDuplicateGzFiles 호출 제거 (레이스 컨디션 방지)
+- deleteFile(), deleteHistory(), getFile() → dumpfiles/ 기준 + 레거시 fallback
+
+[model/HeapDumpFile.java] compressed, originalSize, compressedSize 필드 추가
+[model/HeapAnalysisResult.java] originalFileSize 필드 추가
+[config/HeapDumpConfig.java] getDumpFilesDirectory(), compress-after-analysis 설정
+[controller/HeapDumpController.java] POST /api/settings/compress API 추가
+[templates/settings.html] "Compress after analysis" 토글 스위치 추가
+[templates/index.html] 파일 목록에 압축 상태 (GZ 배지 + 원본/압축 크기) 표시
+[application.properties] analysis.compress-after-analysis=true 추가
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  analyze.html Re-Analyze 버튼 크기 통일
+────────────────────────────────────────────────────────────────────────────────
+
+[templates/analyze.html]
+- 헤더 .btn-sm에 line-height, box-sizing, font-family 추가
+- 본문 에러 영역 Re-Analyze <button>과 Back to Home <a> 버튼에도 동일 속성 적용
+- 분석 실패 시 <form><button>과 <a> 태그 버튼 크기 통일
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  대기열 취소 — 전용 Cancel API + 모달 UI 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[controller/HeapDumpController.java]
+- POST /api/analyze/cancel/{filename} 엔드포인트 추가
+
+[service/HeapDumpAnalyzerService.java]
+- activeTasks(ConcurrentHashMap) 맵으로 분석 Future 추적
+- cancelAnalysis(filename) 메서드: 맵에서 Future 조회 → cancel(true) 호출
+- analyzeWithProgress: Future를 맵에 저장, finally에서 제거
+
+[templates/progress.html]
+- 대기열 상태에서 취소 시 모달("대기열에서 제거하고 취소하시겠습니까?") 표시
+- 모달 확인 시 POST /api/analyze/cancel API 호출로 서버 측 즉시 취소
+- RUNNING 상태에서는 기존 confirm 다이얼로그 유지
+- _isQueued 플래그로 QUEUED/RUNNING 상태 추적
+- 힙 경고 모달용 cancelAnalysis()를 cancelHeapWarnModal()로 분리
+  (동일 함수명 중복 정의로 후자가 전자를 덮어써 모달/API 호출 불가했던 버그 수정)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  대기열 취소 시 태스크가 큐에 남는 버그 수정
+────────────────────────────────────────────────────────────────────────────────
+
+[service/HeapDumpAnalyzerService.java]
+- sendProgress()에서 IOException 발생 시 스레드 인터럽트 누락 수정
+- 기존: IllegalStateException만 인터럽트, IOException은 debug 로그만 남김
+  → 클라이언트 disconnect 후에도 세마포어 대기 루프가 중단되지 않아 큐에 잔류
+- 수정: 모든 SSE 전송 실패를 disconnect로 간주하고 즉시 인터럽트
+  → 세마포어 대기 루프의 tryAcquire()가 InterruptedException 발생 → finally에서 queueSize 감소
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  분석 스레드 풀 개선 — MAT 출력 리더 분리 + 설정 외부화
+────────────────────────────────────────────────────────────────────────────────
+
+[config/HeapDumpConfig.java]
+- 분석 스레드 풀 설정 3개 추가 (core-size, max-size, queue-capacity)
+- @PostConstruct에서 설정값 검증 (core < 3 경고, max < core 보정)
+
+[service/HeapDumpAnalyzerService.java]
+- executor를 하드코딩(core=2,max=4,queue=8)에서 application.properties 기반으로 변경
+- MAT CLI 출력 리더를 CompletableFuture.runAsync(executor)에서 전용 데몬 스레드로 분리
+  → 근본 원인: MAT 리더가 executor core 스레드를 점유하여 대기 태스크가 실행 불가였음
+- RejectedExecutionHandler에 스레드 풀 고갈 에러 로그 추가
+  (active/poolSize/queueSize/completedTasks 출력 + CallerRuns 대체 실행)
+
+[application.properties]
+- analysis.thread-pool.core-size=3 (기본값, 최소 3 권장)
+- analysis.thread-pool.max-size=5
+- analysis.thread-pool.queue-capacity=12
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  히스토리 삭제 시 힙덤프 파일 삭제 선택 옵션 추가
+────────────────────────────────────────────────────────────────────────────────
+
+[templates/history.html]
+- 삭제 모달에 "힙덤프 파일도 함께 삭제" 체크박스 추가
+- 기본 동작: 분석 결과 데이터만 삭제 (힙덤프 파일 보존)
+- 체크 시: 힙덤프 파일(.hprof, .gz, tmp)도 함께 삭제
+- 힙덤프 파일이 이미 삭제된 경우 체크박스 자동 숨김
+
+[controller/HeapDumpController.java]
+- /history/delete 엔드포인트에 deleteHeapDump 파라미터 추가 (기본값 false)
+
+[service/HeapDumpAnalyzerService.java]
+- deleteHistory() 메서드에 deleteHeapDump 파라미터 추가
+- deleteHeapDump=false면 힙덤프 파일 삭제 단계 스킵
+- MAT 인덱스 파일 삭제 시 힙덤프 파일 확장자(.hprof, .bin, .dump, .gz) 제외 필터 추가
+  (기존: baseName.* 패턴이 힙덤프 파일까지 매칭하여 의도치 않은 삭제 발생)
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  대기열 알림 지연 수정
+────────────────────────────────────────────────────────────────────────────────
+
+[service/HeapDumpAnalyzerService.java]
+- 대기열 진입 시 첫 QUEUED SSE 메시지를 즉시 전송하도록 수정
+- 기존: tryAcquire(3초) 타임아웃 후에야 첫 QUEUED 알림 전송 → 최대 3초 지연
+- 수정: 세마포어 획득 실패 직후 즉시 QUEUED 메시지 전송, 이후 3초 간격 갱신 유지
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  KnownLibrary 규칙 대폭 확장 (17개 → 56개)
+────────────────────────────────────────────────────────────────────────────────
+
+[util/LeakSuspectAdvisor.java]
+- KnownLibrary 규칙 39개 추가 (총 56개):
+  · APM: Datadog, Pinpoint, Micrometer
+  · WAS: WebLogic, WebSphere, JBoss/WildFly, Undertow
+  · 한국형 프레임워크: WebSquare(인스웨이브), Inswave, ProWorks, WMatrix
+  · ORM: MyBatis, EclipseLink, jOOQ
+  · DB 드라이버: MySQL, Oracle, PostgreSQL, Tibero(TmaxSoft)
+  · 커넥션 풀: DBCP, Tomcat DBCP, C3P0
+  · 캐시: Ehcache, Caffeine, Hazelcast
+  · 메시징: Kafka, RabbitMQ, LMAX Disruptor
+  · Redis/NoSQL: Jedis, Lettuce, MongoDB
+  · HTTP 클라이언트: Apache HttpClient, OkHttp
+  · DI/직렬화: Google Guice, Guava, Gson
+  · 리액티브/gRPC: Project Reactor, gRPC
+  · JDK: NIO Buffer
+
+────────────────────────────────────────────────────────────────────────────────
+ 2026-03-30  Leak Suspects 지능형 분석 시스템 구현
+────────────────────────────────────────────────────────────────────────────────
+
+[model/LeakSuspect.java]
+- category, explanation, advice, severity 필드 추가
+- @AllArgsConstructor 제거, 명시적 2인자 생성자 유지 (기존 호환)
+- @JsonIgnoreProperties(ignoreUnknown = true) 추가 (기존 캐시 호환)
+
+[util/LeakSuspectAdvisor.java] (신규 → 전면 재작성)
+- MAT 텍스트에서 구조화된 정보를 추출하는 SuspectContext 파서:
+  · 인스턴스 수, 클래스명(FQ/단순), ClassLoader, 메모리 크기/비율
+  · 축적 대상 클래스(accumulator), 참조 출처(referenced from)
+- 알려진 라이브러리 자동 감지 (KnownLibrary, 16개 규칙):
+  · APM: New Relic, Dynatrace
+  · WAS: JEUS, Apache Tomcat
+  · ORM: Hibernate
+  · Framework: Spring, Netty, Jackson, Elasticsearch
+  · Connection Pool: HikariCP
+  · Logging: Log4j, Logback
+  · JDK: ZipFile, Reflection, Class 메타데이터
+- 동적 설명 생성: 실제 클래스명, 인스턴스 수, 메모리 비율, 축적 대상을 설명에 삽입
+- 심각도 자동 산정: critical(≥50%), high(≥25%), medium(≥10%), low(<10%)
+- fallback: 기존 키워드 규칙 8개 + 동적 컨텍스트 보강 (enrichExplanation)
+
+[parser/MatReportParser.java]
+- parseSuspectsZip()에서 LeakSuspect 생성 후 LeakSuspectAdvisor.analyze() 호출
+- primary/fallback 모두 advisor 연동
+
+[templates/analyze.html]
+- severity 기반 동적 색상: critical(암적색), high(빨강), medium(주황), low(녹색)
+  · severity가 null이면 기존 position 기반 fallback (이전 캐시 호환)
+- suspect-header에 카테고리 뱃지(파란색 라벨) 추가
+- suspect-body에 분석 설명 박스(파란 배경) + 권장 조치 박스(녹색 배경) 추가
+- CSS: .severity-critical, .suspect-category, .suspect-explanation, .suspect-advice 등
+
+────────────────────────────────────────────────────────────────────────────────
  2026-03-29  settings.json 방어 로직 강화
 ────────────────────────────────────────────────────────────────────────────────
 

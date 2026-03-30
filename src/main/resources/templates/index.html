@@ -547,14 +547,17 @@
                 <div class="file-info">
                     <div class="fname" th:text="${file.name}">dump.hprof</div>
                     <div class="fmeta">
-                        <span th:text="${file.formattedSize}">157 MB</span>
+                        <span th:if="${file.compressed}" style="color:#8B5CF6;font-weight:600" th:text="'GZ ' + ${file.formattedCompressedSize}" th:title="'원본 ' + ${file.formattedOriginalSize} + ' → 압축 ' + ${file.formattedCompressedSize}">GZ 45MB</span>
+                        <span th:if="${!file.compressed}" th:text="${file.formattedSize}">157 MB</span>
                         &middot;
                         <span th:text="${file.formattedDate}">03-18</span>
                     </div>
                 </div>
                 <div class="fname-tooltip">
                     <div class="tt-row"><span class="tt-label">File</span><span class="tt-val" th:text="${file.name}">dump.hprof</span></div>
-                    <div class="tt-row"><span class="tt-label">Size</span><span class="tt-val" th:text="${file.formattedSize}">157 MB</span></div>
+                    <div class="tt-row" th:if="${file.compressed}"><span class="tt-label">Original</span><span class="tt-val" th:text="${file.formattedOriginalSize}">997 MB</span></div>
+                    <div class="tt-row" th:if="${file.compressed}"><span class="tt-label">Compressed</span><span class="tt-val" th:text="${file.formattedCompressedSize}">45 MB</span></div>
+                    <div class="tt-row" th:if="${!file.compressed}"><span class="tt-label">Size</span><span class="tt-val" th:text="${file.formattedSize}">157 MB</span></div>
                     <div class="tt-row"><span class="tt-label">Date</span><span class="tt-val" th:text="${file.formattedDate}">03-18</span></div>
                     <div class="tt-row"><span class="tt-label">Status</span>
                         <span class="tt-val" th:if="${analyzedFiles.contains(file.name)}" style="color:#6ee7b7">Analyzed</span>
@@ -770,13 +773,10 @@
                         <a th:if="${ra.status == 'SUCCESS'}"
                            th:href="@{/analyze/result/{f}(f=${ra.filename})}"
                            class="ra-name" th:text="${ra.filename}" style="color:#2563EB;text-decoration:none;">dump.hprof</a>
-                        <!-- ERROR + 파일 존재: 재분석 가능 -->
-                        <a th:if="${ra.status == 'ERROR' and !ra.fileDeleted}"
-                           th:href="@{/analyze/{f}(f=${ra.filename})}"
+                        <!-- ERROR: 에러 결과 페이지 링크 -->
+                        <a th:if="${ra.status == 'ERROR'}"
+                           th:href="@{/analyze/result/{f}(f=${ra.filename})}"
                            class="ra-name" th:text="${ra.filename}" style="color:#EF4444;text-decoration:none;">dump.hprof</a>
-                        <!-- ERROR + 파일 삭제됨: 링크 없이 텍스트만 -->
-                        <span th:if="${ra.status == 'ERROR' and ra.fileDeleted}"
-                              class="ra-name" th:text="${ra.filename}" style="color:#EF4444;">dump.hprof</span>
                         <span class="ra-badge ra-ok" th:if="${ra.status == 'SUCCESS'}">success</span>
                         <span class="ra-badge ra-err" th:if="${ra.status == 'ERROR'}">failed</span>
                         <span class="ra-badge ra-del" th:if="${ra.fileDeleted}">deleted</span>

@@ -86,6 +86,10 @@
         .modal-del-badge { font-size: 10px; padding: 2px 7px; border-radius: 20px;
                            background: #FEE2E2; color: #991B1B; font-weight: 500; white-space: nowrap; }
         .modal-warn { font-size: 11px; color: #EF4444; margin-bottom: 16px; }
+        .modal-chk { display: flex; align-items: center; gap: 7px; margin: 10px 0 6px;
+                     font-size: 12px; color: #374151; cursor: pointer; user-select: none; }
+        .modal-chk input[type=checkbox] { width: 15px; height: 15px; accent-color: #EF4444; cursor: pointer; }
+        .modal-chk-desc { font-size: 11px; color: #9CA3AF; margin: 0 0 10px 22px; }
         .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
         .modal-btns button { font-size: 13px; padding: 7px 16px; border-radius: 7px; border: none;
                              cursor: pointer; font-weight: 500; }
@@ -143,13 +147,10 @@
                 <a th:if="${h.status == 'SUCCESS'}"
                    th:href="@{/analyze/result/{f}(f=${h.filename})}"
                    class="hi-name hi-name-link" th:text="${h.filename}">dump.hprof</a>
-                <!-- ERROR + 파일 존재: 재분석 링크 -->
-                <a th:if="${h.status == 'ERROR' and !h.fileDeleted}"
-                   th:href="@{/analyze/{f}(f=${h.filename})}"
+                <!-- ERROR: 에러 결과 페이지 링크 -->
+                <a th:if="${h.status == 'ERROR'}"
+                   th:href="@{/analyze/result/{f}(f=${h.filename})}"
                    class="hi-name hi-name-err" th:text="${h.filename}">dump.hprof</a>
-                <!-- ERROR + 파일 삭제됨: 텍스트만 -->
-                <span th:if="${h.status == 'ERROR' and h.fileDeleted}"
-                      class="hi-name hi-name-plain" th:text="${h.filename}">dump.hprof</span>
                 <span class="hi-badge hb-ok" th:if="${h.status == 'SUCCESS'}">success</span>
                 <span class="hi-badge hb-err" th:if="${h.status == 'ERROR'}">failed</span>
                 <span class="hi-badge hb-del" th:if="${h.fileDeleted}">deleted</span>
@@ -188,11 +189,16 @@
 <div class="modal-ov" id="deleteModal">
     <div class="modal-box">
         <div class="modal-ttl">히스토리 삭제</div>
-        <div class="modal-msg">이 분석 히스토리를 삭제하시겠습니까?<br>힙덤프 파일과 분석 결과가 모두 삭제됩니다.</div>
+        <div class="modal-msg">이 분석 히스토리를 삭제하시겠습니까?<br>분석 결과 데이터가 삭제됩니다.</div>
         <div class="modal-fname">
             <span id="deleteFileName"></span>
             <span class="modal-del-badge" id="deleteFileBadge" style="display:none">힙덤프 파일 이미 삭제됨</span>
         </div>
+        <label class="modal-chk" id="deleteHeapDumpLabel">
+            <input type="checkbox" id="deleteHeapDumpChk">
+            힙덤프 파일도 함께 삭제
+        </label>
+        <div class="modal-chk-desc" id="deleteHeapDumpDesc">원본 힙덤프 파일(.hprof)을 함께 삭제합니다.</div>
         <div class="modal-warn">⚠ 이 작업은 되돌릴 수 없습니다.</div>
         <div class="modal-btns">
             <button class="mbtn-cancel" onclick="closeDeleteModal()">취소</button>
@@ -207,12 +213,30 @@ function openDeleteModal(filename, fileDeleted) {
     _delFilename = filename;
     document.getElementById('deleteFileName').textContent = filename;
     document.getElementById('deleteFileBadge').style.display = fileDeleted ? '' : 'none';
+    var chkLabel = document.getElementById('deleteHeapDumpLabel');
+    var chkDesc = document.getElementById('deleteHeapDumpDesc');
+    var chk = document.getElementById('deleteHeapDumpChk');
+    if (fileDeleted) {
+        chkLabel.style.display = 'none';
+        chkDesc.style.display = 'none';
+        chk.checked = false;
+    } else {
+        chkLabel.style.display = '';
+        chkDesc.style.display = '';
+        chk.checked = false;
+    }
     document.getElementById('deleteModal').classList.add('open');
 }
 function submitDelete() {
     if (!_delFilename) return;
     var f = document.createElement('form');
     f.method = 'POST'; f.action = '/history/delete/' + encodeURIComponent(_delFilename); f.style.display = 'none';
+    var chk = document.getElementById('deleteHeapDumpChk');
+    if (chk.checked) {
+        var input = document.createElement('input');
+        input.type = 'hidden'; input.name = 'deleteHeapDump'; input.value = 'true';
+        f.appendChild(input);
+    }
     document.body.appendChild(f); f.submit();
 }
 function closeDeleteModal() {

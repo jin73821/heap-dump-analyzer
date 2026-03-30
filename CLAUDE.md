@@ -45,8 +45,8 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 ```
 
 **Key layers:**
-- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history` (JSON history list), `/api/cache/clear`, `/api/settings/unreachable`, `/api/queue/status`, `/api/disk/check`, `/api/settings`. `GET /analyze/rerun/{filename}` clears cache and restarts analysis.
-- **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (tmp staging → final), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). On disk cache restore, auto-reparses missing data from ZIPs (`reparseComponentDetails`, `reparseActions`).
+- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history` (JSON history list), `/api/cache/clear`, `/api/settings/unreachable`, `/api/settings/compress`, `/api/analyze/cancel/{filename}`, `/api/queue/status`, `/api/disk/check`, `/api/settings`. `GET /analyze/rerun/{filename}` clears cache and restarts analysis.
+- **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (dumpfiles → tmp copy → analysis → tmp cleanup), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). On disk cache restore, auto-reparses missing data from ZIPs (`reparseComponentDetails`, `reparseActions`). Runtime settings (`keepUnreachableObjects`, `compressAfterAnalysis`) persisted to `settings.json` and synced back to `application.properties`.
 - **Parser** (`parser/MatReportParser.java`) — Multi-tier extraction from MAT ZIP files:
   - Overview ZIP: heap stats from `<td>` key-value pairs, Class Histogram from `Class_Histogram*.html`, Thread Overview from `Thread_Overview*.html`
   - Top Components ZIP: `index.html` `<h2>` tags for percentages (primary), sub-page tables (fallback), per-component detail pages keyed as `className#index`
@@ -55,11 +55,12 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 - **Config** (`config/HeapDumpConfig.java`) — `@Value`-injected properties with startup validation.
 
 **Models** (all use Lombok `@Data`):
-- `HeapAnalysisResult` — main result with heap stats, parsed objects, HTML fragments, histogram/thread data
+- `HeapAnalysisResult` — main result with heap stats, parsed objects, HTML fragments, histogram/thread data, `originalFileSize` (pre-compression size)
 - `MatParseResult` — intermediate parse result passed between parser methods
 - `HistogramEntry` — class name, object count, shallow/retained heap
 - `ThreadInfo` — thread name, type, heap sizes, address, stack trace (matched from `.threads` file)
-- `MemoryObject`, `LeakSuspect`, `AnalysisProgress`, `HeapDumpFile`
+- `HeapDumpFile` — file info with `compressed`, `originalSize`, `compressedSize` for GZ display
+- `MemoryObject`, `LeakSuspect`, `AnalysisProgress`
 
 **Frontend:** Thymeleaf templates + vanilla JS + Chart.js. No build step. `index.html`, `analyze.html`, `files.html` have **complete inline `<style>` blocks**. `progress.html` and `compare.html` link `/css/style.css` plus additional inline styles. Modals use `.modal-ov.open` CSS pattern with `animation: modalIn .2s ease`.
 
@@ -67,7 +68,7 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 
 ## Frontend Structure
 
-**index.html** — Dashboard with sidebar (upload, file list, MAT settings). Files list shows tooltips on hover. Analysis Queue panel (auto-polls `/api/queue/status` every 5s when active, idle state when empty). Modals for: Download, Compare, Export History, Clear Cache, Delete, Auto-Analyze warning, Keep Unreachable warning. Settings modal has fixed height (520px) across tabs.
+**index.html** — Dashboard with sidebar (upload, file list, MAT settings). Files list shows tooltips on hover with compressed file info (GZ badge + original/compressed sizes). Analysis Queue panel (auto-polls `/api/queue/status` every 5s when active, idle state when empty). Modals for: Download, Compare, Export History, Clear Cache, Delete, Auto-Analyze warning, Keep Unreachable warning. Settings link navigates to `/settings` page.
 
 **analyze.html** — Analysis result page with sidebar navigation sections:
 - **Analysis**: Overview (KPI cards, charts), Top Consumers (sortable/searchable table with click-for-detail modal), Leak Suspects (accordion)
@@ -75,34 +76,55 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 - **Tools**: MAT Log (chunked loading), Export CSV, Print
 - **Raw Data**: MAT original HTML for System Overview, Top Components, Suspect Details, Histogram, Thread Overview
 
-**progress.html** — SSE-driven analysis progress with step indicators. Queue waiting banner (purple gradient) shown when analysis is queued behind another, with position and current analysis filename.
+**progress.html** — SSE-driven analysis progress with step indicators. Queue waiting banner (purple gradient) shown when analysis is queued behind another, with position and current analysis filename. Cancel button: QUEUED state shows modal + calls `POST /api/analyze/cancel/{filename}`; RUNNING state uses confirm dialog. `cancelAnalysis()` must not conflict with `cancelHeapWarnModal()` (separate functions — previously caused a bug due to duplicate function names).
 
 **files.html** — Full file listing page (`/files`). Search filter, status dots, SVG icon buttons (view/analyze/download/delete) matching `index.html` sidebar style. Delete confirmation modal. Download confirmation modal (filename + size).
 
 **history.html** — Full analysis history page (`/history`). Topbar navigation, search filter, status dots (success/error/pending), analysis metadata (file size, date, analysis time, heap size, suspect count), total statistics. Complete inline `<style>` block like `index.html`.
 
+**settings.html** — Settings page (`/settings`). Toggle switches for runtime settings with confirmation modals. Toast notifications at top-center. MAT JVM heap/Xms inline editing with predefined select options.
+
 **compare.html** — Side-by-side dump comparison.
 
-## File Flow
+## Directory Structure & File Flow
 
 ```
-Upload → /opt/heapdumps/tmp/{filename}     (staging)
-                 │
-                 ├─ Analysis success → /opt/heapdumps/{filename}  (Files.move)
-                 │                   → /opt/heapdumps/{baseName}/  (result.json, mat.log, ZIPs)
-                 │                   → /opt/heapdumps/{baseName}.threads  (thread stacks)
-                 │                   → /opt/heapdumps/{baseName}.*.index  (MAT index files)
-                 │
-                 └─ Analysis fail/interrupt/shutdown → tmp file deleted
+/opt/heapdumps/
+├── dumpfiles/              ← 원본 힙덤프 저장 (업로드 대상, 파일 감지)
+│   ├── heapdump.hprof
+│   └── heapdump.hprof.gz   (compress-after-analysis=true 시)
+├── data/                   ← 분석 결과 + 설정 영속화
+│   ├── settings.json        (런타임 설정, application.properties와 동기화)
+│   └── {baseName}/
+│       ├── result.json, mat.log, *.zip
+│       ├── *.index, *.threads
+│       └── workspace/
+└── tmp/                    ← 분석 중 임시 복사본 (분석 후 항상 삭제)
+    └── heapdump.hprof       (dumpfiles에서 copy, MAT CLI 실행 대상)
 ```
 
-On startup (`@PostConstruct`): disk results restored, missing data re-parsed from ZIPs, `.threads` files loaded, tmp files cleaned. On shutdown (`@PreDestroy`): executor `shutdownNow()` + tmp cleanup.
+**분석 흐름:**
+```
+Upload → /opt/heapdumps/dumpfiles/{filename}  (원본 보존)
+                 │
+                 ├─ Analysis start → dumpfiles → tmp/ copy (디스크 공간 체크)
+                 │                 → MAT CLI는 tmp 파일로 실행
+                 │
+                 ├─ Analysis success → tmp 삭제, data/{baseName}/ 결과 저장
+                 │                   → compress=true 시 dumpfiles 원본 gzip 압축
+                 │
+                 └─ Analysis fail/interrupt → tmp만 삭제 (dumpfiles 원본 안전)
+```
+
+On startup (`@PostConstruct`): 기존 루트의 덤프 파일 → dumpfiles/ 자동 마이그레이션, disk results restored, missing data re-parsed from ZIPs, `.threads` files loaded, tmp files cleaned, settings.json → application.properties 동기화. On shutdown (`@PreDestroy`): executor `shutdownNow()` + tmp cleanup.
 
 ## Key Design Decisions
 
 - **Two-tier cache:** In-memory `ConcurrentHashMap` restored from disk (`result.json`) on startup. Missing fields (componentDetailHtmlMap, histogramHtml, threadOverviewHtml) are lazily re-extracted from ZIPs via `reparseComponentDetails()` / `reparseActions()`.
-- **Serial analysis with queue:** `Semaphore(1)` ensures only one MAT CLI analysis runs at a time. Additional requests queue via `CachedThreadPool` and send `QUEUED` status via SSE every 3 seconds while waiting. `AtomicInteger queueSize` and `volatile currentAnalysisFilename` track queue state. `GET /api/queue/status` exposes queue info. SSE emitter callbacks call `task.cancel(true)` on client disconnect (safe for both queued and running tasks via `semaphoreAcquired` flag).
-- **Tmp staging:** Uploads go to `{heapdump.directory}/tmp/` first. Only moved to final location after successful analysis.
+- **Serial analysis with queue:** `Semaphore(1)` ensures only one MAT CLI analysis runs at a time. Thread pool is configurable via `application.properties` (`analysis.thread-pool.core-size/max-size/queue-capacity`). MAT CLI output reader uses a dedicated daemon thread (not the analysis executor) to prevent thread pool exhaustion. `AtomicInteger queueSize` and `volatile currentAnalysisFilename` track queue state. `GET /api/queue/status` exposes queue info.
+- **Analysis cancellation:** Explicit cancel via `POST /api/analyze/cancel/{filename}` + `activeTasks` (`ConcurrentHashMap<String, Future<?>>`) for reliable cancellation. SSE disconnect also triggers `task.cancel(true)` via emitter callbacks. QUEUED state shows cancel confirmation modal; RUNNING state uses confirm dialog.
+- **Dumpfiles separation:** Uploads go to `{heapdump.directory}/dumpfiles/` (original preserved). Analysis copies to `tmp/`, runs MAT CLI on tmp copy, then deletes tmp. Original is never deleted by analysis — only by explicit compress or user delete.
+- **Compression:** `compressDumpFile()` validates .gz size > 0 before deleting original. Controlled by `compressAfterAnalysis` runtime setting (Settings page toggle).
 - **Component detail pages:** Keyed as `className#index` in `componentDetailHtmlMap` to handle multiple instances of the same class (e.g., multiple `ParallelWebappClassLoader` instances).
 - **Thread stack matching:** `.threads` file parsed by splitting on `Thread 0x...` blocks; matched to `ThreadInfo` entries by hex address extracted from the Thread Overview HTML.
 - **Thread detail optimization:** Single shared `<tr>` DOM element moved between rows on click. Stack traces stored in JS array (`THREAD_STACKS`), not pre-rendered in DOM, to avoid performance issues with 60+ threads.
@@ -114,7 +136,8 @@ On startup (`@PostConstruct`): disk results restored, missing data re-parsed fro
 - **Thread Stacks auto-load:** `showPanel('thread-stacks')` triggers automatic first-load (`_threadStacksLoaded` flag). Server-side logging with `[ThreadStacks]` prefix in `HeapDumpController`.
 - **MAT CLI startup validation:** `HeapDumpConfig.init()` runs 5-step validation (exists → isFile → readable → executable → non-empty). Results stored in `isMatCliReady()` / `getMatCliStatusMessage()`. Service checks `config.isMatCliReady()` before analysis.
 - **MAT CLI error extraction:** `extractMatErrorHint()` in service detects OOM, SnapshotException, permission denied, disk full patterns from MAT output and logs Korean-language remediation hints.
-- **Settings Modal:** `index.html` "API / Settings" button opens a 3-tab modal (General / System / API) instead of raw JSON. Data loaded via `GET /api/settings` which returns system, disk, mat, files info.
+- **Settings page:** `/settings` page with toggle switches for runtime settings (Compress after analysis, Keep unreachable objects, Auto-analyze, Save results, Skip heap warning). Settings persisted to `settings.json` AND synced to `application.properties` via `syncApplicationProperties()` (line-by-line replacement preserving comments). `findExternalPropertiesFile()` locates the properties file in JAR directory or source directory.
+- **Settings confirmation modals:** Destructive setting changes (disable compress, disable save results, disable keep unreachable, enable auto-analyze) show confirmation modals before applying. Pattern: toggle reverts → modal opens → confirm button calls API + updates toggle.
 - **Thymeleaf security restriction:** `th:onclick` with string variables is blocked by Thymeleaf's restricted expression policy. Use `th:data-*` attributes + plain `onclick="fn(this.dataset.x)"` pattern instead.
 - **SVG icon button pattern:** `index.html` and `files.html` share the `.fb` icon button style (26×26px, 1px border, SVG stroke icons). Variants: `.fb.v` (green/view), `.fb.p` (blue/analyze), `.fb.d` (red hover/delete), plain (download). When adding file action buttons to new pages, replicate this pattern.
 

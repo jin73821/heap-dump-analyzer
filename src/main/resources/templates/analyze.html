@@ -52,7 +52,7 @@
         .app-header .btn-sm {
             padding:5px 12px; font-size:12px; font-weight:600; border:1px solid var(--border);
             border-radius:6px; cursor:pointer; transition:all .15s; background:var(--surface); color:#6B7280;
-            text-decoration:none; display:inline-block;
+            text-decoration:none; display:inline-block; line-height:1.5; box-sizing:border-box; font-family:inherit;
         }
         .app-header .btn-sm:hover { background:#F9FAFB; border-color:var(--primary); color:var(--primary); text-decoration:none; }
         .app-header .btn-sm.btn-warn { background:var(--warning); color:#fff; border-color:var(--warning); }
@@ -227,17 +227,40 @@
             width:36px; height:36px; border-radius:50%; display:flex; align-items:center; justify-content:center;
             font-weight:800; font-size:14px; color:#fff; flex-shrink:0;
         }
+        .severity-critical { background:#7f1d1d; }
         .severity-high { background:var(--danger); }
         .severity-medium { background:var(--warning); }
-        .severity-low { background:#f59e0b; }
+        .severity-low { background:#10b981; }
         .suspect-title-text { flex:1; font-weight:700; font-size:14px; color:var(--text); }
         .suspect-chevron { color:var(--text-secondary); font-size:18px; transition:transform .2s; }
         .suspect-item.open .suspect-chevron { transform:rotate(180deg); }
         .suspect-body {
             display:none; padding:0 18px 16px 66px; font-size:13px; line-height:1.8;
-            color:#374151; white-space:pre-wrap; border-top:1px solid #f3f4f6;
+            color:#374151; border-top:1px solid #f3f4f6;
         }
         .suspect-item.open .suspect-body { display:block; padding-top:14px; }
+        .suspect-desc { white-space:pre-wrap; margin:0 0 8px 0; }
+        .suspect-category {
+            display:inline-block; font-size:11px; font-weight:600;
+            padding:2px 10px; border-radius:10px; margin-left:8px;
+            background:#eff6ff; color:#2563eb;
+        }
+        .suspect-explanation {
+            background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px;
+            padding:12px 16px; margin-top:12px; font-size:13px; line-height:1.7; color:#1e40af;
+        }
+        .suspect-explanation-title {
+            font-weight:700; margin-bottom:6px; font-size:12px; color:#1e3a8a;
+        }
+        .suspect-advice {
+            background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px;
+            padding:12px 16px; margin-top:10px; font-size:13px; line-height:1.7; color:#065f46;
+        }
+        .suspect-advice-title {
+            font-weight:700; margin-bottom:6px; font-size:12px; color:#064e3b;
+        }
+        .suspect-advice ol { margin:0; padding-left:18px; }
+        .suspect-advice ol li { margin-bottom:4px; }
 
         /* ── MAT Report Frame ─────────────────────── */
         .mat-frame {
@@ -503,7 +526,7 @@
 </header>
 
 <!-- ════════════════ ERROR STATE ════════════════ -->
-<div th:if="${error}" class="main-content" style="margin-left:0">
+<div th:if="${error}" class="main-content" style="margin-left:0;max-width:860px;margin-left:auto;margin-right:auto">
     <div class="error-card">
         <h3>Analysis Failed</h3>
         <p th:text="${error}"></p>
@@ -523,8 +546,8 @@
             </span>
         </div>
         <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
-            <form th:action="@{'/analyze/rerun/' + ${filename}}" method="post" style="display:inline"><button type="submit" style="padding:8px 20px;background:var(--warning);color:#fff;border:none;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer">&#8635; Re-Analyze</button></form>
-            <a href="/" style="display:inline-block;padding:8px 20px;background:var(--primary);color:#fff;border-radius:6px;font-weight:600;font-size:13px">Back to Home</a>
+            <form th:action="@{'/analyze/rerun/' + ${filename}}" method="post" style="display:inline"><button type="submit" style="padding:8px 20px;background:var(--warning);color:#fff;border:none;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;line-height:1.5;box-sizing:border-box;font-family:inherit">&#8635; Re-Analyze</button></form>
+            <a href="/" style="display:inline-block;padding:8px 20px;background:var(--primary);color:#fff;border-radius:6px;font-weight:600;font-size:13px;line-height:1.5;box-sizing:border-box;text-decoration:none">Back to Home</a>
         </div>
     </div>
 
@@ -869,12 +892,24 @@ function loadFullErrorLog() {
                 <div class="suspect-list">
                     <div th:each="s,iter : ${result.leakSuspects}" class="suspect-item" th:classappend="${iter.first} ? 'open' : ''">
                         <div class="suspect-header" onclick="toggleSuspect(this)">
-                            <div class="suspect-severity" th:classappend="${iter.index < 1} ? 'severity-high' : (${iter.index < 3} ? 'severity-medium' : 'severity-low')"
+                            <div class="suspect-severity"
+                                 th:classappend="${s.severity != null ? (s.severity == 'critical' ? 'severity-critical' : (s.severity == 'high' ? 'severity-high' : (s.severity == 'medium' ? 'severity-medium' : 'severity-low'))) : (iter.index < 1 ? 'severity-high' : (iter.index < 3 ? 'severity-medium' : 'severity-low'))}"
                                  th:text="${iter.count}">1</div>
                             <span class="suspect-title-text" th:text="${s.title}">Suspect #1</span>
+                            <span th:if="${s.category != null}" class="suspect-category" th:text="${s.category}">Category</span>
                             <span class="suspect-chevron">&#9660;</span>
                         </div>
-                        <div class="suspect-body" th:text="${s.description}">-</div>
+                        <div class="suspect-body">
+                            <p class="suspect-desc" th:text="${s.description}">-</p>
+                            <div th:if="${s.explanation != null}" class="suspect-explanation">
+                                <div class="suspect-explanation-title">&#128269; 분석 설명</div>
+                                <span th:text="${s.explanation}"></span>
+                            </div>
+                            <div th:if="${s.advice != null}" class="suspect-advice">
+                                <div class="suspect-advice-title">&#9889; 권장 조치</div>
+                                <span th:utext="${s.advice}"></span>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

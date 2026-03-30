@@ -19,6 +19,9 @@ public class HeapDumpFile {
     private String path;
     private long   size;
     private long   lastModified;
+    private boolean compressed;
+    private long   originalSize;
+    private long   compressedSize;
 
     /** 파일 크기 포맷 */
     public String getFormattedSize() {
@@ -39,5 +42,23 @@ public class HeapDumpFile {
         int dot = name.lastIndexOf('.');
         if (dot < 0 || dot >= name.length() - 1) return "DUMP";
         return name.substring(dot + 1).toUpperCase();
+    }
+
+    /** 원본 크기 포맷 (압축 시 사용) */
+    public String getFormattedOriginalSize() {
+        if (originalSize <= 0) return getFormattedSize();
+        if (originalSize < 1024)                return originalSize + " B";
+        if (originalSize < 1024 * 1024)         return String.format("%.2f KB", originalSize / 1024.0);
+        if (originalSize < 1024L * 1024 * 1024) return String.format("%.2f MB", originalSize / (1024.0 * 1024));
+        return String.format("%.2f GB", originalSize / (1024.0 * 1024 * 1024));
+    }
+
+    /** 압축 크기 포맷 */
+    public String getFormattedCompressedSize() {
+        if (compressedSize <= 0) return "-";
+        if (compressedSize < 1024)                return compressedSize + " B";
+        if (compressedSize < 1024 * 1024)         return String.format("%.2f KB", compressedSize / 1024.0);
+        if (compressedSize < 1024L * 1024 * 1024) return String.format("%.2f MB", compressedSize / (1024.0 * 1024));
+        return String.format("%.2f GB", compressedSize / (1024.0 * 1024 * 1024));
     }
 }

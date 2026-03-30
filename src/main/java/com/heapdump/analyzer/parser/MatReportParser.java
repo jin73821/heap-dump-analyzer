@@ -2,6 +2,7 @@ package com.heapdump.analyzer.parser;
 
 import com.heapdump.analyzer.model.*;
 import com.heapdump.analyzer.util.HtmlSanitizer;
+import com.heapdump.analyzer.util.LeakSuspectAdvisor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -548,7 +549,9 @@ public class MatReportParser {
         while (pm.find() && suspects.size() < 5) {
             String section = stripTags(pm.group(1));
             if (section.length() > 30) {
-                suspects.add(new LeakSuspect("Suspect #" + idx, section.substring(0, Math.min(section.length(), 500))));
+                LeakSuspect suspect = new LeakSuspect("Suspect #" + idx, section.substring(0, Math.min(section.length(), 500)));
+                LeakSuspectAdvisor.analyze(suspect, section);
+                suspects.add(suspect);
                 idx++;
             }
         }
@@ -557,7 +560,9 @@ public class MatReportParser {
         if (suspects.isEmpty()) {
             String plain = stripTags(html);
             if (plain.length() > 100) {
-                suspects.add(new LeakSuspect("Leak Analysis", plain.substring(0, Math.min(plain.length(), 1000))));
+                LeakSuspect suspect = new LeakSuspect("Leak Analysis", plain.substring(0, Math.min(plain.length(), 1000)));
+                LeakSuspectAdvisor.analyze(suspect, plain);
+                suspects.add(suspect);
             }
         }
 

@@ -174,6 +174,7 @@ public class HeapDumpController {
     @GetMapping("/settings")
     public String settingsPage(Model model) {
         model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
+        model.addAttribute("compressAfterAnalysis", analyzerService.isCompressAfterAnalysis());
         return "settings";
     }
 
@@ -181,11 +182,12 @@ public class HeapDumpController {
 
     @PostMapping("/history/delete/{filename:.+}")
     public String deleteHistory(@PathVariable String filename,
+                                @RequestParam(value = "deleteHeapDump", defaultValue = "false") boolean deleteHeapDump,
                                 RedirectAttributes redirectAttributes) {
         filename = FilenameValidator.validate(filename);
-        logger.info("[DeleteHistory] Request received: filename={}", filename);
+        logger.info("[DeleteHistory] Request received: filename={}, deleteHeapDump={}", filename, deleteHeapDump);
         try {
-            analyzerService.deleteHistory(filename);
+            analyzerService.deleteHistory(filename, deleteHeapDump);
             logger.info("[DeleteHistory] Success: {}", filename);
             redirectAttributes.addFlashAttribute("success", "히스토리 삭제 완료: " + filename);
         } catch (IOException e) {
@@ -286,6 +288,20 @@ public class HeapDumpController {
         emitter.onCompletion(cancelTask);
 
         return emitter;
+    }
+
+    // ── 분석 취소 API ─────────────────────────────────────────────
+
+    @PostMapping("/api/analyze/cancel/{filename:.+}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> cancelAnalysis(@PathVariable String filename) {
+        String safe = FilenameValidator.validate(filename);
+        logger.info("[Cancel] Cancel requested for: {}", safe);
+        boolean cancelled = analyzerService.cancelAnalysis(safe);
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("cancelled", cancelled);
+        resp.put("filename", safe);
+        return ResponseEntity.ok(resp);
     }
 
     // ── 분석 결과 화면 ───────────────────────────────────────────
@@ -629,6 +645,19 @@ public class HeapDumpController {
         analyzerService.setKeepUnreachableObjects(enabled);
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("keepUnreachableObjects", enabled);
+        resp.put("message", "Setting updated. Takes effect on next analysis.");
+        return ResponseEntity.ok(resp);
+    }
+
+    // ── [NEW] API: compress_after_analysis 설정 ────────────────
+
+    @PostMapping("/api/settings/compress")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setCompressAfterAnalysis(
+            @RequestParam boolean enabled) {
+        analyzerService.setCompressAfterAnalysis(enabled);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("compressAfterAnalysis", enabled);
         resp.put("message", "Setting updated. Takes effect on next analysis.");
         return ResponseEntity.ok(resp);
     }

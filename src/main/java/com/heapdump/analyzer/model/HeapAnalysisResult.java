@@ -23,6 +23,7 @@ public class HeapAnalysisResult {
     // ── 파일 정보 ────────────────────────────────────
     private String filename;
     private long   fileSize;
+    private long   originalFileSize;   // 압축 전 원본 크기 (result.json에 영속)
     private long   lastModified;
     private String format;
 

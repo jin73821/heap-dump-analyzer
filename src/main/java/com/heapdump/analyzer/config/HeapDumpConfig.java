@@ -71,6 +71,22 @@ public class HeapDumpConfig {
     @Value("${analysis.progress.log-update-lines:50}")
     private int progressLogUpdateLines;
 
+    /** 분석 스레드 풀 core 크기 (최소 3 권장: 분석1 + MAT리더1 + 대기1) */
+    @Value("${analysis.thread-pool.core-size:3}")
+    private int threadPoolCoreSize;
+
+    /** 분석 스레드 풀 max 크기 */
+    @Value("${analysis.thread-pool.max-size:5}")
+    private int threadPoolMaxSize;
+
+    /** 분석 스레드 풀 큐 용량 */
+    @Value("${analysis.thread-pool.queue-capacity:12}")
+    private int threadPoolQueueCapacity;
+
+    /** 분석 완료 후 원본 gzip 압축 여부 */
+    @Value("${analysis.compress-after-analysis:true}")
+    private boolean compressAfterAnalysis;
+
     /** MAT CLI 유효성 상태 (init 후 설정) */
     private boolean matCliReady;
     private String  matCliStatusMessage;
@@ -87,7 +103,10 @@ public class HeapDumpConfig {
         // ── 2. MAT CLI 검증 ───────────────────────────────────
         validateMatCli();
 
-        // ── 3. 설정 값 로깅 ───────────────────────────────────
+        // ── 3. 스레드 풀 설정 검증 ─────────────────────────────
+        validateThreadPoolConfig();
+
+        // ── 4. 설정 값 로깅 ───────────────────────────────────
         logger.info("[Config] keep_unreachable_objects: {}", keepUnreachableObjects);
         logger.info("========================================");
     }
@@ -123,6 +142,14 @@ public class HeapDumpConfig {
                 logger.info("[Config] Created data directory: {}", dataPath);
             } else {
                 logger.info("[Config] Data directory: {}", dataPath);
+            }
+            // dumpfiles 디렉토리 생성 (원본 힙덤프 저장)
+            Path dumpFilesPath = Paths.get(heapDumpDirectory, "dumpfiles");
+            if (!Files.exists(dumpFilesPath)) {
+                Files.createDirectories(dumpFilesPath);
+                logger.info("[Config] Created dumpfiles directory: {}", dumpFilesPath);
+            } else {
+                logger.info("[Config] Dumpfiles directory: {}", dumpFilesPath);
             }
         } catch (IOException e) {
             logger.error("[Config] Failed to create heap dump directory: {} — {}", heapDumpDirectory, e.getMessage());
@@ -207,8 +234,24 @@ public class HeapDumpConfig {
         logger.info("└─────────────────────────────────────────────────┘");
     }
 
+    private void validateThreadPoolConfig() {
+        if (threadPoolCoreSize < 3) {
+            logger.warn("[Config] analysis.thread-pool.core-size={} — 3 미만이면 대기열 알림이 지연될 수 있습니다 (권장: 3 이상)", threadPoolCoreSize);
+        }
+        if (threadPoolMaxSize < threadPoolCoreSize) {
+            logger.warn("[Config] analysis.thread-pool.max-size({})가 core-size({})보다 작아 core-size로 보정합니다", threadPoolMaxSize, threadPoolCoreSize);
+            threadPoolMaxSize = threadPoolCoreSize;
+        }
+        if (threadPoolQueueCapacity < 1) {
+            logger.warn("[Config] analysis.thread-pool.queue-capacity={} — 최소 1 이상이어야 합니다. 기본값 12로 보정합니다", threadPoolQueueCapacity);
+            threadPoolQueueCapacity = 12;
+        }
+        logger.info("[Config] 분석 스레드 풀: core={}, max={}, queue={}", threadPoolCoreSize, threadPoolMaxSize, threadPoolQueueCapacity);
+    }
+
     public String  getHeapDumpDirectory()        { return heapDumpDirectory; }
     public String  getDataDirectory()            { return heapDumpDirectory + File.separator + "data"; }
+    public String  getDumpFilesDirectory()       { return heapDumpDirectory + File.separator + "dumpfiles"; }
     public String  getMatCliPath()               { return matCliPath; }
     public boolean isKeepUnreachableObjects()    { return keepUnreachableObjects; }
     public boolean isMatCliReady()               { return matCliReady; }
@@ -221,4 +264,8 @@ public class HeapDumpConfig {
     public int     getTopObjectsMaxDisplay()     { return topObjectsMaxDisplay; }
     public int     getMatLogMaxDisplayChars()    { return matLogMaxDisplayChars; }
     public int     getProgressLogUpdateLines()   { return progressLogUpdateLines; }
+    public int     getThreadPoolCoreSize()      { return threadPoolCoreSize; }
+    public int     getThreadPoolMaxSize()        { return threadPoolMaxSize; }
+    public int     getThreadPoolQueueCapacity()  { return threadPoolQueueCapacity; }
+    public boolean isCompressAfterAnalysis()    { return compressAfterAnalysis; }
 }
