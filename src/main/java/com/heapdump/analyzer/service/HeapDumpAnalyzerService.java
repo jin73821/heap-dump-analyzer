@@ -42,6 +42,8 @@ public class HeapDumpAnalyzerService {
 
     private final HeapDumpConfig  config;
     private final MatReportParser parser;
+
+    public MatReportParser getParser() { return parser; }
     private final ObjectMapper    objectMapper = new ObjectMapper();
 
     // 메모리 1차 캐시
@@ -316,6 +318,24 @@ public class HeapDumpAnalyzerService {
             reparsComponentDetails(r);
         }
 
+        // componentDetailParsedMap이 비어있으면 기존 HTML에서 구조화 파싱
+        if ((r.getComponentDetailParsedMap() == null || r.getComponentDetailParsedMap().isEmpty())
+                && r.getComponentDetailHtmlMap() != null && !r.getComponentDetailHtmlMap().isEmpty()) {
+            r.setComponentDetailParsedMap(new java.util.LinkedHashMap<>());
+            for (java.util.Map.Entry<String, String> entry : r.getComponentDetailHtmlMap().entrySet()) {
+                String key = entry.getKey();
+                String className = key.contains("#") ? key.substring(0, key.lastIndexOf('#')) : key;
+                com.heapdump.analyzer.model.ComponentDetailParsed parsed =
+                        parser.parseComponentDetail(entry.getValue(), className);
+                if (parsed.isParsedSuccessfully()) {
+                    r.getComponentDetailParsedMap().put(key, parsed);
+                }
+            }
+            if (!r.getComponentDetailParsedMap().isEmpty()) {
+                logger.info("Lazy-parsed {} component details for {}", r.getComponentDetailParsedMap().size(), r.getFilename());
+            }
+        }
+
         // histogramHtml이 없으면 ZIP에서 재추출 시도
         if (r.getHistogramHtml() == null || r.getHistogramHtml().isEmpty()) {
             reparseActions(r);
@@ -341,6 +361,9 @@ public class HeapDumpAnalyzerService {
             parser.reparseComponentDetails(resultDir.getAbsolutePath(), baseName, tmp);
             if (!tmp.getComponentDetailHtmlMap().isEmpty()) {
                 r.setComponentDetailHtmlMap(tmp.getComponentDetailHtmlMap());
+                if (!tmp.getComponentDetailParsedMap().isEmpty()) {
+                    r.setComponentDetailParsedMap(tmp.getComponentDetailParsedMap());
+                }
                 logger.info("Re-extracted {} component detail pages for {}",
                         tmp.getComponentDetailHtmlMap().size(), r.getFilename());
             }
@@ -817,10 +840,10 @@ public class HeapDumpAnalyzerService {
 
         if (!isValidHeapDumpFile(filename)) {
             String ext = getExtension(filename);
-            logger.warn("[Upload] Rejected: invalid extension '{}' for file '{}'. Allowed: .hprof, .bin, .dump",
+            logger.warn("[Upload] Rejected: invalid extension '{}' for file '{}'. Allowed: .hprof, .bin, .dump (+ .gz)",
                     ext, filename);
             throw new IllegalArgumentException(
-                    "'" + ext + "' is not a supported file type. Only .hprof, .bin, .dump files are allowed.");
+                    "'" + ext + "' is not a supported file type. Only .hprof, .bin, .dump (+ .gz) files are allowed.");
         }
 
         File dumpDir = dumpFilesDirectory();
@@ -870,7 +893,10 @@ public class HeapDumpAnalyzerService {
                         // memCache에서 원본 크기 조회
                         HeapAnalysisResult cached = memCache.get(displayName);
                         if (cached != null && cached.getOriginalFileSize() > 0) {
+                            hdf.setOriginalSize(cached.getOriginalFileSize());
                             hdf.setSize(cached.getOriginalFileSize());
+                        } else {
+                            hdf.setOriginalSize(f.length());
                         }
                     }
                     result.add(hdf);
@@ -1534,6 +1560,7 @@ public class HeapDumpAnalyzerService {
         c.setThreadInfos(r.getThreadInfos());
         c.setTotalHistogramClasses(r.getTotalHistogramClasses());
         c.setOriginalFileSize(r.getOriginalFileSize());
+        c.setComponentDetailParsedMap(r.getComponentDetailParsedMap());
         // threadStacksText는 @JsonIgnore이므로 저장하지 않음
         return c;
     }
@@ -1577,6 +1604,7 @@ public class HeapDumpAnalyzerService {
         r.setTopComponentsHtml(parsed.getTopComponentsHtml());
         r.setSuspectsHtml(parsed.getSuspectsHtml());
         r.setComponentDetailHtmlMap(parsed.getComponentDetailHtmlMap());
+        r.setComponentDetailParsedMap(parsed.getComponentDetailParsedMap());
         r.setHistogramHtml(parsed.getHistogramHtml());
         r.setThreadOverviewHtml(parsed.getThreadOverviewHtml());
         r.setHistogramEntries(parsed.getHistogramEntries());
@@ -1596,6 +1624,21 @@ public class HeapDumpAnalyzerService {
     }
     private File resultJsonFile(String filename) {
         return new File(resultDirectory(filename), RESULT_JSON);
+    }
+
+    /**
+     * 지정된 reportType에 해당하는 MAT 리포트 ZIP 파일을 찾아 반환합니다.
+     * @param reportType "overview" | "top_components" | "suspects"
+     */
+    public File findReportZip(String filename, String reportType) {
+        String safe = new File(filename).getName();
+        File resultDir = resultDirectory(safe);
+        if (!resultDir.exists()) return null;
+        return parser.findReportZip(resultDir.getAbsolutePath(), stripExtension(safe), reportType);
+    }
+
+    public boolean hasReportZip(String filename, String reportType) {
+        return findReportZip(filename, reportType) != null;
     }
 
     /**

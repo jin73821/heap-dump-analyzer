@@ -84,6 +84,40 @@ public class MatReportParser {
     private static final Pattern ONLY_N_OBJECTS_PATTERN = Pattern.compile(
             "(?i)\\bOnly\\s+[\\d,]+\\s+objects?\\b.*");
 
+    // ─── Component Detail 파싱용 패턴 ─────────────────────────────────────────────
+
+    // 메타데이터: Size: <strong>44.7 MB</strong> Classes: <strong>2.4k</strong> ...
+    private static final Pattern CD_METADATA_PATTERN = Pattern.compile(
+            "Size:\\s*<strong>([^<]+)</strong>\\s*Classes:\\s*<strong>([^<]+)</strong>\\s*Objects:\\s*<strong>([^<]+)</strong>\\s*Class Loader:\\s*<strong>([^<]+)</strong>",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    // 섹션 헤더: <h2-h5 id="i###">...</h2-h5>
+    private static final Pattern CD_SECTION_HEADER_PATTERN = Pattern.compile(
+            "<h([2-5])\\s+id=\"(i\\d+)\"[^>]*>(.*?)</h\\1>",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    // 섹션 콘텐츠: <div id="exp###">
+    private static final Pattern CD_SECTION_DIV_PATTERN = Pattern.compile(
+            "<div\\s+id=\"(exp\\d+)\"[^>]*>",
+            Pattern.CASE_INSENSITIVE);
+
+    // 테이블 추출: <table class="result">...</table>
+    private static final Pattern CD_TABLE_PATTERN = Pattern.compile(
+            "<table[^>]*class=\"result\"[^>]*>(.*?)</table>",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    // thead 행 추출
+    private static final Pattern TH_PATTERN = Pattern.compile(
+            "<th[^>]*>(.*?)</th>", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
+    // 심각도 텍스트 (sanitize 후 이미지는 제거되므로 alt 텍스트나 Status: 문자열로 감지)
+    private static final Pattern CD_SEVERITY_PATTERN = Pattern.compile(
+            "Status:\\s*(warning|error)", Pattern.CASE_INSENSITIVE);
+
+    // ul/li 목록 추출
+    private static final Pattern CD_LI_PATTERN = Pattern.compile(
+            "<li[^>]*>(.*?)</li>", Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+
     // ─── 공개 API ────────────────────────────────────────────────────────────────
 
     /**
@@ -193,6 +227,13 @@ public class MatReportParser {
      *
      * @param reportType  "overview" | "top_components" | "suspects"
      */
+    /**
+     * 외부에서 ZIP 파일을 찾을 수 있도록 공개 래퍼.
+     */
+    public File findReportZip(String dir, String baseName, String reportType) {
+        return findZip(dir, baseName, reportType);
+    }
+
     private File findZip(String dir, String base, String reportType) {
         File directory = new File(dir);
         if (!directory.exists()) return null;
@@ -521,9 +562,16 @@ public class MatReportParser {
                     String html = readZipEntry(zis);
                     String key = hrefToKey.get(entryName);
                     if (html != null && !html.isEmpty()) {
-                        result.getComponentDetailHtmlMap().put(key, sanitizeHtml(html));
-                        logger.debug("[Parser] Extracted detail page for: {} ({} chars)",
-                                key, html.length());
+                        String sanitized = sanitizeHtml(html);
+                        result.getComponentDetailHtmlMap().put(key, sanitized);
+                        // 구조화 파싱도 수행
+                        String className = key.contains("#") ? key.substring(0, key.lastIndexOf('#')) : key;
+                        ComponentDetailParsed parsed = parseComponentDetail(sanitized, className);
+                        if (parsed.isParsedSuccessfully()) {
+                            result.getComponentDetailParsedMap().put(key, parsed);
+                        }
+                        logger.debug("[Parser] Extracted detail page for: {} ({} chars, parsed={})",
+                                key, html.length(), parsed.isParsedSuccessfully());
                     }
                 }
                 zis.closeEntry();
@@ -533,6 +581,331 @@ public class MatReportParser {
         }
 
         logger.info("[Parser] Extracted {} component detail pages", result.getComponentDetailHtmlMap().size());
+    }
+
+    // ─── Component Detail 구조화 파싱 ──────────────────────────────────────────
+
+    /**
+     * sanitize된 component detail HTML을 구조화된 데이터로 파싱합니다.
+     *
+     * @param sanitizedHtml sanitize 완료된 HTML
+     * @param className     컴포넌트 클래스명
+     * @return 파싱된 구조화 데이터
+     */
+    public ComponentDetailParsed parseComponentDetail(String sanitizedHtml, String className) {
+        ComponentDetailParsed detail = new ComponentDetailParsed();
+        detail.setClassName(className);
+
+        if (sanitizedHtml == null || sanitizedHtml.isEmpty()) {
+            detail.setParsedSuccessfully(false);
+            return detail;
+        }
+
+        try {
+            // 1) 메타데이터 추출
+            Matcher metaM = CD_METADATA_PATTERN.matcher(sanitizedHtml);
+            if (metaM.find()) {
+                ComponentMetadata meta = new ComponentMetadata();
+                meta.setSizeDisplay(metaM.group(1).trim());
+                meta.setSizeBytes(parseSizeString(metaM.group(1).trim()));
+                meta.setClassCount(parseCountString(metaM.group(2).trim()));
+                meta.setObjectCount(parseCountString(metaM.group(3).trim()));
+                meta.setClassLoader(metaM.group(4).trim());
+                detail.setMetadata(meta);
+            }
+
+            // 2) 섹션 헤더 수집
+            List<SectionHeader> headers = new ArrayList<>();
+            Matcher hm = CD_SECTION_HEADER_PATTERN.matcher(sanitizedHtml);
+            boolean firstH2Skipped = false;
+            while (hm.find()) {
+                int level = Integer.parseInt(hm.group(1));
+                String id = hm.group(2);
+                String titleHtml = hm.group(3);
+                String title = stripTags(titleHtml).trim();
+                // "Status: warning." 같은 alt text 제거
+                title = title.replaceAll("(?i)Status:\\s*(warning|error)\\.?\\s*", "").trim();
+                if (title.isEmpty()) continue;
+
+                // 첫 번째 h2는 컴포넌트 제목 → 스킵
+                if (level == 2 && !firstH2Skipped) {
+                    firstH2Skipped = true;
+                    continue;
+                }
+
+                // 심각도: 제목 키워드 기반 추론
+                String severity = null;
+                String titleLower = title.toLowerCase();
+                if (titleLower.contains("possible memory") || titleLower.contains("duplicate")
+                        || titleLower.contains("memory waste") || titleLower.contains("collision")
+                        || titleLower.contains("memory leak")) {
+                    severity = "warning";
+                }
+
+                SectionHeader sh = new SectionHeader();
+                sh.id = id;
+                sh.level = level;
+                sh.title = title;
+                sh.severity = severity;
+                sh.startPos = hm.end();
+                headers.add(sh);
+            }
+
+            // 3) 각 헤더의 콘텐츠 범위 결정 및 파싱
+            for (int i = 0; i < headers.size(); i++) {
+                SectionHeader sh = headers.get(i);
+                // 콘텐츠 영역: 현재 헤더 끝 ~ 다음 동일/상위 레벨 헤더 시작 (또는 문서 끝)
+                int contentEnd = sanitizedHtml.length();
+                for (int j = i + 1; j < headers.size(); j++) {
+                    if (headers.get(j).level <= sh.level) {
+                        // 다음 헤더의 시작 위치를 찾아야 함
+                        String nextHeaderTag = "<h" + headers.get(j).level + " id=\"" + headers.get(j).id + "\"";
+                        int nextPos = sanitizedHtml.indexOf(nextHeaderTag, sh.startPos);
+                        if (nextPos > 0) {
+                            contentEnd = nextPos;
+                        }
+                        break;
+                    }
+                }
+
+                // 하위 섹션이 있는지 확인 → 있으면 첫 번째 하위 섹션 시작까지만 자체 콘텐츠
+                int ownContentEnd = contentEnd;
+                boolean hasChildren = false;
+                for (int j = i + 1; j < headers.size(); j++) {
+                    if (headers.get(j).level > sh.level) {
+                        // 첫 번째 하위 섹션의 헤더 시작 위치
+                        String childTag = "<h" + headers.get(j).level + " id=\"" + headers.get(j).id + "\"";
+                        int childPos = sanitizedHtml.indexOf(childTag, sh.startPos);
+                        if (childPos > 0) {
+                            ownContentEnd = childPos;
+                            hasChildren = true;
+                        }
+                        break;
+                    } else {
+                        break;
+                    }
+                }
+
+                String contentArea = sanitizedHtml.substring(sh.startPos, ownContentEnd);
+
+                ComponentSection section = new ComponentSection();
+                section.setId(sh.id);
+                section.setTitle(sh.title);
+                section.setSeverity(sh.severity);
+                section.setLevel(sh.level);
+
+                // 테이블이 포함된 섹션인지 확인
+                Matcher tableM = CD_TABLE_PATTERN.matcher(contentArea);
+                if (tableM.find()) {
+                    section.setType(ComponentSection.SectionType.TABLE);
+                    // 모든 테이블 추출
+                    Matcher allTableM = CD_TABLE_PATTERN.matcher(contentArea);
+                    while (allTableM.find()) {
+                        TableData td = parseTableHtml(allTableM.group(1));
+                        if (td != null && !td.getHeaders().isEmpty()) {
+                            section.getTables().add(td);
+                        }
+                    }
+                    // 테이블 외 텍스트 설명이 있으면 추출
+                    String textBefore = contentArea.substring(0, tableM.start());
+                    String desc = extractTextDescription(textBefore);
+                    if (!desc.isEmpty()) section.setDescription(desc);
+                } else if (!hasChildren) {
+                    // 하위 섹션이 없는 리프 섹션만 TEXT로 처리
+                    section.setType(ComponentSection.SectionType.TEXT);
+                    String textContent = extractTextDescription(contentArea);
+                    if (!textContent.isEmpty()) {
+                        section.setTextContent(textContent);
+                    }
+                    // 목록 항목 추출
+                    List<String> listItems = extractListItems(contentArea);
+                    if (!listItems.isEmpty()) {
+                        String combined = textContent;
+                        if (!combined.isEmpty()) combined += "\n";
+                        StringBuilder sb = new StringBuilder(combined);
+                        for (String item : listItems) {
+                            sb.append("- ").append(item).append("\n");
+                        }
+                        section.setTextContent(sb.toString().trim());
+                    }
+                } else {
+                    // 하위 섹션이 있는 컨테이너 → 자체 텍스트만 추출
+                    section.setType(ComponentSection.SectionType.TEXT);
+                    String ownText = extractTextDescription(contentArea);
+                    if (!ownText.isEmpty()) section.setTextContent(ownText);
+                }
+
+                // 의미 있는 콘텐츠가 있는 섹션만 추가
+                boolean hasContent = false;
+                if (section.getType() == ComponentSection.SectionType.TABLE && !section.getTables().isEmpty()) hasContent = true;
+                if (section.getType() == ComponentSection.SectionType.TEXT
+                        && section.getTextContent() != null && !section.getTextContent().isEmpty()) hasContent = true;
+                // 컨테이너 섹션(하위 섹션이 있는)은 항상 표시 (자식이 채워질 예정)
+                if (hasChildren) hasContent = true;
+                if (hasContent) {
+                    detail.getSections().add(section);
+                }
+            }
+
+            // flat 리스트를 트리로 변환: level 기반으로 부모-자식 관계 구성
+            detail.setSections(buildSectionTree(detail.getSections()));
+
+            // 빈 섹션 제거 (텍스트/테이블/children 모두 없는 섹션)
+            detail.getSections().removeIf(this::isEmptySection);
+
+            // 섹션이 하나도 없으면 전체 텍스트를 하나의 TEXT 섹션으로
+            if (detail.getSections().isEmpty() && detail.getMetadata() != null) {
+                String fullText = extractTextDescription(sanitizedHtml);
+                if (!fullText.isEmpty()) {
+                    ComponentSection fallback = new ComponentSection();
+                    fallback.setType(ComponentSection.SectionType.TEXT);
+                    fallback.setTitle("Overview");
+                    fallback.setTextContent(fullText);
+                    detail.getSections().add(fallback);
+                }
+            }
+
+            detail.setParsedSuccessfully(detail.getMetadata() != null || !detail.getSections().isEmpty());
+
+        } catch (Exception e) {
+            logger.warn("[Parser] Failed to parse component detail for '{}': {}", className, e.getMessage());
+            detail.setParsedSuccessfully(false);
+        }
+
+        return detail;
+    }
+
+    /** <table class="result"> 내부 HTML을 TableData로 변환 */
+    private TableData parseTableHtml(String tableInnerHtml) {
+        TableData td = new TableData();
+
+        // 헤더 추출
+        Matcher thM = TH_PATTERN.matcher(tableInnerHtml);
+        while (thM.find()) {
+            td.getHeaders().add(stripTags(thM.group(1)).trim());
+        }
+        if (td.getHeaders().isEmpty()) return null;
+
+        // 정렬 힌트 초기화
+        for (int i = 0; i < td.getHeaders().size(); i++) {
+            td.getRightAligned().add(false);
+        }
+
+        // 행 추출
+        Matcher rowM = TR_PATTERN.matcher(tableInnerHtml);
+        while (rowM.find()) {
+            String row = rowM.group(1);
+            if (row.contains("<th")) continue;  // 헤더 행 스킵
+            // Total 행은 포함하되 표시
+            boolean isTotals = row.contains("class=\"totals\"") || row.toLowerCase().contains("total:");
+
+            List<String> cells = new ArrayList<>();
+            Matcher cellM = TD_PATTERN.matcher(row);
+            int colIdx = 0;
+            while (cellM.find()) {
+                String cellHtml = cellM.group(1);
+                String cellText = stripTags(cellHtml).trim();
+                // "First 10 of 120,203 objects" 같은 부가 텍스트 정리
+                cellText = cellText.replaceAll("(?i)First\\s+\\d+\\s+of\\s+", "").trim();
+                cellText = cellText.replaceAll("(?i)\\s*objects?$", "").trim();
+                cells.add(cellText);
+
+                // 정렬 힌트: align="right"
+                if (cellM.group(0).contains("align=\"right\"") && colIdx < td.getRightAligned().size()) {
+                    td.getRightAligned().set(colIdx, true);
+                }
+                colIdx++;
+            }
+
+            if (!cells.isEmpty() && cells.size() <= td.getHeaders().size() + 1) {
+                td.getRows().add(cells);
+            }
+        }
+
+        return td;
+    }
+
+    /** HTML에서 텍스트 설명 부분을 추출 (태그 제거, 공백 정리) */
+    private String extractTextDescription(String html) {
+        if (html == null) return "";
+        // <p> 태그 내 텍스트와 일반 텍스트 추출
+        String text = html;
+        // 하위 섹션 태그 제거 (h2-h5, table 등)
+        text = text.replaceAll("(?i)<table[^>]*>.*?</table>", "");
+        text = text.replaceAll("(?i)<h[2-5][^>]*>.*?</h[2-5]>", "");
+        // Details 링크 제거
+        text = text.replaceAll("(?i)<a[^>]*>\\s*Details\\s*[»\u00BB]?\\s*</a>", "");
+        text = stripTags(text).trim();
+        // 연속 공백/줄바꿈 정리
+        text = text.replaceAll("\\s+", " ").trim();
+        return text;
+    }
+
+    /** HTML에서 <li> 목록 항목 추출 */
+    private List<String> extractListItems(String html) {
+        List<String> items = new ArrayList<>();
+        Matcher liM = CD_LI_PATTERN.matcher(html);
+        while (liM.find()) {
+            String text = stripTags(liM.group(1)).trim();
+            if (!text.isEmpty()) {
+                items.add(text);
+            }
+        }
+        return items;
+    }
+
+    /** "2.4k", "506.3k" 같은 축약 숫자를 파싱 */
+    private int parseCountString(String s) {
+        if (s == null || s.isEmpty()) return 0;
+        s = s.trim().toLowerCase();
+        try {
+            if (s.endsWith("k")) {
+                return (int) (Double.parseDouble(s.substring(0, s.length() - 1)) * 1000);
+            } else if (s.endsWith("m")) {
+                return (int) (Double.parseDouble(s.substring(0, s.length() - 1)) * 1_000_000);
+            } else {
+                return (int) parseLong(s.replace(",", ""));
+            }
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** 빈 섹션 판별 (재귀) */
+    private boolean isEmptySection(ComponentSection sec) {
+        boolean noContent = (sec.getTextContent() == null || sec.getTextContent().isEmpty())
+                && (sec.getTables() == null || sec.getTables().isEmpty())
+                && (sec.getChildren() == null || sec.getChildren().isEmpty());
+        return noContent;
+    }
+
+    /** flat 섹션 리스트를 level 기반 트리로 변환 */
+    private List<ComponentSection> buildSectionTree(List<ComponentSection> flat) {
+        List<ComponentSection> roots = new ArrayList<>();
+        Deque<ComponentSection> stack = new ArrayDeque<>();
+
+        for (ComponentSection sec : flat) {
+            // 스택에서 현재 level보다 같거나 높은(숫자가 같거나 큰) 것은 pop
+            while (!stack.isEmpty() && stack.peek().getLevel() >= sec.getLevel()) {
+                stack.pop();
+            }
+            if (stack.isEmpty()) {
+                roots.add(sec);
+            } else {
+                stack.peek().getChildren().add(sec);
+            }
+            stack.push(sec);
+        }
+        return roots;
+    }
+
+    /** 섹션 헤더 정보를 담는 내부 클래스 */
+    private static class SectionHeader {
+        String id;
+        int level;
+        String title;
+        String severity;
+        int startPos;
     }
 
     // ─── Suspects 파싱 ────────────────────────────────────────────────────────

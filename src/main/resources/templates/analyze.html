@@ -276,6 +276,43 @@
         .mat-frame p { margin:6px 0; }
         .mat-frame a { color:var(--primary); }
 
+        /* ── Component Detail Parsed View ─────────── */
+        .cd-tabs { display:flex; gap:0; border-bottom:2px solid var(--border); margin-bottom:16px; }
+        .cd-tab { background:none; border:none; padding:8px 18px; font-size:13px; font-weight:600; color:var(--text-secondary); cursor:pointer; border-bottom:2px solid transparent; margin-bottom:-2px; transition:all .15s; }
+        .cd-tab:hover { color:var(--primary); }
+        .cd-tab.active { color:var(--primary); border-bottom-color:var(--primary); }
+        .cd-meta { display:grid; grid-template-columns:repeat(auto-fit, minmax(120px,1fr)); gap:10px; margin-bottom:18px; }
+        .cd-meta-card { background:var(--bg); border-radius:8px; padding:12px 14px; text-align:center; }
+        .cd-meta-card { position:relative; }
+        .cd-meta-card .cd-meta-label { font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; margin-bottom:4px; display:flex; align-items:center; justify-content:center; gap:4px; }
+        .cd-meta-card .cd-meta-value { font-size:18px; font-weight:700; color:var(--text); font-family:var(--mono); }
+        .cd-help-btn { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; border-radius:50%; border:1px solid #cbd5e1; background:#f1f5f9; color:#64748b; font-size:10px; font-weight:700; font-family:var(--sans); cursor:pointer; padding:0; line-height:1; flex-shrink:0; transition:all .15s; }
+        .cd-help-btn:hover { background:#3b82f6; color:#fff; border-color:#3b82f6; }
+        .cd-help-popup { position:fixed; background:#1e293b; color:#f1f5f9; font-size:12px; line-height:1.5; padding:10px 12px; border-radius:8px; width:240px; z-index:100000; box-shadow:0 4px 16px rgba(0,0,0,.25); text-transform:none; letter-spacing:normal; font-weight:400; animation:cdHelpIn .15s ease; pointer-events:auto; }
+        .cd-help-arrow { position:absolute; width:0; height:0; border:6px solid transparent; }
+        .cd-help-popup.arrow-top .cd-help-arrow { bottom:100%; border-bottom-color:#1e293b; }
+        .cd-help-popup.arrow-bottom .cd-help-arrow { top:100%; border-top-color:#1e293b; }
+        @keyframes cdHelpIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+        .cd-section { border:1px solid var(--border); border-radius:8px; margin-bottom:10px; overflow:hidden; }
+        .cd-section-hdr { display:flex; align-items:center; gap:8px; padding:10px 14px; background:var(--bg); cursor:pointer; user-select:none; font-weight:600; font-size:13px; }
+        .cd-section-hdr:hover { background:#e8eaf0; }
+        .cd-section-hdr .cd-arrow { transition:transform .2s; font-size:10px; color:var(--text-secondary); }
+        .cd-section-hdr .cd-arrow.open { transform:rotate(90deg); }
+        .cd-section-body { padding:12px 14px; display:none; }
+        .cd-section-body.open { display:block; }
+        .cd-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:10px; font-weight:700; text-transform:uppercase; }
+        .cd-badge-warning { background:var(--warning-light); color:var(--warning); }
+        .cd-badge-error { background:var(--danger-light); color:var(--danger); }
+        .cd-table { width:100%; border-collapse:collapse; font-size:13px; margin:6px 0; }
+        .cd-table th { background:#e5e7eb; font-weight:700; font-size:12px; padding:8px 10px; text-align:left; border:1px solid #d1d5db; }
+        .cd-table td { padding:7px 10px; border:1px solid #e2e5ec; }
+        .cd-table tr:nth-child(even) { background:#f9fafb; }
+        .cd-table tr:hover { background:#eff6ff; }
+        .cd-table .num { text-align:right; font-family:var(--mono); font-size:12px; }
+        .cd-text { font-size:13px; line-height:1.7; color:var(--text); white-space:pre-wrap; }
+        .cd-list { margin:8px 0; padding-left:20px; }
+        .cd-list li { margin-bottom:4px; font-size:13px; }
+
         /* ── Log Viewer ───────────────────────────── */
         .log-wrap { background:#0f172a; border-radius:10px; overflow:hidden; }
         .log-toolbar {
@@ -412,6 +449,11 @@
             .mat-frame { font-size:15px; }
             .mat-frame table { font-size:15px; }
             .mat-frame th { font-size:14px; }
+            .cd-table { font-size:15px; }
+            .cd-table th { font-size:14px; }
+            .cd-meta-card .cd-meta-value { font-size:20px; }
+            .cd-section-hdr { font-size:14px; }
+            .cd-text { font-size:14px; }
             .log-body { font-size:14px; }
             .log-toolbar .log-status { font-size:14px; }
             .file-info-key { font-size:13px; }
@@ -524,6 +566,11 @@
         <a href="/" class="btn-sm">Home</a>
     </div>
 </header>
+
+<!-- ════════════════ RERUN ERROR BANNER ════════════════ -->
+<div th:if="${rerunError}" style="position:relative;z-index:101;max-width:860px;margin:0 auto;padding:12px 18px;margin-top:52px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:0 0 8px 8px;color:#92400E;font-size:13px;font-weight:500">
+    <span th:text="${rerunError}"></span>
+</div>
 
 <!-- ════════════════ ERROR STATE ════════════════ -->
 <div th:if="${error}" class="main-content" style="margin-left:0;max-width:860px;margin-left:auto;margin-right:auto">
@@ -676,15 +723,15 @@ function loadFullErrorLog() {
     <div class="sidebar-section">
         <div class="sidebar-section-title">Raw Data</div>
         <button class="nav-item" onclick="showPanel('mat-overview',this)"
-                th:if="${!#strings.isEmpty(result.overviewHtml)}">
+                th:if="${hasOverviewZip}">
             <span class="nav-icon">&#128196;</span> System Overview
         </button>
         <button class="nav-item" onclick="showPanel('mat-top',this)"
-                th:if="${!#strings.isEmpty(result.topComponentsHtml)}">
+                th:if="${hasTopComponentsZip}">
             <span class="nav-icon">&#128230;</span> Top Components
         </button>
         <button class="nav-item" onclick="showPanel('mat-suspects',this)"
-                th:if="${!#strings.isEmpty(result.suspectsHtml)}">
+                th:if="${hasSuspectsZip}">
             <span class="nav-icon">&#128269;</span> Suspect Details
         </button>
         <button class="nav-item" onclick="showPanel('raw-histogram',this)" th:if="${hasHistogram}">
@@ -942,12 +989,12 @@ function loadFullErrorLog() {
                         </tr>
                     </thead>
                     <tbody>
-                        <tr th:each="h,s : ${histogramEntries}">
+                        <tr th:each="h,s : ${histogramEntries}" th:data-class="${h.className}" th:data-retained="${h.retainedHeap}" th:data-shallow="${h.shallowHeap}" th:data-objects="${h.objectCount}" onclick="showComponentDetail(this.dataset['class'])" style="cursor:pointer" title="클릭하여 상세 보기">
                             <td style="text-align:center"><span class="rank-num" th:text="${s.count}">1</span></td>
                             <td><div class="class-name-cell" th:text="${h.className}">-</div></td>
                             <td style="text-align:right;font-family:var(--mono);font-size:12px" th:text="${#numbers.formatInteger(h.objectCount, 1, 'COMMA')}">0</td>
-                            <td style="text-align:right;font-family:var(--mono);font-size:12px" th:text="${#numbers.formatInteger(h.shallowHeap, 1, 'COMMA')}">0</td>
-                            <td style="text-align:right;font-family:var(--mono);font-size:12px" th:text="${h.retainedHeapDisplay}">0</td>
+                            <td style="text-align:right;font-family:var(--mono);font-size:12px" th:title="${#numbers.formatInteger(h.shallowHeap, 1, 'COMMA') + ' bytes'}" th:text="${h.shallowHeapHuman}">0</td>
+                            <td style="text-align:right;font-family:var(--mono);font-size:12px" th:title="${h.retainedHeapDisplay + ' bytes'}" th:text="${h.retainedHeapHuman}">0</td>
                         </tr>
                     </tbody>
                 </table>
@@ -1022,27 +1069,46 @@ function loadFullErrorLog() {
         </div>
     </div>
 
-    <!-- ▌ MAT OVERVIEW PANEL ▌ -->
-    <div id="panel-mat-overview" class="panel" th:if="${!#strings.isEmpty(result.overviewHtml)}">
-        <div class="card">
-            <div class="card-title"><span class="card-icon">&#128196;</span> MAT System Overview</div>
-            <div class="mat-frame" th:utext="${result.overviewHtml}"></div>
+    <!-- ▌ MAT MAIN OVERVIEW PANEL (iframe) ▌ -->
+    <!-- ▌ MAT OVERVIEW PANEL (iframe) ▌ -->
+    <div id="panel-mat-overview" class="panel" th:if="${hasOverviewZip}">
+        <div class="card" style="padding:0;overflow:hidden">
+            <div class="card-title" style="padding:16px 20px;margin:0">
+                <span class="card-icon">&#128196;</span> MAT System Overview
+            </div>
+            <iframe id="matOverviewIframe"
+                    th:data-src="'/report/' + ${filename} + '/mat-page/overview/index.html'"
+                    style="width:100%;min-height:700px;border:none;border-top:1px solid var(--border);background:#fff"
+                    sandbox="allow-same-origin allow-scripts"
+                    referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
 
-    <!-- ▌ MAT TOP COMPONENTS PANEL ▌ -->
-    <div id="panel-mat-top" class="panel" th:if="${!#strings.isEmpty(result.topComponentsHtml)}">
-        <div class="card">
-            <div class="card-title"><span class="card-icon">&#128230;</span> MAT Top Components</div>
-            <div class="mat-frame" th:utext="${result.topComponentsHtml}"></div>
+    <!-- ▌ MAT TOP COMPONENTS PANEL (iframe) ▌ -->
+    <div id="panel-mat-top" class="panel" th:if="${hasTopComponentsZip}">
+        <div class="card" style="padding:0;overflow:hidden">
+            <div class="card-title" style="padding:16px 20px;margin:0">
+                <span class="card-icon">&#128230;</span> MAT Top Components
+            </div>
+            <iframe id="matTopIframe"
+                    th:data-src="'/report/' + ${filename} + '/mat-page/top_components/index.html'"
+                    style="width:100%;min-height:700px;border:none;border-top:1px solid var(--border);background:#fff"
+                    sandbox="allow-same-origin allow-scripts"
+                    referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
 
-    <!-- ▌ MAT SUSPECTS PANEL ▌ -->
-    <div id="panel-mat-suspects" class="panel" th:if="${!#strings.isEmpty(result.suspectsHtml)}">
-        <div class="card">
-            <div class="card-title"><span class="card-icon">&#128269;</span> MAT Leak Suspects Report</div>
-            <div class="mat-frame" th:utext="${result.suspectsHtml}"></div>
+    <!-- ▌ MAT SUSPECTS PANEL (iframe) ▌ -->
+    <div id="panel-mat-suspects" class="panel" th:if="${hasSuspectsZip}">
+        <div class="card" style="padding:0;overflow:hidden">
+            <div class="card-title" style="padding:16px 20px;margin:0">
+                <span class="card-icon">&#128269;</span> MAT Leak Suspects Report
+            </div>
+            <iframe id="matSuspectsIframe"
+                    th:data-src="'/report/' + ${filename} + '/mat-page/suspects/index.html'"
+                    style="width:100%;min-height:700px;border:none;border-top:1px solid var(--border);background:#fff"
+                    sandbox="allow-same-origin allow-scripts"
+                    referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
 
@@ -1081,17 +1147,23 @@ function loadFullErrorLog() {
 
 <!-- ── Component Detail Modal ── -->
 <div class="modal-overlay" id="componentDetailModal" onclick="if(event.target===this)closeComponentDetail()">
-    <div class="modal-box" style="max-width:800px;width:95%;max-height:85vh;display:flex;flex-direction:column">
+    <div class="modal-box" style="max-width:860px;width:95%;max-height:85vh;display:flex;flex-direction:column">
         <div class="modal-header" style="flex-shrink:0">
             <div class="modal-icon icon-csv">&#128230;</div>
-            <div class="modal-title" id="componentDetailTitle">Component Detail</div>
+            <div class="modal-title" id="componentDetailTitle">컴포넌트 상세</div>
             <button style="margin-left:auto;background:none;border:none;font-size:22px;cursor:pointer;color:var(--text-secondary)" onclick="closeComponentDetail()">&#215;</button>
         </div>
-        <div id="componentDetailBody" style="flex:1;overflow:auto;min-height:0">
-            <div style="text-align:center;padding:40px;color:var(--text-secondary)">Loading...</div>
+        <div class="cd-tabs" id="cdTabs" style="display:none;flex-shrink:0;padding:0 20px">
+            <button class="cd-tab active" onclick="switchCdTab('parsed',this)">분석 결과</button>
+            <button class="cd-tab" onclick="switchCdTab('raw',this)">원본 데이터</button>
+        </div>
+        <div id="componentDetailBody" style="flex:1;overflow:auto;min-height:0;padding:16px 20px">
+            <div id="cdParsedView" style="display:none"></div>
+            <div id="cdRawView" style="display:none"></div>
+            <div id="cdLoading" style="text-align:center;padding:40px;color:var(--text-secondary)">로딩 중...</div>
         </div>
         <div class="modal-footer" style="flex-shrink:0;margin-top:12px">
-            <button class="modal-btn modal-btn-cancel" onclick="closeComponentDetail()">Close</button>
+            <button class="modal-btn modal-btn-cancel" onclick="closeComponentDetail()">닫기</button>
         </div>
     </div>
 </div>
@@ -1219,6 +1291,75 @@ function showPanel(name, btn) {
         _threadStacksLoaded = true;
         loadThreadStacks();
     }
+
+    // iframe lazy-load (Overview, Top Components, Suspects)
+    var iframeMap = {
+        'mat-overview': 'matOverviewIframe',
+        'mat-top': 'matTopIframe',
+        'mat-suspects': 'matSuspectsIframe'
+    };
+    if (iframeMap[name]) {
+        var iframe = document.getElementById(iframeMap[name]);
+        if (iframe && !iframe.src) {
+            iframe.src = iframe.getAttribute('data-src');
+            iframe.addEventListener('load', function() {
+                try {
+                    var doc = iframe.contentDocument || iframe.contentWindow.document;
+                    iframe.style.height = Math.max(700, doc.body.scrollHeight + 40) + 'px';
+                    iframe.contentWindow.addEventListener('click', function() {
+                        setTimeout(function() {
+                            try {
+                                iframe.style.height = Math.max(700, doc.body.scrollHeight + 40) + 'px';
+                            } catch(e) {}
+                        }, 300);
+                    });
+                    // 클래스명 링크 활성화 (현재 페이지 + 내부 네비게이션 후)
+                    activateClassLinksInIframe(doc, iframe);
+                } catch(e) {}
+            });
+        }
+    }
+}
+
+// ── iframe 내 클래스명 링크 활성화 ──────────────────────
+function activateClassLinksInIframe(doc, iframe) {
+    // FQCN 패턴: 패키지.클래스명 (최소 2단계 이상)
+    var FQCN_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*\.[A-Z][\w$]*$/;
+    function activate(targetDoc) {
+        var links = targetDoc.querySelectorAll('a[href="javascript:void(0)"]');
+        for (var i = 0; i < links.length; i++) {
+            var link = links[i];
+            if (link._classLinkActivated) continue;
+            var text = (link.textContent || '').trim();
+            if (!FQCN_RE.test(text)) continue;
+            link._classLinkActivated = true;
+            // 스타일 활성화
+            link.style.opacity = '1';
+            link.style.cursor = 'pointer';
+            link.style.color = '#2563eb';
+            link.style.textDecoration = 'underline';
+            link.title = text + ' 상세 보기';
+            // 클릭 핸들러
+            (function(className) {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.parent.showComponentDetail(className);
+                });
+            })(text);
+        }
+    }
+    activate(doc);
+    // iframe 내부 네비게이션 감지: load 이벤트 재바인딩
+    if (iframe) {
+        iframe.addEventListener('load', function() {
+            try {
+                var newDoc = iframe.contentDocument || iframe.contentWindow.document;
+                iframe.style.height = Math.max(700, newDoc.body.scrollHeight + 40) + 'px';
+                activate(newDoc);
+            } catch(e) {}
+        });
+    }
 }
 
 // ── Suspect Toggle ────────────────────────────────────
@@ -1340,14 +1481,62 @@ function sortTable(colIdx) {
 
 // ── Re-Analyze Modal ──────────────────────────────────
 // ── Component Detail Modal ─────────────────────────
+var _cdRawLoaded = false;
+var _cdCurrentClass = '';
+var _cdCurrentIdx = null;
+
 function showComponentDetail(className, idx) {
     var modal = document.getElementById('componentDetailModal');
     var title = document.getElementById('componentDetailTitle');
-    var body  = document.getElementById('componentDetailBody');
+    var tabs = document.getElementById('cdTabs');
+    var parsedView = document.getElementById('cdParsedView');
+    var rawView = document.getElementById('cdRawView');
+    var loading = document.getElementById('cdLoading');
+
+    _cdRawLoaded = false;
+    _cdCurrentClass = className;
+    _cdCurrentIdx = idx;
 
     title.textContent = className;
-    body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary)">Loading...</div>';
+    parsedView.style.display = 'none';
+    parsedView.innerHTML = '';
+    rawView.style.display = 'none';
+    rawView.innerHTML = '';
+    loading.style.display = 'block';
+    tabs.style.display = 'none';
     modal.classList.add('open');
+
+    // parsed JSON 먼저 시도
+    var url = '/report/' + encodeURIComponent(FILENAME) + '/component-detail-parsed?className=' + encodeURIComponent(className);
+    if (idx !== undefined && idx !== null) url += '&index=' + idx;
+    fetch(url)
+        .then(function(r) {
+            if (!r.ok) throw new Error('Not found');
+            return r.json();
+        })
+        .then(function(data) {
+            if (data.parsedSuccessfully && (data.metadata || (data.sections && data.sections.length > 0))) {
+                loading.style.display = 'none';
+                parsedView.innerHTML = renderParsedDetail(data);
+                parsedView.style.display = 'block';
+                tabs.style.display = 'flex';
+                switchCdTab('parsed', tabs.children[0]);
+            } else {
+                // 파싱 실패 → raw HTML 폴백
+                loadRawComponentDetail(className, idx);
+            }
+        })
+        .catch(function() {
+            // parsed 엔드포인트 실패 → raw HTML 폴백
+            loadRawComponentDetail(className, idx);
+        });
+}
+
+function loadRawComponentDetail(className, idx) {
+    var loading = document.getElementById('cdLoading');
+    var rawView = document.getElementById('cdRawView');
+    var parsedView = document.getElementById('cdParsedView');
+    var tabs = document.getElementById('cdTabs');
 
     var url = '/report/' + encodeURIComponent(FILENAME) + '/component-detail?className=' + encodeURIComponent(className);
     if (idx !== undefined && idx !== null) url += '&index=' + idx;
@@ -1357,20 +1546,971 @@ function showComponentDetail(className, idx) {
             return r.text();
         })
         .then(function(html) {
-            body.innerHTML = '<div class="mat-frame" style="max-height:none">' + html + '</div>';
+            loading.style.display = 'none';
+            rawView.innerHTML = '<div class="mat-frame" style="max-height:none">' + html + '</div>';
+            rawView.style.display = 'block';
+            parsedView.style.display = 'none';
+            _cdRawLoaded = true;
+            // 탭 없이 raw만 표시 (파싱 실패 케이스)
+            if (!parsedView.innerHTML) {
+                tabs.style.display = 'none';
+            }
         })
         .catch(function(err) {
-            console.error('[ComponentDetail] Failed to load detail for className="' + className + '", idx=' + idx + ', url=' + url + ', error:', err);
-            body.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary)">' +
-                '<div style="font-size:48px;margin-bottom:16px">&#128269;</div>' +
-                '<div style="font-size:16px;font-weight:700;margin-bottom:8px">Detail not available</div>' +
-                '<div style="font-size:14px">No detailed sub-page found for this component.<br>Try re-analyzing the heap dump to generate detail pages.</div>' +
-                '<div style="font-size:12px;margin-top:12px;color:#9ca3af;font-family:var(--mono)">URL: ' + url + '<br>Error: ' + err + '</div></div>';
+            loading.style.display = 'none';
+            // Histogram에서 해당 클래스 정보를 찾아 표시
+            var histInfo = findClassInHistogram(className);
+            if (histInfo) {
+                parsedView.innerHTML = renderHistogramFallback(className, histInfo);
+                parsedView.style.display = 'block';
+                rawView.style.display = 'none';
+                tabs.style.display = 'none';
+            } else {
+                rawView.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary)">' +
+                    '<div style="font-size:48px;margin-bottom:16px">&#128269;</div>' +
+                    '<div style="font-size:16px;font-weight:700;margin-bottom:8px">상세 정보를 사용할 수 없습니다</div>' +
+                    '<div style="font-size:14px">이 컴포넌트의 상세 하위 페이지를 찾을 수 없습니다.<br>힙 덤프를 다시 분석하여 상세 페이지를 생성해 보세요.</div>' +
+                    '<div style="font-size:12px;margin-top:12px;color:#9ca3af;font-family:var(--mono)">오류: ' + err + '</div></div>';
+                rawView.style.display = 'block';
+                tabs.style.display = 'none';
+            }
         });
+}
+
+// Histogram 테이블에서 클래스명으로 정보 검색
+function findClassInHistogram(className) {
+    var rows = document.querySelectorAll('#histogramTable tbody tr');
+    for (var i = 0; i < rows.length; i++) {
+        var cells = rows[i].querySelectorAll('td');
+        if (cells.length >= 5) {
+            var cn = (cells[1].textContent || '').trim();
+            if (cn === className) {
+                return {
+                    rank: (cells[0].textContent || '').trim(),
+                    objects: (cells[2].textContent || '').trim(),
+                    shallowHeap: (cells[3].textContent || '').trim(),
+                    retainedHeap: (cells[4].textContent || '').trim(),
+                    retainedBytes: parseInt(rows[i].dataset.retained || '0', 10),
+                    shallowBytes: parseInt(rows[i].dataset.shallow || '0', 10),
+                    objectCount: parseInt(rows[i].dataset.objects || '0', 10)
+                };
+            }
+        }
+    }
+    return null;
+}
+
+// 바이트 수를 사람이 읽기 쉬운 형태로 변환
+function formatBytesHuman(str) {
+    if (!str) return '-';
+    // HTML 엔티티 디코딩 + ">= " 접두사 제거
+    var prefix = '';
+    var s = str.replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&');
+    s = s.replace(/^[>=≥\s]+/, function(m) { prefix = '≥ '; return ''; });
+    // 콤마 제거 후 숫자 파싱
+    var num = parseInt(s.replace(/,/g, ''), 10);
+    if (isNaN(num)) return str;
+    var display;
+    if (num >= 1073741824) display = (num / 1073741824).toFixed(2) + ' GB';
+    else if (num >= 1048576) display = (num / 1048576).toFixed(2) + ' MB';
+    else if (num >= 1024) display = (num / 1024).toFixed(2) + ' KB';
+    else display = num + ' B';
+    return prefix + display;
+}
+
+// Leak Suspects에서 클래스명이 언급된 항목 검색
+function findRelatedLeakSuspects(className) {
+    var suspects = [];
+    var shortName = className.indexOf('.') >= 0 ? className.substring(className.lastIndexOf('.') + 1) : className;
+    document.querySelectorAll('#panel-suspects .suspect-item').forEach(function(item) {
+        var desc = item.querySelector('.suspect-desc');
+        var titleEl = item.querySelector('.suspect-title-text');
+        var text = (desc ? desc.textContent : '') + ' ' + (titleEl ? titleEl.textContent : '');
+        if (text.indexOf(className) >= 0 || text.indexOf(shortName) >= 0) {
+            suspects.push({
+                title: titleEl ? titleEl.textContent.trim() : 'Leak Suspect',
+                element: item
+            });
+        }
+    });
+    return suspects;
+}
+
+// Top Consumers 테이블에서 클래스명 검색
+function findClassInTopConsumers(className) {
+    var rows = document.querySelectorAll('#topObjectsTable tbody tr');
+    for (var i = 0; i < rows.length; i++) {
+        var cn = rows[i].dataset['class'];
+        if (cn === className) {
+            return {
+                idx: rows[i].dataset.idx,
+                row: rows[i],
+                pct: parseFloat(rows[i].dataset.pct || '0'),
+                size: parseInt(rows[i].dataset.size || '0', 10)
+            };
+        }
+    }
+    return null;
+}
+
+// 자주 등장하는 클래스에 대한 부연설명 사전
+var CLASS_DESCRIPTIONS = {
+    'byte[]': {
+        desc: 'Java 원시 바이트 배열. I/O 버퍼, 네트워크 데이터, 파일 콘텐츠, 직렬화 데이터 등에 광범위하게 사용됩니다.',
+        detail: 'Java 9+에서는 String 내부 저장소가 char[]에서 byte[]로 변경되어(Compact Strings), 문자열이 많은 애플리케이션에서 byte[]가 상위에 위치하는 것은 정상적입니다.',
+        icon: '&#128196;'
+    },
+    'char[]': {
+        desc: 'Java 원시 문자 배열. Java 8 이하에서 String의 내부 저장소로 사용됩니다.',
+        detail: 'char[]가 상위에 있다면 문자열 데이터가 힙의 큰 부분을 차지하고 있음을 의미합니다. 문자열 중복(String deduplication)이나 인터닝(interning) 적용을 고려해 볼 수 있습니다.',
+        icon: '&#128172;'
+    },
+    'int[]': {
+        desc: 'Java 원시 정수 배열. HashMap/HashSet 등 해시 기반 컬렉션의 내부 버킷 배열로 주로 사용됩니다.',
+        detail: '대량의 int[]는 해시맵 크기가 크거나 비트맵/인덱스 데이터를 많이 사용하고 있음을 나타낼 수 있습니다.',
+        icon: '&#128290;'
+    },
+    'java.lang.String': {
+        desc: 'Java 문자열 객체. 내부적으로 byte[] (Java 9+) 또는 char[] (Java 8)에 실제 데이터를 저장합니다.',
+        detail: '문자열 객체가 상위에 있으면 문자열 중복이 많을 수 있습니다. -XX:+UseStringDeduplication (G1 GC) 옵션을 고려해 보세요.',
+        icon: '&#128221;'
+    },
+    'java.lang.Object[]': {
+        desc: 'Object 배열. ArrayList, HashMap 등 대부분의 Java 컬렉션 내부 저장소로 사용됩니다.',
+        detail: '컬렉션 프레임워크가 내부적으로 Object[]를 사용하므로, 이 클래스의 메모리가 크다면 컬렉션의 초기 용량(initial capacity) 최적화를 검토해 보세요.',
+        icon: '&#128230;'
+    },
+    'java.util.HashMap$Node': {
+        desc: 'HashMap의 개별 엔트리(키-값 쌍) 노드입니다.',
+        detail: '노드 수가 많다면 대형 HashMap이 존재하거나, 작은 HashMap이 대량으로 생성되고 있을 수 있습니다. 불필요한 맵 생성을 줄이는 것을 검토하세요.',
+        icon: '&#128279;'
+    },
+    'java.util.LinkedHashMap$Entry': {
+        desc: 'LinkedHashMap의 엔트리 노드. 삽입 순서 또는 접근 순서를 유지하는 연결 리스트 구조입니다.',
+        detail: 'LRU 캐시 구현이나 순서 보장이 필요한 경우에 사용됩니다. 일반 HashMap보다 엔트리당 메모리를 더 소비합니다.',
+        icon: '&#128279;'
+    },
+    'java.util.concurrent.ConcurrentHashMap$Node': {
+        desc: 'ConcurrentHashMap의 엔트리 노드. 스레드 안전한 해시맵의 내부 구조입니다.',
+        detail: '동시성 캐시나 공유 데이터 구조에서 많이 사용됩니다. 노드 수가 과도하면 캐시 정리(eviction) 정책을 확인하세요.',
+        icon: '&#128279;'
+    },
+    'java.lang.ref.Finalizer': {
+        desc: 'finalize() 메서드를 가진 객체를 추적하는 참조 객체입니다.',
+        detail: 'Finalizer가 많으면 finalize()를 오버라이드한 객체들이 GC 지연을 유발하고 있을 수 있습니다. try-with-resources 패턴으로 전환을 고려하세요.',
+        icon: '&#9888;'
+    },
+    'java.lang.Class': {
+        desc: 'JVM에 로드된 클래스의 메타데이터 객체입니다.',
+        detail: 'Class 객체 수가 과도하면 클래스 로더 누수(ClassLoader leak)나 동적 프록시/리플렉션의 과다 사용을 의심해 볼 수 있습니다.',
+        icon: '&#127979;'
+    },
+    'long[]': {
+        desc: 'Java 원시 long 배열. 타임스탬프, ID 값, 통계 카운터 등에 사용됩니다.',
+        detail: 'BitSet 내부 저장소로도 사용됩니다. 대량의 long[]은 대형 BitSet이나 시계열 데이터 저장을 나타낼 수 있습니다.',
+        icon: '&#128290;'
+    },
+    'short[]': {
+        desc: 'Java 원시 short 배열. 오디오 데이터, 이미지 처리 등 메모리 절약이 필요한 수치 데이터에 사용됩니다.',
+        icon: '&#128290;'
+    },
+    'boolean[]': {
+        desc: 'Java 원시 boolean 배열. 플래그 집합이나 상태 추적에 사용됩니다.',
+        detail: 'JVM에서 boolean 하나가 1바이트를 차지하므로, 대량의 플래그에는 BitSet 사용이 더 효율적입니다.',
+        icon: '&#128290;'
+    },
+    'double[]': {
+        desc: 'Java 원시 double 배열. 수치 계산, 통계, 좌표 데이터 등에 사용됩니다.',
+        icon: '&#128290;'
+    },
+    'float[]': {
+        desc: 'Java 원시 float 배열. 그래픽, 과학 계산 등에서 단정밀도 부동소수점 데이터에 사용됩니다.',
+        icon: '&#128290;'
+    },
+    'java.util.ArrayList': {
+        desc: '가변 길이 배열 기반 리스트. 내부적으로 Object[]를 사용합니다.',
+        detail: '빈 ArrayList도 내부 배열을 할당할 수 있습니다. 크기를 예측할 수 있다면 초기 용량을 지정하여 불필요한 배열 복사를 줄이세요.',
+        icon: '&#128203;'
+    },
+    'java.util.HashMap': {
+        desc: '해시 기반 키-값 쌍 저장 컬렉션. 내부적으로 Node[]와 TreeNode를 사용합니다.',
+        detail: '기본 초기 용량(16)과 로드 팩터(0.75)가 적용됩니다. 예상 크기를 알고 있다면 초기 용량을 지정하여 리해싱(rehashing)을 줄이세요.',
+        icon: '&#128203;'
+    },
+    'java.lang.ref.WeakReference': {
+        desc: '약한 참조(Weak Reference) 객체. GC가 참조 대상을 회수할 수 있게 합니다.',
+        detail: 'WeakHashMap이나 캐시에서 주로 사용됩니다. 많은 수의 WeakReference는 캐시 구현을 확인해 볼 필요가 있음을 나타냅니다.',
+        icon: '&#128279;'
+    },
+    'java.lang.ref.SoftReference': {
+        desc: '소프트 참조(Soft Reference) 객체. 메모리 부족 시에만 GC가 회수합니다.',
+        detail: '캐시에 자주 사용됩니다. OOM 상황에서 SoftReference가 많으면 캐시 크기 제한을 검토하세요.',
+        icon: '&#128279;'
+    },
+    'java.util.TreeMap$Entry': {
+        desc: 'TreeMap의 레드-블랙 트리 노드입니다. 정렬된 키-값 쌍을 저장합니다.',
+        detail: 'HashMap$Node보다 엔트리당 메모리 사용이 크지만, 키 정렬이 필요한 경우에 사용됩니다.',
+        icon: '&#128279;'
+    }
+};
+
+// Histogram 기반 폴백 렌더링
+function renderHistogramFallback(className, info) {
+    // 힙 점유율 계산
+    var retainedBytes = info.retainedBytes || 0;
+    var heapPct = (typeof TOTAL_BYTES !== 'undefined' && TOTAL_BYTES > 0) ? (retainedBytes / TOTAL_BYTES * 100) : 0;
+
+    // 클래스명 + 순위 뱃지
+    var h = '<div style="margin-bottom:14px;padding:12px 14px;background:var(--bg);border-radius:8px;display:flex;align-items:flex-start;gap:10px">';
+    h += '<div style="flex:1">';
+    h += '<div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">클래스명</div>';
+    h += '<div style="font-size:14px;font-weight:600;color:var(--text);font-family:var(--mono);word-break:break-all">' + escHtml(className) + '</div>';
+    h += '</div>';
+    if (info.rank) {
+        h += '<div style="flex-shrink:0;background:var(--primary);color:#fff;border-radius:12px;padding:4px 12px;font-size:12px;font-weight:700;white-space:nowrap">';
+        h += 'Histogram #' + escHtml(info.rank);
+        h += '</div>';
+    }
+    h += '</div>';
+
+    // 클래스 부연설명
+    var classDesc = CLASS_DESCRIPTIONS[className];
+    if (classDesc) {
+        h += '<div style="margin-bottom:14px;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px">';
+        h += '<div style="font-size:13px;color:#0c4a6e;line-height:1.6">';
+        h += '<span style="margin-right:6px">' + (classDesc.icon || '&#128204;') + '</span>';
+        h += '<strong>' + escHtml(className) + '</strong> &mdash; ' + classDesc.desc;
+        if (classDesc.detail) {
+            h += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #bae6fd;font-size:12px;color:#0369a1">';
+            h += '&#128161; ' + classDesc.detail;
+            h += '</div>';
+        }
+        h += '</div></div>';
+    }
+
+    // 메타 카드
+    h += '<div class="cd-meta">';
+    h += cdMetaCard('객체 수', info.objects);
+    h += cdMetaCard('얕은 힙', formatBytesHuman(info.shallowHeap));
+    h += cdMetaCard('보유 힙', formatBytesHuman(info.retainedHeap));
+    if (heapPct > 0) {
+        h += cdMetaCard('힙 점유율', heapPct.toFixed(2) + '%');
+    }
+    h += '</div>';
+
+    // 힙 점유율 바
+    if (heapPct > 0) {
+        h += '<div style="margin-top:14px;padding:12px 14px;background:var(--bg);border-radius:8px">';
+        h += '<div style="font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">전체 힙 대비 Retained Heap</div>';
+        h += '<div style="background:#e5e7eb;border-radius:6px;height:22px;overflow:hidden;position:relative">';
+        var barWidth = Math.min(heapPct, 100);
+        var barColor = heapPct >= 30 ? '#ef4444' : heapPct >= 10 ? '#f59e0b' : '#3b82f6';
+        h += '<div style="height:100%;width:' + barWidth + '%;background:' + barColor + ';border-radius:6px;transition:width .3s ease"></div>';
+        h += '<div style="position:absolute;top:0;left:8px;line-height:22px;font-size:12px;font-weight:700;color:' + (heapPct >= 15 ? '#fff' : '#374151') + '">' + heapPct.toFixed(2) + '%</div>';
+        h += '</div>';
+        h += '</div>';
+    }
+
+    // 연관 Leak Suspect 검색
+    var suspects = findRelatedLeakSuspects(className);
+    if (suspects.length > 0) {
+        h += '<div style="margin-top:14px;padding:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px">';
+        h += '<div style="font-size:12px;font-weight:700;color:#991b1b;margin-bottom:8px">&#9888; 관련 Leak Suspect</div>';
+        suspects.forEach(function(s) {
+            h += '<div style="font-size:13px;color:#991b1b;padding:4px 0;cursor:pointer;text-decoration:underline" ';
+            h += 'onclick="showPanel(\'suspects\');setTimeout(function(){document.querySelectorAll(\'#panel-suspects .suspect-item\').forEach(function(el){';
+            h += 'if(el.querySelector(\'.suspect-title-text\')&&el.querySelector(\'.suspect-title-text\').textContent.trim()===\'' + escHtml(s.title).replace(/'/g, "\\'") + '\'){';
+            h += 'el.classList.add(\'open\');el.scrollIntoView({behavior:\'smooth\',block:\'center\'});}});},200);';
+            h += 'document.getElementById(\'componentDetailModal\').classList.remove(\'open\');">';
+            h += '&#8594; ' + escHtml(s.title);
+            h += '</div>';
+        });
+        h += '</div>';
+    }
+
+    // Top Consumers에 존재하면 링크 표시
+    var tcMatch = findClassInTopConsumers(className);
+    if (tcMatch) {
+        h += '<div style="margin-top:14px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px">';
+        h += '<div style="font-size:12px;font-weight:700;color:#1e40af;margin-bottom:6px">&#128204; Top Consumers 상세 분석 가능</div>';
+        h += '<div style="font-size:13px;color:#1e40af;cursor:pointer;text-decoration:underline" ';
+        h += 'onclick="document.getElementById(\'componentDetailModal\').classList.remove(\'open\');';
+        h += 'setTimeout(function(){showComponentDetail(\'' + escHtml(className).replace(/'/g, "\\'") + '\',' + tcMatch.idx + ');},300);">';
+        h += '&#8594; Top Consumers에서 상세 분석 보기';
+        h += '</div>';
+        h += '</div>';
+    }
+
+    // 안내 메시지
+    h += '<div style="margin-top:14px;padding:16px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;font-size:13px;color:#92400e">';
+    h += '<strong>&#9432; 참고:</strong> 위 정보는 Class Histogram에서 가져온 기본 데이터입니다.';
+    if (!tcMatch) {
+        h += ' 이 클래스는 Top Components 리포트에 포함되어 있지 않아 상세 분석 데이터가 제한적입니다.';
+    }
+    h += '</div>';
+    return h;
+}
+
+function switchCdTab(tab, btn) {
+    var parsedView = document.getElementById('cdParsedView');
+    var rawView = document.getElementById('cdRawView');
+    var tabs = document.getElementById('cdTabs');
+
+    // 탭 버튼 활성화
+    for (var i = 0; i < tabs.children.length; i++) tabs.children[i].classList.remove('active');
+    if (btn) btn.classList.add('active');
+
+    if (tab === 'parsed') {
+        parsedView.style.display = 'block';
+        rawView.style.display = 'none';
+    } else {
+        parsedView.style.display = 'none';
+        rawView.style.display = 'block';
+        // Raw Data 최초 클릭 시 lazy 로드
+        if (!_cdRawLoaded) {
+            rawView.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-secondary)">원본 데이터 로딩 중...</div>';
+            _cdRawLoaded = true;
+            var url = '/report/' + encodeURIComponent(FILENAME) + '/component-detail?className=' + encodeURIComponent(_cdCurrentClass);
+            if (_cdCurrentIdx !== undefined && _cdCurrentIdx !== null) url += '&index=' + _cdCurrentIdx;
+            fetch(url)
+                .then(function(r) { return r.ok ? r.text() : Promise.reject('Not found'); })
+                .then(function(html) {
+                    rawView.innerHTML = '<div class="mat-frame" style="max-height:none">' + html + '</div>';
+                })
+                .catch(function() {
+                    rawView.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary)">원본 데이터를 사용할 수 없습니다</div>';
+                });
+        }
+    }
+}
+
+// ── MAT 영문 → 한국어 번역 사전 ──────────────────────────
+var MAT_TITLE_MAP = {
+    // 섹션 제목
+    'Miscellaneous': '기타 분석',
+    'Map Collision Ratios': '맵 충돌 비율',
+    'Duplicate Strings': '중복 문자열',
+    'Duplicate Classes': '중복 클래스',
+    'Empty Collections': '빈 컬렉션',
+    'Collection Fill Ratios': '컬렉션 채움 비율',
+    'Zero-Length Arrays': '길이 0 배열',
+    'Primitive Arrays with a Constant Value': '상수 값 원시 배열',
+    'Array Fill Ratios': '배열 채움 비율',
+    'Possible Memory Waste': '메모리 낭비 가능성',
+    'Memory Waste': '메모리 낭비',
+    'Possible Memory Leak': '메모리 누수 가능성',
+    'Memory Leak': '메모리 누수',
+    'Soft Reference Statistics': '소프트 참조 통계',
+    'Weak Reference Statistics': '약한 참조 통계',
+    'Phantom Reference Statistics': '팬텀 참조 통계',
+    'Finalizer Statistics': 'Finalizer 통계',
+    'Finalizer Summary': 'Finalizer 요약',
+    'Class Histogram': '클래스 히스토그램',
+    'Top Components': '상위 컴포넌트',
+    'Table Of Contents': '목차',
+    'Component Report': '컴포넌트 리포트',
+    'Overview': '개요',
+    'Details': '상세 정보',
+    'Top Consumers': '상위 소비자',
+    'Retained Set': '보유 집합',
+    'Suspects': '의심 항목',
+    'Leak Suspects': '누수 의심 항목',
+    'System Overview': '시스템 개요',
+    'Thread Overview': '스레드 개요',
+    'Thread Details': '스레드 상세',
+    'Description': '설명',
+    'Shortest Paths To the Accumulation Point': '축적 지점까지의 최단 경로',
+    'Accumulated Objects in Dominator Tree': '도미네이터 트리의 축적 객체',
+    'Accumulated Objects by Class in Dominator Tree': '도미네이터 트리의 클래스별 축적 객체',
+    'All Accumulated Objects by Class': '클래스별 전체 축적 객체'
+};
+
+var MAT_HEADER_MAP = {
+    // 테이블 헤더
+    'Class Name': '클래스명',
+    'Objects': '객체 수',
+    'Shallow Heap': '얕은 힙',
+    'Retained Heap': '보유 힙',
+    'Heap Size': '힙 크기',
+    'Percentage': '비율',
+    'Num Objects': '객체 수',
+    'Used Heap Size': '사용 힙 크기',
+    'Class': '클래스',
+    'Name': '이름',
+    'Value': '값',
+    'Count': '개수',
+    'Size': '크기',
+    'Waste': '낭비',
+    'Instances': '인스턴스',
+    'Total': '합계',
+    'Empty': '비어있음',
+    'Non-Empty': '비어있지 않음',
+    'Number of Objects': '객체 수',
+    'Shallow Size': '얕은 크기',
+    'Retained Size': '보유 크기',
+    'Ref.Count': '참조 수',
+    'Average': '평균',
+    'Minimum': '최소',
+    'Maximum': '최대',
+    'Median': '중간값',
+    'Standard Deviation': '표준편차',
+    'Address': '주소',
+    'Type': '유형',
+    'Collection': '컬렉션',
+    'Fill Ratio': '채움 비율',
+    'Length': '길이',
+    'Key': '키',
+    'Collision Ratio': '충돌 비율',
+    'Number of Collisions': '충돌 수',
+    'Total Size': '총 크기',
+    'Wasted Size': '낭비 크기'
+};
+
+// 자주 등장하는 MAT 영문 문구 → 한국어 패턴 매칭 (줄 단위)
+var MAT_LINE_PATTERNS = [
+    [/^Detected the following maps with collision ratios above (\d+)%:/i,
+        function(m) { return '다음 맵에서 ' + m[1] + '% 이상의 충돌 비율이 감지되었습니다:'; }],
+    [/^(\d[\d,]*)\s+instances?\s+of\s+([\w.$\[\]<>]+)\s+retain\s+>=?\s*([\d,]+)\s+bytes/i,
+        function(m) { return m[2] + '의 인스턴스 ' + m[1] + '개가 ' + m[3] + ' 바이트 이상을 보유하고 있습니다'; }],
+    [/^One\s+instance\s+of\s+([\w.$\[\]<>]+)\s+retain[s]?\s+>=?\s*([\d,]+)\s+bytes/i,
+        function(m) { return m[1] + '의 인스턴스 1개가 ' + m[2] + ' 바이트를 보유하고 있습니다'; }],
+    [/^(\d[\d,]*)\s+instances?\s+of\s+([\w.$\[\]<>]+)\s+retain\s+([\d,]+)\s+bytes/i,
+        function(m) { return m[2] + '의 인스턴스 ' + m[1] + '개가 ' + m[3] + ' 바이트를 보유하고 있습니다'; }],
+    [/^Table Of Contents$/i, function() { return '목차'; }],
+    [/^Created by Eclipse Memory Analyzer$/i, function() { return 'Eclipse Memory Analyzer에 의해 생성됨'; }],
+    [/^Created by (.+)$/i, function(m) { return m[1] + '에 의해 생성됨'; }],
+    [/^The class(?:es)? (.+?) (is|are) loaded by (\d+) class loaders?/i,
+        function(m) { return m[1] + ' 클래스가 ' + m[3] + '개의 클래스 로더에 의해 로드되었습니다'; }],
+    [/^(\d[\d,]*)\s+instances\s+of\s+(.*?),\s+loaded by\s+(.*?),?\s+occupy\s+([\d,]+)\s+\(([\d.]+)%\)\s+bytes/i,
+        function(m) { return m[3] + '에 의해 로드된 ' + m[2] + '의 인스턴스 ' + m[1] + '개가 ' + m[4] + ' 바이트(' + m[5] + '%)를 점유하고 있습니다'; }],
+    [/^One\s+instance\s+of\s+(.*?),?\s+loaded by\s+(.*?),?\s+occup(?:y|ies)\s+([\d,]+)\s+\(([\d.]+)%\)\s+bytes/i,
+        function(m) { return m[2] + '에 의해 로드된 ' + m[1] + '의 인스턴스 1개가 ' + m[3] + ' 바이트(' + m[4] + '%)를 점유하고 있습니다'; }],
+    [/^These\s+(\d+)\s+instances?\s+are?\s+referenced\s+from\s+one\s+instance\s+of\s+([\w.$]+)/i,
+        function(m) { return '이 인스턴스 ' + m[1] + '개는 ' + m[2] + '의 인스턴스 1개에서 참조됩니다'; }],
+    [/^Biggest instances?:/i, function() { return '가장 큰 인스턴스:'; }],
+    [/^The memory is accumulated in one instance of\s+(.*?)\s+loaded by\s+(.*?)(?:\s*@\s*0x[0-9a-fA-F]+)?$/i,
+        function(m) { return '메모리가 ' + m[2] + '에 의해 로드된 ' + m[1] + '의 인스턴스 1개에 축적되어 있습니다'; }],
+    [/^The memory is accumulated in\s+(.*?)\s+loaded by\s+(.*?)$/i,
+        function(m) { return '메모리가 ' + m[2] + '에 의해 로드된 ' + m[1] + '에 축적되어 있습니다'; }],
+    [/^Keywords$/i, function() { return '키워드'; }],
+    [/^See stacktrace$/i, function() { return '스택트레이스 보기'; }],
+    [/^Problem Suspect (\d+)$/i, function(m) { return '의심 항목 ' + m[1]; }],
+    [/^Suspect (\d+)$/i, function(m) { return '의심 항목 ' + m[1]; }],
+    [/^(\d[\d,]*)\s*×\s*(.*?)\s*\(([\d,]+)\s*bytes\)$/i,
+        function(m) { return m[1] + ' × ' + m[2] + ' (' + m[3] + ' 바이트)'; }]
+];
+
+// 긴 문장 전체를 매칭하는 패턴 (줄 분리 전에 적용)
+var MAT_SENTENCE_PATTERNS = [
+    // Duplicate Strings — "Found N occurrences of X with at least M instances..."
+    [/Found (\d[\d,]*) occurrences? of ([\w.$\[\]]+) with at least (\d[\d,]*) instances? having identical content\.\s*Total size is ([\d,]+) bytes\.\s*Top elements include:\s*/i,
+        function(m) { return '동일한 내용을 가진 인스턴스가 ' + m[3] + '개 이상인 ' + m[2] + '가 ' + m[1] + '건 발견되었습니다. 총 크기는 ' + m[4] + ' 바이트입니다. 주요 항목: '; }],
+    // "N × value (bytes)" 패턴 — 리스트 항목 및 인라인
+    [/^(\d[\d,]*)\s*×\s*(.*?)\s*\(([\d,]+)\s*bytes\)$/i,
+        function(m) { return m[1] + ' × ' + m[2] + ' (' + m[3] + ' 바이트)'; }],
+    // Soft Reference Statistics
+    [/A total of (\d[\d,]*) ([\w.$]+) objects have been found, which softly reference (\d[\d,]*) objects?\./i,
+        function(m) { return '총 ' + m[1] + '개의 ' + m[2] + ' 객체가 발견되었으며, ' + m[3] + '개의 객체를 소프트 참조하고 있습니다.'; }],
+    [/A total of (\d[\d,]*) ([\w.$]+) objects have been found, which softly reference no objects?\./i,
+        function(m) { return '총 ' + m[1] + '개의 ' + m[2] + ' 객체가 발견되었으며, 소프트 참조하는 객체는 없습니다.'; }],
+    // Weak Reference Statistics
+    [/A total of (\d[\d,]*) ([\w.$]+) objects have been found, which weakly reference (\d[\d,]*) objects?\./i,
+        function(m) { return '총 ' + m[1] + '개의 ' + m[2] + ' 객체가 발견되었으며, ' + m[3] + '개의 객체를 약한 참조하고 있습니다.'; }],
+    [/A total of (\d[\d,]*) ([\w.$]+) objects have been found, which weakly reference no objects?\./i,
+        function(m) { return '총 ' + m[1] + '개의 ' + m[2] + ' 객체가 발견되었으며, 약한 참조하는 객체는 없습니다.'; }],
+    // Phantom Reference Statistics
+    [/A total of (\d[\d,]*) ([\w.$]+) objects have been found, which phantom reference (\d[\d,]*) objects?\./i,
+        function(m) { return '총 ' + m[1] + '개의 ' + m[2] + ' 객체가 발견되었으며, ' + m[3] + '개의 객체를 팬텀 참조하고 있습니다.'; }],
+    // "No objects totalling X B are retained (kept alive) only via soft/weak references."
+    [/No objects totalling ([\d,]+ \w+) are retained \(kept alive\) only via (soft|weak|phantom) references\./ig,
+        function(m) { var t = m[2]==='soft'?'소프트':m[2]==='weak'?'약한':'팬텀'; return t + ' 참조만으로 유지(alive)되는 객체는 없습니다 (총 ' + m[1] + ').'; }],
+    [/([\d,]+ \w+) of objects are retained \(kept alive\) only via (soft|weak|phantom) references\./ig,
+        function(m) { var t = m[2]==='soft'?'소프트':m[2]==='weak'?'약한':'팬텀'; return t + ' 참조만으로 유지(alive)되는 객체가 ' + m[1] + ' 있습니다.'; }],
+    // "No objects totalling X B are softly/weakly referenced and also strongly retained..."
+    [/No objects totalling ([\d,]+ \w+) are (softly|weakly) referenced and also strongly retained \(kept alive\) via (soft|weak|phantom) references\./ig,
+        function(m) { var t = m[3]==='soft'?'소프트':m[3]==='weak'?'약한':'팬텀'; var r = m[2]==='softly'?'소프트':'약한'; return r + ' 참조되면서 ' + t + ' 참조를 통해 강하게 유지(alive)되는 객체는 없습니다 (총 ' + m[1] + ').'; }],
+    [/([\d,]+ \w+) of objects are (softly|weakly) referenced and also strongly retained \(kept alive\) via (soft|weak|phantom) references\./ig,
+        function(m) { var t = m[3]==='soft'?'소프트':m[3]==='weak'?'약한':'팬텀'; var r = m[2]==='softly'?'소프트':'약한'; return r + ' 참조되면서 ' + t + ' 참조를 통해 강하게 유지(alive)되는 객체가 ' + m[1] + ' 있습니다.'; }],
+    // Finalizer
+    [/Component does not keep objects? with Finalizer methods? alive\./i,
+        function() { return '이 컴포넌트는 Finalizer 메서드를 가진 객체를 유지(alive)하지 않습니다.'; }],
+    [/A total of (\d[\d,]*) objects with finalizers? have been found\./i,
+        function(m) { return 'Finalizer를 가진 객체가 총 ' + m[1] + '개 발견되었습니다.'; }],
+    // Empty collections / duplicate strings
+    [/No excessive duplicate strings found\./i,
+        function() { return '과도한 중복 문자열이 발견되지 않았습니다.'; }],
+    [/No suspicious empty collections found\./i,
+        function() { return '의심스러운 빈 컬렉션이 발견되지 않았습니다.'; }],
+    [/No excessive usage of empty collections found\./i,
+        function() { return '빈 컬렉션의 과도한 사용이 발견되지 않았습니다.'; }],
+    [/No suspicious collection fill ratios found\./i,
+        function() { return '의심스러운 컬렉션 채움 비율이 발견되지 않았습니다.'; }],
+    [/No serious amount of collections with low fill ratios found\./i,
+        function() { return '낮은 채움 비율을 가진 컬렉션이 심각한 수준으로 발견되지 않았습니다.'; }],
+    [/No suspicious zero-length arrays found\./i,
+        function() { return '의심스러운 길이 0 배열이 발견되지 않았습니다.'; }],
+    [/No excessive usage of zero-length arrays found\./i,
+        function() { return '길이 0 배열의 과도한 사용이 발견되지 않았습니다.'; }],
+    [/No suspicious array fill ratios found\./i,
+        function() { return '의심스러운 배열 채움 비율이 발견되지 않았습니다.'; }],
+    [/No serious amount of arrays with low fill ratios found\./i,
+        function() { return '낮은 채움 비율을 가진 배열이 심각한 수준으로 발견되지 않았습니다.'; }],
+    [/No suspicious primitive arrays with constant values found\./i,
+        function() { return '의심스러운 상수 값 원시 배열이 발견되지 않았습니다.'; }],
+    [/No excessive usage of primitive arrays with a constant value found\./i,
+        function() { return '상수 값 원시 배열의 과도한 사용이 발견되지 않았습니다.'; }],
+    // Table Of Contents / Created by (inline 형태)
+    [/Table Of Contents\s+Created by Eclipse Memory Analyzer/i,
+        function() { return '목차 — Eclipse Memory Analyzer에 의해 생성됨'; }],
+    [/Table Of Contents/i,
+        function() { return '목차'; }],
+    [/Created by Eclipse Memory Analyzer/i,
+        function() { return 'Eclipse Memory Analyzer에 의해 생성됨'; }]
+];
+
+function trTitle(title) {
+    if (!title) return '';
+    if (MAT_TITLE_MAP[title]) return MAT_TITLE_MAP[title];
+    // 부분 매칭: "Duplicate Strings" 같은 키가 포함된 경우
+    for (var k in MAT_TITLE_MAP) {
+        if (title === k) return MAT_TITLE_MAP[k];
+    }
+    return title;
+}
+
+function trHeader(header) {
+    if (!header) return '';
+    if (MAT_HEADER_MAP[header]) return MAT_HEADER_MAP[header];
+    return header;
+}
+
+function decodeHtmlEntities(s) {
+    return s.replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&')
+            .replace(/&#61;/g, '=').replace(/&#62;/g, '>').replace(/&#60;/g, '<')
+            .replace(/&#34;/g, '"').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+}
+
+function trText(text) {
+    if (!text) return '';
+    // HTML 엔티티 디코딩
+    text = decodeHtmlEntities(text);
+
+    // 1) 문장 단위 패턴 매칭 (전체 텍스트에 대해 반복 적용)
+    for (var i = 0; i < MAT_SENTENCE_PATTERNS.length; i++) {
+        var pat = MAT_SENTENCE_PATTERNS[i][0];
+        var fn = MAT_SENTENCE_PATTERNS[i][1];
+        // global 플래그가 있으면 replaceAll, 아니면 단일 매칭
+        if (pat.global) {
+            text = text.replace(pat, function() {
+                var args = Array.prototype.slice.call(arguments);
+                return fn(args);
+            });
+        } else {
+            var m = text.match(pat);
+            if (m) {
+                text = text.replace(pat, fn(m));
+            }
+        }
+    }
+
+    // 2) 줄 단위 패턴 매칭
+    var lines = text.split('\n');
+    var result = [];
+    for (var li = 0; li < lines.length; li++) {
+        var line = lines[li];
+        var prefix = '';
+        var content = line;
+        if (line.indexOf('- ') === 0) {
+            prefix = '- ';
+            content = line.substring(2);
+        }
+        var translated = false;
+        for (var j = 0; j < MAT_LINE_PATTERNS.length; j++) {
+            var lm = content.match(MAT_LINE_PATTERNS[j][0]);
+            if (lm) {
+                result.push(prefix + MAT_LINE_PATTERNS[j][1](lm));
+                translated = true;
+                break;
+            }
+        }
+        if (!translated) result.push(line);
+    }
+    return result.join('\n');
+}
+
+// 섹션 트리에서 경고/오류 수 집계
+function countSectionSeverities(sections) {
+    var result = { warnings: 0, errors: 0, total: 0 };
+    if (!sections) return result;
+    for (var i = 0; i < sections.length; i++) {
+        result.total++;
+        if (sections[i].severity === 'warning') result.warnings++;
+        if (sections[i].severity === 'error') result.errors++;
+        if (sections[i].children && sections[i].children.length > 0) {
+            var sub = countSectionSeverities(sections[i].children);
+            result.warnings += sub.warnings;
+            result.errors += sub.errors;
+            result.total += sub.total;
+        }
+    }
+    return result;
+}
+
+// 분석 요약 텍스트 생성
+function generateAnalysisSummary(data, className, heapPct, severities, histInfo, suspects) {
+    var points = [];
+
+    // 힙 점유율 기반 평가
+    if (heapPct >= 30) {
+        points.push('&#9888; 이 컴포넌트는 전체 힙의 <strong>' + heapPct.toFixed(1) + '%</strong>를 차지하고 있어 <strong>주요 메모리 소비자</strong>입니다. 메모리 최적화가 필요할 수 있습니다.');
+    } else if (heapPct >= 10) {
+        points.push('&#128313; 전체 힙의 <strong>' + heapPct.toFixed(1) + '%</strong>를 차지하며, 상당한 메모리를 사용하고 있습니다.');
+    } else if (heapPct > 0) {
+        points.push('&#9989; 전체 힙의 <strong>' + heapPct.toFixed(1) + '%</strong>를 차지하며, 정상 범위 내입니다.');
+    }
+
+    // 경고/오류
+    if (severities.errors > 0) {
+        points.push('&#128308; MAT 분석에서 <strong>' + severities.errors + '건의 오류</strong>가 감지되었습니다. 아래 섹션을 확인하세요.');
+    }
+    if (severities.warnings > 0) {
+        points.push('&#128992; MAT 분석에서 <strong>' + severities.warnings + '건의 경고</strong>가 발견되었습니다.');
+    }
+
+    // Leak Suspect 연관
+    if (suspects.length > 0) {
+        points.push('&#128270; 이 클래스가 <strong>' + suspects.length + '개의 Leak Suspect</strong>에서 언급되고 있습니다 — 메모리 누수 가능성을 검토하세요.');
+    }
+
+    // Histogram 연동
+    if (histInfo) {
+        points.push('&#128202; Histogram 기준 <strong>#' + histInfo.rank + '위</strong>, 객체 수 <strong>' + histInfo.objects + '</strong>, Shallow Heap <strong>' + histInfo.shallowHeap + '</strong>');
+    }
+
+    // 객체 수 대비 크기 비율 (metadata 기반)
+    if (data.metadata && data.metadata.objectCount > 0 && data.metadata.sizeBytes > 0) {
+        var avgObjSize = data.metadata.sizeBytes / data.metadata.objectCount;
+        if (avgObjSize > 1048576) {
+            points.push('&#128200; 객체당 평균 크기가 <strong>' + (avgObjSize / 1048576).toFixed(1) + ' MB</strong>로, 대형 객체가 포함되어 있습니다.');
+        } else if (data.metadata.objectCount > 100000) {
+            points.push('&#128200; 객체 수가 <strong>' + formatNum(data.metadata.objectCount) + '</strong>개로 매우 많습니다. 객체 풀링이나 캐시 정리를 검토하세요.');
+        }
+    }
+
+    return points;
+}
+
+function renderParsedDetail(data) {
+    var h = '';
+    var className = _cdCurrentClass || (data.className || '');
+
+    // 클래스 부연설명
+    var classDesc = CLASS_DESCRIPTIONS[className];
+    if (classDesc) {
+        h += '<div style="margin-bottom:14px;padding:12px 14px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px">';
+        h += '<div style="font-size:13px;color:#0c4a6e;line-height:1.6">';
+        h += '<span style="margin-right:6px">' + (classDesc.icon || '&#128204;') + '</span>';
+        h += '<strong>' + escHtml(className) + '</strong> &mdash; ' + classDesc.desc;
+        if (classDesc.detail) {
+            h += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #bae6fd;font-size:12px;color:#0369a1">';
+            h += '&#128161; ' + classDesc.detail;
+            h += '</div>';
+        }
+        h += '</div></div>';
+    }
+
+    // 메타데이터 카드
+    // Top Consumers 테이블의 MAT 기준 퍼센트를 우선 사용 (정확한 dominator 분석 값)
+    var tcInfo = findClassInTopConsumers(className);
+    var heapPct = (tcInfo && tcInfo.pct > 0) ? tcInfo.pct : 0;
+    var retainedSize = (tcInfo && tcInfo.size > 0) ? tcInfo.size : 0;
+
+    if (data.metadata) {
+        var m = data.metadata;
+        // Top Consumers에 없는 경우에만 metadata.sizeBytes로 폴백
+        if (heapPct === 0 && typeof TOTAL_BYTES !== 'undefined' && TOTAL_BYTES > 0 && m.sizeBytes > 0) {
+            heapPct = m.sizeBytes / TOTAL_BYTES * 100;
+        }
+        h += '<div class="cd-meta">';
+        h += cdMetaCard('크기', m.sizeDisplay || '-');
+        if (retainedSize > 0) {
+            h += cdMetaCard('Retained Heap', formatBytesHuman(String(retainedSize)));
+        }
+        h += cdMetaCard('클래스 수', formatNum(m.classCount));
+        h += cdMetaCard('객체 수', formatNum(m.objectCount));
+        h += cdMetaCard('클래스 로더', m.classLoader || '-');
+        if (heapPct > 0) {
+            h += cdMetaCard('힙 점유율', heapPct.toFixed(2) + '%');
+        }
+        h += '</div>';
+
+        // 힙 점유율 바
+        if (heapPct > 0) {
+            h += '<div style="margin:10px 0 14px;padding:0 2px">';
+            var barWidth = Math.min(heapPct, 100);
+            var barColor = heapPct >= 30 ? '#ef4444' : heapPct >= 10 ? '#f59e0b' : '#3b82f6';
+            h += '<div style="background:#e5e7eb;border-radius:6px;height:20px;overflow:hidden;position:relative">';
+            h += '<div style="height:100%;width:' + barWidth + '%;background:' + barColor + ';border-radius:6px;transition:width .3s ease"></div>';
+            h += '<div style="position:absolute;top:0;left:8px;line-height:20px;font-size:11px;font-weight:700;color:' + (heapPct >= 15 ? '#fff' : '#374151') + '">전체 힙의 ' + heapPct.toFixed(2) + '%</div>';
+            h += '</div></div>';
+        }
+    }
+
+    // 요약 카드 생성
+    var severities = countSectionSeverities(data.sections);
+    var histInfo = findClassInHistogram(className);
+    var suspects = findRelatedLeakSuspects(className);
+    var summaryPoints = generateAnalysisSummary(data, className, heapPct, severities, histInfo, suspects);
+
+    if (summaryPoints.length > 0) {
+        var summaryBg = severities.errors > 0 ? '#fef2f2' : (severities.warnings > 0 || heapPct >= 30) ? '#fffbeb' : '#f0fdf4';
+        var summaryBorder = severities.errors > 0 ? '#fecaca' : (severities.warnings > 0 || heapPct >= 30) ? '#fde68a' : '#bbf7d0';
+        var summaryColor = severities.errors > 0 ? '#991b1b' : (severities.warnings > 0 || heapPct >= 30) ? '#92400e' : '#166534';
+        h += '<div style="margin-bottom:14px;padding:14px;background:' + summaryBg + ';border:1px solid ' + summaryBorder + ';border-radius:8px">';
+        h += '<div style="font-size:12px;font-weight:700;color:' + summaryColor + ';margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">&#128221; 분석 요약</div>';
+        h += '<ul style="margin:0;padding-left:20px;list-style:none">';
+        for (var sp = 0; sp < summaryPoints.length; sp++) {
+            h += '<li style="font-size:13px;color:' + summaryColor + ';line-height:1.8;padding:2px 0">' + summaryPoints[sp] + '</li>';
+        }
+        h += '</ul>';
+
+        // Leak Suspect 링크
+        if (suspects.length > 0) {
+            h += '<div style="margin-top:10px;padding-top:10px;border-top:1px solid ' + summaryBorder + '">';
+            suspects.forEach(function(s) {
+                h += '<div style="font-size:12px;color:' + summaryColor + ';padding:3px 0;cursor:pointer;text-decoration:underline" ';
+                h += 'onclick="showPanel(\'suspects\');setTimeout(function(){document.querySelectorAll(\'#panel-suspects .suspect-item\').forEach(function(el){';
+                h += 'if(el.querySelector(\'.suspect-title-text\')&&el.querySelector(\'.suspect-title-text\').textContent.trim()===\'' + escHtml(s.title).replace(/'/g, "\\'") + '\'){';
+                h += 'el.classList.add(\'open\');el.scrollIntoView({behavior:\'smooth\',block:\'center\'});}});},200);';
+                h += 'document.getElementById(\'componentDetailModal\').classList.remove(\'open\');">';
+                h += '&#128270; Leak Suspect로 이동: ' + escHtml(s.title);
+                h += '</div>';
+            });
+            h += '</div>';
+        }
+        h += '</div>';
+    }
+
+    // 섹션 (전역 인덱스 카운터로 고유 ID 보장)
+    _cdSectionIdx = 0;
+    if (data.sections && data.sections.length > 0) {
+        for (var i = 0; i < data.sections.length; i++) {
+            h += renderCdSection(data.sections[i], true, 0); // 최상위는 기본 열림
+        }
+    }
+
+    if (!h) h = '<div style="text-align:center;padding:30px;color:var(--text-secondary)">파싱된 데이터가 없습니다</div>';
+    return h;
+}
+
+// 메타 카드 부연설명 사전
+var META_HELP = {
+    '크기': '이 클래스 로더가 로드한 모든 클래스와 객체의 총 크기입니다. 다른 컴포넌트와 공유되는 객체도 포함되어 Retained Heap보다 클 수 있습니다.',
+    'Retained Heap': '이 컴포넌트가 GC root에서 독점적으로 보유(retain)하는 힙 크기입니다. 이 컴포넌트가 해제되면 실제로 회수되는 메모리량입니다.',
+    '클래스 수': '이 컴포넌트에 포함된 Java 클래스의 수입니다.',
+    '객체 수': '이 컴포넌트에 속한 객체 인스턴스의 총 수입니다. 수가 매우 많다면 객체 생성 최적화를 검토할 수 있습니다.',
+    '클래스 로더': '이 컴포넌트의 클래스를 로드한 ClassLoader입니다. <system class loader>는 JVM 부트스트랩/시스템 클래스 로더를 의미합니다.',
+    '힙 점유율': '전체 힙 메모리 대비 이 컴포넌트의 Retained Heap 비율입니다. MAT의 dominator 분석 기준으로 계산됩니다.',
+    '얕은 힙': 'Shallow Heap — 객체 헤더와 필드가 차지하는 메모리입니다. 참조하는 다른 객체의 크기는 포함하지 않습니다.',
+    '보유 힙': 'Retained Heap — 이 객체가 GC되면 함께 회수되는 전체 메모리입니다. 객체 자체 + 이 객체만이 유일하게 참조하는 다른 객체들의 크기를 포함합니다.'
+};
+
+function escAttr(s) {
+    if (!s) return '';
+    return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function toggleMetaHelp(btn) {
+    var wasOpen = btn._cdHelpOpen;
+    // 다른 모든 팝업 닫기
+    document.querySelectorAll('.cd-help-popup').forEach(function(p) { p.remove(); });
+    document.querySelectorAll('.cd-help-btn').forEach(function(b) { b._cdHelpOpen = false; });
+    // 같은 버튼이면 토글 (닫기만)
+    if (wasOpen) return;
+    // 새 팝업 생성 (body에 추가하여 overflow 영향 없음)
+    var popup = document.createElement('div');
+    popup.className = 'cd-help-popup';
+    popup.textContent = btn.getAttribute('data-help');
+    document.body.appendChild(popup);
+    btn._cdHelpOpen = true;
+    // 버튼 위치 기준으로 팝업 배치
+    var rect = btn.getBoundingClientRect();
+    var popupW = 240;
+    var popupH = popup.offsetHeight;
+    var spaceBelow = window.innerHeight - rect.bottom;
+    var showBelow = spaceBelow > popupH + 16;
+    // 모달 박스의 실제 경계를 기준으로 사용 (모달 내부일 경우)
+    var modalBox = btn.closest('.modal-box');
+    var rightBound = window.innerWidth;
+    var leftBound = 0;
+    if (modalBox) {
+        var modalRect = modalBox.getBoundingClientRect();
+        rightBound = modalRect.right;
+        leftBound = modalRect.left;
+    }
+    // 수평 위치: 버튼 중앙 기준, 모달/화면 밖으로 안 나가도록 보정
+    var btnCenter = rect.left + rect.width / 2;
+    var left = btnCenter - popupW / 2;
+    if (left < leftBound + 8) left = leftBound + 8;
+    if (left + popupW > rightBound - 8) left = rightBound - popupW - 8;
+    if (showBelow) {
+        popup.style.top = (rect.bottom + 8) + 'px';
+        popup.classList.add('arrow-top');
+    } else {
+        popup.style.top = (rect.top - popupH - 8) + 'px';
+        popup.classList.add('arrow-bottom');
+    }
+    popup.style.left = left + 'px';
+    // 화살표 DOM 요소 추가 (버튼 중심에 맞춤)
+    var arrow = document.createElement('div');
+    arrow.className = 'cd-help-arrow';
+    var arrowPos = btnCenter - left - 6;
+    arrowPos = Math.max(10, Math.min(arrowPos, popupW - 22));
+    arrow.style.left = arrowPos + 'px';
+    popup.appendChild(arrow);
+    // 외부 클릭 또는 스크롤 시 닫기
+    var cleanup = function() {
+        popup.remove();
+        btn._cdHelpOpen = false;
+        document.removeEventListener('click', closeHandler, true);
+        var scrollTarget = document.getElementById('componentDetailBody');
+        if (scrollTarget) scrollTarget.removeEventListener('scroll', cleanup);
+    };
+    var closeHandler = function(e) {
+        if (!popup.contains(e.target) && e.target !== btn) cleanup();
+    };
+    setTimeout(function() {
+        document.addEventListener('click', closeHandler, true);
+        var scrollTarget = document.getElementById('componentDetailBody');
+        if (scrollTarget) scrollTarget.addEventListener('scroll', cleanup, { once: true });
+    }, 0);
+}
+
+function cdMetaCard(label, value) {
+    var help = META_HELP[label];
+    var helpBtn = help ? ' <button class="cd-help-btn" onclick="event.stopPropagation();toggleMetaHelp(this)" data-help="' + escAttr(help) + '">?</button>' : '';
+    return '<div class="cd-meta-card"><div class="cd-meta-label">' + escHtml(label) + helpBtn + '</div><div class="cd-meta-value">' + escHtml(value) + '</div></div>';
+}
+
+var _cdSectionIdx = 0;
+
+function renderCdSection(sec, defaultOpen, depth) {
+    var idx = _cdSectionIdx++;
+    var hasChildren = sec.children && sec.children.length > 0;
+    var indent = depth > 0 ? ' style="margin-left:' + (depth * 8) + 'px"' : '';
+
+    var h = '<div class="cd-section"' + indent + '>';
+    // 헤더
+    h += '<div class="cd-section-hdr" onclick="toggleCdSection(' + idx + ')">';
+    h += '<span class="cd-arrow' + (defaultOpen ? ' open' : '') + '" id="cdArrow' + idx + '">&#9654;</span> ';
+    if (sec.severity === 'warning') h += '<span class="cd-badge cd-badge-warning">경고</span> ';
+    if (sec.severity === 'error') h += '<span class="cd-badge cd-badge-error">오류</span> ';
+    h += escHtml(trTitle(sec.title) || '섹션');
+    if (hasChildren) h += ' <span style="color:var(--text-secondary);font-size:11px;font-weight:400">(' + sec.children.length + ')</span>';
+    h += '</div>';
+
+    // 본문
+    h += '<div class="cd-section-body' + (defaultOpen ? ' open' : '') + '" id="cdBody' + idx + '">';
+
+    // 자체 콘텐츠
+    if (sec.description) {
+        h += '<div class="cd-text" style="margin-bottom:10px">' + escHtml(trText(sec.description)) + '</div>';
+    }
+
+    if (sec.type === 'TABLE' && sec.tables) {
+        for (var t = 0; t < sec.tables.length; t++) {
+            h += renderCdTable(sec.tables[t]);
+        }
+    } else if (sec.type === 'TEXT' && sec.textContent) {
+        var text = trText(sec.textContent);
+        var lines = text.split('\n');
+        var hasList = false;
+        var textPart = '';
+        var listItems = [];
+        for (var li = 0; li < lines.length; li++) {
+            if (lines[li].indexOf('- ') === 0) {
+                hasList = true;
+                listItems.push(lines[li].substring(2));
+            } else {
+                textPart += (textPart ? ' ' : '') + lines[li];
+            }
+        }
+        if (textPart) h += '<div class="cd-text">' + escHtml(textPart) + '</div>';
+        if (hasList) {
+            h += '<ul class="cd-list">';
+            for (var li2 = 0; li2 < listItems.length; li2++) {
+                h += '<li>' + escHtml(listItems[li2]) + '</li>';
+            }
+            h += '</ul>';
+        }
+    }
+
+    // 하위 섹션 재귀 렌더링
+    if (hasChildren) {
+        h += '<div style="margin-top:8px">';
+        for (var ci = 0; ci < sec.children.length; ci++) {
+            h += renderCdSection(sec.children[ci], false, depth + 1);
+        }
+        h += '</div>';
+    }
+
+    h += '</div></div>';
+    return h;
+}
+
+function renderCdTable(tbl) {
+    if (!tbl || !tbl.headers || tbl.headers.length === 0) return '';
+    var h = '<table class="cd-table"><thead><tr>';
+    for (var i = 0; i < tbl.headers.length; i++) {
+        var align = (tbl.rightAligned && tbl.rightAligned[i]) ? ' class="num"' : '';
+        h += '<th' + align + '>' + escHtml(trHeader(tbl.headers[i])) + '</th>';
+    }
+    h += '</tr></thead><tbody>';
+    if (tbl.rows) {
+        var maxRows = Math.min(tbl.rows.length, 100);
+        for (var r = 0; r < maxRows; r++) {
+            h += '<tr>';
+            for (var c = 0; c < tbl.rows[r].length && c < tbl.headers.length; c++) {
+                var align2 = (tbl.rightAligned && tbl.rightAligned[c]) ? ' class="num"' : '';
+                h += '<td' + align2 + '>' + escHtml(tbl.rows[r][c]) + '</td>';
+            }
+            h += '</tr>';
+        }
+        if (tbl.rows.length > 100) {
+            h += '<tr><td colspan="' + tbl.headers.length + '" style="text-align:center;color:var(--text-secondary);font-size:12px">... ' + (tbl.rows.length - 100) + '개 행 추가 (전체 보기는 원본 데이터 탭 사용)</td></tr>';
+        }
+    }
+    h += '</tbody></table>';
+    return h;
+}
+
+function toggleCdSection(idx) {
+    var body = document.getElementById('cdBody' + idx);
+    var arrow = document.getElementById('cdArrow' + idx);
+    if (body.classList.contains('open')) {
+        body.classList.remove('open');
+        arrow.classList.remove('open');
+    } else {
+        body.classList.add('open');
+        arrow.classList.add('open');
+    }
+}
+
+function formatNum(n) {
+    if (n === null || n === undefined) return '-';
+    return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+function escHtml(s) {
+    if (!s) return '';
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(s));
+    return d.innerHTML;
 }
 
 function closeComponentDetail() {
     document.getElementById('componentDetailModal').classList.remove('open');
+    document.querySelectorAll('.cd-help-popup').forEach(function(p) { p.remove(); });
 }
 
 function showReanalyzeModal() {
@@ -1581,7 +2721,7 @@ function buildTreemap() {
                 + '<div class="tt-pct">' + item.pct.toFixed(2) + '% of heap</div>';
         });
         div.addEventListener('mousemove', function(e) {
-            tooltip.style.left = (e.clientX + 14) + 'px'; tooltip.style.top = (e.clientY - 10) + 'px';
+            positionTooltip(tooltip, e);
         });
         div.addEventListener('mouseleave', function() { tooltip.style.display = 'none'; });
         container.appendChild(div);
@@ -1591,6 +2731,21 @@ function buildTreemap() {
 }
 
 function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// 툴팁 위치 계산 — 오른쪽 넘침 시 왼쪽으로, 하단 넘침 시 위쪽으로
+function positionTooltip(tt, e) {
+    var ttW = tt.offsetWidth || 320;
+    var ttH = tt.offsetHeight || 60;
+    var mx = e.clientX, my = e.clientY;
+    var left = mx + 14;
+    var top = my - 10;
+    if (left + ttW > window.innerWidth - 8) left = mx - ttW - 14;
+    if (left < 8) left = 8;
+    if (top + ttH > window.innerHeight - 8) top = my - ttH - 10;
+    if (top < 8) top = 8;
+    tt.style.left = left + 'px';
+    tt.style.top = top + 'px';
+}
 
 // ── Stacked Bar Builder ───────────────────────────────
 function buildStackedBar() {
@@ -1642,7 +2797,7 @@ function buildStackedBar() {
                 + '<div class="tt-pct">' + seg.pct.toFixed(2) + '% of total heap</div>';
         });
         div.addEventListener('mousemove', function(e) {
-            tooltip.style.left = (e.clientX + 14) + 'px'; tooltip.style.top = (e.clientY - 10) + 'px';
+            positionTooltip(tooltip, e);
         });
         div.addEventListener('mouseleave', function() { tooltip.style.display = 'none'; });
 

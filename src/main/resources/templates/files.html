@@ -70,6 +70,18 @@
         .fb.d:hover svg { stroke: #EF4444; }
         .fb svg { width: 12px; height: 12px; stroke: #6B7280; fill: none; stroke-width: 1.5; }
         .no-match { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; display: none; }
+        .legend { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+        .legend-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #6B7280; }
+        .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .ld-ok   { background: #10B981; }
+        .ld-warn { background: #F59E0B; }
+        .ld-err  { background: #EF4444; }
+        .gz-badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 4px;
+                    background: #DBEAFE; color: #1E40AF; font-weight: 600; margin-left: 4px; vertical-align: middle; }
+        .fsize-detail { font-size: 11px; color: #9CA3AF; flex-shrink: 0; min-width: 60px; text-align: right; }
+        .fsize-detail .sz-orig { color: #6B7280; }
+        .fsize-detail .sz-arrow { color: #D1D5DB; margin: 0 2px; }
+        .fsize-detail .sz-comp { color: #2563EB; font-weight: 500; }
         .fi-deleted { opacity: 0.65; }
         .fi-del-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px;
                         background: #F3F4F6; color: #6B7280; flex-shrink: 0; margin-left: 2px; }
@@ -123,8 +135,16 @@
         <div class="page-stats">
             <span class="page-stat"><strong th:text="${fileCount}">0</strong> files</span>
             <span class="page-stat"><strong th:text="${analyzedCount}">0</strong> analyzed</span>
-            <span class="page-stat"><strong th:text="${totalSize}">0</strong> total</span>
+            <span class="page-stat"><strong th:text="${totalSize}">0</strong> original</span>
+            <span th:if="${hasCompressed}" class="page-stat" style="color:#2563EB">
+                <strong th:text="${diskSize}">0</strong> disk</span>
         </div>
+    </div>
+
+    <div class="legend">
+        <div class="legend-item"><div class="legend-dot ld-ok"></div>분석 완료</div>
+        <div class="legend-item"><div class="legend-dot ld-warn"></div>미분석</div>
+        <div class="legend-item"><div class="legend-dot ld-err"></div>분석 오류</div>
     </div>
 
     <input type="text" class="search-bar" id="searchInput"
@@ -139,7 +159,13 @@
             <div class="hdot hd-warn" th:unless="${h.status == 'SUCCESS' or h.status == 'ERROR' or h.status == 'NOT_ANALYZED'}"></div>
             <div class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</div>
             <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
-            <div class="fsize" th:text="${h.formattedSize}">157 MB</div>
+            <div th:if="${h.compressed}" class="fsize-detail">
+                <span class="sz-orig" th:text="${h.formattedOriginalSize}">500 MB</span>
+                <span class="sz-arrow">→</span>
+                <span class="sz-comp" th:text="${h.formattedCompressedSize}">120 MB</span>
+                <span class="gz-badge">GZ</span>
+            </div>
+            <div th:unless="${h.compressed}" class="fsize" th:text="${h.formattedSize}">157 MB</div>
             <div class="fdate" th:text="${h.formattedDate}">03-18 10:00</div>
             <div class="file-actions">
                 <!-- 결과 보기 (SUCCESS — 파일 삭제 여부 무관) -->

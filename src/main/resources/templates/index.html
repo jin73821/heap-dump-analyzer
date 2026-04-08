@@ -523,8 +523,8 @@
                         <svg viewBox="0 0 20 20"><path d="M10 13V5M6 8l4-4 4 4"/><path d="M3 16h14"/></svg>
                     </div>
                     <div class="upload-zone-title">Drop file here</div>
-                    <div class="upload-zone-sub">.hprof .bin .dump · Max 2 GB</div>
-                    <input type="file" id="fileInput" name="file" accept=".hprof,.bin,.dump" style="display:none" required>
+                    <div class="upload-zone-sub">.hprof .bin .dump (.gz) · Max 2 GB</div>
+                    <input type="file" id="fileInput" name="file" accept=".hprof,.bin,.dump,.gz" style="display:none" required>
                     <button type="button" class="upload-zone-btn"
                             onclick="document.getElementById('fileInput').click()">Choose file</button>
                     <div class="upload-pw" id="upPW">
@@ -953,12 +953,13 @@ if (zone) {
 }
 
 function validateFileExt(file) {
-    const allowed = ['hprof','bin','dump'];
-    const ext = file.name.split('.').pop().toLowerCase();
-    if (allowed.includes(ext)) return true;
+    const lower = file.name.toLowerCase();
+    const validExts = ['.hprof','.bin','.dump','.hprof.gz','.bin.gz','.dump.gz'];
+    if (validExts.some(ext => lower.endsWith(ext))) return true;
     // 파일 input 초기화
+    const ext = file.name.split('.').pop().toLowerCase();
     if (fileInput) fileInput.value = '';
-    toast('Unsupported file type: .' + ext + '\nAllowed: .hprof, .bin, .dump', 'error');
+    toast('Unsupported file type: .' + ext + '\nAllowed: .hprof, .bin, .dump (+ .gz)', 'error');
     // 확장자 경고 모달 표시
     showExtWarning(file.name, ext);
     return false;
@@ -984,6 +985,7 @@ function showExtWarning(filename, ext) {
         + '<span style="padding:4px 10px;background:#DBEAFE;color:#1D4ED8;border-radius:4px;font-size:12px;font-weight:600">.hprof</span>'
         + '<span style="padding:4px 10px;background:#DBEAFE;color:#1D4ED8;border-radius:4px;font-size:12px;font-weight:600">.bin</span>'
         + '<span style="padding:4px 10px;background:#DBEAFE;color:#1D4ED8;border-radius:4px;font-size:12px;font-weight:600">.dump</span>'
+        + '<span style="padding:4px 10px;background:#D1FAE5;color:#065F46;border-radius:4px;font-size:12px;font-weight:600">.gz</span>'
         + '</div></div>'
         + '<button onclick="this.closest(\'#extWarningOverlay\').remove()" style="width:100%;padding:10px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">OK</button>'
         + '</div>';

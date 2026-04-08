@@ -12,12 +12,13 @@ document.addEventListener('DOMContentLoaded', function () {
         fileInput.addEventListener('change', function (e) {
             const file = e.target.files[0];
             if (file) {
-                const ext = file.name.split('.').pop().toLowerCase();
-                const allowed = ['hprof', 'bin', 'dump'];
-                if (!allowed.includes(ext)) {
+                const lower = file.name.toLowerCase();
+                const validExts = ['.hprof', '.bin', '.dump', '.hprof.gz', '.bin.gz', '.dump.gz'];
+                if (!validExts.some(ext => lower.endsWith(ext))) {
+                    const ext = file.name.split('.').pop().toLowerCase();
                     fileNameSpan.textContent = 'Choose a file or drag it here';
                     fileInput.value = '';
-                    showToast('Unsupported file type: .' + ext + '. Allowed: .hprof, .bin, .dump', 'error');
+                    showToast('Unsupported file type: .' + ext + '. Allowed: .hprof, .bin, .dump (+ .gz)', 'error');
                     return;
                 }
                 fileNameSpan.textContent = file.name;
@@ -53,7 +54,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const file       = files[0];
             const lower      = file.name.toLowerCase();
-            const validExts  = ['.hprof', '.bin', '.dump'];
+            const validExts  = ['.hprof', '.bin', '.dump', '.hprof.gz', '.bin.gz', '.dump.gz'];
             const isValid    = validExts.some(ext => lower.endsWith(ext));
 
             if (isValid) {
@@ -68,7 +69,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
                 if (fileNameSpan) fileNameSpan.textContent = file.name;
             } else {
-                showToast('Invalid file type. Please upload a .hprof, .bin, or .dump file.', 'error');
+                showToast('Invalid file type. Please upload a .hprof, .bin, .dump, or .gz file.', 'error');
             }
         });
     }
@@ -87,10 +88,12 @@ document.addEventListener('DOMContentLoaded', function () {
             }
 
             // 확장자 검증
-            const ext = file.name.split('.').pop().toLowerCase();
-            if (!['hprof', 'bin', 'dump'].includes(ext)) {
+            const lower = file.name.toLowerCase();
+            const validExts = ['.hprof', '.bin', '.dump', '.hprof.gz', '.bin.gz', '.dump.gz'];
+            if (!validExts.some(ext => lower.endsWith(ext))) {
                 e.preventDefault();
-                showToast('Unsupported file type: .' + ext + '. Allowed: .hprof, .bin, .dump', 'error');
+                const ext = file.name.split('.').pop().toLowerCase();
+                showToast('Unsupported file type: .' + ext + '. Allowed: .hprof, .bin, .dump (+ .gz)', 'error');
                 return;
             }
 

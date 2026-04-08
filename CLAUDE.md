@@ -57,12 +57,12 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 **Models** (all use Lombok `@Data`):
 - `HeapAnalysisResult` — main result with heap stats, parsed objects, HTML fragments, histogram/thread data, `originalFileSize` (pre-compression size)
 - `MatParseResult` — intermediate parse result passed between parser methods
-- `HistogramEntry` — class name, object count, shallow/retained heap
+- `HistogramEntry` — class name, object count, shallow/retained heap. `getRetainedHeapHuman()` / `getShallowHeapHuman()` for human-readable display (≥ 973.4 MB). `retainedHeapDisplay` preserves MAT's raw format (">= 1,020,644,584").
 - `ThreadInfo` — thread name, type, heap sizes, address, stack trace (matched from `.threads` file)
 - `HeapDumpFile` — file info with `compressed`, `originalSize`, `compressedSize` for GZ display
 - `MemoryObject`, `LeakSuspect`, `AnalysisProgress`
 
-**Frontend:** Thymeleaf templates + vanilla JS + Chart.js. No build step. `index.html`, `analyze.html`, `files.html` have **complete inline `<style>` blocks**. `progress.html` and `compare.html` link `/css/style.css` plus additional inline styles. Modals use `.modal-ov.open` CSS pattern with `animation: modalIn .2s ease`.
+**Frontend:** Thymeleaf templates + vanilla JS + Chart.js. No build step. `index.html`, `analyze.html`, `files.html` have **complete inline `<style>` blocks**. `progress.html` and `compare.html` link `/css/style.css` plus additional inline styles. Modals use `.modal-ov.open` CSS pattern with `animation: modalIn .2s ease`. Tooltip positioning uses `positionTooltip(tt, e)` — auto-flips left/right and up/down to prevent viewport overflow.
 
 **External dependency:** Eclipse MAT CLI binary at `/opt/mat/ParseHeapDump.sh`, invoked with reports: `org.eclipse.mat.api:suspects`, `org.eclipse.mat.api:overview`, `org.eclipse.mat.api:top_components`. 30-minute timeout.
 
@@ -71,10 +71,16 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 **index.html** — Dashboard with sidebar (upload, file list, MAT settings). Files list shows tooltips on hover with compressed file info (GZ badge + original/compressed sizes). Analysis Queue panel (auto-polls `/api/queue/status` every 5s when active, idle state when empty). Modals for: Download, Compare, Export History, Clear Cache, Delete, Auto-Analyze warning, Keep Unreachable warning. Settings link navigates to `/settings` page.
 
 **analyze.html** — Analysis result page with sidebar navigation sections:
-- **Analysis**: Overview (KPI cards, charts), Top Consumers (sortable/searchable table with click-for-detail modal), Leak Suspects (accordion)
-- **Actions**: Histogram (parsed data table), Thread Overview (click row to expand stack trace — single shared detail row for performance), Thread Stacks (lazy-loaded `.threads` file)
+- **Analysis**: Overview (KPI cards, Memory Treemap, Stacked Bar charts), Top Consumers (sortable/searchable table with click-for-detail modal), Leak Suspects (accordion)
+- **Actions**: Histogram (parsed data table, **click row → detail modal**), Thread Overview (click row to expand stack trace — single shared detail row for performance), Thread Stacks (lazy-loaded `.threads` file)
 - **Tools**: MAT Log (chunked loading), Export CSV, Print
 - **Raw Data**: MAT original HTML for System Overview, Top Components, Suspect Details, Histogram, Thread Overview
+- **Component Detail Modal** (`componentDetailModal`): Shared by Top Consumers and Histogram. Two tabs (분석 결과/원본 데이터). Cascade: `/component-detail-parsed` → `/component-detail` (raw HTML) → `renderHistogramFallback()`. Features:
+  - `CLASS_DESCRIPTIONS` dict (20 classes): Korean descriptions for common heap classes (`byte[]`, `HashMap$Node`, etc.)
+  - `META_HELP` dict: `?` button on metadata cards shows help popover (크기 vs Retained Heap meaning, etc.)
+  - `renderParsedDetail()`: auto-generates summary card with heap %, severity counts, Leak Suspect cross-refs, Histogram ranking
+  - `findRelatedLeakSuspects()` / `findClassInTopConsumers()`: DOM-based cross-reference between panels
+  - Heap % source: Top Consumers table `data-pct` (MAT dominator analysis) takes priority over `metadata.sizeBytes` (total loaded size)
 
 **progress.html** — SSE-driven analysis progress with step indicators. Queue waiting banner (purple gradient) shown when analysis is queued behind another, with position and current analysis filename. Cancel button: QUEUED state shows modal + calls `POST /api/analyze/cancel/{filename}`; RUNNING state uses confirm dialog. `cancelAnalysis()` must not conflict with `cancelHeapWarnModal()` (separate functions — previously caused a bug due to duplicate function names).
 
@@ -140,7 +146,11 @@ On startup (`@PostConstruct`): 기존 루트의 덤프 파일 → dumpfiles/ 자
 - **Settings confirmation modals:** Destructive setting changes (disable compress, disable save results, disable keep unreachable, enable auto-analyze) show confirmation modals before applying. Pattern: toggle reverts → modal opens → confirm button calls API + updates toggle.
 - **Thymeleaf security restriction:** `th:onclick` with string variables is blocked by Thymeleaf's restricted expression policy. Use `th:data-*` attributes + plain `onclick="fn(this.dataset.x)"` pattern instead.
 - **SVG icon button pattern:** `index.html` and `files.html` share the `.fb` icon button style (26×26px, 1px border, SVG stroke icons). Variants: `.fb.v` (green/view), `.fb.p` (blue/analyze), `.fb.d` (red hover/delete), plain (download). When adding file action buttons to new pages, replicate this pattern.
+- **Tooltip positioning:** `positionTooltip(tt, e)` handles viewport-aware placement for Treemap/StackedBar tooltips. Flips left when right edge overflows, flips up when bottom overflows. All hover tooltips should use this function.
+- **Meta card help popover:** `cdMetaCard(label, value)` auto-adds `?` button when `META_HELP[label]` exists. Popover rendered as `position:fixed` on `document.body` (avoids parent `overflow:hidden` clipping). Uses `toggleMetaHelp(btn)` with modal-boundary-aware positioning. When adding new metadata cards, add corresponding entry to `META_HELP` dict.
+- **Class descriptions pattern:** `CLASS_DESCRIPTIONS` dict maps class names → `{desc, detail, icon}`. Used by both `renderHistogramFallback()` and `renderParsedDetail()`. When adding support for new common classes, add entries here.
+- **Cross-panel references:** Histogram detail and Top Consumers detail modals cross-reference Leak Suspects and each other via DOM search. Pattern: `findRelatedLeakSuspects(className)` searches `#panel-suspects .suspect-item` text; `findClassInTopConsumers(className)` searches `#topObjectsTable` rows. Clicking a cross-ref link closes modal → navigates to target panel → highlights/scrolls to item.
 
 ## Changelog
 
-모든 변경 내용은 `CHANGELOG.txt` 파일에 누적 기록합니다. 작업 완료 후 반드시 해당 파일에 변경 내용을 날짜, 대상 파일, 상세 내역과 함께 추가하세요.
+모든 변경 내용은 `CHANGELOG.md` 파일에 누적 기록합니다. 작업 완료 후 반드시 해당 파일에 변경 내용을 날짜, 대상 파일, 상세 내역과 함께 추가하세요.

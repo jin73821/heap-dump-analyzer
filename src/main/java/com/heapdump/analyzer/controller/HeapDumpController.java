@@ -16,10 +16,16 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import javax.servlet.http.HttpServletRequest;
 import java.io.*;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * Heap Dump Analyzer Controller
@@ -67,8 +73,10 @@ public class HeapDumpController {
         model.addAttribute("files", files);
         model.addAttribute("fileCount", files.size());
 
-        // 통계 계산
-        long totalBytes = files.stream().mapToLong(HeapDumpFile::getSize).sum();
+        // 통계 계산 (디스크 실제 사용량 기준: 압축 파일은 compressedSize 사용)
+        long totalBytes = files.stream()
+            .mapToLong(f -> f.isCompressed() && f.getCompressedSize() > 0 ? f.getCompressedSize() : f.getSize())
+            .sum();
         model.addAttribute("totalSize", formatBytes(totalBytes));
 
         // 분석 히스토리 (캐시에서 로드)
@@ -135,8 +143,13 @@ public class HeapDumpController {
         model.addAttribute("analysisHistory", history);
         model.addAttribute("fileCount", files.size());
 
-        long totalBytes = files.stream().mapToLong(HeapDumpFile::getSize).sum();
-        model.addAttribute("totalSize", formatBytes(totalBytes));
+        long originalBytes = files.stream().mapToLong(HeapDumpFile::getSize).sum();
+        long diskBytes = files.stream()
+            .mapToLong(f -> f.isCompressed() && f.getCompressedSize() > 0 ? f.getCompressedSize() : f.getSize())
+            .sum();
+        model.addAttribute("totalSize", formatBytes(originalBytes));
+        model.addAttribute("diskSize", formatBytes(diskBytes));
+        model.addAttribute("hasCompressed", originalBytes != diskBytes);
 
         long analyzedCount = history.stream()
             .filter(h -> "SUCCESS".equals(h.getStatus())).count();
@@ -259,8 +272,20 @@ public class HeapDumpController {
     // ── 재분석 ───────────────────────────────────────────────────
 
     @PostMapping("/analyze/rerun/{filename:.+}")
-    public String rerunAnalysis(@PathVariable String filename) {
+    public String rerunAnalysis(@PathVariable String filename, RedirectAttributes redirectAttributes) {
         filename = FilenameValidator.validate(filename);
+
+        // 덤프 파일 존재 여부 확인 (원본 + .gz)
+        File sourceFile = new File(config.getDumpFilesDirectory(), filename);
+        File gzFile = new File(config.getDumpFilesDirectory(), filename + ".gz");
+        File legacyFile = new File(config.getHeapDumpDirectory(), filename);
+        if (!sourceFile.exists() && !gzFile.exists() && !legacyFile.exists()) {
+            logger.warn("[Rerun] Dump file not found: {}. Preserving existing analysis data.", filename);
+            redirectAttributes.addFlashAttribute("rerunError",
+                    "덤프 파일이 존재하지 않아 재분석할 수 없습니다. 기존 분석 결과는 유지됩니다.");
+            return "redirect:/analyze/result/" + filename;
+        }
+
         analyzerService.clearCache(filename);
         logger.info("Cache cleared for {} → restarting", filename);
         return "redirect:/analyze/" + filename;
@@ -375,6 +400,11 @@ public class HeapDumpController {
             }
         }
         model.addAttribute("threadStacks", threadStacks);
+
+        // Raw Data: MAT ZIP 존재 여부 (iframe용)
+        model.addAttribute("hasOverviewZip", analyzerService.hasReportZip(filename, "overview"));
+        model.addAttribute("hasTopComponentsZip", analyzerService.hasReportZip(filename, "top_components"));
+        model.addAttribute("hasSuspectsZip", analyzerService.hasReportZip(filename, "suspects"));
 
         return "analyze";
     }
@@ -510,6 +540,56 @@ public class HeapDumpController {
         return ResponseEntity.notFound().build();
     }
 
+    @GetMapping("/report/{filename:.+}/component-detail-parsed")
+    @ResponseBody
+    public ResponseEntity<com.heapdump.analyzer.model.ComponentDetailParsed> componentDetailParsed(
+            @PathVariable String filename,
+            @RequestParam String className,
+            @RequestParam(defaultValue = "-1") int index) {
+        filename = FilenameValidator.validate(filename);
+        HeapAnalysisResult r = analyzerService.getCachedResult(filename);
+        if (r == null) return ResponseEntity.notFound().build();
+
+        // parsed map에서 조회
+        Map<String, com.heapdump.analyzer.model.ComponentDetailParsed> parsedMap = r.getComponentDetailParsedMap();
+        if (parsedMap != null && !parsedMap.isEmpty()) {
+            // index 기반 키로 먼저 조회
+            if (index >= 0) {
+                String key = className + "#" + index;
+                com.heapdump.analyzer.model.ComponentDetailParsed p = parsedMap.get(key);
+                if (p != null) return ResponseEntity.ok(p);
+            }
+            // className 매칭
+            for (Map.Entry<String, com.heapdump.analyzer.model.ComponentDetailParsed> e : parsedMap.entrySet()) {
+                String mapKey = e.getKey().contains("#")
+                        ? e.getKey().substring(0, e.getKey().lastIndexOf('#')) : e.getKey();
+                if (mapKey.equals(className)) return ResponseEntity.ok(e.getValue());
+            }
+        }
+
+        // parsed map에 없으면 raw HTML에서 즉석 파싱 시도
+        if (r.getComponentDetailHtmlMap() != null) {
+            String rawHtml = null;
+            if (index >= 0) {
+                rawHtml = r.getComponentDetailHtmlMap().get(className + "#" + index);
+            }
+            if (rawHtml == null) {
+                for (Map.Entry<String, String> e : r.getComponentDetailHtmlMap().entrySet()) {
+                    String mapKey = e.getKey().contains("#")
+                            ? e.getKey().substring(0, e.getKey().lastIndexOf('#')) : e.getKey();
+                    if (mapKey.equals(className)) { rawHtml = e.getValue(); break; }
+                }
+            }
+            if (rawHtml != null) {
+                com.heapdump.analyzer.model.ComponentDetailParsed p =
+                        analyzerService.getParser().parseComponentDetail(rawHtml, className);
+                return ResponseEntity.ok(p);
+            }
+        }
+
+        return ResponseEntity.notFound().build();
+    }
+
     @GetMapping("/report/{filename:.+}/component-list")
     @ResponseBody
     public ResponseEntity<List<String>> componentList(@PathVariable String filename) {
@@ -536,6 +616,107 @@ public class HeapDumpController {
         int lineCount = text.split("\n").length;
         logger.info("[ThreadStacks] Loaded successfully for {}: {} lines, {} bytes", filename, lineCount, text.length());
         return ResponseEntity.ok(text);
+    }
+
+    // ── MAT 리포트 ZIP 파일 서빙 (iframe용) ─────────────────────
+
+    private static final Set<String> ALLOWED_REPORT_TYPES = Set.of("overview", "top_components", "suspects");
+
+    @GetMapping("/report/{filename:.+}/mat-page/{reportType}/**")
+    @ResponseBody
+    public ResponseEntity<byte[]> matPageFile(
+            @PathVariable String filename,
+            @PathVariable String reportType,
+            HttpServletRequest request) {
+
+        filename = FilenameValidator.validate(filename);
+
+        if (!ALLOWED_REPORT_TYPES.contains(reportType)) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        // URI에서 ZIP 내 파일 경로 추출
+        String prefix = "/report/" + filename + "/mat-page/" + reportType + "/";
+        String fullPath = request.getRequestURI();
+        int idx = fullPath.indexOf(prefix);
+        String entryPath = (idx >= 0) ? fullPath.substring(idx + prefix.length()) : "";
+
+        if (entryPath.isEmpty()) {
+            entryPath = "index.html";
+        }
+
+        // URL 디코딩 + path traversal 방지
+        try {
+            entryPath = URLDecoder.decode(entryPath, StandardCharsets.UTF_8.name());
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().build();
+        }
+        if (entryPath.contains("..") || entryPath.startsWith("/") || entryPath.contains("\\")) {
+            return ResponseEntity.badRequest().build();
+        }
+
+        // ZIP 파일 찾기
+        File zip = analyzerService.findReportZip(filename, reportType);
+        if (zip == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // ZIP 엔트리 읽기
+        byte[] content = readZipEntryBytes(zip, entryPath);
+        if (content == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // HTML 파일: mat:// 프로토콜 링크 비활성화
+        MediaType contentType = guessMediaType(entryPath);
+        if (MediaType.TEXT_HTML.isCompatibleWith(contentType)) {
+            String html = new String(content, StandardCharsets.UTF_8);
+            html = suppressMatProtocolLinks(html);
+            content = html.getBytes(StandardCharsets.UTF_8);
+        }
+
+        return ResponseEntity.ok()
+                .contentType(contentType)
+                .cacheControl(CacheControl.maxAge(1, TimeUnit.HOURS))
+                .body(content);
+    }
+
+    private byte[] readZipEntryBytes(File zip, String entryPath) {
+        try (ZipFile zf = new ZipFile(zip)) {
+            ZipEntry entry = zf.getEntry(entryPath);
+            if (entry == null || entry.isDirectory()) return null;
+            if (entry.getSize() > 10 * 1024 * 1024) return null; // 10MB 제한
+
+            try (InputStream is = zf.getInputStream(entry);
+                 ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = is.read(buf)) != -1) baos.write(buf, 0, n);
+                return baos.toByteArray();
+            }
+        } catch (IOException e) {
+            logger.warn("[MatPage] Failed to read '{}' from ZIP {}: {}", entryPath, zip.getName(), e.getMessage());
+            return null;
+        }
+    }
+
+    private MediaType guessMediaType(String path) {
+        String lower = path.toLowerCase();
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) return MediaType.TEXT_HTML;
+        if (lower.endsWith(".css")) return new MediaType("text", "css", StandardCharsets.UTF_8);
+        if (lower.endsWith(".js")) return new MediaType("application", "javascript", StandardCharsets.UTF_8);
+        if (lower.endsWith(".png")) return MediaType.IMAGE_PNG;
+        if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return MediaType.IMAGE_JPEG;
+        if (lower.endsWith(".svg")) return new MediaType("image", "svg+xml");
+        return MediaType.APPLICATION_OCTET_STREAM;
+    }
+
+    private String suppressMatProtocolLinks(String html) {
+        return html.replaceAll(
+                "href\\s*=\\s*\"mat://[^\"]*\"",
+                "href=\"javascript:void(0)\" title=\"MAT desktop 전용 링크\" "
+                        + "style=\"opacity:0.4;cursor:not-allowed\"");
     }
 
     // ── [NEW] Compare ────────────────────────────────────────────
@@ -842,8 +1023,12 @@ public class HeapDumpController {
         List<HeapDumpFile> files = analyzerService.listFiles();
         Map<String, Object> fileStats = new LinkedHashMap<>();
         fileStats.put("totalFiles", files.size());
-        long totalBytes = files.stream().mapToLong(HeapDumpFile::getSize).sum();
-        fileStats.put("totalSize", formatBytes(totalBytes));
+        long originalBytes = files.stream().mapToLong(HeapDumpFile::getSize).sum();
+        long diskBytes = files.stream()
+            .mapToLong(f -> f.isCompressed() && f.getCompressedSize() > 0 ? f.getCompressedSize() : f.getSize())
+            .sum();
+        fileStats.put("totalSize", formatBytes(originalBytes));
+        fileStats.put("diskSize", formatBytes(diskBytes));
         fileStats.put("analyzedCount", files.stream()
                 .filter(f -> analyzerService.getCachedResult(f.getName()) != null)
                 .count());
@@ -905,6 +1090,11 @@ public class HeapDumpController {
             item.setFormattedDate(sdf.format(new Date(file.getLastModified())));
             item.setLastModified(file.getLastModified());
             item.setFileDeleted(false);
+            item.setCompressed(file.isCompressed());
+            if (file.isCompressed()) {
+                item.setFormattedOriginalSize(file.getFormattedOriginalSize());
+                item.setFormattedCompressedSize(file.getFormattedCompressedSize());
+            }
             if (result != null) {
                 item.setStatus(result.getAnalysisStatus().name());
                 item.setSuspectCount(result.getLeakSuspects() != null
@@ -965,6 +1155,9 @@ public class HeapDumpController {
         private String  heapUsed;
         private boolean fileDeleted;
         private long    lastModified;
+        private boolean compressed;
+        private String  formattedOriginalSize;
+        private String  formattedCompressedSize;
 
         public String  getFilename()      { return filename; }
         public void    setFilename(String v)      { filename = v; }
@@ -986,6 +1179,12 @@ public class HeapDumpController {
         public void    setFileDeleted(boolean v)  { fileDeleted = v; }
         public long    getLastModified()  { return lastModified; }
         public void    setLastModified(long v)    { lastModified = v; }
+        public boolean isCompressed()    { return compressed; }
+        public void    setCompressed(boolean v)   { compressed = v; }
+        public String  getFormattedOriginalSize() { return formattedOriginalSize; }
+        public void    setFormattedOriginalSize(String v) { formattedOriginalSize = v; }
+        public String  getFormattedCompressedSize() { return formattedCompressedSize; }
+        public void    setFormattedCompressedSize(String v) { formattedCompressedSize = v; }
     }
 
     public static class ClassDiff {

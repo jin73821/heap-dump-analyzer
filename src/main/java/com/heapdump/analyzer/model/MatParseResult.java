@@ -36,6 +36,9 @@ public class MatParseResult {
     // ── Top Component 별 상세 HTML (className → HTML) ──
     private Map<String, String> componentDetailHtmlMap = new LinkedHashMap<>();
 
+    // ── Top Component 별 파싱된 상세 데이터 (className → parsed) ──
+    private Map<String, ComponentDetailParsed> componentDetailParsedMap = new LinkedHashMap<>();
+
     // ── MAT Actions (Histogram / Thread Overview) ─────
     private String histogramHtml = "";
     private String threadOverviewHtml = "";
