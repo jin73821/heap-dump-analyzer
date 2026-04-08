@@ -48,6 +48,27 @@
         .upload-zone-btn { width: 100%; padding: 7px; background: #2563EB; color: white;
                            border: none; border-radius: 6px; font-size: 12px; cursor: pointer; }
         .upload-zone-btn:hover { background: #1D4ED8; }
+        .upload-zone-sub { margin-bottom: 8px; }
+        .upload-zone-btn.uploading { pointer-events: none; position: relative; color: transparent; }
+        .upload-zone-btn.uploading::after {
+            content: ''; position: absolute; left: 50%; top: 50%;
+            width: 16px; height: 16px; margin: -8px 0 0 -8px;
+            border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+            border-radius: 50%; animation: btnSpin .6s linear infinite;
+        }
+        @keyframes btnSpin { to { transform: rotate(360deg); } }
+        .uq-item { display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid #F3F4F6; font-size:11px; }
+        .uq-item:last-child { border-bottom:none; }
+        .uq-icon { width:16px; height:16px; flex-shrink:0; }
+        .uq-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#374151; }
+        .uq-status { font-size:10px; font-weight:600; flex-shrink:0; }
+        .uq-status.pending { color:#9CA3AF; }
+        .uq-status.uploading { color:#2563EB; }
+        .uq-status.done { color:#059669; }
+        .uq-status.error { color:#DC2626; }
+        .uq-status.skipped { color:#F59E0B; }
+        .uq-bar-bg { width:100%; height:4px; background:#E5E7EB; border-radius:2px; margin-top:2px; }
+        .uq-bar { height:100%; background:#2563EB; border-radius:2px; width:0%; transition:width .2s; }
         .upload-pw { display: none; margin-top: 10px; }
         .upload-pw-bg { background: #E5E7EB; border-radius: 4px; height: 6px; overflow: hidden; }
         .upload-pw-bar { height: 100%; background: #2563EB; border-radius: 4px; width: 0%; transition: width .3s; }
@@ -521,13 +542,12 @@
                         <svg viewBox="0 0 20 20"><path d="M10 13V5M6 8l4-4 4 4"/><path d="M3 16h14"/></svg>
                     </div>
                     <div class="upload-zone-title">Drop file here</div>
-                    <div class="upload-zone-sub">.hprof .bin .dump (.gz) · Max 2 GB</div>
-                    <input type="file" id="fileInput" name="file" accept=".hprof,.bin,.dump,.gz" style="display:none" required>
-                    <button type="button" class="upload-zone-btn"
-                            onclick="document.getElementById('fileInput').click()">Choose file</button>
-                    <div class="upload-pw" id="upPW">
-                        <div class="upload-pw-bg"><div class="upload-pw-bar" id="upBar"></div></div>
-                        <div class="upload-pw-lbl" id="upLbl">Uploading...</div>
+                    <div class="upload-zone-sub">.hprof .bin .dump (.gz) · Max 5 GB</div>
+                    <input type="file" id="fileInput" name="file" accept=".hprof,.bin,.dump,.gz" style="display:none" multiple>
+                    <button type="button" class="upload-zone-btn" id="uploadBtn"
+                            onclick="document.getElementById('fileInput').click()">Choose files</button>
+                    <div id="uploadQueueUI" style="display:none;width:100%;margin-top:10px">
+                        <div id="uploadQueueList" style="text-align:left"></div>
                     </div>
                 </div>
             </form>
@@ -929,11 +949,10 @@ function closeMobileSidebar() {
 const fileInput = document.getElementById('fileInput');
 const uploadForm = document.getElementById('uploadForm');
 
-fileInput && fileInput.addEventListener('change', e => {
-    const f = e.target.files[0];
-    if (!f) return;
-    if (!validateFileExt(f)) return;
-    doUpload(f);
+fileInput && fileInput.addEventListener('change', function(e) {
+    var files = Array.from(e.target.files);
+    if (files.length > 0) enqueueFiles(files);
+    fileInput.value = '';
 });
 
 const zone = document.getElementById('uploadZone');
@@ -942,11 +961,8 @@ if (zone) {
     zone.addEventListener('dragleave', () => { zone.style.borderColor='#93C5FD'; });
     zone.addEventListener('drop', e => {
         e.preventDefault(); zone.style.borderColor='#93C5FD';
-        const f = e.dataTransfer.files[0];
-        if (!f) return;
-        if (!validateFileExt(f)) return;
-        try { const dt=new DataTransfer(); dt.items.add(f); fileInput.files=dt.files; } catch(_){}
-        doUpload(f);
+        var files = Array.from(e.dataTransfer.files);
+        if (files.length > 0) enqueueFiles(files);
     });
 }
 
@@ -993,19 +1009,394 @@ function showExtWarning(filename, ext) {
 
 function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
-function doUpload(file) {
-    if (file.size > 2*1024*1024*1024) { toast('File exceeds 2 GB limit','error'); return; }
-    // 업로드 전 디스크 사용량 체크
-    fetch('/api/disk/check').then(r=>r.json()).then(d=>{
-        if (d.usableSpaceBytes != null && file.size > d.usableSpaceBytes) {
-            showDiskFullModal(d, file);
-        } else if (d.warning) {
-            showDiskWarningModal(d, file);
+/* ═══ Multi-file upload queue system ═══ */
+var _uploadQueue = [];   // [{file, uploadName, status:'pending'|'uploading'|'done'|'error'|'skipped'|'cancelled'}]
+var _uploading = false;
+var _uploadCancelled = false;
+var _currentXhr = null;
+var _MAX_QUEUE = 5;
+
+function enqueueFiles(files) {
+    if (_uploading) { toast('업로드가 진행 중입니다. 완료 후 다시 시도해주세요.','error'); return; }
+    var valid = [], rejected = [], oversized = [];
+    var validExts = ['.hprof','.bin','.dump','.hprof.gz','.bin.gz','.dump.gz'];
+    for (var i = 0; i < files.length; i++) {
+        var lower = files[i].name.toLowerCase();
+        if (!validExts.some(function(ext){return lower.endsWith(ext);})) {
+            rejected.push(files[i].name);
+        } else if (files[i].size > 5*1024*1024*1024) {
+            oversized.push(files[i].name);
         } else {
-            startUpload(file);
+            valid.push(files[i]);
         }
-    }).catch(()=>startUpload(file));
+    }
+    // 거부/초과 파일이 있으면 요약 모달 표시 후 유효 파일 진행
+    if (rejected.length > 0 || oversized.length > 0) {
+        showFileFilterModal(rejected, oversized, valid, function(proceed) {
+            if (proceed && valid.length > 0) continueEnqueue(valid);
+        });
+        return;
+    }
+    if (valid.length === 0) return;
+    continueEnqueue(valid);
 }
+
+function showFileFilterModal(rejected, oversized, valid, callback) {
+    var ov = document.createElement('div'); ov.id = 'fileFilterOv';
+    ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    var html = '<div style="background:#fff;border-radius:12px;padding:24px;max-width:460px;width:90%;max-height:80vh;overflow-y:auto">'
+        + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
+        + '<div style="width:40px;height:40px;border-radius:50%;background:#FEF3C7;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" style="width:22px;height:22px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>'
+        + '<h3 style="font-size:16px;font-weight:700;color:#1F2937;margin:0">파일 검증 결과</h3></div>';
+    if (rejected.length > 0) {
+        html += '<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:700;color:#DC2626;margin-bottom:6px">지원되지 않는 형식 (' + rejected.length + '개)</div>';
+        rejected.forEach(function(n) {
+            html += '<div style="font-size:12px;color:#6B7280;padding:3px 0;display:flex;align-items:center;gap:6px">'
+                + '<span style="color:#DC2626">✕</span> ' + escapeHtml(n) + '</div>';
+        });
+        html += '</div>';
+    }
+    if (oversized.length > 0) {
+        html += '<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:700;color:#F59E0B;margin-bottom:6px">용량 초과 — 5 GB 제한 (' + oversized.length + '개)</div>';
+        oversized.forEach(function(n) {
+            html += '<div style="font-size:12px;color:#6B7280;padding:3px 0;display:flex;align-items:center;gap:6px">'
+                + '<span style="color:#F59E0B">✕</span> ' + escapeHtml(n) + '</div>';
+        });
+        html += '</div>';
+    }
+    if (valid.length > 0) {
+        html += '<div style="margin-bottom:16px"><div style="font-size:12px;font-weight:700;color:#059669;margin-bottom:6px">업로드 가능 (' + valid.length + '개)</div>';
+        valid.forEach(function(f) {
+            html += '<div style="font-size:12px;color:#6B7280;padding:3px 0;display:flex;align-items:center;gap:6px">'
+                + '<span style="color:#059669">✓</span> ' + escapeHtml(f.name) + ' <span style="color:#9CA3AF">(' + fmtB(f.size) + ')</span></div>';
+        });
+        html += '</div>';
+        html += '<div style="display:flex;gap:8px">'
+            + '<button id="ffCancel" style="flex:1;padding:10px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">취소</button>'
+            + '<button id="ffProceed" style="flex:1;padding:10px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">' + valid.length + '개 파일 업로드</button>'
+            + '</div>';
+    } else {
+        html += '<div style="font-size:13px;color:#6B7280;margin-bottom:16px">업로드 가능한 파일이 없습니다.</div>'
+            + '<button id="ffCancel" style="width:100%;padding:10px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">확인</button>';
+    }
+    html += '</div>';
+    ov.innerHTML = html;
+    document.body.appendChild(ov);
+    ov.querySelector('#ffCancel').onclick = function() { ov.remove(); callback(false); };
+    var proceed = ov.querySelector('#ffProceed');
+    if (proceed) proceed.onclick = function() { ov.remove(); callback(true); };
+}
+
+function continueEnqueue(valid) {
+    if (valid.length > _MAX_QUEUE) {
+        toast('최대 ' + _MAX_QUEUE + '개까지 동시 업로드 가능합니다. 처음 ' + _MAX_QUEUE + '개만 처리합니다.','error');
+        valid = valid.slice(0, _MAX_QUEUE);
+    }
+    _uploadQueue = valid.map(function(f) { return { file: f, uploadName: f.name, status: 'pending' }; });
+    // 디스크 체크 후 중복 검사 시작
+    fetch('/api/disk/check').then(function(r){return r.json();}).then(function(d) {
+        var totalSize = valid.reduce(function(s,f){return s+f.size;},0);
+        if (d.usableSpaceBytes != null && totalSize > d.usableSpaceBytes) {
+            showDiskFullModal(d, {name: valid.length+'개 파일', size: totalSize}); return;
+        }
+        startDuplicateChecks(0);
+    }).catch(function() { startDuplicateChecks(0); });
+}
+
+function startDuplicateChecks(idx) {
+    if (idx >= _uploadQueue.length) { startQueueUploads(); return; }
+    var item = _uploadQueue[idx];
+    if (item.status === 'skipped') { startDuplicateChecks(idx + 1); return; }
+    computePartialHash(item.file).then(function(hash) {
+        item._hash = hash;
+        fetch('/api/upload/check', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({filename:item.uploadName, fileSize:item.file.size, partialHash:hash})
+        }).then(function(r){return r.json();}).then(function(res) {
+            if (res.status === 'DUPLICATE_CONTENT') {
+                showQueueDupContentModal(idx, res.existingFilename, function() { startDuplicateChecks(idx+1); });
+            } else if (res.status === 'DUPLICATE_NAME') {
+                showQueueDupNameModal(idx, res.existingFilename, res.suggestedName, function() { startDuplicateChecks(idx+1); });
+            } else {
+                startDuplicateChecks(idx+1);
+            }
+        }).catch(function() { startDuplicateChecks(idx+1); });
+    }).catch(function() { startDuplicateChecks(idx+1); });
+}
+
+function showQueueDupContentModal(idx, existingName, onDone) {
+    var item = _uploadQueue[idx];
+    var ov = document.createElement('div'); ov.id='dupOv';
+    ov.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    ov.innerHTML='<div style="background:#fff;border-radius:12px;padding:24px;max-width:420px;width:90%">'
+        +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
+        +'<div style="width:40px;height:40px;border-radius:50%;background:#DBEAFE;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+        +'<svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" style="width:22px;height:22px"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>'
+        +'<h3 style="font-size:16px;font-weight:700;color:#1F2937;margin:0">중복 파일 감지 ('+(idx+1)+'/'+_uploadQueue.length+')</h3></div>'
+        +'<p style="font-size:13px;color:#374151;margin-bottom:8px">업로드 파일: <strong>'+escapeHtml(item.file.name)+'</strong></p>'
+        +'<p style="font-size:13px;color:#374151;margin-bottom:16px">이미 존재하는 <strong>\''+escapeHtml(existingName)+'\'</strong>과 동일한 내용입니다.</p>'
+        +'<div style="display:flex;gap:8px">'
+        +'<button id="dupSkip" style="flex:1;padding:10px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">건너뛰기</button>'
+        +'<button id="dupProceed" style="flex:1;padding:10px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">업로드</button>'
+        +'</div></div>';
+    document.body.appendChild(ov);
+    ov.querySelector('#dupSkip').onclick=function(){ov.remove();item.status='skipped';onDone();};
+    ov.querySelector('#dupProceed').onclick=function(){ov.remove();onDone();};
+}
+
+function showQueueDupNameModal(idx, existingName, suggestedName, onDone) {
+    var item = _uploadQueue[idx];
+    var ov = document.createElement('div'); ov.id='dupOv';
+    ov.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    ov.innerHTML='<div style="background:#fff;border-radius:12px;padding:24px;max-width:420px;width:90%">'
+        +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
+        +'<div style="width:40px;height:40px;border-radius:50%;background:#FEF3C7;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+        +'<svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" style="width:22px;height:22px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>'
+        +'<h3 style="font-size:16px;font-weight:700;color:#1F2937;margin:0">파일 이름 충돌 ('+(idx+1)+'/'+_uploadQueue.length+')</h3></div>'
+        +'<p style="font-size:13px;color:#374151;margin-bottom:12px"><strong>\''+escapeHtml(existingName)+'\'</strong> 이름이 이미 존재하며 내용이 다릅니다.</p>'
+        +'<div style="margin-bottom:12px">'
+        +'<label style="font-size:12px;font-weight:600;color:#6B7280;display:block;margin-bottom:4px">새 파일 이름</label>'
+        +'<input id="dupRenameInput" type="text" value="'+escapeHtml(suggestedName)+'" style="width:100%;padding:8px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box">'
+        +'<div id="dupRenameErr" style="font-size:11px;color:#DC2626;margin-top:4px;display:none"></div></div>'
+        +'<div style="display:flex;flex-direction:column;gap:8px">'
+        +'<button id="dupRename" style="padding:10px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">이름 변경</button>'
+        +'<button id="dupOverwrite" style="padding:10px;background:#F59E0B;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">덮어쓰기</button>'
+        +'<button id="dupSkip2" style="padding:10px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">건너뛰기</button>'
+        +'</div></div>';
+    document.body.appendChild(ov);
+    ov.querySelector('#dupSkip2').onclick=function(){ov.remove();item.status='skipped';onDone();};
+    ov.querySelector('#dupOverwrite').onclick=function(){ov.remove();onDone();};
+    ov.querySelector('#dupRename').onclick=function(){
+        var inp=document.getElementById('dupRenameInput'), errEl=document.getElementById('dupRenameErr');
+        var newName=inp.value.trim();
+        if(!newName){errEl.textContent='파일 이름을 입력해주세요.';errEl.style.display='block';return;}
+        var lower=newName.toLowerCase();
+        var validExts=['.hprof','.bin','.dump','.hprof.gz','.bin.gz','.dump.gz'];
+        if(!validExts.some(function(ext){return lower.endsWith(ext);})){errEl.textContent='지원되는 확장자: .hprof, .bin, .dump (.gz)';errEl.style.display='block';return;}
+        errEl.style.display='none';
+        // 서버 재확인
+        fetch('/api/upload/check',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({filename:newName,fileSize:item.file.size,partialHash:item._hash||''})
+        }).then(function(r){return r.json();}).then(function(res){
+            if(res.status==='DUPLICATE_NAME'){errEl.textContent='\''+newName+'\' 도 이미 존재합니다.';errEl.style.display='block';}
+            else if(res.status==='DUPLICATE_CONTENT'){errEl.textContent='\''+res.existingFilename+'\' 과 동일한 내용입니다.';errEl.style.display='block';}
+            else{item.uploadName=newName;ov.remove();onDone();}
+        }).catch(function(){item.uploadName=newName;ov.remove();onDone();});
+    };
+    var inp=document.getElementById('dupRenameInput');
+    if(inp){inp.addEventListener('keydown',function(e){if(e.key==='Enter')ov.querySelector('#dupRename').click();});inp.focus();inp.select();}
+}
+
+/* ── Upload progress modal + sequential upload ── */
+function showUploadProgressModal() {
+    var existing = document.getElementById('uploadProgressOv');
+    if (existing) existing.remove();
+    var ov = document.createElement('div'); ov.id = 'uploadProgressOv';
+    ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+    var total = _uploadQueue.filter(function(q){return q.status!=='skipped';}).length;
+    ov.innerHTML = '<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:90%;max-height:80vh;overflow-y:auto">'
+        + '<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
+        + '<div style="width:40px;height:40px;border-radius:50%;background:#DBEAFE;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" style="width:20px;height:20px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>'
+        + '<div><h3 style="font-size:16px;font-weight:700;color:#1F2937;margin:0">파일 업로드</h3>'
+        + '<div id="upModalSub" style="font-size:12px;color:#9CA3AF">0 / '+total+' 완료</div></div></div>'
+        + '<div id="upModalList" style="margin-bottom:16px"></div>'
+        + '<div id="upModalCancelWrap" style="text-align:center">'
+        + '<button id="upModalCancelBtn" onclick="cancelUploadQueue()" style="padding:8px 20px;background:#F3F4F6;color:#DC2626;border:1px solid #FECACA;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">업로드 취소</button>'
+        + '</div>'
+        + '<div id="upModalFooter" style="display:none;text-align:center">'
+        + '<button onclick="document.getElementById(\'uploadProgressOv\').remove();window.location.reload()" style="padding:10px 24px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">확인</button>'
+        + '</div></div>';
+    document.body.appendChild(ov);
+    renderUploadModalList();
+}
+
+function renderUploadModalList() {
+    var list = document.getElementById('upModalList');
+    if (!list) return;
+    var html = '';
+    _uploadQueue.forEach(function(q, i) {
+        if (q.status === 'skipped') return;
+        var icon, cls, label;
+        if (q.status === 'uploading') { icon='⬆'; cls='uploading'; label=q._pct?q._pct+'%':'업로드 중'; }
+        else if (q.status === 'done') { icon='✅'; cls='done'; label='완료'; }
+        else if (q.status === 'error') { icon='❌'; cls='error'; label='실패'; }
+        else if (q.status === 'cancelled') { icon='⊘'; cls='skipped'; label='취소됨'; }
+        else { icon='⏳'; cls='pending'; label='대기'; }
+        html += '<div class="uq-item" id="uqi'+i+'">'
+            + '<span class="uq-icon">'+icon+'</span>'
+            + '<span class="uq-name" title="'+escapeHtml(q.uploadName)+'">'+escapeHtml(q.uploadName)+' <span style="color:#9CA3AF;font-size:10px">'+fmtB(q.file.size)+'</span></span>'
+            + '<span class="uq-status '+cls+'">'+label+'</span></div>';
+        if (q.status === 'uploading') {
+            html += '<div class="uq-bar-bg"><div class="uq-bar" id="uqbar'+i+'" style="width:'+(q._pct||0)+'%"></div></div>';
+        }
+    });
+    list.innerHTML = html;
+    // 카운터 업데이트
+    var done = _uploadQueue.filter(function(q){return q.status==='done';}).length;
+    var total = _uploadQueue.filter(function(q){return q.status!=='skipped';}).length;
+    var sub = document.getElementById('upModalSub');
+    if (sub) sub.textContent = done + ' / ' + total + ' 완료';
+}
+
+function cancelUploadQueue() {
+    var pending = _uploadQueue.filter(function(q){return q.status==='pending'||q.status==='uploading';}).length;
+    var ov = document.createElement('div'); ov.id = 'cancelConfirmOv';
+    ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10001;background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center';
+    ov.innerHTML = '<div style="background:#fff;border-radius:12px;padding:24px;max-width:380px;width:90%;text-align:center">'
+        + '<div style="width:44px;height:44px;background:#FEE2E2;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 12px">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" style="width:22px;height:22px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div>'
+        + '<div style="font-size:16px;font-weight:700;color:#1F2937;margin-bottom:8px">업로드를 취소하시겠습니까?</div>'
+        + '<div style="font-size:13px;color:#6B7280;margin-bottom:16px">현재 진행 중이거나 대기 중인 <b>' + pending + '개</b> 파일의 업로드가 중단됩니다.<br>이미 완료된 파일은 유지됩니다.</div>'
+        + '<div style="display:flex;gap:8px">'
+        + '<button id="cancelNo" style="flex:1;padding:10px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">계속 업로드</button>'
+        + '<button id="cancelYes" style="flex:1;padding:10px;background:#DC2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">취소</button>'
+        + '</div></div>';
+    document.body.appendChild(ov);
+    ov.querySelector('#cancelNo').onclick = function() { ov.remove(); };
+    ov.querySelector('#cancelYes').onclick = function() { ov.remove(); doCancelUpload(); };
+}
+
+function doCancelUpload() {
+    _uploadCancelled = true;
+    if (_currentXhr) { _currentXhr.abort(); _currentXhr = null; }
+    _uploadQueue.forEach(function(q) {
+        if (q.status === 'pending') q.status = 'cancelled';
+        if (q.status === 'uploading') q.status = 'cancelled';
+    });
+    _uploading = false;
+    window.onbeforeunload = null;
+    setUploadZoneDisabled(false);
+    renderUploadModalList();
+    var cancelWrap = document.getElementById('upModalCancelWrap');
+    if (cancelWrap) cancelWrap.style.display = 'none';
+    var footer = document.getElementById('upModalFooter');
+    if (footer) footer.style.display = 'block';
+    var sub = document.getElementById('upModalSub');
+    var done = _uploadQueue.filter(function(q){return q.status==='done';}).length;
+    var total = _uploadQueue.filter(function(q){return q.status!=='skipped';}).length;
+    if (sub) sub.textContent = done + ' / ' + total + ' 완료 — 취소됨';
+}
+
+function startQueueUploads() {
+    var pending = _uploadQueue.filter(function(q){return q.status==='pending';});
+    if (pending.length === 0) { toast('업로드할 파일이 없습니다.'); return; }
+    _uploading = true;
+    _uploadCancelled = false;
+    _currentXhr = null;
+    window.onbeforeunload = function(e) { e.preventDefault(); e.returnValue = ''; return ''; };
+    setUploadZoneDisabled(true);
+    showUploadProgressModal();
+    processNextInQueue(0);
+}
+
+function processNextInQueue(idx) {
+    if (_uploadCancelled) return;
+    while (idx < _uploadQueue.length && _uploadQueue[idx].status !== 'pending') idx++;
+    if (idx >= _uploadQueue.length) {
+        _uploading = false;
+        window.onbeforeunload = null;
+        _currentXhr = null;
+        renderUploadModalList();
+        var cancelWrap = document.getElementById('upModalCancelWrap');
+        if (cancelWrap) cancelWrap.style.display = 'none';
+        var footer = document.getElementById('upModalFooter');
+        if (footer) footer.style.display = 'block';
+        var sub = document.getElementById('upModalSub');
+        var done = _uploadQueue.filter(function(q){return q.status==='done';}).length;
+        var total = _uploadQueue.filter(function(q){return q.status!=='skipped';}).length;
+        if (sub) sub.textContent = done + ' / ' + total + ' 완료 — 업로드 종료';
+        setUploadZoneDisabled(false);
+        return;
+    }
+    var item = _uploadQueue[idx];
+    item.status = 'uploading'; item._pct = 0;
+    renderUploadModalList();
+
+    var xhr = new XMLHttpRequest();
+    _currentXhr = xhr;
+    xhr.upload.addEventListener('progress', function(e) {
+        if (e.lengthComputable) {
+            item._pct = Math.round(e.loaded/e.total*100);
+            var bar = document.getElementById('uqbar'+idx);
+            var statusEl = document.getElementById('uqi'+idx);
+            if (bar) bar.style.width = item._pct+'%';
+            if (statusEl) {
+                var st = statusEl.querySelector('.uq-status');
+                if (st) st.textContent = item._pct+'% ('+fmtB(e.loaded)+'/'+fmtB(e.total)+')';
+            }
+        }
+    });
+    xhr.addEventListener('load', function() {
+        item.status = 'done';
+        renderUploadModalList();
+        processNextInQueue(idx + 1);
+    });
+    xhr.addEventListener('error', function() {
+        item.status = 'error';
+        renderUploadModalList();
+        processNextInQueue(idx + 1);
+    });
+    xhr.open('POST','/upload');
+    var fd = new FormData();
+    fd.append('file', item.file, item.uploadName);
+    xhr.send(fd);
+}
+
+function setUploadZoneDisabled(disabled) {
+    var zone = document.getElementById('uploadZone');
+    var btn = zone ? zone.querySelector('.upload-zone-btn') : null;
+    var icon = zone ? zone.querySelector('.upload-icon') : null;
+    var sub = zone ? zone.querySelector('.upload-zone-sub') : null;
+    var title = zone ? zone.querySelector('.upload-zone-title') : null;
+    if (disabled) {
+        if (icon) icon.style.display = 'none';
+        if (title) title.style.display = 'none';
+        if (sub) sub.style.display = 'none';
+        if (zone) zone.style.borderColor = '#D1D5DB';
+        if (btn) { btn.classList.add('uploading'); btn.disabled = true; }
+    } else {
+        if (icon) icon.style.display = '';
+        if (title) { title.style.display = ''; title.textContent = 'Drop file here'; }
+        if (sub) sub.style.display = '';
+        if (zone) zone.style.borderColor = '';
+        if (btn) { btn.classList.remove('uploading'); btn.disabled = false; }
+        var ui = document.getElementById('uploadQueueUI'); if (ui) ui.style.display = 'none';
+    }
+}
+
+/* ── Hash utilities ── */
+function computePartialHash(file) {
+    return new Promise(function(resolve, reject) {
+        try {
+            var slice = file.slice(0, 65536);
+            var reader = new FileReader();
+            reader.onload = function() {
+                try {
+                    if (window.crypto && crypto.subtle) {
+                        crypto.subtle.digest('SHA-256', reader.result).then(function(buf) {
+                            var arr = Array.from(new Uint8Array(buf));
+                            resolve(arr.map(function(b){return b.toString(16).padStart(2,'0');}).join(''));
+                        }).catch(function(){resolve(simpleHash(reader.result));});
+                    } else { resolve(simpleHash(reader.result)); }
+                } catch(e) { resolve(simpleHash(reader.result)); }
+            };
+            reader.onerror = function(){reject(reader.error);};
+            reader.readAsArrayBuffer(slice);
+        } catch(e) { reject(e); }
+    });
+}
+function simpleHash(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var h1 = 0x811c9dc5, h2 = 0x01000193;
+    for (var i = 0; i < bytes.length; i++) {
+        h1 = Math.imul(h1 ^ bytes[i], h2);
+        h2 = Math.imul(h2 ^ bytes[i], 0x01000193);
+    }
+    return (h1>>>0).toString(16).padStart(8,'0') + (h2>>>0).toString(16).padStart(8,'0');
+}
+
 function showDiskFullModal(diskInfo, file) {
     var overlay = document.createElement('div');
     overlay.id = 'diskFullOverlay';
@@ -1027,51 +1418,26 @@ function showDiskFullModal(diskInfo, file) {
     document.body.appendChild(overlay);
     overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
 }
-function showDiskWarningModal(diskInfo, file) {
-    var overlay = document.createElement('div');
-    overlay.id = 'diskWarningOverlay';
-    overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
-    overlay.innerHTML = '<div style="background:#fff;border-radius:12px;padding:24px;max-width:380px;width:90%;text-align:center">'
-        + '<div style="width:48px;height:48px;background:#FEF3C7;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 12px">'
-        + '<svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" style="width:24px;height:24px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
-        + '</div>'
-        + '<div style="font-size:16px;font-weight:700;color:#92400E;margin-bottom:8px">Disk Usage Warning</div>'
-        + '<div style="font-size:13px;color:#78716C;margin-bottom:6px">'
-        + 'Usage: <b style="color:#DC2626">' + diskInfo.usagePercent + '%</b>'
-        + ' &nbsp;(Free: ' + diskInfo.usableSpace + ' / Total: ' + diskInfo.totalSpace + ')'
-        + '</div>'
-        + '<div style="font-size:13px;color:#92400E;margin-bottom:16px">'
-        + 'Upload file: <b>' + escapeHtml(file.name) + '</b> (' + fmtB(file.size) + ')'
-        + '</div>'
-        + '<div style="display:flex;gap:8px">'
-        + '<button onclick="document.getElementById(\'diskWarningOverlay\').remove()" style="flex:1;padding:10px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Cancel</button>'
-        + '<button onclick="document.getElementById(\'diskWarningOverlay\').remove();startUpload(window._pendingUploadFile)" style="flex:1;padding:10px;background:#F59E0B;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Upload anyway</button>'
-        + '</div></div>';
-    window._pendingUploadFile = file;
-    document.body.appendChild(overlay);
-    overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
-}
-function startUpload(file) {
-    document.getElementById('upPW').style.display = 'block';
-    const lbl = document.getElementById('upLbl');
-    const bar = document.getElementById('upBar');
-    lbl.textContent = 'Uploading ' + file.name + '…';
-    const xhr = new XMLHttpRequest();
-    xhr.upload.addEventListener('progress', e => {
-        if (e.lengthComputable) {
-            const p = Math.round(e.loaded/e.total*100);
-            bar.style.width = p+'%';
-            lbl.textContent = p+'% — '+fmtB(e.loaded)+' / '+fmtB(e.total);
-        }
-    });
-    xhr.addEventListener('load', () => {
-        if (localStorage.getItem('autoAnalyze')==='true')
-            window.location.href = '/analyze/'+encodeURIComponent(file.name);
-        else window.location.reload();
-    });
-    xhr.addEventListener('error', () => toast('Upload failed','error'));
-    xhr.open('POST','/upload');
-    xhr.send(new FormData(uploadForm));
+
+function setUploadZoneDisabled(disabled, filename) {
+    var zone = document.getElementById('uploadZone');
+    var btn = zone ? zone.querySelector('.upload-zone-btn') : null;
+    var icon = zone ? zone.querySelector('.upload-icon') : null;
+    var title = zone ? zone.querySelector('.upload-zone-title') : null;
+    var sub = zone ? zone.querySelector('.upload-zone-sub') : null;
+    if (disabled) {
+        if (icon) icon.style.display = 'none';
+        if (title) { title.textContent = filename || 'Uploading…'; title.style.display = ''; title.style.fontSize = '12px'; title.style.color = '#2563EB'; title.style.wordBreak = 'break-all'; }
+        if (sub) sub.style.display = 'none';
+        if (zone) zone.style.borderColor = '#D1D5DB';
+        if (btn) { btn.classList.add('uploading'); btn.disabled = true; }
+    } else {
+        if (icon) icon.style.display = '';
+        if (title) { title.textContent = 'Drop file here'; title.style.fontSize = ''; title.style.color = ''; title.style.wordBreak = ''; }
+        if (sub) sub.style.display = '';
+        if (zone) zone.style.borderColor = '';
+        if (btn) { btn.classList.remove('uploading'); btn.disabled = false; }
+    }
 }
 
 function showDeleteModal(filename, url) {

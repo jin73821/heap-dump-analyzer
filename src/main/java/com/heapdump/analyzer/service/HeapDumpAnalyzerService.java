@@ -15,6 +15,8 @@ import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
 import java.io.*;
 import java.nio.file.*;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import java.util.*;
@@ -860,6 +862,100 @@ public class HeapDumpAnalyzerService {
         logger.info("[Upload] Completed: filename={}, writtenSize={}, path={} (dumpfiles)",
                 filename, formatBytes(writtenSize), target.toAbsolutePath());
         return filename;
+    }
+
+    // ── 업로드 중복 검사 ─────────────────────────────────────────
+
+    public Map<String, String> checkDuplicate(String filename, long fileSize, String partialHash) {
+        Map<String, String> result = new LinkedHashMap<>();
+        File dir = dumpFilesDirectory();
+        File[] files = dir.listFiles((d, n) -> isValidHeapDumpFile(n));
+        if (files == null) {
+            result.put("status", "OK");
+            return result;
+        }
+
+        boolean nameMatch = false;
+        for (File f : files) {
+            // 기존 파일의 실제 크기 결정 (gz인 경우 originalSize 사용)
+            String fName = f.getName();
+            long existingSize;
+            boolean isGz = fName.toLowerCase().endsWith(".gz");
+            if (isGz) {
+                String displayName = fName.substring(0, fName.length() - 3);
+                HeapAnalysisResult cached = memCache.get(displayName);
+                existingSize = (cached != null && cached.getOriginalFileSize() > 0)
+                        ? cached.getOriginalFileSize() : -1;
+            } else {
+                existingSize = f.length();
+            }
+
+            // 이름 일치 확인 (gz 확장자 제거 후 비교)
+            String existingDisplayName = isGz ? fName.substring(0, fName.length() - 3) : fName;
+            if (existingDisplayName.equals(filename)) {
+                nameMatch = true;
+            }
+
+            // 크기 일치 시 해시 비교
+            if (existingSize == fileSize) {
+                try {
+                    String existingHash = computePartialHash(f, 65536);
+                    if (existingHash.equals(partialHash)) {
+                        result.put("status", "DUPLICATE_CONTENT");
+                        result.put("existingFilename", existingDisplayName);
+                        logger.info("[Upload Check] Duplicate content: '{}' matches '{}'", filename, existingDisplayName);
+                        return result;
+                    }
+                } catch (Exception e) {
+                    logger.debug("[Upload Check] Hash computation failed for {}: {}", fName, e.getMessage());
+                }
+            }
+        }
+
+        if (nameMatch) {
+            result.put("status", "DUPLICATE_NAME");
+            result.put("existingFilename", filename);
+            result.put("suggestedName", generateUniqueName(filename, dir));
+            logger.info("[Upload Check] Name conflict: '{}', suggested: '{}'", filename, result.get("suggestedName"));
+            return result;
+        }
+
+        result.put("status", "OK");
+        return result;
+    }
+
+    private String computePartialHash(File file, int bytes) throws IOException, NoSuchAlgorithmException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        try (InputStream is = file.getName().toLowerCase().endsWith(".gz")
+                ? new GZIPInputStream(new FileInputStream(file))
+                : new FileInputStream(file)) {
+            byte[] buf = new byte[8192];
+            int totalRead = 0;
+            while (totalRead < bytes) {
+                int read = is.read(buf, 0, Math.min(buf.length, bytes - totalRead));
+                if (read < 0) break;
+                digest.update(buf, 0, read);
+                totalRead += read;
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (byte b : digest.digest()) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private String generateUniqueName(String filename, File directory) {
+        String base = stripExtension(filename);
+        String ext = getExtension(filename);
+        int counter = 2;
+        String candidate;
+        do {
+            candidate = base + "_" + counter + "." + ext;
+            counter++;
+        } while (new File(directory, candidate).exists()
+                || new File(directory, candidate + ".gz").exists());
+        return candidate;
     }
 
     private String formatBytes(long bytes) {

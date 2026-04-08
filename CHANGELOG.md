@@ -1,5 +1,26 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-09] 파일 업로드 중복 감지 시스템
+
+[HeapDumpAnalyzerService.java]
+- `checkDuplicate(filename, fileSize, partialHash)` — 기존 파일과 크기+첫 64KB SHA-256 해시로 비교
+- `computePartialHash(File, int)` — 일반/GZ 파일 모두 지원하는 부분 해시 계산
+- `generateUniqueName(filename, directory)` — `{base}_2.{ext}` 패턴 자동 이름 생성
+- `java.security.MessageDigest` import 추가
+
+[HeapDumpController.java]
+- `POST /api/upload/check` 엔드포인트 추가 — 요청: `{filename, fileSize, partialHash}`, 응답: `{status, existingFilename, suggestedName}`
+- 응답 status: `OK`, `DUPLICATE_CONTENT`, `DUPLICATE_NAME`
+
+[index.html]
+- `computePartialHash(file)` — Web Crypto API로 클라이언트 측 첫 64KB SHA-256 해시 계산
+- `checkDuplicate(file)` — API 호출 후 결과에 따라 모달 분기
+- `showDuplicateContentModal()` — "이미 존재하는 파일과 동일한 내용" 모달 (취소/업로드)
+- `showDuplicateNameModal()` — "같은 이름, 다른 내용" 모달 (취소/덮어쓰기/이름변경)
+- `startUploadRenamed()` — `FormData.append(file, newName)` 으로 이름 변경 업로드
+- `doUpload()` 수정: 디스크 체크 후 `checkDuplicate()` 호출로 변경
+- 디스크 경고 모달 "Upload anyway" → `checkDuplicate()` 호출로 변경
+
 ## [2026-04-09] 배너 접힌 상태 오버플로우 + 페이지 이동 깜빡임 수정
 
 [fragments/banner.html]

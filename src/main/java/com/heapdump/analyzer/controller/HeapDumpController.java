@@ -255,6 +255,27 @@ public class HeapDumpController {
         return "redirect:/";
     }
 
+    // ── 업로드 중복 검사 API ────────────────────────────────────────
+
+    @PostMapping("/api/upload/check")
+    @ResponseBody
+    public ResponseEntity<Map<String, String>> checkUploadDuplicate(@RequestBody Map<String, Object> request) {
+        String filename = (String) request.get("filename");
+        Number fileSizeNum = (Number) request.get("fileSize");
+        String partialHash = (String) request.get("partialHash");
+
+        if (filename == null || fileSizeNum == null || partialHash == null) {
+            Map<String, String> err = new LinkedHashMap<>();
+            err.put("status", "OK");
+            return ResponseEntity.ok(err);
+        }
+
+        filename = new File(filename).getName(); // path traversal 방지
+        long fileSize = fileSizeNum.longValue();
+        Map<String, String> result = analyzerService.checkDuplicate(filename, fileSize, partialHash);
+        return ResponseEntity.ok(result);
+    }
+
     // ── 분석 진행 화면 ───────────────────────────────────────────
 
     @GetMapping("/analyze/{filename:.+}")
