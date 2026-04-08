@@ -32,7 +32,8 @@
 
         /* ── Layout ───────────────────────────────── */
         .app-header {
-            position:fixed; top:0; left:0; right:0; height:var(--header-h); z-index:100;
+            position:fixed; top:0; left:var(--banner-w, 220px); right:0; height:var(--header-h); z-index:100;
+            transition: left .25s cubic-bezier(.4,0,.2,1);
             background:var(--surface); border-bottom:1px solid var(--border);
             display:flex; align-items:center; justify-content:space-between;
             padding:0 20px; box-shadow:0 1px 3px rgba(0,0,0,.06);
@@ -59,7 +60,8 @@
         .app-header .btn-sm.btn-warn:hover { background:#b45309; text-decoration:none; }
 
         .sidebar {
-            position:fixed; top:var(--header-h); left:0; bottom:0; width:var(--sidebar-w);
+            position:fixed; top:var(--header-h); left:var(--banner-w, 220px); bottom:0; width:var(--sidebar-w);
+            transition: left .25s cubic-bezier(.4,0,.2,1);
             background:var(--surface); border-right:1px solid var(--border);
             overflow-y:auto; z-index:50; padding:16px 0;
         }
@@ -91,7 +93,8 @@
         .sidebar-stat .stat-val { font-weight:700; color:var(--text); font-family:var(--mono); font-size:12px; }
 
         .main-content {
-            margin-left:var(--sidebar-w); margin-top:var(--header-h); padding:16px 20px; min-height:calc(100vh - var(--header-h));
+            margin-left:calc(var(--sidebar-w) + var(--banner-w, 220px)); margin-top:var(--header-h); padding:16px 20px; min-height:calc(100vh - var(--header-h));
+            transition: margin-left .25s cubic-bezier(.4,0,.2,1);
         }
 
         /* ── Panels ───────────────────────────────── */
@@ -499,6 +502,7 @@
         .mobile-sidebar-header .ms-title { font-size:13px; font-weight:600; word-break:break-all; }
 
         @media (max-width:768px) {
+            .app-header { left:0; }
             .sidebar {
                 position:fixed; top:var(--header-h); left:0; bottom:0; width:280px; z-index:50;
                 height:calc(100vh - var(--header-h)); transform:translateX(-100%);
@@ -569,16 +573,15 @@
 </head>
 <body>
 
+<div th:replace="fragments/banner :: banner"></div>
+
 <!-- ════════════════ HEADER ════════════════ -->
 <header class="app-header">
     <div class="header-brand">
         <button class="mobile-menu-btn" id="menuBtn" onclick="toggleMobileSidebar()" aria-label="Menu">
             <span></span><span></span><span></span>
         </button>
-        <a href="/" class="header-logo" style="text-decoration:none">
-            <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
-        </a>
-        <a href="/" class="logo" style="text-decoration:none">Heap Dump Analyzer</a>
+        <span class="logo">Analysis</span>
         <span th:if="${result != null}" class="filename-badge" th:text="${result.filename}"></span>
         <span th:if="${result == null and filename != null}" class="filename-badge" th:text="${filename}"></span>
     </div>

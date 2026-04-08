@@ -9,10 +9,11 @@
         html, body { height: 100%; overflow-x: hidden; }
         body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
                color: #1F2937; background: #F3F4F6; line-height: 1.5; }
-        .topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 52px;
+        .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
                   background: #fff; border-bottom: 1px solid #E5E7EB;
                   display: flex; align-items: center; justify-content: space-between;
-                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+                  transition: left .25s cubic-bezier(.4,0,.2,1); }
         .topbar-brand { display: flex; align-items: center; gap: 10px; }
         .topbar-logo { width: 30px; height: 30px; background: #2563EB; border-radius: 7px;
                        display: flex; align-items: center; justify-content: center; }
@@ -27,7 +28,9 @@
         .topbar-btn:hover { background: #F9FAFB; }
         .topbar-settings-btn { display: inline-flex; align-items: center; }
         .app-layout { display: grid; grid-template-columns: 300px 1fr;
-                      min-height: 100vh; padding-top: 52px; }
+                      min-height: 100vh; padding-top: 52px;
+                      margin-left: var(--banner-w, 220px);
+                      transition: margin-left .25s cubic-bezier(.4,0,.2,1); }
         .sidebar { background: #fff; border-right: 1px solid #E5E7EB;
                    display: flex; flex-direction: column;
                    height: calc(100vh - 52px); position: sticky; top: 52px; overflow-y: auto; }
@@ -447,7 +450,8 @@
         .mobile-sidebar-header .ms-sub { font-size: 11px; opacity: .8; margin-top: 2px; }
 
         @media (max-width: 900px) {
-            .app-layout { grid-template-columns: 1fr; }
+            .topbar { left: 0; }
+            .app-layout { grid-template-columns: 1fr; margin-left: 0; }
             .main-content { max-width: 100vw; }
             .fname-tooltip { display: none !important; }
             .sidebar {
@@ -486,22 +490,16 @@
 </head>
 <body>
 
+<div th:replace="fragments/banner :: banner"></div>
+
 <header class="topbar">
     <button class="mobile-menu-btn" id="menuBtn" onclick="toggleMobileSidebar()" aria-label="Menu">
         <span></span><span></span><span></span>
     </button>
     <div class="topbar-brand">
-        <div class="topbar-logo">
-            <svg viewBox="0 0 16 16"><rect x="1" y="8" width="3" height="7" rx="1"/><rect x="6" y="5" width="3" height="10" rx="1"/><rect x="11" y="2" width="3" height="13" rx="1"/></svg>
-        </div>
-        <span class="topbar-title">Heap Dump Analyzer</span>
-        <span class="topbar-badge">v2.0 · MAT CLI</span>
+        <span class="topbar-title">Dashboard</span>
     </div>
     <div class="topbar-right">
-        <a class="topbar-btn topbar-settings-btn" href="/settings">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;vertical-align:middle;margin-right:2px"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
-            Settings
-        </a>
         <a class="topbar-btn" href="/">Refresh</a>
     </div>
 </header>
@@ -1242,6 +1240,7 @@ function renderQueuePanel(d) {
     var mm = String(now.getMinutes()).padStart(2, '0');
     var ss = String(now.getSeconds()).padStart(2, '0');
     updated.textContent = 'Updated ' + hh + ':' + mm + ':' + ss;
+
 }
 
 function escHtml(s) {

@@ -1,5 +1,99 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-09] 배너 접힌 상태 오버플로우 + 페이지 이동 깜빡임 수정
+
+[fragments/banner.html]
+- 접힌 아이콘 스트립: padding 축소(42px→6px), `overflow-y: auto`, `flex: 1`로 뷰포트 내 스크롤 처리
+- 아이콘 `flex-shrink: 0`, `min-height: 32px`로 크기 유지
+- 페이지 로드 깜빡임 방지: `<style>` 앞에 인라인 `<script>`로 `banner-collapsed` 즉시 적용
+- `banner-no-transition` 클래스로 초기 로드 시 transition 비활성화, `requestAnimationFrame` 2프레임 후 복원
+- 배너 헤더 하단 border 제거
+
+## [2026-04-09] 배너 헤더/경계 디자인 C안 적용
+
+[fragments/banner.html]
+- 배너 `border-right` 제거 → `box-shadow: 1px 0 3px rgba(0,0,0,.06)` 미세한 그림자로 교체
+- 배너 헤더 배경: 본체와 동일한 `#F9FAFB`로 통일 (경계선 최소화)
+- 헤더 하단 `border-bottom: 1px solid #E5E7EB` 유지 (본체와 구분)
+- 페이지 topbar의 `box-shadow`와 배너 그림자가 자연스럽게 연결
+
+## [2026-04-08] 배너 System Status 캐시 + Refresh 버튼
+
+[fragments/banner.html]
+- `localStorage` 캐시 도입: 페이지 이동 시 캐시된 데이터로 즉시 렌더링 (깜빡임 방지)
+- 자동 갱신 주기 15초 → 60초(1분)로 변경
+- 캐시가 60초 미만이면 페이지 로드 시 API 호출 생략
+- System Status 타이틀 우측에 Refresh 아이콘 버튼 추가 (회전 애니메이션)
+- `fetchBannerStatus()` → `applyBannerStatus()` DOM 업데이트 분리
+- `refreshBannerStatus()` 수동 갱신 함수 추가
+- JS 변수 `js` → `js_el`로 변경 (예약어 충돌 방지)
+
+## [2026-04-08] 페이지 topbar 로고 제거 + 제목 페이지명으로 변경
+
+[index.html] 로고 제거, 제목 "Heap Dump Analyzer" → "Dashboard", Settings 버튼 제거
+[analyze.html] 로고 제거, 제목 "Heap Dump Analyzer" → "Analysis" (filename-badge 유지)
+[history.html] 로고 제거, 제목 → "History"
+[files.html] 로고 제거, 제목 → "Files"
+[settings.html] 로고 제거, 제목 → "Settings"
+[compare.html] 로고 제거, 제목 "Heap Dump Compare" → "Compare"
+[progress.html] 변경 없음 (이미 로고 없고 "Analyzing" 제목 적절)
+
+## [2026-04-08] 배너 헤더 영역 추가
+
+[fragments/banner.html]
+- 배너를 `top: 0`부터 시작하도록 변경 (기존 `top: 52px`)
+- 52px 헤더 영역 추가: 앱 로고(파란 아이콘) + "Heap Dump Analyzer" 타이틀 + "v2.0 · MAT CLI" 서브텍스트
+- 배너 z-index 90 → 110으로 상향 (페이지 topbar 위에 표시)
+- 접힌 상태에서 헤더는 로고 아이콘만 표시
+- 토글 버튼 위치 `top: 8px` → `top: 62px`로 헤더 아래로 이동
+
+## [2026-04-08] 좌측 배너 전역 적용 + 접기/펼치기 토글
+
+[fragments/banner.html] (신규)
+- 공통 배너 Thymeleaf fragment 생성 — CSS, HTML, JS 자체 포함
+- `position: fixed; left: 0; top: 52px` 으로 전 페이지 최좌측 고정
+- System Status: MAT CLI 상태, 디스크 사용량 바, JVM 메모리 바, 분석 큐 상태
+- Navigation: Dashboard, Files, History, Settings (현재 페이지 하이라이트)
+- 접기/펼치기 토글 버튼 (220px ↔ 44px) + `localStorage` 상태 저장
+- 접힌 상태: 아이콘 스트립 표시 (MAT 상태 dot + 네비 아이콘)
+- `/api/system/status` API에서 15초 간격으로 데이터 갱신
+- 900px 이하 모바일에서 자동 숨김
+
+[HeapDumpController.java]
+- `GET /api/system/status` 엔드포인트 추가 — MAT CLI, 디스크, JVM, 큐 상태 JSON 반환
+- index()의 배너 전용 model attribute 제거 (API로 이전)
+
+[index.html]
+- 인라인 배너 HTML/CSS/JS 제거, fragment include로 교체
+- grid `300px 220px 1fr` → `300px 1fr` + `margin-left: var(--banner-w)`
+- topbar `left: var(--banner-w)` 적용
+
+[analyze.html]
+- `.app-header`, `.sidebar`, `.main-content`에 `left/margin-left: var(--banner-w)` 적용
+- 768px 이하 모바일에서 리셋
+
+[progress.html, history.html, files.html, settings.html, compare.html]
+- 각 페이지 topbar에 `left: var(--banner-w)` 적용
+- container에 `padding-left: calc(var(--banner-w) + 20px)` 적용
+- 900px 이하 모바일 리셋 미디어쿼리 추가
+
+## [2026-04-08] 메인 홈페이지 좌측 배너 추가
+
+[HeapDumpController.java]
+- `index()` 메서드에 MAT CLI 상태 (`matCliReady`, `matCliStatus`), JVM 메모리 (`jvmUsedMb`, `jvmMaxMb`, `jvmUsedPercent`) model attribute 추가
+
+[index.html]
+- 레이아웃을 `300px 1fr` → `300px 220px 1fr` 3컬럼 grid로 변경
+- 좌측 배너 (`<div class="left-banner">`) 추가: System Status 섹션 + Navigation 섹션
+  - MAT CLI 상태: Ready/Not Ready 인디케이터 (초록/빨간 dot)
+  - 디스크 사용량: 프로그레스 바 + 퍼센트 (70%/90% 기준 색상 변경)
+  - JVM 메모리: 프로그레스 바 + MB 표시
+  - 분석 큐 상태: `renderQueuePanel()`과 동기화되는 실시간 표시
+  - 네비게이션 링크: Files, History, Settings, Compare (SVG 아이콘)
+- 반응형: `@media (max-width: 900px)` 에서 배너 숨김 처리
+- `@media (min-width: 1024px)` desktop 스케일링에 배너 폰트 크기 추가
+- `updateBannerQueue()` 함수 추가: 큐 polling 결과를 배너 카드에 동기화
+
 ## [2026-04-08] Overview KPI 카드 모바일 3x2 그리드 레이아웃
 
 [analyze.html]

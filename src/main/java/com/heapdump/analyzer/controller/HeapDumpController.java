@@ -885,6 +885,43 @@ public class HeapDumpController {
         return ResponseEntity.ok(resp);
     }
 
+    // ── API: 시스템 상태 (배너용) ──────────────────────────────────
+
+    @GetMapping("/api/system/status")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getSystemStatus() {
+        Map<String, Object> resp = new LinkedHashMap<>();
+
+        // MAT CLI
+        resp.put("matCliReady", config.isMatCliReady());
+        resp.put("matCliStatus", config.getMatCliStatusMessage());
+
+        // Disk
+        File dumpDir = new File(analyzerService.getHeapDumpDirectory());
+        if (dumpDir.exists() && dumpDir.getTotalSpace() > 0) {
+            long total = dumpDir.getTotalSpace();
+            long usable = dumpDir.getUsableSpace();
+            long used = total - usable;
+            resp.put("diskUsedPercent", Math.round(used * 100.0 / total));
+            resp.put("diskUsed", formatBytes(used));
+            resp.put("diskTotal", formatBytes(total));
+        }
+
+        // JVM
+        Runtime rt = Runtime.getRuntime();
+        long jvmMax = rt.maxMemory();
+        long jvmUsed = rt.totalMemory() - rt.freeMemory();
+        resp.put("jvmUsedMb", jvmUsed / (1024 * 1024));
+        resp.put("jvmMaxMb", jvmMax / (1024 * 1024));
+        resp.put("jvmUsedPercent", Math.round(jvmUsed * 100.0 / jvmMax));
+
+        // Queue
+        resp.put("queueSize", analyzerService.getQueueSize());
+        resp.put("currentAnalysis", analyzerService.getCurrentAnalysisFilename());
+
+        return ResponseEntity.ok(resp);
+    }
+
     // ── [NEW] API: MAT 힙 메모리 설정 ─────────────────────────────
 
     @GetMapping("/api/mat/heap")

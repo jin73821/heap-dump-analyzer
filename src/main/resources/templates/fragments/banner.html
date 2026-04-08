@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<!-- 좌측 시스템 배너 fragment — 모든 페이지에서 th:replace 로 삽입 -->
+<div th:fragment="banner">
+
+<script>
+/* 렌더링 전 즉시 실행 — 접힌 상태 깜빡임 방지 */
+if (localStorage.getItem('bannerCollapsed') === 'true') {
+    document.body.classList.add('banner-collapsed');
+}
+document.body.classList.add('banner-no-transition');
+</script>
+<style>
+/* ── Left Banner (global, fixed) ─────────────────────── */
+:root { --banner-w: 220px; }
+body.banner-collapsed { --banner-w: 44px; }
+
+.g-banner {
+    position: fixed; left: 0; top: 0; bottom: 0;
+    width: var(--banner-w); background: #F0F1F3;
+    border-right: none; box-shadow: 1px 0 3px rgba(0,0,0,.06);
+    z-index: 110; overflow-y: auto; overflow-x: hidden;
+    font-size: 14px; line-height: 1.5;
+    display: flex; flex-direction: column;
+    transition: width .25s cubic-bezier(.4,0,.2,1);
+}
+
+/* ── Banner header (52px, aligned with page topbar) ── */
+.gb-header {
+    height: 52px; min-height: 52px; display: flex; align-items: center; gap: 10px;
+    padding: 0 14px; background: #F0F1F3; border-bottom: none;
+    overflow: hidden; white-space: nowrap;
+}
+.gb-header-logo {
+    width: 30px; height: 30px; min-width: 30px; background: #2563EB; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.gb-header-logo svg { width: 16px; height: 16px; fill: #fff; }
+.gb-header-text { overflow: hidden; }
+.gb-header-title { font-size: 14px; font-weight: 700; color: #1F2937; line-height: 1.2; }
+.gb-header-sub { font-size: 10px; color: #9CA3AF; font-weight: 500; }
+body.banner-collapsed .gb-header { justify-content: center; padding: 0; }
+body.banner-collapsed .gb-header-text { display: none; }
+
+/* ── Toggle button ──────────────────────────── */
+.gb-toggle {
+    position: absolute; top: 62px; right: 8px;
+    width: 28px; height: 28px; border-radius: 6px;
+    background: #fff; border: 1px solid #E5E7EB;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: transform .25s, background .15s;
+    z-index: 2;
+}
+.gb-toggle:hover { background: #EFF6FF; border-color: #93C5FD; }
+.gb-toggle svg { width: 14px; height: 14px; stroke: #6B7280; fill: none; stroke-width: 2; }
+body.banner-collapsed .gb-toggle {
+    position: static; margin: 6px auto 0; transform: rotate(180deg);
+    width: 26px; height: 26px;
+}
+
+/* ── Banner content (hidden when collapsed) ── */
+.gb-body { padding: 42px 12px 14px; display: flex; flex-direction: column; gap: 16px; }
+body.banner-collapsed .gb-body { display: none; }
+
+/* ── Collapsed icon strip ───────────────────── */
+.gb-collapsed-icons {
+    display: none; flex-direction: column; align-items: center;
+    gap: 2px; padding: 4px 0 8px; margin-top: auto;
+}
+body.banner-collapsed .gb-collapsed-icons { display: flex; }
+.gb-ci {
+    width: 28px; height: 28px; border-radius: 5px; display: flex;
+    align-items: center; justify-content: center; color: #6B7280;
+    text-decoration: none; transition: background .15s;
+}
+.gb-ci:hover { background: #EFF6FF; color: #2563EB; }
+.gb-ci svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+.gb-ci-dot { width: 7px; height: 7px; border-radius: 50%; margin: 2px 0; }
+
+/* ── Section styles ──────────────────────────── */
+.gb-section { }
+.gb-title { font-size: 9px; font-weight: 700; color: #9CA3AF;
+            text-transform: uppercase; letter-spacing: .08em; margin-bottom: 10px;
+            display: flex; align-items: center; justify-content: space-between; }
+.gb-refresh {
+    width: 22px; height: 22px; border: none; background: none; cursor: pointer;
+    border-radius: 4px; display: flex; align-items: center; justify-content: center;
+    color: #9CA3AF; transition: color .15s, background .15s;
+}
+.gb-refresh:hover { color: #2563EB; background: #EFF6FF; }
+.gb-refresh svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
+.gb-refresh.spinning svg { animation: gbSpin .6s linear; }
+@keyframes gbSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.gb-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 8px;
+           padding: 10px 12px; margin-bottom: 8px; }
+.gb-card:last-child { margin-bottom: 0; }
+.gb-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.gb-row:last-child { margin-bottom: 0; }
+.gb-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.gb-dot.green { background: #059669; }
+.gb-dot.red { background: #EF4444; }
+.gb-dot.amber { background: #F59E0B; }
+.gb-label { font-size: 11px; color: #6B7280; }
+.gb-val { font-size: 11px; font-weight: 600; color: #1F2937; }
+.gb-bar-wrap { width: 100%; height: 6px; background: #E5E7EB; border-radius: 3px; overflow: hidden; }
+.gb-bar { height: 100%; border-radius: 3px; transition: width .4s ease; }
+.gb-bar.blue { background: #2563EB; }
+.gb-bar.green { background: #059669; }
+.gb-bar.amber { background: #F59E0B; }
+.gb-bar.red { background: #EF4444; }
+.gb-sub { font-size: 10px; color: #9CA3AF; margin-top: 3px; }
+.gb-nav-link { display: flex; align-items: center; gap: 8px;
+               padding: 8px 10px; border-radius: 6px; color: #374151;
+               text-decoration: none; font-size: 12px; font-weight: 500;
+               transition: background .15s; }
+.gb-nav-link:hover { background: #EFF6FF; color: #2563EB; }
+.gb-nav-link.active { background: #EFF6FF; color: #2563EB; font-weight: 600; }
+.gb-nav-link svg { width: 16px; height: 16px; stroke: currentColor;
+                   fill: none; stroke-width: 1.8; flex-shrink: 0; }
+
+/* ── Desktop font scale ──────────────────────── */
+@media (min-width: 1024px) {
+    .gb-title { font-size: 10px; }
+    .gb-label { font-size: 12px; }
+    .gb-val { font-size: 12px; }
+    .gb-sub { font-size: 11px; }
+    .gb-nav-link { font-size: 13px; }
+}
+/* ── 페이지 로드 시 transition 비활성화 ───────── */
+body.banner-no-transition .g-banner,
+body.banner-no-transition .gb-header { transition: none !important; }
+
+/* ── Mobile: hide banner ─────────────────────── */
+@media (max-width: 900px) {
+    .g-banner { display: none; }
+    :root { --banner-w: 0px !important; }
+    body.banner-collapsed { --banner-w: 0px !important; }
+}
+</style>
+
+<aside class="g-banner" id="gBanner">
+    <!-- Header -->
+    <a href="/" class="gb-header" style="text-decoration:none">
+        <div class="gb-header-logo">
+            <svg viewBox="0 0 14 14"><rect x="1" y="7" width="2" height="6" rx="1"/><rect x="5" y="4" width="2" height="9" rx="1"/><rect x="9" y="1" width="2" height="12" rx="1"/></svg>
+        </div>
+        <div class="gb-header-text">
+            <div class="gb-header-title">Heap Dump Analyzer</div>
+            <div class="gb-header-sub">v2.0 · MAT CLI</div>
+        </div>
+    </a>
+
+    <!-- Toggle -->
+    <button class="gb-toggle" id="gbToggle" onclick="toggleBanner()" title="배너 접기/펼치기">
+        <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+
+    <!-- Expanded body -->
+    <div class="gb-body" id="gbBody">
+        <div class="gb-section">
+            <div class="gb-title">
+                System Status
+                <button class="gb-refresh" id="gbRefreshBtn" onclick="refreshBannerStatus()" title="Refresh">
+                    <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                </button>
+            </div>
+
+            <!-- MAT CLI -->
+            <div class="gb-card">
+                <div class="gb-row">
+                    <span class="gb-dot" id="gbMatDot"></span>
+                    <span class="gb-label">MAT CLI</span>
+                </div>
+                <div class="gb-row">
+                    <span class="gb-val" id="gbMatVal">Loading...</span>
+                </div>
+            </div>
+
+            <!-- Disk -->
+            <div class="gb-card">
+                <div class="gb-row" style="justify-content:space-between">
+                    <span class="gb-label">Disk</span>
+                    <span class="gb-val" id="gbDiskPct">-</span>
+                </div>
+                <div class="gb-bar-wrap">
+                    <div class="gb-bar blue" id="gbDiskBar" style="width:0%"></div>
+                </div>
+                <div class="gb-sub" id="gbDiskSub">-</div>
+            </div>
+
+            <!-- JVM Memory -->
+            <div class="gb-card">
+                <div class="gb-row" style="justify-content:space-between">
+                    <span class="gb-label">JVM Memory</span>
+                    <span class="gb-val" id="gbJvmPct">-</span>
+                </div>
+                <div class="gb-bar-wrap">
+                    <div class="gb-bar green" id="gbJvmBar" style="width:0%"></div>
+                </div>
+                <div class="gb-sub" id="gbJvmSub">-</div>
+            </div>
+
+            <!-- Queue -->
+            <div class="gb-card">
+                <div class="gb-row">
+                    <span class="gb-dot green" id="gbQueueDot"></span>
+                    <span class="gb-label">Queue</span>
+                    <span class="gb-val" id="gbQueueVal" style="margin-left:auto">Idle</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="gb-section">
+            <div class="gb-title">Navigation</div>
+            <a href="/" class="gb-nav-link" id="gbNavDashboard">
+                <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+                Dashboard
+            </a>
+            <a href="/files" class="gb-nav-link" id="gbNavFiles">
+                <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                Files
+            </a>
+            <a href="/history" class="gb-nav-link" id="gbNavHistory">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                History
+            </a>
+            <a href="/settings" class="gb-nav-link" id="gbNavSettings">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                Settings
+            </a>
+        </div>
+    </div>
+
+    <!-- Collapsed icons -->
+    <div class="gb-collapsed-icons">
+        <div class="gb-ci-dot" id="gbMatDotC"></div>
+        <a href="/" class="gb-ci" title="Dashboard"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></a>
+        <a href="/files" class="gb-ci" title="Files"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></a>
+        <a href="/history" class="gb-ci" title="History"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></a>
+        <a href="/settings" class="gb-ci" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>
+    </div>
+</aside>
+
+<script>
+/* ── Banner toggle + system status ─────────── */
+var _GB_CACHE_KEY = 'bannerStatusCache';
+var _GB_INTERVAL = 60000; // 1분
+
+(function() {
+    highlightActiveNav();
+
+    // 로드 완료 후 transition 복원
+    requestAnimationFrame(function() {
+        requestAnimationFrame(function() {
+            document.body.classList.remove('banner-no-transition');
+        });
+    });
+
+    // 캐시된 데이터로 즉시 렌더링 (페이지 이동 시 깜빡임 방지)
+    var cached = loadStatusCache();
+    if (cached) {
+        applyBannerStatus(cached);
+    }
+
+    // 캐시가 60초 이상 오래됐으면 API 호출, 아니면 다음 주기까지 대기
+    var age = getCacheAge();
+    if (age < 0 || age >= _GB_INTERVAL) {
+        fetchBannerStatus();
+    }
+    setInterval(fetchBannerStatus, _GB_INTERVAL);
+})();
+
+function toggleBanner() {
+    document.body.classList.toggle('banner-collapsed');
+    localStorage.setItem('bannerCollapsed', document.body.classList.contains('banner-collapsed'));
+}
+
+function highlightActiveNav() {
+    var path = window.location.pathname;
+    var links = document.querySelectorAll('.gb-nav-link');
+    links.forEach(function(l) {
+        var href = l.getAttribute('href');
+        if (path === href || (href !== '/' && path.startsWith(href))) {
+            l.classList.add('active');
+        }
+    });
+}
+
+/* 수동 Refresh 버튼 */
+function refreshBannerStatus() {
+    var btn = document.getElementById('gbRefreshBtn');
+    if (btn) { btn.classList.add('spinning'); }
+    fetchBannerStatus(function() {
+        if (btn) { setTimeout(function() { btn.classList.remove('spinning'); }, 600); }
+    });
+}
+
+/* 캐시 읽기/쓰기 */
+function loadStatusCache() {
+    try {
+        var raw = localStorage.getItem(_GB_CACHE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw).data;
+    } catch(e) { return null; }
+}
+function saveStatusCache(d) {
+    try {
+        localStorage.setItem(_GB_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: d }));
+    } catch(e) {}
+}
+function getCacheAge() {
+    try {
+        var raw = localStorage.getItem(_GB_CACHE_KEY);
+        if (!raw) return -1;
+        return Date.now() - JSON.parse(raw).ts;
+    } catch(e) { return -1; }
+}
+
+/* API 호출 */
+function fetchBannerStatus(cb) {
+    fetch('/api/system/status').then(function(r) { return r.json(); }).then(function(d) {
+        saveStatusCache(d);
+        applyBannerStatus(d);
+        if (cb) cb();
+    }).catch(function() { if (cb) cb(); });
+}
+
+/* DOM 업데이트 */
+function applyBannerStatus(d) {
+    // MAT CLI
+    var matDot = document.getElementById('gbMatDot');
+    var matDotC = document.getElementById('gbMatDotC');
+    var matVal = document.getElementById('gbMatVal');
+    if (matDot) matDot.className = 'gb-dot ' + (d.matCliReady ? 'green' : 'red');
+    if (matDotC) matDotC.style.background = d.matCliReady ? '#059669' : '#EF4444';
+    if (matVal) {
+        matVal.textContent = d.matCliReady ? 'Ready' : 'Not Ready';
+        matVal.style.color = d.matCliReady ? '#059669' : '#EF4444';
+    }
+
+    // Disk
+    var diskPct = d.diskUsedPercent || 0;
+    var dp = document.getElementById('gbDiskPct');
+    var db = document.getElementById('gbDiskBar');
+    var ds = document.getElementById('gbDiskSub');
+    if (dp) {
+        dp.textContent = diskPct + '%';
+        dp.style.color = diskPct > 90 ? '#EF4444' : (diskPct > 70 ? '#F59E0B' : '');
+    }
+    if (db) {
+        db.style.width = diskPct + '%';
+        db.className = 'gb-bar ' + (diskPct > 90 ? 'red' : (diskPct > 70 ? 'amber' : 'blue'));
+    }
+    if (ds) ds.textContent = (d.diskUsed || '-') + ' / ' + (d.diskTotal || '-');
+
+    // JVM
+    var jvmPct = d.jvmUsedPercent || 0;
+    var jp = document.getElementById('gbJvmPct');
+    var jb = document.getElementById('gbJvmBar');
+    var js_el = document.getElementById('gbJvmSub');
+    if (jp) {
+        jp.textContent = jvmPct + '%';
+        jp.style.color = jvmPct > 90 ? '#EF4444' : (jvmPct > 70 ? '#F59E0B' : '');
+    }
+    if (jb) {
+        jb.style.width = jvmPct + '%';
+        jb.className = 'gb-bar ' + (jvmPct > 90 ? 'red' : (jvmPct > 70 ? 'amber' : 'green'));
+    }
+    if (js_el) js_el.textContent = (d.jvmUsedMb || 0) + ' / ' + (d.jvmMaxMb || 0) + ' MB';
+
+    // Queue
+    var qDot = document.getElementById('gbQueueDot');
+    var qVal = document.getElementById('gbQueueVal');
+    var qSize = d.queueSize || 0;
+    var current = d.currentAnalysis || null;
+    if (qDot && qVal) {
+        if (qSize === 0 && !current) {
+            qDot.className = 'gb-dot green';
+            qVal.textContent = 'Idle';
+            qVal.style.color = '';
+        } else if (current && qSize <= 1) {
+            qDot.className = 'gb-dot amber';
+            qVal.textContent = 'Running';
+            qVal.style.color = '#F59E0B';
+        } else {
+            qDot.className = 'gb-dot amber';
+            qVal.textContent = 'Running +' + (qSize - 1) + ' queued';
+            qVal.style.color = '#F59E0B';
+        }
+    }
+}
+</script>
+
+</div>
+</html>
