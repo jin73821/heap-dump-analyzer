@@ -1,5 +1,23 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-08] Overview KPI 카드 모바일 3x2 그리드 레이아웃
+
+[analyze.html]
+- `@media (max-width:480px)`: KPI 바를 `flex-direction:column`(1열) → `grid-template-columns:repeat(3, 1fr)`(3열 2행)로 변경
+- 아이콘 26px, 값 13px, 라벨 10px으로 축소하여 3열에 맞게 조정
+- 패딩 8px 10px, gap 6px로 밀도 높임
+- 3n번째 아이템 `border-right:none`, 마지막 행 `border-bottom:none` 처리
+
+## [2026-04-08] Analysis 모달 모바일 레이아웃 최적화
+
+[analyze.html]
+- `@media (max-width:768px)`: 일반 모달(`.modal-box`) 패딩·너비 축소, 아이콘·타이틀·바디·버튼 폰트 크기 축소
+- `@media (max-width:768px)`: Component Detail 모달 전용 — 너비 `calc(100vw - 24px)`, 최대높이 88vh, 내부 패딩 축소
+- `@media (max-width:480px)`: 일반 모달 패딩 18→16px, 너비 `calc(100vw - 32px)`, border-radius 12px로 축소
+- `@media (max-width:480px)`: 모달 아이콘 34px, 타이틀 15px, 바디 12px, 버튼 12px으로 모바일 최적화
+- `@media (max-width:480px)`: Component Detail 모달 — 너비 `calc(100vw - 16px)`, 최대높이 90vh, 내부 padding 최소화
+- 미사용 `.modal-content` 규칙을 실제 `.modal-box` 및 Component Detail 모달에 맞게 재작성
+
 ## [2026-04-07] Overview Treemap/StackedBar 툴팁 오른쪽 넘침 수정
 
 [analyze.html]

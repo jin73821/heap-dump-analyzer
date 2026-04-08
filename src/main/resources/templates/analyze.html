@@ -523,6 +523,13 @@
             .app-header .header-actions { gap:4px; }
             .app-header .btn-sm { font-size:11px; padding:5px 8px; white-space:nowrap; }
             .mobile-menu-btn { display:flex !important; align-items:center; justify-content:center; flex-direction:column; }
+            .modal-box { padding:22px 18px; width:calc(100vw - 40px); }
+            .modal-icon { width:36px; height:36px; font-size:18px; }
+            .modal-title { font-size:16px; }
+            .modal-body { font-size:13px; }
+            .modal-btn { padding:9px 18px; font-size:13px; }
+            #componentDetailModal .modal-box { width:calc(100vw - 24px); max-width:none; max-height:88vh; padding:18px 14px; }
+            #componentDetailModal #componentDetailBody { padding:12px 10px; }
             .col-thread-loader { display:none; }
             .col-thread-type { white-space:nowrap; }
             .col-thread-size { white-space:nowrap; }
@@ -530,14 +537,30 @@
         }
         @media (max-width:480px) {
             .sidebar, .sidebar.mobile-open { width:calc(100vw - 56px); max-width:280px; }
-            .kpi-bar { flex-direction:column; }
-            .kpi-item { flex:1 1 100%; border-right:none; border-bottom:1px solid #f3f4f6; }
-            .kpi-item:last-child { border-bottom:none; }
+            .kpi-bar { display:grid; grid-template-columns:repeat(3, 1fr); }
+            .kpi-item { border-right:1px solid #f3f4f6; border-bottom:1px solid #f3f4f6; padding:8px 10px; gap:6px; }
+            .kpi-item:nth-child(3n) { border-right:none; }
+            .kpi-item:nth-last-child(-n+3) { border-bottom:none; }
+            .kpi-icon { width:26px; height:26px; border-radius:6px; font-size:12px; }
+            .kpi-value { font-size:13px; }
+            .kpi-label { font-size:10px; }
             .table-toolbar { flex-direction:column; align-items:stretch; }
             .table-search { width:100%; }
             .card { padding:14px; }
             .suspect-body { padding:0 14px 14px 14px; }
-            .modal-content { width:calc(100vw - 32px); margin:0 16px; max-height:80vh; overflow-y:auto; }
+            .modal-box { padding:18px 16px; border-radius:12px; width:calc(100vw - 32px); max-width:none; }
+            .modal-header { gap:8px; margin-bottom:12px; }
+            .modal-icon { width:34px; height:34px; font-size:16px; }
+            .modal-title { font-size:15px; }
+            .modal-body { font-size:12px; margin-bottom:14px; }
+            .modal-body .modal-filename { font-size:11px; padding:2px 8px; }
+            .modal-body .modal-info { gap:12px; font-size:11px; }
+            .modal-btn { padding:8px 16px; font-size:12px; border-radius:6px; }
+            .modal-footer { gap:8px; }
+            #componentDetailModal .modal-box { width:calc(100vw - 16px); max-height:90vh; padding:14px 10px; }
+            #componentDetailModal .modal-header { padding:0 6px; }
+            #componentDetailModal #componentDetailBody { padding:10px 6px; }
+            #componentDetailModal .modal-footer { padding:0 6px; }
             .app-header .header-logo { width:26px; height:26px; }
             .app-header .logo { font-size:13px; }
             .app-header .btn-sm { font-size:10px; padding:4px 6px; }
