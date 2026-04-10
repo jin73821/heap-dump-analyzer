@@ -1,0 +1,471 @@
+================================================================================
+  LLM 연동 Settings + 분석 결과 페이지 구현 계획서
+  작성일: 2026-04-10
+  v3 — 다중 프로바이더 지원 (Claude, GPT, Genspark 등)
+================================================================================
+
+1. 개요
+------------------------------------------------------------------------
+Settings 페이지(/settings)에 LLM API 연동 설정 카드를 추가하고,
+분석 결과 페이지(analyze.html)에 AI 분석 요청 선택지를 표시한다.
+
+핵심 변경:
+  - 자동 LLM 호출 없음 → 사용자가 명시적으로 "AI 분석" 버튼 클릭
+  - 분석 결과 페이지 헤더에 AI 분석 여부 배지 표시
+  - AI 미분석 상태는 회색(비활성) 표시
+  - 다중 LLM 프로바이더 지원 (Claude, GPT, Genspark 등)
+
+
+2. 다중 프로바이더 아키텍처
+------------------------------------------------------------------------
+
+2-1. 프로바이더별 차이점
+........................................................................
+  ┌──────────┬──────────────────────────────┬───────────────────┬──────────────┐
+  │ Provider │ API Endpoint                 │ 인증 헤더          │ 요청 형식     │
+  ├──────────┼──────────────────────────────┼───────────────────┼──────────────┤
+  │ Claude   │ api.anthropic.com/v1/messages│ x-api-key         │ Messages API │
+  │ GPT      │ api.openai.com/v1/chat/...   │ Authorization:    │ Chat API     │
+  │          │                              │ Bearer <key>      │              │
+  │ Genspark │ (사용자 지정 URL)             │ Authorization:    │ Chat API     │
+  │          │                              │ Bearer <key>      │ (호환)       │
+  │ Custom   │ (사용자 지정 URL)             │ (사용자 지정)      │ (자동 감지)  │
+  └──────────┴──────────────────────────────┴───────────────────┴──────────────┘
+
+2-2. 추상화 전략 — LlmProvider 인터페이스
+........................................................................
+  인터페이스를 사용하지 않고, LlmAnalysisService 내부에서 provider 값에
+  따라 요청 형식을 분기하는 방식 채택.
+
+  이유:
+  - 현재 프로젝트가 인터페이스/DI 패턴을 사용하지 않는 단순 구조
+  - 프로바이더 간 차이는 (1) HTTP 헤더 (2) JSON 요청/응답 포맷 뿐
+  - 별도 클래스 분리 시 과도한 복잡성 → 메서드 분기로 충분
+
+  구현:
+  LlmAnalysisService 내:
+
+    private HttpURLConnection buildRequest(String prompt) {
+        switch (llmProvider) {
+            case "claude":  return buildClaudeRequest(prompt);
+            case "gpt":     return buildGptRequest(prompt);
+            case "genspark": return buildGensparkRequest(prompt);
+            default:        return buildOpenAICompatibleRequest(prompt);
+        }
+    }
+
+    private Map<String,Object> parseResponse(String provider, String body) {
+        switch (provider) {
+            case "claude":  return parseClaudeResponse(body);
+            case "gpt":     return parseGptResponse(body);
+            case "genspark": return parseGptResponse(body);  // OpenAI 호환
+            default:        return parseGptResponse(body);    // 기본: OpenAI 호환
+        }
+    }
+
+2-3. 프로바이더별 요청 형식
+........................................................................
+  [Claude — Messages API]
+    POST https://api.anthropic.com/v1/messages
+    Headers:
+      x-api-key: {apiKey}
+      anthropic-version: 2023-06-01
+      content-type: application/json
+    Body:
+      {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 4000,
+        "system": "...",
+        "messages": [{"role":"user", "content":"..."}]
+      }
+    Response:
+      { "content": [{"type":"text","text":"..."}],
+        "model": "...", "usage": {"input_tokens":N, "output_tokens":N} }
+
+  [GPT — Chat Completions API]
+    POST https://api.openai.com/v1/chat/completions
+    Headers:
+      Authorization: Bearer {apiKey}
+      content-type: application/json
+    Body:
+      {
+        "model": "gpt-4o",
+        "max_tokens": 4000,
+        "messages": [
+          {"role":"system", "content":"..."},
+          {"role":"user", "content":"..."}
+        ]
+      }
+    Response:
+      { "choices": [{"message":{"content":"..."}}],
+        "model": "...", "usage": {"prompt_tokens":N, "completion_tokens":N} }
+
+  [Genspark / Custom — OpenAI 호환]
+    GPT와 동일한 Chat Completions 형식, URL만 다름
+    POST {사용자 지정 URL}
+    Headers: Authorization: Bearer {apiKey}
+    Body/Response: GPT와 동일
+
+2-4. 프로바이더별 기본 모델 목록
+........................................................................
+  ┌──────────┬────────────────────────────────────────────────┐
+  │ Provider │ 모델 목록 (Settings 드롭다운)                   │
+  ├──────────┼────────────────────────────────────────────────┤
+  │ claude   │ claude-sonnet-4-20250514 (추천)                │
+  │          │ claude-haiku-4-5-20251001 (빠름/저비용)         │
+  │          │ claude-opus-4-20250514 (최고 성능)              │
+  ├──────────┼────────────────────────────────────────────────┤
+  │ gpt      │ gpt-4o (추천)                                  │
+  │          │ gpt-4o-mini (빠름/저비용)                       │
+  │          │ gpt-4-turbo                                    │
+  ├──────────┼────────────────────────────────────────────────┤
+  │ genspark │ (사용자 직접 입력)                              │
+  ├──────────┼────────────────────────────────────────────────┤
+  │ custom   │ (사용자 직접 입력)                              │
+  └──────────┴────────────────────────────────────────────────┘
+
+  Settings에서 Provider 변경 시:
+    - 모델 드롭다운 옵션이 해당 프로바이더 목록으로 변경
+    - API URL이 기본값으로 자동 채움 (사용자 수정 가능)
+    - genspark/custom은 모델명 직접 입력 가능 (텍스트 input)
+
+
+3. 수정 대상 파일 및 역할
+------------------------------------------------------------------------
+[백엔드]
+  (1) application.properties          — LLM 기본 설정 속성 추가
+  (2) config/HeapDumpConfig.java      — @Value 필드 + getter 추가
+  (3) service/HeapDumpAnalyzerService — settings.json 영속화,
+                                        LLM getter/setter, 연결 테스트,
+                                        프로바이더별 요청/응답 분기
+  (4) controller/HeapDumpController   — LLM 설정 API 엔드포인트,
+                                        /api/settings 응답에 llm 섹션 추가
+
+[프론트엔드]
+  (5) templates/settings.html         — LLM 설정 카드 UI
+  (6) templates/analyze.html          — 헤더 AI 배지, AI 인사이트 패널
+
+
+4. 상세 구현 — 백엔드
+------------------------------------------------------------------------
+
+4-1. application.properties 추가 항목
+........................................................................
+  # ── LLM 분석 설정 ────────────────────────────────────────────
+  # 프로바이더: claude | gpt | genspark | custom
+  llm.enabled=false
+  llm.provider=claude
+  llm.api.url=https://api.anthropic.com/v1/messages
+  llm.model=claude-sonnet-4-20250514
+  llm.api.key=
+  llm.max-input-tokens=8000
+  llm.max-output-tokens=4000
+  llm.timeout.connect-seconds=60
+  llm.timeout.read-seconds=120
+
+  ※ API 키 우선순위: 환경변수 LLM_API_KEY > settings.json > application.properties
+
+4-2. HeapDumpConfig.java 추가 필드
+........................................................................
+  @Value("${llm.enabled:false}")         private boolean llmEnabled;
+  @Value("${llm.provider:claude}")       private String llmProvider;
+  @Value("${llm.api.url:...}")           private String llmApiUrl;
+  @Value("${llm.model:...}")             private String llmModel;
+  @Value("${llm.api.key:}")              private String llmApiKey;
+  @Value("${llm.max-input-tokens:8000}") private int llmMaxInputTokens;
+  @Value("${llm.max-output-tokens:4000}")private int llmMaxOutputTokens;
+  @Value("${llm.timeout.connect-seconds:60}")  private int llmTimeoutConnectSeconds;
+  @Value("${llm.timeout.read-seconds:120}")    private int llmTimeoutReadSeconds;
+
+  + 각 필드에 대한 public getter 메서드
+
+4-3. HeapDumpAnalyzerService.java 변경
+........................................................................
+  (A) 런타임 설정 필드 추가 (volatile)
+  (B) 생성자에서 config 값 초기화
+  (C) getter/setter 쌍 (setter → persistSettings())
+  (D) persistSettings() — settings Map에 LLM 필드 추가
+  (E) loadPersistedSettings() — settings.json에서 복원
+  (F) syncApplicationProperties() — llm.* 키 동기화
+
+  (G) API 키 마스킹
+      public String getLlmApiKeyMasked() {
+          if (key == null || key.length() < 8) return "****";
+          return key.substring(0,7) + "..." + key.substring(key.length()-4);
+      }
+
+  (H) 프로바이더별 기본 URL 반환
+      public String getDefaultApiUrl(String provider) {
+          switch (provider) {
+              case "claude":   return "https://api.anthropic.com/v1/messages";
+              case "gpt":      return "https://api.openai.com/v1/chat/completions";
+              case "genspark":
+              case "custom":   return "";  // 사용자 직접 입력
+              default:         return "";
+          }
+      }
+
+  (I) 연결 테스트 (프로바이더별 분기)
+      public Map<String, Object> testLlmConnection() {
+          if (apiKey가 비어있음) → 에러: "API 키가 설정되지 않았습니다"
+          if (apiUrl이 비어있음) → 에러: "API URL이 설정되지 않았습니다"
+
+          switch (provider):
+            "claude"  → buildClaudeTestRequest()  // x-api-key 헤더
+            "gpt"     → buildGptTestRequest()     // Bearer 헤더
+            default   → buildGptTestRequest()     // OpenAI 호환
+
+          → HttpURLConnection 실행
+          → 성공: {success:true, model:"...", provider:"...", latencyMs:...}
+          → 실패: {success:false, error:"...", provider:"..."}
+      }
+
+4-4. HeapDumpController.java 변경
+........................................................................
+  (A) /settings model attribute
+      model.addAttribute("llmEnabled", analyzerService.isLlmEnabled());
+
+  (B) API 엔드포인트
+
+      POST /api/llm/enabled?enabled=bool       — 활성화/비활성화
+      POST /api/llm/config (JSON body)          — 일괄 변경
+           body 예시: {
+             "provider": "gpt",
+             "apiUrl": "https://api.openai.com/v1/chat/completions",
+             "model": "gpt-4o",
+             "maxInputTokens": 8000,
+             "maxOutputTokens": 4000
+           }
+           → provider 변경 시 apiUrl을 기본값으로 자동 설정 (body에 없을 때)
+      POST /api/llm/apikey (JSON body)          — API 키 저장
+      POST /api/llm/test-connection             — 연결 테스트
+
+  (C) GET /api/settings 응답 llm 섹션
+      llm: {
+        enabled, provider, apiUrl, model,
+        apiKeySet (bool), apiKeyMasked (string),
+        maxInputTokens, maxOutputTokens,
+        availableProviders: ["claude","gpt","genspark","custom"],
+        providerModels: {
+          "claude": ["claude-sonnet-4-20250514", ...],
+          "gpt": ["gpt-4o", "gpt-4o-mini", ...],
+          "genspark": [],
+          "custom": []
+        }
+      }
+
+
+5. 상세 구현 — Settings 프론트엔드 (settings.html)
+------------------------------------------------------------------------
+
+5-1. LLM 카드 HTML 구조
+........................................................................
+  <!-- AI / LLM Configuration -->
+  <div class="card">
+      <div class="card-title">
+          AI / LLM Configuration
+          <span class="llm-badge" id="llmStatusBadge">OFF</span>
+      </div>
+
+      ■ LLM 활성화 토글
+
+      ■ Provider 선택 (드롭다운)
+        <select id="llmProviderSelect" onchange="onProviderChange()">
+            <option value="claude">Claude (Anthropic)</option>
+            <option value="gpt">GPT (OpenAI)</option>
+            <option value="genspark">Genspark</option>
+            <option value="custom">Custom (OpenAI 호환)</option>
+        </select>
+
+      ■ API URL (provider에 따라 자동 채움, 편집 가능)
+        - claude/gpt: 기본 URL 표시, 수정 가능
+        - genspark/custom: 빈 값, 직접 입력 필수
+        <input type="text" id="llmApiUrlInput">
+
+      ■ Model 선택
+        - claude/gpt: 드롭다운 (프로바이더별 목록)
+        - genspark/custom: 텍스트 직접 입력
+        <select id="llmModelSelect">...</select>       ← claude/gpt
+        <input type="text" id="llmModelInput">         ← genspark/custom
+        (provider에 따라 하나만 표시)
+
+      ■ API Key (password input)
+      ■ 연결 테스트 버튼
+      ■ Max Input / Output Tokens (드롭다운)
+  </div>
+
+5-2. Provider 변경 시 동작 (JavaScript)
+........................................................................
+  function onProviderChange() {
+      var provider = document.getElementById('llmProviderSelect').value;
+
+      // (1) API URL 기본값 채움
+      var urlInput = document.getElementById('llmApiUrlInput');
+      var defaultUrls = {
+          'claude':  'https://api.anthropic.com/v1/messages',
+          'gpt':     'https://api.openai.com/v1/chat/completions',
+          'genspark': '',
+          'custom':  ''
+      };
+      urlInput.value = defaultUrls[provider] || '';
+      urlInput.readOnly = false;  // 모든 프로바이더에서 편집 가능
+
+      // (2) 모델 드롭다운 ↔ 텍스트 입력 전환
+      var modelSelect = document.getElementById('llmModelSelect');
+      var modelInput = document.getElementById('llmModelInput');
+      var providerModels = {
+          'claude': [
+              {value:'claude-sonnet-4-20250514', label:'Claude Sonnet 4 (추천)'},
+              {value:'claude-haiku-4-5-20251001', label:'Claude Haiku 4.5 (빠름)'},
+              {value:'claude-opus-4-20250514', label:'Claude Opus 4 (최고 성능)'}
+          ],
+          'gpt': [
+              {value:'gpt-4o', label:'GPT-4o (추천)'},
+              {value:'gpt-4o-mini', label:'GPT-4o Mini (빠름)'},
+              {value:'gpt-4-turbo', label:'GPT-4 Turbo'}
+          ]
+      };
+
+      if (providerModels[provider]) {
+          // 드롭다운 표시
+          modelSelect.style.display = '';
+          modelInput.style.display = 'none';
+          modelSelect.innerHTML = '';
+          providerModels[provider].forEach(function(m) {
+              var opt = document.createElement('option');
+              opt.value = m.value; opt.textContent = m.label;
+              modelSelect.appendChild(opt);
+          });
+      } else {
+          // 텍스트 입력 표시
+          modelSelect.style.display = 'none';
+          modelInput.style.display = '';
+          modelInput.value = '';
+          modelInput.placeholder = '모델 ID를 입력하세요';
+      }
+  }
+
+5-3. 설정 저장 시 provider/apiUrl 포함
+........................................................................
+  function saveLlmConfig() {
+      var provider = document.getElementById('llmProviderSelect').value;
+      var modelSelect = document.getElementById('llmModelSelect');
+      var modelInput = document.getElementById('llmModelInput');
+      var model = modelSelect.style.display !== 'none'
+                  ? modelSelect.value : modelInput.value.trim();
+      var apiUrl = document.getElementById('llmApiUrlInput').value.trim();
+
+      if (!apiUrl) { toast('API URL을 입력하세요', 'error'); return; }
+      if (!model) { toast('모델을 선택하세요', 'error'); return; }
+
+      fetch('/api/llm/config', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({
+              provider: provider,
+              apiUrl: apiUrl,
+              model: model
+          })
+      })...
+  }
+
+
+6. 상세 구현 — 분석 결과 페이지 (analyze.html)
+------------------------------------------------------------------------
+
+6-1. 헤더 AI 배지
+........................................................................
+  <header class="app-header">
+      <div class="header-brand">
+          <span class="logo">Analysis</span>
+          <span class="filename-badge">...</span>
+          <!-- AI 분석 완료 배지 (파란색) -->
+          <span class="ai-header-badge ai-done" id="aiHeaderBadge"
+                style="display:none">AI Analyzed</span>
+          <!-- AI 미분석 배지 (회색) -->
+          <span class="ai-header-badge ai-not-done"
+                id="aiHeaderBadgeOff">AI Not Analyzed</span>
+      </div>
+      ...
+  </header>
+
+  CSS:
+    .ai-header-badge {
+        font-size:10px; font-weight:700; padding:3px 10px;
+        border-radius:10px; margin-left:8px; white-space:nowrap;
+    }
+    .ai-header-badge.ai-done {
+        background:#DBEAFE; color:#1D4ED8; border:1px solid #93C5FD;
+    }
+    .ai-header-badge.ai-not-done {
+        background:#F3F4F6; color:#9CA3AF; border:1px solid #E5E7EB;
+    }
+
+6-2. 사이드바 AI 섹션 (Analysis와 Actions 사이)
+........................................................................
+  <div class="sidebar-section">
+      <div class="sidebar-section-title">AI Analysis</div>
+      <button class="nav-item" onclick="showPanel('ai-insight',this)">
+          AI 인사이트
+          <span class="ai-nav-status" id="aiNavStatus"></span>
+      </button>
+  </div>
+
+6-3. AI 패널 — 4가지 상태
+........................................................................
+  (A) 미분석: 회색 dashed 박스 + "AI 분석 시작" 버튼
+      LLM 비활성화 시: 버튼 disabled + 빨간 안내문
+  (B) 분석 중: 스피너 + 폴링 (2초)
+  (C) 완료: 요약/근본원인/권장조치/위험도 카드 + 재분석 버튼
+  (D) 에러: 에러 메시지 + 재시도 버튼
+
+
+7. UI 상태 표
+------------------------------------------------------------------------
+  ┌───────────────┬──────────────────┬─────────────────────────────┐
+  │ 상태          │ 헤더 배지         │ AI 패널                     │
+  ├───────────────┼──────────────────┼─────────────────────────────┤
+  │ AI 미분석     │ "AI Not Analyzed"│ 회색 dashed 박스             │
+  │               │ 회색             │ + "AI 분석 시작" 파란 버튼    │
+  ├───────────────┼──────────────────┼─────────────────────────────┤
+  │ LLM 비활성화  │ "AI Not Analyzed"│ 회색 dashed 박스             │
+  │               │ 회색             │ + 버튼 disabled + 빨간 안내  │
+  ├───────────────┼──────────────────┼─────────────────────────────┤
+  │ AI 분석 중    │ "AI Not Analyzed"│ 스피너 + 대기 텍스트         │
+  │               │ 회색             │                             │
+  ├───────────────┼──────────────────┼─────────────────────────────┤
+  │ AI 분석 완료  │ "AI Analyzed"    │ 결과 카드 4개 + 재분석 버튼  │
+  │               │ 파란색           │                             │
+  ├───────────────┼──────────────────┼─────────────────────────────┤
+  │ AI 분석 실패  │ "AI Not Analyzed"│ 에러 메시지 + 재시도 버튼    │
+  │               │ 회색             │                             │
+  └───────────────┴──────────────────┴─────────────────────────────┘
+
+
+8. 검증 방법
+------------------------------------------------------------------------
+  (1) 빌드: mvn clean package -DskipTests && bash restart.sh
+
+  (2) Settings — Provider 전환:
+      - Claude 선택 → URL 자동 채움, 모델 드롭다운 3개
+      - GPT 선택 → URL 자동 채움, 모델 드롭다운 3개
+      - Genspark 선택 → URL 비움, 모델 텍스트 입력
+      - Custom 선택 → URL 비움, 모델 텍스트 입력
+
+  (3) Settings — 연결 테스트:
+      - 각 프로바이더별 API 키 + 연결 테스트 성공/실패 확인
+
+  (4) 분석 결과 페이지 — AI 미분석:
+      - 헤더 회색 배지, AI 패널 회색 + 버튼 표시
+
+  (5) 분석 결과 페이지 — AI 분석 실행:
+      - 버튼 클릭 → 스피너 → 완료 시 파란 배지 전환
+
+  (6) 영속화:
+      - settings.json 내 provider, apiUrl, model 저장 확인
+      - 서버 재시작 후 설정 유지 확인
+
+
+================================================================================
+  END OF PLAN
+================================================================================

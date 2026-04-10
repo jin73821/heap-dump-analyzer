@@ -87,6 +87,26 @@ public class HeapDumpConfig {
     @Value("${analysis.compress-after-analysis:true}")
     private boolean compressAfterAnalysis;
 
+    // ── LLM 분석 설정 ──────────────────────────────────────────
+    @Value("${llm.enabled:false}")
+    private boolean llmEnabled;
+    @Value("${llm.provider:claude}")
+    private String llmProvider;
+    @Value("${llm.api.url:https://api.anthropic.com/v1/messages}")
+    private String llmApiUrl;
+    @Value("${llm.model:claude-sonnet-4-20250514}")
+    private String llmModel;
+    @Value("${llm.api.key:}")
+    private String llmApiKey;
+    @Value("${llm.max-input-tokens:8000}")
+    private int llmMaxInputTokens;
+    @Value("${llm.max-output-tokens:4000}")
+    private int llmMaxOutputTokens;
+    @Value("${llm.timeout.connect-seconds:60}")
+    private int llmTimeoutConnectSeconds;
+    @Value("${llm.timeout.read-seconds:120}")
+    private int llmTimeoutReadSeconds;
+
     /** MAT CLI 유효성 상태 (init 후 설정) */
     private boolean matCliReady;
     private String  matCliStatusMessage;
@@ -268,4 +288,15 @@ public class HeapDumpConfig {
     public int     getThreadPoolMaxSize()        { return threadPoolMaxSize; }
     public int     getThreadPoolQueueCapacity()  { return threadPoolQueueCapacity; }
     public boolean isCompressAfterAnalysis()    { return compressAfterAnalysis; }
+
+    // ── LLM getters ────────────────────────────────────────────
+    public boolean isLlmEnabled()              { return llmEnabled; }
+    public String  getLlmProvider()             { return llmProvider; }
+    public String  getLlmApiUrl()               { return llmApiUrl; }
+    public String  getLlmModel()                { return llmModel; }
+    public String  getLlmApiKey()               { return llmApiKey; }
+    public int     getLlmMaxInputTokens()       { return llmMaxInputTokens; }
+    public int     getLlmMaxOutputTokens()      { return llmMaxOutputTokens; }
+    public int     getLlmTimeoutConnectSeconds(){ return llmTimeoutConnectSeconds; }
+    public int     getLlmTimeoutReadSeconds()   { return llmTimeoutReadSeconds; }
 }

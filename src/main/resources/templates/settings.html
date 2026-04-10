@@ -365,6 +365,85 @@
             </div>
         </div>
 
+        <!-- AI / LLM Configuration -->
+        <div class="card" id="llmCard">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><path d="M12 2a4 4 0 014 4c0 1.1-.9 2-2 2h-4a2 2 0 01-2-2 4 4 0 014-4z"/><path d="M8 8v8a4 4 0 008 0V8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
+                AI / LLM Configuration
+                <span id="llmStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;margin-left:auto;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">OFF</span>
+            </div>
+            <!-- LLM 활성화 토글 -->
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">Enable AI Analysis</div>
+                    <div class="setting-desc">LLM을 사용한 힙 덤프 AI 분석 기능 활성화</div>
+                </div>
+                <div>
+                    <input type="checkbox" class="tog" id="togLlm" onchange="toggleLlm(this)">
+                    <label class="tog-track" for="togLlm"></label>
+                </div>
+            </div>
+            <!-- Provider 선택 -->
+            <div class="s-row">
+                <span class="s-key">Provider</span>
+                <select id="llmProviderSelect" onchange="onProviderChange()" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:160px">
+                    <option value="claude">Claude (Anthropic)</option>
+                    <option value="gpt">GPT (OpenAI)</option>
+                    <option value="genspark">Genspark</option>
+                    <option value="custom">Custom (OpenAI 호환)</option>
+                </select>
+            </div>
+            <!-- API URL -->
+            <div class="s-row">
+                <span class="s-key">API URL</span>
+                <input type="text" id="llmApiUrlInput" placeholder="API endpoint URL"
+                       style="flex:1;max-width:320px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace">
+            </div>
+            <!-- Model -->
+            <div class="s-row">
+                <span class="s-key">Model</span>
+                <div style="display:flex;gap:6px;align-items:center">
+                    <select id="llmModelSelect" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:200px">
+                    </select>
+                    <input type="text" id="llmModelInput" placeholder="모델 ID를 입력하세요" style="display:none;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:200px">
+                </div>
+            </div>
+            <!-- API Key -->
+            <div class="s-row">
+                <span class="s-key">API Key</span>
+                <div style="display:flex;gap:6px;align-items:center">
+                    <input type="password" id="llmApiKeyInput" placeholder="API 키를 입력하세요"
+                           style="width:200px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace">
+                    <button onclick="saveLlmApiKey()" style="padding:5px 12px;border:1px solid #D1D5DB;border-radius:6px;background:#fff;font-size:12px;cursor:pointer;font-weight:600;color:#374151">Save</button>
+                    <span id="llmKeyStatus" style="font-size:11px;color:#9CA3AF"></span>
+                </div>
+            </div>
+            <!-- Max Tokens -->
+            <div class="s-row">
+                <span class="s-key">Max Input Tokens</span>
+                <select id="llmMaxInputTokens" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px">
+                    <option value="4000">4,000</option>
+                    <option value="8000" selected>8,000</option>
+                    <option value="16000">16,000</option>
+                    <option value="32000">32,000</option>
+                </select>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Max Output Tokens</span>
+                <select id="llmMaxOutputTokens" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px">
+                    <option value="2000">2,000</option>
+                    <option value="4000" selected>4,000</option>
+                    <option value="8000">8,000</option>
+                </select>
+            </div>
+            <!-- 저장 + 연결 테스트 버튼 -->
+            <div style="display:flex;gap:8px;margin-top:14px">
+                <button onclick="saveLlmConfig()" class="heap-btn-apply">Save Config</button>
+                <button onclick="testLlmConnection()" style="padding:6px 14px;border:1px solid #D1D5DB;border-radius:6px;background:#fff;font-size:12px;cursor:pointer;font-weight:600;color:#374151">Test Connection</button>
+            </div>
+            <div id="llmTestResult" style="margin-top:10px;font-size:12px;display:none"></div>
+        </div>
+
         <!-- Storage -->
         <div class="card">
             <div class="card-title">
@@ -706,6 +785,9 @@ function loadAllData(showToast) {
             jvmBar.style.width = jvmPct + '%';
             jvmBar.style.background = jvmPct > 85 ? '#DC2626' : jvmPct > 60 ? '#D97706' : '#7c3aed';
         }
+        // LLM
+        if (d.llm) { loadLlmSettings(d.llm); }
+
         if (showToast) toast('Settings refreshed', 'success');
     }).catch(function(e) { toast('Failed to load settings: ' + e.message, 'error'); });
 
@@ -955,6 +1037,168 @@ function fallbackCopy(text) {
         toast('Copy failed — please copy manually: ' + text, 'error');
     }
     document.body.removeChild(ta);
+}
+
+// ── LLM Settings ──────────────────────────────────────
+var _providerModels = {
+    'claude': [
+        {value:'claude-sonnet-4-20250514', label:'Claude Sonnet 4 (추천)'},
+        {value:'claude-haiku-4-5-20251001', label:'Claude Haiku 4.5 (빠름)'},
+        {value:'claude-opus-4-20250514', label:'Claude Opus 4 (최고 성능)'}
+    ],
+    'gpt': [
+        {value:'gpt-4o', label:'GPT-4o (추천)'},
+        {value:'gpt-4o-mini', label:'GPT-4o Mini (빠름)'},
+        {value:'gpt-4-turbo', label:'GPT-4 Turbo'}
+    ]
+};
+var _defaultUrls = {
+    'claude': 'https://api.anthropic.com/v1/messages',
+    'gpt': 'https://api.openai.com/v1/chat/completions',
+    'genspark': '',
+    'custom': ''
+};
+
+function loadLlmSettings(llm) {
+    var tog = document.getElementById('togLlm');
+    if (tog) tog.checked = llm.enabled;
+    updateLlmBadge(llm.enabled);
+
+    var provSel = document.getElementById('llmProviderSelect');
+    if (provSel) provSel.value = llm.provider || 'claude';
+
+    // 모델 드롭다운 구성
+    populateModelSelect(llm.provider || 'claude', llm.model);
+
+    var urlInput = document.getElementById('llmApiUrlInput');
+    if (urlInput) urlInput.value = llm.apiUrl || '';
+
+    // API key
+    var keyStatus = document.getElementById('llmKeyStatus');
+    if (keyStatus) {
+        keyStatus.textContent = llm.apiKeySet ? ('설정됨: ' + llm.apiKeyMasked) : '미설정';
+        keyStatus.style.color = llm.apiKeySet ? '#065F46' : '#DC2626';
+    }
+
+    // Max tokens
+    selectOption('llmMaxInputTokens', String(llm.maxInputTokens || 8000));
+    selectOption('llmMaxOutputTokens', String(llm.maxOutputTokens || 4000));
+}
+
+function updateLlmBadge(enabled) {
+    var badge = document.getElementById('llmStatusBadge');
+    if (!badge) return;
+    if (enabled) {
+        badge.textContent = 'ON';
+        badge.style.background = '#DBEAFE';
+        badge.style.color = '#1D4ED8';
+        badge.style.borderColor = '#93C5FD';
+    } else {
+        badge.textContent = 'OFF';
+        badge.style.background = '#F3F4F6';
+        badge.style.color = '#9CA3AF';
+        badge.style.borderColor = '#E5E7EB';
+    }
+}
+
+function populateModelSelect(provider, currentModel) {
+    var modelSelect = document.getElementById('llmModelSelect');
+    var modelInput = document.getElementById('llmModelInput');
+    if (!modelSelect || !modelInput) return;
+
+    if (_providerModels[provider]) {
+        modelSelect.style.display = '';
+        modelInput.style.display = 'none';
+        modelSelect.innerHTML = '';
+        _providerModels[provider].forEach(function(m) {
+            var opt = document.createElement('option');
+            opt.value = m.value; opt.textContent = m.label;
+            modelSelect.appendChild(opt);
+        });
+        if (currentModel) {
+            for (var i = 0; i < modelSelect.options.length; i++) {
+                if (modelSelect.options[i].value === currentModel) { modelSelect.selectedIndex = i; break; }
+            }
+        }
+    } else {
+        modelSelect.style.display = 'none';
+        modelInput.style.display = '';
+        modelInput.value = currentModel || '';
+        modelInput.placeholder = '모델 ID를 입력하세요';
+    }
+}
+
+function onProviderChange() {
+    var provider = document.getElementById('llmProviderSelect').value;
+    document.getElementById('llmApiUrlInput').value = _defaultUrls[provider] || '';
+    populateModelSelect(provider, null);
+}
+
+function toggleLlm(el) {
+    fetch('/api/llm/enabled?enabled=' + el.checked, {method:'POST'})
+        .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(d){ updateLlmBadge(d.enabled); toast('AI Analysis ' + (d.enabled ? 'enabled' : 'disabled'), 'success'); })
+        .catch(function(e){ el.checked = !el.checked; toast('Failed: ' + e.message, 'error'); });
+}
+
+function saveLlmConfig() {
+    var provider = document.getElementById('llmProviderSelect').value;
+    var modelSelect = document.getElementById('llmModelSelect');
+    var modelInput = document.getElementById('llmModelInput');
+    var model = modelSelect.style.display !== 'none' ? modelSelect.value : modelInput.value.trim();
+    var apiUrl = document.getElementById('llmApiUrlInput').value.trim();
+    var maxIn = parseInt(document.getElementById('llmMaxInputTokens').value);
+    var maxOut = parseInt(document.getElementById('llmMaxOutputTokens').value);
+
+    if (!apiUrl) { toast('API URL을 입력하세요', 'error'); return; }
+    if (!model) { toast('모델을 선택하세요', 'error'); return; }
+
+    fetch('/api/llm/config', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({provider:provider, apiUrl:apiUrl, model:model, maxInputTokens:maxIn, maxOutputTokens:maxOut})
+    })
+    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(d){ toast('LLM 설정이 저장되었습니다 (Provider: ' + d.provider + ', Model: ' + d.model + ')', 'success'); })
+    .catch(function(e){ toast('저장 실패: ' + e.message, 'error'); });
+}
+
+function saveLlmApiKey() {
+    var key = document.getElementById('llmApiKeyInput').value.trim();
+    if (!key) { toast('API 키를 입력하세요', 'error'); return; }
+    fetch('/api/llm/apikey', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({apiKey: key})
+    })
+    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(d){
+        document.getElementById('llmApiKeyInput').value = '';
+        var ks = document.getElementById('llmKeyStatus');
+        ks.textContent = d.apiKeySet ? ('설정됨: ' + d.apiKeyMasked) : '미설정';
+        ks.style.color = d.apiKeySet ? '#065F46' : '#DC2626';
+        toast('API 키가 저장되었습니다', 'success');
+    })
+    .catch(function(e){ toast('API 키 저장 실패: ' + e.message, 'error'); });
+}
+
+function testLlmConnection() {
+    var resEl = document.getElementById('llmTestResult');
+    resEl.style.display = 'block';
+    resEl.innerHTML = '<span style="color:#6B7280">연결 테스트 중...</span>';
+    fetch('/api/llm/test-connection', {method:'POST'})
+        .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(d){
+            if (d.success) {
+                resEl.innerHTML = '<span style="color:#065F46;font-weight:600">&#10003; 연결 성공</span>'
+                    + ' — Provider: ' + d.provider + ', Model: ' + (d.model||'-')
+                    + ', Latency: ' + (d.latencyMs||0) + 'ms';
+            } else {
+                resEl.innerHTML = '<span style="color:#DC2626;font-weight:600">&#10007; 연결 실패</span>'
+                    + ' — ' + (d.error||'Unknown error');
+            }
+        })
+        .catch(function(e){ resEl.innerHTML = '<span style="color:#DC2626">오류: ' + e.message + '</span>'; });
 }
 
 // ── Init ───────────────────────────────────────────────

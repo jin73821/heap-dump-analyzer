@@ -1025,6 +1025,83 @@ public class HeapDumpController {
         return ResponseEntity.ok(resp);
     }
 
+    // ── LLM API 엔드포인트 ──────────────────────────────────────
+
+    @PostMapping("/api/llm/enabled")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setLlmEnabled(@RequestParam boolean enabled) {
+        analyzerService.setLlmEnabled(enabled);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("enabled", enabled);
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/api/llm/config")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setLlmConfig(@RequestBody Map<String, Object> body) {
+        String provider = (String) body.getOrDefault("provider", analyzerService.getLlmProvider());
+        String apiUrl = (String) body.get("apiUrl");
+        String model = (String) body.get("model");
+        int maxIn = body.containsKey("maxInputTokens")
+                ? Integer.parseInt(String.valueOf(body.get("maxInputTokens")))
+                : analyzerService.getLlmMaxInputTokens();
+        int maxOut = body.containsKey("maxOutputTokens")
+                ? Integer.parseInt(String.valueOf(body.get("maxOutputTokens")))
+                : analyzerService.getLlmMaxOutputTokens();
+
+        // provider 변경 시 apiUrl 미지정이면 기본값
+        if (apiUrl == null || apiUrl.isEmpty()) {
+            apiUrl = analyzerService.getDefaultApiUrl(provider);
+        }
+        if (model == null) model = analyzerService.getLlmModel();
+
+        analyzerService.setLlmConfig(provider, apiUrl, model, maxIn, maxOut);
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("provider", provider);
+        resp.put("apiUrl", apiUrl);
+        resp.put("model", model);
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/api/llm/apikey")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setLlmApiKey(@RequestBody Map<String, String> body) {
+        String key = body.get("apiKey");
+        if (key == null) key = "";
+        analyzerService.setLlmApiKey(key.trim());
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("apiKeySet", analyzerService.isLlmApiKeySet());
+        resp.put("apiKeyMasked", analyzerService.getLlmApiKeyMasked());
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/api/llm/test-connection")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> testLlmConnection() {
+        Map<String, Object> result = analyzerService.testLlmConnection();
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/api/llm/analyze")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> analyzeLlm(@RequestBody Map<String, Object> body) {
+        String prompt = (String) body.get("prompt");
+        String filename = (String) body.get("filename");
+        if (prompt == null || prompt.isEmpty()) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("error", "분석 프롬프트가 비어있습니다");
+            return ResponseEntity.badRequest().body(err);
+        }
+        logger.info("[LLM] AI analysis requested for: {}", filename);
+        Map<String, Object> result = analyzerService.callLlmAnalysis(prompt);
+        return ResponseEntity.ok(result);
+    }
+
     // ── [NEW] API: 현재 설정 조회 ────────────────────────────────
 
     @GetMapping("/api/settings")
@@ -1091,6 +1168,25 @@ public class HeapDumpController {
                 .filter(f -> analyzerService.getCachedResult(f.getName()) != null)
                 .count());
         settings.put("files", fileStats);
+
+        // LLM 설정
+        Map<String, Object> llm = new LinkedHashMap<>();
+        llm.put("enabled", analyzerService.isLlmEnabled());
+        llm.put("provider", analyzerService.getLlmProvider());
+        llm.put("apiUrl", analyzerService.getLlmApiUrl());
+        llm.put("model", analyzerService.getLlmModel());
+        llm.put("apiKeySet", analyzerService.isLlmApiKeySet());
+        llm.put("apiKeyMasked", analyzerService.getLlmApiKeyMasked());
+        llm.put("maxInputTokens", analyzerService.getLlmMaxInputTokens());
+        llm.put("maxOutputTokens", analyzerService.getLlmMaxOutputTokens());
+        llm.put("availableProviders", Arrays.asList("claude", "gpt", "genspark", "custom"));
+        Map<String, List<String>> providerModels = new LinkedHashMap<>();
+        providerModels.put("claude", Arrays.asList("claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"));
+        providerModels.put("gpt", Arrays.asList("gpt-4o", "gpt-4o-mini", "gpt-4-turbo"));
+        providerModels.put("genspark", Collections.emptyList());
+        providerModels.put("custom", Collections.emptyList());
+        llm.put("providerModels", providerModels);
+        settings.put("llm", llm);
 
         return ResponseEntity.ok(settings);
     }

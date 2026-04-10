@@ -1,5 +1,50 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-10] LLM 연동 Settings + 분석 결과 페이지 AI 인사이트
+
+다중 LLM 프로바이더(Claude, GPT, Genspark, Custom) 지원 AI 분석 기능 추가.
+사용자가 명시적으로 "AI 분석 시작" 버튼을 클릭해야만 LLM 호출 발생.
+
+[application.properties]
+- `llm.enabled`, `llm.provider`, `llm.api.url`, `llm.model`, `llm.api.key` 등 9개 LLM 설정 속성 추가
+
+[config/HeapDumpConfig.java]
+- LLM 관련 `@Value` 필드 9개 + getter 메서드 추가
+
+[service/HeapDumpAnalyzerService.java]
+- LLM 런타임 설정 volatile 필드 (provider, apiUrl, model, apiKey 등)
+- `setLlmEnabled()`, `setLlmConfig()`, `setLlmApiKey()` — 런타임 설정 변경 + settings.json 영속화
+- `getLlmApiKeyMasked()` — API 키 마스킹 (앞 7자 + ... + 뒤 4자)
+- `getDefaultApiUrl(provider)` — 프로바이더별 기본 API URL
+- `testLlmConnection()` — 프로바이더별 연결 테스트 (Claude: x-api-key, 나머지: Bearer)
+- `callLlmAnalysis(prompt)` — 프로바이더별 LLM API 호출 + JSON 응답 파싱
+- `extractLlmText(resp)` — Claude/OpenAI 응답 형식 분기 텍스트 추출
+- `persistSettings()` / `loadPersistedSettings()` / `syncApplicationProperties()`에 LLM 설정 추가
+- 환경변수 `LLM_API_KEY` 우선 적용
+
+[controller/HeapDumpController.java]
+- `POST /api/llm/enabled` — LLM 활성화/비활성화
+- `POST /api/llm/config` — provider, apiUrl, model, maxTokens 일괄 변경
+- `POST /api/llm/apikey` — API 키 저장
+- `POST /api/llm/test-connection` — 연결 테스트
+- `POST /api/llm/analyze` — AI 분석 요청 (프롬프트 기반)
+- `GET /api/settings` 응답에 `llm` 섹션 추가 (enabled, provider, providerModels 등)
+
+[templates/settings.html]
+- "AI / LLM Configuration" 카드 추가: LLM 활성화 토글, Provider 드롭다운 (Claude/GPT/Genspark/Custom), API URL, Model 선택/입력, API Key, Max Tokens, Save Config + Test Connection 버튼
+- `onProviderChange()` — Provider 변경 시 API URL 자동 채움 + 모델 드롭다운/텍스트 입력 전환
+- `saveLlmConfig()`, `saveLlmApiKey()`, `testLlmConnection()` JS 함수
+
+[templates/analyze.html]
+- 헤더에 "AI Analyzed" / "AI Not Analyzed" 배지 추가 (파란색/회색 전환)
+- 사이드바에 "AI Analysis" 섹션 + "AI 인사이트" 네비게이션 버튼
+- `panel-ai-insight` 패널: 4가지 상태 (미분석/분석중/완료/에러)
+  - 미분석: dashed 박스 + "AI 분석 시작" 버튼 (LLM 비활성화 시 disabled + 안내문)
+  - 분석중: 스피너
+  - 완료: 요약/위험도/근본원인/권장조치 카드 4개 + 재분석 버튼
+  - 에러: 에러 메시지 + 재시도 버튼
+- `startAiAnalysis()`, `collectAnalysisData()`, `buildAnalysisPrompt()` 등 AI 분석 JS 함수
+
 ## [2026-04-09] 파일 업로드 중복 감지 시스템
 
 [HeapDumpAnalyzerService.java]
