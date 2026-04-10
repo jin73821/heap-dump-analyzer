@@ -38,9 +38,10 @@ public class HeapDumpAnalyzerService {
 
     private static final Logger logger = LoggerFactory.getLogger(HeapDumpAnalyzerService.class);
     // MAT_TIMEOUT_MINUTES → config.getMatTimeoutMinutes()로 이동
-    private static final String RESULT_JSON  = "result.json";
-    private static final String MAT_LOG_FILE = "mat.log";
-    private static final String TMP_DIR_NAME = "tmp";
+    private static final String RESULT_JSON      = "result.json";
+    private static final String AI_INSIGHT_FILE  = "ai_insight.json";
+    private static final String MAT_LOG_FILE     = "mat.log";
+    private static final String TMP_DIR_NAME     = "tmp";
 
     private final HeapDumpConfig  config;
     private final MatReportParser parser;
@@ -826,11 +827,22 @@ public class HeapDumpAnalyzerService {
         switch (provider) {
             case "claude":   return "https://api.anthropic.com/v1/messages";
             case "gpt":      return "https://api.openai.com/v1/chat/completions";
-            case "genspark":
+            case "genspark": return "https://www.genspark.ai/api/llm_proxy/v1/chat/completions";
             case "custom":   return "";
             default:         return "";
         }
     }
+
+    /** Genspark 허용 모델 목록 */
+    public static final List<String> GENSPARK_MODELS = java.util.Arrays.asList(
+        "gpt-5", "gpt-5-mini", "gpt-5-nano",
+        "gpt-5.1", "gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano",
+        "gpt-5-codex", "gpt-5.2-codex", "gpt-5.3-codex",
+        "claude-sonnet-4-5", "claude-sonnet-4-6", "claude-sonnet-4-6-1m",
+        "claude-haiku-4-5",
+        "claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-6-1m",
+        "kimi-k2p5", "minimax-m2p5", "minimax-m2p7"
+    );
 
     /**
      * LLM 연결 테스트 — 프로바이더별 분기
@@ -920,25 +932,117 @@ public class HeapDumpAnalyzerService {
         return result;
     }
 
+    // ── AI Insight 저장 / 불러오기 ──────────────────────────────────
+
     /**
-     * LLM API를 호출하여 힙 분석 결과를 AI가 해석하게 함
+     * AI 인사이트 결과를 /opt/heapdumps/data/{baseName}/ai_insight.json 에 영속화
+     */
+    public void saveAiInsight(String filename, Map<String, Object> insightData) {
+        try {
+            File dir = resultDirectory(filename);
+            if (!dir.exists()) dir.mkdirs();
+            File target = new File(dir, AI_INSIGHT_FILE);
+            // analysedAt 타임스탬프 추가
+            Map<String, Object> toSave = new LinkedHashMap<>(insightData);
+            toSave.put("analysedAt", System.currentTimeMillis());
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(target, toSave);
+            logger.info("[AI-Insight] Saved ai_insight.json for '{}' → {}", filename, target.getAbsolutePath());
+        } catch (Exception e) {
+            logger.error("[AI-Insight] Failed to save ai_insight.json for '{}': {}", filename, e.getMessage());
+        }
+    }
+
+    /**
+     * 저장된 AI 인사이트 결과를 불러옴. 없으면 null 반환.
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> loadAiInsight(String filename) {
+        try {
+            File target = new File(resultDirectory(filename), AI_INSIGHT_FILE);
+            if (!target.exists()) {
+                logger.debug("[AI-Insight] No saved ai_insight.json for '{}'", filename);
+                return null;
+            }
+            Map<String, Object> data = objectMapper.readValue(target, Map.class);
+            logger.info("[AI-Insight] Loaded ai_insight.json for '{}' (analysedAt={})", filename, data.get("analysedAt"));
+            return data;
+        } catch (Exception e) {
+            logger.warn("[AI-Insight] Failed to load ai_insight.json for '{}': {}", filename, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 저장된 AI 인사이트 결과 삭제
+     */
+    public boolean deleteAiInsight(String filename) {
+        try {
+            File target = new File(resultDirectory(filename), AI_INSIGHT_FILE);
+            if (target.exists() && target.delete()) {
+                logger.info("[AI-Insight] Deleted ai_insight.json for '{}'", filename);
+                return true;
+            }
+            return false;
+        } catch (Exception e) {
+            logger.warn("[AI-Insight] Failed to delete ai_insight.json for '{}': {}", filename, e.getMessage());
+            return false;
+        }
+    }
+
+    // ── LLM 분석 호출 ────────────────────────────────────────────────
+
+    /**
+     * LLM API를 호출하여 힙 분석 결과를 AI가 해석하게 함 (로깅·오류 분류 강화)
      */
     @SuppressWarnings("unchecked")
     public Map<String, Object> callLlmAnalysis(String prompt) {
         Map<String, Object> result = new LinkedHashMap<>();
 
+        // ── 사전 검증 ─────────────────────────────────────────────
         if (!llmEnabled) {
+            logger.warn("[AI-Insight][STEP] 분석 요청 거부 — LLM 비활성화 상태 (Settings에서 AI Analysis를 ON으로 설정하세요)");
             result.put("success", false);
-            result.put("error", "LLM이 비활성화 상태입니다");
+            result.put("errorCode", "LLM_DISABLED");
+            result.put("error", "AI 분석 기능이 비활성화 상태입니다. Settings → AI/LLM Configuration에서 활성화하세요.");
             return result;
         }
         if (llmApiKey == null || llmApiKey.trim().isEmpty()) {
+            logger.warn("[AI-Insight][STEP] 분석 요청 거부 — API 키 미설정 (provider={})", llmProvider);
             result.put("success", false);
-            result.put("error", "API 키가 설정되지 않았습니다");
+            result.put("errorCode", "NO_API_KEY");
+            result.put("error", "API 키가 설정되지 않았습니다. Settings → AI/LLM Configuration에서 API 키를 저장하세요.");
+            return result;
+        }
+        if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) {
+            logger.warn("[AI-Insight][STEP] 분석 요청 거부 — API URL 미설정 (provider={})", llmProvider);
+            result.put("success", false);
+            result.put("errorCode", "NO_API_URL");
+            result.put("error", "API URL이 설정되지 않았습니다. Settings → AI/LLM Configuration에서 API URL을 확인하세요.");
             return result;
         }
 
+        long startTime = System.currentTimeMillis();
+        logger.info("[AI-Insight][STEP 1/4] LLM 분석 시작 — provider={}, model={}, url={}, maxOutput={}",
+            llmProvider, llmModel, llmApiUrl, llmMaxOutputTokens);
+
         try {
+            // ── STEP 2: 프롬프트 준비 ──────────────────────────────
+            int maxChars = llmMaxInputTokens * 4;
+            boolean truncated = prompt.length() > maxChars;
+            if (truncated) {
+                prompt = prompt.substring(0, maxChars) + "\n...(truncated)";
+                logger.warn("[AI-Insight][STEP 2/4] 프롬프트가 maxInputTokens({}) 초과 — 잘림 처리", llmMaxInputTokens);
+            }
+            boolean isReasoningModel = llmModel != null && (
+                llmModel.startsWith("gpt-5") || llmModel.startsWith("o1") || llmModel.startsWith("o3")
+            );
+            int effectiveMaxOutputTokens = isReasoningModel
+                ? Math.max(llmMaxOutputTokens, 8000)
+                : Math.max(llmMaxOutputTokens, 2000);
+            logger.info("[AI-Insight][STEP 2/4] 프롬프트 준비 완료 — 길이={} chars, reasoningModel={}, effectiveMaxTokens={}",
+                prompt.length(), isReasoningModel, effectiveMaxOutputTokens);
+
+            // ── STEP 3: HTTP 요청 전송 ─────────────────────────────
             java.net.URL url = new java.net.URL(llmApiUrl);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
@@ -947,16 +1051,11 @@ public class HeapDumpAnalyzerService {
             conn.setReadTimeout(llmTimeoutReadSeconds * 1000);
             conn.setRequestProperty("Content-Type", "application/json");
 
-            // 프롬프트가 maxInputTokens 초과 시 자르기 (대략 4글자 = 1토큰 추정)
-            int maxChars = llmMaxInputTokens * 4;
-            if (prompt.length() > maxChars) {
-                prompt = prompt.substring(0, maxChars) + "\n...(truncated)";
-            }
-
             String systemPrompt = "당신은 Java 힙 덤프 분석 전문가입니다. "
                 + "Eclipse MAT 분석 결과를 해석하여 메모리 누수의 근본 원인을 진단하고 "
                 + "실행 가능한 조치를 한국어로 제안합니다. "
-                + "응답은 반드시 순수 JSON 형태로만 반환하세요.";
+                + "응답은 반드시 마크다운 없이 순수 JSON 형태로만 반환하세요. "
+                + "코드블록(```)을 절대 사용하지 마세요.";
 
             String body;
             if ("claude".equals(llmProvider)) {
@@ -964,7 +1063,7 @@ public class HeapDumpAnalyzerService {
                 conn.setRequestProperty("anthropic-version", "2023-06-01");
                 body = objectMapper.writeValueAsString(Map.of(
                     "model", llmModel,
-                    "max_tokens", llmMaxOutputTokens,
+                    "max_tokens", effectiveMaxOutputTokens,
                     "system", systemPrompt,
                     "messages", List.of(Map.of("role", "user", "content", prompt))
                 ));
@@ -972,7 +1071,7 @@ public class HeapDumpAnalyzerService {
                 conn.setRequestProperty("Authorization", "Bearer " + llmApiKey);
                 body = objectMapper.writeValueAsString(Map.of(
                     "model", llmModel,
-                    "max_tokens", llmMaxOutputTokens,
+                    "max_tokens", effectiveMaxOutputTokens,
                     "messages", List.of(
                         Map.of("role", "system", "content", systemPrompt),
                         Map.of("role", "user", "content", prompt)
@@ -980,67 +1079,142 @@ public class HeapDumpAnalyzerService {
                 ));
             }
 
+            logger.info("[AI-Insight][STEP 3/4] HTTP POST 전송 중 — timeout={}s/{}s",
+                llmTimeoutConnectSeconds, llmTimeoutReadSeconds);
+
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             }
 
+            // ── STEP 4: 응답 처리 ─────────────────────────────────
             int code = conn.getResponseCode();
+            long elapsed = System.currentTimeMillis() - startTime;
+            logger.info("[AI-Insight][STEP 4/4] HTTP 응답 수신 — status={}, elapsed={}ms", code, elapsed);
+
             if (code >= 200 && code < 300) {
                 StringBuilder sb = new StringBuilder();
-                try (BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
                     String line;
-                    while ((line = br.readLine()) != null) sb.append(line);
+                    while ((line = br.readLine()) != null) sb.append(line).append('\n');
                 }
 
-                // LLM 응답에서 텍스트 추출
                 Map<String, Object> resp = objectMapper.readValue(sb.toString(), Map.class);
                 String text = extractLlmText(resp);
                 result.put("model", llmModel);
+                result.put("latencyMs", elapsed);
 
-                // JSON 파싱 시도
+                if (text == null || text.trim().isEmpty()) {
+                    logger.warn("[AI-Insight] LLM이 빈 content를 반환 — model={}, isReasoning={}, effectiveMaxTokens={}",
+                        llmModel, isReasoningModel, effectiveMaxOutputTokens);
+                    result.put("success", false);
+                    result.put("errorCode", "EMPTY_RESPONSE");
+                    result.put("error", "LLM이 빈 응답을 반환했습니다."
+                        + (isReasoningModel ? " GPT-5 계열 reasoning 모델은 max_tokens를 8,000 이상으로 설정하거나, claude-sonnet-4-5 모델을 사용해 주세요." : " max_tokens를 늘리거나 다른 모델을 선택하세요."));
+                    return result;
+                }
+
                 try {
-                    // 마크다운 코드블록 제거
                     String cleaned = text.trim();
-                    if (cleaned.startsWith("```")) {
-                        int firstNewline = cleaned.indexOf('\n');
-                        int lastFence = cleaned.lastIndexOf("```");
-                        if (firstNewline > 0 && lastFence > firstNewline) {
-                            cleaned = cleaned.substring(firstNewline + 1, lastFence).trim();
-                        }
+                    cleaned = cleaned.replaceAll("(?s)^```[a-zA-Z]*\\s*", "").replaceAll("(?s)\\s*```\\s*$", "").trim();
+                    int jsonStart = cleaned.indexOf('{');
+                    int jsonEnd   = cleaned.lastIndexOf('}');
+                    if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                        cleaned = cleaned.substring(jsonStart, jsonEnd + 1);
                     }
                     Map<String, Object> aiData = objectMapper.readValue(cleaned, Map.class);
                     result.put("success", true);
                     result.put("data", aiData);
+                    logger.info("[AI-Insight] 분석 완료 — model={}, latency={}ms, severity={}",
+                        llmModel, elapsed, aiData.get("severity"));
                 } catch (Exception parseErr) {
-                    // JSON 파싱 실패 시 원문 텍스트 반환
+                    logger.warn("[AI-Insight] JSON 파싱 실패 — textLen={}, parseError={}",
+                        text.length(), parseErr.getMessage());
                     result.put("success", true);
+                    result.put("errorCode", "JSON_PARSE_WARN");
                     Map<String, Object> fallback = new LinkedHashMap<>();
-                    fallback.put("summary", text.length() > 500 ? text.substring(0, 500) + "..." : text);
-                    fallback.put("rootCause", "AI 응답을 구조화하지 못했습니다. 원문을 확인하세요.");
+                    fallback.put("summary", text.length() > 1000 ? text.substring(0, 1000) + "..." : text);
+                    fallback.put("rootCause", "AI 응답을 JSON으로 파싱하지 못했습니다. 위 요약에서 원문을 확인하세요.");
                     fallback.put("recommendations", "-");
                     fallback.put("severity", "Unknown");
-                    fallback.put("severityDesc", "");
+                    fallback.put("severityDesc", "파싱 오류: " + parseErr.getMessage());
                     result.put("data", fallback);
                 }
             } else {
                 StringBuilder errSb = new StringBuilder();
                 InputStream errStream = conn.getErrorStream();
                 if (errStream != null) {
-                    try (BufferedReader br = new BufferedReader(new InputStreamReader(errStream, java.nio.charset.StandardCharsets.UTF_8))) {
+                    try (BufferedReader br = new BufferedReader(
+                            new InputStreamReader(errStream, java.nio.charset.StandardCharsets.UTF_8))) {
                         String line;
                         while ((line = br.readLine()) != null) errSb.append(line);
                     }
                 }
+                String errBody = errSb.toString();
+                String errorCode = classifyHttpError(code, errBody);
+                String friendlyMsg = buildHttpErrorMessage(code, errBody);
+                logger.error("[AI-Insight] HTTP 오류 — status={}, errorCode={}, body={}", code, errorCode, errBody);
                 result.put("success", false);
-                result.put("error", "HTTP " + code + ": " + errSb.toString());
+                result.put("errorCode", errorCode);
+                result.put("error", friendlyMsg);
+                result.put("httpStatus", code);
             }
             conn.disconnect();
-        } catch (Exception e) {
+        } catch (java.net.SocketTimeoutException e) {
+            long elapsed = System.currentTimeMillis() - startTime;
+            logger.error("[AI-Insight] 연결/읽기 타임아웃 — elapsed={}ms, msg={}", elapsed, e.getMessage());
             result.put("success", false);
-            result.put("error", e.getClass().getSimpleName() + ": " + e.getMessage());
-            logger.error("[LLM] Analysis call failed: {}", e.getMessage());
+            result.put("errorCode", "TIMEOUT");
+            result.put("error", "LLM 응답 대기 시간이 초과되었습니다 (" + elapsed / 1000 + "초). "
+                + "Settings에서 타임아웃을 늘리거나, 더 빠른 모델(claude-sonnet-4-5, gpt-5-mini)을 선택하세요.");
+        } catch (java.net.ConnectException e) {
+            logger.error("[AI-Insight] 서버 연결 실패 — url={}, msg={}", llmApiUrl, e.getMessage());
+            result.put("success", false);
+            result.put("errorCode", "CONNECT_FAILED");
+            result.put("error", "LLM 서버에 연결할 수 없습니다. API URL(" + llmApiUrl + ")을 확인하세요: " + e.getMessage());
+        } catch (java.net.UnknownHostException e) {
+            logger.error("[AI-Insight] 알 수 없는 호스트 — url={}, msg={}", llmApiUrl, e.getMessage());
+            result.put("success", false);
+            result.put("errorCode", "UNKNOWN_HOST");
+            result.put("error", "API URL의 호스트를 찾을 수 없습니다: " + e.getMessage() + ". URL(" + llmApiUrl + ")을 확인하세요.");
+        } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - startTime;
+            logger.error("[AI-Insight] 예외 발생 — type={}, msg={}, elapsed={}ms",
+                e.getClass().getSimpleName(), e.getMessage(), elapsed, e);
+            result.put("success", false);
+            result.put("errorCode", "INTERNAL_ERROR");
+            result.put("error", "[" + e.getClass().getSimpleName() + "] " + e.getMessage());
         }
         return result;
+    }
+
+    /** HTTP 오류 코드를 errorCode 문자열로 분류 */
+    private String classifyHttpError(int code, String body) {
+        if (code == 401 || code == 403) return "AUTH_ERROR";
+        if (code == 404) return "NOT_FOUND";
+        if (code == 429) return "RATE_LIMIT";
+        if (code == 400) return "BAD_REQUEST";
+        if (code >= 500) return "SERVER_ERROR";
+        return "HTTP_" + code;
+    }
+
+    /** HTTP 오류 코드에 따른 사용자 친화적 메시지 생성 */
+    private String buildHttpErrorMessage(int code, String body) {
+        String base;
+        switch (code) {
+            case 401: base = "API 키 인증 실패(401). API 키가 올바른지 확인하세요."; break;
+            case 403: base = "API 키 권한 없음(403). 해당 모델 접근 권한이 있는지 확인하세요."; break;
+            case 404: base = "API 엔드포인트를 찾을 수 없습니다(404). Settings에서 API URL 끝에 /chat/completions 포함 여부를 확인하세요."; break;
+            case 429: base = "API 요청 횟수 초과(429 Too Many Requests). 잠시 후 다시 시도하세요."; break;
+            case 400: base = "잘못된 요청(400 Bad Request). 모델명이 허용 목록에 있는지 확인하세요."; break;
+            case 500: case 502: case 503:
+                base = "LLM 서버 내부 오류(" + code + "). 잠시 후 다시 시도하세요."; break;
+            default:  base = "HTTP " + code + " 오류가 발생했습니다.";
+        }
+        if (body != null && !body.isEmpty() && body.length() < 300) {
+            base += " 상세: " + body;
+        }
+        return base;
     }
 
     @SuppressWarnings("unchecked")

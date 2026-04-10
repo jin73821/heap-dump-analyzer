@@ -1091,15 +1091,58 @@ public class HeapDumpController {
     public ResponseEntity<Map<String, Object>> analyzeLlm(@RequestBody Map<String, Object> body) {
         String prompt = (String) body.get("prompt");
         String filename = (String) body.get("filename");
+        Boolean save = body.get("save") instanceof Boolean ? (Boolean) body.get("save") : true;
+
         if (prompt == null || prompt.isEmpty()) {
             Map<String, Object> err = new LinkedHashMap<>();
             err.put("success", false);
+            err.put("errorCode", "EMPTY_PROMPT");
             err.put("error", "분석 프롬프트가 비어있습니다");
             return ResponseEntity.badRequest().body(err);
         }
-        logger.info("[LLM] AI analysis requested for: {}", filename);
+        logger.info("[AI-Insight] 분석 요청 수신 — file={}, promptLen={}, save={}", filename, prompt.length(), save);
+
         Map<String, Object> result = analyzerService.callLlmAnalysis(prompt);
+
+        // 분석 성공 시 자동 저장
+        if (Boolean.TRUE.equals(result.get("success")) && filename != null && !filename.isEmpty() && Boolean.TRUE.equals(save)) {
+            Map<String, Object> toStore = new LinkedHashMap<>();
+            toStore.put("model", result.get("model"));
+            toStore.put("latencyMs", result.get("latencyMs"));
+            Object dataObj = result.get("data");
+            if (dataObj instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> dataMap = (Map<String, Object>) dataObj;
+                toStore.putAll(dataMap);
+            }
+            analyzerService.saveAiInsight(filename, toStore);
+            result.put("saved", true);
+        }
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/api/llm/insight/{filename}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getAiInsight(@PathVariable String filename) {
+        logger.info("[AI-Insight] 저장된 인사이트 조회 — file={}", filename);
+        Map<String, Object> insight = analyzerService.loadAiInsight(filename);
+        if (insight == null) {
+            Map<String, Object> notFound = new LinkedHashMap<>();
+            notFound.put("found", false);
+            return ResponseEntity.ok(notFound);
+        }
+        insight.put("found", true);
+        return ResponseEntity.ok(insight);
+    }
+
+    @DeleteMapping("/api/llm/insight/{filename}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> deleteAiInsight(@PathVariable String filename) {
+        logger.info("[AI-Insight] 인사이트 삭제 요청 — file={}", filename);
+        boolean deleted = analyzerService.deleteAiInsight(filename);
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", deleted);
+        return ResponseEntity.ok(res);
     }
 
     // ── [NEW] API: 현재 설정 조회 ────────────────────────────────
@@ -1183,7 +1226,7 @@ public class HeapDumpController {
         Map<String, List<String>> providerModels = new LinkedHashMap<>();
         providerModels.put("claude", Arrays.asList("claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"));
         providerModels.put("gpt", Arrays.asList("gpt-4o", "gpt-4o-mini", "gpt-4-turbo"));
-        providerModels.put("genspark", Collections.emptyList());
+        providerModels.put("genspark", com.heapdump.analyzer.service.HeapDumpAnalyzerService.GENSPARK_MODELS);
         providerModels.put("custom", Collections.emptyList());
         llm.put("providerModels", providerModels);
         settings.put("llm", llm);
