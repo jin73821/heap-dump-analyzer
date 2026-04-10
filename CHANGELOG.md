@@ -1,6 +1,29 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
-## [2026-04-10] LLM 연동 Settings + 분석 결과 페이지 AI 인사이트
+## [2026-04-11] Genspark LLM 연동 버그 수정
+
+HTTP 404 Not Found 오류 발생하던 Genspark LLM 연동 문제 수정.
+
+**근본 원인:** Genspark API 엔드포인트는 `/chat/completions` 경로가 필요한데,
+`getDefaultApiUrl("genspark")`이 빈 문자열을 반환하고 Settings UI에서도 URL 미입력 상태가 유지되어
+`base_url`만으로 요청이 전달되었기 때문에 404 발생.
+추가로 모델명(`gpt-4o`, `claude-sonnet-4-20250514` 등)이 Genspark 허용 모델 목록에 없어 에러 발생.
+
+[service/HeapDumpAnalyzerService.java]
+- `getDefaultApiUrl("genspark")`: `""` → `"https://www.genspark.ai/api/llm_proxy/v1/chat/completions"` 수정
+- `GENSPARK_MODELS` 정적 상수 추가 — Genspark 허용 모델 21종 (GPT-5 계열, Claude 4 계열, Kimi, MiniMax)
+
+[controller/HeapDumpController.java]
+- `/api/settings` 응답의 `providerModels.genspark`: 빈 목록 → `GENSPARK_MODELS` 목록으로 수정
+
+[templates/settings.html]
+- `_defaultUrls.genspark`: `""` → `"https://www.genspark.ai/api/llm_proxy/v1/chat/completions"` 수정
+- `_providerModels.genspark`: 드롭다운 목록 추가 (GPT-5/Claude 4/Kimi/MiniMax 21종)
+- Genspark 선택 시 안내 박스 표시 (`#gensparkHint`):
+  - Base URL / 엔드포인트 / API Key 형식(gsk-...) / 허용 모델 안내
+- `loadLlmSettings()`: provider 로드 시 gensparkHint 표시 여부 반영
+- `onProviderChange()`: provider 전환 시 gensparkHint 표시/숨김 처리
+
 
 다중 LLM 프로바이더(Claude, GPT, Genspark, Custom) 지원 AI 분석 기능 추가.
 사용자가 명시적으로 "AI 분석 시작" 버튼을 클릭해야만 LLM 호출 발생.

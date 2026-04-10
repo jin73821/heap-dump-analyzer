@@ -392,6 +392,20 @@
         }
         @keyframes modalIn { from { opacity:0; transform:translateY(-12px); } to { opacity:1; transform:translateY(0); } }
         @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+        @keyframes aiPulse { 0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.4)} 50%{box-shadow:0 0 0 8px rgba(59,130,246,0)} }
+        /* AI Step Indicator */
+        .ai-step { display:flex;flex-direction:column;align-items:center;gap:6px;min-width:68px; }
+        .ai-step-circle { width:32px;height:32px;border-radius:50%;background:#E2E8F0;color:#94A3B8;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;transition:all .4s ease;border:2px solid #E2E8F0; }
+        .ai-step-circle.ai-step-active { background:linear-gradient(135deg,#3B82F6,#6366F1);color:#fff;border-color:#3B82F6;animation:aiPulse 1.5s infinite; }
+        .ai-step-circle.ai-step-done { background:#10B981;color:#fff;border-color:#10B981;animation:none; }
+        .ai-step-label { font-size:10px;color:#94A3B8;font-weight:600;text-align:center;transition:color .3s; white-space:nowrap; }
+        .ai-step.active .ai-step-label { color:#2563EB; }
+        .ai-step.done .ai-step-label { color:#10B981; }
+        .ai-step-line { flex:1;height:2px;background:#E2E8F0;min-width:24px;max-width:48px;margin-bottom:16px;transition:background .4s ease; }
+        .ai-step-line.done { background:linear-gradient(90deg,#10B981,#3B82F6); }
+        /* Navigation leave warning overlay */
+        #aiLeaveWarning { display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center; }
+        #aiLeaveWarning.show { display:flex; }
         .modal-header { display:flex; align-items:center; gap:12px; margin-bottom:18px; }
         .modal-icon {
             width:42px; height:42px; border-radius:50%; display:flex; align-items:center; justify-content:center;
@@ -811,57 +825,142 @@ function loadFullErrorLog() {
     <!-- ▌ AI INSIGHT PANEL ▌ -->
     <div id="panel-ai-insight" class="panel">
         <div class="card">
-            <div class="card-title">
-                <span class="card-icon">&#129302;</span>
-                AI 인사이트
-                <span id="aiPanelBadge" style="margin-left:8px;font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">미분석</span>
+            <!-- 패널 헤더 -->
+            <div class="card-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+                <div style="display:flex;align-items:center;gap:8px">
+                    <span class="card-icon" style="font-size:18px">&#129302;</span>
+                    <span style="font-size:15px;font-weight:700;color:#1F2937">AI 인사이트</span>
+                    <span id="aiPanelBadge" style="font-size:10px;font-weight:700;padding:3px 10px;border-radius:12px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB;letter-spacing:.03em">미분석</span>
+                </div>
+                <div id="aiHeaderActions" style="display:none;gap:6px;align-items:center">
+                    <span id="aiSavedIndicator" style="display:none;font-size:11px;color:#16A34A;font-weight:600;padding:3px 8px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:6px">&#10003; 저장됨</span>
+                    <button onclick="startAiAnalysis()" id="aiReanalyzeBtn" style="padding:5px 14px;border:1px solid #D1D5DB;border-radius:6px;background:#fff;font-size:12px;cursor:pointer;font-weight:600;color:#374151;display:flex;align-items:center;gap:4px"><span>&#8635;</span> 재분석</button>
+                    <button onclick="deleteAiInsight()" id="aiDeleteBtn" style="padding:5px 14px;border:1px solid #FECACA;border-radius:6px;background:#FEF2F2;font-size:12px;cursor:pointer;font-weight:600;color:#DC2626">&#128465; 삭제</button>
+                </div>
             </div>
+
             <!-- 미분석 상태 -->
-            <div id="aiStateNotAnalyzed" style="border:2px dashed #D1D5DB;border-radius:10px;padding:40px 20px;text-align:center">
-                <div style="font-size:48px;margin-bottom:12px;opacity:.5">&#129302;</div>
-                <div style="font-size:15px;font-weight:600;color:#6B7280;margin-bottom:6px">AI 분석이 아직 수행되지 않았습니다</div>
-                <div style="font-size:12px;color:#9CA3AF;margin-bottom:18px">AI가 힙 덤프 분석 결과를 해석하여 근본 원인, 권장 조치, 위험도를 제공합니다.</div>
-                <button id="aiStartBtn" onclick="startAiAnalysis()" style="padding:10px 28px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">AI 분석 시작</button>
-                <div id="aiDisabledMsg" style="display:none;margin-top:12px;font-size:12px;color:#DC2626">LLM이 비활성화 상태입니다. Settings에서 AI Analysis를 활성화하세요.</div>
+            <div id="aiStateNotAnalyzed">
+                <div style="border:2px dashed #BFDBFE;border-radius:12px;padding:44px 24px;text-align:center;background:linear-gradient(135deg,#EFF6FF 0%,#F0F9FF 100%)">
+                    <div style="width:64px;height:64px;margin:0 auto 16px;border-radius:16px;background:linear-gradient(135deg,#3B82F6,#6366F1);display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;box-shadow:0 4px 12px rgba(59,130,246,.3)">&#129302;</div>
+                    <div style="font-size:16px;font-weight:700;color:#1E40AF;margin-bottom:6px">AI 분석이 아직 수행되지 않았습니다</div>
+                    <div style="font-size:13px;color:#64748B;margin-bottom:22px;max-width:380px;margin-left:auto;margin-right:auto;line-height:1.6">힙 덤프 분석 결과를 AI가 해석하여<br>근본 원인·권장 조치·위험도를 제공합니다.</div>
+                    <button id="aiStartBtn" onclick="startAiAnalysis()" style="padding:11px 32px;background:linear-gradient(135deg,#2563EB,#4F46E5);color:#fff;border:none;border-radius:9px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 3px 10px rgba(37,99,235,.35);letter-spacing:.02em">&#128640; AI 분석 시작</button>
+                    <div id="aiDisabledMsg" style="display:none;margin-top:14px;font-size:12px;color:#DC2626;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:8px 16px;display:inline-block">
+                        &#9888; LLM이 비활성화 상태입니다. <a href="/settings" style="color:#2563EB;text-decoration:underline;font-weight:600">Settings</a>에서 AI Analysis를 활성화하세요.
+                    </div>
+                </div>
             </div>
-            <!-- 분석 중 -->
-            <div id="aiStateLoading" style="display:none;text-align:center;padding:40px 20px">
-                <div style="display:inline-block;width:40px;height:40px;border:3px solid #E5E7EB;border-top-color:#2563EB;border-radius:50%;animation:spin 1s linear infinite"></div>
-                <div style="margin-top:14px;font-size:14px;color:#6B7280;font-weight:500">AI 분석 중...</div>
-                <div style="margin-top:6px;font-size:12px;color:#9CA3AF">LLM이 분석 결과를 해석하고 있습니다. 잠시만 기다려주세요.</div>
+
+            <!-- 분석 중 상태 (진행 단계 표시) -->
+            <div id="aiStateLoading" style="display:none">
+                <div style="border:1px solid #BFDBFE;border-radius:12px;padding:32px 24px;background:linear-gradient(135deg,#EFF6FF,#F5F3FF)">
+                    <!-- 스텝 인디케이터 -->
+                    <div id="aiStepIndicator" style="display:flex;align-items:center;justify-content:center;gap:0;margin-bottom:28px">
+                        <div class="ai-step" id="aiStep1" data-step="1">
+                            <div class="ai-step-circle ai-step-active">1</div>
+                            <div class="ai-step-label">데이터 수집</div>
+                        </div>
+                        <div class="ai-step-line" id="aiStepLine1"></div>
+                        <div class="ai-step" id="aiStep2" data-step="2">
+                            <div class="ai-step-circle">2</div>
+                            <div class="ai-step-label">프롬프트 구성</div>
+                        </div>
+                        <div class="ai-step-line" id="aiStepLine2"></div>
+                        <div class="ai-step" id="aiStep3" data-step="3">
+                            <div class="ai-step-circle">3</div>
+                            <div class="ai-step-label">LLM 분석 중</div>
+                        </div>
+                        <div class="ai-step-line" id="aiStepLine3"></div>
+                        <div class="ai-step" id="aiStep4" data-step="4">
+                            <div class="ai-step-circle">4</div>
+                            <div class="ai-step-label">결과 저장</div>
+                        </div>
+                    </div>
+                    <!-- 진행 바 -->
+                    <div style="background:#E2E8F0;border-radius:8px;height:6px;margin-bottom:16px;overflow:hidden">
+                        <div id="aiProgressBar" style="height:100%;background:linear-gradient(90deg,#3B82F6,#6366F1);border-radius:8px;transition:width .6s ease;width:0%"></div>
+                    </div>
+                    <!-- 상태 메시지 -->
+                    <div style="text-align:center">
+                        <div id="aiLoadingMsg" style="font-size:14px;font-weight:600;color:#2563EB;margin-bottom:4px">데이터 수집 중...</div>
+                        <div id="aiLoadingDetail" style="font-size:12px;color:#64748B">분석 결과 페이지에서 KPI·누수 의심 항목·메모리 소비 상위 클래스를 수집합니다.</div>
+                        <div id="aiElapsedTime" style="font-size:11px;color:#94A3B8;margin-top:8px"></div>
+                    </div>
+                </div>
             </div>
-            <!-- 완료 -->
+
+            <!-- 완료 상태 (개선된 디자인) -->
             <div id="aiStateResult" style="display:none">
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
-                    <div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:10px;padding:16px">
-                        <div style="font-size:12px;font-weight:700;color:#0369A1;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">요약</div>
-                        <div id="aiSummary" style="font-size:13px;color:#1F2937;line-height:1.6"></div>
+                <!-- 위험도 배너 -->
+                <div id="aiSeverityBanner" style="border-radius:10px;padding:16px 20px;margin-bottom:18px;display:flex;align-items:center;gap:14px">
+                    <div id="aiSeverityIcon" style="font-size:28px"></div>
+                    <div style="flex:1">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+                            <span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;opacity:.7">위험도</span>
+                            <span id="aiSeverity" style="font-size:18px;font-weight:800"></span>
+                        </div>
+                        <div id="aiSeverityDesc" style="font-size:12px;line-height:1.5;opacity:.85"></div>
                     </div>
-                    <div style="background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;padding:16px">
-                        <div style="font-size:12px;font-weight:700;color:#C2410C;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">위험도</div>
-                        <div id="aiSeverity" style="font-size:24px;font-weight:800"></div>
-                        <div id="aiSeverityDesc" style="font-size:12px;color:#6B7280;margin-top:4px"></div>
+                    <div style="text-align:right">
+                        <div id="aiAnalysedAt" style="font-size:10px;opacity:.6"></div>
+                        <div id="aiModelInfo" style="font-size:10px;opacity:.6;margin-top:2px"></div>
                     </div>
                 </div>
-                <div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px;padding:16px;margin-bottom:14px">
-                    <div style="font-size:12px;font-weight:700;color:#15803D;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">근본 원인 분석</div>
-                    <div id="aiRootCause" style="font-size:13px;color:#1F2937;line-height:1.6"></div>
+
+                <!-- 요약 카드 -->
+                <div style="background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:18px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.05)">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                        <span style="width:28px;height:28px;border-radius:8px;background:#EFF6FF;display:flex;align-items:center;justify-content:center;font-size:14px">&#128203;</span>
+                        <span style="font-size:12px;font-weight:700;color:#1E40AF;text-transform:uppercase;letter-spacing:.06em">요약</span>
+                    </div>
+                    <div id="aiSummary" style="font-size:13.5px;color:#374151;line-height:1.75;word-break:break-word"></div>
                 </div>
-                <div style="background:#FAF5FF;border:1px solid #E9D5FF;border-radius:10px;padding:16px;margin-bottom:16px">
-                    <div style="font-size:12px;font-weight:700;color:#7C3AED;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">권장 조치</div>
-                    <div id="aiRecommendations" style="font-size:13px;color:#1F2937;line-height:1.6"></div>
+
+                <!-- 근본 원인 카드 -->
+                <div style="background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:18px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.05)">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                        <span style="width:28px;height:28px;border-radius:8px;background:#F0FDF4;display:flex;align-items:center;justify-content:center;font-size:14px">&#128269;</span>
+                        <span style="font-size:12px;font-weight:700;color:#15803D;text-transform:uppercase;letter-spacing:.06em">근본 원인 분석</span>
+                    </div>
+                    <div id="aiRootCause" style="font-size:13.5px;color:#374151;line-height:1.75;word-break:break-word"></div>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center">
-                    <button onclick="startAiAnalysis()" style="padding:6px 14px;border:1px solid #D1D5DB;border-radius:6px;background:#fff;font-size:12px;cursor:pointer;font-weight:600;color:#374151">재분석</button>
-                    <span id="aiModelInfo" style="font-size:11px;color:#9CA3AF"></span>
+
+                <!-- 권장 조치 카드 -->
+                <div style="background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:18px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.05)">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                        <span style="width:28px;height:28px;border-radius:8px;background:#FAF5FF;display:flex;align-items:center;justify-content:center;font-size:14px">&#9989;</span>
+                        <span style="font-size:12px;font-weight:700;color:#7C3AED;text-transform:uppercase;letter-spacing:.06em">권장 조치</span>
+                    </div>
+                    <div id="aiRecommendations" style="font-size:13.5px;color:#374151;line-height:1.75;word-break:break-word"></div>
+                </div>
+
+                <!-- 잠재적 위험 카드 (severityDesc가 길 때 별도 표시) -->
+                <div id="aiRiskCard" style="display:none;background:#fff;border:1px solid #E2E8F0;border-radius:12px;padding:18px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.05)">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+                        <span style="width:28px;height:28px;border-radius:8px;background:#FFFBEB;display:flex;align-items:center;justify-content:center;font-size:14px">&#9888;</span>
+                        <span style="font-size:12px;font-weight:700;color:#D97706;text-transform:uppercase;letter-spacing:.06em">잠재적 위험 요소</span>
+                    </div>
+                    <div id="aiRiskDesc" style="font-size:13.5px;color:#374151;line-height:1.75;word-break:break-word"></div>
                 </div>
             </div>
-            <!-- 에러 -->
-            <div id="aiStateError" style="display:none;border:1px solid #FECACA;border-radius:10px;padding:24px;text-align:center;background:#FEF2F2">
-                <div style="font-size:36px;margin-bottom:8px">&#9888;</div>
-                <div style="font-size:14px;font-weight:600;color:#DC2626;margin-bottom:6px">AI 분석 실패</div>
-                <div id="aiErrorMsg" style="font-size:12px;color:#7F1D1D;margin-bottom:14px"></div>
-                <button onclick="startAiAnalysis()" style="padding:8px 20px;background:#2563EB;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">재시도</button>
+
+            <!-- 에러 상태 (개선) -->
+            <div id="aiStateError" style="display:none">
+                <div style="border:1px solid #FECACA;border-radius:12px;padding:28px 24px;background:linear-gradient(135deg,#FEF2F2,#FFF5F5)">
+                    <div style="display:flex;align-items:flex-start;gap:14px">
+                        <div style="width:44px;height:44px;border-radius:12px;background:#FEE2E2;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">&#9888;</div>
+                        <div style="flex:1">
+                            <div style="font-size:14px;font-weight:700;color:#DC2626;margin-bottom:6px">AI 분석 실패</div>
+                            <div id="aiErrorCode" style="display:none;font-size:10px;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px"></div>
+                            <div id="aiErrorMsg" style="font-size:13px;color:#7F1D1D;line-height:1.6;margin-bottom:14px"></div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                                <button onclick="startAiAnalysis()" style="padding:8px 18px;background:linear-gradient(135deg,#2563EB,#4F46E5);color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">&#8635; 재시도</button>
+                                <a href="/settings" style="padding:8px 18px;border:1px solid #D1D5DB;border-radius:7px;font-size:13px;font-weight:600;color:#374151;text-decoration:none;background:#fff">&#9881; Settings 확인</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -3048,198 +3147,427 @@ window.addEventListener('resize', function() {
     resizeTimer = setTimeout(function() { buildTreemap(); }, 300);
 });
 
-// ── AI Analysis ──────────────────────────────────────
-var _aiPollingTimer = null;
+// ═══════════════════════════════════════════════════════
+// AI INSIGHT MODULE — v2.0
+// 1. 결과 저장/불러오기   2. 개선된 디자인
+// 3. 진행 단계 표시       4. 이탈 경고 + 방어 로직
+// 5. 구조화 로그          6. 상세 에러 분류
+// ═══════════════════════════════════════════════════════
 
-function initAiPanel() {
-    // LLM 활성화 상태 확인
-    fetch('/api/settings').then(function(r){ return r.json(); }).then(function(d) {
-        if (!d.llm || !d.llm.enabled) {
-            var btn = document.getElementById('aiStartBtn');
-            if (btn) { btn.disabled = true; btn.style.opacity = '.5'; btn.style.cursor = 'not-allowed'; }
-            var msg = document.getElementById('aiDisabledMsg');
-            if (msg) msg.style.display = 'block';
-        }
-    }).catch(function(){});
+var _aiAnalysisInProgress = false;  // [4] 이탈 방어용 플래그
+var _aiElapsedTimer       = null;   // 경과 시간 타이머
+var _aiElapsedStart       = 0;
+
+// ── [4] 페이지 이탈 경고 ─────────────────────────────────
+window.addEventListener('beforeunload', function(e) {
+    if (_aiAnalysisInProgress) {
+        var msg = 'AI 분석이 진행 중입니다. 페이지를 벗어나면 분석이 중단될 수 있습니다.';
+        e.preventDefault();
+        e.returnValue = msg;
+        return msg;
+    }
+});
+
+// SPA 내부 링크 이탈 가로채기 (a 태그 클릭)
+document.addEventListener('click', function(e) {
+    if (!_aiAnalysisInProgress) return;
+    var a = e.target.closest('a[href]');
+    if (!a) return;
+    var href = a.getAttribute('href');
+    if (!href || href.startsWith('#') || href.startsWith('javascript')) return;
+    e.preventDefault();
+    showLeaveWarning(href);
+}, true);
+
+function showLeaveWarning(pendingHref) {
+    var overlay = document.getElementById('aiLeaveWarning');
+    if (!overlay) return;
+    overlay.classList.add('show');
+    overlay._pendingHref = pendingHref;
+}
+function confirmLeave() {
+    _aiAnalysisInProgress = false;
+    var overlay = document.getElementById('aiLeaveWarning');
+    if (overlay && overlay._pendingHref) {
+        window.location.href = overlay._pendingHref;
+    } else {
+        window.history.back();
+    }
+}
+function cancelLeave() {
+    var overlay = document.getElementById('aiLeaveWarning');
+    if (overlay) overlay.classList.remove('show');
 }
 
+// ── 초기화 ──────────────────────────────────────────────
+function initAiPanel() {
+    fetch('/api/settings').then(function(r){ return r.json(); }).then(function(d) {
+        var enabled = d.llm && d.llm.enabled;
+        if (!enabled) {
+            var btn = document.getElementById('aiStartBtn');
+            if (btn) { btn.disabled = true; btn.style.opacity = '.45'; btn.style.cursor = 'not-allowed'; }
+            var msg = document.getElementById('aiDisabledMsg');
+            if (msg) { msg.style.removeProperty('display'); msg.style.display = 'block'; }
+        }
+    }).catch(function(){});
+
+    // [1] 저장된 AI 인사이트 자동 로드
+    if (typeof FILENAME !== 'undefined' && FILENAME) {
+        fetch('/api/llm/insight/' + encodeURIComponent(FILENAME))
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+            if (d.found) {
+                console.log('[AI-Insight] 저장된 인사이트 로드 성공');
+                showAiResult(d, true);
+            }
+        }).catch(function(){});
+    }
+}
+
+// ── 상태 관리 ────────────────────────────────────────────
 function setAiState(state) {
-    var states = ['aiStateNotAnalyzed','aiStateLoading','aiStateResult','aiStateError'];
-    states.forEach(function(id) {
-        var el = document.getElementById(id);
+    ['NotAnalyzed','Loading','Result','Error'].forEach(function(s) {
+        var el = document.getElementById('aiState' + s);
         if (el) el.style.display = 'none';
     });
     var target = document.getElementById('aiState' + state);
     if (target) target.style.display = '';
+    // 헤더 액션 버튼 표시/숨김
+    var actions = document.getElementById('aiHeaderActions');
+    if (actions) actions.style.display = (state === 'Result') ? 'flex' : 'none';
 }
 
-function updateAiBadges(done) {
-    var badgeOn = document.getElementById('aiHeaderBadge');
+function updateAiBadges(state) {
+    // state: 'none' | 'analyzing' | 'done' | 'error'
+    var badgeOn  = document.getElementById('aiHeaderBadge');
     var badgeOff = document.getElementById('aiHeaderBadgeOff');
     var panelBadge = document.getElementById('aiPanelBadge');
-    var navStatus = document.getElementById('aiNavStatus');
-
-    if (done) {
-        if (badgeOn) badgeOn.style.display = '';
-        if (badgeOff) badgeOff.style.display = 'none';
-        if (panelBadge) { panelBadge.textContent = '완료'; panelBadge.style.background = '#DBEAFE'; panelBadge.style.color = '#1D4ED8'; panelBadge.style.borderColor = '#93C5FD'; }
-        if (navStatus) { navStatus.textContent = '완료'; navStatus.style.background = '#DBEAFE'; navStatus.style.color = '#1D4ED8'; }
-    } else {
-        if (badgeOn) badgeOn.style.display = 'none';
-        if (badgeOff) badgeOff.style.display = '';
-        if (panelBadge) { panelBadge.textContent = '미분석'; panelBadge.style.background = '#F3F4F6'; panelBadge.style.color = '#9CA3AF'; panelBadge.style.borderColor = '#E5E7EB'; }
-        if (navStatus) { navStatus.textContent = '-'; navStatus.style.background = '#F3F4F6'; navStatus.style.color = '#9CA3AF'; }
+    var navStatus  = document.getElementById('aiNavStatus');
+    var cfg = {
+        none:      { on:false, badge:'미분석',   bg:'#F3F4F6', color:'#9CA3AF', border:'#E5E7EB' },
+        analyzing: { on:false, badge:'분석중…',  bg:'#EFF6FF', color:'#2563EB', border:'#BFDBFE' },
+        done:      { on:true,  badge:'완료',     bg:'#DBEAFE', color:'#1D4ED8', border:'#93C5FD' },
+        error:     { on:false, badge:'실패',     bg:'#FEE2E2', color:'#DC2626', border:'#FECACA' }
+    };
+    var c = cfg[state] || cfg.none;
+    if (badgeOn)  badgeOn.style.display  = c.on ? '' : 'none';
+    if (badgeOff) badgeOff.style.display = c.on ? 'none' : '';
+    if (panelBadge) {
+        panelBadge.textContent = c.badge;
+        panelBadge.style.background   = c.bg;
+        panelBadge.style.color        = c.color;
+        panelBadge.style.borderColor  = c.border;
+    }
+    if (navStatus) {
+        navStatus.textContent = c.badge;
+        navStatus.style.background = c.bg;
+        navStatus.style.color      = c.color;
     }
 }
 
-function startAiAnalysis() {
-    setAiState('Loading');
-    updateAiBadges(false);
+// ── [3] 진행 단계 업데이트 ──────────────────────────────
+var _STEP_MSGS = [
+    null,
+    { msg:'데이터 수집 중…',    detail:'분석 페이지에서 KPI·누수 항목·메모리 소비 상위 클래스를 수집합니다.',  pct:15 },
+    { msg:'프롬프트 구성 중…',  detail:'수집된 데이터를 AI 분석용 구조화 텍스트로 변환합니다.',               pct:35 },
+    { msg:'LLM 분석 요청 중…',  detail:'LLM이 힙 덤프를 분석하고 있습니다. 모델에 따라 10~30초 소요됩니다.', pct:65 },
+    { msg:'결과 저장 중…',      detail:'분석 결과를 서버에 영속화하고 화면에 표시합니다.',                    pct:90 }
+];
 
-    // 분석 데이터 수집
-    var data = collectAnalysisData();
-
-    fetch('/api/llm/test-connection', {method:'POST'})
-        .then(function(r){ return r.json(); })
-        .then(function(d) {
-            if (!d.success) {
-                showAiError('LLM 연결 실패: ' + (d.error || 'Unknown'));
-                return;
-            }
-            return requestAiAnalysis(data);
-        })
-        .catch(function(e) { showAiError('요청 실패: ' + e.message); });
+function setAiStep(stepNum) {
+    for (var i = 1; i <= 4; i++) {
+        var circle = document.querySelector('#aiStep' + i + ' .ai-step-circle');
+        var stepEl = document.getElementById('aiStep' + i);
+        var lineEl = document.getElementById('aiStepLine' + i);
+        if (!circle) continue;
+        circle.classList.remove('ai-step-active', 'ai-step-done');
+        if (stepEl) { stepEl.classList.remove('active', 'done'); }
+        if (i < stepNum) {
+            circle.classList.add('ai-step-done');
+            circle.textContent = '✓';
+            if (stepEl) stepEl.classList.add('done');
+            if (lineEl) lineEl.classList.add('done');
+        } else if (i === stepNum) {
+            circle.classList.add('ai-step-active');
+            circle.textContent = String(i);
+            if (stepEl) stepEl.classList.add('active');
+        } else {
+            circle.textContent = String(i);
+        }
+    }
+    var s = _STEP_MSGS[stepNum];
+    if (s) {
+        var msgEl = document.getElementById('aiLoadingMsg');
+        var detailEl = document.getElementById('aiLoadingDetail');
+        var progressEl = document.getElementById('aiProgressBar');
+        if (msgEl) msgEl.textContent = s.msg;
+        if (detailEl) detailEl.textContent = s.detail;
+        if (progressEl) progressEl.style.width = s.pct + '%';
+    }
 }
 
+function startElapsedTimer() {
+    _aiElapsedStart = Date.now();
+    _aiElapsedTimer = setInterval(function() {
+        var sec = Math.floor((Date.now() - _aiElapsedStart) / 1000);
+        var el = document.getElementById('aiElapsedTime');
+        if (el) el.textContent = '경과 시간: ' + sec + '초';
+    }, 1000);
+}
+function stopElapsedTimer() {
+    if (_aiElapsedTimer) { clearInterval(_aiElapsedTimer); _aiElapsedTimer = null; }
+}
+
+// ── 분석 시작 ────────────────────────────────────────────
+function startAiAnalysis() {
+    _aiAnalysisInProgress = true;
+    setAiState('Loading');
+    updateAiBadges('analyzing');
+    setAiStep(1);
+    startElapsedTimer();
+
+    // STEP 1: 데이터 수집
+    var data = collectAnalysisData();
+
+    // STEP 2: 프롬프트 구성
+    setTimeout(function() {
+        setAiStep(2);
+        var prompt = buildAnalysisPrompt(data);
+
+        // STEP 3: LLM 요청
+        setTimeout(function() {
+            setAiStep(3);
+            requestAiAnalysis(data, prompt);
+        }, 400);
+    }, 300);
+}
+
+// ── 데이터 수집 ──────────────────────────────────────────
 function collectAnalysisData() {
     var data = { filename: typeof FILENAME !== 'undefined' ? FILENAME : '' };
-
-    // KPI 데이터
-    var kpiItems = document.querySelectorAll('.kpi-item');
     data.kpis = [];
-    kpiItems.forEach(function(item) {
+    document.querySelectorAll('.kpi-item').forEach(function(item) {
         var label = item.querySelector('.kpi-label');
         var value = item.querySelector('.kpi-value');
-        if (label && value) data.kpis.push({label: label.textContent.trim(), value: value.textContent.trim()});
+        if (label && value) data.kpis.push({ label: label.textContent.trim(), value: value.textContent.trim() });
     });
-
-    // Leak Suspects
-    var suspects = document.querySelectorAll('#panel-suspects .suspect-item');
     data.suspects = [];
-    suspects.forEach(function(s) {
-        var title = s.querySelector('.suspect-title');
-        var desc = s.querySelector('.suspect-desc');
-        if (title) data.suspects.push({title: title.textContent.trim(), desc: desc ? desc.textContent.trim().substring(0, 500) : ''});
+    document.querySelectorAll('#panel-suspects .suspect-item').forEach(function(s) {
+        var title = s.querySelector('.suspect-title-text');
+        var desc  = s.querySelector('.suspect-desc');
+        if (title) data.suspects.push({
+            title: title.textContent.trim(),
+            desc:  desc ? desc.textContent.trim().substring(0, 600) : ''
+        });
     });
-
-    // Top Consumers
-    var rows = document.querySelectorAll('#topObjectsTable tbody tr');
+    // 컬럼: [0]순위, [1]ClassName, [2]Objects수, [3]RetainedHeap, [4]% of Total
     data.topConsumers = [];
-    rows.forEach(function(r, i) {
+    document.querySelectorAll('#topObjectsTable tbody tr').forEach(function(r, i) {
         if (i >= 10) return;
         var cells = r.querySelectorAll('td');
-        if (cells.length >= 3) {
-            data.topConsumers.push({className: cells[0].textContent.trim(), size: cells[1].textContent.trim(), pct: cells[2].textContent.trim()});
+        if (cells.length >= 5) {
+            var cnCell = cells[1].querySelector('.class-name-cell');
+            data.topConsumers.push({
+                rank:      cells[0].textContent.trim(),
+                className: cnCell ? cnCell.textContent.trim() : cells[1].textContent.trim(),
+                count:     cells[2].textContent.trim(),
+                size:      cells[3].textContent.trim(),
+                pct:       cells[4].textContent.trim()
+            });
         }
     });
-
     return data;
 }
 
-function requestAiAnalysis(data) {
-    // 서버사이드 LLM 호출
-    fetch('/api/settings').then(function(r){ return r.json(); }).then(function(settings) {
-        var llm = settings.llm;
-        if (!llm || !llm.enabled) { showAiError('LLM이 비활성화 상태입니다'); return; }
-
-        // 프롬프트 구성
-        var prompt = buildAnalysisPrompt(data);
-
-        // 클라이언트에서 직접 LLM API 호출 (CORS 문제가 있을 수 있으므로 서버 프록시 권장)
-        // 현재는 서버를 통하지 않고 설정된 URL로 직접 호출
-        var apiUrl = llm.apiUrl;
-        var provider = llm.provider;
-        var model = llm.model;
-
-        var headers = {'Content-Type':'application/json'};
-        var body;
-
-        // API 키는 서버에서만 알므로 서버 프록시 엔드포인트 사용
-        fetch('/api/llm/analyze', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({prompt: prompt, filename: data.filename})
-        })
-        .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-        .then(function(result) {
-            if (result.success) {
-                showAiResult(result);
-            } else {
-                showAiError(result.error || 'AI 분석 실패');
-            }
-        })
-        .catch(function(e) { showAiError('요청 실패: ' + e.message); });
-    }).catch(function(e) { showAiError('설정 로딩 실패: ' + e.message); });
-}
-
+// ── 프롬프트 생성 ────────────────────────────────────────
 function buildAnalysisPrompt(data) {
-    var parts = [];
-    parts.push('Java 힙 덤프 분석 결과를 해석해주세요. 파일: ' + data.filename);
-    parts.push('');
-
-    if (data.kpis && data.kpis.length > 0) {
-        parts.push('== 힙 통계 ==');
-        data.kpis.forEach(function(k) { parts.push(k.label + ': ' + k.value); });
-        parts.push('');
+    var p = [];
+    p.push('Java 힙 덤프 분석 결과를 해석해주세요. 파일: ' + data.filename);
+    p.push('');
+    if (data.kpis && data.kpis.length) {
+        p.push('== 힙 통계 ==');
+        data.kpis.forEach(function(k) { p.push(k.label + ': ' + k.value); });
+        p.push('');
     }
-
-    if (data.topConsumers && data.topConsumers.length > 0) {
-        parts.push('== Top Memory Consumers ==');
-        data.topConsumers.forEach(function(c, i) { parts.push((i+1) + '. ' + c.className + ' — ' + c.size + ' (' + c.pct + ')'); });
-        parts.push('');
+    if (data.topConsumers && data.topConsumers.length) {
+        p.push('== Top Memory Consumers (' + data.topConsumers.length + '개) ==');
+        data.topConsumers.forEach(function(c, i) {
+            p.push((i+1) + '. ' + c.className + ' — 크기: ' + c.size + ', 객체수: ' + c.count + ' (' + c.pct + ')');
+        });
+        p.push('');
     }
-
-    if (data.suspects && data.suspects.length > 0) {
-        parts.push('== Leak Suspects ==');
-        data.suspects.forEach(function(s, i) { parts.push('Suspect ' + (i+1) + ': ' + s.title); if (s.desc) parts.push('  ' + s.desc); });
-        parts.push('');
+    if (data.suspects && data.suspects.length) {
+        p.push('== Leak Suspects ==');
+        data.suspects.forEach(function(s, i) {
+            p.push('Suspect ' + (i+1) + ': ' + s.title);
+            if (s.desc) p.push('  ' + s.desc);
+        });
+        p.push('');
     }
-
-    parts.push('다음 형식으로 JSON을 반환해주세요 (마크다운 코드블록 없이 순수 JSON만):');
-    parts.push('{"summary":"전체 요약 (2-3문장)","rootCause":"근본 원인 분석","recommendations":"권장 조치 (번호 매기기)","severity":"Critical/High/Medium/Low","severityDesc":"위험도 설명"}');
-
-    return parts.join('\n');
+    p.push('위 데이터를 기반으로 아래 JSON 형식으로만 응답하세요.');
+    p.push('절대 마크다운 코드블록(```)을 사용하지 마세요. 순수 JSON만 반환하세요.');
+    p.push('{"summary":"전체 요약(2-3문장)","rootCause":"근본 원인 분석(상세)","recommendations":"권장 조치(1. 2. 3. 번호 매기기)","severity":"Critical|High|Medium|Low 중 하나","severityDesc":"위험도 판단 근거"}');
+    return p.join('\n');
 }
 
-function showAiResult(result) {
+// ── LLM 요청 ────────────────────────────────────────────
+function requestAiAnalysis(data, prompt) {
+    fetch('/api/llm/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: prompt, filename: data.filename, save: true })
+    })
+    .then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + r.statusText);
+        return r.json();
+    })
+    .then(function(result) {
+        // STEP 4: 결과 저장
+        setAiStep(4);
+        var progressEl = document.getElementById('aiProgressBar');
+        if (progressEl) progressEl.style.width = '100%';
+        setTimeout(function() {
+            stopElapsedTimer();
+            _aiAnalysisInProgress = false;
+            if (result.success) {
+                showAiResult(result, !!result.saved);
+            } else {
+                showAiError(result.error || 'AI 분석 실패', result.errorCode);
+            }
+        }, 500);
+    })
+    .catch(function(e) {
+        stopElapsedTimer();
+        _aiAnalysisInProgress = false;
+        var msg = e.message || String(e);
+        if (msg.indexOf('Failed to fetch') !== -1 || msg.indexOf('NetworkError') !== -1) {
+            showAiError('네트워크 오류: 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요.', 'NETWORK_ERROR');
+        } else if (msg.indexOf('timeout') !== -1 || msg.indexOf('408') !== -1) {
+            showAiError('요청 타임아웃: LLM 응답 대기 시간이 초과되었습니다. Settings에서 타임아웃을 늘리거나 빠른 모델을 선택하세요.', 'TIMEOUT');
+        } else {
+            showAiError('요청 실패: ' + msg, 'CLIENT_ERROR');
+        }
+    });
+}
+
+// ── [1] AI 인사이트 삭제 ────────────────────────────────
+function deleteAiInsight() {
+    if (!confirm('저장된 AI 인사이트를 삭제하시겠습니까?\n재분석 전까지 결과를 볼 수 없습니다.')) return;
+    var fn = typeof FILENAME !== 'undefined' ? FILENAME : '';
+    if (!fn) return;
+    fetch('/api/llm/insight/' + encodeURIComponent(fn), { method: 'DELETE' })
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            setAiState('NotAnalyzed');
+            updateAiBadges('none');
+            console.log('[AI-Insight] 인사이트 삭제 완료');
+        }
+    }).catch(function(){});
+}
+
+// ── 결과 표시 ────────────────────────────────────────────
+var _SEV_CONFIG = {
+    Critical: { bg:'#FEF2F2', border:'#FECACA', color:'#DC2626', icon:'🔴', textColor:'#7F1D1D' },
+    High:     { bg:'#FFF7ED', border:'#FED7AA', color:'#EA580C', icon:'🟠', textColor:'#7C2D12' },
+    Medium:   { bg:'#FFFBEB', border:'#FDE68A', color:'#D97706', icon:'🟡', textColor:'#78350F' },
+    Low:      { bg:'#F0FDF4', border:'#BBF7D0', color:'#16A34A', icon:'🟢', textColor:'#14532D' },
+    Unknown:  { bg:'#F9FAFB', border:'#E5E7EB', color:'#6B7280', icon:'⚪', textColor:'#374151' }
+};
+
+function showAiResult(result, isSaved) {
     setAiState('Result');
-    updateAiBadges(true);
+    updateAiBadges('done');
 
     var data = result.data || result;
-    document.getElementById('aiSummary').textContent = data.summary || '-';
-    document.getElementById('aiRootCause').textContent = data.rootCause || '-';
-    document.getElementById('aiRecommendations').textContent = data.recommendations || '-';
-
     var severity = data.severity || 'Unknown';
+    var sevCfg = _SEV_CONFIG[severity] || _SEV_CONFIG.Unknown;
+
+    // 위험도 배너
+    var banner = document.getElementById('aiSeverityBanner');
+    if (banner) {
+        banner.style.background = sevCfg.bg;
+        banner.style.border = '1px solid ' + sevCfg.border;
+        banner.style.color = sevCfg.textColor;
+    }
+    var iconEl = document.getElementById('aiSeverityIcon');
+    if (iconEl) iconEl.textContent = sevCfg.icon;
     var sevEl = document.getElementById('aiSeverity');
-    sevEl.textContent = severity;
-    var sevColors = {'Critical':'#DC2626','High':'#EA580C','Medium':'#D97706','Low':'#16A34A'};
-    sevEl.style.color = sevColors[severity] || '#6B7280';
+    if (sevEl) { sevEl.textContent = severity; sevEl.style.color = sevCfg.color; }
+    setTextWithLineBreaks(document.getElementById('aiSeverityDesc'), data.severityDesc);
 
-    document.getElementById('aiSeverityDesc').textContent = data.severityDesc || '';
-    document.getElementById('aiModelInfo').textContent = result.model ? ('Model: ' + result.model) : '';
+    // 내용 카드
+    setTextWithLineBreaks(document.getElementById('aiSummary'),         data.summary);
+    setTextWithLineBreaks(document.getElementById('aiRootCause'),       data.rootCause);
+    setTextWithLineBreaks(document.getElementById('aiRecommendations'), data.recommendations);
+
+    // severityDesc가 길면 위험 요소 카드에도 표시
+    var riskCard = document.getElementById('aiRiskCard');
+    var riskDesc = document.getElementById('aiRiskDesc');
+    if (riskCard && riskDesc && data.severityDesc && data.severityDesc.length > 80) {
+        riskCard.style.display = '';
+        setTextWithLineBreaks(riskDesc, data.severityDesc);
+        // 배너에서는 짧게만
+        setTextWithLineBreaks(document.getElementById('aiSeverityDesc'), data.severityDesc.substring(0,80) + '…');
+    }
+
+    // 메타 정보
+    var modelEl = document.getElementById('aiModelInfo');
+    if (modelEl) modelEl.textContent = (result.model || data.model) ? 'Model: ' + (result.model || data.model) : '';
+    var atEl = document.getElementById('aiAnalysedAt');
+    if (atEl) {
+        var ts = result.analysedAt || data.analysedAt;
+        atEl.textContent = ts ? '분석: ' + new Date(ts).toLocaleString('ko-KR', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+    }
+
+    // 저장 표시
+    var savedEl = document.getElementById('aiSavedIndicator');
+    if (savedEl) savedEl.style.display = isSaved ? '' : 'none';
 }
 
-function showAiError(msg) {
+function showAiError(msg, errorCode) {
     setAiState('Error');
-    updateAiBadges(false);
-    document.getElementById('aiErrorMsg').textContent = msg;
+    updateAiBadges('error');
+    setTextWithLineBreaks(document.getElementById('aiErrorMsg'), msg || 'AI 분석 실패');
+    var codeEl = document.getElementById('aiErrorCode');
+    if (codeEl) {
+        if (errorCode) {
+            codeEl.textContent = 'ERROR CODE: ' + errorCode;
+            codeEl.style.display = '';
+        } else {
+            codeEl.style.display = 'none';
+        }
+    }
 }
 
-// AI 패널 초기화 (페이지 로드 시)
+// ── XSS-safe 텍스트 렌더링 ──────────────────────────────
+function escapeHtml(text) {
+    return String(text)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+function setTextWithLineBreaks(el, text) {
+    if (!el) return;
+    el.innerHTML = escapeHtml(text || '-').replace(/\n/g, '<br>');
+    el.style.whiteSpace = 'pre-wrap';
+}
+
+// ── 초기화 실행 ─────────────────────────────────────────
 if (typeof FILENAME !== 'undefined') {
     initAiPanel();
 }
 </script>
+<!-- AI 분석 중 이탈 경고 모달 -->
+<div id="aiLeaveWarning">
+    <div style="background:#fff;border-radius:16px;padding:32px 28px;max-width:380px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.3);text-align:center">
+        <div style="width:56px;height:56px;border-radius:16px;background:#FEF2F2;border:2px solid #FECACA;display:flex;align-items:center;justify-content:center;font-size:24px;margin:0 auto 16px">&#9888;</div>
+        <div style="font-size:16px;font-weight:700;color:#1F2937;margin-bottom:8px">페이지를 벗어나시겠습니까?</div>
+        <div style="font-size:13px;color:#6B7280;margin-bottom:22px;line-height:1.6">AI 분석이 진행 중입니다.<br>페이지를 벗어나면 <strong style="color:#DC2626">분석이 중단</strong>될 수 있습니다.</div>
+        <div style="display:flex;gap:10px;justify-content:center">
+            <button onclick="cancelLeave()" style="flex:1;padding:10px 0;border:1px solid #D1D5DB;border-radius:8px;background:#fff;font-size:13px;font-weight:600;color:#374151;cursor:pointer">계속 분석</button>
+            <button onclick="confirmLeave()" style="flex:1;padding:10px 0;border:none;border-radius:8px;background:#DC2626;color:#fff;font-size:13px;font-weight:700;cursor:pointer">페이지 이탈</button>
+        </div>
+    </div>
+</div>
 </body>
 </html>

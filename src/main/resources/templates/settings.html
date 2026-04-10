@@ -396,8 +396,19 @@
             <!-- API URL -->
             <div class="s-row">
                 <span class="s-key">API URL</span>
-                <input type="text" id="llmApiUrlInput" placeholder="API endpoint URL"
-                       style="flex:1;max-width:320px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace">
+                <div style="display:flex;flex-direction:column;gap:4px;flex:1;max-width:420px">
+                    <input type="text" id="llmApiUrlInput" placeholder="API endpoint URL"
+                           style="width:100%;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace;box-sizing:border-box">
+                    <!-- Genspark 안내 메시지 -->
+                    <div id="gensparkHint" style="display:none;padding:7px 10px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:6px;font-size:11px;color:#1E40AF;line-height:1.5">
+                        💡 <strong>Genspark API 안내</strong><br>
+                        • Base URL: <code style="background:#DBEAFE;padding:1px 4px;border-radius:3px">https://www.genspark.ai/api/llm_proxy/v1</code><br>
+                        • 엔드포인트: <code style="background:#DBEAFE;padding:1px 4px;border-radius:3px">/chat/completions</code> 가 자동으로 포함됩니다.<br>
+                        • API Key는 <strong>Genspark API Key</strong>를 사용하세요 (gsk-... 형식).<br>
+                        • 허용 모델: GPT-5 계열, Claude 4 계열, Kimi, MiniMax<br>
+                        • ⚠️ GPT-5 계열(reasoning 모델)은 AI 인사이트 분석 시 <strong>Max Output Tokens을 8,000 이상</strong>으로 설정하세요.
+                    </div>
+                </div>
             </div>
             <!-- Model -->
             <div class="s-row">
@@ -1050,13 +1061,37 @@ var _providerModels = {
         {value:'gpt-4o', label:'GPT-4o (추천)'},
         {value:'gpt-4o-mini', label:'GPT-4o Mini (빠름)'},
         {value:'gpt-4-turbo', label:'GPT-4 Turbo'}
+    ],
+    'genspark': [
+        {value:'claude-sonnet-4-5',     label:'Claude Sonnet 4.5 (추천 - 빠른 응답)'},
+        {value:'gpt-5',            label:'GPT-5 (reasoning, 느림)'},
+        {value:'gpt-5-mini',       label:'GPT-5 Mini (빠름)'},
+        {value:'gpt-5-nano',       label:'GPT-5 Nano (저비용)'},
+        {value:'gpt-5.1',          label:'GPT-5.1'},
+        {value:'gpt-5.2',          label:'GPT-5.2'},
+        {value:'gpt-5.4',          label:'GPT-5.4'},
+        {value:'gpt-5.4-mini',     label:'GPT-5.4 Mini'},
+        {value:'gpt-5.4-nano',     label:'GPT-5.4 Nano'},
+        {value:'gpt-5-codex',      label:'GPT-5 Codex'},
+        {value:'gpt-5.2-codex',    label:'GPT-5.2 Codex'},
+        {value:'gpt-5.3-codex',    label:'GPT-5.3 Codex'},
+        {value:'claude-sonnet-4-5',     label:'Claude Sonnet 4.5 (추천)'},
+        {value:'claude-sonnet-4-6',     label:'Claude Sonnet 4.6'},
+        {value:'claude-sonnet-4-6-1m',  label:'Claude Sonnet 4.6 (1M ctx)'},
+        {value:'claude-haiku-4-5',      label:'Claude Haiku 4.5 (빠름)'},
+        {value:'claude-opus-4-5',       label:'Claude Opus 4.5 (고성능)'},
+        {value:'claude-opus-4-6',       label:'Claude Opus 4.6'},
+        {value:'claude-opus-4-6-1m',    label:'Claude Opus 4.6 (1M ctx)'},
+        {value:'kimi-k2p5',        label:'Kimi K2P5'},
+        {value:'minimax-m2p5',     label:'MiniMax M2P5'},
+        {value:'minimax-m2p7',     label:'MiniMax M2P7'}
     ]
 };
 var _defaultUrls = {
-    'claude': 'https://api.anthropic.com/v1/messages',
-    'gpt': 'https://api.openai.com/v1/chat/completions',
-    'genspark': '',
-    'custom': ''
+    'claude':   'https://api.anthropic.com/v1/messages',
+    'gpt':      'https://api.openai.com/v1/chat/completions',
+    'genspark': 'https://www.genspark.ai/api/llm_proxy/v1/chat/completions',
+    'custom':   ''
 };
 
 function loadLlmSettings(llm) {
@@ -1064,14 +1099,19 @@ function loadLlmSettings(llm) {
     if (tog) tog.checked = llm.enabled;
     updateLlmBadge(llm.enabled);
 
+    var provider = llm.provider || 'claude';
     var provSel = document.getElementById('llmProviderSelect');
-    if (provSel) provSel.value = llm.provider || 'claude';
+    if (provSel) provSel.value = provider;
 
     // 모델 드롭다운 구성
-    populateModelSelect(llm.provider || 'claude', llm.model);
+    populateModelSelect(provider, llm.model);
 
     var urlInput = document.getElementById('llmApiUrlInput');
     if (urlInput) urlInput.value = llm.apiUrl || '';
+
+    // Genspark 안내 표시 여부
+    var hint = document.getElementById('gensparkHint');
+    if (hint) hint.style.display = (provider === 'genspark') ? '' : 'none';
 
     // API key
     var keyStatus = document.getElementById('llmKeyStatus');
@@ -1132,6 +1172,9 @@ function onProviderChange() {
     var provider = document.getElementById('llmProviderSelect').value;
     document.getElementById('llmApiUrlInput').value = _defaultUrls[provider] || '';
     populateModelSelect(provider, null);
+    // Genspark 안내 메시지 표시/숨김
+    var hint = document.getElementById('gensparkHint');
+    if (hint) hint.style.display = (provider === 'genspark') ? '' : 'none';
 }
 
 function toggleLlm(el) {
