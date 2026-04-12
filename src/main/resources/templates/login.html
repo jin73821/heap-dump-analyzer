@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login — Heap Dump Analyzer</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5;
+               display: flex; align-items: center; justify-content: center; }
+        .login-card { background: #fff; border-radius: 16px; padding: 40px 36px;
+                      width: 100%; max-width: 400px; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+        .login-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 28px;
+                      justify-content: center; }
+        .login-logo-icon { width: 40px; height: 40px; background: #2563EB; border-radius: 10px;
+                           display: flex; align-items: center; justify-content: center; }
+        .login-logo-icon svg { width: 20px; height: 20px; fill: #fff; }
+        .login-logo-text { font-size: 18px; font-weight: 700; }
+        .login-sub { text-align: center; font-size: 13px; color: #6B7280; margin-bottom: 24px; }
+        .form-group { margin-bottom: 16px; }
+        .form-label { display: block; font-size: 12px; font-weight: 600; color: #374151;
+                      margin-bottom: 6px; }
+        .form-input { width: 100%; padding: 10px 14px; border: 1px solid #E5E7EB;
+                      border-radius: 8px; font-size: 14px; outline: none; background: #F9FAFB; }
+        .form-input:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+                            background: #fff; }
+        .login-btn { width: 100%; padding: 11px; border: none; border-radius: 8px;
+                     background: #2563EB; color: #fff; font-size: 14px; font-weight: 600;
+                     cursor: pointer; margin-top: 8px; }
+        .login-btn:hover { background: #1D4ED8; }
+        .msg-error { background: #FEF2F2; border: 1px solid #FECACA; color: #DC2626;
+                     padding: 10px 14px; border-radius: 8px; font-size: 13px;
+                     margin-bottom: 16px; text-align: center; }
+        .msg-info { background: #EFF6FF; border: 1px solid #BFDBFE; color: #2563EB;
+                    padding: 10px 14px; border-radius: 8px; font-size: 13px;
+                    margin-bottom: 16px; text-align: center; }
+
+        /* ── Mobile ──────────────────────────────── */
+        @media (max-width: 480px) {
+            body { padding: 24px; align-items: flex-start; padding-top: 60px; }
+            .login-card { padding: 24px 18px; border-radius: 12px; max-width: 320px;
+                          box-shadow: 0 2px 12px rgba(0,0,0,.06); margin: 0 auto; }
+            .login-logo { gap: 8px; margin-bottom: 18px; }
+            .login-logo-icon { width: 30px; height: 30px; border-radius: 7px; }
+            .login-logo-icon svg { width: 15px; height: 15px; }
+            .login-logo-text { font-size: 15px; }
+            .login-sub { font-size: 11px; margin-bottom: 16px; }
+            .form-label { font-size: 11px; }
+            .form-input { padding: 9px 11px; font-size: 15px; }
+            .login-btn { padding: 11px; font-size: 14px; }
+            .msg-error, .msg-info { font-size: 11px; padding: 8px 10px; }
+        }
+
+        /* ── Desktop large ───────────────────────── */
+        @media (min-width: 1024px) {
+            .login-card { padding: 48px 44px; max-width: 420px; }
+            .login-logo-text { font-size: 20px; }
+            .login-sub { font-size: 14px; }
+            .form-input { padding: 12px 16px; font-size: 15px; }
+            .login-btn { padding: 13px; font-size: 15px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-card">
+    <div class="login-logo">
+        <div class="login-logo-icon">
+            <svg viewBox="0 0 14 14"><rect x="1" y="7" width="2" height="6" rx="1"/><rect x="5" y="4" width="2" height="9" rx="1"/><rect x="9" y="1" width="2" height="12" rx="1"/></svg>
+        </div>
+        <span class="login-logo-text">Heap Dump Analyzer</span>
+    </div>
+    <div class="login-sub">시스템에 접속하려면 로그인하세요</div>
+
+    <div th:if="${errorMessage}" class="msg-error" th:text="${errorMessage}"></div>
+    <div th:if="${logoutMessage}" class="msg-info" th:text="${logoutMessage}"></div>
+
+    <form th:action="@{/login}" method="post">
+        <div class="form-group">
+            <label class="form-label" for="username">사용자명</label>
+            <input class="form-input" type="text" id="username" name="username"
+                   placeholder="Username" autocomplete="username" autofocus required>
+        </div>
+        <div class="form-group">
+            <label class="form-label" for="password">비밀번호</label>
+            <input class="form-input" type="password" id="password" name="password"
+                   placeholder="Password" autocomplete="current-password" required>
+        </div>
+        <button class="login-btn" type="submit">로그인</button>
+    </form>
+</div>
+
+</body>
+</html>

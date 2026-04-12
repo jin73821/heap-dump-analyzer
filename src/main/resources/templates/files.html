@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <title>Analysis Files — Heap Dump Analyzer</title>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -37,25 +39,25 @@
                       border-radius: 8px; font-size: 13px; margin-bottom: 16px;
                       outline: none; background: #fff; }
         .search-bar:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
-        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px; }
-        .file-item { display: flex; align-items: center; gap: 10px;
-                     padding: 10px 0; border-bottom: 1px solid #F3F4F6; }
-        .file-item:last-child { border-bottom: none; }
-        .hdot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
+        .ftable { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .ftable thead { background: #F9FAFB; }
+        .ftable th { padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 600;
+                     color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
+                     border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
+        .ftable td { padding: 10px 12px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
+        .ftable tbody tr:last-child td { border-bottom: none; }
+        .ftable tbody tr:hover { background: #F9FAFB; }
+        .hdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
         .hd-ok   { background: #10B981; }
         .hd-warn { background: #F59E0B; }
         .hd-err  { background: #EF4444; }
-        .fname { font-size: 13px; font-weight: 500; flex: 1; min-width: 0;
-                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .td-status { width: 36px; text-align: center; }
+        .fname { font-weight: 500; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .fname-err { color: #DC2626; }
-        .fsize { font-size: 12px; color: #9CA3AF; flex-shrink: 0; min-width: 60px; }
-        .fdate { font-size: 12px; color: #9CA3AF; flex-shrink: 0; min-width: 90px; }
-        .fbadge { font-size: 11px; padding: 3px 10px; border-radius: 20px;
-                  flex-shrink: 0; font-weight: 500; text-decoration: none; cursor: pointer; }
-        .fb-ok   { background: #D1FAE5; color: #065F46; }
-        .fb-err  { background: #FEE2E2; color: #7F1D1D; }
-        .fb-analyze { background: #DBEAFE; color: #1E40AF; }
-        .file-actions { display: flex; gap: 3px; flex-shrink: 0; align-items: center; }
+        .fsize { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .fdate { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .file-actions { display: flex; gap: 3px; align-items: center; }
         .fb { width: 26px; height: 26px; border: 1px solid #E5E7EB; border-radius: 5px;
               display: flex; align-items: center; justify-content: center; cursor: pointer;
               background: transparent; text-decoration: none; }
@@ -81,13 +83,13 @@
         .ld-err  { background: #EF4444; }
         .gz-badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 4px;
                     background: #DBEAFE; color: #1E40AF; font-weight: 600; margin-left: 4px; vertical-align: middle; }
-        .fsize-detail { font-size: 11px; color: #9CA3AF; flex-shrink: 0; min-width: 60px; text-align: right; }
+        .fsize-detail { font-size: 11px; color: #9CA3AF; white-space: nowrap; }
         .fsize-detail .sz-orig { color: #6B7280; }
         .fsize-detail .sz-arrow { color: #D1D5DB; margin: 0 2px; }
         .fsize-detail .sz-comp { color: #2563EB; font-weight: 500; }
         .fi-deleted { opacity: 0.65; }
         .fi-del-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px;
-                        background: #F3F4F6; color: #6B7280; flex-shrink: 0; margin-left: 2px; }
+                        background: #F3F4F6; color: #6B7280; margin-left: 2px; }
 
         /* Delete confirm modal */
         .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
@@ -109,7 +111,7 @@
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
         @media (min-width: 1024px) {
-            .fname { font-size: 14px; }
+            .ftable { font-size: 14px; }
             .fsize, .fdate { font-size: 13px; }
         }
         @media (max-width: 900px) {
@@ -117,7 +119,7 @@
             .container { padding-left: 20px; }
         }
         @media (max-width: 640px) {
-            .fdate { display: none; }
+            .ftable .col-date { display: none; }
             .page-stats { gap: 10px; }
         }
     </style>
@@ -157,54 +159,73 @@
            placeholder="Search files..." oninput="filterFiles()">
 
     <div class="panel">
-        <div th:each="h : ${analysisHistory}" class="file-item" th:classappend="${h.fileDeleted} ? 'fi-deleted'"
-             th:data-name="${h.filename}">
-            <div class="hdot hd-ok"   th:if="${h.status == 'SUCCESS'}"></div>
-            <div class="hdot hd-err"  th:if="${h.status == 'ERROR'}"></div>
-            <div class="hdot hd-warn" th:if="${h.status == 'NOT_ANALYZED'}"></div>
-            <div class="hdot hd-warn" th:unless="${h.status == 'SUCCESS' or h.status == 'ERROR' or h.status == 'NOT_ANALYZED'}"></div>
-            <div class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</div>
-            <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
-            <div th:if="${h.compressed}" class="fsize-detail">
-                <span class="sz-orig" th:text="${h.formattedOriginalSize}">500 MB</span>
-                <span class="sz-arrow">→</span>
-                <span class="sz-comp" th:text="${h.formattedCompressedSize}">120 MB</span>
-                <span class="gz-badge">GZ</span>
-            </div>
-            <div th:unless="${h.compressed}" class="fsize" th:text="${h.formattedSize}">157 MB</div>
-            <div class="fdate" th:text="${h.formattedDate}">03-18 10:00</div>
-            <div class="file-actions">
-                <!-- 결과 보기 (SUCCESS — 파일 삭제 여부 무관) -->
-                <a th:if="${h.status == 'SUCCESS'}"
-                   th:href="@{/analyze/result/{f}(f=${h.filename})}"
-                   class="fb v" title="View Result">
-                    <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
-                </a>
-                <!-- 에러 보기 (ERROR + 파일 존재) -->
-                <a th:if="${h.status == 'ERROR' and !h.fileDeleted}"
-                   th:href="@{/analyze/result/{f}(f=${h.filename})}"
-                   class="fb e" title="View Error">
-                    <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
-                </a>
-                <!-- 분석 (미분석 + 파일 존재) -->
-                <a th:if="${h.status == 'NOT_ANALYZED' and !h.fileDeleted}"
-                   th:href="@{/analyze/{f}(f=${h.filename})}"
-                   class="fb p" title="Analyze">
-                    <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
-                </a>
-                <!-- 다운로드/삭제 (파일 존재 시에만) -->
-                <a th:if="${!h.fileDeleted}" href="#" class="fb" title="Download"
-                   th:data-filename="${h.filename}" th:data-size="${h.formattedSize}"
-                   onclick="showDownloadModal(this.dataset.filename,this.dataset.size);return false;">
-                    <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
-                </a>
-                <a th:if="${!h.fileDeleted}" href="#" class="fb d" title="Delete"
-                   th:data-filename="${h.filename}"
-                   onclick="confirmDelete(this.dataset.filename);return false;">
-                    <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
-                </a>
-            </div>
-        </div>
+        <table class="ftable">
+            <thead>
+                <tr>
+                    <th class="td-status">상태</th>
+                    <th>파일명</th>
+                    <th>크기</th>
+                    <th class="col-date">날짜</th>
+                    <th>작업</th>
+                </tr>
+            </thead>
+            <tbody id="fileTableBody">
+                <tr th:each="h : ${analysisHistory}" th:classappend="${h.fileDeleted} ? 'fi-deleted'"
+                    th:data-name="${h.filename}">
+                    <td class="td-status">
+                        <span class="hdot hd-ok"   th:if="${h.status == 'SUCCESS'}"></span>
+                        <span class="hdot hd-err"  th:if="${h.status == 'ERROR'}"></span>
+                        <span class="hdot hd-warn" th:if="${h.status == 'NOT_ANALYZED'}"></span>
+                        <span class="hdot hd-warn" th:unless="${h.status == 'SUCCESS' or h.status == 'ERROR' or h.status == 'NOT_ANALYZED'}"></span>
+                    </td>
+                    <td>
+                        <span class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</span>
+                        <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
+                    </td>
+                    <td>
+                        <span th:if="${h.compressed}" class="fsize-detail">
+                            <span class="sz-orig" th:text="${h.formattedOriginalSize}">500 MB</span>
+                            <span class="sz-arrow">→</span>
+                            <span class="sz-comp" th:text="${h.formattedCompressedSize}">120 MB</span>
+                            <span class="gz-badge">GZ</span>
+                        </span>
+                        <span th:unless="${h.compressed}" class="fsize" th:text="${h.formattedSize}">157 MB</span>
+                    </td>
+                    <td class="col-date">
+                        <span class="fdate" th:text="${h.formattedDate}">03-18 10:00</span>
+                    </td>
+                    <td>
+                        <div class="file-actions">
+                            <a th:if="${h.status == 'SUCCESS'}"
+                               th:href="@{/analyze/result/{f}(f=${h.filename})}"
+                               class="fb v" title="View Result">
+                                <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
+                            </a>
+                            <a th:if="${h.status == 'ERROR' and !h.fileDeleted}"
+                               th:href="@{/analyze/result/{f}(f=${h.filename})}"
+                               class="fb e" title="View Error">
+                                <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                            </a>
+                            <a th:if="${h.status == 'NOT_ANALYZED' and !h.fileDeleted}"
+                               th:href="@{/analyze/{f}(f=${h.filename})}"
+                               class="fb p" title="Analyze">
+                                <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                            </a>
+                            <a th:if="${!h.fileDeleted}" href="#" class="fb" title="Download"
+                               th:data-filename="${h.filename}" th:data-size="${h.formattedSize}"
+                               onclick="showDownloadModal(this.dataset.filename,this.dataset.size);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
+                            </a>
+                            <a th:if="${!h.fileDeleted}" href="#" class="fb d" title="Delete"
+                               th:data-filename="${h.filename}"
+                               onclick="confirmDelete(this.dataset.filename);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
         <div class="no-match" id="noMatch">No files matching your search.</div>
     </div>
 </div>
@@ -257,6 +278,8 @@ document.getElementById('btnConfirmDel').onclick = function() {
     if (_delTarget) {
         var f = document.createElement('form');
         f.method = 'POST'; f.action = '/delete/' + encodeURIComponent(_delTarget); f.style.display = 'none';
+        var ci = document.createElement('input'); ci.type = 'hidden'; ci.name = '_csrf';
+        ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(ci);
         document.body.appendChild(f); f.submit();
     }
 };
@@ -284,7 +307,7 @@ document.getElementById('btnConfirmDl').onclick = function() {
 
 function filterFiles() {
     var q = document.getElementById('searchInput').value.toLowerCase();
-    var items = document.querySelectorAll('.file-item');
+    var items = document.querySelectorAll('#fileTableBody tr');
     var visible = 0;
     items.forEach(function(el) {
         var name = el.getAttribute('data-name').toLowerCase();

@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <title>Analyzing... - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/style.css}">
     <style>
@@ -739,6 +741,8 @@
     function postRerun() {
         var f = document.createElement('form');
         f.method = 'POST'; f.action = RERUN_URL; f.style.display = 'none';
+        var ci = document.createElement('input'); ci.type = 'hidden'; ci.name = '_csrf';
+        ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(ci);
         document.body.appendChild(f); f.submit();
     }
 

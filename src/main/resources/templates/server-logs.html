@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <title>Transfer Logs — Heap Dump Analyzer</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5; }
+        .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
+                  transition: left .25s cubic-bezier(.4,0,.2,1);
+                  background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .topbar-title { font-size: 16px; font-weight: 700; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; }
+        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                      border-radius: 6px; background: transparent; color: #6B7280;
+                      cursor: pointer; text-decoration: none; }
+        .topbar-btn:hover { background: #F9FAFB; }
+        .container { max-width: 1280px; margin: 0 auto; padding: 68px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+        .page-hdr { display: flex; align-items: center; justify-content: space-between;
+                    margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+        .page-ttl { font-size: 18px; font-weight: 700; }
+
+        /* Accordion */
+        .acc { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+               margin-bottom: 12px; overflow: hidden; }
+        .acc-header { display: flex; align-items: center; justify-content: space-between;
+                      padding: 14px 18px; cursor: pointer; user-select: none;
+                      transition: background .15s; }
+        .acc-header:hover { background: #F9FAFB; }
+        .acc-left { display: flex; align-items: center; gap: 10px; }
+        .acc-arrow { width: 18px; height: 18px; stroke: #9CA3AF; fill: none; stroke-width: 2;
+                     transition: transform .2s; flex-shrink: 0; }
+        .acc.open .acc-arrow { transform: rotate(90deg); }
+        .acc-name { font-size: 15px; font-weight: 600; }
+        .acc-host { font-size: 13px; color: #6B7280; }
+        .acc-stats { display: flex; gap: 12px; font-size: 12px; }
+        .acc-stat { display: inline-flex; align-items: center; gap: 4px; }
+        .acc-stat-dot { width: 7px; height: 7px; border-radius: 50%; }
+        .dot-success { background: #059669; }
+        .dot-fail { background: #EF4444; }
+        .dot-progress { background: #F59E0B; }
+        .acc-body { display: none; border-top: 1px solid #E5E7EB; }
+        .acc.open .acc-body { display: block; }
+        .acc-empty { padding: 24px; text-align: center; color: #9CA3AF; font-size: 13px; }
+
+        /* Log table */
+        .ltable { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .ltable th { padding: 10px 16px; text-align: left; font-size: 12px; font-weight: 600;
+                     color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
+                     background: #F9FAFB; border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
+        .ltable td { padding: 10px 16px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
+        .ltable tbody tr:last-child td { border-bottom: none; }
+        .ltable tbody tr:hover { background: #FAFAFA; }
+        .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+        .badge-success { background: #D1FAE5; color: #065F46; }
+        .badge-failed { background: #FEE2E2; color: #991B1B; }
+        .badge-progress { background: #FEF3C7; color: #92400E; }
+        .td-mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px; }
+        .td-err { font-size: 11px; color: #DC2626; max-width: 300px; overflow: hidden;
+                  text-overflow: ellipsis; white-space: nowrap; }
+        .td-err:hover { white-space: normal; word-break: break-all; }
+        .td-path { font-size: 11px; color: #6B7280; max-width: 250px; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; }
+
+        .empty-all { text-align: center; padding: 48px; color: #9CA3AF; font-size: 14px; }
+
+        @media (max-width: 900px) {
+            .topbar { left: 0; }
+            .container { padding-left: 20px; }
+        }
+        @media (max-width: 640px) {
+            .ltable .col-hide-sm { display: none; }
+            .acc-stats { gap: 8px; }
+        }
+        @media (min-width: 1024px) {
+            .ltable { font-size: 15px; }
+            .ltable th { font-size: 13px; padding: 12px 18px; }
+            .ltable td { padding: 12px 18px; }
+            .acc-header { padding: 16px 20px; }
+            .acc-name { font-size: 16px; }
+            .acc-host { font-size: 14px; }
+            .acc-stats { font-size: 13px; }
+            .page-ttl { font-size: 20px; }
+            .badge { font-size: 12px; }
+            .td-mono { font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+
+<div th:replace="fragments/banner :: banner"></div>
+
+<div class="topbar">
+    <span class="topbar-title">Transfer Logs</span>
+    <div class="topbar-right">
+        <a href="/servers" class="topbar-btn">&larr; Servers</a>
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-hdr">
+        <div class="page-ttl">Transfer Logs</div>
+    </div>
+
+    <div th:if="${#lists.isEmpty(servers)}" class="empty-all">
+        등록된 서버가 없습니다.
+    </div>
+
+    <div th:each="s : ${servers}" class="acc" th:classappend="${sStat.first} ? 'open'">
+        <div class="acc-header" onclick="toggleAcc(this)">
+            <div class="acc-left">
+                <svg class="acc-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+                <span class="acc-name" th:text="${s.name}">Server1</span>
+                <span class="acc-host" th:text="${s.host + ':' + s.port}">192.168.1.1:22</span>
+            </div>
+            <div class="acc-stats" th:with="stats=${statsByServer.get(s.id)}">
+                <span class="acc-stat">
+                    Total: <strong th:text="${stats != null ? stats[0] : 0}">0</strong>
+                </span>
+                <span class="acc-stat">
+                    <span class="acc-stat-dot dot-success"></span>
+                    <span th:text="${stats != null ? stats[1] : 0}">0</span>
+                </span>
+                <span class="acc-stat">
+                    <span class="acc-stat-dot dot-fail"></span>
+                    <span th:text="${stats != null ? stats[2] : 0}">0</span>
+                </span>
+            </div>
+        </div>
+        <div class="acc-body" th:with="logs=${logsByServer.get(s.id)}">
+            <div th:if="${logs == null or logs.isEmpty()}" class="acc-empty">전송 이력이 없습니다.</div>
+            <table th:unless="${logs == null or logs.isEmpty()}" class="ltable">
+                <thead>
+                    <tr>
+                        <th>상태</th>
+                        <th>파일명</th>
+                        <th class="col-hide-sm">원격 경로</th>
+                        <th>크기</th>
+                        <th>시작</th>
+                        <th class="col-hide-sm">완료</th>
+                        <th>에러</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="log : ${logs}">
+                        <td>
+                            <span th:if="${log.transferStatus == 'SUCCESS'}" class="badge badge-success">SUCCESS</span>
+                            <span th:if="${log.transferStatus == 'FAILED'}" class="badge badge-failed">FAILED</span>
+                            <span th:if="${log.transferStatus == 'IN_PROGRESS'}" class="badge badge-progress">RUNNING</span>
+                        </td>
+                        <td style="font-weight:500" th:text="${log.filename}">dump.hprof</td>
+                        <td class="td-path col-hide-sm" th:text="${log.remotePath}" th:title="${log.remotePath}">-</td>
+                        <td class="td-mono" th:text="${log.fileSize != null ? log.fileSize > 1048576 ? #numbers.formatDecimal(log.fileSize / 1048576.0, 1, 1) + ' MB' : #numbers.formatDecimal(log.fileSize / 1024.0, 1, 1) + ' KB' : '-'}">-</td>
+                        <td class="td-mono" th:text="${log.startedAt != null ? #temporals.format(log.startedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
+                        <td class="td-mono col-hide-sm" th:text="${log.completedAt != null ? #temporals.format(log.completedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
+                        <td>
+                            <span th:if="${log.errorMessage != null}" class="td-err" th:text="${log.errorMessage}" th:title="${log.errorMessage}"></span>
+                            <span th:unless="${log.errorMessage != null}" style="color:#9CA3AF">-</span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleAcc(header) {
+    header.parentElement.classList.toggle('open');
+}
+</script>
+
+</body>
+</html>

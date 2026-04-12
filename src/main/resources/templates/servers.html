@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Target Servers — Heap Dump Analyzer</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5; }
+        .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
+                  transition: left .25s cubic-bezier(.4,0,.2,1);
+                  background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .topbar-title { font-size: 16px; font-weight: 700; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; }
+        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                      border-radius: 6px; background: transparent; color: #6B7280;
+                      cursor: pointer; text-decoration: none; }
+        .topbar-btn:hover { background: #F9FAFB; }
+        .container { max-width: 1280px; margin: 0 auto; padding: 68px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+        .page-hdr { display: flex; align-items: center; justify-content: space-between;
+                    margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+        .page-ttl { font-size: 18px; font-weight: 700; }
+        .btn-primary { padding: 8px 16px; border: none; border-radius: 8px; background: #2563EB;
+                       color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .btn-primary:hover { background: #1D4ED8; }
+
+        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
+        .stable { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .stable thead { background: #F9FAFB; }
+        .stable th { padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600;
+                     color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
+                     border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
+        .stable td { padding: 12px 16px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
+        .stable tbody tr:last-child td { border-bottom: none; }
+        .stable tbody tr:hover { background: #F9FAFB; }
+        .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+        .badge-on { background: #D1FAE5; color: #065F46; }
+        .badge-fail { background: #FEE2E2; color: #991B1B; }
+        .badge-off { background: #F3F4F6; color: #6B7280; }
+        .badge-auto { background: #DBEAFE; color: #1E40AF; }
+        .empty-msg { text-align: center; padding: 32px; color: #9CA3AF; font-size: 14px; }
+
+        .action-btn { padding: 5px 12px; border: 1px solid #E5E7EB; border-radius: 5px;
+                      background: transparent; font-size: 12px; cursor: pointer; color: #6B7280; }
+        .action-btn:hover { border-color: #93C5FD; background: #EFF6FF; color: #2563EB; }
+        .action-btn.scan { background: #059669; color: #fff; border-color: #059669; }
+        .action-btn.scan:hover { background: #047857; }
+        .action-btn.danger:hover { border-color: #FCA5A5; background: #FEF2F2; color: #EF4444; }
+
+        /* Scan result panel */
+        .scan-panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                      padding: 16px; margin-top: 16px; display: none; }
+        .scan-panel.open { display: block; }
+        .scan-title { font-size: 14px; font-weight: 700; margin-bottom: 12px;
+                      display: flex; align-items: center; justify-content: space-between; }
+        .scan-file { display: flex; align-items: center; gap: 10px; padding: 8px 0;
+                     border-bottom: 1px solid #F3F4F6; font-size: 13px; }
+        .scan-file:last-child { border-bottom: none; }
+        .scan-transferred { color: #9CA3AF; }
+        .btn-transfer { padding: 4px 10px; border: 1px solid #2563EB; border-radius: 5px;
+                        background: #2563EB; color: #fff; font-size: 11px; cursor: pointer; }
+        .btn-transfer:hover { background: #1D4ED8; }
+        .btn-transfer:disabled { background: #9CA3AF; border-color: #9CA3AF; cursor: default; }
+        .transfer-progress { display: inline-flex; align-items: center; gap: 6px; min-width: 120px; }
+        .transfer-bar { width: 80px; height: 6px; background: #E5E7EB; border-radius: 3px; overflow: hidden; }
+        .transfer-bar-fill { height: 100%; border-radius: 3px; background: #2563EB;
+                             animation: transferPulse 1.5s ease-in-out infinite; width: 100%; }
+        .transfer-bar-fill.done { background: #059669; animation: none; }
+        .transfer-bar-fill.fail { background: #EF4444; animation: none; }
+        .transfer-label { font-size: 10px; color: #6B7280; white-space: nowrap; }
+        @keyframes transferPulse {
+            0% { opacity: .4; transform: scaleX(.3); transform-origin: left; }
+            50% { opacity: 1; transform: scaleX(1); transform-origin: left; }
+            100% { opacity: .4; transform: scaleX(.3); transform-origin: right; }
+        }
+
+        /* Modal */
+        .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
+                    background: rgba(0,0,0,.4); align-items: center; justify-content: center; }
+        .modal-ov.open { display: flex; }
+        .modal-box { background: #fff; border-radius: 12px; padding: 24px; width: 90%; max-width: 500px;
+                     box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease; }
+        @keyframes modalIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        .modal-ttl { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+        .modal-group { margin-bottom: 14px; }
+        .modal-label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+        .modal-input { width: 100%; padding: 8px 12px; border: 1px solid #E5E7EB; border-radius: 7px;
+                       font-size: 13px; outline: none; }
+        .modal-input:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .modal-row { display: flex; gap: 12px; }
+        .modal-row .modal-group { flex: 1; }
+        .modal-check { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
+        .modal-check input { width: 16px; height: 16px; accent-color: #2563EB; }
+        .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+        .modal-btns button { padding: 8px 18px; border-radius: 7px; font-size: 13px; border: none;
+                             cursor: pointer; font-weight: 500; }
+        .mbtn-cancel { background: #F3F4F6; color: #374151; }
+        .mbtn-cancel:hover { background: #E5E7EB; }
+        .mbtn-save { background: #2563EB; color: #fff; }
+        .mbtn-save:hover { background: #1D4ED8; }
+        .mbtn-del { background: #EF4444; color: #fff; }
+        .mbtn-del:hover { background: #DC2626; }
+
+        /* Toast */
+        .toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+                 padding: 10px 24px; border-radius: 8px; font-size: 13px; font-weight: 500;
+                 z-index: 300; opacity: 0; transition: opacity .3s; pointer-events: none; }
+        .toast.show { opacity: 1; }
+        .toast.success { background: #D1FAE5; color: #065F46; border: 1px solid #A7F3D0; }
+        .toast.error { background: #FEE2E2; color: #991B1B; border: 1px solid #FECACA; }
+
+        @media (max-width: 900px) {
+            .topbar { left: 0; }
+            .container { padding-left: 20px; }
+        }
+        @media (min-width: 1024px) {
+            .stable { font-size: 15px; }
+            .stable th { font-size: 13px; padding: 14px 18px; }
+            .stable td { padding: 14px 18px; }
+            .page-ttl { font-size: 20px; }
+            .btn-primary { font-size: 14px; padding: 9px 18px; }
+            .action-btn { font-size: 13px; padding: 6px 14px; }
+            .badge { font-size: 12px; }
+            .scan-file { font-size: 14px; padding: 10px 0; }
+        }
+    </style>
+</head>
+<body>
+
+<div th:replace="fragments/banner :: banner"></div>
+
+<div class="topbar">
+    <span class="topbar-title">Servers</span>
+    <div class="topbar-right">
+        <a href="/servers/logs" class="topbar-btn">Transfer Logs</a>
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-hdr">
+        <div class="page-ttl">Target Servers</div>
+        <button class="btn-primary" onclick="openCreateModal()">+ 서버 추가</button>
+    </div>
+
+    <div class="panel">
+        <div th:if="${#lists.isEmpty(servers)}" class="empty-msg">
+            등록된 서버가 없습니다. 서버를 추가하세요.
+        </div>
+        <table th:unless="${#lists.isEmpty(servers)}" class="stable">
+            <thead>
+                <tr>
+                    <th>이름</th>
+                    <th>호스트</th>
+                    <th>SSH 계정</th>
+                    <th>덤프 경로</th>
+                    <th>상태</th>
+                    <th>자동탐지</th>
+                    <th>작업</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="s : ${servers}" th:data-id="${s.id}">
+                    <td style="font-weight:600" th:text="${s.name}">server1</td>
+                    <td th:text="${s.host + ':' + s.port}">192.168.1.1:22</td>
+                    <td th:text="${s.sshUser}">sscuser</td>
+                    <td style="font-size:12px;color:#6B7280;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                        th:text="${s.dumpPath}">/opt/dumps</td>
+                    <td>
+                        <span th:unless="${s.enabled}" class="badge badge-off">비활성</span>
+                        <span th:if="${s.enabled and s.connStatus == 'OK'}" class="badge badge-on">정상</span>
+                        <span th:if="${s.enabled and s.connStatus == 'FAIL'}" class="badge badge-fail"
+                              th:title="${s.lastError}">실패</span>
+                        <span th:if="${s.enabled and (s.connStatus == null or s.connStatus == 'UNKNOWN')}" class="badge badge-off">미확인</span>
+                    </td>
+                    <td>
+                        <span class="badge badge-auto" th:if="${s.autoDetect}">ON</span>
+                        <span class="badge badge-off" th:unless="${s.autoDetect}">OFF</span>
+                    </td>
+                    <td style="white-space:nowrap">
+                        <button class="action-btn scan"
+                                th:data-id="${s.id}" th:data-name="${s.name}"
+                                onclick="scanServer(this.dataset.id, this.dataset.name)">스캔</button>
+                        <button class="action-btn"
+                                th:data-id="${s.id}" th:data-name="${s.name}"
+                                onclick="testConn(this.dataset.id)">테스트</button>
+                        <button class="action-btn"
+                                th:data-id="${s.id}" th:data-name="${s.name}"
+                                th:data-host="${s.host}" th:data-port="${s.port}"
+                                th:data-sshuser="${s.sshUser}" th:data-dumppath="${s.dumpPath}"
+                                th:data-autodetect="${s.autoDetect}" th:data-enabled="${s.enabled}"
+                                onclick="openEditModal(this.dataset)">수정</button>
+                        <button class="action-btn danger"
+                                th:data-id="${s.id}" th:data-name="${s.name}"
+                                onclick="openDeleteModal(this.dataset.id, this.dataset.name)">삭제</button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Auto-scan errors -->
+    <div id="scanErrorsPanel" style="display:none;margin-bottom:16px"></div>
+
+    <!-- Scan results -->
+    <div class="scan-panel" id="scanPanel">
+        <div class="scan-title">
+            <span><span id="scanServerName"></span> — Remote Dump Files</span>
+            <div style="display:flex;gap:6px;align-items:center">
+                <button class="btn-transfer" id="btnTransferAll" style="display:none;font-size:11px;padding:4px 12px" onclick="transferAll()">All Transfer</button>
+                <button class="action-btn" onclick="closeScanPanel()" style="font-size:12px">&times; 닫기</button>
+            </div>
+        </div>
+        <div id="scanResults"></div>
+    </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- Create/Edit Modal -->
+<div class="modal-ov" id="serverModal" >
+    <div class="modal-box">
+        <div class="modal-ttl" id="serverModalTitle">서버 추가</div>
+        <input type="hidden" id="smId">
+        <div class="modal-group">
+            <label class="modal-label">서버 이름</label>
+            <input class="modal-input" id="smName" placeholder="예: WAS-01">
+        </div>
+        <div class="modal-row">
+            <div class="modal-group">
+                <label class="modal-label">호스트 (IP)</label>
+                <input class="modal-input" id="smHost" placeholder="192.168.1.100">
+            </div>
+            <div class="modal-group" style="max-width:100px">
+                <label class="modal-label">포트</label>
+                <input class="modal-input" id="smPort" type="number" value="22">
+            </div>
+        </div>
+        <div class="modal-row">
+            <div class="modal-group">
+                <label class="modal-label">SSH 계정</label>
+                <input class="modal-input" id="smSshUser" value="sscuser">
+            </div>
+        </div>
+        <div class="modal-group">
+            <label class="modal-label">덤프 파일 경로</label>
+            <input class="modal-input" id="smDumpPath" placeholder="/opt/app/logs">
+        </div>
+        <div class="modal-group">
+            <label class="modal-check">
+                <input type="checkbox" id="smAutoDetect">
+                자동 탐지 활성화 (주기적으로 새 덤프 파일 탐지 및 전송)
+            </label>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('serverModal')">취소</button>
+            <button class="mbtn-save" id="smSaveBtn" onclick="submitServer()">저장</button>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Modal -->
+<div class="modal-ov" id="deleteModal" >
+    <div class="modal-box">
+        <div class="modal-ttl">서버 삭제</div>
+        <input type="hidden" id="dmId">
+        <p style="font-size:13px;color:#6B7280;margin-bottom:16px">
+            <strong id="dmName"></strong> 서버를 삭제하시겠습니까?<br>전송 이력도 함께 삭제됩니다.
+        </p>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('deleteModal')">취소</button>
+            <button class="mbtn-del" onclick="submitDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function showToast(msg, type) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + type + ' show';
+    setTimeout(function() { t.classList.remove('show'); }, 3000);
+}
+
+var _isEdit = false;
+
+function openCreateModal() {
+    _isEdit = false;
+    document.getElementById('serverModalTitle').textContent = '서버 추가';
+    document.getElementById('smId').value = '';
+    document.getElementById('smName').value = '';
+    document.getElementById('smHost').value = '';
+    document.getElementById('smPort').value = '22';
+    document.getElementById('smSshUser').value = 'sscuser';
+    document.getElementById('smDumpPath').value = '';
+    document.getElementById('smAutoDetect').checked = false;
+    document.getElementById('serverModal').classList.add('open');
+}
+
+function openEditModal(ds) {
+    _isEdit = true;
+    document.getElementById('serverModalTitle').textContent = '서버 수정';
+    document.getElementById('smId').value = ds.id;
+    document.getElementById('smName').value = ds.name;
+    document.getElementById('smHost').value = ds.host;
+    document.getElementById('smPort').value = ds.port;
+    document.getElementById('smSshUser').value = ds.sshuser;
+    document.getElementById('smDumpPath').value = ds.dumppath;
+    document.getElementById('smAutoDetect').checked = ds.autodetect === 'true';
+    document.getElementById('serverModal').classList.add('open');
+}
+
+function submitServer() {
+    var data = {
+        name: document.getElementById('smName').value.trim(),
+        host: document.getElementById('smHost').value.trim(),
+        port: parseInt(document.getElementById('smPort').value) || 22,
+        sshUser: document.getElementById('smSshUser').value.trim() || 'sscuser',
+        dumpPath: document.getElementById('smDumpPath').value.trim(),
+        autoDetect: document.getElementById('smAutoDetect').checked
+    };
+    if (!data.name || !data.host || !data.dumpPath) {
+        showToast('이름, 호스트, 덤프 경로를 입력하세요.', 'error'); return;
+    }
+    var id = document.getElementById('smId').value;
+    var url = _isEdit ? '/api/servers/' + id : '/api/servers';
+    var method = _isEdit ? 'PUT' : 'POST';
+    fetch(url, { method: method, headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            showToast(_isEdit ? '서버가 수정되었습니다.' : '서버가 추가되었습니다.', 'success');
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            showToast(d.message || '저장 실패', 'error');
+        }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+    closeModal('serverModal');
+}
+
+function openDeleteModal(id, name) {
+    document.getElementById('dmId').value = id;
+    document.getElementById('dmName').textContent = name;
+    document.getElementById('deleteModal').classList.add('open');
+}
+
+function submitDelete() {
+    var id = document.getElementById('dmId').value;
+    fetch('/api/servers/' + id, { method: 'DELETE' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            showToast('서버가 삭제되었습니다.', 'success');
+            setTimeout(function() { location.reload(); }, 500);
+        } else { showToast(d.message || '삭제 실패', 'error'); }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+    closeModal('deleteModal');
+}
+
+function testConn(id) {
+    showToast('연결 테스트 중...', 'success');
+    fetch('/api/servers/' + id + '/test', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            showToast('연결 성공: ' + (d.hostname || ''), 'success');
+            updateStatusBadge(id, 'OK');
+        } else {
+            showToast(d.message || '연결 실패', 'error');
+            updateStatusBadge(id, 'FAIL', d.message);
+        }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+}
+
+var _scanServerId = null;
+function scanServer(id, name) {
+    _scanServerId = id;
+    document.getElementById('scanServerName').textContent = name;
+    document.getElementById('scanResults').innerHTML = '<div style="padding:12px;color:#6B7280;text-align:center">스캔 중...</div>';
+    document.getElementById('scanPanel').classList.add('open');
+
+    fetch('/api/servers/' + id + '/scan', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        var html = '';
+        // SSH/SCP 에러 배너
+        if (d.error) {
+            html += '<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#991B1B;line-height:1.5">'
+                  + '<strong style="display:block;margin-bottom:4px">SSH/SCP Error</strong>'
+                  + escHtml(d.error) + '</div>';
+            updateStatusBadge(id, 'FAIL', d.error);
+        } else {
+            updateStatusBadge(id, 'OK');
+        }
+        if (d.files && d.files.length > 0) {
+            html += renderScanResultsHtml(d.files);
+        } else if (!d.error) {
+            html += '<div style="padding:12px;color:#9CA3AF;text-align:center">덤프 파일이 없습니다.</div>';
+        }
+        document.getElementById('scanResults').innerHTML = html;
+        // 미전송 파일 2개 이상이면 "모두 전송" 버튼 표시
+        var untransferred = (d.files || []).filter(function(f) { return !f.transferred; });
+        var btnAll = document.getElementById('btnTransferAll');
+        if (btnAll) btnAll.style.display = untransferred.length >= 2 ? '' : 'none';
+        if (!d.success && !d.error) {
+            document.getElementById('scanResults').innerHTML =
+                '<div style="padding:12px;color:#EF4444;text-align:center">' + escHtml(d.message || '스캔 실패') + '</div>';
+        }
+    }).catch(function() {
+        document.getElementById('scanResults').innerHTML =
+            '<div style="padding:12px;color:#EF4444;text-align:center">요청 실패</div>';
+    });
+}
+
+function renderScanResultsHtml(files) {
+    var html = '';
+    for (var i = 0; i < files.length; i++) {
+        var f = files[i];
+        html += '<div class="scan-file">';
+        html += '<span style="flex:1;font-weight:500">' + escHtml(f.filename) + '</span>';
+        html += '<span style="color:#6B7280;font-size:12px">' + escHtml(f.formattedSize) + '</span>';
+        if (f.transferred && f.analyzed) {
+            html += '<span style="font-size:11px;color:#059669;font-weight:600">전송됨(분석완료)</span>';
+        } else if (f.transferred) {
+            html += '<span class="scan-transferred" style="font-size:11px">전송됨</span>';
+        } else {
+            html += '<button class="btn-transfer" data-path="' + escAttr(f.path) + '" onclick="transferFile(this)">전송</button>';
+        }
+        html += '</div>';
+    }
+    return html;
+}
+
+function transferFile(btn, callback) {
+    var path = btn.getAttribute('data-path');
+    var parent = btn.parentNode;
+
+    // 버튼을 진행바로 교체
+    btn.style.display = 'none';
+    var prevErr = parent.querySelector('.transfer-err');
+    if (prevErr) prevErr.remove();
+    var prog = document.createElement('div');
+    prog.className = 'transfer-progress';
+    prog.innerHTML = '<div class="transfer-bar"><div class="transfer-bar-fill"></div></div>'
+                   + '<span class="transfer-label">전송 중...</span>';
+    parent.appendChild(prog);
+
+    fetch('/api/servers/' + _scanServerId + '/transfer', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ remotePath: path })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        var fill = prog.querySelector('.transfer-bar-fill');
+        var label = prog.querySelector('.transfer-label');
+        if (d.success) {
+            fill.className = 'transfer-bar-fill done';
+            label.textContent = '완료';
+            label.style.color = '#059669';
+            showToast(d.filename + ' 전송 완료', 'success');
+        } else {
+            fill.className = 'transfer-bar-fill fail';
+            label.textContent = '실패';
+            label.style.color = '#EF4444';
+            // 에러 메시지 표시
+            var errEl = document.createElement('div');
+            errEl.className = 'transfer-err';
+            errEl.style.cssText = 'font-size:11px;color:#DC2626;margin-top:4px;max-width:300px;word-break:break-all';
+            errEl.textContent = d.message || '전송 실패';
+            parent.appendChild(errEl);
+            // 실패 시 재시도 가능하도록 버튼 복원
+            btn.style.display = '';
+            btn.disabled = false;
+            btn.textContent = '재시도';
+            showToast('SCP Transfer Failed: ' + (d.message || ''), 'error');
+        }
+        if (callback) callback();
+    }).catch(function() {
+        prog.querySelector('.transfer-bar-fill').className = 'transfer-bar-fill fail';
+        prog.querySelector('.transfer-label').textContent = '오류';
+        btn.style.display = '';
+        btn.disabled = false;
+        btn.textContent = '재시도';
+        showToast('전송 요청 실패', 'error');
+        if (callback) callback();
+    });
+}
+
+function transferAll() {
+    var btns = document.querySelectorAll('#scanResults .btn-transfer:not(:disabled)');
+    if (btns.length === 0) { showToast('전송할 파일이 없습니다.', 'error'); return; }
+    var allBtn = document.getElementById('btnTransferAll');
+    if (allBtn) { allBtn.disabled = true; allBtn.textContent = '전송 중...'; }
+    // 순차 전송
+    var queue = Array.prototype.slice.call(btns);
+    function next() {
+        if (queue.length === 0) {
+            if (allBtn) { allBtn.textContent = '완료'; allBtn.style.background = '#059669'; allBtn.style.borderColor = '#059669'; }
+            return;
+        }
+        var btn = queue.shift();
+        transferFile(btn, next);
+    }
+    next();
+}
+
+function closeScanPanel() {
+    document.getElementById('scanPanel').classList.remove('open');
+}
+
+function updateStatusBadge(serverId, status, errMsg) {
+    var row = document.querySelector('tr[data-id="' + serverId + '"]');
+    if (!row) return;
+    // 상태 컬럼은 5번째 td (0-indexed: 4)
+    var cells = row.querySelectorAll('td');
+    if (cells.length < 5) return;
+    var td = cells[4];
+    if (status === 'OK') {
+        td.innerHTML = '<span class="badge badge-on">정상</span>';
+    } else if (status === 'FAIL') {
+        var span = document.createElement('span');
+        span.className = 'badge badge-fail';
+        span.textContent = '실패';
+        if (errMsg) span.title = errMsg;
+        td.innerHTML = '';
+        td.appendChild(span);
+    }
+}
+
+function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escAttr(s) { return s.replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
+
+// ── Auto-scan errors ──────────────────────────────────
+function loadScanErrors() {
+    fetch('/api/servers/scan-errors').then(function(r) { return r.json(); }).then(function(d) {
+        var panel = document.getElementById('scanErrorsPanel');
+        var errors = d.errors || {};
+        var keys = Object.keys(errors);
+        if (keys.length === 0) { panel.style.display = 'none'; return; }
+        var html = '';
+        for (var i = 0; i < keys.length; i++) {
+            var sid = keys[i];
+            var msg = errors[sid];
+            // 서버 이름 찾기 — 테이블에서 data-id로 조회
+            var row = document.querySelector('tr[data-id="' + sid + '"]');
+            var sname = row ? row.querySelector('td').textContent : 'Server #' + sid;
+            html += '<div style="background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:10px 14px;margin-bottom:8px;font-size:12px;color:#991B1B;line-height:1.5">'
+                  + '<strong>' + escHtml(sname) + '</strong> — ' + escHtml(msg) + '</div>';
+        }
+        panel.innerHTML = html;
+        panel.style.display = 'block';
+    }).catch(function() {});
+}
+
+// 30초마다 에러 상태 갱신
+loadScanErrors();
+setInterval(loadScanErrors, 30000);
+</script>
+
+</body>
+</html>

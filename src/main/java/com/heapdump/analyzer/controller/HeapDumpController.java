@@ -1,6 +1,8 @@
 package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.model.*;
+import com.heapdump.analyzer.model.entity.AnalysisHistoryEntity;
+import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
@@ -47,11 +49,17 @@ public class HeapDumpController {
 
     private final HeapDumpAnalyzerService analyzerService;
     private final com.heapdump.analyzer.config.HeapDumpConfig config;
+    private final org.springframework.boot.autoconfigure.jdbc.DataSourceProperties dataSourceProperties;
+    private final javax.sql.DataSource dataSource;
 
     public HeapDumpController(HeapDumpAnalyzerService analyzerService,
-                              com.heapdump.analyzer.config.HeapDumpConfig config) {
+                              com.heapdump.analyzer.config.HeapDumpConfig config,
+                              org.springframework.boot.autoconfigure.jdbc.DataSourceProperties dataSourceProperties,
+                              javax.sql.DataSource dataSource) {
         this.analyzerService = analyzerService;
         this.config = config;
+        this.dataSourceProperties = dataSourceProperties;
+        this.dataSource = dataSource;
     }
 
     // ── 파일명 검증 실패 핸들러 ─────────────────────────────────────
@@ -70,7 +78,8 @@ public class HeapDumpController {
     @GetMapping("/")
     public String index(Model model) {
         List<HeapDumpFile> files = analyzerService.listFiles();
-        model.addAttribute("files", files);
+        model.addAttribute("files", files.size() > 5 ? files.subList(0, 5) : files);
+        model.addAttribute("allFiles", files);
         model.addAttribute("fileCount", files.size());
 
         // 통계 계산 (디스크 실제 사용량 기준: 압축 파일은 compressedSize 사용)
@@ -110,12 +119,39 @@ public class HeapDumpController {
                 .collect(Collectors.toSet());
         model.addAttribute("errorFiles", errorFiles);
 
-        // 분석 수행 이력 (성공+에러, 최근 10개)
-        List<AnalysisHistoryItem> recentAnalyses = history.stream()
-                .filter(h -> "SUCCESS".equals(h.getStatus()) || "ERROR".equals(h.getStatus()))
-                .limit(10)
-                .collect(Collectors.toList());
-        model.addAttribute("recentAnalyses", recentAnalyses);
+        // 탐지 현황 (심각도별 집계)
+        int criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
+        List<DetectionSummaryItem> detectionItems = new ArrayList<>();
+        for (AnalysisHistoryItem h : history) {
+            if (!"SUCCESS".equals(h.getStatus()) || h.getSuspectCount() == 0) continue;
+            HeapAnalysisResult r = analyzerService.getCachedResult(h.getFilename());
+            if (r == null || r.getLeakSuspects() == null) continue;
+            int fc = 0, fh = 0, fm = 0, fl = 0;
+            for (LeakSuspect s : r.getLeakSuspects()) {
+                String sev = s.getSeverity() != null ? s.getSeverity().toLowerCase() : "medium";
+                switch (sev) {
+                    case "critical": fc++; criticalCount++; break;
+                    case "high":     fh++; highCount++; break;
+                    case "low":      fl++; lowCount++; break;
+                    default:         fm++; mediumCount++; break;
+                }
+            }
+            DetectionSummaryItem di = new DetectionSummaryItem();
+            di.setFilename(h.getFilename());
+            di.setSuspectCount(h.getSuspectCount());
+            di.setCriticalCount(fc);
+            di.setHighCount(fh);
+            di.setMediumCount(fm);
+            di.setLowCount(fl);
+            di.setFileDeleted(h.isFileDeleted());
+            detectionItems.add(di);
+        }
+        model.addAttribute("criticalCount", criticalCount);
+        model.addAttribute("highCount", highCount);
+        model.addAttribute("mediumCount", mediumCount);
+        model.addAttribute("lowCount", lowCount);
+        model.addAttribute("detectionItems", detectionItems);
+        model.addAttribute("hasDetections", criticalCount + highCount + mediumCount + lowCount > 0);
 
         // 디스크 사용량
         File dumpDir = new File(analyzerService.getHeapDumpDirectory());
@@ -189,6 +225,11 @@ public class HeapDumpController {
         model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
         model.addAttribute("compressAfterAnalysis", analyzerService.isCompressAfterAnalysis());
         return "settings";
+    }
+
+    @GetMapping("/settings/llm")
+    public String llmSettingsPage() {
+        return "llm-settings";
     }
 
     // ── 히스토리 삭제 ────────────────────────────────────────────
@@ -864,6 +905,101 @@ public class HeapDumpController {
         return ResponseEntity.ok(resp);
     }
 
+    // ── [NEW] API: DB 연결 테스트 ─────────────────────────────────
+    @PostMapping("/api/settings/database/test")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> testDbConnection(@RequestBody Map<String, String> body) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        String host = body.getOrDefault("host", "");
+        String port = body.getOrDefault("port", "3306");
+        String database = body.getOrDefault("database", "HEAPDB");
+        String username = body.getOrDefault("username", "");
+        String password = body.getOrDefault("password", "");
+
+        String url = "jdbc:mariadb://" + host + ":" + port + "/" + database
+                + "?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Seoul";
+        try {
+            Class.forName("org.mariadb.jdbc.Driver");
+            try (java.sql.Connection conn = java.sql.DriverManager.getConnection(url, username, password)) {
+                if (conn.isValid(5)) {
+                    java.sql.DatabaseMetaData meta = conn.getMetaData();
+                    resp.put("success", true);
+                    resp.put("version", meta.getDatabaseProductName() + " " + meta.getDatabaseProductVersion());
+                    resp.put("message", "연결 성공");
+                } else {
+                    resp.put("success", false);
+                    resp.put("message", "연결 실패: 유효하지 않은 연결");
+                }
+            }
+        } catch (Exception e) {
+            resp.put("success", false);
+            resp.put("message", "연결 실패: " + e.getMessage());
+        }
+        return ResponseEntity.ok(resp);
+    }
+
+    // ── [NEW] API: DB 설정 저장 ──────────────────────────────────
+    @PostMapping("/api/settings/database")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> saveDatabaseSettings(@RequestBody Map<String, String> body) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        String host = body.getOrDefault("host", "");
+        String port = body.getOrDefault("port", "3306");
+        String database = body.getOrDefault("database", "HEAPDB");
+        String username = body.getOrDefault("username", "");
+        String password = body.getOrDefault("password", "");
+
+        if (host.isEmpty() || username.isEmpty() || password.isEmpty()) {
+            resp.put("success", false);
+            resp.put("message", "호스트, 계정, 패스워드를 모두 입력하세요.");
+            return ResponseEntity.badRequest().body(resp);
+        }
+
+        String encryptedPw = com.heapdump.analyzer.util.AesEncryptor.encrypt(password);
+        String newUrl = "jdbc:mariadb://" + host + ":" + port + "/" + database
+                + "?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Seoul";
+
+        File propsFile = analyzerService.findExternalPropertiesFilePublic();
+        if (propsFile == null) {
+            resp.put("success", false);
+            resp.put("message", "application.properties 파일을 찾을 수 없습니다.");
+            return ResponseEntity.ok(resp);
+        }
+
+        try {
+            java.util.List<String> lines = java.nio.file.Files.readAllLines(
+                    propsFile.toPath(), java.nio.charset.StandardCharsets.UTF_8);
+            Map<String, String> updates = new LinkedHashMap<>();
+            updates.put("spring.datasource.url", newUrl);
+            updates.put("spring.datasource.username", username);
+            updates.put("spring.datasource.password", "ENC(" + encryptedPw + ")");
+
+            java.util.List<String> newLines = new java.util.ArrayList<>();
+            for (String line : lines) {
+                String trimmed = line.trim();
+                boolean replaced = false;
+                for (Map.Entry<String, String> entry : updates.entrySet()) {
+                    if (trimmed.startsWith(entry.getKey() + "=")) {
+                        newLines.add(entry.getKey() + "=" + entry.getValue());
+                        replaced = true;
+                        break;
+                    }
+                }
+                if (!replaced) newLines.add(line);
+            }
+            java.nio.file.Files.write(propsFile.toPath(), newLines, java.nio.charset.StandardCharsets.UTF_8);
+
+            resp.put("success", true);
+            resp.put("message", "DB 설정이 저장되었습니다. 변경사항을 적용하려면 앱을 재시작하세요.");
+            resp.put("requireRestart", true);
+            logger.info("[Settings] DB 설정 변경: host={}, port={}, db={}, user={}", host, port, database, username);
+        } catch (Exception e) {
+            resp.put("success", false);
+            resp.put("message", "설정 파일 저장 실패: " + e.getMessage());
+        }
+        return ResponseEntity.ok(resp);
+    }
+
     // ── [NEW] API: 분석 큐 상태 ──────────────────────────────
 
     // ── [NEW] API: 분석 전 힙 메모리 사전 체크 ─────────────────────
@@ -1091,15 +1227,108 @@ public class HeapDumpController {
     public ResponseEntity<Map<String, Object>> analyzeLlm(@RequestBody Map<String, Object> body) {
         String prompt = (String) body.get("prompt");
         String filename = (String) body.get("filename");
-        if (prompt == null || prompt.isEmpty()) {
+        Boolean save = body.get("save") instanceof Boolean ? (Boolean) body.get("save") : true;
+
+        // ── [Req6] 에러 검증: 빈 프롬프트 ──────────────────────────────
+        if (prompt == null || prompt.trim().isEmpty()) {
+            logger.warn("[AI-Insight] 분석 요청 거부 — 프롬프트 비어있음 (file={})", filename);
             Map<String, Object> err = new LinkedHashMap<>();
             err.put("success", false);
-            err.put("error", "분석 프롬프트가 비어있습니다");
+            err.put("errorCode", "EMPTY_PROMPT");
+            err.put("error", "분석 프롬프트가 비어있습니다. 페이지에서 힙 분석 결과 데이터를 찾을 수 없습니다. 덤프 분석이 완료된 후 AI 분석을 실행하세요.");
             return ResponseEntity.badRequest().body(err);
         }
-        logger.info("[LLM] AI analysis requested for: {}", filename);
+        // ── [Req6] 에러 검증: 프롬프트 내 유효 데이터 확인 ──────────────
+        if (!prompt.contains("==") || prompt.trim().length() < 50) {
+            logger.warn("[AI-Insight] 분석 요청 경고 — 프롬프트 데이터 부족 (file={}, len={})", filename, prompt.length());
+            // 경고만 기록, 계속 진행
+        }
+
+        // ── [Req5] 구조화 로그: 요청 수신 ────────────────────────────────
+        logger.info("[AI-Insight][REQ] 분석 요청 수신 — file='{}', promptLen={} chars, save={}, provider={}",
+            filename, prompt.length(), save, analyzerService.getLlmProvider());
+
+        long reqStart = System.currentTimeMillis();
         Map<String, Object> result = analyzerService.callLlmAnalysis(prompt);
+        long totalElapsed = System.currentTimeMillis() - reqStart;
+
+        // ── [Req5] 구조화 로그: 분석 결과 요약 ───────────────────────────
+        boolean success = Boolean.TRUE.equals(result.get("success"));
+        String errorCode = (String) result.get("errorCode");
+        Object dataObj = result.get("data");
+        String severity = null;
+        if (dataObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> dm = (Map<String, Object>) dataObj;
+            severity = (String) dm.get("severity");
+        }
+        if (success) {
+            logger.info("[AI-Insight][RESULT] 분석 성공 — file='{}', severity={}, totalElapsed={}ms, model={}",
+                filename, severity, totalElapsed, result.get("model"));
+        } else {
+            logger.warn("[AI-Insight][RESULT] 분석 실패 — file='{}', errorCode={}, totalElapsed={}ms, error={}",
+                filename, errorCode, totalElapsed, result.get("error"));
+        }
+
+        // ── [Req1] 분석 성공 시 자동 저장 ────────────────────────────────
+        if (success && filename != null && !filename.isEmpty() && Boolean.TRUE.equals(save)) {
+            Map<String, Object> toStore = new LinkedHashMap<>();
+            toStore.put("model", result.get("model"));
+            toStore.put("latencyMs", result.get("latencyMs"));
+            if (dataObj instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> dataMap = (Map<String, Object>) dataObj;
+                toStore.putAll(dataMap);
+            }
+            try {
+                analyzerService.saveAiInsight(filename, toStore);
+                result.put("saved", true);
+                result.put("savedTo", "database");
+                logger.info("[AI-Insight][SAVE] 저장 완료 — file='{}', severity={}", filename, severity);
+            } catch (Exception saveEx) {
+                // ── [Req6] 저장 실패 에러 처리: 분석 결과는 반환하되 저장 실패 알림 ──
+                logger.error("[AI-Insight][SAVE] 저장 실패 — file='{}', error={}", filename, saveEx.getMessage());
+                result.put("saved", false);
+                result.put("saveError", "결과 파일 저장에 실패했습니다: " + saveEx.getMessage());
+                result.put("saveErrorCode", "SAVE_FAILED");
+            }
+        }
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/api/llm/insight/{filename}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getAiInsight(@PathVariable String filename) {
+        // ── [Req5] 조회 로그 ─────────────────────────────────────────────
+        logger.debug("[AI-Insight][LOAD] 저장된 인사이트 조회 시작 — file='{}'", filename);
+        Map<String, Object> insight = analyzerService.loadAiInsight(filename);
+        if (insight == null) {
+            logger.debug("[AI-Insight][LOAD] 저장된 인사이트 없음 — file='{}'", filename);
+            Map<String, Object> notFound = new LinkedHashMap<>();
+            notFound.put("found", false);
+            return ResponseEntity.ok(notFound);
+        }
+        logger.info("[AI-Insight][LOAD] 인사이트 로드 성공 — file='{}', severity={}, analysedAt={}",
+            filename, insight.get("severity"), insight.get("analysedAt"));
+        insight.put("found", true);
+        insight.put("savedTo", "database");
+        return ResponseEntity.ok(insight);
+    }
+
+    @DeleteMapping("/api/llm/insight/{filename}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> deleteAiInsight(@PathVariable String filename) {
+        // ── [Req5] 삭제 로그 ─────────────────────────────────────────────
+        logger.info("[AI-Insight][DELETE] 인사이트 삭제 요청 — file='{}'", filename);
+        boolean deleted = analyzerService.deleteAiInsight(filename);
+        if (deleted) {
+            logger.info("[AI-Insight][DELETE] 삭제 완료 — file='{}'", filename);
+        } else {
+            logger.warn("[AI-Insight][DELETE] 삭제 대상 없음 또는 실패 — file='{}'", filename);
+        }
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", deleted);
+        return ResponseEntity.ok(res);
     }
 
     // ── [NEW] API: 현재 설정 조회 ────────────────────────────────
@@ -1183,10 +1412,47 @@ public class HeapDumpController {
         Map<String, List<String>> providerModels = new LinkedHashMap<>();
         providerModels.put("claude", Arrays.asList("claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"));
         providerModels.put("gpt", Arrays.asList("gpt-4o", "gpt-4o-mini", "gpt-4-turbo"));
-        providerModels.put("genspark", Collections.emptyList());
+        providerModels.put("genspark", com.heapdump.analyzer.service.HeapDumpAnalyzerService.GENSPARK_MODELS);
         providerModels.put("custom", Collections.emptyList());
         llm.put("providerModels", providerModels);
         settings.put("llm", llm);
+
+        // Database 정보
+        Map<String, Object> db = new LinkedHashMap<>();
+        try {
+            String dbUrl = dataSourceProperties.getUrl() != null ? dataSourceProperties.getUrl() : "";
+            String dbUser = dataSourceProperties.getUsername() != null ? dataSourceProperties.getUsername() : "";
+            String dbHost = "-", dbPort = "3306", dbName = "-";
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("//([^:/]+)(?::(\\d+))?/([^?]+)").matcher(dbUrl);
+            if (m.find()) {
+                dbHost = m.group(1);
+                if (m.group(2) != null) dbPort = m.group(2);
+                dbName = m.group(3);
+            }
+            db.put("host", dbHost);
+            db.put("port", dbPort);
+            db.put("database", dbName);
+            db.put("username", dbUser);
+            boolean connected = false;
+            String dbVersion = "-";
+            long historyCount = 0;
+            try (java.sql.Connection conn = dataSource.getConnection()) {
+                connected = conn.isValid(3);
+                java.sql.DatabaseMetaData meta = conn.getMetaData();
+                dbVersion = meta.getDatabaseProductName() + " " + meta.getDatabaseProductVersion();
+                historyCount = analyzerService.getAnalysisHistoryRepository().count();
+            } catch (Exception ex) {
+                dbVersion = "Connection failed";
+            }
+            db.put("connected", connected);
+            db.put("version", dbVersion);
+            db.put("historyCount", historyCount);
+        } catch (Exception e) {
+            db.put("connected", false);
+            db.put("version", "Error");
+        }
+        settings.put("database", db);
 
         return ResponseEntity.ok(settings);
     }
@@ -1232,11 +1498,55 @@ public class HeapDumpController {
     private List<AnalysisHistoryItem> buildHistory(List<HeapDumpFile> files) {
         List<AnalysisHistoryItem> history = new ArrayList<>();
         SimpleDateFormat sdf = new SimpleDateFormat("MM-dd HH:mm");
-        Set<String> fileNames = new HashSet<>();
+        Set<String> processedNames = new HashSet<>();
 
-        // 1. 물리 파일이 존재하는 항목
+        // 파일명 → HeapDumpFile 매핑
+        Map<String, HeapDumpFile> fileMap = new HashMap<>();
         for (HeapDumpFile file : files) {
-            fileNames.add(file.getName());
+            fileMap.put(file.getName(), file);
+        }
+
+        // 1. DB 기반: 분석 이력이 있는 항목
+        AnalysisHistoryRepository repo = analyzerService.getAnalysisHistoryRepository();
+        List<AnalysisHistoryEntity> dbEntries = repo.findAllByOrderByAnalyzedAtDesc();
+        for (AnalysisHistoryEntity e : dbEntries) {
+            processedNames.add(e.getFilename());
+            AnalysisHistoryItem item = new AnalysisHistoryItem();
+            item.setFilename(e.getFilename());
+            item.setStatus(e.getStatus());
+            item.setSuspectCount(e.getSuspectCount() != null ? e.getSuspectCount() : 0);
+            item.setAnalysisTime(e.getAnalysisTimeMs() != null ? e.getAnalysisTimeMs() : 0);
+            item.setFormattedAnalysisTime(formatDuration(item.getAnalysisTime()));
+            item.setHeapUsed(e.getUsedHeapSize() != null ? formatBytes(e.getUsedHeapSize()) : "-");
+            item.setServerName(e.getServerName());
+
+            HeapDumpFile file = fileMap.get(e.getFilename());
+            if (file != null) {
+                item.setFileDeleted(false);
+                item.setFormattedSize(file.getFormattedSize());
+                item.setFormattedDate(sdf.format(new Date(file.getLastModified())));
+                item.setLastModified(file.getLastModified());
+                item.setCompressed(file.isCompressed());
+                if (file.isCompressed()) {
+                    item.setFormattedOriginalSize(file.getFormattedOriginalSize());
+                    item.setFormattedCompressedSize(file.getFormattedCompressedSize());
+                }
+            } else {
+                item.setFileDeleted(true);
+                item.setFormattedSize(e.getFileSize() != null ? formatBytes(e.getFileSize()) : "-");
+                item.setFormattedDate(e.getAnalyzedAt() != null
+                        ? e.getAnalyzedAt().format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")) : "-");
+                item.setLastModified(e.getAnalyzedAt() != null
+                        ? e.getAnalyzedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        : 0);
+            }
+            history.add(item);
+        }
+
+        // 2. 파일은 있지만 DB에 없는 항목 (memCache 기반 폴백 + 미분석)
+        for (HeapDumpFile file : files) {
+            if (processedNames.contains(file.getName())) continue;
+            processedNames.add(file.getName());
             HeapAnalysisResult result = analyzerService.getCachedResult(file.getName());
             AnalysisHistoryItem item = new AnalysisHistoryItem();
             item.setFilename(file.getName());
@@ -1262,9 +1572,9 @@ public class HeapDumpController {
             history.add(item);
         }
 
-        // 2. 소스 파일이 삭제되었지만 분석 결과가 남아있는 항목
+        // 3. memCache에는 있지만 DB/파일 모두 없는 항목 (기존 호환성)
         for (HeapAnalysisResult result : analyzerService.getAllCachedResults()) {
-            if (result.getFilename() != null && !fileNames.contains(result.getFilename())) {
+            if (result.getFilename() != null && !processedNames.contains(result.getFilename())) {
                 AnalysisHistoryItem item = new AnalysisHistoryItem();
                 item.setFilename(result.getFilename());
                 item.setFormattedSize(formatBytes(result.getFileSize()));
@@ -1312,6 +1622,7 @@ public class HeapDumpController {
         private boolean compressed;
         private String  formattedOriginalSize;
         private String  formattedCompressedSize;
+        private String  serverName;
 
         public String  getFilename()      { return filename; }
         public void    setFilename(String v)      { filename = v; }
@@ -1339,6 +1650,33 @@ public class HeapDumpController {
         public void    setFormattedOriginalSize(String v) { formattedOriginalSize = v; }
         public String  getFormattedCompressedSize() { return formattedCompressedSize; }
         public void    setFormattedCompressedSize(String v) { formattedCompressedSize = v; }
+        public String  getServerName()    { return serverName; }
+        public void    setServerName(String v)    { serverName = v; }
+    }
+
+    public static class DetectionSummaryItem {
+        private String filename;
+        private int suspectCount;
+        private int criticalCount;
+        private int highCount;
+        private int mediumCount;
+        private int lowCount;
+        private boolean fileDeleted;
+
+        public String  getFilename()      { return filename; }
+        public void    setFilename(String v) { filename = v; }
+        public int     getSuspectCount()  { return suspectCount; }
+        public void    setSuspectCount(int v) { suspectCount = v; }
+        public int     getCriticalCount() { return criticalCount; }
+        public void    setCriticalCount(int v) { criticalCount = v; }
+        public int     getHighCount()     { return highCount; }
+        public void    setHighCount(int v) { highCount = v; }
+        public int     getMediumCount()   { return mediumCount; }
+        public void    setMediumCount(int v) { mediumCount = v; }
+        public int     getLowCount()      { return lowCount; }
+        public void    setLowCount(int v) { lowCount = v; }
+        public boolean isFileDeleted()    { return fileDeleted; }
+        public void    setFileDeleted(boolean v) { fileDeleted = v; }
     }
 
     public static class ClassDiff {

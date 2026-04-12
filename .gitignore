@@ -36,3 +36,7 @@ config/local.conf
 # OS 생성 파일
 .DS_Store
 Thumbs.db
+
+.bashrc
+.genspark_llm.yaml
+.git-credentials

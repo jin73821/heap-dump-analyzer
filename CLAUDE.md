@@ -35,39 +35,60 @@ No linter is configured. No CI/CD pipeline exists.
 
 ## Architecture
 
-Classic Spring MVC with service layer. No database — all state is file-based.
+Spring MVC + JPA with MariaDB. Spring Security 세션 기반 인증. 분석 결과 메타데이터는 DB, 분석 상세 데이터(HTML/ZIP)는 파일 시스템 하이브리드.
 
 **Request flow:**
 ```
-Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
-                                      ↓
-                              ProcessBuilder (MAT CLI subprocess)
+Browser → Spring Security Filter → Controller → Service → MatReportParser
+                                        ↓              ↓
+                                   JPA Repository   ProcessBuilder (MAT CLI)
+                                        ↓
+                                   MariaDB (HEAPDB)
 ```
 
 **Key layers:**
-- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history` (JSON history list), `/api/cache/clear`, `/api/settings/unreachable`, `/api/settings/compress`, `/api/analyze/cancel/{filename}`, `/api/queue/status`, `/api/disk/check`, `/api/settings`, `/api/system/status` (배너용 시스템 상태), `/api/upload/check` (업로드 중복 검사). `GET /analyze/rerun/{filename}` clears cache and restarts analysis.
-- **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (dumpfiles → tmp copy → analysis → tmp cleanup), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). On disk cache restore, auto-reparses missing data from ZIPs (`reparseComponentDetails`, `reparseActions`). Runtime settings (`keepUnreachableObjects`, `compressAfterAnalysis`) persisted to `settings.json` and synced back to `application.properties`.
+- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status, DB 설정. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history`, `/api/cache/clear`, `/api/settings/unreachable`, `/api/settings/compress`, `/api/settings/database` (DB 연결 설정), `/api/settings/database/test` (DB 연결 테스트), `/api/analyze/cancel/{filename}`, `/api/queue/status`, `/api/disk/check`, `/api/settings`, `/api/system/status`, `/api/upload/check`. Inner DTOs: `AnalysisHistoryItem`, `DetectionSummaryItem`, `ClassDiff`.
+- **Controller** (`controller/AuthController.java`) — `/login` 로그인 페이지
+- **Controller** (`controller/AdminController.java`) — `/admin/users` 계정 관리 (ADMIN 전용). CRUD API: `/api/admin/users`, `/api/admin/users/{id}/reset-password`
+- **Controller** (`controller/ServerController.java`) — `/servers` Target Server 관리, `/servers/logs` 전송 로그 페이지. API: `/api/servers` (CRUD), `/api/servers/{id}/test` (연결 테스트), `/api/servers/{id}/scan` (수동 스캔), `/api/servers/{id}/transfer` (파일 전송), `/api/servers/scan-interval`, `/api/servers/ssh-local-user`, `/api/servers/scp-temp-dir`
+- **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (dumpfiles → tmp copy → analysis → tmp cleanup), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). 분석 완료 시 `analysis_history` 테이블에 메타데이터 DB 저장. AI 인사이트 DB 저장/조회/삭제 (`ai_insights` 테이블). Runtime settings persisted to `settings.json` and synced back to `application.properties`.
+- **Service** (`service/RemoteDumpService.java`) — SSH/SCP 기반 원격 서버 덤프 탐지/전송. `runuser -l sscuser -c "ssh/scp ..."` 패턴으로 로컬 계정 전환. 2단계 SCP 전송 (임시 경로 → `Files.move()` 최종 경로). `@Scheduled` 동적 주기 자동 탐지. 서버 `connStatus` (OK/FAIL/UNKNOWN) DB 영속화.
+- **Service** (`service/UserService.java`) — 사용자 CRUD, `@PostConstruct`에서 기본 admin 계정 자동 생성 (admin/shinhan@10)
+- **Service** (`service/CustomUserDetailsService.java`) — Spring Security `UserDetailsService` 구현
 - **Parser** (`parser/MatReportParser.java`) — Multi-tier extraction from MAT ZIP files:
-  - Overview ZIP: heap stats from `<td>` key-value pairs, Class Histogram from `Class_Histogram*.html`, Thread Overview from `Thread_Overview*.html`
-  - Top Components ZIP: `index.html` `<h2>` tags for percentages (primary), sub-page tables (fallback), per-component detail pages keyed as `className#index`
+  - Overview ZIP: heap stats from `<td>` key-value pairs, Class Histogram, Thread Overview
+  - Top Components ZIP: per-component detail pages keyed as `className#index`
   - Suspects ZIP: `Problem/Suspect` section extraction
-  - `sanitizeHtml()`: extracts `<body>` content, strips scripts/links/images/event handlers, converts `href="#"` to `javascript:void(0)`
-- **Config** (`config/HeapDumpConfig.java`) — `@Value`-injected properties with startup validation.
+  - `sanitizeHtml()`: extracts `<body>` content, strips scripts/links/images/event handlers
+- **Config** (`config/HeapDumpConfig.java`) — `@Value`-injected properties with startup validation
+- **Config** (`config/SecurityConfig.java`) — Spring Security: 세션 인증, `/login` 공개, `/admin/**` ADMIN 전용, `/api/**` CSRF 면제
+- **Config** (`config/DataSourceConfig.java`) — `ENC(...)` 형식 DB 비밀번호 AES 자동 복호화
+- **Util** (`util/AesEncryptor.java`) — AES-256-CBC HEX 암호화/복호화. CLI: `bash heap_enc.sh "평문"`, `bash heap_dec.sh "암호문"`
 
 **Models** (all use Lombok `@Data`):
 - `HeapAnalysisResult` — main result with heap stats, parsed objects, HTML fragments, histogram/thread data, `originalFileSize` (pre-compression size)
 - `MatParseResult` — intermediate parse result passed between parser methods
-- `HistogramEntry` — class name, object count, shallow/retained heap. `getRetainedHeapHuman()` / `getShallowHeapHuman()` for human-readable display (≥ 973.4 MB). `retainedHeapDisplay` preserves MAT's raw format (">= 1,020,644,584").
+- `HistogramEntry` — class name, object count, shallow/retained heap
 - `ThreadInfo` — thread name, type, heap sizes, address, stack trace (matched from `.threads` file)
 - `HeapDumpFile` — file info with `compressed`, `originalSize`, `compressedSize` for GZ display
-- `MemoryObject`, `LeakSuspect`, `AnalysisProgress`
+- `LeakSuspect` — title, description, severity (critical/high/medium/low)
+- `MemoryObject`, `AnalysisProgress`
+
+**JPA Entities** (`model/entity/`):
+- `User` — 사용자 (username, password(BCrypt), displayName, role(ADMIN/USER), enabled)
+- `TargetServer` — 원격 서버 (name, host, port, sshUser, dumpPath, autoDetect, connStatus(OK/FAIL/UNKNOWN), lastError)
+- `AnalysisHistoryEntity` — 분석 이력 메타데이터 (filename, status, heap sizes, suspect count, serverId, serverName)
+- `DumpTransferLog` — SCP 전송 로그 (serverId, filename, remotePath, transferStatus(SUCCESS/FAILED/IN_PROGRESS), errorMessage)
+- `AiInsightEntity` — AI 인사이트 결과 (filename, model, severity, insightData(MEDIUMTEXT JSON))
+
+**Repositories** (`repository/`): Spring Data JPA interfaces. `AnalysisHistoryRepository`, `UserRepository`, `TargetServerRepository`, `DumpTransferLogRepository`, `AiInsightRepository`
 
 **Frontend:** Thymeleaf templates + vanilla JS + Chart.js. No build step. `index.html`, `analyze.html`, `files.html` have **complete inline `<style>` blocks**. `progress.html` and `compare.html` link `/css/style.css` plus additional inline styles. Modals use `.modal-ov.open` CSS pattern with `animation: modalIn .2s ease`. Tooltip positioning uses `positionTooltip(tt, e)` — auto-flips left/right and up/down to prevent viewport overflow.
 
 **Global Banner** (`fragments/banner.html`) — 모든 페이지에 `th:replace="fragments/banner :: banner"`로 삽입되는 좌측 고정 배너. `position: fixed; left: 0; top: 0; bottom: 0; width: var(--banner-w)` (220px/44px). 포함 내용:
 - **Header**: 앱 로고 + 제목 (클릭 시 Dashboard 이동), `<a href="/">` 태그
 - **System Status**: MAT CLI 상태, 디스크 사용량, JVM 메모리, 분석 큐 — `/api/system/status` API에서 60초 간격 자동 갱신 + 수동 Refresh 버튼. `localStorage` 캐시로 페이지 이동 시 깜빡임 방지
-- **Navigation**: Dashboard, Files, History, Settings 링크 (현재 페이지 하이라이트)
+- **Navigation**: Dashboard, Files, History, Settings, Servers (아코디언: Target Servers / Transfer Logs), Admin (ADMIN only), Logout. Thymeleaf `sec:authorize` 사용
 - **접기/펼치기**: 토글 버튼으로 220px ↔ 44px 전환, `localStorage('bannerCollapsed')` 상태 저장. 접힌 상태에서는 아이콘 스트립이 하단에 `margin-top: auto`로 위치
 - **깜빡임 방지**: `<style>` 앞 인라인 `<script>`에서 `banner-collapsed` 클래스 즉시 적용 + `banner-no-transition` 클래스로 초기 transition 차단, `requestAnimationFrame` 2프레임 후 복원
 - **스타일 격리**: `.g-banner`에 `font-size: 14px; line-height: 1.5` 고정 — 페이지별 body font-size 차이에 영향받지 않음
@@ -99,9 +120,19 @@ Browser → HeapDumpController → HeapDumpAnalyzerService → MatReportParser
 
 **history.html** — Full analysis history page (`/history`). Topbar navigation, search filter, status dots (success/error/pending), analysis metadata (file size, date, analysis time, heap size, suspect count), total statistics. Complete inline `<style>` block like `index.html`.
 
-**settings.html** — Settings page (`/settings`). Toggle switches for runtime settings with confirmation modals. Toast notifications at top-center. MAT JVM heap/Xms inline editing with predefined select options.
+**settings.html** — Settings page (`/settings`). Toggle switches for runtime settings with confirmation modals. Toast notifications at top-center. MAT JVM heap/Xms inline editing. Database 카드 (접속 상태, IP/포트/계정 설정 모달, 연결 테스트). Remote scan 설정 (SCP temp dir, SSH local user, scan interval).
 
 **compare.html** — Side-by-side dump comparison.
+
+**login.html** — 로그인 페이지. 중앙 정렬 카드 폼 (username, password). CSRF 토큰 자동 삽입. 모바일 반응형 (480px 이하 축소).
+
+**servers.html** — Target Server 관리 (`/servers`). 서버 CRUD 테이블, 연결 테스트, 수동 스캔 (SSH), 파일 전송 (SCP 2단계: 임시경로→최종경로). 전송 진행바 (pulse 애니메이션). "All Transfer" 일괄 전송. 서버 상태 뱃지 (정상/실패/미확인). 자동 스캔 에러 배너 (30초 갱신).
+
+**server-logs.html** — Transfer Logs (`/servers/logs`). 서버별 아코디언 레이아웃, 전송 이력 테이블 (상태/파일명/원격경로/크기/시간/에러).
+
+**admin/users.html** — 계정 관리 (`/admin/users`, ADMIN 전용). 사용자 CRUD 테이블, 비밀번호 초기화 모달. 기본 관리자 삭제 불가.
+
+**llm-settings.html** — LLM/AI 분석 설정 페이지 (`/settings/llm`).
 
 ## Directory Structure & File Flow
 
@@ -133,7 +164,38 @@ Upload → /opt/heapdumps/dumpfiles/{filename}  (원본 보존)
                  └─ Analysis fail/interrupt → tmp만 삭제 (dumpfiles 원본 안전)
 ```
 
-On startup (`@PostConstruct`): 기존 루트의 덤프 파일 → dumpfiles/ 자동 마이그레이션, disk results restored, missing data re-parsed from ZIPs, `.threads` files loaded, tmp files cleaned, settings.json → application.properties 동기화. On shutdown (`@PreDestroy`): executor `shutdownNow()` + tmp cleanup.
+On startup (`@PostConstruct`): 기존 루트의 덤프 파일 → dumpfiles/ 자동 마이그레이션, disk results restored, missing data re-parsed from ZIPs, `.threads` files loaded, tmp files cleaned, settings.json → application.properties 동기화, **기존 분석 결과 DB 마이그레이션** (result.json → `analysis_history` 테이블), **AI 인사이트 파일 → DB 마이그레이션** (ai_insight.json → `ai_insights` 테이블), **기본 admin 계정 자동 생성** (UserService). On shutdown (`@PreDestroy`): executor `shutdownNow()` + tmp cleanup.
+
+## Database (MariaDB)
+
+**접속 정보**: `192.168.56.9:3306/HEAPDB` (heap_user). 비밀번호는 `application.properties`에 `ENC(...)` AES-256 암호화 저장 → `DataSourceConfig`에서 자동 복호화.
+
+**테이블**: `users`, `target_servers`, `analysis_history`, `dump_transfer_log`, `ai_insights`. JPA `ddl-auto=update`로 자동 생성/업데이트.
+
+**하이브리드 저장**: 분석 메타데이터(filename, status, heap size, suspect count)는 DB. 분석 상세 데이터(HTML fragments, ZIP, result.json)는 파일 시스템 유지. AI 인사이트는 DB(`insightData` MEDIUMTEXT JSON).
+
+## Authentication & Security
+
+**Spring Security** 세션 기반. `/login` 공개, `/admin/**` ADMIN 전용, 나머지 인증 필요. CSRF: `/api/**` 면제, 나머지 활성화.
+
+**CSRF 주의**: JS로 동적 생성하는 POST 폼에 반드시 `_csrf` hidden input 추가 필요. 패턴:
+```javascript
+var ci = document.createElement('input'); ci.type = 'hidden'; ci.name = '_csrf';
+ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(ci);
+```
+각 페이지 `<head>`에 `<meta name="_csrf" th:content="${_csrf.token}">` 필요.
+
+**기본 계정**: admin / shinhan@10 (BCrypt, `UserService.initDefaultAdmin()`에서 자동 생성)
+
+## Remote Dump Transfer
+
+**SSH/SCP 실행 계정**: `remote.ssh.local-user=sscuser` → `runuser -l sscuser -c "ssh/scp ..."` 패턴. 현재 프로세스와 동일 계정이면 runuser 생략.
+
+**2단계 SCP**: Phase 1: `sscuser`로 SCP → 임시 경로(`remote.scp.temp-dir`, 기본 `/tmp`). Phase 2: `Files.move()`로 앱 계정(root) 권한으로 `/opt/heapdumps/dumpfiles/`에 이동. 임시 파일은 성공/실패 모두 자동 정리.
+
+**전송됨 판정**: DB 전송 성공 로그(`transfer_status=SUCCESS`) **+** 로컬 파일 실제 존재(`.gz` 압축 포함) 두 조건 모두 충족 시.
+
+**자동 탐지**: `@Scheduled(fixedDelay=10초)` 체크 루프 + `scanIntervalSec` 동적 주기. `auto_detect=true && enabled=true` 서버만 대상. 서버 `connStatus` DB 영속화.
 
 ## Key Design Decisions
 
@@ -160,8 +222,9 @@ On startup (`@PostConstruct`): 기존 루트의 덤프 파일 → dumpfiles/ 자
 - **Tooltip positioning:** `positionTooltip(tt, e)` handles viewport-aware placement for Treemap/StackedBar tooltips. Flips left when right edge overflows, flips up when bottom overflows. All hover tooltips should use this function.
 - **Meta card help popover:** `cdMetaCard(label, value)` auto-adds `?` button when `META_HELP[label]` exists. Popover rendered as `position:fixed` on `document.body` (avoids parent `overflow:hidden` clipping). Uses `toggleMetaHelp(btn)` with modal-boundary-aware positioning. When adding new metadata cards, add corresponding entry to `META_HELP` dict.
 - **Class descriptions pattern:** `CLASS_DESCRIPTIONS` dict maps class names → `{desc, detail, icon}`. Used by both `renderHistogramFallback()` and `renderParsedDetail()`. When adding support for new common classes, add entries here.
-- **Global banner fragment:** `fragments/banner.html`은 CSS + HTML + JS를 자체 포함하는 Thymeleaf fragment. 모든 7개 페이지에 `th:replace`로 삽입. System Status 데이터는 서버 렌더링이 아닌 `/api/system/status` JS fetch로 로드하여 controller 의존성 없음. `localStorage` 캐시로 페이지 이동 간 데이터 유지 (60초 TTL).
-- **Banner collapse persistence:** `localStorage('bannerCollapsed')` + 렌더링 전 인라인 스크립트로 FOUC(Flash of Unstyled Content) 방지. CSS 변수 `--banner-w`가 모든 페이지의 topbar `left`, container `padding-left`/`margin-left`를 제어.
+- **Global banner fragment:** `fragments/banner.html` — CSS + HTML + JS 자체 포함 Thymeleaf fragment. 모든 페이지에 `th:replace`로 삽입. Navigation: Dashboard, Files, History, Settings, Servers (아코디언: Target Servers + Transfer Logs), Admin (ADMIN only, `sec:authorize`), 사용자명 표시 + Logout. System Status → `/api/system/status` JS fetch (60초 TTL `localStorage` 캐시).
+- **Banner Servers sub-menu:** `toggleSubMenu()` → `.gb-nav-sub.open` 토글. `/servers*` 경로 시 자동 펼침. CSS `max-height: 0 → 80px` 트랜지션 + `.gb-nav-toggle` 화살표 회전.
+- **Banner collapse persistence:** `localStorage('bannerCollapsed')` + 렌더링 전 인라인 스크립트로 FOUC 방지. CSS 변수 `--banner-w`가 모든 페이지의 topbar/container offset 제어.
 - **Multi-file upload queue:** `index.html`에서 최대 5개 파일 동시 선택 가능 (`<input multiple>`). `enqueueFiles()` → 확장자/크기 검증 → `showFileFilterModal()`로 유효/무효 파일 요약 표시 → `startDuplicateChecks()` 순차 중복 검사 → `startQueueUploads()` 순차 업로드. 업로드 중 `showUploadProgressModal()` 모달로 파일별 진행 상태(⏳대기/⬆업로드중/✅완료/❌실패/⊘취소) 실시간 표시. `_currentXhr` 저장으로 취소 시 `xhr.abort()` 가능. `window.onbeforeunload`로 페이지 이탈 방지.
 - **Upload duplicate detection:** `POST /api/upload/check` API — 클라이언트에서 `file.slice(0, 65536)` + Web Crypto API (또는 `simpleHash` 폴백)로 첫 64KB SHA-256 해시 계산 → 서버 `checkDuplicate()`가 기존 파일들과 파일크기+부분해시 비교. 결과: `OK`/`DUPLICATE_CONTENT`(동일 내용, 다른 이름)/`DUPLICATE_NAME`(같은 이름, 다른 내용). `.gz` 압축 파일은 `GZIPInputStream`으로 압축 해제 후 해시 비교. 이름 변경 시 `generateUniqueName()`으로 `{base}_2.{ext}` 패턴 자동 생성, 사용자 커스텀 이름도 서버 재검증.
 - **crypto.subtle 폴백:** `crypto.subtle`은 HTTPS/localhost에서만 사용 가능. HTTP 환경에서는 `simpleHash()` (FNV-1a 기반) 자동 폴백. 모든 경로에 try-catch로 Promise가 반드시 resolve/reject 되도록 보장.

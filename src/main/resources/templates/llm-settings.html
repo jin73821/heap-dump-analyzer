@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI / LLM Settings — Heap Dump Analyzer</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5; overflow-x: hidden; }
+
+        /* ── Topbar ──────────────────────────────────────── */
+        .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
+                  transition: left .25s cubic-bezier(.4,0,.2,1);
+                  background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; }
+        .topbar-title { font-size: 16px; font-weight: 700; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; }
+        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                      border-radius: 6px; background: transparent; color: #6B7280;
+                      cursor: pointer; text-decoration: none; display: inline-block; }
+        .topbar-btn:hover { background: #F9FAFB; }
+
+        /* ── Layout ──────────────────────────────────────── */
+        .container { max-width: 1080px; margin: 0 auto; padding: 68px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+        .page-hdr { display: flex; align-items: center; justify-content: space-between;
+                    margin-bottom: 24px; flex-wrap: wrap; gap: 8px; }
+        .page-ttl { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        .page-ttl svg { width: 22px; height: 22px; stroke: #6B7280; fill: none; stroke-width: 2; }
+        .breadcrumb { font-size: 12px; color: #9CA3AF; display: flex; align-items: center; gap: 4px; }
+        .breadcrumb a { color: #6B7280; text-decoration: none; }
+        .breadcrumb a:hover { color: #2563EB; text-decoration: underline; }
+
+        /* ── Card ────────────────────────────────────────── */
+        .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+                      color: #6B7280; margin-bottom: 14px; padding-bottom: 8px;
+                      border-bottom: 1px solid #F3F4F6;
+                      display: flex; align-items: center; gap: 8px; }
+        .card-title svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+
+        /* ── Key-value rows ──────────────────────────────── */
+        .s-row { display: flex; justify-content: space-between; align-items: center;
+                 padding: 10px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
+        .s-row:last-child { border-bottom: none; }
+        .s-key { font-size: 13px; color: #374151; font-weight: 500; flex-shrink: 0; }
+
+        /* ── Toggle switch ───────────────────────────────── */
+        .setting-row { display: flex; align-items: center; justify-content: space-between;
+                       padding: 12px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
+        .setting-row:last-child { border-bottom: none; }
+        .setting-label { font-size: 13px; font-weight: 500; color: #374151; }
+        .setting-desc { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+        .tog { display: none; }
+        .tog-track { position: relative; display: inline-block; width: 38px; height: 22px;
+                     background: #D1D5DB; border-radius: 11px; cursor: pointer; transition: background .2s; }
+        .tog-track::after { content: ''; position: absolute; top: 3px; left: 3px;
+                            width: 16px; height: 16px; background: #fff; border-radius: 50%;
+                            transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+        .tog:checked + .tog-track { background: #2563EB; }
+        .tog:checked + .tog-track::after { transform: translateX(16px); }
+
+        /* ── Buttons ─────────────────────────────────────── */
+        .btn-primary { padding: 6px 14px; border: none; border-radius: 6px; background: #2563EB;
+                       color: #fff; font-size: 12px; cursor: pointer; font-weight: 600; }
+        .btn-primary:hover { background: #1D4ED8; }
+        .btn-secondary { padding: 6px 14px; border: 1px solid #D1D5DB; border-radius: 6px;
+                         background: #fff; font-size: 12px; cursor: pointer; font-weight: 600; color: #374151; }
+        .btn-secondary:hover { background: #F3F4F6; }
+
+        /* ── Toast ───────────────────────────────────────── */
+        .toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+                 padding: 10px 22px; border-radius: 8px; font-size: 13px; font-weight: 500;
+                 z-index: 500; animation: toastIn .3s ease; pointer-events: none; }
+        .toast-success { background: #065F46; color: #fff; }
+        .toast-error { background: #7F1D1D; color: #fff; }
+        @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -10px); }
+                             to   { opacity: 1; transform: translate(-50%, 0); } }
+
+        /* ── Desktop ─────────────────────────────────────── */
+        @media (min-width: 1024px) {
+            .page-ttl { font-size: 22px; }
+            .s-key { font-size: 14px; }
+            .setting-label { font-size: 14px; }
+            .setting-desc { font-size: 12px; }
+        }
+
+        @media (max-width: 900px) {
+            .topbar { left: 0; }
+            .container { padding-left: 20px; }
+        }
+        @media (max-width: 768px) {
+            .container { padding: 60px 12px 32px; }
+            .s-row { flex-wrap: wrap; gap: 4px; }
+            .s-key { flex-shrink: 1; min-width: 0; }
+            .card { padding: 16px 14px; }
+            .page-ttl { font-size: 18px; }
+        }
+        @media (max-width: 400px) {
+            .container { padding: 58px 8px 24px; }
+            .card { padding: 14px 12px; }
+            .s-key { font-size: 12px; }
+            .setting-label { font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+
+<div th:replace="fragments/banner :: banner"></div>
+
+<!-- ── Topbar ─────────────────────────────────────────────── -->
+<div class="topbar">
+    <div class="topbar-brand">
+        <span class="topbar-title">AI / LLM Settings</span>
+    </div>
+    <div class="topbar-right">
+        <a href="/settings" class="topbar-btn">&larr; Settings</a>
+    </div>
+</div>
+
+<!-- ── Content ────────────────────────────────────────────── -->
+<div class="container">
+    <div class="breadcrumb" style="margin-bottom:8px">
+        <a href="/settings">Settings</a>
+        <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:#9CA3AF;fill:none;stroke-width:2"><polyline points="9 18 15 12 9 6"/></svg>
+        <span style="color:#374151;font-weight:500">AI / LLM Configuration</span>
+    </div>
+    <div class="page-hdr">
+        <div class="page-ttl">
+            <svg viewBox="0 0 24 24" style="fill:#6B7280;stroke:none"><path d="M12 2a4 4 0 014 4c0 1.1-.9 2-2 2h-4a2 2 0 01-2-2 4 4 0 014-4z"/><path d="M8 8v8a4 4 0 008 0V8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
+            AI / LLM Configuration
+            <span id="llmStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">OFF</span>
+        </div>
+    </div>
+
+    <!-- Enable / Disable -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            Enable AI Analysis
+        </div>
+        <div class="setting-row" style="border-bottom:none">
+            <div>
+                <div class="setting-label">Enable AI Analysis</div>
+                <div class="setting-desc">LLM을 사용한 힙 덤프 AI 분석 기능 활성화</div>
+            </div>
+            <div>
+                <input type="checkbox" class="tog" id="togLlm" onchange="toggleLlm(this)">
+                <label class="tog-track" for="togLlm"></label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Provider & Model -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Provider & Model
+        </div>
+        <!-- Provider -->
+        <div class="s-row">
+            <span class="s-key">Provider</span>
+            <select id="llmProviderSelect" onchange="onProviderChange()" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:160px">
+                <option value="claude">Claude (Anthropic)</option>
+                <option value="gpt">GPT (OpenAI)</option>
+                <option value="genspark">Genspark</option>
+                <option value="custom">Custom (OpenAI compatible)</option>
+            </select>
+        </div>
+        <!-- API URL -->
+        <div class="s-row" style="flex-wrap:wrap">
+            <span class="s-key">API URL</span>
+            <div style="display:flex;flex-direction:column;gap:4px;flex:1;max-width:420px">
+                <input type="text" id="llmApiUrlInput" placeholder="API endpoint URL"
+                       style="width:100%;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace;box-sizing:border-box">
+                <div id="gensparkHint" style="display:none;padding:7px 10px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:6px;font-size:11px;color:#1E40AF;line-height:1.5">
+                    <strong>Genspark API</strong><br>
+                    Base URL: <code style="background:#DBEAFE;padding:1px 4px;border-radius:3px">https://www.genspark.ai/api/llm_proxy/v1</code><br>
+                    Endpoint: <code style="background:#DBEAFE;padding:1px 4px;border-radius:3px">/chat/completions</code> auto-appended.<br>
+                    API Key: Genspark API Key (gsk-... format).<br>
+                    GPT-5 (reasoning): set Max Output Tokens >= 8,000.
+                </div>
+            </div>
+        </div>
+        <!-- Model -->
+        <div class="s-row">
+            <span class="s-key">Model</span>
+            <div style="display:flex;gap:6px;align-items:center">
+                <select id="llmModelSelect" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:200px">
+                </select>
+                <input type="text" id="llmModelInput" placeholder="Model ID" style="display:none;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:200px">
+            </div>
+        </div>
+    </div>
+
+    <!-- API Key -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zM15.5 7.5l2 2L21 6l-3-3z"/></svg>
+            API Key
+        </div>
+        <div class="s-row" style="border-bottom:none">
+            <span class="s-key">API Key</span>
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <input type="password" id="llmApiKeyInput" placeholder="API Key"
+                       style="width:200px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace">
+                <button onclick="saveLlmApiKey()" class="btn-primary">Save Key</button>
+                <span id="llmKeyStatus" style="font-size:11px;color:#9CA3AF"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Token Limits -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
+            Token Limits
+        </div>
+        <div class="s-row">
+            <span class="s-key">Max Input Tokens</span>
+            <select id="llmMaxInputTokens" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px">
+                <option value="4000">4,000</option>
+                <option value="8000" selected>8,000</option>
+                <option value="16000">16,000</option>
+                <option value="32000">32,000</option>
+            </select>
+        </div>
+        <div class="s-row">
+            <span class="s-key">Max Output Tokens</span>
+            <select id="llmMaxOutputTokens" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px">
+                <option value="2000">2,000</option>
+                <option value="4000" selected>4,000</option>
+                <option value="8000">8,000</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Save & Test -->
+    <div class="card">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button onclick="saveLlmConfig()" class="btn-primary" style="padding:8px 20px;font-size:13px">Save Config</button>
+            <button onclick="testLlmConnection()" class="btn-secondary" style="padding:8px 20px;font-size:13px">Test Connection</button>
+        </div>
+        <div id="llmTestResult" style="margin-top:10px;font-size:12px;display:none"></div>
+    </div>
+
+</div>
+
+<!-- ── JavaScript ─────────────────────────────────────────── -->
+<script>
+// ── Toast ──────────────────────────────────────────────
+function toast(msg, type) {
+    var t = document.createElement('div');
+    t.className = 'toast toast-' + (type || 'success');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function() { t.style.transition='opacity .4s'; t.style.opacity='0';
+        setTimeout(function(){ t.remove(); }, 400); }, 2500);
+}
+
+function selectOption(id, val) {
+    var sel = document.getElementById(id);
+    if (!sel) return;
+    for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === val) { sel.selectedIndex = i; return; }
+    }
+}
+
+// ── Provider / Model data ─────────────────────────────
+var _providerModels = {
+    'claude': [
+        {value:'claude-sonnet-4-20250514', label:'Claude Sonnet 4'},
+        {value:'claude-haiku-4-5-20251001', label:'Claude Haiku 4.5'},
+        {value:'claude-opus-4-20250514', label:'Claude Opus 4'}
+    ],
+    'gpt': [
+        {value:'gpt-4o', label:'GPT-4o'},
+        {value:'gpt-4o-mini', label:'GPT-4o Mini'},
+        {value:'gpt-4-turbo', label:'GPT-4 Turbo'}
+    ],
+    'genspark': [
+        {value:'claude-sonnet-4-5',     label:'Claude Sonnet 4.5'},
+        {value:'gpt-5',            label:'GPT-5 (reasoning)'},
+        {value:'gpt-5-mini',       label:'GPT-5 Mini'},
+        {value:'gpt-5-nano',       label:'GPT-5 Nano'},
+        {value:'gpt-5.1',          label:'GPT-5.1'},
+        {value:'gpt-5.2',          label:'GPT-5.2'},
+        {value:'gpt-5.4',          label:'GPT-5.4'},
+        {value:'gpt-5.4-mini',     label:'GPT-5.4 Mini'},
+        {value:'gpt-5.4-nano',     label:'GPT-5.4 Nano'},
+        {value:'gpt-5-codex',      label:'GPT-5 Codex'},
+        {value:'gpt-5.2-codex',    label:'GPT-5.2 Codex'},
+        {value:'gpt-5.3-codex',    label:'GPT-5.3 Codex'},
+        {value:'claude-sonnet-4-5',     label:'Claude Sonnet 4.5'},
+        {value:'claude-sonnet-4-6',     label:'Claude Sonnet 4.6'},
+        {value:'claude-sonnet-4-6-1m',  label:'Claude Sonnet 4.6 (1M)'},
+        {value:'claude-haiku-4-5',      label:'Claude Haiku 4.5'},
+        {value:'claude-opus-4-5',       label:'Claude Opus 4.5'},
+        {value:'claude-opus-4-6',       label:'Claude Opus 4.6'},
+        {value:'claude-opus-4-6-1m',    label:'Claude Opus 4.6 (1M)'},
+        {value:'kimi-k2p5',        label:'Kimi K2P5'},
+        {value:'minimax-m2p5',     label:'MiniMax M2P5'},
+        {value:'minimax-m2p7',     label:'MiniMax M2P7'}
+    ]
+};
+var _defaultUrls = {
+    'claude':   'https://api.anthropic.com/v1/messages',
+    'gpt':      'https://api.openai.com/v1/chat/completions',
+    'genspark': 'https://www.genspark.ai/api/llm_proxy/v1/chat/completions',
+    'custom':   ''
+};
+
+// ── Load settings ─────────────────────────────────────
+function loadLlmSettings() {
+    fetch('/api/settings').then(function(r){
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    }).then(function(d) {
+        if (!d.llm) return;
+        var llm = d.llm;
+
+        var tog = document.getElementById('togLlm');
+        if (tog) tog.checked = llm.enabled;
+        updateBadge(llm.enabled);
+
+        var provider = llm.provider || 'claude';
+        var provSel = document.getElementById('llmProviderSelect');
+        if (provSel) provSel.value = provider;
+
+        populateModelSelect(provider, llm.model);
+
+        var urlInput = document.getElementById('llmApiUrlInput');
+        if (urlInput) urlInput.value = llm.apiUrl || '';
+
+        var hint = document.getElementById('gensparkHint');
+        if (hint) hint.style.display = (provider === 'genspark') ? '' : 'none';
+
+        var keyStatus = document.getElementById('llmKeyStatus');
+        if (keyStatus) {
+            keyStatus.textContent = llm.apiKeySet ? ('Set: ' + llm.apiKeyMasked) : 'Not set';
+            keyStatus.style.color = llm.apiKeySet ? '#065F46' : '#DC2626';
+        }
+
+        selectOption('llmMaxInputTokens', String(llm.maxInputTokens || 8000));
+        selectOption('llmMaxOutputTokens', String(llm.maxOutputTokens || 4000));
+    }).catch(function(e) { toast('Failed to load settings: ' + e.message, 'error'); });
+}
+
+function updateBadge(enabled) {
+    var badge = document.getElementById('llmStatusBadge');
+    if (!badge) return;
+    if (enabled) {
+        badge.textContent = 'ON';
+        badge.style.background = '#DBEAFE';
+        badge.style.color = '#1D4ED8';
+        badge.style.borderColor = '#93C5FD';
+    } else {
+        badge.textContent = 'OFF';
+        badge.style.background = '#F3F4F6';
+        badge.style.color = '#9CA3AF';
+        badge.style.borderColor = '#E5E7EB';
+    }
+}
+
+function populateModelSelect(provider, currentModel) {
+    var modelSelect = document.getElementById('llmModelSelect');
+    var modelInput = document.getElementById('llmModelInput');
+    if (!modelSelect || !modelInput) return;
+
+    if (_providerModels[provider]) {
+        modelSelect.style.display = '';
+        modelInput.style.display = 'none';
+        modelSelect.innerHTML = '';
+        _providerModels[provider].forEach(function(m) {
+            var opt = document.createElement('option');
+            opt.value = m.value; opt.textContent = m.label;
+            modelSelect.appendChild(opt);
+        });
+        if (currentModel) {
+            for (var i = 0; i < modelSelect.options.length; i++) {
+                if (modelSelect.options[i].value === currentModel) { modelSelect.selectedIndex = i; break; }
+            }
+        }
+    } else {
+        modelSelect.style.display = 'none';
+        modelInput.style.display = '';
+        modelInput.value = currentModel || '';
+        modelInput.placeholder = 'Model ID';
+    }
+}
+
+function onProviderChange() {
+    var provider = document.getElementById('llmProviderSelect').value;
+    document.getElementById('llmApiUrlInput').value = _defaultUrls[provider] || '';
+    populateModelSelect(provider, null);
+    var hint = document.getElementById('gensparkHint');
+    if (hint) hint.style.display = (provider === 'genspark') ? '' : 'none';
+}
+
+// ── Actions ───────────────────────────────────────────
+function toggleLlm(el) {
+    fetch('/api/llm/enabled?enabled=' + el.checked, {method:'POST'})
+        .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(d){ updateBadge(d.enabled); toast('AI Analysis ' + (d.enabled ? 'enabled' : 'disabled'), 'success'); })
+        .catch(function(e){ el.checked = !el.checked; toast('Failed: ' + e.message, 'error'); });
+}
+
+function saveLlmConfig() {
+    var provider = document.getElementById('llmProviderSelect').value;
+    var modelSelect = document.getElementById('llmModelSelect');
+    var modelInput = document.getElementById('llmModelInput');
+    var model = modelSelect.style.display !== 'none' ? modelSelect.value : modelInput.value.trim();
+    var apiUrl = document.getElementById('llmApiUrlInput').value.trim();
+    var maxIn = parseInt(document.getElementById('llmMaxInputTokens').value);
+    var maxOut = parseInt(document.getElementById('llmMaxOutputTokens').value);
+
+    if (!apiUrl) { toast('API URL is required', 'error'); return; }
+    if (!model) { toast('Model is required', 'error'); return; }
+
+    fetch('/api/llm/config', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({provider:provider, apiUrl:apiUrl, model:model, maxInputTokens:maxIn, maxOutputTokens:maxOut})
+    })
+    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(d){ toast('LLM config saved (Provider: ' + d.provider + ', Model: ' + d.model + ')', 'success'); })
+    .catch(function(e){ toast('Save failed: ' + e.message, 'error'); });
+}
+
+function saveLlmApiKey() {
+    var key = document.getElementById('llmApiKeyInput').value.trim();
+    if (!key) { toast('API Key is required', 'error'); return; }
+    fetch('/api/llm/apikey', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({apiKey: key})
+    })
+    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(d){
+        document.getElementById('llmApiKeyInput').value = '';
+        var ks = document.getElementById('llmKeyStatus');
+        ks.textContent = d.apiKeySet ? ('Set: ' + d.apiKeyMasked) : 'Not set';
+        ks.style.color = d.apiKeySet ? '#065F46' : '#DC2626';
+        toast('API Key saved', 'success');
+    })
+    .catch(function(e){ toast('API Key save failed: ' + e.message, 'error'); });
+}
+
+function testLlmConnection() {
+    var resEl = document.getElementById('llmTestResult');
+    resEl.style.display = 'block';
+    resEl.innerHTML = '<span style="color:#6B7280">Testing connection...</span>';
+    fetch('/api/llm/test-connection', {method:'POST'})
+        .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+        .then(function(d){
+            if (d.success) {
+                resEl.innerHTML = '<span style="color:#065F46;font-weight:600">&#10003; Connected</span>'
+                    + ' — Provider: ' + d.provider + ', Model: ' + (d.model||'-')
+                    + ', Latency: ' + (d.latencyMs||0) + 'ms';
+            } else {
+                resEl.innerHTML = '<span style="color:#DC2626;font-weight:600">&#10007; Failed</span>'
+                    + ' — ' + (d.error||'Unknown error');
+            }
+        })
+        .catch(function(e){ resEl.innerHTML = '<span style="color:#DC2626">Error: ' + e.message + '</span>'; });
+}
+
+// ── Init ──────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+    loadLlmSettings();
+});
+</script>
+
+</body>
+</html>

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management — Heap Dump Analyzer</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5; }
+        .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
+                  transition: left .25s cubic-bezier(.4,0,.2,1);
+                  background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .topbar-title { font-size: 16px; font-weight: 700; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; }
+        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                      border-radius: 6px; background: transparent; color: #6B7280;
+                      cursor: pointer; text-decoration: none; }
+        .topbar-btn:hover { background: #F9FAFB; }
+        .container { max-width: 1100px; margin: 0 auto; padding: 68px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+
+        .page-hdr { display: flex; align-items: center; justify-content: space-between;
+                    margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+        .page-ttl { font-size: 18px; font-weight: 700; }
+        .btn-primary { padding: 8px 16px; border: none; border-radius: 8px; background: #2563EB;
+                       color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
+        .btn-primary:hover { background: #1D4ED8; }
+
+        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
+        .utable { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .utable thead { background: #F9FAFB; }
+        .utable th { padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600;
+                     color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
+                     border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
+        .utable td { padding: 12px 16px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
+        .utable tbody tr:last-child td { border-bottom: none; }
+        .utable tbody tr:hover { background: #F9FAFB; }
+
+        .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+        .badge-admin { background: #DBEAFE; color: #1E40AF; }
+        .badge-user { background: #D1FAE5; color: #065F46; }
+        .badge-disabled { background: #FEE2E2; color: #991B1B; }
+        .badge-enabled { background: #D1FAE5; color: #065F46; }
+
+        .action-btn { padding: 5px 12px; border: 1px solid #E5E7EB; border-radius: 5px;
+                      background: transparent; font-size: 12px; cursor: pointer; color: #6B7280; }
+        .action-btn:hover { border-color: #93C5FD; background: #EFF6FF; color: #2563EB; }
+        .action-btn.danger:hover { border-color: #FCA5A5; background: #FEF2F2; color: #EF4444; }
+
+        /* Modal */
+        .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
+                    background: rgba(0,0,0,.4); align-items: center; justify-content: center; }
+        .modal-ov.open { display: flex; }
+        .modal-box { background: #fff; border-radius: 12px; padding: 24px; width: 90%; max-width: 440px;
+                     box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease; }
+        @keyframes modalIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        .modal-ttl { font-size: 16px; font-weight: 700; margin-bottom: 16px; }
+        .modal-group { margin-bottom: 14px; }
+        .modal-label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+        .modal-input { width: 100%; padding: 8px 12px; border: 1px solid #E5E7EB; border-radius: 7px;
+                       font-size: 13px; outline: none; }
+        .modal-input:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .modal-select { width: 100%; padding: 8px 12px; border: 1px solid #E5E7EB; border-radius: 7px;
+                        font-size: 13px; outline: none; background: #fff; }
+        .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+        .modal-btns button { padding: 8px 18px; border-radius: 7px; font-size: 13px; border: none;
+                             cursor: pointer; font-weight: 500; }
+        .mbtn-cancel { background: #F3F4F6; color: #374151; }
+        .mbtn-cancel:hover { background: #E5E7EB; }
+        .mbtn-save { background: #2563EB; color: #fff; }
+        .mbtn-save:hover { background: #1D4ED8; }
+        .mbtn-del { background: #EF4444; color: #fff; }
+        .mbtn-del:hover { background: #DC2626; }
+
+        /* Toast */
+        .toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+                 padding: 10px 24px; border-radius: 8px; font-size: 13px; font-weight: 500;
+                 z-index: 300; opacity: 0; transition: opacity .3s; pointer-events: none; }
+        .toast.show { opacity: 1; }
+        .toast.success { background: #D1FAE5; color: #065F46; border: 1px solid #A7F3D0; }
+        .toast.error { background: #FEE2E2; color: #991B1B; border: 1px solid #FECACA; }
+
+        @media (max-width: 900px) {
+            .topbar { left: 0; }
+            .container { padding-left: 20px; }
+        }
+        @media (min-width: 1024px) {
+            .utable { font-size: 15px; }
+            .utable th { font-size: 13px; padding: 14px 18px; }
+            .utable td { padding: 14px 18px; }
+            .page-ttl { font-size: 20px; }
+            .btn-primary { font-size: 14px; padding: 9px 18px; }
+            .action-btn { font-size: 13px; padding: 6px 14px; }
+            .badge { font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+
+<div th:replace="fragments/banner :: banner"></div>
+
+<div class="topbar">
+    <span class="topbar-title">계정 관리</span>
+    <div class="topbar-right">
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-hdr">
+        <div class="page-ttl">사용자 목록</div>
+        <button class="btn-primary" onclick="openCreateModal()">+ 사용자 추가</button>
+    </div>
+
+    <div class="panel">
+        <table class="utable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>사용자명</th>
+                    <th>이름</th>
+                    <th>역할</th>
+                    <th>상태</th>
+                    <th>생성일</th>
+                    <th>작업</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="u : ${users}">
+                    <td th:text="${u.id}">1</td>
+                    <td style="font-weight:600" th:text="${u.username}">admin</td>
+                    <td th:text="${u.displayName ?: '-'}">관리자</td>
+                    <td>
+                        <span class="badge badge-admin" th:if="${u.role.name() == 'ADMIN'}">ADMIN</span>
+                        <span class="badge badge-user" th:if="${u.role.name() == 'USER'}">USER</span>
+                    </td>
+                    <td>
+                        <span class="badge badge-enabled" th:if="${u.enabled}">활성</span>
+                        <span class="badge badge-disabled" th:unless="${u.enabled}">비활성</span>
+                    </td>
+                    <td th:text="${u.createdAt != null ? #temporals.format(u.createdAt, 'yyyy-MM-dd HH:mm') : '-'}">2026-04-12</td>
+                    <td>
+                        <button class="action-btn"
+                                th:data-id="${u.id}" th:data-username="${u.username}"
+                                th:data-displayname="${u.displayName}" th:data-role="${u.role.name()}"
+                                th:data-enabled="${u.enabled}"
+                                onclick="openEditModal(this.dataset)">수정</button>
+                        <button class="action-btn"
+                                th:data-id="${u.id}"
+                                onclick="openResetPwModal(this.dataset.id)">비밀번호</button>
+                        <button class="action-btn danger"
+                                th:data-id="${u.id}" th:data-username="${u.username}"
+                                th:disabled="${u.username == 'admin'}"
+                                onclick="openDeleteModal(this.dataset.id, this.dataset.username)">삭제</button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!-- Create Modal -->
+<div class="modal-ov" id="createModal" onclick="if(event.target===this)closeModal('createModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">사용자 추가</div>
+        <div class="modal-group">
+            <label class="modal-label">사용자명</label>
+            <input class="modal-input" id="cUsername" placeholder="영문, 숫자">
+        </div>
+        <div class="modal-group">
+            <label class="modal-label">비밀번호</label>
+            <input class="modal-input" id="cPassword" type="password" placeholder="비밀번호">
+        </div>
+        <div class="modal-group">
+            <label class="modal-label">이름</label>
+            <input class="modal-input" id="cDisplayName" placeholder="표시 이름">
+        </div>
+        <div class="modal-group">
+            <label class="modal-label">역할</label>
+            <select class="modal-select" id="cRole">
+                <option value="USER">USER</option>
+                <option value="ADMIN">ADMIN</option>
+            </select>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('createModal')">취소</button>
+            <button class="mbtn-save" onclick="submitCreate()">추가</button>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-ov" id="editModal" onclick="if(event.target===this)closeModal('editModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">사용자 수정</div>
+        <input type="hidden" id="eId">
+        <div class="modal-group">
+            <label class="modal-label">사용자명</label>
+            <input class="modal-input" id="eUsername" disabled style="background:#F3F4F6">
+        </div>
+        <div class="modal-group">
+            <label class="modal-label">이름</label>
+            <input class="modal-input" id="eDisplayName">
+        </div>
+        <div class="modal-group">
+            <label class="modal-label">역할</label>
+            <select class="modal-select" id="eRole">
+                <option value="USER">USER</option>
+                <option value="ADMIN">ADMIN</option>
+            </select>
+        </div>
+        <div class="modal-group">
+            <label class="modal-label">상태</label>
+            <select class="modal-select" id="eEnabled">
+                <option value="true">활성</option>
+                <option value="false">비활성</option>
+            </select>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('editModal')">취소</button>
+            <button class="mbtn-save" onclick="submitEdit()">저장</button>
+        </div>
+    </div>
+</div>
+
+<!-- Reset Password Modal -->
+<div class="modal-ov" id="resetPwModal" onclick="if(event.target===this)closeModal('resetPwModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">비밀번호 초기화</div>
+        <input type="hidden" id="rpId">
+        <div class="modal-group">
+            <label class="modal-label">새 비밀번호</label>
+            <input class="modal-input" id="rpPassword" type="password" placeholder="새 비밀번호">
+        </div>
+        <div class="modal-group">
+            <label class="modal-label">비밀번호 확인</label>
+            <input class="modal-input" id="rpPasswordConfirm" type="password" placeholder="비밀번호 확인">
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('resetPwModal')">취소</button>
+            <button class="mbtn-save" onclick="submitResetPw()">변경</button>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Modal -->
+<div class="modal-ov" id="deleteModal" onclick="if(event.target===this)closeModal('deleteModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">사용자 삭제</div>
+        <input type="hidden" id="dId">
+        <p style="font-size:13px;color:#6B7280;margin-bottom:16px">
+            <strong id="dUsername"></strong> 사용자를 삭제하시겠습니까?<br>이 작업은 되돌릴 수 없습니다.
+        </p>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('deleteModal')">취소</button>
+            <button class="mbtn-del" onclick="submitDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<script>
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function showToast(msg, type) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast ' + type + ' show';
+    setTimeout(function() { t.classList.remove('show'); }, 3000);
+}
+
+function openCreateModal() {
+    document.getElementById('cUsername').value = '';
+    document.getElementById('cPassword').value = '';
+    document.getElementById('cDisplayName').value = '';
+    document.getElementById('cRole').value = 'USER';
+    document.getElementById('createModal').classList.add('open');
+}
+
+function submitCreate() {
+    var data = {
+        username: document.getElementById('cUsername').value.trim(),
+        password: document.getElementById('cPassword').value,
+        displayName: document.getElementById('cDisplayName').value.trim(),
+        role: document.getElementById('cRole').value
+    };
+    if (!data.username || !data.password) { showToast('사용자명과 비밀번호를 입력하세요.', 'error'); return; }
+    fetch('/api/admin/users', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(data)
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) { showToast('사용자가 추가되었습니다.', 'success'); setTimeout(function() { location.reload(); }, 500); }
+        else { showToast(d.message || '생성 실패', 'error'); }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+    closeModal('createModal');
+}
+
+function openEditModal(ds) {
+    document.getElementById('eId').value = ds.id;
+    document.getElementById('eUsername').value = ds.username;
+    document.getElementById('eDisplayName').value = ds.displayname || '';
+    document.getElementById('eRole').value = ds.role;
+    document.getElementById('eEnabled').value = ds.enabled;
+    document.getElementById('editModal').classList.add('open');
+}
+
+function submitEdit() {
+    var id = document.getElementById('eId').value;
+    var data = {
+        displayName: document.getElementById('eDisplayName').value.trim(),
+        role: document.getElementById('eRole').value,
+        enabled: document.getElementById('eEnabled').value
+    };
+    fetch('/api/admin/users/' + id, {
+        method: 'PUT', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(data)
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) { showToast('수정되었습니다.', 'success'); setTimeout(function() { location.reload(); }, 500); }
+        else { showToast(d.message || '수정 실패', 'error'); }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+    closeModal('editModal');
+}
+
+function openResetPwModal(id) {
+    document.getElementById('rpId').value = id;
+    document.getElementById('rpPassword').value = '';
+    document.getElementById('rpPasswordConfirm').value = '';
+    document.getElementById('resetPwModal').classList.add('open');
+}
+
+function submitResetPw() {
+    var id = document.getElementById('rpId').value;
+    var pw = document.getElementById('rpPassword').value;
+    var pwc = document.getElementById('rpPasswordConfirm').value;
+    if (!pw) { showToast('비밀번호를 입력하세요.', 'error'); return; }
+    if (pw !== pwc) { showToast('비밀번호가 일치하지 않습니다.', 'error'); return; }
+    fetch('/api/admin/users/' + id + '/reset-password', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ password: pw })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) { showToast('비밀번호가 변경되었습니다.', 'success'); }
+        else { showToast(d.message || '변경 실패', 'error'); }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+    closeModal('resetPwModal');
+}
+
+function openDeleteModal(id, username) {
+    document.getElementById('dId').value = id;
+    document.getElementById('dUsername').textContent = username;
+    document.getElementById('deleteModal').classList.add('open');
+}
+
+function submitDelete() {
+    var id = document.getElementById('dId').value;
+    fetch('/api/admin/users/' + id, { method: 'DELETE' })
+    .then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) { showToast('삭제되었습니다.', 'success'); setTimeout(function() { location.reload(); }, 500); }
+        else { showToast(d.message || '삭제 실패', 'error'); }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+    closeModal('deleteModal');
+}
+</script>
+
+</body>
+</html>

@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <title>Heap Dump Analyzer</title>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -205,6 +207,32 @@
         .hi-deleted { opacity: 0.7; }
         .more-link { font-size: 12px; color: #2563EB; text-decoration: none; font-weight: 500; }
         .more-link:hover { text-decoration: underline; }
+        /* ── Detection Status Panel ──────────── */
+        .detect-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+        .detect-card { padding: 12px; border-radius: 8px; border: 1px solid #E5E7EB; background: #F9FAFB; text-align: center; }
+        .detect-card-val { font-size: 20px; font-weight: 700; line-height: 1.2; }
+        .detect-card-lbl { font-size: 10px; color: #9CA3AF; text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
+        .dc-critical { border-color: #FCA5A5; background: #FEF2F2; }
+        .dc-critical .detect-card-val { color: #DC2626; }
+        .dc-high { border-color: #FDBA74; background: #FFF7ED; }
+        .dc-high .detect-card-val { color: #EA580C; }
+        .dc-medium { border-color: #FDE68A; background: #FFFBEB; }
+        .dc-medium .detect-card-val { color: #B45309; }
+        .dc-low { border-color: #BBF7D0; background: #F0FDF4; }
+        .dc-low .detect-card-val { color: #16A34A; }
+        .detect-item { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #F3F4F6; }
+        .detect-item:last-child { border-bottom: none; }
+        .detect-fname { font-size: 12px; font-weight: 600; flex: 1; min-width: 0;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .detect-count { font-size: 11px; color: #6B7280; flex-shrink: 0; }
+        .detect-sevs { display: flex; gap: 6px; flex-shrink: 0; }
+        .detect-sev { font-size: 10px; padding: 1px 6px; border-radius: 10px; font-weight: 500; }
+        .ds-critical { background: #FEE2E2; color: #DC2626; }
+        .ds-high { background: #FFEDD5; color: #EA580C; }
+        .ds-medium { background: #FEF3C7; color: #92400E; }
+        .ds-low { background: #D1FAE5; color: #065F46; }
+        .detect-empty { text-align: center; padding: 24px 0; color: #9CA3AF; font-size: 12px; }
+
         .ra-item { padding: 10px 0; border-bottom: 1px solid #F3F4F6; }
         .ra-item:last-child { border-bottom: none; }
         .ra-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
@@ -412,6 +440,12 @@
             .ra-meta { font-size: 13px; }
             .ra-badge { font-size: 12px; }
             .ra-empty { font-size: 14px; }
+            .detect-card-val { font-size: 24px; }
+            .detect-card-lbl { font-size: 11px; }
+            .detect-fname { font-size: 14px; }
+            .detect-count { font-size: 13px; }
+            .detect-sev { font-size: 12px; }
+            .detect-empty { font-size: 14px; }
             .welcome-title { font-size: 22px; }
             .welcome-sub { font-size: 15px; }
             .welcome-btn { font-size: 16px; padding: 12px 28px; }
@@ -503,6 +537,7 @@
             .modal { width: calc(100vw - 32px); margin: 0 16px; }
             .dashboard-left { grid-template-columns: 1fr 1fr; }
             .ra-meta { flex-wrap: wrap; gap: 6px 12px; }
+            .detect-summary { grid-template-columns: repeat(2, 1fr); }
             .history-item { flex-wrap: wrap; gap: 4px 8px; }
             .hname { flex-basis: calc(100% - 20px); }
             .main-content { padding: 12px; }
@@ -774,46 +809,54 @@
                 </div>
             </div>
 
-            <!-- Analysis History -->
+            <!-- 탐지 현황 -->
             <div class="panel">
                 <div class="panel-hdr">
-                    <span class="panel-ttl">Analysis history</span>
-                    <a th:href="@{/history}" class="more-link">View all history &rarr;</a>
+                    <span class="panel-ttl">탐지 현황</span>
+                    <span th:if="${hasDetections}" style="font-size:12px;color:#6B7280"
+                          th:text="'총 ' + ${criticalCount + highCount + mediumCount + lowCount} + ' suspects'"></span>
                 </div>
-                <div th:if="${#lists.isEmpty(recentAnalyses)}" class="ra-empty">
-                    No analysis performed yet.
+                <div th:if="${hasDetections}">
+                    <div class="detect-summary">
+                        <div class="detect-card dc-critical">
+                            <div class="detect-card-val" th:text="${criticalCount}">0</div>
+                            <div class="detect-card-lbl">Critical</div>
+                        </div>
+                        <div class="detect-card dc-high">
+                            <div class="detect-card-val" th:text="${highCount}">0</div>
+                            <div class="detect-card-lbl">High</div>
+                        </div>
+                        <div class="detect-card dc-medium">
+                            <div class="detect-card-val" th:text="${mediumCount}">0</div>
+                            <div class="detect-card-lbl">Medium</div>
+                        </div>
+                        <div class="detect-card dc-low">
+                            <div class="detect-card-val" th:text="${lowCount}">0</div>
+                            <div class="detect-card-lbl">Low</div>
+                        </div>
+                    </div>
+                    <div th:each="di : ${detectionItems}" class="detect-item">
+                        <div class="hdot" th:classappend="${di.criticalCount > 0} ? 'hd-err' : (${di.highCount > 0} ? 'hd-warn' : 'hd-ok')"></div>
+                        <div class="detect-fname" th:text="${di.filename}">dump.hprof</div>
+                        <div class="detect-count" th:text="${di.suspectCount} + '건'">0건</div>
+                        <div class="detect-sevs">
+                            <span th:if="${di.criticalCount > 0}" class="detect-sev ds-critical"
+                                  th:text="'critical x' + ${di.criticalCount}"></span>
+                            <span th:if="${di.highCount > 0}" class="detect-sev ds-high"
+                                  th:text="'high x' + ${di.highCount}"></span>
+                            <span th:if="${di.mediumCount > 0}" class="detect-sev ds-medium"
+                                  th:text="'medium x' + ${di.mediumCount}"></span>
+                            <span th:if="${di.lowCount > 0}" class="detect-sev ds-low"
+                                  th:text="'low x' + ${di.lowCount}"></span>
+                        </div>
+                        <a th:unless="${di.fileDeleted}"
+                           th:href="@{/analyze/result/{f}(f=${di.filename})}"
+                           class="hbadge hb-ok">view</a>
+                        <span th:if="${di.fileDeleted}" class="hbadge hb-del">deleted</span>
+                    </div>
                 </div>
-                <div th:each="ra : ${recentAnalyses}" class="ra-item" th:classappend="${ra.fileDeleted} ? 'ra-deleted'">
-                    <div class="ra-top">
-                        <div class="hdot hd-ok"  th:if="${ra.status == 'SUCCESS'}"></div>
-                        <div class="hdot hd-err" th:if="${ra.status == 'ERROR'}"></div>
-                        <!-- SUCCESS: 삭제 여부와 관계없이 결과 보기 가능 -->
-                        <a th:if="${ra.status == 'SUCCESS'}"
-                           th:href="@{/analyze/result/{f}(f=${ra.filename})}"
-                           class="ra-name" th:text="${ra.filename}" style="color:#2563EB;text-decoration:none;">dump.hprof</a>
-                        <!-- ERROR: 에러 결과 페이지 링크 -->
-                        <a th:if="${ra.status == 'ERROR'}"
-                           th:href="@{/analyze/result/{f}(f=${ra.filename})}"
-                           class="ra-name" th:text="${ra.filename}" style="color:#EF4444;text-decoration:none;">dump.hprof</a>
-                        <span class="ra-badge ra-ok" th:if="${ra.status == 'SUCCESS'}">success</span>
-                        <span class="ra-badge ra-err" th:if="${ra.status == 'ERROR'}">failed</span>
-                        <span class="ra-badge ra-del" th:if="${ra.fileDeleted}">deleted</span>
-                    </div>
-                    <div class="ra-meta">
-                        <span>
-                            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-                            <span th:text="${ra.formattedAnalysisTime}">-</span>
-                        </span>
-                        <span>
-                            <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0022 16z"/></svg>
-                            <span th:text="${ra.heapUsed != null ? ra.heapUsed : '-'}">-</span>
-                        </span>
-                        <span>
-                            <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                            <span th:text="${ra.suspectCount}">0</span> suspects
-                        </span>
-                        <span th:text="${ra.formattedDate}">03-18</span>
-                    </div>
+                <div th:unless="${hasDetections}" class="detect-empty">
+                    탐지된 누수 의심 항목이 없습니다.
                 </div>
             </div>
 
@@ -1448,6 +1491,8 @@ function showDeleteModal(filename, url) {
 function postRedirect(url) {
     var f = document.createElement('form');
     f.method = 'POST'; f.action = url; f.style.display = 'none';
+    var ci = document.createElement('input'); ci.type = 'hidden'; ci.name = '_csrf';
+    ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(ci);
     document.body.appendChild(f); f.submit();
 }
 function closeDeleteModal() {

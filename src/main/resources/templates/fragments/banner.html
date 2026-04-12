@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.thymeleaf.org/extras/spring-security">
 <!-- 좌측 시스템 배너 fragment — 모든 페이지에서 th:replace 로 삽입 -->
 <div th:fragment="banner">
 
@@ -117,6 +117,19 @@ body.banner-collapsed .gb-collapsed-icons { display: flex; }
 .gb-nav-link.active { background: #EFF6FF; color: #2563EB; font-weight: 600; }
 .gb-nav-link svg { width: 16px; height: 16px; stroke: currentColor;
                    fill: none; stroke-width: 1.8; flex-shrink: 0; }
+/* ── Sub-menu ────────────────────────────────── */
+.gb-nav-sub { overflow: hidden; max-height: 0; transition: max-height .25s ease; }
+.gb-nav-sub.open { max-height: 80px; }
+.gb-nav-sub a { display: flex; align-items: center; gap: 6px;
+                padding: 5px 10px 5px 34px; border-radius: 5px; color: #6B7280;
+                text-decoration: none; font-size: 11px; font-weight: 500;
+                transition: background .15s; }
+.gb-nav-sub a:hover { background: #EFF6FF; color: #2563EB; }
+.gb-nav-sub a.active { background: #EFF6FF; color: #2563EB; font-weight: 600; }
+.gb-nav-sub a svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+.gb-nav-toggle { margin-left: auto; width: 14px; height: 14px; stroke: currentColor;
+                 fill: none; stroke-width: 2; transition: transform .2s; flex-shrink: 0; }
+.gb-nav-link.sub-open .gb-nav-toggle { transform: rotate(90deg); }
 
 /* ── Desktop font scale ──────────────────────── */
 @media (min-width: 1024px) {
@@ -228,6 +241,38 @@ body.banner-no-transition .gb-header { transition: none !important; }
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 Settings
             </a>
+            <a href="/servers" class="gb-nav-link" id="gbNavServers" onclick="toggleSubMenu(event, 'gbSubServers')">
+                <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                Servers
+                <svg class="gb-nav-toggle" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+            </a>
+            <div class="gb-nav-sub" id="gbSubServers">
+                <a href="/servers" id="gbNavServersMain">
+                    <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/></svg>
+                    Target Servers
+                </a>
+                <a href="/servers/logs" id="gbNavServerLogs">
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                    Transfer Logs
+                </a>
+            </div>
+            <a href="/admin/users" class="gb-nav-link" id="gbNavAdmin" sec:authorize="hasRole('ADMIN')">
+                <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                Admin
+            </a>
+        </div>
+
+        <!-- User info & Logout -->
+        <div class="gb-section" style="margin-top:auto;padding-top:12px;border-top:1px solid #E5E7EB">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:12px;color:#6B7280">
+                <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <span sec:authentication="name" style="font-weight:600;color:#1F2937">user</span>
+            </div>
+            <a href="/logout" class="gb-nav-link" style="color:#EF4444" onclick="event.preventDefault();document.getElementById('logoutForm').submit()">
+                <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                Logout
+            </a>
+            <form id="logoutForm" th:action="@{/logout}" method="post" style="display:none"></form>
         </div>
     </div>
 
@@ -238,6 +283,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         <a href="/files" class="gb-ci" title="Files"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></a>
         <a href="/history" class="gb-ci" title="History"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></a>
         <a href="/settings" class="gb-ci" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>
+        <a href="/servers" class="gb-ci" title="Servers"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></a>
     </div>
 </aside>
 
@@ -277,13 +323,42 @@ function toggleBanner() {
 
 function highlightActiveNav() {
     var path = window.location.pathname;
+    // 일반 메뉴 하이라이트
     var links = document.querySelectorAll('.gb-nav-link');
     links.forEach(function(l) {
         var href = l.getAttribute('href');
-        if (path === href || (href !== '/' && path.startsWith(href))) {
+        if (href && path === href && href !== '/servers') {
+            l.classList.add('active');
+        } else if (href && href !== '/' && href !== '/servers' && path.startsWith(href)) {
             l.classList.add('active');
         }
     });
+    // 서브 메뉴 하이라이트 + 자동 펼치기
+    var subLinks = document.querySelectorAll('.gb-nav-sub a');
+    subLinks.forEach(function(a) {
+        var href = a.getAttribute('href');
+        if (path === href) {
+            a.classList.add('active');
+        }
+    });
+    // /servers 경로면 서브 메뉴 펼치기 + 부모 활성화
+    if (path.startsWith('/servers')) {
+        var serversLink = document.getElementById('gbNavServers');
+        var sub = document.getElementById('gbSubServers');
+        if (serversLink) serversLink.classList.add('active', 'sub-open');
+        if (sub) sub.classList.add('open');
+    }
+}
+
+function toggleSubMenu(e, subId) {
+    // 서브 메뉴 토글 (링크 이동 방지)
+    e.preventDefault();
+    var link = e.currentTarget;
+    var sub = document.getElementById(subId);
+    if (sub) {
+        sub.classList.toggle('open');
+        link.classList.toggle('sub-open');
+    }
 }
 
 /* 수동 Refresh 버튼 */

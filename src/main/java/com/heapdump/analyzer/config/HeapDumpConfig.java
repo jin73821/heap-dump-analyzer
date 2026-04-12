@@ -87,6 +87,21 @@ public class HeapDumpConfig {
     @Value("${analysis.compress-after-analysis:true}")
     private boolean compressAfterAnalysis;
 
+    /** SSH/SCP 로컬 실행 계정 (runuser 로 전환). 비어있으면 현재 프로세스 계정 */
+    @Value("${remote.ssh.local-user:}")
+    private String sshLocalUser;
+    public String getSshLocalUser() { return sshLocalUser; }
+
+    /** SCP 임시 저장 경로 */
+    @Value("${remote.scp.temp-dir:/tmp}")
+    private String scpTempDir;
+    public String getScpTempDir() { return scpTempDir; }
+
+    /** 원격 서버 덤프 자동 스캔 주기 (초) */
+    @Value("${remote.scan.interval-sec:60}")
+    private int remoteScanIntervalSec;
+    public int getRemoteScanIntervalSec() { return remoteScanIntervalSec; }
+
     // ── LLM 분석 설정 ──────────────────────────────────────────
     @Value("${llm.enabled:false}")
     private boolean llmEnabled;

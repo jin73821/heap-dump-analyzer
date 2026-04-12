@@ -1,6 +1,284 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
-## [2026-04-10] LLM 연동 Settings + 분석 결과 페이지 AI 인사이트
+## [2026-04-13] 사용자 계정 및 암호화 보안 점검 보고서 작성
+
+**생성 파일:** `SECURITY_AUDIT_ACCOUNT.md`
+
+- 사용자 인증/인가, DB 비밀번호 암호화, 계정 관리 API 대상 보안 점검 수행
+- 양호 항목 6건 (BCrypt 해싱, SQL Injection 방지, 인증/인가 구조 등)
+- 취약점 7건 발견: AES 키 하드코딩(높음), IV 고정(높음), 기본 관리자 비밀번호 하드코딩(높음), init.sql 평문 비밀번호(높음), API CSRF 비활성화(중간), 비밀번호 정책 부재(중간), 메서드 레벨 권한 검증 없음(낮음)
+- 각 취약점별 수정 예시 코드 및 개선 방안 포함
+
+---
+
+## [2026-04-13] 대시보드 "탐지 현황" 패��� 추가
+
+**변경 파일:** `HeapDumpController.java`, `index.html`
+
+- Analysis History 패널 제거 (배너 History 링크로 충분)
+- "탐지 현황" 패널 추가: 심각도별 카드 (Critical/High/Medium/Low) + 파일별 suspect 목록
+- `DetectionSummaryItem` inner DTO 추가 (파일명, suspect수, 심각도별 카운트)
+- 각 파일의 `LeakSuspect.severity`를 집계하여 심각도별 통계 표시
+- 파일명 클릭 → 분석 결과 페이지 이동 (view 버���)
+- suspects 없으면 "탐지된 누수 의심 항목이 없습니다" 빈 상태 표시
+- 모바일(480px 이하) 심각도 카드 2x2 레이아웃
+
+---
+
+## [2026-04-13] AI 인사이트 DB 저장으로 전환
+
+**변경 파일:** `AiInsightEntity.java`(신규), `AiInsightRepository.java`(신규), `HeapDumpAnalyzerService.java`, `HeapDumpController.java`, `analyze.html`
+
+- `ai_insights` 테이블 생성 (filename, model, severity, latency_ms, insight_data(MEDIUMTEXT), analysed_at)
+- `saveAiInsight()`: DB에 저장 (기존 결과 있으면 UPDATE)
+- `loadAiInsight()`: DB 조회 우선, 없으면 파일 폴백 + 자동 DB 마이그레이션
+- `deleteAiInsight()`: DB 삭제 + 잔존 파일도 함께 삭제
+- 앱 기동 시 기존 `ai_insight.json` 파일을 DB로 자동 마이그레이션 (1회)
+- Controller 응답에서 `savedPath` → `savedTo: "database"` 변경
+- 프론트엔드 저장 경로 표시: "Database (MariaDB)" 로 변경
+
+---
+
+## [2026-04-12] 배너 Servers 서브 메뉴 아코디언
+
+**변경 파일:** `fragments/banner.html`
+
+- Servers 메뉴를 아코디언 형태로 변경: 클릭 시 하위 메뉴 펼침/접기
+- 하위 메뉴: "Target Servers" (`/servers`), "Transfer Logs" (`/servers/logs`)
+- `/servers` 또는 `/servers/logs` 경로 접속 시 서브 메뉴 자동 펼침 + 부모/자식 모두 active 하이라이트
+- CSS: `.gb-nav-sub` 슬라이드 트랜지션 (max-height), `.gb-nav-toggle` 화살표 회전 애니메이션
+
+---
+
+## [2026-04-12] 전송 진행바 + Transfer Logs 페이지
+
+**변경 파일:** `servers.html`, `server-logs.html`(신규), `ServerController.java`
+
+**전송 진행바:**
+- 전송 버튼 클릭 시 애니메이션 프로그레스 바로 교체 (pulse 애니메이션)
+- 성공: 초록색 바 + "완료" 라벨 / 실패: 빨간색 바 + "실패" + 에러 메시지 + 재시도 버튼
+- 모두 전송 시에도 각 파일별 개별 진행바 표시
+
+**Transfer Logs 페이지 (`/servers/logs`):**
+- Servers topbar에 "Transfer Logs" 버튼 추가
+- 서버별 아코디언 레이아웃 (첫 번째 서버 기본 열림)
+- 아코디언 헤더: 서버명, 호스트, 통계 (Total / Success / Failed)
+- 로그 테이블: 상태(뱃지), 파일명, 원격 경로, 크기, 시작/완료 시간, 에러 메시지
+- 서버당 최근 50건 표시, 에러 컬럼 hover 시 전체 메시지 노출
+
+---
+
+## [2026-04-12] 스캔 전송 상태 판정 수정 + 모두 전송 버튼 + CSRF 수정
+
+**변경 파일:** `DumpTransferLogRepository.java`, `RemoteDumpService.java`, `servers.html`, `files.html`, `history.html`, `index.html`, `analyze.html`, `progress.html`
+
+- "전송됨" 판정 로직 수정: `existsByServerIdAndFilename` → `existsByServerIdAndFilenameAndTransferStatus(..., "SUCCESS")` (실패 로그만 있으면 미전송으로 표시)
+- 스캔 결과에서 미전송 파일 2개 이상이면 "All Transfer" 버튼 표시 → 순차 전송
+- `transferFile(btn, callback)` 콜백 파라미터 추가로 순차 전송 지원
+- 모든 동적 POST 폼에 CSRF `_csrf` 토큰 추가 (files/history/index/analyze/progress 6개 페이지) — 403 Forbidden 수정
+- 실패 전송 로그 DB 정리 (36건 FAILED → 삭제)
+
+---
+
+## [2026-04-12] SCP 2단계 전송 (Permission Denied 수정) + 임시 경로 설정 + 에러 누적 수정
+
+**변경 파일:** `RemoteDumpService.java`, `HeapDumpConfig.java`, `application.properties`, `ServerController.java`, `settings.html`, `servers.html`
+
+**SCP 2단계 전송:**
+- Phase 1: SCP를 sscuser로 실행 → 임시 디렉토리(`/tmp/heapdump_transfer_<UUID>_<filename>`)에 저장
+- Phase 2: `Files.move()`로 앱 실행 계정(root) 권한으로 `/opt/heapdumps/dumpfiles/`에 이동
+- 모든 에러 경로에서 `cleanupTempFile()` 헬퍼로 임시 파일 정리
+
+**Settings — SCP temp directory 설정 추가:**
+- `application.properties`에 `remote.scp.temp-dir=/tmp` 기본값
+- Settings 페이지에서 런타임 변경 가능 (입력 + Save)
+- API: `GET/POST /api/servers/scp-temp-dir`
+
+**servers.html — 전송 에러 누적 표시 버그 수정:**
+- 실패 시 기존 에러 div(`.transfer-err`)를 제거 후 새 에러 추가 → 재시도해도 에러 1개만 표시
+
+---
+
+## [2026-04-12] SSH 로컬 실행 계정 설정 + 상태 커서 수정
+
+**변경 파일:** `application.properties`, `HeapDumpConfig.java`, `RemoteDumpService.java`, `ServerController.java`, `settings.html`, `servers.html`
+
+- `remote.ssh.local-user=sscuser` 설정 추가 — SSH/SCP를 `su - sscuser -c "..."` 로 실행
+- 현재 프로세스 계정과 동일하면 su 없이 직접 실행
+- Settings 페이지 Analysis Options에 "SSH local user" 입력 필드 추가 (런타임 변경 가능)
+- API: `GET/POST /api/servers/ssh-local-user`
+- Servers 페이지 상태 뱃지의 `cursor: help` (`?` 커서) 제거
+
+---
+
+## [2026-04-12] 서버 연결 상태 DB 영속화 (테스트/스캔/자동탐지 실패 시 상태 반영)
+
+**변경 파일:** `TargetServer.java`, `RemoteDumpService.java`, `servers.html`
+
+- `target_servers` 테이블에 `conn_status`(OK/FAIL/UNKNOWN), `last_error`, `last_checked_at` 컬럼 추가
+- 연결 테스트 성공 → `conn_status=OK`, 실패 → `conn_status=FAIL` + `last_error` 저장
+- 수동 스캔 성공 → `OK`, SSH 에러 → `FAIL` + 에러 메시지 저장
+- 자동 탐지 성공 → `OK`, 실패 → `FAIL` + 에러 메시지 저장
+- Servers 페이지 상태 컬럼: `정상`(초록) / `실패`(빨강, hover 시 에러 메시지 표시) / `미확인`(회색) / `비활성`(회색)
+- 테스트/스캔 후 페이지 새로고침 없이 JS로 상태 뱃지 즉시 갱신
+
+---
+
+## [2026-04-12] 스캔 주기 설정 + SSH/SCP 에러 표시
+
+**변경 파일:** `application.properties`, `HeapDumpConfig.java`, `RemoteDumpService.java`, `ServerController.java`, `settings.html`, `servers.html`
+
+**Settings — Remote scan interval 설정 추가:**
+- Analysis Options 카드에 스캔 주기 드롭다운 추가 (10초 ~ 1시간)
+- `application.properties`에 `remote.scan.interval-sec=60` 기본값
+- API: `GET/POST /api/servers/scan-interval` (조회/변경)
+- 고정 `@Scheduled(60초)` → 동적 주기로 변경 (10초 체크 루프 + 설정 주기 경과 시 실행)
+
+**Target Servers — SSH/SCP 에러 표시:**
+- 수동 스캔 시 SSH 에러 발생하면 빨간색 에러 배너로 상세 메시지 표시 (exit code, stderr)
+- SCP 전송 실패 시 버튼 옆에 에러 메시지 인라인 표시
+- 자동 탐지 에러: 서버별 마지막 에러를 `lastAutoScanErrors` 맵에 기록
+- Servers 페이지 상단에 자동 스캔 에러 배너 (30초마다 갱신)
+- `cleanSshError()`: SSH 배너/MOTD 텍스트 제거, 핵심 에러만 추출
+
+---
+
+## [2026-04-12] Settings 페이지 Database 카드 추가
+
+**변경 파일:** `settings.html`, `HeapDumpController.java`
+
+- Settings 페이지에 Database 카드 추가: 접속 상태(Connected/Disconnected 뱃지), Host, Port, Database, Username, Version, History Records 표시
+- "설정 변경" 버튼 → 모달에서 DBMS IP, 포트, DB명, 계정, 패스워드 입력 가능
+- "연결 테스트" 버튼: 입력한 정보로 실제 DB 연결 테스트 (성공 시 DB 버전 표시)
+- "저장" 버튼: application.properties에 AES 암호화된 패스워드로 저장, 재시작 안내
+- API: `POST /api/settings/database/test` (연결 테스트), `POST /api/settings/database` (설정 저장)
+- `/api/settings` 응답에 `database` 섹션 추가 (host, port, database, username, connected, version, historyCount)
+
+---
+
+## [2026-04-12] MariaDB 연동, 로그인/계정관리, 원격 서버 덤프 탐지 기능 추가
+
+### Phase 1: MariaDB 연동 기초 설정
+**변경 파일:** `pom.xml`, `application.properties`, `db/init.sql`
+- spring-boot-starter-data-jpa, mariadb-java-client, spring-boot-starter-security, thymeleaf-extras-springsecurity5 의존성 추가
+- MariaDB 192.168.56.9:3306/HEAPDB 연결 설정 (heap_user 계정)
+- JPA ddl-auto=update 로 테이블 자동 생성
+
+### Phase 2: JPA Entity + Repository
+**신규 파일:** `model/entity/User.java`, `model/entity/TargetServer.java`, `model/entity/AnalysisHistoryEntity.java`, `model/entity/DumpTransferLog.java`, `repository/UserRepository.java`, `repository/TargetServerRepository.java`, `repository/AnalysisHistoryRepository.java`, `repository/DumpTransferLogRepository.java`
+- 4개 Entity 클래스 (users, target_servers, analysis_history, dump_transfer_log 테이블)
+- Spring Data JPA Repository 인터페이스
+
+### Phase 3: Spring Security + 로그인/계정 관리
+**신규 파일:** `config/SecurityConfig.java`, `service/CustomUserDetailsService.java`, `service/UserService.java`, `controller/AuthController.java`, `controller/AdminController.java`, `templates/login.html`, `templates/admin/users.html`
+- Spring Security 기반 세션 인증 (모든 페이지 인증 필요, /login 공개)
+- 기본 관리자 계정: admin / shinhan@10 (BCrypt)
+- ADMIN 전용 계정 관리 페이지 (/admin/users): 사용자 추가/수정/삭제/비밀번호 초기화
+- CSRF: API 경로(/api/**) 제외, Thymeleaf 페이지는 자동 토큰 삽입
+
+### Phase 4: History DB 마이그레이션
+**변경 파일:** `service/HeapDumpAnalyzerService.java`, `controller/HeapDumpController.java`
+- 분석 성공/실패 시 analysis_history 테이블에 메타데이터 자동 저장
+- buildHistory() DB 기반으로 전환 (DB 우선 조회 + 미분석 파일 폴백)
+- 앱 기동 시 기존 result.json 데이터를 DB로 자동 마이그레이션 (1회)
+- AnalysisHistoryItem에 serverName 필드 추가
+
+### Phase 5: 원격 서버 덤프 탐지/전송
+**신규 파일:** `service/RemoteDumpService.java`, `controller/ServerController.java`, `templates/servers.html`
+- SSH/SCP 기반 원격 서버 연결 (sscuser 계정, BatchMode 키 인증)
+- 서버 등록/수정/삭제, 연결 테스트, 수동 스캔, 파일 전송 기능
+- 자동 탐지: @Scheduled(60초)로 auto_detect=true 서버의 새 덤프 자동 전송
+- 전송 이력 dump_transfer_log 기록, 중복 전송 방지 (서버ID + 파일명)
+
+### Phase 6: 배너/네비게이션 업데이트
+**변경 파일:** `templates/fragments/banner.html`
+- Servers 메뉴 추가 (모든 사용자)
+- Admin 메뉴 추가 (ADMIN 역할만 표시, sec:authorize)
+- 로그인 사용자명 표시 + Logout 버튼 (CSRF 폼 기반)
+- Collapsed icons에 Servers 아이콘 추가
+
+---
+
+## [2026-04-12] Files, History 페이지 테이블 레이아웃 전환
+
+**변경 파일:** `files.html`, `history.html`
+
+**Files 페이지 (`/files`):**
+- 기존 `.file-item` flex 리스트 → `<table class="ftable">` 테이블 형식으로 변경
+- 컬럼: 상태, 파일명, 크기, 날짜, 작업 (아이콘 버튼)
+- 테이블 헤더 고정, hover 행 하이라이트, 640px 이하에서 날짜 컬럼 숨김
+- 기존 기능(검색 필터, 삭제/다운로드 모달, GZ 뱃지) 모두 유지
+
+**History 페이지 (`/history`):**
+- 기존 `.hi` 카드형 리스트 → `<table class="htable">` 테이블 형식으로 변경
+- 컬럼: 상태, 파일명(뱃지 포함), 분석 시간, 힙 사용량, Suspects, 파일 크기, 날짜, 작업
+- 640px 이하에서 힙 사용량/Suspects 컬럼 숨김
+- 기존 기능(검색 필터, 삭제 모달, 링크) 모두 유지
+
+---
+
+## [2026-04-11] AI 인사이트 패널 UI 개선 및 분석 확인 모달 추가
+
+**변경 파일:** `analyze.html`
+
+**AI 인사이트 패널 레이아웃/폰트 확대:**
+- 패널 헤더: 제목 14→17px, 부제 11→13px, 뱃지 10→12px, 버튼 12→13px
+- 미분석 상태: 타이틀 17→20px, 설명 13→15px, 태그 11→13px, 시작 버튼 14→16px
+- 분석 중 상태: step circle 32→36px, label 10→12px, 메시지 14→16px, 상세 12→14px
+- 완료 상태: severity 20→24px, 본문 13.5→15px, 카드 타이틀 11→13px, 메타 10→12px
+- 에러 상태: 타이틀 15→18px, 메시지 13→15px, 버튼 13→14px
+- 저장 경로 배너: 14px, 코드 13px
+- 패널 max-width 960px + 가운데 정렬 (margin: 0 auto)
+
+**AI 분석 확인 모달 추가:**
+- `startAiAnalysis()` 호출 시 즉시 실행하지 않고 확인 모달 표시
+- 모달에 API 비용 발생 경고, 페이지 이탈 주의사항 안내
+- 재분석 시에는 "기존 결과가 새 결과로 대체됩니다" 추가 경고 표시
+- 확인 시 `confirmAiAnalysis()` → `_doStartAiAnalysis()`로 실제 분석 진행
+
+**기타:**
+- LLM 비활성화 안내 링크를 `/settings` → `/settings/llm`으로 변경
+- 에러 상태 Settings 링크도 `/settings/llm`으로 변경
+
+## [2026-04-11] AI / LLM Configuration을 별도 페이지로 분리
+
+Settings 페이지의 AI / LLM Configuration 섹션을 독립 페이지(`/settings/llm`)로 분리.
+
+**변경 파일:**
+- `HeapDumpController.java` — `@GetMapping("/settings/llm")` 라우트 추가
+- `settings.html` — LLM 카드를 링크 카드로 교체 (상태 뱃지 + 요약 정보 표시), LLM 관련 JS 코드 제거
+- `llm-settings.html` — 새 페이지 생성 (Enable, Provider & Model, API Key, Token Limits 카드 구성)
+
+**상세 내역:**
+- Settings 페이지에서 LLM 카드 클릭 시 `/settings/llm`으로 이동
+- 링크 카드에 ON/OFF 뱃지와 Provider/Model/API Key 상태 요약 표시
+- LLM Settings 페이지에 breadcrumb 네비게이션 (Settings > AI / LLM Configuration)
+- 배너 네비게이션에서 `/settings/llm` 접근 시 Settings 링크 하이라이트 유지
+
+## [2026-04-11] Genspark LLM 연동 버그 수정
+
+HTTP 404 Not Found 오류 발생하던 Genspark LLM 연동 문제 수정.
+
+**근본 원인:** Genspark API 엔드포인트는 `/chat/completions` 경로가 필요한데,
+`getDefaultApiUrl("genspark")`이 빈 문자열을 반환하고 Settings UI에서도 URL 미입력 상태가 유지되어
+`base_url`만으로 요청이 전달되었기 때문에 404 발생.
+추가로 모델명(`gpt-4o`, `claude-sonnet-4-20250514` 등)이 Genspark 허용 모델 목록에 없어 에러 발생.
+
+[service/HeapDumpAnalyzerService.java]
+- `getDefaultApiUrl("genspark")`: `""` → `"https://www.genspark.ai/api/llm_proxy/v1/chat/completions"` 수정
+- `GENSPARK_MODELS` 정적 상수 추가 — Genspark 허용 모델 21종 (GPT-5 계열, Claude 4 계열, Kimi, MiniMax)
+
+[controller/HeapDumpController.java]
+- `/api/settings` 응답의 `providerModels.genspark`: 빈 목록 → `GENSPARK_MODELS` 목록으로 수정
+
+[templates/settings.html]
+- `_defaultUrls.genspark`: `""` → `"https://www.genspark.ai/api/llm_proxy/v1/chat/completions"` 수정
+- `_providerModels.genspark`: 드롭다운 목록 추가 (GPT-5/Claude 4/Kimi/MiniMax 21종)
+- Genspark 선택 시 안내 박스 표시 (`#gensparkHint`):
+  - Base URL / 엔드포인트 / API Key 형식(gsk-...) / 허용 모델 안내
+- `loadLlmSettings()`: provider 로드 시 gensparkHint 표시 여부 반영
+- `onProviderChange()`: provider 전환 시 gensparkHint 표시/숨김 처리
+
 
 다중 LLM 프로바이더(Claude, GPT, Genspark, Custom) 지원 AI 분석 기능 추가.
 사용자가 명시적으로 "AI 분석 시작" 버튼을 클릭해야만 LLM 호출 발생.

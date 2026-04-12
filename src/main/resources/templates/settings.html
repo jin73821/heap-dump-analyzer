@@ -121,6 +121,9 @@
                       font-size: 11px; cursor: pointer; color: #6B7280; transition: all .15s; vertical-align: middle; }
         .s-copy-btn:hover { border-color: #2563EB; color: #2563EB; }
 
+        /* ── LLM link card ───────────────────────────────── */
+        #llmCard:hover { border-color: #93C5FD; box-shadow: 0 2px 8px rgba(37,99,235,.1); }
+
         /* ── Danger zone ─────────────────────────────────── */
         .danger-zone { border-color: #FECACA; }
         .danger-zone .card-title { color: #DC2626; }
@@ -363,86 +366,99 @@
                     <label class="tog-track" for="togSkipHeapWarn"></label>
                 </div>
             </div>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">SCP temp directory</div>
+                    <div class="setting-desc">SCP 임시 저장 경로 (SSH 계정 쓰기 가능 필요)</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <input id="scpTempDirInput" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;width:160px" placeholder="/tmp">
+                    <button class="heap-btn-apply" style="padding:5px 12px;font-size:12px" onclick="saveScpTempDir()">Save</button>
+                </div>
+            </div>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">SSH local user</div>
+                    <div class="setting-desc">SSH/SCP 실행 시 로컬 계정 (runuser 로 전환)</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <input id="sshLocalUserInput" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;width:120px" placeholder="sscuser">
+                    <button class="heap-btn-apply" style="padding:5px 12px;font-size:12px" onclick="saveSshLocalUser()">Save</button>
+                </div>
+            </div>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">Remote scan interval</div>
+                    <div class="setting-desc">Target Server 덤프 자동 탐지 주기</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <select id="scanIntervalSelect" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:110px" onchange="saveScanInterval(this.value)">
+                        <option value="10">10초</option>
+                        <option value="30">30초</option>
+                        <option value="60">1분</option>
+                        <option value="120">2분</option>
+                        <option value="300">5분</option>
+                        <option value="600">10분</option>
+                        <option value="1800">30분</option>
+                        <option value="3600">1시간</option>
+                    </select>
+                </div>
+            </div>
         </div>
 
-        <!-- AI / LLM Configuration -->
-        <div class="card" id="llmCard">
+        <!-- Database Configuration -->
+        <div class="card">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                Database
+                <span id="dbStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;margin-left:auto;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Host</span>
+                <span class="s-val s-val-mono" id="sDbHost">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Port</span>
+                <span class="s-val s-val-mono" id="sDbPort">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Database</span>
+                <span class="s-val s-val-mono" id="sDbName">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Username</span>
+                <span class="s-val s-val-mono" id="sDbUser">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">Version</span>
+                <span class="s-val s-val-mono" id="sDbVersion">-</span>
+            </div>
+            <div class="s-row">
+                <span class="s-key">History Records</span>
+                <span class="s-val s-val-mono" id="sDbHistoryCount">-</span>
+            </div>
+            <div style="margin-top:12px;text-align:right">
+                <button class="s-edit-btn" style="width:auto;padding:4px 12px;font-size:12px" onclick="openDbEditModal()" title="DB 설정 변경">
+                    &#9998; 설정 변경
+                </button>
+            </div>
+        </div>
+
+        <!-- AI / LLM Configuration (링크) -->
+        <a href="/settings/llm" class="card" id="llmCard" style="text-decoration:none;color:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s;display:block">
             <div class="card-title">
                 <svg viewBox="0 0 24 24"><path d="M12 2a4 4 0 014 4c0 1.1-.9 2-2 2h-4a2 2 0 01-2-2 4 4 0 014-4z"/><path d="M8 8v8a4 4 0 008 0V8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
                 AI / LLM Configuration
                 <span id="llmStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;margin-left:auto;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">OFF</span>
             </div>
-            <!-- LLM 활성화 토글 -->
-            <div class="setting-row">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0">
                 <div>
-                    <div class="setting-label">Enable AI Analysis</div>
-                    <div class="setting-desc">LLM을 사용한 힙 덤프 AI 분석 기능 활성화</div>
+                    <div style="font-size:13px;font-weight:500;color:#374151">LLM을 사용한 힙 덤프 AI 분석 기능 설정</div>
+                    <div style="font-size:11px;color:#9CA3AF;margin-top:4px" id="llmSummary">Provider, Model, API Key 등을 설정합니다</div>
                 </div>
-                <div>
-                    <input type="checkbox" class="tog" id="togLlm" onchange="toggleLlm(this)">
-                    <label class="tog-track" for="togLlm"></label>
-                </div>
+                <svg viewBox="0 0 24 24" style="width:20px;height:20px;stroke:#9CA3AF;fill:none;stroke-width:2;flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
             </div>
-            <!-- Provider 선택 -->
-            <div class="s-row">
-                <span class="s-key">Provider</span>
-                <select id="llmProviderSelect" onchange="onProviderChange()" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:160px">
-                    <option value="claude">Claude (Anthropic)</option>
-                    <option value="gpt">GPT (OpenAI)</option>
-                    <option value="genspark">Genspark</option>
-                    <option value="custom">Custom (OpenAI 호환)</option>
-                </select>
-            </div>
-            <!-- API URL -->
-            <div class="s-row">
-                <span class="s-key">API URL</span>
-                <input type="text" id="llmApiUrlInput" placeholder="API endpoint URL"
-                       style="flex:1;max-width:320px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace">
-            </div>
-            <!-- Model -->
-            <div class="s-row">
-                <span class="s-key">Model</span>
-                <div style="display:flex;gap:6px;align-items:center">
-                    <select id="llmModelSelect" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:200px">
-                    </select>
-                    <input type="text" id="llmModelInput" placeholder="모델 ID를 입력하세요" style="display:none;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:200px">
-                </div>
-            </div>
-            <!-- API Key -->
-            <div class="s-row">
-                <span class="s-key">API Key</span>
-                <div style="display:flex;gap:6px;align-items:center">
-                    <input type="password" id="llmApiKeyInput" placeholder="API 키를 입력하세요"
-                           style="width:200px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace">
-                    <button onclick="saveLlmApiKey()" style="padding:5px 12px;border:1px solid #D1D5DB;border-radius:6px;background:#fff;font-size:12px;cursor:pointer;font-weight:600;color:#374151">Save</button>
-                    <span id="llmKeyStatus" style="font-size:11px;color:#9CA3AF"></span>
-                </div>
-            </div>
-            <!-- Max Tokens -->
-            <div class="s-row">
-                <span class="s-key">Max Input Tokens</span>
-                <select id="llmMaxInputTokens" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px">
-                    <option value="4000">4,000</option>
-                    <option value="8000" selected>8,000</option>
-                    <option value="16000">16,000</option>
-                    <option value="32000">32,000</option>
-                </select>
-            </div>
-            <div class="s-row">
-                <span class="s-key">Max Output Tokens</span>
-                <select id="llmMaxOutputTokens" style="padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px">
-                    <option value="2000">2,000</option>
-                    <option value="4000" selected>4,000</option>
-                    <option value="8000">8,000</option>
-                </select>
-            </div>
-            <!-- 저장 + 연결 테스트 버튼 -->
-            <div style="display:flex;gap:8px;margin-top:14px">
-                <button onclick="saveLlmConfig()" class="heap-btn-apply">Save Config</button>
-                <button onclick="testLlmConnection()" style="padding:6px 14px;border:1px solid #D1D5DB;border-radius:6px;background:#fff;font-size:12px;cursor:pointer;font-weight:600;color:#374151">Test Connection</button>
-            </div>
-            <div id="llmTestResult" style="margin-top:10px;font-size:12px;display:none"></div>
-        </div>
+        </a>
 
         <!-- Storage -->
         <div class="card">
@@ -680,6 +696,41 @@
     </div>
 </div>
 
+<!-- ── DB 설정 변경 모달 ──────────────────────────────────── -->
+<div class="modal-ov" id="dbEditModal" onclick="if(event.target===this)closeDbEditModal()">
+    <div class="modal-box" style="max-width:480px">
+        <div class="modal-ttl">Database 설정 변경</div>
+        <div style="display:flex;gap:10px;margin-bottom:12px">
+            <div style="flex:1">
+                <div class="setting-label" style="margin-bottom:4px">Host (IP)</div>
+                <input class="heap-select" id="dbEditHost" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #D1D5DB;font-size:13px" placeholder="192.168.56.9">
+            </div>
+            <div style="width:90px">
+                <div class="setting-label" style="margin-bottom:4px">Port</div>
+                <input class="heap-select" id="dbEditPort" type="number" value="3306" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #D1D5DB;font-size:13px">
+            </div>
+        </div>
+        <div style="margin-bottom:12px">
+            <div class="setting-label" style="margin-bottom:4px">Database</div>
+            <input class="heap-select" id="dbEditDatabase" value="HEAPDB" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #D1D5DB;font-size:13px" placeholder="HEAPDB">
+        </div>
+        <div style="margin-bottom:12px">
+            <div class="setting-label" style="margin-bottom:4px">Username</div>
+            <input class="heap-select" id="dbEditUsername" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #D1D5DB;font-size:13px" placeholder="heap_user">
+        </div>
+        <div style="margin-bottom:12px">
+            <div class="setting-label" style="margin-bottom:4px">Password</div>
+            <input class="heap-select" id="dbEditPassword" type="password" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #D1D5DB;font-size:13px" placeholder="비밀번호 입력">
+        </div>
+        <div id="dbTestResult" style="display:none;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:12px"></div>
+        <div class="modal-btns" style="gap:8px">
+            <button class="mbtn-cancel" onclick="closeDbEditModal()">취소</button>
+            <button class="heap-btn-apply" style="background:#059669" onclick="testDbConn()">연결 테스트</button>
+            <button class="mbtn-primary" onclick="saveDbSettings()">저장</button>
+        </div>
+    </div>
+</div>
+
 <!-- ── JavaScript ─────────────────────────────────────────── -->
 <script>
 // ── Toast ──────────────────────────────────────────────
@@ -785,11 +836,18 @@ function loadAllData(showToast) {
             jvmBar.style.width = jvmPct + '%';
             jvmBar.style.background = jvmPct > 85 ? '#DC2626' : jvmPct > 60 ? '#D97706' : '#7c3aed';
         }
-        // LLM
-        if (d.llm) { loadLlmSettings(d.llm); }
+        // Database
+        if (d.database) { updateDbCard(d.database); }
+        // LLM (상태 뱃지만 업데이트)
+        if (d.llm) { updateLlmCard(d.llm); }
 
         if (showToast) toast('Settings refreshed', 'success');
     }).catch(function(e) { toast('Failed to load settings: ' + e.message, 'error'); });
+
+    // SCP 임시 경로 + SSH 로컬 계정 + 스캔 주기
+    loadScpTempDir();
+    loadSshLocalUser();
+    loadScanInterval();
 
     // 물리 메모리 (별도 API)
     fetch('/api/mat/heap').then(function(r){ return r.json(); }).then(function(h) {
@@ -1039,166 +1097,189 @@ function fallbackCopy(text) {
     document.body.removeChild(ta);
 }
 
-// ── LLM Settings ──────────────────────────────────────
-var _providerModels = {
-    'claude': [
-        {value:'claude-sonnet-4-20250514', label:'Claude Sonnet 4 (추천)'},
-        {value:'claude-haiku-4-5-20251001', label:'Claude Haiku 4.5 (빠름)'},
-        {value:'claude-opus-4-20250514', label:'Claude Opus 4 (최고 성능)'}
-    ],
-    'gpt': [
-        {value:'gpt-4o', label:'GPT-4o (추천)'},
-        {value:'gpt-4o-mini', label:'GPT-4o Mini (빠름)'},
-        {value:'gpt-4-turbo', label:'GPT-4 Turbo'}
-    ]
-};
-var _defaultUrls = {
-    'claude': 'https://api.anthropic.com/v1/messages',
-    'gpt': 'https://api.openai.com/v1/chat/completions',
-    'genspark': '',
-    'custom': ''
-};
-
-function loadLlmSettings(llm) {
-    var tog = document.getElementById('togLlm');
-    if (tog) tog.checked = llm.enabled;
-    updateLlmBadge(llm.enabled);
-
-    var provSel = document.getElementById('llmProviderSelect');
-    if (provSel) provSel.value = llm.provider || 'claude';
-
-    // 모델 드롭다운 구성
-    populateModelSelect(llm.provider || 'claude', llm.model);
-
-    var urlInput = document.getElementById('llmApiUrlInput');
-    if (urlInput) urlInput.value = llm.apiUrl || '';
-
-    // API key
-    var keyStatus = document.getElementById('llmKeyStatus');
-    if (keyStatus) {
-        keyStatus.textContent = llm.apiKeySet ? ('설정됨: ' + llm.apiKeyMasked) : '미설정';
-        keyStatus.style.color = llm.apiKeySet ? '#065F46' : '#DC2626';
-    }
-
-    // Max tokens
-    selectOption('llmMaxInputTokens', String(llm.maxInputTokens || 8000));
-    selectOption('llmMaxOutputTokens', String(llm.maxOutputTokens || 4000));
-}
-
-function updateLlmBadge(enabled) {
+// ── LLM Card (상태 뱃지 + 요약만) ────────────────────────
+function updateLlmCard(llm) {
     var badge = document.getElementById('llmStatusBadge');
-    if (!badge) return;
-    if (enabled) {
-        badge.textContent = 'ON';
-        badge.style.background = '#DBEAFE';
-        badge.style.color = '#1D4ED8';
-        badge.style.borderColor = '#93C5FD';
-    } else {
-        badge.textContent = 'OFF';
-        badge.style.background = '#F3F4F6';
-        badge.style.color = '#9CA3AF';
-        badge.style.borderColor = '#E5E7EB';
-    }
-}
-
-function populateModelSelect(provider, currentModel) {
-    var modelSelect = document.getElementById('llmModelSelect');
-    var modelInput = document.getElementById('llmModelInput');
-    if (!modelSelect || !modelInput) return;
-
-    if (_providerModels[provider]) {
-        modelSelect.style.display = '';
-        modelInput.style.display = 'none';
-        modelSelect.innerHTML = '';
-        _providerModels[provider].forEach(function(m) {
-            var opt = document.createElement('option');
-            opt.value = m.value; opt.textContent = m.label;
-            modelSelect.appendChild(opt);
-        });
-        if (currentModel) {
-            for (var i = 0; i < modelSelect.options.length; i++) {
-                if (modelSelect.options[i].value === currentModel) { modelSelect.selectedIndex = i; break; }
-            }
+    if (badge) {
+        if (llm.enabled) {
+            badge.textContent = 'ON';
+            badge.style.background = '#DBEAFE';
+            badge.style.color = '#1D4ED8';
+            badge.style.borderColor = '#93C5FD';
+        } else {
+            badge.textContent = 'OFF';
+            badge.style.background = '#F3F4F6';
+            badge.style.color = '#9CA3AF';
+            badge.style.borderColor = '#E5E7EB';
         }
-    } else {
-        modelSelect.style.display = 'none';
-        modelInput.style.display = '';
-        modelInput.value = currentModel || '';
-        modelInput.placeholder = '모델 ID를 입력하세요';
+    }
+    var summary = document.getElementById('llmSummary');
+    if (summary) {
+        var provider = (llm.provider || 'claude').charAt(0).toUpperCase() + (llm.provider || 'claude').slice(1);
+        var model = llm.model || '-';
+        var key = llm.apiKeySet ? 'API Key 설정됨' : 'API Key 미설정';
+        summary.textContent = provider + ' / ' + model + ' / ' + key;
     }
 }
 
-function onProviderChange() {
-    var provider = document.getElementById('llmProviderSelect').value;
-    document.getElementById('llmApiUrlInput').value = _defaultUrls[provider] || '';
-    populateModelSelect(provider, null);
+// ── SCP temp dir ──────────────────────────────────────
+function loadScpTempDir() {
+    fetch('/api/servers/scp-temp-dir').then(function(r){ return r.json(); }).then(function(d) {
+        var inp = document.getElementById('scpTempDirInput');
+        if (inp && d.tempDir != null) inp.value = d.tempDir;
+    }).catch(function(){});
 }
 
-function toggleLlm(el) {
-    fetch('/api/llm/enabled?enabled=' + el.checked, {method:'POST'})
-        .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-        .then(function(d){ updateLlmBadge(d.enabled); toast('AI Analysis ' + (d.enabled ? 'enabled' : 'disabled'), 'success'); })
-        .catch(function(e){ el.checked = !el.checked; toast('Failed: ' + e.message, 'error'); });
+function saveScpTempDir() {
+    var dir = document.getElementById('scpTempDirInput').value.trim() || '/tmp';
+    fetch('/api/servers/scp-temp-dir', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ tempDir: dir })
+    }).then(function(r){ return r.json(); }).then(function(d) {
+        if (d.success) toast('SCP 임시 경로 변경: ' + d.tempDir, 'success');
+        else toast(d.message || '변경 실패', 'error');
+    }).catch(function(e){ toast('요청 실패: ' + e.message, 'error'); });
 }
 
-function saveLlmConfig() {
-    var provider = document.getElementById('llmProviderSelect').value;
-    var modelSelect = document.getElementById('llmModelSelect');
-    var modelInput = document.getElementById('llmModelInput');
-    var model = modelSelect.style.display !== 'none' ? modelSelect.value : modelInput.value.trim();
-    var apiUrl = document.getElementById('llmApiUrlInput').value.trim();
-    var maxIn = parseInt(document.getElementById('llmMaxInputTokens').value);
-    var maxOut = parseInt(document.getElementById('llmMaxOutputTokens').value);
-
-    if (!apiUrl) { toast('API URL을 입력하세요', 'error'); return; }
-    if (!model) { toast('모델을 선택하세요', 'error'); return; }
-
-    fetch('/api/llm/config', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({provider:provider, apiUrl:apiUrl, model:model, maxInputTokens:maxIn, maxOutputTokens:maxOut})
-    })
-    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-    .then(function(d){ toast('LLM 설정이 저장되었습니다 (Provider: ' + d.provider + ', Model: ' + d.model + ')', 'success'); })
-    .catch(function(e){ toast('저장 실패: ' + e.message, 'error'); });
+// ── SSH local user ────────────────────────────────────
+function loadSshLocalUser() {
+    fetch('/api/servers/ssh-local-user').then(function(r){ return r.json(); }).then(function(d) {
+        var inp = document.getElementById('sshLocalUserInput');
+        if (inp && d.localUser != null) inp.value = d.localUser;
+    }).catch(function(){});
 }
 
-function saveLlmApiKey() {
-    var key = document.getElementById('llmApiKeyInput').value.trim();
-    if (!key) { toast('API 키를 입력하세요', 'error'); return; }
-    fetch('/api/llm/apikey', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({apiKey: key})
-    })
-    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-    .then(function(d){
-        document.getElementById('llmApiKeyInput').value = '';
-        var ks = document.getElementById('llmKeyStatus');
-        ks.textContent = d.apiKeySet ? ('설정됨: ' + d.apiKeyMasked) : '미설정';
-        ks.style.color = d.apiKeySet ? '#065F46' : '#DC2626';
-        toast('API 키가 저장되었습니다', 'success');
-    })
-    .catch(function(e){ toast('API 키 저장 실패: ' + e.message, 'error'); });
+function saveSshLocalUser() {
+    var user = document.getElementById('sshLocalUserInput').value.trim();
+    fetch('/api/servers/ssh-local-user', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ localUser: user })
+    }).then(function(r){ return r.json(); }).then(function(d) {
+        if (d.success) toast('SSH 로컬 계정 변경: ' + (d.localUser || '(현재 계정)'), 'success');
+        else toast(d.message || '변경 실패', 'error');
+    }).catch(function(e){ toast('요청 실패: ' + e.message, 'error'); });
 }
 
-function testLlmConnection() {
-    var resEl = document.getElementById('llmTestResult');
-    resEl.style.display = 'block';
-    resEl.innerHTML = '<span style="color:#6B7280">연결 테스트 중...</span>';
-    fetch('/api/llm/test-connection', {method:'POST'})
-        .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-        .then(function(d){
-            if (d.success) {
-                resEl.innerHTML = '<span style="color:#065F46;font-weight:600">&#10003; 연결 성공</span>'
-                    + ' — Provider: ' + d.provider + ', Model: ' + (d.model||'-')
-                    + ', Latency: ' + (d.latencyMs||0) + 'ms';
-            } else {
-                resEl.innerHTML = '<span style="color:#DC2626;font-weight:600">&#10007; 연결 실패</span>'
-                    + ' — ' + (d.error||'Unknown error');
+// ── Scan interval ─────────────────────────────────────
+function loadScanInterval() {
+    fetch('/api/servers/scan-interval').then(function(r){ return r.json(); }).then(function(d) {
+        var sel = document.getElementById('scanIntervalSelect');
+        if (sel && d.intervalSec) {
+            var val = String(d.intervalSec);
+            for (var i = 0; i < sel.options.length; i++) {
+                if (sel.options[i].value === val) { sel.selectedIndex = i; return; }
             }
-        })
-        .catch(function(e){ resEl.innerHTML = '<span style="color:#DC2626">오류: ' + e.message + '</span>'; });
+            // 목록에 없는 값이면 옵션 추가
+            var opt = document.createElement('option');
+            opt.value = val; opt.textContent = val + '초';
+            sel.appendChild(opt);
+            sel.value = val;
+        }
+    }).catch(function(){});
+}
+
+function saveScanInterval(val) {
+    fetch('/api/servers/scan-interval', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ intervalSec: parseInt(val) })
+    }).then(function(r){ return r.json(); }).then(function(d) {
+        if (d.success) toast('스캔 주기 변경: ' + d.intervalSec + '초', 'success');
+        else toast(d.message || '변경 실패', 'error');
+    }).catch(function(e){ toast('요청 실패: ' + e.message, 'error'); });
+}
+
+// ── Database ───────────────────────────────────────────
+function updateDbCard(db) {
+    if (!db) return;
+    document.getElementById('sDbHost').textContent = db.host || '-';
+    document.getElementById('sDbPort').textContent = db.port || '-';
+    document.getElementById('sDbName').textContent = db.database || '-';
+    document.getElementById('sDbUser').textContent = db.username || '-';
+    document.getElementById('sDbVersion').textContent = db.version || '-';
+    document.getElementById('sDbHistoryCount').textContent = db.historyCount != null ? db.historyCount : '-';
+    var badge = document.getElementById('dbStatusBadge');
+    if (badge) {
+        if (db.connected) {
+            badge.textContent = 'Connected';
+            badge.style.background = '#D1FAE5'; badge.style.color = '#065F46'; badge.style.borderColor = '#A7F3D0';
+        } else {
+            badge.textContent = 'Disconnected';
+            badge.style.background = '#FEE2E2'; badge.style.color = '#991B1B'; badge.style.borderColor = '#FECACA';
+        }
+    }
+}
+
+function openDbEditModal() {
+    var h = document.getElementById('sDbHost').textContent;
+    var p = document.getElementById('sDbPort').textContent;
+    var d = document.getElementById('sDbName').textContent;
+    var u = document.getElementById('sDbUser').textContent;
+    document.getElementById('dbEditHost').value = (h && h !== '-') ? h : '';
+    document.getElementById('dbEditPort').value = (p && p !== '-') ? p : '3306';
+    document.getElementById('dbEditDatabase').value = (d && d !== '-') ? d : 'HEAPDB';
+    document.getElementById('dbEditUsername').value = (u && u !== '-') ? u : '';
+    document.getElementById('dbEditPassword').value = '';
+    document.getElementById('dbTestResult').style.display = 'none';
+    document.getElementById('dbEditModal').classList.add('open');
+}
+function closeDbEditModal() { document.getElementById('dbEditModal').classList.remove('open'); }
+
+function testDbConn() {
+    var data = {
+        host: document.getElementById('dbEditHost').value.trim(),
+        port: document.getElementById('dbEditPort').value.trim(),
+        database: document.getElementById('dbEditDatabase').value.trim(),
+        username: document.getElementById('dbEditUsername').value.trim(),
+        password: document.getElementById('dbEditPassword').value
+    };
+    if (!data.host || !data.username || !data.password) {
+        showDbTestResult(false, '호스트, 계정, 패스워드를 모두 입력하세요.');
+        return;
+    }
+    showDbTestResult(null, '연결 테스트 중...');
+    fetch('/api/settings/database/test', {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        showDbTestResult(d.success, d.success ? d.version + ' — ' + d.message : d.message);
+    }).catch(function(e) { showDbTestResult(false, '요청 실패: ' + e.message); });
+}
+
+function showDbTestResult(success, msg) {
+    var el = document.getElementById('dbTestResult');
+    el.style.display = 'block';
+    el.textContent = msg;
+    if (success === null) {
+        el.style.background = '#F3F4F6'; el.style.color = '#6B7280'; el.style.border = '1px solid #E5E7EB';
+    } else if (success) {
+        el.style.background = '#D1FAE5'; el.style.color = '#065F46'; el.style.border = '1px solid #A7F3D0';
+    } else {
+        el.style.background = '#FEE2E2'; el.style.color = '#991B1B'; el.style.border = '1px solid #FECACA';
+    }
+}
+
+function saveDbSettings() {
+    var data = {
+        host: document.getElementById('dbEditHost').value.trim(),
+        port: document.getElementById('dbEditPort').value.trim(),
+        database: document.getElementById('dbEditDatabase').value.trim(),
+        username: document.getElementById('dbEditUsername').value.trim(),
+        password: document.getElementById('dbEditPassword').value
+    };
+    if (!data.host || !data.username || !data.password) {
+        toast('호스트, 계정, 패스워드를 모두 입력하세요.', 'error');
+        return;
+    }
+    fetch('/api/settings/database', {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) {
+            toast(d.message, 'success');
+            closeDbEditModal();
+            loadAllData(false);
+        } else {
+            toast(d.message || '저장 실패', 'error');
+        }
+    }).catch(function(e) { toast('요청 실패: ' + e.message, 'error'); });
 }
 
 // ── Init ───────────────────────────────────────────────
@@ -1211,7 +1292,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') { closeClearModal(); closeKeepURModal(); closeAAModal(); closeHeapWarnModal(); closeSaveResultsModal(); }
+    if (e.key === 'Escape') { closeClearModal(); closeKeepURModal(); closeAAModal(); closeHeapWarnModal(); closeSaveResultsModal(); closeDbEditModal(); }
 });
 </script>
 
