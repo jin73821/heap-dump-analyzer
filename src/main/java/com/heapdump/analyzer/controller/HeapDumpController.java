@@ -1,7 +1,9 @@
 package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.model.*;
+import com.heapdump.analyzer.model.entity.AiInsightEntity;
 import com.heapdump.analyzer.model.entity.AnalysisHistoryEntity;
+import com.heapdump.analyzer.repository.AiInsightRepository;
 import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.util.FilenameValidator;
@@ -1591,6 +1593,20 @@ public class HeapDumpController {
             }
         }
 
+        // AI 인사이트 여부 일괄 설정
+        try {
+            AiInsightRepository aiRepo = analyzerService.getAiInsightRepository();
+            for (AnalysisHistoryItem item : history) {
+                Optional<AiInsightEntity> aiOpt = aiRepo.findByFilename(item.getFilename());
+                if (aiOpt.isPresent()) {
+                    item.setHasAiInsight(true);
+                    item.setAiInsightSeverity(aiOpt.get().getSeverity());
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("[Files] AI 인사이트 조회 실패: {}", e.getMessage());
+        }
+
         // lastModified 기준 내림차순 정렬
         history.sort(Comparator.comparingLong(AnalysisHistoryItem::getLastModified).reversed());
         return history;
@@ -1623,6 +1639,8 @@ public class HeapDumpController {
         private String  formattedOriginalSize;
         private String  formattedCompressedSize;
         private String  serverName;
+        private boolean hasAiInsight;
+        private String  aiInsightSeverity;
 
         public String  getFilename()      { return filename; }
         public void    setFilename(String v)      { filename = v; }
@@ -1652,6 +1670,10 @@ public class HeapDumpController {
         public void    setFormattedCompressedSize(String v) { formattedCompressedSize = v; }
         public String  getServerName()    { return serverName; }
         public void    setServerName(String v)    { serverName = v; }
+        public boolean isHasAiInsight()  { return hasAiInsight; }
+        public void    setHasAiInsight(boolean v) { hasAiInsight = v; }
+        public String  getAiInsightSeverity() { return aiInsightSeverity; }
+        public void    setAiInsightSeverity(String v) { aiInsightSeverity = v; }
     }
 
     public static class DetectionSummaryItem {

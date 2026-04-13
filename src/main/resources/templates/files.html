@@ -82,14 +82,18 @@
         .ld-warn { background: #F59E0B; }
         .ld-err  { background: #EF4444; }
         .gz-badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 4px;
-                    background: #DBEAFE; color: #1E40AF; font-weight: 600; margin-left: 4px; vertical-align: middle; }
-        .fsize-detail { font-size: 11px; color: #9CA3AF; white-space: nowrap; }
-        .fsize-detail .sz-orig { color: #6B7280; }
-        .fsize-detail .sz-arrow { color: #D1D5DB; margin: 0 2px; }
-        .fsize-detail .sz-comp { color: #2563EB; font-weight: 500; }
+                    background: #DBEAFE; color: #1E40AF; font-weight: 600; vertical-align: middle; }
         .fi-deleted { opacity: 0.65; }
         .fi-del-badge { font-size: 10px; padding: 1px 6px; border-radius: 10px;
                         background: #F3F4F6; color: #6B7280; margin-left: 2px; }
+        .ai-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; padding: 2px 8px;
+                    border-radius: 10px; font-weight: 600; white-space: nowrap; }
+        .ai-badge.ai-critical { background: #FEE2E2; color: #991B1B; }
+        .ai-badge.ai-warning  { background: #FEF3C7; color: #92400E; }
+        .ai-badge.ai-info     { background: #DBEAFE; color: #1E40AF; }
+        .ai-badge.ai-default  { background: #D1FAE5; color: #065F46; }
+        .ai-none { font-size: 11px; color: #D1D5DB; }
+        .col-compressed { white-space: nowrap; }
 
         /* Delete confirm modal */
         .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
@@ -119,7 +123,7 @@
             .container { padding-left: 20px; }
         }
         @media (max-width: 640px) {
-            .ftable .col-date { display: none; }
+            .ftable .col-date, .ftable .col-compressed { display: none; }
             .page-stats { gap: 10px; }
         }
     </style>
@@ -164,7 +168,9 @@
                 <tr>
                     <th class="td-status">상태</th>
                     <th>파일명</th>
-                    <th>크기</th>
+                    <th>원본 크기</th>
+                    <th class="col-compressed">압축 크기</th>
+                    <th>AI 인사이트</th>
                     <th class="col-date">날짜</th>
                     <th>작업</th>
                 </tr>
@@ -183,13 +189,23 @@
                         <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
                     </td>
                     <td>
-                        <span th:if="${h.compressed}" class="fsize-detail">
-                            <span class="sz-orig" th:text="${h.formattedOriginalSize}">500 MB</span>
-                            <span class="sz-arrow">→</span>
-                            <span class="sz-comp" th:text="${h.formattedCompressedSize}">120 MB</span>
+                        <span th:if="${h.compressed}" class="fsize" th:text="${h.formattedOriginalSize}">500 MB</span>
+                        <span th:unless="${h.compressed}" class="fsize" th:text="${h.formattedSize}">157 MB</span>
+                    </td>
+                    <td class="col-compressed">
+                        <span th:if="${h.compressed}">
+                            <span class="fsize" th:text="${h.formattedCompressedSize}">120 MB</span>
                             <span class="gz-badge">GZ</span>
                         </span>
-                        <span th:unless="${h.compressed}" class="fsize" th:text="${h.formattedSize}">157 MB</span>
+                        <span th:unless="${h.compressed}" class="ai-none">—</span>
+                    </td>
+                    <td>
+                        <span th:if="${h.hasAiInsight}" class="ai-badge"
+                              th:classappend="${h.aiInsightSeverity == 'critical'} ? 'ai-critical' : (${h.aiInsightSeverity == 'warning'} ? 'ai-warning' : (${h.aiInsightSeverity == 'info'} ? 'ai-info' : 'ai-default'))">
+                            <svg style="width:10px;height:10px;fill:currentColor" viewBox="0 0 16 16"><path d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 3a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5A.75.75 0 0 0 8 4zm0 8a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5z"/></svg>
+                            <span th:text="${h.aiInsightSeverity != null ? h.aiInsightSeverity.toUpperCase() : 'AI'}">AI</span>
+                        </span>
+                        <span th:unless="${h.hasAiInsight}" class="ai-none">—</span>
                     </td>
                     <td class="col-date">
                         <span class="fdate" th:text="${h.formattedDate}">03-18 10:00</span>

@@ -3,6 +3,7 @@ package com.heapdump.analyzer.controller;
 import com.heapdump.analyzer.model.entity.User;
 import com.heapdump.analyzer.service.UserService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 @Controller
+@PreAuthorize("hasRole('ADMIN')")
 public class AdminController {
 
     private final UserService userService;

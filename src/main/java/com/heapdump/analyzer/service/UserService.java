@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import javax.annotation.PostConstruct;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 @Service
 public class UserService {
@@ -27,9 +28,16 @@ public class UserService {
     @PostConstruct
     public void initDefaultAdmin() {
         if (!userRepository.existsByUsername("admin")) {
+            String defaultPassword = System.getenv("HEAP_ADMIN_DEFAULT_PASSWORD");
+            if (defaultPassword == null || defaultPassword.isEmpty()) {
+                defaultPassword = UUID.randomUUID().toString();
+                logger.warn("[UserService] HEAP_ADMIN_DEFAULT_PASSWORD 환경변수가 설정되지 않았습니다.");
+                logger.warn("[UserService] 자동 생성된 기본 관리자 비밀번호: {}", defaultPassword);
+                logger.warn("[UserService] 이 비밀번호를 기록한 후, 로그인하여 즉시 변경하세요.");
+            }
             User admin = new User();
             admin.setUsername("admin");
-            admin.setPassword(passwordEncoder.encode("shinhan@10"));
+            admin.setPassword(passwordEncoder.encode(defaultPassword));
             admin.setDisplayName("관리자");
             admin.setRole(User.Role.ADMIN);
             admin.setEnabled(true);
@@ -50,10 +58,26 @@ public class UserService {
         return userRepository.findByUsername(username);
     }
 
+    private void validatePassword(String password) {
+        if (password == null || password.length() < 8) {
+            throw new IllegalArgumentException("비밀번호는 최소 8자 이상이어야 합니다.");
+        }
+        if (!password.matches(".*[A-Za-z].*")) {
+            throw new IllegalArgumentException("비밀번호는 영문자를 포함해야 합니다.");
+        }
+        if (!password.matches(".*[0-9].*")) {
+            throw new IllegalArgumentException("비밀번호는 숫자를 포함해야 합니다.");
+        }
+        if (!password.matches(".*[!@#$%^&*()_+\\-=\\[\\]{};':\"\\\\|,.<>/?].*")) {
+            throw new IllegalArgumentException("비밀번호는 특수문자를 포함해야 합니다.");
+        }
+    }
+
     public User createUser(String username, String password, String displayName, User.Role role) {
         if (userRepository.existsByUsername(username)) {
             throw new IllegalArgumentException("이미 존재하는 사용자명입니다: " + username);
         }
+        validatePassword(password);
         User user = new User();
         user.setUsername(username);
         user.setPassword(passwordEncoder.encode(password));
@@ -68,13 +92,21 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
         if (displayName != null) user.setDisplayName(displayName);
         if (role != null) user.setRole(role);
-        if (enabled != null) user.setEnabled(enabled);
+        // ADMIN 역할 계정은 비활성화 불가
+        User.Role effectiveRole = (role != null) ? role : user.getRole();
+        if (enabled != null) {
+            if (!enabled && effectiveRole == User.Role.ADMIN) {
+                throw new IllegalArgumentException("관리자 계정은 비활성화할 수 없습니다.");
+            }
+            user.setEnabled(enabled);
+        }
         return userRepository.save(user);
     }
 
     public void resetPassword(Long id, String newPassword) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
+        validatePassword(newPassword);
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
     }

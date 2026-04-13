@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>User Management — Heap Dump Analyzer</title>
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { height: 100%; }
@@ -211,7 +213,7 @@
         </div>
         <div class="modal-group">
             <label class="modal-label">역할</label>
-            <select class="modal-select" id="eRole">
+            <select class="modal-select" id="eRole" onchange="syncEnabledState()">
                 <option value="USER">USER</option>
                 <option value="ADMIN">ADMIN</option>
             </select>
@@ -266,6 +268,15 @@
 </div>
 
 <script>
+var _csrfToken = document.querySelector('meta[name="_csrf"]').content;
+var _csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+function csrfHeaders(extra) {
+    var h = {'Content-Type':'application/json'};
+    h[_csrfHeader] = _csrfToken;
+    if (extra) { for (var k in extra) h[k] = extra[k]; }
+    return h;
+}
+
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
 
 function showToast(msg, type) {
@@ -292,7 +303,7 @@ function submitCreate() {
     };
     if (!data.username || !data.password) { showToast('사용자명과 비밀번호를 입력하세요.', 'error'); return; }
     fetch('/api/admin/users', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: csrfHeaders(),
         body: JSON.stringify(data)
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.success) { showToast('사용자가 추가되었습니다.', 'success'); setTimeout(function() { location.reload(); }, 500); }
@@ -307,18 +318,31 @@ function openEditModal(ds) {
     document.getElementById('eDisplayName').value = ds.displayname || '';
     document.getElementById('eRole').value = ds.role;
     document.getElementById('eEnabled').value = ds.enabled;
+    syncEnabledState();
     document.getElementById('editModal').classList.add('open');
+}
+
+function syncEnabledState() {
+    var role = document.getElementById('eRole').value;
+    var enabledSel = document.getElementById('eEnabled');
+    if (role === 'ADMIN') {
+        enabledSel.value = 'true';
+        enabledSel.disabled = true;
+    } else {
+        enabledSel.disabled = false;
+    }
 }
 
 function submitEdit() {
     var id = document.getElementById('eId').value;
+    var role = document.getElementById('eRole').value;
     var data = {
         displayName: document.getElementById('eDisplayName').value.trim(),
-        role: document.getElementById('eRole').value,
-        enabled: document.getElementById('eEnabled').value
+        role: role,
+        enabled: (role === 'ADMIN') ? 'true' : document.getElementById('eEnabled').value
     };
     fetch('/api/admin/users/' + id, {
-        method: 'PUT', headers: {'Content-Type':'application/json'},
+        method: 'PUT', headers: csrfHeaders(),
         body: JSON.stringify(data)
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.success) { showToast('수정되었습니다.', 'success'); setTimeout(function() { location.reload(); }, 500); }
@@ -341,7 +365,7 @@ function submitResetPw() {
     if (!pw) { showToast('비밀번호를 입력하세요.', 'error'); return; }
     if (pw !== pwc) { showToast('비밀번호가 일치하지 않습니다.', 'error'); return; }
     fetch('/api/admin/users/' + id + '/reset-password', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: csrfHeaders(),
         body: JSON.stringify({ password: pw })
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.success) { showToast('비밀번호가 변경되었습니다.', 'success'); }
@@ -358,7 +382,8 @@ function openDeleteModal(id, username) {
 
 function submitDelete() {
     var id = document.getElementById('dId').value;
-    fetch('/api/admin/users/' + id, { method: 'DELETE' })
+    var delHeaders = {}; delHeaders[_csrfHeader] = _csrfToken;
+    fetch('/api/admin/users/' + id, { method: 'DELETE', headers: delHeaders })
     .then(function(r) { return r.json(); }).then(function(d) {
         if (d.success) { showToast('삭제되었습니다.', 'success'); setTimeout(function() { location.reload(); }, 500); }
         else { showToast(d.message || '삭제 실패', 'error'); }

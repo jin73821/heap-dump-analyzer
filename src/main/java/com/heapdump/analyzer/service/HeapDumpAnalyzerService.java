@@ -2298,6 +2298,10 @@ public class HeapDumpAnalyzerService {
         return analysisHistoryRepository;
     }
 
+    public AiInsightRepository getAiInsightRepository() {
+        return aiInsightRepository;
+    }
+
     // ── 디스크 저장 ──────────────────────────────────────────────
 
     private void saveResultToDisk(HeapAnalysisResult result, File dir) {

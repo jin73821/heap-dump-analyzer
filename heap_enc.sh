@@ -25,7 +25,10 @@ JAR_PATH="$SCRIPT_DIR/target/heap-analyzer-2.0.0.jar"
 
 if [ -z "$1" ]; then
     echo "사용법: bash heap_enc.sh \"암호화할 평문\""
-    echo "예시:   bash heap_enc.sh \"shinhan@10\""
+    echo "예시:   bash heap_enc.sh \"my_password\""
+    echo ""
+    echo "환경변수 HEAP_ANALYZER_ENCRYPTION_KEY로 암호화 키를 설정할 수 있습니다."
+    echo "미설정 시 기본 키를 사용합니다 (운영 환경에서는 반드시 설정하세요)."
     exit 1
 fi
 

@@ -21,8 +21,11 @@ JAR_PATH="$SCRIPT_DIR/target/heap-analyzer-2.0.0.jar"
 
 if [ -z "$1" ]; then
     echo "사용법: bash heap_dec.sh \"암호화된 문자열\""
-    echo "예시:   bash heap_dec.sh \"n8cFXzF2gULZrTFBeoAo6g==\""
-    echo "        bash heap_dec.sh \"ENC(n8cFXzF2gULZrTFBeoAo6g==)\""
+    echo "예시:   bash heap_dec.sh \"hex문자열\""
+    echo "        bash heap_dec.sh \"ENC(hex문자열)\""
+    echo ""
+    echo "환경변수 HEAP_ANALYZER_ENCRYPTION_KEY로 암호화 키를 설정할 수 있습니다."
+    echo "암호화 시 사용한 키와 동일해야 복호화됩니다."
     exit 1
 fi
 

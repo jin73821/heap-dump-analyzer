@@ -1,5 +1,106 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-13] 관리자 계정 비활성화 방지 및 Admin → Settings 하위 Accounts 이동
+
+**변경 파일:** `fragments/banner.html`, `UserService.java`, `admin/users.html`
+
+- ADMIN 역할 계정은 항상 활성 상태 유지, 비활성화 불가 (백엔드 + 프론트엔드 모두 적용)
+  - `UserService.updateUser()`: ADMIN 역할로 설정된 계정에 `enabled=false` 요청 시 예외 발생
+  - 수정 모달: 역할이 ADMIN이면 상태 select 비활성화(disabled) + 값 강제 `true`
+  - 역할 변경(USER↔ADMIN) 시 상태 select 연동 (`syncEnabledState()`)
+- 배너 Navigation에서 Admin 독립 링크 제거 → Settings 하위 메뉴에 "Accounts" 탭으로 이동 (ADMIN 전용, `sec:authorize`)
+- Settings 서브 메뉴 max-height 80px → 120px (3개 항목 수용: General, LLM Configuration, Accounts)
+- `/admin/users` 경로 진입 시 Settings 서브 메뉴 자동 펼침 + Accounts 하이라이트
+
+---
+
+## [2026-04-13] 배너 Settings 위치 변경 및 하위 메뉴 구성
+
+**변경 파일:** `fragments/banner.html`, `llm-settings.html`
+
+- Navigation에서 Settings를 Admin 아래로 이동
+- Settings를 서브 메뉴(아코디언)로 변경: General / LLM Configuration 두 개 탭 구성
+- `/settings` 및 `/settings/llm` 경로 자동 하이라이트 및 서브 메뉴 자동 펼침 적용
+- 접힌 상태(collapsed) 아이콘 순서도 동일하게 변경
+- LLM Configuration 페이지의 Genspark API 설명을 한국어로 변경
+
+---
+
+## [2026-04-13] AI 인사이트 권장 조치 번호 목록 렌더링 개선
+
+**변경 파일:** `analyze.html`
+
+- `setNumberedList()` 함수 추가: 번호 목록 텍스트를 `<ol>` 리스트로 변환
+  - `"1. xxx 2. yyy"` (한 줄 연속) 및 `"1. xxx\n2. yyy"` (줄바꿈 분리) 모두 지원
+  - 번호 없는 이어지는 줄은 이전 항목에 자동 병합
+  - 번호 원형 뱃지(보라색) 스타일 적용, 항목 간 여백 추가
+  - 번호 패턴 미감지 시 기존 `setTextWithLineBreaks()` 폴백
+- 권장 조치(`aiRecommendations`) 렌더링에 `setNumberedList()` 적용
+
+---
+
+## [2026-04-13] AI 인사이트 위험도 배너 레이아웃 개선
+
+**변경 파일:** `analyze.html`
+
+- 위험도 배너에서 `severityDesc` 설명 텍스트 제거 (하단 "잠재적 위험 요소" 카드에서 전체 표시)
+- `severityDesc`가 있으면 길이와 관계없이 항상 "잠재적 위험 요소" 카드 표시 (기존: 80자 초과 시에만)
+- 모바일(768px 이하) 위험도 배너: 가로→세로 레이아웃 전환 (`flex-direction:column`), 글자 세로 출력 문제 해결
+- 모바일(480px 이하) 추가 조정: 아이콘/글자 크기 축소, 카드 패딩 조정
+
+---
+
+## [2026-04-13] Files 페이지 테이블 열 확장 (원본/압축 크기 분리, AI 인사이트 표시)
+
+**변경 파일:** `HeapDumpController.java`, `HeapDumpAnalyzerService.java`, `files.html`
+
+- 기존 "크기" 열을 "원본 크기"와 "압축 크기" 2개 열로 분리
+  - 원본 크기: 항상 표시 (압축 파일은 formattedOriginalSize, 비압축 파일은 formattedSize)
+  - 압축 크기: 압축 파일만 크기 + GZ 뱃지 표시, 비압축 파일은 "—"
+- "AI 인사이트" 열 추가
+  - AI 분석 결과가 있는 파일: 심각도별 색상 뱃지 (critical=빨강, warning=노랑, info=파랑, 기타=초록)
+  - AI 분석 결과가 없는 파일: "—" 표시
+- `AnalysisHistoryItem` DTO에 `hasAiInsight`, `aiInsightSeverity` 필드 추가
+- `buildHistory()`에서 `AiInsightRepository`를 통해 AI 인사이트 존재 여부 일괄 조회
+- `HeapDumpAnalyzerService`에 `getAiInsightRepository()` getter 추가
+- 모바일(640px 이하)에서 압축 크기 열 숨김
+
+---
+
+## [2026-04-13] 사용자 계정 및 암호화 보안 취약점 7건 조치
+
+**변경 파일:** `AesEncryptor.java`, `SecurityConfig.java`, `UserService.java`, `AdminController.java`, `init.sql`, `admin/users.html`, `heap_enc.sh`, `heap_dec.sh`
+
+### 3.1 [높음] AES 암호화 키 환경변수 이동
+- `KEY_SEED` 하드코딩 제거, 환경변수 `HEAP_ANALYZER_ENCRYPTION_KEY`에서 로드
+- 미설정 시 기본 키 폴백 + 경고 로그 출력
+
+### 3.2 [높음] AES IV 랜덤 생성
+- 암호화 시 `SecureRandom`으로 16바이트 랜덤 IV 생성, 암호문 앞에 IV 결합
+- 복호화 시 HEX 길이 기반으로 레거시(고정 IV) / 신규(랜덤 IV) 자동 판별
+- 기존 `ENC(...)` 암호화 값 호환성 유지
+
+### 3.3 [높음] 기본 관리자 비밀번호 외부화
+- `shinhan@10` 하드코딩 제거, 환경변수 `HEAP_ADMIN_DEFAULT_PASSWORD`에서 로드
+- 미설정 시 UUID 자동 생성 + warn 로그로 비밀번호 출력
+
+### 3.4 [높음] init.sql DB 비밀번호 제거
+- `IDENTIFIED BY 'heap_pass_2026'` 평문 비밀번호를 주석 가이드로 대체
+
+### 3.5 [중간] /api/admin/** CSRF 보호 복원
+- `SecurityConfig`에서 `/api/admin/**` 경로를 CSRF 면제에서 제외 (`ignoringRequestMatchers` 커스텀 매처)
+- `admin/users.html`에 CSRF 메타 태그 추가, 모든 fetch 호출에 CSRF 헤더(`X-CSRF-TOKEN`) 전송
+
+### 3.6 [중간] 비밀번호 정책 서버 검증 추가
+- `UserService.validatePassword()` 메서드 추가: 최소 8자, 영문+숫자+특수문자 필수
+- `createUser()`, `resetPassword()` 호출 시 검증 실행, 미충족 시 400 응답
+
+### 3.7 [낮음] @PreAuthorize 이중 방어 추가
+- `SecurityConfig`에 `@EnableGlobalMethodSecurity(prePostEnabled = true)` 추가
+- `AdminController`에 `@PreAuthorize("hasRole('ADMIN')")` 클래스 레벨 적용
+
+---
+
 ## [2026-04-13] 사용자 계정 및 암호화 보안 점검 보고서 작성
 
 **생성 파일:** `SECURITY_AUDIT_ACCOUNT.md`

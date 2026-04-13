@@ -3,12 +3,14 @@ package com.heapdump.analyzer.config;
 import com.heapdump.analyzer.service.CustomUserDetailsService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
+@EnableGlobalMethodSecurity(prePostEnabled = true)
 public class SecurityConfig {
 
     private final CustomUserDetailsService userDetailsService;
@@ -43,7 +45,15 @@ public class SecurityConfig {
                 .permitAll()
             .and()
             .csrf()
-                .ignoringAntMatchers("/api/**");
+                .ignoringRequestMatchers(request -> {
+                    String uri = request.getRequestURI();
+                    // /api/admin/** 경로는 CSRF 보호 유지 (면제하지 않음)
+                    if (uri.startsWith("/api/admin/")) {
+                        return false;
+                    }
+                    // 나머지 /api/** 경로는 CSRF 면제
+                    return uri.startsWith("/api/");
+                });
 
         return http.build();
     }
