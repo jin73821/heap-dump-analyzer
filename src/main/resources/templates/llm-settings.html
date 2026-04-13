@@ -240,6 +240,23 @@
         </div>
     </div>
 
+    <!-- Chat System Prompt -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            Chat System Prompt
+        </div>
+        <div style="margin-bottom:8px">
+            <div class="setting-desc">AI 채팅의 시스템 프롬프트를 설정합니다. 분석 페이지의 플로팅 AI 채팅에서 사용됩니다.</div>
+        </div>
+        <textarea id="llmChatPromptInput" rows="5" placeholder="시스템 프롬프트 입력..."
+                  style="width:100%;padding:10px;border:1px solid #D1D5DB;border-radius:8px;font-size:13px;resize:vertical;line-height:1.6;box-sizing:border-box"></textarea>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <button onclick="saveChatPrompt()" class="btn-primary">Save Prompt</button>
+            <button onclick="resetChatPrompt()" class="btn-secondary">Reset to Default</button>
+        </div>
+    </div>
+
     <!-- Save & Test -->
     <div class="card">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -348,6 +365,9 @@ function loadLlmSettings() {
 
         selectOption('llmMaxInputTokens', String(llm.maxInputTokens || 8000));
         selectOption('llmMaxOutputTokens', String(llm.maxOutputTokens || 4000));
+
+        var chatPromptEl = document.getElementById('llmChatPromptInput');
+        if (chatPromptEl && llm.chatSystemPrompt) chatPromptEl.value = llm.chatSystemPrompt;
     }).catch(function(e) { toast('Failed to load settings: ' + e.message, 'error'); });
 }
 
@@ -468,6 +488,26 @@ function testLlmConnection() {
             }
         })
         .catch(function(e){ resEl.innerHTML = '<span style="color:#DC2626">Error: ' + e.message + '</span>'; });
+}
+
+// ── Chat Prompt ──────────────────────────────────────
+function saveChatPrompt() {
+    var prompt = document.getElementById('llmChatPromptInput').value.trim();
+    if (!prompt) { toast('시스템 프롬프트를 입력하세요', 'error'); return; }
+    fetch('/api/llm/chat-prompt', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({prompt: prompt})
+    })
+    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(d){ toast('Chat system prompt saved', 'success'); })
+    .catch(function(e){ toast('Save failed: ' + e.message, 'error'); });
+}
+
+function resetChatPrompt() {
+    var defaultPrompt = '당신은 Java 힙 덤프 분석 전문가입니다. 사용자가 제공한 힙 덤프 분석 결과에 대해 대화형으로 질문에 답합니다. 메모리 누수 원인, JVM 튜닝, 코드 수정 방안 등을 한국어로 상세히 설명합니다. 마크다운 형식으로 응답하되, 간결하고 실행 가능한 조언을 제공하세요.';
+    document.getElementById('llmChatPromptInput').value = defaultPrompt;
+    saveChatPrompt();
 }
 
 // ── Init ──────────────────────────────────────────────

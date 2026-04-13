@@ -1333,6 +1333,148 @@ public class HeapDumpController {
         return ResponseEntity.ok(res);
     }
 
+    // ── [NEW] API: AI 채팅 ─────────────────────────────────────────
+
+    @SuppressWarnings("unchecked")
+    @PostMapping("/api/llm/chat")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> aiChat(@RequestBody Map<String, Object> body) {
+        List<Map<String, String>> messages = (List<Map<String, String>>) body.get("messages");
+        String context = body.get("context") != null ? String.valueOf(body.get("context")) : "";
+        String filename = body.get("filename") != null ? String.valueOf(body.get("filename")) : "";
+
+        if (messages == null || messages.isEmpty()) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("errorCode", "EMPTY_MESSAGES");
+            err.put("error", "메시지가 비어있습니다.");
+            return ResponseEntity.badRequest().body(err);
+        }
+
+        logger.info("[AI-Chat][REQ] 채팅 요청 — file='{}', messageCount={}, contextLen={}",
+            filename, messages.size(), context.length());
+
+        // 시스템 프롬프트 조합
+        String systemPrompt = analyzerService.getLlmChatSystemPrompt();
+        if (!context.trim().isEmpty()) {
+            systemPrompt += "\n\n아래는 사용자가 현재 보고 있는 힙 덤프 분석 결과입니다. "
+                + "이 데이터를 참고하여 질문에 답하세요:\n\n" + context;
+        }
+
+        Map<String, Object> result = analyzerService.callLlmChat(messages, systemPrompt);
+
+        if (Boolean.TRUE.equals(result.get("success"))) {
+            logger.info("[AI-Chat][RESULT] 응답 완료 — model={}, latency={}ms",
+                result.get("model"), result.get("latencyMs"));
+        } else {
+            logger.warn("[AI-Chat][RESULT] 실패 — errorCode={}, error={}",
+                result.get("errorCode"), result.get("error"));
+        }
+
+        return ResponseEntity.ok(result);
+    }
+
+    @SuppressWarnings("unchecked")
+    @PostMapping(value = "/api/llm/chat/stream", produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
+    @ResponseBody
+    public SseEmitter aiChatStream(@RequestBody Map<String, Object> body) {
+        List<Map<String, String>> messages = (List<Map<String, String>>) body.get("messages");
+        String context = body.get("context") != null ? String.valueOf(body.get("context")) : "";
+        String filename = body.get("filename") != null ? String.valueOf(body.get("filename")) : "";
+
+        SseEmitter emitter = new SseEmitter(config.getSseEmitterTimeoutMinutes() * 60L * 1000);
+
+        if (messages == null || messages.isEmpty()) {
+            try {
+                emitter.send(SseEmitter.event().name("error")
+                    .data("{\"errorCode\":\"EMPTY_MESSAGES\",\"error\":\"메시지가 비어있습니다.\"}"));
+                emitter.complete();
+            } catch (Exception ignored) {}
+            return emitter;
+        }
+
+        logger.info("[AI-Chat-Stream][REQ] 스트리밍 채팅 요청 — file='{}', messageCount={}", filename, messages.size());
+
+        String systemPrompt = analyzerService.getLlmChatSystemPrompt();
+        if (!context.trim().isEmpty()) {
+            systemPrompt += "\n\n아래는 사용자가 현재 보고 있는 힙 덤프 분석 결과입니다. "
+                + "이 데이터를 참고하여 질문에 답하세요:\n\n" + context;
+        }
+
+        final String finalSystemPrompt = systemPrompt;
+        final String model = analyzerService.getLlmModel();
+
+        // 비동기 스레드에서 스트리밍 실행
+        new Thread(() -> {
+            try {
+                // 시작 이벤트: model 정보 전달
+                emitter.send(SseEmitter.event().name("start")
+                    .data("{\"model\":\"" + (model != null ? model : "") + "\"}"));
+
+                analyzerService.callLlmChatStream(messages, finalSystemPrompt,
+                    // onChunk: 텍스트 청크
+                    chunk -> {
+                        try {
+                            // JSON escape
+                            String escaped = chunk.replace("\\", "\\\\")
+                                .replace("\"", "\\\"")
+                                .replace("\n", "\\n")
+                                .replace("\r", "\\r")
+                                .replace("\t", "\\t");
+                            emitter.send(SseEmitter.event().name("chunk")
+                                .data("{\"text\":\"" + escaped + "\"}"));
+                        } catch (Exception e) {
+                            // 클라이언트 disconnect
+                        }
+                    },
+                    // onDone: 완료
+                    (fullText, latencyMs) -> {
+                        try {
+                            emitter.send(SseEmitter.event().name("done")
+                                .data("{\"latencyMs\":" + latencyMs + "}"));
+                            emitter.complete();
+                        } catch (Exception ignored) {}
+                    },
+                    // onError: 오류
+                    (errorCode, errorMsg) -> {
+                        try {
+                            String escapedMsg = errorMsg.replace("\\", "\\\\")
+                                .replace("\"", "\\\"")
+                                .replace("\n", "\\n");
+                            emitter.send(SseEmitter.event().name("error")
+                                .data("{\"errorCode\":\"" + errorCode + "\",\"error\":\"" + escapedMsg + "\"}"));
+                            emitter.complete();
+                        } catch (Exception ignored) {}
+                    }
+                );
+            } catch (Exception e) {
+                try {
+                    emitter.send(SseEmitter.event().name("error")
+                        .data("{\"errorCode\":\"INTERNAL_ERROR\",\"error\":\"" + e.getMessage() + "\"}"));
+                    emitter.complete();
+                } catch (Exception ignored) {}
+            }
+        }, "ai-chat-stream-" + System.currentTimeMillis()).start();
+
+        emitter.onTimeout(() -> {
+            logger.warn("[AI-Chat-Stream] 타임아웃 — file='{}'", filename);
+            emitter.complete();
+        });
+
+        return emitter;
+    }
+
+    @PostMapping("/api/llm/chat-prompt")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> saveChatPrompt(@RequestBody Map<String, String> body) {
+        String prompt = body.get("prompt");
+        analyzerService.setLlmChatSystemPrompt(prompt);
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", true);
+        res.put("prompt", analyzerService.getLlmChatSystemPrompt());
+        return ResponseEntity.ok(res);
+    }
+
     // ── [NEW] API: 현재 설정 조회 ────────────────────────────────
 
     @GetMapping("/api/settings")
@@ -1417,6 +1559,7 @@ public class HeapDumpController {
         providerModels.put("genspark", com.heapdump.analyzer.service.HeapDumpAnalyzerService.GENSPARK_MODELS);
         providerModels.put("custom", Collections.emptyList());
         llm.put("providerModels", providerModels);
+        llm.put("chatSystemPrompt", analyzerService.getLlmChatSystemPrompt());
         settings.put("llm", llm);
 
         // Database 정보

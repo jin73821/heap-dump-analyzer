@@ -51,7 +51,8 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 - **Controller** (`controller/AuthController.java`) — `/login` 로그인 페이지
 - **Controller** (`controller/AdminController.java`) — `/admin/users` 계정 관리 (ADMIN 전용). CRUD API: `/api/admin/users`, `/api/admin/users/{id}/reset-password`
 - **Controller** (`controller/ServerController.java`) — `/servers` Target Server 관리, `/servers/logs` 전송 로그 페이지. API: `/api/servers` (CRUD), `/api/servers/{id}/test` (연결 테스트), `/api/servers/{id}/scan` (수동 스캔), `/api/servers/{id}/transfer` (파일 전송), `/api/servers/scan-interval`, `/api/servers/ssh-local-user`, `/api/servers/scp-temp-dir`
-- **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (dumpfiles → tmp copy → analysis → tmp cleanup), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). 분석 완료 시 `analysis_history` 테이블에 메타데이터 DB 저장. AI 인사이트 DB 저장/조회/삭제 (`ai_insights` 테이블). Runtime settings persisted to `settings.json` and synced back to `application.properties`.
+- **Controller** (`controller/AiChatController.java`) — `/ai-chat` AI 채팅 전용 페이지. 세션 CRUD: `/api/ai-chat/sessions` (목록/생성), `/api/ai-chat/sessions/{id}` (수정/삭제). 메시지 조회/저장: `/api/ai-chat/sessions/{id}/messages`. 세션 기반 스트리밍: `POST /api/ai-chat/sessions/{id}/stream` (`SseEmitter`, user/assistant 메시지 자동 DB 저장). `Principal`로 계정별 세션 격리.
+- **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (dumpfiles → tmp copy → analysis → tmp cleanup), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). 분석 완료 시 `analysis_history` 테이블에 메타데이터 DB 저장. AI 인사이트 DB 저장/조회/삭제 (`ai_insights` 테이블). LLM API 호출: `callLlmAnalysis(prompt)` (원샷 JSON 응답), `callLlmChat(messages, systemPrompt)` (멀티턴 텍스트 응답), `callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError)` (SSE 스트리밍). Runtime settings persisted to `settings.json` and synced back to `application.properties`.
 - **Service** (`service/RemoteDumpService.java`) — SSH/SCP 기반 원격 서버 덤프 탐지/전송. `runuser -l sscuser -c "ssh/scp ..."` 패턴으로 로컬 계정 전환. 2단계 SCP 전송 (임시 경로 → `Files.move()` 최종 경로). `@Scheduled` 동적 주기 자동 탐지. 서버 `connStatus` (OK/FAIL/UNKNOWN) DB 영속화.
 - **Service** (`service/UserService.java`) — 사용자 CRUD, `@PostConstruct`에서 기본 admin 계정 자동 생성 (admin/shinhan@10)
 - **Service** (`service/CustomUserDetailsService.java`) — Spring Security `UserDetailsService` 구현
@@ -80,21 +81,23 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 - `AnalysisHistoryEntity` — 분석 이력 메타데이터 (filename, status, heap sizes, suspect count, serverId, serverName)
 - `DumpTransferLog` — SCP 전송 로그 (serverId, filename, remotePath, transferStatus(SUCCESS/FAILED/IN_PROGRESS), errorMessage)
 - `AiInsightEntity` — AI 인사이트 결과 (filename, model, severity, insightData(MEDIUMTEXT JSON))
+- `AiChatSession` — AI 채팅 세션 (username, filename(nullable=일반채팅), title, model, messageCount). 계정별·덤프별 세션 격리
+- `AiChatMessage` — AI 채팅 메시지 (sessionId, role(user/assistant), content(MEDIUMTEXT))
 
-**Repositories** (`repository/`): Spring Data JPA interfaces. `AnalysisHistoryRepository`, `UserRepository`, `TargetServerRepository`, `DumpTransferLogRepository`, `AiInsightRepository`
+**Repositories** (`repository/`): Spring Data JPA interfaces. `AnalysisHistoryRepository`, `UserRepository`, `TargetServerRepository`, `DumpTransferLogRepository`, `AiInsightRepository`, `AiChatSessionRepository`, `AiChatMessageRepository`
 
 **Frontend:** Thymeleaf templates + vanilla JS + Chart.js. No build step. `index.html`, `analyze.html`, `files.html` have **complete inline `<style>` blocks**. `progress.html` and `compare.html` link `/css/style.css` plus additional inline styles. Modals use `.modal-ov.open` CSS pattern with `animation: modalIn .2s ease`. Tooltip positioning uses `positionTooltip(tt, e)` — auto-flips left/right and up/down to prevent viewport overflow.
 
 **Global Banner** (`fragments/banner.html`) — 모든 페이지에 `th:replace="fragments/banner :: banner"`로 삽입되는 좌측 고정 배너. `position: fixed; left: 0; top: 0; bottom: 0; width: var(--banner-w)` (220px/44px). 포함 내용:
 - **Header**: 앱 로고 + 제목 (클릭 시 Dashboard 이동), `<a href="/">` 태그
 - **System Status**: MAT CLI 상태, 디스크 사용량, JVM 메모리, 분석 큐 — `/api/system/status` API에서 60초 간격 자동 갱신 + 수동 Refresh 버튼. `localStorage` 캐시로 페이지 이동 시 깜빡임 방지
-- **Navigation**: Dashboard, Files, History, Settings, Servers (아코디언: Target Servers / Transfer Logs), Admin (ADMIN only), Logout. Thymeleaf `sec:authorize` 사용
+- **Navigation**: Dashboard, Files, History, AI Chat, Servers (아코디언: Target Servers / Transfer Logs), Settings (아코디언: General / LLM Configuration / Accounts(ADMIN only)), Logout. Thymeleaf `sec:authorize` 사용
 - **접기/펼치기**: 토글 버튼으로 220px ↔ 44px 전환, `localStorage('bannerCollapsed')` 상태 저장. 접힌 상태에서는 아이콘 스트립이 하단에 `margin-top: auto`로 위치
 - **깜빡임 방지**: `<style>` 앞 인라인 `<script>`에서 `banner-collapsed` 클래스 즉시 적용 + `banner-no-transition` 클래스로 초기 transition 차단, `requestAnimationFrame` 2프레임 후 복원
 - **스타일 격리**: `.g-banner`에 `font-size: 14px; line-height: 1.5` 고정 — 페이지별 body font-size 차이에 영향받지 않음
 - **레이아웃 영향**: 각 페이지의 topbar에 `left: var(--banner-w)`, container에 `padding-left: calc(var(--banner-w) + 20px)` 적용. `index.html`은 `.app-layout`에 `margin-left: var(--banner-w)`, `analyze.html`은 `.sidebar`/`.main-content`에 개별 적용. 900px 이하 모바일에서 배너 숨김 + 모든 offset 리셋
 - **CSS 변수**: `:root { --banner-w: 220px; }`, `body.banner-collapsed { --banner-w: 44px; }`. 모바일에서 `--banner-w: 0px !important`
-- **페이지 topbar**: 각 페이지 topbar에서 로고 제거됨. 제목은 페이지명 표시 (Dashboard, Analysis, Files, History, Settings, Compare)
+- **페이지 topbar**: 각 페이지 topbar에서 로고 제거됨. 제목은 페이지명 표시 (Dashboard, Analysis, Files, History, Settings, Compare, AI Chat)
 
 **External dependency:** Eclipse MAT CLI binary at `/opt/mat/ParseHeapDump.sh`, invoked with reports: `org.eclipse.mat.api:suspects`, `org.eclipse.mat.api:overview`, `org.eclipse.mat.api:top_components`. 30-minute timeout.
 
@@ -105,8 +108,10 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 **analyze.html** — Analysis result page with sidebar navigation sections:
 - **Analysis**: Overview (KPI cards, Memory Treemap, Stacked Bar charts), Top Consumers (sortable/searchable table with click-for-detail modal), Leak Suspects (accordion)
 - **Actions**: Histogram (parsed data table, **click row → detail modal**), Thread Overview (click row to expand stack trace — single shared detail row for performance), Thread Stacks (lazy-loaded `.threads` file)
+- **AI Analysis**: AI 인사이트 패널 (원샷 LLM 분석 — severity/summary/rootCause/recommendations)
 - **Tools**: MAT Log (chunked loading), Export CSV, Print
 - **Raw Data**: MAT original HTML for System Overview, Top Components, Suspect Details, Histogram, Thread Overview
+- **플로팅 AI 채팅**: 우하단 56px FAB 버튼 → 슬라이드업 채팅 패널 (420×560px, 확대 시 700px×80vh). SSE 스트리밍 응답, 마크다운 렌더링, 분석 컨텍스트(KPI/Suspects/TopConsumers/AI인사이트) 자동 주입. 세션 기반 DB 자동 저장. `_aiChatExpanded` 토글로 확대/축소.
 - **Component Detail Modal** (`componentDetailModal`): Shared by Top Consumers and Histogram. Two tabs (분석 결과/원본 데이터). Cascade: `/component-detail-parsed` → `/component-detail` (raw HTML) → `renderHistogramFallback()`. Features:
   - `CLASS_DESCRIPTIONS` dict (20 classes): Korean descriptions for common heap classes (`byte[]`, `HashMap$Node`, etc.)
   - `META_HELP` dict: `?` button on metadata cards shows help popover (크기 vs Retained Heap meaning, etc.)
@@ -132,7 +137,9 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 
 **admin/users.html** — 계정 관리 (`/admin/users`, ADMIN 전용). 사용자 CRUD 테이블, 비밀번호 초기화 모달. 기본 관리자 삭제 불가.
 
-**llm-settings.html** — LLM/AI 분석 설정 페이지 (`/settings/llm`).
+**llm-settings.html** — LLM/AI 분석 설정 페이지 (`/settings/llm`). Provider 선택 (Claude/GPT/Genspark/Custom), 모델 선택, API URL/Key, Token Limits, Chat System Prompt (textarea 편집/Save/Reset), Test Connection.
+
+**ai-chat.html** — AI 채팅 전용 페이지 (`/ai-chat`). 좌측 세션 사이드바 (280px): 세션 목록, 새 채팅 버튼, 덤프 파일 필터. 우측 채팅 영역: 스트리밍 메시지 표시, 마크다운 렌더링. 세션 기반 DB 저장 (계정별 격리).
 
 ## Directory Structure & File Flow
 
@@ -170,9 +177,9 @@ On startup (`@PostConstruct`): 기존 루트의 덤프 파일 → dumpfiles/ 자
 
 **접속 정보**: `192.168.56.9:3306/HEAPDB` (heap_user). 비밀번호는 `application.properties`에 `ENC(...)` AES-256 암호화 저장 → `DataSourceConfig`에서 자동 복호화.
 
-**테이블**: `users`, `target_servers`, `analysis_history`, `dump_transfer_log`, `ai_insights`. JPA `ddl-auto=update`로 자동 생성/업데이트.
+**테이블**: `users`, `target_servers`, `analysis_history`, `dump_transfer_log`, `ai_insights`, `ai_chat_sessions`, `ai_chat_messages`. JPA `ddl-auto=update`로 자동 생성/업데이트.
 
-**하이브리드 저장**: 분석 메타데이터(filename, status, heap size, suspect count)는 DB. 분석 상세 데이터(HTML fragments, ZIP, result.json)는 파일 시스템 유지. AI 인사이트는 DB(`insightData` MEDIUMTEXT JSON).
+**하이브리드 저장**: 분석 메타데이터(filename, status, heap size, suspect count)는 DB. 분석 상세 데이터(HTML fragments, ZIP, result.json)는 파일 시스템 유지. AI 인사이트는 DB(`insightData` MEDIUMTEXT JSON). AI 채팅은 DB(세션+메시지 테이블).
 
 ## Authentication & Security
 
@@ -186,6 +193,28 @@ ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(c
 각 페이지 `<head>`에 `<meta name="_csrf" th:content="${_csrf.token}">` 필요.
 
 **기본 계정**: admin / shinhan@10 (BCrypt, `UserService.initDefaultAdmin()`에서 자동 생성)
+
+**계정별 데이터 격리**: AI 채팅 세션은 `Principal.getName()`으로 현재 사용자를 식별. 세션 조회/수정/삭제 시 username 일치 검증.
+
+## LLM / AI Integration
+
+**Multi-provider LLM**: Claude (Messages API), GPT (Chat Completions), Genspark, Custom (OpenAI-compatible). Provider별 헤더/본문 분기. `volatile` 런타임 설정 (settings.json 영속화).
+
+**3가지 LLM 호출 방식:**
+- `callLlmAnalysis(prompt)` — 원샷 분석, JSON 응답 파싱 (severity/summary/rootCause/recommendations)
+- `callLlmChat(messages, systemPrompt)` — 멀티턴 대화, 텍스트 응답
+- `callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError)` — SSE 스트리밍, `stream:true` 요청. Claude `content_block_delta` / OpenAI `choices.delta.content` 파싱
+
+**채팅 시스템 프롬프트**: `llmChatSystemPrompt` 필드, `DEFAULT_CHAT_SYSTEM_PROMPT` 상수. Settings 페이지에서 편집 가능 (`POST /api/llm/chat-prompt`).
+
+**분석 페이지 플로팅 채팅 흐름:**
+```
+사용자 입력 → ensureChatSession() (세션 없으면 POST /api/ai-chat/sessions)
+           → doStreamRequest() (POST /api/ai-chat/sessions/{id}/stream)
+           → SSE 이벤트 수신 (start → chunk 반복 → done)
+           → 실시간 마크다운 렌더링 + 커서 애니메이션
+           → 완료 시 user/assistant 메시지 DB 자동 저장
+```
 
 ## Remote Dump Transfer
 
@@ -222,13 +251,15 @@ ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(c
 - **Tooltip positioning:** `positionTooltip(tt, e)` handles viewport-aware placement for Treemap/StackedBar tooltips. Flips left when right edge overflows, flips up when bottom overflows. All hover tooltips should use this function.
 - **Meta card help popover:** `cdMetaCard(label, value)` auto-adds `?` button when `META_HELP[label]` exists. Popover rendered as `position:fixed` on `document.body` (avoids parent `overflow:hidden` clipping). Uses `toggleMetaHelp(btn)` with modal-boundary-aware positioning. When adding new metadata cards, add corresponding entry to `META_HELP` dict.
 - **Class descriptions pattern:** `CLASS_DESCRIPTIONS` dict maps class names → `{desc, detail, icon}`. Used by both `renderHistogramFallback()` and `renderParsedDetail()`. When adding support for new common classes, add entries here.
-- **Global banner fragment:** `fragments/banner.html` — CSS + HTML + JS 자체 포함 Thymeleaf fragment. 모든 페이지에 `th:replace`로 삽입. Navigation: Dashboard, Files, History, Settings, Servers (아코디언: Target Servers + Transfer Logs), Admin (ADMIN only, `sec:authorize`), 사용자명 표시 + Logout. System Status → `/api/system/status` JS fetch (60초 TTL `localStorage` 캐시).
+- **Global banner fragment:** `fragments/banner.html` — CSS + HTML + JS 자체 포함 Thymeleaf fragment. 모든 페이지에 `th:replace`로 삽입. Navigation: Dashboard, Files, History, AI Chat, Settings (아코디언: General / LLM Configuration / Accounts), Servers (아코디언: Target Servers + Transfer Logs), 사용자명 표시 + Logout. System Status → `/api/system/status` JS fetch (60초 TTL `localStorage` 캐시).
 - **Banner Servers sub-menu:** `toggleSubMenu()` → `.gb-nav-sub.open` 토글. `/servers*` 경로 시 자동 펼침. CSS `max-height: 0 → 80px` 트랜지션 + `.gb-nav-toggle` 화살표 회전.
 - **Banner collapse persistence:** `localStorage('bannerCollapsed')` + 렌더링 전 인라인 스크립트로 FOUC 방지. CSS 변수 `--banner-w`가 모든 페이지의 topbar/container offset 제어.
 - **Multi-file upload queue:** `index.html`에서 최대 5개 파일 동시 선택 가능 (`<input multiple>`). `enqueueFiles()` → 확장자/크기 검증 → `showFileFilterModal()`로 유효/무효 파일 요약 표시 → `startDuplicateChecks()` 순차 중복 검사 → `startQueueUploads()` 순차 업로드. 업로드 중 `showUploadProgressModal()` 모달로 파일별 진행 상태(⏳대기/⬆업로드중/✅완료/❌실패/⊘취소) 실시간 표시. `_currentXhr` 저장으로 취소 시 `xhr.abort()` 가능. `window.onbeforeunload`로 페이지 이탈 방지.
 - **Upload duplicate detection:** `POST /api/upload/check` API — 클라이언트에서 `file.slice(0, 65536)` + Web Crypto API (또는 `simpleHash` 폴백)로 첫 64KB SHA-256 해시 계산 → 서버 `checkDuplicate()`가 기존 파일들과 파일크기+부분해시 비교. 결과: `OK`/`DUPLICATE_CONTENT`(동일 내용, 다른 이름)/`DUPLICATE_NAME`(같은 이름, 다른 내용). `.gz` 압축 파일은 `GZIPInputStream`으로 압축 해제 후 해시 비교. 이름 변경 시 `generateUniqueName()`으로 `{base}_2.{ext}` 패턴 자동 생성, 사용자 커스텀 이름도 서버 재검증.
 - **crypto.subtle 폴백:** `crypto.subtle`은 HTTPS/localhost에서만 사용 가능. HTTP 환경에서는 `simpleHash()` (FNV-1a 기반) 자동 폴백. 모든 경로에 try-catch로 Promise가 반드시 resolve/reject 되도록 보장.
 - **Cross-panel references:** Histogram detail and Top Consumers detail modals cross-reference Leak Suspects and each other via DOM search. Pattern: `findRelatedLeakSuspects(className)` searches `#panel-suspects .suspect-item` text; `findClassInTopConsumers(className)` searches `#topObjectsTable` rows. Clicking a cross-ref link closes modal → navigates to target panel → highlights/scrolls to item.
+- **플로팅 채팅 확대/축소:** `toggleChatExpand()`로 `.ai-chat-panel`에 `.expanded` CSS 클래스 토글. 420×560px ↔ 700px×80vh. CSS `transition`으로 부드러운 전환. 확대/축소 아이콘 자동 변경. `getChatContainer()`, `getChatInput()`, `getChatSendBtn()` 헬퍼로 DOM 접근 추상화.
+- **AI 채팅 세션 자동 생성:** `analyze.html`에서 첫 메시지 전송 시 `ensureChatSession()`이 `POST /api/ai-chat/sessions`로 세션 생성. 이후 `doStreamRequest()`가 세션 기반 스트리밍 엔드포인트 사용.
 
 ## Changelog
 

@@ -84,6 +84,12 @@ public class HeapDumpAnalyzerService {
     private volatile int     llmMaxOutputTokens;
     private volatile int     llmTimeoutConnectSeconds;
     private volatile int     llmTimeoutReadSeconds;
+    private volatile String  llmChatSystemPrompt;
+
+    private static final String DEFAULT_CHAT_SYSTEM_PROMPT =
+        "당신은 Java 힙 덤프 분석 전문가입니다. 사용자가 제공한 힙 덤프 분석 결과에 대해 "
+        + "대화형으로 질문에 답합니다. 메모리 누수 원인, JVM 튜닝, 코드 수정 방안 등을 "
+        + "한국어로 상세히 설명합니다. 마크다운 형식으로 응답하되, 간결하고 실행 가능한 조언을 제공하세요.";
 
     public HeapDumpAnalyzerService(HeapDumpConfig config, MatReportParser parser,
                                    AnalysisHistoryRepository analysisHistoryRepository,
@@ -104,6 +110,7 @@ public class HeapDumpAnalyzerService {
         this.llmMaxOutputTokens = config.getLlmMaxOutputTokens();
         this.llmTimeoutConnectSeconds = config.getLlmTimeoutConnectSeconds();
         this.llmTimeoutReadSeconds = config.getLlmTimeoutReadSeconds();
+        this.llmChatSystemPrompt = DEFAULT_CHAT_SYSTEM_PROMPT;
         // 환경변수 우선
         String envKey = System.getenv("LLM_API_KEY");
         if (envKey != null && !envKey.isEmpty()) {
@@ -715,6 +722,12 @@ public class HeapDumpAnalyzerService {
             if (saved.containsKey("llmTimeoutReadSeconds")) {
                 this.llmTimeoutReadSeconds = Integer.parseInt(String.valueOf(saved.get("llmTimeoutReadSeconds")));
             }
+            if (saved.containsKey("llmChatSystemPrompt")) {
+                String prompt = String.valueOf(saved.get("llmChatSystemPrompt"));
+                if (prompt != null && !prompt.trim().isEmpty() && !"null".equals(prompt)) {
+                    this.llmChatSystemPrompt = prompt;
+                }
+            }
             // 환경변수 LLM_API_KEY 우선
             String envKey = System.getenv("LLM_API_KEY");
             if (envKey != null && !envKey.isEmpty()) {
@@ -766,6 +779,7 @@ public class HeapDumpAnalyzerService {
             settings.put("llmMaxOutputTokens", llmMaxOutputTokens);
             settings.put("llmTimeoutConnectSeconds", llmTimeoutConnectSeconds);
             settings.put("llmTimeoutReadSeconds", llmTimeoutReadSeconds);
+            settings.put("llmChatSystemPrompt", llmChatSystemPrompt);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
         } catch (IOException e) {
@@ -889,6 +903,14 @@ public class HeapDumpAnalyzerService {
 
     public boolean isLlmApiKeySet() {
         return llmApiKey != null && !llmApiKey.trim().isEmpty();
+    }
+
+    public String getLlmChatSystemPrompt() { return llmChatSystemPrompt; }
+
+    public void setLlmChatSystemPrompt(String prompt) {
+        this.llmChatSystemPrompt = (prompt != null && !prompt.trim().isEmpty()) ? prompt.trim() : DEFAULT_CHAT_SYSTEM_PROMPT;
+        persistSettings();
+        logger.info("[LLM] Chat system prompt updated (length={})", this.llmChatSystemPrompt.length());
     }
 
     public String getDefaultApiUrl(String provider) {
@@ -1281,6 +1303,340 @@ public class HeapDumpAnalyzerService {
             result.put("error", "[" + e.getClass().getSimpleName() + "] " + e.getMessage());
         }
         return result;
+    }
+
+    /**
+     * LLM 채팅 API 호출 — 멀티턴 대화 지원
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> callLlmChat(List<Map<String, String>> messages, String systemPrompt) {
+        Map<String, Object> result = new LinkedHashMap<>();
+
+        // ── 사전 검증 ─────────────────────────────────────────────
+        if (!llmEnabled) {
+            result.put("success", false);
+            result.put("errorCode", "LLM_DISABLED");
+            result.put("error", "AI 분석 기능이 비활성화 상태입니다.");
+            return result;
+        }
+        if (llmApiKey == null || llmApiKey.trim().isEmpty()) {
+            result.put("success", false);
+            result.put("errorCode", "NO_API_KEY");
+            result.put("error", "API 키가 설정되지 않았습니다.");
+            return result;
+        }
+        if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) {
+            result.put("success", false);
+            result.put("errorCode", "NO_API_URL");
+            result.put("error", "API URL이 설정되지 않았습니다.");
+            return result;
+        }
+
+        long startTime = System.currentTimeMillis();
+        logger.info("[AI-Chat] 채팅 요청 시작 — provider={}, model={}, messageCount={}",
+            llmProvider, llmModel, messages.size());
+
+        try {
+            // ── 메시지 총 길이 truncation ──────────────────────────
+            int maxChars = llmMaxInputTokens * 4;
+            int totalChars = messages.stream().mapToInt(m -> {
+                String c = m.get("content");
+                return c != null ? c.length() : 0;
+            }).sum();
+            List<Map<String, String>> effectiveMessages = new ArrayList<>(messages);
+            if (totalChars > maxChars && effectiveMessages.size() > 1) {
+                // 오래된 메시지부터 제거 (마지막 user 메시지는 유지)
+                while (totalChars > maxChars && effectiveMessages.size() > 1) {
+                    Map<String, String> removed = effectiveMessages.remove(0);
+                    String rc = removed.get("content");
+                    totalChars -= (rc != null ? rc.length() : 0);
+                }
+                logger.warn("[AI-Chat] 메시지 truncation — 남은 메시지 수={}", effectiveMessages.size());
+            }
+
+            boolean isReasoningModel = llmModel != null && (
+                llmModel.startsWith("gpt-5") || llmModel.startsWith("o1") || llmModel.startsWith("o3")
+            );
+            int effectiveMaxOutputTokens = isReasoningModel
+                ? Math.max(llmMaxOutputTokens, 8000)
+                : Math.max(llmMaxOutputTokens, 2000);
+
+            // ── HTTP 요청 전송 ─────────────────────────────────────
+            java.net.URL url = new java.net.URL(llmApiUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(llmTimeoutConnectSeconds * 1000);
+            conn.setReadTimeout(llmTimeoutReadSeconds * 1000);
+            conn.setRequestProperty("Content-Type", "application/json");
+
+            // 메시지 배열을 List<Map<String,Object>>로 변환 (직렬화 호환)
+            List<Map<String, Object>> msgList = new ArrayList<>();
+            for (Map<String, String> m : effectiveMessages) {
+                Map<String, Object> msg = new LinkedHashMap<>();
+                msg.put("role", m.get("role"));
+                msg.put("content", m.get("content"));
+                msgList.add(msg);
+            }
+
+            String body;
+            if ("claude".equals(llmProvider)) {
+                conn.setRequestProperty("x-api-key", llmApiKey);
+                conn.setRequestProperty("anthropic-version", "2023-06-01");
+                Map<String, Object> reqBody = new LinkedHashMap<>();
+                reqBody.put("model", llmModel);
+                reqBody.put("max_tokens", effectiveMaxOutputTokens);
+                reqBody.put("system", systemPrompt);
+                reqBody.put("messages", msgList);
+                body = objectMapper.writeValueAsString(reqBody);
+            } else {
+                conn.setRequestProperty("Authorization", "Bearer " + llmApiKey);
+                List<Map<String, Object>> allMessages = new ArrayList<>();
+                Map<String, Object> sysMsg = new LinkedHashMap<>();
+                sysMsg.put("role", "system");
+                sysMsg.put("content", systemPrompt);
+                allMessages.add(sysMsg);
+                allMessages.addAll(msgList);
+                Map<String, Object> reqBody = new LinkedHashMap<>();
+                reqBody.put("model", llmModel);
+                reqBody.put("max_tokens", effectiveMaxOutputTokens);
+                reqBody.put("messages", allMessages);
+                body = objectMapper.writeValueAsString(reqBody);
+            }
+
+            logger.info("[AI-Chat] HTTP POST 전송 — timeout={}s/{}s", llmTimeoutConnectSeconds, llmTimeoutReadSeconds);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+
+            // ── 응답 처리 ─────────────────────────────────────────
+            int code = conn.getResponseCode();
+            long elapsed = System.currentTimeMillis() - startTime;
+
+            if (code >= 200 && code < 300) {
+                StringBuilder sb = new StringBuilder();
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = br.readLine()) != null) sb.append(line).append('\n');
+                }
+                Map<String, Object> resp = objectMapper.readValue(sb.toString(), Map.class);
+                String text = extractLlmText(resp);
+                result.put("model", llmModel);
+                result.put("latencyMs", elapsed);
+
+                if (text == null || text.trim().isEmpty()) {
+                    result.put("success", false);
+                    result.put("errorCode", "EMPTY_RESPONSE");
+                    result.put("error", "LLM이 빈 응답을 반환했습니다.");
+                } else {
+                    result.put("success", true);
+                    result.put("text", text.trim());
+                    logger.info("[AI-Chat] 응답 수신 — model={}, latency={}ms, textLen={}",
+                        llmModel, elapsed, text.length());
+                }
+            } else {
+                StringBuilder errSb = new StringBuilder();
+                InputStream errStream = conn.getErrorStream();
+                if (errStream != null) {
+                    try (BufferedReader br = new BufferedReader(
+                            new InputStreamReader(errStream, java.nio.charset.StandardCharsets.UTF_8))) {
+                        String line;
+                        while ((line = br.readLine()) != null) errSb.append(line);
+                    }
+                }
+                String errBody = errSb.toString();
+                result.put("success", false);
+                result.put("errorCode", classifyHttpError(code, errBody));
+                result.put("error", buildHttpErrorMessage(code, errBody));
+            }
+            conn.disconnect();
+        } catch (java.net.SocketTimeoutException e) {
+            long elapsed = System.currentTimeMillis() - startTime;
+            logger.error("[AI-Chat] 타임아웃 — elapsed={}ms", elapsed);
+            result.put("success", false);
+            result.put("errorCode", "TIMEOUT");
+            result.put("error", "LLM 응답 대기 시간이 초과되었습니다 (" + elapsed / 1000 + "초).");
+        } catch (java.net.ConnectException e) {
+            result.put("success", false);
+            result.put("errorCode", "CONNECT_FAILED");
+            result.put("error", "LLM 서버에 연결할 수 없습니다: " + e.getMessage());
+        } catch (java.net.UnknownHostException e) {
+            result.put("success", false);
+            result.put("errorCode", "UNKNOWN_HOST");
+            result.put("error", "API URL의 호스트를 찾을 수 없습니다: " + e.getMessage());
+        } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - startTime;
+            logger.error("[AI-Chat] 예외 — type={}, msg={}, elapsed={}ms",
+                e.getClass().getSimpleName(), e.getMessage(), elapsed, e);
+            result.put("success", false);
+            result.put("errorCode", "INTERNAL_ERROR");
+            result.put("error", "[" + e.getClass().getSimpleName() + "] " + e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * LLM 채팅 스트리밍 — SSE로 토큰 단위 전송
+     * @param onChunk  텍스트 청크마다 호출되는 콜백
+     * @param onDone   완료 시 호출 (전체 텍스트, model, latencyMs)
+     * @param onError  오류 시 호출 (errorCode, error 메시지)
+     */
+    @SuppressWarnings("unchecked")
+    public void callLlmChatStream(List<Map<String, String>> messages, String systemPrompt,
+                                   java.util.function.Consumer<String> onChunk,
+                                   java.util.function.BiConsumer<String, Long> onDone,
+                                   java.util.function.BiConsumer<String, String> onError) {
+        // ── 사전 검증 ─────────────────────────────────────────────
+        if (!llmEnabled) { onError.accept("LLM_DISABLED", "AI 분석 기능이 비활성화 상태입니다."); return; }
+        if (llmApiKey == null || llmApiKey.trim().isEmpty()) { onError.accept("NO_API_KEY", "API 키가 설정되지 않았습니다."); return; }
+        if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) { onError.accept("NO_API_URL", "API URL이 설정되지 않았습니다."); return; }
+
+        long startTime = System.currentTimeMillis();
+        logger.info("[AI-Chat-Stream] 스트리밍 요청 시작 — provider={}, model={}, messageCount={}",
+            llmProvider, llmModel, messages.size());
+
+        try {
+            // ── 메시지 truncation ──────────────────────────────────
+            int maxChars = llmMaxInputTokens * 4;
+            int totalChars = messages.stream().mapToInt(m -> {
+                String c = m.get("content");
+                return c != null ? c.length() : 0;
+            }).sum();
+            List<Map<String, String>> effectiveMessages = new ArrayList<>(messages);
+            if (totalChars > maxChars && effectiveMessages.size() > 1) {
+                while (totalChars > maxChars && effectiveMessages.size() > 1) {
+                    Map<String, String> removed = effectiveMessages.remove(0);
+                    String rc = removed.get("content");
+                    totalChars -= (rc != null ? rc.length() : 0);
+                }
+            }
+
+            boolean isReasoningModel = llmModel != null && (
+                llmModel.startsWith("gpt-5") || llmModel.startsWith("o1") || llmModel.startsWith("o3")
+            );
+            int effectiveMaxOutputTokens = isReasoningModel
+                ? Math.max(llmMaxOutputTokens, 8000)
+                : Math.max(llmMaxOutputTokens, 2000);
+
+            // ── HTTP 요청 (stream: true) ──────────────────────────
+            java.net.URL url = new java.net.URL(llmApiUrl);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(llmTimeoutConnectSeconds * 1000);
+            conn.setReadTimeout(llmTimeoutReadSeconds * 1000);
+            conn.setRequestProperty("Content-Type", "application/json");
+
+            List<Map<String, Object>> msgList = new ArrayList<>();
+            for (Map<String, String> m : effectiveMessages) {
+                Map<String, Object> msg = new LinkedHashMap<>();
+                msg.put("role", m.get("role"));
+                msg.put("content", m.get("content"));
+                msgList.add(msg);
+            }
+
+            String body;
+            boolean isClaude = "claude".equals(llmProvider);
+            if (isClaude) {
+                conn.setRequestProperty("x-api-key", llmApiKey);
+                conn.setRequestProperty("anthropic-version", "2023-06-01");
+                Map<String, Object> reqBody = new LinkedHashMap<>();
+                reqBody.put("model", llmModel);
+                reqBody.put("max_tokens", effectiveMaxOutputTokens);
+                reqBody.put("stream", true);
+                reqBody.put("system", systemPrompt);
+                reqBody.put("messages", msgList);
+                body = objectMapper.writeValueAsString(reqBody);
+            } else {
+                conn.setRequestProperty("Authorization", "Bearer " + llmApiKey);
+                List<Map<String, Object>> allMessages = new ArrayList<>();
+                Map<String, Object> sysMsg = new LinkedHashMap<>();
+                sysMsg.put("role", "system");
+                sysMsg.put("content", systemPrompt);
+                allMessages.add(sysMsg);
+                allMessages.addAll(msgList);
+                Map<String, Object> reqBody = new LinkedHashMap<>();
+                reqBody.put("model", llmModel);
+                reqBody.put("max_tokens", effectiveMaxOutputTokens);
+                reqBody.put("stream", true);
+                reqBody.put("messages", allMessages);
+                body = objectMapper.writeValueAsString(reqBody);
+            }
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+
+            int code = conn.getResponseCode();
+            if (code >= 200 && code < 300) {
+                StringBuilder fullText = new StringBuilder();
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        if (!line.startsWith("data: ")) continue;
+                        String data = line.substring(6).trim();
+                        if ("[DONE]".equals(data)) break;
+
+                        try {
+                            Map<String, Object> chunk = objectMapper.readValue(data, Map.class);
+                            String text = null;
+
+                            if (isClaude) {
+                                // Claude: {"type":"content_block_delta","delta":{"type":"text_delta","text":"..."}}
+                                String type = String.valueOf(chunk.get("type"));
+                                if ("content_block_delta".equals(type)) {
+                                    Map<String, Object> delta = (Map<String, Object>) chunk.get("delta");
+                                    if (delta != null) text = (String) delta.get("text");
+                                }
+                            } else {
+                                // OpenAI: {"choices":[{"delta":{"content":"..."}}]}
+                                List<Map<String, Object>> choices = (List<Map<String, Object>>) chunk.get("choices");
+                                if (choices != null && !choices.isEmpty()) {
+                                    Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
+                                    if (delta != null) text = (String) delta.get("content");
+                                }
+                            }
+
+                            if (text != null && !text.isEmpty()) {
+                                fullText.append(text);
+                                onChunk.accept(text);
+                            }
+                        } catch (Exception parseErr) {
+                            // 개별 청크 파싱 오류는 무시
+                        }
+                    }
+                }
+                long elapsed = System.currentTimeMillis() - startTime;
+                logger.info("[AI-Chat-Stream] 스트리밍 완료 — model={}, latency={}ms, textLen={}",
+                    llmModel, elapsed, fullText.length());
+                onDone.accept(fullText.toString(), elapsed);
+            } else {
+                StringBuilder errSb = new StringBuilder();
+                InputStream errStream = conn.getErrorStream();
+                if (errStream != null) {
+                    try (BufferedReader br = new BufferedReader(
+                            new InputStreamReader(errStream, java.nio.charset.StandardCharsets.UTF_8))) {
+                        String l; while ((l = br.readLine()) != null) errSb.append(l);
+                    }
+                }
+                String errBody = errSb.toString();
+                onError.accept(classifyHttpError(code, errBody), buildHttpErrorMessage(code, errBody));
+            }
+            conn.disconnect();
+        } catch (java.net.SocketTimeoutException e) {
+            long elapsed = System.currentTimeMillis() - startTime;
+            onError.accept("TIMEOUT", "LLM 응답 대기 시간이 초과되었습니다 (" + elapsed / 1000 + "초).");
+        } catch (java.net.ConnectException e) {
+            onError.accept("CONNECT_FAILED", "LLM 서버에 연결할 수 없습니다: " + e.getMessage());
+        } catch (java.net.UnknownHostException e) {
+            onError.accept("UNKNOWN_HOST", "API URL의 호스트를 찾을 수 없습니다: " + e.getMessage());
+        } catch (Exception e) {
+            logger.error("[AI-Chat-Stream] 예외 — type={}, msg={}", e.getClass().getSimpleName(), e.getMessage(), e);
+            onError.accept("INTERNAL_ERROR", "[" + e.getClass().getSimpleName() + "] " + e.getMessage());
+        }
     }
 
     /** HTTP 오류 코드를 errorCode 문자열로 분류 */

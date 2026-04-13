@@ -1,5 +1,95 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-13] 플로팅 채팅 전체화면 → 확대/축소 토글로 변경
+
+**변경 파일:** `analyze.html`
+
+- 헤더의 전체화면 버튼 및 전체화면 오버레이 HTML/CSS/JS 전체 제거
+- 플로팅 채팅 헤더에 확대/축소 토글 버튼 추가 (화살표 아이콘)
+- 확대 시: 420×560px → 700px×80vh, CSS transition으로 부드러운 전환
+- 축소 시: 원래 크기로 복귀, 아이콘도 변경
+- `_aiChatFullscreen` 변수 → `_aiChatExpanded`로 변경
+- `getChatContainer()`, `getChatInput()`, `getChatSendBtn()` 단순화 (전체화면 분기 제거)
+- 모바일(640px 이하) 확대 시 전체 너비
+
+---
+
+## [2026-04-13] AI 채팅 이력 DB 저장 + 전용 페이지 + 전체화면
+
+**변경 파일:** `AiChatSession.java` (신규), `AiChatMessage.java` (신규), `AiChatSessionRepository.java` (신규), `AiChatMessageRepository.java` (신규), `AiChatController.java` (신규), `ai-chat.html` (신규), `banner.html`, `analyze.html`
+
+### DB 엔티티 및 API
+- **`ai_chat_sessions`** 테이블: 세션별 username, filename, title, model, messageCount 저장
+- **`ai_chat_messages`** 테이블: 세션별 role, content (MEDIUMTEXT) 저장
+- **`AiChatController`**: 세션 CRUD (`/api/ai-chat/sessions`), 메시지 조회/저장, 세션 기반 스트리밍 (`/api/ai-chat/sessions/{id}/stream`)
+- 계정별(Spring Security `Principal`) 세션 격리 + 덤프 파일별 세션 분류
+- 스트리밍 응답 완료 시 user/assistant 메시지 자동 DB 저장
+- 첫 질문에서 세션 제목 자동 생성 (40자 truncate)
+
+### AI Chat 전용 페이지 (`/ai-chat`)
+- 좌측 세션 사이드바 (280px): 세션 목록, 새 채팅 버튼, 덤프 파일 필터
+- 우측 채팅 영역: 메시지 표시, 스트리밍 입력, 마크다운 렌더링
+- 세션 선택 시 기존 메시지 이력 로드
+- 세션 삭제 (cascade: 메시지 함께 삭제)
+
+### 배너 네비게이션
+- History ↔ Servers 사이에 "AI Chat" 탭 추가 (말풍선 아이콘)
+- 접힌 상태 아이콘도 동일하게 추가
+
+### 분석 페이지 전체화면 전환
+- 헤더에 "Chat" 전체화면 버튼 추가 (LLM 활성화 시만 표시)
+- 전체화면 오버레이: 별도 입력/메시지 영역, 모델 뱃지, 초기화 버튼
+- 플로팅 채팅 ↔ 전체화면 간 메시지 동기화
+
+### 분석 페이지 채팅 세션 연동
+- `sendChatMessage()` 시 세션 자동 생성 (`ensureChatSession()`)
+- 세션 기반 스트리밍 엔드포인트 사용 → DB 자동 저장
+- 채팅 관련 DOM 접근을 `getChatContainer()`, `getChatInput()`, `getChatSendBtn()` 헬퍼로 추상화 (전체화면/플로팅 모드 통합)
+
+---
+
+## [2026-04-13] AI 채팅 스트리밍 응답 구현
+
+**변경 파일:** `HeapDumpAnalyzerService.java`, `HeapDumpController.java`, `analyze.html`
+
+- AI 채팅 응답을 실시간 스트리밍으로 출력하도록 변경 (기존 전체 대기 → 토큰 단위 실시간 렌더링)
+- **Backend**: `callLlmChatStream()` 메서드 추가 — LLM API에 `stream: true`로 요청, SSE 청크 파싱 (Claude `content_block_delta` / OpenAI `choices.delta.content`)
+- **Backend**: `POST /api/llm/chat/stream` 엔드포인트 — `SseEmitter` 반환, 비동기 스레드에서 스트리밍 실행
+- **Frontend**: `fetch` + `ReadableStream`으로 SSE 이벤트 실시간 수신, 텍스트 청크마다 assistant 버블에 마크다운 렌더링 업데이트
+- 스트리밍 중 깜빡이는 커서(▌) 표시, 완료 시 커서 제거
+- SSE 이벤트 구조: `start` (모델 정보), `chunk` (텍스트 조각), `done` (완료), `error` (오류)
+
+---
+
+## [2026-04-13] AI 플로팅 채팅 시스템 구현 + 채팅 시스템 프롬프트 설정
+
+**변경 파일:** `HeapDumpAnalyzerService.java`, `HeapDumpController.java`, `analyze.html`, `llm-settings.html`
+
+### 플로팅 AI 채팅 (analyze.html)
+- 분석 페이지 우하단에 56px 원형 플로팅 채팅 버튼 추가 (파란-보라 그라데이션)
+- LLM 활성화 시에만 표시, 비활성화 시 자동 숨김
+- 채팅 패널 (420×560px): 헤더(모델명 뱃지, 초기화, 닫기), 메시지 영역, 입력 영역
+- 멀티턴 대화 지원: 대화 이력을 매 요청마다 전체 전송
+- 분석 컨텍스트 자동 주입: KPI, Top Consumers, Leak Suspects, AI 인사이트 결과를 시스템 프롬프트에 포함
+- 마크다운 렌더링: bold, 인라인 코드, 코드 블록, 줄바꿈 지원
+- 타이핑 인디케이터 (점 3개 bounce 애니메이션)
+- 토큰 관리: 메시지 총 길이 초과 시 오래된 메시지 자동 제거
+- Enter 전송, Shift+Enter 줄바꿈, Escape 패널 닫기
+- 모바일 반응형 (640px 이하 전체 너비)
+
+### 채팅 시스템 프롬프트 설정 (llm-settings.html)
+- LLM Settings 페이지에 "Chat System Prompt" 카드 추가
+- textarea로 시스템 프롬프트 편집, Save Prompt / Reset to Default 버튼
+- `POST /api/llm/chat-prompt` 엔드포인트로 저장, settings.json에 영속화
+
+### Backend
+- `HeapDumpAnalyzerService`: `callLlmChat()` 메서드 추가 (멀티턴 messages 배열 수신, 마크다운 응답 반환)
+- `HeapDumpAnalyzerService`: `llmChatSystemPrompt` volatile 필드 + `DEFAULT_CHAT_SYSTEM_PROMPT` 상수 + getter/setter + 영속화
+- `HeapDumpController`: `POST /api/llm/chat` (채팅 API), `POST /api/llm/chat-prompt` (프롬프트 저장 API) 엔드포인트 추가
+- `/api/settings` 응답에 `chatSystemPrompt` 필드 추가
+
+---
+
 ## [2026-04-13] 관리자 계정 비활성화 방지 및 Admin → Settings 하위 Accounts 이동
 
 **변경 파일:** `fragments/banner.html`, `UserService.java`, `admin/users.html`
