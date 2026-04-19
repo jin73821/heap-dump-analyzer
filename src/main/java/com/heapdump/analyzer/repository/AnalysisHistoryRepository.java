@@ -12,6 +12,7 @@ public interface AnalysisHistoryRepository extends JpaRepository<AnalysisHistory
     List<AnalysisHistoryEntity> findByServerIdIsNullOrderByAnalyzedAtDesc();
     Optional<AnalysisHistoryEntity> findByFilename(String filename);
     boolean existsByFilename(String filename);
+    void deleteByFilename(String filename);
     List<AnalysisHistoryEntity> findByStatus(String status);
     long countByStatus(String status);
 }

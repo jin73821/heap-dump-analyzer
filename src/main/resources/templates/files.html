@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>Analysis Files — Heap Dump Analyzer</title>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -121,10 +122,12 @@
         @media (max-width: 900px) {
             .topbar { left: 0; }
             .container { padding-left: 20px; }
+            .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         }
         @media (max-width: 640px) {
             .ftable .col-date, .ftable .col-compressed { display: none; }
             .page-stats { gap: 10px; }
+            .ftable { min-width: 500px; }
         }
     </style>
 </head>
@@ -134,6 +137,7 @@
 
 <div class="topbar">
     <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
         <span class="topbar-title">Files</span>
     </div>
     <div class="topbar-right">

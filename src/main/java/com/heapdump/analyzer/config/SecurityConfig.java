@@ -29,7 +29,7 @@ public class SecurityConfig {
         http
             .userDetailsService(userDetailsService)
             .authorizeRequests()
-                .antMatchers("/login", "/css/**", "/js/**", "/favicon.ico").permitAll()
+                .antMatchers("/login", "/css/**", "/js/**", "/favicon.ico", "/favicon.svg").permitAll()
                 .antMatchers("/admin/**", "/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
             .and()
@@ -43,6 +43,9 @@ public class SecurityConfig {
                 .logoutUrl("/logout")
                 .logoutSuccessUrl("/login?logout=true")
                 .permitAll()
+            .and()
+            .headers()
+                .frameOptions().sameOrigin()
             .and()
             .csrf()
                 .ignoringRequestMatchers(request -> {

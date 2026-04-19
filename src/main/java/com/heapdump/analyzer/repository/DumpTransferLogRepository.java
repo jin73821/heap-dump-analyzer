@@ -9,4 +9,5 @@ public interface DumpTransferLogRepository extends JpaRepository<DumpTransferLog
     List<DumpTransferLog> findByServerIdOrderByStartedAtDesc(Long serverId);
     boolean existsByServerIdAndFilename(Long serverId, String filename);
     boolean existsByServerIdAndFilenameAndTransferStatus(Long serverId, String filename, String transferStatus);
+    List<DumpTransferLog> findByFilenameAndTransferStatusOrderByCompletedAtDesc(String filename, String transferStatus);
 }

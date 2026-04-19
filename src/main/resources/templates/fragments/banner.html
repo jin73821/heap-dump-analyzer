@@ -35,7 +35,7 @@ body.banner-collapsed { --banner-w: 44px; }
     width: 30px; height: 30px; min-width: 30px; background: #2563EB; border-radius: 7px;
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
 }
-.gb-header-logo svg { width: 16px; height: 16px; fill: #fff; }
+.gb-header-logo svg { width: 18px; height: 18px; }
 .gb-header-text { overflow: hidden; }
 .gb-header-title { font-size: 14px; font-weight: 700; color: #1F2937; line-height: 1.2; }
 .gb-header-sub { font-size: 10px; color: #9CA3AF; font-weight: 500; }
@@ -143,19 +143,87 @@ body.banner-collapsed .gb-collapsed-icons { display: flex; }
 body.banner-no-transition .g-banner,
 body.banner-no-transition .gb-header { transition: none !important; }
 
-/* ── Mobile: hide banner ─────────────────────── */
+/* ── Mobile hamburger button (shared across pages) ── */
+.gb-menu-btn {
+    display: none; width: 32px; height: 32px; border: none; background: none;
+    cursor: pointer; padding: 6px; margin-right: 4px; flex-shrink: 0;
+    flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+}
+.gb-menu-btn span {
+    display: block; width: 16px; height: 2px; background: #374151;
+    border-radius: 1px; transition: transform .2s, opacity .15s;
+}
+.gb-menu-btn.open span:nth-child(1) { transform: rotate(45deg) translate(3px, 4px); }
+.gb-menu-btn.open span:nth-child(2) { opacity: 0; }
+.gb-menu-btn.open span:nth-child(3) { transform: rotate(-45deg) translate(3px, -4px); }
 @media (max-width: 900px) {
-    .g-banner { display: none; }
+    .gb-menu-btn { display: flex; }
+}
+
+/* ── Mobile: banner as slide-in drawer ────────── */
+@media (max-width: 900px) {
     :root { --banner-w: 0px !important; }
     body.banner-collapsed { --banner-w: 0px !important; }
+    .g-banner {
+        width: 300px; transform: translateX(-100%);
+        transition: transform .3s cubic-bezier(.4,0,.2,1);
+        box-shadow: none; z-index: 200;
+    }
+    .g-banner.mobile-open {
+        transform: translateX(0);
+        box-shadow: 4px 0 24px rgba(0,0,0,.18);
+    }
+    body.banner-collapsed .g-banner { width: 300px; }
+    body.banner-collapsed .gb-body { display: flex; }
+    body.banner-collapsed .gb-collapsed-icons { display: none; }
+    .gb-toggle { display: none !important; }
+
+    /* ── Mobile tab bar ──────────────────────────── */
+    .gb-mobile-tabs {
+        display: flex; border-bottom: 2px solid #E5E7EB; flex-shrink: 0;
+        background: #F8F9FA;
+    }
+    .gb-mobile-tab {
+        flex: 1; padding: 10px 0; text-align: center;
+        font-size: 12px; font-weight: 600; color: #9CA3AF;
+        background: none; border: none; cursor: pointer;
+        border-bottom: 2px solid transparent; margin-bottom: -2px;
+        transition: color .15s, border-color .15s;
+    }
+    .gb-mobile-tab.active { color: #2563EB; border-bottom-color: #2563EB; }
+    .gb-mobile-tab:hover { color: #374151; }
+    .gb-mobile-tab-icon { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; margin-right: 4px; }
+    .gb-mobile-tab-icon svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+    .gb-tab-content { display: none; flex: 1; overflow-y: auto; }
+    .gb-tab-content.active { display: flex; flex-direction: column; }
+
+    /* Dynamic tabs hidden by default (only shown when page injects content) */
+    .gb-mobile-tab[data-tab="upload"] { display: none; }
+    .gb-mobile-tab[data-tab="analysis"] { display: none; }
+    body.has-upload-tab .gb-mobile-tab[data-tab="upload"] { display: block; }
+    body.has-analysis-tab .gb-mobile-tab[data-tab="analysis"] { display: block; }
 }
+/* ── Desktop: hide mobile elements ──────────────── */
+@media (min-width: 901px) {
+    .gb-mobile-tabs { display: none; }
+    .gb-tab-content.gb-tab-nav { display: flex; flex-direction: column; }
+    .gb-tab-content.gb-tab-upload { display: none; }
+    .gb-tab-content.gb-tab-analysis { display: none; }
+    .gb-banner-overlay { display: none !important; }
+}
+/* ── Banner mobile overlay ──────────────────────── */
+.gb-banner-overlay {
+    display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,.4); z-index: 199;
+}
+.gb-banner-overlay.open { display: block; }
 </style>
 
 <aside class="g-banner" id="gBanner">
     <!-- Header -->
     <a href="/" class="gb-header" style="text-decoration:none">
         <div class="gb-header-logo">
-            <svg viewBox="0 0 14 14"><rect x="1" y="7" width="2" height="6" rx="1"/><rect x="5" y="4" width="2" height="9" rx="1"/><rect x="9" y="1" width="2" height="12" rx="1"/></svg>
+            <svg viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="6.5" stroke="rgba(255,255,255,.35)" stroke-width="3.5"/><circle cx="10" cy="10" r="6.5" stroke="#fff" stroke-width="3.5" stroke-dasharray="27.5 40.8" stroke-dashoffset="10.2" stroke-linecap="round"/><circle cx="10" cy="10" r="1.5" fill="#fff" opacity=".8"/></svg>
         </div>
         <div class="gb-header-text">
             <div class="gb-header-title">Heap Dump Analyzer</div>
@@ -168,8 +236,24 @@ body.banner-no-transition .gb-header { transition: none !important; }
         <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
 
+    <!-- Mobile tabs -->
+    <div class="gb-mobile-tabs" id="gbMobileTabs">
+        <button class="gb-mobile-tab active" data-tab="nav" onclick="switchBannerTab('nav')">
+            <span class="gb-mobile-tab-icon"><svg viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg></span>
+            Navigation
+        </button>
+        <button class="gb-mobile-tab" data-tab="analysis" onclick="switchBannerTab('analysis')">
+            <span class="gb-mobile-tab-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
+            Analysis
+        </button>
+        <button class="gb-mobile-tab" data-tab="upload" onclick="switchBannerTab('upload')">
+            <span class="gb-mobile-tab-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+            Upload
+        </button>
+    </div>
+
     <!-- Expanded body -->
-    <div class="gb-body" id="gbBody">
+    <div class="gb-body gb-tab-content gb-tab-nav active" id="gbBody">
         <div class="gb-section">
             <div class="gb-title">
                 System Status
@@ -291,6 +375,12 @@ body.banner-no-transition .gb-header { transition: none !important; }
         </div>
     </div>
 
+    <!-- Mobile upload tab content (populated by index.html) -->
+    <div class="gb-tab-content gb-tab-upload" id="gbMobileUpload"></div>
+
+    <!-- Mobile analysis tab content (populated by analyze.html) -->
+    <div class="gb-tab-content gb-tab-analysis" id="gbMobileAnalysis"></div>
+
     <!-- Collapsed icons -->
     <div class="gb-collapsed-icons">
         <div class="gb-ci-dot" id="gbMatDotC"></div>
@@ -302,6 +392,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         <a href="/settings" class="gb-ci" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>
     </div>
 </aside>
+<div class="gb-banner-overlay" id="gbBannerOverlay" onclick="closeMobileBanner()"></div>
 
 <script>
 /* ── Banner toggle + system status ─────────── */
@@ -310,6 +401,14 @@ var _GB_INTERVAL = 60000; // 1분
 
 (function() {
     highlightActiveNav();
+
+    // 모바일: 내비게이션 링크 클릭 시 배너 자동 닫기
+    var navLinks = document.querySelectorAll('.gb-nav-link:not([onclick*="toggleSubMenu"]), .gb-nav-sub a');
+    navLinks.forEach(function(link) {
+        link.addEventListener('click', function() {
+            if (window.innerWidth <= 900) closeMobileBanner();
+        });
+    });
 
     // 로드 완료 후 transition 복원
     requestAnimationFrame(function() {
@@ -335,6 +434,61 @@ var _GB_INTERVAL = 60000; // 1분
 function toggleBanner() {
     document.body.classList.toggle('banner-collapsed');
     localStorage.setItem('bannerCollapsed', document.body.classList.contains('banner-collapsed'));
+}
+
+/* ── Mobile banner drawer ─────────────────────── */
+function openMobileBanner() {
+    var banner = document.getElementById('gBanner');
+    var ov = document.getElementById('gbBannerOverlay');
+    if (banner) banner.classList.add('mobile-open');
+    if (ov) ov.classList.add('open');
+    // 햄버거 버튼 X 전환
+    var btn = document.getElementById('menuBtn');
+    if (btn) btn.classList.add('open');
+}
+function closeMobileBanner() {
+    var banner = document.getElementById('gBanner');
+    var ov = document.getElementById('gbBannerOverlay');
+    if (banner) banner.classList.remove('mobile-open');
+    if (ov) ov.classList.remove('open');
+    var btn = document.getElementById('menuBtn');
+    if (btn) btn.classList.remove('open');
+}
+function toggleMobileBanner() {
+    var banner = document.getElementById('gBanner');
+    if (banner && banner.classList.contains('mobile-open')) {
+        closeMobileBanner();
+    } else {
+        openMobileBanner();
+    }
+}
+
+/* ── Mobile tab switching ─────────────────────── */
+function switchBannerTab(tabName) {
+    // Tab buttons
+    var tabs = document.querySelectorAll('.gb-mobile-tab');
+    tabs.forEach(function(t) { t.classList.toggle('active', t.getAttribute('data-tab') === tabName); });
+    // Tab contents
+    document.querySelectorAll('.gb-tab-content').forEach(function(el) { el.classList.remove('active'); });
+    var map = { nav: 'gbBody', upload: 'gbMobileUpload', analysis: 'gbMobileAnalysis' };
+    var target = document.getElementById(map[tabName]);
+    if (target) target.classList.add('active');
+}
+
+/* ── Register upload content into banner (called by index.html) ── */
+function registerBannerUploadTab(contentElement) {
+    var slot = document.getElementById('gbMobileUpload');
+    if (!slot || !contentElement) return;
+    slot.appendChild(contentElement);
+    document.body.classList.add('has-upload-tab');
+}
+
+/* ── Register analysis content into banner (called by analyze.html) ── */
+function registerBannerAnalysisTab(contentElement) {
+    var slot = document.getElementById('gbMobileAnalysis');
+    if (!slot || !contentElement) return;
+    slot.appendChild(contentElement);
+    document.body.classList.add('has-analysis-tab');
 }
 
 function highlightActiveNav() {

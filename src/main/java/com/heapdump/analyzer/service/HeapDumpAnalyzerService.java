@@ -6,12 +6,17 @@ import com.heapdump.analyzer.model.*;
 import com.heapdump.analyzer.model.entity.AiInsightEntity;
 import com.heapdump.analyzer.model.entity.AnalysisHistoryEntity;
 import com.heapdump.analyzer.parser.MatReportParser;
+import com.heapdump.analyzer.model.entity.DumpTransferLog;
+import com.heapdump.analyzer.model.entity.TargetServer;
 import com.heapdump.analyzer.repository.AiInsightRepository;
 import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
+import com.heapdump.analyzer.repository.DumpTransferLogRepository;
+import com.heapdump.analyzer.repository.TargetServerRepository;
 import com.heapdump.analyzer.util.FormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -51,6 +56,8 @@ public class HeapDumpAnalyzerService {
     private final MatReportParser parser;
     private final AnalysisHistoryRepository analysisHistoryRepository;
     private final AiInsightRepository aiInsightRepository;
+    private final DumpTransferLogRepository transferLogRepository;
+    private final TargetServerRepository targetServerRepository;
 
     public MatReportParser getParser() { return parser; }
     private final ObjectMapper    objectMapper = new ObjectMapper();
@@ -93,11 +100,15 @@ public class HeapDumpAnalyzerService {
 
     public HeapDumpAnalyzerService(HeapDumpConfig config, MatReportParser parser,
                                    AnalysisHistoryRepository analysisHistoryRepository,
-                                   AiInsightRepository aiInsightRepository) {
+                                   AiInsightRepository aiInsightRepository,
+                                   DumpTransferLogRepository transferLogRepository,
+                                   TargetServerRepository targetServerRepository) {
         this.config  = config;
         this.parser  = parser;
         this.analysisHistoryRepository = analysisHistoryRepository;
         this.aiInsightRepository = aiInsightRepository;
+        this.transferLogRepository = transferLogRepository;
+        this.targetServerRepository = targetServerRepository;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
         this.compressAfterAnalysis = config.isCompressAfterAnalysis();
         // LLM 초기화
@@ -190,6 +201,9 @@ public class HeapDumpAnalyzerService {
 
         // 기존 결과를 DB로 마이그레이션 (한 번만 실행)
         migrateExistingResultsToDb();
+
+        // 기존 history 레코드 중 서버 정보가 누락된 항목 보정
+        fixMissingServerInfoInHistory();
     }
 
     private void migrateExistingResultsToDb() {
@@ -207,6 +221,34 @@ public class HeapDumpAnalyzerService {
         }
         // AI 인사이트 파일 → DB 마이그레이션
         migrateAiInsightsToDb();
+    }
+
+    private void fixMissingServerInfoInHistory() {
+        try {
+            List<AnalysisHistoryEntity> allHistory = analysisHistoryRepository.findAll();
+            int fixed = 0;
+            for (AnalysisHistoryEntity entity : allHistory) {
+                if (entity.getServerName() != null && !entity.getServerName().isEmpty()) continue;
+                // 전송 로그에서 서버 정보 조회
+                List<DumpTransferLog> logs = transferLogRepository
+                        .findByFilenameAndTransferStatusOrderByCompletedAtDesc(entity.getFilename(), "SUCCESS");
+                if (!logs.isEmpty()) {
+                    DumpTransferLog log = logs.get(0);
+                    entity.setServerId(log.getServerId());
+                    Optional<TargetServer> serverOpt = targetServerRepository.findById(log.getServerId());
+                    if (serverOpt.isPresent()) {
+                        entity.setServerName(serverOpt.get().getName());
+                        analysisHistoryRepository.save(entity);
+                        fixed++;
+                    }
+                }
+            }
+            if (fixed > 0) {
+                logger.info("[DB Fix] Updated server info for {} history records from transfer logs", fixed);
+            }
+        } catch (Exception e) {
+            logger.warn("[DB Fix] Failed to fix missing server info: {}", e.getMessage());
+        }
     }
 
     @SuppressWarnings("unchecked")
@@ -2126,6 +2168,7 @@ public class HeapDumpAnalyzerService {
      * 히스토리 삭제: 분석 결과 디렉토리 + 인덱스 파일 + 메모리 캐시 삭제
      * @param deleteHeapDump true이면 힙덤프 파일도 함께 삭제
      */
+    @Transactional
     public void deleteHistory(String filename, boolean deleteHeapDump) throws IOException {
         String safe = new File(filename).getName();
         logger.info("[DeleteHistory] Started: filename={}, deleteHeapDump={}", safe, deleteHeapDump);
@@ -2179,6 +2222,20 @@ public class HeapDumpAnalyzerService {
 
         // 4) 메모리 캐시 제거
         memCache.remove(safe);
+
+        // 5) DB 레코드 삭제 (analysis_history + ai_insights)
+        try {
+            analysisHistoryRepository.deleteByFilename(safe);
+            logger.info("[DeleteHistory] DB analysis_history record deleted: {}", safe);
+        } catch (Exception e) {
+            logger.warn("[DeleteHistory] Failed to delete DB analysis_history for '{}': {}", safe, e.getMessage());
+        }
+        try {
+            aiInsightRepository.deleteByFilename(safe);
+            logger.info("[DeleteHistory] DB ai_insights record deleted: {}", safe);
+        } catch (Exception e) {
+            logger.warn("[DeleteHistory] Failed to delete DB ai_insights for '{}': {}", safe, e.getMessage());
+        }
 
         logger.info("[DeleteHistory] Completed: filename='{}', heapDumpDeleted={}", safe, deleteHeapDump);
     }
@@ -2618,7 +2675,24 @@ public class HeapDumpAnalyzerService {
     // ── DB 저장 ───────────────────────────────────────────────────
 
     public void saveAnalysisToDb(HeapAnalysisResult result) {
-        saveAnalysisToDb(result, null, null, null);
+        // 전송 로그에서 서버 정보를 자동 조회
+        Long serverId = null;
+        String serverName = null;
+        try {
+            List<DumpTransferLog> logs = transferLogRepository
+                    .findByFilenameAndTransferStatusOrderByCompletedAtDesc(result.getFilename(), "SUCCESS");
+            if (!logs.isEmpty()) {
+                DumpTransferLog log = logs.get(0);
+                serverId = log.getServerId();
+                Optional<TargetServer> serverOpt = targetServerRepository.findById(serverId);
+                if (serverOpt.isPresent()) {
+                    serverName = serverOpt.get().getName();
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("[DB] Failed to lookup transfer log for {}: {}", result.getFilename(), e.getMessage());
+        }
+        saveAnalysisToDb(result, serverId, serverName, null);
     }
 
     public void saveAnalysisToDb(HeapAnalysisResult result, Long serverId, String serverName, String uploadedBy) {

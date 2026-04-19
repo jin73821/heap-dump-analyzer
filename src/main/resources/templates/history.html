@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>Analysis History — Heap Dump Analyzer</title>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -112,10 +113,12 @@
         @media (max-width: 900px) {
             .topbar { left: 0; }
             .container { padding-left: 20px; }
+            .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         }
         @media (max-width: 640px) {
             .page-stats { gap: 10px; }
             .htable .col-hide-sm { display: none; }
+            .htable { min-width: 600px; }
         }
     </style>
 </head>
@@ -125,6 +128,7 @@
 
 <div class="topbar">
     <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
         <span class="topbar-title">History</span>
     </div>
     <div class="topbar-right">

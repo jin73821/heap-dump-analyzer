@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="_csrf" th:content="${_csrf.token}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>AI Chat — Heap Dump Analyzer</title>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -110,7 +111,13 @@
         .chat-msg-assistant pre { background: #1F2937; color: #E5E7EB; padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; font-size: 12px; line-height: 1.5; }
         .chat-msg-assistant pre code { background: none; padding: 0; color: inherit; }
         .chat-msg-time { font-size: 10px; color: #9CA3AF; margin-top: 4px; }
-        .chat-msg-user .chat-msg-time { color: rgba(255,255,255,.6); }
+        .chat-msg-user .chat-msg-time { color: rgba(255,255,255,.6); text-align: right; }
+
+        /* ── Date separator ─────────────────────────── */
+        .chat-date-sep { align-self: center; display: flex; align-items: center; gap: 12px;
+                         width: 100%; margin: 8px 0; }
+        .chat-date-sep::before, .chat-date-sep::after { content: ''; flex: 1; height: 1px; background: #E5E7EB; }
+        .chat-date-label { font-size: 11px; color: #9CA3AF; font-weight: 600; white-space: nowrap; }
         .chat-msg-welcome { align-self: center; background: #EFF6FF; color: #1E40AF; font-size: 12px; padding: 12px 16px; border-radius: 10px; text-align: center; line-height: 1.7; border: 1px solid #BFDBFE; }
         .chat-msg-error { align-self: center; background: #FEF2F2; color: #991B1B; font-size: 12px; padding: 8px 14px; border-radius: 8px; text-align: center; border: 1px solid #FECACA; }
         .chat-cursor { color: #3B82F6; animation: cursorBlink .8s infinite; }
@@ -148,6 +155,7 @@
 
 <div class="topbar">
     <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
         <span class="topbar-title">AI Chat</span>
     </div>
     <div class="topbar-right">
@@ -260,13 +268,15 @@ function createNewSession() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: filter || '', title: '새 채팅' })
     })
+    .then(checkAuth)
     .then(function(r){ return r.json(); })
     .then(function(d) {
         if (d.success) {
             selectSession(d.sessionId);
             loadSessions();
         }
-    });
+    })
+    .catch(function(e) { alert(e.message); });
 }
 
 function selectSession(id) {
@@ -312,15 +322,21 @@ function loadMessages(sessionId) {
             div.innerHTML = '<strong>AI Chat</strong><br>질문을 입력하여 대화를 시작하세요.';
             container.appendChild(div);
         } else {
+            var lastDate = '';
             messages.forEach(function(m) {
-                appendMsg(m.role, m.content);
+                var dateStr = extractDate(m.createdAt);
+                if (dateStr && dateStr !== lastDate) {
+                    appendDateSep(dateStr);
+                    lastDate = dateStr;
+                }
+                appendMsg(m.role, m.content, m.createdAt);
             });
         }
         container.scrollTop = container.scrollHeight;
     });
 }
 
-function appendMsg(role, content) {
+function appendMsg(role, content, createdAt) {
     var container = document.getElementById('chatMessages');
     var wrapper = document.createElement('div');
     wrapper.style.cssText = 'display:flex;flex-direction:column;' + (role === 'user' ? 'align-items:flex-end' : 'align-items:flex-start');
@@ -332,7 +348,44 @@ function appendMsg(role, content) {
         div.textContent = content;
     }
     wrapper.appendChild(div);
+    var timeStr = extractTime(createdAt);
+    if (timeStr) {
+        var timeDiv = document.createElement('div');
+        timeDiv.className = 'chat-msg-time';
+        timeDiv.textContent = timeStr;
+        wrapper.appendChild(timeDiv);
+    }
     container.appendChild(wrapper);
+}
+
+function appendDateSep(dateStr) {
+    var container = document.getElementById('chatMessages');
+    var sep = document.createElement('div');
+    sep.className = 'chat-date-sep';
+    sep.innerHTML = '<span class="chat-date-label">' + escHtml(dateStr) + '</span>';
+    container.appendChild(sep);
+}
+
+function extractDate(dt) {
+    if (!dt) return '';
+    var d = new Date(dt);
+    if (isNaN(d.getTime())) return '';
+    var now = new Date();
+    var y = d.getFullYear(), m = d.getMonth(), day = d.getDate();
+    if (y === now.getFullYear() && m === now.getMonth() && day === now.getDate()) return '오늘';
+    var yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
+    if (y === yesterday.getFullYear() && m === yesterday.getMonth() && day === yesterday.getDate()) return '어제';
+    return y + '년 ' + (m + 1) + '월 ' + day + '일';
+}
+
+function extractTime(dt) {
+    if (!dt) return '';
+    var d = new Date(dt);
+    if (isNaN(d.getTime())) return '';
+    var h = d.getHours(), mi = d.getMinutes();
+    var ampm = h < 12 ? '오전' : '오후';
+    var h12 = h % 12 || 12;
+    return ampm + ' ' + h12 + ':' + (mi < 10 ? '0' : '') + mi;
 }
 
 function sendMessage() {
@@ -341,8 +394,13 @@ function sendMessage() {
     var text = input.value.trim();
     if (!text) return;
 
+    var now = new Date().toISOString();
+    var todayDate = extractDate(now);
+    var dateSeps = document.getElementById('chatMessages').querySelectorAll('.chat-date-label');
+    var lastDateText = dateSeps.length ? dateSeps[dateSeps.length - 1].textContent : '';
+    if (todayDate && todayDate !== lastDateText) appendDateSep(todayDate);
     _messages.push({ role: 'user', content: text });
-    appendMsg('user', text);
+    appendMsg('user', text, now);
     input.value = '';
     input.style.height = 'auto';
 
@@ -373,6 +431,7 @@ function sendMessage() {
         body: JSON.stringify({ messages: _messages, context: '', filename: '' })
     })
     .then(function(response) {
+        checkAuth(response);
         if (!response.ok) throw new Error('HTTP ' + response.status);
         if (typing.parentNode) typing.parentNode.removeChild(typing);
         container.appendChild(bubbleWrapper);
@@ -423,6 +482,10 @@ function sendMessage() {
             if (fullText) {
                 bubble.innerHTML = mdRender(fullText);
                 _messages.push({ role: 'assistant', content: fullText });
+                var timeDiv = document.createElement('div');
+                timeDiv.className = 'chat-msg-time';
+                timeDiv.textContent = extractTime(new Date().toISOString());
+                bubbleWrapper.appendChild(timeDiv);
             } else if (bubbleWrapper.parentNode) {
                 bubbleWrapper.parentNode.removeChild(bubbleWrapper);
             }
@@ -444,6 +507,19 @@ function sendMessage() {
         _sending = false;
         document.getElementById('chatSendBtn').disabled = false;
     });
+}
+
+// ── 인증 체크 ─────────────────────────────────────────
+
+function checkAuth(r) {
+    if (r.redirected || r.status === 401 || r.status === 403 || r.status === 302) {
+        throw new Error('로그인이 만료되었습니다. 페이지를 새로고침 해주세요.');
+    }
+    var ct = r.headers.get('content-type') || '';
+    if (!ct.includes('application/json') && !ct.includes('text/event-stream')) {
+        throw new Error('로그인이 만료되었습니다. 페이지를 새로고침 해주세요.');
+    }
+    return r;
 }
 
 // ── 유틸 ───────────────────────────────────────────────

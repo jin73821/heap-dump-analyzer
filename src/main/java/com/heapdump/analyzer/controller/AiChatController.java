@@ -246,19 +246,24 @@ public class AiChatController {
         // 마지막 user 메시지 DB 저장
         Map<String, String> lastUserMsg = messages.get(messages.size() - 1);
         if ("user".equals(lastUserMsg.get("role"))) {
-            AiChatMessage userMsg = new AiChatMessage();
-            userMsg.setSessionId(sessionId);
-            userMsg.setRole("user");
-            userMsg.setContent(lastUserMsg.get("content"));
-            messageRepo.save(userMsg);
+            try {
+                AiChatMessage userMsg = new AiChatMessage();
+                userMsg.setSessionId(sessionId);
+                userMsg.setRole("user");
+                userMsg.setContent(lastUserMsg.get("content"));
+                AiChatMessage savedUser = messageRepo.save(userMsg);
+                logger.info("[AI-Chat-Stream] User 메시지 저장 완료 — sessionId={}, msgId={}", sessionId, savedUser.getId());
 
-            AiChatSession session = opt.get();
-            session.setMessageCount(session.getMessageCount() + 1);
-            if ("새 채팅".equals(session.getTitle()) || session.getTitle() == null) {
-                String c = lastUserMsg.get("content");
-                session.setTitle(c.length() > 40 ? c.substring(0, 40) + "..." : c);
+                AiChatSession session = opt.get();
+                session.setMessageCount(session.getMessageCount() + 1);
+                if ("새 채팅".equals(session.getTitle()) || session.getTitle() == null) {
+                    String c = lastUserMsg.get("content");
+                    session.setTitle(c.length() > 40 ? c.substring(0, 40) + "..." : c);
+                }
+                sessionRepo.save(session);
+            } catch (Exception e) {
+                logger.error("[AI-Chat-Stream] User 메시지 저장 실패 — sessionId={}, error={}", sessionId, e.getMessage(), e);
             }
-            sessionRepo.save(session);
         }
 
         String systemPrompt = analyzerService.getLlmChatSystemPrompt();
@@ -289,30 +294,59 @@ public class AiChatController {
                                 .replace("\t", "\\t");
                             emitter.send(SseEmitter.event().name("chunk")
                                 .data("{\"text\":\"" + escaped + "\"}"));
-                        } catch (Exception ignored) {}
+                        } catch (Exception e) {
+                            logger.warn("[AI-Chat-Stream] Chunk 전송 실패 — sessionId={}", sid);
+                        }
                     },
                     (ft, latencyMs) -> {
-                        try {
-                            // assistant 메시지 DB 저장
-                            AiChatMessage assistantMsg = new AiChatMessage();
-                            assistantMsg.setSessionId(sid);
-                            assistantMsg.setRole("assistant");
-                            assistantMsg.setContent(fullText.toString());
-                            messageRepo.save(assistantMsg);
-
-                            AiChatSession s = sessionRepo.findById(sid).orElse(null);
-                            if (s != null) {
-                                s.setMessageCount(s.getMessageCount() + 1);
-                                if (model != null) s.setModel(model);
-                                sessionRepo.save(s);
+                        // assistant 메시지 DB 저장 (재시도 포함)
+                        boolean saved = false;
+                        Long savedMsgId = null;
+                        for (int retry = 0; retry < 3 && !saved; retry++) {
+                            try {
+                                AiChatMessage assistantMsg = new AiChatMessage();
+                                assistantMsg.setSessionId(sid);
+                                assistantMsg.setRole("assistant");
+                                assistantMsg.setContent(fullText.toString());
+                                AiChatMessage result = messageRepo.save(assistantMsg);
+                                savedMsgId = result.getId();
+                                saved = true;
+                            } catch (Exception e) {
+                                logger.error("[AI-Chat-Stream] Assistant 메시지 저장 실패 (시도 {}/3) — sessionId={}, error={}",
+                                    retry + 1, sid, e.getMessage());
+                                if (retry < 2) {
+                                    try { Thread.sleep(500); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+                                }
                             }
+                        }
 
+                        if (saved) {
+                            logger.info("[AI-Chat-Stream] Assistant 메시지 저장 완료 — sessionId={}, msgId={}, length={}",
+                                sid, savedMsgId, fullText.length());
+                            try {
+                                AiChatSession s = sessionRepo.findById(sid).orElse(null);
+                                if (s != null) {
+                                    s.setMessageCount(s.getMessageCount() + 1);
+                                    if (model != null) s.setModel(model);
+                                    sessionRepo.save(s);
+                                }
+                            } catch (Exception e) {
+                                logger.warn("[AI-Chat-Stream] 세션 업데이트 실패 — sessionId={}", sid, e);
+                            }
+                        } else {
+                            logger.error("[AI-Chat-Stream] Assistant 메시지 저장 최종 실패 — sessionId={}, contentLength={}", sid, fullText.length());
+                        }
+
+                        try {
                             emitter.send(SseEmitter.event().name("done")
-                                .data("{\"latencyMs\":" + latencyMs + "}"));
+                                .data("{\"latencyMs\":" + latencyMs + ",\"saved\":" + saved + "}"));
                             emitter.complete();
-                        } catch (Exception ignored) {}
+                        } catch (Exception e) {
+                            logger.warn("[AI-Chat-Stream] SSE done 이벤트 전송 실패 — sessionId={}", sid);
+                        }
                     },
                     (errorCode, errorMsg) -> {
+                        logger.warn("[AI-Chat-Stream] LLM 에러 — sessionId={}, code={}, msg={}", sid, errorCode, errorMsg);
                         try {
                             String escapedMsg = errorMsg.replace("\\", "\\\\")
                                 .replace("\"", "\\\"")
@@ -320,10 +354,13 @@ public class AiChatController {
                             emitter.send(SseEmitter.event().name("error")
                                 .data("{\"errorCode\":\"" + errorCode + "\",\"error\":\"" + escapedMsg + "\"}"));
                             emitter.complete();
-                        } catch (Exception ignored) {}
+                        } catch (Exception e) {
+                            logger.warn("[AI-Chat-Stream] SSE error 이벤트 전송 실패 — sessionId={}", sid);
+                        }
                     }
                 );
             } catch (Exception e) {
+                logger.error("[AI-Chat-Stream] 스트리밍 스레드 에러 — sessionId={}, error={}", sid, e.getMessage(), e);
                 try {
                     emitter.send(SseEmitter.event().name("error")
                         .data("{\"errorCode\":\"INTERNAL_ERROR\",\"error\":\"" + e.getMessage() + "\"}"));

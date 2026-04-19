@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>User Management — Heap Dump Analyzer</title>
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
@@ -22,7 +23,7 @@
                       border-radius: 6px; background: transparent; color: #6B7280;
                       cursor: pointer; text-decoration: none; }
         .topbar-btn:hover { background: #F9FAFB; }
-        .container { max-width: 1100px; margin: 0 auto; padding: 68px 20px 40px;
+        .container { max-width: 1400px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
 
@@ -107,7 +108,10 @@
 <div th:replace="fragments/banner :: banner"></div>
 
 <div class="topbar">
-    <span class="topbar-title">계정 관리</span>
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title">계정 관리</span>
+    </div>
     <div class="topbar-right">
         <a href="/" class="topbar-btn">&larr; Dashboard</a>
     </div>

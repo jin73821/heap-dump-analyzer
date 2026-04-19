@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title th:text="${server.name + ' — Heap Dump Analyzer'}">Server Detail</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5; }
+        .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
+                  transition: left .25s cubic-bezier(.4,0,.2,1);
+                  background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; }
+        .topbar-title { font-size: 16px; font-weight: 700; }
+        .topbar-status { margin-left: 4px; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; }
+        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                      border-radius: 6px; background: transparent; color: #6B7280;
+                      cursor: pointer; text-decoration: none; }
+        .topbar-btn:hover { background: #F9FAFB; }
+        .container { max-width: 1280px; margin: 0 auto; padding: 68px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+
+        /* Section heading */
+        .sec-hdr { display: flex; align-items: center; gap: 10px; margin: 28px 0 12px; }
+        .sec-hdr:first-child { margin-top: 0; }
+        .sec-ttl { font-size: 16px; font-weight: 700; }
+        .sec-count { font-size: 12px; padding: 2px 8px; border-radius: 10px;
+                     background: #E5E7EB; color: #374151; font-weight: 600; }
+        .sec-stats { display: flex; gap: 12px; margin-left: auto; font-size: 12px; color: #6B7280; }
+        .sec-stats strong { color: #1F2937; }
+
+        /* Info card */
+        .info-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                     padding: 20px 24px; margin-bottom: 8px; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 32px; }
+        .info-item { }
+        .info-label { font-size: 11px; font-weight: 600; color: #9CA3AF; text-transform: uppercase;
+                      letter-spacing: .4px; margin-bottom: 2px; }
+        .info-value { font-size: 13px; color: #1F2937; word-break: break-all; }
+        .info-value.mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px; }
+        .info-actions { display: flex; gap: 8px; margin-top: 16px; padding-top: 16px;
+                        border-top: 1px solid #F3F4F6; }
+        .action-btn { padding: 6px 14px; border: 1px solid #E5E7EB; border-radius: 6px;
+                      background: transparent; font-size: 12px; cursor: pointer; color: #6B7280;
+                      font-weight: 500; }
+        .action-btn:hover { border-color: #93C5FD; background: #EFF6FF; color: #2563EB; }
+        .action-btn.scan { background: #059669; color: #fff; border-color: #059669; }
+        .action-btn.scan:hover { background: #047857; }
+
+        /* Badge */
+        .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600;
+                 display: inline-block; }
+        .badge-on { background: #D1FAE5; color: #065F46; }
+        .badge-fail { background: #FEE2E2; color: #991B1B; }
+        .badge-off { background: #F3F4F6; color: #6B7280; }
+        .badge-auto { background: #DBEAFE; color: #1E40AF; }
+        .badge-success { background: #D1FAE5; color: #065F46; }
+        .badge-failed { background: #FEE2E2; color: #991B1B; }
+        .badge-progress { background: #FEF3C7; color: #92400E; }
+
+        /* Tables */
+        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
+        .dtable { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .dtable thead { background: #F9FAFB; }
+        .dtable th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 600;
+                     color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
+                     border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
+        .dtable td { padding: 10px 14px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
+        .dtable tbody tr:last-child td { border-bottom: none; }
+        .dtable tbody tr:hover { background: #F9FAFB; }
+        .td-status { width: 36px; text-align: center; }
+        .hdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .hd-ok { background: #10B981; }
+        .hd-err { background: #EF4444; }
+        .td-meta { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .td-mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px; }
+        .td-err { font-size: 11px; color: #DC2626; max-width: 250px; overflow: hidden;
+                  text-overflow: ellipsis; white-space: nowrap; }
+        .td-err:hover { white-space: normal; word-break: break-all; }
+        .td-path { font-size: 11px; color: #6B7280; max-width: 200px; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; }
+        .fname-link { color: #2563EB; text-decoration: none; font-weight: 500;
+                      max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+                      white-space: nowrap; display: inline-block; }
+        .fname-link:hover { text-decoration: underline; }
+        .fname-err { color: #EF4444; font-weight: 500; }
+        .empty-msg { text-align: center; padding: 28px; color: #9CA3AF; font-size: 13px; }
+
+        /* Toast */
+        .toast { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 300;
+                 padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 500;
+                 box-shadow: 0 4px 16px rgba(0,0,0,.12); opacity: 0; transition: opacity .3s; pointer-events: none; }
+        .toast.show { opacity: 1; pointer-events: auto; }
+        .toast-ok { background: #D1FAE5; color: #065F46; border: 1px solid #A7F3D0; }
+        .toast-err { background: #FEE2E2; color: #991B1B; border: 1px solid #FECACA; }
+
+        @media (min-width: 1024px) {
+            .dtable { font-size: 14px; }
+            .dtable th { font-size: 12px; padding: 12px 16px; }
+            .dtable td { padding: 12px 16px; }
+            .td-meta { font-size: 13px; }
+            .sec-ttl { font-size: 17px; }
+            .info-value { font-size: 14px; }
+        }
+        @media (max-width: 900px) {
+            .topbar { left: 0; }
+            .container { padding-left: 20px; }
+            .info-grid { grid-template-columns: 1fr; gap: 12px; }
+        }
+        @media (max-width: 640px) {
+            .dtable .col-hide-sm { display: none; }
+            .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .dtable { min-width: 550px; }
+        }
+    </style>
+</head>
+<body>
+
+<div th:replace="fragments/banner :: banner"></div>
+
+<div class="topbar">
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title" th:text="${server.name}">Server Name</span>
+        <span class="topbar-status">
+            <span th:unless="${server.enabled}" class="badge badge-off">비활성</span>
+            <span th:if="${server.enabled and server.connStatus == 'OK'}" class="badge badge-on">정상</span>
+            <span th:if="${server.enabled and server.connStatus == 'FAIL'}" class="badge badge-fail">실패</span>
+            <span th:if="${server.enabled and (server.connStatus == null or server.connStatus == 'UNKNOWN')}" class="badge badge-off">미확인</span>
+        </span>
+    </div>
+    <div class="topbar-right">
+        <a href="/servers" class="topbar-btn">&larr; Servers</a>
+    </div>
+</div>
+
+<div class="container">
+
+    <!-- ── 서버 정보 ──────────────────────────────────── -->
+    <div class="sec-hdr" style="margin-top:0">
+        <div class="sec-ttl">서버 정보</div>
+    </div>
+    <div class="info-card">
+        <div class="info-grid">
+            <div class="info-item">
+                <div class="info-label">호스트</div>
+                <div class="info-value mono" th:text="${server.host + ':' + server.port}">192.168.1.1:22</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">SSH 계정</div>
+                <div class="info-value" th:text="${server.sshUser}">sscuser</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">덤프 경로</div>
+                <div class="info-value mono" th:text="${server.dumpPath}">/opt/dumps</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">자동탐지</div>
+                <div class="info-value">
+                    <span class="badge badge-auto" th:if="${server.autoDetect}">ON</span>
+                    <span class="badge badge-off" th:unless="${server.autoDetect}">OFF</span>
+                    <span th:if="${server.autoDetect}" style="margin-left:6px;font-size:12px;color:#6B7280"
+                          th:text="'(' + ${server.scanIntervalSec} + '초 주기)'"></span>
+                </div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">마지막 확인</div>
+                <div class="info-value" th:text="${server.lastCheckedAt != null ? #temporals.format(server.lastCheckedAt, 'yyyy-MM-dd HH:mm:ss') : '-'}">-</div>
+            </div>
+            <div class="info-item">
+                <div class="info-label">등록일</div>
+                <div class="info-value" th:text="${server.createdAt != null ? #temporals.format(server.createdAt, 'yyyy-MM-dd HH:mm:ss') : '-'}">-</div>
+            </div>
+            <div class="info-item" th:if="${server.lastError != null}">
+                <div class="info-label">마지막 에러</div>
+                <div class="info-value" style="color:#DC2626;font-size:12px" th:text="${server.lastError}">-</div>
+            </div>
+        </div>
+        <div class="info-actions">
+            <button class="action-btn" th:data-id="${server.id}" onclick="testConn(this.dataset.id)">연결 테스트</button>
+            <button class="action-btn scan" th:data-id="${server.id}" onclick="scanServer(this.dataset.id)">스캔</button>
+        </div>
+    </div>
+
+    <!-- ── 분석 이력 ──────────────────────────────────── -->
+    <div class="sec-hdr">
+        <div class="sec-ttl">분석 이력</div>
+        <span class="sec-count" th:text="${#lists.size(histories)}">0</span>
+        <div class="sec-stats">
+            <span style="color:#059669"><strong th:text="${analysisSuccess}">0</strong> success</span>
+            <span style="color:#EF4444"><strong th:text="${analysisFailed}">0</strong> failed</span>
+        </div>
+    </div>
+    <div class="panel">
+        <div th:if="${#lists.isEmpty(histories)}" class="empty-msg">이 서버의 분석 이력이 없습니다.</div>
+        <table th:unless="${#lists.isEmpty(histories)}" class="dtable">
+            <thead>
+                <tr>
+                    <th class="td-status">상태</th>
+                    <th>파일명</th>
+                    <th>파일 크기</th>
+                    <th class="col-hide-sm">Heap 사용</th>
+                    <th class="col-hide-sm">Suspects</th>
+                    <th>분석 시간</th>
+                    <th>분석일</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="h : ${histories}">
+                    <td class="td-status">
+                        <span class="hdot hd-ok" th:if="${h.status == 'SUCCESS'}"></span>
+                        <span class="hdot hd-err" th:if="${h.status == 'ERROR'}"></span>
+                    </td>
+                    <td>
+                        <a th:if="${h.status == 'SUCCESS'}"
+                           th:href="@{/analyze/result/{f}(f=${h.filename})}"
+                           class="fname-link" th:text="${h.filename}">dump.hprof</a>
+                        <span th:if="${h.status == 'ERROR'}"
+                              class="fname-err" th:text="${h.filename}">dump.hprof</span>
+                    </td>
+                    <td class="td-meta" th:text="${h.fileSize != null ? h.fileSize > 1048576 ? #numbers.formatDecimal(h.fileSize / 1048576.0, 1, 1) + ' MB' : #numbers.formatDecimal(h.fileSize / 1024.0, 1, 1) + ' KB' : '-'}">-</td>
+                    <td class="td-meta col-hide-sm" th:text="${h.usedHeapSize != null and h.totalHeapSize != null ? #numbers.formatDecimal(h.usedHeapSize / 1048576.0, 1, 1) + ' / ' + #numbers.formatDecimal(h.totalHeapSize / 1048576.0, 1, 1) + ' MB' : '-'}">-</td>
+                    <td class="td-meta col-hide-sm" th:text="${h.suspectCount != null ? h.suspectCount : 0}">0</td>
+                    <td class="td-meta" th:text="${h.analysisTimeMs != null ? h.analysisTimeMs > 60000 ? #numbers.formatDecimal(h.analysisTimeMs / 60000.0, 1, 1) + 'm' : #numbers.formatDecimal(h.analysisTimeMs / 1000.0, 1, 1) + 's' : '-'}">-</td>
+                    <td class="td-meta" th:text="${h.analyzedAt != null ? #temporals.format(h.analyzedAt, 'MM-dd HH:mm') : '-'}">-</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- ── 전송 이력 ──────────────────────────────────── -->
+    <div class="sec-hdr">
+        <div class="sec-ttl">전송 이력</div>
+        <span class="sec-count" th:text="${#lists.size(transferLogs)}">0</span>
+        <div class="sec-stats">
+            <span style="color:#059669"><strong th:text="${transferSuccess}">0</strong> success</span>
+            <span style="color:#EF4444"><strong th:text="${transferFailed}">0</strong> failed</span>
+        </div>
+    </div>
+    <div class="panel">
+        <div th:if="${#lists.isEmpty(transferLogs)}" class="empty-msg">이 서버의 전송 이력이 없습니다.</div>
+        <table th:unless="${#lists.isEmpty(transferLogs)}" class="dtable">
+            <thead>
+                <tr>
+                    <th>상태</th>
+                    <th>파일명</th>
+                    <th class="col-hide-sm">원격 경로</th>
+                    <th>크기</th>
+                    <th>시작</th>
+                    <th class="col-hide-sm">완료</th>
+                    <th>에러</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr th:each="log : ${transferLogs}">
+                    <td>
+                        <span th:if="${log.transferStatus == 'SUCCESS'}" class="badge badge-success">SUCCESS</span>
+                        <span th:if="${log.transferStatus == 'FAILED'}" class="badge badge-failed">FAILED</span>
+                        <span th:if="${log.transferStatus == 'IN_PROGRESS'}" class="badge badge-progress">RUNNING</span>
+                    </td>
+                    <td style="font-weight:500" th:text="${log.filename}">dump.hprof</td>
+                    <td class="td-path col-hide-sm" th:text="${log.remotePath}" th:title="${log.remotePath}">-</td>
+                    <td class="td-mono" th:text="${log.fileSize != null ? log.fileSize > 1048576 ? #numbers.formatDecimal(log.fileSize / 1048576.0, 1, 1) + ' MB' : #numbers.formatDecimal(log.fileSize / 1024.0, 1, 1) + ' KB' : '-'}">-</td>
+                    <td class="td-mono" th:text="${log.startedAt != null ? #temporals.format(log.startedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
+                    <td class="td-mono col-hide-sm" th:text="${log.completedAt != null ? #temporals.format(log.completedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
+                    <td>
+                        <span th:if="${log.errorMessage != null}" class="td-err" th:text="${log.errorMessage}" th:title="${log.errorMessage}"></span>
+                        <span th:unless="${log.errorMessage != null}" style="color:#9CA3AF">-</span>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+var _serverId = '[[${server.id}]]';
+var _csrf = document.querySelector('meta[name="_csrf"]').content;
+var _csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
+
+function showToast(msg, ok) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = 'toast show ' + (ok ? 'toast-ok' : 'toast-err');
+    setTimeout(function() { t.classList.remove('show'); }, 3000);
+}
+
+function testConn(id) {
+    var btn = event.target;
+    btn.disabled = true; btn.textContent = '테스트 중...';
+    fetch('/api/servers/' + id + '/test', {
+        method: 'POST', headers: { [_csrfHeader]: _csrf }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            showToast('연결 성공', true);
+        } else {
+            showToast('연결 실패: ' + (d.message || d.error || ''), false);
+        }
+        btn.disabled = false; btn.textContent = '연결 테스트';
+    })
+    .catch(function(e) {
+        showToast('오류: ' + e.message, false);
+        btn.disabled = false; btn.textContent = '연결 테스트';
+    });
+}
+
+function scanServer(id) {
+    var btn = event.target;
+    btn.disabled = true; btn.textContent = '스캔 중...';
+    fetch('/api/servers/' + id + '/scan', {
+        method: 'POST', headers: { [_csrfHeader]: _csrf }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            var count = d.count || 0;
+            showToast('스캔 완료: ' + count + '개 파일 발견', true);
+        } else {
+            showToast('스캔 실패: ' + (d.error || d.message || ''), false);
+        }
+        btn.disabled = false; btn.textContent = '스캔';
+    })
+    .catch(function(e) {
+        showToast('오류: ' + e.message, false);
+        btn.disabled = false; btn.textContent = '스캔';
+    });
+}
+</script>
+
+</body>
+</html>

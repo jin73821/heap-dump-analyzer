@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>Analyzing... - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/style.css}">
     <style>
@@ -1080,9 +1081,10 @@
 
 
 
-            // 첫 RUNNING 수신 시 타이머 시작
+            // 첫 RUNNING 수신 시 타이머 시작 + 배너 상태 갱신
             if (!analysisStartTime && (status === 'RUNNING' || status === 'PARSING')) {
                 startElapsedTimer();
+                if (typeof refreshBannerStatus === 'function') refreshBannerStatus();
             }
 
             // 로그 라인만 있고 진행률 변화 없으면 UI 업데이트 스킵
@@ -1217,10 +1219,12 @@
 
             if (status === 'COMPLETED') {
                 evtSource.close();
+                if (typeof refreshBannerStatus === 'function') refreshBannerStatus();
                 showComplete(resultUrl || RESULT_URL);
             }
             if (status === 'ERROR') {
                 evtSource.close();
+                if (typeof refreshBannerStatus === 'function') refreshBannerStatus();
                 disableLeaveWarning();
                 stopElapsedTimer();
                 if (logBuffer.length) flushLog();

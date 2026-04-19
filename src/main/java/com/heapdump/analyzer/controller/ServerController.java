@@ -1,13 +1,17 @@
 package com.heapdump.analyzer.controller;
 
+import com.heapdump.analyzer.model.entity.AnalysisHistoryEntity;
 import com.heapdump.analyzer.model.entity.DumpTransferLog;
 import com.heapdump.analyzer.model.entity.TargetServer;
+import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
+import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.TargetServerRepository;
 import com.heapdump.analyzer.service.RemoteDumpService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -17,11 +21,17 @@ public class ServerController {
 
     private final TargetServerRepository serverRepository;
     private final RemoteDumpService remoteDumpService;
+    private final AnalysisHistoryRepository analysisHistoryRepository;
+    private final DumpTransferLogRepository dumpTransferLogRepository;
 
     public ServerController(TargetServerRepository serverRepository,
-                            RemoteDumpService remoteDumpService) {
+                            RemoteDumpService remoteDumpService,
+                            AnalysisHistoryRepository analysisHistoryRepository,
+                            DumpTransferLogRepository dumpTransferLogRepository) {
         this.serverRepository = serverRepository;
         this.remoteDumpService = remoteDumpService;
+        this.analysisHistoryRepository = analysisHistoryRepository;
+        this.dumpTransferLogRepository = dumpTransferLogRepository;
     }
 
     @GetMapping("/servers")
@@ -29,6 +39,34 @@ public class ServerController {
         List<TargetServer> servers = serverRepository.findAll();
         model.addAttribute("servers", servers);
         return "servers";
+    }
+
+    @GetMapping("/servers/{id}")
+    public String serverDetailPage(@PathVariable Long id, Model model, RedirectAttributes redirectAttributes) {
+        Optional<TargetServer> opt = serverRepository.findById(id);
+        if (!opt.isPresent()) {
+            redirectAttributes.addFlashAttribute("error", "서버를 찾을 수 없습니다: " + id);
+            return "redirect:/servers";
+        }
+        TargetServer server = opt.get();
+        List<AnalysisHistoryEntity> histories = analysisHistoryRepository.findByServerIdOrderByAnalyzedAtDesc(server.getId());
+        if (histories.size() > 100) histories = histories.subList(0, 100);
+        List<DumpTransferLog> transferLogs = dumpTransferLogRepository.findByServerIdOrderByStartedAtDesc(server.getId());
+        if (transferLogs.size() > 100) transferLogs = transferLogs.subList(0, 100);
+
+        long analysisSuccess = histories.stream().filter(h -> "SUCCESS".equals(h.getStatus())).count();
+        long analysisFailed = histories.stream().filter(h -> "ERROR".equals(h.getStatus())).count();
+        long transferSuccess = transferLogs.stream().filter(l -> "SUCCESS".equals(l.getTransferStatus())).count();
+        long transferFailed = transferLogs.stream().filter(l -> "FAILED".equals(l.getTransferStatus())).count();
+
+        model.addAttribute("server", server);
+        model.addAttribute("histories", histories);
+        model.addAttribute("transferLogs", transferLogs);
+        model.addAttribute("analysisSuccess", analysisSuccess);
+        model.addAttribute("analysisFailed", analysisFailed);
+        model.addAttribute("transferSuccess", transferSuccess);
+        model.addAttribute("transferFailed", transferFailed);
+        return "server-detail";
     }
 
     @GetMapping("/servers/logs")

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
@@ -585,19 +586,7 @@
         @media (max-width:1024px) {
             :root { --sidebar-w:240px; }
         }
-        /* ── Mobile menu button ──────────────────── */
-        .mobile-menu-btn {
-            display:none; width:44px; height:44px; background:none; border:none;
-            cursor:pointer; padding:8px; border-radius:6px; flex-shrink:0;
-        }
-        .mobile-menu-btn:hover { background:var(--bg); }
-        .mobile-menu-btn span {
-            display:block; width:20px; height:2.5px; background:#1F2937;
-            margin:4px auto; border-radius:2px; transition:all .25s;
-        }
-        .mobile-menu-btn.open span:nth-child(1) { transform:rotate(45deg) translate(4px,5px); }
-        .mobile-menu-btn.open span:nth-child(2) { opacity:0; }
-        .mobile-menu-btn.open span:nth-child(3) { transform:rotate(-45deg) translate(4px,-5px); }
+        /* ── Mobile menu button (using gb-menu-btn from banner) ── */
 
         .sidebar-overlay {
             display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:40;
@@ -639,7 +628,7 @@
             .app-header .filename-badge { display:none; }
             .app-header .header-actions { gap:4px; }
             .app-header .btn-sm { font-size:11px; padding:5px 8px; white-space:nowrap; }
-            .mobile-menu-btn { display:flex !important; align-items:center; justify-content:center; flex-direction:column; }
+            .gb-menu-btn { display:flex !important; }
             .modal-box { padding:22px 18px; width:calc(100vw - 40px); }
             .modal-icon { width:36px; height:36px; font-size:18px; }
             .modal-title { font-size:16px; }
@@ -695,7 +684,7 @@
 <!-- ════════════════ HEADER ════════════════ -->
 <header class="app-header">
     <div class="header-brand">
-        <button class="mobile-menu-btn" id="menuBtn" onclick="toggleMobileSidebar()" aria-label="Menu">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu">
             <span></span><span></span><span></span>
         </button>
         <span class="logo">Analysis</span>
@@ -1449,7 +1438,6 @@ function loadFullErrorLog() {
             <iframe id="matOverviewIframe"
                     th:data-src="'/report/' + ${filename} + '/mat-page/overview/index.html'"
                     style="width:100%;min-height:700px;border:none;border-top:1px solid var(--border);background:#fff"
-                    sandbox="allow-same-origin allow-scripts"
                     referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
@@ -1463,7 +1451,6 @@ function loadFullErrorLog() {
             <iframe id="matTopIframe"
                     th:data-src="'/report/' + ${filename} + '/mat-page/top_components/index.html'"
                     style="width:100%;min-height:700px;border:none;border-top:1px solid var(--border);background:#fff"
-                    sandbox="allow-same-origin allow-scripts"
                     referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
@@ -1477,7 +1464,6 @@ function loadFullErrorLog() {
             <iframe id="matSuspectsIframe"
                     th:data-src="'/report/' + ${filename} + '/mat-page/suspects/index.html'"
                     style="width:100%;min-height:700px;border:none;border-top:1px solid var(--border);background:#fff"
-                    sandbox="allow-same-origin allow-scripts"
                     referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
@@ -1627,24 +1613,40 @@ var THREAD_STACKS  = /*[[${threadStacks}]]*/ [];
 </th:block>
 
 <script>
+// ── 배너 Analysis 탭 등록 ──────────────────────────────
+(function() {
+    var sidebar = document.getElementById('mobileSidebar');
+    if (sidebar && typeof registerBannerAnalysisTab === 'function') {
+        // 사이드바 내용 전체를 배너 Analysis 탭에 복제
+        var wrapper = document.createElement('div');
+        wrapper.style.cssText = 'padding:8px 12px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;flex:1';
+        // 각 sidebar-section을 복제
+        var sections = sidebar.querySelectorAll('.sidebar-section');
+        sections.forEach(function(sec) {
+            var clone = sec.cloneNode(true);
+            // 복제된 nav-item의 onclick이 원본 showPanel을 호출하므로 그대로 동작
+            wrapper.appendChild(clone);
+        });
+        registerBannerAnalysisTab(wrapper);
+    }
+})();
+
 // ── Panel Navigation ──────────────────────────────────
 /* ── Mobile sidebar toggle ─────────────────────── */
 function toggleMobileSidebar() {
     var sb = document.getElementById('mobileSidebar');
     var ov = document.getElementById('sidebarOverlay');
-    var btn = document.getElementById('menuBtn');
     var opening = !sb.classList.contains('mobile-open');
     sb.classList.toggle('mobile-open');
     ov.classList.toggle('open');
-    if (btn) btn.classList.toggle('open', opening);
 }
 function closeMobileSidebar() {
     var sb = document.getElementById('mobileSidebar');
     var ov = document.getElementById('sidebarOverlay');
-    var btn = document.getElementById('menuBtn');
     if (sb) sb.classList.remove('mobile-open');
     if (ov) ov.classList.remove('open');
-    if (btn) btn.classList.remove('open');
+    // 배너도 닫기
+    if (typeof closeMobileBanner === 'function') closeMobileBanner();
 }
 
 var _threadStacksLoaded = false;
@@ -1670,7 +1672,7 @@ function showPanel(name, btn) {
     };
     if (iframeMap[name]) {
         var iframe = document.getElementById(iframeMap[name]);
-        if (iframe && !iframe.src) {
+        if (iframe && !iframe.getAttribute('src')) {
             iframe.src = iframe.getAttribute('data-src');
             iframe.addEventListener('load', function() {
                 try {
@@ -3461,7 +3463,6 @@ function updateAiBadges(state) {
     var badgeOn   = document.getElementById('aiHeaderBadge');
     var badgeOff  = document.getElementById('aiHeaderBadgeOff');
     var panelBadge = document.getElementById('aiPanelBadge');
-    var navStatus  = document.getElementById('aiNavStatus');
     var cfg = {
         none:      { on:false, badge:'미분석',   bg:'#F3F4F6', color:'#9CA3AF', border:'#E5E7EB' },
         analyzing: { on:false, badge:'분석중…',  bg:'#EFF6FF', color:'#2563EB', border:'#BFDBFE' },
@@ -3477,11 +3478,13 @@ function updateAiBadges(state) {
         panelBadge.style.color       = c.color;
         panelBadge.style.borderColor = c.border;
     }
-    if (navStatus) {
-        navStatus.textContent = c.badge;
-        navStatus.style.background = c.bg;
-        navStatus.style.color      = c.color;
-    }
+    // 사이드바 + 배너에 복제된 모든 aiNavStatus 요소 업데이트
+    var navStatuses = document.querySelectorAll('.ai-nav-status');
+    navStatuses.forEach(function(el) {
+        el.textContent = c.badge;
+        el.style.background = c.bg;
+        el.style.color      = c.color;
+    });
 }
 
 // ── [3] 진행 단계 업데이트 ────────────────────────────────────
@@ -4075,7 +4078,16 @@ function ensureChatSession() {
             title: '새 채팅'
         })
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+        if (r.redirected || r.status === 401 || r.status === 403 || r.status === 302) {
+            throw new Error('로그인이 만료되었습니다. 페이지를 새로고침 해주세요.');
+        }
+        var ct = r.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) {
+            throw new Error('로그인이 만료되었습니다. 페이지를 새로고침 해주세요.');
+        }
+        return r.json();
+    })
     .then(function(d) {
         if (d.success) {
             _aiChatSessionId = d.sessionId;

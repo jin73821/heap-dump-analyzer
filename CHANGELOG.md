@@ -1,5 +1,167 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-14] 분석 실행 시 배너 System Status 자동 갱신
+
+**변경 파일:** `progress.html`
+
+- 분석 시작(첫 RUNNING 수신), 완료(COMPLETED), 에러(ERROR) 시 `refreshBannerStatus()` 호출 추가
+- 분석 중 디스크 사용량, JVM 메모리, 분석 큐 상태가 배너에 실시간 반영
+
+---
+
+## [2026-04-14] Accounts 페이지 레이아웃 가로 폭 확대
+
+**변경 파일:** `admin/users.html`
+
+- 컨테이너 `max-width` 1100px → 1400px로 변경
+
+---
+
+## [2026-04-14] AI 채팅 세션 생성 시 인증 만료 에러 처리
+
+**변경 파일:** `analyze.html`, `ai-chat.html`
+
+- 로그인 세션 만료 상태에서 채팅 시 "Unexpected token '<'" JSON 파싱 에러 발생하던 문제 수정
+- 원인: 세션 만료 시 API가 로그인 페이지 HTML(302 리다이렉트)을 반환, 이를 JSON으로 파싱 시도
+- analyze.html `ensureChatSession()`: 응답 Content-Type 및 리다이렉트 체크 추가
+- ai-chat.html: 공통 `checkAuth()` 함수 추가, 세션 생성/스트리밍 fetch에 적용
+- 인증 만료 시 "로그인이 만료되었습니다. 페이지를 새로고침 해주세요." 안내 메시지 표시
+
+---
+
+## [2026-04-14] AI 채팅 메시지 DB 저장 안정성 보강
+
+**변경 파일:** `AiChatController.java`
+
+- 스트리밍 콜백(onDone)에서 assistant 메시지 저장 실패가 `catch (Exception ignored)`로 무시되던 문제 수정
+- Assistant 메시지 저장에 3회 재시도 로직 추가 (500ms 간격)
+- User/Assistant 메시지 저장 성공/실패 로그 추가 (`[AI-Chat-Stream]` prefix)
+- onChunk/onError/스레드 에러 등 모든 catch 블록에 로그 추가
+- 클라이언트에 저장 성공 여부 전달 (`done` 이벤트에 `saved` 필드 추가)
+
+---
+
+## [2026-04-14] Raw Data 패널 (System Overview / Top Components / Suspect Details) iframe 로드 수정
+
+**변경 파일:** `SecurityConfig.java`, `analyze.html`
+
+- Raw Data 패널의 iframe이 로드되지 않던 버그 수정
+- 원인 1: Spring Security 기본값 `X-Frame-Options: DENY`가 iframe 내 페이지 표시를 차단
+- 수정 1: `SecurityConfig`에 `.headers().frameOptions().sameOrigin()` 추가하여 같은 도메인 iframe 허용 (clickjacking 보호 유지)
+- 원인 2: `!iframe.src` 조건에서 브라우저가 `"about:blank"`를 반환하면 lazy-load 미실행
+- 수정 2: `!iframe.getAttribute('src')`로 변경하여 HTML 속성 기반으로 판단
+- iframe의 `sandbox="allow-same-origin allow-scripts"` 속성 제거 (보안 경고 해소 + 불필요한 제약 제거)
+
+---
+
+## [2026-04-14] 분석 페이지 좌측 배너 AI 인사이트 완료 표시 수정
+
+**변경 파일:** `analyze.html`
+
+- AI 인사이트 완료/분석중/실패 상태가 좌측 배너에 반영되지 않던 버그 수정
+- 원인: 사이드바가 배너에 `cloneNode`로 복제되어 `id="aiNavStatus"` 요소가 2개 존재, `getElementById`는 첫 번째(원본)만 업데이트
+- 수정: `querySelectorAll('.ai-nav-status')`로 원본 + 복제본 모두 업데이트하도록 변경
+
+---
+
+## [2026-04-14] AI Chat 날짜 구분선 및 시간 표시 추가
+
+**변경 파일:** `ai-chat.html`
+
+- 메시지 목록에서 날짜가 바뀌는 시점에 날짜 구분선 표시 (오늘/어제/YYYY년 M월 D일)
+- 각 메시지 버블 하단에 시간 표시 (오전/오후 H:MM 형식)
+- 새 메시지 전송 시에도 날짜 구분선 및 시간 자동 표시
+- 스트리밍 응답 완료 시 assistant 메시지에도 시간 표시
+
+---
+
+## [2026-04-14] Target Server 상세 페이지 추가
+
+**변경 파일:** `ServerController.java`, `server-detail.html` (신규), `servers.html`
+
+- `/servers/{id}` 상세 페이지 신규 추가
+  - 서버 정보 카드: 호스트, SSH 계정, 덤프 경로, 상태, 자동탐지, 마지막 확인/에러
+  - 분석 이력 테이블: 해당 서버에서 전송된 힙덤프의 분석 결과 (상태, 파일명, Heap 사용량, Suspects, 분석 시간)
+  - 전송 이력 테이블: SCP 전송 로그 (상태, 파일명, 원격 경로, 크기, 시간, 에러)
+  - 연결 테스트 / 스캔 액션 버튼
+- ServerController에 `AnalysisHistoryRepository`, `DumpTransferLogRepository` 의존성 추가
+- 존재하지 않는 서버 ID 접근 시 `/servers`로 리다이렉트 (flash error)
+- servers.html에서 서버 이름을 클릭 가능한 링크(`/servers/{id}`)로 변경
+
+---
+
+## [2026-04-14] Favicon 추가 및 앱 전체 아이콘 도넛 차트로 통일
+
+**변경 파일:** `favicon.svg` (신규), `SecurityConfig.java`, `banner.html`, `login.html`, 전체 템플릿 13개
+
+- 간결한 도넛 차트 스타일 SVG favicon 추가 (파란 배경 + 흰색 단일 세그먼트 + 중앙 점)
+- 모든 HTML 템플릿(13개)에 `<link rel="icon" type="image/svg+xml" href="/favicon.svg">` 삽입
+- Spring Security에 `/favicon.svg` 경로 인증 면제 추가 (로그인 페이지에서도 표시)
+- 배너 헤더 로고 (gb-header-logo) 막대 차트 → 도넛 차트 아이콘으로 변경
+- 로그인 페이지 로고 (login-logo-icon) 막대 차트 → 도넛 차트 아이콘으로 변경
+
+---
+
+## [2026-04-14] History 삭제 시 DB 레코드 미삭제 버그 수정
+
+**변경 파일:** `AnalysisHistoryRepository.java`, `HeapDumpAnalyzerService.java`
+
+- History 페이지에서 이력 삭제 시 `analysis_history` DB 레코드가 삭제되지 않아 테이블에 계속 표시되던 문제 수정
+- `AnalysisHistoryRepository`에 `deleteByFilename()` 메서드 추가
+- `HeapDumpAnalyzerService.deleteHistory()`에 DB 레코드 삭제 로직 추가 (analysis_history + ai_insights)
+- `@Transactional` 어노테이션 추가로 삭제 트랜잭션 보장
+- Files 페이지에서도 삭제된 이력의 분석 완료 상태가 정상적으로 반영됨
+
+---
+
+## [2026-04-13] 모바일 배너에 Analysis 탭 추가
+
+**변경 파일:** `banner.html`, `analyze.html`
+
+- 모바일 배너 드로어에 Analysis 탭 추가 (Navigation | Analysis 전환)
+- `analyze.html`에서 사이드바(Heap Statistics, Analysis, AI Analysis, Actions, Tools, Raw Data, File Info)를 배너 Analysis 탭에 동적 복제/주입
+- Analysis 탭 내 패널 선택 시 배너 자동 닫기 + 해당 패널 표시
+- Upload 탭과 동일한 동적 슬롯 패턴: `registerBannerAnalysisTab()` 함수, `body.has-analysis-tab` CSS 클래스
+
+---
+
+## [2026-04-13] 모바일 Files/History 테이블 가로 스크롤 수정
+
+**변경 파일:** `files.html`, `history.html`
+
+- `.panel { overflow: hidden }` 때문에 모바일에서 테이블이 잘리고 가로 스크롤이 불가능했던 문제 수정
+- 900px 이하에서 `.panel { overflow-x: auto; -webkit-overflow-scrolling: touch }` 추가
+- 640px 이하에서 테이블 `min-width` 지정 (files: 500px, history: 600px) — 터치 스크롤 보장
+
+---
+
+## [2026-04-13] 모바일 배너 드로어 + Navigation/Upload 탭 추가
+
+**변경 파일:** `banner.html`, `index.html`, `analyze.html`, `history.html`, `files.html`, `settings.html`, `compare.html`, `servers.html`, `server-logs.html`, `admin/users.html`, `ai-chat.html`, `llm-settings.html`
+
+- 모바일(900px 이하)에서 좌측 배너를 슬라이드인 드로어로 동작하도록 변경 (기존 `display: none` → 오프스크린 드로어)
+- 배너 상단에 Navigation/Upload 모바일 전용 탭 추가. 기본 탭은 Navigation
+- Navigation 탭: System Status, 페이지 네비게이션(Dashboard, Files, History, AI Chat, Servers, Settings), 로그아웃
+- Upload 탭: `index.html`(Dashboard)에서만 표시 — Upload 영역을 배너에 동적 주입
+- 배너에 `gb-menu-btn` 공용 햄버거 버튼 CSS 정의, 모든 페이지의 topbar에 햄버거 버튼 추가
+- 배너 오버레이 (`gb-banner-overlay`) 추가 — 배너 외부 클릭 시 자동 닫기
+- 내비게이션 링크 클릭 시 모바일 배너 자동 닫기
+- `index.html`, `analyze.html`의 기존 `mobile-menu-btn` CSS/JS를 `gb-menu-btn`/`toggleMobileBanner`로 통합
+
+---
+
+## [2026-04-13] Analysis History 서버 정보 자동 매핑 개선
+
+**변경 파일:** `HeapDumpAnalyzerService.java`, `DumpTransferLogRepository.java`
+
+- 원격 서버에서 전송된 파일의 분석 이력에 서버 이름이 "Local"로 표시되던 문제 수정
+- `saveAnalysisToDb(result)` 호출 시 `DumpTransferLog`에서 전송 성공 기록을 조회하여 `serverId`/`serverName`을 자동 매핑
+- `DumpTransferLogRepository`에 `findByFilenameAndTransferStatusOrderByCompletedAtDesc` 메서드 추가
+- `HeapDumpAnalyzerService`에 `DumpTransferLogRepository`, `TargetServerRepository` 의존성 주입
+- 기동 시 기존 history 레코드 중 서버 정보가 누락된 항목을 전송 로그 기반으로 자동 보정하는 `fixMissingServerInfoInHistory()` 추가
+
+---
+
 ## [2026-04-13] 플로팅 채팅 전체화면 → 확대/축소 토글로 변경
 
 **변경 파일:** `analyze.html`

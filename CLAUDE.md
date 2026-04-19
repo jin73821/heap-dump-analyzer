@@ -50,7 +50,7 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 - **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status, DB 설정. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history`, `/api/cache/clear`, `/api/settings/unreachable`, `/api/settings/compress`, `/api/settings/database` (DB 연결 설정), `/api/settings/database/test` (DB 연결 테스트), `/api/analyze/cancel/{filename}`, `/api/queue/status`, `/api/disk/check`, `/api/settings`, `/api/system/status`, `/api/upload/check`. Inner DTOs: `AnalysisHistoryItem`, `DetectionSummaryItem`, `ClassDiff`.
 - **Controller** (`controller/AuthController.java`) — `/login` 로그인 페이지
 - **Controller** (`controller/AdminController.java`) — `/admin/users` 계정 관리 (ADMIN 전용). CRUD API: `/api/admin/users`, `/api/admin/users/{id}/reset-password`
-- **Controller** (`controller/ServerController.java`) — `/servers` Target Server 관리, `/servers/logs` 전송 로그 페이지. API: `/api/servers` (CRUD), `/api/servers/{id}/test` (연결 테스트), `/api/servers/{id}/scan` (수동 스캔), `/api/servers/{id}/transfer` (파일 전송), `/api/servers/scan-interval`, `/api/servers/ssh-local-user`, `/api/servers/scp-temp-dir`
+- **Controller** (`controller/ServerController.java`) — `/servers` Target Server 관리, `/servers/{id}` 서버 상세 페이지 (분석 이력 + 전송 이력), `/servers/logs` 전송 로그 페이지. API: `/api/servers` (CRUD), `/api/servers/{id}/test` (연결 테스트), `/api/servers/{id}/scan` (수동 스캔), `/api/servers/{id}/transfer` (파일 전송), `/api/servers/scan-interval`, `/api/servers/ssh-local-user`, `/api/servers/scp-temp-dir`
 - **Controller** (`controller/AiChatController.java`) — `/ai-chat` AI 채팅 전용 페이지. 세션 CRUD: `/api/ai-chat/sessions` (목록/생성), `/api/ai-chat/sessions/{id}` (수정/삭제). 메시지 조회/저장: `/api/ai-chat/sessions/{id}/messages`. 세션 기반 스트리밍: `POST /api/ai-chat/sessions/{id}/stream` (`SseEmitter`, user/assistant 메시지 자동 DB 저장). `Principal`로 계정별 세션 격리.
 - **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (dumpfiles → tmp copy → analysis → tmp cleanup), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). 분석 완료 시 `analysis_history` 테이블에 메타데이터 DB 저장. AI 인사이트 DB 저장/조회/삭제 (`ai_insights` 테이블). LLM API 호출: `callLlmAnalysis(prompt)` (원샷 JSON 응답), `callLlmChat(messages, systemPrompt)` (멀티턴 텍스트 응답), `callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError)` (SSE 스트리밍). Runtime settings persisted to `settings.json` and synced back to `application.properties`.
 - **Service** (`service/RemoteDumpService.java`) — SSH/SCP 기반 원격 서버 덤프 탐지/전송. `runuser -l sscuser -c "ssh/scp ..."` 패턴으로 로컬 계정 전환. 2단계 SCP 전송 (임시 경로 → `Files.move()` 최종 경로). `@Scheduled` 동적 주기 자동 탐지. 서버 `connStatus` (OK/FAIL/UNKNOWN) DB 영속화.
@@ -62,7 +62,7 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
   - Suspects ZIP: `Problem/Suspect` section extraction
   - `sanitizeHtml()`: extracts `<body>` content, strips scripts/links/images/event handlers
 - **Config** (`config/HeapDumpConfig.java`) — `@Value`-injected properties with startup validation
-- **Config** (`config/SecurityConfig.java`) — Spring Security: 세션 인증, `/login` 공개, `/admin/**` ADMIN 전용, `/api/**` CSRF 면제
+- **Config** (`config/SecurityConfig.java`) — Spring Security: 세션 인증, `/login` 공개, `/admin/**` ADMIN 전용, `/api/**` CSRF 면제, `X-Frame-Options: SAMEORIGIN` (iframe용)
 - **Config** (`config/DataSourceConfig.java`) — `ENC(...)` 형식 DB 비밀번호 AES 자동 복호화
 - **Util** (`util/AesEncryptor.java`) — AES-256-CBC HEX 암호화/복호화. CLI: `bash heap_enc.sh "평문"`, `bash heap_dec.sh "암호문"`
 
@@ -99,6 +99,8 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 - **CSS 변수**: `:root { --banner-w: 220px; }`, `body.banner-collapsed { --banner-w: 44px; }`. 모바일에서 `--banner-w: 0px !important`
 - **페이지 topbar**: 각 페이지 topbar에서 로고 제거됨. 제목은 페이지명 표시 (Dashboard, Analysis, Files, History, Settings, Compare, AI Chat)
 
+**Favicon:** `/static/favicon.svg` — 도넛 차트 스타일 SVG (파란 배경 + 흰색 세그먼트). 모든 페이지 `<head>`에 `<link rel="icon" type="image/svg+xml" href="/favicon.svg">`. `SecurityConfig`에서 `/favicon.svg` permitAll 설정. 배너 헤더 로고(`gb-header-logo`)와 로그인 페이지 로고(`login-logo-icon`)도 동일한 도넛 차트 아이콘 사용.
+
 **External dependency:** Eclipse MAT CLI binary at `/opt/mat/ParseHeapDump.sh`, invoked with reports: `org.eclipse.mat.api:suspects`, `org.eclipse.mat.api:overview`, `org.eclipse.mat.api:top_components`. 30-minute timeout.
 
 ## Frontend Structure
@@ -131,7 +133,9 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 
 **login.html** — 로그인 페이지. 중앙 정렬 카드 폼 (username, password). CSRF 토큰 자동 삽입. 모바일 반응형 (480px 이하 축소).
 
-**servers.html** — Target Server 관리 (`/servers`). 서버 CRUD 테이블, 연결 테스트, 수동 스캔 (SSH), 파일 전송 (SCP 2단계: 임시경로→최종경로). 전송 진행바 (pulse 애니메이션). "All Transfer" 일괄 전송. 서버 상태 뱃지 (정상/실패/미확인). 자동 스캔 에러 배너 (30초 갱신).
+**servers.html** — Target Server 관리 (`/servers`). 서버 CRUD 테이블, 연결 테스트, 수동 스캔 (SSH), 파일 전송 (SCP 2단계: 임시경로→최종경로). 전송 진행바 (pulse 애니메이션). "All Transfer" 일괄 전송. 서버 상태 뱃지 (정상/실패/미확인). 자동 스캔 에러 배너 (30초 갱신). 서버 이름 클릭 시 `/servers/{id}` 상세 페이지로 이동.
+
+**server-detail.html** — 서버 상세 페이지 (`/servers/{id}`). 3개 섹션: 서버 정보 카드 (호스트/SSH계정/상태/자동탐지/마지막 에러), 분석 이력 테이블 (해당 서버의 힙덤프 분석 결과), 전송 이력 테이블 (SCP 전송 로그). 연결 테스트/스캔 액션 버튼 포함. 존재하지 않는 ID 접근 시 `/servers`로 리다이렉트.
 
 **server-logs.html** — Transfer Logs (`/servers/logs`). 서버별 아코디언 레이아웃, 전송 이력 테이블 (상태/파일명/원격경로/크기/시간/에러).
 
@@ -139,7 +143,7 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 
 **llm-settings.html** — LLM/AI 분석 설정 페이지 (`/settings/llm`). Provider 선택 (Claude/GPT/Genspark/Custom), 모델 선택, API URL/Key, Token Limits, Chat System Prompt (textarea 편집/Save/Reset), Test Connection.
 
-**ai-chat.html** — AI 채팅 전용 페이지 (`/ai-chat`). 좌측 세션 사이드바 (280px): 세션 목록, 새 채팅 버튼, 덤프 파일 필터. 우측 채팅 영역: 스트리밍 메시지 표시, 마크다운 렌더링. 세션 기반 DB 저장 (계정별 격리).
+**ai-chat.html** — AI 채팅 전용 페이지 (`/ai-chat`). 좌측 세션 사이드바 (280px): 세션 목록, 새 채팅 버튼, 덤프 파일 필터. 우측 채팅 영역: 스트리밍 메시지 표시, 마크다운 렌더링. 세션 기반 DB 저장 (계정별 격리). 날짜 구분선 (오늘/어제/YYYY년 M월 D일), 메시지별 시간 표시 (오전/오후 H:MM). `checkAuth()` 공통 함수로 인증 만료 시 로그인 안내.
 
 ## Directory Structure & File Flow
 
@@ -180,6 +184,8 @@ On startup (`@PostConstruct`): 기존 루트의 덤프 파일 → dumpfiles/ 자
 **테이블**: `users`, `target_servers`, `analysis_history`, `dump_transfer_log`, `ai_insights`, `ai_chat_sessions`, `ai_chat_messages`. JPA `ddl-auto=update`로 자동 생성/업데이트.
 
 **하이브리드 저장**: 분석 메타데이터(filename, status, heap size, suspect count)는 DB. 분석 상세 데이터(HTML fragments, ZIP, result.json)는 파일 시스템 유지. AI 인사이트는 DB(`insightData` MEDIUMTEXT JSON). AI 채팅은 DB(세션+메시지 테이블).
+
+**히스토리 삭제**: `deleteHistory()`는 결과 디렉토리 + 메모리 캐시 + DB 레코드(`analysis_history` + `ai_insights`) 모두 삭제. `@Transactional` 적용. `AnalysisHistoryRepository.deleteByFilename()` 사용.
 
 ## Authentication & Security
 
@@ -260,6 +266,11 @@ ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(c
 - **Cross-panel references:** Histogram detail and Top Consumers detail modals cross-reference Leak Suspects and each other via DOM search. Pattern: `findRelatedLeakSuspects(className)` searches `#panel-suspects .suspect-item` text; `findClassInTopConsumers(className)` searches `#topObjectsTable` rows. Clicking a cross-ref link closes modal → navigates to target panel → highlights/scrolls to item.
 - **플로팅 채팅 확대/축소:** `toggleChatExpand()`로 `.ai-chat-panel`에 `.expanded` CSS 클래스 토글. 420×560px ↔ 700px×80vh. CSS `transition`으로 부드러운 전환. 확대/축소 아이콘 자동 변경. `getChatContainer()`, `getChatInput()`, `getChatSendBtn()` 헬퍼로 DOM 접근 추상화.
 - **AI 채팅 세션 자동 생성:** `analyze.html`에서 첫 메시지 전송 시 `ensureChatSession()`이 `POST /api/ai-chat/sessions`로 세션 생성. 이후 `doStreamRequest()`가 세션 기반 스트리밍 엔드포인트 사용.
+- **AI 채팅 메시지 DB 저장:** 스트리밍 엔드포인트(`/api/ai-chat/sessions/{id}/stream`)에서 user 메시지는 스트리밍 시작 전 동기 저장, assistant 메시지는 `onDone` 콜백에서 3회 재시도(500ms 간격)로 저장. 저장 성공/실패 로그 `[AI-Chat-Stream]` prefix. `done` SSE 이벤트에 `saved` 필드로 클라이언트에 저장 결과 전달.
+- **인증 만료 방어:** `analyze.html`의 `ensureChatSession()`, `ai-chat.html`의 `checkAuth()` 함수에서 fetch 응답의 Content-Type/redirected/status를 확인하여 세션 만료 시 HTML 응답을 JSON으로 파싱하는 에러 방지. "로그인이 만료되었습니다" 안내 메시지 표시.
+- **배너 사이드바 DOM 복제 주의:** `analyze.html`의 사이드바는 `cloneNode(true)`로 배너 Analysis 탭에 복제됨. `getElementById`로는 원본만 접근 가능하므로, 양쪽 모두 업데이트해야 할 요소는 `querySelectorAll('.class-name')` 사용 필수 (예: `.ai-nav-status`).
+- **분석 진행 중 배너 상태 갱신:** `progress.html`에서 분석 시작(RUNNING)/완료(COMPLETED)/에러(ERROR) 시 `refreshBannerStatus()` 호출하여 디스크/JVM/큐 상태 실시간 반영.
+- **Raw Data iframe:** MAT 리포트 ZIP 내 HTML을 `/report/{filename}/mat-page/{reportType}/**` 엔드포인트로 제공. `SecurityConfig`에서 `X-Frame-Options: SAMEORIGIN` 설정 필수. iframe에 `sandbox` 속성 미사용 (allow-scripts + allow-same-origin 조합은 sandbox 무력화 경고 유발). lazy-load 조건은 `!iframe.getAttribute('src')` 사용 (`!iframe.src`는 브라우저별로 `"about:blank"` 반환 가능).
 
 ## Changelog
 

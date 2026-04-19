@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>Compare Dumps - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/style.css}">
     <style>
@@ -119,6 +120,7 @@
 
 <div class="topbar">
     <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
         <span class="topbar-title">Compare</span>
     </div>
     <a href="/" class="back-btn">← Back</a>

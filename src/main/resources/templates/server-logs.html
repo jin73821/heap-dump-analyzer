@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>Transfer Logs — Heap Dump Analyzer</title>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -100,7 +101,10 @@
 <div th:replace="fragments/banner :: banner"></div>
 
 <div class="topbar">
-    <span class="topbar-title">Transfer Logs</span>
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title">Transfer Logs</span>
+    </div>
     <div class="topbar-right">
         <a href="/servers" class="topbar-btn">&larr; Servers</a>
         <a href="/" class="topbar-btn">&larr; Dashboard</a>
