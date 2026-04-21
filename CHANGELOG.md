@@ -1,5 +1,218 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-21] CLAUDE.md 갱신 (최근 변경 반영)
+
+**변경 파일:** `CLAUDE.md`
+
+- 통합 변경 반영: Comparison 네비, Bulk-delete API, 페이지네이션·정렬·다중선택 공통 패턴, deleted 가시성 제어, DB id 기반 순번, 모바일 Chat 탭, 채팅 커서 placeholder, 대시보드 intro 카드, Recent Files 카운터
+- HeapDumpController 엔드포인트 목록에 bulk-delete API + Authentication/isAdmin 추가
+- files/history 페이지 설명을 새 툴바 패턴 기준으로 갱신 (status dot 제거)
+- compare.html을 picker 모드 포함하여 갱신
+- Key Design Decisions에 9개 신규 패턴 추가
+
+---
+
+## [2026-04-21] AI 답변 대기 중 커서 깜빡임 수정
+
+**변경 파일:** `ai-chat.html`, `analyze.html`
+
+- 말풍선이 생성되었지만 첫 chunk가 아직 도착하지 않은 시점(초기 placeholder)에서 커서가 깜빡이지 않던 문제 수정
+- 원인: 초기 cursor를 `<span style="color:#9CA3AF">▌</span>` (정적) 로 표시 후, 첫 chunk 도착 시에만 `chat-cursor`/`ai-chat-cursor` 클래스(애니메이션) 적용
+- 수정: 초기 placeholder도 깜빡임 클래스(`chat-cursor` / `ai-chat-cursor`) 사용
+- 적용 위치: AI Chat 페이지(`sendMessage`), 분석 페이지 플로팅 채팅(`createStreamBubble`)
+
+---
+
+## [2026-04-21] 정렬 기본값 변경 + 모바일 AI Chat 세션 탭 추가
+
+**변경 파일:** `history.html`, `files.html`, `fragments/banner.html`, `ai-chat.html`
+
+- **정렬 기본값**: 날짜 오름차순 → 내림차순(최신 → 오래된)으로 양 페이지 통일
+- **모바일 AI Chat 채팅 목록 접근성 개선**:
+  - 좌측 배너 모바일 탭에 "Chat" 탭 신설 (`data-tab="chat"`, 채팅 아이콘)
+  - `body.has-chat-tab` 클래스로 ai-chat 페이지에서만 노출
+  - banner.html에 `gbMobileChat` 슬롯 + `registerBannerChatTab()` 함수 추가
+  - ai-chat.html: `DOMContentLoaded`에서 `.session-sidebar`를 cloneNode하여 배너 슬롯 등록 (내부 ID 제거로 충돌 방지)
+  - `getElementById('sessionList'/'sessionFilter')` → `querySelectorAll('.session-list'/'.session-filter select')`로 전환, 원본+클론 동시 갱신
+  - 필터 셀렉트는 `onFilterChange(this)` + `syncFilterValue()`로 양 인스턴스 동기화
+  - 세션 클릭 시 모바일에서는 `closeMobileBanner()`로 배너 자동 닫고 채팅 본문 노출
+  - `#gbMobileChat .session-sidebar`는 풀-블리드 표시되도록 CSS 오버라이드
+
+---
+
+## [2026-04-21] History/Files 테이블 헤더 클릭 정렬 기능
+
+**변경 파일:** `HeapDumpController.java`, `history.html`, `files.html`
+
+- **DTO 확장**: `AnalysisHistoryItem`에 raw 바이트 필드 추가 (`sizeBytes`, `originalSizeBytes`, `compressedSizeBytes`, `heapUsedBytes`)
+- `buildHistory()`에서 위 값들을 entity/file로부터 채움
+- **공통 정렬 동작**:
+  - 헤더 클릭 시 오름차순 ↔ 내림차순 토글, 다른 헤더 클릭 시 asc부터
+  - 활성 헤더에 ▲/▼ 인디케이터 (파란색), 비활성은 흐린 ▲
+  - 정렬 후 검색/필터/페이지네이션 자동 재적용 (`sortRows()` → `applyFilter()`)
+  - 한글 정렬: `localeCompare(s, 'ko')`
+- **History 정렬 칼럼**: # (id), 결과(status), 파일명, 분석 시간, 힙 사용량, Suspects, 파일 크기, 서버, 날짜
+- **Files 정렬 칼럼**: # (id), 파일명, 원본 크기, 압축 크기, AI 인사이트(severity rank), 날짜
+- **기본 정렬: 날짜 오름차순** (오래된 → 최신, 양 페이지 동일)
+- raw 숫자값은 `data-sort-*` 속성으로 행에 직렬화 후 클라이언트 정렬
+
+---
+
+## [2026-04-21] 대시보드 Analysis Files에서 deleted 항목 항상 숨김
+
+**변경 파일:** `HeapDumpController.java`
+
+- `index()` 메서드에서 `buildHistory()` 결과를 stream filter로 `fileDeleted=true` 제외
+- 모든 계정(관리자 포함) 동일하게 적용
+- `totalFileCount`, `hasMoreFiles`, `analyzedCount`, `totalSuspects` 등 파생 값도 자동으로 deleted 제외 기준
+- History/Files 페이지는 기존 정책 유지 (관리자 토글로 표시 가능)
+
+---
+
+## [2026-04-21] History/Files 다중 선택 일괄 삭제 기능
+
+**변경 파일:** `HeapDumpController.java`, `history.html`, `files.html`
+
+- **신규 API**:
+  - `POST /api/history/bulk-delete` — body `{filenames:[], deleteHeapDump:bool}` → 응답 `{success, failed, errors}`
+  - `POST /api/files/bulk-delete` — body `{filenames:[]}` → 응답 동일
+- **공통 UI 패턴 (history.html, files.html)**:
+  - 검색바 우측에 "선택" 토글 버튼. 활성화 시 파란색 배경
+  - 활성 시 좌측 첫 칼럼에 체크박스 표시 (CSS `select-mode` 클래스로 토글)
+  - 헤더 체크박스로 현재 페이지 표시 행 일괄 선택/해제 (indeterminate 상태 지원)
+  - 하단 고정 액션 바: "N건 선택됨 | 취소 | 선택 삭제"
+  - 일괄 삭제 모달에서 확인 → API 호출 → 페이지 새로고침
+- **History 모달**: "힙덤프 파일도 함께 삭제" 옵션 체크박스 (이미 deleted된 항목은 자동 건너뜀)
+- **Files 모달**: 살아있는 파일은 `/api/files/bulk-delete` (heap dump 삭제), deleted 항목은 `/api/history/bulk-delete` (분석 기록 purge)로 자동 분리 호출
+- 페이지/필터 이동 시에도 선택 카운트 자동 갱신 (`render()`에 훅)
+- 부분 실패 시 실패 건수 + 에러 메시지를 alert로 표시
+
+---
+
+## [2026-04-21] deleted 기록 관리자 전용 표시/삭제 기능
+
+**변경 파일:** `HeapDumpController.java`, `history.html`, `files.html`
+
+- **서버 측 필터링**: 비관리자에게는 `fileDeleted=true` 항목을 응답에서 제외 (보안)
+- `historyPage()`/`filesPage()`에 `Authentication` 파라미터 + `isAdmin` 모델 속성 추가
+- `isAdmin()` 헬퍼 메서드 추가 (ROLE_ADMIN 검사)
+- **관리자 전용 토글**: 검색바 우측에 "deleted 표시" 체크박스 (기본 off, `localStorage` 기억)
+  - history.html: `historyShowDeleted`, files.html: `filesShowDeleted`
+  - `applyFilter()`가 `data-deleted="true"` 행을 토글 상태에 따라 제외/포함
+- **History 페이지**: `deletedCount` 통계 추가 (관리자가 보는 경우만 표시)
+- **Files 페이지**: deleted 행에도 관리자 전용 영구 삭제(purge) 버튼 추가
+  - `confirmPurge()` → 별도 모달 → POST `/history/delete/{filename}`
+- `/history/delete/{filename}` 엔드포인트: Referer 기반 리다이렉트 (`/files`에서 호출 시 `/files`로 복귀)
+
+---
+
+## [2026-04-21] Recent Files 카운터 표시 개선
+
+**변경 파일:** `index.html`
+
+- 사이드바 "Recent Files (12)" 라벨이 실제 표시 개수(5개로 제한)와 불일치하던 문제 수정
+- 전체가 5건 이하: "Recent Files (3)" — 단일 숫자
+- 전체가 5건 초과: "Recent Files (5 / 12)" — 표시 / 전체 형태
+- `fileCount`(전체)와 `#lists.size(files)`(서버에서 잘린 표시 개수)를 함께 사용
+
+---
+
+## [2026-04-21] Quick Actions 정리 및 Compare/Export 동선 재배치
+
+**변경 파일:** `HeapDumpController.java`, `compare.html`, `fragments/banner.html`, `history.html`, `index.html`
+
+- Compare Two Dumps → 좌측 네비게이션 "Comparison" 항목으로 이동
+  - `/compare` 컨트롤러: `base`/`target` 파라미터 옵셔널화. 미입력 시 파일 선택 화면 노출
+  - `compare.html`: `/api/history`에서 SUCCESS 분석 이력 fetch → base/target 셀렉트 자동 채움 + Compare 버튼
+  - banner: History 다음에 "Comparison" 링크 + collapsed icon 추가
+- Export History → History 페이지 topbar로 이동
+  - `history.html` topbar에 Export 버튼 + 모달 + 다운로드 JS (기존 `/api/history` 재사용)
+- Settings → Quick Actions에서 제거 (좌측 네비에 이미 존재)
+- `index.html` Quick Actions 섹션 통째로 제거. 관련 모달(`#compareModal`, `#exportHistoryModal`) 및 JS(`openCompare`, `closeCompare`, `startCompare`, `exportHistory`, `closeExportHistory`, `doExportHistory`, Esc 키 핸들러) 정리
+
+---
+
+## [2026-04-21] 대시보드 상단에 앱 소개 문구 추가
+
+**변경 파일:** `index.html`
+
+- `.main-content` alerts 영역 직후, disk-warn-banner 직전에 intro 카드 삽입
+- 문구: "Eclipse MAT 기반 분석기. 원격 서버에서 덤프를 자동 수집하고, 누수 의심 대상을 요약하며, AI 로 근본 원인을 찾아냅니다."
+- info SVG 아이콘 + 그라데이션(#EFF6FF→#F5F3FF) + 1px #DBEAFE 테두리
+- `.dashboard-intro` CSS 신설, `@media (min-width:1024px)`에서 14px / `@media (max-width:900px)`에서 12px·padding 축소
+- 신규 사용자에게 도구 가치를 즉시 전달, 빈 상태에서도 항상 노출 (`th:if` 없음)
+
+---
+
+## [2026-04-21] Analysis History/Files 순번을 DB id 기반으로 변경
+
+**변경 파일:** `HeapDumpController.java`, `history.html`, `files.html`
+
+- 행 시프트 문제 해결: 표시 인덱스(`#lists.size - iter.index`) → DB `analysis_history.id` (영구 식별자)
+- 행을 삭제해도 다른 행의 번호가 변하지 않음. 같은 레코드는 항상 같은 번호로 식별
+- `AnalysisHistoryItem` DTO에 `Long id` 필드 추가, `buildHistory()`에서 `e.getId()`로 채움
+- `history.html`: `${h.id}` (모든 항목이 분석 이력이라 항상 존재)
+- `files.html`: `${h.id != null ? h.id : '-'}` — NOT_ANALYZED 파일은 DB 레코드 없으므로 `-` 표시
+
+---
+
+## [2026-04-21] Files 페이지에 페이지네이션 + 순번 칼럼 + 상태 인디케이터 제거
+
+**변경 파일:** `files.html`
+
+- `상태` dot 칼럼 + 범례(legend) 영역 제거 (`.hdot`, `.hd-*`, `.legend*`, `.ld-*` CSS 정리)
+- 신규 `#` 순번 칼럼 추가 (오래된=1, 최신=마지막). 식: `${#lists.size(analysisHistory) - iter.index}`
+- 검색바 우측에 "행 표시" 콤보박스 (20/30/50/100, 기본 20, `localStorage('filesPageSize')` 저장)
+- 패널 하단 페이지네이션 바 (전체 ≤ 페이지 크기 시 자동 숨김), ‹ Prev / 슬라이딩 윈도우 / Next ›
+- 기존 `filterFiles()` → `applyFilter() + render() + renderPagination()` 구조
+
+---
+
+## [2026-04-21] Analysis History 페이지네이션 + 행 표시 갯수 선택 기능
+
+**변경 파일:** `history.html`, DB seed (analysis_history)
+
+- 더미 데이터 30건 DB 삽입 (`dummy_dump_01..30.hprof`, SUCCESS 24/ERROR 6 비율, `file_deleted=true`, 30일에 걸친 `analyzed_at`)
+- 테이블 우측 상단 "행 표시" 콤보박스 추가 (20/30/50/100, 기본 20, `localStorage` 저장)
+- 패널 하단 페이지네이션 바 추가 (전체 건수가 페이지 크기 초과 시 자동 활성화)
+- 페이지 버튼: ‹ Prev, 1 … 현재±2 … 마지막, Next ›. 활성 버튼 파란 배경
+- 검색(`onSearchInput`)과 페이지 크기 변경(`onPageSizeChange`)은 항상 1페이지로 리셋
+- 기존 `filterItems()` → `applyFilter()` + `render()` + `renderPagination()` 구조로 리팩터링
+
+---
+
+## [2026-04-21] Analysis History 순번 채번 방향 변경 (오래된=1, 최신=마지막)
+
+**변경 파일:** `history.html`
+
+- 목록은 최신 정렬(`analyzedAt DESC`)이지만 순번은 오래된 데이터부터 1로 시작하도록 변경
+- 표현식 변경: `${iter.count}` → `${#lists.size(analysisHistory) - iter.index}`
+- 결과: 상단(최신)이 가장 큰 번호, 하단(오래된)이 1번
+
+---
+
+## [2026-04-21] Analysis History 테이블에 순번 칼럼 추가 및 상태 인디케이터 제거
+
+**변경 파일:** `history.html`
+
+- `상태` 칼럼(컬러 dot)을 제거 (직전 변경에서 추가된 `결과` 뱃지 칼럼이 동일 정보 제공)
+- 신규 `#` 순번 칼럼 추가 (`th:each` 변수에 `iter` 추가, `${iter.count}` 사용)
+- `.td-seq` CSS 추가 (`width: 48px; text-align: center; tabular-nums`)
+- `.hdot`, `.hd-ok`, `.hd-err`, `.td-status` CSS 제거
+
+---
+
+## [2026-04-21] Analysis History 테이블에 결과 칼럼 분리
+
+**변경 파일:** `history.html`
+
+- 파일명 칼럼에 인라인으로 표시되던 `success`/`failed`/`deleted` 뱃지를 별도 "결과" 칼럼으로 분리
+- `<thead>`에 `<th class="td-result">결과</th>` 추가 (상태 칼럼 다음 위치)
+- `.td-result` CSS 추가 (`width: 84px; white-space: nowrap;`)
+- 결과를 한눈에 정렬된 형태로 확인 가능, 파일명은 깔끔하게 표시
+
+---
+
 ## [2026-04-14] 분석 실행 시 배너 System Status 자동 갱신
 
 **변경 파일:** `progress.html`

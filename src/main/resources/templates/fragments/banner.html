@@ -200,8 +200,10 @@ body.banner-no-transition .gb-header { transition: none !important; }
     /* Dynamic tabs hidden by default (only shown when page injects content) */
     .gb-mobile-tab[data-tab="upload"] { display: none; }
     .gb-mobile-tab[data-tab="analysis"] { display: none; }
+    .gb-mobile-tab[data-tab="chat"] { display: none; }
     body.has-upload-tab .gb-mobile-tab[data-tab="upload"] { display: block; }
     body.has-analysis-tab .gb-mobile-tab[data-tab="analysis"] { display: block; }
+    body.has-chat-tab .gb-mobile-tab[data-tab="chat"] { display: block; }
 }
 /* ── Desktop: hide mobile elements ──────────────── */
 @media (min-width: 901px) {
@@ -209,6 +211,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
     .gb-tab-content.gb-tab-nav { display: flex; flex-direction: column; }
     .gb-tab-content.gb-tab-upload { display: none; }
     .gb-tab-content.gb-tab-analysis { display: none; }
+    .gb-tab-content.gb-tab-chat { display: none; }
     .gb-banner-overlay { display: none !important; }
 }
 /* ── Banner mobile overlay ──────────────────────── */
@@ -245,6 +248,10 @@ body.banner-no-transition .gb-header { transition: none !important; }
         <button class="gb-mobile-tab" data-tab="analysis" onclick="switchBannerTab('analysis')">
             <span class="gb-mobile-tab-icon"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
             Analysis
+        </button>
+        <button class="gb-mobile-tab" data-tab="chat" onclick="switchBannerTab('chat')">
+            <span class="gb-mobile-tab-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
+            Chat
         </button>
         <button class="gb-mobile-tab" data-tab="upload" onclick="switchBannerTab('upload')">
             <span class="gb-mobile-tab-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
@@ -321,6 +328,10 @@ body.banner-no-transition .gb-header { transition: none !important; }
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 History
             </a>
+            <a href="/compare" class="gb-nav-link" id="gbNavCompare">
+                <svg viewBox="0 0 24 24"><path d="M2 7h10M9 4l3 3-3 3M5 4L2 7l3 3"/><path d="M22 17H12M15 14l-3 3 3 3M19 14l3 3-3 3"/></svg>
+                Comparison
+            </a>
             <a href="/ai-chat" class="gb-nav-link" id="gbNavAiChat">
                 <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 AI Chat
@@ -381,12 +392,16 @@ body.banner-no-transition .gb-header { transition: none !important; }
     <!-- Mobile analysis tab content (populated by analyze.html) -->
     <div class="gb-tab-content gb-tab-analysis" id="gbMobileAnalysis"></div>
 
+    <!-- Mobile chat tab content (populated by ai-chat.html) -->
+    <div class="gb-tab-content gb-tab-chat" id="gbMobileChat"></div>
+
     <!-- Collapsed icons -->
     <div class="gb-collapsed-icons">
         <div class="gb-ci-dot" id="gbMatDotC"></div>
         <a href="/" class="gb-ci" title="Dashboard"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></a>
         <a href="/files" class="gb-ci" title="Files"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></a>
         <a href="/history" class="gb-ci" title="History"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></a>
+        <a href="/compare" class="gb-ci" title="Comparison"><svg viewBox="0 0 24 24"><path d="M2 7h10M9 4l3 3-3 3M5 4L2 7l3 3"/><path d="M22 17H12M15 14l-3 3 3 3M19 14l3 3-3 3"/></svg></a>
         <a href="/ai-chat" class="gb-ci" title="AI Chat"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></a>
         <a href="/servers" class="gb-ci" title="Servers"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></a>
         <a href="/settings" class="gb-ci" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>
@@ -470,7 +485,7 @@ function switchBannerTab(tabName) {
     tabs.forEach(function(t) { t.classList.toggle('active', t.getAttribute('data-tab') === tabName); });
     // Tab contents
     document.querySelectorAll('.gb-tab-content').forEach(function(el) { el.classList.remove('active'); });
-    var map = { nav: 'gbBody', upload: 'gbMobileUpload', analysis: 'gbMobileAnalysis' };
+    var map = { nav: 'gbBody', upload: 'gbMobileUpload', analysis: 'gbMobileAnalysis', chat: 'gbMobileChat' };
     var target = document.getElementById(map[tabName]);
     if (target) target.classList.add('active');
 }
@@ -489,6 +504,14 @@ function registerBannerAnalysisTab(contentElement) {
     if (!slot || !contentElement) return;
     slot.appendChild(contentElement);
     document.body.classList.add('has-analysis-tab');
+}
+
+/* ── Register chat session list into banner (called by ai-chat.html) ── */
+function registerBannerChatTab(contentElement) {
+    var slot = document.getElementById('gbMobileChat');
+    if (!slot || !contentElement) return;
+    slot.appendChild(contentElement);
+    document.body.classList.add('has-chat-tab');
 }
 
 function highlightActiveNav() {

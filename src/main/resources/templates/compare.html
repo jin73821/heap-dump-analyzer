@@ -226,10 +226,72 @@
 
     </div>
 
-    <!-- No results yet -->
-    <div th:if="${baseResult == null and error == null}" class="panel">
-        <div class="no-data">Select two analyzed files to compare.</div>
+    <!-- 파일 선택 화면 (base/target 미입력 시) -->
+    <div th:if="${baseResult == null and error == null}" class="panel" id="cmpPickerPanel">
+        <div class="panel-title">Select Two Analyzed Dumps</div>
+        <div id="cmpPickerLoading" style="text-align:center;padding:24px;color:#9CA3AF;font-size:13px">
+            Loading analyzed files...
+        </div>
+        <div id="cmpPickerEmpty" style="display:none;text-align:center;padding:24px;color:#9CA3AF;font-size:13px">
+            No analyzed dumps available. Analyze at least two heap dumps first.
+        </div>
+        <div id="cmpPickerForm" style="display:none">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:600;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Base Dump</label>
+                    <select id="cmpBase" style="width:100%;padding:10px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;background:#fff;outline:none">
+                        <option value="">Select a file...</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:11px;font-weight:600;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Target Dump</label>
+                    <select id="cmpTarget" style="width:100%;padding:10px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;background:#fff;outline:none">
+                        <option value="">Select a file...</option>
+                    </select>
+                </div>
+            </div>
+            <div style="display:flex;justify-content:flex-end">
+                <button id="cmpRunBtn" onclick="runCompare()" style="padding:10px 22px;font-size:13px;font-weight:600;color:#fff;background:#2563EB;border:none;border-radius:8px;cursor:pointer">
+                    Compare
+                </button>
+            </div>
+            <div id="cmpPickerError" style="display:none;margin-top:10px;font-size:12px;color:#DC2626"></div>
+        </div>
     </div>
+
+    <script th:if="${baseResult == null and error == null}">
+    (function() {
+        fetch('/api/history').then(function(r) { return r.json(); }).then(function(items) {
+            var analyzed = (items || []).filter(function(it) { return it.status === 'SUCCESS'; });
+            var loading = document.getElementById('cmpPickerLoading');
+            var empty = document.getElementById('cmpPickerEmpty');
+            var form = document.getElementById('cmpPickerForm');
+            loading.style.display = 'none';
+            if (analyzed.length < 2) { empty.style.display = ''; return; }
+            form.style.display = '';
+            var base = document.getElementById('cmpBase');
+            var tgt = document.getElementById('cmpTarget');
+            analyzed.forEach(function(it) {
+                var o1 = document.createElement('option'); o1.value = it.filename; o1.textContent = it.filename; base.appendChild(o1);
+                var o2 = document.createElement('option'); o2.value = it.filename; o2.textContent = it.filename; tgt.appendChild(o2);
+            });
+        }).catch(function() {
+            document.getElementById('cmpPickerLoading').style.display = 'none';
+            document.getElementById('cmpPickerEmpty').style.display = '';
+            document.getElementById('cmpPickerEmpty').textContent = 'Failed to load file list.';
+        });
+    })();
+
+    function runCompare() {
+        var b = document.getElementById('cmpBase').value;
+        var t = document.getElementById('cmpTarget').value;
+        var err = document.getElementById('cmpPickerError');
+        err.style.display = 'none';
+        if (!b || !t) { err.textContent = 'Please select both files.'; err.style.display = ''; return; }
+        if (b === t)  { err.textContent = 'Please select two different files.'; err.style.display = ''; return; }
+        location.href = '/compare?base=' + encodeURIComponent(b) + '&target=' + encodeURIComponent(t);
+    }
+    </script>
 </div>
 </body>
 </html>

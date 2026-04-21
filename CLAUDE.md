@@ -47,7 +47,7 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 ```
 
 **Key layers:**
-- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status, DB 설정. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history`, `/api/cache/clear`, `/api/settings/unreachable`, `/api/settings/compress`, `/api/settings/database` (DB 연결 설정), `/api/settings/database/test` (DB 연결 테스트), `/api/analyze/cancel/{filename}`, `/api/queue/status`, `/api/disk/check`, `/api/settings`, `/api/system/status`, `/api/upload/check`. Inner DTOs: `AnalysisHistoryItem`, `DetectionSummaryItem`, `ClassDiff`.
+- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status, DB 설정. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history`, `/api/history/bulk-delete` (POST JSON `{filenames,deleteHeapDump}`), `/api/files/bulk-delete`, `/api/cache/clear`, `/api/settings/unreachable`, `/api/settings/compress`, `/api/settings/database` (DB 연결 설정), `/api/settings/database/test` (DB 연결 테스트), `/api/analyze/cancel/{filename}`, `/api/queue/status`, `/api/disk/check`, `/api/settings`, `/api/system/status`, `/api/upload/check`. `/compare` GET: `base`/`target` 파라미터 옵셔널 (미입력 시 파일 선택 화면). `historyPage()`/`filesPage()`는 `Authentication` 파라미터로 ROLE_ADMIN 검사 후 `isAdmin` 모델 속성 + 비관리자에게는 `fileDeleted=true` 항목 응답 제외. Inner DTOs: `AnalysisHistoryItem` (sizeBytes/originalSizeBytes/compressedSizeBytes/heapUsedBytes raw 필드 포함 — 클라이언트 정렬용), `DetectionSummaryItem`, `ClassDiff`.
 - **Controller** (`controller/AuthController.java`) — `/login` 로그인 페이지
 - **Controller** (`controller/AdminController.java`) — `/admin/users` 계정 관리 (ADMIN 전용). CRUD API: `/api/admin/users`, `/api/admin/users/{id}/reset-password`
 - **Controller** (`controller/ServerController.java`) — `/servers` Target Server 관리, `/servers/{id}` 서버 상세 페이지 (분석 이력 + 전송 이력), `/servers/logs` 전송 로그 페이지. API: `/api/servers` (CRUD), `/api/servers/{id}/test` (연결 테스트), `/api/servers/{id}/scan` (수동 스캔), `/api/servers/{id}/transfer` (파일 전송), `/api/servers/scan-interval`, `/api/servers/ssh-local-user`, `/api/servers/scp-temp-dir`
@@ -91,7 +91,8 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 **Global Banner** (`fragments/banner.html`) — 모든 페이지에 `th:replace="fragments/banner :: banner"`로 삽입되는 좌측 고정 배너. `position: fixed; left: 0; top: 0; bottom: 0; width: var(--banner-w)` (220px/44px). 포함 내용:
 - **Header**: 앱 로고 + 제목 (클릭 시 Dashboard 이동), `<a href="/">` 태그
 - **System Status**: MAT CLI 상태, 디스크 사용량, JVM 메모리, 분석 큐 — `/api/system/status` API에서 60초 간격 자동 갱신 + 수동 Refresh 버튼. `localStorage` 캐시로 페이지 이동 시 깜빡임 방지
-- **Navigation**: Dashboard, Files, History, AI Chat, Servers (아코디언: Target Servers / Transfer Logs), Settings (아코디언: General / LLM Configuration / Accounts(ADMIN only)), Logout. Thymeleaf `sec:authorize` 사용
+- **Navigation**: Dashboard, Files, History, Comparison, AI Chat, Servers (아코디언: Target Servers / Transfer Logs), Settings (아코디언: General / LLM Configuration / Accounts(ADMIN only)), Logout. Thymeleaf `sec:authorize` 사용
+- **Mobile tabs**: Navigation / Analysis(분석 페이지) / Chat(AI Chat 페이지) / Upload(대시보드). 페이지가 `body.has-{name}-tab` 클래스를 토글하여 동적 표시. 등록은 `registerBannerUploadTab/AnalysisTab/ChatTab(elem)` JS 헬퍼
 - **접기/펼치기**: 토글 버튼으로 220px ↔ 44px 전환, `localStorage('bannerCollapsed')` 상태 저장. 접힌 상태에서는 아이콘 스트립이 하단에 `margin-top: auto`로 위치
 - **깜빡임 방지**: `<style>` 앞 인라인 `<script>`에서 `banner-collapsed` 클래스 즉시 적용 + `banner-no-transition` 클래스로 초기 transition 차단, `requestAnimationFrame` 2프레임 후 복원
 - **스타일 격리**: `.g-banner`에 `font-size: 14px; line-height: 1.5` 고정 — 페이지별 body font-size 차이에 영향받지 않음
@@ -105,7 +106,7 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 
 ## Frontend Structure
 
-**index.html** — Dashboard with sidebar (upload, file list, MAT settings). Topbar title: "Dashboard". Grid layout `300px 1fr` with `margin-left: var(--banner-w)`. Multi-file upload (max 5, sequential, `<input multiple>`) with queue progress modal, duplicate detection (content hash + name conflict), file filter modal (valid/invalid summary), upload cancel with XHR abort, `beforeunload` page-leave protection. Files list shows tooltips on hover with compressed file info (GZ badge + original/compressed sizes). Analysis Queue panel (auto-polls `/api/queue/status` every 5s when active, idle state when empty). Modals for: Download, Compare, Export History, Clear Cache, Delete, Auto-Analyze warning, Keep Unreachable warning, Upload Progress, Duplicate Content, Duplicate Name, File Filter, Cancel Confirm.
+**index.html** — Dashboard with sidebar (upload, file list, MAT settings). Topbar title: "Dashboard". Grid layout `300px 1fr` with `margin-left: var(--banner-w)`. **Intro 카드**(`.dashboard-intro`)가 alerts 직후 항상 표시 (앱 가치 1줄 설명). Multi-file upload (max 5, sequential, `<input multiple>`) with queue progress modal, duplicate detection (content hash + name conflict), file filter modal (valid/invalid summary), upload cancel with XHR abort, `beforeunload` page-leave protection. Files list shows tooltips on hover with compressed file info (GZ badge + original/compressed sizes). **Recent Files 카운터**: 전체 ≤ 5건 시 `(N)`, 초과 시 `(표시/전체)` 형태. **Analysis Files 패널은 deleted 항목 항상 제외** (모든 계정). Analysis Queue panel (auto-polls `/api/queue/status` every 5s when active, idle state when empty). Modals for: Download, Clear Cache, Delete, Auto-Analyze warning, Keep Unreachable warning, Upload Progress, Duplicate Content, Duplicate Name, File Filter, Cancel Confirm. (Compare/Export History/Settings 트리거는 좌측 네비/History 페이지로 이동됨)
 
 **analyze.html** — Analysis result page with sidebar navigation sections:
 - **Analysis**: Overview (KPI cards, Memory Treemap, Stacked Bar charts), Top Consumers (sortable/searchable table with click-for-detail modal), Leak Suspects (accordion)
@@ -123,13 +124,13 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 
 **progress.html** — SSE-driven analysis progress with step indicators. Queue waiting banner (purple gradient) shown when analysis is queued behind another, with position and current analysis filename. Cancel button: QUEUED state shows modal + calls `POST /api/analyze/cancel/{filename}`; RUNNING state uses confirm dialog. `cancelAnalysis()` must not conflict with `cancelHeapWarnModal()` (separate functions — previously caused a bug due to duplicate function names).
 
-**files.html** — Full file listing page (`/files`). Search filter, status dots, SVG icon buttons (view/analyze/download/delete) matching `index.html` sidebar style. Delete confirmation modal. Download confirmation modal (filename + size).
+**files.html** — Full file listing page (`/files`). 공통 테이블 툴바 패턴 적용 (search + 행표시 셀렉트 + 다중선택 + admin deleted 토글). 페이지네이션 바 (전체 > 페이지 크기일 때 자동 노출). 헤더 클릭 정렬 (default: 날짜 desc). DB id 기반 # 칼럼 (NOT_ANALYZED 파일은 `-`). SVG icon buttons (view/analyze/download/delete) matching `index.html` sidebar style. Delete/Download 확인 모달. 관리자: deleted 행 영구 삭제(purge) 버튼 + 별도 모달 → `POST /history/delete/{filename}`.
 
-**history.html** — Full analysis history page (`/history`). Topbar navigation, search filter, status dots (success/error/pending), analysis metadata (file size, date, analysis time, heap size, suspect count), total statistics. Complete inline `<style>` block like `index.html`.
+**history.html** — Full analysis history page (`/history`). 공통 테이블 툴바 패턴 동일. # (DB id) · 결과 뱃지 · 파일명 · 분석시간 · 힙사용량 · Suspects · 파일크기 · 서버 · 날짜. Topbar 우측에 Export 버튼 (모달 → `/api/history` JSON 다운로드). 다중선택 일괄 삭제 모달은 "힙덤프 파일도 함께 삭제" 옵션 포함. 관리자만 deleted 행+카운터 노출.
 
 **settings.html** — Settings page (`/settings`). Toggle switches for runtime settings with confirmation modals. Toast notifications at top-center. MAT JVM heap/Xms inline editing. Database 카드 (접속 상태, IP/포트/계정 설정 모달, 연결 테스트). Remote scan 설정 (SCP temp dir, SSH local user, scan interval).
 
-**compare.html** — Side-by-side dump comparison.
+**compare.html** — Side-by-side dump comparison. `base`/`target` 파라미터 미입력 시 파일 선택 화면 표시 (`/api/history`에서 SUCCESS 분석 이력 fetch → 두 셀렉트 자동 채움). 좌측 네비 "Comparison" 진입 시 이 모드.
 
 **login.html** — 로그인 페이지. 중앙 정렬 카드 폼 (username, password). CSRF 토큰 자동 삽입. 모바일 반응형 (480px 이하 축소).
 
@@ -271,6 +272,20 @@ ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(c
 - **배너 사이드바 DOM 복제 주의:** `analyze.html`의 사이드바는 `cloneNode(true)`로 배너 Analysis 탭에 복제됨. `getElementById`로는 원본만 접근 가능하므로, 양쪽 모두 업데이트해야 할 요소는 `querySelectorAll('.class-name')` 사용 필수 (예: `.ai-nav-status`).
 - **분석 진행 중 배너 상태 갱신:** `progress.html`에서 분석 시작(RUNNING)/완료(COMPLETED)/에러(ERROR) 시 `refreshBannerStatus()` 호출하여 디스크/JVM/큐 상태 실시간 반영.
 - **Raw Data iframe:** MAT 리포트 ZIP 내 HTML을 `/report/{filename}/mat-page/{reportType}/**` 엔드포인트로 제공. `SecurityConfig`에서 `X-Frame-Options: SAMEORIGIN` 설정 필수. iframe에 `sandbox` 속성 미사용 (allow-scripts + allow-same-origin 조합은 sandbox 무력화 경고 유발). lazy-load 조건은 `!iframe.getAttribute('src')` 사용 (`!iframe.src`는 브라우저별로 `"about:blank"` 반환 가능).
+- **Files/History 테이블 툴바 공통 패턴:** 두 페이지(`history.html`, `files.html`)는 동일한 클라이언트 사이드 데이터 그리드 패턴을 공유:
+  - 검색 입력 + 행 표시 셀렉트(20/30/50/100, `localStorage` 기억) + admin 전용 "deleted 표시" 체크박스 + 다중선택 토글 버튼
+  - 헤더 클릭 정렬: `data-sort-key`/`data-sort-type=num|str` 속성, ▲/▼ 인디케이터 (활성 파란). 기본 날짜 내림차순. 한글 정렬 `localeCompare(s, 'ko')`
+  - raw 정렬값은 `<tr>`의 `data-sort-*` 속성으로 직렬화 — 숫자값은 `AnalysisHistoryItem`의 raw 바이트 필드(`sizeBytes`/`originalSizeBytes`/`compressedSizeBytes`/`heapUsedBytes`) 사용
+  - 페이지네이션: ‹Prev / 1 … 현재±2 … 마지막 / Next›. 전체 ≤ 페이지 크기일 때 자동 숨김. `applyFilter()` → `render()` → `renderPagination()` 파이프라인. 페이지 이동 후에도 다중선택 상태/카운트 자동 갱신
+  - 다중선택 액션바: 하단 고정. `getSelectedFilenames()`는 현재 페이지 visible 행만 대상. 헤더 체크박스 indeterminate 상태 지원
+- **다중 삭제 API 분리:** `/api/history/bulk-delete` (분석 기록 + 옵션으로 heap dump 삭제) vs `/api/files/bulk-delete` (heap dump 삭제, 분석 기록 보존). Files 페이지의 일괄 삭제는 살아있는 파일/이미 deleted 항목으로 자동 분리해 두 엔드포인트 호출. 두 API 모두 `{success, failed, errors}` JSON 응답
+- **순번 칼럼은 DB id 기반:** 표시 인덱스(시프트되는 순번)가 아닌 `analysis_history.id`(IDENTITY) 사용. 같은 레코드는 항상 같은 번호로 식별. NOT_ANALYZED 파일은 DB 레코드 없으므로 `-` 표시
+- **deleted 기록 가시성 제어:** `historyPage()`/`filesPage()`는 `Authentication`으로 ROLE_ADMIN 검사. 비관리자에게는 `fileDeleted=true` 항목을 응답에서 제외(서버 측 보안). 관리자만 토글로 표시/숨김 가능. **대시보드 `Analysis Files` 패널은 모든 계정 deleted 항상 제외**
+- **`/history/delete/{filename}` Referer 리다이렉트:** Referer가 `/files` 포함 시 `/files`로, 그 외 `/history`로 복귀. Files 페이지에서도 deleted 행 purge 가능
+- **Comparison 페이지 두 모드:** 파라미터 없으면 picker(`/api/history` SUCCESS 항목으로 셀렉트 채움), 있으면 비교 결과. 좌측 네비 "Comparison" 진입 시 picker 모드
+- **Export History 위치:** History 페이지 topbar의 Export 버튼이 단일 진입점. 기존 대시보드 Quick Actions의 Compare/Export/Settings 모두 제거됨
+- **모바일 Chat 탭 (배너):** ai-chat.html이 `.session-sidebar`를 cloneNode로 복제 후 `registerBannerChatTab(clone)`로 배너 슬롯에 등록. 클론 내부 ID는 충돌 방지 위해 모두 제거 — 따라서 코드는 `getElementById` 대신 `querySelectorAll('.session-list'/'.session-filter select')`로 원본+클론 동시 갱신. 세션 클릭 시 `closeMobileBanner()`로 자동 닫고 채팅 본문 노출
+- **채팅 커서 placeholder:** AI 답변 말풍선 생성 직후 첫 chunk 도착 전 시점에도 커서가 깜빡이도록, 초기 placeholder부터 `chat-cursor`/`ai-chat-cursor` 클래스(`cursorBlink` 애니메이션) 사용. 정적 인라인 색상 사용 금지
 
 ## Changelog
 

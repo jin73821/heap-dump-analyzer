@@ -37,9 +37,73 @@
         .page-stat { font-size: 12px; color: #6B7280; }
         .page-stat strong { color: #1F2937; }
         .search-bar { width: 100%; padding: 10px 14px; border: 1px solid #E5E7EB;
-                      border-radius: 8px; font-size: 13px; margin-bottom: 16px;
+                      border-radius: 8px; font-size: 13px;
                       outline: none; background: #fff; }
         .search-bar:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .table-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .table-toolbar .search-bar { flex: 1; }
+        .page-size-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .page-size-label { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .page-size-select { padding: 8px 28px 8px 10px; font-size: 13px; border: 1px solid #E5E7EB;
+                            border-radius: 8px; background: #fff; color: #1F2937; cursor: pointer;
+                            outline: none; appearance: none; -webkit-appearance: none;
+                            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+                            background-repeat: no-repeat; background-position: right 10px center; }
+        .page-size-select:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .deleted-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px;
+                          font-size: 12px; color: #6B7280; cursor: pointer; user-select: none;
+                          border: 1px solid #E5E7EB; border-radius: 8px; background: #fff; flex-shrink: 0; }
+        .deleted-toggle:hover { border-color: #D1D5DB; background: #F9FAFB; }
+        .deleted-toggle input[type=checkbox] { width: 14px; height: 14px; accent-color: #6B7280; cursor: pointer; }
+        .select-toggle-btn { padding: 7px 12px; font-size: 12px; color: #374151; background: #fff;
+                             border: 1px solid #E5E7EB; border-radius: 8px; cursor: pointer;
+                             display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .select-toggle-btn:hover { border-color: #93C5FD; background: #F9FAFB; }
+        .select-toggle-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+        .select-toggle-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
+        /* 체크박스 칼럼은 select-mode일 때만 표시 */
+        .td-check { width: 38px; text-align: center; display: none; }
+        .htable.select-mode .td-check { display: table-cell; }
+        .row-check, .all-check { width: 15px; height: 15px; accent-color: #2563EB; cursor: pointer; vertical-align: middle; }
+        /* 선택 액션 바 (하단 고정) */
+        .select-action-bar { position: fixed; left: var(--banner-w, 220px); right: 0; bottom: 0; z-index: 90;
+                             background: #fff; border-top: 1px solid #E5E7EB; padding: 12px 20px;
+                             display: none; align-items: center; justify-content: space-between;
+                             box-shadow: 0 -4px 12px rgba(0,0,0,.06);
+                             transition: left .25s cubic-bezier(.4,0,.2,1); }
+        .select-action-bar.show { display: flex; }
+        .sa-info { font-size: 13px; color: #374151; }
+        .sa-info strong { color: #2563EB; }
+        .sa-btns { display: flex; gap: 8px; }
+        .sa-btn { padding: 8px 16px; font-size: 13px; border-radius: 7px; border: none; cursor: pointer; font-weight: 500; }
+        .sa-btn-cancel { background: #F3F4F6; color: #374151; }
+        .sa-btn-cancel:hover { background: #E5E7EB; }
+        .sa-btn-del { background: #EF4444; color: #fff; }
+        .sa-btn-del:hover { background: #DC2626; }
+        .sa-btn-del:disabled { background: #FCA5A5; cursor: not-allowed; }
+        /* 정렬 가능 헤더 */
+        .htable th.sortable { cursor: pointer; user-select: none; }
+        .htable th.sortable:hover { background: #F3F4F6; }
+        .htable th.sortable .sort-arrow { display: inline-block; margin-left: 4px; opacity: 0.3;
+                                          font-size: 9px; vertical-align: middle; transition: opacity .15s; }
+        .htable th.sortable.sort-active .sort-arrow { opacity: 1; color: #2563EB; }
+
+        /* Pagination */
+        .pagination-bar { display: none; align-items: center; justify-content: space-between;
+                          padding: 12px 16px; border-top: 1px solid #E5E7EB; background: #FAFBFC;
+                          flex-wrap: wrap; gap: 8px; }
+        .pagination-bar.show { display: flex; }
+        .pg-info { font-size: 12px; color: #6B7280; }
+        .pg-info strong { color: #1F2937; }
+        .pg-list { display: flex; gap: 4px; align-items: center; }
+        .pg-btn { min-width: 32px; height: 32px; padding: 0 8px; border: 1px solid #E5E7EB;
+                  border-radius: 6px; background: #fff; color: #374151; font-size: 12px;
+                  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+                  font-variant-numeric: tabular-nums; }
+        .pg-btn:hover:not(:disabled):not(.active) { background: #F3F4F6; border-color: #D1D5DB; }
+        .pg-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; cursor: default; }
+        .pg-btn:disabled { color: #D1D5DB; cursor: not-allowed; background: #F9FAFB; }
+        .pg-ellipsis { padding: 0 4px; color: #9CA3AF; font-size: 12px; }
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
         .no-match { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; display: none; }
         .empty-msg { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; }
@@ -53,10 +117,9 @@
         .htable td { padding: 10px 12px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
         .htable tbody tr:last-child td { border-bottom: none; }
         .htable tbody tr:hover { background: #F9FAFB; }
-        .td-status { width: 36px; text-align: center; }
-        .hdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-        .hd-ok  { background: #10B981; }
-        .hd-err { background: #EF4444; }
+        .td-seq { width: 48px; text-align: center; color: #9CA3AF; font-size: 12px;
+                  font-variant-numeric: tabular-nums; }
+        .td-result { width: 84px; white-space: nowrap; }
         .hi-name { font-weight: 500; max-width: 300px; overflow: hidden; text-overflow: ellipsis;
                    white-space: nowrap; display: inline-block; text-decoration: none; }
         .hi-name-link { color: #2563EB; }
@@ -114,11 +177,16 @@
             .topbar { left: 0; }
             .container { padding-left: 20px; }
             .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .select-action-bar { left: 0; }
         }
         @media (max-width: 640px) {
             .page-stats { gap: 10px; }
             .htable .col-hide-sm { display: none; }
             .htable { min-width: 600px; }
+            .table-toolbar { flex-direction: column; align-items: stretch; }
+            .page-size-wrap { justify-content: flex-end; }
+            .pagination-bar { flex-direction: column; align-items: stretch; }
+            .pg-list { justify-content: center; flex-wrap: wrap; }
         }
     </style>
 </head>
@@ -132,6 +200,16 @@
         <span class="topbar-title">History</span>
     </div>
     <div class="topbar-right">
+        <button type="button" class="topbar-btn" onclick="openExportHistory()" id="exportHistoryBtn"
+                style="display:inline-flex;align-items:center;gap:6px">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 style="vertical-align:middle">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Export
+        </button>
         <a href="/" class="topbar-btn">&larr; Dashboard</a>
     </div>
 </div>
@@ -143,36 +221,71 @@
             <span class="page-stat"><strong th:text="${totalCount}">0</strong> total</span>
             <span class="page-stat" style="color:#059669"><strong th:text="${successCount}">0</strong> success</span>
             <span class="page-stat" style="color:#EF4444"><strong th:text="${errorCount}">0</strong> failed</span>
+            <span th:if="${isAdmin and deletedCount > 0}" class="page-stat" style="color:#9CA3AF">
+                <strong th:text="${deletedCount}">0</strong> deleted
+            </span>
         </div>
     </div>
 
-    <input type="text" class="search-bar" id="searchInput"
-           placeholder="Search analysis history..." oninput="filterItems()">
+    <div class="table-toolbar">
+        <input type="text" class="search-bar" id="searchInput"
+               placeholder="Search analysis history..." oninput="onSearchInput()">
+        <button type="button" class="select-toggle-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="다중 선택 모드">
+            <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            <span id="selectModeBtnLabel">선택</span>
+        </button>
+        <label th:if="${isAdmin}" class="deleted-toggle" id="deletedToggleWrap" title="삭제된 파일의 분석 기록 표시 여부 (관리자 전용)">
+            <input type="checkbox" id="showDeletedChk" onchange="onToggleShowDeleted()">
+            <span>deleted 표시</span>
+        </label>
+        <div class="page-size-wrap">
+            <span class="page-size-label">행 표시</span>
+            <select class="page-size-select" id="pageSizeSelect" onchange="onPageSizeChange()">
+                <option value="20" selected>20</option>
+                <option value="30">30</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+        </div>
+    </div>
 
     <div class="panel">
         <div th:if="${#lists.isEmpty(analysisHistory)}" class="empty-msg">
             No analysis history yet.
         </div>
-        <table th:unless="${#lists.isEmpty(analysisHistory)}" class="htable">
+        <table th:unless="${#lists.isEmpty(analysisHistory)}" class="htable" id="historyTable">
             <thead>
                 <tr>
-                    <th class="td-status">상태</th>
-                    <th>파일명</th>
-                    <th>분석 시간</th>
-                    <th class="col-hide-sm">힙 사용량</th>
-                    <th class="col-hide-sm">Suspects</th>
-                    <th>파일 크기</th>
-                    <th class="col-hide-sm">서버</th>
-                    <th>날짜</th>
+                    <th class="td-check"><input type="checkbox" class="all-check" id="allCheck" onchange="onSelectAll()"></th>
+                    <th class="td-seq sortable" data-sort-key="id" data-sort-type="num" onclick="onHeaderSort(this)"># <span class="sort-arrow">▲</span></th>
+                    <th class="td-result sortable" data-sort-key="status" data-sort-type="str" onclick="onHeaderSort(this)">결과 <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="onHeaderSort(this)">파일명 <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="atime" data-sort-type="num" onclick="onHeaderSort(this)">분석 시간 <span class="sort-arrow">▲</span></th>
+                    <th class="col-hide-sm sortable" data-sort-key="heap" data-sort-type="num" onclick="onHeaderSort(this)">힙 사용량 <span class="sort-arrow">▲</span></th>
+                    <th class="col-hide-sm sortable" data-sort-key="suspects" data-sort-type="num" onclick="onHeaderSort(this)">Suspects <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="size" data-sort-type="num" onclick="onHeaderSort(this)">파일 크기 <span class="sort-arrow">▲</span></th>
+                    <th class="col-hide-sm sortable" data-sort-key="server" data-sort-type="str" onclick="onHeaderSort(this)">서버 <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="date" data-sort-type="num" onclick="onHeaderSort(this)">날짜 <span class="sort-arrow">▲</span></th>
                     <th>작업</th>
                 </tr>
             </thead>
             <tbody id="historyTableBody">
                 <tr th:each="h : ${analysisHistory}" th:classappend="${h.fileDeleted} ? 'hi-deleted'"
-                    th:data-name="${h.filename}">
-                    <td class="td-status">
-                        <span class="hdot hd-ok"  th:if="${h.status == 'SUCCESS'}"></span>
-                        <span class="hdot hd-err" th:if="${h.status == 'ERROR'}"></span>
+                    th:data-name="${h.filename}" th:data-deleted="${h.fileDeleted}"
+                    th:attr="data-sort-id=${h.id != null ? h.id : 0},
+                             data-sort-status=${h.status},
+                             data-sort-atime=${h.analysisTime},
+                             data-sort-heap=${h.heapUsedBytes},
+                             data-sort-suspects=${h.suspectCount},
+                             data-sort-size=${h.sizeBytes},
+                             data-sort-server=${h.serverName != null ? h.serverName : ''},
+                             data-sort-date=${h.lastModified}">
+                    <td class="td-check"><input type="checkbox" class="row-check" th:value="${h.filename}" onchange="onRowCheck()"></td>
+                    <td class="td-seq" th:text="${h.id}">1</td>
+                    <td class="td-result">
+                        <span class="hi-badge hb-ok" th:if="${h.status == 'SUCCESS'}">success</span>
+                        <span class="hi-badge hb-err" th:if="${h.status == 'ERROR'}">failed</span>
+                        <span class="hi-badge hb-del" th:if="${h.fileDeleted}">deleted</span>
                     </td>
                     <td>
                         <a th:if="${h.status == 'SUCCESS'}"
@@ -181,9 +294,6 @@
                         <a th:if="${h.status == 'ERROR'}"
                            th:href="@{/analyze/result/{f}(f=${h.filename})}"
                            class="hi-name hi-name-err" th:text="${h.filename}">dump.hprof</a>
-                        <span class="hi-badge hb-ok" th:if="${h.status == 'SUCCESS'}">success</span>
-                        <span class="hi-badge hb-err" th:if="${h.status == 'ERROR'}">failed</span>
-                        <span class="hi-badge hb-del" th:if="${h.fileDeleted}">deleted</span>
                     </td>
                     <td class="td-meta" th:text="${h.formattedAnalysisTime}">-</td>
                     <td class="td-meta col-hide-sm" th:text="${h.heapUsed != null ? h.heapUsed : '-'}">-</td>
@@ -206,6 +316,10 @@
             </tbody>
         </table>
         <div class="no-match" id="noMatch">No results matching your search.</div>
+        <div class="pagination-bar" id="paginationBar">
+            <div class="pg-info" id="pgInfo">-</div>
+            <div class="pg-list" id="pgList"></div>
+        </div>
     </div>
 </div>
 
@@ -227,6 +341,59 @@
         <div class="modal-btns">
             <button class="mbtn-cancel" onclick="closeDeleteModal()">취소</button>
             <button class="mbtn-del" id="deleteLinkBtn" onclick="submitDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<!-- 다중 선택 액션 바 (하단 고정) -->
+<div class="select-action-bar" id="selectActionBar">
+    <div class="sa-info"><strong id="saCount">0</strong>건 선택됨</div>
+    <div class="sa-btns">
+        <button class="sa-btn sa-btn-cancel" onclick="exitSelectMode()">취소</button>
+        <button class="sa-btn sa-btn-del" id="saDelBtn" onclick="openBulkDeleteModal()" disabled>선택 삭제</button>
+    </div>
+</div>
+
+<!-- 일괄 삭제 확인 모달 -->
+<div class="modal-ov" id="bulkDeleteModal" onclick="if(event.target===this)closeBulkDeleteModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">선택 항목 일괄 삭제</div>
+        <div class="modal-msg"><strong id="bulkDelCount">0</strong>건의 분석 히스토리를 삭제합니다.<br>분석 결과 데이터가 함께 삭제됩니다.</div>
+        <label class="modal-chk">
+            <input type="checkbox" id="bulkDelHeapDumpChk">
+            힙덤프 파일도 함께 삭제
+        </label>
+        <div class="modal-chk-desc">원본 힙덤프 파일(.hprof)도 함께 삭제합니다. (이미 삭제된 파일은 건너뜀)</div>
+        <div class="modal-warn">⚠ 이 작업은 되돌릴 수 없습니다.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeBulkDeleteModal()">취소</button>
+            <button class="mbtn-del" id="bulkDelConfirmBtn" onclick="submitBulkDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<!-- Export 모달 -->
+<div class="modal-ov" id="exportHistoryModal" onclick="if(event.target===this)closeExportHistory()">
+    <div class="modal-box">
+        <div class="modal-ttl">Export Analysis History</div>
+        <div class="modal-msg">분석 이력 전체를 JSON 파일로 다운로드합니다.</div>
+        <div style="background:#f9fafb;border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px">
+            <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                <span style="color:#6b7280">Filename</span>
+                <span style="font-weight:700">heap-history.json</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+                <span style="color:#6b7280">Records</span>
+                <span style="font-weight:700" th:text="${totalCount}">0</span>
+            </div>
+            <div style="display:flex;justify-content:space-between">
+                <span style="color:#6b7280">Format</span>
+                <span style="font-weight:700">JSON</span>
+            </div>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeExportHistory()">취소</button>
+            <button class="mbtn-del" style="background:#2563EB" onclick="doExportHistory()">Download</button>
         </div>
     </div>
 </div>
@@ -272,18 +439,292 @@ document.getElementById('deleteModal').addEventListener('click', function(e) {
     if (e.target === this) closeDeleteModal();
 });
 
-function filterItems() {
-    var q = document.getElementById('searchInput').value.toLowerCase();
-    var items = document.querySelectorAll('#historyTableBody tr');
-    var visible = 0;
-    items.forEach(function(el) {
-        var name = el.getAttribute('data-name').toLowerCase();
-        var show = name.indexOf(q) !== -1;
-        el.style.display = show ? '' : 'none';
-        if (show) visible++;
-    });
-    document.getElementById('noMatch').style.display = visible === 0 ? 'block' : 'none';
+// ── 다중 선택 모드 ────────────────────────────────────────────
+var _selectMode = false;
+
+function toggleSelectMode() {
+    _selectMode = !_selectMode;
+    var table = document.getElementById('historyTable');
+    var btn = document.getElementById('selectModeBtn');
+    var label = document.getElementById('selectModeBtnLabel');
+    var bar = document.getElementById('selectActionBar');
+    if (!table) return;
+    if (_selectMode) {
+        table.classList.add('select-mode');
+        btn.classList.add('active');
+        label.textContent = '선택 종료';
+        bar.classList.add('show');
+        updateSelectionCount();
+    } else {
+        exitSelectMode();
+    }
 }
+
+function exitSelectMode() {
+    _selectMode = false;
+    var table = document.getElementById('historyTable');
+    if (table) table.classList.remove('select-mode');
+    document.getElementById('selectModeBtn').classList.remove('active');
+    document.getElementById('selectModeBtnLabel').textContent = '선택';
+    document.getElementById('selectActionBar').classList.remove('show');
+    document.querySelectorAll('.row-check').forEach(function(c) { c.checked = false; });
+    var all = document.getElementById('allCheck');
+    if (all) { all.checked = false; all.indeterminate = false; }
+}
+
+function getSelectedFilenames() {
+    var sel = [];
+    document.querySelectorAll('#historyTableBody tr').forEach(function(tr) {
+        if (tr.style.display === 'none') return; // 페이지/필터/검색 가시 행만
+        var c = tr.querySelector('.row-check');
+        if (c && c.checked) sel.push(c.value);
+    });
+    return sel;
+}
+
+function updateSelectionCount() {
+    var n = getSelectedFilenames().length;
+    document.getElementById('saCount').textContent = n;
+    document.getElementById('saDelBtn').disabled = (n === 0);
+    // all-check 상태 업데이트 (현재 페이지의 표시된 행만 기준)
+    var visible = [];
+    document.querySelectorAll('#historyTableBody tr').forEach(function(tr) {
+        if (tr.style.display === 'none') return;
+        var c = tr.querySelector('.row-check');
+        if (c) visible.push(c);
+    });
+    var all = document.getElementById('allCheck');
+    if (all) {
+        var checkedCount = visible.filter(function(c) { return c.checked; }).length;
+        all.checked = (visible.length > 0 && checkedCount === visible.length);
+        all.indeterminate = (checkedCount > 0 && checkedCount < visible.length);
+    }
+}
+
+function onRowCheck() { updateSelectionCount(); }
+
+function onSelectAll() {
+    var checked = document.getElementById('allCheck').checked;
+    document.querySelectorAll('#historyTableBody tr').forEach(function(tr) {
+        if (tr.style.display === 'none') return;
+        var c = tr.querySelector('.row-check');
+        if (c) c.checked = checked;
+    });
+    updateSelectionCount();
+}
+
+function openBulkDeleteModal() {
+    var sel = getSelectedFilenames();
+    if (sel.length === 0) return;
+    document.getElementById('bulkDelCount').textContent = sel.length;
+    document.getElementById('bulkDelHeapDumpChk').checked = false;
+    document.getElementById('bulkDeleteModal').classList.add('open');
+}
+function closeBulkDeleteModal() { document.getElementById('bulkDeleteModal').classList.remove('open'); }
+
+function submitBulkDelete() {
+    var sel = getSelectedFilenames();
+    if (sel.length === 0) return;
+    var deleteHeapDump = document.getElementById('bulkDelHeapDumpChk').checked;
+    var btn = document.getElementById('bulkDelConfirmBtn');
+    btn.disabled = true; btn.textContent = '삭제 중...';
+    var headers = { 'Content-Type': 'application/json' };
+    var csrfMeta = document.querySelector('meta[name="_csrf"]');
+    var csrfHeaderMeta = document.querySelector('meta[name="_csrf_header"]');
+    if (csrfMeta && csrfHeaderMeta) headers[csrfHeaderMeta.content] = csrfMeta.content;
+    fetch('/api/history/bulk-delete', {
+        method: 'POST', headers: headers,
+        body: JSON.stringify({ filenames: sel, deleteHeapDump: deleteHeapDump })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        closeBulkDeleteModal();
+        if (d.failed > 0) alert('삭제 완료: ' + d.success + '건, 실패: ' + d.failed + '건\n' + (d.errors || []).join('\n'));
+        location.reload();
+    }).catch(function(e) {
+        btn.disabled = false; btn.textContent = '삭제';
+        alert('일괄 삭제 실패: ' + e.message);
+    });
+}
+
+// ── Export History ────────────────────────────────────────────
+function openExportHistory() { document.getElementById('exportHistoryModal').classList.add('open'); }
+function closeExportHistory() { document.getElementById('exportHistoryModal').classList.remove('open'); }
+function doExportHistory() {
+    closeExportHistory();
+    fetch('/api/history').then(function(r) { return r.json(); }).then(function(d) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([JSON.stringify(d, null, 2)], { type: 'application/json' }));
+        a.download = 'heap-history.json';
+        a.click();
+    }).catch(function() { alert('Failed to export history.'); });
+}
+
+// ── 검색 + 페이지네이션 + 정렬 ────────────────────────────────
+var _allRows = [];
+var _filteredRows = [];
+var _pageSize = 20;
+var _currentPage = 1;
+var _showDeleted = false;
+var _sortKey = 'date';   // 기본: 날짜 내림차순 (최신 → 오래된)
+var _sortDir = 'desc';
+var _sortType = 'num';
+
+function initRows() {
+    _allRows = Array.prototype.slice.call(document.querySelectorAll('#historyTableBody tr'));
+    var saved = parseInt(localStorage.getItem('historyPageSize') || '20', 10);
+    if ([20, 30, 50, 100].indexOf(saved) !== -1) {
+        _pageSize = saved;
+        document.getElementById('pageSizeSelect').value = String(saved);
+    }
+    var chk = document.getElementById('showDeletedChk');
+    if (chk) {
+        _showDeleted = localStorage.getItem('historyShowDeleted') === 'true';
+        chk.checked = _showDeleted;
+    }
+    sortRows();          // 기본 정렬 적용
+    updateSortIndicators();
+    applyFilter();
+}
+
+function onHeaderSort(th) {
+    var key = th.getAttribute('data-sort-key');
+    var type = th.getAttribute('data-sort-type') || 'str';
+    if (_sortKey === key) {
+        _sortDir = (_sortDir === 'asc') ? 'desc' : 'asc';
+    } else {
+        _sortKey = key;
+        _sortType = type;
+        _sortDir = 'asc';
+    }
+    _sortType = type;
+    sortRows();
+    updateSortIndicators();
+    applyFilter();
+}
+
+function sortRows() {
+    var key = 'data-sort-' + _sortKey;
+    var dir = _sortDir === 'asc' ? 1 : -1;
+    var isNum = _sortType === 'num';
+    _allRows.sort(function(a, b) {
+        var va = (_sortKey === 'name') ? (a.getAttribute('data-name') || '') : (a.getAttribute(key) || '');
+        var vb = (_sortKey === 'name') ? (b.getAttribute('data-name') || '') : (b.getAttribute(key) || '');
+        if (isNum) { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; return (va - vb) * dir; }
+        return va.localeCompare(vb, 'ko') * dir;
+    });
+    var tbody = document.getElementById('historyTableBody');
+    if (tbody) _allRows.forEach(function(r) { tbody.appendChild(r); });
+}
+
+function updateSortIndicators() {
+    document.querySelectorAll('.htable th.sortable').forEach(function(th) {
+        var arrow = th.querySelector('.sort-arrow');
+        if (!arrow) return;
+        if (th.getAttribute('data-sort-key') === _sortKey) {
+            th.classList.add('sort-active');
+            arrow.textContent = (_sortDir === 'asc') ? '▲' : '▼';
+        } else {
+            th.classList.remove('sort-active');
+            arrow.textContent = '▲';
+        }
+    });
+}
+
+function applyFilter() {
+    var q = (document.getElementById('searchInput').value || '').toLowerCase();
+    _filteredRows = _allRows.filter(function(el) {
+        // 관리자: 토글 off일 때 deleted 행 제외 / 비관리자: data-deleted 속성 자체가 없거나 false (서버 측 필터)
+        if (!_showDeleted && el.getAttribute('data-deleted') === 'true') return false;
+        if (q && (el.getAttribute('data-name') || '').toLowerCase().indexOf(q) === -1) return false;
+        return true;
+    });
+    _currentPage = 1;
+    render();
+}
+
+function onSearchInput() { applyFilter(); }
+function onToggleShowDeleted() {
+    _showDeleted = document.getElementById('showDeletedChk').checked;
+    localStorage.setItem('historyShowDeleted', String(_showDeleted));
+    applyFilter();
+}
+
+function onPageSizeChange() {
+    _pageSize = parseInt(document.getElementById('pageSizeSelect').value, 10) || 20;
+    localStorage.setItem('historyPageSize', String(_pageSize));
+    _currentPage = 1;
+    render();
+}
+
+function gotoPage(p) {
+    var total = _filteredRows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
+    if (p < 1) p = 1; if (p > totalPages) p = totalPages;
+    _currentPage = p;
+    render();
+}
+
+function render() {
+    // 모든 row 숨기고, 현재 페이지 row만 표시
+    _allRows.forEach(function(el) { el.style.display = 'none'; });
+    var total = _filteredRows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
+    if (_currentPage > totalPages) _currentPage = totalPages;
+    var start = (_currentPage - 1) * _pageSize;
+    var end = Math.min(start + _pageSize, total);
+    for (var i = start; i < end; i++) _filteredRows[i].style.display = '';
+
+    document.getElementById('noMatch').style.display = total === 0 ? 'block' : 'none';
+    renderPagination(total, totalPages, start, end);
+    if (_selectMode) updateSelectionCount();
+}
+
+function renderPagination(total, totalPages, start, end) {
+    var bar = document.getElementById('paginationBar');
+    if (total <= _pageSize) {
+        bar.classList.remove('show');
+        return;
+    }
+    bar.classList.add('show');
+    document.getElementById('pgInfo').innerHTML =
+        '<strong>' + (total === 0 ? 0 : (start + 1)) + '–' + end + '</strong> / 전체 <strong>' + total + '</strong>건';
+
+    var list = document.getElementById('pgList');
+    list.innerHTML = '';
+    var addBtn = function(label, page, opts) {
+        opts = opts || {};
+        var b = document.createElement('button');
+        b.className = 'pg-btn' + (opts.active ? ' active' : '');
+        b.textContent = label;
+        if (opts.disabled) b.disabled = true;
+        else b.onclick = function() { gotoPage(page); };
+        list.appendChild(b);
+    };
+    var addEllipsis = function() {
+        var s = document.createElement('span');
+        s.className = 'pg-ellipsis'; s.textContent = '…';
+        list.appendChild(s);
+    };
+
+    addBtn('‹', _currentPage - 1, { disabled: _currentPage === 1 });
+
+    // 슬라이딩 윈도우 (현재 페이지 ±2)
+    var pages = new Set([1, totalPages, _currentPage]);
+    for (var d = 1; d <= 2; d++) {
+        if (_currentPage - d >= 1) pages.add(_currentPage - d);
+        if (_currentPage + d <= totalPages) pages.add(_currentPage + d);
+    }
+    var sorted = Array.from(pages).sort(function(a, b) { return a - b; });
+    var prev = 0;
+    sorted.forEach(function(p) {
+        if (p - prev > 1) addEllipsis();
+        addBtn(String(p), p, { active: p === _currentPage });
+        prev = p;
+    });
+
+    addBtn('›', _currentPage + 1, { disabled: _currentPage === totalPages });
+}
+
+initRows();
 </script>
 
 </body>

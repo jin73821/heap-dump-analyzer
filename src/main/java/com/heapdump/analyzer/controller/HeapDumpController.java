@@ -13,6 +13,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.*;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
@@ -90,8 +92,10 @@ public class HeapDumpController {
             .sum();
         model.addAttribute("totalSize", formatBytes(totalBytes));
 
-        // 분석 히스토리 (캐시에서 로드)
-        List<AnalysisHistoryItem> history = buildHistory(files);
+        // 분석 히스토리 (캐시에서 로드) — 대시보드는 deleted 항목 항상 제외 (모든 계정)
+        List<AnalysisHistoryItem> history = buildHistory(files).stream()
+            .filter(h -> !h.isFileDeleted())
+            .collect(Collectors.toList());
         int maxDisplay = config.getDashboardHistoryMaxDisplay();
         model.addAttribute("analysisHistory",
             history.size() > maxDisplay ? history.subList(0, maxDisplay) : history);
@@ -175,10 +179,16 @@ public class HeapDumpController {
     // ── 전체 파일 목록 ────────────────────────────────────────────
 
     @GetMapping("/files")
-    public String filesPage(Model model) {
+    public String filesPage(Model model, Authentication authentication) {
+        boolean isAdmin = isAdmin(authentication);
         List<HeapDumpFile> files = analyzerService.listFiles();
         List<AnalysisHistoryItem> history = buildHistory(files);
-        model.addAttribute("analysisHistory", history);
+
+        // 비관리자: deleted 기록 제외
+        List<AnalysisHistoryItem> visible = isAdmin ? history :
+                history.stream().filter(h -> !h.isFileDeleted()).collect(Collectors.toList());
+        model.addAttribute("analysisHistory", visible);
+        model.addAttribute("isAdmin", isAdmin);
         model.addAttribute("fileCount", files.size());
 
         long originalBytes = files.stream().mapToLong(HeapDumpFile::getSize).sum();
@@ -189,7 +199,7 @@ public class HeapDumpController {
         model.addAttribute("diskSize", formatBytes(diskBytes));
         model.addAttribute("hasCompressed", originalBytes != diskBytes);
 
-        long analyzedCount = history.stream()
+        long analyzedCount = visible.stream()
             .filter(h -> "SUCCESS".equals(h.getStatus())).count();
         model.addAttribute("analyzedCount", analyzedCount);
 
@@ -199,25 +209,38 @@ public class HeapDumpController {
     // ── 분석 이력 페이지 ─────────────────────────────────────────
 
     @GetMapping("/history")
-    public String historyPage(Model model) {
+    public String historyPage(Model model, Authentication authentication) {
+        boolean isAdmin = isAdmin(authentication);
         List<HeapDumpFile> files = analyzerService.listFiles();
         List<AnalysisHistoryItem> history = buildHistory(files);
 
-        // 분석 수행된 항목만 필터 (SUCCESS + ERROR)
+        // 분석 수행된 항목만 필터 (SUCCESS + ERROR), 비관리자는 deleted 제외
         List<AnalysisHistoryItem> analysisOnly = history.stream()
             .filter(h -> "SUCCESS".equals(h.getStatus()) || "ERROR".equals(h.getStatus()))
+            .filter(h -> isAdmin || !h.isFileDeleted())
             .collect(Collectors.toList());
         model.addAttribute("analysisHistory", analysisOnly);
+        model.addAttribute("isAdmin", isAdmin);
 
         long successCount = analysisOnly.stream()
             .filter(h -> "SUCCESS".equals(h.getStatus())).count();
         long errorCount = analysisOnly.stream()
             .filter(h -> "ERROR".equals(h.getStatus())).count();
+        long deletedCount = analysisOnly.stream().filter(AnalysisHistoryItem::isFileDeleted).count();
         model.addAttribute("totalCount", analysisOnly.size());
         model.addAttribute("successCount", successCount);
         model.addAttribute("errorCount", errorCount);
+        model.addAttribute("deletedCount", deletedCount);
 
         return "history";
+    }
+
+    private boolean isAdmin(Authentication authentication) {
+        if (authentication == null) return false;
+        for (GrantedAuthority a : authentication.getAuthorities()) {
+            if ("ROLE_ADMIN".equals(a.getAuthority())) return true;
+        }
+        return false;
     }
 
     // ── 설정 페이지 ─────────────────────────────────────────────
@@ -236,9 +259,63 @@ public class HeapDumpController {
 
     // ── 히스토리 삭제 ────────────────────────────────────────────
 
+    @PostMapping("/api/history/bulk-delete")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> bulkDeleteHistory(@RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<String> filenames = (List<String>) body.getOrDefault("filenames", java.util.Collections.emptyList());
+        boolean deleteHeapDump = Boolean.TRUE.equals(body.get("deleteHeapDump"));
+        int success = 0, failed = 0;
+        List<String> errors = new ArrayList<>();
+        for (String raw : filenames) {
+            try {
+                String safe = FilenameValidator.validate(raw);
+                analyzerService.deleteHistory(safe, deleteHeapDump);
+                success++;
+            } catch (Exception e) {
+                failed++;
+                errors.add(raw + ": " + e.getMessage());
+                logger.warn("[BulkDeleteHistory] Failed for '{}': {}", raw, e.getMessage());
+            }
+        }
+        logger.info("[BulkDeleteHistory] success={}, failed={}, deleteHeapDump={}", success, failed, deleteHeapDump);
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("success", success);
+        resp.put("failed", failed);
+        resp.put("errors", errors);
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/api/files/bulk-delete")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> bulkDeleteFiles(@RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<String> filenames = (List<String>) body.getOrDefault("filenames", java.util.Collections.emptyList());
+        int success = 0, failed = 0;
+        List<String> errors = new ArrayList<>();
+        for (String raw : filenames) {
+            try {
+                String safe = FilenameValidator.validate(raw);
+                analyzerService.deleteFile(safe);
+                success++;
+            } catch (Exception e) {
+                failed++;
+                errors.add(raw + ": " + e.getMessage());
+                logger.warn("[BulkDeleteFile] Failed for '{}': {}", raw, e.getMessage());
+            }
+        }
+        logger.info("[BulkDeleteFile] success={}, failed={}", success, failed);
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("success", success);
+        resp.put("failed", failed);
+        resp.put("errors", errors);
+        return ResponseEntity.ok(resp);
+    }
+
     @PostMapping("/history/delete/{filename:.+}")
     public String deleteHistory(@PathVariable String filename,
                                 @RequestParam(value = "deleteHeapDump", defaultValue = "false") boolean deleteHeapDump,
+                                @RequestHeader(value = "Referer", required = false) String referer,
                                 RedirectAttributes redirectAttributes) {
         filename = FilenameValidator.validate(filename);
         logger.info("[DeleteHistory] Request received: filename={}, deleteHeapDump={}", filename, deleteHeapDump);
@@ -249,6 +326,9 @@ public class HeapDumpController {
         } catch (IOException e) {
             logger.error("[DeleteHistory] Failed for '{}': {}", filename, e.getMessage());
             redirectAttributes.addFlashAttribute("error", "히스토리 삭제 실패: " + e.getMessage());
+        }
+        if (referer != null && referer.contains("/files")) {
+            return "redirect:/files";
         }
         return "redirect:/history";
     }
@@ -787,9 +867,13 @@ public class HeapDumpController {
 
     @GetMapping("/compare")
     public String compareDumps(
-            @RequestParam String base,
-            @RequestParam String target,
+            @RequestParam(required = false) String base,
+            @RequestParam(required = false) String target,
             Model model) {
+        // 파라미터 없이 진입하면 파일 선택 화면을 노출
+        if (base == null || target == null || base.isEmpty() || target.isEmpty()) {
+            return "compare";
+        }
         base = FilenameValidator.validate(base);
         target = FilenameValidator.validate(target);
 
@@ -1657,28 +1741,40 @@ public class HeapDumpController {
         for (AnalysisHistoryEntity e : dbEntries) {
             processedNames.add(e.getFilename());
             AnalysisHistoryItem item = new AnalysisHistoryItem();
+            item.setId(e.getId());
             item.setFilename(e.getFilename());
             item.setStatus(e.getStatus());
             item.setSuspectCount(e.getSuspectCount() != null ? e.getSuspectCount() : 0);
             item.setAnalysisTime(e.getAnalysisTimeMs() != null ? e.getAnalysisTimeMs() : 0);
             item.setFormattedAnalysisTime(formatDuration(item.getAnalysisTime()));
             item.setHeapUsed(e.getUsedHeapSize() != null ? formatBytes(e.getUsedHeapSize()) : "-");
+            item.setHeapUsedBytes(e.getUsedHeapSize() != null ? e.getUsedHeapSize() : 0);
             item.setServerName(e.getServerName());
 
             HeapDumpFile file = fileMap.get(e.getFilename());
             if (file != null) {
                 item.setFileDeleted(false);
                 item.setFormattedSize(file.getFormattedSize());
+                item.setSizeBytes(file.getSize());
                 item.setFormattedDate(sdf.format(new Date(file.getLastModified())));
                 item.setLastModified(file.getLastModified());
                 item.setCompressed(file.isCompressed());
                 if (file.isCompressed()) {
                     item.setFormattedOriginalSize(file.getFormattedOriginalSize());
                     item.setFormattedCompressedSize(file.getFormattedCompressedSize());
+                    item.setOriginalSizeBytes(file.getOriginalSize() > 0 ? file.getOriginalSize() : file.getSize());
+                    item.setCompressedSizeBytes(file.getCompressedSize());
+                } else {
+                    item.setOriginalSizeBytes(file.getSize());
+                    item.setCompressedSizeBytes(0);
                 }
             } else {
                 item.setFileDeleted(true);
+                long fb = e.getFileSize() != null ? e.getFileSize() : 0;
                 item.setFormattedSize(e.getFileSize() != null ? formatBytes(e.getFileSize()) : "-");
+                item.setSizeBytes(fb);
+                item.setOriginalSizeBytes(e.getOriginalFileSize() != null ? e.getOriginalFileSize() : fb);
+                item.setCompressedSizeBytes(0);
                 item.setFormattedDate(e.getAnalyzedAt() != null
                         ? e.getAnalyzedAt().format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")) : "-");
                 item.setLastModified(e.getAnalyzedAt() != null
@@ -1696,6 +1792,7 @@ public class HeapDumpController {
             AnalysisHistoryItem item = new AnalysisHistoryItem();
             item.setFilename(file.getName());
             item.setFormattedSize(file.getFormattedSize());
+            item.setSizeBytes(file.getSize());
             item.setFormattedDate(sdf.format(new Date(file.getLastModified())));
             item.setLastModified(file.getLastModified());
             item.setFileDeleted(false);
@@ -1703,6 +1800,11 @@ public class HeapDumpController {
             if (file.isCompressed()) {
                 item.setFormattedOriginalSize(file.getFormattedOriginalSize());
                 item.setFormattedCompressedSize(file.getFormattedCompressedSize());
+                item.setOriginalSizeBytes(file.getOriginalSize() > 0 ? file.getOriginalSize() : file.getSize());
+                item.setCompressedSizeBytes(file.getCompressedSize());
+            } else {
+                item.setOriginalSizeBytes(file.getSize());
+                item.setCompressedSizeBytes(0);
             }
             if (result != null) {
                 item.setStatus(result.getAnalysisStatus().name());
@@ -1768,14 +1870,19 @@ public class HeapDumpController {
     // ── Inner DTOs ────────────────────────────────────────────────
 
     public static class AnalysisHistoryItem {
+        private Long    id;
         private String  filename;
         private String  formattedSize;
+        private long    sizeBytes;
+        private long    originalSizeBytes;
+        private long    compressedSizeBytes;
         private String  formattedDate;
         private String  status;
         private int     suspectCount;
         private long    analysisTime;
         private String  formattedAnalysisTime;
         private String  heapUsed;
+        private long    heapUsedBytes;
         private boolean fileDeleted;
         private long    lastModified;
         private boolean compressed;
@@ -1785,6 +1892,16 @@ public class HeapDumpController {
         private boolean hasAiInsight;
         private String  aiInsightSeverity;
 
+        public Long    getId()            { return id; }
+        public void    setId(Long v)              { id = v; }
+        public long    getSizeBytes()       { return sizeBytes; }
+        public void    setSizeBytes(long v)         { sizeBytes = v; }
+        public long    getOriginalSizeBytes()   { return originalSizeBytes; }
+        public void    setOriginalSizeBytes(long v) { originalSizeBytes = v; }
+        public long    getCompressedSizeBytes() { return compressedSizeBytes; }
+        public void    setCompressedSizeBytes(long v) { compressedSizeBytes = v; }
+        public long    getHeapUsedBytes()   { return heapUsedBytes; }
+        public void    setHeapUsedBytes(long v)     { heapUsedBytes = v; }
         public String  getFilename()      { return filename; }
         public void    setFilename(String v)      { filename = v; }
         public String  getFormattedSize() { return formattedSize; }

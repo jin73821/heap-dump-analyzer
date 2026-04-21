@@ -37,9 +37,54 @@
         .page-stat { font-size: 12px; color: #6B7280; }
         .page-stat strong { color: #1F2937; }
         .search-bar { width: 100%; padding: 10px 14px; border: 1px solid #E5E7EB;
-                      border-radius: 8px; font-size: 13px; margin-bottom: 16px;
+                      border-radius: 8px; font-size: 13px;
                       outline: none; background: #fff; }
         .search-bar:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .table-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .table-toolbar .search-bar { flex: 1; }
+        .page-size-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .page-size-label { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .page-size-select { padding: 8px 28px 8px 10px; font-size: 13px; border: 1px solid #E5E7EB;
+                            border-radius: 8px; background: #fff; color: #1F2937; cursor: pointer;
+                            outline: none; appearance: none; -webkit-appearance: none;
+                            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+                            background-repeat: no-repeat; background-position: right 10px center; }
+        .page-size-select:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .deleted-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px;
+                          font-size: 12px; color: #6B7280; cursor: pointer; user-select: none;
+                          border: 1px solid #E5E7EB; border-radius: 8px; background: #fff; flex-shrink: 0; }
+        .deleted-toggle:hover { border-color: #D1D5DB; background: #F9FAFB; }
+        .deleted-toggle input[type=checkbox] { width: 14px; height: 14px; accent-color: #6B7280; cursor: pointer; }
+        .select-toggle-btn { padding: 7px 12px; font-size: 12px; color: #374151; background: #fff;
+                             border: 1px solid #E5E7EB; border-radius: 8px; cursor: pointer;
+                             display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .select-toggle-btn:hover { border-color: #93C5FD; background: #F9FAFB; }
+        .select-toggle-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+        .select-toggle-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
+        .td-check { width: 38px; text-align: center; display: none; }
+        .ftable.select-mode .td-check { display: table-cell; }
+        .row-check, .all-check { width: 15px; height: 15px; accent-color: #2563EB; cursor: pointer; vertical-align: middle; }
+        .select-action-bar { position: fixed; left: var(--banner-w, 220px); right: 0; bottom: 0; z-index: 90;
+                             background: #fff; border-top: 1px solid #E5E7EB; padding: 12px 20px;
+                             display: none; align-items: center; justify-content: space-between;
+                             box-shadow: 0 -4px 12px rgba(0,0,0,.06);
+                             transition: left .25s cubic-bezier(.4,0,.2,1); }
+        .select-action-bar.show { display: flex; }
+        .sa-info { font-size: 13px; color: #374151; }
+        .sa-info strong { color: #2563EB; }
+        .sa-btns { display: flex; gap: 8px; }
+        .sa-btn { padding: 8px 16px; font-size: 13px; border-radius: 7px; border: none; cursor: pointer; font-weight: 500; }
+        .sa-btn-cancel { background: #F3F4F6; color: #374151; }
+        .sa-btn-cancel:hover { background: #E5E7EB; }
+        .sa-btn-del { background: #EF4444; color: #fff; }
+        .sa-btn-del:hover { background: #DC2626; }
+        .sa-btn-del:disabled { background: #FCA5A5; cursor: not-allowed; }
+        /* 정렬 가능 헤더 */
+        .ftable th.sortable { cursor: pointer; user-select: none; }
+        .ftable th.sortable:hover { background: #F3F4F6; }
+        .ftable th.sortable .sort-arrow { display: inline-block; margin-left: 4px; opacity: 0.3;
+                                          font-size: 9px; vertical-align: middle; transition: opacity .15s; }
+        .ftable th.sortable.sort-active .sort-arrow { opacity: 1; color: #2563EB; }
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
         .ftable { width: 100%; border-collapse: collapse; font-size: 13px; }
         .ftable thead { background: #F9FAFB; }
@@ -49,11 +94,25 @@
         .ftable td { padding: 10px 12px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
         .ftable tbody tr:last-child td { border-bottom: none; }
         .ftable tbody tr:hover { background: #F9FAFB; }
-        .hdot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-        .hd-ok   { background: #10B981; }
-        .hd-warn { background: #F59E0B; }
-        .hd-err  { background: #EF4444; }
-        .td-status { width: 36px; text-align: center; }
+        .td-seq { width: 48px; text-align: center; color: #9CA3AF; font-size: 12px;
+                  font-variant-numeric: tabular-nums; }
+
+        /* Pagination */
+        .pagination-bar { display: none; align-items: center; justify-content: space-between;
+                          padding: 12px 16px; border-top: 1px solid #E5E7EB; background: #FAFBFC;
+                          flex-wrap: wrap; gap: 8px; }
+        .pagination-bar.show { display: flex; }
+        .pg-info { font-size: 12px; color: #6B7280; }
+        .pg-info strong { color: #1F2937; }
+        .pg-list { display: flex; gap: 4px; align-items: center; }
+        .pg-btn { min-width: 32px; height: 32px; padding: 0 8px; border: 1px solid #E5E7EB;
+                  border-radius: 6px; background: #fff; color: #374151; font-size: 12px;
+                  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+                  font-variant-numeric: tabular-nums; }
+        .pg-btn:hover:not(:disabled):not(.active) { background: #F3F4F6; border-color: #D1D5DB; }
+        .pg-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; cursor: default; }
+        .pg-btn:disabled { color: #D1D5DB; cursor: not-allowed; background: #F9FAFB; }
+        .pg-ellipsis { padding: 0 4px; color: #9CA3AF; font-size: 12px; }
         .fname { font-weight: 500; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .fname-err { color: #DC2626; }
         .fsize { font-size: 12px; color: #6B7280; white-space: nowrap; }
@@ -76,12 +135,6 @@
         .fb.d:hover svg { stroke: #EF4444; }
         .fb svg { width: 12px; height: 12px; stroke: #6B7280; fill: none; stroke-width: 1.5; }
         .no-match { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; display: none; }
-        .legend { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
-        .legend-item { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #6B7280; }
-        .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-        .ld-ok   { background: #10B981; }
-        .ld-warn { background: #F59E0B; }
-        .ld-err  { background: #EF4444; }
         .gz-badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 4px;
                     background: #DBEAFE; color: #1E40AF; font-weight: 600; vertical-align: middle; }
         .fi-deleted { opacity: 0.65; }
@@ -123,11 +176,16 @@
             .topbar { left: 0; }
             .container { padding-left: 20px; }
             .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .select-action-bar { left: 0; }
         }
         @media (max-width: 640px) {
             .ftable .col-date, .ftable .col-compressed { display: none; }
             .page-stats { gap: 10px; }
             .ftable { min-width: 500px; }
+            .table-toolbar { flex-direction: column; align-items: stretch; }
+            .page-size-wrap { justify-content: flex-end; }
+            .pagination-bar { flex-direction: column; align-items: stretch; }
+            .pg-list { justify-content: center; flex-wrap: wrap; }
         }
     </style>
 </head>
@@ -157,37 +215,53 @@
         </div>
     </div>
 
-    <div class="legend">
-        <div class="legend-item"><div class="legend-dot ld-ok"></div>분석 완료</div>
-        <div class="legend-item"><div class="legend-dot ld-warn"></div>미분석</div>
-        <div class="legend-item"><div class="legend-dot ld-err"></div>분석 오류</div>
+    <div class="table-toolbar">
+        <input type="text" class="search-bar" id="searchInput"
+               placeholder="Search files..." oninput="onSearchInput()">
+        <button type="button" class="select-toggle-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="다중 선택 모드">
+            <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            <span id="selectModeBtnLabel">선택</span>
+        </button>
+        <label th:if="${isAdmin}" class="deleted-toggle" id="deletedToggleWrap" title="삭제된 파일의 분석 기록 표시 여부 (관리자 전용)">
+            <input type="checkbox" id="showDeletedChk" onchange="onToggleShowDeleted()">
+            <span>deleted 표시</span>
+        </label>
+        <div class="page-size-wrap">
+            <span class="page-size-label">행 표시</span>
+            <select class="page-size-select" id="pageSizeSelect" onchange="onPageSizeChange()">
+                <option value="20" selected>20</option>
+                <option value="30">30</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+        </div>
     </div>
 
-    <input type="text" class="search-bar" id="searchInput"
-           placeholder="Search files..." oninput="filterFiles()">
-
     <div class="panel">
-        <table class="ftable">
+        <table class="ftable" id="filesTable">
             <thead>
                 <tr>
-                    <th class="td-status">상태</th>
-                    <th>파일명</th>
-                    <th>원본 크기</th>
-                    <th class="col-compressed">압축 크기</th>
-                    <th>AI 인사이트</th>
-                    <th class="col-date">날짜</th>
+                    <th class="td-check"><input type="checkbox" class="all-check" id="allCheck" onchange="onSelectAll()"></th>
+                    <th class="td-seq sortable" data-sort-key="id" data-sort-type="num" onclick="onHeaderSort(this)"># <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="onHeaderSort(this)">파일명 <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="osize" data-sort-type="num" onclick="onHeaderSort(this)">원본 크기 <span class="sort-arrow">▲</span></th>
+                    <th class="col-compressed sortable" data-sort-key="csize" data-sort-type="num" onclick="onHeaderSort(this)">압축 크기 <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="ai" data-sort-type="num" onclick="onHeaderSort(this)">AI 인사이트 <span class="sort-arrow">▲</span></th>
+                    <th class="col-date sortable" data-sort-key="date" data-sort-type="num" onclick="onHeaderSort(this)">날짜 <span class="sort-arrow">▲</span></th>
                     <th>작업</th>
                 </tr>
             </thead>
             <tbody id="fileTableBody">
                 <tr th:each="h : ${analysisHistory}" th:classappend="${h.fileDeleted} ? 'fi-deleted'"
-                    th:data-name="${h.filename}">
-                    <td class="td-status">
-                        <span class="hdot hd-ok"   th:if="${h.status == 'SUCCESS'}"></span>
-                        <span class="hdot hd-err"  th:if="${h.status == 'ERROR'}"></span>
-                        <span class="hdot hd-warn" th:if="${h.status == 'NOT_ANALYZED'}"></span>
-                        <span class="hdot hd-warn" th:unless="${h.status == 'SUCCESS' or h.status == 'ERROR' or h.status == 'NOT_ANALYZED'}"></span>
-                    </td>
+                    th:data-name="${h.filename}" th:data-deleted="${h.fileDeleted}"
+                    th:attr="data-sort-id=${h.id != null ? h.id : 0},
+                             data-sort-osize=${h.originalSizeBytes},
+                             data-sort-csize=${h.compressedSizeBytes},
+                             data-sort-ai=${h.hasAiInsight ? (h.aiInsightSeverity == 'critical' ? 4 : (h.aiInsightSeverity == 'warning' ? 3 : (h.aiInsightSeverity == 'info' ? 2 : 1))) : 0},
+                             data-sort-date=${h.lastModified}">
+                    <td class="td-check"><input type="checkbox" class="row-check" th:value="${h.filename}"
+                                                th:data-deleted="${h.fileDeleted}" onchange="onRowCheck()"></td>
+                    <td class="td-seq" th:text="${h.id != null ? h.id : '-'}">1</td>
                     <td>
                         <span class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</span>
                         <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
@@ -241,12 +315,46 @@
                                onclick="confirmDelete(this.dataset.filename);return false;">
                                 <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                             </a>
+                            <a th:if="${h.fileDeleted and isAdmin}" href="#" class="fb d" title="기록 영구 삭제 (관리자)"
+                               th:data-filename="${h.filename}"
+                               onclick="confirmPurge(this.dataset.filename);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
+                            </a>
                         </div>
                     </td>
                 </tr>
             </tbody>
         </table>
         <div class="no-match" id="noMatch">No files matching your search.</div>
+        <div class="pagination-bar" id="paginationBar">
+            <div class="pg-info" id="pgInfo">-</div>
+            <div class="pg-list" id="pgList"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 다중 선택 액션 바 -->
+<div class="select-action-bar" id="selectActionBar">
+    <div class="sa-info"><strong id="saCount">0</strong>건 선택됨</div>
+    <div class="sa-btns">
+        <button class="sa-btn sa-btn-cancel" onclick="exitSelectMode()">취소</button>
+        <button class="sa-btn sa-btn-del" id="saDelBtn" onclick="openBulkDeleteModal()" disabled>선택 삭제</button>
+    </div>
+</div>
+
+<!-- 일괄 삭제 확인 모달 -->
+<div class="modal-ov" id="bulkDeleteModal" onclick="if(event.target===this)closeBulkDeleteModal()">
+    <div class="modal-box">
+        <h3>선택 항목 일괄 삭제</h3>
+        <p>선택한 <strong id="bulkDelCount">0</strong>건의 파일을 삭제합니다.<br>
+           힙덤프 파일이 삭제되며 분석 결과는 보존됩니다.<br>
+           <span id="bulkDelDeletedNote" style="display:none;color:#9CA3AF;font-size:11px">(이미 deleted된 항목은 분석 기록도 영구 삭제됩니다 — 관리자)</span><br>
+           <span style="color:#DC2626;font-size:11px">⚠ 이 작업은 되돌릴 수 없습니다.</span>
+        </p>
+        <div class="modal-btns">
+            <button class="btn-cancel" onclick="closeBulkDeleteModal()">취소</button>
+            <button class="btn-delete" id="bulkDelConfirmBtn" onclick="submitBulkDelete()">삭제</button>
+        </div>
     </div>
 </div>
 
@@ -258,6 +366,20 @@
         <div class="modal-btns">
             <button class="btn-cancel" onclick="closeDeleteModal()">취소</button>
             <button class="btn-delete" id="btnConfirmDel">삭제</button>
+        </div>
+    </div>
+</div>
+
+<!-- Purge confirm modal (관리자 전용 - 이미 deleted된 기록 영구 삭제) -->
+<div class="modal-ov" id="purgeModal">
+    <div class="modal-box">
+        <h3>분석 기록 영구 삭제</h3>
+        <p>이미 힙덤프 파일이 삭제된 항목입니다.<br>
+           <strong id="purgeFileName"></strong> 의 분석 기록을 DB에서 완전히 제거합니다.<br>
+           <span style="color:#DC2626;font-size:11px">⚠ 이 작업은 되돌릴 수 없습니다.</span></p>
+        <div class="modal-btns">
+            <button class="btn-cancel" onclick="closePurgeModal()">취소</button>
+            <button class="btn-delete" id="btnConfirmPurge">기록 삭제</button>
         </div>
     </div>
 </div>
@@ -303,6 +425,31 @@ document.getElementById('btnConfirmDel').onclick = function() {
         document.body.appendChild(f); f.submit();
     }
 };
+
+// ── Purge (관리자 전용 - deleted 기록 영구 삭제) ──
+var _purgeTarget = '';
+function confirmPurge(filename) {
+    _purgeTarget = filename;
+    document.getElementById('purgeFileName').textContent = filename;
+    document.getElementById('purgeModal').classList.add('open');
+}
+function closePurgeModal() {
+    document.getElementById('purgeModal').classList.remove('open');
+    _purgeTarget = '';
+}
+document.getElementById('btnConfirmPurge').onclick = function() {
+    if (_purgeTarget) {
+        var f = document.createElement('form');
+        f.method = 'POST'; f.action = '/history/delete/' + encodeURIComponent(_purgeTarget); f.style.display = 'none';
+        var ci = document.createElement('input'); ci.type = 'hidden'; ci.name = '_csrf';
+        ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(ci);
+        document.body.appendChild(f); f.submit();
+    }
+};
+document.getElementById('purgeModal').addEventListener('click', function(e) {
+    if (e.target === this) closePurgeModal();
+});
+
 document.getElementById('deleteModal').addEventListener('click', function(e) {
     if (e.target === this) closeDeleteModal();
 });
@@ -325,18 +472,292 @@ document.getElementById('btnConfirmDl').onclick = function() {
     }
 };
 
-function filterFiles() {
-    var q = document.getElementById('searchInput').value.toLowerCase();
-    var items = document.querySelectorAll('#fileTableBody tr');
-    var visible = 0;
-    items.forEach(function(el) {
-        var name = el.getAttribute('data-name').toLowerCase();
-        var show = name.indexOf(q) !== -1;
-        el.style.display = show ? '' : 'none';
-        if (show) visible++;
-    });
-    document.getElementById('noMatch').style.display = visible === 0 ? 'block' : 'none';
+// ── 다중 선택 모드 ────────────────────────────────────────────
+var _selectMode = false;
+
+function toggleSelectMode() {
+    _selectMode = !_selectMode;
+    var table = document.getElementById('filesTable');
+    var btn = document.getElementById('selectModeBtn');
+    var label = document.getElementById('selectModeBtnLabel');
+    var bar = document.getElementById('selectActionBar');
+    if (!table) return;
+    if (_selectMode) {
+        table.classList.add('select-mode');
+        btn.classList.add('active');
+        label.textContent = '선택 종료';
+        bar.classList.add('show');
+        updateSelectionCount();
+    } else {
+        exitSelectMode();
+    }
 }
+
+function exitSelectMode() {
+    _selectMode = false;
+    var table = document.getElementById('filesTable');
+    if (table) table.classList.remove('select-mode');
+    document.getElementById('selectModeBtn').classList.remove('active');
+    document.getElementById('selectModeBtnLabel').textContent = '선택';
+    document.getElementById('selectActionBar').classList.remove('show');
+    document.querySelectorAll('.row-check').forEach(function(c) { c.checked = false; });
+    var all = document.getElementById('allCheck');
+    if (all) { all.checked = false; all.indeterminate = false; }
+}
+
+function getSelectedCheckboxes() {
+    var sel = [];
+    document.querySelectorAll('#fileTableBody tr').forEach(function(tr) {
+        if (tr.style.display === 'none') return;
+        var c = tr.querySelector('.row-check');
+        if (c && c.checked) sel.push(c);
+    });
+    return sel;
+}
+
+function updateSelectionCount() {
+    var selCheckboxes = getSelectedCheckboxes();
+    var n = selCheckboxes.length;
+    document.getElementById('saCount').textContent = n;
+    document.getElementById('saDelBtn').disabled = (n === 0);
+    var visible = [];
+    document.querySelectorAll('#fileTableBody tr').forEach(function(tr) {
+        if (tr.style.display === 'none') return;
+        var c = tr.querySelector('.row-check');
+        if (c) visible.push(c);
+    });
+    var all = document.getElementById('allCheck');
+    if (all) {
+        var checkedCount = visible.filter(function(c) { return c.checked; }).length;
+        all.checked = (visible.length > 0 && checkedCount === visible.length);
+        all.indeterminate = (checkedCount > 0 && checkedCount < visible.length);
+    }
+}
+
+function onRowCheck() { updateSelectionCount(); }
+
+function onSelectAll() {
+    var checked = document.getElementById('allCheck').checked;
+    document.querySelectorAll('#fileTableBody tr').forEach(function(tr) {
+        if (tr.style.display === 'none') return;
+        var c = tr.querySelector('.row-check');
+        if (c) c.checked = checked;
+    });
+    updateSelectionCount();
+}
+
+function openBulkDeleteModal() {
+    var sel = getSelectedCheckboxes();
+    if (sel.length === 0) return;
+    document.getElementById('bulkDelCount').textContent = sel.length;
+    var anyDeleted = sel.some(function(c) { return c.getAttribute('data-deleted') === 'true'; });
+    document.getElementById('bulkDelDeletedNote').style.display = anyDeleted ? '' : 'none';
+    document.getElementById('bulkDeleteModal').classList.add('open');
+}
+function closeBulkDeleteModal() { document.getElementById('bulkDeleteModal').classList.remove('open'); }
+
+function submitBulkDelete() {
+    var sel = getSelectedCheckboxes();
+    if (sel.length === 0) return;
+    // 분리: 살아있는 파일은 /api/files/bulk-delete, 이미 deleted된 항목은 /api/history/bulk-delete (분석 기록 purge)
+    var liveFiles = sel.filter(function(c) { return c.getAttribute('data-deleted') !== 'true'; }).map(function(c) { return c.value; });
+    var deletedFiles = sel.filter(function(c) { return c.getAttribute('data-deleted') === 'true'; }).map(function(c) { return c.value; });
+    var btn = document.getElementById('bulkDelConfirmBtn');
+    btn.disabled = true; btn.textContent = '삭제 중...';
+    var headers = { 'Content-Type': 'application/json' };
+    var csrfMeta = document.querySelector('meta[name="_csrf"]');
+    var csrfHeaderMeta = document.querySelector('meta[name="_csrf_header"]');
+    if (csrfMeta && csrfHeaderMeta) headers[csrfHeaderMeta.content] = csrfMeta.content;
+
+    var tasks = [];
+    if (liveFiles.length > 0) {
+        tasks.push(fetch('/api/files/bulk-delete', {
+            method: 'POST', headers: headers,
+            body: JSON.stringify({ filenames: liveFiles })
+        }).then(function(r) { return r.json(); }));
+    }
+    if (deletedFiles.length > 0) {
+        tasks.push(fetch('/api/history/bulk-delete', {
+            method: 'POST', headers: headers,
+            body: JSON.stringify({ filenames: deletedFiles, deleteHeapDump: false })
+        }).then(function(r) { return r.json(); }));
+    }
+    Promise.all(tasks).then(function(results) {
+        closeBulkDeleteModal();
+        var total = { success: 0, failed: 0, errors: [] };
+        results.forEach(function(d) { total.success += (d.success || 0); total.failed += (d.failed || 0); (d.errors || []).forEach(function(e) { total.errors.push(e); }); });
+        if (total.failed > 0) alert('삭제 완료: ' + total.success + '건, 실패: ' + total.failed + '건\n' + total.errors.join('\n'));
+        location.reload();
+    }).catch(function(e) {
+        btn.disabled = false; btn.textContent = '삭제';
+        alert('일괄 삭제 실패: ' + e.message);
+    });
+}
+
+// ── 검색 + 페이지네이션 + 정렬 ────────────────────────────────
+var _allRows = [];
+var _filteredRows = [];
+var _pageSize = 20;
+var _currentPage = 1;
+var _showDeleted = false;
+var _sortKey = 'date';   // 기본: 날짜 내림차순 (최신 → 오래된)
+var _sortDir = 'desc';
+var _sortType = 'num';
+
+function initRows() {
+    _allRows = Array.prototype.slice.call(document.querySelectorAll('#fileTableBody tr'));
+    var saved = parseInt(localStorage.getItem('filesPageSize') || '20', 10);
+    if ([20, 30, 50, 100].indexOf(saved) !== -1) {
+        _pageSize = saved;
+        document.getElementById('pageSizeSelect').value = String(saved);
+    }
+    var chk = document.getElementById('showDeletedChk');
+    if (chk) {
+        _showDeleted = localStorage.getItem('filesShowDeleted') === 'true';
+        chk.checked = _showDeleted;
+    }
+    sortRows();
+    updateSortIndicators();
+    applyFilter();
+}
+
+function onHeaderSort(th) {
+    var key = th.getAttribute('data-sort-key');
+    var type = th.getAttribute('data-sort-type') || 'str';
+    if (_sortKey === key) {
+        _sortDir = (_sortDir === 'asc') ? 'desc' : 'asc';
+    } else {
+        _sortKey = key;
+        _sortType = type;
+        _sortDir = 'asc';
+    }
+    _sortType = type;
+    sortRows();
+    updateSortIndicators();
+    applyFilter();
+}
+
+function sortRows() {
+    var key = 'data-sort-' + _sortKey;
+    var dir = _sortDir === 'asc' ? 1 : -1;
+    var isNum = _sortType === 'num';
+    _allRows.sort(function(a, b) {
+        var va = (_sortKey === 'name') ? (a.getAttribute('data-name') || '') : (a.getAttribute(key) || '');
+        var vb = (_sortKey === 'name') ? (b.getAttribute('data-name') || '') : (b.getAttribute(key) || '');
+        if (isNum) { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; return (va - vb) * dir; }
+        return va.localeCompare(vb, 'ko') * dir;
+    });
+    var tbody = document.getElementById('fileTableBody');
+    if (tbody) _allRows.forEach(function(r) { tbody.appendChild(r); });
+}
+
+function updateSortIndicators() {
+    document.querySelectorAll('.ftable th.sortable').forEach(function(th) {
+        var arrow = th.querySelector('.sort-arrow');
+        if (!arrow) return;
+        if (th.getAttribute('data-sort-key') === _sortKey) {
+            th.classList.add('sort-active');
+            arrow.textContent = (_sortDir === 'asc') ? '▲' : '▼';
+        } else {
+            th.classList.remove('sort-active');
+            arrow.textContent = '▲';
+        }
+    });
+}
+
+function applyFilter() {
+    var q = (document.getElementById('searchInput').value || '').toLowerCase();
+    _filteredRows = _allRows.filter(function(el) {
+        if (!_showDeleted && el.getAttribute('data-deleted') === 'true') return false;
+        if (q && (el.getAttribute('data-name') || '').toLowerCase().indexOf(q) === -1) return false;
+        return true;
+    });
+    _currentPage = 1;
+    render();
+}
+
+function onSearchInput() { applyFilter(); }
+function onToggleShowDeleted() {
+    _showDeleted = document.getElementById('showDeletedChk').checked;
+    localStorage.setItem('filesShowDeleted', String(_showDeleted));
+    applyFilter();
+}
+
+function onPageSizeChange() {
+    _pageSize = parseInt(document.getElementById('pageSizeSelect').value, 10) || 20;
+    localStorage.setItem('filesPageSize', String(_pageSize));
+    _currentPage = 1;
+    render();
+}
+
+function gotoPage(p) {
+    var total = _filteredRows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
+    if (p < 1) p = 1; if (p > totalPages) p = totalPages;
+    _currentPage = p;
+    render();
+}
+
+function render() {
+    _allRows.forEach(function(el) { el.style.display = 'none'; });
+    var total = _filteredRows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
+    if (_currentPage > totalPages) _currentPage = totalPages;
+    var start = (_currentPage - 1) * _pageSize;
+    var end = Math.min(start + _pageSize, total);
+    for (var i = start; i < end; i++) _filteredRows[i].style.display = '';
+
+    document.getElementById('noMatch').style.display = total === 0 ? 'block' : 'none';
+    renderPagination(total, totalPages, start, end);
+    if (_selectMode) updateSelectionCount();
+}
+
+function renderPagination(total, totalPages, start, end) {
+    var bar = document.getElementById('paginationBar');
+    if (total <= _pageSize) {
+        bar.classList.remove('show');
+        return;
+    }
+    bar.classList.add('show');
+    document.getElementById('pgInfo').innerHTML =
+        '<strong>' + (total === 0 ? 0 : (start + 1)) + '–' + end + '</strong> / 전체 <strong>' + total + '</strong>건';
+
+    var list = document.getElementById('pgList');
+    list.innerHTML = '';
+    var addBtn = function(label, page, opts) {
+        opts = opts || {};
+        var b = document.createElement('button');
+        b.className = 'pg-btn' + (opts.active ? ' active' : '');
+        b.textContent = label;
+        if (opts.disabled) b.disabled = true;
+        else b.onclick = function() { gotoPage(page); };
+        list.appendChild(b);
+    };
+    var addEllipsis = function() {
+        var s = document.createElement('span');
+        s.className = 'pg-ellipsis'; s.textContent = '…';
+        list.appendChild(s);
+    };
+
+    addBtn('‹', _currentPage - 1, { disabled: _currentPage === 1 });
+
+    var pages = new Set([1, totalPages, _currentPage]);
+    for (var d = 1; d <= 2; d++) {
+        if (_currentPage - d >= 1) pages.add(_currentPage - d);
+        if (_currentPage + d <= totalPages) pages.add(_currentPage + d);
+    }
+    var sorted = Array.from(pages).sort(function(a, b) { return a - b; });
+    var prev = 0;
+    sorted.forEach(function(p) {
+        if (p - prev > 1) addEllipsis();
+        addBtn(String(p), p, { active: p === _currentPage });
+        prev = p;
+    });
+
+    addBtn('›', _currentPage + 1, { disabled: _currentPage === totalPages });
+}
+
+initRows();
 </script>
 
 </body>
