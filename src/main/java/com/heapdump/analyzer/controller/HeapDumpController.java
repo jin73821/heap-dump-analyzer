@@ -550,6 +550,9 @@ public class HeapDumpController {
         model.addAttribute("hasTopComponentsZip", analyzerService.hasReportZip(filename, "top_components"));
         model.addAttribute("hasSuspectsZip", analyzerService.hasReportZip(filename, "suspects"));
 
+        // LLM chat restore mode (플로팅 챗 복원 시 컨텍스트 포함 여부)
+        model.addAttribute("llmChatRestoreIncludeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
+
         return "analyze";
     }
 
@@ -1559,6 +1562,17 @@ public class HeapDumpController {
         return ResponseEntity.ok(res);
     }
 
+    @PostMapping("/api/llm/chat-restore-mode")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setChatRestoreMode(@RequestBody Map<String, Object> body) {
+        boolean include = Boolean.TRUE.equals(body.get("includeHistory"));
+        analyzerService.setLlmChatRestoreIncludeHistory(include);
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", true);
+        res.put("includeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
+        return ResponseEntity.ok(res);
+    }
+
     // ── [NEW] API: 현재 설정 조회 ────────────────────────────────
 
     @GetMapping("/api/settings")
@@ -1644,6 +1658,7 @@ public class HeapDumpController {
         providerModels.put("custom", Collections.emptyList());
         llm.put("providerModels", providerModels);
         llm.put("chatSystemPrompt", analyzerService.getLlmChatSystemPrompt());
+        llm.put("chatRestoreIncludeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
         settings.put("llm", llm);
 
         // Database 정보

@@ -1546,6 +1546,27 @@ function loadFullErrorLog() {
     </div>
 </div>
 
+<!-- ── New Chat Confirm Modal ── -->
+<div class="modal-overlay" id="newChatModal" onclick="if(event.target===this)closeNewChatModal()">
+    <div class="modal-box">
+        <div class="modal-header">
+            <div class="modal-icon" style="background:#eff6ff;color:#2563eb">&#9998;</div>
+            <div class="modal-title">새 대화 시작</div>
+        </div>
+        <div class="modal-body">
+            현재 화면의 대화 내용을 비우고 새 대화를 시작합니다.
+            <div style="margin-top:10px;padding:10px 12px;background:#f3f4f6;border-radius:6px;font-size:12px;color:#4b5563">
+                &bull; 이전 대화는 <strong>DB에 그대로 보존</strong>되며 AI Chat 페이지에서 계속 조회할 수 있습니다.<br>
+                &bull; 다음 메시지를 보내면 <strong>새 세션</strong>이 생성됩니다.
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="modal-btn modal-btn-cancel" onclick="closeNewChatModal()">Cancel</button>
+            <button class="modal-btn modal-btn-primary" onclick="doNewChat()">새 대화 시작</button>
+        </div>
+    </div>
+</div>
+
 <!-- ── Download File Confirm Modal ── -->
 <div class="modal-overlay" id="dlModal" onclick="if(event.target===this)closeDlModal()">
     <div class="modal-box">
@@ -1608,6 +1629,7 @@ var OBJ_SIZES     = /*[[${topObjSizes}]]*/ [];
 var OBJ_COUNTS    = /*[[${topObjCounts}]]*/ [];
 var OBJ_PCTS      = /*[[${topObjPcts}]]*/ [];
 var THREAD_STACKS  = /*[[${threadStacks}]]*/ [];
+var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ true;
 /*]]>*/
 </script>
 </th:block>
@@ -2956,14 +2978,31 @@ function doExportCSV() {
         if (othersSize > 0) { pieLabels.push('Others'); pieSizes.push(othersSize); }
 
         var pieColors = ['#2563eb','#3b82f6','#60a5fa','#93c5fd','#0891b2','#06b6d4','#0d9488','#10b981','#d1d5db'];
+        var pieClassCount = Math.min(OBJ_NAMES.length, 8);
 
         new Chart(pieCtx, {
             type: 'pie',
             data: { labels: pieLabels, datasets: [{ data: pieSizes, backgroundColor: pieColors, borderColor: '#fff', borderWidth: 2, hoverOffset: 8 }] },
             options: {
                 responsive: true, maintainAspectRatio: true,
+                onClick: function(evt, elements) {
+                    if (!elements || elements.length === 0) return;
+                    var idx = elements[0].index;
+                    if (idx < pieClassCount) {
+                        showComponentDetail(OBJ_NAMES[idx], idx);
+                    }
+                },
+                onHover: function(evt, elements) {
+                    if (!evt || !evt.native || !evt.native.target) return;
+                    var clickable = elements && elements.length > 0 && elements[0].index < pieClassCount;
+                    evt.native.target.style.cursor = clickable ? 'pointer' : 'default';
+                },
                 plugins: {
-                    legend: { position:'right', labels: { padding:8, font:{size:11}, boxWidth:12, color:'#374151',
+                    legend: { position:'right', onClick: function(e, item, legend) {
+                            if (item && item.index < pieClassCount) {
+                                showComponentDetail(OBJ_NAMES[item.index], item.index);
+                            }
+                        }, labels: { padding:8, font:{size:11}, boxWidth:12, color:'#374151',
                         generateLabels: function(chart) {
                             var ds = chart.data.datasets[0];
                             var total = ds.data.reduce(function(a,b){return a+b;},0);
@@ -2974,7 +3013,7 @@ function doExportCSV() {
                         }
                     }},
                     tooltip: { backgroundColor:'rgba(15,23,42,.92)', padding:10,
-                        callbacks: { label: function(ctx) { var mb=(ctx.parsed/1048576).toFixed(1); var tot=ctx.dataset.data.reduce(function(a,b){return a+b;},0); var pct=((ctx.parsed/tot)*100).toFixed(1); return ' '+ctx.label+': '+mb+' MB ('+pct+'%)'; } }
+                        callbacks: { label: function(ctx) { var mb=(ctx.parsed/1048576).toFixed(1); var tot=ctx.dataset.data.reduce(function(a,b){return a+b;},0); var pct=((ctx.parsed/tot)*100).toFixed(1); var hint = ctx.dataIndex < pieClassCount ? ' (클릭하여 상세 보기)' : ''; return ' '+ctx.label+': '+mb+' MB ('+pct+'%)'+hint; } }
                     }
                 },
                 animation: { duration:800, easing:'easeInOutQuart' }
@@ -3005,10 +3044,21 @@ function doExportCSV() {
             data: { labels: shortLabels, datasets: [{ label:'Retained Heap (MB)', data:sizesMB, backgroundColor:bgColors, borderRadius:4, hoverBackgroundColor:'#1e40af' }] },
             options: {
                 indexAxis:'y', responsive:true, maintainAspectRatio:true,
+                onClick: function(evt, elements) {
+                    if (!elements || elements.length === 0) return;
+                    var idx = elements[0].index;
+                    if (idx >= 0 && idx < top10names.length) {
+                        showComponentDetail(top10names[idx], idx);
+                    }
+                },
+                onHover: function(evt, elements) {
+                    if (!evt || !evt.native || !evt.native.target) return;
+                    evt.native.target.style.cursor = (elements && elements.length > 0) ? 'pointer' : 'default';
+                },
                 plugins: {
                     legend:{display:false},
                     tooltip:{ backgroundColor:'rgba(15,23,42,.92)', padding:10,
-                        callbacks:{ title:function(items){return top10names[items[0].dataIndex]||items[0].label;}, label:function(ctx){return ' '+ctx.parsed.x+' MB';} }
+                        callbacks:{ title:function(items){return top10names[items[0].dataIndex]||items[0].label;}, label:function(ctx){return ' '+ctx.parsed.x+' MB (클릭하여 상세 보기)';} }
                     }
                 },
                 scales: {
@@ -3035,8 +3085,8 @@ function buildTreemap() {
 
     var items = [];
     var total = 0;
-    for (var i = 0; i < OBJ_NAMES.length; i++) { items.push({name:OBJ_NAMES[i], size:OBJ_SIZES[i], pct:OBJ_PCTS[i]}); total += OBJ_SIZES[i]; }
-    if (TOTAL_BYTES > total) { items.push({name:'Others', size:TOTAL_BYTES-total, pct:((TOTAL_BYTES-total)/TOTAL_BYTES*100)}); total = TOTAL_BYTES; }
+    for (var i = 0; i < OBJ_NAMES.length; i++) { items.push({name:OBJ_NAMES[i], size:OBJ_SIZES[i], pct:OBJ_PCTS[i], index:i, clickable:true}); total += OBJ_SIZES[i]; }
+    if (TOTAL_BYTES > total) { items.push({name:'Others', size:TOTAL_BYTES-total, pct:((TOTAL_BYTES-total)/TOTAL_BYTES*100), clickable:false}); total = TOTAL_BYTES; }
 
     var colors = ['#2563eb','#3b82f6','#0891b2','#0d9488','#059669','#d97706','#dc2626','#7c3aed','#be185d','#475569','#94a3b8'];
     var tooltip = document.getElementById('treemapTooltip');
@@ -3092,12 +3142,21 @@ function buildTreemap() {
             tooltip.style.display = 'block';
             tooltip.innerHTML = '<div class="tt-name">' + escHtml(item.name) + '</div>'
                 + '<div class="tt-size">' + (item.size/1048576).toFixed(2) + ' MB</div>'
-                + '<div class="tt-pct">' + item.pct.toFixed(2) + '% of heap</div>';
+                + '<div class="tt-pct">' + item.pct.toFixed(2) + '% of heap</div>'
+                + (item.clickable ? '<div class="tt-hint" style="margin-top:4px;font-size:10px;opacity:.75">클릭하여 상세 보기</div>' : '');
         });
         div.addEventListener('mousemove', function(e) {
             positionTooltip(tooltip, e);
         });
         div.addEventListener('mouseleave', function() { tooltip.style.display = 'none'; });
+        if (item.clickable) {
+            div.style.cursor = 'pointer';
+            div.title = '클릭하여 상세 보기';
+            div.addEventListener('click', function() {
+                if (tooltip) tooltip.style.display = 'none';
+                showComponentDetail(item.name, item.index);
+            });
+        }
         container.appendChild(div);
     }
 
@@ -3138,12 +3197,12 @@ function buildStackedBar() {
         var parts = OBJ_NAMES[i].split('.');
         var shortName = parts[parts.length-1] || OBJ_NAMES[i];
         if (shortName.length > 20) shortName = shortName.slice(0,18) + '..';
-        segments.push({ name: OBJ_NAMES[i], shortName: shortName, size: OBJ_SIZES[i], pct: pct, color: colors[i % colors.length] });
+        segments.push({ name: OBJ_NAMES[i], shortName: shortName, size: OBJ_SIZES[i], pct: pct, color: colors[i % colors.length], index: i, clickable: true });
     }
 
     var otherSize = TOTAL_BYTES - usedTotal;
     if (otherSize > 0) {
-        segments.push({ name: 'Others', shortName: 'Others', size: otherSize, pct: (otherSize / TOTAL_BYTES * 100), color: '#d1d5db' });
+        segments.push({ name: 'Others', shortName: 'Others', size: otherSize, pct: (otherSize / TOTAL_BYTES * 100), color: '#d1d5db', clickable: false });
     }
 
     container.innerHTML = '';
@@ -3168,12 +3227,24 @@ function buildStackedBar() {
             tooltip.style.display = 'block';
             tooltip.innerHTML = '<div class="tt-name">' + escHtml(seg.name) + '</div>'
                 + '<div class="tt-size">' + (seg.size/1048576).toFixed(2) + ' MB</div>'
-                + '<div class="tt-pct">' + seg.pct.toFixed(2) + '% of total heap</div>';
+                + '<div class="tt-pct">' + seg.pct.toFixed(2) + '% of total heap</div>'
+                + (seg.clickable ? '<div class="tt-hint" style="margin-top:4px;font-size:10px;opacity:.75">클릭하여 상세 보기</div>' : '');
         });
         div.addEventListener('mousemove', function(e) {
             positionTooltip(tooltip, e);
         });
         div.addEventListener('mouseleave', function() { tooltip.style.display = 'none'; });
+
+        if (seg.clickable) {
+            div.style.cursor = 'pointer';
+            div.title = '클릭하여 상세 보기';
+            div.addEventListener('click', function() {
+                if (tooltip) tooltip.style.display = 'none';
+                showComponentDetail(seg.name, seg.index);
+            });
+        } else {
+            div.style.cursor = 'default';
+        }
 
         container.appendChild(div);
 
@@ -3185,6 +3256,14 @@ function buildStackedBar() {
         li.className = 'stacked-legend-item';
         li.innerHTML = '<span class="stacked-legend-dot" style="background:' + seg.color + '"></span>'
             + '<span>' + escHtml(seg.shortName) + ' <strong>' + seg.pct.toFixed(1) + '%</strong> (' + (seg.size/1048576).toFixed(1) + ' MB)</span>';
+        if (seg.clickable) {
+            li.style.cursor = 'pointer';
+            li.title = '클릭하여 상세 보기';
+            li.addEventListener('click', function() {
+                if (tooltip) tooltip.style.display = 'none';
+                showComponentDetail(seg.name, seg.index);
+            });
+        }
         legend.appendChild(li);
     });
 }
@@ -3967,6 +4046,7 @@ var _aiChatContextBuilt = null;
 var _aiChatModel = '';
 var _aiChatExpanded = false;
 var _aiChatSessionId = null;
+var _aiChatRestoreAttempted = false;
 
 function toggleAiChat() {
     var panel = document.getElementById('aiChatPanel');
@@ -3975,7 +4055,7 @@ function toggleAiChat() {
         panel.classList.add('open');
         if (!_aiChatContextBuilt) {
             buildChatContext();
-            showChatWelcome();
+            restoreChatHistory();
         }
         var input = document.getElementById('aiChatInput');
         if (input) setTimeout(function(){ input.focus(); }, 200);
@@ -4034,6 +4114,175 @@ function showChatWelcome() {
         + '<span style="font-size:11px;color:#6B7280;margin-top:4px;display:inline-block">'
         + '예: "메모리 누수의 근본 원인이 뭔가요?", "JVM 튜닝 방법을 알려주세요"</span>';
     container.appendChild(div);
+}
+
+// ── 이전 대화 복원 ─────────────────────────────────────
+function restoreChatHistory() {
+    if (_aiChatRestoreAttempted) { showChatWelcome(); return; }
+    _aiChatRestoreAttempted = true;
+
+    var fn = typeof FILENAME !== 'undefined' ? FILENAME : '';
+    if (!fn) { showChatWelcome(); return; }
+
+    var container = getChatContainer();
+    var loader = document.createElement('div');
+    loader.className = 'ai-chat-msg ai-chat-msg-welcome';
+    loader.id = 'aiChatRestoreLoader';
+    loader.textContent = '이전 대화를 불러오는 중…';
+    container.appendChild(loader);
+
+    fetch('/api/ai-chat/sessions?filename=' + encodeURIComponent(fn), { credentials: 'same-origin' })
+        .then(function(r) {
+            if (r.redirected || r.status === 401 || r.status === 403 || r.status === 302) {
+                throw new Error('auth');
+            }
+            var ct = r.headers.get('content-type') || '';
+            if (ct.indexOf('application/json') < 0) throw new Error('auth');
+            return r.json();
+        })
+        .then(function(sessions) {
+            var ldr = document.getElementById('aiChatRestoreLoader');
+            if (ldr && ldr.parentNode) ldr.parentNode.removeChild(ldr);
+            if (!sessions || !sessions.length) {
+                showChatWelcome();
+                return;
+            }
+            // 가장 최근 updatedAt 세션 선택 (서버 쿼리 이미 desc 정렬)
+            var s = sessions[0];
+            _aiChatSessionId = s.id;
+            if (s.model) {
+                _aiChatModel = s.model;
+                var badge = document.getElementById('aiChatModelBadge');
+                if (badge) badge.textContent = s.model;
+            }
+            loadChatMessages(s.id);
+        })
+        .catch(function(e) {
+            var ldr = document.getElementById('aiChatRestoreLoader');
+            if (ldr && ldr.parentNode) ldr.parentNode.removeChild(ldr);
+            showChatWelcome();
+            if (e && e.message !== 'auth') {
+                console.warn('[AI-Chat] 이전 대화 로드 실패:', e.message);
+            }
+        });
+}
+
+function loadChatMessages(sessionId) {
+    var container = getChatContainer();
+    fetch('/api/ai-chat/sessions/' + sessionId + '/messages', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(messages) {
+            if (!messages || !messages.length) {
+                showChatWelcome();
+                return;
+            }
+            // UI 렌더 (항상 수행)
+            var lastDate = '';
+            messages.forEach(function(m) {
+                var d = extractChatDate(m.createdAt);
+                if (d && d !== lastDate) {
+                    appendChatDateSep(d);
+                    lastDate = d;
+                }
+                renderRestoredMessage(m.role, m.content, m.createdAt);
+            });
+
+            if (LLM_CHAT_RESTORE_INCLUDE_HISTORY) {
+                // Option 1: LLM 컨텍스트에 포함
+                _aiChatMessages = messages.map(function(m) {
+                    return { role: m.role, content: m.content || '' };
+                });
+                trimChatMessages();  // 24000자 컷오프
+            } else {
+                // Option 3: UI만 표시, LLM은 신규 대화로 인식
+                _aiChatMessages = [];
+                appendContextResetNotice();
+            }
+
+            container.scrollTop = container.scrollHeight;
+        })
+        .catch(function(e) {
+            console.warn('[AI-Chat] 메시지 로드 실패:', e && e.message);
+            showChatWelcome();
+        });
+}
+
+function renderRestoredMessage(role, content, createdAt) {
+    var container = getChatContainer();
+    var wrapper = document.createElement('div');
+    wrapper.style.cssText = 'display:flex;flex-direction:column;' + (role === 'user' ? 'align-items:flex-end' : 'align-items:flex-start');
+
+    var div = document.createElement('div');
+    div.className = 'ai-chat-msg ai-chat-msg-' + role;
+    if (role === 'assistant') {
+        div.innerHTML = renderChatMarkdown(content || '');
+    } else {
+        div.textContent = content || '';
+    }
+
+    var timeDiv = document.createElement('div');
+    timeDiv.className = 'ai-chat-msg-time';
+    timeDiv.textContent = extractChatTime(createdAt);
+
+    wrapper.appendChild(div);
+    wrapper.appendChild(timeDiv);
+    container.appendChild(wrapper);
+}
+
+function appendContextResetNotice() {
+    var container = getChatContainer();
+    var notice = document.createElement('div');
+    notice.className = 'ai-chat-msg-context-reset';
+    notice.style.cssText = 'text-align:center;font-size:11px;color:#9CA3AF;padding:8px 0;border-top:1px dashed #E5E7EB;margin:8px 0 4px';
+    notice.textContent = '— 여기까지 이전 대화 (AI는 기억하지 않음) —';
+    container.appendChild(notice);
+}
+
+function appendChatDateSep(dateStr) {
+    var container = getChatContainer();
+    var sep = document.createElement('div');
+    sep.style.cssText = 'text-align:center;font-size:10px;color:#9CA3AF;padding:6px 0;margin:4px 0';
+    sep.textContent = dateStr;
+    container.appendChild(sep);
+}
+
+function extractChatDate(dt) {
+    if (!dt) return '';
+    var d = _parseChatDateTime(dt);
+    if (!d) return '';
+    var today = new Date();
+    var yday = new Date(); yday.setDate(today.getDate() - 1);
+    var sameDay = function(a, b) {
+        return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    };
+    if (sameDay(d, today)) return '오늘';
+    if (sameDay(d, yday)) return '어제';
+    return d.getFullYear() + '년 ' + (d.getMonth() + 1) + '월 ' + d.getDate() + '일';
+}
+
+function extractChatTime(dt) {
+    var d = _parseChatDateTime(dt);
+    if (!d) {
+        var now = new Date();
+        return now.getHours().toString().padStart(2, '0') + ':' + now.getMinutes().toString().padStart(2, '0');
+    }
+    var h = d.getHours();
+    var m = d.getMinutes();
+    var ap = h < 12 ? '오전' : '오후';
+    var h12 = h % 12 || 12;
+    return ap + ' ' + h12 + ':' + (m < 10 ? '0' : '') + m;
+}
+
+function _parseChatDateTime(dt) {
+    if (!dt) return null;
+    try {
+        // ISO 8601, LocalDateTime.toString(), epoch millis 등 다양한 포맷 수용
+        var d;
+        if (typeof dt === 'number') { d = new Date(dt); }
+        else { d = new Date(dt); }
+        if (isNaN(d.getTime())) return null;
+        return d;
+    } catch (e) { return null; }
 }
 
 function sendChatMessage() {
@@ -4334,12 +4583,26 @@ function resetAiChat() {
     _aiChatMessages = [];
     _aiChatContextBuilt = null;
     _aiChatSessionId = null;
+    _aiChatRestoreAttempted = true;  // 리셋 후 재복원 차단 (사용자 의도 존중)
     var container = getChatContainer();
     container.innerHTML = '';
     buildChatContext();
     showChatWelcome();
     var badge = document.getElementById('aiChatModelBadge');
     if (badge) badge.textContent = _aiChatModel || '';
+}
+
+function confirmNewChat() {
+    var m = document.getElementById('newChatModal');
+    if (m) m.classList.add('open');
+}
+function closeNewChatModal() {
+    var m = document.getElementById('newChatModal');
+    if (m) m.classList.remove('open');
+}
+function doNewChat() {
+    closeNewChatModal();
+    resetAiChat();
 }
 
 function handleChatKeyDown(e) {
@@ -4413,7 +4676,7 @@ if (typeof FILENAME !== 'undefined') {
         <svg viewBox="0 0 24 24" style="width:20px;height:20px;flex-shrink:0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="#fff" stroke-width="2"/></svg>
         <span class="ai-chat-header-title">AI 채팅</span>
         <span class="ai-chat-header-model" id="aiChatModelBadge"></span>
-        <button class="ai-chat-header-btn" onclick="resetAiChat()" title="대화 초기화">초기화</button>
+        <button class="ai-chat-header-btn" onclick="confirmNewChat()" title="새 대화 시작 (이전 대화는 DB에 보존)">새 대화</button>
         <button class="ai-chat-header-btn" id="aiChatExpandBtn" onclick="toggleChatExpand()" title="확대">
             <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
         </button>

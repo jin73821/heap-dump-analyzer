@@ -1,5 +1,54 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-21] 분석 페이지 플로팅 AI 채팅 대화 히스토리 복원 + LLM 설정 토글
+
+**변경 파일:** `HeapDumpAnalyzerService.java`, `HeapDumpController.java`,
+`application.properties`, `llm-settings.html`, `analyze.html`
+
+### A. 플로팅 챗 대화 복원
+- 분석 페이지 FAB 플로팅 채팅에서 같은 덤프(filename)에 대한 이전 AI 대화를 자동 복원
+- 트리거: 채팅 패널 최초 open 시 `restoreChatHistory()` 호출 — `GET /api/ai-chat/sessions?filename=xxx` (본인 소유, updatedAt desc 정렬)로 최근 세션 1개 자동 바인딩, `GET /api/ai-chat/sessions/{id}/messages`로 대화 로드
+- 신규 함수 (analyze.html): `restoreChatHistory()`, `loadChatMessages()`, `renderRestoredMessage()`, `appendContextResetNotice()`, `extractChatDate()`, `extractChatTime()`, `appendChatDateSep()`, `_parseChatDateTime()`
+- 시나리오 분기:
+  - 세션 0건 → 기존 welcome (첫 전송 시 세션 생성)
+  - 세션 1건+ → 가장 최근 세션 복원, `_aiChatSessionId` 자동 설정 → `ensureChatSession()`이 재사용해 추가 메시지도 같은 세션에 이어짐
+- 날짜 구분선 (오늘/어제/YYYY년 M월 D일) + 메시지별 시간 (오전/오후 H:MM) 표시 — `ai-chat.html` 패턴 재사용
+- "초기화" 버튼 → "새 대화" 라벨 변경 + `_aiChatRestoreAttempted=true` 유지로 재복원 차단 (사용자 의도 존중, 과거 세션은 DB 보존)
+- "새 대화" 버튼 클릭 시 **확인 모달** 노출 (`newChatModal`): "이전 대화는 DB에 보존 / 다음 메시지 전송 시 새 세션 생성" 안내 문구 + Cancel / 새 대화 시작 버튼
+- 로딩 스피너, 인증 만료/네트워크 실패 시 welcome 폴백, `encodeURIComponent(FILENAME)` 적용
+- 메시지 DB 저장 로직 무변경 — 기존 `/stream` 엔드포인트가 user/assistant 자동 저장 (기존)
+
+### B. LLM 설정 — 이전 대화 컨텍스트 포함 토글
+- 신규 설정 `llmChatRestoreIncludeHistory` (default: true, 기존 동작 호환)
+  - ON: 복원된 이전 대화를 `_aiChatMessages`에 로드 → AI가 기억 (`trimChatMessages()` 24000자 컷 자동 적용)
+  - OFF: UI에만 렌더, 컨텍스트는 빈 배열 → AI는 신규 대화로 인식. "— 여기까지 이전 대화 (AI는 기억하지 않음) —" 구분선 표시로 혼란 방지
+- 신규 API: `POST /api/llm/chat-restore-mode {includeHistory: bool}`
+- `/api/settings` 응답에 `llm.chatRestoreIncludeHistory` 필드 추가
+- 설정 영속화: `settings.json` (`llmChatRestoreIncludeHistory`) + `application.properties` (`llm.chat.restore-include-history`) 양방향 동기화 — 기존 패턴 재사용
+- LLM 설정 페이지(`/settings/llm`)에 "Chat History Restoration" 카드 + 토글 스위치 추가, 상태별 설명 문구 동적 전환, 토글 실패 시 원복
+- 분석 페이지 Thymeleaf 모델에 `llmChatRestoreIncludeHistory` 주입 → JS 전역 `LLM_CHAT_RESTORE_INCLUDE_HISTORY`로 복원 로직이 조건 분기
+- 모드 전환은 다음 페이지 로드 시 반영 (진행 중 대화 중단 방지)
+
+---
+
+## [2026-04-21] 분석 페이지 다이어그램 클릭 → Component Detail 모달 연결
+
+**변경 파일:** `analyze.html`
+
+- Overview 패널 4개 다이어그램 모두에서 클래스 클릭 시 Top Consumers 행 클릭과 동일한 `componentDetailModal` 열림
+  - Memory Treemap 셀
+  - Stacked Bar 세그먼트 및 Legend 항목
+  - Pie Chart 슬라이스 및 범례(legend)
+  - 수평 Bar Chart 막대
+- 데이터 매칭: `OBJ_NAMES[i]`의 i가 Top Consumers `s.index`와 동일하므로 별도 역매칭 없이 `showComponentDetail(className, i)` 재사용
+- `buildTreemap()` items / `buildStackedBar()` segments에 `index`/`clickable` 속성 추가 — "Others" 집계 셀은 `clickable:false`로 클릭 비활성 (cursor:default)
+- Chart.js 다이어그램: `options.onClick` + `onHover`로 cursor pointer 자동 전환. Pie는 `pieClassCount` 경계로 "Others" 인덱스 차단
+- 시각적 피드백: clickable 셀에 `cursor:pointer`, native `title="클릭하여 상세 보기"`, 커스텀 툴팁 하단에 힌트 텍스트 추가
+- 모바일 touch → click 합성 호환: 클릭 시 `treemapTooltip` 명시 숨김 처리로 잔존 방지
+- 모달/백엔드 수정 없음 — 호출부만 추가. parsed → raw → histogram fallback 체인이 모든 다이어그램에서 그대로 동작
+
+---
+
 ## [2026-04-21] CLAUDE.md 갱신 (최근 변경 반영)
 
 **변경 파일:** `CLAUDE.md`

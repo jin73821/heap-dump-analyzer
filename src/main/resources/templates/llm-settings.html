@@ -259,6 +259,26 @@
         </div>
     </div>
 
+    <!-- Chat Restore Mode -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 3v6h6"/></svg>
+            Chat History Restoration
+        </div>
+        <div class="setting-row" style="border-bottom:none">
+            <div>
+                <div class="setting-label">이전 대화 컨텍스트 포함</div>
+                <div class="setting-desc" id="chatRestoreModeDesc">
+                    ON: 분석 페이지 재진입 시 이전 대화를 AI가 기억합니다 (토큰 사용량 증가, 최대 24,000자 내로 자동 축소)
+                </div>
+            </div>
+            <div>
+                <input type="checkbox" class="tog" id="togChatRestoreMode" onchange="toggleChatRestoreMode(this)">
+                <label class="tog-track" for="togChatRestoreMode"></label>
+            </div>
+        </div>
+    </div>
+
     <!-- Save & Test -->
     <div class="card">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -370,6 +390,12 @@ function loadLlmSettings() {
 
         var chatPromptEl = document.getElementById('llmChatPromptInput');
         if (chatPromptEl && llm.chatSystemPrompt) chatPromptEl.value = llm.chatSystemPrompt;
+
+        var togRestore = document.getElementById('togChatRestoreMode');
+        if (togRestore) {
+            togRestore.checked = !!llm.chatRestoreIncludeHistory;
+            updateChatRestoreDesc(togRestore.checked);
+        }
     }).catch(function(e) { toast('Failed to load settings: ' + e.message, 'error'); });
 }
 
@@ -510,6 +536,36 @@ function resetChatPrompt() {
     var defaultPrompt = '당신은 Java 힙 덤프 분석 전문가입니다. 사용자가 제공한 힙 덤프 분석 결과에 대해 대화형으로 질문에 답합니다. 메모리 누수 원인, JVM 튜닝, 코드 수정 방안 등을 한국어로 상세히 설명합니다. 마크다운 형식으로 응답하되, 간결하고 실행 가능한 조언을 제공하세요.';
     document.getElementById('llmChatPromptInput').value = defaultPrompt;
     saveChatPrompt();
+}
+
+// ── Chat Restore Mode ──────────────────────────────────
+function updateChatRestoreDesc(enabled) {
+    var desc = document.getElementById('chatRestoreModeDesc');
+    if (!desc) return;
+    if (enabled) {
+        desc.textContent = 'ON: 분석 페이지 재진입 시 이전 대화를 AI가 기억합니다 (토큰 사용량 증가, 최대 24,000자 내로 자동 축소)';
+    } else {
+        desc.textContent = 'OFF: 이전 대화는 화면에만 표시되며, AI는 신규 대화로 인식합니다 (토큰 절감)';
+    }
+}
+
+function toggleChatRestoreMode(el) {
+    var newVal = el.checked;
+    fetch('/api/llm/chat-restore-mode', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({includeHistory: newVal})
+    })
+    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    .then(function(d){
+        updateChatRestoreDesc(!!d.includeHistory);
+        toast('대화 복원 모드: ' + (d.includeHistory ? 'ON' : 'OFF'), 'success');
+    })
+    .catch(function(e){
+        el.checked = !newVal;
+        updateChatRestoreDesc(el.checked);
+        toast('Save failed: ' + e.message, 'error');
+    });
 }
 
 // ── Init ──────────────────────────────────────────────

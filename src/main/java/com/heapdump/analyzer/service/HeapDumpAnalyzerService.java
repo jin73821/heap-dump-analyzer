@@ -92,6 +92,7 @@ public class HeapDumpAnalyzerService {
     private volatile int     llmTimeoutConnectSeconds;
     private volatile int     llmTimeoutReadSeconds;
     private volatile String  llmChatSystemPrompt;
+    private volatile boolean llmChatRestoreIncludeHistory = true;
 
     private static final String DEFAULT_CHAT_SYSTEM_PROMPT =
         "당신은 Java 힙 덤프 분석 전문가입니다. 사용자가 제공한 힙 덤프 분석 결과에 대해 "
@@ -770,6 +771,9 @@ public class HeapDumpAnalyzerService {
                     this.llmChatSystemPrompt = prompt;
                 }
             }
+            if (saved.containsKey("llmChatRestoreIncludeHistory")) {
+                this.llmChatRestoreIncludeHistory = Boolean.TRUE.equals(saved.get("llmChatRestoreIncludeHistory"));
+            }
             // 환경변수 LLM_API_KEY 우선
             String envKey = System.getenv("LLM_API_KEY");
             if (envKey != null && !envKey.isEmpty()) {
@@ -822,6 +826,7 @@ public class HeapDumpAnalyzerService {
             settings.put("llmTimeoutConnectSeconds", llmTimeoutConnectSeconds);
             settings.put("llmTimeoutReadSeconds", llmTimeoutReadSeconds);
             settings.put("llmChatSystemPrompt", llmChatSystemPrompt);
+            settings.put("llmChatRestoreIncludeHistory", llmChatRestoreIncludeHistory);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
         } catch (IOException e) {
@@ -857,6 +862,7 @@ public class HeapDumpAnalyzerService {
             updates.put("llm.max-output-tokens", String.valueOf(llmMaxOutputTokens));
             updates.put("llm.timeout.connect-seconds", String.valueOf(llmTimeoutConnectSeconds));
             updates.put("llm.timeout.read-seconds", String.valueOf(llmTimeoutReadSeconds));
+            updates.put("llm.chat.restore-include-history", String.valueOf(llmChatRestoreIncludeHistory));
 
             List<String> newLines = new ArrayList<>();
             for (String line : lines) {
@@ -953,6 +959,14 @@ public class HeapDumpAnalyzerService {
         this.llmChatSystemPrompt = (prompt != null && !prompt.trim().isEmpty()) ? prompt.trim() : DEFAULT_CHAT_SYSTEM_PROMPT;
         persistSettings();
         logger.info("[LLM] Chat system prompt updated (length={})", this.llmChatSystemPrompt.length());
+    }
+
+    public boolean isLlmChatRestoreIncludeHistory() { return llmChatRestoreIncludeHistory; }
+
+    public void setLlmChatRestoreIncludeHistory(boolean v) {
+        this.llmChatRestoreIncludeHistory = v;
+        persistSettings();
+        logger.info("[LLM] Chat restore include-history: {}", v);
     }
 
     public String getDefaultApiUrl(String provider) {
