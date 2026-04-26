@@ -1,5 +1,122 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-26] RAG 전용 페이지 분리 + 청킹 옵션 추가
+
+**변경 파일:** `application.properties`, `HeapDumpConfig.java`, `HeapDumpAnalyzerService.java`,
+`RagService.java`, `HeapDumpController.java`, `settings.html`, `rag-settings.html` (신규),
+`fragments/banner.html`
+
+### A. RAG 설정을 General 페이지 → 전용 페이지로 분리
+- 신규 라우트 `GET /settings/rag` → `rag-settings.html` (LLM Configuration 페이지 패턴 재사용)
+- `settings.html` (General)에서 RAG 카드/모달/JS 일괄 제거 → 링크 카드 1개로 대체 (LLM Configuration 카드와 동일 형태). 카드 클릭 시 `/settings/rag`로 이동
+- 배너 Servers/Settings 서브메뉴 패턴 따라 Settings 서브메뉴에 `RAG Configuration` 항목 추가 (`fragments/banner.html`). `gb-nav-sub.open` max-height: 120px → 200px (4 → 5 항목 수용)
+- 배너 active 처리: `/settings/rag` 경로 시 `gbNavSettingsRag` 활성화
+
+### B. RAG 청킹 (post-retrieval) 옵션
+- 신규 설정: `rag.chunking.{enabled,strategy,size,overlap,max-chunks-per-doc,max-total-chars}`
+  - `strategy`: `fixed`(고정 길이 + overlap) | `paragraph`(빈 줄 단위) | `sentence`(문장 단위 + overlap)
+  - `size`: 청크 최대 글자수 (기본 800, 100~8000 검증)
+  - `overlap`: 인접 청크 중복 글자수 (기본 120, fixed/sentence에서 적용. size보다 작아야 함)
+  - `max-chunks-per-doc`: 한 문서당 최대 청크 수 (기본 3, 1~20)
+  - `max-total-chars`: LLM 컨텍스트 전체 글자수 한도 (기본 6000, 500~50000)
+- `HeapDumpConfig` `@Value` 6개 + `HeapDumpAnalyzerService` `volatile` 필드 + 영속화(settings.json + application.properties 동기화) — 기존 RAG 패턴 재사용
+- `setRagChunkingConfig()` 메서드: 입력값 범위 검증 + persist
+- `RagService.fetchContextForLlm()`에 청킹 통합:
+  - 청킹 ON: `chunkText(text, strategy, size, overlap, maxChunks)` 호출 → 자료별 청크를 `--- 자료 N.M ---` 헤더로 구분
+  - `maxTotalChars` 한도 누적 체크 — 한도 초과 시 break (첫 청크가 한도를 넘으면 잘라서라도 일부 주입)
+- `chunkText()` 구현:
+  - **fixed**: `step = size - overlap`로 슬라이딩 윈도우 분할
+  - **paragraph**: `\n{2,}` 빈 줄 분할 후 size 한도 내에서 머지, 단일 문단이 size 초과 시 fixed 폴백
+  - **sentence**: `(?<=[\.!?。？！])\s+` 정규식으로 한국어/영문 문장 종결자 인식. tail overlap 유지
+  - 모든 전략에서 `maxChunks` 초과 시 절단
+
+### C. API
+- `GET /api/settings/rag` 응답에 `chunking` 객체 + `availableChunkingStrategies` 배열 추가
+- `POST /api/settings/rag/chunking` 신규 — 청킹 옵션 단독 저장 (연결 설정과 분리되어 있어 배포 후 청킹만 튜닝 가능)
+
+### D. RAG Configuration 페이지 (`rag-settings.html`)
+- 카드 구성: Enable RAG / Connection (URL, Index, SSL Verify) / Authentication (none|basic|api-key, 동적 필드 토글) / Search (Mode, Text Field, Top-K, Min Score, Timeout) / **Chunking** (Enable, Strategy, Size, Overlap, Max per Doc, Max Total) / Save All + Test Connection + Reload
+- "Save All" 버튼: 연결 설정 + 청킹 옵션을 두 API에 순차 PUT (체이닝). 두 번째 실패 시 첫 번째는 이미 저장된 상태 — 실패 메시지로 알림
+- "Test Connection" 버튼: 현재 폼 값으로 `/api/settings/rag/test` 호출 → cluster name/status, index 존재 여부 인라인 표시
+- 비밀번호/API Key 입력은 빈 값이면 페이로드에서 제외 → 백엔드가 "기존 값 유지"로 해석 (저장된 마스킹 안내 표시)
+- Phase 1 안내 배너: "Keyword(BM25)만 동작, Semantic 모드는 Phase 2 — RAG_PHASE2_PLAN.md 참고"
+- CSRF 메타 태그 + `getCsrfHeaders()` 헬퍼 (다른 페이지 패턴 일관성)
+- 입력 검증: URL 빈 값 거부, overlap >= size 거부 (toast)
+
+### 검증
+- 빌드 성공 (`mvn clean package -DskipTests`)
+- `GET /api/settings/rag` → `chunking` 객체 정상 반환
+- `POST /api/settings/rag/chunking` → settings.json + application.properties 양쪽 영속화 (paragraph/1000/150/4/8000 적용 확인)
+- `/settings/rag` HTML 렌더링 — 모든 chunking 입력 필드 + 청킹 마커 12개 매치
+- `/settings` General 페이지 — RAG 모달/JS 잔존 0, 링크 카드만 노출
+
+---
+
+## [2026-04-26] RAG (Elasticsearch) 연동 — Phase 1 (Keyword/BM25 + Settings UI)
+
+**변경 파일:** `application.properties`, `HeapDumpConfig.java`, `HeapDumpAnalyzerService.java`,
+`RagService.java` (신규), `HeapDumpController.java`, `AiChatController.java`, `settings.html`
+
+### 배경
+사내 운영 환경 ES를 RAG로 연동 가능하도록 Settings 화면에 ES 접속/검색 설정 추가. 사내 ES 매핑(임베딩 사전 색인 여부, inference endpoint 보유 여부)을 운영팀에 확인하기 전 단계라, 호환성 가장 높은 **Keyword(BM25) 모드를 Phase 1**로 구현. Semantic 모드(server-side text_expansion / client-side kNN)는 운영팀 답변 후 Phase 2에서 활성화 예정.
+
+### A. 백엔드 설정/영속화 (LLM 설정 패턴 재사용)
+- `application.properties` 신규 키: `rag.enabled`, `rag.elasticsearch.{url,auth-type,username,password,api-key,index,ssl-verify}`, `rag.search.{mode,text-field,top-k,min-score,timeout-seconds}`. 비밀번호/API Key는 `ENC(...)` AES-256-CBC 암호화 형식 (`AesEncryptor`).
+- `HeapDumpConfig`: `@Value`로 13개 RAG 필드 + getter 추가
+- `HeapDumpAnalyzerService`: `volatile` 런타임 필드 + 생성자 초기화(저장된 ENC 자동 복호화) + `loadPersistedSettings`/`persistSettings`/`syncApplicationProperties`에 RAG 항목 추가. 설정 저장 시 password/apiKey는 `encryptForStorage()`로 ENC(...) 변환 후 settings.json + application.properties에 동시 기록. `setRagConfig()`는 password/apiKey가 null이면 기존 값 유지 (마스킹된 폼 재제출 시 비밀 보존)
+
+### B. RagService 신규 클래스
+- `RagService.java` (신규): ES 검색 + 연결 테스트 전담. HeapDumpAnalyzerService의 런타임 getter를 통해 설정값 읽음
+- `fetchContextForLlm(query)`: 활성화 시 검색 후 LLM 시스템 프롬프트에 `[참고 자료 (RAG)]` 형식으로 주입. 비활성/실패/빈 결과 시 빈 문자열 — 호출자는 무조건 안전하게 사용 가능
+- `search(query, overrides)`: `POST {url}/{index}/_search` BM25 `match` 쿼리 (Phase 1). semantic-* 모드 선택 시 keyword 폴백 + 경고 로그
+- `testConnection(overrides)`: `GET /_cluster/health` + `HEAD /{index}` 검증. cluster name/status, indexExists 반환
+- 인증: `none` / `basic` (Authorization: Basic base64) / `api-key` (Authorization: ApiKey ...)
+- SSL 검증 비활성 옵션 (자체 서명 인증서 사내 환경 대응) — `HttpsURLConnection` + 모든 cert 신뢰 TrustManager
+- 검색 결과: `_score` >= minScore 필터 → preferredField → content/body/text/message 폴백
+
+### C. API 엔드포인트
+- `GET  /api/settings/rag` — 현재 설정 조회 (password/apiKey는 마스킹 + Set 플래그)
+- `POST /api/settings/rag` — 설정 일괄 저장. password/apiKey는 키 자체가 없거나 null이면 기존 값 유지, 빈 문자열이면 삭제, 그 외는 갱신
+- `POST /api/settings/rag/enabled` — 활성화 토글 단독
+- `POST /api/settings/rag/test` — 연결 테스트 (request body의 overrides 우선, 누락 시 저장된 값 사용 → 저장 전 검증 가능)
+- `POST /api/settings/rag/search` — 검색 프로브 (디버깅/검증용)
+
+### D. LLM 채팅 흐름 통합
+- `AiChatController.streamChat()`: 마지막 user 메시지로 `ragService.fetchContextForLlm()` 호출 → systemPrompt 끝에 추가
+- `HeapDumpController.aiChat()` (legacy): 동일 패턴
+- `HeapDumpController.aiChatStream()` (legacy): 동일 패턴
+- 원샷 분석(`/api/llm/analyze`)은 prompt 자체가 분석 결과 데이터라 RAG 검색 키 부적합 → Phase 1에서는 미적용
+
+### E. Settings 페이지 UI (DB 카드 패턴 재사용)
+- 신규 카드 `RAG (Elasticsearch)`: ON/OFF 토글 + URL/Index/Mode/Auth/Top-K 요약 + "설정 변경" 버튼. ON 시 파란 뱃지
+- 신규 모달 `ragEditModal`: URL/Index/Mode/Text Field/Top-K/Min Score/Timeout/Auth(none|basic|api-key)/Username/Password/API Key/SSL Verify. 인증 방식 변경 시 `onRagAuthChange()`로 관련 박스만 표시
+- Phase 1 안내 박스: "Keyword(BM25) 모드만 동작. Semantic 모드는 사내 ES 매핑 확인 후 활성화 예정"
+- "연결 테스트" 버튼: 현재 폼 값으로 `/api/settings/rag/test` 호출 → cluster name/status + index 존재 여부 인라인 표시 (성공: 녹색 / 경고: 노랑 / 실패: 빨강)
+- 비밀번호/API Key 입력은 빈 값이면 페이로드에서 제외 → 백엔드가 "기존 값 유지"로 해석 (마스킹된 placeholder로 안내)
+- `loadAllData()` → `loadRagSettings()` 추가, 설정 변경 후 자동 갱신
+
+### 검증
+- 빌드 성공 (`mvn clean package -DskipTests`)
+- `GET /api/settings/rag` → 기본값 정상 반환
+- `POST /api/settings/rag` → settings.json + application.properties 양쪽에 ENC(...) 형식 비밀번호 영속화 확인
+- 마스킹 응답: `passwordMasked: "****23"` (마지막 2자리만 노출)
+- `POST /api/settings/rag/test` (가짜 host) → `[UnknownHostException]` 명확한 에러 응답
+- Settings 페이지 HTML 렌더링 — RAG 카드 + 모달 정상 노출
+
+---
+
+## [2026-04-26] 로그인 화면 사용자명 저장 기능 추가
+
+**변경 파일:** `login.html`
+
+- 로그인 폼에 "사용자명 저장" 체크박스 추가 (비밀번호 필드와 로그인 버튼 사이)
+- `localStorage` 키 `heap_login_username`으로 username만 영속 (비밀번호는 저장하지 않음 — 보안)
+- 페이지 로드 시 저장된 username 자동 채움 + 체크박스 자동 체크 + 포커스를 password 필드로 이동(사용성)
+- 폼 submit 시 체크 상태에 따라 `setItem`/`removeItem` 분기. localStorage 차단 환경 대비 try/catch로 폴백 — 저장 실패해도 로그인 진행
+- CSS: `.form-remember` (16px 체크박스, accent-color blue, 480px 이하 모바일에서 12px 폰트)
+
+---
+
 ## [2026-04-21] 분석 페이지 플로팅 AI 채팅 대화 히스토리 복원 + LLM 설정 토글
 
 **변경 파일:** `HeapDumpAnalyzerService.java`, `HeapDumpController.java`,

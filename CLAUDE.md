@@ -47,12 +47,13 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 ```
 
 **Key layers:**
-- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status, DB 설정. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history`, `/api/history/bulk-delete` (POST JSON `{filenames,deleteHeapDump}`), `/api/files/bulk-delete`, `/api/cache/clear`, `/api/settings/unreachable`, `/api/settings/compress`, `/api/settings/database` (DB 연결 설정), `/api/settings/database/test` (DB 연결 테스트), `/api/analyze/cancel/{filename}`, `/api/queue/status`, `/api/disk/check`, `/api/settings`, `/api/system/status`, `/api/upload/check`. `/compare` GET: `base`/`target` 파라미터 옵셔널 (미입력 시 파일 선택 화면). `historyPage()`/`filesPage()`는 `Authentication` 파라미터로 ROLE_ADMIN 검사 후 `isAdmin` 모델 속성 + 비관리자에게는 `fileDeleted=true` 항목 응답 제외. Inner DTOs: `AnalysisHistoryItem` (sizeBytes/originalSizeBytes/compressedSizeBytes/heapUsedBytes raw 필드 포함 — 클라이언트 정렬용), `DetectionSummaryItem`, `ClassDiff`.
+- **Controller** (`controller/HeapDumpController.java`) — REST/MVC endpoints for upload, analysis, comparison, settings, component detail, thread stacks, history, queue status, DB 설정, RAG 설정. SSE `Future` tracking per emitter for client disconnect cancellation. Key API endpoints: `/api/history`, `/api/history/bulk-delete` (POST JSON `{filenames,deleteHeapDump}`), `/api/files/bulk-delete`, `/api/cache/clear`, `/api/settings/unreachable`, `/api/settings/compress`, `/api/settings/database` (DB 연결 설정), `/api/settings/database/test`, `/api/settings/rag` (GET 조회 / POST 연결 저장), `/api/settings/rag/enabled`, `/api/settings/rag/chunking` (청킹 옵션 단독 저장), `/api/settings/rag/test` (ES 연결 테스트), `/api/settings/rag/search` (검색 프로브), `/api/analyze/cancel/{filename}`, `/api/queue/status`, `/api/disk/check`, `/api/settings`, `/api/system/status`, `/api/upload/check`. 페이지 라우트: `/settings`(General), `/settings/llm`, `/settings/rag`, `/compare` GET (`base`/`target` 미입력 시 파일 선택 화면). `historyPage()`/`filesPage()`는 `Authentication` 파라미터로 ROLE_ADMIN 검사 후 `isAdmin` 모델 속성 + 비관리자에게는 `fileDeleted=true` 항목 응답 제외. Inner DTOs: `AnalysisHistoryItem` (sizeBytes/originalSizeBytes/compressedSizeBytes/heapUsedBytes raw 필드 포함 — 클라이언트 정렬용), `DetectionSummaryItem`, `ClassDiff`.
 - **Controller** (`controller/AuthController.java`) — `/login` 로그인 페이지
 - **Controller** (`controller/AdminController.java`) — `/admin/users` 계정 관리 (ADMIN 전용). CRUD API: `/api/admin/users`, `/api/admin/users/{id}/reset-password`
 - **Controller** (`controller/ServerController.java`) — `/servers` Target Server 관리, `/servers/{id}` 서버 상세 페이지 (분석 이력 + 전송 이력), `/servers/logs` 전송 로그 페이지. API: `/api/servers` (CRUD), `/api/servers/{id}/test` (연결 테스트), `/api/servers/{id}/scan` (수동 스캔), `/api/servers/{id}/transfer` (파일 전송), `/api/servers/scan-interval`, `/api/servers/ssh-local-user`, `/api/servers/scp-temp-dir`
 - **Controller** (`controller/AiChatController.java`) — `/ai-chat` AI 채팅 전용 페이지. 세션 CRUD: `/api/ai-chat/sessions` (목록/생성), `/api/ai-chat/sessions/{id}` (수정/삭제). 메시지 조회/저장: `/api/ai-chat/sessions/{id}/messages`. 세션 기반 스트리밍: `POST /api/ai-chat/sessions/{id}/stream` (`SseEmitter`, user/assistant 메시지 자동 DB 저장). `Principal`로 계정별 세션 격리.
-- **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (dumpfiles → tmp copy → analysis → tmp cleanup), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). 분석 완료 시 `analysis_history` 테이블에 메타데이터 DB 저장. AI 인사이트 DB 저장/조회/삭제 (`ai_insights` 테이블). LLM API 호출: `callLlmAnalysis(prompt)` (원샷 JSON 응답), `callLlmChat(messages, systemPrompt)` (멀티턴 텍스트 응답), `callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError)` (SSE 스트리밍). Runtime settings persisted to `settings.json` and synced back to `application.properties`.
+- **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (dumpfiles → tmp copy → analysis → tmp cleanup), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). 분석 완료 시 `analysis_history` 테이블에 메타데이터 DB 저장. AI 인사이트 DB 저장/조회/삭제 (`ai_insights` 테이블). LLM API 호출: `callLlmAnalysis(prompt)` (원샷 JSON 응답), `callLlmChat(messages, systemPrompt)` (멀티턴 텍스트 응답), `callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError)` (SSE 스트리밍). **모든 런타임 설정 영속화 단일 책임**: LLM(provider/model/key/timeouts/system prompt) + RAG(connection/auth/search/chunking) 모두 이 서비스의 `volatile` 필드 → `settings.json` + `application.properties` 양방향 동기화 (`syncApplicationProperties()` 라인 단위 치환). RAG password/API key는 `encryptForStorage()`로 `ENC(...)` AES-256 암호화하여 저장.
+- **Service** (`service/RagService.java`) — Elasticsearch 검색 + 연결 테스트 + LLM 컨텍스트 주입 전담. `fetchContextForLlm(query)`: 비활성/실패 시 빈 문자열 반환 (호출자는 무조건 안전). `search(query, overrides)`: BM25 `match` 쿼리 (Phase 1 — semantic 모드는 keyword 폴백). `testConnection(overrides)`: `_cluster/health` + `HEAD /{index}`. 인증 분기: none / Basic / ApiKey. 자체 서명 인증서 환경에서 SSL 검증 비활성 옵션. **청킹**: `chunkText(text, strategy, size, overlap, maxChunks)` — fixed(슬라이딩 윈도우) / paragraph(빈 줄 단위 + size 머지) / sentence(문장 종결자 정규식 + tail overlap). 검색 결과 본문을 청크로 분할 후 `maxTotalChars` 한도 내에서 LLM 컨텍스트에 주입.
 - **Service** (`service/RemoteDumpService.java`) — SSH/SCP 기반 원격 서버 덤프 탐지/전송. `runuser -l sscuser -c "ssh/scp ..."` 패턴으로 로컬 계정 전환. 2단계 SCP 전송 (임시 경로 → `Files.move()` 최종 경로). `@Scheduled` 동적 주기 자동 탐지. 서버 `connStatus` (OK/FAIL/UNKNOWN) DB 영속화.
 - **Service** (`service/UserService.java`) — 사용자 CRUD, `@PostConstruct`에서 기본 admin 계정 자동 생성 (admin/shinhan@10)
 - **Service** (`service/CustomUserDetailsService.java`) — Spring Security `UserDetailsService` 구현
@@ -91,7 +92,7 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 **Global Banner** (`fragments/banner.html`) — 모든 페이지에 `th:replace="fragments/banner :: banner"`로 삽입되는 좌측 고정 배너. `position: fixed; left: 0; top: 0; bottom: 0; width: var(--banner-w)` (220px/44px). 포함 내용:
 - **Header**: 앱 로고 + 제목 (클릭 시 Dashboard 이동), `<a href="/">` 태그
 - **System Status**: MAT CLI 상태, 디스크 사용량, JVM 메모리, 분석 큐 — `/api/system/status` API에서 60초 간격 자동 갱신 + 수동 Refresh 버튼. `localStorage` 캐시로 페이지 이동 시 깜빡임 방지
-- **Navigation**: Dashboard, Files, History, Comparison, AI Chat, Servers (아코디언: Target Servers / Transfer Logs), Settings (아코디언: General / LLM Configuration / Accounts(ADMIN only)), Logout. Thymeleaf `sec:authorize` 사용
+- **Navigation**: Dashboard, Files, History, Comparison, AI Chat, Servers (아코디언: Target Servers / Transfer Logs), Settings (아코디언: General / LLM Configuration / RAG Configuration / Accounts(ADMIN only)), Logout. Thymeleaf `sec:authorize` 사용. 서브메뉴 CSS는 `.gb-nav-sub.open { max-height: 200px }` (5개 항목 수용 — RAG 추가 시 80px → 200px로 확장)
 - **Mobile tabs**: Navigation / Analysis(분석 페이지) / Chat(AI Chat 페이지) / Upload(대시보드). 페이지가 `body.has-{name}-tab` 클래스를 토글하여 동적 표시. 등록은 `registerBannerUploadTab/AnalysisTab/ChatTab(elem)` JS 헬퍼
 - **접기/펼치기**: 토글 버튼으로 220px ↔ 44px 전환, `localStorage('bannerCollapsed')` 상태 저장. 접힌 상태에서는 아이콘 스트립이 하단에 `margin-top: auto`로 위치
 - **깜빡임 방지**: `<style>` 앞 인라인 `<script>`에서 `banner-collapsed` 클래스 즉시 적용 + `banner-no-transition` 클래스로 초기 transition 차단, `requestAnimationFrame` 2프레임 후 복원
@@ -128,7 +129,7 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 
 **history.html** — Full analysis history page (`/history`). 공통 테이블 툴바 패턴 동일. # (DB id) · 결과 뱃지 · 파일명 · 분석시간 · 힙사용량 · Suspects · 파일크기 · 서버 · 날짜. Topbar 우측에 Export 버튼 (모달 → `/api/history` JSON 다운로드). 다중선택 일괄 삭제 모달은 "힙덤프 파일도 함께 삭제" 옵션 포함. 관리자만 deleted 행+카운터 노출.
 
-**settings.html** — Settings page (`/settings`). Toggle switches for runtime settings with confirmation modals. Toast notifications at top-center. MAT JVM heap/Xms inline editing. Database 카드 (접속 상태, IP/포트/계정 설정 모달, 연결 테스트). Remote scan 설정 (SCP temp dir, SSH local user, scan interval).
+**settings.html** — Settings page (`/settings`, General). Toggle switches for runtime settings with confirmation modals. Toast notifications at top-center. MAT JVM heap/Xms inline editing. Database 카드 (접속 상태, IP/포트/계정 설정 모달, 연결 테스트). Remote scan 설정 (SCP temp dir, SSH local user, scan interval). LLM Configuration / RAG (Elasticsearch) 카드는 **링크 카드** (각각 `/settings/llm`, `/settings/rag`로 이동) — 인라인 편집 UI는 전용 페이지에 위치.
 
 **compare.html** — Side-by-side dump comparison. `base`/`target` 파라미터 미입력 시 파일 선택 화면 표시 (`/api/history`에서 SUCCESS 분석 이력 fetch → 두 셀렉트 자동 채움). 좌측 네비 "Comparison" 진입 시 이 모드.
 
@@ -143,6 +144,10 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 **admin/users.html** — 계정 관리 (`/admin/users`, ADMIN 전용). 사용자 CRUD 테이블, 비밀번호 초기화 모달. 기본 관리자 삭제 불가.
 
 **llm-settings.html** — LLM/AI 분석 설정 페이지 (`/settings/llm`). Provider 선택 (Claude/GPT/Genspark/Custom), 모델 선택, API URL/Key, Token Limits, Chat System Prompt (textarea 편집/Save/Reset), Test Connection.
+
+**rag-settings.html** — RAG (Elasticsearch) 설정 페이지 (`/settings/rag`). 카드 구성: Enable RAG 토글 / Connection (URL/Index/SSL Verify) / Authentication (none|basic|api-key, 동적 필드 토글) / Search (Mode/Text Field/Top-K/Min Score/Timeout) / **Chunking** (Enable/Strategy(fixed|paragraph|sentence)/Size/Overlap/Max per Doc/Max Total Chars) / Save All + Test Connection + Reload. "Save All"은 `/api/settings/rag` + `/api/settings/rag/chunking`을 순차 호출. password/API Key 입력은 빈 값이면 페이로드에서 제외 → 백엔드가 "기존 값 유지"로 해석. Phase 1 안내 배너로 Keyword(BM25) 모드만 동작 명시 (Semantic 모드는 `RAG_PHASE2_PLAN.md` 참고).
+
+**참고 문서:** `RAG_PHASE2_PLAN.md` — Semantic 모드(server-side text_expansion / client-side kNN) 구현 계획. 운영팀 확인 사항 3가지 + 모드별 구현 작업 + 체크리스트.
 
 **ai-chat.html** — AI 채팅 전용 페이지 (`/ai-chat`). 좌측 세션 사이드바 (280px): 세션 목록, 새 채팅 버튼, 덤프 파일 필터. 우측 채팅 영역: 스트리밍 메시지 표시, 마크다운 렌더링. 세션 기반 DB 저장 (계정별 격리). 날짜 구분선 (오늘/어제/YYYY년 M월 D일), 메시지별 시간 표시 (오전/오후 H:MM). `checkAuth()` 공통 함수로 인증 만료 시 로그인 안내.
 
@@ -223,6 +228,21 @@ ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(c
            → 완료 시 user/assistant 메시지 DB 자동 저장
 ```
 
+## RAG (Elasticsearch) Integration
+
+**검색 모드 (Phase 1):** keyword(BM25)만 동작. semantic-server / semantic-client는 사내 ES 매핑 확인 후 활성화 (구현 계획: `RAG_PHASE2_PLAN.md`).
+
+**인증:** none / Basic (Authorization: Basic base64) / API Key (Authorization: ApiKey ...). Password / API Key는 `AesEncryptor.encrypt()`로 `ENC(...)` 형식 암호화 후 `settings.json` + `application.properties` 양쪽에 저장. 메모리에는 평문(`volatile String`)로 보관. **POST /api/settings/rag에서 password/apiKey가 키 자체가 없거나 null이면 기존 값 유지, 빈 문자열이면 삭제, 그 외는 갱신** — UI는 마스킹 placeholder만 보여주고 변경 시에만 입력하도록 유도.
+
+**LLM 통합:** `RagService.fetchContextForLlm(query)`가 LLM 채팅 흐름 3곳에 주입됨:
+- `AiChatController.streamChat()` — `/ai-chat` 페이지 스트리밍
+- `HeapDumpController.aiChat()` — `/api/llm/chat` (legacy)
+- `HeapDumpController.aiChatStream()` — `/api/llm/chat/stream` (legacy + analyze.html 플로팅 채팅)
+
+각 흐름에서 마지막 user 메시지로 ES 검색 → systemPrompt 끝에 `[참고 자료 (RAG)]\n--- 자료 1 ---\n...` 형식 추가. 비활성/실패 시 빈 문자열 → 기존 흐름 무영향.
+
+**청킹 (post-retrieval):** ES가 긴 본문을 반환할 때 LLM 토큰 한도 보호. `rag.chunking.{enabled,strategy,size,overlap,max-chunks-per-doc,max-total-chars}` 설정. 청크 헤더 `--- 자료 N.M ---` (M은 동일 문서 내 청크 인덱스). `maxTotalChars` 초과 시 break — 첫 청크가 한도 초과하면 잘라서라도 일부 주입 (RAG가 완전히 묵살되지 않도록).
+
 ## Remote Dump Transfer
 
 **SSH/SCP 실행 계정**: `remote.ssh.local-user=sscuser` → `runuser -l sscuser -c "ssh/scp ..."` 패턴. 현재 프로세스와 동일 계정이면 runuser 생략.
@@ -258,8 +278,8 @@ ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(c
 - **Tooltip positioning:** `positionTooltip(tt, e)` handles viewport-aware placement for Treemap/StackedBar tooltips. Flips left when right edge overflows, flips up when bottom overflows. All hover tooltips should use this function.
 - **Meta card help popover:** `cdMetaCard(label, value)` auto-adds `?` button when `META_HELP[label]` exists. Popover rendered as `position:fixed` on `document.body` (avoids parent `overflow:hidden` clipping). Uses `toggleMetaHelp(btn)` with modal-boundary-aware positioning. When adding new metadata cards, add corresponding entry to `META_HELP` dict.
 - **Class descriptions pattern:** `CLASS_DESCRIPTIONS` dict maps class names → `{desc, detail, icon}`. Used by both `renderHistogramFallback()` and `renderParsedDetail()`. When adding support for new common classes, add entries here.
-- **Global banner fragment:** `fragments/banner.html` — CSS + HTML + JS 자체 포함 Thymeleaf fragment. 모든 페이지에 `th:replace`로 삽입. Navigation: Dashboard, Files, History, AI Chat, Settings (아코디언: General / LLM Configuration / Accounts), Servers (아코디언: Target Servers + Transfer Logs), 사용자명 표시 + Logout. System Status → `/api/system/status` JS fetch (60초 TTL `localStorage` 캐시).
-- **Banner Servers sub-menu:** `toggleSubMenu()` → `.gb-nav-sub.open` 토글. `/servers*` 경로 시 자동 펼침. CSS `max-height: 0 → 80px` 트랜지션 + `.gb-nav-toggle` 화살표 회전.
+- **Global banner fragment:** `fragments/banner.html` — CSS + HTML + JS 자체 포함 Thymeleaf fragment. 모든 페이지에 `th:replace`로 삽입. Navigation: Dashboard, Files, History, AI Chat, Servers (아코디언: Target Servers / Transfer Logs), Settings (아코디언: General / LLM Configuration / RAG Configuration / Accounts(ADMIN)), 사용자명 표시 + Logout. System Status → `/api/system/status` JS fetch (60초 TTL `localStorage` 캐시).
+- **Banner sub-menu (공용):** `toggleSubMenu()` → `.gb-nav-sub.open` 토글. `/servers*`/`/settings*`/`/admin/users` 경로 시 자동 펼침. CSS `max-height: 0 → 200px` 공통 트랜지션 + `.gb-nav-toggle` 화살표 회전. Servers(2개), Settings(4개 — General/LLM/RAG/Accounts) 모두 같은 규칙 사용.
 - **Banner collapse persistence:** `localStorage('bannerCollapsed')` + 렌더링 전 인라인 스크립트로 FOUC 방지. CSS 변수 `--banner-w`가 모든 페이지의 topbar/container offset 제어.
 - **Multi-file upload queue:** `index.html`에서 최대 5개 파일 동시 선택 가능 (`<input multiple>`). `enqueueFiles()` → 확장자/크기 검증 → `showFileFilterModal()`로 유효/무효 파일 요약 표시 → `startDuplicateChecks()` 순차 중복 검사 → `startQueueUploads()` 순차 업로드. 업로드 중 `showUploadProgressModal()` 모달로 파일별 진행 상태(⏳대기/⬆업로드중/✅완료/❌실패/⊘취소) 실시간 표시. `_currentXhr` 저장으로 취소 시 `xhr.abort()` 가능. `window.onbeforeunload`로 페이지 이탈 방지.
 - **Upload duplicate detection:** `POST /api/upload/check` API — 클라이언트에서 `file.slice(0, 65536)` + Web Crypto API (또는 `simpleHash` 폴백)로 첫 64KB SHA-256 해시 계산 → 서버 `checkDuplicate()`가 기존 파일들과 파일크기+부분해시 비교. 결과: `OK`/`DUPLICATE_CONTENT`(동일 내용, 다른 이름)/`DUPLICATE_NAME`(같은 이름, 다른 내용). `.gz` 압축 파일은 `GZIPInputStream`으로 압축 해제 후 해시 비교. 이름 변경 시 `generateUniqueName()`으로 `{base}_2.{ext}` 패턴 자동 생성, 사용자 커스텀 이름도 서버 재검증.

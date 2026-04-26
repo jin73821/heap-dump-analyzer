@@ -122,6 +122,47 @@ public class HeapDumpConfig {
     @Value("${llm.timeout.read-seconds:120}")
     private int llmTimeoutReadSeconds;
 
+    // ── RAG (Elasticsearch) 설정 ─────────────────────────────
+    @Value("${rag.enabled:false}")
+    private boolean ragEnabled;
+    @Value("${rag.elasticsearch.url:}")
+    private String ragElasticsearchUrl;
+    @Value("${rag.elasticsearch.auth-type:none}")
+    private String ragAuthType;
+    @Value("${rag.elasticsearch.username:}")
+    private String ragUsername;
+    @Value("${rag.elasticsearch.password:}")
+    private String ragPassword;
+    @Value("${rag.elasticsearch.api-key:}")
+    private String ragApiKey;
+    @Value("${rag.elasticsearch.index:}")
+    private String ragIndex;
+    @Value("${rag.elasticsearch.ssl-verify:true}")
+    private boolean ragSslVerify;
+    @Value("${rag.search.mode:keyword}")
+    private String ragSearchMode;
+    @Value("${rag.search.text-field:content}")
+    private String ragTextField;
+    @Value("${rag.search.top-k:3}")
+    private int ragTopK;
+    @Value("${rag.search.min-score:0.0}")
+    private double ragMinScore;
+    @Value("${rag.search.timeout-seconds:10}")
+    private int ragTimeoutSeconds;
+
+    @Value("${rag.chunking.enabled:true}")
+    private boolean ragChunkingEnabled;
+    @Value("${rag.chunking.strategy:fixed}")
+    private String ragChunkingStrategy;
+    @Value("${rag.chunking.size:800}")
+    private int ragChunkingSize;
+    @Value("${rag.chunking.overlap:120}")
+    private int ragChunkingOverlap;
+    @Value("${rag.chunking.max-chunks-per-doc:3}")
+    private int ragChunkingMaxChunksPerDoc;
+    @Value("${rag.chunking.max-total-chars:6000}")
+    private int ragChunkingMaxTotalChars;
+
     /** MAT CLI 유효성 상태 (init 후 설정) */
     private boolean matCliReady;
     private String  matCliStatusMessage;
@@ -314,4 +355,25 @@ public class HeapDumpConfig {
     public int     getLlmMaxOutputTokens()      { return llmMaxOutputTokens; }
     public int     getLlmTimeoutConnectSeconds(){ return llmTimeoutConnectSeconds; }
     public int     getLlmTimeoutReadSeconds()   { return llmTimeoutReadSeconds; }
+
+    // ── RAG getters ────────────────────────────────────────────
+    public boolean isRagEnabled()           { return ragEnabled; }
+    public String  getRagElasticsearchUrl() { return ragElasticsearchUrl; }
+    public String  getRagAuthType()         { return ragAuthType; }
+    public String  getRagUsername()         { return ragUsername; }
+    public String  getRagPassword()         { return ragPassword; }
+    public String  getRagApiKey()           { return ragApiKey; }
+    public String  getRagIndex()            { return ragIndex; }
+    public boolean isRagSslVerify()         { return ragSslVerify; }
+    public String  getRagSearchMode()       { return ragSearchMode; }
+    public String  getRagTextField()        { return ragTextField; }
+    public int     getRagTopK()             { return ragTopK; }
+    public double  getRagMinScore()         { return ragMinScore; }
+    public int     getRagTimeoutSeconds()   { return ragTimeoutSeconds; }
+    public boolean isRagChunkingEnabled()        { return ragChunkingEnabled; }
+    public String  getRagChunkingStrategy()       { return ragChunkingStrategy; }
+    public int     getRagChunkingSize()           { return ragChunkingSize; }
+    public int     getRagChunkingOverlap()        { return ragChunkingOverlap; }
+    public int     getRagChunkingMaxChunksPerDoc(){ return ragChunkingMaxChunksPerDoc; }
+    public int     getRagChunkingMaxTotalChars()  { return ragChunkingMaxTotalChars; }
 }

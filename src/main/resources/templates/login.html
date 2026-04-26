@@ -37,6 +37,11 @@
         .msg-info { background: #EFF6FF; border: 1px solid #BFDBFE; color: #2563EB;
                     padding: 10px 14px; border-radius: 8px; font-size: 13px;
                     margin-bottom: 16px; text-align: center; }
+        .form-remember { display: flex; align-items: center; gap: 8px; margin: 4px 0 4px;
+                         font-size: 13px; color: #374151; cursor: pointer;
+                         user-select: none; }
+        .form-remember input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer;
+                                                 accent-color: #2563EB; margin: 0; }
 
         /* ── Mobile ──────────────────────────────── */
         @media (max-width: 480px) {
@@ -52,6 +57,7 @@
             .form-input { padding: 9px 11px; font-size: 15px; }
             .login-btn { padding: 11px; font-size: 14px; }
             .msg-error, .msg-info { font-size: 11px; padding: 8px 10px; }
+            .form-remember { font-size: 12px; }
         }
 
         /* ── Desktop large ───────────────────────── */
@@ -78,7 +84,7 @@
     <div th:if="${errorMessage}" class="msg-error" th:text="${errorMessage}"></div>
     <div th:if="${logoutMessage}" class="msg-info" th:text="${logoutMessage}"></div>
 
-    <form th:action="@{/login}" method="post">
+    <form th:action="@{/login}" method="post" id="loginForm">
         <div class="form-group">
             <label class="form-label" for="username">사용자명</label>
             <input class="form-input" type="text" id="username" name="username"
@@ -89,9 +95,46 @@
             <input class="form-input" type="password" id="password" name="password"
                    placeholder="Password" autocomplete="current-password" required>
         </div>
+        <label class="form-remember">
+            <input type="checkbox" id="rememberUsername">
+            <span>사용자명 저장</span>
+        </label>
         <button class="login-btn" type="submit">로그인</button>
     </form>
 </div>
+
+<script>
+(function () {
+    var STORAGE_KEY = 'heap_login_username';
+    var usernameEl = document.getElementById('username');
+    var passwordEl = document.getElementById('password');
+    var rememberEl = document.getElementById('rememberUsername');
+    var formEl = document.getElementById('loginForm');
+    if (!usernameEl || !rememberEl || !formEl) return;
+
+    try {
+        var saved = localStorage.getItem(STORAGE_KEY);
+        if (saved) {
+            usernameEl.value = saved;
+            rememberEl.checked = true;
+            if (passwordEl) {
+                usernameEl.blur();
+                passwordEl.focus();
+            }
+        }
+    } catch (e) { /* localStorage 비활성/차단 환경 무시 */ }
+
+    formEl.addEventListener('submit', function () {
+        try {
+            if (rememberEl.checked) {
+                localStorage.setItem(STORAGE_KEY, usernameEl.value.trim());
+            } else {
+                localStorage.removeItem(STORAGE_KEY);
+            }
+        } catch (e) { /* 저장 실패해도 로그인은 진행 */ }
+    });
+})();
+</script>
 
 </body>
 </html>

@@ -119,7 +119,7 @@ body.banner-collapsed .gb-collapsed-icons { display: flex; }
                    fill: none; stroke-width: 1.8; flex-shrink: 0; }
 /* ── Sub-menu ────────────────────────────────── */
 .gb-nav-sub { overflow: hidden; max-height: 0; transition: max-height .25s ease; }
-.gb-nav-sub.open { max-height: 120px; }
+.gb-nav-sub.open { max-height: 200px; }
 .gb-nav-sub a { display: flex; align-items: center; gap: 6px;
                 padding: 5px 10px 5px 34px; border-radius: 5px; color: #6B7280;
                 text-decoration: none; font-size: 11px; font-weight: 500;
@@ -365,6 +365,10 @@ body.banner-no-transition .gb-header { transition: none !important; }
                     <svg viewBox="0 0 24 24" style="fill:currentColor;stroke:none"><path d="M12 2a4 4 0 014 4c0 1.1-.9 2-2 2h-4a2 2 0 01-2-2 4 4 0 014-4z"/><path d="M8 8v8a4 4 0 008 0V8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
                     LLM Configuration
                 </a>
+                <a href="/settings/rag" id="gbNavSettingsRag">
+                    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    RAG Configuration
+                </a>
                 <a href="/admin/users" id="gbNavSettingsAccounts" sec:authorize="hasRole('ADMIN')">
                     <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     Accounts
@@ -554,6 +558,9 @@ function highlightActiveNav() {
         } else if (path === '/settings/llm') {
             var llmLink = document.getElementById('gbNavSettingsLlm');
             if (llmLink) llmLink.classList.add('active');
+        } else if (path === '/settings/rag') {
+            var ragLink = document.getElementById('gbNavSettingsRag');
+            if (ragLink) ragLink.classList.add('active');
         } else if (path.startsWith('/admin/users')) {
             var accLink = document.getElementById('gbNavSettingsAccounts');
             if (accLink) accLink.classList.add('active');

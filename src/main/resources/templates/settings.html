@@ -446,6 +446,22 @@
             </div>
         </div>
 
+        <!-- RAG (Elasticsearch) Configuration (링크) -->
+        <a href="/settings/rag" class="card" id="ragCard" style="text-decoration:none;color:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s;display:block">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                RAG (Elasticsearch)
+                <span id="ragStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;margin-left:auto;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">OFF</span>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0">
+                <div>
+                    <div style="font-size:13px;font-weight:500;color:#374151">사내 Elasticsearch 검색 결과를 LLM 컨텍스트에 주입</div>
+                    <div style="font-size:11px;color:#9CA3AF;margin-top:4px" id="ragSummary">접속 정보, 검색 모드, 청킹 옵션을 설정합니다</div>
+                </div>
+                <svg viewBox="0 0 24 24" style="width:20px;height:20px;stroke:#9CA3AF;fill:none;stroke-width:2;flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
+            </div>
+        </a>
+
         <!-- AI / LLM Configuration (링크) -->
         <a href="/settings/llm" class="card" id="llmCard" style="text-decoration:none;color:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s;display:block">
             <div class="card-title">
@@ -850,6 +866,8 @@ function loadAllData(showToast) {
     loadScpTempDir();
     loadSshLocalUser();
     loadScanInterval();
+    // RAG 설정
+    loadRagSettings();
 
     // 물리 메모리 (별도 API)
     fetch('/api/mat/heap').then(function(r){ return r.json(); }).then(function(h) {
@@ -1097,6 +1115,35 @@ function fallbackCopy(text) {
         toast('Copy failed — please copy manually: ' + text, 'error');
     }
     document.body.removeChild(ta);
+}
+
+// ── RAG Card (링크 카드 — 상태 뱃지 + 요약만) ────────────
+function loadRagSettings() {
+    fetch('/api/settings/rag').then(function(r){ return r.json(); }).then(function(d){
+        var badge = document.getElementById('ragStatusBadge');
+        if (badge) {
+            if (d.enabled) {
+                badge.textContent = 'ON';
+                badge.style.background = '#DBEAFE';
+                badge.style.color = '#1D4ED8';
+                badge.style.borderColor = '#93C5FD';
+            } else {
+                badge.textContent = 'OFF';
+                badge.style.background = '#F3F4F6';
+                badge.style.color = '#9CA3AF';
+                badge.style.borderColor = '#E5E7EB';
+            }
+        }
+        var summary = document.getElementById('ragSummary');
+        if (summary) {
+            if (d.url) {
+                var auth = d.authType || 'none';
+                summary.textContent = (d.url || '-') + ' / index: ' + (d.index || '-') + ' / mode: ' + (d.searchMode || 'keyword') + ' / auth: ' + auth;
+            } else {
+                summary.textContent = '미설정 — 클릭하여 ES 접속 정보 입력';
+            }
+        }
+    }).catch(function(e){ console.warn('RAG 설정 로드 실패:', e); });
 }
 
 // ── LLM Card (상태 뱃지 + 요약만) ────────────────────────

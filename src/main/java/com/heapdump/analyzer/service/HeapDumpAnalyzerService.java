@@ -94,6 +94,27 @@ public class HeapDumpAnalyzerService {
     private volatile String  llmChatSystemPrompt;
     private volatile boolean llmChatRestoreIncludeHistory = true;
 
+    // RAG (Elasticsearch) 런타임 설정
+    private volatile boolean ragEnabled;
+    private volatile String  ragElasticsearchUrl;
+    private volatile String  ragAuthType;          // none | basic | api-key
+    private volatile String  ragUsername;
+    private volatile String  ragPassword;          // 평문 보관 (settings.json에는 ENC로 저장)
+    private volatile String  ragApiKey;            // 평문 보관 (settings.json에는 ENC로 저장)
+    private volatile String  ragIndex;
+    private volatile boolean ragSslVerify;
+    private volatile String  ragSearchMode;        // keyword | semantic-server | semantic-client
+    private volatile String  ragTextField;
+    private volatile int     ragTopK;
+    private volatile double  ragMinScore;
+    private volatile int     ragTimeoutSeconds;
+    private volatile boolean ragChunkingEnabled;
+    private volatile String  ragChunkingStrategy;       // fixed | paragraph | sentence
+    private volatile int     ragChunkingSize;
+    private volatile int     ragChunkingOverlap;
+    private volatile int     ragChunkingMaxChunksPerDoc;
+    private volatile int     ragChunkingMaxTotalChars;
+
     private static final String DEFAULT_CHAT_SYSTEM_PROMPT =
         "당신은 Java 힙 덤프 분석 전문가입니다. 사용자가 제공한 힙 덤프 분석 결과에 대해 "
         + "대화형으로 질문에 답합니다. 메모리 누수 원인, JVM 튜닝, 코드 수정 방안 등을 "
@@ -129,6 +150,27 @@ public class HeapDumpAnalyzerService {
             this.llmApiKey = envKey;
             logger.info("[LLM] API key loaded from environment variable LLM_API_KEY");
         }
+
+        // RAG 초기화 (application.properties → settings.json 로드 시 덮어씀)
+        this.ragEnabled = config.isRagEnabled();
+        this.ragElasticsearchUrl = config.getRagElasticsearchUrl();
+        this.ragAuthType = config.getRagAuthType();
+        this.ragUsername = config.getRagUsername();
+        this.ragPassword = com.heapdump.analyzer.util.AesEncryptor.decryptIfEncrypted(config.getRagPassword());
+        this.ragApiKey = com.heapdump.analyzer.util.AesEncryptor.decryptIfEncrypted(config.getRagApiKey());
+        this.ragIndex = config.getRagIndex();
+        this.ragSslVerify = config.isRagSslVerify();
+        this.ragSearchMode = config.getRagSearchMode();
+        this.ragTextField = config.getRagTextField();
+        this.ragTopK = config.getRagTopK();
+        this.ragMinScore = config.getRagMinScore();
+        this.ragTimeoutSeconds = config.getRagTimeoutSeconds();
+        this.ragChunkingEnabled = config.isRagChunkingEnabled();
+        this.ragChunkingStrategy = config.getRagChunkingStrategy();
+        this.ragChunkingSize = config.getRagChunkingSize();
+        this.ragChunkingOverlap = config.getRagChunkingOverlap();
+        this.ragChunkingMaxChunksPerDoc = config.getRagChunkingMaxChunksPerDoc();
+        this.ragChunkingMaxTotalChars = config.getRagChunkingMaxTotalChars();
     }
 
     // ── 스레드 풀 초기화 ───────────────────────────────────────────
@@ -774,6 +816,67 @@ public class HeapDumpAnalyzerService {
             if (saved.containsKey("llmChatRestoreIncludeHistory")) {
                 this.llmChatRestoreIncludeHistory = Boolean.TRUE.equals(saved.get("llmChatRestoreIncludeHistory"));
             }
+            // RAG 설정 복원
+            if (saved.containsKey("ragEnabled")) {
+                this.ragEnabled = Boolean.parseBoolean(String.valueOf(saved.get("ragEnabled")));
+            }
+            if (saved.containsKey("ragElasticsearchUrl")) {
+                this.ragElasticsearchUrl = String.valueOf(saved.get("ragElasticsearchUrl"));
+            }
+            if (saved.containsKey("ragAuthType")) {
+                this.ragAuthType = String.valueOf(saved.get("ragAuthType"));
+            }
+            if (saved.containsKey("ragUsername")) {
+                this.ragUsername = String.valueOf(saved.get("ragUsername"));
+            }
+            if (saved.containsKey("ragPassword")) {
+                this.ragPassword = com.heapdump.analyzer.util.AesEncryptor.decryptIfEncrypted(String.valueOf(saved.get("ragPassword")));
+            }
+            if (saved.containsKey("ragApiKey")) {
+                this.ragApiKey = com.heapdump.analyzer.util.AesEncryptor.decryptIfEncrypted(String.valueOf(saved.get("ragApiKey")));
+            }
+            if (saved.containsKey("ragIndex")) {
+                this.ragIndex = String.valueOf(saved.get("ragIndex"));
+            }
+            if (saved.containsKey("ragSslVerify")) {
+                this.ragSslVerify = Boolean.parseBoolean(String.valueOf(saved.get("ragSslVerify")));
+            }
+            if (saved.containsKey("ragSearchMode")) {
+                this.ragSearchMode = String.valueOf(saved.get("ragSearchMode"));
+            }
+            if (saved.containsKey("ragTextField")) {
+                this.ragTextField = String.valueOf(saved.get("ragTextField"));
+            }
+            if (saved.containsKey("ragTopK")) {
+                this.ragTopK = Integer.parseInt(String.valueOf(saved.get("ragTopK")));
+            }
+            if (saved.containsKey("ragMinScore")) {
+                this.ragMinScore = Double.parseDouble(String.valueOf(saved.get("ragMinScore")));
+            }
+            if (saved.containsKey("ragTimeoutSeconds")) {
+                this.ragTimeoutSeconds = Integer.parseInt(String.valueOf(saved.get("ragTimeoutSeconds")));
+            }
+            if (saved.containsKey("ragChunkingEnabled")) {
+                this.ragChunkingEnabled = Boolean.parseBoolean(String.valueOf(saved.get("ragChunkingEnabled")));
+            }
+            if (saved.containsKey("ragChunkingStrategy")) {
+                this.ragChunkingStrategy = String.valueOf(saved.get("ragChunkingStrategy"));
+            }
+            if (saved.containsKey("ragChunkingSize")) {
+                this.ragChunkingSize = Integer.parseInt(String.valueOf(saved.get("ragChunkingSize")));
+            }
+            if (saved.containsKey("ragChunkingOverlap")) {
+                this.ragChunkingOverlap = Integer.parseInt(String.valueOf(saved.get("ragChunkingOverlap")));
+            }
+            if (saved.containsKey("ragChunkingMaxChunksPerDoc")) {
+                this.ragChunkingMaxChunksPerDoc = Integer.parseInt(String.valueOf(saved.get("ragChunkingMaxChunksPerDoc")));
+            }
+            if (saved.containsKey("ragChunkingMaxTotalChars")) {
+                this.ragChunkingMaxTotalChars = Integer.parseInt(String.valueOf(saved.get("ragChunkingMaxTotalChars")));
+            }
+            if (ragEnabled) {
+                logger.info("[Settings] RAG enabled: url={}, index={}, mode={}", ragElasticsearchUrl, ragIndex, ragSearchMode);
+            }
             // 환경변수 LLM_API_KEY 우선
             String envKey = System.getenv("LLM_API_KEY");
             if (envKey != null && !envKey.isEmpty()) {
@@ -827,6 +930,26 @@ public class HeapDumpAnalyzerService {
             settings.put("llmTimeoutReadSeconds", llmTimeoutReadSeconds);
             settings.put("llmChatSystemPrompt", llmChatSystemPrompt);
             settings.put("llmChatRestoreIncludeHistory", llmChatRestoreIncludeHistory);
+            // RAG 설정 (비밀번호/API 키는 ENC(...)로 암호화하여 저장)
+            settings.put("ragEnabled", ragEnabled);
+            settings.put("ragElasticsearchUrl", ragElasticsearchUrl);
+            settings.put("ragAuthType", ragAuthType);
+            settings.put("ragUsername", ragUsername);
+            settings.put("ragPassword", encryptForStorage(ragPassword));
+            settings.put("ragApiKey", encryptForStorage(ragApiKey));
+            settings.put("ragIndex", ragIndex);
+            settings.put("ragSslVerify", ragSslVerify);
+            settings.put("ragSearchMode", ragSearchMode);
+            settings.put("ragTextField", ragTextField);
+            settings.put("ragTopK", ragTopK);
+            settings.put("ragMinScore", ragMinScore);
+            settings.put("ragTimeoutSeconds", ragTimeoutSeconds);
+            settings.put("ragChunkingEnabled", ragChunkingEnabled);
+            settings.put("ragChunkingStrategy", ragChunkingStrategy);
+            settings.put("ragChunkingSize", ragChunkingSize);
+            settings.put("ragChunkingOverlap", ragChunkingOverlap);
+            settings.put("ragChunkingMaxChunksPerDoc", ragChunkingMaxChunksPerDoc);
+            settings.put("ragChunkingMaxTotalChars", ragChunkingMaxTotalChars);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
         } catch (IOException e) {
@@ -863,6 +986,26 @@ public class HeapDumpAnalyzerService {
             updates.put("llm.timeout.connect-seconds", String.valueOf(llmTimeoutConnectSeconds));
             updates.put("llm.timeout.read-seconds", String.valueOf(llmTimeoutReadSeconds));
             updates.put("llm.chat.restore-include-history", String.valueOf(llmChatRestoreIncludeHistory));
+            // RAG 설정
+            updates.put("rag.enabled", String.valueOf(ragEnabled));
+            updates.put("rag.elasticsearch.url", ragElasticsearchUrl != null ? ragElasticsearchUrl : "");
+            updates.put("rag.elasticsearch.auth-type", ragAuthType != null ? ragAuthType : "none");
+            updates.put("rag.elasticsearch.username", ragUsername != null ? ragUsername : "");
+            updates.put("rag.elasticsearch.password", encryptForStorage(ragPassword));
+            updates.put("rag.elasticsearch.api-key", encryptForStorage(ragApiKey));
+            updates.put("rag.elasticsearch.index", ragIndex != null ? ragIndex : "");
+            updates.put("rag.elasticsearch.ssl-verify", String.valueOf(ragSslVerify));
+            updates.put("rag.search.mode", ragSearchMode != null ? ragSearchMode : "keyword");
+            updates.put("rag.search.text-field", ragTextField != null ? ragTextField : "content");
+            updates.put("rag.search.top-k", String.valueOf(ragTopK));
+            updates.put("rag.search.min-score", String.valueOf(ragMinScore));
+            updates.put("rag.search.timeout-seconds", String.valueOf(ragTimeoutSeconds));
+            updates.put("rag.chunking.enabled", String.valueOf(ragChunkingEnabled));
+            updates.put("rag.chunking.strategy", ragChunkingStrategy != null ? ragChunkingStrategy : "fixed");
+            updates.put("rag.chunking.size", String.valueOf(ragChunkingSize));
+            updates.put("rag.chunking.overlap", String.valueOf(ragChunkingOverlap));
+            updates.put("rag.chunking.max-chunks-per-doc", String.valueOf(ragChunkingMaxChunksPerDoc));
+            updates.put("rag.chunking.max-total-chars", String.valueOf(ragChunkingMaxTotalChars));
 
             List<String> newLines = new ArrayList<>();
             for (String line : lines) {
@@ -967,6 +1110,103 @@ public class HeapDumpAnalyzerService {
         this.llmChatRestoreIncludeHistory = v;
         persistSettings();
         logger.info("[LLM] Chat restore include-history: {}", v);
+    }
+
+    // ── RAG 설정 getter/setter ────────────────────────────────────
+    public boolean isRagEnabled()           { return ragEnabled; }
+    public String  getRagElasticsearchUrl() { return ragElasticsearchUrl; }
+    public String  getRagAuthType()         { return ragAuthType; }
+    public String  getRagUsername()         { return ragUsername; }
+    public String  getRagPassword()         { return ragPassword; }
+    public String  getRagApiKey()           { return ragApiKey; }
+    public String  getRagIndex()            { return ragIndex; }
+    public boolean isRagSslVerify()         { return ragSslVerify; }
+    public String  getRagSearchMode()       { return ragSearchMode; }
+    public String  getRagTextField()        { return ragTextField; }
+    public int     getRagTopK()             { return ragTopK; }
+    public double  getRagMinScore()         { return ragMinScore; }
+    public int     getRagTimeoutSeconds()   { return ragTimeoutSeconds; }
+    public boolean isRagChunkingEnabled()        { return ragChunkingEnabled; }
+    public String  getRagChunkingStrategy()       { return ragChunkingStrategy; }
+    public int     getRagChunkingSize()           { return ragChunkingSize; }
+    public int     getRagChunkingOverlap()        { return ragChunkingOverlap; }
+    public int     getRagChunkingMaxChunksPerDoc(){ return ragChunkingMaxChunksPerDoc; }
+    public int     getRagChunkingMaxTotalChars()  { return ragChunkingMaxTotalChars; }
+
+    public boolean isRagPasswordSet() { return ragPassword != null && !ragPassword.trim().isEmpty(); }
+    public boolean isRagApiKeySet()   { return ragApiKey != null && !ragApiKey.trim().isEmpty(); }
+
+    public String getRagPasswordMasked() {
+        if (ragPassword == null || ragPassword.isEmpty()) return "";
+        if (ragPassword.length() < 4) return "****";
+        return "****" + ragPassword.substring(ragPassword.length() - 2);
+    }
+
+    public String getRagApiKeyMasked() {
+        if (ragApiKey == null || ragApiKey.isEmpty()) return "";
+        if (ragApiKey.length() < 8) return "****";
+        return ragApiKey.substring(0, 4) + "..." + ragApiKey.substring(ragApiKey.length() - 4);
+    }
+
+    public void setRagEnabled(boolean enabled) {
+        this.ragEnabled = enabled;
+        persistSettings();
+        logger.info("[RAG] enabled={}", enabled);
+    }
+
+    /**
+     * RAG 설정 일괄 업데이트.
+     * password/apiKey 파라미터는 null이면 기존 값 유지, 빈 문자열이면 삭제, 그 외는 새 값으로 교체.
+     */
+    public void setRagConfig(String url, String authType, String username,
+                             String password, String apiKey, String index, boolean sslVerify,
+                             String searchMode, String textField, int topK, double minScore,
+                             int timeoutSeconds) {
+        this.ragElasticsearchUrl = trimOrEmpty(url);
+        this.ragAuthType = (authType == null || authType.isEmpty()) ? "none" : authType;
+        this.ragUsername = trimOrEmpty(username);
+        if (password != null) this.ragPassword = password;       // null = 유지
+        if (apiKey != null)   this.ragApiKey = apiKey;
+        this.ragIndex = trimOrEmpty(index);
+        this.ragSslVerify = sslVerify;
+        this.ragSearchMode = (searchMode == null || searchMode.isEmpty()) ? "keyword" : searchMode;
+        this.ragTextField = (textField == null || textField.isEmpty()) ? "content" : textField;
+        this.ragTopK = Math.max(1, Math.min(20, topK));
+        this.ragMinScore = Math.max(0.0, minScore);
+        this.ragTimeoutSeconds = Math.max(1, Math.min(60, timeoutSeconds));
+        persistSettings();
+        logger.info("[RAG] config updated: url={}, index={}, mode={}, topK={}",
+                ragElasticsearchUrl, ragIndex, ragSearchMode, ragTopK);
+    }
+
+    /** RAG 청킹 옵션 일괄 업데이트 */
+    public void setRagChunkingConfig(boolean enabled, String strategy, int size, int overlap,
+                                     int maxChunksPerDoc, int maxTotalChars) {
+        this.ragChunkingEnabled = enabled;
+        String s = (strategy == null) ? "fixed" : strategy.toLowerCase();
+        if (!s.equals("fixed") && !s.equals("paragraph") && !s.equals("sentence")) s = "fixed";
+        this.ragChunkingStrategy = s;
+        this.ragChunkingSize = Math.max(100, Math.min(8000, size));
+        this.ragChunkingOverlap = Math.max(0, Math.min(this.ragChunkingSize - 1, overlap));
+        this.ragChunkingMaxChunksPerDoc = Math.max(1, Math.min(20, maxChunksPerDoc));
+        this.ragChunkingMaxTotalChars = Math.max(500, Math.min(50000, maxTotalChars));
+        persistSettings();
+        logger.info("[RAG] chunking updated: enabled={}, strategy={}, size={}, overlap={}, maxPerDoc={}, maxTotal={}",
+                ragChunkingEnabled, ragChunkingStrategy, ragChunkingSize, ragChunkingOverlap,
+                ragChunkingMaxChunksPerDoc, ragChunkingMaxTotalChars);
+    }
+
+    private static String trimOrEmpty(String s) { return s == null ? "" : s.trim(); }
+
+    /** 평문을 ENC(...) 형식 암호문으로 변환. 빈 값은 그대로 빈 문자열. */
+    private static String encryptForStorage(String plain) {
+        if (plain == null || plain.isEmpty()) return "";
+        try {
+            return "ENC(" + com.heapdump.analyzer.util.AesEncryptor.encrypt(plain) + ")";
+        } catch (Exception e) {
+            logger.warn("[Settings] AES 암호화 실패, 평문 저장 회피: {}", e.getMessage());
+            return "";
+        }
     }
 
     public String getDefaultApiUrl(String provider) {

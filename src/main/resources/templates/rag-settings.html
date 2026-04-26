@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>RAG Configuration — Heap Dump Analyzer</title>
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { height: 100%; }
+        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
+               color: #1F2937; background: #F3F4F6; line-height: 1.5; overflow-x: hidden; }
+
+        .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
+                  transition: left .25s cubic-bezier(.4,0,.2,1);
+                  background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; }
+        .topbar-title { font-size: 16px; font-weight: 700; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; }
+        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                      border-radius: 6px; background: transparent; color: #6B7280;
+                      cursor: pointer; text-decoration: none; display: inline-block; }
+        .topbar-btn:hover { background: #F9FAFB; }
+
+        .container { max-width: 1080px; margin: 0 auto; padding: 68px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+        .page-hdr { display: flex; align-items: center; justify-content: space-between;
+                    margin-bottom: 24px; flex-wrap: wrap; gap: 8px; }
+        .page-ttl { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        .page-ttl svg { width: 22px; height: 22px; stroke: #6B7280; fill: none; stroke-width: 2; }
+        .breadcrumb { font-size: 12px; color: #9CA3AF; display: flex; align-items: center; gap: 4px; }
+        .breadcrumb a { color: #6B7280; text-decoration: none; }
+        .breadcrumb a:hover { color: #2563EB; text-decoration: underline; }
+
+        .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+        .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+                      color: #6B7280; margin-bottom: 14px; padding-bottom: 8px;
+                      border-bottom: 1px solid #F3F4F6;
+                      display: flex; align-items: center; gap: 8px; }
+        .card-title svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+
+        .s-row { display: flex; justify-content: space-between; align-items: center;
+                 padding: 10px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; flex-wrap: wrap; }
+        .s-row:last-child { border-bottom: none; }
+        .s-key { font-size: 13px; color: #374151; font-weight: 500; flex-shrink: 0; }
+
+        .setting-row { display: flex; align-items: center; justify-content: space-between;
+                       padding: 12px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
+        .setting-row:last-child { border-bottom: none; }
+        .setting-label { font-size: 13px; font-weight: 500; color: #374151; }
+        .setting-desc { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+        .tog { display: none; }
+        .tog-track { position: relative; display: inline-block; width: 38px; height: 22px;
+                     background: #D1D5DB; border-radius: 11px; cursor: pointer; transition: background .2s; }
+        .tog-track::after { content: ''; position: absolute; top: 3px; left: 3px;
+                            width: 16px; height: 16px; background: #fff; border-radius: 50%;
+                            transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+        .tog:checked + .tog-track { background: #2563EB; }
+        .tog:checked + .tog-track::after { transform: translateX(16px); }
+
+        .input-text { width: 100%; padding: 6px 10px; border: 1px solid #D1D5DB; border-radius: 6px;
+                      font-size: 13px; box-sizing: border-box; font-family: 'JetBrains Mono','SF Mono',monospace; }
+        .input-text:focus { outline: none; border-color: #2563EB; box-shadow: 0 0 0 2px rgba(37,99,235,.15); }
+        .input-num { padding: 5px 10px; border: 1px solid #D1D5DB; border-radius: 6px; font-size: 13px;
+                     min-width: 100px; text-align: right; }
+        .input-sel { padding: 5px 10px; border: 1px solid #D1D5DB; border-radius: 6px; font-size: 13px; }
+
+        .btn-primary { padding: 6px 14px; border: none; border-radius: 6px; background: #2563EB;
+                       color: #fff; font-size: 12px; cursor: pointer; font-weight: 600; }
+        .btn-primary:hover { background: #1D4ED8; }
+        .btn-secondary { padding: 6px 14px; border: 1px solid #D1D5DB; border-radius: 6px;
+                         background: #fff; font-size: 12px; cursor: pointer; font-weight: 600; color: #374151; }
+        .btn-secondary:hover { background: #F3F4F6; }
+        .btn-success { padding: 6px 14px; border: none; border-radius: 6px; background: #059669;
+                       color: #fff; font-size: 12px; cursor: pointer; font-weight: 600; }
+        .btn-success:hover { background: #047857; }
+
+        .info-banner { font-size: 12px; color: #6B7280; padding: 10px 14px; background: #F9FAFB;
+                       border-radius: 6px; border: 1px solid #E5E7EB; margin-bottom: 16px; line-height: 1.6; }
+        .info-banner strong { color: #1F2937; }
+        .test-result { display: none; padding: 8px 12px; border-radius: 6px; font-size: 12px; margin-top: 10px; }
+        .test-result.ok   { background: #D1FAE5; color: #065F46; border: 1px solid #A7F3D0; display: block; }
+        .test-result.err  { background: #FEE2E2; color: #991B1B; border: 1px solid #FECACA; display: block; }
+        .test-result.busy { background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A; display: block; }
+
+        .toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
+                 padding: 10px 22px; border-radius: 8px; font-size: 13px; font-weight: 500;
+                 z-index: 500; animation: toastIn .3s ease; pointer-events: none; }
+        .toast-success { background: #065F46; color: #fff; }
+        .toast-error   { background: #7F1D1D; color: #fff; }
+        @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -10px); }
+                             to   { opacity: 1; transform: translate(-50%, 0); } }
+
+        @media (min-width: 1024px) {
+            .page-ttl { font-size: 22px; }
+            .s-key { font-size: 14px; }
+            .setting-label { font-size: 14px; }
+            .setting-desc { font-size: 12px; }
+        }
+        @media (max-width: 900px) {
+            .topbar { left: 0; }
+            .container { padding-left: 20px; }
+        }
+        @media (max-width: 768px) {
+            .container { padding: 60px 12px 32px; }
+            .s-row { flex-wrap: wrap; gap: 4px; }
+            .s-key { flex-shrink: 1; min-width: 0; }
+            .card { padding: 16px 14px; }
+            .page-ttl { font-size: 18px; }
+        }
+        @media (max-width: 400px) {
+            .container { padding: 58px 8px 24px; }
+            .card { padding: 14px 12px; }
+            .s-key { font-size: 12px; }
+            .setting-label { font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+
+<div th:replace="fragments/banner :: banner"></div>
+
+<div class="topbar">
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title">RAG Configuration</span>
+    </div>
+    <div class="topbar-right">
+        <a href="/settings" class="topbar-btn">&larr; Settings</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="breadcrumb" style="margin-bottom:8px">
+        <a href="/settings">Settings</a>
+        <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:#9CA3AF;fill:none;stroke-width:2"><polyline points="9 18 15 12 9 6"/></svg>
+        <span style="color:#374151;font-weight:500">RAG Configuration</span>
+    </div>
+    <div class="page-hdr">
+        <div class="page-ttl">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            RAG (Elasticsearch) Configuration
+            <span id="ragStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">OFF</span>
+        </div>
+    </div>
+
+    <div class="info-banner">
+        <strong>Phase 1:</strong> Keyword(BM25) 모드만 동작합니다. Semantic 모드(<code>semantic-server</code>, <code>semantic-client</code>)는 사내 ES 매핑 확인 후 Phase 2에서 활성화 예정 — <code>RAG_PHASE2_PLAN.md</code> 참고.
+    </div>
+
+    <!-- Enable / Disable -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            Enable RAG
+        </div>
+        <div class="setting-row" style="border-bottom:none">
+            <div>
+                <div class="setting-label">Enable RAG</div>
+                <div class="setting-desc">활성화 시 LLM 채팅 응답에 사내 ES 검색 결과를 컨텍스트로 자동 주입합니다.</div>
+            </div>
+            <div>
+                <input type="checkbox" class="tog" id="togRagEnabled" onchange="toggleRagEnabled(this)">
+                <label class="tog-track" for="togRagEnabled"></label>
+            </div>
+        </div>
+    </div>
+
+    <!-- Connection -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+            Connection
+        </div>
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">Elasticsearch URL</span>
+            <input type="text" id="ragUrl" class="input-text" placeholder="https://es.internal:9200">
+        </div>
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">Index</span>
+            <input type="text" id="ragIndex" class="input-text" placeholder="heap-knowledge-base">
+        </div>
+        <div class="s-row">
+            <span class="s-key">SSL Verify</span>
+            <div style="display:flex;align-items:center;gap:8px">
+                <input type="checkbox" id="ragSslVerify" style="width:16px;height:16px">
+                <span class="setting-desc" style="margin-top:0">자체 서명 인증서 사용 시 해제</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Authentication -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            Authentication
+        </div>
+        <div class="s-row">
+            <span class="s-key">Auth Type</span>
+            <select id="ragAuth" class="input-sel" onchange="onRagAuthChange()">
+                <option value="none">None</option>
+                <option value="basic">Basic (username + password)</option>
+                <option value="api-key">API Key</option>
+            </select>
+        </div>
+        <div id="ragAuthBasicBox" style="display:none">
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+                <span class="s-key">Username</span>
+                <input type="text" id="ragUsername" class="input-text" placeholder="elastic">
+            </div>
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+                <span class="s-key">Password</span>
+                <input type="password" id="ragPassword" class="input-text" placeholder="비밀번호">
+                <span id="ragPasswordHint" class="setting-desc" style="margin-top:0"></span>
+            </div>
+        </div>
+        <div id="ragAuthApiKeyBox" style="display:none">
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+                <span class="s-key">API Key</span>
+                <input type="password" id="ragApiKey" class="input-text" placeholder="API Key">
+                <span id="ragApiKeyHint" class="setting-desc" style="margin-top:0"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Search -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Search
+        </div>
+        <div class="s-row">
+            <span class="s-key">Search Mode</span>
+            <select id="ragMode" class="input-sel">
+                <option value="keyword">keyword (BM25)</option>
+                <option value="semantic-server">semantic-server (Phase 2)</option>
+                <option value="semantic-client">semantic-client (Phase 2)</option>
+            </select>
+        </div>
+        <div class="s-row">
+            <span class="s-key">Text Field</span>
+            <input type="text" id="ragTextField" class="input-num" style="text-align:left;font-family:'JetBrains Mono',monospace" placeholder="content">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Top-K (검색 결과 개수)</span>
+            <input type="number" id="ragTopK" class="input-num" min="1" max="20" value="3">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Min Score (최소 점수, 0=필터 없음)</span>
+            <input type="number" id="ragMinScore" class="input-num" step="0.1" min="0" value="0">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Timeout (초)</span>
+            <input type="number" id="ragTimeout" class="input-num" min="1" max="60" value="10">
+        </div>
+    </div>
+
+    <!-- Chunking -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            Chunking (검색 결과 청킹)
+        </div>
+        <div class="info-banner" style="margin-bottom:12px">
+            ES가 반환한 긴 본문을 작은 청크로 잘라 LLM 컨텍스트에 주입합니다. LLM 토큰 한도/응답 품질을 안정시킵니다.
+        </div>
+        <div class="setting-row">
+            <div>
+                <div class="setting-label">Enable Chunking</div>
+                <div class="setting-desc">OFF 시 검색 결과 본문을 그대로 컨텍스트에 주입합니다 (Top-K 한도만 적용)</div>
+            </div>
+            <div>
+                <input type="checkbox" class="tog" id="togChunkingEnabled">
+                <label class="tog-track" for="togChunkingEnabled"></label>
+            </div>
+        </div>
+        <div class="s-row">
+            <span class="s-key">Strategy</span>
+            <select id="chunkStrategy" class="input-sel">
+                <option value="fixed">fixed — 고정 길이 (overlap 적용)</option>
+                <option value="paragraph">paragraph — 빈 줄 단위</option>
+                <option value="sentence">sentence — 문장 단위 (overlap 적용)</option>
+            </select>
+        </div>
+        <div class="s-row">
+            <span class="s-key">Chunk Size (글자 수)</span>
+            <input type="number" id="chunkSize" class="input-num" min="100" max="8000" step="100" value="800">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Overlap (글자 수, fixed/sentence)</span>
+            <input type="number" id="chunkOverlap" class="input-num" min="0" max="2000" step="20" value="120">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Max Chunks per Document</span>
+            <input type="number" id="chunkMaxPerDoc" class="input-num" min="1" max="20" value="3">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Max Total Chars (전체 컨텍스트 글자수)</span>
+            <input type="number" id="chunkMaxTotal" class="input-num" min="500" max="50000" step="500" value="6000">
+        </div>
+    </div>
+
+    <!-- Save & Test -->
+    <div class="card">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button onclick="saveRagAll()" class="btn-primary" style="padding:8px 20px;font-size:13px">Save All</button>
+            <button onclick="testRagConn()" class="btn-success" style="padding:8px 20px;font-size:13px">Test Connection</button>
+            <button onclick="loadRagSettings()" class="btn-secondary" style="padding:8px 20px;font-size:13px">Reload</button>
+        </div>
+        <div id="ragTestResult" class="test-result"></div>
+    </div>
+
+</div>
+
+<script>
+function toast(msg, type) {
+    var t = document.createElement('div');
+    t.className = 'toast toast-' + (type || 'success');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function() { t.style.transition='opacity .4s'; t.style.opacity='0';
+        setTimeout(function(){ t.remove(); }, 400); }, 2500);
+}
+
+function getCsrfHeaders(base) {
+    var h = base || {};
+    var meta = document.querySelector('meta[name="_csrf"]');
+    var headerMeta = document.querySelector('meta[name="_csrf_header"]');
+    if (meta && headerMeta) h[headerMeta.content] = meta.content;
+    return h;
+}
+
+function updateBadge(enabled) {
+    var badge = document.getElementById('ragStatusBadge');
+    if (!badge) return;
+    if (enabled) {
+        badge.textContent = 'ON';
+        badge.style.background = '#DBEAFE'; badge.style.color = '#1D4ED8'; badge.style.borderColor = '#93C5FD';
+    } else {
+        badge.textContent = 'OFF';
+        badge.style.background = '#F3F4F6'; badge.style.color = '#9CA3AF'; badge.style.borderColor = '#E5E7EB';
+    }
+}
+
+function loadRagSettings() {
+    fetch('/api/settings/rag').then(function(r){
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+    }).then(function(d) {
+        document.getElementById('togRagEnabled').checked = !!d.enabled;
+        updateBadge(d.enabled);
+        document.getElementById('ragUrl').value      = d.url || '';
+        document.getElementById('ragIndex').value    = d.index || '';
+        document.getElementById('ragSslVerify').checked = d.sslVerify !== false;
+        document.getElementById('ragAuth').value     = d.authType || 'none';
+        document.getElementById('ragUsername').value = d.username || '';
+        document.getElementById('ragPassword').value = '';
+        document.getElementById('ragApiKey').value   = '';
+        document.getElementById('ragPasswordHint').textContent = d.passwordSet
+            ? '저장된 비밀번호 있음 (' + (d.passwordMasked || '****') + ') — 변경 시에만 입력' : '';
+        document.getElementById('ragApiKeyHint').textContent = d.apiKeySet
+            ? '저장된 키 있음 (' + (d.apiKeyMasked || '****') + ') — 변경 시에만 입력' : '';
+        document.getElementById('ragMode').value      = d.searchMode || 'keyword';
+        document.getElementById('ragTextField').value = d.textField || 'content';
+        document.getElementById('ragTopK').value      = d.topK != null ? d.topK : 3;
+        document.getElementById('ragMinScore').value  = d.minScore != null ? d.minScore : 0;
+        document.getElementById('ragTimeout').value   = d.timeoutSeconds != null ? d.timeoutSeconds : 10;
+        var c = d.chunking || {};
+        document.getElementById('togChunkingEnabled').checked = c.enabled !== false;
+        document.getElementById('chunkStrategy').value   = c.strategy || 'fixed';
+        document.getElementById('chunkSize').value       = c.size != null ? c.size : 800;
+        document.getElementById('chunkOverlap').value    = c.overlap != null ? c.overlap : 120;
+        document.getElementById('chunkMaxPerDoc').value  = c.maxChunksPerDoc != null ? c.maxChunksPerDoc : 3;
+        document.getElementById('chunkMaxTotal').value   = c.maxTotalChars != null ? c.maxTotalChars : 6000;
+        onRagAuthChange();
+    }).catch(function(e) { toast('설정 로드 실패: ' + e.message, 'error'); });
+}
+
+function onRagAuthChange() {
+    var auth = document.getElementById('ragAuth').value;
+    document.getElementById('ragAuthBasicBox').style.display  = (auth === 'basic')   ? 'block' : 'none';
+    document.getElementById('ragAuthApiKeyBox').style.display = (auth === 'api-key') ? 'block' : 'none';
+}
+
+function toggleRagEnabled(el) {
+    var enabled = el.checked;
+    fetch('/api/settings/rag/enabled', {
+        method: 'POST', headers: getCsrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ enabled: enabled })
+    }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.success) {
+            toast('RAG ' + (d.enabled ? '활성화' : '비활성화'), 'success');
+            updateBadge(d.enabled);
+        } else {
+            el.checked = !enabled;
+            toast('변경 실패', 'error');
+        }
+    }).catch(function(e){
+        el.checked = !enabled;
+        toast('요청 실패: ' + e.message, 'error');
+    });
+}
+
+function buildConnPayload(includeSecrets) {
+    var payload = {
+        url:       document.getElementById('ragUrl').value.trim(),
+        index:     document.getElementById('ragIndex').value.trim(),
+        sslVerify: document.getElementById('ragSslVerify').checked,
+        authType:  document.getElementById('ragAuth').value,
+        username:  document.getElementById('ragUsername').value.trim(),
+        searchMode: document.getElementById('ragMode').value,
+        textField: document.getElementById('ragTextField').value.trim() || 'content',
+        topK:      parseInt(document.getElementById('ragTopK').value, 10) || 3,
+        minScore:  parseFloat(document.getElementById('ragMinScore').value) || 0,
+        timeoutSeconds: parseInt(document.getElementById('ragTimeout').value, 10) || 10
+    };
+    if (includeSecrets) {
+        var pw = document.getElementById('ragPassword').value;
+        var ak = document.getElementById('ragApiKey').value;
+        if (pw && pw.length > 0) payload.password = pw;
+        if (ak && ak.length > 0) payload.apiKey = ak;
+    }
+    return payload;
+}
+
+function buildChunkingPayload() {
+    return {
+        enabled:  document.getElementById('togChunkingEnabled').checked,
+        strategy: document.getElementById('chunkStrategy').value,
+        size:     parseInt(document.getElementById('chunkSize').value, 10) || 800,
+        overlap:  parseInt(document.getElementById('chunkOverlap').value, 10) || 0,
+        maxChunksPerDoc: parseInt(document.getElementById('chunkMaxPerDoc').value, 10) || 3,
+        maxTotalChars:   parseInt(document.getElementById('chunkMaxTotal').value, 10) || 6000
+    };
+}
+
+function saveRagAll() {
+    var connPayload = buildConnPayload(true);
+    if (!connPayload.url) { toast('Elasticsearch URL을 입력하세요', 'error'); return; }
+    var chunkPayload = buildChunkingPayload();
+    if (chunkPayload.overlap >= chunkPayload.size) {
+        toast('Overlap은 Chunk Size보다 작아야 합니다', 'error');
+        return;
+    }
+
+    // 두 API 순차 호출
+    fetch('/api/settings/rag', {
+        method: 'POST', headers: getCsrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(connPayload)
+    }).then(function(r){ return r.json(); }).then(function(d){
+        if (!d.success) throw new Error(d.error || '연결 설정 저장 실패');
+        return fetch('/api/settings/rag/chunking', {
+            method: 'POST', headers: getCsrfHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify(chunkPayload)
+        });
+    }).then(function(r){ return r.json(); }).then(function(d){
+        if (!d.success) throw new Error('청킹 설정 저장 실패');
+        toast('RAG 설정 저장 완료', 'success');
+        loadRagSettings();
+    }).catch(function(e){ toast('저장 실패: ' + e.message, 'error'); });
+}
+
+function testRagConn() {
+    var payload = buildConnPayload(true);
+    var resBox = document.getElementById('ragTestResult');
+    resBox.className = 'test-result busy';
+    resBox.textContent = '연결 테스트 중...';
+    fetch('/api/settings/rag/test', {
+        method: 'POST', headers: getCsrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+    }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.success) {
+            resBox.className = 'test-result ok';
+            var msg = '✓ 연결 성공';
+            if (d.clusterName) msg += ' — cluster: ' + d.clusterName + ' (status: ' + d.status + ')';
+            if (d.indexExists === true) msg += ', index 존재 ✓';
+            else if (d.indexExists === false) msg += ', ⚠ index 없음 (' + (d.warning || '') + ')';
+            resBox.textContent = msg;
+        } else {
+            resBox.className = 'test-result err';
+            resBox.textContent = '✗ ' + (d.error || '연결 실패');
+        }
+    }).catch(function(e){
+        resBox.className = 'test-result err';
+        resBox.textContent = '✗ 요청 실패: ' + e.message;
+    });
+}
+
+document.addEventListener('DOMContentLoaded', loadRagSettings);
+</script>
+
+</body>
+</html>

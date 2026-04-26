@@ -55,15 +55,18 @@ public class HeapDumpController {
     private final com.heapdump.analyzer.config.HeapDumpConfig config;
     private final org.springframework.boot.autoconfigure.jdbc.DataSourceProperties dataSourceProperties;
     private final javax.sql.DataSource dataSource;
+    private final com.heapdump.analyzer.service.RagService ragService;
 
     public HeapDumpController(HeapDumpAnalyzerService analyzerService,
                               com.heapdump.analyzer.config.HeapDumpConfig config,
                               org.springframework.boot.autoconfigure.jdbc.DataSourceProperties dataSourceProperties,
-                              javax.sql.DataSource dataSource) {
+                              javax.sql.DataSource dataSource,
+                              com.heapdump.analyzer.service.RagService ragService) {
         this.analyzerService = analyzerService;
         this.config = config;
         this.dataSourceProperties = dataSourceProperties;
         this.dataSource = dataSource;
+        this.ragService = ragService;
     }
 
     // ── 파일명 검증 실패 핸들러 ─────────────────────────────────────
@@ -255,6 +258,11 @@ public class HeapDumpController {
     @GetMapping("/settings/llm")
     public String llmSettingsPage() {
         return "llm-settings";
+    }
+
+    @GetMapping("/settings/rag")
+    public String ragSettingsPage() {
+        return "rag-settings";
     }
 
     // ── 히스토리 삭제 ────────────────────────────────────────────
@@ -1447,6 +1455,12 @@ public class HeapDumpController {
             systemPrompt += "\n\n아래는 사용자가 현재 보고 있는 힙 덤프 분석 결과입니다. "
                 + "이 데이터를 참고하여 질문에 답하세요:\n\n" + context;
         }
+        // RAG 컨텍스트 주입 (활성화 시 마지막 사용자 메시지로 검색)
+        Map<String, String> lastMsg = messages.get(messages.size() - 1);
+        if (lastMsg != null && "user".equals(lastMsg.get("role"))) {
+            String ragContext = ragService.fetchContextForLlm(lastMsg.get("content"));
+            if (!ragContext.isEmpty()) systemPrompt += ragContext;
+        }
 
         Map<String, Object> result = analyzerService.callLlmChat(messages, systemPrompt);
 
@@ -1486,6 +1500,12 @@ public class HeapDumpController {
         if (!context.trim().isEmpty()) {
             systemPrompt += "\n\n아래는 사용자가 현재 보고 있는 힙 덤프 분석 결과입니다. "
                 + "이 데이터를 참고하여 질문에 답하세요:\n\n" + context;
+        }
+        // RAG 컨텍스트 주입
+        Map<String, String> lastStreamMsg = messages.get(messages.size() - 1);
+        if (lastStreamMsg != null && "user".equals(lastStreamMsg.get("role"))) {
+            String ragContext = ragService.fetchContextForLlm(lastStreamMsg.get("content"));
+            if (!ragContext.isEmpty()) systemPrompt += ragContext;
         }
 
         final String finalSystemPrompt = systemPrompt;
@@ -1571,6 +1591,135 @@ public class HeapDumpController {
         res.put("success", true);
         res.put("includeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
         return ResponseEntity.ok(res);
+    }
+
+    // ── RAG (Elasticsearch) API ──────────────────────────────────
+
+    @GetMapping("/api/settings/rag")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getRagSettings() {
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("enabled", analyzerService.isRagEnabled());
+        res.put("url", analyzerService.getRagElasticsearchUrl());
+        res.put("authType", analyzerService.getRagAuthType());
+        res.put("username", analyzerService.getRagUsername());
+        res.put("passwordSet", analyzerService.isRagPasswordSet());
+        res.put("passwordMasked", analyzerService.getRagPasswordMasked());
+        res.put("apiKeySet", analyzerService.isRagApiKeySet());
+        res.put("apiKeyMasked", analyzerService.getRagApiKeyMasked());
+        res.put("index", analyzerService.getRagIndex());
+        res.put("sslVerify", analyzerService.isRagSslVerify());
+        res.put("searchMode", analyzerService.getRagSearchMode());
+        res.put("textField", analyzerService.getRagTextField());
+        res.put("topK", analyzerService.getRagTopK());
+        res.put("minScore", analyzerService.getRagMinScore());
+        res.put("timeoutSeconds", analyzerService.getRagTimeoutSeconds());
+        // 청킹 옵션
+        Map<String, Object> chunking = new LinkedHashMap<>();
+        chunking.put("enabled", analyzerService.isRagChunkingEnabled());
+        chunking.put("strategy", analyzerService.getRagChunkingStrategy());
+        chunking.put("size", analyzerService.getRagChunkingSize());
+        chunking.put("overlap", analyzerService.getRagChunkingOverlap());
+        chunking.put("maxChunksPerDoc", analyzerService.getRagChunkingMaxChunksPerDoc());
+        chunking.put("maxTotalChars", analyzerService.getRagChunkingMaxTotalChars());
+        res.put("chunking", chunking);
+        res.put("availableModes", java.util.Arrays.asList("keyword", "semantic-server", "semantic-client"));
+        res.put("availableAuthTypes", java.util.Arrays.asList("none", "basic", "api-key"));
+        res.put("availableChunkingStrategies", java.util.Arrays.asList("fixed", "paragraph", "sentence"));
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/api/settings/rag/chunking")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setRagChunking(@RequestBody Map<String, Object> body) {
+        boolean enabled = !Boolean.FALSE.equals(body.get("enabled"));
+        String strategy = (String) body.getOrDefault("strategy", "fixed");
+        int size      = parseInt(body.get("size"), 800);
+        int overlap   = parseInt(body.get("overlap"), 120);
+        int maxPerDoc = parseInt(body.get("maxChunksPerDoc"), 3);
+        int maxTotal  = parseInt(body.get("maxTotalChars"), 6000);
+        analyzerService.setRagChunkingConfig(enabled, strategy, size, overlap, maxPerDoc, maxTotal);
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", true);
+        res.put("enabled", analyzerService.isRagChunkingEnabled());
+        res.put("strategy", analyzerService.getRagChunkingStrategy());
+        res.put("size", analyzerService.getRagChunkingSize());
+        res.put("overlap", analyzerService.getRagChunkingOverlap());
+        res.put("maxChunksPerDoc", analyzerService.getRagChunkingMaxChunksPerDoc());
+        res.put("maxTotalChars", analyzerService.getRagChunkingMaxTotalChars());
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/api/settings/rag/enabled")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setRagEnabled(@RequestBody Map<String, Object> body) {
+        boolean enabled = Boolean.TRUE.equals(body.get("enabled"));
+        analyzerService.setRagEnabled(enabled);
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", true);
+        res.put("enabled", analyzerService.isRagEnabled());
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/api/settings/rag")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setRagConfig(@RequestBody Map<String, Object> body) {
+        String url        = (String) body.getOrDefault("url", "");
+        String authType   = (String) body.getOrDefault("authType", "none");
+        String username   = (String) body.getOrDefault("username", "");
+        String index      = (String) body.getOrDefault("index", "");
+        boolean sslVerify = !Boolean.FALSE.equals(body.get("sslVerify"));
+        String searchMode = (String) body.getOrDefault("searchMode", "keyword");
+        String textField  = (String) body.getOrDefault("textField", "content");
+        int topK          = parseInt(body.get("topK"), 3);
+        double minScore   = parseDouble(body.get("minScore"), 0.0);
+        int timeoutSec    = parseInt(body.get("timeoutSeconds"), 10);
+
+        // password/apiKey: 키 자체가 없거나 null이면 기존 값 유지, 빈 문자열이면 삭제, 그 외는 갱신
+        String password = body.containsKey("password") ? (String) body.get("password") : null;
+        String apiKey   = body.containsKey("apiKey")   ? (String) body.get("apiKey")   : null;
+
+        analyzerService.setRagConfig(url, authType, username, password, apiKey, index, sslVerify,
+                searchMode, textField, topK, minScore, timeoutSec);
+
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", true);
+        res.put("url", analyzerService.getRagElasticsearchUrl());
+        res.put("index", analyzerService.getRagIndex());
+        res.put("searchMode", analyzerService.getRagSearchMode());
+        res.put("passwordSet", analyzerService.isRagPasswordSet());
+        res.put("apiKeySet", analyzerService.isRagApiKeySet());
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/api/settings/rag/test")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> testRagConnection(@RequestBody(required = false) Map<String, Object> body) {
+        Map<String, Object> result = ragService.testConnection(body);
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/api/settings/rag/search")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> ragSearchProbe(@RequestBody Map<String, Object> body) {
+        String query = (String) body.getOrDefault("query", "");
+        if (query.trim().isEmpty()) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("error", "query 파라미터가 비어있습니다.");
+            return ResponseEntity.badRequest().body(err);
+        }
+        Map<String, Object> result = ragService.search(query, null);
+        return ResponseEntity.ok(result);
+    }
+
+    private static int parseInt(Object v, int fallback) {
+        if (v == null) return fallback;
+        try { return Integer.parseInt(String.valueOf(v)); } catch (Exception e) { return fallback; }
+    }
+    private static double parseDouble(Object v, double fallback) {
+        if (v == null) return fallback;
+        try { return Double.parseDouble(String.valueOf(v)); } catch (Exception e) { return fallback; }
     }
 
     // ── [NEW] API: 현재 설정 조회 ────────────────────────────────

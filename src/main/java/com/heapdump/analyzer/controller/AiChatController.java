@@ -5,6 +5,7 @@ import com.heapdump.analyzer.model.entity.AiChatSession;
 import com.heapdump.analyzer.repository.AiChatMessageRepository;
 import com.heapdump.analyzer.repository.AiChatSessionRepository;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.service.RagService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -25,15 +26,18 @@ public class AiChatController {
     private final AiChatMessageRepository messageRepo;
     private final HeapDumpAnalyzerService analyzerService;
     private final com.heapdump.analyzer.config.HeapDumpConfig config;
+    private final RagService ragService;
 
     public AiChatController(AiChatSessionRepository sessionRepo,
                             AiChatMessageRepository messageRepo,
                             HeapDumpAnalyzerService analyzerService,
-                            com.heapdump.analyzer.config.HeapDumpConfig config) {
+                            com.heapdump.analyzer.config.HeapDumpConfig config,
+                            RagService ragService) {
         this.sessionRepo = sessionRepo;
         this.messageRepo = messageRepo;
         this.analyzerService = analyzerService;
         this.config = config;
+        this.ragService = ragService;
     }
 
     // ── 페이지 라우팅 ────────────────────────────────────────────
@@ -270,6 +274,11 @@ public class AiChatController {
         if (!context.trim().isEmpty()) {
             systemPrompt += "\n\n아래는 사용자가 현재 보고 있는 힙 덤프 분석 결과입니다. "
                 + "이 데이터를 참고하여 질문에 답하세요:\n\n" + context;
+        }
+        // RAG 컨텍스트 주입 (활성화 시 마지막 사용자 메시지로 검색)
+        if (lastUserMsg != null) {
+            String ragContext = ragService.fetchContextForLlm(lastUserMsg.get("content"));
+            if (!ragContext.isEmpty()) systemPrompt += ragContext;
         }
 
         final String finalSystemPrompt = systemPrompt;
