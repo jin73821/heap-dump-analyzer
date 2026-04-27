@@ -1,5 +1,7 @@
 # RAG Phase 2 구현 계획 (Elasticsearch Semantic Search)
 
+> **상태(2026-04-27): Phase 2 구현 완료.** 운영팀에서 ES 예시 쿼리를 별도로 제공하지 않아 두 가지 semantic 모드(`semantic-server`, `semantic-client`)를 모두 구현하여 Settings UI에서 선택 가능하게 활성화했습니다. 실제 사내 ES 매핑이 확인되면 적합한 모드를 선택하여 검증하면 됩니다. 변경 내역은 `CHANGELOG.md`의 `[2026-04-27] RAG (Elasticsearch) 연동 — Phase 2` 섹션 참조.
+
 ## 배경
 
 Phase 1(2026-04-26 완료)에서 Keyword(BM25) 모드로 RAG 연동의 골격을 구축했습니다. Settings UI / API / 영속화 / LLM 컨텍스트 주입 흐름은 모두 완성되어 있고, 사내 운영팀에 ES 매핑/inference endpoint를 확인한 뒤 Semantic 모드만 활성화하면 됩니다.
@@ -138,30 +140,34 @@ ES 8.11+ semantic_text 필드 사용 시:
 
 ## Phase 2 작업 체크리스트
 
-운영팀 답변 받으면 아래 체크리스트로 진행:
-
 ### 공통
-- [ ] 운영팀에서 받은 ES 쿼리 예시 본문을 `RagService.buildQueryBody()`에 그대로 반영
-- [ ] `application.properties`에 모드별 신규 키 추가
-- [ ] `HeapDumpConfig` / `HeapDumpAnalyzerService` 영속화 필드 추가 (Phase 1 패턴 재사용)
-- [ ] `settings.html` 모달에 모드별 동적 노출 영역 추가 (`onRagModeChange()`)
+- [x] 운영팀 답변 부재 → 두 모드 모두 활성화 (`RagService.buildQueryBody()` switch 분기)
+- [x] `application.properties`에 모드별 신규 키 추가 (semantic 4 + embedding 8)
+- [x] `HeapDumpConfig` / `HeapDumpAnalyzerService` 영속화 필드 추가 (Phase 1 패턴 재사용, ENC 암호화 포함)
+- [x] `rag-settings.html`에 모드별 동적 노출 영역 추가 (`onRagModeChange()`)
 
-### 모드 (a) 추가
-- [ ] `text_expansion` 또는 `semantic` 쿼리 빌더 분기
-- [ ] `model-id` / `tokens-field` / `semantic-field` 설정 노출
+### 모드 (a) — `semantic-server`
+- [x] `text_expansion` (ELSER) 쿼리 빌더 분기 — `model-id` 필수
+- [x] `semantic` (semantic_text) 쿼리 빌더 분기 — `semantic-field` 필수
+- [x] `query-type` / `model-id` / `tokens-field` / `semantic-field` 설정 노출
+- [x] queryType select에 따른 동적 입력 박스 토글(`onSemanticQueryTypeChange()`)
 
-### 모드 (b) 추가
-- [ ] `EmbeddingService` 신규 (또는 `RagService` 내부 메서드)
-- [ ] OpenAI / Cohere / Custom provider 분기
-- [ ] 임베딩 API Key ENC 암호화 저장 (Phase 1 password 패턴 재사용)
-- [ ] `knn` 쿼리 빌더 분기
-- [ ] (선택) 임베딩 인메모리 LRU 캐시
-- [ ] `vector-field` / `num-candidates` 설정 노출
+### 모드 (b) — `semantic-client`
+- [x] `EmbeddingService` 신규 서비스
+- [x] OpenAI / Cohere / Custom provider 분기 (custom은 OpenAI 호환)
+- [x] 임베딩 API Key ENC 암호화 저장 (Phase 1 password 패턴 재사용)
+- [x] `knn` 쿼리 빌더 분기
+- [x] `vector-field` / `num-candidates` 설정 노출
+- [x] `POST /api/settings/rag/embedding/test` 엔드포인트 추가 (UI: Test Embedding API 버튼)
+- [ ] (선택, 미구현) 임베딩 인메모리 LRU 캐시 — 운영 부하/비용 측정 후 필요 시 추가
 
-### 검증
+### 운영팀 검증 단계 (남은 작업)
+- [ ] 사내 ES 매핑 확인 → 적합한 모드 선택 (`semantic-server` 우선 권장)
+- [ ] Settings에서 신규 필드 입력 → Save → Test Connection 검증
+- [ ] `semantic-client` 사용 시: 색인 시 모델과 동일한 임베딩 모델·차원 확인 후 Test Embedding API 추가 검증
 - [ ] 사내 환경에서 실제 검색 결과로 LLM 응답 품질 비교 (RAG ON vs OFF)
 - [ ] 응답 latency 측정 (P50/P95). 검색 + LLM 합계가 사용자 체감 가능한 지연(>3초)이면 캐시/타임아웃 튜닝
-- [ ] 잘못된 인덱스/필드명에 대한 에러 메시지 명확성 확인
+- [ ] 잘못된 인덱스/필드명에 대한 에러 메시지 명확성 확인 (Phase 2 코드는 keyword 폴백 없이 명확한 에러 반환)
 
 ---
 

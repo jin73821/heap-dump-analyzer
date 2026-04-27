@@ -53,7 +53,8 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 - **Controller** (`controller/ServerController.java`) — `/servers` Target Server 관리, `/servers/{id}` 서버 상세 페이지 (분석 이력 + 전송 이력), `/servers/logs` 전송 로그 페이지. API: `/api/servers` (CRUD), `/api/servers/{id}/test` (연결 테스트), `/api/servers/{id}/scan` (수동 스캔), `/api/servers/{id}/transfer` (파일 전송), `/api/servers/scan-interval`, `/api/servers/ssh-local-user`, `/api/servers/scp-temp-dir`
 - **Controller** (`controller/AiChatController.java`) — `/ai-chat` AI 채팅 전용 페이지. 세션 CRUD: `/api/ai-chat/sessions` (목록/생성), `/api/ai-chat/sessions/{id}` (수정/삭제). 메시지 조회/저장: `/api/ai-chat/sessions/{id}/messages`. 세션 기반 스트리밍: `POST /api/ai-chat/sessions/{id}/stream` (`SseEmitter`, user/assistant 메시지 자동 DB 저장). `Principal`로 계정별 세션 격리.
 - **Service** (`service/HeapDumpAnalyzerService.java`) — Core logic: file management (dumpfiles → tmp copy → analysis → tmp cleanup), async MAT CLI invocation via `ProcessBuilder`, SSE progress streaming via `SseEmitter`, two-tier caching (in-memory `ConcurrentHashMap` + disk `result.json`/`mat.log`). 분석 완료 시 `analysis_history` 테이블에 메타데이터 DB 저장. AI 인사이트 DB 저장/조회/삭제 (`ai_insights` 테이블). LLM API 호출: `callLlmAnalysis(prompt)` (원샷 JSON 응답), `callLlmChat(messages, systemPrompt)` (멀티턴 텍스트 응답), `callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError)` (SSE 스트리밍). **모든 런타임 설정 영속화 단일 책임**: LLM(provider/model/key/timeouts/system prompt) + RAG(connection/auth/search/chunking) 모두 이 서비스의 `volatile` 필드 → `settings.json` + `application.properties` 양방향 동기화 (`syncApplicationProperties()` 라인 단위 치환). RAG password/API key는 `encryptForStorage()`로 `ENC(...)` AES-256 암호화하여 저장.
-- **Service** (`service/RagService.java`) — Elasticsearch 검색 + 연결 테스트 + LLM 컨텍스트 주입 전담. `fetchContextForLlm(query)`: 비활성/실패 시 빈 문자열 반환 (호출자는 무조건 안전). `search(query, overrides)`: BM25 `match` 쿼리 (Phase 1 — semantic 모드는 keyword 폴백). `testConnection(overrides)`: `_cluster/health` + `HEAD /{index}`. 인증 분기: none / Basic / ApiKey. 자체 서명 인증서 환경에서 SSL 검증 비활성 옵션. **청킹**: `chunkText(text, strategy, size, overlap, maxChunks)` — fixed(슬라이딩 윈도우) / paragraph(빈 줄 단위 + size 머지) / sentence(문장 종결자 정규식 + tail overlap). 검색 결과 본문을 청크로 분할 후 `maxTotalChars` 한도 내에서 LLM 컨텍스트에 주입.
+- **Service** (`service/RagService.java`) — Elasticsearch 검색 + 연결 테스트 + LLM 컨텍스트 주입 전담. `fetchContextForLlm(query)`: 비활성/실패 시 빈 문자열 반환 (호출자는 무조건 안전). `search(query, overrides)`: switch 분기로 3개 모드 지원 — `keyword`(BM25 `match`) / `semantic-server`(`text_expansion` ELSER 또는 `semantic` semantic_text) / `semantic-client`(앱이 임베딩 호출 후 `knn` 쿼리). `testConnection(overrides)`: `_cluster/health` + `HEAD /{index}`. 인증 분기: none / Basic / ApiKey. 자체 서명 인증서 환경에서 SSL 검증 비활성 옵션. semantic 모드 설정 누락 시 keyword 폴백 없이 명확한 에러 반환 (디버깅 용이). **청킹**: `chunkText(text, strategy, size, overlap, maxChunks)` — fixed(슬라이딩 윈도우) / paragraph(빈 줄 단위 + size 머지) / sentence(문장 종결자 정규식 + tail overlap). 검색 결과 본문을 청크로 분할 후 `maxTotalChars` 한도 내에서 LLM 컨텍스트에 주입.
+- **Service** (`service/EmbeddingService.java`) — Phase 2 `semantic-client` 전용 임베딩 호출. provider 분기: openai (`POST /embeddings` `{model, input}` → `data[0].embedding[]`) / cohere (`POST /embed` `{model, texts}` → `embeddings[0][]`) / custom (OpenAI 호환). Bearer 인증. `embed(text, overrides)`로 `float[]` 반환, `testConnection(overrides)`로 dimension 회신. API Key는 평문 메모리 + `ENC(...)` 저장.
 - **Service** (`service/RemoteDumpService.java`) — SSH/SCP 기반 원격 서버 덤프 탐지/전송. `runuser -l sscuser -c "ssh/scp ..."` 패턴으로 로컬 계정 전환. 2단계 SCP 전송 (임시 경로 → `Files.move()` 최종 경로). `@Scheduled` 동적 주기 자동 탐지. 서버 `connStatus` (OK/FAIL/UNKNOWN) DB 영속화.
 - **Service** (`service/UserService.java`) — 사용자 CRUD, `@PostConstruct`에서 기본 admin 계정 자동 생성 (admin/shinhan@10)
 - **Service** (`service/CustomUserDetailsService.java`) — Spring Security `UserDetailsService` 구현
@@ -129,7 +130,7 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 
 **history.html** — Full analysis history page (`/history`). 공통 테이블 툴바 패턴 동일. # (DB id) · 결과 뱃지 · 파일명 · 분석시간 · 힙사용량 · Suspects · 파일크기 · 서버 · 날짜. Topbar 우측에 Export 버튼 (모달 → `/api/history` JSON 다운로드). 다중선택 일괄 삭제 모달은 "힙덤프 파일도 함께 삭제" 옵션 포함. 관리자만 deleted 행+카운터 노출.
 
-**settings.html** — Settings page (`/settings`, General). Toggle switches for runtime settings with confirmation modals. Toast notifications at top-center. MAT JVM heap/Xms inline editing. Database 카드 (접속 상태, IP/포트/계정 설정 모달, 연결 테스트). Remote scan 설정 (SCP temp dir, SSH local user, scan interval). LLM Configuration / RAG (Elasticsearch) 카드는 **링크 카드** (각각 `/settings/llm`, `/settings/rag`로 이동) — 인라인 편집 UI는 전용 페이지에 위치.
+**settings.html** — Settings page (`/settings`, General). Toggle switches for runtime settings with confirmation modals. Toast notifications at top-center. MAT JVM heap/Xms inline editing. Database 카드 (접속 상태, IP/포트/계정 설정 모달, 연결 테스트). Remote scan 설정 (SCP temp dir, SSH local user, scan interval). LLM Configuration 카드는 **링크 카드** (`/settings/llm`로 이동). RAG는 General 페이지에 카드 없이 좌측 배너 Settings 서브메뉴(`RAG Configuration` → `/settings/rag`)로만 접근.
 
 **compare.html** — Side-by-side dump comparison. `base`/`target` 파라미터 미입력 시 파일 선택 화면 표시 (`/api/history`에서 SUCCESS 분석 이력 fetch → 두 셀렉트 자동 채움). 좌측 네비 "Comparison" 진입 시 이 모드.
 
@@ -139,15 +140,15 @@ Browser → Spring Security Filter → Controller → Service → MatReportParse
 
 **server-detail.html** — 서버 상세 페이지 (`/servers/{id}`). 3개 섹션: 서버 정보 카드 (호스트/SSH계정/상태/자동탐지/마지막 에러), 분석 이력 테이블 (해당 서버의 힙덤프 분석 결과), 전송 이력 테이블 (SCP 전송 로그). 연결 테스트/스캔 액션 버튼 포함. 존재하지 않는 ID 접근 시 `/servers`로 리다이렉트.
 
-**server-logs.html** — Transfer Logs (`/servers/logs`). 서버별 아코디언 레이아웃, 전송 이력 테이블 (상태/파일명/원격경로/크기/시간/에러).
+**server-logs.html** — Transfer Logs (`/servers/logs`). **단일 통합 테이블** (모든 서버 평탄화) + 상단 KPI 카드 3개(Total/Success/Failed) + 검색·상태·서버 필터 툴바 + 페이지 사이즈 셀렉트 + Export 드롭다운(CSV/JSON). 페이지 자체는 `servers` 셀렉트박스만 SSR, 데이터는 모두 클라이언트 fetch. **서버 사이드 페이지네이션** — `/api/servers/transfers?page&size&sort&q&status&serverId` (Spring `Page<TransferLogItem>`), KPI는 `/api/servers/transfers/stats`(status 무시, q+serverId만 적용 — 비교 의미 유지), Export는 `/api/servers/transfers/export?format=csv|json` (최대 50,000건 cap, `X-Truncated` 헤더). 검색은 filename/remotePath/errorMessage OR 매칭 (JPA Specification `cb.like(cb.lower(...), %q%)`). 정렬 필드 화이트리스트: id/filename/fileSize/transferStatus/startedAt/completedAt. localStorage 키 `logsPageSize`만.
 
 **admin/users.html** — 계정 관리 (`/admin/users`, ADMIN 전용). 사용자 CRUD 테이블, 비밀번호 초기화 모달. 기본 관리자 삭제 불가.
 
 **llm-settings.html** — LLM/AI 분석 설정 페이지 (`/settings/llm`). Provider 선택 (Claude/GPT/Genspark/Custom), 모델 선택, API URL/Key, Token Limits, Chat System Prompt (textarea 편집/Save/Reset), Test Connection.
 
-**rag-settings.html** — RAG (Elasticsearch) 설정 페이지 (`/settings/rag`). 카드 구성: Enable RAG 토글 / Connection (URL/Index/SSL Verify) / Authentication (none|basic|api-key, 동적 필드 토글) / Search (Mode/Text Field/Top-K/Min Score/Timeout) / **Chunking** (Enable/Strategy(fixed|paragraph|sentence)/Size/Overlap/Max per Doc/Max Total Chars) / Save All + Test Connection + Reload. "Save All"은 `/api/settings/rag` + `/api/settings/rag/chunking`을 순차 호출. password/API Key 입력은 빈 값이면 페이로드에서 제외 → 백엔드가 "기존 값 유지"로 해석. Phase 1 안내 배너로 Keyword(BM25) 모드만 동작 명시 (Semantic 모드는 `RAG_PHASE2_PLAN.md` 참고).
+**rag-settings.html** — RAG (Elasticsearch) 설정 페이지 (`/settings/rag`). 카드 구성: Enable RAG 토글 / Connection (URL/Index/SSL Verify) / Authentication (none|basic|api-key, 동적 필드 토글) / Search (Mode/Text Field/Top-K/Min Score/Timeout) / **Semantic — Server-side**(Phase 2, `semantic-server` 선택 시 노출: queryType=text_expansion(ELSER)|semantic, 동적 입력 박스) / **Semantic — Client-side**(Phase 2, `semantic-client` 선택 시 노출: provider/api-url/api-key/model/dimension/timeout/vector-field/num-candidates + Test Embedding API 버튼) / **Chunking** (Enable/Strategy(fixed|paragraph|sentence)/Size/Overlap/Max per Doc/Max Total Chars) / Save All + Test Connection + Reload. "Save All"은 `/api/settings/rag` + `/api/settings/rag/chunking`을 순차 호출. password/API Key/embeddingApiKey 입력은 빈 값이면 페이로드에서 제외 → 백엔드가 "기존 값 유지"로 해석. `onRagModeChange()`로 mode select에 따라 두 semantic 카드 동적 노출, `onSemanticQueryTypeChange()`로 ELSER/semantic_text 입력 박스 토글.
 
-**참고 문서:** `RAG_PHASE2_PLAN.md` — Semantic 모드(server-side text_expansion / client-side kNN) 구현 계획. 운영팀 확인 사항 3가지 + 모드별 구현 작업 + 체크리스트.
+**참고 문서:** `RAG_PHASE2_PLAN.md` — Semantic 모드 구현 완료 기록(2026-04-27). 운영팀 답변 부재로 양 모드 모두 활성화. 운영팀 검증 단계만 남아있음(체크리스트 마지막 섹션 참조).
 
 **ai-chat.html** — AI 채팅 전용 페이지 (`/ai-chat`). 좌측 세션 사이드바 (280px): 세션 목록, 새 채팅 버튼, 덤프 파일 필터. 우측 채팅 영역: 스트리밍 메시지 표시, 마크다운 렌더링. 세션 기반 DB 저장 (계정별 격리). 날짜 구분선 (오늘/어제/YYYY년 M월 D일), 메시지별 시간 표시 (오전/오후 H:MM). `checkAuth()` 공통 함수로 인증 만료 시 로그인 안내.
 
@@ -230,7 +231,9 @@ ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(c
 
 ## RAG (Elasticsearch) Integration
 
-**검색 모드 (Phase 1):** keyword(BM25)만 동작. semantic-server / semantic-client는 사내 ES 매핑 확인 후 활성화 (구현 계획: `RAG_PHASE2_PLAN.md`).
+**검색 모드 (Phase 2 완료):** 3개 모드 모두 활성. Settings에서 선택 — `keyword`(BM25, 추가 설정 불필요), `semantic-server`(ES 서버측 임베딩: text_expansion ELSER 또는 semantic_text 필드), `semantic-client`(앱이 외부 임베딩 API 호출 후 dense_vector kNN). `RagService.buildQueryBody()` switch 분기. semantic 설정 누락 시 keyword 폴백 없이 명확한 에러.
+
+**임베딩 API (semantic-client):** `EmbeddingService` 신규. provider: openai / cohere / custom (OpenAI 호환). Bearer 인증. API key는 ENC AES-256 저장. `POST /api/settings/rag/embedding/test`로 임베딩 호출만 별도 검증 가능 (응답에 dimension 포함).
 
 **인증:** none / Basic (Authorization: Basic base64) / API Key (Authorization: ApiKey ...). Password / API Key는 `AesEncryptor.encrypt()`로 `ENC(...)` 형식 암호화 후 `settings.json` + `application.properties` 양쪽에 저장. 메모리에는 평문(`volatile String`)로 보관. **POST /api/settings/rag에서 password/apiKey가 키 자체가 없거나 null이면 기존 값 유지, 빈 문자열이면 삭제, 그 외는 갱신** — UI는 마스킹 placeholder만 보여주고 변경 시에만 입력하도록 유도.
 
@@ -292,6 +295,7 @@ ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(c
 - **배너 사이드바 DOM 복제 주의:** `analyze.html`의 사이드바는 `cloneNode(true)`로 배너 Analysis 탭에 복제됨. `getElementById`로는 원본만 접근 가능하므로, 양쪽 모두 업데이트해야 할 요소는 `querySelectorAll('.class-name')` 사용 필수 (예: `.ai-nav-status`).
 - **분석 진행 중 배너 상태 갱신:** `progress.html`에서 분석 시작(RUNNING)/완료(COMPLETED)/에러(ERROR) 시 `refreshBannerStatus()` 호출하여 디스크/JVM/큐 상태 실시간 반영.
 - **Raw Data iframe:** MAT 리포트 ZIP 내 HTML을 `/report/{filename}/mat-page/{reportType}/**` 엔드포인트로 제공. `SecurityConfig`에서 `X-Frame-Options: SAMEORIGIN` 설정 필수. iframe에 `sandbox` 속성 미사용 (allow-scripts + allow-same-origin 조합은 sandbox 무력화 경고 유발). lazy-load 조건은 `!iframe.getAttribute('src')` 사용 (`!iframe.src`는 브라우저별로 `"about:blank"` 반환 가능).
+- **server-logs.html은 의도적으로 서버 사이드 페이지네이션 사용:** transfer log는 누적형 데이터로 시간 경과에 따라 무제한 성장 가능(서버 N대 × 일 M건 × 365일+). history/files의 클라이언트 사이드 그리드 패턴(아래)과 다름. `Page<TransferLogItem>` 응답 + KPI는 별도 endpoint + Export 50,000 cap. JPA `Specification` 동적 쿼리 사용. 정렬 필드는 화이트리스트(`isAllowedSortField`)로 보호. 서버명은 `serverRepository.findAll()` Map lookup(JPA `@ManyToOne` 미도입 — 스키마 영향 회피).
 - **Files/History 테이블 툴바 공통 패턴:** 두 페이지(`history.html`, `files.html`)는 동일한 클라이언트 사이드 데이터 그리드 패턴을 공유:
   - 검색 입력 + 행 표시 셀렉트(20/30/50/100, `localStorage` 기억) + admin 전용 "deleted 표시" 체크박스 + 다중선택 토글 버튼
   - 헤더 클릭 정렬: `data-sort-key`/`data-sort-type=num|str` 속성, ▲/▼ 인디케이터 (활성 파란). 기본 날짜 내림차순. 한글 정렬 `localeCompare(s, 'ko')`

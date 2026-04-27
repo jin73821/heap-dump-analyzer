@@ -150,7 +150,7 @@
     </div>
 
     <div class="info-banner">
-        <strong>Phase 1:</strong> Keyword(BM25) 모드만 동작합니다. Semantic 모드(<code>semantic-server</code>, <code>semantic-client</code>)는 사내 ES 매핑 확인 후 Phase 2에서 활성화 예정 — <code>RAG_PHASE2_PLAN.md</code> 참고.
+        <strong>Phase 2:</strong> 세 가지 검색 모드를 지원합니다 — <code>keyword</code>(BM25, 추가 설정 불필요) / <code>semantic-server</code>(ES 서버측 임베딩, ELSER 또는 semantic_text 필드 필요) / <code>semantic-client</code>(앱이 임베딩 API 호출 후 kNN 쿼리). 모드를 변경하면 아래 해당 설정 카드가 나타납니다.
     </div>
 
     <!-- Enable / Disable -->
@@ -236,10 +236,10 @@
         </div>
         <div class="s-row">
             <span class="s-key">Search Mode</span>
-            <select id="ragMode" class="input-sel">
+            <select id="ragMode" class="input-sel" onchange="onRagModeChange()">
                 <option value="keyword">keyword (BM25)</option>
-                <option value="semantic-server">semantic-server (Phase 2)</option>
-                <option value="semantic-client">semantic-client (Phase 2)</option>
+                <option value="semantic-server">semantic-server (ES inference)</option>
+                <option value="semantic-client">semantic-client (앱측 임베딩 + kNN)</option>
             </select>
         </div>
         <div class="s-row">
@@ -258,6 +258,92 @@
             <span class="s-key">Timeout (초)</span>
             <input type="number" id="ragTimeout" class="input-num" min="1" max="60" value="10">
         </div>
+    </div>
+
+    <!-- Phase 2: semantic-server -->
+    <div class="card" id="cardSemanticServer" style="display:none">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Semantic — Server-side (ES inference)
+        </div>
+        <div class="info-banner" style="margin-bottom:12px">
+            ES가 인덱싱 시점에 만든 임베딩(ELSER 스파스 토큰 또는 <code>semantic_text</code>)을 그대로 사용합니다. 앱은 텍스트만 송신합니다.
+        </div>
+        <div class="s-row">
+            <span class="s-key">Query Type</span>
+            <select id="ragSemanticQueryType" class="input-sel" onchange="onSemanticQueryTypeChange()">
+                <option value="text_expansion">text_expansion (ELSER, 스파스 토큰)</option>
+                <option value="semantic">semantic (ES 8.11+ semantic_text)</option>
+            </select>
+        </div>
+        <div id="semElserBox">
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+                <span class="s-key">ELSER Model ID</span>
+                <input type="text" id="ragSemanticModelId" class="input-text" placeholder=".elser_model_2">
+            </div>
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+                <span class="s-key">Tokens Field</span>
+                <input type="text" id="ragSemanticTokensField" class="input-text" placeholder="ml.tokens">
+            </div>
+        </div>
+        <div id="semSemanticBox" style="display:none">
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+                <span class="s-key">Semantic Field</span>
+                <input type="text" id="ragSemanticField" class="input-text" placeholder="content_semantic">
+            </div>
+        </div>
+    </div>
+
+    <!-- Phase 2: semantic-client (Embedding API) -->
+    <div class="card" id="cardSemanticClient" style="display:none">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            Semantic — Client-side (Embedding API + kNN)
+        </div>
+        <div class="info-banner" style="margin-bottom:12px">
+            앱이 외부 임베딩 API로 쿼리 벡터를 생성한 뒤 ES <code>kNN</code> 쿼리로 검색합니다. <strong>색인 시 사용한 모델과 동일한 모델·차원</strong>을 사용해야 합니다.
+        </div>
+        <div class="s-row">
+            <span class="s-key">Provider</span>
+            <select id="ragEmbProvider" class="input-sel">
+                <option value="openai">openai</option>
+                <option value="cohere">cohere</option>
+                <option value="custom">custom (OpenAI 호환)</option>
+            </select>
+        </div>
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">API URL</span>
+            <input type="text" id="ragEmbApiUrl" class="input-text" placeholder="https://api.openai.com/v1/embeddings">
+        </div>
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">API Key</span>
+            <input type="password" id="ragEmbApiKey" class="input-text" placeholder="API Key">
+            <span id="ragEmbApiKeyHint" class="setting-desc" style="margin-top:0"></span>
+        </div>
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">Model</span>
+            <input type="text" id="ragEmbModel" class="input-text" placeholder="text-embedding-3-small">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Dimension (벡터 차원)</span>
+            <input type="number" id="ragEmbDim" class="input-num" min="1" max="8192" value="1536">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Embedding Timeout (초)</span>
+            <input type="number" id="ragEmbTimeout" class="input-num" min="1" max="120" value="15">
+        </div>
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">kNN Vector Field</span>
+            <input type="text" id="ragKnnField" class="input-text" placeholder="embedding">
+        </div>
+        <div class="s-row">
+            <span class="s-key">kNN Num Candidates</span>
+            <input type="number" id="ragKnnCandidates" class="input-num" min="1" max="10000" value="50">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+            <button type="button" onclick="testEmbeddingConn()" class="btn-success" style="padding:6px 14px;font-size:12px">Test Embedding API</button>
+        </div>
+        <div id="embTestResult" class="test-result"></div>
     </div>
 
     <!-- Chunking -->
@@ -377,8 +463,43 @@ function loadRagSettings() {
         document.getElementById('chunkOverlap').value    = c.overlap != null ? c.overlap : 120;
         document.getElementById('chunkMaxPerDoc').value  = c.maxChunksPerDoc != null ? c.maxChunksPerDoc : 3;
         document.getElementById('chunkMaxTotal').value   = c.maxTotalChars != null ? c.maxTotalChars : 6000;
+
+        // Phase 2 — semantic-server
+        var s = d.semantic || {};
+        document.getElementById('ragSemanticQueryType').value   = s.queryType || 'text_expansion';
+        document.getElementById('ragSemanticModelId').value     = s.modelId || '';
+        document.getElementById('ragSemanticTokensField').value = s.tokensField || 'ml.tokens';
+        document.getElementById('ragSemanticField').value       = s.semanticField || '';
+
+        // Phase 2 — semantic-client
+        var e = d.embedding || {};
+        document.getElementById('ragEmbProvider').value = e.provider || 'openai';
+        document.getElementById('ragEmbApiUrl').value   = e.apiUrl || '';
+        document.getElementById('ragEmbApiKey').value   = '';
+        document.getElementById('ragEmbApiKeyHint').textContent = e.apiKeySet
+            ? '저장된 키 있음 (' + (e.apiKeyMasked || '****') + ') — 변경 시에만 입력' : '';
+        document.getElementById('ragEmbModel').value    = e.model || '';
+        document.getElementById('ragEmbDim').value      = e.dimension != null ? e.dimension : 1536;
+        document.getElementById('ragEmbTimeout').value  = e.timeoutSeconds != null ? e.timeoutSeconds : 15;
+        document.getElementById('ragKnnField').value    = e.vectorField || 'embedding';
+        document.getElementById('ragKnnCandidates').value = e.numCandidates != null ? e.numCandidates : 50;
+
         onRagAuthChange();
+        onRagModeChange();
+        onSemanticQueryTypeChange();
     }).catch(function(e) { toast('설정 로드 실패: ' + e.message, 'error'); });
+}
+
+function onRagModeChange() {
+    var mode = document.getElementById('ragMode').value;
+    document.getElementById('cardSemanticServer').style.display = (mode === 'semantic-server') ? 'block' : 'none';
+    document.getElementById('cardSemanticClient').style.display = (mode === 'semantic-client') ? 'block' : 'none';
+}
+
+function onSemanticQueryTypeChange() {
+    var qt = document.getElementById('ragSemanticQueryType').value;
+    document.getElementById('semElserBox').style.display    = (qt === 'text_expansion') ? 'block' : 'none';
+    document.getElementById('semSemanticBox').style.display = (qt === 'semantic')       ? 'block' : 'none';
 }
 
 function onRagAuthChange() {
@@ -417,15 +538,60 @@ function buildConnPayload(includeSecrets) {
         textField: document.getElementById('ragTextField').value.trim() || 'content',
         topK:      parseInt(document.getElementById('ragTopK').value, 10) || 3,
         minScore:  parseFloat(document.getElementById('ragMinScore').value) || 0,
-        timeoutSeconds: parseInt(document.getElementById('ragTimeout').value, 10) || 10
+        timeoutSeconds: parseInt(document.getElementById('ragTimeout').value, 10) || 10,
+        // Phase 2 — semantic-server
+        semanticQueryType:    document.getElementById('ragSemanticQueryType').value,
+        semanticModelId:      document.getElementById('ragSemanticModelId').value.trim(),
+        semanticTokensField:  document.getElementById('ragSemanticTokensField').value.trim() || 'ml.tokens',
+        semanticField:        document.getElementById('ragSemanticField').value.trim(),
+        // Phase 2 — semantic-client (kNN + Embedding)
+        embeddingProvider:    document.getElementById('ragEmbProvider').value,
+        embeddingApiUrl:      document.getElementById('ragEmbApiUrl').value.trim(),
+        embeddingModel:       document.getElementById('ragEmbModel').value.trim(),
+        embeddingDimension:   parseInt(document.getElementById('ragEmbDim').value, 10) || 1536,
+        embeddingTimeoutSeconds: parseInt(document.getElementById('ragEmbTimeout').value, 10) || 15,
+        knnVectorField:       document.getElementById('ragKnnField').value.trim() || 'embedding',
+        knnNumCandidates:     parseInt(document.getElementById('ragKnnCandidates').value, 10) || 50
     };
     if (includeSecrets) {
         var pw = document.getElementById('ragPassword').value;
         var ak = document.getElementById('ragApiKey').value;
+        var ek = document.getElementById('ragEmbApiKey').value;
         if (pw && pw.length > 0) payload.password = pw;
         if (ak && ak.length > 0) payload.apiKey = ak;
+        if (ek && ek.length > 0) payload.embeddingApiKey = ek;
     }
     return payload;
+}
+
+function testEmbeddingConn() {
+    var ek = document.getElementById('ragEmbApiKey').value;
+    var payload = {
+        provider: document.getElementById('ragEmbProvider').value,
+        apiUrl:   document.getElementById('ragEmbApiUrl').value.trim(),
+        model:    document.getElementById('ragEmbModel').value.trim(),
+        timeoutSeconds: parseInt(document.getElementById('ragEmbTimeout').value, 10) || 15
+    };
+    if (ek && ek.length > 0) payload.apiKey = ek; // 비어있으면 저장 키 사용
+    var resBox = document.getElementById('embTestResult');
+    resBox.className = 'test-result busy';
+    resBox.textContent = '임베딩 API 호출 중...';
+    fetch('/api/settings/rag/embedding/test', {
+        method: 'POST', headers: getCsrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+    }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.success) {
+            resBox.className = 'test-result ok';
+            resBox.textContent = '✓ 임베딩 호출 성공 — provider: ' + (d.provider || '?')
+                + ', model: ' + (d.model || '?') + ', dimension: ' + (d.dimension || 0);
+        } else {
+            resBox.className = 'test-result err';
+            resBox.textContent = '✗ ' + (d.error || '임베딩 호출 실패');
+        }
+    }).catch(function(e){
+        resBox.className = 'test-result err';
+        resBox.textContent = '✗ 요청 실패: ' + e.message;
+    });
 }
 
 function buildChunkingPayload() {

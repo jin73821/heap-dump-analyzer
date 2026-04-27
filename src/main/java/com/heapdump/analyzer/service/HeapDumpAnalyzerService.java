@@ -114,6 +114,20 @@ public class HeapDumpAnalyzerService {
     private volatile int     ragChunkingOverlap;
     private volatile int     ragChunkingMaxChunksPerDoc;
     private volatile int     ragChunkingMaxTotalChars;
+    // Phase 2 — semantic-server
+    private volatile String  ragSemanticQueryType;     // text_expansion | semantic
+    private volatile String  ragSemanticModelId;       // ELSER 모델 ID
+    private volatile String  ragSemanticTokensField;   // ELSER 토큰 필드
+    private volatile String  ragSemanticField;         // semantic_text 필드
+    // Phase 2 — semantic-client
+    private volatile String  ragEmbeddingProvider;     // openai | cohere | custom
+    private volatile String  ragEmbeddingApiUrl;
+    private volatile String  ragEmbeddingApiKey;       // 평문 보관 (settings.json에는 ENC로 저장)
+    private volatile String  ragEmbeddingModel;
+    private volatile int     ragEmbeddingDimension;
+    private volatile int     ragEmbeddingTimeoutSeconds;
+    private volatile String  ragKnnVectorField;
+    private volatile int     ragKnnNumCandidates;
 
     private static final String DEFAULT_CHAT_SYSTEM_PROMPT =
         "당신은 Java 힙 덤프 분석 전문가입니다. 사용자가 제공한 힙 덤프 분석 결과에 대해 "
@@ -171,6 +185,20 @@ public class HeapDumpAnalyzerService {
         this.ragChunkingOverlap = config.getRagChunkingOverlap();
         this.ragChunkingMaxChunksPerDoc = config.getRagChunkingMaxChunksPerDoc();
         this.ragChunkingMaxTotalChars = config.getRagChunkingMaxTotalChars();
+        // Phase 2 — semantic-server
+        this.ragSemanticQueryType   = config.getRagSemanticQueryType();
+        this.ragSemanticModelId     = config.getRagSemanticModelId();
+        this.ragSemanticTokensField = config.getRagSemanticTokensField();
+        this.ragSemanticField       = config.getRagSemanticField();
+        // Phase 2 — semantic-client
+        this.ragEmbeddingProvider = config.getRagEmbeddingProvider();
+        this.ragEmbeddingApiUrl   = config.getRagEmbeddingApiUrl();
+        this.ragEmbeddingApiKey   = com.heapdump.analyzer.util.AesEncryptor.decryptIfEncrypted(config.getRagEmbeddingApiKey());
+        this.ragEmbeddingModel    = config.getRagEmbeddingModel();
+        this.ragEmbeddingDimension = config.getRagEmbeddingDimension();
+        this.ragEmbeddingTimeoutSeconds = config.getRagEmbeddingTimeoutSeconds();
+        this.ragKnnVectorField    = config.getRagKnnVectorField();
+        this.ragKnnNumCandidates  = config.getRagKnnNumCandidates();
     }
 
     // ── 스레드 풀 초기화 ───────────────────────────────────────────
@@ -874,6 +902,44 @@ public class HeapDumpAnalyzerService {
             if (saved.containsKey("ragChunkingMaxTotalChars")) {
                 this.ragChunkingMaxTotalChars = Integer.parseInt(String.valueOf(saved.get("ragChunkingMaxTotalChars")));
             }
+            // Phase 2 — semantic-server
+            if (saved.containsKey("ragSemanticQueryType")) {
+                this.ragSemanticQueryType = String.valueOf(saved.get("ragSemanticQueryType"));
+            }
+            if (saved.containsKey("ragSemanticModelId")) {
+                this.ragSemanticModelId = String.valueOf(saved.get("ragSemanticModelId"));
+            }
+            if (saved.containsKey("ragSemanticTokensField")) {
+                this.ragSemanticTokensField = String.valueOf(saved.get("ragSemanticTokensField"));
+            }
+            if (saved.containsKey("ragSemanticField")) {
+                this.ragSemanticField = String.valueOf(saved.get("ragSemanticField"));
+            }
+            // Phase 2 — semantic-client
+            if (saved.containsKey("ragEmbeddingProvider")) {
+                this.ragEmbeddingProvider = String.valueOf(saved.get("ragEmbeddingProvider"));
+            }
+            if (saved.containsKey("ragEmbeddingApiUrl")) {
+                this.ragEmbeddingApiUrl = String.valueOf(saved.get("ragEmbeddingApiUrl"));
+            }
+            if (saved.containsKey("ragEmbeddingApiKey")) {
+                this.ragEmbeddingApiKey = com.heapdump.analyzer.util.AesEncryptor.decryptIfEncrypted(String.valueOf(saved.get("ragEmbeddingApiKey")));
+            }
+            if (saved.containsKey("ragEmbeddingModel")) {
+                this.ragEmbeddingModel = String.valueOf(saved.get("ragEmbeddingModel"));
+            }
+            if (saved.containsKey("ragEmbeddingDimension")) {
+                this.ragEmbeddingDimension = Integer.parseInt(String.valueOf(saved.get("ragEmbeddingDimension")));
+            }
+            if (saved.containsKey("ragEmbeddingTimeoutSeconds")) {
+                this.ragEmbeddingTimeoutSeconds = Integer.parseInt(String.valueOf(saved.get("ragEmbeddingTimeoutSeconds")));
+            }
+            if (saved.containsKey("ragKnnVectorField")) {
+                this.ragKnnVectorField = String.valueOf(saved.get("ragKnnVectorField"));
+            }
+            if (saved.containsKey("ragKnnNumCandidates")) {
+                this.ragKnnNumCandidates = Integer.parseInt(String.valueOf(saved.get("ragKnnNumCandidates")));
+            }
             if (ragEnabled) {
                 logger.info("[Settings] RAG enabled: url={}, index={}, mode={}", ragElasticsearchUrl, ragIndex, ragSearchMode);
             }
@@ -950,6 +1016,20 @@ public class HeapDumpAnalyzerService {
             settings.put("ragChunkingOverlap", ragChunkingOverlap);
             settings.put("ragChunkingMaxChunksPerDoc", ragChunkingMaxChunksPerDoc);
             settings.put("ragChunkingMaxTotalChars", ragChunkingMaxTotalChars);
+            // Phase 2 — semantic-server
+            settings.put("ragSemanticQueryType", ragSemanticQueryType);
+            settings.put("ragSemanticModelId", ragSemanticModelId);
+            settings.put("ragSemanticTokensField", ragSemanticTokensField);
+            settings.put("ragSemanticField", ragSemanticField);
+            // Phase 2 — semantic-client (API key는 ENC 암호화)
+            settings.put("ragEmbeddingProvider", ragEmbeddingProvider);
+            settings.put("ragEmbeddingApiUrl", ragEmbeddingApiUrl);
+            settings.put("ragEmbeddingApiKey", encryptForStorage(ragEmbeddingApiKey));
+            settings.put("ragEmbeddingModel", ragEmbeddingModel);
+            settings.put("ragEmbeddingDimension", ragEmbeddingDimension);
+            settings.put("ragEmbeddingTimeoutSeconds", ragEmbeddingTimeoutSeconds);
+            settings.put("ragKnnVectorField", ragKnnVectorField);
+            settings.put("ragKnnNumCandidates", ragKnnNumCandidates);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
         } catch (IOException e) {
@@ -1006,6 +1086,20 @@ public class HeapDumpAnalyzerService {
             updates.put("rag.chunking.overlap", String.valueOf(ragChunkingOverlap));
             updates.put("rag.chunking.max-chunks-per-doc", String.valueOf(ragChunkingMaxChunksPerDoc));
             updates.put("rag.chunking.max-total-chars", String.valueOf(ragChunkingMaxTotalChars));
+            // Phase 2 — semantic-server
+            updates.put("rag.search.semantic.query-type", ragSemanticQueryType != null ? ragSemanticQueryType : "text_expansion");
+            updates.put("rag.search.semantic.model-id", ragSemanticModelId != null ? ragSemanticModelId : "");
+            updates.put("rag.search.semantic.tokens-field", ragSemanticTokensField != null ? ragSemanticTokensField : "ml.tokens");
+            updates.put("rag.search.semantic.semantic-field", ragSemanticField != null ? ragSemanticField : "");
+            // Phase 2 — semantic-client (API key는 ENC 암호화)
+            updates.put("rag.embedding.provider", ragEmbeddingProvider != null ? ragEmbeddingProvider : "openai");
+            updates.put("rag.embedding.api.url", ragEmbeddingApiUrl != null ? ragEmbeddingApiUrl : "");
+            updates.put("rag.embedding.api.key", encryptForStorage(ragEmbeddingApiKey));
+            updates.put("rag.embedding.model", ragEmbeddingModel != null ? ragEmbeddingModel : "");
+            updates.put("rag.embedding.dimension", String.valueOf(ragEmbeddingDimension));
+            updates.put("rag.embedding.timeout-seconds", String.valueOf(ragEmbeddingTimeoutSeconds));
+            updates.put("rag.search.knn.vector-field", ragKnnVectorField != null ? ragKnnVectorField : "embedding");
+            updates.put("rag.search.knn.num-candidates", String.valueOf(ragKnnNumCandidates));
 
             List<String> newLines = new ArrayList<>();
             for (String line : lines) {
@@ -1133,8 +1227,30 @@ public class HeapDumpAnalyzerService {
     public int     getRagChunkingMaxChunksPerDoc(){ return ragChunkingMaxChunksPerDoc; }
     public int     getRagChunkingMaxTotalChars()  { return ragChunkingMaxTotalChars; }
 
+    // Phase 2 — semantic-server getter
+    public String  getRagSemanticQueryType()    { return ragSemanticQueryType; }
+    public String  getRagSemanticModelId()      { return ragSemanticModelId; }
+    public String  getRagSemanticTokensField()  { return ragSemanticTokensField; }
+    public String  getRagSemanticField()        { return ragSemanticField; }
+    // Phase 2 — semantic-client getter
+    public String  getRagEmbeddingProvider()    { return ragEmbeddingProvider; }
+    public String  getRagEmbeddingApiUrl()      { return ragEmbeddingApiUrl; }
+    public String  getRagEmbeddingApiKey()      { return ragEmbeddingApiKey; }
+    public String  getRagEmbeddingModel()       { return ragEmbeddingModel; }
+    public int     getRagEmbeddingDimension()   { return ragEmbeddingDimension; }
+    public int     getRagEmbeddingTimeoutSeconds() { return ragEmbeddingTimeoutSeconds; }
+    public String  getRagKnnVectorField()       { return ragKnnVectorField; }
+    public int     getRagKnnNumCandidates()     { return ragKnnNumCandidates; }
+
     public boolean isRagPasswordSet() { return ragPassword != null && !ragPassword.trim().isEmpty(); }
     public boolean isRagApiKeySet()   { return ragApiKey != null && !ragApiKey.trim().isEmpty(); }
+    public boolean isRagEmbeddingApiKeySet() { return ragEmbeddingApiKey != null && !ragEmbeddingApiKey.trim().isEmpty(); }
+
+    public String getRagEmbeddingApiKeyMasked() {
+        if (ragEmbeddingApiKey == null || ragEmbeddingApiKey.isEmpty()) return "";
+        if (ragEmbeddingApiKey.length() < 8) return "****";
+        return ragEmbeddingApiKey.substring(0, 4) + "..." + ragEmbeddingApiKey.substring(ragEmbeddingApiKey.length() - 4);
+    }
 
     public String getRagPasswordMasked() {
         if (ragPassword == null || ragPassword.isEmpty()) return "";
@@ -1177,6 +1293,47 @@ public class HeapDumpAnalyzerService {
         persistSettings();
         logger.info("[RAG] config updated: url={}, index={}, mode={}, topK={}",
                 ragElasticsearchUrl, ragIndex, ragSearchMode, ragTopK);
+    }
+
+    /**
+     * Phase 2 — semantic-server 설정 일괄 업데이트.
+     * null 인자는 변경 없음(기존 값 유지).
+     */
+    public void setRagSemanticConfig(String queryType, String modelId, String tokensField, String semanticField) {
+        if (queryType != null) {
+            String q = queryType.trim();
+            if (!q.equals("text_expansion") && !q.equals("semantic")) q = "text_expansion";
+            this.ragSemanticQueryType = q;
+        }
+        if (modelId != null)      this.ragSemanticModelId = modelId.trim();
+        if (tokensField != null)  this.ragSemanticTokensField = tokensField.trim().isEmpty() ? "ml.tokens" : tokensField.trim();
+        if (semanticField != null) this.ragSemanticField = semanticField.trim();
+        persistSettings();
+        logger.info("[RAG] semantic-server config updated: queryType={}, modelId={}, tokensField={}, semanticField={}",
+                ragSemanticQueryType, ragSemanticModelId, ragSemanticTokensField, ragSemanticField);
+    }
+
+    /**
+     * Phase 2 — semantic-client (앱측 임베딩) 설정 일괄 업데이트.
+     * apiKey 파라미터는 null이면 기존 값 유지, 빈 문자열이면 삭제, 그 외는 새 값으로 교체.
+     */
+    public void setRagEmbeddingConfig(String provider, String apiUrl, String apiKey, String model,
+                                      int dimension, int timeoutSeconds, String vectorField, int numCandidates) {
+        if (provider != null) {
+            String p = provider.trim().toLowerCase();
+            if (!p.equals("openai") && !p.equals("cohere") && !p.equals("custom")) p = "openai";
+            this.ragEmbeddingProvider = p;
+        }
+        if (apiUrl != null)      this.ragEmbeddingApiUrl = apiUrl.trim();
+        if (apiKey != null)      this.ragEmbeddingApiKey = apiKey;
+        if (model != null)       this.ragEmbeddingModel = model.trim();
+        if (dimension > 0)       this.ragEmbeddingDimension = Math.min(8192, dimension);
+        if (timeoutSeconds > 0)  this.ragEmbeddingTimeoutSeconds = Math.max(1, Math.min(120, timeoutSeconds));
+        if (vectorField != null) this.ragKnnVectorField = vectorField.trim().isEmpty() ? "embedding" : vectorField.trim();
+        if (numCandidates > 0)   this.ragKnnNumCandidates = Math.max(1, Math.min(10000, numCandidates));
+        persistSettings();
+        logger.info("[RAG] semantic-client config updated: provider={}, model={}, dim={}, vectorField={}, numCandidates={}",
+                ragEmbeddingProvider, ragEmbeddingModel, ragEmbeddingDimension, ragKnnVectorField, ragKnnNumCandidates);
     }
 
     /** RAG 청킹 옵션 일괄 업데이트 */

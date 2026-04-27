@@ -7,12 +7,25 @@ import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.TargetServerRepository;
 import com.heapdump.analyzer.service.RemoteDumpService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.MediaType;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import javax.persistence.criteria.Predicate;
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -71,20 +84,8 @@ public class ServerController {
 
     @GetMapping("/servers/logs")
     public String serverLogsPage(Model model) {
-        List<TargetServer> servers = serverRepository.findAll();
-        model.addAttribute("servers", servers);
-        Map<Long, List<DumpTransferLog>> logsByServer = new LinkedHashMap<>();
-        Map<Long, long[]> statsByServer = new LinkedHashMap<>(); // [total, success, failed]
-        for (TargetServer s : servers) {
-            List<DumpTransferLog> logs = remoteDumpService.getTransferLogs(s.getId());
-            if (logs.size() > 50) logs = logs.subList(0, 50);
-            logsByServer.put(s.getId(), logs);
-            long success = logs.stream().filter(l -> "SUCCESS".equals(l.getTransferStatus())).count();
-            long failed = logs.stream().filter(l -> "FAILED".equals(l.getTransferStatus())).count();
-            statsByServer.put(s.getId(), new long[]{logs.size(), success, failed});
-        }
-        model.addAttribute("logsByServer", logsByServer);
-        model.addAttribute("statsByServer", statsByServer);
+        // 페이지/KPI 데이터는 클라이언트가 fetch — 여기서는 서버 셀렉트박스용 servers만 SSR
+        model.addAttribute("servers", serverRepository.findAll());
         return "server-logs";
     }
 
@@ -218,6 +219,263 @@ public class ServerController {
     @ResponseBody
     public ResponseEntity<List<DumpTransferLog>> getTransferLogs(@PathVariable Long id) {
         return ResponseEntity.ok(remoteDumpService.getTransferLogs(id));
+    }
+
+    // ── Transfer Logs 페이지: 서버 사이드 페이지네이션 + 검색 + 필터 + Export ──
+
+    private static final DateTimeFormatter LOG_TS_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final int EXPORT_CAP = 50_000;
+
+    @GetMapping("/api/servers/transfers")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> listTransferLogs(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "startedAt,desc") String sort,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Long serverId) {
+
+        size = Math.max(1, Math.min(100, size));
+        page = Math.max(0, page);
+
+        Pageable pageable = PageRequest.of(page, size, parseSort(sort));
+        Specification<DumpTransferLog> spec = buildSpec(q, status, serverId);
+
+        Page<DumpTransferLog> result = dumpTransferLogRepository.findAll(spec, pageable);
+        Map<Long, String> serverNames = buildServerNames();
+
+        List<TransferLogItem> items = result.getContent().stream()
+                .map(l -> toItem(l, serverNames))
+                .collect(Collectors.toList());
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("content", items);
+        body.put("totalElements", result.getTotalElements());
+        body.put("totalPages", result.getTotalPages());
+        body.put("number", result.getNumber());
+        body.put("size", result.getSize());
+        return ResponseEntity.ok(body);
+    }
+
+    @GetMapping("/api/servers/transfers/stats")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> transferStats(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Long serverId) {
+        // KPI는 status 필터 무시 — Total/Success/Failed 비교 의미 유지. q + serverId만 적용.
+        Specification<DumpTransferLog> spec = buildSpec(q, null, serverId);
+        long total = dumpTransferLogRepository.count(spec);
+        long success = dumpTransferLogRepository.count(spec.and(statusEquals("SUCCESS")));
+        long failed = dumpTransferLogRepository.count(spec.and(statusEquals("FAILED")));
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("total", total);
+        body.put("success", success);
+        body.put("failed", failed);
+        return ResponseEntity.ok(body);
+    }
+
+    @GetMapping("/api/servers/transfers/export")
+    public ResponseEntity<String> exportTransferLogs(
+            @RequestParam(defaultValue = "csv") String format,
+            @RequestParam(defaultValue = "startedAt,desc") String sort,
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) Long serverId) {
+
+        Pageable pageable = PageRequest.of(0, EXPORT_CAP, parseSort(sort));
+        Specification<DumpTransferLog> spec = buildSpec(q, status, serverId);
+        Page<DumpTransferLog> page = dumpTransferLogRepository.findAll(spec, pageable);
+        Map<Long, String> serverNames = buildServerNames();
+
+        List<TransferLogItem> items = page.getContent().stream()
+                .map(l -> toItem(l, serverNames))
+                .collect(Collectors.toList());
+
+        String ts = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(LocalDateTime.now());
+        boolean truncated = page.getTotalElements() > EXPORT_CAP;
+
+        HttpHeaders headers = new HttpHeaders();
+        if (truncated) headers.add("X-Truncated", "true");
+
+        String body;
+        if ("json".equalsIgnoreCase(format)) {
+            body = renderJson(items);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setContentDispositionFormData("attachment", "transfer-logs-" + ts + ".json");
+        } else {
+            body = renderCsv(items);
+            headers.setContentType(MediaType.parseMediaType("text/csv; charset=UTF-8"));
+            headers.setContentDispositionFormData("attachment", "transfer-logs-" + ts + ".csv");
+        }
+        return new ResponseEntity<>(body, headers, org.springframework.http.HttpStatus.OK);
+    }
+
+    // ── Helpers ──────────────────────────────────────────
+
+    private Sort parseSort(String sortParam) {
+        // "startedAt,desc" / "fileSize,asc" 형태. 잘못된 입력은 기본값으로 폴백
+        if (sortParam == null || sortParam.isEmpty()) {
+            return Sort.by(Sort.Direction.DESC, "startedAt");
+        }
+        String[] parts = sortParam.split(",");
+        String field = parts[0].trim();
+        if (!isAllowedSortField(field)) field = "startedAt";
+        Sort.Direction dir = Sort.Direction.DESC;
+        if (parts.length > 1 && "asc".equalsIgnoreCase(parts[1].trim())) {
+            dir = Sort.Direction.ASC;
+        }
+        return Sort.by(dir, field);
+    }
+
+    private boolean isAllowedSortField(String field) {
+        // 클라이언트가 임의 필드로 정렬 못 하도록 화이트리스트
+        switch (field) {
+            case "id": case "filename": case "fileSize":
+            case "transferStatus": case "startedAt": case "completedAt":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private Specification<DumpTransferLog> buildSpec(String q, String status, Long serverId) {
+        return (root, query, cb) -> {
+            List<Predicate> preds = new ArrayList<>();
+            if (q != null && !q.trim().isEmpty()) {
+                String like = "%" + q.trim().toLowerCase() + "%";
+                preds.add(cb.or(
+                        cb.like(cb.lower(root.get("filename")), like),
+                        cb.like(cb.lower(cb.coalesce(root.get("remotePath"), "")), like),
+                        cb.like(cb.lower(cb.coalesce(root.get("errorMessage"), "")), like)
+                ));
+            }
+            if (status != null && !status.isEmpty()) {
+                preds.add(cb.equal(root.get("transferStatus"), status));
+            }
+            if (serverId != null) {
+                preds.add(cb.equal(root.get("serverId"), serverId));
+            }
+            return preds.isEmpty() ? cb.conjunction() : cb.and(preds.toArray(new Predicate[0]));
+        };
+    }
+
+    private Specification<DumpTransferLog> statusEquals(String status) {
+        return (root, query, cb) -> cb.equal(root.get("transferStatus"), status);
+    }
+
+    private Map<Long, String> buildServerNames() {
+        return serverRepository.findAll().stream()
+                .collect(Collectors.toMap(TargetServer::getId, TargetServer::getName, (a, b) -> a));
+    }
+
+    private TransferLogItem toItem(DumpTransferLog l, Map<Long, String> serverNames) {
+        TransferLogItem t = new TransferLogItem();
+        t.id = l.getId();
+        t.serverId = l.getServerId();
+        t.serverName = serverNames.getOrDefault(l.getServerId(), "(삭제된 서버 #" + l.getServerId() + ")");
+        t.filename = l.getFilename();
+        t.remotePath = l.getRemotePath();
+        t.transferStatus = l.getTransferStatus();
+        t.fileSize = l.getFileSize();
+        t.formattedSize = formatBytes(l.getFileSize());
+        t.startedAt = l.getStartedAt() != null ? l.getStartedAt().format(LOG_TS_FMT) : null;
+        t.startedAtMillis = l.getStartedAt() != null
+                ? l.getStartedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli() : 0L;
+        t.completedAt = l.getCompletedAt() != null ? l.getCompletedAt().format(LOG_TS_FMT) : null;
+        if (l.getStartedAt() != null && l.getCompletedAt() != null) {
+            long ms = Duration.between(l.getStartedAt(), l.getCompletedAt()).toMillis();
+            t.durationMs = ms;
+            t.formattedDuration = formatDuration(ms);
+        } else if ("IN_PROGRESS".equals(l.getTransferStatus())) {
+            t.durationMs = null;
+            t.formattedDuration = "진행 중";
+        } else {
+            t.durationMs = null;
+            t.formattedDuration = "-";
+        }
+        t.errorMessage = l.getErrorMessage();
+        return t;
+    }
+
+    private static String formatBytes(Long bytes) {
+        if (bytes == null) return "-";
+        double b = bytes.doubleValue();
+        if (b < 1024) return bytes + " B";
+        if (b < 1024 * 1024) return String.format("%.1f KB", b / 1024);
+        if (b < 1024 * 1024 * 1024) return String.format("%.1f MB", b / (1024 * 1024));
+        return String.format("%.2f GB", b / (1024 * 1024 * 1024));
+    }
+
+    private static String formatDuration(long ms) {
+        if (ms < 1000) return ms + "ms";
+        long s = ms / 1000;
+        if (s < 60) return s + "초";
+        long m = s / 60; long rs = s % 60;
+        if (m < 60) return rs == 0 ? m + "분" : (m + "분 " + rs + "초");
+        long h = m / 60; long rm = m % 60;
+        return rm == 0 ? h + "시간" : (h + "시간 " + rm + "분");
+    }
+
+    // ── Export rendering ─────────────────────────────────
+
+    private String renderCsv(List<TransferLogItem> items) {
+        StringWriter sw = new StringWriter();
+        PrintWriter pw = new PrintWriter(sw);
+        pw.println("id,serverId,serverName,filename,remotePath,transferStatus,fileSize,startedAt,completedAt,durationMs,errorMessage");
+        for (TransferLogItem t : items) {
+            pw.println(String.join(",",
+                    csvCell(t.id),
+                    csvCell(t.serverId),
+                    csvCell(t.serverName),
+                    csvCell(t.filename),
+                    csvCell(t.remotePath),
+                    csvCell(t.transferStatus),
+                    csvCell(t.fileSize),
+                    csvCell(t.startedAt),
+                    csvCell(t.completedAt),
+                    csvCell(t.durationMs),
+                    csvCell(t.errorMessage)));
+        }
+        pw.flush();
+        return sw.toString();
+    }
+
+    private static String csvCell(Object v) {
+        if (v == null) return "";
+        String s = String.valueOf(v);
+        boolean needsQuote = s.indexOf(',') >= 0 || s.indexOf('"') >= 0 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0;
+        if (!needsQuote) return s;
+        return "\"" + s.replace("\"", "\"\"") + "\"";
+    }
+
+    private String renderJson(List<TransferLogItem> items) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper()
+                    .writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(items);
+        } catch (Exception e) {
+            return "[]";
+        }
+    }
+
+    // ── Inner DTO ────────────────────────────────────────
+    public static class TransferLogItem {
+        public Long id;
+        public Long serverId;
+        public String serverName;
+        public String filename;
+        public String remotePath;
+        public String transferStatus;
+        public Long fileSize;
+        public String formattedSize;
+        public String startedAt;
+        public Long startedAtMillis;
+        public String completedAt;
+        public Long durationMs;
+        public String formattedDuration;
+        public String errorMessage;
     }
 
     // ── Scan interval ────────────────────────────────────

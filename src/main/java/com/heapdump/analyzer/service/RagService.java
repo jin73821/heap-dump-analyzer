@@ -22,8 +22,7 @@ import java.util.*;
 /**
  * Elasticsearch 기반 RAG 검색 서비스.
  *
- * Phase 1: keyword(BM25) 모드만 동작.
- * semantic-server / semantic-client 모드는 사내 ES 매핑 확인 후 Phase 2에서 활성화.
+ * Phase 2: keyword(BM25) / semantic-server(ES inference) / semantic-client(앱측 임베딩 + kNN) 지원.
  */
 @Service
 public class RagService {
@@ -32,9 +31,11 @@ public class RagService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final HeapDumpAnalyzerService analyzerService;
+    private final EmbeddingService embeddingService;
 
-    public RagService(HeapDumpAnalyzerService analyzerService) {
+    public RagService(HeapDumpAnalyzerService analyzerService, EmbeddingService embeddingService) {
         this.analyzerService = analyzerService;
+        this.embeddingService = embeddingService;
     }
 
     /**
@@ -249,7 +250,15 @@ public class RagService {
 
         try {
             String searchUrl = stripTrailingSlash(url) + "/" + index + "/_search";
-            String body = buildQueryBody(mode, field, query, topK, minScore);
+            String body;
+            try {
+                body = buildQueryBody(mode, field, query, topK, minScore, overrides);
+            } catch (Exception qbe) {
+                logger.warn("[RAG] 쿼리 본문 생성 실패 — mode={}: {}", mode, qbe.getMessage());
+                result.put("success", false);
+                result.put("error", "쿼리 생성 실패: " + qbe.getMessage());
+                return result;
+            }
 
             HttpURLConnection conn = openConnection(searchUrl, sslVerify);
             conn.setRequestMethod("POST");
@@ -376,22 +385,95 @@ public class RagService {
 
     // ── 내부 유틸 ────────────────────────────────────────────────
 
-    private String buildQueryBody(String mode, String field, String query, int topK, double minScore) throws Exception {
+    private String buildQueryBody(String mode, String field, String query, int topK, double minScore,
+                                  Map<String, Object> overrides) throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("size", topK);
         if (minScore > 0) body.put("min_score", minScore);
 
-        // Phase 1: keyword(BM25)만 구현. semantic-* 모드는 keyword로 폴백 + 경고.
-        if (!"keyword".equalsIgnoreCase(mode)) {
-            logger.warn("[RAG] '{}' 모드는 Phase 2에서 활성화 예정 — keyword 모드로 폴백합니다", mode);
+        String m = mode == null ? "keyword" : mode.toLowerCase();
+        switch (m) {
+            case "semantic-server":
+                buildSemanticServerQuery(body, query, overrides);
+                break;
+            case "semantic-client":
+                buildSemanticClientQuery(body, query, topK, overrides);
+                break;
+            case "keyword":
+            default: {
+                Map<String, Object> match = new LinkedHashMap<>();
+                match.put(field, query);
+                Map<String, Object> matchWrap = new LinkedHashMap<>();
+                matchWrap.put("match", match);
+                body.put("query", matchWrap);
+                break;
+            }
         }
-        Map<String, Object> match = new LinkedHashMap<>();
-        match.put(field, query);
-        Map<String, Object> matchWrap = new LinkedHashMap<>();
-        matchWrap.put("match", match);
-        body.put("query", matchWrap);
-
         return objectMapper.writeValueAsString(body);
+    }
+
+    /**
+     * Phase 2 — ES 서버측 임베딩 (text_expansion / semantic).
+     */
+    private void buildSemanticServerQuery(Map<String, Object> body, String query, Map<String, Object> overrides) {
+        String queryType    = pickStr(overrides, "semanticQueryType", analyzerService.getRagSemanticQueryType());
+        String modelId      = pickStr(overrides, "semanticModelId", analyzerService.getRagSemanticModelId());
+        String tokensField  = pickStr(overrides, "semanticTokensField", analyzerService.getRagSemanticTokensField());
+        String semanticField = pickStr(overrides, "semanticField", analyzerService.getRagSemanticField());
+
+        if (queryType == null || queryType.trim().isEmpty()) queryType = "text_expansion";
+
+        if ("semantic".equalsIgnoreCase(queryType)) {
+            // ES 8.11+ semantic_text 쿼리: { semantic: { field: "...", query: "..." } }
+            if (semanticField == null || semanticField.trim().isEmpty()) {
+                throw new IllegalStateException("semantic 쿼리에는 semantic-field 설정이 필요합니다");
+            }
+            Map<String, Object> semantic = new LinkedHashMap<>();
+            semantic.put("field", semanticField);
+            semantic.put("query", query);
+            Map<String, Object> wrap = new LinkedHashMap<>();
+            wrap.put("semantic", semantic);
+            body.put("query", wrap);
+        } else {
+            // text_expansion (ELSER): { text_expansion: { <tokensField>: { model_id, model_text } } }
+            if (modelId == null || modelId.trim().isEmpty()) {
+                throw new IllegalStateException("text_expansion 쿼리에는 model-id 설정이 필요합니다");
+            }
+            if (tokensField == null || tokensField.trim().isEmpty()) tokensField = "ml.tokens";
+            Map<String, Object> inner = new LinkedHashMap<>();
+            inner.put("model_id", modelId);
+            inner.put("model_text", query);
+            Map<String, Object> textExpansion = new LinkedHashMap<>();
+            textExpansion.put(tokensField, inner);
+            Map<String, Object> wrap = new LinkedHashMap<>();
+            wrap.put("text_expansion", textExpansion);
+            body.put("query", wrap);
+        }
+    }
+
+    /**
+     * Phase 2 — 앱측 임베딩 + kNN.
+     */
+    private void buildSemanticClientQuery(Map<String, Object> body, String query, int topK, Map<String, Object> overrides) {
+        String vectorField   = pickStr(overrides, "knnVectorField", analyzerService.getRagKnnVectorField());
+        int numCandidates    = pickInt(overrides, "knnNumCandidates", analyzerService.getRagKnnNumCandidates());
+        if (vectorField == null || vectorField.trim().isEmpty()) {
+            throw new IllegalStateException("kNN 쿼리에는 vector-field 설정이 필요합니다");
+        }
+        if (numCandidates <= 0) numCandidates = Math.max(10, topK * 10);
+
+        // 1) 앱에서 임베딩 생성 (오버라이드는 임베딩 설정에는 그대로 전달)
+        float[] vector = embeddingService.embed(query, overrides);
+
+        // 2) kNN 쿼리 본문 구성
+        Map<String, Object> knn = new LinkedHashMap<>();
+        knn.put("field", vectorField);
+        List<Float> vec = new ArrayList<>(vector.length);
+        for (float v : vector) vec.add(v);
+        knn.put("query_vector", vec);
+        knn.put("k", topK);
+        knn.put("num_candidates", numCandidates);
+        body.put("knn", knn);
     }
 
     private String extractContent(Map<String, Object> source, String preferredField) {

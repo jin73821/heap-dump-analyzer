@@ -12,6 +12,7 @@
         html, body { height: 100%; }
         body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
                color: #1F2937; background: #F3F4F6; line-height: 1.5; }
+
         .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
                   transition: left .25s cubic-bezier(.4,0,.2,1);
                   background: #fff; border-bottom: 1px solid #E5E7EB;
@@ -23,6 +24,7 @@
                       border-radius: 6px; background: transparent; color: #6B7280;
                       cursor: pointer; text-decoration: none; }
         .topbar-btn:hover { background: #F9FAFB; }
+
         .container { max-width: 1280px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
@@ -30,66 +32,109 @@
                     margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
         .page-ttl { font-size: 18px; font-weight: 700; }
 
-        /* Accordion */
-        .acc { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
-               margin-bottom: 12px; overflow: hidden; }
-        .acc-header { display: flex; align-items: center; justify-content: space-between;
-                      padding: 14px 18px; cursor: pointer; user-select: none;
-                      transition: background .15s; }
-        .acc-header:hover { background: #F9FAFB; }
-        .acc-left { display: flex; align-items: center; gap: 10px; }
-        .acc-arrow { width: 18px; height: 18px; stroke: #9CA3AF; fill: none; stroke-width: 2;
-                     transition: transform .2s; flex-shrink: 0; }
-        .acc.open .acc-arrow { transform: rotate(90deg); }
-        .acc-name { font-size: 15px; font-weight: 600; }
-        .acc-host { font-size: 13px; color: #6B7280; }
-        .acc-stats { display: flex; gap: 12px; font-size: 12px; }
-        .acc-stat { display: inline-flex; align-items: center; gap: 4px; }
-        .acc-stat-dot { width: 7px; height: 7px; border-radius: 50%; }
-        .dot-success { background: #059669; }
-        .dot-fail { background: #EF4444; }
-        .dot-progress { background: #F59E0B; }
-        .acc-body { display: none; border-top: 1px solid #E5E7EB; }
-        .acc.open .acc-body { display: block; }
-        .acc-empty { padding: 24px; text-align: center; color: #9CA3AF; font-size: 13px; }
+        /* ── KPI cards ────────────────────────────────────── */
+        .kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+        .kpi-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                    padding: 14px 16px; display: flex; align-items: center; gap: 12px; }
+        .kpi-icon { width: 38px; height: 38px; border-radius: 10px; display: flex;
+                    align-items: center; justify-content: center; flex-shrink: 0; }
+        .kpi-icon svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 2; }
+        .kpi-blue  { background: #DBEAFE; color: #1D4ED8; }
+        .kpi-green { background: #D1FAE5; color: #065F46; }
+        .kpi-red   { background: #FEE2E2; color: #991B1B; }
+        .kpi-text { display: flex; flex-direction: column; }
+        .kpi-label { font-size: 11px; color: #6B7280; text-transform: uppercase; letter-spacing: .5px;
+                     font-weight: 600; }
+        .kpi-value { font-size: 22px; font-weight: 700; color: #1F2937; line-height: 1.2; margin-top: 2px; }
 
-        /* Log table */
+        /* ── Table toolbar ────────────────────────────────── */
+        .table-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+        .search-bar { flex: 1 1 220px; min-width: 200px; padding: 7px 12px; font-size: 13px;
+                      border: 1px solid #D1D5DB; border-radius: 6px; background: #fff; }
+        .search-bar:focus { outline: none; border-color: #2563EB; box-shadow: 0 0 0 2px rgba(37,99,235,.15); }
+        .toolbar-sel { padding: 7px 10px; font-size: 13px; border: 1px solid #D1D5DB; border-radius: 6px;
+                       background: #fff; cursor: pointer; min-width: 130px; }
+        .toolbar-sel:focus { outline: none; border-color: #2563EB; }
+        .page-size-wrap { display: inline-flex; align-items: center; gap: 6px; }
+        .page-size-label { font-size: 12px; color: #6B7280; }
+        .export-wrap { position: relative; }
+        .export-btn { padding: 7px 14px; font-size: 13px; border: 1px solid #D1D5DB; border-radius: 6px;
+                      background: #fff; cursor: pointer; font-weight: 500; }
+        .export-btn:hover { background: #F9FAFB; }
+        .export-menu { display: none; position: absolute; right: 0; top: 100%; margin-top: 4px;
+                       background: #fff; border: 1px solid #E5E7EB; border-radius: 6px; min-width: 140px;
+                       box-shadow: 0 4px 12px rgba(0,0,0,.08); z-index: 20; }
+        .export-menu.open { display: block; }
+        .export-menu a { display: block; padding: 8px 14px; font-size: 13px; color: #374151;
+                         text-decoration: none; cursor: pointer; }
+        .export-menu a:hover { background: #F3F4F6; }
+
+        /* ── Table ────────────────────────────────────────── */
+        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
         .ltable { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .ltable th { padding: 10px 16px; text-align: left; font-size: 12px; font-weight: 600;
+        .ltable th { padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600;
                      color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
                      background: #F9FAFB; border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
-        .ltable td { padding: 10px 16px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
+        .ltable th.sortable { cursor: pointer; user-select: none; }
+        .ltable th.sortable:hover { background: #F3F4F6; }
+        .ltable th .sort-arrow { display: inline-block; margin-left: 4px; color: #D1D5DB; font-size: 10px; }
+        .ltable th.sort-active { color: #2563EB; }
+        .ltable th.sort-active .sort-arrow { color: #2563EB; }
+        .ltable td { padding: 10px 14px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
         .ltable tbody tr:last-child td { border-bottom: none; }
         .ltable tbody tr:hover { background: #FAFAFA; }
-        .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+        .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
         .badge-success { background: #D1FAE5; color: #065F46; }
         .badge-failed { background: #FEE2E2; color: #991B1B; }
         .badge-progress { background: #FEF3C7; color: #92400E; }
         .td-mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px; }
-        .td-err { font-size: 11px; color: #DC2626; max-width: 300px; overflow: hidden;
+        .td-num { color: #6B7280; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+        .td-server { font-weight: 500; color: #2563EB; }
+        .td-name { font-weight: 500; max-width: 240px; overflow: hidden; text-overflow: ellipsis;
+                   white-space: nowrap; }
+        .td-path { font-size: 11px; color: #6B7280; max-width: 250px; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
+        .td-err { font-size: 11px; color: #DC2626; max-width: 260px; overflow: hidden;
                   text-overflow: ellipsis; white-space: nowrap; }
         .td-err:hover { white-space: normal; word-break: break-all; }
-        .td-path { font-size: 11px; color: #6B7280; max-width: 250px; overflow: hidden;
-                   text-overflow: ellipsis; white-space: nowrap; }
 
-        .empty-all { text-align: center; padding: 48px; color: #9CA3AF; font-size: 14px; }
+        .empty-state { padding: 48px 24px; text-align: center; color: #9CA3AF; font-size: 14px; }
+        .loading-state { padding: 48px 24px; text-align: center; color: #6B7280; font-size: 13px; }
+
+        /* ── Pagination ───────────────────────────────────── */
+        .pagination-bar { display: none; margin-top: 14px; padding: 10px 14px; gap: 12px;
+                          align-items: center; justify-content: space-between; flex-wrap: wrap; }
+        .pagination-bar.show { display: flex; }
+        .pg-info { font-size: 12px; color: #6B7280; }
+        .pg-list { display: flex; gap: 4px; flex-wrap: wrap; }
+        .pg-btn { min-width: 32px; padding: 5px 10px; font-size: 12px; border: 1px solid #D1D5DB;
+                  border-radius: 6px; background: #fff; cursor: pointer; color: #374151; }
+        .pg-btn:hover:not(:disabled) { background: #F3F4F6; }
+        .pg-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; font-weight: 600; }
+        .pg-btn:disabled { opacity: .5; cursor: not-allowed; }
+        .pg-ellipsis { padding: 5px 4px; color: #9CA3AF; font-size: 12px; }
 
         @media (max-width: 900px) {
             .topbar { left: 0; }
             .container { padding-left: 20px; }
         }
+        @media (max-width: 768px) {
+            .kpi-grid { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+            .kpi-card { padding: 10px 12px; }
+            .kpi-icon { width: 30px; height: 30px; }
+            .kpi-icon svg { width: 16px; height: 16px; }
+            .kpi-value { font-size: 18px; }
+        }
         @media (max-width: 640px) {
+            .kpi-grid { grid-template-columns: 1fr; }
             .ltable .col-hide-sm { display: none; }
-            .acc-stats { gap: 8px; }
+            .table-toolbar { flex-direction: column; align-items: stretch; }
+            .toolbar-sel, .search-bar { width: 100%; }
         }
         @media (min-width: 1024px) {
-            .ltable { font-size: 15px; }
-            .ltable th { font-size: 13px; padding: 12px 18px; }
-            .ltable td { padding: 12px 18px; }
-            .acc-header { padding: 16px 20px; }
-            .acc-name { font-size: 16px; }
-            .acc-host { font-size: 14px; }
-            .acc-stats { font-size: 13px; }
+            .ltable { font-size: 14px; }
+            .ltable th { font-size: 12px; padding: 12px 16px; }
+            .ltable td { padding: 12px 16px; }
             .page-ttl { font-size: 20px; }
             .badge { font-size: 12px; }
             .td-mono { font-size: 13px; }
@@ -116,72 +161,377 @@
         <div class="page-ttl">Transfer Logs</div>
     </div>
 
-    <div th:if="${#lists.isEmpty(servers)}" class="empty-all">
-        등록된 서버가 없습니다.
+    <!-- KPI 카드 (Total / Success / Failed) -->
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-icon kpi-blue">
+                <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+            <div class="kpi-text">
+                <span class="kpi-label">Total</span>
+                <span class="kpi-value" id="kpiTotal">-</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon kpi-green">
+                <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            </div>
+            <div class="kpi-text">
+                <span class="kpi-label">Success</span>
+                <span class="kpi-value" id="kpiSuccess">-</span>
+            </div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-icon kpi-red">
+                <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </div>
+            <div class="kpi-text">
+                <span class="kpi-label">Failed</span>
+                <span class="kpi-value" id="kpiFailed">-</span>
+            </div>
+        </div>
     </div>
 
-    <div th:each="s : ${servers}" class="acc" th:classappend="${sStat.first} ? 'open'">
-        <div class="acc-header" onclick="toggleAcc(this)">
-            <div class="acc-left">
-                <svg class="acc-arrow" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
-                <span class="acc-name" th:text="${s.name}">Server1</span>
-                <span class="acc-host" th:text="${s.host + ':' + s.port}">192.168.1.1:22</span>
-            </div>
-            <div class="acc-stats" th:with="stats=${statsByServer.get(s.id)}">
-                <span class="acc-stat">
-                    Total: <strong th:text="${stats != null ? stats[0] : 0}">0</strong>
-                </span>
-                <span class="acc-stat">
-                    <span class="acc-stat-dot dot-success"></span>
-                    <span th:text="${stats != null ? stats[1] : 0}">0</span>
-                </span>
-                <span class="acc-stat">
-                    <span class="acc-stat-dot dot-fail"></span>
-                    <span th:text="${stats != null ? stats[2] : 0}">0</span>
-                </span>
+    <!-- Toolbar (검색/상태/서버/페이지사이즈/Export) -->
+    <div class="table-toolbar">
+        <input type="text" class="search-bar" id="searchInput"
+               placeholder="파일명·경로·에러 메시지로 검색..." oninput="onSearchInput()">
+        <select class="toolbar-sel" id="statusSel" onchange="onStatusChange()">
+            <option value="">상태: 전체</option>
+            <option value="SUCCESS">SUCCESS</option>
+            <option value="FAILED">FAILED</option>
+            <option value="IN_PROGRESS">IN PROGRESS</option>
+        </select>
+        <select class="toolbar-sel" id="serverSel" onchange="onServerChange()">
+            <option value="">서버: 전체</option>
+            <option th:each="s : ${servers}" th:value="${s.id}" th:text="${s.name}">Server1</option>
+        </select>
+        <div class="page-size-wrap">
+            <span class="page-size-label">행 표시</span>
+            <select class="toolbar-sel" id="pageSizeSel" onchange="onPageSizeChange()" style="min-width: 80px">
+                <option value="20" selected>20</option>
+                <option value="30">30</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+        </div>
+        <div class="export-wrap" id="exportWrap">
+            <button class="export-btn" onclick="toggleExportMenu(event)">Export &#9662;</button>
+            <div class="export-menu" id="exportMenu">
+                <a onclick="exportData('csv')">CSV 다운로드</a>
+                <a onclick="exportData('json')">JSON 다운로드</a>
             </div>
         </div>
-        <div class="acc-body" th:with="logs=${logsByServer.get(s.id)}">
-            <div th:if="${logs == null or logs.isEmpty()}" class="acc-empty">전송 이력이 없습니다.</div>
-            <table th:unless="${logs == null or logs.isEmpty()}" class="ltable">
-                <thead>
-                    <tr>
-                        <th>상태</th>
-                        <th>파일명</th>
-                        <th class="col-hide-sm">원격 경로</th>
-                        <th>크기</th>
-                        <th>시작</th>
-                        <th class="col-hide-sm">완료</th>
-                        <th>에러</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr th:each="log : ${logs}">
-                        <td>
-                            <span th:if="${log.transferStatus == 'SUCCESS'}" class="badge badge-success">SUCCESS</span>
-                            <span th:if="${log.transferStatus == 'FAILED'}" class="badge badge-failed">FAILED</span>
-                            <span th:if="${log.transferStatus == 'IN_PROGRESS'}" class="badge badge-progress">RUNNING</span>
-                        </td>
-                        <td style="font-weight:500" th:text="${log.filename}">dump.hprof</td>
-                        <td class="td-path col-hide-sm" th:text="${log.remotePath}" th:title="${log.remotePath}">-</td>
-                        <td class="td-mono" th:text="${log.fileSize != null ? log.fileSize > 1048576 ? #numbers.formatDecimal(log.fileSize / 1048576.0, 1, 1) + ' MB' : #numbers.formatDecimal(log.fileSize / 1024.0, 1, 1) + ' KB' : '-'}">-</td>
-                        <td class="td-mono" th:text="${log.startedAt != null ? #temporals.format(log.startedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
-                        <td class="td-mono col-hide-sm" th:text="${log.completedAt != null ? #temporals.format(log.completedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
-                        <td>
-                            <span th:if="${log.errorMessage != null}" class="td-err" th:text="${log.errorMessage}" th:title="${log.errorMessage}"></span>
-                            <span th:unless="${log.errorMessage != null}" style="color:#9CA3AF">-</span>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+    </div>
+
+    <!-- Table -->
+    <div class="panel">
+        <table class="ltable" id="logsTable">
+            <thead>
+                <tr>
+                    <th class="sortable" data-sort-key="id" onclick="onHeaderSort(this)">
+                        # <span class="sort-arrow">▲</span>
+                    </th>
+                    <th class="sortable" data-sort-key="transferStatus" onclick="onHeaderSort(this)">
+                        상태 <span class="sort-arrow">▲</span>
+                    </th>
+                    <th>서버</th>
+                    <th class="sortable" data-sort-key="filename" onclick="onHeaderSort(this)">
+                        파일명 <span class="sort-arrow">▲</span>
+                    </th>
+                    <th class="col-hide-sm">원격 경로</th>
+                    <th class="sortable" data-sort-key="fileSize" onclick="onHeaderSort(this)">
+                        크기 <span class="sort-arrow">▲</span>
+                    </th>
+                    <th class="sortable sort-active" data-sort-key="startedAt" onclick="onHeaderSort(this)">
+                        시작 <span class="sort-arrow">▼</span>
+                    </th>
+                    <th>소요시간</th>
+                    <th>에러</th>
+                </tr>
+            </thead>
+            <tbody id="logsTableBody">
+                <tr><td colspan="9" class="loading-state">불러오는 중...</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination-bar" id="paginationBar">
+        <div class="pg-info" id="pgInfo">-</div>
+        <div class="pg-list" id="pgList"></div>
     </div>
 </div>
 
 <script>
-function toggleAcc(header) {
-    header.parentElement.classList.toggle('open');
+// ── State ─────────────────────────────────────────────
+var _params = {
+    page: 0,
+    size: 20,
+    sort: 'startedAt,desc',
+    q: '',
+    status: '',
+    serverId: ''
+};
+var _searchDebounce = null;
+var _loading = false;
+
+// ── Init ──────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+    // 페이지 사이즈 복원
+    var saved = parseInt(localStorage.getItem('logsPageSize') || '20', 10);
+    if ([20, 30, 50, 100].indexOf(saved) !== -1) {
+        _params.size = saved;
+        document.getElementById('pageSizeSel').value = String(saved);
+    }
+    // export 외부 클릭 닫기
+    document.addEventListener('click', function(e) {
+        var wrap = document.getElementById('exportWrap');
+        if (wrap && !wrap.contains(e.target)) {
+            document.getElementById('exportMenu').classList.remove('open');
+        }
+    });
+    loadData();
+});
+
+// ── Data fetch ────────────────────────────────────────
+function buildQuery(extra) {
+    var p = Object.assign({}, _params, extra || {});
+    var qs = [];
+    Object.keys(p).forEach(function(k) {
+        if (p[k] !== '' && p[k] !== null && p[k] !== undefined) {
+            qs.push(encodeURIComponent(k) + '=' + encodeURIComponent(p[k]));
+        }
+    });
+    return qs.join('&');
 }
+
+function loadData() {
+    if (_loading) return;
+    _loading = true;
+    var listQuery = buildQuery();
+    var statsQuery = buildQuery({ page: undefined, size: undefined, sort: undefined, status: undefined });
+
+    Promise.all([
+        fetch('/api/servers/transfers?' + listQuery).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+        }),
+        fetch('/api/servers/transfers/stats?' + statsQuery).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
+        })
+    ]).then(function(arr) {
+        var page = arr[0], stats = arr[1];
+        renderKpi(stats);
+        renderTable(page.content);
+        renderPagination(page.totalElements, page.totalPages, page.number, page.size);
+        _loading = false;
+    }).catch(function(e) {
+        _loading = false;
+        var tbody = document.getElementById('logsTableBody');
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">불러오기 실패: '
+            + escapeHtml(e.message) + '</td></tr>';
+        document.getElementById('paginationBar').classList.remove('show');
+    });
+}
+
+// ── KPI ───────────────────────────────────────────────
+function renderKpi(stats) {
+    document.getElementById('kpiTotal').textContent = formatNum(stats.total || 0);
+    document.getElementById('kpiSuccess').textContent = formatNum(stats.success || 0);
+    document.getElementById('kpiFailed').textContent = formatNum(stats.failed || 0);
+}
+
+function formatNum(n) {
+    return Number(n).toLocaleString('ko-KR');
+}
+
+// ── Table ─────────────────────────────────────────────
+function renderTable(items) {
+    var tbody = document.getElementById('logsTableBody');
+    tbody.innerHTML = '';
+    if (!items || items.length === 0) {
+        var msg = (_params.q || _params.status || _params.serverId)
+            ? '검색 조건에 맞는 결과가 없습니다.'
+            : '전송 이력이 없습니다.';
+        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">' + msg + '</td></tr>';
+        return;
+    }
+    items.forEach(function(t) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = renderRow(t);
+        tbody.appendChild(tr);
+    });
+}
+
+function renderRow(t) {
+    var badge = '';
+    if (t.transferStatus === 'SUCCESS') badge = '<span class="badge badge-success">SUCCESS</span>';
+    else if (t.transferStatus === 'FAILED') badge = '<span class="badge badge-failed">FAILED</span>';
+    else if (t.transferStatus === 'IN_PROGRESS') badge = '<span class="badge badge-progress">RUNNING</span>';
+    else badge = '<span class="badge">' + escapeHtml(t.transferStatus || '-') + '</span>';
+
+    var serverLink = t.serverName
+        ? '<a href="/servers/' + t.serverId + '" class="td-server">' + escapeHtml(t.serverName) + '</a>'
+        : '<span class="td-server">-</span>';
+
+    var pathHtml = t.remotePath
+        ? '<span class="td-path" title="' + escapeAttr(t.remotePath) + '">' + escapeHtml(t.remotePath) + '</span>'
+        : '<span style="color:#9CA3AF">-</span>';
+
+    var errHtml = t.errorMessage
+        ? '<span class="td-err" title="' + escapeAttr(t.errorMessage) + '">' + escapeHtml(t.errorMessage) + '</span>'
+        : '<span style="color:#9CA3AF">-</span>';
+
+    return ''
+        + '<td class="td-num">' + (t.id != null ? t.id : '-') + '</td>'
+        + '<td>' + badge + '</td>'
+        + '<td>' + serverLink + '</td>'
+        + '<td><span class="td-name" title="' + escapeAttr(t.filename || '') + '">' + escapeHtml(t.filename || '-') + '</span></td>'
+        + '<td class="col-hide-sm">' + pathHtml + '</td>'
+        + '<td class="td-mono">' + escapeHtml(t.formattedSize || '-') + '</td>'
+        + '<td class="td-mono">' + escapeHtml(t.startedAt || '-') + '</td>'
+        + '<td class="td-mono">' + escapeHtml(t.formattedDuration || '-') + '</td>'
+        + '<td>' + errHtml + '</td>';
+}
+
+// ── Pagination ────────────────────────────────────────
+function renderPagination(total, totalPages, currentPage, pageSize) {
+    var bar = document.getElementById('paginationBar');
+    if (total <= pageSize) {
+        bar.classList.remove('show');
+        return;
+    }
+    bar.classList.add('show');
+    var start = currentPage * pageSize + 1;
+    var end = Math.min(start + pageSize - 1, total);
+    document.getElementById('pgInfo').innerHTML =
+        '<strong>' + start + '–' + end + '</strong> / 전체 <strong>' + formatNum(total) + '</strong>건';
+
+    var list = document.getElementById('pgList');
+    list.innerHTML = '';
+    var addBtn = function(label, page, opts) {
+        opts = opts || {};
+        var b = document.createElement('button');
+        b.className = 'pg-btn' + (opts.active ? ' active' : '');
+        b.textContent = label;
+        if (opts.disabled) b.disabled = true;
+        else b.onclick = function() { gotoPage(page); };
+        list.appendChild(b);
+    };
+    var addEllipsis = function() {
+        var s = document.createElement('span');
+        s.className = 'pg-ellipsis'; s.textContent = '…';
+        list.appendChild(s);
+    };
+
+    addBtn('‹', currentPage - 1, { disabled: currentPage === 0 });
+
+    var pages = new Set([0, totalPages - 1, currentPage]);
+    for (var d = 1; d <= 2; d++) {
+        if (currentPage - d >= 0) pages.add(currentPage - d);
+        if (currentPage + d <= totalPages - 1) pages.add(currentPage + d);
+    }
+    var sorted = Array.from(pages).sort(function(a, b) { return a - b; });
+    var prev = -1;
+    sorted.forEach(function(p) {
+        if (p - prev > 1) addEllipsis();
+        addBtn(String(p + 1), p, { active: p === currentPage });
+        prev = p;
+    });
+
+    addBtn('›', currentPage + 1, { disabled: currentPage === totalPages - 1 });
+}
+
+// ── Event handlers ────────────────────────────────────
+function onSearchInput() {
+    clearTimeout(_searchDebounce);
+    _searchDebounce = setTimeout(function() {
+        _params.q = document.getElementById('searchInput').value.trim();
+        _params.page = 0;
+        loadData();
+    }, 300);
+}
+
+function onStatusChange() {
+    _params.status = document.getElementById('statusSel').value;
+    _params.page = 0;
+    loadData();
+}
+
+function onServerChange() {
+    _params.serverId = document.getElementById('serverSel').value;
+    _params.page = 0;
+    loadData();
+}
+
+function onPageSizeChange() {
+    _params.size = parseInt(document.getElementById('pageSizeSel').value, 10) || 20;
+    _params.page = 0;
+    localStorage.setItem('logsPageSize', String(_params.size));
+    loadData();
+}
+
+function onHeaderSort(th) {
+    var key = th.getAttribute('data-sort-key');
+    var current = _params.sort.split(',');
+    var newSort;
+    if (current[0] === key) {
+        newSort = key + ',' + (current[1] === 'asc' ? 'desc' : 'asc');
+    } else {
+        newSort = key + ',asc';
+    }
+    _params.sort = newSort;
+    updateSortIndicators();
+    loadData();
+}
+
+function updateSortIndicators() {
+    var parts = _params.sort.split(',');
+    var activeKey = parts[0], activeDir = parts[1];
+    document.querySelectorAll('#logsTable th.sortable').forEach(function(th) {
+        var arrow = th.querySelector('.sort-arrow');
+        if (!arrow) return;
+        if (th.getAttribute('data-sort-key') === activeKey) {
+            th.classList.add('sort-active');
+            arrow.textContent = (activeDir === 'asc') ? '▲' : '▼';
+        } else {
+            th.classList.remove('sort-active');
+            arrow.textContent = '▲';
+        }
+    });
+}
+
+function gotoPage(p) {
+    _params.page = p;
+    loadData();
+}
+
+// ── Export ────────────────────────────────────────────
+function toggleExportMenu(e) {
+    e.stopPropagation();
+    document.getElementById('exportMenu').classList.toggle('open');
+}
+
+function exportData(format) {
+    document.getElementById('exportMenu').classList.remove('open');
+    var qs = buildQuery({ page: undefined, size: undefined, format: format });
+    var url = '/api/servers/transfers/export?' + qs;
+    var a = document.createElement('a');
+    a.href = url;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+// ── Helpers ───────────────────────────────────────────
+function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/[&<>"']/g, function(c) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+}
+function escapeAttr(s) { return escapeHtml(s); }
 </script>
 
 </body>

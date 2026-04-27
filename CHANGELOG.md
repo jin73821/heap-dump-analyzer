@@ -1,5 +1,131 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-27] RAG (Elasticsearch) 연동 — Phase 2 (Semantic Search 활성화)
+
+**변경 파일:** `application.properties`, `HeapDumpConfig.java`, `HeapDumpAnalyzerService.java`, `EmbeddingService.java`(신규), `RagService.java`, `HeapDumpController.java`, `rag-settings.html`, `RAG_PHASE2_PLAN.md`, `MEMORY.md`
+
+### 배경
+Phase 1(2026-04-26)에서 `keyword(BM25)`만 동작. 운영팀 ES 예시 쿼리 부재 확인 후, 두 가지 semantic 모드를 모두 구현하여 사내 ES 매핑에 따라 Settings에서 선택 가능하게 활성화.
+
+### 신규 검색 모드
+- **`semantic-server`** — ES 서버측 임베딩. 두 가지 쿼리 타입 지원:
+  - `text_expansion` (ELSER 스파스 토큰): `{ text_expansion: { <tokensField>: { model_id, model_text } } }`
+  - `semantic` (ES 8.11+ semantic_text): `{ semantic: { field, query } }`
+- **`semantic-client`** — 앱이 외부 임베딩 API 호출 후 kNN 쿼리: `{ knn: { field, query_vector, k, num_candidates } }`
+
+### A. 신규 설정 키 (`application.properties`)
+- semantic-server: `rag.search.semantic.{query-type, model-id, tokens-field, semantic-field}`
+- semantic-client: `rag.embedding.{provider, api.url, api.key(ENC), model, dimension, timeout-seconds}`, `rag.search.knn.{vector-field, num-candidates}`
+
+### B. `EmbeddingService` 신규
+- `embed(text, overrides)` — provider별 분기 (openai / cohere / custom-OpenAI호환)
+- `testConnection(overrides)` — 임의 텍스트("test") 임베딩 호출 후 dimension 반환
+- API 키는 평문 메모리 보관 + `ENC(...)` AES-256 형식으로 `settings.json` / `application.properties` 저장 (Phase 1 password 패턴 재사용)
+- Bearer 인증 (openai/cohere/custom 모두 동일)
+- OpenAI/Cohere 응답 파싱: `data[0].embedding[]` vs `embeddings[0][]`
+
+### C. `RagService` 확장
+- 생성자에 `EmbeddingService` 주입
+- `buildQueryBody(mode, ..., overrides)` switch 분기: `keyword` / `semantic-server` / `semantic-client`
+- `semantic-client`은 `embeddingService.embed(query, overrides)` 호출 → `query_vector` 배열 변환 후 kNN 쿼리 본문 구성
+- `text_expansion`은 `model-id` 필수, `semantic`은 `semantic-field` 필수 — 누락 시 명확한 에러 (Phase 1처럼 keyword로 폴백하지 않음)
+
+### D. `HeapDumpAnalyzerService` 영속화 확장
+- volatile 필드 12개 추가 (semantic 4 + embedding 8)
+- `settings.json` load/save에 신규 키 12개 + ENC 암호화 (`ragEmbeddingApiKey`)
+- `syncApplicationProperties()` 갱신
+- 신규 setter 2개:
+  - `setRagSemanticConfig(queryType, modelId, tokensField, semanticField)` — null 인자는 변경 없음
+  - `setRagEmbeddingConfig(provider, apiUrl, apiKey, model, dim, timeout, vectorField, numCandidates)` — apiKey null=유지/빈문자열=삭제 패턴 (Phase 1과 동일)
+- `getRagEmbeddingApiKeyMasked()`, `isRagEmbeddingApiKeySet()`
+
+### E. Controller API 확장
+- `GET /api/settings/rag` 응답에 `semantic`/`embedding` 객체 + `availableSemanticQueryTypes`/`availableEmbeddingProviders` 추가
+- `POST /api/settings/rag` 페이로드에 semantic + embedding 필드 수용. 키 누락 시 변경 없음 (containsKey 가드)
+- `POST /api/settings/rag/embedding/test` (신규) — 임베딩 API 연결 테스트. 빈 apiKey는 저장 키로 대체
+
+### F. UI (`rag-settings.html`)
+- Phase 1 안내 배너 → Phase 2 안내 배너로 교체 (3개 모드 설명)
+- Search Mode select에 `onRagModeChange()` 핸들러 — 선택 모드에 따라 두 신규 카드 동적 노출
+  - **semantic-server 카드**: queryType select(text_expansion/semantic) + 동적 박스(`semElserBox`/`semSemanticBox`)
+  - **semantic-client 카드**: provider/api-url/api-key/model/dimension/timeout/vector-field/num-candidates 입력 + Test Embedding API 버튼
+- API key 입력은 비어있으면 페이로드에서 제외 (저장 값 유지). placeholder hint로 마스킹 표시
+- `buildConnPayload(includeSecrets)` — Phase 2 필드 모두 포함. `embeddingApiKey`는 includeSecrets=true이고 입력값 있을 때만 전달
+- `testEmbeddingConn()` — 별도 테스트 결과 박스(`#embTestResult`)에 dimension 표시
+
+### G. 보안
+- 임베딩 API 키 ENC 저장: 평문은 메모리만, settings.json + application.properties 양쪽 모두 `ENC(...)` 형식
+- UI는 마스킹 placeholder만 표시, 변경 시에만 입력하도록 유도 (Phase 1 password와 동일 UX)
+- 잘못된 설정으로 인한 ES 호출 실패 시 keyword 폴백하지 않고 명확한 에러 — 디버깅 용이
+
+### H. 테스트 가이드
+- 사내 운영팀 ES 매핑 확인 후 모드 선택:
+  1. ELSER 사용 시: `semantic-server` + `text_expansion` + 운영팀이 알려준 `model-id` / `tokens-field`
+  2. semantic_text 사용 시: `semantic-server` + `semantic` + `semantic-field`
+  3. dense_vector + 외부 임베딩 API 사용 시: `semantic-client` + provider/model/vector-field 설정. **반드시 색인 시 모델과 동일** 사용
+- Settings 페이지에서 모드 변경 → Save → Test Connection 순서로 검증
+- semantic-client는 추가로 "Test Embedding API"로 임베딩 호출만 별도 검증 가능
+
+### I. `RAG_PHASE2_PLAN.md`
+- 운영팀 답변 부재로 양 모드 모두 구현했음을 기록. 체크리스트 항목 모두 완료 표시.
+
+## [2026-04-26] 사내 이관용 README-DEPLOY.md 작성 (DB 준비 가이드 중심)
+
+**변경 파일:** `README-DEPLOY.md` (신규)
+
+### 배경
+사내 시스템 이관 시 "JAR 파일만 가져가면 되는지" 질의에 답하면서, 외부 의존성(MAT CLI, MariaDB, 디렉토리, SSH 계정, LLM/RAG 연동 등)을 함께 정리할 설치 가이드 필요.
+
+### 내용
+- **DB 준비 섹션 중심** — MariaDB 설치, 외부 접속 허용(`bind-address` + 방화벽), `HEAPDB` 생성 + `heap_user` 계정 + `GRANT` SQL, 접속 테스트(`mysql -h`), `heap_enc.sh`로 비밀번호 AES 암호화, `application.properties` 수정 예시, JPA `ddl-auto=update`로 자동 생성되는 7개 테이블 목록(users / target_servers / analysis_history / dump_transfer_log / ai_insights / ai_chat_sessions / ai_chat_messages), `mysqldump` 백업/복구 + cron 자동 백업
+- **권한 최소화 옵션**: 운영 시 `GRANT ALL` 대신 `SELECT/INSERT/UPDATE/DELETE/CREATE/ALTER/DROP/INDEX/REFERENCES`만 부여 가능함을 명시
+- **암호화 키 설정**: `HEAP_ANALYZER_ENCRYPTION_KEY` 환경변수로 별도 키 지정 권장 (기본 키는 운영 부적합)
+- **나머지 섹션**: 사전 준비(OS/Java/포트), 디렉토리 권한(`/opt/heapdumps/{dumpfiles,data,tmp}`), MAT CLI 설치, 앱 기동(`restart.sh`), 트러블슈팅 표(접속 실패/권한/한글 깨짐/`ENC()` 복호화 실패), 이관 패키지 체크리스트
+- **기본 admin 계정 변경 강조** — admin/shinhan@10 자동 생성 후 즉시 변경 권고
+
+## [2026-04-26] Transfer Logs 페이지 고도화 — 검색/필터/페이지네이션/Export
+
+**변경 파일:** `DumpTransferLogRepository.java`, `ServerController.java`, `server-logs.html`, `CLAUDE.md`
+
+### 배경
+기존 `/servers/logs`는 서버별 아코디언 + 서버당 50개 하드코딩 컷 + 검색/정렬/페이지네이션 전무. 운영자가 "어제 어떤 파일이 실패했지"를 찾으려면 서버를 하나씩 펼치며 눈으로 스캔해야 했음. 누적 데이터 특성상 시간이 지나면 오래된 이력은 영구히 가려짐.
+
+### A. 백엔드
+- `DumpTransferLogRepository`: `JpaSpecificationExecutor<DumpTransferLog>` 추가 → 동적 검색·정렬·페이지네이션 가능
+- `ServerController`:
+  - `serverLogsPage(Model)` 단순화: `logsByServer`/`statsByServer` 모델 키 제거. `servers`(셀렉트박스용)만 SSR. 데이터는 클라이언트 fetch
+  - `GET /api/servers/transfers` (신규) — `Page<TransferLogItem>` 반환. 파라미터: `page, size, sort, q, status, serverId`. JPA Specification으로 동적 쿼리 (`q`는 filename/remotePath/errorMessage OR 매칭, `cb.like(cb.lower(...), %q%)`). 정렬 필드 화이트리스트(`isAllowedSortField`) — 임의 필드 정렬 차단
+  - `GET /api/servers/transfers/stats` (신규) — KPI 3개(total/success/failed). status는 무시하고 `q + serverId`만 적용 — Total과 Success/Failed 비교 의미 유지
+  - `GET /api/servers/transfers/export?format=csv|json` (신규) — 현재 필터 그대로 적용된 결과 다운로드. 안전 cap 50,000건, 초과 시 `X-Truncated: true` 헤더. CSV는 RFC 4180 인용 (`csvCell`로 `,`/`"`/줄바꿈 escape)
+  - Inner DTO `TransferLogItem` (HeapDumpController.AnalysisHistoryItem 패턴): id, serverId, serverName, filename, remotePath, transferStatus, fileSize+formattedSize, startedAt+startedAtMillis, completedAt, durationMs+formattedDuration, errorMessage
+  - 서버명 조인은 `serverRepository.findAll()` Map lookup (JPA `@ManyToOne` 미도입 — 스키마 변경 회피)
+  - Helper: `parseSort()`, `buildSpec()`, `statusEquals()`, `formatBytes()`, `formatDuration()`, `renderCsv()`, `renderJson()`
+
+### B. 프론트엔드 (`server-logs.html` 전면 재작성)
+- 아코디언 폐기 → **단일 통합 테이블** (서버 칼럼 추가)
+- 상단 KPI 3카드: Total / Success / Failed (파란/녹색/빨강 아이콘. `index.html`의 stat-card 패턴 차용)
+- 툴바: 검색 input(300ms debounce) + 상태 셀렉트(전체/SUCCESS/FAILED/IN_PROGRESS) + 서버 셀렉트(Thymeleaf로 채움) + 페이지 사이즈 셀렉트(20/30/50/100, `localStorage.logsPageSize`) + Export 드롭다운(CSV/JSON)
+- 테이블 9칼럼: # / 상태 뱃지 / 서버(링크) / 파일명 / 원격경로(col-hide-sm) / 크기 / 시작 / 소요시간 / 에러
+- 정렬 가능 헤더: id, transferStatus, filename, fileSize, startedAt (asc↔desc 토글, 화살표 인디케이터). 서버명·소요시간·에러는 의도적으로 정렬 비활성 (DB 계산 어려움 / 의미 적음)
+- 페이지네이션: ‹Prev / 1 … 현재±2 … 마지막 / Next›, history.html 알고리즘 그대로 0-base 페이지로 변환
+- 검색 결과 0건/전체 0건 분기 메시지
+- IN_PROGRESS는 소요시간 "진행 중" 표시
+- 모바일 반응형: 768px 이하 KPI 콤팩트, 640px 이하 KPI 1열 + 원격경로 숨김 + 툴바 세로 스택
+
+### C. CLAUDE.md
+- `server-logs.html` 항목을 갱신 (3 KPI / 단일 통합 테이블 / 서버 사이드 페이지네이션 / 3 endpoint)
+- "Files/History 테이블 툴바 공통 패턴" 섹션 직전에 메모 추가: server-logs는 의도적으로 서버 사이드 페이지네이션 사용 — 누적형 데이터 특성 반영. history/files(클라이언트 사이드 그리드)와 다름
+
+### 검증
+- 빌드 성공 (`mvn clean package -DskipTests`)
+- `/servers/logs` HTTP 200, KPI/검색/필터/페이지네이션 마크업 26개 매치
+- `/api/servers/transfers?page=0&size=5` → totalElements=9, totalPages=2, 서버명 join + 포맷팅 정상
+- `/api/servers/transfers/stats` → `{total:9, success:9, failed:0}`
+- 검색 `q=admin` → 4건, 상태 `status=SUCCESS` → 9건, 정렬 `fileSize,asc` 정상
+- Export CSV/JSON 모두 필터 적용된 응답 + Content-Disposition 헤더
+
+---
+
 ## [2026-04-26] RAG 전용 페이지 분리 + 청킹 옵션 추가
 
 **변경 파일:** `application.properties`, `HeapDumpConfig.java`, `HeapDumpAnalyzerService.java`,

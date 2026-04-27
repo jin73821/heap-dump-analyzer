@@ -56,17 +56,20 @@ public class HeapDumpController {
     private final org.springframework.boot.autoconfigure.jdbc.DataSourceProperties dataSourceProperties;
     private final javax.sql.DataSource dataSource;
     private final com.heapdump.analyzer.service.RagService ragService;
+    private final com.heapdump.analyzer.service.EmbeddingService embeddingService;
 
     public HeapDumpController(HeapDumpAnalyzerService analyzerService,
                               com.heapdump.analyzer.config.HeapDumpConfig config,
                               org.springframework.boot.autoconfigure.jdbc.DataSourceProperties dataSourceProperties,
                               javax.sql.DataSource dataSource,
-                              com.heapdump.analyzer.service.RagService ragService) {
+                              com.heapdump.analyzer.service.RagService ragService,
+                              com.heapdump.analyzer.service.EmbeddingService embeddingService) {
         this.analyzerService = analyzerService;
         this.config = config;
         this.dataSourceProperties = dataSourceProperties;
         this.dataSource = dataSource;
         this.ragService = ragService;
+        this.embeddingService = embeddingService;
     }
 
     // ── 파일명 검증 실패 핸들러 ─────────────────────────────────────
@@ -1623,9 +1626,33 @@ public class HeapDumpController {
         chunking.put("maxChunksPerDoc", analyzerService.getRagChunkingMaxChunksPerDoc());
         chunking.put("maxTotalChars", analyzerService.getRagChunkingMaxTotalChars());
         res.put("chunking", chunking);
+
+        // Phase 2 — semantic-server (ES inference)
+        Map<String, Object> semantic = new LinkedHashMap<>();
+        semantic.put("queryType", analyzerService.getRagSemanticQueryType());
+        semantic.put("modelId", analyzerService.getRagSemanticModelId());
+        semantic.put("tokensField", analyzerService.getRagSemanticTokensField());
+        semantic.put("semanticField", analyzerService.getRagSemanticField());
+        res.put("semantic", semantic);
+
+        // Phase 2 — semantic-client (앱측 임베딩)
+        Map<String, Object> embedding = new LinkedHashMap<>();
+        embedding.put("provider", analyzerService.getRagEmbeddingProvider());
+        embedding.put("apiUrl", analyzerService.getRagEmbeddingApiUrl());
+        embedding.put("apiKeySet", analyzerService.isRagEmbeddingApiKeySet());
+        embedding.put("apiKeyMasked", analyzerService.getRagEmbeddingApiKeyMasked());
+        embedding.put("model", analyzerService.getRagEmbeddingModel());
+        embedding.put("dimension", analyzerService.getRagEmbeddingDimension());
+        embedding.put("timeoutSeconds", analyzerService.getRagEmbeddingTimeoutSeconds());
+        embedding.put("vectorField", analyzerService.getRagKnnVectorField());
+        embedding.put("numCandidates", analyzerService.getRagKnnNumCandidates());
+        res.put("embedding", embedding);
+
         res.put("availableModes", java.util.Arrays.asList("keyword", "semantic-server", "semantic-client"));
         res.put("availableAuthTypes", java.util.Arrays.asList("none", "basic", "api-key"));
         res.put("availableChunkingStrategies", java.util.Arrays.asList("fixed", "paragraph", "sentence"));
+        res.put("availableSemanticQueryTypes", java.util.Arrays.asList("text_expansion", "semantic"));
+        res.put("availableEmbeddingProviders", java.util.Arrays.asList("openai", "cohere", "custom"));
         return ResponseEntity.ok(res);
     }
 
@@ -1682,6 +1709,30 @@ public class HeapDumpController {
         analyzerService.setRagConfig(url, authType, username, password, apiKey, index, sslVerify,
                 searchMode, textField, topK, minScore, timeoutSec);
 
+        // Phase 2 — semantic-server: 키 없으면 변경 없음(null)
+        String semQueryType    = body.containsKey("semanticQueryType")    ? (String) body.get("semanticQueryType")    : null;
+        String semModelId      = body.containsKey("semanticModelId")      ? (String) body.get("semanticModelId")      : null;
+        String semTokensField  = body.containsKey("semanticTokensField")  ? (String) body.get("semanticTokensField")  : null;
+        String semField        = body.containsKey("semanticField")        ? (String) body.get("semanticField")        : null;
+        if (semQueryType != null || semModelId != null || semTokensField != null || semField != null) {
+            analyzerService.setRagSemanticConfig(semQueryType, semModelId, semTokensField, semField);
+        }
+
+        // Phase 2 — semantic-client: 임베딩 설정. apiKey null=유지
+        String embProvider    = body.containsKey("embeddingProvider") ? (String) body.get("embeddingProvider") : null;
+        String embApiUrl      = body.containsKey("embeddingApiUrl")   ? (String) body.get("embeddingApiUrl")   : null;
+        String embApiKey      = body.containsKey("embeddingApiKey")   ? (String) body.get("embeddingApiKey")   : null;
+        String embModel       = body.containsKey("embeddingModel")    ? (String) body.get("embeddingModel")    : null;
+        int    embDim         = body.containsKey("embeddingDimension")    ? parseInt(body.get("embeddingDimension"), -1)    : -1;
+        int    embTimeout     = body.containsKey("embeddingTimeoutSeconds") ? parseInt(body.get("embeddingTimeoutSeconds"), -1) : -1;
+        String knnVectorField = body.containsKey("knnVectorField")    ? (String) body.get("knnVectorField")    : null;
+        int    knnCandidates  = body.containsKey("knnNumCandidates")  ? parseInt(body.get("knnNumCandidates"), -1)  : -1;
+        if (embProvider != null || embApiUrl != null || embApiKey != null || embModel != null
+                || embDim > 0 || embTimeout > 0 || knnVectorField != null || knnCandidates > 0) {
+            analyzerService.setRagEmbeddingConfig(embProvider, embApiUrl, embApiKey, embModel,
+                    embDim, embTimeout, knnVectorField, knnCandidates);
+        }
+
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
         res.put("url", analyzerService.getRagElasticsearchUrl());
@@ -1689,6 +1740,7 @@ public class HeapDumpController {
         res.put("searchMode", analyzerService.getRagSearchMode());
         res.put("passwordSet", analyzerService.isRagPasswordSet());
         res.put("apiKeySet", analyzerService.isRagApiKeySet());
+        res.put("embeddingApiKeySet", analyzerService.isRagEmbeddingApiKeySet());
         return ResponseEntity.ok(res);
     }
 
@@ -1710,6 +1762,22 @@ public class HeapDumpController {
             return ResponseEntity.badRequest().body(err);
         }
         Map<String, Object> result = ragService.search(query, null);
+        return ResponseEntity.ok(result);
+    }
+
+    /**
+     * Phase 2 — 임베딩 API 연결 테스트.
+     * 페이로드의 apiKey가 비어 있거나 누락되면 저장된 키 사용.
+     */
+    @PostMapping("/api/settings/rag/embedding/test")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> testEmbedding(@RequestBody(required = false) Map<String, Object> body) {
+        // apiKey가 빈 문자열이거나 없으면 저장 값 사용 — overrides에서 제거
+        if (body != null && body.containsKey("apiKey")) {
+            Object v = body.get("apiKey");
+            if (v == null || String.valueOf(v).trim().isEmpty()) body.remove("apiKey");
+        }
+        Map<String, Object> result = embeddingService.testConnection(body);
         return ResponseEntity.ok(result);
     }
 

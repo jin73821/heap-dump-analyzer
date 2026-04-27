@@ -150,6 +150,34 @@ public class HeapDumpConfig {
     @Value("${rag.search.timeout-seconds:10}")
     private int ragTimeoutSeconds;
 
+    // Phase 2: semantic-server (ES inference)
+    @Value("${rag.search.semantic.query-type:text_expansion}")
+    private String ragSemanticQueryType;
+    @Value("${rag.search.semantic.model-id:.elser_model_2}")
+    private String ragSemanticModelId;
+    @Value("${rag.search.semantic.tokens-field:ml.tokens}")
+    private String ragSemanticTokensField;
+    @Value("${rag.search.semantic.semantic-field:}")
+    private String ragSemanticField;
+
+    // Phase 2: semantic-client (앱측 임베딩)
+    @Value("${rag.embedding.provider:openai}")
+    private String ragEmbeddingProvider;
+    @Value("${rag.embedding.api.url:https://api.openai.com/v1/embeddings}")
+    private String ragEmbeddingApiUrl;
+    @Value("${rag.embedding.api.key:}")
+    private String ragEmbeddingApiKey;
+    @Value("${rag.embedding.model:text-embedding-3-small}")
+    private String ragEmbeddingModel;
+    @Value("${rag.embedding.dimension:1536}")
+    private int ragEmbeddingDimension;
+    @Value("${rag.embedding.timeout-seconds:15}")
+    private int ragEmbeddingTimeoutSeconds;
+    @Value("${rag.search.knn.vector-field:embedding}")
+    private String ragKnnVectorField;
+    @Value("${rag.search.knn.num-candidates:50}")
+    private int ragKnnNumCandidates;
+
     @Value("${rag.chunking.enabled:true}")
     private boolean ragChunkingEnabled;
     @Value("${rag.chunking.strategy:fixed}")
@@ -370,6 +398,21 @@ public class HeapDumpConfig {
     public int     getRagTopK()             { return ragTopK; }
     public double  getRagMinScore()         { return ragMinScore; }
     public int     getRagTimeoutSeconds()   { return ragTimeoutSeconds; }
+    // Phase 2 — semantic-server
+    public String  getRagSemanticQueryType()    { return ragSemanticQueryType; }
+    public String  getRagSemanticModelId()      { return ragSemanticModelId; }
+    public String  getRagSemanticTokensField()  { return ragSemanticTokensField; }
+    public String  getRagSemanticField()        { return ragSemanticField; }
+    // Phase 2 — semantic-client
+    public String  getRagEmbeddingProvider()    { return ragEmbeddingProvider; }
+    public String  getRagEmbeddingApiUrl()      { return ragEmbeddingApiUrl; }
+    public String  getRagEmbeddingApiKey()      { return ragEmbeddingApiKey; }
+    public String  getRagEmbeddingModel()       { return ragEmbeddingModel; }
+    public int     getRagEmbeddingDimension()   { return ragEmbeddingDimension; }
+    public int     getRagEmbeddingTimeoutSeconds() { return ragEmbeddingTimeoutSeconds; }
+    public String  getRagKnnVectorField()       { return ragKnnVectorField; }
+    public int     getRagKnnNumCandidates()     { return ragKnnNumCandidates; }
+
     public boolean isRagChunkingEnabled()        { return ragChunkingEnabled; }
     public String  getRagChunkingStrategy()       { return ragChunkingStrategy; }
     public int     getRagChunkingSize()           { return ragChunkingSize; }
