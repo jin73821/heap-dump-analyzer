@@ -35,6 +35,7 @@
         .btn-primary:hover { background: #1D4ED8; }
 
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
+        .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
         .utable { width: 100%; border-collapse: collapse; font-size: 13px; }
         .utable thead { background: #F9FAFB; }
         .utable th { padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600;
@@ -88,9 +89,95 @@
         .toast.success { background: #D1FAE5; color: #065F46; border: 1px solid #A7F3D0; }
         .toast.error { background: #FEE2E2; color: #991B1B; border: 1px solid #FECACA; }
 
+        /* Tabs */
+        .tabs { display: flex; gap: 4px; border-bottom: 1px solid #E5E7EB; margin-bottom: 18px; }
+        .tab { padding: 10px 18px; border: none; background: transparent; cursor: pointer;
+               font-size: 13px; font-weight: 600; color: #6B7280; border-bottom: 2px solid transparent;
+               margin-bottom: -1px; }
+        .tab:hover { color: #2563EB; }
+        .tab.active { color: #2563EB; border-bottom-color: #2563EB; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .tab-badge { display: inline-block; min-width: 18px; padding: 0 6px; height: 18px;
+                     line-height: 18px; border-radius: 9px; background: #EF4444; color: #fff;
+                     font-size: 10px; font-weight: 700; margin-left: 6px; vertical-align: middle; }
+        .tab-badge.zero { background: #E5E7EB; color: #9CA3AF; }
+        .req-reason-cell { font-size: 12px; color: #4B5563; max-width: 280px; overflow: hidden;
+                           text-overflow: ellipsis; white-space: nowrap; }
+        .req-reason-cell:hover { white-space: normal; word-break: break-word; }
+        .req-meta { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+        .badge-pending { background: #FEF3C7; color: #92400E; }
+        .badge-approved { background: #D1FAE5; color: #065F46; }
+        .badge-rejected { background: #FEE2E2; color: #991B1B; }
+
+        /* Toolbar */
+        .lh-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+        .lh-search { flex: 1; min-width: 200px; padding: 8px 12px; border: 1px solid #E5E7EB;
+                     border-radius: 7px; font-size: 13px; outline: none; }
+        .lh-search:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .lh-select { padding: 8px 12px; border: 1px solid #E5E7EB; border-radius: 7px;
+                     font-size: 13px; background: #fff; outline: none; cursor: pointer; }
+        .lh-btn { padding: 7px 14px; border: 1px solid #E5E7EB; border-radius: 7px; background: #fff;
+                  font-size: 12px; cursor: pointer; color: #374151; }
+        .lh-btn:hover { background: #F9FAFB; }
+
+        /* Status badges */
+        .badge-success { background: #D1FAE5; color: #065F46; }
+        .badge-failure { background: #FEE2E2; color: #991B1B; }
+
+        /* Pagination */
+        .lh-pager { display: flex; align-items: center; justify-content: center; gap: 4px;
+                    padding: 14px; border-top: 1px solid #F3F4F6; }
+        .lh-pager button { min-width: 32px; padding: 6px 10px; border: 1px solid #E5E7EB;
+                           border-radius: 6px; background: #fff; font-size: 12px; cursor: pointer; color: #374151; }
+        .lh-pager button:hover:not(:disabled) { background: #F9FAFB; border-color: #93C5FD; }
+        .lh-pager button.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+        .lh-pager button:disabled { opacity: .4; cursor: not-allowed; }
+        .lh-pager .ellipsis { padding: 6px 4px; color: #9CA3AF; font-size: 12px; }
+        .lh-summary { padding: 8px 16px; font-size: 12px; color: #6B7280; border-top: 1px solid #F3F4F6; }
+        .lh-empty { padding: 40px 20px; text-align: center; color: #9CA3AF; font-size: 13px; }
+
+        /* IP/UA cell */
+        .lh-ua { font-size: 11px; color: #9CA3AF; max-width: 280px; overflow: hidden;
+                 text-overflow: ellipsis; white-space: nowrap; }
+        .lh-reason { font-size: 11px; color: #DC2626; max-width: 280px; overflow: hidden;
+                     text-overflow: ellipsis; white-space: nowrap; }
+
         @media (max-width: 900px) {
             .topbar { left: 0; }
-            .container { padding-left: 20px; }
+            .container { padding-left: 20px; padding-right: 14px; }
+            .utable { min-width: 760px; }
+            #panel-active .utable { min-width: 920px; }
+            #panel-history .utable { min-width: 760px; }
+            #panel-requests .utable { min-width: 1040px; }
+        }
+        @media (max-width: 768px) {
+            .container { padding: 64px 14px 32px; }
+            .page-hdr { margin-bottom: 14px; }
+            .page-ttl { font-size: 16px; }
+            .tabs { gap: 0; overflow-x: auto; -webkit-overflow-scrolling: touch;
+                    flex-wrap: nowrap; white-space: nowrap; }
+            .tab { padding: 10px 14px; flex: 0 0 auto; }
+            .topbar { padding: 0 12px; }
+            .topbar-title { font-size: 15px; }
+            .topbar-btn { padding: 5px 8px; }
+            /* 페이저: 한 줄에 안 들어가면 wrap */
+            .lh-pager { flex-wrap: wrap; padding: 12px 8px; gap: 4px; }
+        }
+        @media (max-width: 640px) {
+            .page-hdr { flex-direction: column; align-items: stretch; gap: 10px; }
+            .page-hdr > div:last-child { justify-content: space-between; }
+            .btn-primary { width: 100%; }
+            .lh-toolbar { flex-direction: column; align-items: stretch; }
+            .lh-search, .lh-select, .lh-toolbar .lh-btn { width: 100%; }
+            .lh-summary { padding: 8px 12px; text-align: center; }
+            /* 모달 풀폭 가까이 */
+            .modal-box { padding: 18px; max-width: calc(100vw - 24px); }
+            .modal-btns { gap: 6px; }
+            .modal-btns button { flex: 1; padding: 9px 10px; }
+            /* 토스트 */
+            .toast { left: 12px; right: 12px; transform: none; max-width: none;
+                     text-align: center; }
         }
         @media (min-width: 1024px) {
             .utable { font-size: 15px; }
@@ -118,55 +205,196 @@
 </div>
 
 <div class="container">
-    <div class="page-hdr">
-        <div class="page-ttl">사용자 목록</div>
-        <button class="btn-primary" onclick="openCreateModal()">+ 사용자 추가</button>
+    <div class="tabs">
+        <button class="tab active" data-tab="users" onclick="switchTab('users')">사용자 목록</button>
+        <button class="tab" data-tab="active" onclick="switchTab('active')">현재 접속</button>
+        <button class="tab" data-tab="history" onclick="switchTab('history')">접속 이력</button>
+        <button class="tab" data-tab="requests" onclick="switchTab('requests')">계정 신청<span class="tab-badge zero" id="reqBadge">0</span></button>
     </div>
 
-    <div class="panel">
-        <table class="utable">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>사용자명</th>
-                    <th>이름</th>
-                    <th>역할</th>
-                    <th>상태</th>
-                    <th>생성일</th>
-                    <th>작업</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr th:each="u : ${users}">
-                    <td th:text="${u.id}">1</td>
-                    <td style="font-weight:600" th:text="${u.username}">admin</td>
-                    <td th:text="${u.displayName ?: '-'}">관리자</td>
-                    <td>
-                        <span class="badge badge-admin" th:if="${u.role.name() == 'ADMIN'}">ADMIN</span>
-                        <span class="badge badge-user" th:if="${u.role.name() == 'USER'}">USER</span>
-                    </td>
-                    <td>
-                        <span class="badge badge-enabled" th:if="${u.enabled}">활성</span>
-                        <span class="badge badge-disabled" th:unless="${u.enabled}">비활성</span>
-                    </td>
-                    <td th:text="${u.createdAt != null ? #temporals.format(u.createdAt, 'yyyy-MM-dd HH:mm') : '-'}">2026-04-12</td>
-                    <td>
-                        <button class="action-btn"
-                                th:data-id="${u.id}" th:data-username="${u.username}"
-                                th:data-displayname="${u.displayName}" th:data-role="${u.role.name()}"
-                                th:data-enabled="${u.enabled}"
-                                onclick="openEditModal(this.dataset)">수정</button>
-                        <button class="action-btn"
-                                th:data-id="${u.id}"
-                                onclick="openResetPwModal(this.dataset.id)">비밀번호</button>
-                        <button class="action-btn danger"
-                                th:data-id="${u.id}" th:data-username="${u.username}"
-                                th:disabled="${u.username == 'admin'}"
-                                onclick="openDeleteModal(this.dataset.id, this.dataset.username)">삭제</button>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+    <!-- 사용자 목록 -->
+    <div class="tab-panel active" id="panel-users">
+        <div class="page-hdr">
+            <div class="page-ttl">사용자 목록</div>
+            <button class="btn-primary" onclick="openCreateModal()">+ 사용자 추가</button>
+        </div>
+
+        <div class="panel">
+          <div class="table-scroll">
+            <table class="utable">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>사용자명</th>
+                        <th>이름</th>
+                        <th>역할</th>
+                        <th>상태</th>
+                        <th>생성일</th>
+                        <th>작업</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="u : ${users}">
+                        <td th:text="${u.id}">1</td>
+                        <td style="font-weight:600" th:text="${u.username}">admin</td>
+                        <td th:text="${u.displayName ?: '-'}">관리자</td>
+                        <td>
+                            <span class="badge badge-admin" th:if="${u.role.name() == 'ADMIN'}">ADMIN</span>
+                            <span class="badge badge-user" th:if="${u.role.name() == 'USER'}">USER</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-enabled" th:if="${u.enabled}">활성</span>
+                            <span class="badge badge-disabled" th:unless="${u.enabled}">비활성</span>
+                        </td>
+                        <td th:text="${u.createdAt != null ? #temporals.format(u.createdAt, 'yyyy-MM-dd HH:mm') : '-'}">2026-04-12</td>
+                        <td>
+                            <button class="action-btn"
+                                    th:data-id="${u.id}" th:data-username="${u.username}"
+                                    th:data-displayname="${u.displayName}" th:data-role="${u.role.name()}"
+                                    th:data-enabled="${u.enabled}"
+                                    onclick="openEditModal(this.dataset)">수정</button>
+                            <button class="action-btn"
+                                    th:data-id="${u.id}"
+                                    onclick="openResetPwModal(this.dataset.id)">비밀번호</button>
+                            <button class="action-btn danger"
+                                    th:data-id="${u.id}" th:data-username="${u.username}"
+                                    th:data-admin="${u.username == 'admin'}"
+                                    onclick="onDeleteUserClick(this.dataset)">삭제</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+          </div>
+        </div>
+    </div>
+
+    <!-- 현재 접속 -->
+    <div class="tab-panel" id="panel-active">
+        <div class="page-hdr">
+            <div class="page-ttl">현재 접속 중인 계정</div>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <label style="font-size:12px; color:#6B7280; display:flex; align-items:center; gap:6px;">
+                    <input type="checkbox" id="asAutoRefresh" onchange="toggleAutoRefresh()">
+                    <span>자동 갱신 (10초)</span>
+                </label>
+                <button class="lh-btn" onclick="loadActive()">↻ 새로고침</button>
+            </div>
+        </div>
+
+        <div class="panel">
+          <div class="table-scroll">
+            <table class="utable">
+                <thead>
+                    <tr>
+                        <th>사용자</th>
+                        <th>역할</th>
+                        <th>IP</th>
+                        <th>로그인 시각</th>
+                        <th>마지막 활동</th>
+                        <th>유휴</th>
+                        <th>만료 예정</th>
+                        <th>작업</th>
+                    </tr>
+                </thead>
+                <tbody id="asBody">
+                    <tr><td colspan="8" class="lh-empty">데이터를 불러오는 중...</td></tr>
+                </tbody>
+            </table>
+          </div>
+            <div class="lh-summary" id="asSummary"></div>
+        </div>
+    </div>
+
+    <!-- 계정 신청 -->
+    <div class="tab-panel" id="panel-requests">
+        <div class="page-hdr">
+            <div class="page-ttl">계정 신청 관리</div>
+            <button class="lh-btn" onclick="loadRequests(_reqPage)">↻ 새로고침</button>
+        </div>
+
+        <div class="lh-toolbar">
+            <input class="lh-search" id="reqSearch" placeholder="사용자명 또는 이름 검색" oninput="onReqSearchInput()">
+            <select class="lh-select" id="reqStatus" onchange="loadRequests(0)">
+                <option value="PENDING">대기 중</option>
+                <option value="">전체 상태</option>
+                <option value="APPROVED">승인됨</option>
+                <option value="REJECTED">거부됨</option>
+            </select>
+            <select class="lh-select" id="reqPageSize" onchange="loadRequests(0)">
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+        </div>
+
+        <div class="panel">
+          <div class="table-scroll">
+            <table class="utable">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>사용자명</th>
+                        <th>이름</th>
+                        <th>사유</th>
+                        <th>신청 시각</th>
+                        <th>IP</th>
+                        <th>상태</th>
+                        <th>처리자/시각</th>
+                        <th>작업</th>
+                    </tr>
+                </thead>
+                <tbody id="reqBody">
+                    <tr><td colspan="9" class="lh-empty">데이터를 불러오는 중...</td></tr>
+                </tbody>
+            </table>
+          </div>
+            <div class="lh-summary" id="reqSummary"></div>
+            <div class="lh-pager" id="reqPager"></div>
+        </div>
+    </div>
+
+    <!-- 접속 이력 -->
+    <div class="tab-panel" id="panel-history">
+        <div class="page-hdr">
+            <div class="page-ttl">로그인 접속 이력</div>
+        </div>
+
+        <div class="lh-toolbar">
+            <input class="lh-search" id="lhSearch" placeholder="사용자명 또는 IP 검색" oninput="onLhSearchInput()">
+            <select class="lh-select" id="lhStatus" onchange="loadHistory(0)">
+                <option value="">전체 상태</option>
+                <option value="SUCCESS">성공</option>
+                <option value="FAILURE">실패</option>
+            </select>
+            <select class="lh-select" id="lhPageSize" onchange="loadHistory(0)">
+                <option value="20">20</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+            <button class="lh-btn" onclick="loadHistory(_lhPage)">↻ 새로고침</button>
+        </div>
+
+        <div class="panel">
+          <div class="table-scroll">
+            <table class="utable">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>일시</th>
+                        <th>사용자명</th>
+                        <th>상태</th>
+                        <th>IP</th>
+                        <th>User Agent / 사유</th>
+                    </tr>
+                </thead>
+                <tbody id="lhBody">
+                    <tr><td colspan="6" class="lh-empty">데이터를 불러오는 중...</td></tr>
+                </tbody>
+            </table>
+          </div>
+            <div class="lh-summary" id="lhSummary"></div>
+            <div class="lh-pager" id="lhPager"></div>
+        </div>
     </div>
 </div>
 
@@ -271,6 +499,74 @@
     </div>
 </div>
 
+<!-- Info Modal (안내 전용) -->
+<div class="modal-ov" id="infoModal" onclick="if(event.target===this)closeModal('infoModal')">
+    <div class="modal-box">
+        <div class="modal-ttl" id="infoModalTtl">알림</div>
+        <p style="font-size:13px;color:#374151;margin-bottom:16px;line-height:1.6" id="infoModalMsg"></p>
+        <div class="modal-btns">
+            <button class="mbtn-save" onclick="closeModal('infoModal')">확인</button>
+        </div>
+    </div>
+</div>
+
+<!-- Approve Request Modal -->
+<div class="modal-ov" id="approveReqModal" onclick="if(event.target===this)closeModal('approveReqModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">계정 신청 승인</div>
+        <input type="hidden" id="arId">
+        <p style="font-size:13px;color:#374151;margin-bottom:12px">
+            <strong id="arUsername"></strong> 님의 계정 신청을 승인합니다.
+        </p>
+        <div class="modal-group">
+            <label class="modal-label">부여 역할</label>
+            <select class="modal-select" id="arRole">
+                <option value="USER">USER</option>
+                <option value="ADMIN">ADMIN</option>
+            </select>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('approveReqModal')">취소</button>
+            <button class="mbtn-save" onclick="submitApproveRequest()">승인</button>
+        </div>
+    </div>
+</div>
+
+<!-- Reject Request Modal -->
+<div class="modal-ov" id="rejectReqModal" onclick="if(event.target===this)closeModal('rejectReqModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">계정 신청 거부</div>
+        <input type="hidden" id="rrId">
+        <p style="font-size:13px;color:#374151;margin-bottom:12px">
+            <strong id="rrUsername"></strong> 님의 계정 신청을 거부합니다.
+        </p>
+        <div class="modal-group">
+            <label class="modal-label">거부 사유 (선택)</label>
+            <input class="modal-input" id="rrReason" maxlength="500" placeholder="신청자에게 전달되지는 않습니다">
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('rejectReqModal')">취소</button>
+            <button class="mbtn-del" onclick="submitRejectRequest()">거부</button>
+        </div>
+    </div>
+</div>
+
+<!-- Terminate Session Modal -->
+<div class="modal-ov" id="termSessionModal" onclick="if(event.target===this)closeModal('termSessionModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">세션 강제 종료</div>
+        <input type="hidden" id="tsSessionId">
+        <p style="font-size:13px;color:#6B7280;margin-bottom:16px">
+            <strong id="tsUsername"></strong> 사용자의 현재 접속을 강제 종료하시겠습니까?<br>
+            해당 사용자는 다음 요청 시 로그인 페이지로 이동합니다.
+        </p>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('termSessionModal')">취소</button>
+            <button class="mbtn-del" onclick="submitTerminate()">강제 종료</button>
+        </div>
+    </div>
+</div>
+
 <script>
 var _csrfToken = document.querySelector('meta[name="_csrf"]').content;
 var _csrfHeader = document.querySelector('meta[name="_csrf_header"]').content;
@@ -282,6 +578,28 @@ function csrfHeaders(extra) {
 }
 
 function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+function showInfoModal(title, messageHtml) {
+    document.getElementById('infoModalTtl').textContent = title || '알림';
+    document.getElementById('infoModalMsg').innerHTML = messageHtml || '';
+    document.getElementById('infoModal').classList.add('open');
+}
+
+function onDeleteUserClick(ds) {
+    if (ds && ds.admin === 'true') {
+        showInfoModal('삭제 불가',
+            '관리자(admin) 계정은 삭제할 수 없습니다.<br>' +
+            '시스템 운영을 위해 기본 관리자 계정은 보호됩니다.');
+        return;
+    }
+    openDeleteModal(ds.id, ds.username);
+}
+
+function showSelfTerminateInfo() {
+    showInfoModal('강제 종료 불가',
+        '본인 세션은 강제 종료할 수 없습니다.<br>' +
+        '로그아웃이 필요하다면 좌측 메뉴의 <strong>Logout</strong>을 이용해 주세요.');
+}
 
 function showToast(msg, type) {
     var t = document.getElementById('toast');
@@ -393,6 +711,437 @@ function submitDelete() {
         else { showToast(d.message || '삭제 실패', 'error'); }
     }).catch(function() { showToast('요청 실패', 'error'); });
     closeModal('deleteModal');
+}
+
+// ── 탭 전환 ─────────────────────────────────────────────────
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(function(t) {
+        t.classList.toggle('active', t.dataset.tab === name);
+    });
+    document.querySelectorAll('.tab-panel').forEach(function(p) {
+        p.classList.toggle('active', p.id === 'panel-' + name);
+    });
+    if (name === 'history' && !_lhLoaded) {
+        _lhLoaded = true;
+        loadHistory(0);
+    }
+    if (name === 'requests' && !_reqLoaded) {
+        _reqLoaded = true;
+        loadRequests(0);
+    }
+    if (name === 'active') {
+        if (!_asLoaded) { _asLoaded = true; loadActive(); }
+    } else {
+        // 다른 탭으로 이동 시 자동 갱신 중지 (불필요한 폴링 방지)
+        stopAutoRefresh();
+        var ar = document.getElementById('asAutoRefresh');
+        if (ar) ar.checked = false;
+    }
+}
+
+// ── 계정 신청 ───────────────────────────────────────────────
+var _reqLoaded = false;
+var _reqPage = 0;
+var _reqTotalPages = 0;
+var _reqSearchTimer = null;
+
+function onReqSearchInput() {
+    if (_reqSearchTimer) clearTimeout(_reqSearchTimer);
+    _reqSearchTimer = setTimeout(function() { loadRequests(0); }, 300);
+}
+
+function loadRequests(page) {
+    var q = document.getElementById('reqSearch').value.trim();
+    var status = document.getElementById('reqStatus').value;
+    var size = document.getElementById('reqPageSize').value;
+    var url = '/api/admin/account-requests?page=' + page + '&size=' + size;
+    if (q) url += '&q=' + encodeURIComponent(q);
+    if (status) url += '&status=' + status;
+
+    var body = document.getElementById('reqBody');
+    body.innerHTML = '<tr><td colspan="9" class="lh-empty">데이터를 불러오는 중...</td></tr>';
+
+    fetch(url)
+        .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(d) {
+            _reqPage = d.page;
+            _reqTotalPages = d.totalPages;
+            renderRequests(d);
+            updateReqBadge(d.pendingCount);
+        })
+        .catch(function(e) {
+            body.innerHTML = '<tr><td colspan="9" class="lh-empty">불러오기 실패: ' + escHtml(e.message) + '</td></tr>';
+            document.getElementById('reqPager').innerHTML = '';
+            document.getElementById('reqSummary').textContent = '';
+        });
+}
+
+function renderRequests(d) {
+    var body = document.getElementById('reqBody');
+    if (!d.items || d.items.length === 0) {
+        body.innerHTML = '<tr><td colspan="9" class="lh-empty">조건에 맞는 신청이 없습니다.</td></tr>';
+        document.getElementById('reqPager').innerHTML = '';
+        document.getElementById('reqSummary').textContent = '총 0건';
+        return;
+    }
+    var rows = d.items.map(function(it) {
+        var statusBadge;
+        if (it.status === 'PENDING') statusBadge = '<span class="badge badge-pending">대기 중</span>';
+        else if (it.status === 'APPROVED') statusBadge = '<span class="badge badge-approved">승인됨</span>';
+        else statusBadge = '<span class="badge badge-rejected">거부됨</span>';
+
+        var actBtns = '';
+        if (it.status === 'PENDING') {
+            actBtns = '<button class="action-btn" data-id="' + it.id + '" data-username="' + escAttr(it.username) +
+                      '" onclick="openApproveReqModal(this.dataset.id, this.dataset.username)">승인</button> ' +
+                      '<button class="action-btn danger" data-id="' + it.id + '" data-username="' + escAttr(it.username) +
+                      '" onclick="openRejectReqModal(this.dataset.id, this.dataset.username)">거부</button>';
+        } else {
+            actBtns = '<button class="action-btn danger" data-id="' + it.id +
+                      '" onclick="deleteRequest(this.dataset.id)">삭제</button>';
+        }
+
+        var processedCell = '-';
+        if (it.processedAt) {
+            processedCell = '<div>' + escHtml(it.processedBy || '-') + '</div>'
+                          + '<div class="req-meta">' + escHtml(it.processedAt) + '</div>';
+            if (it.status === 'REJECTED' && it.rejectReason) {
+                processedCell += '<div class="req-meta" style="color:#DC2626" title="' + escAttr(it.rejectReason) + '">사유: '
+                              + escHtml(it.rejectReason) + '</div>';
+            }
+        }
+
+        var reasonCell = it.reason
+            ? '<div class="req-reason-cell" title="' + escAttr(it.reason) + '">' + escHtml(it.reason) + '</div>'
+            : '<span style="color:#9CA3AF">-</span>';
+
+        return '<tr>'
+            + '<td>' + it.id + '</td>'
+            + '<td style="font-weight:600">' + escHtml(it.username) + '</td>'
+            + '<td>' + escHtml(it.displayName || '-') + '</td>'
+            + '<td>' + reasonCell + '</td>'
+            + '<td>' + escHtml(it.requestedAt || '-') + '</td>'
+            + '<td>' + escHtml(it.requestIp || '-') + '</td>'
+            + '<td>' + statusBadge + '</td>'
+            + '<td>' + processedCell + '</td>'
+            + '<td>' + actBtns + '</td>'
+            + '</tr>';
+    }).join('');
+    body.innerHTML = rows;
+
+    var from = d.page * d.size + 1;
+    var to = d.page * d.size + d.items.length;
+    document.getElementById('reqSummary').textContent =
+        '총 ' + d.totalElements + '건 — ' + from + '~' + to + ' 표시';
+
+    renderReqPager(d.page, d.totalPages);
+}
+
+function renderReqPager(current, total) {
+    var pager = document.getElementById('reqPager');
+    if (total <= 1) { pager.innerHTML = ''; return; }
+    var html = '';
+    html += '<button onclick="loadRequests(' + (current - 1) + ')"' + (current === 0 ? ' disabled' : '') + '>‹ 이전</button>';
+    var start = Math.max(0, current - 2);
+    var end = Math.min(total - 1, current + 2);
+    if (start > 0) {
+        html += '<button onclick="loadRequests(0)">1</button>';
+        if (start > 1) html += '<span class="ellipsis">…</span>';
+    }
+    for (var i = start; i <= end; i++) {
+        html += '<button class="' + (i === current ? 'active' : '') + '" onclick="loadRequests(' + i + ')">' + (i + 1) + '</button>';
+    }
+    if (end < total - 1) {
+        if (end < total - 2) html += '<span class="ellipsis">…</span>';
+        html += '<button onclick="loadRequests(' + (total - 1) + ')">' + total + '</button>';
+    }
+    html += '<button onclick="loadRequests(' + (current + 1) + ')"' + (current >= total - 1 ? ' disabled' : '') + '>다음 ›</button>';
+    pager.innerHTML = html;
+}
+
+function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
+
+function openApproveReqModal(id, username) {
+    document.getElementById('arId').value = id;
+    document.getElementById('arUsername').textContent = username;
+    document.getElementById('arRole').value = 'USER';
+    document.getElementById('approveReqModal').classList.add('open');
+}
+
+function submitApproveRequest() {
+    var id = document.getElementById('arId').value;
+    var role = document.getElementById('arRole').value;
+    fetch('/api/admin/account-requests/' + id + '/approve', {
+        method: 'POST', headers: csrfHeaders(),
+        body: JSON.stringify({ role: role })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) {
+            showToast('승인되었습니다. 사용자 계정이 생성되었습니다.', 'success');
+            closeModal('approveReqModal');
+            loadRequests(_reqPage);
+        } else {
+            showToast(d.message || '승인 실패', 'error');
+        }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+}
+
+function openRejectReqModal(id, username) {
+    document.getElementById('rrId').value = id;
+    document.getElementById('rrUsername').textContent = username;
+    document.getElementById('rrReason').value = '';
+    document.getElementById('rejectReqModal').classList.add('open');
+}
+
+function submitRejectRequest() {
+    var id = document.getElementById('rrId').value;
+    var reason = document.getElementById('rrReason').value.trim();
+    fetch('/api/admin/account-requests/' + id + '/reject', {
+        method: 'POST', headers: csrfHeaders(),
+        body: JSON.stringify({ reason: reason })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) {
+            showToast('거부 처리되었습니다.', 'success');
+            closeModal('rejectReqModal');
+            loadRequests(_reqPage);
+        } else {
+            showToast(d.message || '처리 실패', 'error');
+        }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+}
+
+function deleteRequest(id) {
+    if (!confirm('이 신청 기록을 삭제하시겠습니까?')) return;
+    var delHeaders = {}; delHeaders[_csrfHeader] = _csrfToken;
+    fetch('/api/admin/account-requests/' + id, { method: 'DELETE', headers: delHeaders })
+    .then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) {
+            showToast('삭제되었습니다.', 'success');
+            loadRequests(_reqPage);
+        } else {
+            showToast(d.message || '삭제 실패', 'error');
+        }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+}
+
+function updateReqBadge(count) {
+    var el = document.getElementById('reqBadge');
+    if (!el) return;
+    var n = parseInt(count, 10) || 0;
+    el.textContent = n > 99 ? '99+' : String(n);
+    el.classList.toggle('zero', n === 0);
+}
+
+function refreshPendingCount() {
+    fetch('/api/admin/account-requests/pending-count')
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(d) { if (d) updateReqBadge(d.count); })
+        .catch(function() {});
+}
+
+// 페이지 로드 시 펜딩 배지 갱신
+document.addEventListener('DOMContentLoaded', refreshPendingCount);
+
+// ── 접속 이력 ───────────────────────────────────────────────
+var _lhLoaded = false;
+var _lhPage = 0;
+var _lhTotalPages = 0;
+var _lhSearchTimer = null;
+
+function onLhSearchInput() {
+    if (_lhSearchTimer) clearTimeout(_lhSearchTimer);
+    _lhSearchTimer = setTimeout(function() { loadHistory(0); }, 300);
+}
+
+function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function loadHistory(page) {
+    var q = document.getElementById('lhSearch').value.trim();
+    var status = document.getElementById('lhStatus').value;
+    var size = document.getElementById('lhPageSize').value;
+    var url = '/api/admin/login-history?page=' + page + '&size=' + size;
+    if (q) url += '&q=' + encodeURIComponent(q);
+    if (status) url += '&status=' + status;
+
+    var body = document.getElementById('lhBody');
+    body.innerHTML = '<tr><td colspan="6" class="lh-empty">데이터를 불러오는 중...</td></tr>';
+
+    fetch(url)
+        .then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function(d) {
+            _lhPage = d.page;
+            _lhTotalPages = d.totalPages;
+            renderHistory(d);
+        })
+        .catch(function(e) {
+            body.innerHTML = '<tr><td colspan="6" class="lh-empty">불러오기 실패: ' + escHtml(e.message) + '</td></tr>';
+            document.getElementById('lhPager').innerHTML = '';
+            document.getElementById('lhSummary').textContent = '';
+        });
+}
+
+function renderHistory(d) {
+    var body = document.getElementById('lhBody');
+    if (!d.items || d.items.length === 0) {
+        body.innerHTML = '<tr><td colspan="6" class="lh-empty">조건에 맞는 접속 이력이 없습니다.</td></tr>';
+        document.getElementById('lhPager').innerHTML = '';
+        document.getElementById('lhSummary').textContent = '총 0건';
+        return;
+    }
+    var rows = d.items.map(function(it) {
+        var statusBadge = it.status === 'SUCCESS'
+            ? '<span class="badge badge-success">성공</span>'
+            : '<span class="badge badge-failure">실패</span>';
+        var detail = it.status === 'FAILURE' && it.failureReason
+            ? '<div class="lh-reason" title="' + escHtml(it.failureReason) + '">' + escHtml(it.failureReason) + '</div>'
+            : '<div class="lh-ua" title="' + escHtml(it.userAgent || '') + '">' + escHtml(it.userAgent || '-') + '</div>';
+        return '<tr>'
+            + '<td>' + it.id + '</td>'
+            + '<td>' + escHtml(it.loginAt || '-') + '</td>'
+            + '<td style="font-weight:600">' + escHtml(it.username) + '</td>'
+            + '<td>' + statusBadge + '</td>'
+            + '<td>' + escHtml(it.ip || '-') + '</td>'
+            + '<td>' + detail + '</td>'
+            + '</tr>';
+    }).join('');
+    body.innerHTML = rows;
+
+    var from = d.page * d.size + 1;
+    var to = d.page * d.size + d.items.length;
+    document.getElementById('lhSummary').textContent =
+        '총 ' + d.totalElements + '건 — ' + from + '~' + to + ' 표시';
+
+    renderPager(d.page, d.totalPages);
+}
+
+// ── 현재 접속 중 ─────────────────────────────────────────────
+var _asLoaded = false;
+var _asAutoTimer = null;
+
+function fmtIdle(sec) {
+    if (sec == null) return '-';
+    var s = parseInt(sec, 10);
+    if (s < 60) return s + '초';
+    if (s < 3600) return Math.floor(s / 60) + '분 ' + (s % 60) + '초';
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    return h + '시간 ' + m + '분';
+}
+
+function loadActive() {
+    var body = document.getElementById('asBody');
+    fetch('/api/admin/active-sessions')
+        .then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function(d) { renderActive(d); })
+        .catch(function(e) {
+            body.innerHTML = '<tr><td colspan="8" class="lh-empty">불러오기 실패: ' + escHtml(e.message) + '</td></tr>';
+            document.getElementById('asSummary').textContent = '';
+        });
+}
+
+function renderActive(d) {
+    var body = document.getElementById('asBody');
+    if (!d.items || d.items.length === 0) {
+        body.innerHTML = '<tr><td colspan="8" class="lh-empty">현재 접속 중인 계정이 없습니다.</td></tr>';
+        document.getElementById('asSummary').textContent = '활성 세션 0';
+        return;
+    }
+    body.innerHTML = d.items.map(function(it) {
+        var nameCell = '<span style="font-weight:600">' + escHtml(it.username) + '</span>';
+        if (it.displayName) {
+            nameCell += '<span style="color:#6B7280;font-size:11px;margin-left:6px">(' + escHtml(it.displayName) + ')</span>';
+        }
+        if (it.isCurrent) {
+            nameCell += ' <span class="badge badge-admin" style="margin-left:4px">본인</span>';
+        }
+        var roleBadge = '';
+        if (it.role === 'ADMIN') roleBadge = '<span class="badge badge-admin">ADMIN</span>';
+        else if (it.role === 'USER') roleBadge = '<span class="badge badge-user">USER</span>';
+        else roleBadge = '-';
+
+        var actBtn;
+        if (it.isCurrent) {
+            actBtn = '<button class="action-btn" onclick="showSelfTerminateInfo()">강제 종료</button>';
+        } else {
+            actBtn = '<button class="action-btn danger" onclick="openTerminateModal(\'' +
+                     escHtml(it.sessionId) + '\', \'' + escHtml(it.username) + '\')">강제 종료</button>';
+        }
+
+        return '<tr>'
+            + '<td>' + nameCell + '<div style="font-size:11px;color:#9CA3AF;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(it.userAgent || '') + '">' + escHtml(it.userAgent || '-') + '</div></td>'
+            + '<td>' + roleBadge + '</td>'
+            + '<td>' + escHtml(it.ip || '-') + '</td>'
+            + '<td>' + escHtml(it.loginAt || it.createdAt) + '</td>'
+            + '<td>' + escHtml(it.lastAccessAt) + '</td>'
+            + '<td>' + fmtIdle(it.idleSec) + '</td>'
+            + '<td>' + escHtml(it.expiresAt) + '</td>'
+            + '<td>' + actBtn + '</td>'
+            + '</tr>';
+    }).join('');
+    document.getElementById('asSummary').textContent = '활성 세션 ' + d.totalElements + '개';
+}
+
+function openTerminateModal(sessionId, username) {
+    document.getElementById('tsSessionId').value = sessionId;
+    document.getElementById('tsUsername').textContent = username;
+    document.getElementById('termSessionModal').classList.add('open');
+}
+
+function submitTerminate() {
+    var sid = document.getElementById('tsSessionId').value;
+    var delHeaders = {}; delHeaders[_csrfHeader] = _csrfToken;
+    fetch('/api/admin/active-sessions/' + encodeURIComponent(sid), {
+        method: 'DELETE', headers: delHeaders
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) { showToast('세션을 종료했습니다.', 'success'); loadActive(); }
+        else { showToast(d.message || '종료 실패', 'error'); }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+    closeModal('termSessionModal');
+}
+
+function toggleAutoRefresh() {
+    var on = document.getElementById('asAutoRefresh').checked;
+    if (on) {
+        loadActive();
+        _asAutoTimer = setInterval(loadActive, 10000);
+    } else {
+        stopAutoRefresh();
+    }
+}
+
+function stopAutoRefresh() {
+    if (_asAutoTimer) { clearInterval(_asAutoTimer); _asAutoTimer = null; }
+}
+
+function renderPager(current, total) {
+    var pager = document.getElementById('lhPager');
+    if (total <= 1) { pager.innerHTML = ''; return; }
+    var html = '';
+    html += '<button onclick="loadHistory(' + (current - 1) + ')"' + (current === 0 ? ' disabled' : '') + '>‹ 이전</button>';
+    var start = Math.max(0, current - 2);
+    var end = Math.min(total - 1, current + 2);
+    if (start > 0) {
+        html += '<button onclick="loadHistory(0)">1</button>';
+        if (start > 1) html += '<span class="ellipsis">…</span>';
+    }
+    for (var i = start; i <= end; i++) {
+        html += '<button class="' + (i === current ? 'active' : '') + '" onclick="loadHistory(' + i + ')">' + (i + 1) + '</button>';
+    }
+    if (end < total - 1) {
+        if (end < total - 2) html += '<span class="ellipsis">…</span>';
+        html += '<button onclick="loadHistory(' + (total - 1) + ')">' + total + '</button>';
+    }
+    html += '<button onclick="loadHistory(' + (current + 1) + ')"' + (current >= total - 1 ? ' disabled' : '') + '>다음 ›</button>';
+    pager.innerHTML = html;
 }
 </script>
 

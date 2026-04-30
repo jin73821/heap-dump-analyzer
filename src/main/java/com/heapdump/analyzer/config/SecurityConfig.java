@@ -30,6 +30,7 @@ public class SecurityConfig {
             .userDetailsService(userDetailsService)
             .authorizeRequests()
                 .antMatchers("/login", "/css/**", "/js/**", "/favicon.ico", "/favicon.svg").permitAll()
+                .antMatchers(org.springframework.http.HttpMethod.POST, "/api/account-requests").permitAll()
                 .antMatchers("/admin/**", "/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
             .and()

@@ -58,7 +58,7 @@ public class UserService {
         return userRepository.findByUsername(username);
     }
 
-    private void validatePassword(String password) {
+    public static void validatePassword(String password) {
         if (password == null || password.length() < 8) {
             throw new IllegalArgumentException("비밀번호는 최소 8자 이상이어야 합니다.");
         }
@@ -73,7 +73,20 @@ public class UserService {
         }
     }
 
+    public static void validateUsername(String username) {
+        if (username == null || username.trim().isEmpty()) {
+            throw new IllegalArgumentException("사용자명을 입력하세요.");
+        }
+        if (username.length() < 3 || username.length() > 50) {
+            throw new IllegalArgumentException("사용자명은 3~50자 사이여야 합니다.");
+        }
+        if (!username.matches("^[A-Za-z0-9_.-]+$")) {
+            throw new IllegalArgumentException("사용자명은 영문/숫자/_/-/. 만 사용할 수 있습니다.");
+        }
+    }
+
     public User createUser(String username, String password, String displayName, User.Role role) {
+        validateUsername(username);
         if (userRepository.existsByUsername(username)) {
             throw new IllegalArgumentException("이미 존재하는 사용자명입니다: " + username);
         }
@@ -85,6 +98,29 @@ public class UserService {
         user.setRole(role);
         user.setEnabled(true);
         return userRepository.save(user);
+    }
+
+    /** 이미 BCrypt 인코딩된 비밀번호로 사용자 생성. 계정 신청 승인 흐름에서 사용. */
+    public User createUserWithEncodedPassword(String username, String encodedPassword,
+                                              String displayName, User.Role role) {
+        validateUsername(username);
+        if (userRepository.existsByUsername(username)) {
+            throw new IllegalArgumentException("이미 존재하는 사용자명입니다: " + username);
+        }
+        if (encodedPassword == null || encodedPassword.isEmpty()) {
+            throw new IllegalArgumentException("비밀번호가 비어 있습니다.");
+        }
+        User user = new User();
+        user.setUsername(username);
+        user.setPassword(encodedPassword);
+        user.setDisplayName(displayName);
+        user.setRole(role);
+        user.setEnabled(true);
+        return userRepository.save(user);
+    }
+
+    public boolean existsByUsername(String username) {
+        return userRepository.existsByUsername(username);
     }
 
     public User updateUser(Long id, String displayName, User.Role role, Boolean enabled) {

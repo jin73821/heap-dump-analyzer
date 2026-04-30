@@ -1,5 +1,381 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-04-30] login.html 폼 사라짐 버그 수정 — `<head>`에 `<meta name="_csrf">` 추가
+
+**변경 파일:** `src/main/resources/templates/login.html`, `CHANGELOG.md`
+
+### 증상
+`/login` 페이지에서 ID/PWD 입력칸과 로그인 버튼이 사라짐. 응답 본문이 line 130(login-sub div)에서 끊겨 약 16KB 분량 후속 마크업이 미렌더.
+
+### 근본 원인
+```
+java.lang.IllegalStateException: Cannot create a session after the response has been committed
+  at HttpSessionCsrfTokenRepository.saveToken
+  at SpringActionTagProcessor.doProcess (login - line 134, <form th:action="@{/login}">)
+```
+- login.html의 `<style>` 블록이 약 110줄로 응답 버퍼(Tomcat 기본 8KB)를 초과 → `<form th:action>` 처리 시점엔 응답이 이미 commit된 상태
+- Spring Security의 `LazyCsrfTokenRepository`가 `<form>` 처리 중 hidden CSRF input 주입을 위해 `request.getSession()` 호출 → 세션 생성 시 `Set-Cookie` 헤더 작성 시도하나 응답이 commit되어 실패
+- 결과적으로 Thymeleaf가 line 134에서 예외 던지고 렌더링 중단 → 본문이 잘린 채 클라이언트에 전송
+
+### 해결
+`<head>`에 `<meta name="_csrf" th:content="${_csrf.token}">` + `<meta name="_csrf_header">` 추가. 페이지 앞부분에서 `_csrf.token`이 평가되며 `LazyCsrfToken.getToken()` 호출 → 세션이 응답 버퍼 commit 전에 미리 생성됨. `<form th:action>` 처리 시점엔 이미 토큰이 캐싱되어 세션 신규 생성 불필요.
+
+이 패턴은 이미 `files.html`/`history.html`/`server-logs.html` 등 8개 템플릿에 동일하게 적용되어 있었으나 login.html에만 누락. CLAUDE.md "CSRF 주의 (JS 동적 폼)" 항목에 명시된 패턴.
+
+### 검증
+- 기동 후 `curl http://localhost:18080/login` → 16803 bytes / 314줄 (이전 4400 bytes / 133줄에서 끊김)
+- `<form action="/login" method="post">` + 자동 주입된 `<input type="hidden" name="_csrf" value="...">` + username/password 입력칸 + 로그인 버튼 모두 정상
+- 재기동 후 신규 `TemplateInputException` 로그 없음
+
+## [2026-04-30] Target Servers 페이지 데이터 그리드 풀 패턴 적용
+
+**변경 파일:** `src/main/resources/templates/servers.html`, `CHANGELOG.md`
+
+### 배경
+`/servers` 페이지는 `serverRepository.findAll()`을 그대로 SSR 렌더링하여 검색·정렬·페이지네이션이 전혀 없었음. 등록 서버가 늘어날수록 특정 서버를 찾기 번거롭고 Files/History 페이지의 데이터 그리드 UX와 일관되지 않아 고도화 요청.
+
+### 변경 내역 (servers.html 단일 파일, 백엔드 변경 없음)
+- **툴바 추가**: 텍스트 검색(이름/호스트/SSH 계정/덤프 경로 OR 매칭) + 상태 필터(전체/정상/실패/미확인/비활성) + 자동탐지 필터(전체/ON/OFF) + 행 표시 셀렉트(20/30/50/100, localStorage `serversPageSize`)
+- **헤더 클릭 정렬**: 6개 컬럼(이름/호스트/SSH 계정/덤프 경로/상태/자동탐지) — `data-sort-key`/`data-sort-type=str`, ▲/▼ 인디케이터, 한글 `localeCompare(s, 'ko')`. 기본 이름 오름차순.
+- **페이지네이션**: 행 수 ≤ pageSize 시 숨김, 첫/마지막/현재±2 + ellipsis. 전체 건수/현재 범위 표시.
+- **테이블 마크업**: 모든 `<tr>`에 `data-name`/`data-host`/`data-sshuser`/`data-dumppath`/`data-autodetect`/`data-enabled`/`data-status` 부여(클라이언트 필터/정렬용). `data-status`는 `enabled=false` → `DISABLED`, 그 외 `connStatus` 값.
+- **검색 결과 없음**: `.no-match` 메시지("검색 결과가 없습니다.") — 등록 서버 0건일 때의 `.empty-msg`와 분리.
+- **상태 동기화**: `updateStatusBadge()`에 `row.setAttribute('data-status', status)` 추가 — 연결 테스트/스캔으로 상태 변경 시 필터 일관성 유지.
+- **모바일(≤900px)**: 툴바/페이지네이션 세로 적층.
+
+### 디자인 결정
+- **클라이언트 측 처리**: 서버 수가 일반적으로 수십 개 수준이라 SSR 구조를 유지한 채 클라이언트 측에서 필터/정렬/페이지네이션. files.html 패턴 그대로 이식하여 일관성 확보. localStorage 키는 `serversPageSize`로 분리.
+- **백엔드 무변경**: `ServerController.serversPage()`/`TargetServerRepository`/`TargetServer` 엔티티 그대로 유지.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 후 `Started HeapAnalyzerApplication in 9.229 seconds` 확인
+- JAR 내 `BOOT-INF/classes/templates/servers.html`에 신규 마커 26건 매칭
+
+## [2026-04-30] RAG 학습 데이터 CSV — WAS 토픽 추가 (54→84건)
+
+**변경 파일:** `rag-data/rag-knowledge-20260430.csv`, `rag-data/README.md`, `CHANGELOG.md`
+
+### 배경
+사내 운영 환경에서 자주 사용되는 WAS/WebServer 제품(JEUS / Webtob / Weblogic) 관련 토픽 30건을 추가 요청. 제품별로 검색·필터링이 정확히 되도록 새 category 3개를 분리하여 도입.
+
+### 신규 카테고리 (각 10건)
+- **`was_jeus`** — TmaxSoft JEUS: heap dump 캡처(jeusadmin/WebAdmin), 메모리 영역 구조, Session 관리, DataSource 풀, Web Container Thread Pool, GC 로그 활성, 클러스터 모니터링, 버전별 차이(7/8/9), Hot Deploy ClassLoader 누수, jeusadmin/WebAdmin 도구
+- **`was_webtob`** — TmaxSoft Webtob: 프로세스 구조(HTH/HTM/HTL/JSV), JEUS 연동(JSV connector), HTH 메모리 패턴, 로그 분석, 503 에러 진단, 성능 튜닝, SSL 설정, http.m 파라미터, 관리 명령(wsadmin/wsboot/wsdown), 고가용성
+- **`was_weblogic`** — Oracle Weblogic: heap dump 캡처(WLST/jcmd), Stuck Thread 진단, JDBC Connection Pool, Work Manager, Node Manager, Cluster 통신(Multicast/Unicast), Session Replication, Self-Tuning Thread Pool, 12c vs 14c 차이, Admin/Managed Server 구조
+
+### 최종 분포
+| category | 건수 |
+|---|---|
+| heap_analysis | 15 |
+| java_spring | 15 |
+| mat_tip | 13 |
+| troubleshooting | 11 |
+| was_jeus | 10 |
+| was_webtob | 10 |
+| was_weblogic | 10 |
+| **합계** | **84** |
+
+## [2026-04-30] RAG 학습 데이터 CSV 확장 (24→54건)
+
+**변경 파일:** `rag-data/rag-knowledge-20260430.csv`, `rag-data/README.md`, `CHANGELOG.md`
+
+### 배경
+초안 24건이 학습 데이터로는 부족 — 50건 이상으로 확장 요청. 균등 분포 기준으로 30건 추가하여 카테고리별 11~15건 수준으로 보강.
+
+### 추가 내역 (각 카테고리 +7~8건, 총 +30건)
+- **heap_analysis** 7→15: ZGC OOM 분석, Stack Overflow vs Heap OOM, Compressed Oops 32GB 경계, Spring ApplicationListener 누수, JDBC Connection 누수, GC 로그 기본 해석, Promotion Failure 패턴, Allocation Rate 측정
+- **java_spring** 8→15: Spring AOP CGLIB 메모리 비용, @Async ThreadPool 설정, @Cacheable maxSize 필수, Container 환경 메모리 인식, GC 알고리즘 선택 가이드, Heap Dump 캡처 명령 5종, JIT Code Cache
+- **mat_tip** 5→13: Top Components 리포트, 두 dump 비교 분석, MAT Thread 분석, Inspector 뷰, OQL UNION/서브쿼리, OQL Duplicate Strings 탐지, Reachable vs Unreachable, Index 파일 의미
+- **troubleshooting** 4→11: Logback async appender 큐 누적, HikariCP pool 고갈, Kafka Consumer rebalance OOM, Redis cache miss → DB 풀 고갈, 파일 업로드 메모리 누적, WebSocket 세션 누수, Scheduled 중첩 실행 (모두 가상 예시)
+
+### 최종 분포
+| category | 건수 |
+|---|---|
+| heap_analysis | 15 |
+| java_spring | 15 |
+| mat_tip | 13 |
+| troubleshooting | 11 |
+| **합계** | **54** |
+
+## [2026-04-30] RAG 학습 데이터 CSV 초안 작성
+
+**변경 파일:** `rag-data/rag-knowledge-20260430.csv`(신규), `rag-data/README.md`(신규), `CHANGELOG.md`
+
+### 배경
+사내 RAG(Elasticsearch) 환경에 별도 운영 중인 CSV → ES 인덱싱 도구로 투입할 학습 데이터 초안 작성. 검색 모드는 keyword(BM25) 기준. 본 프로젝트의 `RagService` 검색 코드 폴백 우선순위(`content` 필드)에 맞춰 컬럼 설계. 앱 측 코드 변경 없음(빌드/재기동 불필요).
+
+### CSV 스펙
+- 컬럼: `id`/`category`/`title`/`content`(필수 4) + `tags`/`source`/`severity`/`created_at`(선택)
+- `content`가 BM25 검색 본문이자 LLM 컨텍스트 주입 대상 — 메타정보(버전·태그)는 본문에 자연어로 녹임
+- 한 row = 한 청크(800~1500자 권장). 인덱싱 시점 자동 청킹 없음
+
+### 산출물
+- `rag-data/rag-knowledge-20260430.csv` 총 24행:
+  - `heap_analysis` 7건 (Old Gen OOM × G1/CMS+Parallel, Metaspace OOM, Direct ByteBuffer OOM, Leak 3종 — Cache/ThreadLocal/Static)
+  - `java_spring` 8건 (Spring Session JDBC, Actuator heapdump, RestTemplate pool, Hibernate N+1, JVM 메모리 영역, ClassLoader 누수, Thread Dump 해석, JMX)
+  - `mat_tip` 5건 (Leak Suspects, OQL, Path To GC Roots, Dominator Tree, Histogram vs Class Loader Explorer)
+  - `troubleshooting` 4건 (모두 가상 예시 — `source`에 명시. 사내 인시던트로 교체 권장)
+- `rag-data/README.md` — CSV 컬럼 스펙·작성 가이드·ES 매핑 예시·등록 후 검증 절차
+- 참고 plan 파일: `/root/.claude/plans/rag-csv-melodic-yeti.md`
+
+### 등록 후 검증 절차
+`/settings/rag`에서 keyword 모드·textField=content로 Save → Test Connection → 검색 프로브로 CSV 본문 매칭 확인 → `/ai-chat`에서 RAG ON으로 답변 품질 검증.
+
+## [2026-04-30] 계정 관리 — 보호 동작에 안내 모달 적용
+
+**변경 파일:** `admin/users.html`, `CHANGELOG.md`
+
+### 배경
+기존에는 (1) `admin` 사용자의 [삭제] 버튼과 (2) 본인 세션의 [강제 종료] 버튼이 `disabled` 상태로 비활성화돼 있어, 왜 클릭이 안 되는지 사용자에게 명확하지 않았음. 클릭은 가능하되 안내 모달로 사유와 대안을 제시하도록 개선.
+
+### 수정 내용
+- **공용 `infoModal` + `showInfoModal(title, messageHtml)` 헬퍼 신설** — 단순 안내 전용. [확인] 버튼만 노출. 두 보호 동작에서 재사용.
+- **사용자 목록 `admin` 삭제** — `th:disabled` 제거, `th:data-admin="${u.username == 'admin'}"` 추가, 클릭 시 `onDeleteUserClick(this.dataset)` 호출. admin이면 모달로 "관리자(admin) 계정은 삭제할 수 없습니다. 시스템 운영을 위해 기본 관리자 계정은 보호됩니다." 안내. 그 외 기존 삭제 확인 모달 그대로.
+- **현재 접속 — 본인 세션 강제 종료** — `disabled + title` 제거, `onclick="showSelfTerminateInfo()"`로 변경. 모달로 "본인 세션은 강제 종료할 수 없습니다. 로그아웃이 필요하다면 좌측 메뉴의 **Logout**을 이용해 주세요." 안내. (서버 측 본인 세션 종료 거부는 그대로 유지 — `DELETE /api/admin/active-sessions/{id}` 400 응답)
+
+### 동작 검증
+- 빌드/기동 성공 (`Started HeapAnalyzerApplication in 9.542 seconds`)
+- admin 사용자의 삭제 버튼 클릭 → 안내 모달 노출 (DELETE API 호출되지 않음)
+- 본인 세션의 강제 종료 클릭 → 안내 모달 노출
+
+## [2026-04-30] 계정 신청(Self-signup) 기능 + 관리자 승인 흐름
+
+**변경 파일:** `model/entity/AccountRequest.java`(신규), `repository/AccountRequestRepository.java`(신규), `service/AccountRequestService.java`(신규), `controller/AccountRequestController.java`(신규), `service/UserService.java`, `config/SecurityConfig.java`, `templates/login.html`, `templates/admin/users.html`, `CHANGELOG.md`
+
+### 배경
+관리자가 모든 계정을 직접 생성해야 하는 운영 부담을 줄이기 위해, 비로그인 사용자가 직접 계정을 신청할 수 있도록 하고 관리자 승인을 거쳐 계정이 활성화되는 흐름을 도입.
+
+### A. 데이터 모델 — `account_requests` 테이블 (자동 생성, ddl-auto=update)
+- 컬럼: id / username / password(BCrypt 인코딩 저장) / display_name / reason / status(PENDING/APPROVED/REJECTED) / requested_at / processed_at / processed_by / reject_reason / request_ip
+- 인덱스: status, username, requested_at
+- 비밀번호는 **신청 시점에 BCrypt 인코딩**해 저장. 승인 시 재인코딩 없이 `users.password`로 그대로 복사 → 평문이 DB에 남지 않음.
+
+### B. `UserService` 리팩토링
+- `validatePassword(String)` private → **public static**으로 추출 (AccountRequestService에서 동일 검증 재사용)
+- `validateUsername(String)` 신설 — 3~50자, `[A-Za-z0-9_.-]`만 허용
+- `createUserWithEncodedPassword(...)` 신설 — 이미 BCrypt 인코딩된 비밀번호로 사용자 생성 (승인 흐름 전용)
+- `existsByUsername(String)` 노출 — service 레이어에서 사용자명 중복 검사
+
+### C. `AccountRequestService`
+- `submit(username, password, displayName, reason, ip)` — 사용자명 형식·비밀번호 정책·users 중복·기존 PENDING 중복 검사 → BCrypt 인코딩 후 저장
+- `list(status, q, pageable)` — Specification 동적 쿼리 (LoginHistory 패턴 그대로)
+- `approve(id, role, approverUsername)` — 트랜잭션 내에서 (1) 사용자 생성 (2) 신청 상태 APPROVED 마킹. 동시 신청자 동일 username 충돌 방어 위해 다시 한 번 `existsByUsername` 검사
+- `reject(id, reason, approverUsername)` — REJECTED 마킹 + 사유 기록
+- `deleteRequest(id)` — APPROVED/REJECTED만 삭제 가능 (PENDING은 거부 처리해야 함)
+
+### D. `AccountRequestController` — REST 엔드포인트
+- **공개**: `POST /api/account-requests` — 비로그인에서 호출. SecurityConfig `permitAll`. CSRF는 `/api/admin/`이 아니므로 기본 면제 정책 적용.
+- **ADMIN**: `GET /api/admin/account-requests` (목록, status·q·페이징, pendingCount 동시 반환), `GET /pending-count`, `POST /{id}/approve`(role 지정), `POST /{id}/reject`(reason), `DELETE /{id}`
+- 클라이언트 IP는 `X-Forwarded-For` → `X-Real-IP` → `request.getRemoteAddr()` 순으로 결정
+
+### E. `SecurityConfig`
+- `antMatchers(POST, "/api/account-requests").permitAll()` 추가 (login 페이지에서 호출 가능)
+- `/api/admin/account-requests/**`는 기존 `hasRole("ADMIN")` + CSRF 보호 적용 룰에 자연스레 포함
+
+### F. `login.html` — "계정 신청" 모달
+- 로그인 버튼 아래 "계정이 없으신가요? **계정 신청**" 링크 추가
+- 모달: 사용자명 / 비밀번호 / 비밀번호 확인 / 이름 / 신청 사유
+- 비밀번호 일치 검사(클라이언트), 신청 진행 중 버튼 disabled, 성공 시 토스트 후 자동 닫힘
+- 인라인 모달 스타일 추가 (`.modal-ov`, `.modal-box`, `.modal-input`, `.modal-textarea`, `.modal-msg`), 모바일 폭(≤480px)에서 풀폭에 가깝게 + 버튼 flex:1
+- ESC 키로 모달 닫기
+
+### G. `admin/users.html` — 4번째 탭 "계정 신청"
+- 탭 라벨에 **빨간 펜딩 카운트 배지** (`.tab-badge`, 0이면 회색 zero 클래스). 페이지 로드 시 `/api/admin/account-requests/pending-count`로 즉시 갱신.
+- 기본 필터 "대기 중"(PENDING)으로 진입. 검색(사용자명/이름) + 상태 필터 + 페이지 사이즈 + ↻ 새로고침
+- 컬럼: # / 사용자명 / 이름 / 사유(말줄임 + hover wrap) / 신청 시각 / IP / 상태(뱃지) / 처리자·시각·거부사유 / 작업
+- 작업 버튼: PENDING이면 [승인] [거부], 그 외 [삭제]
+- 승인 모달: 부여 역할(USER/ADMIN) 선택. 거부 모달: 사유 입력(선택)
+- 모바일 미디어쿼리: `#panel-requests .utable { min-width: 1040px }` (가장 컬럼 많음) + 기존 `.table-scroll` 좌우 스크롤 패턴 활용
+
+### 동작 검증
+- 빌드/기동 성공 (`Started HeapAnalyzerApplication in 9.643 seconds`)
+- `account_requests` 테이블 ddl-auto로 자동 생성 (DESCRIBE로 11컬럼 확인)
+- POST `/api/account-requests` 케이스 3종 검증
+  - 정상 신청 → `{"success":true,"id":1}`, DB에 PENDING + BCrypt 인코딩(`$2a$10$...`) 저장 확인
+  - 약한 비밀번호 → "비밀번호는 최소 8자 이상이어야 합니다."
+  - 기존 username(admin) 중복 → "이미 사용 중인 사용자명입니다."
+- 검증 후 테스트 행 삭제 완료
+
+## [2026-04-30] Accounts(계정 관리) 모바일 레이아웃 + 좌우 스크롤
+
+**변경 파일:** `admin/users.html`, `CHANGELOG.md`
+
+### 배경
+계정 관리 페이지(`/admin/users`)의 3개 탭(사용자 목록 / 현재 접속 / 접속 이력) 모두 `.panel { overflow: hidden }` 위에 직접 `<table class="utable">`만 있어, 모바일 폭에서 컬럼이 압축되거나 잘렸음. 좌우 스크롤도 불가능. 또 탭 메뉴, 페이지 헤더, toolbar, 모달, 토스트 등이 모바일 폭 대응이 빈약했음.
+
+### 수정 내용
+- **3개 테이블 좌우 스크롤** — 각 `<table class="utable">`을 `.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch }` 래퍼로 감쌈. `.panel`의 `overflow: hidden`은 그대로 유지(border-radius 보존).
+- **테이블 min-width** — 모바일에서 컬럼이 뭉개지지 않도록 `≤900px`에 `min-width: 760px` 기본, `#panel-active .utable`(현재 접속, 8컬럼)은 `920px`로 더 크게 지정. 좁은 화면에선 자연스레 가로 스크롤 노출.
+- **탭 메뉴 가로 스크롤** — `≤768px`에서 `.tabs { overflow-x: auto; flex-wrap: nowrap; white-space: nowrap }`, `.tab { flex: 0 0 auto }` — 탭 3개가 좁아도 스크롤로 접근.
+- **페이지 헤더 / 사용자 추가 버튼** — `≤640px`: `.page-hdr { flex-direction: column; align-items: stretch }`, 추가 버튼 / 자동 갱신 컨트롤 width 100%.
+- **접속 이력 toolbar** — `≤640px`: 검색바·셀렉트·새로고침 모두 width 100% 세로 스택.
+- **페이저 wrap** — `≤768px`: `.lh-pager { flex-wrap: wrap }` — 페이지 버튼 다수일 때 줄바꿈.
+- **모달 / 토스트 모바일 대응** — `≤640px`: 모달 `max-width: calc(100vw - 24px)`, 모달 버튼 `flex: 1`로 폭 균등. 토스트는 `left/right: 12px; transform: none`으로 풀폭 가운데.
+- **Container/Topbar 패딩 축소** — `≤768px`에서 container 좌우 14px, topbar 12px, 페이지 타이틀 16px.
+
+### 동작 검증
+- 빌드/기동 성공 (`Started HeapAnalyzerApplication in 9.462 seconds`)
+- 데스크톱(≥1024px)에서는 기존 레이아웃 동일 — 새 룰은 모두 `max-width:768px/900px/640px` 미디어쿼리 안에만 정의
+
+## [2026-04-30] Transfer Logs 모바일 레이아웃 + 좌우 스크롤
+
+**변경 파일:** `server-logs.html`, `CHANGELOG.md`
+
+### 배경
+모바일/태블릿 폭에서 Transfer Logs 페이지의 테이블 컬럼이 압축되어 가독성 저하. 또한 `.panel { overflow: hidden }`만 정의되어 있고 모바일 오버라이드가 없어 컬럼이 화면 밖으로 나가도 좌우 스크롤이 불가능했음 (files.html / history.html에는 이미 적용된 패턴 누락).
+
+### 수정 내용
+- **테이블 좌우 스크롤** — 테이블을 `.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch }` 래퍼로 감싸 모바일에서 가로 스와이프 가능. `.panel`의 `overflow: hidden`은 유지(border-radius 보존).
+- **테이블 min-width** — 모바일에서 컬럼이 뭉개지지 않도록 `max-width: 900px`에서 `min-width: 880px`, `max-width: 640px`(원격 경로 컬럼 숨김)에서 `min-width: 720px` 지정. 화면이 좁으면 자연스레 스크롤바 노출.
+- **Toolbar 모바일 정리** — `≤640px`: 검색바/셀렉트/Export 버튼 폭 100%로 stretch, `.page-size-wrap` justify-content space-between, Export 메뉴 좌우 0으로 펼침.
+- **Pagination 모바일** — `≤640px`: flex-direction column, 정보/버튼 그룹 가운데 정렬, 페이지 버튼 wrap.
+- **Topbar/Container 패딩** — `≤768px`에서 container 좌우 14px, topbar 패딩 12px로 축소. 페이지 타이틀 16px.
+
+### 동작 검증
+- 빌드/기동 성공 (`Started HeapAnalyzerApplication in 9.122 seconds`)
+- 데스크톱(1280px)에서는 기존과 동일 (max-width 900px 미만에서만 적용되는 룰)
+- 모바일 폭에서 테이블 가로 스크롤 가능 + 툴바/페이지네이션 세로 스택
+
+## [2026-04-29] 활성 세션 모니터링 + 강제 로그아웃
+
+**변경 파일:** `AdminController.java`, `AuthEventListener.java`, `admin/users.html`, `CHANGELOG.md`
+
+### 배경
+관리자가 현재 누가 시스템에 접속해 있는지 한눈에 파악하고, 의심 세션을 즉시 종료할 수 있어야 함. SPRING_SESSION 테이블이 이미 있으니 별도 인프라 없이 구현 가능.
+
+### A. AuthEventListener 수정 — `InteractiveAuthenticationSuccessEvent`로 교체
+- **문제 발견**: `AuthenticationSuccessEvent`는 `ProviderManager`에서 인증 검증 *직후* 발행되는데, 그 시점에는 Spring Security 기본값인 세션 고정 보호(session fixation protection)가 아직 새 세션을 발급하기 전. 결과적으로 login_history에 저장된 session_id가 SPRING_SESSION의 세션 ID와 달라 IP/UA 매칭 실패.
+- **수정**: `InteractiveAuthenticationSuccessEvent`로 교체. 이는 `AbstractAuthenticationProcessingFilter#successfulAuthentication()` 안에서 sessionStrategy(세션 고정 보호) 적용 *이후* 발행되므로 현재 활성 세션 ID와 일치.
+- 검증: 패치 후 신규 세션은 활성 세션 목록에서 IP/UA/loginAt 모두 정상 매칭 확인.
+
+### B. `AdminController` — 활성 세션 API
+- `JdbcTemplate` + `FindByIndexNameSessionRepository` 의존성 주입 (`@Autowired(required=false)` — Spring Session 미사용 환경에서 NPE 방지)
+- `GET /api/admin/active-sessions` — SPRING_SESSION + login_history 최신 SUCCESS 행 + users 테이블 LEFT JOIN. 만료된 세션(`EXPIRY_TIME <= NOW`)은 제외. 현재 요청 세션은 `isCurrent=true`로 표시. 응답 필드: sessionId/username/displayName/role/ip/userAgent/createdAt/lastAccessAt/expiresAt/loginAt/idleSec/maxInactiveSec/isCurrent
+- `DELETE /api/admin/active-sessions/{sessionId}` — Spring Session의 `sessionRepository.deleteById()` 우선 사용 (속성 테이블까지 정합성 유지). 미주입 환경 폴백: 자식(`SPRING_SESSION_ATTRIBUTES`) → 부모(`SPRING_SESSION`) 순서로 직접 DELETE.
+- **본인 세션 종료 거부**: 현재 요청의 `request.getSession(false).getId()`와 비교 → 일치하면 400 + "본인의 세션은 강제 종료할 수 없습니다." 메시지
+
+### C. `admin/users.html` — "현재 접속" 탭 추가
+- 탭 3개로 확장: 사용자 목록 / **현재 접속** / 접속 이력
+- 활성 세션 테이블 — 사용자(이름+role+UA) / IP / 로그인 시각 / 마지막 활동 / 유휴(`fmtIdle()`로 한글 변환: "5분 32초") / 만료 예정 / 작업
+- 본인 세션 행: "본인" 뱃지 + 강제 종료 버튼 disabled (title="본인 세션은 종료할 수 없습니다")
+- 강제 종료: 확인 모달 → DELETE API → 토스트 + 목록 즉시 갱신
+- **자동 갱신 옵션**: 체크박스 ON 시 10초 간격 폴링. 다른 탭 이동 시 자동 OFF (불필요한 폴링 방지)
+- 첫 진입 시 lazy-load (`_asLoaded` 플래그)
+
+### 동작 검증 (2026-04-29 16:43 재시작 후)
+1. admin + test 두 사용자 동시 로그인 → 활성 세션 5개 표시 (이전 세션 포함)
+2. 신규 세션의 IP/UA/loginAt 정상 매칭 확인 (`InteractiveAuthenticationSuccessEvent` 효과)
+3. admin이 test 세션 강제 종료 → `{success:true}`
+4. 종료 직후 test 세션으로 `/api/system/status` 호출 → HTTP 302 → `/login` (세션 무효화 확인)
+5. admin이 본인 세션 종료 시도 → `{success:false, message:"본인의 세션은 강제 종료할 수 없습니다."}`
+
+### 보안
+- ADMIN 전용 (클래스 레벨 `@PreAuthorize("hasRole('ADMIN')")`)
+- DELETE 요청 CSRF 토큰 필수 (`/api/admin/**`은 CSRF 보호 유지 — Phase 1에서 이미 설정)
+- 세션 ID 비교는 서버 측에서만 수행 (클라이언트 isCurrent 플래그는 UI 힌트, 실제 거부 결정은 백엔드)
+
+## [2026-04-29] 로그인 페이지 새로고침 시 메시지 잔존 문제 개선
+
+**변경 파일:** `login.html`, `CHANGELOG.md`
+
+### 배경
+로그인 실패 시 Spring Security가 `/login?error=true`로 리다이렉트 → 서버가 "아이디 또는 비밀번호가 올바르지 않습니다." 메시지 렌더. URL에 `?error=true`가 남아 있어 사용자가 브라우저 새로고침(F5)을 해도 같은 메시지가 계속 표시되는 UX 문제.
+
+### 변경 내용
+`login.html` 최상단 인라인 스크립트에 `history.replaceState()` 추가. 페이지 로드 직후 `?error` 또는 `?logout` 쿼리스트링을 발견하면 즉시 URL을 `/login`(쿼리 없음)으로 교체.
+
+```javascript
+if (location.search.indexOf('error') >= 0 || location.search.indexOf('logout') >= 0) {
+    window.history.replaceState({}, document.title, location.pathname);
+}
+```
+
+### 효과
+- 첫 진입(로그인 실패 직후): URL은 `/login?error=true`로 들어오지만 즉시 `/login`으로 교체. 메시지는 DOM에 그대로 표시되어 사용자에게 정상 노출
+- 새로고침: 브라우저가 현재 URL bar의 `/login`(쿼리 없음)을 다시 요청 → 서버는 `errorMessage` 모델 추가하지 않음 → 깨끗한 로그인 화면
+- 로그아웃 메시지(`?logout=true`)도 동일 패턴으로 처리
+- 백엔드 변경 없음 (Flash attribute 도입 시 `AuthenticationFailureHandler` 커스터마이즈 필요했으나, 클라이언트 정리만으로 동일 UX 달성)
+
+## [2026-04-29] 로그인 접속 이력 기록 + 계정 관리 탭 UI
+
+**변경 파일:** `LoginHistory.java`(신규), `LoginHistoryRepository.java`(신규), `AuthEventListener.java`(신규), `AdminController.java`, `admin/users.html`, `CHANGELOG.md`
+
+### 배경
+보안 감사/오용 추적을 위해 로그인 시도 내역을 영속화하고, 관리자가 한 화면에서 사용자 목록과 함께 접속 이력을 확인할 수 있는 통합 UI 필요.
+
+### A. 신규 엔티티 / 리포지토리
+- `LoginHistory` — `login_history` 테이블 매핑. 컬럼: id, username, login_at, ip, user_agent, status(SUCCESS/FAILURE), session_id, failure_reason
+- 인덱스 3개: `idx_login_history_username`, `idx_login_history_login_at`, `idx_login_history_status` — 검색/시간 정렬/상태 필터 모두 인덱스 활용
+- `LoginHistoryRepository extends JpaRepository, JpaSpecificationExecutor` — 동적 쿼리 + 페이지네이션
+
+### B. 인증 이벤트 리스너 (`AuthEventListener`)
+- Spring Security `AuthenticationSuccessEvent` / `AbstractAuthenticationFailureEvent` 수신
+- `RequestContextHolder`로 현재 HttpServletRequest 추출 → IP / User-Agent / 세션 ID 기록
+- IP는 `X-Forwarded-For` / `X-Real-IP` 등 프록시 헤더 우선 검사 후 `getRemoteAddr()` 폴백 (콤마 구분 시 첫 값만)
+- 모든 컬럼 길이 안전 truncate, 기록 실패 시 로그인 흐름 영향 없도록 try/catch
+- 실패 이벤트는 BadCredentialsException, DisabledException 등 모두 포함
+
+### C. 조회 API (`AdminController`)
+- `GET /api/admin/login-history?page&size&q&status` — ROLE_ADMIN 전용
+- 검색(q): `username` OR `ip` (소문자 LIKE), 상태 필터: SUCCESS/FAILURE, 페이지 사이즈 1~200 클램프
+- JPA `Specification` 동적 쿼리 + `PageRequest.of(.., Sort.by(DESC, "loginAt"))`
+- 응답: `{items, page, size, totalElements, totalPages}` — server-logs 페이지와 동일 구조
+
+### D. UI — `admin/users.html`
+- 상단 탭 2개: "사용자 목록" / "접속 이력" (active 클래스 + 파란 underline)
+- 접속 이력 패널:
+  - 툴바: 검색(사용자/IP, 300ms debounce), 상태 셀렉트(전체/성공/실패), 페이지 사이즈(20/50/100), 새로고침
+  - 테이블: # / 일시 / 사용자명 / 상태(뱃지) / IP / User Agent or 실패 사유 (`title` 속성으로 풀 텍스트 툴팁)
+  - 페이지네이션: ‹이전 / 1 … 현재±2 … 마지막 / 다음› (server-logs 패턴 재사용)
+  - 첫 진입 시 lazy-load (`_lhLoaded` 플래그) — 사용자 목록 탭만 보는 경우 불필요한 API 호출 방지
+- XSS 방어: 모든 표시 텍스트 `escHtml()` 적용
+
+### 동작 검증 (2026-04-29 16:27 재시작 후)
+- `login_history` 테이블 자동 생성 (인덱스 3개 포함)
+- 잘못된 비밀번호 로그인 → FAILURE 1건, "자격 증명에 실패하였습니다." 사유 기록
+- 정상 로그인 → SUCCESS 1건, session_id까지 기록
+- IP는 IPv6 localhost(`0:0:0:0:0:0:0:1`) / 외부 접속자(`112.218.186.181`) 모두 정상 캡처
+- `/api/admin/login-history?status=FAILURE` → HTTP 200, 실패 건만 반환
+- `/admin/users` → HTTP 200, 탭 전환 정상
+
+### 보안
+- 모든 `/api/admin/**` 경로는 SecurityConfig에서 ROLE_ADMIN 강제 + CSRF 보호 유지
+- 비밀번호는 어떤 경우에도 기록되지 않음 (실패 사유는 Spring 메시지만 저장)
+
+## [2026-04-29] 로그인 세션 MariaDB 영속화 (Spring Session JDBC)
+
+**변경 파일:** `pom.xml`, `application.properties`, `CHANGELOG.md`
+
+### 배경
+지금까지는 Tomcat 메모리에만 세션이 저장되어 ① 앱 재시작 시 모든 사용자가 강제 로그아웃 ② 향후 다중 노드 운영 시 세션 공유 불가능 한계 존재. 이미 사용 중인 MariaDB(HEAPDB)에 세션을 영속화하여 두 문제를 동시에 해결.
+
+### 변경 내용
+- **`pom.xml`** — `spring-session-jdbc` 의존성 추가 (Spring Boot 2.7 BOM이 버전 관리)
+- **`application.properties`** — 신규 "세션 관리" 블록 추가:
+  - `server.servlet.session.timeout=60m` — 무동작 만료 60분
+  - `spring.session.store-type=jdbc` — JDBC(MariaDB) 저장소 사용
+  - `spring.session.jdbc.initialize-schema=always` — 기동 시 테이블 자동 생성/검증
+  - `spring.session.jdbc.schema=classpath:org/springframework/session/jdbc/schema-mysql.sql` — MariaDB 호환 (MySQL 스크립트 재사용)
+  - `spring.session.jdbc.cleanup-cron=0 */10 * * * *` — 만료 세션 10분 주기 정리
+- 동시 세션 제한 **미설정** (단일 사용자 다중 브라우저/탭 허용)
+
+### 자동 생성 테이블 (MariaDB HEAPDB)
+- `SPRING_SESSION` — 세션 메타데이터 (PRIMARY_ID, SESSION_ID, CREATION_TIME, LAST_ACCESS_TIME, MAX_INACTIVE_INTERVAL=3600, EXPIRY_TIME, PRINCIPAL_NAME)
+- `SPRING_SESSION_ATTRIBUTES` — 세션 속성 직렬화 (BYTEA → MariaDB BLOB)
+- 인덱스: `SPRING_SESSION_IX1(SESSION_ID 유니크)`, `SPRING_SESSION_IX2(EXPIRY_TIME)`, `SPRING_SESSION_IX3(PRINCIPAL_NAME)` — 만료 정리 + 사용자별 조회 성능 보장
+
+### 동작 검증 (2026-04-29 12:07 재시작)
+- 기동 로그: `Started HeapAnalyzerApplication in 9.109 seconds` (정상)
+- 테이블 자동 생성 확인: `SHOW TABLES LIKE 'SPRING_SESSION%'` → 2개 모두 존재
+- admin 로그인 후 `SELECT * FROM SPRING_SESSION` → 1행, `MAX_INACTIVE_INTERVAL=3600`, `PRINCIPAL_NAME=admin`, 만료 시각 = 마지막 접근 + 60분
+- 기존 `ai_chat_sessions` 테이블과 충돌 없음 (서로 다른 도메인)
+
+### 운영 효과
+- 앱 재시작에도 로그인 유지 (MariaDB 재시작 시에만 강제 로그아웃)
+- 향후 다중 노드 배포 시 세션 공유 자동 동작 (sticky session 불필요)
+- 활성 세션을 SQL로 직접 모니터링 가능 (`SELECT PRINCIPAL_NAME, FROM_UNIXTIME(LAST_ACCESS_TIME/1000) FROM SPRING_SESSION`)
+- 트레이드오프: 매 요청 시 `UPDATE LAST_ACCESS_TIME` 발생 (MariaDB 부하 약간 증가, 단일 인덱스 갱신 수준)
+
 ## [2026-04-27] RAG (Elasticsearch) 연동 — Phase 2 (Semantic Search 활성화)
 
 **변경 파일:** `application.properties`, `HeapDumpConfig.java`, `HeapDumpAnalyzerService.java`, `EmbeddingService.java`(신규), `RagService.java`, `HeapDumpController.java`, `rag-settings.html`, `RAG_PHASE2_PLAN.md`, `MEMORY.md`

@@ -47,6 +47,42 @@
         .badge-off { background: #F3F4F6; color: #6B7280; }
         .badge-auto { background: #DBEAFE; color: #1E40AF; }
         .empty-msg { text-align: center; padding: 32px; color: #9CA3AF; font-size: 14px; }
+        .no-match { display: none; text-align: center; padding: 32px; color: #9CA3AF; font-size: 14px; }
+
+        /* Toolbar */
+        .table-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+        .search-bar { flex: 1; min-width: 220px; padding: 10px 14px; border: 1px solid #E5E7EB;
+                      border-radius: 8px; font-size: 13px; outline: none; background: #fff; }
+        .search-bar:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .page-size-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .page-size-label { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .page-size-select { padding: 8px 28px 8px 10px; font-size: 13px; border: 1px solid #E5E7EB;
+                            border-radius: 6px; background: #fff; outline: none; cursor: pointer;
+                            appearance: none; -webkit-appearance: none;
+                            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path fill='%236B7280' d='M0 0l5 6 5-6z'/></svg>");
+                            background-repeat: no-repeat; background-position: right 10px center; }
+        .page-size-select:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+
+        /* Sortable headers */
+        .stable th.sortable { cursor: pointer; user-select: none; }
+        .stable th.sortable:hover { background: #F3F4F6; }
+        .stable th.sortable .sort-arrow { display: inline-block; margin-left: 4px; opacity: .3;
+                                          font-size: 10px; transition: opacity .15s; }
+        .stable th.sortable.sort-active .sort-arrow { opacity: 1; color: #2563EB; }
+
+        /* Pagination */
+        .pagination-bar { display: none; align-items: center; justify-content: space-between;
+                          margin-top: 16px; padding: 12px 4px; gap: 12px; flex-wrap: wrap; }
+        .pagination-bar.show { display: flex; }
+        .pg-info { font-size: 12px; color: #6B7280; }
+        .pg-list { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+        .pg-btn { min-width: 32px; height: 32px; padding: 0 8px; border: 1px solid #E5E7EB;
+                  background: #fff; border-radius: 6px; font-size: 12px; color: #374151;
+                  cursor: pointer; transition: background .15s, border-color .15s; }
+        .pg-btn:hover:not(:disabled):not(.active) { background: #F3F4F6; border-color: #D1D5DB; }
+        .pg-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; cursor: default; }
+        .pg-btn:disabled { color: #D1D5DB; cursor: not-allowed; background: #F9FAFB; }
+        .pg-ellipsis { font-size: 12px; color: #9CA3AF; padding: 0 4px; }
 
         .action-btn { padding: 5px 12px; border: 1px solid #E5E7EB; border-radius: 5px;
                       background: transparent; font-size: 12px; cursor: pointer; color: #6B7280; }
@@ -120,6 +156,10 @@
         @media (max-width: 900px) {
             .topbar { left: 0; }
             .container { padding-left: 20px; }
+            .table-toolbar { flex-direction: column; align-items: stretch; }
+            .page-size-wrap { justify-content: space-between; }
+            .pagination-bar { flex-direction: column; align-items: stretch; }
+            .pg-list { justify-content: center; }
         }
         @media (min-width: 1024px) {
             .stable { font-size: 15px; }
@@ -154,63 +194,112 @@
         <button class="btn-primary" onclick="openCreateModal()">+ 서버 추가</button>
     </div>
 
-    <div class="panel">
-        <div th:if="${#lists.isEmpty(servers)}" class="empty-msg">
-            등록된 서버가 없습니다. 서버를 추가하세요.
+    <div th:if="${#lists.isEmpty(servers)}" class="panel">
+        <div class="empty-msg">등록된 서버가 없습니다. 서버를 추가하세요.</div>
+    </div>
+
+    <div th:unless="${#lists.isEmpty(servers)}">
+        <div class="table-toolbar">
+            <input type="text" class="search-bar" id="searchInput"
+                   placeholder="이름 / 호스트 / SSH 계정 / 덤프 경로 검색..." oninput="onSearchInput()">
+            <div class="page-size-wrap">
+                <span class="page-size-label">상태</span>
+                <select class="page-size-select" id="statusFilter" onchange="applyFilter()">
+                    <option value="all">전체</option>
+                    <option value="OK">정상</option>
+                    <option value="FAIL">실패</option>
+                    <option value="UNKNOWN">미확인</option>
+                    <option value="DISABLED">비활성</option>
+                </select>
+            </div>
+            <div class="page-size-wrap">
+                <span class="page-size-label">자동탐지</span>
+                <select class="page-size-select" id="autoDetectFilter" onchange="applyFilter()">
+                    <option value="all">전체</option>
+                    <option value="on">ON</option>
+                    <option value="off">OFF</option>
+                </select>
+            </div>
+            <div class="page-size-wrap">
+                <span class="page-size-label">행 표시</span>
+                <select class="page-size-select" id="pageSizeSelect" onchange="onPageSizeChange()">
+                    <option value="20" selected>20</option>
+                    <option value="30">30</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
         </div>
-        <table th:unless="${#lists.isEmpty(servers)}" class="stable">
-            <thead>
-                <tr>
-                    <th>이름</th>
-                    <th>호스트</th>
-                    <th>SSH 계정</th>
-                    <th>덤프 경로</th>
-                    <th>상태</th>
-                    <th>자동탐지</th>
-                    <th>작업</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr th:each="s : ${servers}" th:data-id="${s.id}">
-                    <td style="font-weight:600">
-                        <a th:href="@{'/servers/' + ${s.id}}" th:text="${s.name}"
-                           style="color:#2563EB;text-decoration:none">server1</a>
-                    </td>
-                    <td th:text="${s.host + ':' + s.port}">192.168.1.1:22</td>
-                    <td th:text="${s.sshUser}">sscuser</td>
-                    <td style="font-size:12px;color:#6B7280;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                        th:text="${s.dumpPath}">/opt/dumps</td>
-                    <td>
-                        <span th:unless="${s.enabled}" class="badge badge-off">비활성</span>
-                        <span th:if="${s.enabled and s.connStatus == 'OK'}" class="badge badge-on">정상</span>
-                        <span th:if="${s.enabled and s.connStatus == 'FAIL'}" class="badge badge-fail"
-                              th:title="${s.lastError}">실패</span>
-                        <span th:if="${s.enabled and (s.connStatus == null or s.connStatus == 'UNKNOWN')}" class="badge badge-off">미확인</span>
-                    </td>
-                    <td>
-                        <span class="badge badge-auto" th:if="${s.autoDetect}">ON</span>
-                        <span class="badge badge-off" th:unless="${s.autoDetect}">OFF</span>
-                    </td>
-                    <td style="white-space:nowrap">
-                        <button class="action-btn scan"
-                                th:data-id="${s.id}" th:data-name="${s.name}"
-                                onclick="scanServer(this.dataset.id, this.dataset.name)">스캔</button>
-                        <button class="action-btn"
-                                th:data-id="${s.id}" th:data-name="${s.name}"
-                                onclick="testConn(this.dataset.id)">테스트</button>
-                        <button class="action-btn"
-                                th:data-id="${s.id}" th:data-name="${s.name}"
-                                th:data-host="${s.host}" th:data-port="${s.port}"
-                                th:data-sshuser="${s.sshUser}" th:data-dumppath="${s.dumpPath}"
-                                th:data-autodetect="${s.autoDetect}" th:data-enabled="${s.enabled}"
-                                onclick="openEditModal(this.dataset)">수정</button>
-                        <button class="action-btn danger"
-                                th:data-id="${s.id}" th:data-name="${s.name}"
-                                onclick="openDeleteModal(this.dataset.id, this.dataset.name)">삭제</button>
-                    </td>
-                </tr>
-            </tbody>
-        </table>
+
+        <div class="panel">
+            <table class="stable" id="serversTable">
+                <thead>
+                    <tr>
+                        <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="onHeaderSort(this)">이름 <span class="sort-arrow">▲</span></th>
+                        <th class="sortable" data-sort-key="host" data-sort-type="str" onclick="onHeaderSort(this)">호스트 <span class="sort-arrow">▲</span></th>
+                        <th class="sortable" data-sort-key="sshuser" data-sort-type="str" onclick="onHeaderSort(this)">SSH 계정 <span class="sort-arrow">▲</span></th>
+                        <th class="sortable" data-sort-key="dumppath" data-sort-type="str" onclick="onHeaderSort(this)">덤프 경로 <span class="sort-arrow">▲</span></th>
+                        <th class="sortable" data-sort-key="status" data-sort-type="str" onclick="onHeaderSort(this)">상태 <span class="sort-arrow">▲</span></th>
+                        <th class="sortable" data-sort-key="autodetect" data-sort-type="str" onclick="onHeaderSort(this)">자동탐지 <span class="sort-arrow">▲</span></th>
+                        <th>작업</th>
+                    </tr>
+                </thead>
+                <tbody id="serverTableBody">
+                    <tr th:each="s : ${servers}"
+                        th:data-id="${s.id}"
+                        th:data-name="${s.name}"
+                        th:data-host="${s.host + ':' + s.port}"
+                        th:data-sshuser="${s.sshUser}"
+                        th:data-dumppath="${s.dumpPath}"
+                        th:data-autodetect="${s.autoDetect}"
+                        th:data-enabled="${s.enabled}"
+                        th:attr="data-status=${!s.enabled ? 'DISABLED' : (s.connStatus == null ? 'UNKNOWN' : s.connStatus)}">
+                        <td style="font-weight:600">
+                            <a th:href="@{'/servers/' + ${s.id}}" th:text="${s.name}"
+                               style="color:#2563EB;text-decoration:none">server1</a>
+                        </td>
+                        <td th:text="${s.host + ':' + s.port}">192.168.1.1:22</td>
+                        <td th:text="${s.sshUser}">sscuser</td>
+                        <td style="font-size:12px;color:#6B7280;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                            th:text="${s.dumpPath}">/opt/dumps</td>
+                        <td>
+                            <span th:unless="${s.enabled}" class="badge badge-off">비활성</span>
+                            <span th:if="${s.enabled and s.connStatus == 'OK'}" class="badge badge-on">정상</span>
+                            <span th:if="${s.enabled and s.connStatus == 'FAIL'}" class="badge badge-fail"
+                                  th:title="${s.lastError}">실패</span>
+                            <span th:if="${s.enabled and (s.connStatus == null or s.connStatus == 'UNKNOWN')}" class="badge badge-off">미확인</span>
+                        </td>
+                        <td>
+                            <span class="badge badge-auto" th:if="${s.autoDetect}">ON</span>
+                            <span class="badge badge-off" th:unless="${s.autoDetect}">OFF</span>
+                        </td>
+                        <td style="white-space:nowrap">
+                            <button class="action-btn scan"
+                                    th:data-id="${s.id}" th:data-name="${s.name}"
+                                    onclick="scanServer(this.dataset.id, this.dataset.name)">스캔</button>
+                            <button class="action-btn"
+                                    th:data-id="${s.id}" th:data-name="${s.name}"
+                                    onclick="testConn(this.dataset.id)">테스트</button>
+                            <button class="action-btn"
+                                    th:data-id="${s.id}" th:data-name="${s.name}"
+                                    th:data-host="${s.host}" th:data-port="${s.port}"
+                                    th:data-sshuser="${s.sshUser}" th:data-dumppath="${s.dumpPath}"
+                                    th:data-autodetect="${s.autoDetect}" th:data-enabled="${s.enabled}"
+                                    onclick="openEditModal(this.dataset)">수정</button>
+                            <button class="action-btn danger"
+                                    th:data-id="${s.id}" th:data-name="${s.name}"
+                                    onclick="openDeleteModal(this.dataset.id, this.dataset.name)">삭제</button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+            <div class="no-match" id="noMatch">검색 결과가 없습니다.</div>
+        </div>
+
+        <div class="pagination-bar" id="paginationBar">
+            <div class="pg-info" id="pgInfo"></div>
+            <div class="pg-list" id="pgList"></div>
+        </div>
     </div>
 
     <!-- Auto-scan errors -->
@@ -525,6 +614,10 @@ function closeScanPanel() {
 function updateStatusBadge(serverId, status, errMsg) {
     var row = document.querySelector('tr[data-id="' + serverId + '"]');
     if (!row) return;
+    // data-status 동기화 (필터 일관성 유지)
+    if (row.getAttribute('data-enabled') === 'true') {
+        row.setAttribute('data-status', status);
+    }
     // 상태 컬럼은 5번째 td (0-indexed: 4)
     var cells = row.querySelectorAll('td');
     if (cells.length < 5) return;
@@ -569,6 +662,172 @@ function loadScanErrors() {
 // 30초마다 에러 상태 갱신
 loadScanErrors();
 setInterval(loadScanErrors, 30000);
+
+// ── Data grid: search / filter / sort / pagination ─────────────
+var _allRows = [];
+var _filteredRows = [];
+var _pageSize = 20;
+var _currentPage = 1;
+var _sortKey = 'name';
+var _sortDir = 'asc';
+var _sortType = 'str';
+
+function initRows() {
+    var tbody = document.getElementById('serverTableBody');
+    if (!tbody) return;   // 서버 0건 — 데이터 그리드 미렌더
+    _allRows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+    var saved = parseInt(localStorage.getItem('serversPageSize') || '20', 10);
+    if ([20, 30, 50, 100].indexOf(saved) !== -1) {
+        _pageSize = saved;
+        document.getElementById('pageSizeSelect').value = String(saved);
+    }
+    sortRows();
+    updateSortIndicators();
+    applyFilter();
+}
+
+function onHeaderSort(th) {
+    var key = th.getAttribute('data-sort-key');
+    var type = th.getAttribute('data-sort-type') || 'str';
+    if (_sortKey === key) {
+        _sortDir = (_sortDir === 'asc') ? 'desc' : 'asc';
+    } else {
+        _sortKey = key;
+        _sortType = type;
+        _sortDir = 'asc';
+    }
+    _sortType = type;
+    sortRows();
+    updateSortIndicators();
+    applyFilter();
+}
+
+function sortRows() {
+    var dir = _sortDir === 'asc' ? 1 : -1;
+    var isNum = _sortType === 'num';
+    _allRows.sort(function(a, b) {
+        var va = a.getAttribute('data-' + _sortKey) || '';
+        var vb = b.getAttribute('data-' + _sortKey) || '';
+        if (isNum) { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; return (va - vb) * dir; }
+        return va.localeCompare(vb, 'ko') * dir;
+    });
+    var tbody = document.getElementById('serverTableBody');
+    if (tbody) _allRows.forEach(function(r) { tbody.appendChild(r); });
+}
+
+function updateSortIndicators() {
+    document.querySelectorAll('.stable th.sortable').forEach(function(th) {
+        var arrow = th.querySelector('.sort-arrow');
+        if (!arrow) return;
+        if (th.getAttribute('data-sort-key') === _sortKey) {
+            th.classList.add('sort-active');
+            arrow.textContent = (_sortDir === 'asc') ? '▲' : '▼';
+        } else {
+            th.classList.remove('sort-active');
+            arrow.textContent = '▲';
+        }
+    });
+}
+
+function applyFilter() {
+    var q = (document.getElementById('searchInput').value || '').toLowerCase();
+    var statusF = document.getElementById('statusFilter').value;
+    var autoF = document.getElementById('autoDetectFilter').value;
+    _filteredRows = _allRows.filter(function(el) {
+        if (statusF !== 'all' && el.getAttribute('data-status') !== statusF) return false;
+        if (autoF !== 'all') {
+            var on = el.getAttribute('data-autodetect') === 'true';
+            if (autoF === 'on' && !on) return false;
+            if (autoF === 'off' && on) return false;
+        }
+        if (q) {
+            var hay = ((el.getAttribute('data-name') || '') + ' ' +
+                       (el.getAttribute('data-host') || '') + ' ' +
+                       (el.getAttribute('data-sshuser') || '') + ' ' +
+                       (el.getAttribute('data-dumppath') || '')).toLowerCase();
+            if (hay.indexOf(q) === -1) return false;
+        }
+        return true;
+    });
+    _currentPage = 1;
+    render();
+}
+
+function onSearchInput() { applyFilter(); }
+
+function onPageSizeChange() {
+    _pageSize = parseInt(document.getElementById('pageSizeSelect').value, 10) || 20;
+    localStorage.setItem('serversPageSize', String(_pageSize));
+    _currentPage = 1;
+    render();
+}
+
+function gotoPage(p) {
+    var total = _filteredRows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
+    if (p < 1) p = 1; if (p > totalPages) p = totalPages;
+    _currentPage = p;
+    render();
+}
+
+function render() {
+    _allRows.forEach(function(el) { el.style.display = 'none'; });
+    var total = _filteredRows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
+    if (_currentPage > totalPages) _currentPage = totalPages;
+    var start = (_currentPage - 1) * _pageSize;
+    var end = Math.min(start + _pageSize, total);
+    for (var i = start; i < end; i++) _filteredRows[i].style.display = '';
+
+    var noMatch = document.getElementById('noMatch');
+    if (noMatch) noMatch.style.display = total === 0 ? 'block' : 'none';
+    renderPagination(total, totalPages, start, end);
+}
+
+function renderPagination(total, totalPages, start, end) {
+    var bar = document.getElementById('paginationBar');
+    if (!bar) return;
+    if (total <= _pageSize) { bar.classList.remove('show'); return; }
+    bar.classList.add('show');
+    document.getElementById('pgInfo').innerHTML =
+        '<strong>' + (total === 0 ? 0 : (start + 1)) + '–' + end + '</strong> / 전체 <strong>' + total + '</strong>건';
+
+    var list = document.getElementById('pgList');
+    list.innerHTML = '';
+    var addBtn = function(label, page, opts) {
+        opts = opts || {};
+        var b = document.createElement('button');
+        b.className = 'pg-btn' + (opts.active ? ' active' : '');
+        b.textContent = label;
+        if (opts.disabled) b.disabled = true;
+        else b.onclick = function() { gotoPage(page); };
+        list.appendChild(b);
+    };
+    var addEllipsis = function() {
+        var s = document.createElement('span');
+        s.className = 'pg-ellipsis'; s.textContent = '…';
+        list.appendChild(s);
+    };
+
+    addBtn('‹', _currentPage - 1, { disabled: _currentPage === 1 });
+
+    var pages = new Set([1, totalPages, _currentPage]);
+    for (var d = 1; d <= 2; d++) {
+        if (_currentPage - d >= 1) pages.add(_currentPage - d);
+        if (_currentPage + d <= totalPages) pages.add(_currentPage + d);
+    }
+    var sorted = Array.from(pages).sort(function(a, b) { return a - b; });
+    var prev = 0;
+    sorted.forEach(function(p) {
+        if (p - prev > 1) addEllipsis();
+        addBtn(String(p), p, { active: p === _currentPage });
+        prev = p;
+    });
+
+    addBtn('›', _currentPage + 1, { disabled: _currentPage === totalPages });
+}
+
+initRows();
 </script>
 
 </body>

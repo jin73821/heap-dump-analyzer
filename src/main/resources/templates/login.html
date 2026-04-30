@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>Login — Heap Dump Analyzer</title>
     <style>
@@ -42,6 +44,53 @@
                          user-select: none; }
         .form-remember input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer;
                                                  accent-color: #2563EB; margin: 0; }
+
+        /* Signup link below login button */
+        .signup-row { text-align: center; font-size: 12px; color: #6B7280; margin-top: 14px; }
+        .signup-link { background: transparent; border: none; color: #2563EB; font-size: 12px;
+                       font-weight: 600; cursor: pointer; padding: 0; text-decoration: underline; }
+        .signup-link:hover { color: #1D4ED8; }
+
+        /* Modal */
+        .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
+                    background: rgba(0,0,0,.45); align-items: center; justify-content: center; }
+        .modal-ov.open { display: flex; animation: modalFade .15s ease; }
+        @keyframes modalFade { from { opacity: 0; } to { opacity: 1; } }
+        .modal-box { background: #fff; border-radius: 14px; padding: 24px;
+                     width: calc(100% - 32px); max-width: 440px;
+                     box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease;
+                     max-height: calc(100vh - 32px); overflow-y: auto; }
+        @keyframes modalIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        .modal-ttl { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+        .modal-desc { font-size: 12px; color: #6B7280; margin-bottom: 16px; }
+        .modal-group { margin-bottom: 12px; }
+        .modal-label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 5px; }
+        .modal-input { width: 100%; padding: 9px 12px; border: 1px solid #E5E7EB;
+                       border-radius: 8px; font-size: 13px; outline: none; background: #F9FAFB; }
+        .modal-input:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); background: #fff; }
+        .modal-textarea { width: 100%; padding: 9px 12px; border: 1px solid #E5E7EB;
+                          border-radius: 8px; font-size: 13px; outline: none; background: #F9FAFB;
+                          resize: vertical; min-height: 70px; font-family: inherit; }
+        .modal-textarea:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); background: #fff; }
+        .modal-hint { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+        .modal-msg { font-size: 12px; padding: 8px 10px; border-radius: 7px; margin-bottom: 12px; display: none; }
+        .modal-msg.show { display: block; }
+        .modal-msg.error { background: #FEF2F2; border: 1px solid #FECACA; color: #DC2626; }
+        .modal-msg.success { background: #F0FDF4; border: 1px solid #BBF7D0; color: #166534; }
+        .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+        .modal-btns button { padding: 9px 16px; border-radius: 7px; font-size: 13px; border: none;
+                             cursor: pointer; font-weight: 600; }
+        .mbtn-cancel { background: #F3F4F6; color: #374151; }
+        .mbtn-cancel:hover { background: #E5E7EB; }
+        .mbtn-save { background: #2563EB; color: #fff; }
+        .mbtn-save:hover { background: #1D4ED8; }
+        .mbtn-save:disabled { background: #93C5FD; cursor: wait; }
+
+        @media (max-width: 480px) {
+            .modal-box { padding: 18px; border-radius: 12px; }
+            .modal-btns { gap: 6px; }
+            .modal-btns button { flex: 1; }
+        }
 
         /* ── Mobile ──────────────────────────────── */
         @media (max-width: 480px) {
@@ -101,9 +150,63 @@
         </label>
         <button class="login-btn" type="submit">로그인</button>
     </form>
+    <div class="signup-row">
+        계정이 없으신가요?
+        <button type="button" class="signup-link" onclick="openSignupModal()">계정 신청</button>
+    </div>
+</div>
+
+<!-- 계정 신청 모달 -->
+<div class="modal-ov" id="signupModal" onclick="if(event.target===this)closeSignupModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">계정 신청</div>
+        <div class="modal-desc">관리자 승인 후 로그인하실 수 있습니다.</div>
+
+        <div class="modal-msg" id="signupMsg"></div>
+
+        <div class="modal-group">
+            <label class="modal-label" for="suUsername">사용자명 *</label>
+            <input class="modal-input" id="suUsername" autocomplete="off" maxlength="50" placeholder="영문/숫자 3~50자">
+            <div class="modal-hint">로그인 시 사용할 ID</div>
+        </div>
+        <div class="modal-group">
+            <label class="modal-label" for="suPassword">비밀번호 *</label>
+            <input class="modal-input" id="suPassword" type="password" autocomplete="new-password" maxlength="100" placeholder="비밀번호">
+            <div class="modal-hint">8자 이상, 영문·숫자·특수문자 포함</div>
+        </div>
+        <div class="modal-group">
+            <label class="modal-label" for="suPasswordConfirm">비밀번호 확인 *</label>
+            <input class="modal-input" id="suPasswordConfirm" type="password" autocomplete="new-password" maxlength="100" placeholder="비밀번호 다시 입력">
+        </div>
+        <div class="modal-group">
+            <label class="modal-label" for="suDisplayName">이름</label>
+            <input class="modal-input" id="suDisplayName" autocomplete="name" maxlength="100" placeholder="표시 이름 (선택)">
+        </div>
+        <div class="modal-group">
+            <label class="modal-label" for="suReason">신청 사유</label>
+            <textarea class="modal-textarea" id="suReason" maxlength="500" placeholder="간단히 입력해주세요 (선택)"></textarea>
+        </div>
+
+        <div class="modal-btns">
+            <button class="mbtn-cancel" type="button" onclick="closeSignupModal()">취소</button>
+            <button class="mbtn-save" type="button" id="suSubmitBtn" onclick="submitSignup()">신청</button>
+        </div>
+    </div>
 </div>
 
 <script>
+// 새로고침 시 ?error / ?logout 쿼리 잔존으로 메시지가 재표시되는 것 방지.
+// 메시지는 이미 서버에서 렌더링됐으므로, URL만 깨끗하게 교체하면
+// 새로고침(F5/Ctrl+R) 시 깔끔한 /login 으로 다시 요청한다.
+(function () {
+    try {
+        if (window.history && window.history.replaceState
+                && (location.search.indexOf('error') >= 0 || location.search.indexOf('logout') >= 0)) {
+            window.history.replaceState({}, document.title, location.pathname);
+        }
+    } catch (e) { /* 구형 브라우저 무시 */ }
+})();
+
 (function () {
     var STORAGE_KEY = 'heap_login_username';
     var usernameEl = document.getElementById('username');
@@ -134,6 +237,77 @@
         } catch (e) { /* 저장 실패해도 로그인은 진행 */ }
     });
 })();
+
+// ── 계정 신청 모달 ─────────────────────────────────────
+function openSignupModal() {
+    document.getElementById('suUsername').value = '';
+    document.getElementById('suPassword').value = '';
+    document.getElementById('suPasswordConfirm').value = '';
+    document.getElementById('suDisplayName').value = '';
+    document.getElementById('suReason').value = '';
+    var msg = document.getElementById('signupMsg');
+    msg.className = 'modal-msg'; msg.textContent = '';
+    document.getElementById('suSubmitBtn').disabled = false;
+    document.getElementById('suSubmitBtn').textContent = '신청';
+    document.getElementById('signupModal').classList.add('open');
+    setTimeout(function() { document.getElementById('suUsername').focus(); }, 50);
+}
+function closeSignupModal() {
+    document.getElementById('signupModal').classList.remove('open');
+}
+function showSignupMsg(text, type) {
+    var el = document.getElementById('signupMsg');
+    el.textContent = text;
+    el.className = 'modal-msg show ' + (type || 'error');
+}
+function submitSignup() {
+    var btn = document.getElementById('suSubmitBtn');
+    var username = (document.getElementById('suUsername').value || '').trim();
+    var password = document.getElementById('suPassword').value || '';
+    var passwordConfirm = document.getElementById('suPasswordConfirm').value || '';
+    var displayName = (document.getElementById('suDisplayName').value || '').trim();
+    var reason = (document.getElementById('suReason').value || '').trim();
+
+    if (!username) { showSignupMsg('사용자명을 입력하세요.', 'error'); return; }
+    if (!password) { showSignupMsg('비밀번호를 입력하세요.', 'error'); return; }
+    if (password !== passwordConfirm) { showSignupMsg('비밀번호 확인이 일치하지 않습니다.', 'error'); return; }
+
+    btn.disabled = true;
+    btn.textContent = '신청 중…';
+    fetch('/api/account-requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            username: username,
+            password: password,
+            displayName: displayName,
+            reason: reason
+        })
+    }).then(function(r) {
+        return r.json().then(function(d) { return { ok: r.ok, body: d }; });
+    }).then(function(res) {
+        if (res.ok && res.body && res.body.success) {
+            showSignupMsg('신청이 접수되었습니다. 관리자 승인 후 로그인하실 수 있습니다.', 'success');
+            btn.textContent = '신청 완료';
+            setTimeout(closeSignupModal, 2200);
+        } else {
+            btn.disabled = false;
+            btn.textContent = '신청';
+            showSignupMsg((res.body && res.body.message) || '신청 처리에 실패했습니다.', 'error');
+        }
+    }).catch(function() {
+        btn.disabled = false;
+        btn.textContent = '신청';
+        showSignupMsg('네트워크 오류가 발생했습니다. 잠시 후 다시 시도하세요.', 'error');
+    });
+}
+// ESC 키로 모달 닫기
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        var m = document.getElementById('signupModal');
+        if (m && m.classList.contains('open')) closeSignupModal();
+    }
+});
 </script>
 
 </body>

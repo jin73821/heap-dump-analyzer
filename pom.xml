@@ -76,6 +76,12 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
+        <!-- Spring Session JDBC (MariaDB에 세션 영속화) -->
+        <dependency>
+            <groupId>org.springframework.session</groupId>
+            <artifactId>spring-session-jdbc</artifactId>
+        </dependency>
+
         <!-- Thymeleaf Spring Security extras -->
         <dependency>
             <groupId>org.thymeleaf.extras</groupId>

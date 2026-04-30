@@ -71,6 +71,7 @@
 
         /* ── Table ────────────────────────────────────────── */
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
+        .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
         .ltable { width: 100%; border-collapse: collapse; font-size: 13px; }
         .ltable th { padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600;
                      color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
@@ -116,7 +117,8 @@
 
         @media (max-width: 900px) {
             .topbar { left: 0; }
-            .container { padding-left: 20px; }
+            .container { padding-left: 20px; padding-right: 14px; }
+            .ltable { min-width: 880px; }
         }
         @media (max-width: 768px) {
             .kpi-grid { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
@@ -124,12 +126,26 @@
             .kpi-icon { width: 30px; height: 30px; }
             .kpi-icon svg { width: 16px; height: 16px; }
             .kpi-value { font-size: 18px; }
+            .page-hdr { margin-bottom: 14px; }
+            .page-ttl { font-size: 16px; }
+            .container { padding: 64px 14px 32px; }
         }
         @media (max-width: 640px) {
             .kpi-grid { grid-template-columns: 1fr; }
             .ltable .col-hide-sm { display: none; }
+            .ltable { min-width: 720px; }
             .table-toolbar { flex-direction: column; align-items: stretch; }
-            .toolbar-sel, .search-bar { width: 100%; }
+            .toolbar-sel, .search-bar { width: 100%; min-width: 0; }
+            .page-size-wrap { justify-content: space-between; }
+            .export-wrap { width: 100%; }
+            .export-btn { width: 100%; }
+            .export-menu { left: 0; right: 0; }
+            .pagination-bar { flex-direction: column; align-items: stretch; gap: 8px; }
+            .pg-info { text-align: center; }
+            .pg-list { justify-content: center; flex-wrap: wrap; }
+            .topbar { padding: 0 12px; }
+            .topbar-title { font-size: 15px; }
+            .topbar-btn { padding: 5px 8px; }
         }
         @media (min-width: 1024px) {
             .ltable { font-size: 14px; }
@@ -226,6 +242,7 @@
 
     <!-- Table -->
     <div class="panel">
+      <div class="table-scroll">
         <table class="ltable" id="logsTable">
             <thead>
                 <tr>
@@ -254,6 +271,7 @@
                 <tr><td colspan="9" class="loading-state">불러오는 중...</td></tr>
             </tbody>
         </table>
+      </div>
     </div>
 
     <!-- Pagination -->
