@@ -6,6 +6,10 @@ import lombok.NoArgsConstructor;
 
 import javax.persistence.*;
 import java.time.LocalDateTime;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Data
 @NoArgsConstructor
@@ -30,8 +34,25 @@ public class TargetServer {
     @Column(name = "ssh_user", nullable = false, length = 50)
     private String sshUser = "sscuser";
 
-    @Column(name = "dump_path", nullable = false, length = 500)
+    /** 덤프 파일 경로 — 1~5개. 다중 경로는 줄바꿈(\n)으로 구분 저장. */
+    @Column(name = "dump_path", nullable = false, length = 2500)
     private String dumpPath;
+
+    /** 다중 경로 최대 개수 — UI/서비스 공용 상한. */
+    public static final int MAX_DUMP_PATHS = 5;
+
+    /** dumpPath를 줄바꿈 기준으로 분리 — 빈/공백 제거, 최대 MAX_DUMP_PATHS개. */
+    @Transient
+    public List<String> getDumpPaths() {
+        if (dumpPath == null || dumpPath.isEmpty()) return Collections.emptyList();
+        List<String> result = Arrays.stream(dumpPath.split("\\r?\\n"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .distinct()
+                .limit(MAX_DUMP_PATHS)
+                .collect(Collectors.toList());
+        return result;
+    }
 
     @Column(name = "auto_detect", nullable = false)
     private boolean autoDetect = false;

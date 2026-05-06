@@ -260,8 +260,13 @@
                         </td>
                         <td th:text="${s.host + ':' + s.port}">192.168.1.1:22</td>
                         <td th:text="${s.sshUser}">sscuser</td>
-                        <td style="font-size:12px;color:#6B7280;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                            th:text="${s.dumpPath}">/opt/dumps</td>
+                        <td style="font-size:12px;color:#6B7280;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                            th:title="${s.dumpPath}"
+                            th:with="paths=${s.dumpPaths}">
+                            <span th:text="${#lists.isEmpty(paths) ? '-' : paths[0]}">/opt/dumps</span>
+                            <span th:if="${#lists.size(paths) > 1}" style="color:#9CA3AF;margin-left:4px"
+                                  th:text="'+' + (${#lists.size(paths)} - 1)">+1</span>
+                        </td>
                         <td>
                             <span th:unless="${s.enabled}" class="badge badge-off">비활성</span>
                             <span th:if="${s.enabled and s.connStatus == 'OK'}" class="badge badge-on">정상</span>
@@ -346,8 +351,11 @@
             </div>
         </div>
         <div class="modal-group">
-            <label class="modal-label">덤프 파일 경로</label>
-            <input class="modal-input" id="smDumpPath" placeholder="/opt/app/logs">
+            <label class="modal-label">덤프 파일 경로 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(최대 5개 — 추가된 모든 경로를 스캔)</span></label>
+            <div id="smDumpPathList"></div>
+            <button type="button" class="action-btn" id="smDumpPathAdd"
+                    style="margin-top:6px;font-size:11px;padding:4px 10px"
+                    onclick="addDumpPathRow()">+ 경로 추가</button>
         </div>
         <div class="modal-group">
             <label class="modal-check">
@@ -389,6 +397,63 @@ function showToast(msg, type) {
 
 var _isEdit = false;
 
+var MAX_DUMP_PATHS = 5;
+
+function setDumpPaths(paths) {
+    var list = document.getElementById('smDumpPathList');
+    list.innerHTML = '';
+    var arr = (paths && paths.length > 0) ? paths : [''];
+    for (var i = 0; i < arr.length && i < MAX_DUMP_PATHS; i++) {
+        appendDumpPathRow(arr[i]);
+    }
+    refreshDumpPathAddBtn();
+}
+
+function appendDumpPathRow(value) {
+    var list = document.getElementById('smDumpPathList');
+    if (list.children.length >= MAX_DUMP_PATHS) return;
+    var row = document.createElement('div');
+    row.className = 'sm-path-row';
+    row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'modal-input sm-path-input';
+    input.placeholder = '/opt/app/logs';
+    input.value = value || '';
+    input.style.flex = '1';
+    var rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'action-btn';
+    rm.textContent = '−';
+    rm.style.cssText = 'flex-shrink:0;padding:0 12px';
+    rm.onclick = function() { row.remove(); refreshDumpPathAddBtn(); };
+    row.appendChild(input);
+    row.appendChild(rm);
+    list.appendChild(row);
+}
+
+function addDumpPathRow() {
+    appendDumpPathRow('');
+    refreshDumpPathAddBtn();
+}
+
+function refreshDumpPathAddBtn() {
+    var btn = document.getElementById('smDumpPathAdd');
+    var count = document.querySelectorAll('#smDumpPathList .sm-path-row').length;
+    if (btn) btn.style.display = count >= MAX_DUMP_PATHS ? 'none' : '';
+}
+
+function collectDumpPaths() {
+    var inputs = document.querySelectorAll('#smDumpPathList .sm-path-input');
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < inputs.length; i++) {
+        var v = inputs[i].value.trim();
+        if (v && !seen[v]) { seen[v] = 1; out.push(v); }
+    }
+    return out;
+}
+
 function openCreateModal() {
     _isEdit = false;
     document.getElementById('serverModalTitle').textContent = '서버 추가';
@@ -397,7 +462,7 @@ function openCreateModal() {
     document.getElementById('smHost').value = '';
     document.getElementById('smPort').value = '22';
     document.getElementById('smSshUser').value = 'sscuser';
-    document.getElementById('smDumpPath').value = '';
+    setDumpPaths([]);
     document.getElementById('smAutoDetect').checked = false;
     document.getElementById('serverModal').classList.add('open');
 }
@@ -410,22 +475,24 @@ function openEditModal(ds) {
     document.getElementById('smHost').value = ds.host;
     document.getElementById('smPort').value = ds.port;
     document.getElementById('smSshUser').value = ds.sshuser;
-    document.getElementById('smDumpPath').value = ds.dumppath;
+    var paths = (ds.dumppath || '').split(/\r?\n/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+    setDumpPaths(paths);
     document.getElementById('smAutoDetect').checked = ds.autodetect === 'true';
     document.getElementById('serverModal').classList.add('open');
 }
 
 function submitServer() {
+    var paths = collectDumpPaths();
     var data = {
         name: document.getElementById('smName').value.trim(),
         host: document.getElementById('smHost').value.trim(),
         port: parseInt(document.getElementById('smPort').value) || 22,
         sshUser: document.getElementById('smSshUser').value.trim() || 'sscuser',
-        dumpPath: document.getElementById('smDumpPath').value.trim(),
+        dumpPath: paths.join('\n'),
         autoDetect: document.getElementById('smAutoDetect').checked
     };
-    if (!data.name || !data.host || !data.dumpPath) {
-        showToast('이름, 호스트, 덤프 경로를 입력하세요.', 'error'); return;
+    if (!data.name || !data.host || paths.length === 0) {
+        showToast('이름, 호스트, 덤프 경로(1개 이상)를 입력하세요.', 'error'); return;
     }
     var id = document.getElementById('smId').value;
     var url = _isEdit ? '/api/servers/' + id : '/api/servers';
@@ -488,6 +555,16 @@ function scanServer(id, name) {
     .then(function(r) { return r.json(); })
     .then(function(d) {
         var html = '';
+        // 일부 경로 실패 — pathErrors 배너 (전체 성공이 아닐 때)
+        if (d.pathErrors && d.pathErrors.length > 0 && !d.error) {
+            html += '<div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#92400E;line-height:1.5">'
+                  + '<strong style="display:block;margin-bottom:6px">일부 경로 스캔 실패 (' + d.pathErrors.length + '개)</strong>';
+            for (var pi = 0; pi < d.pathErrors.length; pi++) {
+                var pe = d.pathErrors[pi];
+                html += '<div style="margin-bottom:2px"><code style="font-family:monospace">' + escHtml(pe.dumpPath) + '</code> — ' + escHtml(pe.error || '') + '</div>';
+            }
+            html += '</div>';
+        }
         // 에러 배너 — errorCode 별로 시각 분리
         if (d.error) {
             var code = d.errorCode || 'SSH_ERROR';
@@ -533,20 +610,36 @@ function scanServer(id, name) {
 }
 
 function renderScanResultsHtml(files) {
-    var html = '';
+    // 다중 경로 환경에서는 source 경로별로 그룹화. sourceDumpPath 미존재(레거시)면 단일 그룹.
+    var groups = {};
+    var order = [];
     for (var i = 0; i < files.length; i++) {
-        var f = files[i];
-        html += '<div class="scan-file">';
-        html += '<span style="flex:1;font-weight:500">' + escHtml(f.filename) + '</span>';
-        html += '<span style="color:#6B7280;font-size:12px">' + escHtml(f.formattedSize) + '</span>';
-        if (f.transferred && f.analyzed) {
-            html += '<span style="font-size:11px;color:#059669;font-weight:600">전송됨(분석완료)</span>';
-        } else if (f.transferred) {
-            html += '<span class="scan-transferred" style="font-size:11px">전송됨</span>';
-        } else {
-            html += '<button class="btn-transfer" data-path="' + escAttr(f.path) + '" onclick="transferFile(this)">전송</button>';
+        var key = files[i].sourceDumpPath || '';
+        if (!(key in groups)) { groups[key] = []; order.push(key); }
+        groups[key].push(files[i]);
+    }
+    var multi = order.length > 1 || (order.length === 1 && order[0] !== '');
+    var html = '';
+    for (var g = 0; g < order.length; g++) {
+        var key = order[g];
+        if (multi && key) {
+            html += '<div style="font-size:11px;color:#6B7280;font-weight:600;margin:8px 0 4px;padding:4px 8px;background:#F9FAFB;border-radius:4px;font-family:monospace">' + escHtml(key) + '</div>';
         }
-        html += '</div>';
+        var arr = groups[key];
+        for (var i = 0; i < arr.length; i++) {
+            var f = arr[i];
+            html += '<div class="scan-file">';
+            html += '<span style="flex:1;font-weight:500">' + escHtml(f.filename) + '</span>';
+            html += '<span style="color:#6B7280;font-size:12px">' + escHtml(f.formattedSize) + '</span>';
+            if (f.transferred && f.analyzed) {
+                html += '<span style="font-size:11px;color:#059669;font-weight:600">전송됨(분석완료)</span>';
+            } else if (f.transferred) {
+                html += '<span class="scan-transferred" style="font-size:11px">전송됨</span>';
+            } else {
+                html += '<button class="btn-transfer" data-path="' + escAttr(f.path) + '" onclick="transferFile(this)">전송</button>';
+            }
+            html += '</div>';
+        }
     }
     return html;
 }

@@ -776,7 +776,7 @@
             <!-- Detections (Daily) -->
             <div class="panel">
                 <div class="panel-hdr">
-                    <span class="panel-ttl">Detections &middot; 최근 14일</span>
+                    <span class="panel-ttl">Detections &middot; 최근 14일 &middot; 서버별</span>
                     <a th:href="@{/history}" class="more-link">View history →</a>
                 </div>
                 <div th:if="${kpiTotal14d > 0}">
@@ -919,29 +919,41 @@
 
 <script th:inline="javascript">
 /*<![CDATA[*/
-var DAILY_DETECT = /*[[${dailyDetections}]]*/ [];
+var DAILY_DETECT   = /*[[${dailyDetections}]]*/ [];
+var SERVER_SERIES  = /*[[${serverSeries}]]*/ [];
 /*]]>*/
 </script>
 <script>
-/* ── Daily Detections Chart ─────────────────────────── */
+/* ── Daily Detections Chart (서버별 stacked bar) ─────────── */
 (function(){
     var canvas = document.getElementById('dailyDetectChart');
     if (!canvas || !DAILY_DETECT || DAILY_DETECT.length === 0 || typeof Chart === 'undefined') return;
     var labels = DAILY_DETECT.map(function(d){ return (d.date || '').slice(5); });
-    function col(key){ return DAILY_DETECT.map(function(d){ return d[key] || 0; }); }
+
+    // 12색 + "기타"용 회색. 시리즈 순서대로 순환
+    var PALETTE = ['#2563EB','#DC2626','#16A34A','#EA580C','#7C3AED','#0891B2',
+                   '#DB2777','#CA8A04','#0F766E','#9333EA','#B45309','#475569'];
+    var OTHERS_COLOR = '#9CA3AF';
+
+    var datasets = (SERVER_SERIES || []).map(function(s, idx){
+        var isOthers = (s.name === '기타');
+        return {
+            label: s.name,
+            data: s.counts || [],
+            backgroundColor: isOthers ? OTHERS_COLOR : PALETTE[idx % PALETTE.length],
+            stack: 's'
+        };
+    });
+
+    if (datasets.length === 0) return; // 표시할 시리즈 없음
+
     new Chart(canvas, {
         type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [
-                { label: 'Critical', data: col('critical'), backgroundColor: '#DC2626', stack: 's' },
-                { label: 'High',     data: col('high'),     backgroundColor: '#EA580C', stack: 's' },
-                { label: 'Medium',   data: col('medium'),   backgroundColor: '#F59E0B', stack: 's' },
-                { label: 'Low',      data: col('low'),      backgroundColor: '#10B981', stack: 's' }
-            ]
-        },
+        data: { labels: labels, datasets: datasets },
         options: {
             responsive: true, maintainAspectRatio: false,
+            barPercentage: 0.6,
+            categoryPercentage: 0.7,
             scales: {
                 x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
                 y: { stacked: true, beginAtZero: true, ticks: { precision: 0, font: { size: 10 } } }
@@ -950,6 +962,8 @@ var DAILY_DETECT = /*[[${dailyDetections}]]*/ [];
                 legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, padding: 10 } },
                 tooltip: {
                     backgroundColor: 'rgba(15,23,42,.92)', padding: 10,
+                    itemSort: function(a, b){ return b.parsed.y - a.parsed.y; },
+                    filter: function(item){ return item.parsed.y > 0; },
                     callbacks: {
                         footer: function(items) {
                             var t = items.reduce(function(s, i){ return s + i.parsed.y; }, 0);
@@ -1182,7 +1196,8 @@ function startDuplicateChecks(idx) {
             if (res.status === 'DUPLICATE_CONTENT') {
                 showQueueDupContentModal(idx, res.existingFilename, function() { startDuplicateChecks(idx+1); });
             } else if (res.status === 'DUPLICATE_NAME') {
-                showQueueDupNameModal(idx, res.existingFilename, res.suggestedName, function() { startDuplicateChecks(idx+1); });
+                // 동일 파일명은 업로드 차단 (정책: 업로드 버튼은 동일 이름 덮어쓰기/리네임 불가)
+                showQueueDupNameBlockedModal(idx, res.existingFilename, function() { startDuplicateChecks(idx+1); });
             } else {
                 startDuplicateChecks(idx+1);
             }
@@ -1210,47 +1225,23 @@ function showQueueDupContentModal(idx, existingName, onDone) {
     ov.querySelector('#dupProceed').onclick=function(){ov.remove();onDone();};
 }
 
-function showQueueDupNameModal(idx, existingName, suggestedName, onDone) {
+function showQueueDupNameBlockedModal(idx, existingName, onDone) {
     var item = _uploadQueue[idx];
+    item.status = 'skipped'; // 차단 — 본 파일은 큐에서 업로드되지 않음
     var ov = document.createElement('div'); ov.id='dupOv';
     ov.style.cssText='position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
     ov.innerHTML='<div style="background:#fff;border-radius:12px;padding:24px;max-width:420px;width:90%">'
         +'<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">'
-        +'<div style="width:40px;height:40px;border-radius:50%;background:#FEF3C7;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
-        +'<svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" style="width:22px;height:22px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>'
-        +'<h3 style="font-size:16px;font-weight:700;color:#1F2937;margin:0">파일 이름 충돌 ('+(idx+1)+'/'+_uploadQueue.length+')</h3></div>'
-        +'<p style="font-size:13px;color:#374151;margin-bottom:12px"><strong>\''+escapeHtml(existingName)+'\'</strong> 이름이 이미 존재하며 내용이 다릅니다.</p>'
-        +'<div style="margin-bottom:12px">'
-        +'<label style="font-size:12px;font-weight:600;color:#6B7280;display:block;margin-bottom:4px">새 파일 이름</label>'
-        +'<input id="dupRenameInput" type="text" value="'+escapeHtml(suggestedName)+'" style="width:100%;padding:8px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;outline:none;box-sizing:border-box">'
-        +'<div id="dupRenameErr" style="font-size:11px;color:#DC2626;margin-top:4px;display:none"></div></div>'
-        +'<div style="display:flex;flex-direction:column;gap:8px">'
-        +'<button id="dupRename" style="padding:10px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">이름 변경</button>'
-        +'<button id="dupOverwrite" style="padding:10px;background:#F59E0B;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">덮어쓰기</button>'
-        +'<button id="dupSkip2" style="padding:10px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">건너뛰기</button>'
+        +'<div style="width:40px;height:40px;border-radius:50%;background:#FEE2E2;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+        +'<svg viewBox="0 0 24 24" fill="none" stroke="#DC2626" stroke-width="2" style="width:22px;height:22px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div>'
+        +'<h3 style="font-size:16px;font-weight:700;color:#1F2937;margin:0">동일 파일명 — 업로드 차단 ('+(idx+1)+'/'+_uploadQueue.length+')</h3></div>'
+        +'<p style="font-size:13px;color:#374151;margin-bottom:8px">업로드 파일: <strong>'+escapeHtml(item.file.name)+'</strong></p>'
+        +'<p style="font-size:13px;color:#374151;margin-bottom:16px">이미 같은 이름의 파일 <strong>\''+escapeHtml(existingName)+'\'</strong>이(가) 존재합니다. 업로드 버튼으로는 동일 이름의 파일을 덮어쓰거나 추가할 수 없습니다. 파일명을 변경한 뒤 다시 시도해 주세요.</p>'
+        +'<div style="display:flex;justify-content:flex-end">'
+        +'<button id="dupBlockedOk" style="padding:10px 20px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">확인</button>'
         +'</div></div>';
     document.body.appendChild(ov);
-    ov.querySelector('#dupSkip2').onclick=function(){ov.remove();item.status='skipped';onDone();};
-    ov.querySelector('#dupOverwrite').onclick=function(){ov.remove();onDone();};
-    ov.querySelector('#dupRename').onclick=function(){
-        var inp=document.getElementById('dupRenameInput'), errEl=document.getElementById('dupRenameErr');
-        var newName=inp.value.trim();
-        if(!newName){errEl.textContent='파일 이름을 입력해주세요.';errEl.style.display='block';return;}
-        var lower=newName.toLowerCase();
-        var validExts=['.hprof','.bin','.dump','.hprof.gz','.bin.gz','.dump.gz'];
-        if(!validExts.some(function(ext){return lower.endsWith(ext);})){errEl.textContent='지원되는 확장자: .hprof, .bin, .dump (.gz)';errEl.style.display='block';return;}
-        errEl.style.display='none';
-        // 서버 재확인
-        fetch('/api/upload/check',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({filename:newName,fileSize:item.file.size,partialHash:item._hash||''})
-        }).then(function(r){return r.json();}).then(function(res){
-            if(res.status==='DUPLICATE_NAME'){errEl.textContent='\''+newName+'\' 도 이미 존재합니다.';errEl.style.display='block';}
-            else if(res.status==='DUPLICATE_CONTENT'){errEl.textContent='\''+res.existingFilename+'\' 과 동일한 내용입니다.';errEl.style.display='block';}
-            else{item.uploadName=newName;ov.remove();onDone();}
-        }).catch(function(){item.uploadName=newName;ov.remove();onDone();});
-    };
-    var inp=document.getElementById('dupRenameInput');
-    if(inp){inp.addEventListener('keydown',function(e){if(e.key==='Enter')ov.querySelector('#dupRename').click();});inp.focus();inp.select();}
+    ov.querySelector('#dupBlockedOk').onclick=function(){ov.remove();onDone();};
 }
 
 /* ── Upload progress modal + sequential upload ── */
@@ -1286,7 +1277,7 @@ function renderUploadModalList() {
         var icon, cls, label;
         if (q.status === 'uploading') { icon='⬆'; cls='uploading'; label=q._pct?q._pct+'%':'업로드 중'; }
         else if (q.status === 'done') { icon='✅'; cls='done'; label='완료'; }
-        else if (q.status === 'error') { icon='❌'; cls='error'; label='실패'; }
+        else if (q.status === 'error') { icon='❌'; cls='error'; label = q._error ? q._error : '실패'; }
         else if (q.status === 'cancelled') { icon='⊘'; cls='skipped'; label='취소됨'; }
         else { icon='⏳'; cls='pending'; label='대기'; }
         html += '<div class="uq-item" id="uqi'+i+'">'
@@ -1394,16 +1385,26 @@ function processNextInQueue(idx) {
         }
     });
     xhr.addEventListener('load', function() {
-        item.status = 'done';
+        var ok = xhr.status >= 200 && xhr.status < 300;
+        if (ok) {
+            item.status = 'done';
+        } else {
+            item.status = 'error';
+            try {
+                var j = JSON.parse(xhr.responseText);
+                if (j && j.message) item._error = j.message;
+            } catch(e) { item._error = '서버 오류 (HTTP ' + xhr.status + ')'; }
+        }
         renderUploadModalList();
         processNextInQueue(idx + 1);
     });
     xhr.addEventListener('error', function() {
         item.status = 'error';
+        item._error = '네트워크 오류';
         renderUploadModalList();
         processNextInQueue(idx + 1);
     });
-    xhr.open('POST','/upload');
+    xhr.open('POST','/api/upload');
     var fd = new FormData();
     fd.append('file', item.file, item.uploadName);
     xhr.send(fd);

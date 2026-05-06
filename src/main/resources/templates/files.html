@@ -179,7 +179,7 @@
             .select-action-bar { left: 0; }
         }
         @media (max-width: 640px) {
-            .ftable .col-date, .ftable .col-compressed { display: none; }
+            .ftable .col-date, .ftable .col-compressed, .ftable .col-hide-sm { display: none; }
             .page-stats { gap: 10px; }
             .ftable { min-width: 500px; }
             .table-toolbar { flex-direction: column; align-items: stretch; }
@@ -247,6 +247,7 @@
                     <th class="sortable" data-sort-key="osize" data-sort-type="num" onclick="onHeaderSort(this)">원본 크기 <span class="sort-arrow">▲</span></th>
                     <th class="col-compressed sortable" data-sort-key="csize" data-sort-type="num" onclick="onHeaderSort(this)">압축 크기 <span class="sort-arrow">▲</span></th>
                     <th class="sortable" data-sort-key="ai" data-sort-type="num" onclick="onHeaderSort(this)">AI 인사이트 <span class="sort-arrow">▲</span></th>
+                    <th class="col-hide-sm sortable" data-sort-key="server" data-sort-type="str" onclick="onHeaderSort(this)">서버 <span class="sort-arrow">▲</span></th>
                     <th class="col-date sortable" data-sort-key="date" data-sort-type="num" onclick="onHeaderSort(this)">날짜 <span class="sort-arrow">▲</span></th>
                     <th>작업</th>
                 </tr>
@@ -258,6 +259,7 @@
                              data-sort-osize=${h.originalSizeBytes},
                              data-sort-csize=${h.compressedSizeBytes},
                              data-sort-ai=${h.hasAiInsight ? (h.aiInsightSeverity == 'critical' ? 4 : (h.aiInsightSeverity == 'warning' ? 3 : (h.aiInsightSeverity == 'info' ? 2 : 1))) : 0},
+                             data-sort-server=${h.serverName != null ? h.serverName : ''},
                              data-sort-date=${h.lastModified}">
                     <td class="td-check"><input type="checkbox" class="row-check" th:value="${h.filename}"
                                                 th:data-deleted="${h.fileDeleted}" onchange="onRowCheck()"></td>
@@ -284,6 +286,10 @@
                             <span th:text="${h.aiInsightSeverity != null ? h.aiInsightSeverity.toUpperCase() : 'AI'}">AI</span>
                         </span>
                         <span th:unless="${h.hasAiInsight}" class="ai-none">—</span>
+                    </td>
+                    <td class="col-hide-sm">
+                        <span th:if="${h.serverName != null}" th:text="${h.serverName}" style="background:#EFF6FF;color:#2563EB;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600">server1</span>
+                        <span th:unless="${h.serverName != null}" style="color:#9CA3AF;font-size:11px">Local</span>
                     </td>
                     <td class="col-date">
                         <span class="fdate" th:text="${h.formattedDate}">03-18 10:00</span>

@@ -2295,9 +2295,19 @@ public class HeapDumpAnalyzerService {
 
         File dumpDir = dumpFilesDirectory();
         Files.createDirectories(dumpDir.toPath());
+
+        // 동일 파일명 차단 — 업로드 버튼으로는 같은 이름의 파일을 덮어쓰거나 추가할 수 없음.
+        // (.gz 압축본도 동일 이름으로 간주)
+        if (Files.exists(dumpDir.toPath().resolve(filename))
+                || Files.exists(dumpDir.toPath().resolve(filename + ".gz"))) {
+            logger.warn("[Upload] Rejected: same filename already exists '{}'", filename);
+            throw new IllegalArgumentException(
+                    "동일한 이름의 파일이 이미 존재합니다: '" + filename + "'. 다른 이름으로 변경 후 업로드해 주세요.");
+        }
+
         Path target = dumpDir.toPath().resolve(filename);
         try {
-            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(file.getInputStream(), target);
         } catch (IOException e) {
             logger.error("[Upload] Failed to write file '{}' to dumpfiles: {}", filename, e.getMessage(), e);
             throw e;

@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PostConstruct;
 import java.io.*;
 import java.nio.file.Files;
 import java.time.LocalDateTime;
@@ -54,6 +55,19 @@ public class RemoteDumpService {
         this.scanIntervalSec = config.getRemoteScanIntervalSec();
         this.sshLocalUser = config.getSshLocalUser();
         this.scpTempDir = config.getScpTempDir();
+    }
+
+    /** 부팅 시 1회 실행 — 레거시 transfer 로그(remote_filename NULL)를 filename으로 보정. */
+    @PostConstruct
+    public void backfillRemoteFilenames() {
+        try {
+            int updated = transferLogRepository.backfillRemoteFilenameFromLocal();
+            if (updated > 0) {
+                logger.info("[RemoteDump] Backfilled remote_filename for {} legacy transfer log row(s)", updated);
+            }
+        } catch (Exception e) {
+            logger.warn("[RemoteDump] remote_filename backfill 실패 (무시 가능): {}", e.getMessage());
+        }
     }
 
     // ── 스캔 주기 getter/setter ───────────────────────────────
@@ -112,85 +126,141 @@ public class RemoteDumpService {
     }
 
     /**
-     * 원격 서버에서 힙 덤프 파일 목록 스캔
-     * 반환 Map에 "error" 키가 있으면 SSH/SCP 에러를 의미
+     * 원격 서버에서 힙 덤프 파일 목록 스캔 — 다중 경로(최대 5개) 모두 순회.
+     * - 모든 경로가 같은 종류(NOT_FOUND / NOT_READABLE / SSH_ERROR)로 실패하면 그 errorCode 반환
+     * - 일부만 실패하면 partial 성공: 성공한 경로의 파일은 반환, 실패 경로는 pathErrors에 기록
+     * - 한 경로라도 성공하면 서버 상태는 OK
      */
     public Map<String, Object> scanRemoteDumpsWithStatus(TargetServer server) {
         Map<String, Object> result = new HashMap<>();
         List<Map<String, Object>> files = new ArrayList<>();
+        List<Map<String, Object>> pathErrors = new ArrayList<>();
 
-        try {
-            String dumpPath = server.getDumpPath();
-            // 경로 존재/권한 체크를 find 앞에 두어 exit 2/3으로 명확히 구분
-            // (find의 2>/dev/null이 stderr를 삼켜 원인 불명 메시지가 노출되던 문제 해결)
-            String safePath = dumpPath.replace("'", "'\\''");
-            String findCmd = String.format(
-                "[ -d '%s' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
-                + "[ -r '%s' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
-                + "find '%s' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' \\) -exec ls -la {} \\; 2>/dev/null",
-                safePath, safePath, safePath);
-            String[] cmd = buildSshCommand(server, findCmd);
-            ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
-
-            if (pr.exitCode == 2) {
-                String errorMsg = "원격 덤프 경로가 존재하지 않습니다: " + dumpPath;
-                result.put("errorCode", "DUMP_PATH_NOT_FOUND");
-                result.put("error", errorMsg);
-                result.put("dumpPath", dumpPath);
-                updateServerStatus(server, "FAIL", errorMsg);
-                logger.warn("[RemoteDump] Dump path not found on {}: {}", server.getName(), dumpPath);
-            } else if (pr.exitCode == 3) {
-                String errorMsg = "원격 덤프 경로 읽기 권한이 없습니다: " + dumpPath;
-                result.put("errorCode", "DUMP_PATH_NOT_READABLE");
-                result.put("error", errorMsg);
-                result.put("dumpPath", dumpPath);
-                updateServerStatus(server, "FAIL", errorMsg);
-                logger.warn("[RemoteDump] Dump path not readable on {} (user={}): {}",
-                        server.getName(), server.getSshUser(), dumpPath);
-            } else if (pr.exitCode != 0 && pr.stdout.trim().isEmpty()) {
-                // 그 외 비정상 종료 → SSH/원격 셸 오류
-                String errorMsg = cleanSshError(pr.stderr);
-                if (errorMsg.isEmpty()) errorMsg = "원격 명령 실행 실패 (exit " + pr.exitCode + ")";
-                result.put("errorCode", "SSH_ERROR");
-                result.put("error", "SSH 오류: " + errorMsg);
-                updateServerStatus(server, "FAIL", "스캔 실패: " + errorMsg);
-                logger.warn("[RemoteDump] SSH error on {}: exit={}, stderr={}", server.getName(), pr.exitCode, errorMsg);
-            } else if (!pr.stdout.trim().isEmpty()) {
-                for (String line : pr.stdout.split("\n")) {
-                    line = line.trim();
-                    if (line.isEmpty()) continue;
-                    Map<String, Object> fileInfo = parseLsLine(line);
-                    if (fileInfo != null) {
-                        String filename = (String) fileInfo.get("filename");
-                        // 로컬 파일 존재 확인 (원본 또는 .gz 압축 파일)
-                        boolean localExists = new File(config.getDumpFilesDirectory(), filename).exists()
-                                || new File(config.getDumpFilesDirectory(), filename + ".gz").exists();
-                        // DB 전송 성공 로그 확인
-                        boolean dbSuccess = transferLogRepository.existsByServerIdAndFilenameAndTransferStatus(
-                                server.getId(), filename, "SUCCESS");
-                        boolean transferred = localExists && dbSuccess;
-                        // 분석 완료 여부 (분석 결과 캐시 존재)
-                        boolean analyzed = analysisHistoryRepository.existsByFilename(filename);
-                        fileInfo.put("transferred", transferred);
-                        fileInfo.put("analyzed", analyzed);
-                        files.add(fileInfo);
-                    }
-                }
-            }
-            result.put("files", files);
-            result.put("count", files.size());
-            if (!result.containsKey("error")) {
-                updateServerStatus(server, "OK", null);
-            }
-            logger.info("[RemoteDump] Scanned {} files on server {}", files.size(), server.getName());
-        } catch (Exception e) {
-            result.put("errorCode", "SCAN_EXCEPTION");
-            result.put("error", "스캔 실패: " + e.getMessage());
+        List<String> paths = server.getDumpPaths();
+        if (paths.isEmpty()) {
+            String errorMsg = "덤프 경로가 설정되지 않았습니다.";
+            result.put("errorCode", "NO_DUMP_PATH");
+            result.put("error", errorMsg);
             result.put("files", files);
             result.put("count", 0);
-            updateServerStatus(server, "FAIL", "스캔 실패: " + e.getMessage());
-            logger.error("[RemoteDump] Scan failed for server {}: {}", server.getName(), e.getMessage());
+            updateServerStatus(server, "FAIL", errorMsg);
+            return result;
         }
+
+        // 같은 파일 path 중복 제거 (다중 경로가 겹치는 경우)
+        Set<String> seenPaths = new HashSet<>();
+        int successCount = 0;
+        String firstFatalError = null;
+        String firstFatalCode = null;
+
+        for (String dumpPath : paths) {
+            try {
+                Map<String, Object> single = scanSinglePath(server, dumpPath);
+                if (single.containsKey("error")) {
+                    Map<String, Object> err = new HashMap<>();
+                    err.put("dumpPath", dumpPath);
+                    err.put("errorCode", single.get("errorCode"));
+                    err.put("error", single.get("error"));
+                    pathErrors.add(err);
+                    if (firstFatalError == null) {
+                        firstFatalError = (String) single.get("error");
+                        firstFatalCode = (String) single.get("errorCode");
+                    }
+                } else {
+                    successCount++;
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> pathFiles = (List<Map<String, Object>>) single.get("files");
+                    for (Map<String, Object> f : pathFiles) {
+                        String p = (String) f.get("path");
+                        if (p != null && seenPaths.add(p)) {
+                            files.add(f);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Map<String, Object> err = new HashMap<>();
+                err.put("dumpPath", dumpPath);
+                err.put("errorCode", "SCAN_EXCEPTION");
+                err.put("error", "스캔 실패: " + e.getMessage());
+                pathErrors.add(err);
+                if (firstFatalError == null) {
+                    firstFatalError = "스캔 실패: " + e.getMessage();
+                    firstFatalCode = "SCAN_EXCEPTION";
+                }
+                logger.error("[RemoteDump] Scan failed for {} path={}: {}", server.getName(), dumpPath, e.getMessage());
+            }
+        }
+
+        result.put("files", files);
+        result.put("count", files.size());
+        if (!pathErrors.isEmpty()) result.put("pathErrors", pathErrors);
+
+        if (successCount == 0) {
+            // 모든 경로 실패
+            result.put("errorCode", firstFatalCode != null ? firstFatalCode : "SCAN_EXCEPTION");
+            result.put("error", firstFatalError != null ? firstFatalError : "모든 경로 스캔 실패");
+            updateServerStatus(server, "FAIL", firstFatalError);
+        } else {
+            updateServerStatus(server, "OK", null);
+        }
+        logger.info("[RemoteDump] Scanned {} files across {}/{} path(s) on server {}",
+                files.size(), successCount, paths.size(), server.getName());
+        return result;
+    }
+
+    /** 단일 경로 스캔 — error/errorCode/files 키 반환. 상태 DB 업데이트는 호출자에서 집계. */
+    private Map<String, Object> scanSinglePath(TargetServer server, String dumpPath) throws Exception {
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, Object>> files = new ArrayList<>();
+
+        // 경로 존재/권한 체크를 find 앞에 두어 exit 2/3으로 명확히 구분
+        String safePath = dumpPath.replace("'", "'\\''");
+        String findCmd = String.format(
+            "[ -d '%s' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
+            + "[ -r '%s' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
+            + "find '%s' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' \\) -exec ls -la {} \\; 2>/dev/null",
+            safePath, safePath, safePath);
+        String[] cmd = buildSshCommand(server, findCmd);
+        ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
+
+        if (pr.exitCode == 2) {
+            result.put("errorCode", "DUMP_PATH_NOT_FOUND");
+            result.put("error", "원격 덤프 경로가 존재하지 않습니다: " + dumpPath);
+            logger.warn("[RemoteDump] Dump path not found on {}: {}", server.getName(), dumpPath);
+        } else if (pr.exitCode == 3) {
+            result.put("errorCode", "DUMP_PATH_NOT_READABLE");
+            result.put("error", "원격 덤프 경로 읽기 권한이 없습니다: " + dumpPath);
+            logger.warn("[RemoteDump] Dump path not readable on {} (user={}): {}",
+                    server.getName(), server.getSshUser(), dumpPath);
+        } else if (pr.exitCode != 0 && pr.stdout.trim().isEmpty()) {
+            String errorMsg = cleanSshError(pr.stderr);
+            if (errorMsg.isEmpty()) errorMsg = "원격 명령 실행 실패 (exit " + pr.exitCode + ")";
+            result.put("errorCode", "SSH_ERROR");
+            result.put("error", "SSH 오류: " + errorMsg);
+            logger.warn("[RemoteDump] SSH error on {} path={}: exit={}, stderr={}",
+                    server.getName(), dumpPath, pr.exitCode, errorMsg);
+        } else if (!pr.stdout.trim().isEmpty()) {
+            for (String line : pr.stdout.split("\n")) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                Map<String, Object> fileInfo = parseLsLine(line);
+                if (fileInfo != null) {
+                    String filename = (String) fileInfo.get("filename");
+                    Long size = (Long) fileInfo.get("size");
+                    Optional<DumpTransferLog> succLog = transferLogRepository
+                            .findFirstByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
+                                    server.getId(), filename, size, "SUCCESS");
+                    boolean transferred = succLog.isPresent();
+                    boolean analyzed = transferred
+                            && analysisHistoryRepository.existsByFilename(succLog.get().getFilename());
+                    fileInfo.put("transferred", transferred);
+                    fileInfo.put("analyzed", analyzed);
+                    fileInfo.put("sourceDumpPath", dumpPath);
+                    files.add(fileInfo);
+                }
+            }
+        }
+        result.put("files", files);
         return result;
     }
 
@@ -206,10 +276,13 @@ public class RemoteDumpService {
      * Phase 2: Files.move()로 앱 계정 권한으로 최종 경로에 이동
      */
     public DumpTransferLog transferFile(TargetServer server, String remoteFilePath) {
-        String filename = new File(remoteFilePath).getName();
+        // 원격 원본명 — rename 후에도 변하지 않는 식별자 (scan transferred 판정 키)
+        final String remoteFilename = new File(remoteFilePath).getName();
+        String filename = remoteFilename;
         DumpTransferLog log = new DumpTransferLog();
         log.setServerId(server.getId());
         log.setFilename(filename);
+        log.setRemoteFilename(remoteFilename);
         log.setRemotePath(remoteFilePath);
         log.setTransferStatus("IN_PROGRESS");
         log.setStartedAt(LocalDateTime.now());

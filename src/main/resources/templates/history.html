@@ -7,6 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>Analysis History — Heap Dump Analyzer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { height: 100%; }
@@ -27,7 +28,7 @@
                       border-radius: 6px; background: transparent; color: #6B7280;
                       cursor: pointer; text-decoration: none; display: inline-block; }
         .topbar-btn:hover { background: #F9FAFB; }
-        .container { max-width: 1280px; margin: 0 auto; padding: 68px 20px 40px;
+        .container { max-width: 1800px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
         .page-hdr { display: flex; align-items: center; justify-content: space-between;
@@ -109,7 +110,12 @@
         .empty-msg { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; }
 
         /* History table */
-        .htable { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .table-scroll::-webkit-scrollbar { height: 8px; }
+        .table-scroll::-webkit-scrollbar-track { background: #F9FAFB; }
+        .table-scroll::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 4px; }
+        .table-scroll::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+        .htable { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 960px; }
         .htable thead { background: #F9FAFB; }
         .htable th { padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 600;
                      color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
@@ -120,8 +126,9 @@
         .td-seq { width: 48px; text-align: center; color: #9CA3AF; font-size: 12px;
                   font-variant-numeric: tabular-nums; }
         .td-result { width: 84px; white-space: nowrap; }
-        .hi-name { font-weight: 500; max-width: 300px; overflow: hidden; text-overflow: ellipsis;
-                   white-space: nowrap; display: inline-block; text-decoration: none; }
+        .hi-name { font-weight: 500; max-width: 480px; overflow: hidden; text-overflow: ellipsis;
+                   white-space: nowrap; display: inline-block; text-decoration: none;
+                   font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; }
         .hi-name-link { color: #2563EB; }
         .hi-name-link:hover { text-decoration: underline; }
         .hi-name-err { color: #EF4444; }
@@ -188,6 +195,103 @@
             .pagination-bar { flex-direction: column; align-items: stretch; }
             .pg-list { justify-content: center; flex-wrap: wrap; }
         }
+
+        /* ── 2단 레이아웃 (차트 좌 / 테이블 우) ─────────── */
+        .history-grid {
+            display: grid;
+            grid-template-columns: minmax(460px, 560px) 1fr;
+            gap: 20px;
+            align-items: start;
+        }
+        .history-right { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+        .history-grid .detect-panel { margin-bottom: 0; }
+        .history-right > .table-toolbar { margin-bottom: 0; }
+        @media (max-width: 1024px) {
+            .history-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ── Detections panel ──────────────────────────────── */
+        .detect-panel { padding: 16px 20px; margin-bottom: 18px; overflow: visible; }
+        .detect-panel-hdr { display: flex; align-items: center; justify-content: space-between;
+                            flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+        .detect-panel-ttl { font-size: 14px; font-weight: 700; color: #1F2937; }
+        .det-controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .det-period-chips, .det-group-toggle {
+            display: inline-flex; gap: 2px; padding: 3px;
+            background: #F3F4F6; border-radius: 8px;
+        }
+        .det-period-chip, .det-group-btn {
+            padding: 5px 12px; font-size: 12px; border-radius: 6px;
+            cursor: pointer; color: #6B7280; user-select: none;
+            border: none; background: transparent; font-weight: 500;
+            transition: all .15s ease;
+        }
+        .det-period-chip:hover, .det-group-btn:hover { color: #1F2937; }
+        .det-period-chip.active {
+            background: #fff; color: #2563EB; font-weight: 600;
+            box-shadow: 0 1px 2px rgba(0,0,0,.06);
+        }
+        .det-group-btn.active {
+            background: #fff; color: #1F2937; font-weight: 600;
+            box-shadow: 0 1px 2px rgba(0,0,0,.06);
+        }
+        .det-kpi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+        .det-kpi-card { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 14px 16px; }
+        .det-kpi-lbl { font-size: 11px; color: #9CA3AF; text-transform: uppercase; letter-spacing: .04em; }
+        .det-kpi-val { font-size: 24px; font-weight: 700; margin-top: 4px; line-height: 1.2; color: #1F2937; }
+        .det-kpi-sub { font-size: 12px; color: #6B7280; margin-top: 3px;
+                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .det-delta-up { color: #DC2626; }
+        .det-delta-down { color: #059669; }
+        .det-chart-wrap { position: relative; height: 340px; }
+        .det-empty-chart { text-align: center; padding: 40px 0; color: #9CA3AF; font-size: 12px; }
+        .detect-panel canvas { cursor: pointer; }
+
+        /* ── 드릴다운 모달 ─────────────────────────────────── */
+        .det-day-modal .modal-box {
+            max-width: 720px; width: 92%;
+            max-height: 80vh; display: flex; flex-direction: column;
+        }
+        .det-day-modal .modal-msg { margin-bottom: 0; }
+        .det-day-list {
+            overflow-y: auto; flex: 1; min-height: 0;
+            margin: 14px -8px; padding: 0 4px;
+        }
+        .det-day-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 8px; border-bottom: 1px solid #F3F4F6;
+        }
+        .det-day-row:last-child { border-bottom: none; }
+        .det-day-row:hover { background: #F9FAFB; }
+        .det-day-link {
+            color: #2563EB; text-decoration: none; font-weight: 500;
+            font-size: 12px; flex: 1; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .det-day-link:hover { text-decoration: underline; }
+        .det-day-link.deleted { color: #9CA3AF; cursor: default; }
+        .det-day-link.deleted:hover { text-decoration: none; }
+        .det-day-server {
+            font-size: 10px; padding: 2px 7px; border-radius: 10px;
+            background: #EFF6FF; color: #2563EB; font-weight: 600; flex-shrink: 0;
+        }
+        .det-day-server.local { background: #F3F4F6; color: #6B7280; }
+        .det-day-sevs { display: flex; gap: 5px; flex-shrink: 0; flex-wrap: wrap; }
+        .det-day-sev { font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 500; }
+        .dds-critical { background: #FEE2E2; color: #DC2626; }
+        .dds-high     { background: #FFEDD5; color: #EA580C; }
+        .dds-medium   { background: #FEF3C7; color: #92400E; }
+        .dds-low      { background: #D1FAE5; color: #065F46; }
+        .det-day-empty { text-align: center; padding: 32px 12px; color: #9CA3AF; font-size: 13px; }
+
+        @media (max-width: 640px) {
+            .det-chart-wrap { height: 220px; }
+            .detect-panel-hdr { flex-direction: column; align-items: stretch; }
+            .det-controls { flex-direction: column; align-items: stretch; }
+            .det-period-chips, .det-group-toggle { justify-content: center; }
+            .det-kpi { grid-template-columns: 1fr; }
+            .det-day-row { flex-wrap: wrap; }
+        }
     </style>
 </head>
 <body>
@@ -227,9 +331,56 @@
         </div>
     </div>
 
+    <div class="history-grid">
+
+    <!-- Detections 차트 + KPI 패널 (좌측) -->
+    <div class="panel detect-panel">
+        <div class="detect-panel-hdr">
+            <div class="detect-panel-ttl">Detections</div>
+            <div class="det-controls">
+                <div class="det-period-chips" id="detPeriodChips" role="tablist" aria-label="기간 선택">
+                    <button type="button" class="det-period-chip" data-days="7">7d</button>
+                    <button type="button" class="det-period-chip" data-days="14">14d</button>
+                    <button type="button" class="det-period-chip" data-days="30">30d</button>
+                    <button type="button" class="det-period-chip" data-days="90">90d</button>
+                </div>
+                <div class="det-group-toggle" id="detGroupToggle" role="tablist" aria-label="그룹화">
+                    <button type="button" class="det-group-btn" data-group="server">서버별</button>
+                    <button type="button" class="det-group-btn" data-group="severity">심각도</button>
+                </div>
+            </div>
+        </div>
+        <div class="det-kpi" id="detKpiWrap">
+            <div class="det-kpi-card">
+                <div class="det-kpi-lbl" id="detKpiTotalLbl">14d Total</div>
+                <div class="det-kpi-val" id="detKpiTotal" th:text="${detectKpiTotal}">0</div>
+                <div class="det-kpi-sub">의심 누적 건수</div>
+            </div>
+            <div class="det-kpi-card">
+                <div class="det-kpi-lbl">7d vs Prev</div>
+                <div class="det-kpi-val" id="detKpiDelta">—</div>
+                <div class="det-kpi-sub" id="detKpiDeltaSub">- / - 건</div>
+            </div>
+            <div class="det-kpi-card">
+                <div class="det-kpi-lbl">Peak Day</div>
+                <div class="det-kpi-val" id="detKpiPeak" th:text="${detectKpiPeakCount}">0</div>
+                <div class="det-kpi-sub" id="detKpiPeakDay" th:text="${detectKpiPeakDay}">-</div>
+            </div>
+        </div>
+        <div class="det-chart-wrap" id="detChartWrap">
+            <canvas id="detectChart"></canvas>
+        </div>
+        <div class="det-empty-chart" id="detEmptyChart" style="display:none">
+            해당 기간에 탐지된 의심 항목이 없습니다.
+        </div>
+    </div>
+
+    <!-- 검색/툴바 + 테이블 (우측) -->
+    <div class="history-right">
+
     <div class="table-toolbar">
         <input type="text" class="search-bar" id="searchInput"
-               placeholder="Search analysis history..." oninput="onSearchInput()">
+               placeholder="분석명으로 검색…" oninput="onSearchInput()">
         <button type="button" class="select-toggle-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="다중 선택 모드">
             <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
             <span id="selectModeBtnLabel">선택</span>
@@ -253,15 +404,15 @@
         <div th:if="${#lists.isEmpty(analysisHistory)}" class="empty-msg">
             No analysis history yet.
         </div>
-        <table th:unless="${#lists.isEmpty(analysisHistory)}" class="htable" id="historyTable">
+        <div class="table-scroll" th:unless="${#lists.isEmpty(analysisHistory)}">
+        <table class="htable" id="historyTable">
             <thead>
                 <tr>
                     <th class="td-check"><input type="checkbox" class="all-check" id="allCheck" onchange="onSelectAll()"></th>
                     <th class="td-seq sortable" data-sort-key="id" data-sort-type="num" onclick="onHeaderSort(this)"># <span class="sort-arrow">▲</span></th>
                     <th class="td-result sortable" data-sort-key="status" data-sort-type="str" onclick="onHeaderSort(this)">결과 <span class="sort-arrow">▲</span></th>
-                    <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="onHeaderSort(this)">파일명 <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="onHeaderSort(this)">분석명 <span class="sort-arrow">▲</span></th>
                     <th class="sortable" data-sort-key="atime" data-sort-type="num" onclick="onHeaderSort(this)">분석 시간 <span class="sort-arrow">▲</span></th>
-                    <th class="col-hide-sm sortable" data-sort-key="heap" data-sort-type="num" onclick="onHeaderSort(this)">힙 사용량 <span class="sort-arrow">▲</span></th>
                     <th class="col-hide-sm sortable" data-sort-key="suspects" data-sort-type="num" onclick="onHeaderSort(this)">Suspects <span class="sort-arrow">▲</span></th>
                     <th class="sortable" data-sort-key="size" data-sort-type="num" onclick="onHeaderSort(this)">파일 크기 <span class="sort-arrow">▲</span></th>
                     <th class="col-hide-sm sortable" data-sort-key="server" data-sort-type="str" onclick="onHeaderSort(this)">서버 <span class="sort-arrow">▲</span></th>
@@ -271,11 +422,12 @@
             </thead>
             <tbody id="historyTableBody">
                 <tr th:each="h : ${analysisHistory}" th:classappend="${h.fileDeleted} ? 'hi-deleted'"
-                    th:data-name="${h.filename}" th:data-deleted="${h.fileDeleted}"
+                    th:data-name="${h.analysisName}"
+                    th:data-filename="${h.filename}"
+                    th:data-deleted="${h.fileDeleted}"
                     th:attr="data-sort-id=${h.id != null ? h.id : 0},
                              data-sort-status=${h.status},
                              data-sort-atime=${h.analysisTime},
-                             data-sort-heap=${h.heapUsedBytes},
                              data-sort-suspects=${h.suspectCount},
                              data-sort-size=${h.sizeBytes},
                              data-sort-server=${h.serverName != null ? h.serverName : ''},
@@ -290,13 +442,14 @@
                     <td>
                         <a th:if="${h.status == 'SUCCESS'}"
                            th:href="@{/analyze/result/{f}(f=${h.filename})}"
-                           class="hi-name hi-name-link" th:text="${h.filename}">dump.hprof</a>
+                           th:title="${h.filename}"
+                           class="hi-name hi-name-link" th:text="${h.analysisName}">[HPROF]local_dump.hprof_20260506</a>
                         <a th:if="${h.status == 'ERROR'}"
                            th:href="@{/analyze/result/{f}(f=${h.filename})}"
-                           class="hi-name hi-name-err" th:text="${h.filename}">dump.hprof</a>
+                           th:title="${h.filename}"
+                           class="hi-name hi-name-err" th:text="${h.analysisName}">[HPROF]local_dump.hprof_20260506</a>
                     </td>
                     <td class="td-meta" th:text="${h.formattedAnalysisTime}">-</td>
-                    <td class="td-meta col-hide-sm" th:text="${h.heapUsed != null ? h.heapUsed : '-'}">-</td>
                     <td class="td-meta col-hide-sm" th:text="${h.suspectCount}">0</td>
                     <td class="td-meta" th:text="${h.formattedSize}">-</td>
                     <td class="td-meta col-hide-sm">
@@ -315,10 +468,26 @@
                 </tr>
             </tbody>
         </table>
+        </div><!-- /.table-scroll -->
         <div class="no-match" id="noMatch">No results matching your search.</div>
         <div class="pagination-bar" id="paginationBar">
             <div class="pg-info" id="pgInfo">-</div>
             <div class="pg-list" id="pgList"></div>
+        </div>
+    </div>
+
+    </div><!-- /.history-right -->
+    </div><!-- /.history-grid -->
+</div>
+
+<!-- Detections 드릴다운 모달 -->
+<div class="modal-ov det-day-modal" id="detDayModal" onclick="if(event.target===this)closeDetDayModal()">
+    <div class="modal-box">
+        <div class="modal-ttl"><span id="detDayModalDate">-</span>의 탐지 결과</div>
+        <div class="modal-msg" id="detDayModalSummary">로딩 중…</div>
+        <div class="det-day-list" id="detDayList"></div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="closeDetDayModal()">닫기</button>
         </div>
     </div>
 </div>
@@ -397,6 +566,26 @@
         </div>
     </div>
 </div>
+
+<script th:inline="javascript">
+/*<![CDATA[*/
+var DETECT_INIT = {
+    days:    /*[[${detectInitDays}]]*/ 14,
+    groupBy: /*[[${detectInitGroup}]]*/ 'server',
+    labels:  /*[[${detectLabels}]]*/ [],
+    serverDatasets:   /*[[${detectServerSeries}]]*/ [],
+    severityDatasets: /*[[${detectSeveritySeries}]]*/ [],
+    kpi: {
+        total:     /*[[${detectKpiTotal}]]*/ 0,
+        last7d:    /*[[${detectKpiLast7d}]]*/ 0,
+        prev7d:    /*[[${detectKpiPrev7d}]]*/ 0,
+        delta7d:   /*[[${detectKpiDelta7d}]]*/ null,
+        peakDay:   /*[[${detectKpiPeakDay}]]*/ '-',
+        peakCount: /*[[${detectKpiPeakCount}]]*/ 0
+    }
+};
+/*]]>*/
+</script>
 
 <script>
 var _delFilename = '';
@@ -725,6 +914,291 @@ function renderPagination(total, totalPages, start, end) {
 }
 
 initRows();
+</script>
+
+<script>
+// ── Detections 차트 + 드릴다운 모달 ────────────────────────────
+(function() {
+    var PALETTE = ['#2563EB','#DC2626','#16A34A','#EA580C','#7C3AED','#0891B2',
+                   '#DB2777','#CA8A04','#0F766E','#9333EA','#B45309','#475569'];
+    var OTHERS_COLOR = '#9CA3AF';
+    var SEVERITY_COLORS = {
+        critical: '#DC2626', high: '#EA580C',
+        medium:   '#B45309', low:  '#16A34A'
+    };
+    var detectChart = null;
+    var _currentLabels = [];      // 풀 yyyy-MM-dd (드릴다운 키)
+    var _detDays = 14;
+    var _detGroup = 'server';
+
+    function safeLocal(get) {
+        try { return get(); } catch (e) { return null; }
+    }
+
+    function readPrefs() {
+        var url = new URL(location.href);
+        var qDays = parseInt(url.searchParams.get('days'), 10);
+        var qGroup = url.searchParams.get('groupBy');
+        var lsDays = parseInt(safeLocal(function(){ return localStorage.getItem('historyDetectDays'); }), 10);
+        var lsGroup = safeLocal(function(){ return localStorage.getItem('historyDetectGroup'); });
+
+        _detDays = ([7,14,30,90].indexOf(qDays) !== -1) ? qDays
+                : ([7,14,30,90].indexOf(lsDays) !== -1) ? lsDays : 14;
+        _detGroup = (qGroup === 'server' || qGroup === 'severity') ? qGroup
+                : (lsGroup === 'server' || lsGroup === 'severity') ? lsGroup : 'server';
+    }
+
+    function persistPrefs() {
+        try {
+            localStorage.setItem('historyDetectDays', String(_detDays));
+            localStorage.setItem('historyDetectGroup', _detGroup);
+        } catch (e) { /* private mode */ }
+        try {
+            var url = new URL(location.href);
+            url.searchParams.set('days', String(_detDays));
+            url.searchParams.set('groupBy', _detGroup);
+            history.replaceState({}, '', url.toString());
+        } catch (e) { /* old browser */ }
+    }
+
+    function updateControls() {
+        document.querySelectorAll('#detPeriodChips .det-period-chip').forEach(function(b) {
+            b.classList.toggle('active', parseInt(b.dataset.days, 10) === _detDays);
+        });
+        document.querySelectorAll('#detGroupToggle .det-group-btn').forEach(function(b) {
+            b.classList.toggle('active', b.dataset.group === _detGroup);
+        });
+    }
+
+    function buildDatasets(rawDatasets, groupBy) {
+        return (rawDatasets || []).map(function(s, idx) {
+            var color;
+            if (groupBy === 'severity') {
+                color = SEVERITY_COLORS[s.name] || '#6B7280';
+            } else {
+                color = (s.name === '기타') ? OTHERS_COLOR : PALETTE[idx % PALETTE.length];
+            }
+            return {
+                label: s.name,
+                data: s.counts || [],
+                backgroundColor: color,
+                stack: 's'
+            };
+        });
+    }
+
+    function applyKpi(kpi) {
+        document.getElementById('detKpiTotal').textContent = kpi.total || 0;
+        document.getElementById('detKpiTotalLbl').textContent = _detDays + 'd Total';
+        var deltaEl = document.getElementById('detKpiDelta');
+        deltaEl.classList.remove('det-delta-up', 'det-delta-down');
+        if (kpi.delta7d == null) {
+            deltaEl.textContent = '—';
+        } else if (kpi.delta7d > 0) {
+            deltaEl.textContent = '▲ ' + kpi.delta7d + '%';
+            deltaEl.classList.add('det-delta-up');
+        } else if (kpi.delta7d < 0) {
+            deltaEl.textContent = '▼ ' + (-kpi.delta7d) + '%';
+            deltaEl.classList.add('det-delta-down');
+        } else {
+            deltaEl.textContent = '0%';
+        }
+        document.getElementById('detKpiDeltaSub').textContent =
+            (kpi.last7d || 0) + ' / ' + (kpi.prev7d || 0) + ' 건';
+        document.getElementById('detKpiPeak').textContent = kpi.peakCount || 0;
+        document.getElementById('detKpiPeakDay').textContent = kpi.peakDay || '-';
+    }
+
+    function renderChart(payload) {
+        var labels = payload.labels || [];
+        _currentLabels = labels.slice();
+        var datasets = buildDatasets(payload.datasets, _detGroup);
+
+        applyKpi(payload.kpi || {});
+
+        var hasData = (payload.kpi && payload.kpi.total > 0) && datasets.length > 0;
+        document.getElementById('detEmptyChart').style.display = hasData ? 'none' : 'block';
+        document.getElementById('detChartWrap').style.display  = hasData ? '' : 'none';
+        if (!hasData) {
+            if (detectChart) { detectChart.destroy(); detectChart = null; }
+            return;
+        }
+
+        if (detectChart) detectChart.destroy();
+        var canvas = document.getElementById('detectChart');
+        if (typeof Chart === 'undefined' || !canvas) return;
+
+        detectChart = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: labels.map(function(d){ return (d || '').slice(5); }),
+                datasets: datasets
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                barPercentage: 0.7, categoryPercentage: 0.75,
+                scales: {
+                    x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 }, autoSkip: true, maxTicksLimit: 16 } },
+                    y: { stacked: true, beginAtZero: true, ticks: { precision: 0, font: { size: 10 } } }
+                },
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, padding: 10 } },
+                    tooltip: {
+                        backgroundColor: 'rgba(15,23,42,.92)', padding: 10,
+                        itemSort: function(a, b) { return b.parsed.y - a.parsed.y; },
+                        filter: function(it) { return it.parsed.y > 0; },
+                        callbacks: {
+                            footer: function(items) {
+                                var t = items.reduce(function(s, i){ return s + i.parsed.y; }, 0);
+                                return 'Total: ' + t + ' (클릭 → 상세보기)';
+                            }
+                        }
+                    }
+                },
+                onClick: function(evt, elements) {
+                    if (!elements || elements.length === 0) return;
+                    var idx = elements[0].index;
+                    var fullDate = _currentLabels[idx];
+                    if (fullDate) openDetDayModal(fullDate);
+                },
+                animation: { duration: 500 }
+            }
+        });
+    }
+
+    function fetchDetect() {
+        fetch('/api/history/detections?days=' + _detDays + '&groupBy=' + _detGroup,
+              { credentials: 'same-origin' })
+            .then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function(d) { renderChart(d); })
+            .catch(function(e) { console.error('detect fetch failed', e); });
+    }
+
+    function setDays(days) {
+        if ([7,14,30,90].indexOf(days) === -1 || days === _detDays) return;
+        _detDays = days;
+        persistPrefs();
+        updateControls();
+        fetchDetect();
+    }
+    function setGroup(group) {
+        if ((group !== 'server' && group !== 'severity') || group === _detGroup) return;
+        _detGroup = group;
+        persistPrefs();
+        updateControls();
+        fetchDetect();
+    }
+
+    // ── 드릴다운 모달 ────────────────────────────────────
+    function escapeHtml(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        });
+    }
+
+    function openDetDayModal(date) {
+        document.getElementById('detDayModalDate').textContent = date;
+        document.getElementById('detDayModalSummary').textContent = '로딩 중…';
+        document.getElementById('detDayList').innerHTML = '';
+        document.getElementById('detDayModal').classList.add('open');
+
+        fetch('/api/history/detections/day?date=' + encodeURIComponent(date)
+              + '&groupBy=' + encodeURIComponent(_detGroup),
+              { credentials: 'same-origin' })
+            .then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function(d) { renderDetDayList(d); })
+            .catch(function(e) {
+                document.getElementById('detDayModalSummary').textContent = '로드 실패: ' + e.message;
+            });
+    }
+    window.closeDetDayModal = function() {
+        document.getElementById('detDayModal').classList.remove('open');
+    };
+    // 모달 외부 클릭 핸들러는 inline onclick으로 처리(다른 모달과 동일 패턴).
+    // ESC로 닫기 추가 지원
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            var modal = document.getElementById('detDayModal');
+            if (modal && modal.classList.contains('open')) closeDetDayModal();
+        }
+    });
+
+    function renderDetDayList(d) {
+        var files = d.files || [];
+        var totalCnt = files.reduce(function(s, f) { return s + (f.suspectCount || 0); }, 0);
+        document.getElementById('detDayModalSummary').textContent =
+            files.length + '개 파일 · 총 ' + totalCnt + '건의 의심 항목';
+
+        var list = document.getElementById('detDayList');
+        list.innerHTML = '';
+        if (files.length === 0) {
+            list.innerHTML = '<div class="det-day-empty">해당 일자에 탐지된 항목이 없습니다.</div>';
+            return;
+        }
+        files.forEach(function(f) {
+            var row = document.createElement('div');
+            row.className = 'det-day-row';
+
+            // 분석명: [HPROF]jeusserver1_jeus_admin.hprof_20260506 형식. 서버/날짜 정보 포함되어
+            // 별도 server 배지는 생략. 링크 타겟은 원본 파일명 그대로.
+            var displayName = f.analysisName || f.filename;
+            var nameHtml;
+            if (f.fileDeleted) {
+                nameHtml = '<span class="det-day-link deleted" title="삭제된 파일 — ' + escapeHtml(f.filename) + '">'
+                         + escapeHtml(displayName)
+                         + ' <span class="hi-badge hb-del">deleted</span></span>';
+            } else {
+                nameHtml = '<a class="det-day-link" href="/analyze/result/'
+                         + encodeURIComponent(f.filename) + '"'
+                         + ' title="' + escapeHtml(f.filename) + '">'
+                         + escapeHtml(displayName) + '</a>';
+            }
+
+            var sevs = '<div class="det-day-sevs">';
+            if (f.criticalCount > 0) sevs += '<span class="det-day-sev dds-critical">critical x' + f.criticalCount + '</span>';
+            if (f.highCount > 0)     sevs += '<span class="det-day-sev dds-high">high x' + f.highCount + '</span>';
+            if (f.mediumCount > 0)   sevs += '<span class="det-day-sev dds-medium">medium x' + f.mediumCount + '</span>';
+            if (f.lowCount > 0)      sevs += '<span class="det-day-sev dds-low">low x' + f.lowCount + '</span>';
+            sevs += '</div>';
+
+            row.innerHTML = nameHtml + sevs;
+            list.appendChild(row);
+        });
+    }
+
+    // ── 컨트롤 바인딩 ─────────────────────────────────────
+    document.querySelectorAll('#detPeriodChips .det-period-chip').forEach(function(b) {
+        b.addEventListener('click', function() {
+            setDays(parseInt(this.dataset.days, 10));
+        });
+    });
+    document.querySelectorAll('#detGroupToggle .det-group-btn').forEach(function(b) {
+        b.addEventListener('click', function() {
+            setGroup(this.dataset.group);
+        });
+    });
+
+    // ── 초기 렌더 ─────────────────────────────────────────
+    readPrefs();
+    updateControls();
+    if (_detDays === DETECT_INIT.days && _detGroup === DETECT_INIT.groupBy) {
+        // SSR 초기값 그대로 사용
+        renderChart({
+            labels: DETECT_INIT.labels,
+            datasets: _detGroup === 'server' ? DETECT_INIT.serverDatasets : DETECT_INIT.severityDatasets,
+            kpi: DETECT_INIT.kpi
+        });
+    } else {
+        // 기본값과 prefs 다름 → fetch
+        fetchDetect();
+    }
+})();
 </script>
 
 </body>

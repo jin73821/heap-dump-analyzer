@@ -24,6 +24,10 @@ public class DumpTransferLog {
     @Column(nullable = false, length = 500)
     private String filename;
 
+    /** 원격 서버의 원본 파일명 — 로컬 rename 전 식별자. scan 시 transferred 판정 키. */
+    @Column(name = "remote_filename", length = 500)
+    private String remoteFilename;
+
     @Column(name = "remote_path", length = 1000)
     private String remotePath;
 

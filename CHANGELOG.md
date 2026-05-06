@@ -1,5 +1,305 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-06] Servers — 다중 덤프 경로(최대 5개) + 상세 페이지 서버명/수정 버튼
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/model/entity/TargetServer.java`
+- `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`
+- `src/main/resources/templates/servers.html`
+- `src/main/resources/templates/server-detail.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 한 서버에서 덤프가 여러 위치(예: `/opt/app/logs`, `/var/log/heap`, JBoss 도메인별 경로 등)에 흩어져 떨어지는 운영 환경 대응. 기존에는 1개 경로만 가능 → 별도 서버를 등록해야 했음.
+- 서버 상세 페이지(`/servers/{id}`)에서 서버 이름이 topbar에만 노출되어 본문 정보 카드만 보고는 어떤 서버인지 식별이 어려웠음. 또한 "수정"이 목록 페이지에서만 가능해 상세 → 목록 왕복이 필요했음.
+
+### 내역
+
+**Backend**
+- `TargetServer`
+  - `dump_path` 컬럼 길이 `500 → 2500` (5개 × 평균 500자 여유). JPA `ddl-auto=update`로 자동 alter.
+  - `MAX_DUMP_PATHS = 5` 상수.
+  - `@Transient List<String> getDumpPaths()` 헬퍼: 줄바꿈 분리 → trim → 빈 라인 제거 → 중복 제거 → 최대 5개. UI/서비스 공용.
+- `RemoteDumpService.scanRemoteDumpsWithStatus`
+  - 다중 경로 순회. 경로별 결과 합산 + 중복 path 제거(다중 경로 겹침 대비).
+  - 부분 실패 처리: 하나라도 성공하면 서버 상태 OK + `pathErrors` 배열에 실패 경로 기록. 전체 실패 시 첫 번째 fatal error를 대표로 노출.
+  - `scanSinglePath()` private 메서드로 단일 경로 스캔 로직 분리. 파일 객체에 `sourceDumpPath` 필드 추가(어느 경로에서 왔는지 그룹핑용).
+
+**Frontend (servers.html)**
+- 모달: 단일 input → 동적 경로 입력 리스트(`+ 경로 추가` 버튼, 최대 5개 도달 시 버튼 숨김, `−` 버튼으로 행 제거).
+- 저장 시 input 값들을 `\n`으로 join하여 `dumpPath`에 전송. 빈/중복 경로는 자동 제거.
+- 목록 테이블 셀: 첫 경로만 노출 + `+N` 배지(추가 경로 개수). `title=` 전체 경로 툴팁.
+- 스캔 결과 패널: 다중 경로일 때 source 경로별 그룹 헤더 표시. `pathErrors` 있으면 노란 배너로 일부 경로 실패 안내.
+
+**Frontend (server-detail.html)**
+- 정보 카드 첫 번째 항목으로 `서버 이름` 추가(굵게).
+- 덤프 경로 항목은 라벨에 개수(`덤프 경로 (3개)`) + 경로 1줄씩 나열.
+- `info-actions`에 `수정` 버튼 추가. 동일 모달 구조를 페이지 내에 재구현(servers.html과 동기화 유지 필요 — 두 곳 다 같은 JS 함수명 사용).
+
+### 검증
+- `mvn clean package -DskipTests` 11.2초 빌드 성공, `restart.sh` 후 9.3초 기동 — DB 스키마 자동 alter(컬럼 확장).
+- 기존 단일 경로 데이터 호환: split이 1개 원소 리스트 반환 → 표시/스캔 모두 그대로 동작.
+
+### 함정 / 주의
+- `th:data-dumppath`로 newline 포함 문자열을 attribute에 실어보냄. HTML5 attribute value는 `&#10;` 인코딩으로 newline 보존되며 `dataset.dumppath`로 raw string 복원됨. 만약 일부 브라우저/Thymeleaf 버전에서 정규화 이슈가 발견되면 base64 인코딩으로 전환 검토.
+- 모달 JS(`setDumpPaths`/`collectDumpPaths` 등)는 servers.html과 server-detail.html 두 곳에 중복. 한쪽 수정 시 다른쪽도 동시 수정 필요.
+- `sourceDumpPath` 필드는 신규 응답에만 존재 — 기존 자동 탐지 코드(`autoDetectAndTransfer`)는 path만 사용하므로 영향 없음.
+
+## [2026-05-06] History 페이지 — "힙 사용량" 칼럼 제거
+
+**변경 파일:** `src/main/resources/templates/history.html`, `CHANGELOG.md`
+
+### 변경 의도
+분석 결과 페이지에 들어가면 더 상세한 힙 정보가 제공되므로 History 테이블에서는 우선순위가 낮음. 칼럼 1개 줄여 가로 밀도 완화.
+
+### 내역
+- 헤더 `<th data-sort-key="heap">힙 사용량</th>` 제거.
+- 셀 `<td class="td-meta col-hide-sm" th:text="...heapUsed...">` 제거.
+- 행 속성 `data-sort-heap` 제거(정렬 키 자체 사용 X).
+- 백엔드 `AnalysisHistoryItem.heapUsed`/`heapUsedBytes` 필드는 그대로(다른 페이지/JSON export 사용).
+
+## [2026-05-06] History 페이지 — Detections 패널 확대 + 페이지 폭 추가 확장
+
+**변경 파일:** `src/main/resources/templates/history.html`, `CHANGELOG.md`
+
+### 변경 의도
+좌측 차트 영역이 ~420px로는 KPI 카드와 차트 라벨이 빡빡하게 들어가서 가독성이 떨어짐. 페이지 폭을 추가로 키우고 좌측 차트 영역을 더 넓혀 KPI/차트 모두 여유있게 표시.
+
+### 내역
+- `.container { max-width: 1600px → 1800px }` — 추가 가용폭 확보.
+- `.history-grid grid-template-columns: minmax(360px, 420px) → minmax(460px, 560px)` — 좌측 차트 폭을 ~140px 더 넓힘. gap 18 → 20.
+- `.det-chart-wrap { height: 260px → 340px }` — 차트 세로 80px 증가 → 일자별 막대 분포가 더 잘 보임.
+- KPI 카드 보강: padding 12 14 → 14 16, val font-size 20 → 24, lbl 10 → 11, sub 11 → 12. gap 10 → 12, margin-bottom 14 → 16.
+- 모바일 `@media (max-width: 640px) { .det-chart-wrap { height: 220px } }`은 그대로 유지(좁은 화면에서는 컴팩트).
+
+### 검증
+- 1800px 이상 모니터: 좌측 차트 ~560px, 우측 테이블 ~1180px(배너 닫힘).
+- 1600~1800px: 좌측 460~560px, 우측 충분.
+- ≤1024px: 1열 stacking + 모바일 반응형 그대로.
+
+## [2026-05-06] History 페이지 — 컨테이너 폭 확장 + 테이블 가로 스크롤
+
+**변경 파일:** `src/main/resources/templates/history.html`, `CHANGELOG.md`
+
+### 변경 의도
+2단 레이아웃 적용 후 우측 테이블 영역이 좁아져 분석명/서버명/날짜 등 칼럼이 잘려 보임. 페이지 max-width를 늘려 와이드 모니터에서 정보 밀도를 높이고, 우측이 좁을 때도 테이블이 가로 스크롤되어 모든 칼럼을 확인할 수 있도록 보장.
+
+### 내역
+- `.container { max-width: 1280px → 1600px }` — 와이드 모니터에서 가용폭 활용. 배너 펼친 상태(220px) 가용 컨텐츠 폭 ~1340px, 닫힘 상태 ~1516px.
+- 신규 `.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch }` wrapper — 테이블만 가로 스크롤, panel 자체 둥근 모서리/`overflow: hidden`은 유지. webkit 스크롤바 8px 슬림 스타일 추가.
+- `.htable { min-width: 960px }` — 데스크탑에서도 우측 컬럼이 좁아지면 가로 스크롤 트리거. 모바일(`@media max-width:640px`)의 `min-width: 600px`은 그대로(col-hide-sm로 일부 컬럼 숨겨진 후 적용).
+- HTML: `<table>`을 `<div class="table-scroll">…</div>` wrapper로 감쌌음. `th:unless` 조건은 wrapper로 이동(빈 결과 시 표 자체 미렌더). `.no-match` / `.pagination-bar`는 wrapper 밖에 두어 스크롤되지 않게 유지.
+
+### 검증
+- 1600px 이상 모니터: 우측 테이블에 모든 칼럼 자연스럽게 노출.
+- 1024~1280px: 우측 폭이 부족할 때 테이블이 가로 스크롤(스크롤바 노출).
+- ≤1024px: grid 1열 stacking + 동일하게 가로 스크롤.
+- div 태그 균형 + 빌드 통과.
+
+## [2026-05-06] History 페이지 — 차트 좌 / 테이블 우 2단 레이아웃
+
+**변경 파일:** `src/main/resources/templates/history.html`, `CHANGELOG.md`
+
+### 변경 의도
+세로 스택(차트 위 / 테이블 아래) 배치는 와이드 모니터에서 차트 영역 아래 큰 빈 공간이 생기고, 차트와 테이블을 동시에 볼 수 없어 좌우 비교가 불가능. 좌측 차트 / 우측 테이블 2단으로 재배치하면 한 화면에서 추세와 상세를 동시 확인 가능하고 가독성이 개선됨.
+
+### 내역
+- `.history-grid` CSS — `display: grid; grid-template-columns: minmax(360px, 420px) 1fr; gap: 18px; align-items: start;` 좌측 chart 폭 고정 범위, 우측은 나머지 폭 차지.
+- `.history-right` — 우측 컬럼은 flex column으로 toolbar + 테이블 패널을 16px gap으로 묶음. `min-width: 0`으로 grid item shrink 시 테이블 가로 스크롤 정상 동작 보장.
+- `.history-grid .detect-panel { margin-bottom: 0 }` — grid 안에서는 panel 자체 margin 제거(grid gap이 대신).
+- 반응형 `@media (max-width: 1024px)` — 1열 stack(기존 동작과 동일).
+- HTML 구조: `page-hdr` 다음에 `.history-grid` wrapper. detect-panel을 첫 grid item으로, table-toolbar + table panel을 `.history-right` wrapper로 묶어 두 번째 grid item으로 배치.
+
+### 검증
+- 1280px 폭: 좌측 차트 ~420px, 우측 테이블 ~800px → KPI 3카드/차트/테이블 모두 안정적 표시.
+- 1024px 이하: 1열 stacking으로 모바일 호환.
+- div 태그 균형(opens == closes) 확인 후 빌드.
+
+## [2026-05-06] History 테이블 — 분석명 표시 + Local 시리즈 라벨 통일
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`, `src/main/resources/templates/history.html`, `CHANGELOG.md`
+
+### 변경 의도
+앞 단계에서 드릴다운 모달에는 분석명(`[HPROF]server_filename_yyyyMMdd`)을 도입했지만 History 테이블에는 여전히 원본 파일명만 노출되어 두 화면의 식별 단위가 어긋남. 차트의 로컬 업로드 시리즈도 `(직접 업로드)` 라벨이라 분석명의 `local_` prefix와 시각적으로 일치하지 않아 사용자가 "로컬 파일이 차트에 포함되지 않는다"고 인식하는 부조화가 발생.
+
+### 내역
+- **`AnalysisHistoryItem`** — `analysisName` 필드 + getter/setter 추가. `buildHistory()` 끝부분에서 모든 history 항목에 대해 `buildAnalysisName(filename, serverName, ts)` 일괄 적용. 기준 시각은 `analyzedAtEpoch > 0`이면 분석시각, 아니면 `lastModified` 폴백 → DB-based / file fallback / cache fallback 3개 분기 모두 자동 커버.
+- **`aggregateDetections`** — 차트 시리즈 라벨 `UNKNOWN_SERVER`를 `"(직접 업로드)"` → `"Local"`로 변경. 분석명 helper의 server 부분(`local_`)과 시각적 일관성. 기존 차트 데이터 의미는 동일(serverName이 null/blank인 항목 집계).
+- **`history.html`**
+  - 테이블 헤더 `파일명` → `분석명`. 셀 텍스트 `${h.filename}` → `${h.analysisName}`. 정렬/검색 키(`data-name`)도 분석명 기준 → 사용자가 분석명 일부(예: `jeusserver1`, `20260502`)로 검색 가능.
+  - 검색 placeholder `"Search analysis history..."` → `"분석명으로 검색…"`.
+  - 행에 `data-filename` 속성 추가(원본 파일명 보존). `<a th:title>`에 원본 파일명 → hover 시 확인 가능. 링크 타겟(`/analyze/result/{filename}`)은 그대로 원본 파일명.
+  - `.hi-name` 스타일 보강: `max-width: 300px → 480px`, `font-family: monospace`, `font-size: 12px` — 분석명 가독성 + 잘림 방지.
+
+### 검증
+- BUILD SUCCESS, app `Started` ~10s.
+- 회귀: `/api/history`(JSON export), `/api/history/bulk-delete`, `/history/delete/{filename}` 모두 `data-filename`/`row-check value` 사용 → 정상 동작.
+- 차트 30d 응답에서 시리즈 이름 `Local` 노출 확인. KPI total 동일(라벨만 변경).
+- 테이블에서 분석명 표시 + 검색 시 분석명 부분 매칭 동작.
+
+## [2026-05-06] History 페이지 — Detections 드릴다운 모달에 "분석명" 표시
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`, `src/main/resources/templates/history.html`, `CHANGELOG.md`
+
+### 변경 의도
+드릴다운 모달의 파일명 + 서버 배지 조합은 정보량이 부족하고 분리되어 있어 한눈에 파악이 어려움. 분석을 식별할 수 있는 표준 분석명(`[HPROF]jeusserver1_jeus_admin.hprof_20260506`) 한 줄로 통합하면 확장자/서버/대상파일/분석일자가 동시에 보여 식별·검색 모두 용이.
+
+### 내역
+- **백엔드 helper `buildAnalysisName(filename, serverName, analyzedAtEpoch)`** — 형식: `[{EXT}]{server_lower|"local"}_{filename}_{yyyyMMdd}`. `.gz` 접미사는 벗기고 안쪽 확장자 사용(`.hprof.gz` → `[HPROF]`). 확장자 없거나 인식 불가 시 `[DUMP]`. 서버 없으면 `local`. 분석 시각 epoch가 0이면 today 폴백.
+- **`DetectionDayFile`** — `analysisName` 필드 + getter/setter 추가. 기존 `filename`/`serverName`은 호환 유지(링크 타겟 등에 사용).
+- **`/api/history/detections/day`** — `buildAnalysisName(...)` 호출하여 응답에 `analysisName` 필드 포함.
+- **`history.html` 드릴다운 모달**
+  - 파일명 텍스트 → `f.analysisName` 표시(`f.filename`로 폴백). 링크 타겟(`/analyze/result/{filename}`)과 `title=` 속성은 원본 파일명 그대로 → hover 시 원본 파일명 확인 가능.
+  - 별도 서버 배지(`.det-day-server`) 제거 — 분석명에 이미 서버명 포함되어 중복.
+  - `fileDeleted=true` 케이스도 분석명 표시 + `deleted` 배지 + title에 원본 파일명.
+
+### 검증
+- BUILD SUCCESS, app `Started` ~10s.
+- API: `GET /api/history/detections/day?date=YYYY-MM-DD` 응답 각 file에 `analysisName` 필드 포함 확인.
+- UI: 막대 클릭 → 모달 → 분석명 한 줄 표시(서버 배지 사라짐) → hover 시 원본 파일명 → 클릭 시 `/analyze/result/{filename}` 진입.
+- 엣지: `.gz`, 서버 없는 Local 업로드, 확장자 없는 파일 모두 폴백 작동 확인.
+
+## [2026-05-06] History 페이지 — Detections 그래프 + 드릴다운 모달 추가
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`, `src/main/resources/templates/history.html`, `CHANGELOG.md`
+
+### 변경 의도
+대시보드의 "Detections 최근 14일" 차트는 14일 / 서버별 stacked만 보여줘서, 더 긴 기간이나 심각도 단위 추세 확인, 특정 일자에 어떤 파일들이 잡혔는지 확인하려면 매번 History 표를 수동 검색해야 했다. History 페이지에서 차트(7/14/30/90d, 서버별/심각도별 토글) + 막대 클릭 → 일자별 파일 모달 → 분석 결과 페이지 직링크 흐름 제공.
+
+### 내역
+- **백엔드 helper `aggregateDetections(history, days, topN)` 추출** — 기존 `dashboard()` 인라인 로직(line 130~255)을 일반화. `int[14]` → `int[days]`. 서버 시리즈 + 심각도 시리즈 + 파일별 breakdown + KPI(total/last7d/prev7d/delta7d/peak)를 한 번의 순회로 산출. `dashboard()` / `historyPage()` / 신규 API 모두 공유.
+- **신규 inner DTO** — `DetectionAggregate`(labels, serverSeries, severitySeries, dailyDetections, detectionItems, KPI 필드), `DetectionDayFile`(filename, serverName, severity counts, fileDeleted, analyzedAtEpoch).
+- **신규 API 2개**:
+  - `GET /api/history/detections?days=7|14|30|90&groupBy=server|severity` — 차트 데이터 + KPI. 잘못된 days/groupBy는 14/server로 폴백.
+  - `GET /api/history/detections/day?date=YYYY-MM-DD&groupBy=...` — 해당 일자 파일 리스트(critical desc → high desc → suspectCount desc 정렬). 잘못된 date 시 400.
+  - 비관리자에게 `fileDeleted=true` 항목 제외(서버측 보안). CSRF는 GET이라 면제.
+- **`historyPage()`** — `aggregateDetections(_, 14, 12)` 결과를 SSR로 모델 주입(detectInitDays/Group, detectLabels, detectServerSeries/SeveritySeries, KPI 6개) → 첫 페인트 깜빡임 방지.
+- **`dashboard()` 리팩토링** — 기존 detection 집계 블록을 helper 호출로 교체. 모델 키(dailyDetections/serverSeries/kpiTotal14d 등)는 그대로 유지하여 `index.html` 회귀 없음.
+- **`history.html`**
+  - `<head>`에 Chart.js v4 CDN 추가.
+  - 헤더와 toolbar 사이 신규 `.detect-panel` — 기간 칩(7d/14d/30d/90d) + 그룹 토글(서버별/심각도) + KPI 3카드 + `<canvas id="detectChart">`.
+  - 인라인 CSS 추가(`.det-kpi*`, `.det-chart-wrap`, `.det-period-chip(.active)`, `.det-group-btn(.active)`, `.det-day-modal`, `.dds-critical/high/medium/low`, 모바일 반응형).
+  - 신규 `#detDayModal` 드릴다운 모달 — 파일별 row[파일명 링크 → `/analyze/result/{filename}`] + 서버 배지(없으면 회색 "Local") + 심각도 배지(0건 제외). `fileDeleted=true` 시 비링크. ESC 닫기 + 외부 클릭 닫기.
+  - JS: `readPrefs()` URL `?days`/`?groupBy` > localStorage(`historyDetectDays`/`historyDetectGroup`) > 기본 14d/server. `persistPrefs()`로 `history.replaceState` 동기화. Chart.js `onClick` → `openDetDayModal`. SSR 초기값과 prefs 일치 시 fetch 생략.
+- **색상**: server 12색 팔레트 + "기타" `#9CA3AF` / severity `{critical:#DC2626, high:#EA580C, medium:#B45309, low:#16A34A}`.
+
+### 검증
+- BUILD SUCCESS, app `Started` ~10s.
+- API 단위: `?days=14&groupBy=server` → kpi/datasets 정상, `?days=7&groupBy=severity` → 4개 severity datasets, `?days=99` → days=14 폴백, `/day?date=bad` → 400.
+- UI: 14d/server 초기 노출 → 7d 칩 클릭 시 차트 축소 + URL `?days=7&groupBy=server` → F5 시 상태 복원 → 심각도 토글 시 4색 segments → 막대 클릭 시 모달 → 파일 클릭 시 `/analyze/result` 진입 → 비관리자 로그인 시 deleted 항목 차트/모달 양쪽 제외.
+- 회귀: 대시보드 Detections 패널 변경 없음(helper 리팩토링 호환성 유지).
+
+## [2026-05-06] 업로드 클라이언트 — XHR이 redirect를 success로 오인하던 버그 수정
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`, `src/main/resources/templates/index.html`, `CHANGELOG.md`
+
+### 변경 의도
+앞 단계 동일 파일명 차단 정책 적용 후에도 동일 파일 재업로드 시 UI에 "✅ 완료"로 표시되는 결함 보고. 원인:
+- 서버 `/upload`는 차단 시 `redirect:/`(302) + flash `error` 메시지 반환.
+- 클라이언트 XHR은 302를 따라 GET `/`로 이동(200)하고, `xhr.status === 200`만 보고 `item.status='done'`로 마킹.
+- 결과: 서버에선 정상 차단되지만 사용자 화면엔 성공으로 보임.
+
+### 내역
+- **신규 `/api/upload` JSON 엔드포인트** — 성공: `200 + {status:"ok", filename, size}`. 실패: `400/500 + {status:"error", message}`. CSRF 면제(/api/**). 기존 `/upload`(form fallback, redirect+flash)는 호환성 위해 유지.
+- **`index.html` XHR 핸들러** — `xhr.open('POST','/api/upload')`로 변경. `load` 이벤트에서 `xhr.status` 검사 → 2xx만 done, 그 외는 error. `responseText`를 JSON 파싱해 `item._error` 저장.
+- **렌더** — `q.status==='error'` 시 라벨을 `'실패'` → `q._error || '실패'`로 변경 → 차단 사유("동일한 이름의 파일이 이미 존재합니다…")가 큐 항목 옆에 그대로 노출.
+
+### 검증
+- BUILD SUCCESS, app `Started` 9.8s.
+- 재현(curl): `POST /api/upload` 동일 파일 → `HTTP=400`, `{"status":"error","message":"동일한 이름의 파일이 이미 존재합니다…"}`. 디스크의 기존 파일 timestamp 미변경(덮어쓰기 안 됨).
+- 브라우저 큐 UI에선 ❌ 아이콘 + 에러 메시지가 그대로 노출됨.
+
+## [2026-05-06] 업로드 버튼 — 동일 파일명 차단 정책 적용
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`, `src/main/resources/templates/index.html`, `CHANGELOG.md`
+
+### 변경 의도
+업로드 버튼으로는 같은 이름의 파일을 덮어쓰거나 자동 rename 추가할 수 없도록 정책 변경. 이전에는 `DUPLICATE_NAME` 시 클라이언트 모달에 [이름 변경] / [덮어쓰기] / [건너뛰기]를 제공했는데, 정책상 동일 이름 업로드는 모두 차단한다. 사용자에게 파일명 변경 후 재시도를 안내.
+
+(Servers scan 경로 — 원격 자동 전송 시 자동 rename은 그대로 유지. 본 정책은 업로드 버튼 한정.)
+
+### 내역
+- **`HeapDumpAnalyzerService.uploadFile()`** — 서버측 안전망: `dumpfiles/{filename}` 또는 `dumpfiles/{filename}.gz` 존재 시 `IllegalArgumentException`("동일한 이름의 파일이 이미 존재합니다") 즉시 throw. `Files.copy`의 `REPLACE_EXISTING` 옵션 제거(중복 시 명시적 차단 의도가 더 분명).
+- **`index.html`**
+  - `startDuplicateChecks()`에서 `DUPLICATE_NAME` 응답 시 신규 `showQueueDupNameBlockedModal()` 호출.
+  - 신규 차단형 모달 — 빨간 X 아이콘, "업로드 차단" 헤더, 단일 [확인] 버튼. 모달 표시 직후 `item.status = 'skipped'`로 마킹 → 큐에서 본 파일은 업로드되지 않고 다음 항목으로 진행.
+  - 기존 `showQueueDupNameModal()`(이름 변경/덮어쓰기/건너뛰기 3옵션) 함수 제거.
+- 서버 `checkDuplicate()` 응답은 변동 없음(`DUPLICATE_NAME` + `suggestedName` 그대로 반환). 클라이언트에서 무시되어 `suggestedName` 필드는 향후 폐기 가능 — 본 PR에선 호환성 위해 유지.
+
+### 검증
+- BUILD SUCCESS, app `Started HeapAnalyzerApplication` 9.8s.
+- 시나리오: 같은 이름의 파일 업로드 시도 → 차단 모달 표시 → [확인] → 큐 다음 항목으로 진행, 본 파일은 업로드되지 않음.
+- 클라이언트 우회 (curl 등) 시도해도 서버측에서 `IllegalArgumentException`으로 거부 → 사용자 메시지 노출.
+
+## [2026-05-06] Servers scan transferred 판정 정확화 — (서버, 원격 원본명, 크기) 키
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/model/entity/DumpTransferLog.java`, `src/main/java/com/heapdump/analyzer/repository/DumpTransferLogRepository.java`, `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`, `CHANGELOG.md`
+
+### 변경 의도
+이름이 같아도 서버가 다르거나 크기가 다르면 별개의 파일로 인식해야 하는데, 기존 scan 판정은 `localExists(filename)` + `(serverId, filename) DB 매치`로만 결정됐다. transfer 시 자동 rename(`_2`)으로 DB의 `filename`은 로컬 저장명이 들어가, scan에서 들어오는 원격 원본명과 미스매치 → 같은 파일을 매번 "전송 안 됨"으로 잘못 판정 → 재전송 시 `_3`, `_4`로 무한 누적되는 결함.
+
+수동 업로드(`/api/upload`)는 정책 그대로(서버 컨텍스트 없음) — 본 변경은 Servers scan 경로만 영향.
+
+### 내역
+- **`DumpTransferLog`** — `remote_filename` 컬럼 신규 (`varchar(500)`, nullable). ddl-auto=update이라 자동 반영.
+- **`DumpTransferLogRepository`** — 신규 메서드:
+  - `existsByServerIdAndRemoteFilenameAndFileSizeAndTransferStatus(...)` — transferred 판정.
+  - `findFirstByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(...)` — analyzed 판정용 로컬 저장명 lookup.
+  - `@Modifying @Query backfillRemoteFilenameFromLocal()` — 레거시 row 보정 (`UPDATE ... SET remote_filename = filename WHERE remote_filename IS NULL`).
+- **`RemoteDumpService.transferFile()`** — 진입 즉시 원격 원본명을 캡처해 `log.setRemoteFilename(remoteFilename)`. rename은 `filename`(로컬 저장명)에만 반영, 원본명은 불변.
+- **`RemoteDumpService.scanRemoteDumpsWithStatus()`** — transferred 판정을 `(serverId, remoteFilename, fileSize, SUCCESS)` 매치로 교체. analyzed는 매치된 로그의 `filename`(로컬명)으로 `analysisHistoryRepository.existsByFilename` 호출. localExists 의존 제거.
+- **`RemoteDumpService.@PostConstruct backfillRemoteFilenames()`** — 부팅 시 1회 backfill 실행. 실패 시 경고만 출력하고 진행(부팅 차단 안 함).
+
+### 검증
+- BUILD SUCCESS, app `Started HeapAnalyzerApplication` 9.7s.
+- 부팅 로그: `[RemoteDump] Backfilled remote_filename for 12 legacy transfer log row(s)` 확인.
+- DB 스키마: `remote_filename varchar(500) YES` 컬럼 추가 확인.
+- 데이터 보정: 12 / 0 NULL / 12 backfilled — 모든 기존 row 정상 채움.
+
+## [2026-05-06] Files 페이지 — 서버 컬럼 추가 (history.html과 동일 패턴)
+
+**변경 파일:** `src/main/resources/templates/files.html`, `CHANGELOG.md`
+
+### 변경 의도
+업로드 출처(어느 서버에서 수집된 dump인지)를 Files 목록에서 직접 식별 가능해야 함. History 페이지에는 이미 `서버` 컬럼이 있어 같은 패턴 차용.
+
+### 내역
+- `<th>` "서버" 컬럼을 AI 인사이트와 날짜 사이에 추가 (`col-hide-sm sortable` data-sort-key="server").
+- `<tr>`의 `data-sort-server` 속성 추가.
+- `<td>`에 history.html과 동일한 배지 스타일(`#EFF6FF`/`#2563EB`) — serverName 있으면 배지, 없으면 회색 "Local".
+- 모바일 ≤640px 미디어 쿼리에 `.ftable .col-hide-sm { display: none }` 규칙 추가(.htable처럼).
+
+### 검증
+- BUILD SUCCESS, app `Started HeapAnalyzerApplication` 확인.
+- 정렬: 서버명 헤더 클릭 시 알파벳/한글 사전순 동작(localeCompare 기준).
+
+## [2026-05-06] Dashboard Detections 차트 — 막대 두께 축소
+
+**변경 파일:** `src/main/resources/templates/index.html`, `CHANGELOG.md`
+
+### 내역
+Chart.js options에 `barPercentage: 0.6`, `categoryPercentage: 0.7` 추가 — 카테고리 폭의 약 42%로 좁아짐(기본 ~72% 대비 약 60% 수준).
+
+## [2026-05-06] Dashboard Detections 차트 — 범주를 severity → 서버명으로 변경
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`, `src/main/resources/templates/index.html`, `CHANGELOG.md`
+
+### 변경 의도
+일자별 탐지건수 차트의 stacked bar 범주를 **탐지위험도(critical/high/medium/low)** 에서 **서버명**으로 변경. "어느 서버에서 언제 누수 의심이 몇 건 탐지됐는지"를 한 화면에서 추적 가능하도록.
+
+### 내역
+- **HeapDumpController.index()** — 일자 버킷을 `int[5]`(severity 카운트)에서 `Map<LocalDate, Map<String, Integer>>`(서버별 카운트)로 교체. 14일 누적 서버 순위(`serverTotals`) 기반 상위 12개 + "기타" 그룹화. 서버명 누락(직접 업로드)은 `(직접 업로드)`로 표기. 새 모델 attribute `serverSeries` (`List<ServerSeries>` — name + counts[14]). KPI(14d/7d/Peak)는 dayTotal 기준 그대로 유지.
+- **DailyDetection** DTO 단순화 — date/total만 남기고 critical/high/medium/low 필드 제거.
+- **ServerSeries** inner DTO 신규(name/counts).
+- **index.html**
+  - 패널 헤더 `Detections · 최근 14일 · 서버별`.
+  - 인라인 직렬화에 `SERVER_SERIES` 추가, 차트 datasets를 12색 팔레트(+"기타" 회색)로 매핑.
+  - tooltip — 0인 시리즈 숨김(`filter`) + 값 내림차순 정렬(`itemSort`).
+
+### 검증
+- `mvn clean package -DskipTests` BUILD SUCCESS, app `Started HeapAnalyzerApplication` 확인.
+- 0건/1서버/다중서버/13서버 초과 케이스에서 시리즈 구성 정상.
+
 ## [2026-05-06] Dashboard 고도화 — Analysis Files → 일자별 탐지건수 차트
 
 **변경 파일:** `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`, `src/main/resources/templates/index.html`, `CHANGELOG.md`

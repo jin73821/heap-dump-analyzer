@@ -126,89 +126,24 @@ public class HeapDumpController {
                 .collect(Collectors.toSet());
         model.addAttribute("errorFiles", errorFiles);
 
-        // 탐지 현황 (심각도별 집계) + 일자별 누적 (최근 14일)
-        int criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
-        List<DetectionSummaryItem> detectionItems = new ArrayList<>();
-        java.time.LocalDate today = java.time.LocalDate.now();
-        java.time.LocalDate from = today.minusDays(13);
-        Map<java.time.LocalDate, int[]> dailyBuckets = new HashMap<>();
-        for (AnalysisHistoryItem h : history) {
-            if (!"SUCCESS".equals(h.getStatus()) || h.getSuspectCount() == 0) continue;
-            HeapAnalysisResult r = analyzerService.getCachedResult(h.getFilename());
-            if (r == null || r.getLeakSuspects() == null) continue;
-            int fc = 0, fh = 0, fm = 0, fl = 0;
-            for (LeakSuspect s : r.getLeakSuspects()) {
-                String sev = s.getSeverity() != null ? s.getSeverity().toLowerCase() : "medium";
-                switch (sev) {
-                    case "critical": fc++; criticalCount++; break;
-                    case "high":     fh++; highCount++; break;
-                    case "low":      fl++; lowCount++; break;
-                    default:         fm++; mediumCount++; break;
-                }
-            }
-            DetectionSummaryItem di = new DetectionSummaryItem();
-            di.setFilename(h.getFilename());
-            di.setSuspectCount(h.getSuspectCount());
-            di.setCriticalCount(fc);
-            di.setHighCount(fh);
-            di.setMediumCount(fm);
-            di.setLowCount(fl);
-            di.setFileDeleted(h.isFileDeleted());
-            detectionItems.add(di);
+        // 탐지 현황 (심각도별 집계) + 일자별·서버별 누적 (최근 14일) — helper에 위임
+        DetectionAggregate agg = aggregateDetections(history, 14, 12);
+        model.addAttribute("criticalCount", agg.getCriticalCount());
+        model.addAttribute("highCount", agg.getHighCount());
+        model.addAttribute("mediumCount", agg.getMediumCount());
+        model.addAttribute("lowCount", agg.getLowCount());
+        model.addAttribute("detectionItems", agg.getDetectionItems());
+        model.addAttribute("hasDetections",
+            agg.getCriticalCount() + agg.getHighCount() + agg.getMediumCount() + agg.getLowCount() > 0);
 
-            if (h.getAnalyzedAtEpoch() > 0) {
-                java.time.LocalDate day = java.time.Instant.ofEpochMilli(h.getAnalyzedAtEpoch())
-                        .atZone(java.time.ZoneId.systemDefault()).toLocalDate();
-                if (!day.isBefore(from) && !day.isAfter(today)) {
-                    int[] b = dailyBuckets.computeIfAbsent(day, k -> new int[5]);
-                    b[0] += (fc + fh + fm + fl);
-                    b[1] += fc; b[2] += fh; b[3] += fm; b[4] += fl;
-                }
-            }
-        }
-        model.addAttribute("criticalCount", criticalCount);
-        model.addAttribute("highCount", highCount);
-        model.addAttribute("mediumCount", mediumCount);
-        model.addAttribute("lowCount", lowCount);
-        model.addAttribute("detectionItems", detectionItems);
-        model.addAttribute("hasDetections", criticalCount + highCount + mediumCount + lowCount > 0);
-
-        // 일자별 탐지 추이 (최근 14일, 누락일 포함)
-        java.time.format.DateTimeFormatter dateFmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd");
-        List<DailyDetection> dailyDetections = new ArrayList<>();
-        int total14d = 0, last7d = 0, prev7d = 0;
-        java.time.LocalDate peakDay = null;
-        int peakCount = 0;
-        for (int i = 0; i < 14; i++) {
-            java.time.LocalDate d = from.plusDays(i);
-            int[] b = dailyBuckets.get(d);
-            DailyDetection dd = new DailyDetection();
-            dd.setDate(d.format(dateFmt));
-            if (b != null) {
-                dd.setTotal(b[0]);
-                dd.setCritical(b[1]);
-                dd.setHigh(b[2]);
-                dd.setMedium(b[3]);
-                dd.setLow(b[4]);
-                total14d += b[0];
-                if (i < 7) prev7d += b[0]; else last7d += b[0];
-                if (b[0] > peakCount) { peakCount = b[0]; peakDay = d; }
-            }
-            dailyDetections.add(dd);
-        }
-        Integer delta7d = null;
-        if (prev7d > 0) {
-            delta7d = (int) Math.round((last7d - prev7d) * 100.0 / prev7d);
-        } else if (last7d > 0) {
-            delta7d = null; // 비교 불가 — 템플릿에서 "—" 처리
-        }
-        model.addAttribute("dailyDetections", dailyDetections);
-        model.addAttribute("kpiTotal14d", total14d);
-        model.addAttribute("kpiLast7d", last7d);
-        model.addAttribute("kpiPrev7d", prev7d);
-        model.addAttribute("kpiDelta7d", delta7d);
-        model.addAttribute("kpiPeakDay", peakDay != null ? peakDay.format(dateFmt) : "-");
-        model.addAttribute("kpiPeakCount", peakCount);
+        model.addAttribute("dailyDetections", agg.getDailyDetections());
+        model.addAttribute("serverSeries", agg.getServerSeries());
+        model.addAttribute("kpiTotal14d", agg.getTotal());
+        model.addAttribute("kpiLast7d", agg.getLast7d());
+        model.addAttribute("kpiPrev7d", agg.getPrev7d());
+        model.addAttribute("kpiDelta7d", agg.getDelta7d());
+        model.addAttribute("kpiPeakDay", agg.getPeakDay() != null ? agg.getPeakDay() : "-");
+        model.addAttribute("kpiPeakCount", agg.getPeakCount());
 
         // 디스크 사용량
         File dumpDir = new File(analyzerService.getHeapDumpDirectory());
@@ -282,6 +217,21 @@ public class HeapDumpController {
         model.addAttribute("successCount", successCount);
         model.addAttribute("errorCount", errorCount);
         model.addAttribute("deletedCount", deletedCount);
+
+        // Detections 차트 SSR 초기값 (14d / 서버별)
+        DetectionAggregate detectAgg = aggregateDetections(analysisOnly, 14, 12);
+        model.addAttribute("detectInitDays", 14);
+        model.addAttribute("detectInitGroup", "server");
+        model.addAttribute("detectLabels", detectAgg.getLabels());
+        model.addAttribute("detectServerSeries", detectAgg.getServerSeries());
+        model.addAttribute("detectSeveritySeries", detectAgg.getSeveritySeries());
+        model.addAttribute("detectKpiTotal", detectAgg.getTotal());
+        model.addAttribute("detectKpiLast7d", detectAgg.getLast7d());
+        model.addAttribute("detectKpiPrev7d", detectAgg.getPrev7d());
+        model.addAttribute("detectKpiDelta7d", detectAgg.getDelta7d());
+        model.addAttribute("detectKpiPeakDay",
+            detectAgg.getPeakDay() != null ? detectAgg.getPeakDay() : "-");
+        model.addAttribute("detectKpiPeakCount", detectAgg.getPeakCount());
 
         return "history";
     }
@@ -390,6 +340,41 @@ public class HeapDumpController {
     }
 
     // ── 파일 업로드 ──────────────────────────────────────────────
+
+    /**
+     * XHR 큐 업로더용 JSON API. 성공 200 + {status:"ok", filename, size},
+     * 실패 4xx/5xx + {status:"error", message}. CSRF 면제(/api/**).
+     */
+    @PostMapping("/api/upload")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> uploadFileApi(@RequestParam("file") MultipartFile file) {
+        String originalName = file.getOriginalFilename();
+        Map<String, Object> resp = new LinkedHashMap<>();
+        logger.info("[Upload API] Request: filename={}, size={}", originalName, formatBytes(file.getSize()));
+        try {
+            if (file.isEmpty()) {
+                resp.put("status", "error");
+                resp.put("message", "파일이 비어있습니다.");
+                return ResponseEntity.badRequest().body(resp);
+            }
+            String filename = analyzerService.uploadFile(file);
+            resp.put("status", "ok");
+            resp.put("filename", filename);
+            resp.put("size", file.getSize());
+            logger.info("[Upload API] Success: {}", filename);
+            return ResponseEntity.ok(resp);
+        } catch (IllegalArgumentException e) {
+            logger.warn("[Upload API] Validation failed for '{}': {}", originalName, e.getMessage());
+            resp.put("status", "error");
+            resp.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(resp);
+        } catch (IOException e) {
+            logger.error("[Upload API] IO error for '{}': {}", originalName, e.getMessage(), e);
+            resp.put("status", "error");
+            resp.put("message", "Upload failed: " + e.getMessage());
+            return ResponseEntity.status(500).body(resp);
+        }
+    }
 
     @PostMapping("/upload")
     public String uploadFile(@RequestParam("file") MultipartFile file,
@@ -1004,6 +989,118 @@ public class HeapDumpController {
             history.add(item);
         }
         return ResponseEntity.ok(history);
+    }
+
+    // ── [NEW] API: 기간별 detections 차트 데이터 + KPI ────────────
+
+    @GetMapping("/api/history/detections")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> historyDetections(
+            @RequestParam(defaultValue = "14") int days,
+            @RequestParam(defaultValue = "server") String groupBy,
+            Authentication authentication) {
+        // days / groupBy 검증 + 폴백
+        int safeDays = (days == 7 || days == 14 || days == 30 || days == 90) ? days : 14;
+        String safeGroup = "severity".equals(groupBy) ? "severity" : "server";
+
+        boolean isAdmin = isAdmin(authentication);
+        List<HeapDumpFile> files = analyzerService.listFiles();
+        List<AnalysisHistoryItem> history = buildHistory(files).stream()
+            .filter(h -> "SUCCESS".equals(h.getStatus()) || "ERROR".equals(h.getStatus()))
+            .filter(h -> isAdmin || !h.isFileDeleted())
+            .collect(Collectors.toList());
+
+        DetectionAggregate agg = aggregateDetections(history, safeDays, 12);
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("days", safeDays);
+        resp.put("groupBy", safeGroup);
+        resp.put("labels", agg.getLabels());
+        resp.put("datasets", "server".equals(safeGroup) ? agg.getServerSeries() : agg.getSeveritySeries());
+        Map<String, Object> kpi = new LinkedHashMap<>();
+        kpi.put("total", agg.getTotal());
+        kpi.put("last7d", agg.getLast7d());
+        kpi.put("prev7d", agg.getPrev7d());
+        kpi.put("delta7d", agg.getDelta7d());
+        kpi.put("peakDay", agg.getPeakDay());
+        kpi.put("peakCount", agg.getPeakCount());
+        resp.put("kpi", kpi);
+        return ResponseEntity.ok(resp);
+    }
+
+    // ── [NEW] API: 특정 일자의 파일별 심각도 breakdown (드릴다운) ──
+
+    @GetMapping("/api/history/detections/day")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> historyDetectionsDay(
+            @RequestParam String date,
+            @RequestParam(defaultValue = "server") String groupBy,
+            Authentication authentication) {
+        java.time.LocalDate target;
+        try {
+            target = java.time.LocalDate.parse(date);
+        } catch (Exception e) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("error", "Invalid date");
+            return ResponseEntity.badRequest().body(err);
+        }
+        String safeGroup = "severity".equals(groupBy) ? "severity" : "server";
+
+        boolean isAdmin = isAdmin(authentication);
+        List<HeapDumpFile> files = analyzerService.listFiles();
+        List<AnalysisHistoryItem> history = buildHistory(files).stream()
+            .filter(h -> "SUCCESS".equals(h.getStatus()))
+            .filter(h -> isAdmin || !h.isFileDeleted())
+            .collect(Collectors.toList());
+
+        java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+        List<DetectionDayFile> result = new ArrayList<>();
+        for (AnalysisHistoryItem h : history) {
+            if (h.getAnalyzedAtEpoch() <= 0) continue;
+            java.time.LocalDate day = java.time.Instant.ofEpochMilli(h.getAnalyzedAtEpoch())
+                    .atZone(zone).toLocalDate();
+            if (!day.equals(target)) continue;
+            HeapAnalysisResult r = analyzerService.getCachedResult(h.getFilename());
+            int fc = 0, fh = 0, fm = 0, fl = 0;
+            if (r != null && r.getLeakSuspects() != null) {
+                for (LeakSuspect s : r.getLeakSuspects()) {
+                    String sev = s.getSeverity() != null ? s.getSeverity().toLowerCase() : "medium";
+                    switch (sev) {
+                        case "critical": fc++; break;
+                        case "high":     fh++; break;
+                        case "low":      fl++; break;
+                        default:         fm++; break;
+                    }
+                }
+            }
+            int sum = fc + fh + fm + fl;
+            if (sum == 0) continue;
+            DetectionDayFile dd = new DetectionDayFile();
+            dd.setFilename(h.getFilename());
+            dd.setAnalysisName(buildAnalysisName(h.getFilename(), h.getServerName(), h.getAnalyzedAtEpoch()));
+            dd.setServerName(h.getServerName());
+            dd.setCriticalCount(fc);
+            dd.setHighCount(fh);
+            dd.setMediumCount(fm);
+            dd.setLowCount(fl);
+            dd.setSuspectCount(sum);
+            dd.setFileDeleted(h.isFileDeleted());
+            dd.setAnalyzedAtEpoch(h.getAnalyzedAtEpoch());
+            result.add(dd);
+        }
+        // 정렬: critical desc → high desc → suspect 합계 desc
+        result.sort((a, b) -> {
+            int c = Integer.compare(b.getCriticalCount(), a.getCriticalCount());
+            if (c != 0) return c;
+            c = Integer.compare(b.getHighCount(), a.getHighCount());
+            if (c != 0) return c;
+            return Integer.compare(b.getSuspectCount(), a.getSuspectCount());
+        });
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("date", date);
+        resp.put("groupBy", safeGroup);
+        resp.put("files", result);
+        return ResponseEntity.ok(resp);
     }
 
     // ── [NEW] API: 전체 저장 결과 삭제 ─────────────────────────────
@@ -2132,6 +2229,13 @@ public class HeapDumpController {
             logger.warn("[Files] AI 인사이트 조회 실패: {}", e.getMessage());
         }
 
+        // 분석명 일괄 설정 (DB/파일/캐시 분기 모두 커버)
+        // 분석명 기준 시각: analyzedAtEpoch > 0이면 분석시각, 아니면 lastModified로 폴백.
+        for (AnalysisHistoryItem item : history) {
+            long ts = item.getAnalyzedAtEpoch() > 0 ? item.getAnalyzedAtEpoch() : item.getLastModified();
+            item.setAnalysisName(buildAnalysisName(item.getFilename(), item.getServerName(), ts));
+        }
+
         // lastModified 기준 내림차순 정렬
         history.sort(Comparator.comparingLong(AnalysisHistoryItem::getLastModified).reversed());
         return history;
@@ -2147,11 +2251,198 @@ public class HeapDumpController {
         return map;
     }
 
+    // ── Detections 집계 helper (대시보드 + History 페이지 공유) ─────
+    // 가변 days 윈도우(7/14/30/90 등)에 대해 서버별 시리즈, 심각도별 시리즈,
+    // 파일별 breakdown, KPI(total/last7d/prev7d/delta7d/peak)를 한 번의 순회로 산출.
+    private DetectionAggregate aggregateDetections(List<AnalysisHistoryItem> history, int days, int topN) {
+        DetectionAggregate agg = new DetectionAggregate();
+        if (days <= 0) days = 14;
+        if (topN <= 0) topN = 12;
+
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.LocalDate from = today.minusDays(days - 1L);
+        java.time.ZoneId zone = java.time.ZoneId.systemDefault();
+        java.time.format.DateTimeFormatter dateFmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+        // serverName 없는 항목(로컬 업로드)은 차트에서 "Local" 시리즈로 노출.
+        // 분석명 helper의 server 부분("local_")과 라벨 일관성 유지.
+        final String UNKNOWN_SERVER = "Local";
+        final String OTHERS_LABEL = "기타";
+
+        Map<java.time.LocalDate, Map<String, Integer>> dailyServerBuckets = new HashMap<>();
+        Map<java.time.LocalDate, int[]> dailySeverityBuckets = new HashMap<>(); // [c,h,m,l]
+        Map<java.time.LocalDate, Integer> dailyTotals = new HashMap<>();
+        Map<String, Integer> serverTotals = new HashMap<>();
+
+        int criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
+        List<DetectionSummaryItem> detectionItems = new ArrayList<>();
+
+        for (AnalysisHistoryItem h : history) {
+            if (!"SUCCESS".equals(h.getStatus()) || h.getSuspectCount() == 0) continue;
+            HeapAnalysisResult r = analyzerService.getCachedResult(h.getFilename());
+            if (r == null || r.getLeakSuspects() == null) continue;
+            int fc = 0, fh = 0, fm = 0, fl = 0;
+            for (LeakSuspect s : r.getLeakSuspects()) {
+                String sev = s.getSeverity() != null ? s.getSeverity().toLowerCase() : "medium";
+                switch (sev) {
+                    case "critical": fc++; criticalCount++; break;
+                    case "high":     fh++; highCount++; break;
+                    case "low":      fl++; lowCount++; break;
+                    default:         fm++; mediumCount++; break;
+                }
+            }
+            DetectionSummaryItem di = new DetectionSummaryItem();
+            di.setFilename(h.getFilename());
+            di.setSuspectCount(h.getSuspectCount());
+            di.setCriticalCount(fc);
+            di.setHighCount(fh);
+            di.setMediumCount(fm);
+            di.setLowCount(fl);
+            di.setFileDeleted(h.isFileDeleted());
+            detectionItems.add(di);
+
+            if (h.getAnalyzedAtEpoch() > 0) {
+                java.time.LocalDate day = java.time.Instant.ofEpochMilli(h.getAnalyzedAtEpoch())
+                        .atZone(zone).toLocalDate();
+                if (!day.isBefore(from) && !day.isAfter(today)) {
+                    int suspectsForFile = fc + fh + fm + fl;
+                    String sname = h.getServerName();
+                    if (sname == null || sname.trim().isEmpty()) sname = UNKNOWN_SERVER;
+                    dailyServerBuckets.computeIfAbsent(day, k -> new HashMap<>())
+                                      .merge(sname, suspectsForFile, Integer::sum);
+                    dailyTotals.merge(day, suspectsForFile, Integer::sum);
+                    serverTotals.merge(sname, suspectsForFile, Integer::sum);
+                    int[] sb = dailySeverityBuckets.computeIfAbsent(day, k -> new int[4]);
+                    sb[0] += fc; sb[1] += fh; sb[2] += fm; sb[3] += fl;
+                }
+            }
+        }
+
+        // 서버 상위 N개 + 나머지는 "기타"
+        List<Map.Entry<String, Integer>> sortedServers = new ArrayList<>(serverTotals.entrySet());
+        sortedServers.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+        Set<String> topServerSet = new LinkedHashSet<>();
+        for (int i = 0; i < Math.min(topN, sortedServers.size()); i++) {
+            topServerSet.add(sortedServers.get(i).getKey());
+        }
+        boolean hasOthers = sortedServers.size() > topN;
+
+        Map<String, int[]> seriesCounts = new LinkedHashMap<>();
+        for (String name : topServerSet) seriesCounts.put(name, new int[days]);
+        if (hasOthers) seriesCounts.put(OTHERS_LABEL, new int[days]);
+
+        int[] sevCritical = new int[days];
+        int[] sevHigh     = new int[days];
+        int[] sevMedium   = new int[days];
+        int[] sevLow      = new int[days];
+
+        // 일자별 라벨 + KPI 계산
+        // last7d = 최근 7일, prev7d = 그 직전 7일
+        int last7Start = days - 7;
+        int prev7Start = Math.max(0, days - 14);
+        int prev7End   = Math.max(0, days - 7);
+
+        List<String> labels = new ArrayList<>(days);
+        List<DailyDetection> dailyDetections = new ArrayList<>(days);
+        int total = 0, last7d = 0, prev7d = 0, peakCount = 0;
+        java.time.LocalDate peakDay = null;
+
+        for (int i = 0; i < days; i++) {
+            java.time.LocalDate d = from.plusDays(i);
+            String dStr = d.format(dateFmt);
+            labels.add(dStr);
+            int dayTotal = dailyTotals.getOrDefault(d, 0);
+            DailyDetection dd = new DailyDetection();
+            dd.setDate(dStr);
+            dd.setTotal(dayTotal);
+            dailyDetections.add(dd);
+            total += dayTotal;
+            if (i >= last7Start) last7d += dayTotal;
+            else if (i >= prev7Start && i < prev7End) prev7d += dayTotal;
+            if (dayTotal > peakCount) { peakCount = dayTotal; peakDay = d; }
+
+            Map<String, Integer> serverMap = dailyServerBuckets.get(d);
+            if (serverMap != null) {
+                for (Map.Entry<String, Integer> e : serverMap.entrySet()) {
+                    String key = topServerSet.contains(e.getKey()) ? e.getKey() : OTHERS_LABEL;
+                    int[] arr = seriesCounts.get(key);
+                    if (arr != null) arr[i] += e.getValue();
+                }
+            }
+            int[] sevBuckets = dailySeverityBuckets.get(d);
+            if (sevBuckets != null) {
+                sevCritical[i] = sevBuckets[0];
+                sevHigh[i]     = sevBuckets[1];
+                sevMedium[i]   = sevBuckets[2];
+                sevLow[i]      = sevBuckets[3];
+            }
+        }
+
+        List<ServerSeries> serverSeries = new ArrayList<>();
+        for (Map.Entry<String, int[]> e : seriesCounts.entrySet()) {
+            ServerSeries ss = new ServerSeries();
+            ss.setName(e.getKey());
+            ss.setCounts(e.getValue());
+            serverSeries.add(ss);
+        }
+
+        List<ServerSeries> severitySeries = new ArrayList<>();
+        ServerSeries sc = new ServerSeries(); sc.setName("critical"); sc.setCounts(sevCritical); severitySeries.add(sc);
+        ServerSeries sh = new ServerSeries(); sh.setName("high");     sh.setCounts(sevHigh);     severitySeries.add(sh);
+        ServerSeries sm = new ServerSeries(); sm.setName("medium");   sm.setCounts(sevMedium);   severitySeries.add(sm);
+        ServerSeries sl = new ServerSeries(); sl.setName("low");      sl.setCounts(sevLow);      severitySeries.add(sl);
+
+        Integer delta7d = null;
+        if (prev7d > 0) {
+            delta7d = (int) Math.round((last7d - prev7d) * 100.0 / prev7d);
+        }
+
+        agg.setLabels(labels);
+        agg.setServerSeries(serverSeries);
+        agg.setSeveritySeries(severitySeries);
+        agg.setDailyDetections(dailyDetections);
+        agg.setDetectionItems(detectionItems);
+        agg.setCriticalCount(criticalCount);
+        agg.setHighCount(highCount);
+        agg.setMediumCount(mediumCount);
+        agg.setLowCount(lowCount);
+        agg.setTotal(total);
+        agg.setLast7d(last7d);
+        agg.setPrev7d(prev7d);
+        agg.setDelta7d(delta7d);
+        agg.setPeakDay(peakDay != null ? peakDay.format(dateFmt) : null);
+        agg.setPeakCount(peakCount);
+        return agg;
+    }
+
+    // 분석명 포맷: [{EXT}]{servername_lower|local}_{filename}_{yyyyMMdd}
+    // 예: [HPROF]jeusserver1_jeus_admin.hprof_20260506
+    // .gz 접미사는 벗기고 안쪽 확장자 사용. 확장자 없거나 인식 불가 시 [DUMP].
+    private String buildAnalysisName(String filename, String serverName, long analyzedAtEpoch) {
+        if (filename == null) filename = "";
+        String lower = filename.toLowerCase();
+        String stripped = lower.endsWith(".gz") ? lower.substring(0, lower.length() - 3) : lower;
+        int dotIdx = stripped.lastIndexOf('.');
+        String extUpper = (dotIdx == -1 || dotIdx == stripped.length() - 1)
+                ? "DUMP"
+                : stripped.substring(dotIdx + 1).toUpperCase();
+        String server = (serverName == null || serverName.trim().isEmpty())
+                ? "local"
+                : serverName.toLowerCase();
+        java.time.format.DateTimeFormatter ymdFmt = java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd");
+        String dateStr = (analyzedAtEpoch > 0)
+                ? java.time.Instant.ofEpochMilli(analyzedAtEpoch)
+                        .atZone(java.time.ZoneId.systemDefault()).toLocalDate().format(ymdFmt)
+                : java.time.LocalDate.now().format(ymdFmt);
+        return "[" + extUpper + "]" + server + "_" + filename + "_" + dateStr;
+    }
+
     // ── Inner DTOs ────────────────────────────────────────────────
 
     public static class AnalysisHistoryItem {
         private Long    id;
         private String  filename;
+        private String  analysisName;
         private String  formattedSize;
         private long    sizeBytes;
         private long    originalSizeBytes;
@@ -2185,6 +2476,8 @@ public class HeapDumpController {
         public void    setHeapUsedBytes(long v)     { heapUsedBytes = v; }
         public String  getFilename()      { return filename; }
         public void    setFilename(String v)      { filename = v; }
+        public String  getAnalysisName()  { return analysisName; }
+        public void    setAnalysisName(String v) { analysisName = v; }
         public String  getFormattedSize() { return formattedSize; }
         public void    setFormattedSize(String v) { formattedSize = v; }
         public String  getFormattedDate() { return formattedDate; }
@@ -2222,23 +2515,21 @@ public class HeapDumpController {
     public static class DailyDetection {
         private String date;
         private int total;
-        private int critical;
-        private int high;
-        private int medium;
-        private int low;
 
         public String getDate() { return date; }
         public void   setDate(String v) { date = v; }
         public int    getTotal() { return total; }
         public void   setTotal(int v) { total = v; }
-        public int    getCritical() { return critical; }
-        public void   setCritical(int v) { critical = v; }
-        public int    getHigh() { return high; }
-        public void   setHigh(int v) { high = v; }
-        public int    getMedium() { return medium; }
-        public void   setMedium(int v) { medium = v; }
-        public int    getLow() { return low; }
-        public void   setLow(int v) { low = v; }
+    }
+
+    public static class ServerSeries {
+        private String name;
+        private int[]  counts;
+
+        public String getName()   { return name; }
+        public void   setName(String v) { name = v; }
+        public int[]  getCounts() { return counts; }
+        public void   setCounts(int[] v) { counts = v; }
     }
 
     public static class DetectionSummaryItem {
@@ -2264,6 +2555,79 @@ public class HeapDumpController {
         public void    setLowCount(int v) { lowCount = v; }
         public boolean isFileDeleted()    { return fileDeleted; }
         public void    setFileDeleted(boolean v) { fileDeleted = v; }
+    }
+
+    public static class DetectionAggregate {
+        private List<String> labels;
+        private List<ServerSeries> serverSeries;
+        private List<ServerSeries> severitySeries;
+        private List<DailyDetection> dailyDetections;
+        private List<DetectionSummaryItem> detectionItems;
+        private int criticalCount, highCount, mediumCount, lowCount;
+        private int total, last7d, prev7d, peakCount;
+        private Integer delta7d;
+        private String peakDay;
+
+        public List<String> getLabels() { return labels; }
+        public void setLabels(List<String> v) { labels = v; }
+        public List<ServerSeries> getServerSeries() { return serverSeries; }
+        public void setServerSeries(List<ServerSeries> v) { serverSeries = v; }
+        public List<ServerSeries> getSeveritySeries() { return severitySeries; }
+        public void setSeveritySeries(List<ServerSeries> v) { severitySeries = v; }
+        public List<DailyDetection> getDailyDetections() { return dailyDetections; }
+        public void setDailyDetections(List<DailyDetection> v) { dailyDetections = v; }
+        public List<DetectionSummaryItem> getDetectionItems() { return detectionItems; }
+        public void setDetectionItems(List<DetectionSummaryItem> v) { detectionItems = v; }
+        public int getCriticalCount() { return criticalCount; }
+        public void setCriticalCount(int v) { criticalCount = v; }
+        public int getHighCount() { return highCount; }
+        public void setHighCount(int v) { highCount = v; }
+        public int getMediumCount() { return mediumCount; }
+        public void setMediumCount(int v) { mediumCount = v; }
+        public int getLowCount() { return lowCount; }
+        public void setLowCount(int v) { lowCount = v; }
+        public int getTotal() { return total; }
+        public void setTotal(int v) { total = v; }
+        public int getLast7d() { return last7d; }
+        public void setLast7d(int v) { last7d = v; }
+        public int getPrev7d() { return prev7d; }
+        public void setPrev7d(int v) { prev7d = v; }
+        public Integer getDelta7d() { return delta7d; }
+        public void setDelta7d(Integer v) { delta7d = v; }
+        public String getPeakDay() { return peakDay; }
+        public void setPeakDay(String v) { peakDay = v; }
+        public int getPeakCount() { return peakCount; }
+        public void setPeakCount(int v) { peakCount = v; }
+    }
+
+    public static class DetectionDayFile {
+        private String filename;
+        private String analysisName;
+        private String serverName;
+        private int suspectCount, criticalCount, highCount, mediumCount, lowCount;
+        private boolean fileDeleted;
+        private long analyzedAtEpoch;
+
+        public String  getFilename()      { return filename; }
+        public void    setFilename(String v) { filename = v; }
+        public String  getAnalysisName()  { return analysisName; }
+        public void    setAnalysisName(String v) { analysisName = v; }
+        public String  getServerName()    { return serverName; }
+        public void    setServerName(String v) { serverName = v; }
+        public int     getSuspectCount()  { return suspectCount; }
+        public void    setSuspectCount(int v) { suspectCount = v; }
+        public int     getCriticalCount() { return criticalCount; }
+        public void    setCriticalCount(int v) { criticalCount = v; }
+        public int     getHighCount()     { return highCount; }
+        public void    setHighCount(int v) { highCount = v; }
+        public int     getMediumCount()   { return mediumCount; }
+        public void    setMediumCount(int v) { mediumCount = v; }
+        public int     getLowCount()      { return lowCount; }
+        public void    setLowCount(int v) { lowCount = v; }
+        public boolean isFileDeleted()    { return fileDeleted; }
+        public void    setFileDeleted(boolean v) { fileDeleted = v; }
+        public long    getAnalyzedAtEpoch() { return analyzedAtEpoch; }
+        public void    setAnalyzedAtEpoch(long v) { analyzedAtEpoch = v; }
     }
 
     public static class ClassDiff {

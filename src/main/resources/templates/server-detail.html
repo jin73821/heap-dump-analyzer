@@ -152,6 +152,10 @@
     <div class="info-card">
         <div class="info-grid">
             <div class="info-item">
+                <div class="info-label">서버 이름</div>
+                <div class="info-value" style="font-weight:600" th:text="${server.name}">server1</div>
+            </div>
+            <div class="info-item">
                 <div class="info-label">호스트</div>
                 <div class="info-value mono" th:text="${server.host + ':' + server.port}">192.168.1.1:22</div>
             </div>
@@ -160,8 +164,12 @@
                 <div class="info-value" th:text="${server.sshUser}">sscuser</div>
             </div>
             <div class="info-item">
-                <div class="info-label">덤프 경로</div>
-                <div class="info-value mono" th:text="${server.dumpPath}">/opt/dumps</div>
+                <div class="info-label" th:with="paths=${server.dumpPaths}"
+                     th:text="'덤프 경로' + (${#lists.size(paths) > 1} ? ' (' + ${#lists.size(paths)} + '개)' : '')">덤프 경로</div>
+                <div class="info-value mono" th:with="paths=${server.dumpPaths}">
+                    <div th:each="p : ${paths}" th:text="${p}" style="margin-bottom:2px;word-break:break-all">/opt/dumps</div>
+                    <span th:if="${#lists.isEmpty(paths)}">-</span>
+                </div>
             </div>
             <div class="info-item">
                 <div class="info-label">자동탐지</div>
@@ -188,6 +196,12 @@
         <div class="info-actions">
             <button class="action-btn" th:data-id="${server.id}" onclick="testConn(this.dataset.id)">연결 테스트</button>
             <button class="action-btn scan" th:data-id="${server.id}" onclick="scanServer(this.dataset.id)">스캔</button>
+            <button class="action-btn"
+                    th:data-id="${server.id}" th:data-name="${server.name}"
+                    th:data-host="${server.host}" th:data-port="${server.port}"
+                    th:data-sshuser="${server.sshUser}" th:data-dumppath="${server.dumpPath}"
+                    th:data-autodetect="${server.autoDetect}" th:data-enabled="${server.enabled}"
+                    onclick="openEditModal(this.dataset)">수정</button>
         </div>
     </div>
 
@@ -286,6 +300,54 @@
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
+<!-- Edit Modal (재사용 — servers.html과 동일 구조) -->
+<div class="modal-ov" id="serverModal" style="display:none; position:fixed; inset:0; z-index:200; background:rgba(0,0,0,.4); align-items:center; justify-content:center;">
+    <div style="background:#fff;border-radius:12px;padding:24px;width:90%;max-width:500px;box-shadow:0 20px 60px rgba(0,0,0,.2);animation:modalIn .2s ease;">
+        <div style="font-size:16px;font-weight:700;margin-bottom:16px">서버 수정</div>
+        <input type="hidden" id="smId">
+        <div style="margin-bottom:14px">
+            <label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">서버 이름</label>
+            <input class="modal-input" id="smName" style="width:100%;padding:8px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;outline:none">
+        </div>
+        <div style="display:flex;gap:12px">
+            <div style="flex:1;margin-bottom:14px">
+                <label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">호스트 (IP)</label>
+                <input class="modal-input" id="smHost" style="width:100%;padding:8px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;outline:none">
+            </div>
+            <div style="max-width:100px;margin-bottom:14px">
+                <label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">포트</label>
+                <input class="modal-input" id="smPort" type="number" value="22" style="width:100%;padding:8px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;outline:none">
+            </div>
+        </div>
+        <div style="margin-bottom:14px">
+            <label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">SSH 계정</label>
+            <input class="modal-input" id="smSshUser" value="sscuser" style="width:100%;padding:8px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;outline:none">
+        </div>
+        <div style="margin-bottom:14px">
+            <label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">덤프 파일 경로 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(최대 5개)</span></label>
+            <div id="smDumpPathList"></div>
+            <button type="button" class="action-btn" id="smDumpPathAdd"
+                    style="margin-top:6px;font-size:11px;padding:4px 10px"
+                    onclick="addDumpPathRow()">+ 경로 추가</button>
+        </div>
+        <div style="margin-bottom:14px">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+                <input type="checkbox" id="smAutoDetect" style="width:16px;height:16px;accent-color:#2563EB">
+                자동 탐지 활성화
+            </label>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:18px">
+            <button onclick="closeEditModal()" style="padding:8px 18px;border-radius:7px;font-size:13px;border:none;cursor:pointer;font-weight:500;background:#F3F4F6;color:#374151">취소</button>
+            <button onclick="submitServer()" style="padding:8px 18px;border-radius:7px;font-size:13px;border:none;cursor:pointer;font-weight:500;background:#2563EB;color:#fff">저장</button>
+        </div>
+    </div>
+</div>
+<style>
+.modal-ov.open { display: flex !important; }
+@keyframes modalIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+.modal-input:focus { border-color:#93C5FD; box-shadow:0 0 0 3px rgba(37,99,235,.1); }
+</style>
+
 <script>
 var _serverId = '[[${server.id}]]';
 var _csrf = document.querySelector('meta[name="_csrf"]').content;
@@ -339,6 +401,96 @@ function scanServer(id) {
         showToast('오류: ' + e.message, false);
         btn.disabled = false; btn.textContent = '스캔';
     });
+}
+
+// ── 서버 수정 ─────────────────────────────────────
+var MAX_DUMP_PATHS = 5;
+
+function setDumpPaths(paths) {
+    var list = document.getElementById('smDumpPathList');
+    list.innerHTML = '';
+    var arr = (paths && paths.length > 0) ? paths : [''];
+    for (var i = 0; i < arr.length && i < MAX_DUMP_PATHS; i++) {
+        appendDumpPathRow(arr[i]);
+    }
+    refreshDumpPathAddBtn();
+}
+function appendDumpPathRow(value) {
+    var list = document.getElementById('smDumpPathList');
+    if (list.children.length >= MAX_DUMP_PATHS) return;
+    var row = document.createElement('div');
+    row.className = 'sm-path-row';
+    row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'modal-input sm-path-input';
+    input.placeholder = '/opt/app/logs';
+    input.value = value || '';
+    input.style.cssText = 'flex:1;padding:8px 12px;border:1px solid #E5E7EB;border-radius:7px;font-size:13px;outline:none';
+    var rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'action-btn';
+    rm.textContent = '−';
+    rm.style.cssText = 'flex-shrink:0;padding:0 12px';
+    rm.onclick = function() { row.remove(); refreshDumpPathAddBtn(); };
+    row.appendChild(input);
+    row.appendChild(rm);
+    list.appendChild(row);
+}
+function addDumpPathRow() { appendDumpPathRow(''); refreshDumpPathAddBtn(); }
+function refreshDumpPathAddBtn() {
+    var btn = document.getElementById('smDumpPathAdd');
+    var count = document.querySelectorAll('#smDumpPathList .sm-path-row').length;
+    if (btn) btn.style.display = count >= MAX_DUMP_PATHS ? 'none' : '';
+}
+function collectDumpPaths() {
+    var inputs = document.querySelectorAll('#smDumpPathList .sm-path-input');
+    var out = [], seen = {};
+    for (var i = 0; i < inputs.length; i++) {
+        var v = inputs[i].value.trim();
+        if (v && !seen[v]) { seen[v] = 1; out.push(v); }
+    }
+    return out;
+}
+function openEditModal(ds) {
+    document.getElementById('smId').value = ds.id;
+    document.getElementById('smName').value = ds.name;
+    document.getElementById('smHost').value = ds.host;
+    document.getElementById('smPort').value = ds.port;
+    document.getElementById('smSshUser').value = ds.sshuser;
+    var paths = (ds.dumppath || '').split(/\r?\n/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+    setDumpPaths(paths);
+    document.getElementById('smAutoDetect').checked = ds.autodetect === 'true';
+    document.getElementById('serverModal').classList.add('open');
+}
+function closeEditModal() { document.getElementById('serverModal').classList.remove('open'); }
+function submitServer() {
+    var paths = collectDumpPaths();
+    var data = {
+        name: document.getElementById('smName').value.trim(),
+        host: document.getElementById('smHost').value.trim(),
+        port: parseInt(document.getElementById('smPort').value) || 22,
+        sshUser: document.getElementById('smSshUser').value.trim() || 'sscuser',
+        dumpPath: paths.join('\n'),
+        autoDetect: document.getElementById('smAutoDetect').checked
+    };
+    if (!data.name || !data.host || paths.length === 0) {
+        showToast('이름, 호스트, 덤프 경로(1개 이상)를 입력하세요.', false); return;
+    }
+    var id = document.getElementById('smId').value;
+    var headers = {'Content-Type':'application/json'};
+    headers[_csrfHeader] = _csrf;
+    fetch('/api/servers/' + id, { method: 'PUT', headers: headers, body: JSON.stringify(data) })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+        if (d.success) {
+            showToast('서버가 수정되었습니다.', true);
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            showToast(d.message || '저장 실패', false);
+        }
+    }).catch(function() { showToast('요청 실패', false); });
+    closeEditModal();
 }
 </script>
 
