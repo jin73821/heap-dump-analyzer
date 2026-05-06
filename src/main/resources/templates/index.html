@@ -7,6 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>Heap Dump Analyzer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <style>
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
         html, body { height: 100%; overflow-x: hidden; }
@@ -238,6 +239,16 @@
         .ds-medium { background: #FEF3C7; color: #92400E; }
         .ds-low { background: #D1FAE5; color: #065F46; }
         .detect-empty { text-align: center; padding: 24px 0; color: #9CA3AF; font-size: 12px; }
+        /* ── Daily Detections Panel ──────────── */
+        .det-kpi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+        .det-kpi-card { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; }
+        .det-kpi-lbl { font-size: 10px; color: #9CA3AF; text-transform: uppercase; letter-spacing: .04em; }
+        .det-kpi-val { font-size: 18px; font-weight: 700; margin-top: 2px; line-height: 1.2; }
+        .det-kpi-sub { font-size: 11px; color: #6B7280; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .det-delta-up { color: #DC2626; }
+        .det-delta-down { color: #059669; }
+        .det-chart-wrap { position: relative; height: 220px; }
+        .det-empty-chart { text-align: center; padding: 40px 0; color: #9CA3AF; font-size: 12px; }
 
         .ra-item { padding: 10px 0; border-bottom: 1px solid #F3F4F6; }
         .ra-item:last-child { border-bottom: none; }
@@ -762,43 +773,45 @@
         <!-- Main panels (files exist) -->
         <div th:if="${not #lists.isEmpty(files)}" class="grid2">
 
-            <!-- Analysis Files -->
+            <!-- Detections (Daily) -->
             <div class="panel">
                 <div class="panel-hdr">
-                    <span class="panel-ttl">Analysis Files</span>
-                    <a th:href="@{/files}" class="more-link"
-                       th:text="'View all ' + ${totalFileCount} + ' files →'">View all →</a>
+                    <span class="panel-ttl">Detections &middot; 최근 14일</span>
+                    <a th:href="@{/history}" class="more-link">View history →</a>
                 </div>
-                <div th:if="${#lists.isEmpty(analysisHistory)}" class="no-data">
-                    No results yet. Click Analyze on a file to start.
+                <div th:if="${kpiTotal14d > 0}">
+                    <div class="det-kpi">
+                        <div class="det-kpi-card">
+                            <div class="det-kpi-lbl">14d Total</div>
+                            <div class="det-kpi-val" th:text="${kpiTotal14d}">0</div>
+                            <div class="det-kpi-sub">의심 누적 건수</div>
+                        </div>
+                        <div class="det-kpi-card">
+                            <div class="det-kpi-lbl">7d vs Prev</div>
+                            <div class="det-kpi-val"
+                                 th:classappend="${kpiDelta7d != null and kpiDelta7d > 0} ? 'det-delta-up' : (${kpiDelta7d != null and kpiDelta7d < 0} ? 'det-delta-down' : '')"
+                                 th:text="${kpiDelta7d == null} ? '—' : (${kpiDelta7d > 0} ? '▲ ' + ${kpiDelta7d} + '%' : (${kpiDelta7d < 0} ? '▼ ' + ${-kpiDelta7d} + '%' : '0%'))">—</div>
+                            <div class="det-kpi-sub" th:text="${kpiLast7d} + ' / ' + ${kpiPrev7d} + ' 건'">0 / 0 건</div>
+                        </div>
+                        <div class="det-kpi-card">
+                            <div class="det-kpi-lbl">Peak Day</div>
+                            <div class="det-kpi-val" th:text="${kpiPeakCount}">0</div>
+                            <div class="det-kpi-sub" th:text="${kpiPeakDay}">-</div>
+                        </div>
+                    </div>
+                    <div class="det-chart-wrap">
+                        <canvas id="dailyDetectChart"></canvas>
+                    </div>
                 </div>
-                <div th:each="h : ${analysisHistory}" class="history-item" th:classappend="${h.fileDeleted} ? 'hi-deleted'">
-                    <div class="hdot hd-ok"   th:if="${h.status == 'SUCCESS'}"></div>
-                    <div class="hdot hd-err"  th:if="${h.status == 'ERROR'}"></div>
-                    <div class="hdot hd-warn" th:if="${h.status == 'NOT_ANALYZED'}"></div>
-                    <div class="hdot hd-warn" th:unless="${h.status == 'SUCCESS' or h.status == 'ERROR' or h.status == 'NOT_ANALYZED'}"></div>
-                    <div class="hname" th:classappend="${h.status == 'ERROR'} ? 'hname-err'" th:text="${h.filename}">dump.hprof</div>
-                    <div class="hsize" th:text="${h.formattedSize}">157 MB</div>
-                    <div class="hdate" th:text="${h.formattedDate}">03-18</div>
-                    <a th:if="${h.status == 'SUCCESS'}"
-                       th:href="@{/analyze/result/{f}(f=${h.filename})}"
-                       class="hbadge hb-ok">view</a>
-                    <a th:if="${h.status == 'ERROR' and !h.fileDeleted}"
-                       th:href="@{/analyze/result/{f}(f=${h.filename})}"
-                       class="hbadge hb-err" style="text-decoration:none;">failed</a>
-                    <span th:if="${h.status == 'ERROR' and h.fileDeleted}"
-                          class="hbadge hb-err" style="text-decoration:none;">failed</span>
-                    <a th:if="${h.status == 'NOT_ANALYZED' and !h.fileDeleted}"
-                       th:href="@{/analyze/{f}(f=${h.filename})}"
-                       class="hbadge hb-analyze">analyze</a>
-                    <span th:if="${h.fileDeleted}" class="hbadge hb-del">deleted</span>
+                <div th:unless="${kpiTotal14d > 0}" class="det-empty-chart">
+                    최근 14일간 탐지된 의심 항목이 없습니다.
                 </div>
             </div>
 
             <!-- 탐지 현황 -->
             <div class="panel">
                 <div class="panel-hdr">
-                    <span class="panel-ttl">탐지 현황</span>
+                    <span class="panel-ttl">탐지 현황 &middot; critical 우선</span>
                     <span th:if="${hasDetections}" style="font-size:12px;color:#6B7280"
                           th:text="'총 ' + ${criticalCount + highCount + mediumCount + lowCount} + ' suspects'"></span>
                 </div>
@@ -904,7 +917,52 @@
 </div>
 
 
+<script th:inline="javascript">
+/*<![CDATA[*/
+var DAILY_DETECT = /*[[${dailyDetections}]]*/ [];
+/*]]>*/
+</script>
 <script>
+/* ── Daily Detections Chart ─────────────────────────── */
+(function(){
+    var canvas = document.getElementById('dailyDetectChart');
+    if (!canvas || !DAILY_DETECT || DAILY_DETECT.length === 0 || typeof Chart === 'undefined') return;
+    var labels = DAILY_DETECT.map(function(d){ return (d.date || '').slice(5); });
+    function col(key){ return DAILY_DETECT.map(function(d){ return d[key] || 0; }); }
+    new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                { label: 'Critical', data: col('critical'), backgroundColor: '#DC2626', stack: 's' },
+                { label: 'High',     data: col('high'),     backgroundColor: '#EA580C', stack: 's' },
+                { label: 'Medium',   data: col('medium'),   backgroundColor: '#F59E0B', stack: 's' },
+                { label: 'Low',      data: col('low'),      backgroundColor: '#10B981', stack: 's' }
+            ]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            scales: {
+                x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 } } },
+                y: { stacked: true, beginAtZero: true, ticks: { precision: 0, font: { size: 10 } } }
+            },
+            plugins: {
+                legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 11 }, padding: 10 } },
+                tooltip: {
+                    backgroundColor: 'rgba(15,23,42,.92)', padding: 10,
+                    callbacks: {
+                        footer: function(items) {
+                            var t = items.reduce(function(s, i){ return s + i.parsed.y; }, 0);
+                            return 'Total: ' + t;
+                        }
+                    }
+                }
+            },
+            animation: { duration: 600 }
+        }
+    });
+})();
+
 /* ── Mobile sidebar → banner 연동 ─────────────────────── */
 /* 배너 Upload 탭에 사이드바의 Upload 섹션 등록 */
 (function() {

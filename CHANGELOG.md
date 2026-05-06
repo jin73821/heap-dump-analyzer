@@ -1,5 +1,29 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-06] Dashboard 고도화 — Analysis Files → 일자별 탐지건수 차트
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`, `src/main/resources/templates/index.html`, `CHANGELOG.md`
+
+### 변경 의도
+대시보드 좌측 `Analysis Files` 패널은 사이드바 `Recent Files`와 정보가 중복되고 추세·집계가 보이지 않아 가치가 낮음. 누수 탐지 추이를 한눈에 파악할 수 있도록 **일자별 탐지건수 차트**로 교체.
+
+### 내역
+- **HeapDumpController.index()** — 기존 severity 누적 loop 안에서 `analyzedAt` 기반 일자 버킷에 함께 누적(별도 쿼리 없음). 최근 14일 daily detection 배열 + KPI(14d 누적 / 7d vs 직전 7d 변화율 / Peak day) 산출 후 모델에 주입. 사용 안 하게 된 `analysisHistory`/`hasMoreFiles`/`totalFileCount` model attribute 제거.
+- **AnalysisHistoryItem** — `analyzedAtEpoch` 필드 추가, `buildHistory()` DB 분기에서 `analyzedAt` epoch ms로 세팅.
+- **DailyDetection** inner DTO 신규(date/total/critical/high/medium/low).
+- **index.html**
+  - `<head>`에 Chart.js 4.4.0 CDN 추가(`analyze.html`과 동일 버전).
+  - 좌측 패널을 **Detections · 최근 14일**로 교체: KPI 3카드 + Chart.js stacked bar(severity별 색상). 0건 시 안내 문구.
+  - 우측 `탐지 현황` 패널 헤더에 "critical 우선" 라벨 보강.
+  - 인라인 직렬화 `var DAILY_DETECT = ...` + 차트 초기화 IIFE.
+
+### 검증
+- `mvn clean package -DskipTests` BUILD SUCCESS.
+- 분석 이력 0건: 패널이 빈 메시지로 표시되고 JS 에러 없음.
+- 분석 이력 ≥1건(success+suspect): KPI 3칸 + 14일 stacked bar 렌더, 툴팁 footer Total 노출.
+- 14일 윈도우는 누락일도 0으로 채워 일자 정렬 유지.
+- `/files`·`/history`·`/api/history` JSON shape 변동 없음(buildHistory 새 필드는 노출 안 됨).
+
 ## [2026-05-06] 버전 2.0.0 → 2.0.1 업데이트
 
 **변경 파일:** `pom.xml`, `restart.sh`, `README-DEPLOY.md`, `CLAUDE.md`, `CHANGELOG.md`

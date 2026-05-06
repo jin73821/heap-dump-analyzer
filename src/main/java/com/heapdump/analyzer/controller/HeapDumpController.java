@@ -102,11 +102,6 @@ public class HeapDumpController {
         List<AnalysisHistoryItem> history = buildHistory(files).stream()
             .filter(h -> !h.isFileDeleted())
             .collect(Collectors.toList());
-        int maxDisplay = config.getDashboardHistoryMaxDisplay();
-        model.addAttribute("analysisHistory",
-            history.size() > maxDisplay ? history.subList(0, maxDisplay) : history);
-        model.addAttribute("hasMoreFiles", history.size() > maxDisplay);
-        model.addAttribute("totalFileCount", history.size());
         model.addAttribute("analyzedCount",
             history.stream().filter(h -> "SUCCESS".equals(h.getStatus())).count());
 
@@ -131,9 +126,12 @@ public class HeapDumpController {
                 .collect(Collectors.toSet());
         model.addAttribute("errorFiles", errorFiles);
 
-        // 탐지 현황 (심각도별 집계)
+        // 탐지 현황 (심각도별 집계) + 일자별 누적 (최근 14일)
         int criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
         List<DetectionSummaryItem> detectionItems = new ArrayList<>();
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.LocalDate from = today.minusDays(13);
+        Map<java.time.LocalDate, int[]> dailyBuckets = new HashMap<>();
         for (AnalysisHistoryItem h : history) {
             if (!"SUCCESS".equals(h.getStatus()) || h.getSuspectCount() == 0) continue;
             HeapAnalysisResult r = analyzerService.getCachedResult(h.getFilename());
@@ -157,6 +155,16 @@ public class HeapDumpController {
             di.setLowCount(fl);
             di.setFileDeleted(h.isFileDeleted());
             detectionItems.add(di);
+
+            if (h.getAnalyzedAtEpoch() > 0) {
+                java.time.LocalDate day = java.time.Instant.ofEpochMilli(h.getAnalyzedAtEpoch())
+                        .atZone(java.time.ZoneId.systemDefault()).toLocalDate();
+                if (!day.isBefore(from) && !day.isAfter(today)) {
+                    int[] b = dailyBuckets.computeIfAbsent(day, k -> new int[5]);
+                    b[0] += (fc + fh + fm + fl);
+                    b[1] += fc; b[2] += fh; b[3] += fm; b[4] += fl;
+                }
+            }
         }
         model.addAttribute("criticalCount", criticalCount);
         model.addAttribute("highCount", highCount);
@@ -164,6 +172,43 @@ public class HeapDumpController {
         model.addAttribute("lowCount", lowCount);
         model.addAttribute("detectionItems", detectionItems);
         model.addAttribute("hasDetections", criticalCount + highCount + mediumCount + lowCount > 0);
+
+        // 일자별 탐지 추이 (최근 14일, 누락일 포함)
+        java.time.format.DateTimeFormatter dateFmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        List<DailyDetection> dailyDetections = new ArrayList<>();
+        int total14d = 0, last7d = 0, prev7d = 0;
+        java.time.LocalDate peakDay = null;
+        int peakCount = 0;
+        for (int i = 0; i < 14; i++) {
+            java.time.LocalDate d = from.plusDays(i);
+            int[] b = dailyBuckets.get(d);
+            DailyDetection dd = new DailyDetection();
+            dd.setDate(d.format(dateFmt));
+            if (b != null) {
+                dd.setTotal(b[0]);
+                dd.setCritical(b[1]);
+                dd.setHigh(b[2]);
+                dd.setMedium(b[3]);
+                dd.setLow(b[4]);
+                total14d += b[0];
+                if (i < 7) prev7d += b[0]; else last7d += b[0];
+                if (b[0] > peakCount) { peakCount = b[0]; peakDay = d; }
+            }
+            dailyDetections.add(dd);
+        }
+        Integer delta7d = null;
+        if (prev7d > 0) {
+            delta7d = (int) Math.round((last7d - prev7d) * 100.0 / prev7d);
+        } else if (last7d > 0) {
+            delta7d = null; // 비교 불가 — 템플릿에서 "—" 처리
+        }
+        model.addAttribute("dailyDetections", dailyDetections);
+        model.addAttribute("kpiTotal14d", total14d);
+        model.addAttribute("kpiLast7d", last7d);
+        model.addAttribute("kpiPrev7d", prev7d);
+        model.addAttribute("kpiDelta7d", delta7d);
+        model.addAttribute("kpiPeakDay", peakDay != null ? peakDay.format(dateFmt) : "-");
+        model.addAttribute("kpiPeakCount", peakCount);
 
         // 디스크 사용량
         File dumpDir = new File(analyzerService.getHeapDumpDirectory());
@@ -1982,6 +2027,9 @@ public class HeapDumpController {
             item.setHeapUsed(e.getUsedHeapSize() != null ? formatBytes(e.getUsedHeapSize()) : "-");
             item.setHeapUsedBytes(e.getUsedHeapSize() != null ? e.getUsedHeapSize() : 0);
             item.setServerName(e.getServerName());
+            item.setAnalyzedAtEpoch(e.getAnalyzedAt() != null
+                    ? e.getAnalyzedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    : 0);
 
             HeapDumpFile file = fileMap.get(e.getFilename());
             if (file != null) {
@@ -2123,6 +2171,7 @@ public class HeapDumpController {
         private String  serverName;
         private boolean hasAiInsight;
         private String  aiInsightSeverity;
+        private long    analyzedAtEpoch;
 
         public Long    getId()            { return id; }
         public void    setId(Long v)              { id = v; }
@@ -2166,6 +2215,30 @@ public class HeapDumpController {
         public void    setHasAiInsight(boolean v) { hasAiInsight = v; }
         public String  getAiInsightSeverity() { return aiInsightSeverity; }
         public void    setAiInsightSeverity(String v) { aiInsightSeverity = v; }
+        public long    getAnalyzedAtEpoch() { return analyzedAtEpoch; }
+        public void    setAnalyzedAtEpoch(long v) { analyzedAtEpoch = v; }
+    }
+
+    public static class DailyDetection {
+        private String date;
+        private int total;
+        private int critical;
+        private int high;
+        private int medium;
+        private int low;
+
+        public String getDate() { return date; }
+        public void   setDate(String v) { date = v; }
+        public int    getTotal() { return total; }
+        public void   setTotal(int v) { total = v; }
+        public int    getCritical() { return critical; }
+        public void   setCritical(int v) { critical = v; }
+        public int    getHigh() { return high; }
+        public void   setHigh(int v) { high = v; }
+        public int    getMedium() { return medium; }
+        public void   setMedium(int v) { medium = v; }
+        public int    getLow() { return low; }
+        public void   setLow(int v) { low = v; }
     }
 
     public static class DetectionSummaryItem {
