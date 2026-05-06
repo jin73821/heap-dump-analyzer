@@ -185,6 +185,12 @@ public class ServerController {
             if (scanResult.containsKey("error")) {
                 result.put("error", scanResult.get("error"));
             }
+            if (scanResult.containsKey("errorCode")) {
+                result.put("errorCode", scanResult.get("errorCode"));
+            }
+            if (scanResult.containsKey("dumpPath")) {
+                result.put("dumpPath", scanResult.get("dumpPath"));
+            }
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             result.put("success", false);

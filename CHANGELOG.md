@@ -1,5 +1,76 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-06] 버전 2.0.0 → 2.0.1 업데이트
+
+**변경 파일:** `pom.xml`, `restart.sh`, `README-DEPLOY.md`, `CLAUDE.md`, `CHANGELOG.md`
+
+### 내역
+- `pom.xml` `<version>2.0.0</version>` → `2.0.1`
+- `restart.sh` — kill grep 패턴과 `nohup java -jar ... heap-analyzer-2.0.1.jar` 갱신
+- `README-DEPLOY.md` 2.5절 restart.sh 예시 갱신
+- `CLAUDE.md` Build & Run 섹션 jar 파일명 갱신
+- 기존 2.0.0 프로세스 수동 종료(SIGTERM) 후 신규 2.0.1로 재기동. 다음 재기동부터는 `bash restart.sh`로 정상 처리됨
+
+### 검증
+- `Started HeapAnalyzerApplication in 9.472 seconds`
+- `ps -ef | grep heap-analyzer-2.0.1` 정상 노출
+
+## [2026-05-06] Target Servers 스캔 에러 코드 정비 — 덤프 경로 누락/권한 부족 시 메시지 명확화
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`, `src/main/java/com/heapdump/analyzer/controller/ServerController.java`, `src/main/resources/templates/servers.html`, `CHANGELOG.md`
+
+### 증상
+`/servers`에서 스캔 버튼 클릭 시 원격 덤프 경로 자체가 없거나 읽기 권한이 없을 때 빨간 "SSH/SCP Error" 배너에 본문이 비어 표시(`SSH 오류 (exit 1):`만 노출). 원인 추적 불가.
+
+### 근본 원인
+`scanRemoteDumpsWithStatus()`가 실행하는 find 명령에 `2>/dev/null`이 붙어 있어 `find: '/path': No such file or directory` 같은 핵심 진단 메시지가 통째로 삼켜짐. exit 코드만 비정상으로 떨어지고 stderr는 빈 문자열 → cleanSshError가 빈 문자열 반환.
+
+### 수정 내역
+- **RemoteDumpService.scanRemoteDumpsWithStatus()** — find 앞에 `[ -d ]`/`[ -r ]` 가드를 추가해 의도적으로 exit 2(NOT_FOUND) / exit 3(NOT_READABLE) 반환. 결과 Map에 `errorCode` 필드 신설:
+  - `DUMP_PATH_NOT_FOUND` — 원격 덤프 경로가 존재하지 않음
+  - `DUMP_PATH_NOT_READABLE` — SSH 계정에 읽기 권한 없음
+  - `SSH_ERROR` — 그 외 SSH/원격 셸 오류 (exit 1 등). stderr 빈 경우 "원격 명령 실행 실패 (exit N)" 폴백
+  - `SCAN_EXCEPTION` — Java Exception
+  - dumpPath에 single quote가 들어가도 안전하도록 `'\''` 이스케이프 추가
+- **ServerController.scanServer()** — `errorCode`/`dumpPath` 필드를 응답 JSON에 forwarding
+- **servers.html scanServer()** — `errorCode` 별 배너 시각 분리:
+  - 경로 문제(`DUMP_PATH_NOT_FOUND`/`DUMP_PATH_NOT_READABLE`): 노란 경고 배너 + "서버 상세에서 dump path 또는 SSH 계정 권한 확인" 보조 안내
+  - 그 외: 기존 빨간 SSH/SCP Error 배너
+  - 배너 제목에 `[ERROR_CODE]` 접두사 노출로 식별성 향상
+- 디렉토리는 있으나 dump 파일만 없는 케이스(success + empty files)는 기존 회색 "덤프 파일이 없습니다." 안내 그대로 유지
+
+### 검증
+- 빌드 성공: `mvn clean package -DskipTests` (11.5s)
+- 기동 성공: `Started HeapAnalyzerApplication in 9.435 seconds`
+
+## [2026-04-30] README-DEPLOY.md 갱신 — 2026-04-26 이후 변경사항 일괄 반영
+
+**변경 파일:** `README-DEPLOY.md`, `CHANGELOG.md`
+
+### 배경
+README-DEPLOY.md 작성(2026-04-26) 이후 4월 27일~30일 사이에 Spring Session JDBC, RAG Phase 2, 로그인 이력, 계정 신청 등 여러 기능이 추가되었으나 이관 가이드에 미반영. 사내 시스템으로 옮길 때 신규 키/테이블 누락으로 기동 실패 또는 기능 disable 가능성이 있어 일괄 점검·반영.
+
+### 반영 내역
+- **2.5 DB 비밀번호 암호화** — JAR 설치 경로를 `/opt/heap-analyzer` → `/opt/genspark/webapp_dump`로 통일. `restart.sh`에 `HEAP_ANALYZER_ENCRYPTION_KEY` export 추가 예시 보강(현재 `restart.sh`는 키를 export하지 않음). LLM/RAG도 동일 키 사용 명시.
+- **2.6 application.properties 수정** — 기존에 DataSource 한 블록만 보여주던 것을 5개 서브섹션으로 분리:
+  - (1) DataSource — 필수 변경
+  - (2) Spring Session JDBC — 필수 (블록 누락 시 매 재기동마다 강제 로그아웃)
+  - (3) LLM 분석 — 4-provider(claude/gpt/genspark/custom)
+  - (4) RAG (Elasticsearch) — keyword + Phase 2 두 semantic 모드 + 청킹
+  - (5) 기타 환경값 — MAT 타임아웃, 분석 스레드풀, 원격 SSH/SCP, 업로드/로깅
+- **2.7 테이블 자동 생성 확인** — 7개 → 11개로 갱신:
+  - `account_requests` (2026-04-30 self-signup), `login_history` (2026-04-29), `SPRING_SESSION` / `SPRING_SESSION_ATTRIBUTES` (2026-04-29 Spring Session JDBC) 4건 추가
+  - 생성 주체(JPA / Spring Session JDBC) 칼럼 추가
+  - `SPRING_SESSION` 검증 SQL 예시 추가
+- **5. 애플리케이션 기동** — 경로 통일(`/opt/genspark/webapp_dump`), CLAUDE.md의 기동 검증 grep 명령 추가
+- **6. 트러블슈팅** — 신규 6개 행 추가: SPRING_SESSION 생성 실패, 재기동마다 로그아웃, 계정 신청 403, LLM 401, RAG 검색 0건, RAG semantic 모드 에러, 5GB 업로드 실패
+- **7. 이관 후 활성화 작업 (신설)** — 4개 서브섹션: 계정 관리(self-signup/접속 이력/활성 세션), LLM 활성화, RAG 활성화(ES 매핑 사전 준비 명시), 원격 SSH/SCP 자동 수집
+- **8. 이관 패키지 체크리스트** (기존 7번에서 8번으로 이동) — 항목 보강: `application.properties` 경로 명확화, `restart.sh`에 암호화 키 export 추가, 11개 테이블 검증, `rag-data/` CSV 학습 데이터 포함, 계정 신청 정책 결정 항목
+
+### 검증
+- `grep -n "^## \|^### "` — 8개 메인 섹션 + 4.5개 서브섹션 정상 (Markdown 구조 유지)
+- 라인 수 305 → 496 라인 (신규 추가 분량 대부분 application.properties 5개 블록 + 7번 활성화 가이드)
+
 ## [2026-04-30] login.html 폼 사라짐 버그 수정 — `<head>`에 `<meta name="_csrf">` 추가
 
 **변경 파일:** `src/main/resources/templates/login.html`, `CHANGELOG.md`

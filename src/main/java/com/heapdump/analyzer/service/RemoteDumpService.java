@@ -121,16 +121,38 @@ public class RemoteDumpService {
 
         try {
             String dumpPath = server.getDumpPath();
+            // 경로 존재/권한 체크를 find 앞에 두어 exit 2/3으로 명확히 구분
+            // (find의 2>/dev/null이 stderr를 삼켜 원인 불명 메시지가 노출되던 문제 해결)
+            String safePath = dumpPath.replace("'", "'\\''");
             String findCmd = String.format(
-                "find %s -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' \\) -exec ls -la {} \\; 2>/dev/null",
-                dumpPath);
+                "[ -d '%s' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
+                + "[ -r '%s' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
+                + "find '%s' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' \\) -exec ls -la {} \\; 2>/dev/null",
+                safePath, safePath, safePath);
             String[] cmd = buildSshCommand(server, findCmd);
             ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
 
-            if (pr.exitCode != 0 && pr.stdout.trim().isEmpty()) {
-                // exit 코드 비정상 + 출력 없음 → 실패
+            if (pr.exitCode == 2) {
+                String errorMsg = "원격 덤프 경로가 존재하지 않습니다: " + dumpPath;
+                result.put("errorCode", "DUMP_PATH_NOT_FOUND");
+                result.put("error", errorMsg);
+                result.put("dumpPath", dumpPath);
+                updateServerStatus(server, "FAIL", errorMsg);
+                logger.warn("[RemoteDump] Dump path not found on {}: {}", server.getName(), dumpPath);
+            } else if (pr.exitCode == 3) {
+                String errorMsg = "원격 덤프 경로 읽기 권한이 없습니다: " + dumpPath;
+                result.put("errorCode", "DUMP_PATH_NOT_READABLE");
+                result.put("error", errorMsg);
+                result.put("dumpPath", dumpPath);
+                updateServerStatus(server, "FAIL", errorMsg);
+                logger.warn("[RemoteDump] Dump path not readable on {} (user={}): {}",
+                        server.getName(), server.getSshUser(), dumpPath);
+            } else if (pr.exitCode != 0 && pr.stdout.trim().isEmpty()) {
+                // 그 외 비정상 종료 → SSH/원격 셸 오류
                 String errorMsg = cleanSshError(pr.stderr);
-                result.put("error", "SSH 오류 (exit " + pr.exitCode + "): " + errorMsg);
+                if (errorMsg.isEmpty()) errorMsg = "원격 명령 실행 실패 (exit " + pr.exitCode + ")";
+                result.put("errorCode", "SSH_ERROR");
+                result.put("error", "SSH 오류: " + errorMsg);
                 updateServerStatus(server, "FAIL", "스캔 실패: " + errorMsg);
                 logger.warn("[RemoteDump] SSH error on {}: exit={}, stderr={}", server.getName(), pr.exitCode, errorMsg);
             } else if (!pr.stdout.trim().isEmpty()) {
@@ -162,6 +184,7 @@ public class RemoteDumpService {
             }
             logger.info("[RemoteDump] Scanned {} files on server {}", files.size(), server.getName());
         } catch (Exception e) {
+            result.put("errorCode", "SCAN_EXCEPTION");
             result.put("error", "스캔 실패: " + e.getMessage());
             result.put("files", files);
             result.put("count", 0);
