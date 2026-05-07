@@ -196,18 +196,65 @@
             .pg-list { justify-content: center; flex-wrap: wrap; }
         }
 
-        /* ── 2단 레이아웃 (차트 좌 / 테이블 우) ─────────── */
-        .history-grid {
+        /* ── 상단 2단 레이아웃 (Detections 좌 / Recent 우 — 50:50) ── */
+        .detect-row {
             display: grid;
-            grid-template-columns: minmax(460px, 560px) 1fr;
+            grid-template-columns: 1fr 1fr;
             gap: 20px;
-            align-items: start;
+            align-items: stretch;
+            margin-bottom: 18px;
         }
-        .history-right { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-        .history-grid .detect-panel { margin-bottom: 0; }
-        .history-right > .table-toolbar { margin-bottom: 0; }
+        .detect-row .detect-panel { margin-bottom: 0; }
+        .detect-row .det-recent-panel { margin-bottom: 0; }
+        .history-bottom { display: flex; flex-direction: column; gap: 16px; }
         @media (max-width: 1024px) {
-            .history-grid { grid-template-columns: 1fr; }
+            .detect-row { grid-template-columns: 1fr; }
+        }
+
+        /* ── Recent Detections 패널 ──────────────────────── */
+        .det-recent-panel {
+            padding: 16px 18px;
+            display: flex; flex-direction: column;
+            min-height: 0;
+        }
+        .det-recent-hdr {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        .det-recent-ttl { font-size: 13px; font-weight: 700; color: #1F2937; }
+        .det-recent-cnt { font-size: 11px; color: #9CA3AF; }
+        .det-recent-list {
+            flex: 1; min-height: 0;
+            max-height: 540px; overflow-y: auto;
+            margin: 0 -6px; padding: 0 4px;
+        }
+        .det-recent-row {
+            display: flex; flex-direction: column; gap: 4px;
+            padding: 9px 8px; border-bottom: 1px solid #F3F4F6;
+            cursor: pointer; border-radius: 6px;
+        }
+        .det-recent-row:last-child { border-bottom: none; }
+        .det-recent-row:hover { background: #F9FAFB; }
+        .det-recent-row.deleted { cursor: default; opacity: 0.55; }
+        .det-recent-row.deleted:hover { background: transparent; }
+        .det-recent-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+        .det-recent-sev { font-size: 10px; padding: 2px 7px; border-radius: 10px; font-weight: 600; }
+        .det-recent-server {
+            font-size: 10px; padding: 2px 7px; border-radius: 10px;
+            background: #EFF6FF; color: #2563EB; font-weight: 600;
+        }
+        .det-recent-server.local { background: #F3F4F6; color: #6B7280; }
+        .det-recent-date { font-size: 11px; color: #9CA3AF; margin-left: auto; }
+        .det-recent-title {
+            font-size: 12px; color: #1F2937; font-weight: 500;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .det-recent-meta {
+            font-size: 11px; color: #6B7280;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .det-recent-empty {
+            text-align: center; padding: 32px 12px; color: #9CA3AF; font-size: 12px;
         }
 
         /* ── Detections panel ──────────────────────────────── */
@@ -331,9 +378,9 @@
         </div>
     </div>
 
-    <div class="history-grid">
+    <!-- 상단: Detections 차트 (좌) / KPI + Recent Detections (우) -->
+    <div class="detect-row">
 
-    <!-- Detections 차트 + KPI 패널 (좌측) -->
     <div class="panel detect-panel">
         <div class="detect-panel-hdr">
             <div class="detect-panel-ttl">Detections</div>
@@ -375,8 +422,42 @@
         </div>
     </div>
 
-    <!-- 검색/툴바 + 테이블 (우측) -->
-    <div class="history-right">
+    <div class="panel det-recent-panel">
+            <div class="det-recent-hdr">
+                <div class="det-recent-ttl">최근 탐지 결과</div>
+                <div class="det-recent-cnt" id="detRecentCount" th:text="${#lists.size(detectRecent)} + '건'">0건</div>
+            </div>
+            <div class="det-recent-list" id="detRecentList">
+                <div th:if="${#lists.isEmpty(detectRecent)}" class="det-recent-empty">
+                    해당 기간에 탐지된 의심 항목이 없습니다.
+                </div>
+                <div th:each="r : ${detectRecent}"
+                     th:class="${r.fileDeleted} ? 'det-recent-row deleted' : 'det-recent-row'"
+                     th:data-filename="${r.filename}"
+                     th:data-deleted="${r.fileDeleted}"
+                     onclick="onRecentClick(this)">
+                    <div class="det-recent-top">
+                        <span th:class="'det-recent-sev dds-' + ${r.severity}"
+                              th:text="${#strings.toUpperCase(r.severity)}">HIGH</span>
+                        <span th:if="${r.serverName != null}"
+                              class="det-recent-server"
+                              th:text="${r.serverName}">prod-1</span>
+                        <span th:unless="${r.serverName != null}"
+                              class="det-recent-server local">Local</span>
+                        <span class="det-recent-date" th:text="${r.dateLabel}">2026-05-07</span>
+                    </div>
+                    <div class="det-recent-title" th:text="${r.title}"
+                         th:title="${r.title}">Suspect title</div>
+                    <div class="det-recent-meta" th:text="${r.analysisName}"
+                         th:title="${r.analysisName}">[HPROF]…</div>
+                </div>
+            </div>
+    </div>
+
+    </div><!-- /.detect-row -->
+
+    <!-- 하단: 검색/툴바 + 테이블 (전폭) -->
+    <div class="history-bottom">
 
     <div class="table-toolbar">
         <input type="text" class="search-bar" id="searchInput"
@@ -476,8 +557,7 @@
         </div>
     </div>
 
-    </div><!-- /.history-right -->
-    </div><!-- /.history-grid -->
+    </div><!-- /.history-bottom -->
 </div>
 
 <!-- Detections 드릴다운 모달 -->
@@ -575,6 +655,7 @@ var DETECT_INIT = {
     labels:  /*[[${detectLabels}]]*/ [],
     serverDatasets:   /*[[${detectServerSeries}]]*/ [],
     severityDatasets: /*[[${detectSeveritySeries}]]*/ [],
+    recent: /*[[${detectRecent}]]*/ [],
     kpi: {
         total:     /*[[${detectKpiTotal}]]*/ 0,
         last7d:    /*[[${detectKpiLast7d}]]*/ 0,
@@ -1015,6 +1096,7 @@ initRows();
         var datasets = buildDatasets(payload.datasets, _detGroup);
 
         applyKpi(payload.kpi || {});
+        applyRecent(payload.recent);
 
         var hasData = (payload.kpi && payload.kpi.total > 0) && datasets.length > 0;
         document.getElementById('detEmptyChart').style.display = hasData ? 'none' : 'block';
@@ -1091,6 +1173,47 @@ initRows();
         updateControls();
         fetchDetect();
     }
+
+    // ── Recent Detections 리스트 ──────────────────────────
+    function applyRecent(items) {
+        if (items === undefined || items === null) return; // SSR DOM 보존
+        var list = document.getElementById('detRecentList');
+        var cnt  = document.getElementById('detRecentCount');
+        if (!list || !cnt) return;
+        cnt.textContent = items.length + '건';
+        if (items.length === 0) {
+            list.innerHTML = '<div class="det-recent-empty">해당 기간에 탐지된 의심 항목이 없습니다.</div>';
+            return;
+        }
+        var html = items.map(function(r) {
+            var deletedCls = r.fileDeleted ? ' deleted' : '';
+            var sev = (r.severity || 'medium').toLowerCase();
+            var serverHtml = r.serverName
+                ? '<span class="det-recent-server">' + escapeHtml(r.serverName) + '</span>'
+                : '<span class="det-recent-server local">Local</span>';
+            return '<div class="det-recent-row' + deletedCls + '"' +
+                   ' data-filename="' + escapeHtml(r.filename) + '"' +
+                   ' data-deleted="' + (r.fileDeleted ? 'true' : 'false') + '"' +
+                   ' onclick="onRecentClick(this)">' +
+                   '<div class="det-recent-top">' +
+                     '<span class="det-recent-sev dds-' + sev + '">' + escapeHtml(sev.toUpperCase()) + '</span>' +
+                     serverHtml +
+                     '<span class="det-recent-date">' + escapeHtml(r.dateLabel || '') + '</span>' +
+                   '</div>' +
+                   '<div class="det-recent-title" title="' + escapeHtml(r.title || '') + '">' +
+                     escapeHtml(r.title || '') + '</div>' +
+                   '<div class="det-recent-meta" title="' + escapeHtml(r.analysisName || '') + '">' +
+                     escapeHtml(r.analysisName || '') + '</div>' +
+                   '</div>';
+        }).join('');
+        list.innerHTML = html;
+    }
+
+    window.onRecentClick = function(el) {
+        if (!el || el.dataset.deleted === 'true') return;
+        var f = el.dataset.filename;
+        if (f) location.href = '/analyze/result/' + encodeURIComponent(f);
+    };
 
     // ── 드릴다운 모달 ────────────────────────────────────
     function escapeHtml(s) {

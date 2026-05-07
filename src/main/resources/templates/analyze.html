@@ -859,8 +859,11 @@ function loadFullErrorLog() {
         <button class="nav-item" onclick="exportCSV()">
             <span class="nav-icon">&#128190;</span> Export CSV
         </button>
-        <button class="nav-item" onclick="window.print()">
-            <span class="nav-icon">&#128424;</span> Print Report
+        <button class="nav-item"
+                th:disabled="${!hasHeapData}"
+                onclick="showPanel('pdf-report',this)"
+                title="A4 1페이지 PDF 미리보기 및 다운로드">
+            <span class="nav-icon">&#128196;</span> PDF Report
         </button>
     </div>
 
@@ -1484,6 +1487,31 @@ function loadFullErrorLog() {
         </div>
     </div>
 
+    <!-- ▌ PDF REPORT PANEL ▌ -->
+    <div id="panel-pdf-report" class="panel">
+        <div class="card" style="padding:0;overflow:hidden">
+            <div class="card-title" style="padding:14px 20px;margin:0;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--border)">
+                <div><span class="card-icon">&#128196;</span> PDF Report Preview</div>
+                <a id="pdfReportDownloadBtn" class="pdf-dl-btn"
+                   th:href="@{'/analyze/' + ${filename} + '/print-pdf'(mode='download')}"
+                   style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:#2563EB;color:#fff;font-size:12px;font-weight:600;border-radius:6px;text-decoration:none;transition:background .15s">
+                    <svg viewBox="0 0 24 24" fill="currentColor" style="width:13px;height:13px"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                    <span>PDF 다운로드</span>
+                </a>
+            </div>
+            <div style="position:relative;background:#525659">
+                <iframe id="pdfReportIframe"
+                        style="width:100%;min-height:80vh;border:none;display:block;background:#fff"
+                        referrerpolicy="no-referrer"></iframe>
+                <div id="pdfReportFallback"
+                     style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;color:#E5E7EB;font-size:13px;text-align:center;line-height:1.6;padding:24px">
+                    브라우저에서 PDF 미리보기를 표시할 수 없습니다.<br/>
+                    상단의 <strong>PDF 다운로드</strong> 버튼을 사용해 주세요.
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ▌ LOG PANEL ▌ -->
     <div id="panel-log" class="panel" th:if="${matLogTotalLen != null and matLogTotalLen > 0}">
         <div class="card" style="padding:0;overflow:hidden">
@@ -1653,6 +1681,35 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
     }
 })();
 
+// ── PDF Report panel lazy-load ────────────────────────
+// 첫 진입 시 viewport 폭에 따라 iframe src를 결정:
+//   데스크톱(>900px) → /print-pdf?mode=inline (브라우저 PDF 인라인 뷰어)
+//   모바일(≤900px)   → /print-html             (HTML 렌더, PDF 인라인 미지원 회피)
+// 다운로드 버튼의 download 속성도 같은 시점에 baseName 기반으로 설정.
+function loadPdfReportPanel() {
+    var iframe = document.getElementById('pdfReportIframe');
+    var btn    = document.getElementById('pdfReportDownloadBtn');
+    if (!iframe || typeof FILENAME === 'undefined' || !FILENAME) return;
+
+    if (btn && !btn.getAttribute('download')) {
+        var base = FILENAME.replace(/\.(hprof|bin|dump)(\.gz)?$/i, '');
+        btn.setAttribute('download', base + '-report.pdf');
+    }
+    if (iframe.getAttribute('src')) return;   // 이미 로드됨
+
+    var isMobile = window.matchMedia('(max-width: 900px)').matches;
+    var fb = document.getElementById('pdfReportFallback');
+    iframe.src = '/analyze/' + encodeURIComponent(FILENAME) +
+                 (isMobile ? '/print-html' : '/print-pdf?mode=inline');
+
+    if (!isMobile) {
+        // PDF 인라인은 일부 브라우저에서 load 이벤트가 발생 안 할 수 있음 → 4초 후 fallback.
+        var loaded = false;
+        iframe.addEventListener('load', function() { loaded = true; });
+        setTimeout(function() { if (!loaded && fb) fb.style.display = 'flex'; }, 4000);
+    }
+}
+
 // ── Panel Navigation ──────────────────────────────────
 /* ── Mobile sidebar toggle ─────────────────────── */
 function toggleMobileSidebar() {
@@ -1684,6 +1741,11 @@ function showPanel(name, btn) {
     if (name === 'thread-stacks' && !_threadStacksLoaded) {
         _threadStacksLoaded = true;
         loadThreadStacks();
+    }
+
+    // PDF Report 패널: 첫 진입 시 src 설정 + 다운로드 파일명 갱신
+    if (name === 'pdf-report') {
+        loadPdfReportPanel();
     }
 
     // iframe lazy-load (Overview, Top Components, Suspects)

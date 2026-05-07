@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <title>Heap Dump Analysis Report</title>
+    <style>
+        @page { size: A4 portrait; margin: 12mm; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            font-family: 'Pretendard', sans-serif;
+            font-size: 9pt; line-height: 1.35; color: #111827;
+        }
+        .report { width: 186mm; height: 273mm; overflow: hidden; position: relative; }
+
+        /* Header */
+        .hdr { display: table; width: 100%; height: 18mm; border-bottom: 0.6mm solid #1F2937; padding-bottom: 2.5mm; }
+        .hdr .l { display: table-cell; vertical-align: middle; width: 60%; }
+        .hdr .r { display: table-cell; vertical-align: middle; text-align: right; font-size: 8pt; color: #4B5563; line-height: 1.5; }
+        .hdr h1 { font-size: 14pt; font-weight: 700; color: #111827; }
+        .hdr .sub { font-size: 8pt; color: #6B7280; margin-top: 1mm; }
+        .hdr .r .meta-l { color: #9CA3AF; display: inline-block; width: 18mm; }
+
+        /* Section title */
+        .sec-title { font-size: 10pt; font-weight: 700; color: #1F2937; margin: 3mm 0 1.4mm 0; }
+
+        /* KPI Cards */
+        .kpi-grid { display: table; width: 100%; height: 36mm; border-collapse: separate; border-spacing: 1.6mm 1.6mm; }
+        .kpi-row { display: table-row; }
+        .kpi { display: table-cell; width: 33.33%; border: 0.3mm solid #E5E7EB; border-radius: 1.5mm; padding: 2.5mm 3mm; vertical-align: top; }
+        .kpi .label { font-size: 7.5pt; color: #6B7280; font-weight: 700; letter-spacing: 0.3pt; text-transform: uppercase; }
+        .kpi .value { font-size: 13pt; font-weight: 700; margin-top: 1mm; color: #111827; }
+        .kpi .sub { font-size: 7pt; color: #9CA3AF; margin-top: 0.5mm; }
+        .kpi.k-blue   { border-left: 1.2mm solid #3B82F6; }
+        .kpi.k-orange { border-left: 1.2mm solid #F59E0B; }
+        .kpi.k-green  { border-left: 1.2mm solid #10B981; }
+        .kpi.k-purple { border-left: 1.2mm solid #8B5CF6; }
+        .kpi.k-cyan   { border-left: 1.2mm solid #06B6D4; }
+        .kpi.k-red    { border-left: 1.2mm solid #DC2626; }
+
+        /* Heap composition bar */
+        .bar-wrap { margin-top: 1mm; }
+        .bar { display: table; width: 100%; height: 6mm; border-radius: 1mm; overflow: hidden; border: 0.2mm solid #E5E7EB; }
+        .bar .seg { display: table-cell; vertical-align: middle; text-align: center; color: #fff; font-size: 7.5pt; font-weight: 700; }
+        .bar .seg.used { background: #3B82F6; }
+        .bar .seg.free { background: #E5E7EB; color: #4B5563; }
+        .bar-legend { font-size: 7.5pt; color: #6B7280; margin-top: 1mm; }
+        .bar-legend .dot { display: inline-block; width: 2mm; height: 2mm; vertical-align: middle; margin-right: 1mm; border-radius: 0.5mm; }
+
+        /* Top consumers table */
+        table.tt { width: 100%; border-collapse: collapse; font-size: 8pt; }
+        table.tt th { background: #F3F4F6; color: #374151; font-weight: 700; text-align: left; padding: 1.5mm 2mm; border-bottom: 0.3mm solid #D1D5DB; font-size: 7.5pt; }
+        table.tt td { padding: 1.5mm 2mm; border-bottom: 0.15mm solid #E5E7EB; vertical-align: top; }
+        table.tt td.num { text-align: right; font-variant-numeric: tabular-nums; }
+        table.tt td.cls { max-width: 88mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'Pretendard', monospace; font-size: 7.8pt; }
+        table.tt tr.empty td { color: #9CA3AF; text-align: center; padding: 4mm 2mm; }
+
+        /* Suspects */
+        .sus-list { }
+        .sus { padding: 1.4mm 2.5mm; border: 0.2mm solid #E5E7EB; border-left-width: 1.2mm; border-radius: 1mm; margin-bottom: 1.2mm; }
+        .sus-head { font-size: 8.5pt; font-weight: 700; color: #1F2937; }
+        .sus-cat { display: inline-block; font-size: 7pt; padding: 0.3mm 1.2mm; background: #F3F4F6; color: #6B7280; border-radius: 1mm; margin-left: 1.5mm; font-weight: 400; }
+        .sus-desc { font-size: 7.8pt; color: #4B5563; margin-top: 0.8mm; line-height: 1.35; }
+        .sev-critical { border-left-color: #DC2626; }
+        .sev-high     { border-left-color: #EA580C; }
+        .sev-medium   { border-left-color: #CA8A04; }
+        .sev-low      { border-left-color: #6B7280; }
+        .empty-box { font-size: 8pt; color: #9CA3AF; text-align: center; padding: 4mm; border: 0.2mm dashed #D1D5DB; border-radius: 1mm; }
+
+        /* AI box */
+        .ai-box { border: 0.2mm solid #E5E7EB; border-radius: 1.5mm; padding: 1.8mm 3mm;
+                  max-height: 68mm; overflow: hidden; }
+        .ai-row1 { font-size: 7.3pt; color: #6B7280; margin-bottom: 0.6mm; }
+        .ai-sev { display: inline-block; font-size: 7.3pt; font-weight: 700; padding: 0.4mm 1.8mm; border-radius: 1mm; color: #fff; margin-right: 2mm; }
+        .ai-sev.critical { background: #DC2626; }
+        .ai-sev.high     { background: #EA580C; }
+        .ai-sev.medium   { background: #CA8A04; }
+        .ai-sev.low      { background: #6B7280; }
+        .ai-sev.unknown  { background: #9CA3AF; }
+        .ai-summary { font-size: 8pt; color: #1F2937; line-height: 1.28; margin-top: 0.6mm; }
+        .ai-reco { font-size: 7.7pt; color: #374151; margin-top: 1mm; line-height: 1.25; }
+        .ai-reco strong { color: #1F2937; }
+
+        /* Footer */
+        .ftr { position: absolute; left: 0; right: 0; bottom: 0; height: 6mm; font-size: 7pt; color: #9CA3AF; border-top: 0.15mm solid #E5E7EB; padding-top: 1.5mm; display: table; width: 100%; }
+        .ftr .l { display: table-cell; }
+        .ftr .r { display: table-cell; text-align: right; }
+
+        /* ────────────────────────────────────────────────────────────
+           Screen-only 모바일 가독성 규칙 (≤900px).
+           OpenHTMLtoPDF는 기본 print 미디어를 사용하므로 PDF 렌더에 영향 없음.
+           모바일 미리보기(/print-html iframe)에서만 적용.
+           ──────────────────────────────────────────────────────────── */
+        @media screen and (max-width: 900px) {
+            html, body { font-size: 14px; line-height: 1.45; background: #fff; }
+            body { padding: 14px; }
+            .report { width: 100%; max-width: 100%; height: auto; overflow: visible; }
+
+            .hdr { display: block; height: auto; padding-bottom: 12px; margin-bottom: 8px; border-bottom-width: 1px; }
+            .hdr .l, .hdr .r { display: block; width: 100%; text-align: left; }
+            .hdr h1 { font-size: 18px; }
+            .hdr .sub { font-size: 12px; word-break: break-all; margin-top: 4px; }
+            .hdr .r { margin-top: 10px; font-size: 12px; line-height: 1.7; }
+            .hdr .r .meta-l { width: 72px; }
+
+            .sec-title { font-size: 15px; margin: 18px 0 8px 0; }
+
+            .kpi-grid { display: flex; flex-wrap: wrap; gap: 8px; height: auto; border-spacing: 0; }
+            .kpi-row { display: contents; }
+            .kpi { flex: 1 1 calc(50% - 8px); display: block; width: auto; min-width: 0; padding: 10px 12px; border-width: 1px; border-radius: 6px; }
+            .kpi.k-blue, .kpi.k-orange, .kpi.k-green,
+            .kpi.k-purple, .kpi.k-cyan, .kpi.k-red { border-left-width: 4px; }
+            .kpi .label { font-size: 11px; }
+            .kpi .value { font-size: 18px; margin-top: 2px; }
+            .kpi .sub { font-size: 11px; margin-top: 2px; }
+
+            .bar { height: 22px; border-radius: 4px; border-width: 1px; }
+            .bar .seg { font-size: 12px; }
+            .bar-legend { font-size: 12px; margin-top: 6px; }
+            .bar-legend .dot { width: 8px; height: 8px; border-radius: 2px; margin-right: 4px; }
+
+            table.tt { font-size: 12px; table-layout: auto; }
+            table.tt th { font-size: 11px; padding: 6px 8px; }
+            table.tt td { padding: 6px 8px; }
+            table.tt th[style], table.tt td[style] { width: auto !important; }
+            table.tt td.cls { max-width: none; white-space: normal; word-break: break-all; font-size: 12px; }
+
+            .sus { padding: 8px 12px; margin-bottom: 8px; border-radius: 6px; border-width: 1px; }
+            .sus.sev-critical, .sus.sev-high,
+            .sus.sev-medium, .sus.sev-low { border-left-width: 4px; }
+            .sus-head { font-size: 13px; }
+            .sus-cat { font-size: 11px; padding: 2px 6px; border-radius: 3px; }
+            .sus-desc { font-size: 12px; margin-top: 4px; line-height: 1.45; }
+
+            .ai-box { padding: 10px 12px; max-height: none; border-radius: 6px; border-width: 1px; }
+            .ai-row1 { font-size: 11px; margin-bottom: 4px; }
+            .ai-sev { font-size: 11px; padding: 2px 6px; border-radius: 3px; margin-right: 6px; }
+            .ai-summary { font-size: 13px; line-height: 1.45; margin-top: 4px; }
+            .ai-reco { font-size: 12px; line-height: 1.45; margin-top: 6px; }
+
+            .empty-box { font-size: 12px; padding: 14px; border-radius: 6px; }
+
+            .ftr { position: static; height: auto; margin-top: 18px; padding-top: 8px; font-size: 11px; border-top-width: 1px; }
+        }
+    </style>
+</head>
+<body>
+<div class="report">
+
+    <!-- Header -->
+    <div class="hdr">
+        <div class="l">
+            <h1>Heap Dump Analysis Report</h1>
+            <div class="sub" th:text="${filename}">heapdump.hprof</div>
+        </div>
+        <div class="r">
+            <div><span class="meta-l">분석 일시</span><span th:text="${formattedDate}">-</span></div>
+            <div><span class="meta-l">소요 시간</span><span th:text="${analysisTimeSec} + ' s'">-</span></div>
+            <div><span class="meta-l">파일 크기</span><span th:text="${result.formattedFileSize}">-</span></div>
+            <div th:if="${ai != null and ai.model != null}">
+                <span class="meta-l">AI 모델</span><span th:text="${ai.model}">-</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- KPI Cards (3 x 2) -->
+    <div class="sec-title">주요 지표 (Key Metrics)</div>
+    <div class="kpi-grid">
+        <div class="kpi-row">
+            <div class="kpi k-blue">
+                <div class="label">Total Heap</div>
+                <div class="value" th:text="${result.formattedTotalHeapSize}">-</div>
+                <div class="sub">전체 힙 크기</div>
+            </div>
+            <div class="kpi k-orange">
+                <div class="label">Used Heap</div>
+                <div class="value" th:text="${result.formattedUsedHeapSize}">-</div>
+                <div class="sub">사용 메모리</div>
+            </div>
+            <div class="kpi k-green">
+                <div class="label">Free Heap</div>
+                <div class="value" th:text="${result.formattedFreeHeapSize}">-</div>
+                <div class="sub">여유 메모리</div>
+            </div>
+        </div>
+        <div class="kpi-row">
+            <div class="kpi k-purple">
+                <div class="label">Usage</div>
+                <div class="value" th:text="${result.formattedHeapUsagePercent}">-</div>
+                <div class="sub">힙 사용률</div>
+            </div>
+            <div class="kpi k-cyan">
+                <div class="label">Classes</div>
+                <div class="value" th:text="${result.formattedTotalClasses}">-</div>
+                <div class="sub">로드된 클래스 수</div>
+            </div>
+            <div class="kpi k-red">
+                <div class="label">Suspects</div>
+                <div class="value" th:text="${suspectCount}">0</div>
+                <div class="sub">누수 의심 항목</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Heap composition bar -->
+    <div class="bar-wrap">
+        <div class="bar">
+            <div class="seg used" th:style="'width:' + ${usedBarPct} + '%'" th:text="'Used ' + ${usedBarPct} + '%'">Used</div>
+            <div class="seg free" th:style="'width:' + ${freeBarPct} + '%'" th:text="'Free ' + ${freeBarPct} + '%'">Free</div>
+        </div>
+        <div class="bar-legend">
+            <span class="dot" style="background:#3B82F6"></span>Used <span th:text="${result.formattedUsedHeapSize}">-</span>
+            <span style="margin: 0 2mm;">·</span>
+            <span class="dot" style="background:#E5E7EB"></span>Free <span th:text="${result.formattedFreeHeapSize}">-</span>
+            <span style="margin: 0 2mm;">·</span>
+            Total <span th:text="${result.formattedTotalHeapSize}">-</span>
+        </div>
+    </div>
+
+    <!-- Top Consumers -->
+    <div class="sec-title">상위 메모리 소비자 Top 5 (Top Consumers)</div>
+    <table class="tt">
+        <thead>
+        <tr>
+            <th style="width: 6mm;">#</th>
+            <th>클래스명</th>
+            <th class="num" style="width: 22mm;">객체 수</th>
+            <th class="num" style="width: 24mm;">Retained</th>
+            <th class="num" style="width: 14mm;">비율</th>
+        </tr>
+        </thead>
+        <tbody th:if="${topMem != null and !topMem.isEmpty()}">
+        <tr th:each="m,it : ${topMem}">
+            <td class="num" th:text="${it.count}">1</td>
+            <td class="cls" th:text="${m.className}">java.lang.Object</td>
+            <td class="num" th:text="${m.formattedObjectCount}">-</td>
+            <td class="num" th:text="${m.formattedSize}">-</td>
+            <td class="num" th:text="${m.formattedPercent}">-</td>
+        </tr>
+        </tbody>
+        <tbody th:if="${topMem == null or topMem.isEmpty()}">
+        <tr class="empty"><td colspan="5">데이터 없음</td></tr>
+        </tbody>
+    </table>
+
+    <!-- Leak Suspects -->
+    <div class="sec-title">
+        누수 의심 항목 Top 3 (Leak Suspects)
+        <span style="font-weight: 400; color: #6B7280; font-size: 8pt;"
+              th:if="${suspectCount > 3}"
+              th:text="' · 전체 ' + ${suspectCount} + '건 중 상위 3건'"></span>
+    </div>
+    <div class="sus-list" th:if="${topSuspects != null and !topSuspects.isEmpty()}">
+        <div class="sus" th:each="s : ${topSuspects}"
+             th:classappend="' sev-' + (${s.severity} ?: 'low')">
+            <div class="sus-head">
+                <span th:text="${s.title}">Suspect #1</span>
+                <span class="sus-cat" th:if="${s.category != null}" th:text="${s.category}">Category</span>
+            </div>
+            <div class="sus-desc"
+                 th:text="${s.explanation != null ? s.explanation : s.description}">설명</div>
+        </div>
+    </div>
+    <div class="empty-box" th:if="${topSuspects == null or topSuspects.isEmpty()}">
+        탐지된 누수 의심 항목 없음
+    </div>
+
+    <!-- AI Insights -->
+    <div class="sec-title">AI 인사이트 요약 (AI Insights)</div>
+    <div class="ai-box" th:if="${ai != null}">
+        <div class="ai-row1">
+            <span class="ai-sev"
+                  th:classappend="${ai.severity != null ? ai.severity.toLowerCase() : 'unknown'}"
+                  th:text="${ai.severity != null ? ai.severity.toUpperCase() : 'UNKNOWN'}">SEVERITY</span>
+            <span th:if="${ai.model != null}" th:text="'Model: ' + ${ai.model}">Model</span>
+        </div>
+        <div class="ai-summary"
+             th:if="${ai.summary != null and !ai.summary.isEmpty()}"
+             th:text="${ai.summary}">summary</div>
+        <div class="ai-summary"
+             th:if="${ai.summary == null or ai.summary.isEmpty()}"
+             style="color:#9CA3AF;">
+            <span th:if="${ai.parseError}">AI 데이터 파싱 실패</span>
+            <span th:unless="${ai.parseError}">요약 데이터 없음</span>
+        </div>
+        <div class="ai-reco" th:if="${ai.recommendations != null and !ai.recommendations.isEmpty()}">
+            <strong>권장 조치 ·</strong> <span th:text="${ai.recommendations}">recommendations</span>
+        </div>
+    </div>
+    <div class="empty-box" th:if="${ai == null}">AI 인사이트 미분석</div>
+
+    <!-- Footer -->
+    <div class="ftr">
+        <div class="l">Heap Dump Analyzer · Generated <span th:text="${generatedAt}">-</span></div>
+        <div class="r">Page 1 / 1</div>
+    </div>
+
+</div>
+</body>
+</html>

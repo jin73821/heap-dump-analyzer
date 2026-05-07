@@ -1,5 +1,289 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-07] Dashboard — 모바일 가로 오버플로우 수정 (Detections / 탐지 현황 패널)
+
+**변경 파일:**
+- `src/main/resources/templates/index.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 모바일 화면(특히 ≤480px)에서 Detections 패널과 탐지 현황 패널이 메인 영역(`.main-content`) 우측을 약간 넘어가는 현상 발생.
+- 원인: CSS Grid 자식 요소의 기본 `min-width: auto` 동작 — `.panel` 안에 `nowrap`/`flex-shrink: 0`인 행(detect-item의 칩 묶음 등)이 있으면 자식이 자기 콘텐츠 폭을 강제하여 1fr 트랙이 부풀고, 결과적으로 `.grid2`의 자식 패널 폭이 부모 컨테이너를 초과.
+
+### 내역
+
+**Grid 자식 가로 확장 방지 (전역 처방)**
+- `.panel { min-width: 0; }` 추가 — Grid 자식의 기본 `min-width: auto` 우회. 핵심 처방.
+- `.detect-summary`, `.det-kpi`의 `grid-template-columns`를 `repeat(N, 1fr)` → `repeat(N, minmax(0, 1fr))` 로 변경 — 트랙이 자식 콘텐츠 때문에 부풀지 않도록 강제.
+- `.detect-card`, `.det-kpi-card`에 `min-width: 0` 추가 (이중 안전망).
+- `.detect-item`에 `min-width: 0` 추가.
+- `.detect-sevs`의 `flex-shrink: 0` 제거 + `flex-wrap: wrap` 추가 — 칩이 많을 때 행을 부풀리지 않고 줄바꿈.
+
+**모바일 ≤480px 미디어쿼리 보강**
+- `.detect-item { flex-wrap: wrap; gap: 6px 10px; }` + `.detect-fname { flex-basis: 100%; }` — 좁은 폭에서 파일명을 한 줄 전체로, 건수/칩/배지를 두 번째 줄로 자연 wrap.
+- `.detect-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }` (기존 `repeat(2, 1fr)`을 minmax 형태로 통일).
+- `.det-kpi { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }` + `.det-kpi-card` padding/폰트 축소 (`padding: 8px 10px`, `det-kpi-val` 18px → 16px) — 폭이 좁아도 3컬럼 KPI 카드가 들어가도록.
+- `.main-content { overflow-x: hidden; }` 안전망 — 어떤 자식이 넘쳐도 가로 스크롤은 발생하지 않도록.
+
+### 동작 검증
+- 데스크톱: 변화 없음. detect-item 한 줄에 파일명 + 칩 + 배지 표시 그대로.
+- 태블릿 (480~900px): grid 트랙이 부모 폭에 정확히 맞춰지고, 칩이 많을 때 detect-sevs가 자연 wrap.
+- 모바일 (≤480px): 파일명 한 줄, 칩/배지가 두 번째 줄. Detections 패널 KPI 3카드는 padding/폰트 축소로 좁은 폭에 무리 없이 표시.
+
+---
+
+## [2026-05-07] PDF Report — 분석 페이지 내부 패널로 통합 (별도 페이지 → showPanel)
+
+**변경 파일:**
+- `src/main/resources/templates/analyze.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 직전까지 PDF Report 메뉴는 `/analyze/{filename}/print-preview` 별도 페이지로 이동 → **좌측 글로벌 배너와 Heap Statistics 사이드바가 사라져 분석 컨텍스트 단절**.
+- 다른 분석 메뉴(Overview/Top Consumers/AI 인사이트/MAT Reports 등)는 모두 `showPanel(name, this)`로 같은 페이지 내 패널 전환 패턴 → PDF Report만 다른 동작이라 일관성 깨짐.
+- PDF Report도 동일한 패널 전환 방식으로 통합하여 **배너 + Heap Statistics + 분석 사이드바 컨텍스트가 그대로 유지되는 상태에서 PDF 미리보기**가 보이도록 변경.
+
+### 내역
+
+**메뉴 onclick 변경**
+- 기존: `onclick="if(typeof FILENAME...) location.href='/analyze/'+...+'/print-preview';"` (별도 페이지 이동)
+- 변경: `onclick="showPanel('pdf-report',this)"` (동일 페이지 패널 전환)
+
+**`<div id="panel-pdf-report" class="panel">` 신규 (LOG 패널 직전 위치)**
+- 카드 헤더: "PDF Report Preview" 타이틀 + 우측 [PDF 다운로드] 버튼 (파란색 primary).
+- 본문: `<iframe id="pdfReportIframe">` (lazy-load, `min-height: 80vh`, 어두운 배경 #525659).
+- Fallback: `<div id="pdfReportFallback">` 일부 브라우저에서 PDF 인라인 미지원 시 4초 후 노출.
+
+**`loadPdfReportPanel()` lazy-load 함수**
+- `showPanel('pdf-report', ...)` 진입 시 호출. iframe `src`가 비어있을 때만 1회 설정.
+- viewport 폭 분기 (`window.matchMedia('(max-width: 900px)')`):
+  - 데스크톱 → `/print-pdf?mode=inline` (브라우저 PDF 인라인 뷰어, mat-overview/top/suspects와 동일 lazy 패턴)
+  - 모바일 → `/print-html` (HTML 렌더, iOS Safari/Android Chrome 의 PDF 인라인 한계 회피)
+- 다운로드 버튼 `download` 속성을 baseName 기반으로 동적 설정 (`{base}-report.pdf`). 확장자 정규식 `\.(hprof|bin|dump)(\.gz)?$/i` 제거.
+- PDF 모드에서만 4초 fallback 타이머 (HTML은 항상 정상 로드).
+
+**유지된 라우트 (deep-link 호환)**
+- `/analyze/{filename}/print-preview` (별도 미리보기 페이지) — 메뉴에서는 더 이상 호출 안 되지만 직접 URL 입력/북마크 호환을 위해 유지.
+- `/analyze/{filename}/print-html`, `/analyze/{filename}/print-pdf?mode={inline|download}` — 패널 iframe과 다운로드에서 사용.
+
+### 동작 검증
+- 데스크톱: 좌측 배너(220px) + Heap Statistics 사이드바(300px) + 메인 영역에 PDF iframe 표시. 다른 메뉴 클릭 시 일반 패널 전환.
+- 모바일: 햄버거 메뉴 사이드바 + 메인 영역에 HTML 미리보기 (반응형 @media screen 적용).
+- 다운로드 버튼: `{base}-report.pdf` 파일명으로 attachment 다운로드.
+
+---
+
+## [2026-05-07] PDF Report — Preview 페이지 풀스크린화 (좌측 배너 미노출)
+
+**변경 파일:**
+- `src/main/resources/templates/analyze-print-preview.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 미리보기 페이지에서 좌측 220px 배너가 차지하면서 PDF 가시 영역이 좁아짐. PDF Preview는 단일 목적(미리보기 → 다운로드 결정) 페이지이므로 다른 메뉴로의 좌측 네비게이션 불필요.
+- 풀 viewport 폭에서 PDF 콘텐츠를 더 크게 표시하여 가독성 확보.
+
+### 내역
+- `<div th:replace="fragments/banner :: banner"></div>` 제거 (페이지 진입 시 배너 미노출).
+- `.topbar`/`.preview-wrap` 의 `left: var(--banner-w, 220px)` → `left: 0` 으로 변경.
+- `:root` 변수에서 `--banner-w` 제거 (해당 페이지에서 미사용).
+- 모바일 미디어쿼리의 `left: 0` 중복 규칙 제거 (이제 데스크톱 기본값과 동일).
+- 네비게이션은 기존 topbar의 "분석으로 돌아가기" 버튼 + 모바일 하단 sticky 바의 [돌아가기] 버튼으로 유지.
+
+### 영향 범위
+- 다른 페이지(분석/Files/History 등)의 배너 동작은 무영향.
+- PDF 다운로드/HTML 미리보기 콘텐츠 자체는 변경 없음 (레이아웃 컨테이너만 풀 폭으로).
+
+---
+
+## [2026-05-07] PDF Report — 모바일 미리보기 대응 (HTML iframe + 하단 sticky 액션 바)
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/service/PdfReportService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- `src/main/resources/templates/analyze-print.html`
+- `src/main/resources/templates/analyze-print-preview.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 직전 버전의 PDF 미리보기는 iframe 안에서 `/print-pdf?mode=inline`을 표시 → iOS Safari/Android Chrome 등 모바일 브라우저가 PDF 인라인 뷰를 거의 지원하지 않아 첫 페이지만 보이거나 다운로드가 강제되는 문제.
+- A4 1페이지 레이아웃을 모바일 화면(폭 375px)에 그대로 펼치면 폰트 6~7pt가 그대로 작게 표시되어 가독성이 사실상 0.
+- 모바일에서는 PDF 인라인 대신 **HTML 렌더 + @media screen 반응형 규칙**으로 미리보기를 제공하고, 다운로드 버튼은 thumb-friendly 한 하단 sticky 바로 분리.
+
+### 내역
+
+**서비스 — `PdfReportService.buildPrintModel(filename, result)` 공용 모델 빌더 추출**
+- 기존 `renderPrintPdf(...)`의 `Context.setVariable(...)` 셋업 로직을 `Map<String,Object>` 반환 메서드로 추출.
+- `renderPrintPdf`은 `buildPrintModel(...).forEach(ctx::setVariable)`로 단순화.
+- 컨트롤러의 새 `/print-html` 라우트가 같은 모델을 `model.addAttribute(...)`로 펼쳐 PDF와 동일한 데이터 표시.
+
+**컨트롤러 — `GET /analyze/{filename}/print-html` 신규**
+- `analyze-print` Thymeleaf 템플릿을 HTML 그대로 반환 (PDF 변환 없음 → 서버 부하 0).
+- 캐시 결과 없거나 실패 상태면 `/analyze/result/{filename}`으로 302.
+- 모바일 미리보기 iframe에서만 사용. 데스크톱은 기존 `/print-pdf?mode=inline` 그대로.
+
+**`analyze-print.html` — `@media screen and (max-width: 900px)` 반응형 추가**
+- OpenHTMLtoPDF는 기본 print 미디어를 사용 → screen 미디어쿼리는 PDF 렌더에 영향 없음. 다운로드 PDF는 A4 1페이지 그대로 유지.
+- 화면 모드(모바일 미리보기) 적용 사항:
+  - `.report` 폭 100%, 높이 auto, mm 고정 해제 → 가로 스크롤 제거.
+  - `.hdr` table → block 으로 stack (제목/메타 세로 배치).
+  - `.kpi-grid` table → flex-wrap, KPI 카드 2열 3행 그리드 (3x2 → 2x3).
+  - `table.tt` 인라인 mm 폭 무효화 + `td.cls` 줄바꿈 허용 (`white-space: normal`, `word-break: break-all`).
+  - 폰트 9pt → 14px 베이스, KPI/섹션/Suspect/AI 박스 모두 px 단위로 재조정해 가독성 확보.
+  - `.ftr` `position: absolute` → `static` (높이 고정 해제로 자연스럽게 흐름).
+
+**`analyze-print-preview.html` — 모바일 분기 + 하단 sticky 바**
+- `<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">` 추가 (notch 안전 영역 인식).
+- iframe `src`를 페이지 진입 시 `window.matchMedia('(max-width: 900px)')`로 분기:
+  - 데스크톱 → `/print-pdf?mode=inline` (기존 PDF 인라인)
+  - 모바일 → `/print-html` (새 HTML 라우트)
+  - 4초 fallback 타이머는 PDF 모드에서만 동작 (HTML은 항상 정상 로드).
+  - 브레이크포인트 교차 시 `change` 이벤트로 src 재로드 (Safari < 14는 `addListener` 폴백).
+- 모바일에서 상단 `topbar-right` 숨김 → 하단 `mobile-action-bar` (fixed bottom, `safe-area-inset-bottom` 패딩) 노출. [돌아가기] [PDF 다운로드] 두 버튼 (다운로드 flex 1.4로 더 넓게).
+- `preview-wrap` 모바일에서 `bottom: var(--mobile-bar-h, 60px)`로 액션 바 자리 확보, 배경을 `#525659` → `#fff`로 전환 (HTML 렌더에 어울리게).
+
+### 동작 검증
+- 데스크톱: 기존 PDF iframe 그대로. 다운로드 버튼 정상.
+- 모바일 (≤900px): `/print-html` HTML 렌더 → KPI 2열, 폰트 가독, 가로 스크롤 없음. 하단 [돌아가기]/[PDF 다운로드] 버튼.
+- PDF 다운로드 결과: 기존과 동일 A4 1페이지 (screen 미디어 무영향 확인).
+
+---
+
+## [2026-05-07] PDF Report — 미리보기 페이지 추가 (직접 다운로드 → 미리보기 + 다운로드 버튼)
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- `src/main/resources/templates/analyze-print-preview.html` (신규)
+- `src/main/resources/templates/analyze.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 직전 버전에서 PDF Report 버튼 클릭 시 즉시 다운로드 → 사용자는 결과를 미리 확인하지 못한 채 파일을 받음.
+- 미리보기 페이지에서 PDF 내용을 시각적으로 확인한 뒤 다운로드 여부를 선택할 수 있도록 변경.
+
+### 내역
+
+**새 라우트 / 엔드포인트 분기**
+- `GET /analyze/{filename}/print-preview` (신규) — Thymeleaf 미리보기 페이지 반환. 캐시 결과 없으면 `/analyze/result/{filename}` 으로 302 리다이렉트.
+- `GET /analyze/{filename}/print-pdf` 에 `?mode=inline|download` 쿼리 파라미터 추가:
+  - `mode=download` (기본) → `Content-Disposition: attachment` (다운로드)
+  - `mode=inline` → `Content-Disposition: inline` (iframe 표시용)
+
+**미리보기 페이지 (analyze-print-preview.html)**
+- 글로벌 배너 (`fragments/banner :: banner`) 그대로 적용 (좌측 220px ↔ 44px 토글, `--banner-w` 변수 일관).
+- 상단 fixed topbar (52px): 좌측 빨간색 PDF 아이콘 + "PDF Report Preview" / 파일명 / 우측 버튼 2개.
+  - "분석으로 돌아가기" → `/analyze/result/{filename}` 일반 anchor.
+  - "PDF 다운로드" (primary blue) → `/analyze/{filename}/print-pdf?mode=download` + `download` 속성.
+- 본문 영역 (topbar 아래 ~ viewport 끝): 어두운 배경(`#525659`) + `<iframe>` 100% × 100%로 PDF 인라인 표시. 브라우저 내장 PDF 뷰어가 자동 사용됨.
+- 4초 후 iframe load 이벤트 미발생 시 fallback 메시지 표시 ("브라우저에서 PDF 미리보기 불가, 다운로드 버튼 사용").
+- 모바일 ≤900px: 배너 숨김에 맞춰 `topbar/preview-wrap left:0`.
+
+**버튼 onclick 변경 (analyze.html)**
+- `/print-pdf` 직접 호출 → `/print-preview` 페이지 이동.
+- title 문구도 "미리보기 및 다운로드"로 보강.
+
+### Edge Cases
+- 캐시 미존재/ERROR 상태에서 `/print-preview` 접근 시 분석 페이지로 리다이렉트.
+- iframe inline PDF는 `X-Frame-Options: SAMEORIGIN` 정책 안에서만 동작 (동일 origin이라 OK).
+- 브라우저가 PDF inline 뷰어를 지원하지 않을 경우(일부 모바일 브라우저) 4초 후 fallback 안내 표시.
+
+## [2026-05-07] Print Report → A4 1페이지 PDF 다운로드 고도화
+
+**변경 파일:**
+- `pom.xml`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- `src/main/java/com/heapdump/analyzer/service/PdfReportService.java` (신규)
+- `src/main/resources/templates/analyze-print.html` (신규)
+- `src/main/resources/templates/analyze.html`
+- `src/main/resources/fonts/Pretendard-Regular.ttf`, `Pretendard-Bold.ttf`, `LICENSE.txt` (신규, OFL 1.1)
+- `CHANGELOG.md`
+
+### 변경 의도
+- 기존 사이드바 "Print Report" 버튼은 `window.print()`만 호출 → 활성 1탭만 인쇄, `@media print` 6줄, 결과 분량/레이아웃 불일정 → 보고서 첨부 부적합.
+- A4 1페이지에 핵심 분석 결과를 압축한 정형 PDF를 다운로드하는 방식으로 교체. 외부 보고/공유 용도 일관화.
+
+### 내역
+
+**의존성 (pom.xml)**
+- `com.openhtmltopdf:openhtmltopdf-core:1.0.10` (LGPL 2.1)
+- `com.openhtmltopdf:openhtmltopdf-pdfbox:1.0.10`
+- HTML+CSS → PDF, A4 1페이지 정형 리포트 렌더에 적합. 한글 폰트 `useFont()` 임베딩.
+
+**한글 폰트 임베딩**
+- `src/main/resources/fonts/` 에 Pretendard 1.3.9 Regular/Bold 2 weights + LICENSE.txt(OFL 1.1) 번들. JAR 약 +5MB.
+
+**신규 서비스 `PdfReportService`**
+- `renderPrintPdf(filename, HeapAnalysisResult) -> byte[]` 단일 메서드.
+- Thymeleaf `TemplateEngine.process("analyze-print", ctx)` → XHTML → `PdfRendererBuilder.toStream()` → byte[].
+- `AiInsightRepository.findByFilename()`로 DB의 AI 인사이트 조회 후 `insightData` JSON을 Jackson으로 파싱(severity / summary / recommendations 추출). summary 200자, recommendations 150자 컷.
+- 폰트는 ClassPathResource로 InputStream supplier 등록.
+
+**인쇄 전용 템플릿 `analyze-print.html`**
+- A4 portrait, margin 12mm, 인쇄 가능 영역 186 × 273mm.
+- 섹션 배치: 헤더(파일명/일시/소요/모델) → KPI 6카드(3×2 grid) → Heap 구성 stacked bar → Top Consumers 5행 표 → Leak Suspects 상위 3 → AI 인사이트 요약 → 푸터.
+- `.report { width:186mm; height:273mm; overflow:hidden }` 1페이지 강제.
+- severity 색상: critical=#DC2626, high=#EA580C, medium=#CA8A04, low=#6B7280. 카드 좌측 컬러 보더(blue/orange/green/purple/cyan/red).
+- 클래스명 `max-width:88mm; text-overflow:ellipsis`. 라벨 한국어 + 영문 병기.
+
+**컨트롤러 엔드포인트**
+- `GET /analyze/{filename:.+}/print-pdf` 신규 추가. `FilenameValidator.validate()` → `analyzerService.getCachedResult()` → null/ERROR 시 404.
+- 응답: `application/pdf`, `Content-Disposition: attachment; filename="..."; filename*=UTF-8''<encoded>` (RFC 5987 한글 파일명), `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`.
+- 다운로드 파일명: `{원본baseName}-report.pdf` (확장자 .hprof/.bin/.dump/.gz 제거).
+- 인증: 기존 `/analyze/**` authenticated() 정책 적용.
+
+**버튼 교체 (analyze.html L862-866)**
+- `onclick="window.print()"` → `location.href='/analyze/...print-pdf'`로 교체.
+- `hasHeapData=false` (분석 ERROR) 시 `th:disabled` 비활성화.
+- 라벨 "Print Report" → "PDF Report", 아이콘 🖨️ → 📄.
+- 기존 `@media print` 블록(L532-537)은 유지 (Ctrl+P 폴백).
+
+### Edge Cases
+- AI 미분석 → "AI 인사이트 미분석" placeholder.
+- AI insightData JSON 파싱 실패 → "AI 데이터 파싱 실패" 표시, severity는 컬럼 값 사용.
+- Leak Suspects 0개 → "탐지된 누수 의심 항목 없음" placeholder.
+- Top Consumers 0개 → 표 본문에 "데이터 없음" 1행.
+- summary/recommendations 길이 컷 (220/560자) — 1페이지 보호. AI 박스 max-height 68mm로 권장 조치 5번 항목까지 표시 가능.
+- 한글 파일명 RFC 5987 인코딩.
+
+## [2026-05-07] Analysis History — Detections 레이아웃 재구성 + Recent Detections 추가
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- `src/main/resources/templates/history.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 기존 `/history` 2단 그리드(좌: 차트+KPI / 우: 테이블)에서 차트 가로 폭이 460–560px로 좁아 90d 기간이 빽빽하게 보이고, KPI 3카드가 차트 위쪽에 묻혀 한눈에 안 들어왔음.
+- 차트가 보여주는 일자별 막대만으로는 "어떤 의심 항목이 잡혔는지" 즉시 확인 불가 — 차트 클릭 후 모달까지 두 단계 필요.
+
+### 내역
+
+**레이아웃**
+- 페이지를 2개 행으로 분리:
+  - 상단 `.detect-row` (`1fr 1fr` 좌우 50:50): 좌 — Detections 패널(KPI 3카드 + 차트), 우 — Recent Detections 패널.
+  - 하단 `.history-bottom` (전폭): 검색 툴바 + 테이블 + 페이지네이션.
+- KPI 3카드는 기존 자리(차트 패널 내부 `repeat(3, 1fr)`)에 유지. Recent 패널은 좌측 패널과 같은 높이로 stretch, 리스트는 `flex: 1` + `max-height: 540px` 스크롤.
+- ≤1024px: 단일 컬럼 스택.
+
+**Recent Detections (신규)**
+- 차트 선택 기간(7/14/30/90d) 내 LeakSuspect 평탄화 → 심각도 가중치(critical=4 ··· low=1) DESC, 분석 시각 DESC 정렬, Top 30 표시.
+- 행 구성: 심각도 배지(`dds-*` 재사용) + 서버 배지/Local + 일자 + 의심 항목 title(또는 category 폴백) + 분석명(`buildAnalysisName`).
+- 클릭 → `/analyze/result/{filename}` 이동. 삭제된 dump는 `.deleted` 클래스로 비활성(opacity 0.55, 클릭 무반응).
+- SSR 초기 렌더(Thymeleaf) + 기간/그룹 토글 시 `/api/history/detections` 응답의 `recent` 배열로 동기 갱신.
+
+**Backend**
+- 신규 nested DTO `DetectionRecentItem` (filename / analysisName / serverName / severity / title / category / analyzedAtEpoch / dateLabel / fileDeleted).
+- `DetectionAggregate.recent : List<DetectionRecentItem>` 필드 추가.
+- `aggregateDetections()` 확장: 기존 LeakSuspect 루프 내에서 기간 필터 통과 시 `DetectionRecentItem` 누적, 마지막에 정렬+Top 30 컷. `analysisName`은 파일별 1회만 빌드(lazy-cache).
+- `severityWeight(String)` 헬퍼.
+- `historyPage()` 모델에 `detectRecent` 추가.
+- `GET /api/history/detections` 응답에 `recent` 배열 포함 (드릴다운 endpoint는 변경 없음).
+
+### 보안/엣지케이스
+- 비관리자: `historyPage()`/API 모두 기존 deleted 필터로 자동 제외.
+- XSS: 모든 동적 문자열 `escapeHtml()` 적용.
+- title 길이 cut-off: `text-overflow: ellipsis` + `title=` 호버 툴팁.
+
 ## [2026-05-06] Servers — 다중 덤프 경로(최대 5개) + 상세 페이지 서버명/수정 버튼
 
 **변경 파일:**

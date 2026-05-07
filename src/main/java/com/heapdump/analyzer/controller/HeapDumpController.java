@@ -25,6 +25,7 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import javax.servlet.http.HttpServletRequest;
 import java.io.*;
 import java.net.URLDecoder;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -57,19 +58,22 @@ public class HeapDumpController {
     private final javax.sql.DataSource dataSource;
     private final com.heapdump.analyzer.service.RagService ragService;
     private final com.heapdump.analyzer.service.EmbeddingService embeddingService;
+    private final com.heapdump.analyzer.service.PdfReportService pdfReportService;
 
     public HeapDumpController(HeapDumpAnalyzerService analyzerService,
                               com.heapdump.analyzer.config.HeapDumpConfig config,
                               org.springframework.boot.autoconfigure.jdbc.DataSourceProperties dataSourceProperties,
                               javax.sql.DataSource dataSource,
                               com.heapdump.analyzer.service.RagService ragService,
-                              com.heapdump.analyzer.service.EmbeddingService embeddingService) {
+                              com.heapdump.analyzer.service.EmbeddingService embeddingService,
+                              com.heapdump.analyzer.service.PdfReportService pdfReportService) {
         this.analyzerService = analyzerService;
         this.config = config;
         this.dataSourceProperties = dataSourceProperties;
         this.dataSource = dataSource;
         this.ragService = ragService;
         this.embeddingService = embeddingService;
+        this.pdfReportService = pdfReportService;
     }
 
     // ── 파일명 검증 실패 핸들러 ─────────────────────────────────────
@@ -232,6 +236,8 @@ public class HeapDumpController {
         model.addAttribute("detectKpiPeakDay",
             detectAgg.getPeakDay() != null ? detectAgg.getPeakDay() : "-");
         model.addAttribute("detectKpiPeakCount", detectAgg.getPeakCount());
+        model.addAttribute("detectRecent",
+            detectAgg.getRecent() != null ? detectAgg.getRecent() : Collections.emptyList());
 
         return "history";
     }
@@ -595,6 +601,82 @@ public class HeapDumpController {
         model.addAttribute("llmChatRestoreIncludeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
 
         return "analyze";
+    }
+
+    // ── A4 1페이지 PDF 리포트: 미리보기 페이지 + PDF 스트림 ─────────────
+
+    /**
+     * PDF 미리보기 페이지. iframe으로 inline PDF를 표시하고 다운로드 버튼을 제공.
+     */
+    @GetMapping("/analyze/{filename:.+}/print-preview")
+    public String printPreviewPage(@PathVariable String filename, Model model) {
+        String safe = FilenameValidator.validate(filename);
+        HeapAnalysisResult result = analyzerService.getCachedResult(safe);
+        if (result == null
+                || result.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+            return "redirect:/analyze/result/" + safe;
+        }
+        model.addAttribute("filename", safe);
+        String base = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
+        model.addAttribute("baseName", base);
+        model.addAttribute("downloadName", base + "-report.pdf");
+        return "analyze-print-preview";
+    }
+
+    /**
+     * 인쇄용 리포트의 HTML 렌더 (PDF 미생성). 모바일 미리보기 iframe에서 사용.
+     * - 데스크톱은 기존 PDF iframe 유지, 모바일은 브라우저 PDF 인라인 표시 한계 때문에 HTML로 fallback.
+     * - 같은 모델을 사용하므로 표시 내용이 다운로드 PDF와 동일.
+     */
+    @GetMapping("/analyze/{filename:.+}/print-html")
+    public String printHtmlPage(@PathVariable String filename, Model model) {
+        String safe = FilenameValidator.validate(filename);
+        HeapAnalysisResult result = analyzerService.getCachedResult(safe);
+        if (result == null
+                || result.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+            return "redirect:/analyze/result/" + safe;
+        }
+        pdfReportService.buildPrintModel(safe, result).forEach(model::addAttribute);
+        return "analyze-print";
+    }
+
+    /**
+     * PDF 바이트 스트림. mode=download(기본) → attachment, mode=inline → iframe 미리보기용.
+     */
+    @GetMapping("/analyze/{filename:.+}/print-pdf")
+    public ResponseEntity<byte[]> downloadPrintPdf(
+            @PathVariable String filename,
+            @RequestParam(name = "mode", defaultValue = "download") String mode) {
+        try {
+            String safe = FilenameValidator.validate(filename);
+            HeapAnalysisResult result = analyzerService.getCachedResult(safe);
+            if (result == null
+                    || result.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            }
+
+            byte[] pdf = pdfReportService.renderPrintPdf(safe, result);
+
+            String base = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "") + "-report.pdf";
+            String ascii = base.replaceAll("[^\\x20-\\x7E]", "_");
+            String utf8 = URLEncoder.encode(base, StandardCharsets.UTF_8.name())
+                    .replace("+", "%20");
+
+            String disposition = "inline".equalsIgnoreCase(mode) ? "inline" : "attachment";
+
+            HttpHeaders h = new HttpHeaders();
+            h.setContentType(MediaType.APPLICATION_PDF);
+            h.add(HttpHeaders.CONTENT_DISPOSITION,
+                    disposition + "; filename=\"" + ascii + "\"; filename*=UTF-8''" + utf8);
+            h.setCacheControl("no-store");
+            h.add("X-Content-Type-Options", "nosniff");
+            return new ResponseEntity<>(pdf, h, HttpStatus.OK);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        } catch (Exception e) {
+            logger.error("[PrintPdf] PDF 생성 실패 (filename={}): {}", filename, e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     // ── 로그 청크 API ────────────────────────────────────────────
@@ -1025,6 +1107,7 @@ public class HeapDumpController {
         kpi.put("peakDay", agg.getPeakDay());
         kpi.put("peakCount", agg.getPeakCount());
         resp.put("kpi", kpi);
+        resp.put("recent", agg.getRecent() != null ? agg.getRecent() : Collections.emptyList());
         return ResponseEntity.ok(resp);
     }
 
@@ -2276,11 +2359,24 @@ public class HeapDumpController {
 
         int criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0;
         List<DetectionSummaryItem> detectionItems = new ArrayList<>();
+        List<DetectionRecentItem> recent = new ArrayList<>();
 
         for (AnalysisHistoryItem h : history) {
             if (!"SUCCESS".equals(h.getStatus()) || h.getSuspectCount() == 0) continue;
             HeapAnalysisResult r = analyzerService.getCachedResult(h.getFilename());
             if (r == null || r.getLeakSuspects() == null) continue;
+
+            java.time.LocalDate day = null;
+            boolean inPeriod = false;
+            String dateLabelForRecent = null;
+            if (h.getAnalyzedAtEpoch() > 0) {
+                day = java.time.Instant.ofEpochMilli(h.getAnalyzedAtEpoch())
+                        .atZone(zone).toLocalDate();
+                inPeriod = !day.isBefore(from) && !day.isAfter(today);
+                if (inPeriod) dateLabelForRecent = day.format(dateFmt);
+            }
+            String analysisNameCached = null;
+
             int fc = 0, fh = 0, fm = 0, fl = 0;
             for (LeakSuspect s : r.getLeakSuspects()) {
                 String sev = s.getSeverity() != null ? s.getSeverity().toLowerCase() : "medium";
@@ -2289,6 +2385,26 @@ public class HeapDumpController {
                     case "high":     fh++; highCount++; break;
                     case "low":      fl++; lowCount++; break;
                     default:         fm++; mediumCount++; break;
+                }
+                if (inPeriod) {
+                    if (analysisNameCached == null) {
+                        analysisNameCached = buildAnalysisName(h.getFilename(), h.getServerName(), h.getAnalyzedAtEpoch());
+                    }
+                    DetectionRecentItem ri = new DetectionRecentItem();
+                    ri.setFilename(h.getFilename());
+                    ri.setAnalysisName(analysisNameCached);
+                    ri.setServerName(h.getServerName());
+                    ri.setSeverity(sev);
+                    String t = s.getTitle();
+                    if (t == null || t.isEmpty()) {
+                        t = (s.getCategory() != null && !s.getCategory().isEmpty()) ? s.getCategory() : "Suspect";
+                    }
+                    ri.setTitle(t);
+                    ri.setCategory(s.getCategory());
+                    ri.setAnalyzedAtEpoch(h.getAnalyzedAtEpoch());
+                    ri.setDateLabel(dateLabelForRecent);
+                    ri.setFileDeleted(h.isFileDeleted());
+                    recent.add(ri);
                 }
             }
             DetectionSummaryItem di = new DetectionSummaryItem();
@@ -2301,22 +2417,26 @@ public class HeapDumpController {
             di.setFileDeleted(h.isFileDeleted());
             detectionItems.add(di);
 
-            if (h.getAnalyzedAtEpoch() > 0) {
-                java.time.LocalDate day = java.time.Instant.ofEpochMilli(h.getAnalyzedAtEpoch())
-                        .atZone(zone).toLocalDate();
-                if (!day.isBefore(from) && !day.isAfter(today)) {
-                    int suspectsForFile = fc + fh + fm + fl;
-                    String sname = h.getServerName();
-                    if (sname == null || sname.trim().isEmpty()) sname = UNKNOWN_SERVER;
-                    dailyServerBuckets.computeIfAbsent(day, k -> new HashMap<>())
-                                      .merge(sname, suspectsForFile, Integer::sum);
-                    dailyTotals.merge(day, suspectsForFile, Integer::sum);
-                    serverTotals.merge(sname, suspectsForFile, Integer::sum);
-                    int[] sb = dailySeverityBuckets.computeIfAbsent(day, k -> new int[4]);
-                    sb[0] += fc; sb[1] += fh; sb[2] += fm; sb[3] += fl;
-                }
+            if (inPeriod) {
+                int suspectsForFile = fc + fh + fm + fl;
+                String sname = h.getServerName();
+                if (sname == null || sname.trim().isEmpty()) sname = UNKNOWN_SERVER;
+                dailyServerBuckets.computeIfAbsent(day, k -> new HashMap<>())
+                                  .merge(sname, suspectsForFile, Integer::sum);
+                dailyTotals.merge(day, suspectsForFile, Integer::sum);
+                serverTotals.merge(sname, suspectsForFile, Integer::sum);
+                int[] sb = dailySeverityBuckets.computeIfAbsent(day, k -> new int[4]);
+                sb[0] += fc; sb[1] += fh; sb[2] += fm; sb[3] += fl;
             }
         }
+
+        recent.sort((a, b) -> {
+            int sa = severityWeight(a.getSeverity());
+            int sb = severityWeight(b.getSeverity());
+            if (sa != sb) return Integer.compare(sb, sa);
+            return Long.compare(b.getAnalyzedAtEpoch(), a.getAnalyzedAtEpoch());
+        });
+        if (recent.size() > 30) recent = new ArrayList<>(recent.subList(0, 30));
 
         // 서버 상위 N개 + 나머지는 "기타"
         List<Map.Entry<String, Integer>> sortedServers = new ArrayList<>(serverTotals.entrySet());
@@ -2412,7 +2532,19 @@ public class HeapDumpController {
         agg.setDelta7d(delta7d);
         agg.setPeakDay(peakDay != null ? peakDay.format(dateFmt) : null);
         agg.setPeakCount(peakCount);
+        agg.setRecent(recent);
         return agg;
+    }
+
+    private static int severityWeight(String s) {
+        if (s == null) return 0;
+        switch (s) {
+            case "critical": return 4;
+            case "high":     return 3;
+            case "medium":   return 2;
+            case "low":      return 1;
+            default:         return 0;
+        }
     }
 
     // 분석명 포맷: [{EXT}]{servername_lower|local}_{filename}_{yyyyMMdd}
@@ -2563,6 +2695,7 @@ public class HeapDumpController {
         private List<ServerSeries> severitySeries;
         private List<DailyDetection> dailyDetections;
         private List<DetectionSummaryItem> detectionItems;
+        private List<DetectionRecentItem> recent;
         private int criticalCount, highCount, mediumCount, lowCount;
         private int total, last7d, prev7d, peakCount;
         private Integer delta7d;
@@ -2578,6 +2711,8 @@ public class HeapDumpController {
         public void setDailyDetections(List<DailyDetection> v) { dailyDetections = v; }
         public List<DetectionSummaryItem> getDetectionItems() { return detectionItems; }
         public void setDetectionItems(List<DetectionSummaryItem> v) { detectionItems = v; }
+        public List<DetectionRecentItem> getRecent() { return recent; }
+        public void setRecent(List<DetectionRecentItem> v) { recent = v; }
         public int getCriticalCount() { return criticalCount; }
         public void setCriticalCount(int v) { criticalCount = v; }
         public int getHighCount() { return highCount; }
@@ -2628,6 +2763,37 @@ public class HeapDumpController {
         public void    setFileDeleted(boolean v) { fileDeleted = v; }
         public long    getAnalyzedAtEpoch() { return analyzedAtEpoch; }
         public void    setAnalyzedAtEpoch(long v) { analyzedAtEpoch = v; }
+    }
+
+    public static class DetectionRecentItem {
+        private String  filename;
+        private String  analysisName;
+        private String  serverName;
+        private String  severity;
+        private String  title;
+        private String  category;
+        private long    analyzedAtEpoch;
+        private String  dateLabel;
+        private boolean fileDeleted;
+
+        public String  getFilename()        { return filename; }
+        public void    setFilename(String v) { filename = v; }
+        public String  getAnalysisName()    { return analysisName; }
+        public void    setAnalysisName(String v) { analysisName = v; }
+        public String  getServerName()      { return serverName; }
+        public void    setServerName(String v) { serverName = v; }
+        public String  getSeverity()        { return severity; }
+        public void    setSeverity(String v) { severity = v; }
+        public String  getTitle()           { return title; }
+        public void    setTitle(String v)   { title = v; }
+        public String  getCategory()        { return category; }
+        public void    setCategory(String v) { category = v; }
+        public long    getAnalyzedAtEpoch() { return analyzedAtEpoch; }
+        public void    setAnalyzedAtEpoch(long v) { analyzedAtEpoch = v; }
+        public String  getDateLabel()       { return dateLabel; }
+        public void    setDateLabel(String v) { dateLabel = v; }
+        public boolean isFileDeleted()      { return fileDeleted; }
+        public void    setFileDeleted(boolean v) { fileDeleted = v; }
     }
 
     public static class ClassDiff {

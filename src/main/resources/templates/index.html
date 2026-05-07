@@ -189,7 +189,8 @@
         .progress-pct { font-size: 12px; font-weight: 700; color: #1F2937; min-width: 36px; text-align: right; }
         .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
         .full { grid-column: 1 / -1; }
-        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px; }
+        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px;
+                 min-width: 0; }   /* Grid 자식 기본 min-width:auto 로 인한 가로 오버플로우 방지 */
         .panel-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
         .panel-ttl { font-size: 13px; font-weight: 600; }
         .history-item { display: flex; align-items: center; gap: 10px;
@@ -215,8 +216,8 @@
         .more-link { font-size: 12px; color: #2563EB; text-decoration: none; font-weight: 500; }
         .more-link:hover { text-decoration: underline; }
         /* ── Detection Status Panel ──────────── */
-        .detect-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
-        .detect-card { padding: 12px; border-radius: 8px; border: 1px solid #E5E7EB; background: #F9FAFB; text-align: center; }
+        .detect-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+        .detect-card { padding: 12px; border-radius: 8px; border: 1px solid #E5E7EB; background: #F9FAFB; text-align: center; min-width: 0; }
         .detect-card-val { font-size: 20px; font-weight: 700; line-height: 1.2; }
         .detect-card-lbl { font-size: 10px; color: #9CA3AF; text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
         .dc-critical { border-color: #FCA5A5; background: #FEF2F2; }
@@ -227,12 +228,14 @@
         .dc-medium .detect-card-val { color: #B45309; }
         .dc-low { border-color: #BBF7D0; background: #F0FDF4; }
         .dc-low .detect-card-val { color: #16A34A; }
-        .detect-item { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #F3F4F6; }
+        .detect-item { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #F3F4F6;
+                       min-width: 0; }
         .detect-item:last-child { border-bottom: none; }
         .detect-fname { font-size: 12px; font-weight: 600; flex: 1; min-width: 0;
                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .detect-count { font-size: 11px; color: #6B7280; flex-shrink: 0; }
-        .detect-sevs { display: flex; gap: 6px; flex-shrink: 0; }
+        /* 칩이 많을 때 줄바꿈 허용해 부모 .detect-item / .panel 가로 오버플로우 방지 */
+        .detect-sevs { display: flex; gap: 6px; flex-wrap: wrap; }
         .detect-sev { font-size: 10px; padding: 1px 6px; border-radius: 10px; font-weight: 500; }
         .ds-critical { background: #FEE2E2; color: #DC2626; }
         .ds-high { background: #FFEDD5; color: #EA580C; }
@@ -240,8 +243,8 @@
         .ds-low { background: #D1FAE5; color: #065F46; }
         .detect-empty { text-align: center; padding: 24px 0; color: #9CA3AF; font-size: 12px; }
         /* ── Daily Detections Panel ──────────── */
-        .det-kpi { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
-        .det-kpi-card { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; }
+        .det-kpi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+        .det-kpi-card { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; min-width: 0; }
         .det-kpi-lbl { font-size: 10px; color: #9CA3AF; text-transform: uppercase; letter-spacing: .04em; }
         .det-kpi-val { font-size: 18px; font-weight: 700; margin-top: 2px; line-height: 1.2; }
         .det-kpi-sub { font-size: 11px; color: #6B7280; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -543,10 +546,16 @@
             .modal { width: calc(100vw - 32px); margin: 0 16px; }
             .dashboard-left { grid-template-columns: 1fr 1fr; }
             .ra-meta { flex-wrap: wrap; gap: 6px 12px; }
-            .detect-summary { grid-template-columns: repeat(2, 1fr); }
+            .detect-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .det-kpi { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+            .det-kpi-card { padding: 8px 10px; }
+            .det-kpi-val { font-size: 16px; }
+            /* 탐지 현황 행: 좁은 폭에서 파일명을 한 줄 차지로, 나머지(건수/칩/배지)는 둘째 줄로 wrap */
+            .detect-item { flex-wrap: wrap; gap: 6px 10px; }
+            .detect-fname { flex-basis: 100%; }
             .history-item { flex-wrap: wrap; gap: 4px 8px; }
             .hname { flex-basis: calc(100% - 20px); }
-            .main-content { padding: 12px; }
+            .main-content { padding: 12px; overflow-x: hidden; }
         }
     </style>
 </head>

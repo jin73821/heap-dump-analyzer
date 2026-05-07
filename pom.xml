@@ -94,6 +94,18 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- OpenHTML to PDF (HTML+CSS → PDF, 한글 폰트 임베딩 지원) -->
+        <dependency>
+            <groupId>com.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-core</artifactId>
+            <version>1.0.10</version>
+        </dependency>
+        <dependency>
+            <groupId>com.openhtmltopdf</groupId>
+            <artifactId>openhtmltopdf-pdfbox</artifactId>
+            <version>1.0.10</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

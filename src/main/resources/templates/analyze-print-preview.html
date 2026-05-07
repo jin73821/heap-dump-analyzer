@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="_csrf" th:content="${_csrf?.token}">
+    <title th:text="'PDF Preview · ' + ${baseName}">PDF Preview</title>
+    <style>
+        /* PDF Preview는 단일 목적 풀스크린 페이지 — 좌측 배너 미노출.
+           네비게이션은 topbar의 "분석으로 돌아가기" 버튼으로 충분. */
+        :root { --mobile-bar-h: 60px; }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; height: 100%; background: #F3F4F6;
+                     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Pretendard', 'Noto Sans KR', sans-serif;
+                     color: #111827; }
+        a { color: inherit; text-decoration: none; }
+
+        .topbar { position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+                  height: 52px; background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 18px; }
+        .topbar-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+        .topbar-icon { width: 30px; height: 30px; background: #DC2626; border-radius: 7px;
+                       display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+        .topbar-icon svg { width: 16px; height: 16px; fill: white; }
+        .topbar-titles { min-width: 0; }
+        .topbar-title { font-size: 14px; font-weight: 700; line-height: 1.2; }
+        .topbar-sub { font-size: 11px; color: #6B7280; line-height: 1.2; margin-top: 2px;
+                      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60vw; }
+        .topbar-right { display: flex; align-items: center; gap: 8px; }
+        .btn { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+               padding: 7px 14px; border-radius: 6px; border: 1px solid #E5E7EB; background: #fff;
+               cursor: pointer; transition: background .15s; color: #111827; }
+        .btn:hover { background: #F9FAFB; }
+        .btn-primary { background: #2563EB; border-color: #2563EB; color: #fff; }
+        .btn-primary:hover { background: #1D4ED8; }
+        .btn svg { width: 13px; height: 13px; }
+
+        .preview-wrap { position: fixed; top: 52px; left: 0; right: 0; bottom: 0;
+                        background: #525659; padding: 0; }
+        .preview-frame { width: 100%; height: 100%; border: 0; display: block; }
+
+        .pdf-fallback { position: absolute; inset: 0; display: none; align-items: center;
+                        justify-content: center; color: #E5E7EB; font-size: 14px; padding: 30px;
+                        text-align: center; line-height: 1.6; }
+        .pdf-fallback a { color: #93C5FD; text-decoration: underline; }
+
+        /* 모바일 전용 하단 액션 바 (≤900px에서만 노출) */
+        .mobile-action-bar {
+            display: none;
+            position: fixed; left: 0; right: 0; bottom: 0; z-index: 102;
+            background: #fff; border-top: 1px solid #E5E7EB;
+            padding: 10px 14px;
+            padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+            gap: 8px; align-items: center;
+        }
+        .mobile-action-bar .btn { flex: 1; justify-content: center; padding: 11px 12px; font-size: 13px; }
+        .mobile-action-bar .btn-primary { flex: 1.4; }
+
+        @media (max-width: 900px) {
+            .topbar-sub { max-width: 40vw; }
+            /* 모바일에서는 상단 버튼 숨김 → 하단 sticky 바로 이동 */
+            .topbar-right { display: none; }
+
+            /* 미리보기 영역: HTML 렌더용으로 흰 배경, 하단 액션 바 자리 확보 */
+            .preview-wrap { bottom: var(--mobile-bar-h); background: #fff; }
+            .preview-frame { background: #fff; }
+
+            .mobile-action-bar { display: flex; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-left">
+        <div class="topbar-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm4 18H6V4h7v5h5v11z"/></svg>
+        </div>
+        <div class="topbar-titles">
+            <div class="topbar-title">PDF Report Preview</div>
+            <div class="topbar-sub" th:text="${filename}">filename.hprof</div>
+        </div>
+    </div>
+    <div class="topbar-right">
+        <a class="btn" th:href="@{'/analyze/result/' + ${filename}}" title="분석 결과로 돌아가기">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+            <span>분석으로 돌아가기</span>
+        </a>
+        <a class="btn btn-primary"
+           th:href="@{'/analyze/' + ${filename} + '/print-pdf'(mode='download')}"
+           th:download="${downloadName}"
+           title="PDF 파일 다운로드">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            <span>PDF 다운로드</span>
+        </a>
+    </div>
+</div>
+
+<div class="preview-wrap">
+    <!--
+        iframe src는 페이지 진입 시 viewport 폭으로 결정:
+          - 데스크톱(>900px): /print-pdf?mode=inline  (브라우저 PDF 인라인 뷰어)
+          - 모바일(≤900px):   /print-html             (HTML 렌더, 브라우저 자체 스크롤)
+        모바일에서 PDF iframe은 iOS Safari/Android Chrome가 거의 지원하지 않아
+        다운로드만 강제되거나 첫 페이지만 표시되는 한계가 있어 HTML로 fallback.
+    -->
+    <iframe class="preview-frame"
+            id="pdfPreviewFrame"
+            title="Report Preview"></iframe>
+    <div class="pdf-fallback" id="pdfFallback">
+        브라우저에서 PDF 미리보기를 표시할 수 없습니다.<br/>
+        상단의 <strong>PDF 다운로드</strong> 버튼을 사용해 주세요.
+    </div>
+</div>
+
+<!-- 모바일 전용 하단 액션 바 -->
+<div class="mobile-action-bar" role="toolbar" aria-label="PDF 미리보기 액션">
+    <a class="btn" th:href="@{'/analyze/result/' + ${filename}}" title="분석 결과로 돌아가기">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
+        <span>돌아가기</span>
+    </a>
+    <a class="btn btn-primary"
+       th:href="@{'/analyze/' + ${filename} + '/print-pdf'(mode='download')}"
+       th:download="${downloadName}"
+       title="PDF 파일 다운로드">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+        <span>PDF 다운로드</span>
+    </a>
+</div>
+
+<script th:inline="javascript">
+(function() {
+    var FILENAME    = /*[[${filename}]]*/ '';
+    var URL_PDF     = '/analyze/' + encodeURIComponent(FILENAME) + '/print-pdf?mode=inline';
+    var URL_HTML    = '/analyze/' + encodeURIComponent(FILENAME) + '/print-html';
+
+    var frame    = document.getElementById('pdfPreviewFrame');
+    var fallback = document.getElementById('pdfFallback');
+    var mq       = window.matchMedia('(max-width: 900px)');
+    var currentMode = null;     // 'pdf' | 'html'
+    var loaded   = false;
+    var fallbackTimer = null;
+
+    function applyMode(mode) {
+        if (mode === currentMode) return;
+        currentMode = mode;
+        loaded = false;
+        fallback.style.display = 'none';
+        if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+
+        frame.src = (mode === 'html') ? URL_HTML : URL_PDF;
+
+        // PDF 인라인은 일부 브라우저에서 load 이벤트가 발생 안 할 수 있어 4초 후 fallback.
+        // HTML은 항상 정상 로드되므로 fallback 타이머 불필요.
+        if (mode === 'pdf') {
+            fallbackTimer = setTimeout(function() {
+                if (!loaded) { fallback.style.display = 'flex'; }
+            }, 4000);
+        }
+    }
+
+    frame.addEventListener('load', function() { loaded = true; });
+
+    function pickMode() { return mq.matches ? 'html' : 'pdf'; }
+    applyMode(pickMode());
+
+    // 데스크톱 ↔ 모바일 전환 시 적절한 src로 재로드
+    if (typeof mq.addEventListener === 'function') {
+        mq.addEventListener('change', function() { applyMode(pickMode()); });
+    } else if (typeof mq.addListener === 'function') {
+        // Safari < 14 폴백
+        mq.addListener(function() { applyMode(pickMode()); });
+    }
+})();
+</script>
+
+</body>
+</html>
