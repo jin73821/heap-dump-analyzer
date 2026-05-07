@@ -221,6 +221,58 @@ public class ServerController {
         }
     }
 
+    /**
+     * SSE 전송 — SCP 진행 중 500ms마다 progress 이벤트, 완료 시 done 이벤트.
+     * EventSource 호환성을 위해 GET. CSRF 면제 영역(/api/**).
+     */
+    @GetMapping(value = "/api/servers/{id}/transfer/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter transferStream(
+            @PathVariable Long id, @RequestParam("remotePath") String remotePath) {
+        // 11분 — SCP timeout(10분)보다 약간 길게
+        org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter =
+                new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(11L * 60 * 1000);
+
+        TargetServer server = serverRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("서버를 찾을 수 없습니다: " + id));
+
+        Thread worker = new Thread(() -> {
+            try {
+                DumpTransferLog log = remoteDumpService.transferFile(server, remotePath, (bytes, total) -> {
+                    Map<String, Object> p = new LinkedHashMap<>();
+                    p.put("bytes", bytes);
+                    p.put("total", total);
+                    try {
+                        emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+                                .event().name("progress").data(p));
+                    } catch (Exception ignored) { /* 클라이언트 disconnect */ }
+                });
+                Map<String, Object> done = new LinkedHashMap<>();
+                done.put("success", "SUCCESS".equals(log.getTransferStatus()));
+                done.put("filename", log.getFilename());
+                done.put("status", log.getTransferStatus());
+                done.put("fileSize", log.getFileSize());
+                if (log.getErrorMessage() != null) done.put("message", log.getErrorMessage());
+                try {
+                    emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+                            .event().name("done").data(done));
+                } catch (Exception ignored) {}
+                emitter.complete();
+            } catch (Exception e) {
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("success", false);
+                err.put("message", e.getMessage() != null ? e.getMessage() : "전송 오류");
+                try {
+                    emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+                            .event().name("done").data(err));
+                } catch (Exception ignored) {}
+                emitter.complete();
+            }
+        }, "transfer-stream-" + id);
+        worker.setDaemon(true);
+        worker.start();
+        return emitter;
+    }
+
     @GetMapping("/api/servers/{id}/transfers")
     @ResponseBody
     public ResponseEntity<List<DumpTransferLog>> getTransferLogs(@PathVariable Long id) {

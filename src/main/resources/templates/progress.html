@@ -192,7 +192,7 @@
         .progress-card {
             background: #fff; border-radius: 14px;
             box-shadow: 0 2px 12px rgba(0,0,0,.08);
-            margin-bottom: 20px; overflow: hidden;
+            overflow: hidden;
             transition: background .5s, border-color .5s;
         }
         .progress-card.card-error {
@@ -374,28 +374,40 @@
         }
         .log-console.collapsed { display: none; }
 
-        /* ── 완료 배너 ──────────────────────────────────── */
+        /* ── 완료 배너 (슬림) ───────────────────────────── */
         .complete-banner {
             background: linear-gradient(135deg, #065F46, #059669);
-            border-radius: 14px; padding: 32px;
-            color: #fff; text-align: center; display: none;
+            border-radius: 12px; padding: 12px 18px;
+            color: #fff; display: none; margin-bottom: 16px;
+            align-items: center; gap: 16px;
         }
-        .complete-banner.visible { display: block; animation: fadeIn .5s ease; }
-        .complete-icon  { font-size: 48px; margin-bottom: 10px; }
-        .complete-title { font-size: 22px; font-weight: 800; margin-bottom: 6px; }
-        .complete-sub   { font-size: 14px; opacity: .85; margin-bottom: 20px; }
+        .complete-banner.visible { display: flex; animation: fadeIn .4s ease; }
+        .complete-info { flex: 1; min-width: 0; }
+        .complete-title { font-size: 15px; font-weight: 700; line-height: 1.2; }
+        .complete-sub   { font-size: 12px; opacity: .85; margin-top: 2px; }
         .complete-btn {
             display: inline-block;
             background: #fff; color: #059669;
-            font-size: 15px; font-weight: 700;
-            padding: 12px 32px; border-radius: 10px;
+            font-size: 13px; font-weight: 700;
+            padding: 8px 18px; border-radius: 8px;
             text-decoration: none; transition: all .2s;
-            box-shadow: 0 4px 12px rgba(0,0,0,.15);
+            box-shadow: 0 2px 6px rgba(0,0,0,.12);
+            flex-shrink: 0; white-space: nowrap;
         }
-        .complete-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,.2); }
+        .complete-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 10px rgba(0,0,0,.18); }
+        .complete-btn-stay {
+            background: transparent; color: #fff;
+            font-size: 13px; font-weight: 700;
+            padding: 8px 18px; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,.6);
+            cursor: pointer; transition: all .2s;
+            flex-shrink: 0; white-space: nowrap;
+            font-family: inherit;
+        }
+        .complete-btn-stay:hover { background: rgba(255,255,255,.15); border-color: #fff; }
         .countdown-bar {
-            height: 4px; background: rgba(255,255,255,.3);
-            border-radius: 2px; margin-top: 16px;
+            height: 3px; background: rgba(255,255,255,.3);
+            border-radius: 2px; margin-top: 6px;
             overflow: hidden; display: none;
         }
         .countdown-bar.visible { display: block; }
@@ -403,7 +415,7 @@
             height: 100%; background: #fff; border-radius: 2px;
             width: 100%; transition: width linear;
         }
-        .countdown-text { font-size: 13px; opacity: .8; margin-top: 6px; }
+        .countdown-text { font-size: 11px; opacity: .8; margin-top: 3px; }
 
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(12px); }
@@ -413,7 +425,9 @@
         /* ── 푸터 ───────────────────────────────────────── */
         .progress-footer {
             text-align: center; padding: 20px;
+            padding-left: calc(var(--banner-w, 220px) + 20px);
             font-size: 12px; color: #9CA3AF;
+            transition: padding-left .25s cubic-bezier(.4,0,.2,1);
         }
 
         /* ── Desktop ────────────────────────────────────── */
@@ -430,9 +444,11 @@
             .timeline-item.sub-step .timeline-desc { font-size: 12px; }
             .log-title { font-size: 16px; }
             .log-console { font-size: 13px; }
-            .complete-title { font-size: 26px; }
-            .complete-sub { font-size: 16px; }
-            .complete-btn { font-size: 17px; }
+            .complete-title { font-size: 16px; }
+            .complete-sub { font-size: 13px; }
+            .complete-btn { font-size: 14px; }
+            .complete-btn-stay { font-size: 14px; }
+            .countdown-text { font-size: 12px; }
             .error-header h3 { font-size: 19px; }
             .error-message { font-size: 15px; }
             .queue-content h3 { font-size: 19px; }
@@ -462,6 +478,7 @@
         @media (max-width: 900px) {
             .progress-topbar { left: 0; }
             .progress-page { padding-left: 20px; }
+            .progress-footer { padding-left: 20px; }
         }
         @media (max-width: 480px) {
             .progress-topbar { padding: 0 12px; }
@@ -474,9 +491,10 @@
             .queue-icon { font-size: 28px; }
             .queue-content h3 { font-size: 15px; }
             .queue-content p { font-size: 12px; }
-            .complete-banner { padding: 24px 16px; }
-            .complete-title { font-size: 20px; }
-            .complete-btn { padding: 12px 28px; font-size: 14px; min-height: 44px; }
+            .complete-banner { padding: 10px 12px; gap: 10px; flex-wrap: wrap; }
+            .complete-title { font-size: 14px; }
+            .complete-btn { padding: 9px 18px; font-size: 13px; min-height: 36px; }
+            .complete-btn-stay { padding: 9px 18px; font-size: 13px; min-height: 36px; }
             .cancel-btn { min-height: 44px; padding: 8px 12px; }
             .log-toggle { min-height: 44px; padding: 8px 12px; }
             .error-actions { flex-direction: column; }
@@ -539,6 +557,20 @@
             <a href="#" class="error-retry-btn" id="retryBtn" onclick="postRerun();return false;">&#8635; 재분석</a>
             <a href="/" class="error-home-btn">&#8592; 홈으로</a>
         </div>
+    </div>
+
+    <!-- 완료 배너 (상단, 슬림) -->
+    <div class="complete-banner" id="completeBanner">
+        <div class="complete-info">
+            <div class="complete-title">분석 완료</div>
+            <div class="complete-sub">힙 덤프 분석이 성공적으로 완료되었습니다.</div>
+            <div class="countdown-bar visible" id="countdownBar">
+                <div class="countdown-fill" id="countdownFill"></div>
+            </div>
+            <div class="countdown-text" id="countdownText">5초 후 자동으로 결과 페이지로 이동합니다...</div>
+        </div>
+        <a href="#" class="complete-btn" id="resultLink">&#128202; 결과 보기</a>
+        <button type="button" class="complete-btn-stay" id="stayBtn" onclick="cancelAutoRedirect()">머무르기</button>
     </div>
 
     <!-- 2열 그리드: 진행 카드(좌) + 로그(우) -->
@@ -671,18 +703,6 @@
 
     </div><!-- /.progress-grid -->
 
-    <!-- 완료 배너 -->
-    <div class="complete-banner" id="completeBanner">
-        <div class="complete-icon">&#127881;</div>
-        <div class="complete-title">분석 완료!</div>
-        <div class="complete-sub">힙 덤프 분석이 성공적으로 완료되었습니다.</div>
-        <a href="#" class="complete-btn" id="resultLink">&#128202; 결과 보기</a>
-        <div class="countdown-bar visible" id="countdownBar">
-            <div class="countdown-fill" id="countdownFill"></div>
-        </div>
-        <div class="countdown-text" id="countdownText">3초 후 자동으로 결과 페이지로 이동합니다...</div>
-    </div>
-
 </div>
 
 <!-- 힙 메모리 경고 모달 -->
@@ -730,7 +750,7 @@
 
 <!-- ── Footer ─────────────────────────────────────────────── -->
 <div class="progress-footer">
-    &copy; 2026 Heap Dump Analyzer v2.0.0 | Powered by Eclipse MAT CLI
+    &copy; 2026 Heap Dump Analyzer v2.0.1 | Powered by Eclipse MAT CLI
 </div>
 
 <!-- ── SSE 진행 상황 처리 스크립트 (성능 최적화) ───────────── -->
@@ -1024,6 +1044,23 @@
     }
 
     // ── 완료 처리 + 카운트다운 ────────────────────────────
+    let _autoRedirectTimer = null;
+    let _autoRedirectCancelled = false;
+
+    function cancelAutoRedirect() {
+        _autoRedirectCancelled = true;
+        if (_autoRedirectTimer) { clearInterval(_autoRedirectTimer); _autoRedirectTimer = null; }
+        // 카운트다운 바 진행 멈추기 (현재 폭으로 고정 후 숨김)
+        var fillWidth = countdownFill.getBoundingClientRect().width + 'px';
+        countdownFill.style.transition = 'none';
+        countdownFill.style.width = fillWidth;
+        var bar = document.getElementById('countdownBar');
+        if (bar) bar.classList.remove('visible');
+        countdownText.textContent = '자동 이동이 중지되었습니다. 결과 보기 버튼으로 이동하세요.';
+        var stayBtn = document.getElementById('stayBtn');
+        if (stayBtn) stayBtn.style.display = 'none';
+    }
+
     function showComplete(url) {
         disableLeaveWarning();
         stopElapsedTimer();
@@ -1033,20 +1070,24 @@
         completeBanner.classList.add('visible');
         setStep('done', 'done', '결과 페이지 준비 완료');
 
-        const DELAY = 3000;
+        const DELAY = 5000;
         countdownFill.style.transition = 'width ' + (DELAY / 1000) + 's linear';
         requestAnimationFrame(() => {
             countdownFill.style.width = '0%';
         });
 
         let remaining = Math.ceil(DELAY / 1000);
-        const timer = setInterval(() => {
+        countdownText.textContent = remaining + '초 후 자동으로 결과 페이지로 이동합니다...';
+        _autoRedirectTimer = setInterval(() => {
+            if (_autoRedirectCancelled) { clearInterval(_autoRedirectTimer); _autoRedirectTimer = null; return; }
             remaining--;
-            countdownText.textContent = remaining + '초 후 자동으로 결과 페이지로 이동합니다...';
             if (remaining <= 0) {
-                clearInterval(timer);
+                clearInterval(_autoRedirectTimer);
+                _autoRedirectTimer = null;
                 window.location.href = url || RESULT_URL;
+                return;
             }
+            countdownText.textContent = remaining + '초 후 자동으로 결과 페이지로 이동합니다...';
         }, 1000);
     }
 

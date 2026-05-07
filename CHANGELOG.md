@@ -1,5 +1,279 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-08] Target Servers — SCP 전송 진행률 실시간 표시 (MB 단위 + 진행바)
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`
+- `src/main/java/com/heapdump/analyzer/controller/ServerController.java`
+- `src/main/resources/templates/servers.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 기존: 스캔 후 전송 시 단순 펄스 애니메이션만 표시 — 실제 진행률·잔여 시간 추정 불가.
+- 큰 덤프(수백 MB~수 GB) 전송 시 사용자가 "멈춘 게 아닌가" 의심.
+
+### 내역
+- **`RemoteDumpService`**:
+  - `TransferProgressListener` 함수형 인터페이스 추가 (`onProgress(bytes, total)`).
+  - `transferFile(server, remotePath, listener)` 오버로드 — 기존 `transferFile(server, remotePath)`는 listener=null로 위임 (자동 탐지 호환).
+  - `fetchRemoteFileSize()`: SCP 시작 전 `ssh stat -c %s` 또는 `wc -c`로 원격 총 크기 확보. 실패 시 -1 (총량 미상으로 표시).
+  - `executeCommandWithProgress()`: SCP 프로세스 실행 + daemon 모니터 스레드가 500ms마다 `tempFile.length()`로 진행률 보고.
+- **`ServerController`** — `GET /api/servers/{id}/transfer/stream?remotePath=...` SSE 추가:
+  - `progress` 이벤트: `{bytes, total}` (총량 미상이면 total=-1).
+  - `done` 이벤트: `{success, filename, status, fileSize, message?}`.
+  - 기존 POST `/api/servers/{id}/transfer`는 자동 탐지/외부 호환을 위해 유지.
+- **`servers.html`** — 전송 UI 개편:
+  - `transferFile()`: `EventSource` 기반으로 재작성. 시작 시 indeterminate 펄스 → progress 첫 수신 시 실제 % 채움.
+  - 라벨: `123.4 / 567.8 MB (21.7%)` 형식. 1024 MB 초과 시 `2.34 GB`로 자동 단위.
+  - 진행바 폭 80→140px, 라벨 폭 확장(min-width 260px), `font-variant-numeric: tabular-nums`로 자릿수 흔들림 방지.
+  - `done` 후 EventSource 자동 재연결 차단 (`doneReceived` 플래그로 onerror 분기).
+  - 완료 시 라벨에 최종 파일 크기 표시 ("완료 (174.0 MB)").
+
+## [2026-05-08] Target Servers — 스캔 "전송됨" 판정에 로컬 파일 실존 검증 추가 (버그 수정)
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/repository/DumpTransferLogRepository.java`
+- `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`
+- `CHANGELOG.md`
+
+### 문제
+- JeusServer1 스캔 시 `jeus_admin.hprof`가 "전송됨"으로 표시되지만 Files 페이지에는 보이지 않음.
+- 원인: `scanSinglePath()`가 `transferred` 플래그를 DB의 SUCCESS 로그 존재만으로 판정. 로컬 `dumpfiles/`에서 파일이 삭제된 후 재스캔 시 여전히 "전송됨"으로 잘못 표시됨.
+- CLAUDE.md 명세: **전송됨 판정 = DB SUCCESS 로그 + 로컬 파일 실존(`.gz` 포함) 모두**.
+
+### 내역
+- `DumpTransferLogRepository`: `findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(...)` 추가 — 동일 원격 파일에 여러 SUCCESS row가 있을 때(예: `_2`, `_3` suffix 재전송) 모두 후보로 평가하기 위함.
+- `RemoteDumpService.scanSinglePath()`:
+  - 매칭되는 모든 SUCCESS 로그를 최신순으로 가져온 뒤, 각 row의 로컬 저장명에 대해 `dumpfiles/<filename>` 또는 `dumpfiles/<filename>.gz` 실존 여부를 검사.
+  - 실존하는 row가 있을 때만 `transferred=true`, 그 row의 `filename`으로 `analyzed` 판정.
+  - 모든 row의 로컬 파일이 사라졌으면 `transferred=false` (분석 가능 상태로 다시 노출).
+
+## [2026-05-07] AI Chat — 분석 삭제 / 동일 파일명 재업로드 시 채팅 세션 분리 및 상태 표시
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/model/entity/AiChatSession.java`
+- `src/main/java/com/heapdump/analyzer/repository/AnalysisHistoryRepository.java`
+- `src/main/java/com/heapdump/analyzer/controller/AiChatController.java`
+- `src/main/resources/templates/ai-chat.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 기존: `AiChatSession`이 `filename`만 저장 → 분석 결과 삭제 후 동일 이름으로 새 분석을 시작해도 사이드바에서 이전 채팅과 새 채팅이 같은 분석으로 합쳐져 보이고, 분석이 삭제됐는지 사용자에게 표시되지 않음.
+- 분석명 형식이 `[EXT]server_filename_yyyyMMdd`로 분석 시각(analyzedAt) 기준 일자가 다르므로, 채팅도 분석 인스턴스 단위로 분리되어야 함.
+
+### 내역
+
+**AiChatSession 엔티티 — `analyzedAt` 컬럼 추가**
+- `@Column(name = "analyzed_at") LocalDateTime analyzedAt` 신규 필드. 세션 생성 시점의 `analysis_history.analyzed_at` 스냅샷을 저장.
+- `(filename, analyzedAt)` 조합으로 분석 인스턴스 식별 — 동일 파일명이라도 분석이 새로 이뤄지면 다른 세션으로 자연 분리.
+- 기존 row는 NULL로 남으며 마이그레이션 호환 유지(`ddl-auto=update`로 컬럼 자동 추가됨, datetime(6) NULL).
+
+**AnalysisHistoryRepository — `existsByFilenameAndAnalyzedAt` 추가**
+- 사이드바 렌더링 시 세션의 `analyzedAt`이 현재 분석과 일치하는지 빠르게 확인.
+
+**AiChatController — `createSession` / `listSessions` 변경**
+- `createSession`: `filename`이 있으면 `historyRepo.findByFilename(...)` 으로 분석 entity 조회 후 그 시점의 `analyzedAt`을 세션에 저장. analyze.html의 `ensureChatSession()`은 변경 불필요(filename만 보내면 백엔드가 자동 매칭).
+- `listSessions`: 응답에 `analyzedAt` + `analysisState` 필드 추가. 상태 판정:
+  - `currentAnalysis` — `(filename, analyzedAt)`이 `analysis_history`에 그대로 존재 (정상 연결)
+  - `previousAnalysis` — 동일 filename이 존재하지만 `analyzedAt`이 다름 (재업로드/재분석된 이전 분석의 채팅)
+  - `analysisDeleted` — 해당 filename의 분석 row가 아예 없음 (분석 기록 삭제됨)
+  - `general` — `filename` 없는 일반 채팅
+- 마이그레이션 호환: 세션의 `analyzedAt`이 NULL이면 filename 존재 여부만으로 `currentAnalysis` / `analysisDeleted` 판정.
+- `historyRepo` 의존성 주입 추가.
+
+**ai-chat.html — 사이드바 분석 상태 배지 + 분석 시각 표시**
+- 신규 CSS:
+  - `.session-item-state.deleted` — 빨간색 "분석 삭제됨" 배지
+  - `.session-item-state.previous` — 노란색 "이전 분석" 배지
+  - `.session-item.is-deleted` — 제목 회색 + 취소선, 파일 칩 흐림 처리
+  - `.session-item-analyzed` — `분석 yyyy-MM-dd HH:mm` 보조 라벨
+- `renderSessionList()` 변경: `s.analysisState`에 따라 배지/클래스 추가, `s.analyzedAt`을 세션 카드에 노출.
+
+### 동작 시나리오
+1. `jeus_admin.hprof` 분석 → 채팅 (세션 A: `analyzedAt=T1`)
+2. 분석 결과 삭제(`/api/history/bulk-delete`) → `analysis_history`에서 row 삭제, 세션 A는 보존됨
+3. 사이드바: 세션 A → "**분석 삭제됨**" 빨간 배지, 제목 취소선 (채팅 본문은 여전히 열람 가능)
+4. 동일 이름 `jeus_admin.hprof` 재업로드/재분석 (analyzedAt=T2) → 새 채팅 시작 시 세션 B 생성 (`analyzedAt=T2`)
+5. 사이드바: 세션 B는 "현재 분석"(배지 없음), 세션 A는 동일 filename이지만 `analyzedAt` 불일치 → "**이전 분석**" 노란 배지로 분리 표시
+
+### 검증
+- `mvn clean package -DskipTests` 빌드 성공.
+- `bash restart.sh` 재기동 후 `Started HeapAnalyzerApplication in 9.141 seconds` 확인.
+- `DESCRIBE ai_chat_sessions;` → `analyzed_at datetime(6) YES NULL` 컬럼 자동 추가 확인.
+- `/api/ai-chat/sessions` 미인증 요청 → 302 (정상 로그인 리다이렉트).
+
+---
+
+## [2026-05-07] Analyze — RAW DATA 클릭 시 부모 페이지 이탈 방지 (강한 방어 처방)
+
+**변경 파일:**
+- `src/main/resources/templates/analyze.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 이전 fix(iframe height 고정) 후에도 RAW DATA 항목 클릭 시 브라우저 주소가 `/report/{filename}/mat-page/overview/index.html`로 완전히 이동(top-level navigation)하는 증상이 재현된다는 사용자 보고.
+- 코드 흐름상 `<button>` + `onclick="showPanel(...)"`은 `iframe.src`만 설정하므로 부모 URL이 바뀔 수 없음. 하지만 사용자 환경에서는 실제로 발생 (URL 바 변경 + 사이드바·헤더 사라짐 + 뒤로가기로 복귀). 외부 도메인(`park1v.mooo.com`) 접근, 브라우저 확장, 또는 인라인 onclick 처리의 미묘한 케이스가 의심됨.
+- 원인 격리가 어려워 **방어적 처방** 적용: 어떤 원인이든 click 이벤트 시점에 부모 네비게이션을 차단.
+
+### 내역
+
+**사이드바 nav-item — 인라인 onclick 제거 + 위임 핸들러 + `type="button"`**
+- 모든 `<button class="nav-item">` (Analysis / AI Analysis / Actions / Tools / Raw Data 5개 섹션, 총 15개)에 `type="button"` 명시 추가 — HTML 사양상 form 외부 button의 default type이 모호한 회색지대 차단.
+- 인라인 `onclick="showPanel('...', this)"` → `data-panel="..."`로 교체. 부수 호출(loadLog, exportCSV 등)은 `data-extra`/`data-action`으로 분리.
+- 신규 위임된 click 리스너:
+  ```js
+  document.addEventListener('click', function(e) {
+      var btn = e.target.closest('.nav-item[data-panel], .nav-item[data-action]');
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      ...
+      try {
+          if (panel) showPanel(panel, btn);
+          if (extra && typeof window[extra] === 'function') window[extra]();
+          if (action && typeof window[action] === 'function') window[action]();
+      } catch (err) { console.error('[nav-item handler]', err); }
+      return false;
+  }, false);
+  ```
+- 핵심: **`preventDefault()` + `stopPropagation()` 즉시 호출** — 인라인 onclick에선 못 잡는 click의 default behavior나 중간 단계 가로채기 가능성을 사전 차단.
+- 배너 Analysis 탭의 클론 버튼도 같은 위임 핸들러로 자동 처리 (개별 onclick 등록 불필요).
+
+### 동작 검증
+- 빌드/기동: `mvn clean package -DskipTests` + `bash restart.sh` 후 `Started HeapAnalyzerApplication in 9.394 seconds` 확인.
+- 데스크톱 Chrome 외부 도메인 접근 환경에서 RAW DATA 항목 클릭 시 부모 URL 유지 + 패널 전환 동작 검증 필요 (사용자 측 재테스트 요청).
+- 만약 이번 fix 후에도 동일 증상이라면 사용자 환경(브라우저 확장 / 프록시 / Chrome flag) 측 원인일 가능성이 매우 높음.
+
+---
+
+## [2026-05-07] Analyze — RAW DATA iframe 동적 height 제거 (전체 화면 전환 버그 수정)
+
+**변경 파일:**
+- `src/main/resources/templates/analyze.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- RAW DATA 섹션의 System Overview / Top Components / Suspect Details 클릭 시 iframe이 정상 동작하지 않고 페이지가 "전체 화면 전환"처럼 보이는 사용자 보고.
+- 원인: 기존 코드가 iframe `style.height`를 매 load(초기 + 내부 네비게이션)마다 `Math.max(700, doc.body.scrollHeight + 40)`로 키워, 큰 MAT 리포트(예: Top Components 5000+px)에선 iframe이 콘텐츠 전체 세로를 점유 → 부모 페이지가 거대 단일 스크롤이 되며 사이드바 바깥의 시각 영역을 iframe이 모두 덮음. 모바일(`.main-content { margin-left: 0 }`)에선 가로폭까지 차지해 실제로 화면 전체가 iframe 콘텐츠로 보임.
+- 부수 원인: `activateClassLinksInIframe`가 매 load 콜백 안에서 또 다른 `iframe.addEventListener('load', ...)`를 추가 → 내부 네비게이션할 때마다 핸들러 누적 (1, 2, 3, ... N+1번 호출). 메모리 누수 + 중복 height 계산.
+
+### 내역
+
+**iframe 인라인 스타일 — 고정 viewport 높이 + 내부 스크롤**
+- 3개 MAT iframe(`matOverviewIframe` / `matTopIframe` / `matSuspectsIframe`)의 inline style:
+  - `min-height:700px` → `height:75vh; min-height:500px; display:block`
+- 콘텐츠가 길면 iframe 내부에서 스크롤되도록 (브라우저 기본 `scrolling=auto`).
+
+**JS — load 핸들러 단일 등록 + 동적 height 제거**
+- `showPanel()` 내 iframe lazy-load 블록:
+  - `iframe.style.height = ...` 제거 (3곳: 초기 load + click 후 setTimeout + 내부 네비 후).
+  - `iframe.contentWindow.addEventListener('click', ...)` 의 height 재계산 setTimeout 제거.
+  - `iframe.src = data-src` 호출은 load 리스너 등록 *이후*로 이동 (race 방지).
+- `activateClassLinksInIframe(doc, iframe)` → `activateClassLinksInIframe(doc)` (시그니처 단순화):
+  - 함수 내부의 추가 `iframe.addEventListener('load', ...)` 등록 코드 삭제 — 호출자(showPanel)의 단일 load 리스너가 매번 호출하므로 중복 불필요.
+  - 내부 `function activate(targetDoc) {...}; activate(doc)` 헬퍼 wrap 풀고 인라인화.
+
+### 동작 검증
+- `mvn clean package -DskipTests` + `bash restart.sh` 후 `Started HeapAnalyzerApplication in 9.432 seconds` 확인.
+- `/report/{filename}/mat-page/overview/index.html` curl 200 OK, 헤더에 `X-Frame-Options: SAMEORIGIN` 정상.
+- Raw Data 클릭 시 iframe이 75vh 높이로 카드 내부에 안정적으로 표시되며, MAT 리포트의 긴 콘텐츠는 iframe 내부 스크롤로 탐색 가능. 부모 페이지는 정상 길이 유지.
+- 클래스명 링크(FQCN 형태)는 매 내부 네비 후에도 활성화 동작 유지 (load 리스너 단일 등록으로 자동 재실행).
+
+---
+
+## [2026-05-07] Analyze — 재분석 확인 모달 한국어 번역
+
+**변경 파일:**
+- `src/main/resources/templates/analyze.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- `/analyze/{filename}` 페이지의 재분석 확인 모달이 영어로 노출되어 다른 모달(컴포넌트 상세, 새 대화 시작 등)과 언어 일관성이 어긋남.
+
+### 내역
+- 모달 타이틀: `Re-Analyze` → `재분석`
+- 본문: `Saved results will be cleared and the heap dump will be re-analyzed with MAT CLI. This may take several minutes.` → `저장된 분석 결과가 삭제되고 MAT CLI로 힙 덤프를 다시 분석합니다. 수 분이 소요될 수 있습니다.`
+- 메타 라벨: `File Size:` → `파일 크기:`, `Analysis Time:` → `분석 시간:`
+- 버튼: `Cancel` → `취소`, `Re-Analyze` → `재분석`
+- 마크업 코멘트도 `Re-Analyze Confirm Modal` → `재분석 확인 모달`로 통일.
+
+### 동작 검증
+- 헤더의 `Re-Analyze` 트리거 버튼은 사용자 요청 범위(모달만)에 한정해 영어 유지 — 기존 호출자 onclick 핸들러 변경 없음.
+- 빌드/기동: `mvn clean package -DskipTests` + `bash restart.sh` 후 `Started HeapAnalyzerApplication in 9.074 seconds` 확인.
+
+---
+
+## [2026-05-07] Progress — 좌/우 카드 높이 일치, 자동이동 5초화 + 머무르기 버튼
+
+**변경 파일:**
+- `src/main/resources/templates/progress.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- "MAT CLI 실행 중..." 진행 카드(좌)와 "MAT CLI 로그" 카드(우)의 비주얼 하단이 어긋남 — 사용자 보고.
+- 원인: `.progress-card`에만 `margin-bottom: 20px`가 있어 grid `align-items: stretch` 환경에서 우측 카드보다 시각적 하단이 20px 위로 어긋남. grid `gap: 20px`가 이미 카드 간 간격을 처리하므로 margin-bottom은 중복 + 불일치 원인.
+- 자동 이동 3초가 다소 짧고, 결과를 천천히 보고 싶어도 강제 이동되어 사용자 의도 침해.
+
+### 내역
+
+**좌/우 카드 높이 일치**
+- `.progress-card`의 `margin-bottom: 20px` 제거 (grid `gap: 20px`가 spacing 담당). 모바일 1열 폴백에서도 grid gap이 동일하게 적용됨.
+
+**자동 이동 5초화 + 머무르기 버튼**
+- `showComplete()`의 `DELAY = 3000` → `5000`. 초기 안내문 "3초" → "5초".
+- 완료 배너에 `<button class="complete-btn-stay" id="stayBtn">머무르기</button>` 추가 (결과 보기 버튼 우측, 투명 배경 + 흰색 테두리 ghost 스타일).
+- `cancelAutoRedirect()` 핸들러: setInterval 정리, 카운트다운 바 현재 폭 고정 후 숨김, 안내문 "자동 이동이 중지되었습니다. 결과 보기 버튼으로 이동하세요."로 교체, 머무르기 버튼 자체를 숨김.
+- `_autoRedirectTimer` / `_autoRedirectCancelled` 모듈 변수로 timer 핸들 보관 — 외부에서 취소 가능.
+- 카운트다운 setInterval 내부에서도 `_autoRedirectCancelled` 가드 — race condition 방지.
+
+**스타일**
+- `.complete-btn-stay` 추가: `background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.6); padding: 8px 18px; font-size: 13px; border-radius: 8px; flex-shrink: 0;` + hover 시 `background: rgba(255,255,255,.15)`.
+- 데스크톱(≥1024px) / 모바일(≤480px) 미디어쿼리에 `.complete-btn-stay` 사이즈 동기화.
+
+### 동작 검증
+- 데스크톱: 좌/우 카드 하단 정렬 일치. 완료 시 "5초 후 자동 이동" 안내 + 결과 보기 / 머무르기 두 버튼 가로 배치.
+- 머무르기 클릭: 카운트다운 바 진행 멈춤 + 숨김, 안내문 변경, 머무르기 버튼 사라짐. 결과 보기 버튼만 남아 사용자가 원할 때 이동 가능.
+- 빌드/기동: `mvn clean package -DskipTests` + `bash restart.sh` 후 `Started HeapAnalyzerApplication in 9.346 seconds` 확인.
+
+---
+
+## [2026-05-07] Progress — 완료 배너 상단 이동 + 슬림화, 푸터 중앙정렬 보정
+
+**변경 파일:**
+- `src/main/resources/templates/progress.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 분석 완료 시 페이지 하단에 큰 완료 배너(48px 폭죽 이모지 + 32px 패딩 + 22px 제목 + 큰 버튼)가 출력되어 시선 이동이 길고 영역 점유 과다.
+- 푸터 텍스트가 `text-align:center`만 적용되어 viewport 기준 중앙 → 좌측 고정 배너(220px) 폭만큼 시각적으로 우측 치우침.
+- 푸터 버전 표기가 `v2.0.0`으로 pom 버전(`v2.0.1`)과 불일치.
+
+### 내역
+
+**완료 배너 — 상단 이동 + 슬림 한 줄 레이아웃**
+- 마크업 위치: `.progress-grid` 아래(페이지 하단) → `.progress-grid` 위(상단)로 이동.
+- 마크업 구조 변경: 세로 적층(아이콘/제목/부제/버튼/카운트다운) → 한 줄 flex 레이아웃 (`.complete-info` flex:1 + `.complete-btn` 우측 고정).
+- 폭죽 이모지(`&#127881;`, `.complete-icon`) 제거.
+- 패딩 32px → `12px 18px`, 제목 22px → 15px, 부제 14px → 12px, 버튼 `12px 32px / 15px` → `8px 18px / 13px`, countdown-bar 4px → 3px, countdown-text 13px → 11px.
+- 데스크톱(≥1024px) / 모바일(≤480px) 미디어쿼리도 슬림 사이즈에 맞춰 재정의 (이전 26px 제목/16px 부제 강제 키움 제거).
+- 모바일에서는 `flex-wrap: wrap`로 좁은 폭에서 버튼이 텍스트 아래로 떨어지도록.
+
+**푸터 중앙정렬 보정**
+- `.progress-footer`에 `padding-left: calc(var(--banner-w, 220px) + 20px)` 추가 — 좌측 고정 배너(220px ↔ 44px 토글) 폭만큼 패딩을 주어 콘텐츠 영역 기준 중앙에 위치.
+- `transition: padding-left .25s` — 배너 토글과 동기화된 부드러운 이동.
+- ≤900px 미디어쿼리에서 `padding-left: 20px` 리셋 (모바일은 배너 숨김).
+
+**버전 표기 갱신**
+- 푸터 `v2.0.0` → `v2.0.1` (pom.xml과 일치).
+
+### 동작 검증
+- 데스크톱(>1024px): 분석 완료 시 진행 카드 위에 슬림 배너(약 70px 높이) 가로 한 줄로 표시 — 제목/부제/카운트다운(3px 바 + 안내문) 좌측, "결과 보기" 버튼 우측. 푸터는 콘텐츠 영역 정중앙.
+- 태블릿(900~1024px): 동일 슬림 레이아웃 유지.
+- 모바일(≤480px): 배너 텍스트 + 버튼 wrap, 푸터 padding-left 0으로 viewport 중앙.
+- 빌드/기동: `mvn clean package -DskipTests` + `bash restart.sh` 후 `Started HeapAnalyzerApplication in 9.524 seconds` 확인.
+
+---
+
 ## [2026-05-07] Dashboard — 모바일 가로 오버플로우 수정 (Detections / 탐지 현황 패널)
 
 **변경 파일:**

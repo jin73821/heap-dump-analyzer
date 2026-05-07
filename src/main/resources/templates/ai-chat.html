@@ -67,6 +67,15 @@
         .session-item-file { font-size: 10px; color: #6B7280; background: #F3F4F6;
             padding: 1px 6px; border-radius: 4px; margin-top: 3px; display: inline-block;
             max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .session-item-analyzed { font-size: 10px; color: #9CA3AF; margin-top: 2px; }
+        .session-item-state {
+            display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .3px;
+            padding: 1px 6px; border-radius: 3px; margin-top: 3px; margin-right: 4px;
+        }
+        .session-item-state.deleted  { background: #FEE2E2; color: #B91C1C; }
+        .session-item-state.previous { background: #FEF3C7; color: #92400E; }
+        .session-item.is-deleted .session-item-title { color: #9CA3AF; text-decoration: line-through; }
+        .session-item.is-deleted .session-item-file  { opacity: .65; }
         .session-item-actions { display: none; float: right; }
         .session-item:hover .session-item-actions { display: inline-flex; gap: 4px; }
         .session-del-btn { background: none; border: none; cursor: pointer; color: #9CA3AF; font-size: 14px; padding: 0 2px; }
@@ -269,13 +278,24 @@ function renderSessionList() {
         _sessions.forEach(function(s) {
             var active = s.id === _activeSessionId ? ' active' : '';
             var date = s.updatedAt ? s.updatedAt.substring(0, 16).replace('T', ' ') : '';
-            html += '<div class="session-item' + active + '" onclick="selectSession(' + s.id + ')">'
+            var analyzedAt = s.analyzedAt ? s.analyzedAt.substring(0, 16).replace('T', ' ') : '';
+            var stateBadge = '';
+            var itemClass = 'session-item' + active;
+            if (s.analysisState === 'analysisDeleted') {
+                stateBadge = '<span class="session-item-state deleted" title="연결된 분석 결과가 삭제되었습니다">분석 삭제됨</span>';
+                itemClass += ' is-deleted';
+            } else if (s.analysisState === 'previousAnalysis') {
+                stateBadge = '<span class="session-item-state previous" title="동일한 파일명으로 새 분석이 이뤄져 이전 분석의 채팅입니다">이전 분석</span>';
+            }
+            html += '<div class="' + itemClass + '" onclick="selectSession(' + s.id + ')">'
                 + '<div class="session-item-actions">'
                 + '<button class="session-del-btn" onclick="event.stopPropagation();deleteSession(' + s.id + ')" title="삭제">&times;</button>'
                 + '</div>'
                 + '<div class="session-item-title">' + escHtml(s.title || '새 채팅') + '</div>'
                 + '<div class="session-item-meta"><span>' + date + '</span><span>' + (s.messageCount || 0) + '개 메시지</span></div>'
                 + (s.filename ? '<div class="session-item-file">' + escHtml(s.filename) + '</div>' : '')
+                + (analyzedAt ? '<div class="session-item-analyzed">분석 ' + analyzedAt + '</div>' : '')
+                + (stateBadge ? '<div>' + stateBadge + '</div>' : '')
                 + '</div>';
         });
     }

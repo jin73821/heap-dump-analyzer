@@ -247,12 +247,26 @@ public class RemoteDumpService {
                 if (fileInfo != null) {
                     String filename = (String) fileInfo.get("filename");
                     Long size = (Long) fileInfo.get("size");
-                    Optional<DumpTransferLog> succLog = transferLogRepository
-                            .findFirstByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
+                    // 전송됨 판정: SUCCESS 로그 + 로컬 파일 실존(.gz 포함) 모두 충족해야 함.
+                    // 같은 원격 파일이 여러 번 전송된 경우(_2/_3 suffix 등) 로컬 파일이 남아있는 row를 우선 채택.
+                    List<DumpTransferLog> succLogs = transferLogRepository
+                            .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
                                     server.getId(), filename, size, "SUCCESS");
-                    boolean transferred = succLog.isPresent();
+                    File localDir = new File(config.getDumpFilesDirectory());
+                    String matchedLocalFilename = null;
+                    for (DumpTransferLog sl : succLogs) {
+                        String local = sl.getFilename();
+                        if (local == null) continue;
+                        File f = new File(localDir, local);
+                        File gz = new File(localDir, local + ".gz");
+                        if (f.exists() || gz.exists()) {
+                            matchedLocalFilename = local;
+                            break;
+                        }
+                    }
+                    boolean transferred = matchedLocalFilename != null;
                     boolean analyzed = transferred
-                            && analysisHistoryRepository.existsByFilename(succLog.get().getFilename());
+                            && analysisHistoryRepository.existsByFilename(matchedLocalFilename);
                     fileInfo.put("transferred", transferred);
                     fileInfo.put("analyzed", analyzed);
                     fileInfo.put("sourceDumpPath", dumpPath);
@@ -270,12 +284,25 @@ public class RemoteDumpService {
         return (List<Map<String, Object>>) result.getOrDefault("files", Collections.emptyList());
     }
 
+    /** 전송 진행률 콜백 — bytesTransferred / totalBytes (-1이면 unknown). 예외는 호출자에서 swallow. */
+    public interface TransferProgressListener {
+        void onProgress(long bytes, long total);
+    }
+
     /**
      * 원격 파일을 SCP로 로컬에 전송 (2단계: 임시경로 → 최종경로)
      * Phase 1: SCP를 sscuser로 실행 → 임시 디렉토리에 저장
      * Phase 2: Files.move()로 앱 계정 권한으로 최종 경로에 이동
      */
     public DumpTransferLog transferFile(TargetServer server, String remoteFilePath) {
+        return transferFile(server, remoteFilePath, null);
+    }
+
+    /**
+     * 진행률 콜백 버전. listener가 null이 아닐 때만 SCP 진행 중 임시 파일 크기를 폴링하여 보고.
+     */
+    public DumpTransferLog transferFile(TargetServer server, String remoteFilePath,
+                                        TransferProgressListener listener) {
         // 원격 원본명 — rename 후에도 변하지 않는 식별자 (scan transferred 판정 키)
         final String remoteFilename = new File(remoteFilePath).getName();
         String filename = remoteFilename;
@@ -307,14 +334,26 @@ public class RemoteDumpService {
                 log.setFilename(filename);
             }
 
+            // 원격 총 크기 사전 조회 (실패해도 전송은 진행 — 진행률은 미정)
+            long totalBytes = -1L;
+            if (listener != null) {
+                totalBytes = fetchRemoteFileSize(server, remoteFilePath);
+                safeProgress(listener, 0L, totalBytes);
+            }
+
             // Phase 1: SCP → 임시 경로 (sscuser 쓰기 가능)
             String tempFileName = java.util.UUID.randomUUID().toString().substring(0, 8) + "_" + filename;
             tempFile = new File(scpTempDir, "heapdump_transfer_" + tempFileName);
 
             String[] cmd = buildScpCommand(server, remoteFilePath, tempFile.getAbsolutePath());
-            ProcessResult pr = executeCommand(cmd, SCP_TIMEOUT_SEC);
+            ProcessResult pr = (listener != null)
+                    ? executeCommandWithProgress(cmd, SCP_TIMEOUT_SEC, tempFile, totalBytes, listener)
+                    : executeCommand(cmd, SCP_TIMEOUT_SEC);
 
             if (pr.exitCode == 0 && tempFile.exists() && tempFile.length() > 0) {
+                long finalSize = tempFile.length();
+                if (listener != null) safeProgress(listener, finalSize, totalBytes > 0 ? totalBytes : finalSize);
+
                 // Phase 2: 임시 파일 → 최종 경로 (앱 계정 권한으로 이동)
                 Files.move(tempFile.toPath(), localFile.toPath(),
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -344,6 +383,81 @@ public class RemoteDumpService {
 
         transferLogRepository.save(log);
         return log;
+    }
+
+    /** SSH `stat -c %s` 로 원격 파일 크기 조회. 실패 시 -1. */
+    private long fetchRemoteFileSize(TargetServer server, String remoteFilePath) {
+        try {
+            String safePath = remoteFilePath.replace("'", "'\\''");
+            String[] statCmd = buildSshCommand(server,
+                    "stat -c %s '" + safePath + "' 2>/dev/null || wc -c < '" + safePath + "'");
+            ProcessResult pr = executeCommand(statCmd, SSH_TIMEOUT_SEC);
+            if (pr.exitCode == 0) {
+                String s = pr.stdout.trim();
+                if (!s.isEmpty()) return Long.parseLong(s);
+            }
+        } catch (Exception e) {
+            logger.debug("[RemoteDump] Failed to fetch remote size for {}: {}", remoteFilePath, e.getMessage());
+        }
+        return -1L;
+    }
+
+    private void safeProgress(TransferProgressListener listener, long bytes, long total) {
+        try { listener.onProgress(bytes, total); } catch (Exception ignored) {}
+    }
+
+    /**
+     * SCP 프로세스 실행 + 500ms마다 tempFile.length()로 진행률 보고.
+     * executeCommand와 동일한 stdout/stderr 캡처 + waitFor + timeout.
+     */
+    private ProcessResult executeCommandWithProgress(String[] cmd, int timeoutSec,
+                                                     File tempFile, long totalBytes,
+                                                     TransferProgressListener listener) throws Exception {
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.redirectErrorStream(false);
+        Process process = pb.start();
+
+        StringBuilder stdout = new StringBuilder();
+        StringBuilder stderr = new StringBuilder();
+
+        Thread outReader = new Thread(() -> {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = r.readLine()) != null) stdout.append(line).append("\n");
+            } catch (IOException ignored) {}
+        });
+        Thread errReader = new Thread(() -> {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+                String line;
+                while ((line = r.readLine()) != null) stderr.append(line).append("\n");
+            } catch (IOException ignored) {}
+        });
+        outReader.setDaemon(true);
+        errReader.setDaemon(true);
+        outReader.start();
+        errReader.start();
+
+        Thread monitor = new Thread(() -> {
+            while (process.isAlive()) {
+                long b = tempFile.exists() ? tempFile.length() : 0L;
+                safeProgress(listener, b, totalBytes);
+                try { Thread.sleep(500); } catch (InterruptedException e) { return; }
+            }
+        });
+        monitor.setDaemon(true);
+        monitor.start();
+
+        boolean finished = process.waitFor(timeoutSec, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly();
+            monitor.interrupt();
+            throw new RuntimeException("Command timed out after " + timeoutSec + " seconds");
+        }
+        monitor.interrupt();
+
+        outReader.join(5000);
+        errReader.join(5000);
+        return new ProcessResult(process.exitValue(), stdout.toString(), stderr.toString());
     }
 
     private void cleanupTempFile(File tempFile) {

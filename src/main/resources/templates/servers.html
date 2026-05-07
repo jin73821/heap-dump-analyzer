@@ -105,13 +105,16 @@
                         background: #2563EB; color: #fff; font-size: 11px; cursor: pointer; }
         .btn-transfer:hover { background: #1D4ED8; }
         .btn-transfer:disabled { background: #9CA3AF; border-color: #9CA3AF; cursor: default; }
-        .transfer-progress { display: inline-flex; align-items: center; gap: 6px; min-width: 120px; }
-        .transfer-bar { width: 80px; height: 6px; background: #E5E7EB; border-radius: 3px; overflow: hidden; }
-        .transfer-bar-fill { height: 100%; border-radius: 3px; background: #2563EB;
-                             animation: transferPulse 1.5s ease-in-out infinite; width: 100%; }
-        .transfer-bar-fill.done { background: #059669; animation: none; }
-        .transfer-bar-fill.fail { background: #EF4444; animation: none; }
-        .transfer-label { font-size: 10px; color: #6B7280; white-space: nowrap; }
+        .transfer-progress { display: inline-flex; align-items: center; gap: 8px; min-width: 260px; }
+        .transfer-bar { width: 140px; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden; }
+        .transfer-bar-fill { height: 100%; border-radius: 4px; background: #2563EB;
+                             width: 0; transition: width 0.25s ease; }
+        .transfer-bar-fill.indeterminate { width: 100%;
+                             animation: transferPulse 1.5s ease-in-out infinite; }
+        .transfer-bar-fill.done { background: #059669; animation: none; width: 100%; }
+        .transfer-bar-fill.fail { background: #EF4444; animation: none; width: 100%; }
+        .transfer-label { font-size: 11px; color: #4B5563; white-space: nowrap;
+                          font-variant-numeric: tabular-nums; }
         @keyframes transferPulse {
             0% { opacity: .4; transform: scaleX(.3); transform-origin: left; }
             50% { opacity: 1; transform: scaleX(1); transform-origin: left; }
@@ -644,6 +647,13 @@ function renderScanResultsHtml(files) {
     return html;
 }
 
+function fmtMB(bytes) {
+    if (bytes == null || bytes < 0) return '–';
+    var mb = bytes / (1024 * 1024);
+    if (mb >= 1024) return (mb / 1024).toFixed(2) + ' GB';
+    return mb.toFixed(1) + ' MB';
+}
+
 function transferFile(btn, callback) {
     var path = btn.getAttribute('data-path');
     var parent = btn.parentNode;
@@ -654,47 +664,88 @@ function transferFile(btn, callback) {
     if (prevErr) prevErr.remove();
     var prog = document.createElement('div');
     prog.className = 'transfer-progress';
-    prog.innerHTML = '<div class="transfer-bar"><div class="transfer-bar-fill"></div></div>'
-                   + '<span class="transfer-label">전송 중...</span>';
+    prog.innerHTML = '<div class="transfer-bar"><div class="transfer-bar-fill indeterminate"></div></div>'
+                   + '<span class="transfer-label">전송 시작 중...</span>';
     parent.appendChild(prog);
+    var fill = prog.querySelector('.transfer-bar-fill');
+    var label = prog.querySelector('.transfer-label');
 
-    fetch('/api/servers/' + _scanServerId + '/transfer', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ remotePath: path })
-    }).then(function(r) { return r.json(); }).then(function(d) {
-        var fill = prog.querySelector('.transfer-bar-fill');
-        var label = prog.querySelector('.transfer-label');
+    var url = '/api/servers/' + _scanServerId + '/transfer/stream?remotePath=' + encodeURIComponent(path);
+    var es;
+    try { es = new EventSource(url); }
+    catch (e) {
+        fill.className = 'transfer-bar-fill fail';
+        label.textContent = '연결 실패';
+        btn.style.display = ''; btn.disabled = false; btn.textContent = '재시도';
+        showToast('전송 스트림 열기 실패', 'error');
+        if (callback) callback();
+        return;
+    }
+
+    var doneReceived = false;
+
+    es.addEventListener('progress', function(ev) {
+        try {
+            var d = JSON.parse(ev.data);
+            var bytes = (d.bytes != null) ? d.bytes : 0;
+            var total = (d.total != null) ? d.total : -1;
+            if (total > 0) {
+                fill.classList.remove('indeterminate');
+                var pct = Math.max(0, Math.min(100, (bytes / total) * 100));
+                fill.style.width = pct.toFixed(1) + '%';
+                label.textContent = fmtMB(bytes) + ' / ' + fmtMB(total)
+                                  + ' (' + pct.toFixed(1) + '%)';
+            } else {
+                // 총량 미상 — indeterminate 유지하고 받은 양만 표시
+                label.textContent = fmtMB(bytes) + ' 전송 중...';
+            }
+        } catch (e) {}
+    });
+
+    es.addEventListener('done', function(ev) {
+        doneReceived = true;
+        es.close();
+        var d = {};
+        try { d = JSON.parse(ev.data); } catch (e) {}
         if (d.success) {
+            fill.classList.remove('indeterminate');
             fill.className = 'transfer-bar-fill done';
-            label.textContent = '완료';
+            fill.style.width = '100%';
+            var sizeStr = d.fileSize ? ' (' + fmtMB(d.fileSize) + ')' : '';
+            label.textContent = '완료' + sizeStr;
             label.style.color = '#059669';
-            showToast(d.filename + ' 전송 완료', 'success');
+            showToast((d.filename || '파일') + ' 전송 완료', 'success');
         } else {
+            fill.classList.remove('indeterminate');
             fill.className = 'transfer-bar-fill fail';
             label.textContent = '실패';
             label.style.color = '#EF4444';
-            // 에러 메시지 표시
             var errEl = document.createElement('div');
             errEl.className = 'transfer-err';
             errEl.style.cssText = 'font-size:11px;color:#DC2626;margin-top:4px;max-width:300px;word-break:break-all';
             errEl.textContent = d.message || '전송 실패';
             parent.appendChild(errEl);
-            // 실패 시 재시도 가능하도록 버튼 복원
             btn.style.display = '';
             btn.disabled = false;
             btn.textContent = '재시도';
             showToast('SCP Transfer Failed: ' + (d.message || ''), 'error');
         }
         if (callback) callback();
-    }).catch(function() {
-        prog.querySelector('.transfer-bar-fill').className = 'transfer-bar-fill fail';
-        prog.querySelector('.transfer-label').textContent = '오류';
+    });
+
+    es.onerror = function() {
+        if (doneReceived) return; // 정상 종료 후 재연결 차단을 위한 onerror — 무시
+        es.close();
+        fill.classList.remove('indeterminate');
+        fill.className = 'transfer-bar-fill fail';
+        label.textContent = '연결 오류';
+        label.style.color = '#EF4444';
         btn.style.display = '';
         btn.disabled = false;
         btn.textContent = '재시도';
-        showToast('전송 요청 실패', 'error');
+        showToast('전송 스트림 오류', 'error');
         if (callback) callback();
-    });
+    };
 }
 
 function transferAll() {

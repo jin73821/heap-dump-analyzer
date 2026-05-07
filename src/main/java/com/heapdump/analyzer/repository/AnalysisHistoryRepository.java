@@ -3,6 +3,7 @@ package com.heapdump.analyzer.repository;
 import com.heapdump.analyzer.model.entity.AnalysisHistoryEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -12,6 +13,7 @@ public interface AnalysisHistoryRepository extends JpaRepository<AnalysisHistory
     List<AnalysisHistoryEntity> findByServerIdIsNullOrderByAnalyzedAtDesc();
     Optional<AnalysisHistoryEntity> findByFilename(String filename);
     boolean existsByFilename(String filename);
+    boolean existsByFilenameAndAnalyzedAt(String filename, LocalDateTime analyzedAt);
     void deleteByFilename(String filename);
     List<AnalysisHistoryEntity> findByStatus(String status);
     long countByStatus(String status);

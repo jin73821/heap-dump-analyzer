@@ -27,6 +27,11 @@ public interface DumpTransferLogRepository
         findFirstByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
             Long serverId, String remoteFilename, Long fileSize, String transferStatus);
 
+    /** scan transferred 판정용 — 모든 SUCCESS 로그(여러 번 전송된 경우 로컬 파일 실존 검증). */
+    List<DumpTransferLog>
+        findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
+            Long serverId, String remoteFilename, Long fileSize, String transferStatus);
+
     /** 레거시 row 보정: remote_filename이 NULL인 경우 filename으로 1회 채움. */
     @Modifying
     @Transactional

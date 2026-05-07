@@ -26,6 +26,15 @@ public class AiChatSession {
     @Column(length = 500)
     private String filename;
 
+    /**
+     * 세션 생성 시점의 분석(AnalysisHistory.analyzedAt) 스냅샷.
+     * 동일 filename으로 분석이 새로 이뤄지면 analyzedAt이 갱신되므로,
+     * (filename + analyzedAt)로 분석 인스턴스를 식별 — 분석 삭제/재업로드 시 채팅 분리에 사용.
+     * null이면 일반 채팅 또는 마이그레이션 이전 데이터.
+     */
+    @Column(name = "analyzed_at")
+    private LocalDateTime analyzedAt;
+
     /** 세션 제목 (첫 질문에서 자동 생성) */
     @Column(length = 200)
     private String title;

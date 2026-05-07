@@ -814,13 +814,13 @@ function loadFullErrorLog() {
     <!-- Navigation -->
     <div class="sidebar-section">
         <div class="sidebar-section-title">Analysis</div>
-        <button class="nav-item active" onclick="showPanel('overview',this)">
+        <button type="button" class="nav-item active" data-panel="overview">
             <span class="nav-icon">&#9632;</span> Overview
         </button>
-        <button class="nav-item" onclick="showPanel('top-objects',this)">
+        <button type="button" class="nav-item" data-panel="top-objects">
             <span class="nav-icon">&#9650;</span> Top Consumers
         </button>
-        <button class="nav-item" onclick="showPanel('suspects',this)"
+        <button type="button" class="nav-item" data-panel="suspects"
                 th:classappend="${result.hasLeakSuspects()} ? '' : ''">
             <span class="nav-icon">&#9888;</span> Leak Suspects
             <span th:if="${result.hasLeakSuspects()}" class="nav-badge"
@@ -831,7 +831,7 @@ function loadFullErrorLog() {
     <!-- AI Analysis -->
     <div class="sidebar-section">
         <div class="sidebar-section-title">AI Analysis</div>
-        <button class="nav-item" onclick="showPanel('ai-insight',this)">
+        <button type="button" class="nav-item" data-panel="ai-insight">
             <span class="nav-icon">&#129302;</span> AI 인사이트
             <span class="ai-nav-status" id="aiNavStatus" style="margin-left:auto;font-size:10px;padding:1px 6px;border-radius:6px;background:#F3F4F6;color:#9CA3AF">-</span>
         </button>
@@ -839,29 +839,29 @@ function loadFullErrorLog() {
 
     <div class="sidebar-section" th:if="${hasHistogram or hasThreadOverview or hasThreadStacks}">
         <div class="sidebar-section-title">Actions</div>
-        <button class="nav-item" onclick="showPanel('histogram',this)" th:if="${hasHistogram}">
+        <button type="button" class="nav-item" data-panel="histogram" th:if="${hasHistogram}">
             <span class="nav-icon">&#9776;</span> Histogram
         </button>
-        <button class="nav-item" onclick="showPanel('threads',this)" th:if="${hasThreadOverview}">
+        <button type="button" class="nav-item" data-panel="threads" th:if="${hasThreadOverview}">
             <span class="nav-icon">&#128279;</span> Thread Overview
         </button>
-        <button class="nav-item" onclick="showPanel('thread-stacks',this)" th:if="${hasThreadStacks}">
+        <button type="button" class="nav-item" data-panel="thread-stacks" th:if="${hasThreadStacks}">
             <span class="nav-icon">&#128209;</span> Thread Stacks
         </button>
     </div>
 
     <div class="sidebar-section">
         <div class="sidebar-section-title">Tools</div>
-        <button class="nav-item" onclick="showPanel('log',this);loadLog()"
+        <button type="button" class="nav-item" data-panel="log" data-extra="loadLog"
                 th:if="${matLogTotalLen != null and matLogTotalLen > 0}">
             <span class="nav-icon">&#128187;</span> MAT Log
         </button>
-        <button class="nav-item" onclick="exportCSV()">
+        <button type="button" class="nav-item" data-action="exportCSV">
             <span class="nav-icon">&#128190;</span> Export CSV
         </button>
-        <button class="nav-item"
+        <button type="button" class="nav-item"
                 th:disabled="${!hasHeapData}"
-                onclick="showPanel('pdf-report',this)"
+                data-panel="pdf-report"
                 title="A4 1페이지 PDF 미리보기 및 다운로드">
             <span class="nav-icon">&#128196;</span> PDF Report
         </button>
@@ -869,22 +869,22 @@ function loadFullErrorLog() {
 
     <div class="sidebar-section">
         <div class="sidebar-section-title">Raw Data</div>
-        <button class="nav-item" onclick="showPanel('mat-overview',this)"
+        <button type="button" class="nav-item" data-panel="mat-overview"
                 th:if="${hasOverviewZip}">
             <span class="nav-icon">&#128196;</span> System Overview
         </button>
-        <button class="nav-item" onclick="showPanel('mat-top',this)"
+        <button type="button" class="nav-item" data-panel="mat-top"
                 th:if="${hasTopComponentsZip}">
             <span class="nav-icon">&#128230;</span> Top Components
         </button>
-        <button class="nav-item" onclick="showPanel('mat-suspects',this)"
+        <button type="button" class="nav-item" data-panel="mat-suspects"
                 th:if="${hasSuspectsZip}">
             <span class="nav-icon">&#128269;</span> Suspect Details
         </button>
-        <button class="nav-item" onclick="showPanel('raw-histogram',this)" th:if="${hasHistogram}">
+        <button type="button" class="nav-item" data-panel="raw-histogram" th:if="${hasHistogram}">
             <span class="nav-icon">&#9776;</span> Histogram (Raw)
         </button>
-        <button class="nav-item" onclick="showPanel('raw-threads',this)" th:if="${hasThreadOverview}">
+        <button type="button" class="nav-item" data-panel="raw-threads" th:if="${hasThreadOverview}">
             <span class="nav-icon">&#128279;</span> Threads (Raw)
         </button>
     </div>
@@ -1440,7 +1440,7 @@ function loadFullErrorLog() {
             </div>
             <iframe id="matOverviewIframe"
                     th:data-src="'/report/' + ${filename} + '/mat-page/overview/index.html'"
-                    style="width:100%;min-height:700px;border:none;border-top:1px solid var(--border);background:#fff"
+                    style="width:100%;height:75vh;min-height:500px;border:none;border-top:1px solid var(--border);background:#fff;display:block"
                     referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
@@ -1453,7 +1453,7 @@ function loadFullErrorLog() {
             </div>
             <iframe id="matTopIframe"
                     th:data-src="'/report/' + ${filename} + '/mat-page/top_components/index.html'"
-                    style="width:100%;min-height:700px;border:none;border-top:1px solid var(--border);background:#fff"
+                    style="width:100%;height:75vh;min-height:500px;border:none;border-top:1px solid var(--border);background:#fff;display:block"
                     referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
@@ -1466,7 +1466,7 @@ function loadFullErrorLog() {
             </div>
             <iframe id="matSuspectsIframe"
                     th:data-src="'/report/' + ${filename} + '/mat-page/suspects/index.html'"
-                    style="width:100%;min-height:700px;border:none;border-top:1px solid var(--border);background:#fff"
+                    style="width:100%;height:75vh;min-height:500px;border:none;border-top:1px solid var(--border);background:#fff;display:block"
                     referrerpolicy="no-referrer"></iframe>
         </div>
     </div>
@@ -1552,24 +1552,24 @@ function loadFullErrorLog() {
     </div>
 </div>
 
-<!-- ── Re-Analyze Confirm Modal ── -->
+<!-- ── 재분석 확인 모달 ── -->
 <div class="modal-overlay" id="reanalyzeModal" onclick="if(event.target===this)closeReanalyzeModal()">
     <div class="modal-box">
         <div class="modal-header">
             <div class="modal-icon" style="background:#fffbeb;color:#d97706">&#8635;</div>
-            <div class="modal-title">Re-Analyze</div>
+            <div class="modal-title">재분석</div>
         </div>
         <div class="modal-body">
-            Saved results will be cleared and the heap dump will be re-analyzed with MAT CLI. This may take several minutes.
+            저장된 분석 결과가 삭제되고 MAT CLI로 힙 덤프를 다시 분석합니다. 수 분이 소요될 수 있습니다.
             <div class="modal-filename" th:text="${result.filename}">-</div>
             <div class="modal-info">
-                <div>File Size: <span th:text="${result.formattedFileSize}">-</span></div>
-                <div>Analysis Time: <span th:text="${result.analysisTime} + 'ms'">-</span></div>
+                <div>파일 크기: <span th:text="${result.formattedFileSize}">-</span></div>
+                <div>분석 시간: <span th:text="${result.analysisTime} + 'ms'">-</span></div>
             </div>
         </div>
         <div class="modal-footer">
-            <button class="modal-btn modal-btn-cancel" onclick="closeReanalyzeModal()">Cancel</button>
-            <button class="modal-btn" style="background:var(--warning);color:#fff" onclick="doReanalyze()">Re-Analyze</button>
+            <button class="modal-btn modal-btn-cancel" onclick="closeReanalyzeModal()">취소</button>
+            <button class="modal-btn" style="background:var(--warning);color:#fff" onclick="doReanalyze()">재분석</button>
         </div>
     </div>
 </div>
@@ -1663,6 +1663,27 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </th:block>
 
 <script>
+// ── 사이드바 nav-item 위임 핸들러 ──────────────────────
+// 인라인 onclick 대신 data-panel/data-action 속성 + 위임 리스너 사용.
+// 원본 + 배너 클론 양쪽 모두 단일 핸들러로 처리, 부모 페이지 이탈 가능성 차단.
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.nav-item[data-panel], .nav-item[data-action]');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var panel = btn.getAttribute('data-panel');
+    var action = btn.getAttribute('data-action');
+    var extra = btn.getAttribute('data-extra');
+    try {
+        if (panel) showPanel(panel, btn);
+        if (extra && typeof window[extra] === 'function') window[extra]();
+        if (action && typeof window[action] === 'function') window[action]();
+    } catch (err) {
+        console.error('[nav-item handler]', err);
+    }
+    return false;
+}, false);
+
 // ── 배너 Analysis 탭 등록 ──────────────────────────────
 (function() {
     var sidebar = document.getElementById('mobileSidebar');
@@ -1670,11 +1691,10 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
         // 사이드바 내용 전체를 배너 Analysis 탭에 복제
         var wrapper = document.createElement('div');
         wrapper.style.cssText = 'padding:8px 12px;display:flex;flex-direction:column;gap:4px;overflow-y:auto;flex:1';
-        // 각 sidebar-section을 복제
+        // 각 sidebar-section을 복제 (위임 핸들러가 클론 버튼도 자동 처리)
         var sections = sidebar.querySelectorAll('.sidebar-section');
         sections.forEach(function(sec) {
             var clone = sec.cloneNode(true);
-            // 복제된 nav-item의 onclick이 원본 showPanel을 호출하므로 그대로 동작
             wrapper.appendChild(clone);
         });
         registerBannerAnalysisTab(wrapper);
@@ -1757,64 +1777,45 @@ function showPanel(name, btn) {
     if (iframeMap[name]) {
         var iframe = document.getElementById(iframeMap[name]);
         if (iframe && !iframe.getAttribute('src')) {
-            iframe.src = iframe.getAttribute('data-src');
+            // load 핸들러는 한 번만 등록 — 내부 네비게이션 시마다 자동 재실행됨.
+            // 동적 height 조정은 의도적으로 제거: iframe이 콘텐츠 전체 높이로 자라
+            // 페이지가 거대 단일 스크롤이 되며 시각적으로 "전체 화면 전환"처럼 보이는 문제 방지.
+            // 고정 75vh + iframe 내부 스크롤 사용.
             iframe.addEventListener('load', function() {
                 try {
                     var doc = iframe.contentDocument || iframe.contentWindow.document;
-                    iframe.style.height = Math.max(700, doc.body.scrollHeight + 40) + 'px';
-                    iframe.contentWindow.addEventListener('click', function() {
-                        setTimeout(function() {
-                            try {
-                                iframe.style.height = Math.max(700, doc.body.scrollHeight + 40) + 'px';
-                            } catch(e) {}
-                        }, 300);
-                    });
-                    // 클래스명 링크 활성화 (현재 페이지 + 내부 네비게이션 후)
-                    activateClassLinksInIframe(doc, iframe);
+                    activateClassLinksInIframe(doc);
                 } catch(e) {}
             });
+            iframe.src = iframe.getAttribute('data-src');
         }
     }
 }
 
 // ── iframe 내 클래스명 링크 활성화 ──────────────────────
-function activateClassLinksInIframe(doc, iframe) {
+// load 리스너는 호출자(showPanel)가 한 번만 등록하므로, 여기서는 추가 등록하지 않는다.
+function activateClassLinksInIframe(doc) {
     // FQCN 패턴: 패키지.클래스명 (최소 2단계 이상)
     var FQCN_RE = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*\.[A-Z][\w$]*$/;
-    function activate(targetDoc) {
-        var links = targetDoc.querySelectorAll('a[href="javascript:void(0)"]');
-        for (var i = 0; i < links.length; i++) {
-            var link = links[i];
-            if (link._classLinkActivated) continue;
-            var text = (link.textContent || '').trim();
-            if (!FQCN_RE.test(text)) continue;
-            link._classLinkActivated = true;
-            // 스타일 활성화
-            link.style.opacity = '1';
-            link.style.cursor = 'pointer';
-            link.style.color = '#2563eb';
-            link.style.textDecoration = 'underline';
-            link.title = text + ' 상세 보기';
-            // 클릭 핸들러
-            (function(className) {
-                link.addEventListener('click', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    window.parent.showComponentDetail(className);
-                });
-            })(text);
-        }
-    }
-    activate(doc);
-    // iframe 내부 네비게이션 감지: load 이벤트 재바인딩
-    if (iframe) {
-        iframe.addEventListener('load', function() {
-            try {
-                var newDoc = iframe.contentDocument || iframe.contentWindow.document;
-                iframe.style.height = Math.max(700, newDoc.body.scrollHeight + 40) + 'px';
-                activate(newDoc);
-            } catch(e) {}
-        });
+    var links = doc.querySelectorAll('a[href="javascript:void(0)"]');
+    for (var i = 0; i < links.length; i++) {
+        var link = links[i];
+        if (link._classLinkActivated) continue;
+        var text = (link.textContent || '').trim();
+        if (!FQCN_RE.test(text)) continue;
+        link._classLinkActivated = true;
+        link.style.opacity = '1';
+        link.style.cursor = 'pointer';
+        link.style.color = '#2563eb';
+        link.style.textDecoration = 'underline';
+        link.title = text + ' 상세 보기';
+        (function(className) {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.parent.showComponentDetail(className);
+            });
+        })(text);
     }
 }
 

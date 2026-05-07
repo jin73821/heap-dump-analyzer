@@ -2,8 +2,10 @@ package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.model.entity.AiChatMessage;
 import com.heapdump.analyzer.model.entity.AiChatSession;
+import com.heapdump.analyzer.model.entity.AnalysisHistoryEntity;
 import com.heapdump.analyzer.repository.AiChatMessageRepository;
 import com.heapdump.analyzer.repository.AiChatSessionRepository;
+import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.RagService;
 import org.slf4j.Logger;
@@ -24,17 +26,20 @@ public class AiChatController {
 
     private final AiChatSessionRepository sessionRepo;
     private final AiChatMessageRepository messageRepo;
+    private final AnalysisHistoryRepository historyRepo;
     private final HeapDumpAnalyzerService analyzerService;
     private final com.heapdump.analyzer.config.HeapDumpConfig config;
     private final RagService ragService;
 
     public AiChatController(AiChatSessionRepository sessionRepo,
                             AiChatMessageRepository messageRepo,
+                            AnalysisHistoryRepository historyRepo,
                             HeapDumpAnalyzerService analyzerService,
                             com.heapdump.analyzer.config.HeapDumpConfig config,
                             RagService ragService) {
         this.sessionRepo = sessionRepo;
         this.messageRepo = messageRepo;
+        this.historyRepo = historyRepo;
         this.analyzerService = analyzerService;
         this.config = config;
         this.ragService = ragService;
@@ -62,15 +67,36 @@ public class AiChatController {
         } else {
             sessions = sessionRepo.findByUsernameOrderByUpdatedAtDesc(username);
         }
+
+        // 분석 인스턴스(filename + analyzedAt) 매칭으로 분석 상태 판정
+        // - currentAnalysis : 현재 분석과 동일 (정상 연결)
+        // - previousAnalysis: filename은 존재하지만 analyzedAt이 다름 (재업로드/재분석된 이전 분석의 채팅)
+        // - analysisDeleted : filename에 해당하는 분석이 아예 없음 (분석 기록 삭제됨)
         List<Map<String, Object>> result = sessions.stream().map(s -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", s.getId());
             m.put("title", s.getTitle());
             m.put("filename", s.getFilename());
+            m.put("analyzedAt", s.getAnalyzedAt() != null ? s.getAnalyzedAt().toString() : null);
             m.put("model", s.getModel());
             m.put("messageCount", s.getMessageCount());
             m.put("createdAt", s.getCreatedAt() != null ? s.getCreatedAt().toString() : null);
             m.put("updatedAt", s.getUpdatedAt() != null ? s.getUpdatedAt().toString() : null);
+
+            String state = "general"; // filename 없는 일반 채팅
+            if (s.getFilename() != null && !s.getFilename().isEmpty()) {
+                if (s.getAnalyzedAt() == null) {
+                    // 마이그레이션 이전 데이터 — analysis_history에 filename row 존재 여부만 확인
+                    state = historyRepo.existsByFilename(s.getFilename()) ? "currentAnalysis" : "analysisDeleted";
+                } else if (historyRepo.existsByFilenameAndAnalyzedAt(s.getFilename(), s.getAnalyzedAt())) {
+                    state = "currentAnalysis";
+                } else if (historyRepo.existsByFilename(s.getFilename())) {
+                    state = "previousAnalysis";
+                } else {
+                    state = "analysisDeleted";
+                }
+            }
+            m.put("analysisState", state);
             return m;
         }).collect(Collectors.toList());
         return ResponseEntity.ok(result);
@@ -89,12 +115,19 @@ public class AiChatController {
         AiChatSession session = new AiChatSession();
         session.setUsername(username);
         session.setFilename(filename != null && !filename.isEmpty() ? filename : null);
+        // 분석에 연결된 채팅이라면 현재 AnalysisHistory의 analyzedAt을 스냅샷으로 저장.
+        // 같은 파일명으로 분석이 새로 이뤄지면 analyzedAt이 갱신되므로, 이 세션은 자연히 "이전 분석"의 채팅으로 분리된다.
+        if (session.getFilename() != null) {
+            historyRepo.findByFilename(session.getFilename())
+                    .ifPresent(h -> session.setAnalyzedAt(h.getAnalyzedAt()));
+        }
         session.setTitle(title != null && !title.isEmpty() ? title : "새 채팅");
         session.setModel(analyzerService.getLlmModel());
         session.setMessageCount(0);
         sessionRepo.save(session);
 
-        logger.info("[AI-Chat] 세션 생성 — id={}, user={}, file='{}'", session.getId(), username, filename);
+        logger.info("[AI-Chat] 세션 생성 — id={}, user={}, file='{}', analyzedAt={}",
+                session.getId(), username, filename, session.getAnalyzedAt());
 
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
