@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -213,12 +214,15 @@ public class RemoteDumpService {
         Map<String, Object> result = new HashMap<>();
         List<Map<String, Object>> files = new ArrayList<>();
 
-        // 경로 존재/권한 체크를 find 앞에 두어 exit 2/3으로 명확히 구분
+        // 경로 존재/권한 체크를 find 앞에 두어 exit 2/3으로 명확히 구분.
+        // find 끝의 `|| true` : 하위 디렉토리 권한 부족 등으로 find 가 exit 1 로 끝나도
+        //   매칭된 파일이 stdout 에 있으면 성공으로 처리. find stderr 는 그대로 SSH stderr 로
+        //   올라와 디버깅 단서로 로그에 남김 (2>/dev/null 로 묻히지 않음).
         String safePath = dumpPath.replace("'", "'\\''");
         String findCmd = String.format(
             "[ -d '%s' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
             + "[ -r '%s' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
-            + "find '%s' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' \\) -exec ls -la {} \\; 2>/dev/null",
+            + "find '%s' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' \\) -exec ls -la {} \\; || true",
             safePath, safePath, safePath);
         String[] cmd = buildSshCommand(server, findCmd);
         ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
@@ -232,50 +236,79 @@ public class RemoteDumpService {
             result.put("error", "원격 덤프 경로 읽기 권한이 없습니다: " + dumpPath);
             logger.warn("[RemoteDump] Dump path not readable on {} (user={}): {}",
                     server.getName(), server.getSshUser(), dumpPath);
-        } else if (pr.exitCode != 0 && pr.stdout.trim().isEmpty()) {
+        } else if (pr.exitCode != 0) {
+            // exit 2/3 도 아니고 0 도 아닌 경우는 진짜 SSH 클라이언트 실패 (auth/network 등). stderr 에 단서 있음.
             String errorMsg = cleanSshError(pr.stderr);
             if (errorMsg.isEmpty()) errorMsg = "원격 명령 실행 실패 (exit " + pr.exitCode + ")";
             result.put("errorCode", "SSH_ERROR");
             result.put("error", "SSH 오류: " + errorMsg);
             logger.warn("[RemoteDump] SSH error on {} path={}: exit={}, stderr={}",
                     server.getName(), dumpPath, pr.exitCode, errorMsg);
-        } else if (!pr.stdout.trim().isEmpty()) {
-            for (String line : pr.stdout.split("\n")) {
-                line = line.trim();
-                if (line.isEmpty()) continue;
-                Map<String, Object> fileInfo = parseLsLine(line);
-                if (fileInfo != null) {
-                    String filename = (String) fileInfo.get("filename");
-                    Long size = (Long) fileInfo.get("size");
-                    // 전송됨 판정: SUCCESS 로그 + 로컬 파일 실존(.gz 포함) 모두 충족해야 함.
-                    // 같은 원격 파일이 여러 번 전송된 경우(_2/_3 suffix 등) 로컬 파일이 남아있는 row를 우선 채택.
-                    List<DumpTransferLog> succLogs = transferLogRepository
-                            .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
-                                    server.getId(), filename, size, "SUCCESS");
-                    File localDir = new File(config.getDumpFilesDirectory());
-                    String matchedLocalFilename = null;
-                    for (DumpTransferLog sl : succLogs) {
-                        String local = sl.getFilename();
-                        if (local == null) continue;
-                        File f = new File(localDir, local);
-                        File gz = new File(localDir, local + ".gz");
-                        if (f.exists() || gz.exists()) {
-                            matchedLocalFilename = local;
-                            break;
+        } else {
+            // exit 0 — find 가 일부 디렉토리 권한 부족으로 stderr 를 남겼더라도 정상 처리.
+            // 단, stderr 내용을 INFO 로 첫 몇 줄만 로그에 남겨 추후 디버깅 근거로 활용.
+            if (pr.stderr != null && !pr.stderr.trim().isEmpty()) {
+                logger.info("[RemoteDump] find non-fatal stderr on {} path={}: {}",
+                        server.getName(), dumpPath, summarizeStderr(pr.stderr, 5));
+            }
+            if (!pr.stdout.trim().isEmpty()) {
+                for (String line : pr.stdout.split("\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    Map<String, Object> fileInfo = parseLsLine(line);
+                    if (fileInfo != null) {
+                        String filename = (String) fileInfo.get("filename");
+                        Long size = (Long) fileInfo.get("size");
+                        // 전송됨 판정: SUCCESS 로그 + 로컬 파일 실존(.gz 포함) 모두 충족해야 함.
+                        // 같은 원격 파일이 여러 번 전송된 경우(_2/_3 suffix 등) 로컬 파일이 남아있는 row를 우선 채택.
+                        List<DumpTransferLog> succLogs = transferLogRepository
+                                .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
+                                        server.getId(), filename, size, "SUCCESS");
+                        File localDir = new File(config.getDumpFilesDirectory());
+                        String matchedLocalFilename = null;
+                        for (DumpTransferLog sl : succLogs) {
+                            String local = sl.getFilename();
+                            if (local == null) continue;
+                            File f = new File(localDir, local);
+                            File gz = new File(localDir, local + ".gz");
+                            if (f.exists() || gz.exists()) {
+                                matchedLocalFilename = local;
+                                break;
+                            }
                         }
+                        boolean transferred = matchedLocalFilename != null;
+                        boolean analyzed = transferred
+                                && analysisHistoryRepository.existsByFilename(matchedLocalFilename);
+                        fileInfo.put("transferred", transferred);
+                        fileInfo.put("analyzed", analyzed);
+                        fileInfo.put("sourceDumpPath", dumpPath);
+                        files.add(fileInfo);
                     }
-                    boolean transferred = matchedLocalFilename != null;
-                    boolean analyzed = transferred
-                            && analysisHistoryRepository.existsByFilename(matchedLocalFilename);
-                    fileInfo.put("transferred", transferred);
-                    fileInfo.put("analyzed", analyzed);
-                    fileInfo.put("sourceDumpPath", dumpPath);
-                    files.add(fileInfo);
                 }
             }
         }
         result.put("files", files);
         return result;
+    }
+
+    /** stderr 첫 N 줄만 발췌해 로깅용 한 줄로 묶음. */
+    private String summarizeStderr(String stderr, int maxLines) {
+        if (stderr == null) return "";
+        String[] lines = stderr.split("\n");
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (String l : lines) {
+            String t = l.trim();
+            if (t.isEmpty()) continue;
+            if (shown > 0) sb.append(" | ");
+            sb.append(t);
+            shown++;
+            if (shown >= maxLines) break;
+        }
+        int total = 0;
+        for (String l : lines) if (!l.trim().isEmpty()) total++;
+        if (total > shown) sb.append(" (외 ").append(total - shown).append("줄)");
+        return sb.toString();
     }
 
     /** 하위 호환용 */
@@ -421,13 +454,13 @@ public class RemoteDumpService {
         StringBuilder stderr = new StringBuilder();
 
         Thread outReader = new Thread(() -> {
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) stdout.append(line).append("\n");
             } catch (IOException ignored) {}
         });
         Thread errReader = new Thread(() -> {
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) stderr.append(line).append("\n");
             } catch (IOException ignored) {}
@@ -583,13 +616,13 @@ public class RemoteDumpService {
         StringBuilder stderr = new StringBuilder();
 
         Thread outReader = new Thread(() -> {
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) stdout.append(line).append("\n");
             } catch (IOException ignored) {}
         });
         Thread errReader = new Thread(() -> {
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getErrorStream()))) {
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) stderr.append(line).append("\n");
             } catch (IOException ignored) {}

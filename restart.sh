@@ -36,7 +36,7 @@ fi
 # stdbuf -oL -eL : 파일로 redirect 되어도 라인 단위로 flush
 # < /dev/null    : stdin 도 명시적으로 분리
 : > "$NOHUP_LOG"
-setsid nohup stdbuf -oL -eL java -jar "$JAR" --server.port=18080 \
+setsid nohup stdbuf -oL -eL java -Dfile.encoding=UTF-8 -jar "$JAR" --server.port=18080 \
     < /dev/null > "$NOHUP_LOG" 2>&1 &
 PID=$!
 disown $PID 2>/dev/null || true

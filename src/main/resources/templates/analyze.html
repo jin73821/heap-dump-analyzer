@@ -3901,12 +3901,17 @@ function deleteAiInsight() {
 }
 
 // ── 결과 표시 ─────────────────────────────────────────────────
+// 위험도 아이콘은 폰트(이모지) 의존성을 없애기 위해 인라인 SVG 원형 사용
+function _sevSvg(fill, strokeAttr) {
+    return '<svg xmlns="http://www.w3.org/2000/svg" width="1em" height="1em" viewBox="0 0 16 16" style="vertical-align:middle;display:inline-block">'
+        + '<circle cx="8" cy="8" r="6.5" fill="' + fill + '"' + (strokeAttr || '') + '/></svg>';
+}
 var _SEV_CONFIG = {
-    Critical: { bg:'linear-gradient(135deg,#FEF2F2,#FFE4E4)', border:'#FECACA', color:'#DC2626', icon:'🔴', textColor:'#7F1D1D' },
-    High:     { bg:'linear-gradient(135deg,#FFF7ED,#FFEDD5)', border:'#FED7AA', color:'#EA580C', icon:'🟠', textColor:'#7C2D12' },
-    Medium:   { bg:'linear-gradient(135deg,#FFFBEB,#FEF3C7)', border:'#FDE68A', color:'#D97706', icon:'🟡', textColor:'#78350F' },
-    Low:      { bg:'linear-gradient(135deg,#F0FDF4,#DCFCE7)', border:'#86EFAC', color:'#16A34A', icon:'🟢', textColor:'#14532D' },
-    Unknown:  { bg:'linear-gradient(135deg,#F9FAFB,#F3F4F6)', border:'#E5E7EB', color:'#6B7280', icon:'⚪', textColor:'#374151' }
+    Critical: { bg:'linear-gradient(135deg,#FEF2F2,#FFE4E4)', border:'#FECACA', color:'#DC2626', icon: _sevSvg('#DC2626'), textColor:'#7F1D1D' },
+    High:     { bg:'linear-gradient(135deg,#FFF7ED,#FFEDD5)', border:'#FED7AA', color:'#EA580C', icon: _sevSvg('#F97316'), textColor:'#7C2D12' },
+    Medium:   { bg:'linear-gradient(135deg,#FFFBEB,#FEF3C7)', border:'#FDE68A', color:'#D97706', icon: _sevSvg('#EAB308'), textColor:'#78350F' },
+    Low:      { bg:'linear-gradient(135deg,#F0FDF4,#DCFCE7)', border:'#86EFAC', color:'#16A34A', icon: _sevSvg('#22C55E'), textColor:'#14532D' },
+    Unknown:  { bg:'linear-gradient(135deg,#F9FAFB,#F3F4F6)', border:'#E5E7EB', color:'#6B7280', icon: _sevSvg('#F3F4F6', ' stroke="#9CA3AF" stroke-width="1"'), textColor:'#374151' }
 };
 
 function showAiResult(result, isSaved) {
@@ -3925,7 +3930,7 @@ function showAiResult(result, isSaved) {
         banner.style.color = sevCfg.textColor;
     }
     var iconEl = document.getElementById('aiSeverityIcon');
-    if (iconEl) iconEl.textContent = sevCfg.icon;
+    if (iconEl) iconEl.innerHTML = sevCfg.icon;
     var sevEl = document.getElementById('aiSeverity');
     if (sevEl) { sevEl.textContent = severity; sevEl.style.color = sevCfg.color; }
 

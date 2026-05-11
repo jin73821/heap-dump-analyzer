@@ -1281,14 +1281,22 @@ function renderUploadModalList() {
     var list = document.getElementById('upModalList');
     if (!list) return;
     var html = '';
+    // 큐 상태 아이콘은 폰트(이모지) 의존성 없이 어디서나 같은 모양으로 보이도록 인라인 SVG 사용
+    var _UQ_ICON = {
+        uploading: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#2563EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="13" x2="8" y2="3"/><polyline points="3,8 8,3 13,8"/></svg>',
+        done:      '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#10B981"/><polyline points="4.5,8.2 7,10.7 11.5,5.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+        error:     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#EF4444"/><line x1="5.2" y1="5.2" x2="10.8" y2="10.8" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><line x1="10.8" y1="5.2" x2="5.2" y2="10.8" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>',
+        cancelled: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="#9CA3AF" stroke-width="1.5"/><line x1="4.5" y1="11.5" x2="11.5" y2="4.5" stroke="#9CA3AF" stroke-width="1.5"/></svg>',
+        pending:   '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#F59E0B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><polyline points="8,4.5 8,8 10.5,9.5"/></svg>'
+    };
     _uploadQueue.forEach(function(q, i) {
         if (q.status === 'skipped') return;
         var icon, cls, label;
-        if (q.status === 'uploading') { icon='⬆'; cls='uploading'; label=q._pct?q._pct+'%':'업로드 중'; }
-        else if (q.status === 'done') { icon='✅'; cls='done'; label='완료'; }
-        else if (q.status === 'error') { icon='❌'; cls='error'; label = q._error ? q._error : '실패'; }
-        else if (q.status === 'cancelled') { icon='⊘'; cls='skipped'; label='취소됨'; }
-        else { icon='⏳'; cls='pending'; label='대기'; }
+        if (q.status === 'uploading') { icon=_UQ_ICON.uploading; cls='uploading'; label=q._pct?q._pct+'%':'업로드 중'; }
+        else if (q.status === 'done') { icon=_UQ_ICON.done; cls='done'; label='완료'; }
+        else if (q.status === 'error') { icon=_UQ_ICON.error; cls='error'; label = q._error ? q._error : '실패'; }
+        else if (q.status === 'cancelled') { icon=_UQ_ICON.cancelled; cls='skipped'; label='취소됨'; }
+        else { icon=_UQ_ICON.pending; cls='pending'; label='대기'; }
         html += '<div class="uq-item" id="uqi'+i+'">'
             + '<span class="uq-icon">'+icon+'</span>'
             + '<span class="uq-name" title="'+escapeHtml(q.uploadName)+'">'+escapeHtml(q.uploadName)+' <span style="color:#9CA3AF;font-size:10px">'+fmtB(q.file.size)+'</span></span>'
@@ -1609,7 +1617,7 @@ function renderQueuePanel(d) {
     if (qSize === 0 && !current) {
         // 큐 비활성 — idle 상태 표시, 폴링 중지
         body.innerHTML = '<div class="queue-idle">' +
-            '<div class="queue-idle-icon">✅</div>' +
+            '<div class="queue-idle-icon"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="#10B981"/><polyline points="4.5,8.2 7,10.7 11.5,5.8" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>' +
             '<div class="queue-idle-text">대기 중인 분석 작업이 없습니다</div></div>';
         dot.style.background = '#10B981';
         dot.style.animation = 'none';

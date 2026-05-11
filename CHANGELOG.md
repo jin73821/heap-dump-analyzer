@@ -1,5 +1,132 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-11] 원격 스캔 — find 비치명적 권한 오류 관용 처리
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 사내 시스템에서 Target Server 스캔 시 `stderr=원격 명령 실행 실패 (exit 1)` 로
+  실패 처리됨. UTF-8 한글 로그 확인 후 분석하니, `find` 의 stderr 는 비어 있고
+  단지 exit code 만 1.
+- 원인: 원격 `find /tmp -maxdepth 2 ...` 가 다른 유저 소유 하위 디렉토리 진입 시
+  `Permission denied` → find 가 exit 1 로 종료 → 기존 코드는
+  `2>/dev/null` 로 stderr 를 묻고 있어 단서도 없이 `pr.exitCode != 0` 판정 →
+  fallback 메시지만 노출.
+- 사실상 정상 결과(0건)인데 에러로 처리되는 버그.
+
+### 내역
+- `scanSinglePath` 원격 명령어:
+  - 기존: `find ... 2>/dev/null`
+  - 변경: `find ... || true` — find 의 비치명적 exit 1 을 0 으로 평탄화.
+    동시에 `2>/dev/null` 제거 → find stderr 는 SSH stderr 로 올라옴.
+- 분기 로직 재구조화:
+  - `exit 2/3`: 경로 미존재/읽기 불가 (기존 유지).
+  - `exit != 0` (그 외): 진짜 SSH 클라이언트 실패 (auth/network 등) — stderr 그대로 노출.
+  - `exit 0`: 성공 처리. stderr 가 비어있지 않으면 `summarizeStderr(...,5)` 로 앞 5줄만
+    INFO 로그에 남겨 추후 디버깅 단서 확보.
+- 새 헬퍼 `summarizeStderr(stderr, maxLines)`: 빈 줄 제거 후 첫 N 줄을 ` | ` 로 연결,
+  잘려나간 줄 수를 ` (외 X줄)` 로 표시.
+
+### 효과
+- 다른 유저 디렉토리가 섞여 있는 공유 경로(예: `/tmp`) 스캔이 정상 0건 결과로 마무리.
+- 진짜 SSH 실패(인증/네트워크)는 여전히 SSH_ERROR 로 명확히 노출.
+- find permission denied 류 stderr 는 로그에 첫 5줄만 INFO 로 남겨 추후 분석 가능.
+
+---
+
+## [2026-05-11] 외부 리소스 의존성 제거 — Chart.js source map 404 + 이모지 폰트 의존 아이콘 제거
+
+**변경 파일:**
+- `src/main/resources/static/js/lib/chart.umd.min.js`
+- `src/main/resources/templates/analyze.html`
+- `src/main/resources/templates/index.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 사내(폐쇄망) 환경에서 분석 페이지의 위험도 아이콘이 빈 박스로 표시되고,
+  DevTools 콘솔에 `Failed to load source map: chart.umd.js.map 404` 경고 발생.
+- 외부 인터넷 리소스를 일절 로드하지 않도록 전수 점검 + 폰트 의존성 제거.
+
+### 전수 점검 결과
+- `<script src=>` / `<link href=>` 의 외부 CDN 참조: **없음** (모두 로컬 정적 리소스).
+- Google Fonts / Font Awesome / 외부 JS lib 참조: **없음**.
+- 인라인 `data:image/svg+xml` URI 만 사용 (네트워크 요청 없음).
+- 유일하게 남아 있던 외부 의존: `chart.umd.min.js` 마지막 줄의
+  `//# sourceMappingURL=chart.umd.js.map` 주석 → DevTools 가 .map 파일 자동 요청 → 404.
+
+### 원인 (아이콘 미표시)
+- 외부 리소스 문제 아님 — **이모지 폰트 의존**.
+- `analyze.html` 의 위험도 표시 `🟠🟡🟢` (Unicode 12, 2019) 등 colored-emoji 코드포인트는
+  구형 OS / 사내 표준 PC 의 폰트에 없거나 `.notdef` 글리프로 표시됨.
+- `index.html` 의 업로드 큐 / idle 상태 아이콘 `✅❌⏳` 도 emoji-presentation 이라 동일 위험.
+
+### 내역
+- `chart.umd.min.js`: 마지막 줄 `//# sourceMappingURL=chart.umd.js.map` 제거.
+  (Chart.js v4.4.0 동작에는 영향 없음 — DevTools 디버그용 sourcemap 참조일 뿐.)
+- `analyze.html` `_SEV_CONFIG`:
+  - `🔴🟠🟡🟢⚪` → **인라인 SVG 원형 (color-coded)**.
+  - 새 헬퍼 `_sevSvg(fill, strokeAttr)` 도입 — `width="1em" height="1em"` 로 컨테이너
+    `font-size:28~38px` 에 따라 자동 스케일.
+  - `iconEl.textContent = sevCfg.icon` → `iconEl.innerHTML = sevCfg.icon`.
+  - Unknown 만 outline (회색 stroke + 흰 fill).
+- `index.html` 업로드 큐 상태 아이콘 `_UQ_ICON`:
+  - `⬆✅❌⊘⏳` → 각각 인라인 SVG (up-arrow / check / X / slashed-circle / clock).
+  - Idle 상태(`<div class="queue-idle-icon">✅</div>`) 도 SVG 로 교체.
+  - 색상: uploading=#2563EB, done=#10B981, error=#EF4444, cancelled=#9CA3AF, pending=#F59E0B.
+
+### 유지 항목
+- `⚠ ✓ ✗ ✕` 같은 text-presentation 기호(Unicode 1.x~4.x)는 일반 폰트 글리프로 안정적
+  렌더링되므로 그대로 유지 (files.html / history.html / rag-settings.html / index.html 일부).
+
+### 효과
+- 사내망 분석 페이지 위험도 아이콘이 모든 OS / 폰트 환경에서 동일하게 표시.
+- DevTools 콘솔의 source map 404 경고 제거.
+- 외부 네트워크 의존성 0 — `/etc/hosts` 의 DNS 차단 환경에서도 모든 페이지 정상 렌더.
+
+---
+
+## [2026-05-11] SSH/SCP stderr·로그 한글 깨짐 수정 (UTF-8 명시)
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`
+- `restart.sh`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 사내 시스템(`LANG=C`) 에서 Target Server 스캔 시 실패 로그가
+  `stderr=?? ?? ?? ?? (exit 1)` 로 한글이 모두 `?` 로 치환되어 원인 파악 불가.
+- 로케일을 `ko_KR.utf8` 로 바꿔도 동일 — JVM 기동 시 결정되는
+  `file.encoding` 이 ASCII 인 채로 고정돼 있었기 때문.
+
+### 원인
+1. `RemoteDumpService.executeCommand` / `executeCommandWithProgress` 의
+   `new InputStreamReader(process.getInputStream())` 가 charset 미지정 →
+   JVM 기본 charset (= `file.encoding` 시스템 프로퍼티) 사용.
+   `LANG=C` 환경에서 `file.encoding` 은 `US-ASCII` → SSH stderr 의 UTF-8 한글
+   바이트가 전부 `?` 로 치환.
+2. `restart.sh` 기동 라인에 `-Dfile.encoding=UTF-8` 누락 → 별도 `logback.xml`
+   이 없어 Spring Boot 기본 파일 appender 도 JVM 기본 charset 으로 기록.
+
+### 내역
+- `RemoteDumpService.java`:
+  - `import java.nio.charset.StandardCharsets;` 추가.
+  - `new InputStreamReader(process.getInputStream())` 4곳 →
+    `new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)`
+    (스캔/SSH 호출 + SCP 전송 진행률 모니터링 양쪽).
+  - `new InputStreamReader(process.getErrorStream())` 도 동일하게 UTF-8 명시.
+- `restart.sh`:
+  - 기동 라인에 `-Dfile.encoding=UTF-8` 추가 → 로그 파일이 OS 로케일과 무관하게
+    UTF-8 로 기록.
+
+### 효과
+- 배포 후 재기동 시 `heapdump-analyzer.log` 의 한글이 정상 표시.
+- SSH 인증 실패·find 권한 오류 등 실제 stderr 메시지가 로그에 그대로 남아
+  exit 1 류 원인을 추적 가능.
+
+---
+
 ## [2026-05-11] Chart.js 사내망 로드 실패 → JAR 내부 정적 리소스로 번들
 
 **변경 파일:**
