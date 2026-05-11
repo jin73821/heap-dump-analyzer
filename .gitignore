@@ -40,3 +40,12 @@ Thumbs.db
 .bashrc
 .genspark_llm.yaml
 .git-credentials
+
+# 사내 CA 인증서 / truststore (보안)
+certs/
+*.jks
+*.p12
+*.pem
+*.crt
+*.cer
+*.key

@@ -181,6 +181,17 @@ public class HeapDumpController {
         model.addAttribute("isAdmin", isAdmin);
         model.addAttribute("fileCount", files.size());
 
+        // 필터용 서버 목록 (distinct, 정렬). 미지정/Local 은 별도 식별자 없이 빈 문자열.
+        // 실제 파일이 존재하는 행(fileDeleted=false)에 기반한 서버만 노출 — DB 잔존 기록 제외.
+        List<String> serverNames = visible.stream()
+                .filter(h -> !h.isFileDeleted())
+                .map(AnalysisHistoryItem::getServerName)
+                .filter(n -> n != null && !n.isEmpty())
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+        model.addAttribute("serverNames", serverNames);
+
         long originalBytes = files.stream().mapToLong(HeapDumpFile::getSize).sum();
         long diskBytes = files.stream()
             .mapToLong(f -> f.isCompressed() && f.getCompressedSize() > 0 ? f.getCompressedSize() : f.getSize())
@@ -1519,11 +1530,18 @@ public class HeapDumpController {
 
         analyzerService.setLlmConfig(provider, apiUrl, model, maxIn, maxOut);
 
+        // SSL 검증 토글 (body 에 sslVerify 키가 있을 때만 갱신)
+        if (body.containsKey("sslVerify")) {
+            boolean sslVerify = Boolean.parseBoolean(String.valueOf(body.get("sslVerify")));
+            analyzerService.setLlmSslVerify(sslVerify);
+        }
+
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
         resp.put("provider", provider);
         resp.put("apiUrl", apiUrl);
         resp.put("model", model);
+        resp.put("sslVerify", analyzerService.isLlmSslVerify());
         return ResponseEntity.ok(resp);
     }
 
@@ -2101,6 +2119,7 @@ public class HeapDumpController {
         llm.put("providerModels", providerModels);
         llm.put("chatSystemPrompt", analyzerService.getLlmChatSystemPrompt());
         llm.put("chatRestoreIncludeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
+        llm.put("sslVerify", analyzerService.isLlmSslVerify());
         settings.put("llm", llm);
 
         // Database 정보
@@ -2183,7 +2202,7 @@ public class HeapDumpController {
 
     private List<AnalysisHistoryItem> buildHistory(List<HeapDumpFile> files) {
         List<AnalysisHistoryItem> history = new ArrayList<>();
-        SimpleDateFormat sdf = new SimpleDateFormat("MM-dd HH:mm");
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
         Set<String> processedNames = new HashSet<>();
 
         // 파일명 → HeapDumpFile 매핑
@@ -2236,7 +2255,7 @@ public class HeapDumpController {
                 item.setOriginalSizeBytes(e.getOriginalFileSize() != null ? e.getOriginalFileSize() : fb);
                 item.setCompressedSizeBytes(0);
                 item.setFormattedDate(e.getAnalyzedAt() != null
-                        ? e.getAnalyzedAt().format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm")) : "-");
+                        ? e.getAnalyzedAt().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : "-");
                 item.setLastModified(e.getAnalyzedAt() != null
                         ? e.getAnalyzedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
                         : 0);

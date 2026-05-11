@@ -17,15 +17,17 @@
                   transition: left .25s cubic-bezier(.4,0,.2,1);
                   background: #fff; border-bottom: 1px solid #E5E7EB;
                   display: flex; align-items: center; justify-content: space-between;
-                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-        .topbar-title { font-size: 16px; font-weight: 700; }
-        .topbar-right { display: flex; align-items: center; gap: 6px; }
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); gap: 10px; }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+        .topbar-title { font-size: 16px; font-weight: 700;
+                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
         .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
                       border-radius: 6px; background: transparent; color: #6B7280;
                       cursor: pointer; text-decoration: none; }
         .topbar-btn:hover { background: #F9FAFB; }
 
-        .container { max-width: 1280px; margin: 0 auto; padding: 68px 20px 40px;
+        .container { max-width: 1440px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
         .page-hdr { display: flex; align-items: center; justify-content: space-between;
@@ -93,8 +95,12 @@
         .td-server { font-weight: 500; color: #2563EB; }
         .td-name { font-weight: 500; max-width: 240px; overflow: hidden; text-overflow: ellipsis;
                    white-space: nowrap; }
-        .td-path { font-size: 11px; color: #6B7280; max-width: 250px; overflow: hidden;
-                   text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
+        .td-path { font-size: 11px; color: #6B7280; max-width: 360px; overflow: hidden;
+                   text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace;
+                   display: inline-block; vertical-align: middle; }
+        /* 잘린 경로(.is-truncated) 만 hover 시 펼침 및 cursor: help */
+        .td-path.is-truncated { cursor: help; }
+        .td-path.is-truncated:hover { white-space: normal; word-break: break-all; max-width: 480px; }
         .td-err { font-size: 11px; color: #DC2626; max-width: 260px; overflow: hidden;
                   text-overflow: ellipsis; white-space: nowrap; }
         .td-err:hover { white-space: normal; word-break: break-all; }
@@ -131,14 +137,22 @@
             .container { padding: 64px 14px 32px; }
         }
         @media (max-width: 640px) {
+            .topbar { padding: 0 12px; gap: 8px; }
+            .topbar-title { font-size: 15px; }
+            .topbar-right { gap: 4px; }
+            .topbar-right .topbar-btn { padding: 5px 8px; font-size: 11px; }
             .kpi-grid { grid-template-columns: 1fr; }
             .ltable .col-hide-sm { display: none; }
             .ltable { min-width: 720px; }
-            .table-toolbar { flex-direction: column; align-items: stretch; }
-            .toolbar-sel, .search-bar { width: 100%; min-width: 0; }
-            .page-size-wrap { justify-content: space-between; }
-            .export-wrap { width: 100%; }
-            .export-btn { width: 100%; }
+            /* 콤팩트 3행 툴바: (1) 검색 100% / (2) 상태·서버 50%씩 / (3) 행표시·Export 50%씩 */
+            .table-toolbar { gap: 8px; }
+            .search-bar { flex: 1 1 100%; width: 100%; min-width: 0; padding: 8px 12px; font-size: 13px; }
+            .toolbar-sel { flex: 1 1 calc(50% - 4px); width: auto; min-width: 0; padding: 7px 10px; font-size: 12px; }
+            .page-size-wrap { flex: 1 1 calc(50% - 4px); justify-content: space-between; gap: 6px; }
+            .page-size-wrap .toolbar-sel { flex: 0 0 80px; min-width: 60px; }
+            .page-size-label { font-size: 11px; }
+            .export-wrap { flex: 1 1 calc(50% - 4px); }
+            .export-btn { width: 100%; padding: 7px 12px; font-size: 12px; }
             .export-menu { left: 0; right: 0; }
             .pagination-bar { flex-direction: column; align-items: stretch; gap: 8px; }
             .pg-info { text-align: center; }
@@ -309,6 +323,12 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('exportMenu').classList.remove('open');
         }
     });
+    // 창 폭 변경 시 truncate 클래스 재계산 (debounce 150ms)
+    var _resizeT = null;
+    window.addEventListener('resize', function() {
+        clearTimeout(_resizeT);
+        _resizeT = setTimeout(markTruncated, 150);
+    });
     loadData();
 });
 
@@ -378,6 +398,15 @@ function renderTable(items) {
         var tr = document.createElement('tr');
         tr.innerHTML = renderRow(t);
         tbody.appendChild(tr);
+    });
+    markTruncated();
+}
+
+// 렌더 또는 폭 변경 시 실제 truncate 여부 검사하여 .is-truncated 토글
+function markTruncated() {
+    document.querySelectorAll('#logsTableBody .td-path').forEach(function(el) {
+        if (el.scrollWidth > el.clientWidth + 1) el.classList.add('is-truncated');
+        else el.classList.remove('is-truncated');
     });
 }
 

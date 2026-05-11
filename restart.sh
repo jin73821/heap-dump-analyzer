@@ -36,7 +36,19 @@ fi
 # stdbuf -oL -eL : 파일로 redirect 되어도 라인 단위로 flush
 # < /dev/null    : stdin 도 명시적으로 분리
 : > "$NOHUP_LOG"
-setsid nohup stdbuf -oL -eL java -Dfile.encoding=UTF-8 -jar "$JAR" --server.port=18080 \
+
+# 사내 사설 CA 인증서가 추가된 truststore 사용 (PKIX 검증용)
+# 파일 미존재 시에는 JDK 기본 cacerts 사용 (기동에 영향 없음)
+TRUSTSTORE=/opt/genspark/webapp_dump/certs/heap-truststore.jks
+TRUST_OPTS=""
+if [ -f "$TRUSTSTORE" ]; then
+    TRUST_OPTS="-Djavax.net.ssl.trustStore=$TRUSTSTORE -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=JKS"
+    echo "[restart] Using custom truststore: $TRUSTSTORE"
+else
+    echo "[restart] Custom truststore not found at $TRUSTSTORE — using JDK default cacerts"
+fi
+
+setsid nohup stdbuf -oL -eL java -Dfile.encoding=UTF-8 $TRUST_OPTS -jar "$JAR" --server.port=18080 \
     < /dev/null > "$NOHUP_LOG" 2>&1 &
 PID=$!
 disown $PID 2>/dev/null || true

@@ -1,5 +1,510 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-11] Transfer Logs — 잘리지 않은 짧은 경로는 hover 미표시
+
+**변경 파일:** `src/main/resources/templates/server-logs.html`, `CHANGELOG.md`
+
+### 내역
+- `.td-path` hover 효과(펼침 + `cursor: help`) 적용 조건을 `.is-truncated` 클래스로 한정.
+- JS `markTruncated()` 신규: 렌더 후 각 `.td-path` 의 `scrollWidth > clientWidth` 검사 →
+  잘림 발생 시에만 `.is-truncated` 부여.
+- `renderTable()` 종료 시 호출 + `window.resize` 시 debounce(150ms) 로 재계산.
+
+### 효과
+- 짧은 경로(잘림 없음): hover 효과 없음, 일반 텍스트로 표시.
+- 긴 경로(ellipsis 발생): hover 시 펼침 + cursor: help 그대로 동작.
+
+---
+
+## [2026-05-11] Transfer Logs — 컨테이너 폭 확장 + 원격 경로 hover 펼침
+
+**변경 파일:** `src/main/resources/templates/server-logs.html`, `CHANGELOG.md`
+
+### 내역
+- `.container { max-width: 1280px → 1440px }` — 와이드 화면 가용 폭 확대.
+- `.td-path` (원격 경로 컬럼):
+  - 기본 max-width 250 → 360px (더 긴 경로 노출).
+  - `display: inline-block; cursor: help` 추가 (hover 가능 명시).
+  - `:hover` 시 `white-space: normal; word-break: break-all; max-width: 480px` —
+    `/shblog/infra/jeus/kzdomain/kz_1/JeusServer.log` 같은 긴 경로도 마우스 hover 로 전체 확인 가능.
+- 기존 `title` tooltip 은 그대로 유지(빠른 미리보기용).
+
+---
+
+## [2026-05-11] SSH local user — 빈 값 저장 시 현재 프로세스 계정으로 자동 채움
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`
+- `src/main/resources/templates/settings.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- Settings 에서 SSH local user 입력을 빈 칸으로 저장 시 그대로 빈 값으로 들어가
+  RemoteDumpService 가 `runuser` 없이 현재 프로세스 계정으로 동작 (의도와 일치하나 명시적 표시 없음).
+- 사용자 요청: 빈 칸 저장 시 자동으로 "현재 프로세스 기동 중인 OS 계정" 으로 채워서 명시화.
+
+### 내역
+- `RemoteDumpService.setSshLocalUser(user)`:
+  - 트림 후 빈 문자열이면 `System.getProperty("user.name")` 을 가져와서 자동 채움.
+  - 자동 채움 시 별도 로그: `[RemoteDump] SSH local user empty → auto-filled with current process user 'xxx'`.
+- `settings.html` UI:
+  - 보조 설명에 "빈 값으로 저장 시 현재 프로세스 기동 계정으로 자동 채움" 안내 추가.
+  - input placeholder 를 "비워두면 자동 채움" 으로 변경, 폭 120→140px.
+
+### 검증 (curl, root 프로세스 기준)
+1. 초기 상태: `localUser: "sscuser"` (DB/properties 값)
+2. `POST {"localUser": ""}` → 응답 `{"success": true, "localUser": "root"}`
+3. `GET` 재조회 → `localUser: "root"`
+4. 로그: `SSH local user empty → auto-filled with current process user 'root'`
+
+---
+
+## [2026-05-11] 분석 페이지 — 모든 텍스트를 Sans-Serif 로 통일
+
+**변경 파일:** `src/main/resources/templates/analyze.html`, `CHANGELOG.md`
+
+### 변경 의도
+- 분석 페이지에 monospace 와 sans-serif 가 혼재 (수치/클래스명/파일명/Top Consumers 표/Threads 표 등 → JetBrains Mono).
+- 사용자 요청: 모든 글자를 sans-serif 스타일로 통일.
+
+### 내역
+- `:root` 의 `--mono` CSS 변수 값을 sans-serif 스택으로 교체:
+  - 기존: `'JetBrains Mono','Fira Code','Cascadia Code','Consolas',monospace`
+  - 변경: `-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif`
+  - `var(--mono)` 를 사용하는 20여 곳(KPI 값, 사이드바 stat, 데이터 테이블 col-size/count, rank-num, pct-bar-text, cd-meta-value, cd-table.num, file-info-val, 채팅 코드 등) 일괄 자동 sans-serif.
+- `--sans` 변수 신규 명시 (기존 `.cd-help-btn` 에서 `var(--sans)` 미정의 참조 → 명시 정의로 안정화).
+- 인라인 hardcoded mono 폰트 제거:
+  - AI 분석 실패 에러 코드 div 의 `font-family:monospace` 제거.
+  - Chart.js Top Consumers Y 축 ticks 의 `family:"'JetBrains Mono',monospace"` 제거.
+
+### 효과
+- 분석 페이지(`/analyze/result/{filename}`) 전체에서 mono 폰트가 사라지고 sans-serif 로 통일.
+- 차트·테이블·코드 라벨 모두 동일한 시각 톤.
+
+### 검증
+- 빌드·재기동 후 페이지 응답 정상 (509 KB).
+- 응답 HTML 에서 `monospace` / `JetBrains Mono` / `Courier` 등 잔존 폰트 패밀리 키워드 0건.
+
+---
+
+## [2026-05-11] Analysis Files — 서버 필터에서 deleted 잔존 서버 제외
+
+**변경 파일:** `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`, `CHANGELOG.md`
+
+### 변경 의도
+- `/files` 서버 필터 dropdown 에 실제 파일이 존재하지 않는 서버(`app-server-01`, `app-server-02`)가 노출.
+- 원인: analysis_history DB 에는 기록이 남아있지만 dumpfiles/ 디렉토리에서는 삭제되어 fileDeleted=true 인 행. admin 사용자에게는 history list 에 deleted 포함되지만 "deleted 표시" 토글 OFF 가 기본값이라 화면 행에는 안 보임 → 사용자 관점에서 "기록 없는 서버" 가 dropdown 에 떠 있는 모순.
+
+### 내역
+- `filesPage` 의 distinct serverName 추출 스트림에 `.filter(h -> !h.isFileDeleted())` 추가.
+- 결과: 실제 파일이 존재하는 행에 기반한 서버만 dropdown 노출.
+
+### 검증
+- 변경 전: `JeusServer1`, `app-server-01`, `app-server-02` 표시.
+- 변경 후: `JeusServer1` 만 표시. DB 잔존 ghost 서버 제거.
+
+---
+
+## [2026-05-11] 계정 관리 모바일 — Topbar 줄바꿈 수정 + 탭 toolbar 콤팩트 레이아웃
+
+**변경 파일:** `src/main/resources/templates/admin/users.html`, `CHANGELOG.md`
+
+### 내역
+**(1) Topbar (server-logs/servers 와 동일 패턴 적용)**
+- `.topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }` 명시.
+- `.topbar-title` ellipsis 처리, `.topbar-right { flex-shrink: 0 }` 로 햄버거 + "계정 관리" 한 줄 정렬.
+
+**(2) 접속 이력 / 계정 신청 탭 toolbar — 모바일 콤팩트 레이아웃 (≤640px)**
+- 기존 `flex-direction: column` (검색/상태/페이지사이즈/새로고침 모두 풀폭 4행 스택) 제거.
+- **3행 콤팩트 레이아웃**:
+  - Row 1: 검색 `flex: 1 1 100%` (풀폭)
+  - Row 2: 상태 select + 페이지 사이즈 select 각각 `flex: 1 1 calc(50% - 4px)` (50/50)
+  - Row 3: 새로고침 버튼 `flex: 0 0 auto; margin-left: auto` (우측 정렬, 콤팩트)
+- 접속 이력 탭(4 컨트롤): 위 3행 모두 사용. 계정 신청 탭(3 컨트롤, 새로고침은 page-hdr): 2행으로 종결.
+
+### 효과
+- 모바일에서 햄버거 + 타이틀이 한 줄 정렬.
+- 검색·상태·라인 셀렉트가 그리드처럼 조화롭게 배치되어 세로 공간 절감.
+- 새로고침 버튼은 우측 정렬되어 작업 흐름 일관성 유지.
+
+---
+
+## [2026-05-11] 접속 이력 모바일 — 상태 배지(성공/실패) 줄바꿈 수정
+
+**변경 파일:** `src/main/resources/templates/admin/users.html`, `CHANGELOG.md`
+
+### 내역
+- `.badge` 공통 클래스에 `display: inline-block; white-space: nowrap` 추가.
+- 좁은 모바일 폭에서 "성공"/"실패" 두 글자가 wrap 되어 행 높이가 변동하던 문제 해소.
+- admin 페이지 모든 badge(역할/활성/승인 상태 등) 에 동일 효과.
+
+---
+
+## [2026-05-11] 최근 탐지 결과 패널 폰트 사이즈 확대
+
+**변경 파일:** `src/main/resources/templates/history.html`, `CHANGELOG.md`
+
+### 내역
+- 가독성 향상을 위해 `.det-recent-*` 클래스 폰트를 일괄 1~2px 인상.
+
+| 항목 | 변경 |
+|---|---|
+| 패널 타이틀 | 13 → 15px |
+| 카운트(`N건`) | 11 → 12px |
+| severity / server 배지 | 10 → 11px (padding 2/7 → 3/8) |
+| 날짜 | 11 → 12px |
+| **본문 타이틀** | 12 → 14px |
+| 메타(파일명) | 11 → 12px |
+| empty state | 12 → 13px |
+| 행 padding | 9px 8px → 11px 10px (간격 균형) |
+| 행 내부 gap | 4 → 5px |
+
+---
+
+## [2026-05-11] Servers 모바일 작업 버튼 — 정확한 2×2 그리드 배치
+
+**변경 파일:** `src/main/resources/templates/servers.html`, `CHANGELOG.md`
+
+### 내역
+- ≤640px `.actions-cell` 을 flex-wrap 기반 → **CSS Grid 2열 1fr 1fr** 로 변경.
+- 버튼 width 100%, gap 4px 로 균일한 정렬.
+- 결과: 스캔·테스트 / 수정·삭제 4버튼이 항상 2×2 매트릭스로 표시.
+
+---
+
+## [2026-05-11] Servers 페이지 모바일 헤더 동일 수정 + 테이블 모바일 최적화
+
+**변경 파일:** `src/main/resources/templates/servers.html`, `CHANGELOG.md`
+
+### 변경 의도
+- Transfer Logs 와 동일하게 모바일에서 햄버거 버튼 아래 "Servers" 타이틀이 줄바꿈되는 현상.
+- 7컬럼 테이블이 모바일 폭에 비해 너무 넓어 가독성 저하.
+
+### 내역
+**(1) Topbar 줄바꿈 수정**
+- `.topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }` 명시.
+- `.topbar-title` ellipsis 처리 + `.topbar-right { flex-shrink: 0 }` 로 우측 버튼 고정 폭.
+- ≤640px 에서 우측 버튼 콤팩트화 (`padding: 5px 8px; font-size: 11px;`).
+
+**(2) 테이블 모바일 최적화**
+- 우선순위 낮은 3컬럼에 `col-hide-sm` 클래스 부여:
+  - SSH 계정, 덤프 경로, 자동탐지 (≤640px 시 숨김).
+- ≤640px 잔여 4컬럼: **이름 / 호스트 / 상태 / 작업** — 핵심 정보만 노출.
+- `.actions-cell` 신규 정의:
+  - 데스크톱: `white-space: nowrap` 유지 (한 줄).
+  - 모바일: `white-space: normal` + 버튼 wrap 허용, padding/font 축소
+    (`padding: 4px 8px; font-size: 11px;`).
+- ≤900px: `.panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }` 로 폭 초과 시 가로 스크롤 보장.
+- 모바일 전용 사이즈 조정: `.stable` font 13→12px, th/td padding 12→10px, badge 11→10px, page-ttl 18→16px.
+
+### 효과
+- 햄버거 + "Servers" 타이틀이 한 줄에 깔끔 정렬.
+- 모바일에서 4컬럼만 노출되어 가로 스크롤 없이 표가 화면에 들어옴.
+- 작업 버튼(스캔/테스트/수정/삭제) 4개가 좁은 폭에서 2×2 wrap 되어 모두 접근 가능.
+- 우선순위 낮은 컬럼 정보는 행 클릭(서버 상세 페이지 진입) 으로 여전히 접근 가능.
+
+---
+
+## [2026-05-11] Transfer Logs 모바일 헤더 — 햄버거 버튼·타이틀 줄바꿈 수정
+
+**변경 파일:** `src/main/resources/templates/server-logs.html`, `CHANGELOG.md`
+
+### 변경 의도
+- 모바일에서 햄버거 버튼 아래로 "Transfer Logs" 글자가 떨어져 두 줄로 표시되는 현상.
+
+### 원인
+- 다른 페이지(files.html, history.html 등)에는 `.topbar-brand { display: flex; align-items: center; gap: 10px; }`
+  가 명시되어 있는데 server-logs.html 에는 누락되어, 햄버거 SVG 와 텍스트가 인라인 흐름으로 배치 →
+  우측 버튼(Servers / Dashboard) 가 차지하는 공간 탓에 좁은 화면에서 줄바꿈 발생.
+
+### 내역
+- `.topbar-brand` 명시: `display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto;`
+  (다른 페이지 패턴 + `min-width: 0` 으로 텍스트 ellipsis 가능하게 함).
+- `.topbar-title`: `white-space: nowrap; overflow: hidden; text-overflow: ellipsis;` 추가 → 좁은 폭에서
+  줄바꿈 대신 말줄임 처리.
+- `.topbar-right`: `flex-shrink: 0` 명시 → 우측 버튼들이 줄어들지 않게 고정.
+- ≤640px: 우측 버튼 콤팩트화 (`padding: 5px 8px; font-size: 11px;`), gap 축소(6→4px) 로 가용 공간 확보.
+
+### 효과
+- 햄버거 버튼과 "Transfer Logs" 타이틀이 한 줄에 정렬.
+- 매우 좁은 폭에서도 타이틀은 ellipsis 처리, 우측 버튼은 유지되어 레이아웃이 깨지지 않음.
+
+---
+
+## [2026-05-11] Comparison picker — 삭제된 덤프 파일 제외
+
+**변경 파일:** `src/main/resources/templates/compare.html`, `CHANGELOG.md`
+
+### 변경 의도
+- `/compare` picker 에 deleted 표시된 덤프 파일도 선택 옵션으로 노출됨. 선택 시 비교 결과가
+  의미 없는 데이터에 기반하거나 오류 가능. (관리자만 deleted 가 `/api/history` 에 포함되는데
+  picker 에서까지 노출시킬 필요 없음)
+
+### 내역
+- picker JS 필터 조건 강화: `status === 'SUCCESS'` AND `fileDeleted !== true`.
+
+### 효과
+- 검증 결과: SUCCESS 35건 중 26건이 fileDeleted=true → 제외, picker 에는 9건만 노출.
+- deleted 파일 비교 가능성 차단.
+
+---
+
+## [2026-05-11] Analysis Files — 날짜 컬럼 연도 표시 + 서버·기간 필터 추가
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- `src/main/resources/templates/files.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- `/files` (Analysis Files) 의 날짜 컬럼이 `MM-dd HH:mm` 만 표시되어 연도 분간 불가
+  (예: `03-18 10:00` → 2025/2026 구분 어려움).
+- 검색이 파일명 substring 매칭만 가능. 서버별/기간별 필터링 부재 → 누적된 분석 이력에서 원하는
+  항목 찾기 어렵움.
+
+### 내역
+**(1) 날짜 포맷 — 연도 포함**
+- `buildHistory(...)`: `SimpleDateFormat("MM-dd HH:mm")` → `"yyyy-MM-dd HH:mm"`.
+- DB-only deleted 항목 분기에서 사용하는 `DateTimeFormatter.ofPattern("MM-dd HH:mm")` 도 동일하게
+  `"yyyy-MM-dd HH:mm"` 로 변경.
+- 영향: `/files`, `/history` 등 `buildHistory` 를 사용하는 모든 페이지의 `formattedDate` 출력값에
+  연도 자동 포함 (예: `2026-05-08 00:21`).
+
+**(2) filesPage 컨트롤러 — 서버 목록 주입**
+- `analysisHistory` 에서 distinct `serverName` 추출 → 정렬 → `serverNames` 모델 attr.
+
+**(3) files.html — 필터 dropdown UI**
+- 검색 placeholder: "파일명·서버명으로 검색..." 로 안내 강화.
+- `#serverFilter` select: 옵션 "서버: 전체" + "Local (서버 미지정)" + 동적 서버명 목록.
+- `#periodFilter` select: "기간: 전체 / 오늘 / 최근 7일 / 최근 30일 / 최근 90일".
+- 두 select 모두 `.filter-sel` 공통 클래스 + `onchange="onFilterChange()"`.
+
+**(4) applyFilter JS 확장**
+- 검색어: `data-name` + `data-sort-server` 양쪽 모두에서 substring 매치.
+- 서버 필터: `data-sort-server` 와 비교. `__local__` 값은 빈 문자열(서버 미지정) 매치.
+- 기간 필터: 클라이언트 `Date.now()` 기준 임계 epoch 계산 후 `data-sort-date` 와 비교.
+  `today` 는 자정 기준(`setHours(0,0,0,0)`).
+- 모든 필터 동시 적용 후 `_filteredRows` 갱신 → 페이지 1로 reset 후 render.
+
+**(5) 모바일 콤팩트 레이아웃 (≤640px)**
+- 기존 `flex-direction: column` (모두 풀폭 스택) 제거.
+- 검색바 `flex: 1 1 100%` (1행 풀폭), 두 필터 select 각각 `flex: 1 1 calc(50% - 4px)` 로 2행 50/50.
+- 선택 버튼/deleted toggle/행 표시 는 잔여 폭 자동 분배.
+
+### 효과
+- 한 화면에 작년/올해 파일이 섞여 있어도 즉시 식별 가능.
+- 특정 서버에서 발생한 덤프만 빠르게 추리기 가능.
+- "최근 7일/30일" 등 시간 단위 필터로 디버깅 콘텍스트 좁히기 용이.
+- 검색어가 서버명에도 매치되어 "jeus" 등 키워드로 관련 파일 일괄 조회 가능.
+- 데스크톱·모바일 모두에서 툴바가 한 눈에 들어옴.
+
+---
+
+## [2026-05-11] Transfer Logs 모바일 툴바 콤팩트 레이아웃 (5행 → 3행)
+
+**변경 파일:** `src/main/resources/templates/server-logs.html`, `CHANGELOG.md`
+
+### 변경 의도
+- ≤640px 에서 검색/상태/서버/행표시/Export 가 모두 풀폭 세로 스택 (5행) 으로 화면을 과도하게 차지.
+- 검색·상태·서버 컨트롤이 조화롭게 배치되지 않음.
+
+### 내역 (≤640px 미디어 쿼리)
+- `flex-direction: column` 제거 → 기본 wrap row 유지.
+- **3행 콤팩트 레이아웃**:
+  - Row 1: 검색바 `flex: 1 1 100%` (풀폭)
+  - Row 2: 상태 select + 서버 select 각각 `flex: 1 1 calc(50% - 4px)`
+  - Row 3: 행 표시 wrap + Export wrap 각각 `flex: 1 1 calc(50% - 4px)`
+- 폰트 13 → 12px, padding 살짝 축소로 컨트롤 높이 균일화.
+- `page-size-wrap` 내부 select 는 `flex: 0 0 80px` 로 고정, label 은 11px 로 축소.
+
+### 효과
+- 모바일에서 툴바 세로 점유 공간 약 40% 감소.
+- 검색·상태·서버가 그리드처럼 정렬되어 시각적 조화 확보.
+- 데스크톱(>640px) 동작 변동 없음.
+
+---
+
+## [2026-05-11] Analysis Failed 페이지 폭 확장 (720px → 960px)
+
+**변경 파일:** `src/main/resources/templates/analyze.html`, `CHANGELOG.md`
+
+- `.error-page-inner` max-width 720px → 960px.
+- `.error-card` 내부 패딩 36/32/28 → 40/36/30 으로 비례 확대.
+- `.error-msg` / `.error-meta` max-width 560px → 720px, 메타 박스 패딩·gap 도 소폭 키움.
+
+---
+
+## [2026-05-11] Analysis Failed 페이지 리디자인 — 중앙 정렬 + 카드 시각화 강화
+
+**변경 파일:**
+- `src/main/resources/templates/analyze.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- `/analyze/result/{filename}` 의 ERROR 상태 페이지(`th:if="${error}"` 블록)가 정중앙에 위치하지 않고
+  디자인이 평면적이라는 사용자 피드백.
+- 기존 구조 문제:
+  - 컨테이너가 `.main-content` 클래스 + 인라인 `margin-left:0; max-width:860px; margin-left:auto;`.
+    두 번째 `margin-left:auto` 가 첫 번째를 덮어써서 **뷰포트 전체 기준 중앙 정렬**이 되었으나,
+    220px 고정 배너의 우측 가시 영역 기준으로는 **좌측 치우침**.
+  - `.error-card` 가 단순 평면 배너(좌측 4px border + danger-light 배경)로 디자인 위계감 부족.
+  - 메타 정보(Failed at/Duration/File Size)가 가로 plain 텍스트 나열.
+  - 버튼이 인라인 스타일의 단색 사각형으로 hover/시각 피드백 미흡.
+
+### 내역
+**HTML 구조 재편 (`analyze.html` 711–755 블록)**
+- 외곽 wrapper `<div class="error-page-wrap">` + 내부 `<div class="error-page-inner">` 도입.
+- 배너 우측 가시 영역 한가운데 정렬을 위해 wrapper 에 `margin-left: var(--banner-w)` 적용 후
+  flex `justify-content:center` 로 inner(720px max-width) 를 가시 영역 중앙에 배치.
+- 카드 상단에 64px 원형 아이콘(SVG 경고 삼각형) 추가 → 위계감 확보.
+- 메타 영역을 `<dl class="error-meta">` (dt/dd 컬럼 그룹)로 재구성. 회색 카드 안에서
+  uppercase 라벨 + 모노스페이스 값 표시.
+- 버튼은 별도 클래스 `.btn-rerun` / `.btn-home` 로 분리(인라인 스타일 제거).
+
+**CSS 신규 (`analyze.html` style 블록)**
+- `.error-page-wrap` — wrapper 정렬: header offset + banner offset + flex center + 48px top padding.
+- `.error-page-inner` — `max-width: 720px`.
+- `.error-card` — 흰 배경 + 빨간 톤 그림자(0 12px 32px rgba(220,38,38,.08)) 로 부드러운 카드 입체감.
+- `.error-icon` — 64px circle, danger-light 배경, 안에 32px SVG.
+- `.error-title` — 22px / 800 / -.01em letter-spacing.
+- `.error-msg` — 4b5563 회색 14px / 1.6 line-height / pre-wrap 으로 멀티라인 메시지 자연 표시.
+- `.error-meta` — 회색 박스 안 flex 그룹, dt(라벨)+dd(값) 세로 stack.
+- `.btn-rerun` — warning 색 + hover 시 translateY(-1px) + colored box-shadow.
+- `.btn-home` — primary 색 + 동일 hover 효과.
+- 반응형: ≤900px 시 wrapper margin-left 0 (배너 숨김 모바일 폭),
+  ≤600px 시 카드 padding 축소 + 버튼 width 100% (세로 스택).
+
+### 효과
+- 220px 배너가 좌측에 고정된 데스크톱 폭에서도 카드가 가시 영역의 중앙에 위치.
+- 헤딩-아이콘-메시지-메타-액션 위계가 분명해져 분석 실패 상황을 한눈에 파악.
+- 액션 버튼이 hover 시 살짝 떠오르고 colored shadow 가 입혀져 누를 곳임을 시각적으로 안내.
+- 모바일에서는 카드 패딩 축소 + 버튼 풀폭으로 터치 사용성 확보.
+- MAT CLI Log 카드는 그대로 유지(`error-log-card` 클래스만 부여).
+
+---
+
+## [2026-05-11] Compare 페이지 레이아웃 폭 확장 (1100px → 1400px)
+
+**변경 파일:**
+- `src/main/resources/templates/compare.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 사용자 요청: compare picker / 결과 페이지 가로 사이즈가 좁다.
+- 다른 페이지: dashboard 1800px, history 등 1280px, settings 1080px.
+  compare 는 1100px 로 비교 다이프 테이블의 클래스명 컬럼이 좁아 가독성 저하.
+
+### 내역
+- `.main` `max-width: 1100px` → `1400px` (한 곳만 변경).
+- 반응형 미디어 쿼리 (≤900px, ≤600px) 는 그대로 유지.
+
+---
+
+## [2026-05-11] Compare 결과 페이지 빈 화면 수정 — SpEL Math.min overload ambiguity
+
+**변경 파일:**
+- `src/main/resources/templates/compare.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- `/compare?base=X&target=Y` 진입 시 브라우저 콘솔에
+  `Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING` 로 빈 페이지가 표시됨.
+- 서버 로그 추적 결과:
+  ```
+  SpelEvaluationException: EL1033E: Method call of 'min' is ambiguous,
+    supported type conversions allow multiple variants to match
+  Exception evaluating SpringEL expression:
+    "T(java.lang.Math).min(80, T(java.lang.Math).abs(diff.delta) / 1048576)"
+    (template: "compare" - line 218)
+  ```
+- 원인: `diff.delta` 가 `long`, `Math.abs(long)` → `long`, `long / 1048576` → `long`.
+  반면 `80` 은 `int` 리터럴. Spring EL 의 메서드 해석기가
+  `Math.min(int, int)` (long → int 좁힘) 과 `Math.min(long, long)` (int → long 넓힘) 사이에서
+  결정하지 못하고 ambiguous 로 실패.
+- 응답 헤더와 body 일부가 이미 chunked 로 전송된 뒤 예외가 터져 종료 마커 미전송 →
+  브라우저가 `ERR_INCOMPLETE_CHUNKED_ENCODING` 으로 페이지 폐기 → 빈 화면.
+
+### 내역
+- `compare.html` line 218 의 SpEL 표현식에서 정수 리터럴에 `L` 접미사 부착:
+  - 기존: `T(java.lang.Math).min(80, T(java.lang.Math).abs(diff.delta) / 1048576)`
+  - 변경: `T(java.lang.Math).min(80L, T(java.lang.Math).abs(diff.delta) / 1048576L)`
+- `Math.min(long, long)` 단일 시그니처로 매칭되어 ambiguity 해소.
+
+### 효과
+- 결과 페이지 응답 길이 45,124 → 48,857 bytes (delta-bar 행 포함 정상 마감).
+- `style="width:70px"` / `style="width:34px"` 등 동적 너비 인라인 스타일 정상 렌더.
+- 서버 로그에 `EL1033E` / Thymeleaf TemplateInputException 새로 발생 없음.
+
+---
+
+## [2026-05-11] LLM Connection PKIX 에러 조치 — Truststore + llm.ssl.verify 토글
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/config/HeapDumpConfig.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- `src/main/resources/application.properties`
+- `src/main/resources/templates/llm-settings.html`
+- `restart.sh`
+- `.gitignore`
+- `CHANGELOG.md`
+
+### 변경 의도
+- `/settings/llm` → Test Connection 시 사내 게이트웨이(예: `apigtw.gapdev.shinhan.com`) 호출이
+  `PKIX path building failed: unable to find valid certification path to requested target` 로 실패.
+- 원인: 사내 게이트웨이의 TLS 인증서가 사내 사설 CA 로 서명되어 있어 JDK 번들 cacerts 가
+  신뢰하지 못함. Python 가이드는 `truststore` 라이브러리로 OS truststore(사내 CA 사전 설치)를
+  사용해 우회하지만, 본 앱은 JDK 기본 cacerts 만 사용.
+- LLM 호출 4개 메서드(`testLlmConnection`, `callLlmAnalysis`, `callLlmChat`, `callLlmChatStream`)는
+  `HttpURLConnection` 을 SSL 커스터마이즈 없이 사용. RagService 의 `ragSslVerify` 패턴을 미러링해
+  운영(JVM truststore)과 긴급 우회(토글) 양쪽 경로 제공.
+
+### 내역
+**(A) JVM Truststore — 정공법 / 운영 권장**
+- `restart.sh`: `/opt/genspark/webapp_dump/certs/heap-truststore.jks` 가 존재하면
+  `-Djavax.net.ssl.trustStore` / `-Djavax.net.ssl.trustStorePassword` / `-Djavax.net.ssl.trustStoreType` 3종을
+  자동 부착. 파일 미존재 시는 JDK 기본 cacerts 사용으로 fallback (기동에 영향 없음).
+- `.gitignore`: `certs/`, `*.jks`, `*.p12`, `*.pem`, `*.crt`, `*.cer`, `*.key` 추가
+  (인증서/키스토어 git 커밋 방지).
+- 운영 절차: 사내 Root CA `.crt` 를 `keytool -importcert -alias shinhan-internal-ca` 로
+  `heap-truststore.jks` 에 import 후 재기동.
+
+**(B) `llm.ssl.verify` 토글 — RagService 패턴 미러링 / 긴급 우회**
+- `application.properties`: `llm.ssl.verify=true` (기본값) 추가.
+- `HeapDumpConfig`: `@Value("${llm.ssl.verify:true}") boolean llmSslVerify` + `isLlmSslVerify()` getter.
+- `HeapDumpAnalyzerService`:
+  - `volatile boolean llmSslVerify` 필드 + 생성자 초기화.
+  - settings.json 로드/저장, `syncApplicationProperties()` 동기화.
+  - `isLlmSslVerify()` / `setLlmSslVerify(boolean)` getter·setter.
+  - private `disableSslVerification(HttpsURLConnection)` 헬퍼 추가
+    (RagService/EmbeddingService 와 동일 패턴 — TrustManager 전역 trust + Hostname verifier all-allow).
+  - 4개 LLM 메서드의 `openConnection()` 직후
+    `if (!llmSslVerify && conn instanceof HttpsURLConnection) disableSslVerification(...)` 분기 추가.
+- `HeapDumpController`:
+  - `POST /api/llm/config`: 요청 body 에 `sslVerify` 키가 있으면 `setLlmSslVerify()` 호출.
+    응답에 `sslVerify` 노출.
+  - `GET /api/settings`: `llm.sslVerify` 필드 노출.
+- `llm-settings.html`:
+  - Provider/API URL/Model 카드에 "SSL Verify" 체크박스 + 안내 문구 추가.
+  - `loadLlmSettings()` 가 `llm.sslVerify` 를 체크박스에 반영
+    (`!== false` 로 미설정 시 true 기본).
+  - `saveLlmConfig()` 가 `sslVerify` 를 body 에 포함해 전송.
+
+### 효과
+- 사내 Root CA 를 `heap-truststore.jks` 에 등록하면 PKIX 에러 해소 (운영 권장 경로).
+- 개발/긴급 시에는 `/settings/llm` 의 "SSL Verify" 토글 OFF 로 즉시 우회 가능
+  (MITM 위험 — 안내 문구로 사용자에게 명시).
+- RagService / EmbeddingService 의 기존 SSL 동작에는 영향 없음.
+
+### 후속 운영 작업 (코드 외)
+1. 사내 보안팀에서 Root CA `.crt` 수령 또는 `openssl s_client -showcerts` 로 체인 추출.
+2. `keytool -importcert -alias shinhan-internal-ca -file <ca.crt>
+   -keystore /opt/genspark/webapp_dump/certs/heap-truststore.jks -storepass changeit -noprompt`.
+3. `bash restart.sh` 재기동 — `[restart] Using custom truststore: ...` 메시지 확인.
+4. `/settings/llm` 에서 baseUrl 을 사내 게이트웨이 풀 URL 로 변경, API Key 갱신, Test Connection.
+
+---
+
 ## [2026-05-11] 원격 스캔 — find 비치명적 권한 오류 관용 처리
 
 **변경 파일:**

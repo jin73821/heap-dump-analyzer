@@ -93,6 +93,7 @@ public class HeapDumpAnalyzerService {
     private volatile int     llmTimeoutReadSeconds;
     private volatile String  llmChatSystemPrompt;
     private volatile boolean llmChatRestoreIncludeHistory = true;
+    private volatile boolean llmSslVerify = true;
 
     // RAG (Elasticsearch) 런타임 설정
     private volatile boolean ragEnabled;
@@ -157,6 +158,7 @@ public class HeapDumpAnalyzerService {
         this.llmMaxOutputTokens = config.getLlmMaxOutputTokens();
         this.llmTimeoutConnectSeconds = config.getLlmTimeoutConnectSeconds();
         this.llmTimeoutReadSeconds = config.getLlmTimeoutReadSeconds();
+        this.llmSslVerify = config.isLlmSslVerify();
         this.llmChatSystemPrompt = DEFAULT_CHAT_SYSTEM_PROMPT;
         // 환경변수 우선
         String envKey = System.getenv("LLM_API_KEY");
@@ -844,6 +846,9 @@ public class HeapDumpAnalyzerService {
             if (saved.containsKey("llmChatRestoreIncludeHistory")) {
                 this.llmChatRestoreIncludeHistory = Boolean.TRUE.equals(saved.get("llmChatRestoreIncludeHistory"));
             }
+            if (saved.containsKey("llmSslVerify")) {
+                this.llmSslVerify = Boolean.parseBoolean(String.valueOf(saved.get("llmSslVerify")));
+            }
             // RAG 설정 복원
             if (saved.containsKey("ragEnabled")) {
                 this.ragEnabled = Boolean.parseBoolean(String.valueOf(saved.get("ragEnabled")));
@@ -996,6 +1001,7 @@ public class HeapDumpAnalyzerService {
             settings.put("llmTimeoutReadSeconds", llmTimeoutReadSeconds);
             settings.put("llmChatSystemPrompt", llmChatSystemPrompt);
             settings.put("llmChatRestoreIncludeHistory", llmChatRestoreIncludeHistory);
+            settings.put("llmSslVerify", llmSslVerify);
             // RAG 설정 (비밀번호/API 키는 ENC(...)로 암호화하여 저장)
             settings.put("ragEnabled", ragEnabled);
             settings.put("ragElasticsearchUrl", ragElasticsearchUrl);
@@ -1066,6 +1072,7 @@ public class HeapDumpAnalyzerService {
             updates.put("llm.timeout.connect-seconds", String.valueOf(llmTimeoutConnectSeconds));
             updates.put("llm.timeout.read-seconds", String.valueOf(llmTimeoutReadSeconds));
             updates.put("llm.chat.restore-include-history", String.valueOf(llmChatRestoreIncludeHistory));
+            updates.put("llm.ssl.verify", String.valueOf(llmSslVerify));
             // RAG 설정
             updates.put("rag.enabled", String.valueOf(ragEnabled));
             updates.put("rag.elasticsearch.url", ragElasticsearchUrl != null ? ragElasticsearchUrl : "");
@@ -1204,6 +1211,35 @@ public class HeapDumpAnalyzerService {
         this.llmChatRestoreIncludeHistory = v;
         persistSettings();
         logger.info("[LLM] Chat restore include-history: {}", v);
+    }
+
+    public boolean isLlmSslVerify() { return llmSslVerify; }
+
+    public void setLlmSslVerify(boolean sslVerify) {
+        this.llmSslVerify = sslVerify;
+        persistSettings();
+        logger.info("[LLM] SSL verify: {}", sslVerify);
+    }
+
+    /**
+     * 자체 서명 인증서 환경용 — HttpsURLConnection의 SSL 검증을 비활성화.
+     * 운영에서는 사내 CA를 JVM truststore(-Djavax.net.ssl.trustStore)에 등록하고
+     * llm.ssl.verify=true 유지가 권장.
+     */
+    private void disableSslVerification(javax.net.ssl.HttpsURLConnection conn) {
+        try {
+            javax.net.ssl.TrustManager[] trustAll = new javax.net.ssl.TrustManager[]{ new javax.net.ssl.X509TrustManager() {
+                public java.security.cert.X509Certificate[] getAcceptedIssuers() { return new java.security.cert.X509Certificate[0]; }
+                public void checkClientTrusted(java.security.cert.X509Certificate[] c, String s) {}
+                public void checkServerTrusted(java.security.cert.X509Certificate[] c, String s) {}
+            }};
+            javax.net.ssl.SSLContext sc = javax.net.ssl.SSLContext.getInstance("TLS");
+            sc.init(null, trustAll, new java.security.SecureRandom());
+            conn.setSSLSocketFactory(sc.getSocketFactory());
+            conn.setHostnameVerifier((hostname, session) -> true);
+        } catch (Exception e) {
+            logger.warn("[LLM] SSL verification disable failed: {}", e.getMessage());
+        }
     }
 
     // ── RAG 설정 getter/setter ────────────────────────────────────
@@ -1409,6 +1445,9 @@ public class HeapDumpAnalyzerService {
         try {
             java.net.URL url = new java.net.URL(llmApiUrl);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            if (!llmSslVerify && conn instanceof javax.net.ssl.HttpsURLConnection) {
+                disableSslVerification((javax.net.ssl.HttpsURLConnection) conn);
+            }
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(llmTimeoutConnectSeconds * 1000);
@@ -1615,6 +1654,9 @@ public class HeapDumpAnalyzerService {
             // ── STEP 3: HTTP 요청 전송 ─────────────────────────────
             java.net.URL url = new java.net.URL(llmApiUrl);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            if (!llmSslVerify && conn instanceof javax.net.ssl.HttpsURLConnection) {
+                disableSslVerification((javax.net.ssl.HttpsURLConnection) conn);
+            }
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(llmTimeoutConnectSeconds * 1000);
@@ -1817,6 +1859,9 @@ public class HeapDumpAnalyzerService {
             // ── HTTP 요청 전송 ─────────────────────────────────────
             java.net.URL url = new java.net.URL(llmApiUrl);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            if (!llmSslVerify && conn instanceof javax.net.ssl.HttpsURLConnection) {
+                disableSslVerification((javax.net.ssl.HttpsURLConnection) conn);
+            }
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(llmTimeoutConnectSeconds * 1000);
@@ -1976,6 +2021,9 @@ public class HeapDumpAnalyzerService {
             // ── HTTP 요청 (stream: true) ──────────────────────────
             java.net.URL url = new java.net.URL(llmApiUrl);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            if (!llmSslVerify && conn instanceof javax.net.ssl.HttpsURLConnection) {
+                disableSslVerification((javax.net.ssl.HttpsURLConnection) conn);
+            }
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
             conn.setConnectTimeout(llmTimeoutConnectSeconds * 1000);

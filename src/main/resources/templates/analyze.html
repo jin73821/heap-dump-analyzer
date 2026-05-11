@@ -27,7 +27,9 @@
             --warning-light: #fffbeb;
             --success: #059669;
             --success-light: #ecfdf5;
-            --mono: 'JetBrains Mono','Fira Code','Cascadia Code','Consolas',monospace;
+            --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+            /* --mono: 분석 페이지는 모든 텍스트를 sans-serif 로 통일. var(--mono) 사용처는 별도 수정 없이 sans-serif 로 렌더. */
+            --mono: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
         }
         body { font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; font-size:14px; color:var(--text); background:var(--bg); line-height:1.5; }
         a { color:var(--primary); text-decoration:none; }
@@ -351,12 +353,82 @@
         .file-info-val { font-size:14px; font-weight:700; color:var(--text); font-family:var(--mono); }
 
         /* ── Error State ──────────────────────────── */
-        .error-card {
-            background:var(--danger-light); border:1px solid #fecaca; border-left:4px solid var(--danger);
-            border-radius:10px; padding:24px;
+        .error-page-wrap {
+            margin-top: var(--header-h);
+            margin-left: var(--banner-w, 220px);
+            transition: margin-left .25s cubic-bezier(.4,0,.2,1);
+            min-height: calc(100vh - var(--header-h));
+            display: flex; align-items: flex-start; justify-content: center;
+            padding: 48px 20px 40px;
         }
-        .error-card h3 { color:var(--danger); margin-bottom:8px; }
-        .error-card p { color:#7f1d1d; }
+        .error-page-inner { width: 100%; max-width: 960px; }
+        .error-card {
+            background: #fff; border: 1px solid #fecaca; border-radius: 14px;
+            padding: 40px 36px 30px; text-align: center;
+            box-shadow: 0 12px 32px rgba(220,38,38,.08), 0 1px 3px rgba(0,0,0,.04);
+        }
+        .error-icon {
+            width: 64px; height: 64px; margin: 0 auto 14px;
+            border-radius: 50%; background: var(--danger-light);
+            color: var(--danger);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .error-icon svg { width: 32px; height: 32px; }
+        .error-title {
+            font-size: 22px; font-weight: 800; color: #111827;
+            letter-spacing: -.01em; margin: 0 0 10px;
+        }
+        .error-msg {
+            font-size: 14px; color: #4b5563; line-height: 1.6;
+            max-width: 720px; margin: 0 auto 22px;
+            white-space: pre-wrap; word-break: break-word;
+        }
+        .error-meta {
+            display: flex; flex-wrap: wrap; justify-content: center;
+            gap: 16px 36px; margin: 0 auto 24px; padding: 16px 22px;
+            background: #f9fafb; border: 1px solid #f3f4f6;
+            border-radius: 10px; max-width: 720px;
+        }
+        .error-meta > div { display: flex; flex-direction: column; gap: 3px; align-items: center; }
+        .error-meta dt {
+            margin: 0; text-transform: uppercase;
+            font-size: 10px; font-weight: 700;
+            color: #9ca3af; letter-spacing: .08em;
+        }
+        .error-meta dd {
+            margin: 0; font-size: 13px; color: #1f2937; font-weight: 600;
+            font-family: var(--mono);
+        }
+        .error-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+        .btn-rerun, .btn-home {
+            display: inline-flex; align-items: center; gap: 7px;
+            padding: 10px 22px; border-radius: 8px;
+            font-size: 13px; font-weight: 600; line-height: 1.2;
+            border: 1px solid transparent; cursor: pointer; text-decoration: none;
+            font-family: inherit;
+            transition: transform .12s, box-shadow .15s, background .12s;
+        }
+        .btn-rerun {
+            background: var(--warning); color: #fff;
+            box-shadow: 0 1px 2px rgba(217,119,6,.18);
+        }
+        .btn-rerun:hover { background: #b45309; box-shadow: 0 4px 12px rgba(217,119,6,.3); transform: translateY(-1px); }
+        .btn-home {
+            background: var(--primary); color: #fff;
+            box-shadow: 0 1px 2px rgba(37,99,235,.18);
+        }
+        .btn-home:hover { background: #1d4ed8; box-shadow: 0 4px 12px rgba(37,99,235,.3); transform: translateY(-1px); }
+        .btn-rerun .ic { font-size: 16px; line-height: 1; }
+        .error-log-card { margin-top: 18px; }
+        @media (max-width: 900px) {
+            .error-page-wrap { margin-left: 0; padding: 28px 14px 32px; }
+        }
+        @media (max-width: 600px) {
+            .error-card { padding: 28px 18px 22px; border-radius: 12px; }
+            .error-title { font-size: 19px; }
+            .error-meta { gap: 12px 18px; padding: 12px; }
+            .btn-rerun, .btn-home { width: 100%; justify-content: center; }
+        }
 
         /* ── No Data ──────────────────────────────── */
         .empty-state {
@@ -708,48 +780,60 @@
 </div>
 
 <!-- ════════════════ ERROR STATE ════════════════ -->
-<div th:if="${error}" class="main-content" style="margin-left:0;max-width:860px;margin-left:auto;margin-right:auto">
-    <div class="error-card">
-        <h3>Analysis Failed</h3>
-        <p th:text="${error}"></p>
-        <!-- 분석 실패 상세 정보 -->
-        <div style="margin-top:14px;display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:#7f1d1d">
-            <span th:if="${errorDate != null}">
-                <span style="font-weight:600">Failed at:</span>
-                <span th:text="${errorDate}"></span>
-            </span>
-            <span th:if="${errorAnalysisTime != null and errorAnalysisTime > 0}">
-                <span style="font-weight:600">Duration:</span>
-                <span th:text="${errorAnalysisTime < 1000 ? errorAnalysisTime + 'ms' : (errorAnalysisTime / 1000) + 's'}"></span>
-            </span>
-            <span th:if="${errorFileSize != null}">
-                <span style="font-weight:600">File Size:</span>
-                <span th:text="${errorFileSize}"></span>
-            </span>
-        </div>
-        <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
-            <form th:action="@{'/analyze/rerun/' + ${filename}}" method="post" style="display:inline"><button type="submit" style="padding:8px 20px;background:var(--warning);color:#fff;border:none;border-radius:6px;font-weight:600;font-size:13px;cursor:pointer;line-height:1.5;box-sizing:border-box;font-family:inherit">&#8635; Re-Analyze</button></form>
-            <a href="/" style="display:inline-block;padding:8px 20px;background:var(--primary);color:#fff;border-radius:6px;font-weight:600;font-size:13px;line-height:1.5;box-sizing:border-box;text-decoration:none">Back to Home</a>
-        </div>
-    </div>
+<div th:if="${error}" class="error-page-wrap">
+    <div class="error-page-inner">
+        <div class="error-card">
+            <div class="error-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                    <line x1="12" y1="9" x2="12" y2="13"/>
+                    <line x1="12" y1="17" x2="12.01" y2="17"/>
+                </svg>
+            </div>
+            <h3 class="error-title">Analysis Failed</h3>
+            <p class="error-msg" th:text="${error}"></p>
 
-    <!-- MAT Log Card (에러 시) -->
-    <div class="card" style="margin-top:16px">
-        <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
-            <span>&#128187; MAT CLI Log</span>
-            <span th:if="${matLogTotalLen > 0}" style="font-size:11px;color:var(--text-secondary);font-weight:400"
-                  th:text="'Total: ' + ${#numbers.formatInteger(matLogTotalLen,1,'COMMA')} + ' chars'"></span>
-        </div>
-        <div th:if="${matLog != null and !#strings.isEmpty(matLog)}">
-            <pre id="errorMatLog" style="background:#0f172a;color:#a7f3d0;padding:16px;border-radius:8px;font-size:12px;max-height:500px;overflow:auto;white-space:pre-wrap" th:text="${matLog}"></pre>
-            <div th:if="${matLogTotalLen > 5000}" style="margin-top:10px;text-align:center">
-                <button id="errorLogLoadMore" onclick="loadFullErrorLog()" style="padding:6px 18px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--surface);color:var(--text)">Load Full Log</button>
+            <dl class="error-meta" th:if="${errorDate != null or (errorAnalysisTime != null and errorAnalysisTime > 0) or errorFileSize != null}">
+                <div th:if="${errorDate != null}">
+                    <dt>Failed at</dt>
+                    <dd th:text="${errorDate}"></dd>
+                </div>
+                <div th:if="${errorAnalysisTime != null and errorAnalysisTime > 0}">
+                    <dt>Duration</dt>
+                    <dd th:text="${errorAnalysisTime < 1000 ? errorAnalysisTime + 'ms' : (errorAnalysisTime / 1000) + 's'}"></dd>
+                </div>
+                <div th:if="${errorFileSize != null}">
+                    <dt>File size</dt>
+                    <dd th:text="${errorFileSize}"></dd>
+                </div>
+            </dl>
+
+            <div class="error-actions">
+                <form th:action="@{'/analyze/rerun/' + ${filename}}" method="post" style="display:inline">
+                    <button type="submit" class="btn-rerun"><span class="ic">&#8635;</span> Re-Analyze</button>
+                </form>
+                <a href="/" class="btn-home">Back to Home</a>
             </div>
         </div>
-        <div th:if="${matLog == null or #strings.isEmpty(matLog)}" style="padding:24px;text-align:center;color:var(--text-secondary)">
-            <div style="font-size:36px;margin-bottom:8px">&#128220;</div>
-            <div style="font-size:13px">MAT CLI 로그가 없습니다.</div>
-            <div style="font-size:12px;margin-top:4px;color:#9ca3af">MAT CLI가 실행되기 전에 분석이 실패했을 수 있습니다.</div>
+
+        <!-- MAT Log Card (에러 시) -->
+        <div class="card error-log-card">
+            <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+                <span>&#128187; MAT CLI Log</span>
+                <span th:if="${matLogTotalLen > 0}" style="font-size:11px;color:var(--text-secondary);font-weight:400"
+                      th:text="'Total: ' + ${#numbers.formatInteger(matLogTotalLen,1,'COMMA')} + ' chars'"></span>
+            </div>
+            <div th:if="${matLog != null and !#strings.isEmpty(matLog)}">
+                <pre id="errorMatLog" style="background:#0f172a;color:#a7f3d0;padding:16px;border-radius:8px;font-size:12px;max-height:500px;overflow:auto;white-space:pre-wrap" th:text="${matLog}"></pre>
+                <div th:if="${matLogTotalLen > 5000}" style="margin-top:10px;text-align:center">
+                    <button id="errorLogLoadMore" onclick="loadFullErrorLog()" style="padding:6px 18px;font-size:12px;font-weight:600;border:1px solid var(--border);border-radius:6px;cursor:pointer;background:var(--surface);color:var(--text)">Load Full Log</button>
+                </div>
+            </div>
+            <div th:if="${matLog == null or #strings.isEmpty(matLog)}" style="padding:24px;text-align:center;color:var(--text-secondary)">
+                <div style="font-size:36px;margin-bottom:8px">&#128220;</div>
+                <div style="font-size:13px">MAT CLI 로그가 없습니다.</div>
+                <div style="font-size:12px;margin-top:4px;color:#9ca3af">MAT CLI가 실행되기 전에 분석이 실패했을 수 있습니다.</div>
+            </div>
         </div>
     </div>
 </div>
@@ -1086,7 +1170,7 @@ function loadFullErrorLog() {
                         <div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#FEE2E2,#FECACA);display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;box-shadow:0 2px 8px rgba(220,38,38,.2)">&#10060;</div>
                         <div style="flex:1;min-width:0">
                             <div style="font-size:18px;font-weight:800;color:#DC2626;margin-bottom:6px;letter-spacing:-.01em">AI 분석 실패</div>
-                            <div id="aiErrorCode" style="display:none;font-size:12px;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px;font-family:monospace"></div>
+                            <div id="aiErrorCode" style="display:none;font-size:12px;font-weight:700;color:#9CA3AF;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px"></div>
                             <div id="aiErrorMsg" style="font-size:15px;color:#7F1D1D;line-height:1.75;margin-bottom:14px;word-break:break-word"></div>
                             <div id="aiErrorHint" style="display:none;margin-bottom:18px;padding:12px 16px;background:rgba(255,255,255,.7);border-radius:8px;border:1px solid #FEE2E2;font-size:13px;color:#991B1B;line-height:1.7"></div>
                             <div style="display:flex;gap:10px;flex-wrap:wrap">
@@ -3126,7 +3210,7 @@ function doExportCSV() {
                 },
                 scales: {
                     x:{ beginAtZero:true, grid:{color:'#f3f4f6'}, ticks:{color:'#6b7280',font:{size:11},callback:function(v){return v+' MB';}}, title:{display:true,text:'Retained Heap (MB)',color:'#374151',font:{size:12,weight:'600'}} },
-                    y:{ grid:{display:false}, ticks:{color:'#1f2937',font:{size:11,family:"'JetBrains Mono',monospace"},autoSkip:false} }
+                    y:{ grid:{display:false}, ticks:{color:'#1f2937',font:{size:11},autoSkip:false} }
                 },
                 animation:{duration:900,easing:'easeInOutQuart'}
             }

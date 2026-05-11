@@ -83,8 +83,22 @@ public class RemoteDumpService {
     public String getSshLocalUser() { return sshLocalUser; }
 
     public void setSshLocalUser(String user) {
-        this.sshLocalUser = (user != null) ? user.trim() : "";
-        logger.info("[RemoteDump] SSH local user changed to '{}'", this.sshLocalUser);
+        String trimmed = (user != null) ? user.trim() : "";
+        boolean autoFilled = false;
+        if (trimmed.isEmpty()) {
+            // 빈 칸이면 현재 프로세스를 기동 중인 OS 계정으로 자동 채움
+            String currentUser = System.getProperty("user.name", "");
+            if (currentUser != null && !currentUser.trim().isEmpty()) {
+                trimmed = currentUser.trim();
+                autoFilled = true;
+            }
+        }
+        this.sshLocalUser = trimmed;
+        if (autoFilled) {
+            logger.info("[RemoteDump] SSH local user empty → auto-filled with current process user '{}'", this.sshLocalUser);
+        } else {
+            logger.info("[RemoteDump] SSH local user changed to '{}'", this.sshLocalUser);
+        }
     }
 
     public String getScpTempDir() { return scpTempDir; }

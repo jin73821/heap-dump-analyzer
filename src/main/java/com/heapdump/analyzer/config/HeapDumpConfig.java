@@ -121,6 +121,8 @@ public class HeapDumpConfig {
     private int llmTimeoutConnectSeconds;
     @Value("${llm.timeout.read-seconds:120}")
     private int llmTimeoutReadSeconds;
+    @Value("${llm.ssl.verify:true}")
+    private boolean llmSslVerify;
 
     // ── RAG (Elasticsearch) 설정 ─────────────────────────────
     @Value("${rag.enabled:false}")
@@ -383,6 +385,7 @@ public class HeapDumpConfig {
     public int     getLlmMaxOutputTokens()      { return llmMaxOutputTokens; }
     public int     getLlmTimeoutConnectSeconds(){ return llmTimeoutConnectSeconds; }
     public int     getLlmTimeoutReadSeconds()   { return llmTimeoutReadSeconds; }
+    public boolean isLlmSslVerify()             { return llmSslVerify; }
 
     // ── RAG getters ────────────────────────────────────────────
     public boolean isRagEnabled()           { return ragEnabled; }

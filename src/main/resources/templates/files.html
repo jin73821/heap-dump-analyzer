@@ -40,8 +40,13 @@
                       border-radius: 8px; font-size: 13px;
                       outline: none; background: #fff; }
         .search-bar:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
-        .table-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-        .table-toolbar .search-bar { flex: 1; }
+        .table-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+        .table-toolbar .search-bar { flex: 1 1 220px; min-width: 200px; }
+        .filter-sel { padding: 8px 28px 8px 10px; font-size: 13px;
+                      border: 1px solid #E5E7EB; border-radius: 8px;
+                      background: #fff; cursor: pointer; color: #374151;
+                      min-width: 140px; outline: none; }
+        .filter-sel:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
         .page-size-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
         .page-size-label { font-size: 12px; color: #6B7280; white-space: nowrap; }
         .page-size-select { padding: 8px 28px 8px 10px; font-size: 13px; border: 1px solid #E5E7EB;
@@ -182,8 +187,13 @@
             .ftable .col-date, .ftable .col-compressed, .ftable .col-hide-sm { display: none; }
             .page-stats { gap: 10px; }
             .ftable { min-width: 500px; }
-            .table-toolbar { flex-direction: column; align-items: stretch; }
-            .page-size-wrap { justify-content: flex-end; }
+            /* 콤팩트 mobile 툴바: 검색 풀폭, 서버·기간 50/50, 나머지 잔여 폭 분배 */
+            .table-toolbar { gap: 8px; }
+            .table-toolbar .search-bar { flex: 1 1 100%; min-width: 0; padding: 9px 12px; }
+            .filter-sel { flex: 1 1 calc(50% - 4px); min-width: 0; padding: 8px 28px 8px 10px; }
+            .select-toggle-btn { flex: 0 0 auto; }
+            .deleted-toggle { flex: 1 1 auto; justify-content: center; }
+            .page-size-wrap { flex: 1 1 auto; justify-content: flex-end; }
             .pagination-bar { flex-direction: column; align-items: stretch; }
             .pg-list { justify-content: center; flex-wrap: wrap; }
         }
@@ -217,7 +227,19 @@
 
     <div class="table-toolbar">
         <input type="text" class="search-bar" id="searchInput"
-               placeholder="Search files..." oninput="onSearchInput()">
+               placeholder="파일명·서버명으로 검색..." oninput="onSearchInput()">
+        <select class="filter-sel" id="serverFilter" onchange="onFilterChange()" title="서버별 필터">
+            <option value="">서버: 전체</option>
+            <option value="__local__">Local (서버 미지정)</option>
+            <option th:each="s : ${serverNames}" th:value="${s}" th:text="${s}">server1</option>
+        </select>
+        <select class="filter-sel" id="periodFilter" onchange="onFilterChange()" title="기간 필터">
+            <option value="all" selected>기간: 전체</option>
+            <option value="today">오늘</option>
+            <option value="7d">최근 7일</option>
+            <option value="30d">최근 30일</option>
+            <option value="90d">최근 90일</option>
+        </select>
         <button type="button" class="select-toggle-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="다중 선택 모드">
             <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
             <span id="selectModeBtnLabel">선택</span>
@@ -673,9 +695,46 @@ function updateSortIndicators() {
 
 function applyFilter() {
     var q = (document.getElementById('searchInput').value || '').toLowerCase();
+    var serverSel = document.getElementById('serverFilter');
+    var periodSel = document.getElementById('periodFilter');
+    var server = serverSel ? serverSel.value : '';
+    var period = periodSel ? periodSel.value : 'all';
+
+    // 기간 필터: epoch 임계값 산정 (period === 'all' 이면 0)
+    var now = Date.now();
+    var dayMs = 24 * 60 * 60 * 1000;
+    var periodThreshold = 0;
+    if (period === 'today') {
+        var d = new Date(); d.setHours(0, 0, 0, 0);
+        periodThreshold = d.getTime();
+    } else if (period === '7d')  periodThreshold = now - 7 * dayMs;
+    else if (period === '30d') periodThreshold = now - 30 * dayMs;
+    else if (period === '90d') periodThreshold = now - 90 * dayMs;
+
     _filteredRows = _allRows.filter(function(el) {
         if (!_showDeleted && el.getAttribute('data-deleted') === 'true') return false;
-        if (q && (el.getAttribute('data-name') || '').toLowerCase().indexOf(q) === -1) return false;
+
+        // 검색어: 파일명 + 서버명 모두에서 매치
+        if (q) {
+            var name = (el.getAttribute('data-name') || '').toLowerCase();
+            var srv  = (el.getAttribute('data-sort-server') || '').toLowerCase();
+            if (name.indexOf(q) === -1 && srv.indexOf(q) === -1) return false;
+        }
+
+        // 서버 필터
+        if (server) {
+            var rowServer = el.getAttribute('data-sort-server') || '';
+            if (server === '__local__') {
+                if (rowServer !== '') return false;     // Local = 서버명 빈 값
+            } else if (rowServer !== server) return false;
+        }
+
+        // 기간 필터
+        if (periodThreshold > 0) {
+            var ts = parseFloat(el.getAttribute('data-sort-date')) || 0;
+            if (ts < periodThreshold) return false;
+        }
+
         return true;
     });
     _currentPage = 1;
@@ -683,6 +742,7 @@ function applyFilter() {
 }
 
 function onSearchInput() { applyFilter(); }
+function onFilterChange() { applyFilter(); }
 function onToggleShowDeleted() {
     _showDeleted = document.getElementById('showDeletedChk').checked;
     localStorage.setItem('filesShowDeleted', String(_showDeleted));

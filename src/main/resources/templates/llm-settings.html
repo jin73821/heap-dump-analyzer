@@ -198,6 +198,14 @@
                 <input type="text" id="llmModelInput" placeholder="Model ID" style="display:none;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:200px">
             </div>
         </div>
+        <!-- SSL Verify -->
+        <div class="s-row">
+            <span class="s-key">SSL Verify</span>
+            <div style="display:flex;align-items:center;gap:8px">
+                <input type="checkbox" id="llmSslVerify" style="width:16px;height:16px">
+                <span class="setting-desc" style="margin-top:0">사내 자체 서명 인증서 사용 시 해제. 운영 권장값: ON (JVM truststore에 사내 CA 등록 후 ON 유지)</span>
+            </div>
+        </div>
     </div>
 
     <!-- API Key -->
@@ -388,6 +396,9 @@ function loadLlmSettings() {
         selectOption('llmMaxInputTokens', String(llm.maxInputTokens || 8000));
         selectOption('llmMaxOutputTokens', String(llm.maxOutputTokens || 4000));
 
+        var sslEl = document.getElementById('llmSslVerify');
+        if (sslEl) sslEl.checked = llm.sslVerify !== false;
+
         var chatPromptEl = document.getElementById('llmChatPromptInput');
         if (chatPromptEl && llm.chatSystemPrompt) chatPromptEl.value = llm.chatSystemPrompt;
 
@@ -470,13 +481,15 @@ function saveLlmConfig() {
     if (!apiUrl) { toast('API URL is required', 'error'); return; }
     if (!model) { toast('Model is required', 'error'); return; }
 
+    var sslVerify = document.getElementById('llmSslVerify').checked;
+
     fetch('/api/llm/config', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({provider:provider, apiUrl:apiUrl, model:model, maxInputTokens:maxIn, maxOutputTokens:maxOut})
+        body: JSON.stringify({provider:provider, apiUrl:apiUrl, model:model, maxInputTokens:maxIn, maxOutputTokens:maxOut, sslVerify:sslVerify})
     })
     .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
-    .then(function(d){ toast('LLM config saved (Provider: ' + d.provider + ', Model: ' + d.model + ')', 'success'); })
+    .then(function(d){ toast('LLM config saved (Provider: ' + d.provider + ', Model: ' + d.model + ', SSL: ' + (d.sslVerify ? 'ON' : 'OFF') + ')', 'success'); })
     .catch(function(e){ toast('Save failed: ' + e.message, 'error'); });
 }
 

@@ -381,10 +381,10 @@
             <div class="setting-row">
                 <div>
                     <div class="setting-label">SSH local user</div>
-                    <div class="setting-desc">SSH/SCP 실행 시 로컬 계정 (runuser 로 전환)</div>
+                    <div class="setting-desc">SSH/SCP 실행 시 로컬 계정 (runuser 로 전환). 빈 값으로 저장 시 현재 프로세스 기동 계정으로 자동 채움.</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:6px">
-                    <input id="sshLocalUserInput" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;width:120px" placeholder="sscuser">
+                    <input id="sshLocalUserInput" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;width:140px" placeholder="비워두면 자동 채움">
                     <button class="heap-btn-apply" style="padding:5px 12px;font-size:12px" onclick="saveSshLocalUser()">Save</button>
                 </div>
             </div>

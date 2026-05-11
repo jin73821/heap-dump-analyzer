@@ -14,9 +14,11 @@
                   transition: left .25s cubic-bezier(.4,0,.2,1);
                   background: #fff; border-bottom: 1px solid #E5E7EB;
                   display: flex; align-items: center; justify-content: space-between;
-                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-        .topbar-title { font-size: 16px; font-weight: 700; }
-        .topbar-right { display: flex; align-items: center; gap: 6px; }
+                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); gap: 10px; }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+        .topbar-title { font-size: 16px; font-weight: 700;
+                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .topbar-right { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
         .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
                       border-radius: 6px; background: transparent; color: #6B7280;
                       cursor: pointer; text-decoration: none; }
@@ -84,8 +86,11 @@
         .pg-btn:disabled { color: #D1D5DB; cursor: not-allowed; background: #F9FAFB; }
         .pg-ellipsis { font-size: 12px; color: #9CA3AF; padding: 0 4px; }
 
+        .actions-cell { white-space: nowrap; }
         .action-btn { padding: 5px 12px; border: 1px solid #E5E7EB; border-radius: 5px;
-                      background: transparent; font-size: 12px; cursor: pointer; color: #6B7280; }
+                      background: transparent; font-size: 12px; cursor: pointer; color: #6B7280;
+                      font-family: inherit; }
+        .action-btn + .action-btn { margin-left: 4px; }
         .action-btn:hover { border-color: #93C5FD; background: #EFF6FF; color: #2563EB; }
         .action-btn.scan { background: #059669; color: #fff; border-color: #059669; }
         .action-btn.scan:hover { background: #047857; }
@@ -163,6 +168,33 @@
             .page-size-wrap { justify-content: space-between; }
             .pagination-bar { flex-direction: column; align-items: stretch; }
             .pg-list { justify-content: center; }
+            .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        }
+        @media (max-width: 640px) {
+            .topbar { padding: 0 12px; gap: 8px; }
+            .topbar-title { font-size: 15px; }
+            .topbar-right { gap: 4px; }
+            .topbar-right .topbar-btn { padding: 5px 8px; font-size: 11px; }
+            /* 우선순위 낮은 컬럼 숨김 (SSH 계정/덤프 경로/자동탐지) */
+            .stable .col-hide-sm { display: none; }
+            .stable th, .stable td { padding: 10px 10px; }
+            .stable { font-size: 12px; }
+            /* 작업 버튼 정확한 2×2 그리드 (스캔·테스트 / 수정·삭제) */
+            .actions-cell {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 4px;
+                min-width: 110px;
+            }
+            .actions-cell .action-btn {
+                padding: 6px 6px; font-size: 11px; margin: 0;
+                width: 100%; text-align: center; line-height: 1.2;
+            }
+            .actions-cell .action-btn + .action-btn { margin-left: 0; }
+            .page-hdr { gap: 6px; }
+            .page-ttl { font-size: 16px; }
+            .btn-primary { padding: 7px 14px; font-size: 12px; }
+            .badge { font-size: 10px; padding: 2px 7px; }
         }
         @media (min-width: 1024px) {
             .stable { font-size: 15px; }
@@ -240,10 +272,10 @@
                     <tr>
                         <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="onHeaderSort(this)">이름 <span class="sort-arrow">▲</span></th>
                         <th class="sortable" data-sort-key="host" data-sort-type="str" onclick="onHeaderSort(this)">호스트 <span class="sort-arrow">▲</span></th>
-                        <th class="sortable" data-sort-key="sshuser" data-sort-type="str" onclick="onHeaderSort(this)">SSH 계정 <span class="sort-arrow">▲</span></th>
-                        <th class="sortable" data-sort-key="dumppath" data-sort-type="str" onclick="onHeaderSort(this)">덤프 경로 <span class="sort-arrow">▲</span></th>
+                        <th class="col-hide-sm sortable" data-sort-key="sshuser" data-sort-type="str" onclick="onHeaderSort(this)">SSH 계정 <span class="sort-arrow">▲</span></th>
+                        <th class="col-hide-sm sortable" data-sort-key="dumppath" data-sort-type="str" onclick="onHeaderSort(this)">덤프 경로 <span class="sort-arrow">▲</span></th>
                         <th class="sortable" data-sort-key="status" data-sort-type="str" onclick="onHeaderSort(this)">상태 <span class="sort-arrow">▲</span></th>
-                        <th class="sortable" data-sort-key="autodetect" data-sort-type="str" onclick="onHeaderSort(this)">자동탐지 <span class="sort-arrow">▲</span></th>
+                        <th class="col-hide-sm sortable" data-sort-key="autodetect" data-sort-type="str" onclick="onHeaderSort(this)">자동탐지 <span class="sort-arrow">▲</span></th>
                         <th>작업</th>
                     </tr>
                 </thead>
@@ -262,8 +294,8 @@
                                style="color:#2563EB;text-decoration:none">server1</a>
                         </td>
                         <td th:text="${s.host + ':' + s.port}">192.168.1.1:22</td>
-                        <td th:text="${s.sshUser}">sscuser</td>
-                        <td style="font-size:12px;color:#6B7280;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                        <td class="col-hide-sm" th:text="${s.sshUser}">sscuser</td>
+                        <td class="col-hide-sm" style="font-size:12px;color:#6B7280;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
                             th:title="${s.dumpPath}"
                             th:with="paths=${s.dumpPaths}">
                             <span th:text="${#lists.isEmpty(paths) ? '-' : paths[0]}">/opt/dumps</span>
@@ -277,11 +309,11 @@
                                   th:title="${s.lastError}">실패</span>
                             <span th:if="${s.enabled and (s.connStatus == null or s.connStatus == 'UNKNOWN')}" class="badge badge-off">미확인</span>
                         </td>
-                        <td>
+                        <td class="col-hide-sm">
                             <span class="badge badge-auto" th:if="${s.autoDetect}">ON</span>
                             <span class="badge badge-off" th:unless="${s.autoDetect}">OFF</span>
                         </td>
-                        <td style="white-space:nowrap">
+                        <td class="actions-cell">
                             <button class="action-btn scan"
                                     th:data-id="${s.id}" th:data-name="${s.name}"
                                     onclick="scanServer(this.dataset.id, this.dataset.name)">스캔</button>

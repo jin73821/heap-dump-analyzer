@@ -22,7 +22,7 @@
         .back-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
                     border-radius: 6px; background: transparent; color: #6B7280;
                     cursor: pointer; text-decoration: none; }
-        .main { max-width: 1100px; margin: 0 auto; padding: 24px 20px;
+        .main { max-width: 1400px; margin: 0 auto; padding: 24px 20px;
                 padding-left: calc(var(--banner-w, 220px) + 20px);
                 transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
 
@@ -215,7 +215,7 @@
                             <div class="delta-bar-wrap">
                                 <div class="delta-bar"
                                      th:classappend="${diff.increase} ? ' up' : ' down'"
-                                     th:style="'width:' + ${T(java.lang.Math).min(80, T(java.lang.Math).abs(diff.delta) / 1048576)} + 'px'">
+                                     th:style="'width:' + ${T(java.lang.Math).min(80L, T(java.lang.Math).abs(diff.delta) / 1048576L)} + 'px'">
                                 </div>
                             </div>
                         </td>
@@ -262,7 +262,7 @@
     <script th:if="${baseResult == null and error == null}">
     (function() {
         fetch('/api/history').then(function(r) { return r.json(); }).then(function(items) {
-            var analyzed = (items || []).filter(function(it) { return it.status === 'SUCCESS'; });
+            var analyzed = (items || []).filter(function(it) { return it.status === 'SUCCESS' && it.fileDeleted !== true; });
             var loading = document.getElementById('cmpPickerLoading');
             var empty = document.getElementById('cmpPickerEmpty');
             var form = document.getElementById('cmpPickerForm');
