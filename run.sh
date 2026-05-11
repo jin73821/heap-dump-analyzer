@@ -10,30 +10,77 @@ if [ -n "$RUNNING_PIDS" ]; then
     exit 1
 fi
 
-# nohup 기동 — stdout/stderr 를 nohup.out 으로 (앞 내용은 비우고 시작)
-# stdbuf -oL -eL : 파일로 redirect 되어도 라인 단위로 flush (Spring Boot 부팅 로그가 한 줄씩 즉시 보이도록)
+# 기동 — setsid 로 새 session/process group 에 분리해서 띄움
+# (비대화식 셸은 job control 이 꺼져 있어 `nohup ... &` 만으로는 자바 프로세스가
+#  셸과 같은 PGID 를 공유 → 터미널 Ctrl+C(SIGINT) 가 자바 앱에도 전달되어
+#  "[Shutdown] Application is shutting down (signal received)" 로그가 남는 문제 발생.
+#  setsid 로 새 PGID 에 옮기면 Ctrl+C 가 도달하지 않음.)
+# stdbuf -oL -eL : 파일로 redirect 되어도 라인 단위로 flush
+# < /dev/null    : stdin 도 명시적으로 분리
 : > "$NOHUP_LOG"
-nohup stdbuf -oL -eL java -jar "$JAR" --server.port=18080 > "$NOHUP_LOG" 2>&1 &
+setsid nohup stdbuf -oL -eL java -jar "$JAR" --server.port=18080 \
+    < /dev/null > "$NOHUP_LOG" 2>&1 &
 PID=$!
+disown $PID 2>/dev/null || true
 echo "[run] Started: PID=$PID  (log: $NOHUP_LOG)"
+echo "[run] (Ctrl+C 는 로그 스트리밍만 중단합니다. 앱은 계속 실행됩니다.)"
 echo "----------------------------------------------------------------------"
 
-# 부팅 완료 또는 실패 메시지가 나올 때까지 nohup.out 을 터미널로 스트리밍
-# (Ctrl+C 로 즉시 detach 가능 — 앱은 계속 실행됨)
+# 부팅 완료/실패 메시지가 나올 때까지 nohup.out 을 터미널로 스트리밍
 # stdbuf -oL : tail 의 출력도 라인 단위 flush 강제
 stdbuf -oL tail -n +1 -F "$NOHUP_LOG" 2>/dev/null &
 TAIL_PID=$!
-trap "kill $TAIL_PID 2>/dev/null" EXIT INT
+
+# Ctrl+C 처리: tail 만 중단하고 플래그 set (자바는 setsid 로 분리되어 영향 없음)
+INTERRUPTED=0
+on_interrupt() {
+    INTERRUPTED=1
+    kill "$TAIL_PID" 2>/dev/null
+}
+trap on_interrupt INT TERM
 
 for i in $(seq 1 60); do
-    if grep -qE "Started HeapAnalyzerApplication|APPLICATION FAILED TO START|Exception in thread \"main\"" "$NOHUP_LOG" 2>/dev/null; then
+    [ $INTERRUPTED -eq 1 ] && break
+    # 프로세스가 사라졌으면 즉시 중단
+    if ! kill -0 "$PID" 2>/dev/null; then
+        sleep 1
+        break
+    fi
+    if grep -qE "Started HeapAnalyzerApplication|APPLICATION FAILED TO START|Exception in thread \"main\"|\[Shutdown\] Application is shutting down" "$NOHUP_LOG" 2>/dev/null; then
         sleep 1   # 마지막 줄까지 출력되도록 잠시 대기
         break
     fi
     sleep 1
 done
 
-kill $TAIL_PID 2>/dev/null
-trap - EXIT INT
+kill "$TAIL_PID" 2>/dev/null
+wait "$TAIL_PID" 2>/dev/null
+trap - INT TERM
 echo "----------------------------------------------------------------------"
-echo "[run] Done. (앱은 계속 실행 중. 'tail -f $NOHUP_LOG' 로 계속 추적 가능)"
+
+# 최종 상태 판정
+if [ $INTERRUPTED -eq 1 ]; then
+    if kill -0 "$PID" 2>/dev/null; then
+        echo "[run] 로그 스트리밍 중단 (Ctrl+C). 앱은 계속 실행 중 (PID=$PID)."
+        echo "[run] 'tail -f $NOHUP_LOG' 로 추적, 'bash stop.sh' 로 종료."
+        exit 0
+    else
+        echo "[run] 중단됨. 앱이 실행 중이 아닙니다. '$NOHUP_LOG' 를 확인하세요."
+        exit 1
+    fi
+fi
+
+if kill -0 "$PID" 2>/dev/null && grep -q "Started HeapAnalyzerApplication" "$NOHUP_LOG" 2>/dev/null; then
+    echo "[run] Done. (앱 정상 기동, PID=$PID. 'tail -f $NOHUP_LOG' 로 계속 추적 가능)"
+elif grep -qE "APPLICATION FAILED TO START|Exception in thread \"main\"" "$NOHUP_LOG" 2>/dev/null; then
+    echo "[run] 기동 실패: '$NOHUP_LOG' 를 확인하세요."
+    exit 1
+elif grep -q "\[Shutdown\] Application is shutting down" "$NOHUP_LOG" 2>/dev/null; then
+    echo "[run] 기동 중 종료 신호 수신: '$NOHUP_LOG' 를 확인하세요."
+    exit 1
+elif ! kill -0 "$PID" 2>/dev/null; then
+    echo "[run] 프로세스가 종료되었습니다 (PID=$PID). '$NOHUP_LOG' 를 확인하세요."
+    exit 1
+else
+    echo "[run] 기동 미완료 (60초 타임아웃). '$NOHUP_LOG' 를 확인하세요."
+fi

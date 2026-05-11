@@ -1,5 +1,58 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-11] Chart.js 사내망 로드 실패 → JAR 내부 정적 리소스로 번들
+
+**변경 파일:**
+- `src/main/resources/static/js/lib/chart.umd.min.js` (신규, 204,948 bytes — Chart.js v4.4.0 UMD)
+- `src/main/resources/templates/index.html`
+- `src/main/resources/templates/history.html`
+- `src/main/resources/templates/analyze.html`
+- `CHANGELOG.md`
+
+### 변경 의도
+- 사내 시스템(폐쇄망)으로 마이그레이션 후 분석 화면 진입 시 브라우저 콘솔에
+  `Failed to load resource: net::ERR_NAME_NOT_RESOLVED chart.umd.min.js:1` /
+  `Uncaught ReferenceError: Chart is not defined at initCharts` 에러 발생.
+- 원인: 세 템플릿(`index.html` / `history.html` / `analyze.html`)이 `https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js`
+  CDN 을 직접 참조 → 사내망에서 DNS 해석 실패.
+
+### 내역
+- Chart.js v4.4.0 UMD 빌드(`chart.umd.js`, 204,948 bytes, 이미 minified)를 npm tarball 에서 추출해
+  `src/main/resources/static/js/lib/chart.umd.min.js` 로 배치 → JAR 내부에 포함되어 외부 의존성 제거.
+- 세 템플릿의 `<script src="https://cdn.jsdelivr.net/.../chart.umd.min.js">` →
+  `<script src="/js/lib/chart.umd.min.js">` 로 일괄 교체.
+- 기존 `static/js/chart.js` 는 프로젝트 차트 설정(라이브러리 아님)이므로 별도 `lib/` 디렉토리에 분리.
+
+### 검증
+- `mvn clean package -DskipTests` 빌드 성공, JAR(60.1MB) 내부 `BOOT-INF/classes/static/js/lib/chart.umd.min.js`
+  204,948 bytes 확인.
+- 기동 후 `GET /js/lib/chart.umd.min.js` → 200 OK, content-type=application/javascript, size=204,948.
+
+## [2026-05-11] run.sh / restart.sh — Ctrl+C 가 자바 앱까지 죽이는 문제 보완
+
+**변경 파일:**
+- `run.sh`
+- `restart.sh`
+- `CHANGELOG.md`
+
+### 변경 의도
+- `bash run.sh` 또는 `bash restart.sh` 실행 후 로그 스트리밍 중 Ctrl+C 를 누르면
+  `[Shutdown] Application is shutting down (signal received)` 가 nohup.out 에 찍히며 앱이 같이 종료되는 문제.
+- 원인: 비대화식 셸 스크립트는 job control 이 꺼져 있어 `nohup ... &` 만으로는
+  자바 프로세스가 셸과 **같은 PGID** 를 공유 → 터미널 Ctrl+C(SIGINT) 가 PGID 전체에 전달되어
+  자바 앱의 shutdown hook 까지 발동. `nohup` 은 SIGHUP 만 무시하므로 SIGINT 는 막지 못함.
+
+### 내역
+- **`setsid nohup ... < /dev/null > ... 2>&1 &`** — `setsid` 로 자바 프로세스를 새 session/PGID 에 분리.
+  터미널과의 연결이 끊겨 Ctrl+C 가 더 이상 자바 앱에 도달하지 않음. `disown` 으로 셸 job list 에서도 제거.
+- **trap 핸들러 개선** — `INT/TERM` 발생 시 `INTERRUPTED=1` 플래그 + tail 만 종료 후 루프 탈출.
+  종료 시 "로그 스트리밍 중단. 앱은 계속 실행 중 (PID=N)" 메시지 출력 후 `exit 0`.
+- **부팅 감지 패턴 확장** — grep 패턴에 `[Shutdown] Application is shutting down` 포함.
+  setsid 가 적용된 정상 환경에서는 발생하지 않지만, 외부 요인(다른 터미널의 `bash stop.sh`, OOM kill 등)으로
+  기동 도중 죽는 경우를 빠르게 감지/메시지 출력.
+- **프로세스 사망 즉시 감지** — 루프마다 `kill -0 $PID` 로 PID 존재 확인. 사라지면 즉시 break.
+- **최종 상태 메시지 세분화** — 정상 기동 / FAILED TO START / 종료 신호 수신 / 프로세스 사망 / 타임아웃 5가지 케이스 분리.
+
 ## [2026-05-08] Target Servers — SCP 전송 진행률 실시간 표시 (MB 단위 + 진행바)
 
 **변경 파일:**
