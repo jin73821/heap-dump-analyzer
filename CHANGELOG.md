@@ -1,5 +1,48 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-12] Phase 7-3 — RagConfigService 분리 + RagService/EmbeddingService 재배선
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/service/RagConfigService.java`
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- 수정: `src/main/java/com/heapdump/analyzer/service/RagService.java`
+- 수정: `src/main/java/com/heapdump/analyzer/service/EmbeddingService.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- Phase 4A-3. RAG 26 필드 + getter/setter + AES 암호화 + settings 영속화를 별도 컴포넌트로 분리.
+- `RagService`/`EmbeddingService` 생성자 재배선 — `HeapDumpAnalyzerService` 대신 `RagConfigService` 직접 주입 (구조 단순화).
+- `HeapDumpAnalyzerService` 의 RAG 메서드는 facade 유지 (Controller 무변경).
+
+### 내역
+- `RagConfigService` (421 라인):
+  - 26 RAG 필드 (기본 7 + 검색 6 + 청킹 6 + semantic-server 4 + embedding/kNN 8)
+  - `@PostConstruct init()` — config 로부터 초기화 (`ragPassword`/`ragApiKey`/`ragEmbeddingApiKey` AES 복호화)
+  - 32 개 getter + 6 개 마스킹/`isXxxSet`
+  - 5 개 그룹 setter: `setRagEnabled`/`setRagConfig`/`setRagSemanticConfig`/`setRagEmbeddingConfig`/`setRagChunkingConfig`
+  - `applyFromSettings(Map)` / `collectSettings(Map)` / `collectApplicationProperties(Map)` 영속화 hook
+  - 자체 `encryptForStorage()` (AES ENC 포맷)
+- `HeapDumpAnalyzerService`:
+  - 26 RAG 필드 제거
+  - 생성자에 `RagConfigService` 주입
+  - `loadPersistedSettings` RAG 33 줄 inline 복원 → `ragConfig.applyFromSettings(saved)` 한 줄
+  - `persistSettings` RAG 33 줄 → `ragConfig.collectSettings(settings)` 한 줄
+  - `syncApplicationProperties` RAG 33 줄 → `ragConfig.collectApplicationProperties(updates)` 한 줄
+  - RAG getter/setter 36 개 모두 facade 위임 (시그니처 유지)
+  - `encryptForStorage`/`trimOrEmpty` 헬퍼 제거 (RagConfigService 내부로 이동)
+- `RagService` 생성자: `(HeapDumpAnalyzerService, EmbeddingService)` → `(RagConfigService, EmbeddingService)`. 33 개 getter 호출 모두 `ragConfig.xxx()` 로 치환.
+- `EmbeddingService` 생성자: `(HeapDumpAnalyzerService)` → `(RagConfigService)`. 7 개 호출 치환.
+
+### 검증
+- 빌드 성공.
+- `Started HeapAnalyzerApplication` + `Restored 13 saved results from disk`.
+- `/settings/rag` 페이지 200 OK, 70,084 bytes.
+- `/api/settings/rag` 응답: `enabled=False`, `searchMode=keyword`, `index=heap-knowledge-base`, `passwordSet=True` — AES 복호화 정상.
+- `/api/llm/test-connection` → genspark + claude-sonnet-4-5 성공 (LLM 영향 없음 확인).
+- `HeapDumpAnalyzerService` 라인 수: **2,644 → 2,327** (-317, Phase 6-1 이후 누적 -1,254 라인, -35%).
+
+---
+
 ## [2026-05-12] Phase 7-2 — LlmConfigService 분리
 
 **변경 파일:**

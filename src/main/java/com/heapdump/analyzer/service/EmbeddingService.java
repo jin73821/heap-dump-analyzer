@@ -35,10 +35,10 @@ public class EmbeddingService {
     private static final Logger logger = LoggerFactory.getLogger(EmbeddingService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final HeapDumpAnalyzerService analyzerService;
+    private final RagConfigService ragConfig;
 
-    public EmbeddingService(HeapDumpAnalyzerService analyzerService) {
-        this.analyzerService = analyzerService;
+    public EmbeddingService(RagConfigService ragConfig) {
+        this.ragConfig = ragConfig;
     }
 
     /**
@@ -57,11 +57,11 @@ public class EmbeddingService {
             throw new IllegalArgumentException("Embedding 입력 텍스트가 비어 있습니다");
         }
 
-        String provider = pickStr(overrides, "provider", analyzerService.getRagEmbeddingProvider());
-        String url      = pickStr(overrides, "apiUrl",   analyzerService.getRagEmbeddingApiUrl());
-        String apiKey   = pickStr(overrides, "apiKey",   analyzerService.getRagEmbeddingApiKey());
-        String model    = pickStr(overrides, "model",    analyzerService.getRagEmbeddingModel());
-        int timeout     = pickInt(overrides, "timeoutSeconds", analyzerService.getRagEmbeddingTimeoutSeconds());
+        String provider = pickStr(overrides, "provider", ragConfig.getRagEmbeddingProvider());
+        String url      = pickStr(overrides, "apiUrl",   ragConfig.getRagEmbeddingApiUrl());
+        String apiKey   = pickStr(overrides, "apiKey",   ragConfig.getRagEmbeddingApiKey());
+        String model    = pickStr(overrides, "model",    ragConfig.getRagEmbeddingModel());
+        int timeout     = pickInt(overrides, "timeoutSeconds", ragConfig.getRagEmbeddingTimeoutSeconds());
 
         if (url == null || url.trim().isEmpty()) {
             throw new IllegalStateException("Embedding API URL이 설정되지 않았습니다");
@@ -114,8 +114,8 @@ public class EmbeddingService {
             float[] vec = embed("test", overrides);
             result.put("success", true);
             result.put("dimension", vec != null ? vec.length : 0);
-            result.put("provider", pickStr(overrides, "provider", analyzerService.getRagEmbeddingProvider()));
-            result.put("model", pickStr(overrides, "model", analyzerService.getRagEmbeddingModel()));
+            result.put("provider", pickStr(overrides, "provider", ragConfig.getRagEmbeddingProvider()));
+            result.put("model", pickStr(overrides, "model", ragConfig.getRagEmbeddingModel()));
             return result;
         } catch (Exception e) {
             result.put("success", false);

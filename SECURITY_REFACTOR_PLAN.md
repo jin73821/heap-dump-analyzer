@@ -52,7 +52,11 @@
     - settings.json/application.properties 영속화는 `applyFromSettings`/`collectSettings`/`collectApplicationProperties` hook 으로 분리
     - 외부 API facade 유지 — Controller 수정 없음
     - `HeapDumpAnalyzerService` 3,445 → 2,644 (-801 라인)
-  - [ ] **4A-3. RagConfigService 분리** (보류) — RAG 26 필드, 별도 PR. `RagService`/`EmbeddingService` 생성자 재배선 필요.
+  - [x] **4A-3. RagConfigService 분리** (2026-05-12 완료, Phase 7-3)
+    - 26 RAG 필드 + 32 getter + 5 그룹 setter + AES 암호화 + settings 영속화 hook 이전
+    - `RagService`/`EmbeddingService` 생성자 재배선 — `HeapDumpAnalyzerService` 대신 `RagConfigService` 직접 주입
+    - `HeapDumpAnalyzerService` 의 RAG 메서드는 facade 유지 (Controller 무변경)
+    - `HeapDumpAnalyzerService` 2,644 → 2,327 (-317 라인)
   - [~] **4A-4. FileManagementService 분리** — *Phase 1 완료 (2026-05-12, Phase 7-1)*
     - [x] **4A-4 Phase 1**: `listFiles`/`checkDuplicate`/`computePartialHash`/`generateUniqueName`/`isValidHeapDumpFile`/`stripExtension`/`getExtension`/`dumpFilesDirectory` 8 메서드. `HeapDumpAnalyzerService` 3,581 → 3,445 (-136 라인)
     - [ ] **4A-4 Phase 2**: I/O 메서드 (`uploadFile`/`deleteFile`/`getFile`/`compressDumpFile`/`decompressDumpFile`/마이그레이션) — 보류

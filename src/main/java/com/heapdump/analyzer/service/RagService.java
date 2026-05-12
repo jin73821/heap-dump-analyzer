@@ -30,11 +30,11 @@ public class RagService {
     private static final Logger logger = LoggerFactory.getLogger(RagService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final HeapDumpAnalyzerService analyzerService;
+    private final RagConfigService ragConfig;
     private final EmbeddingService embeddingService;
 
-    public RagService(HeapDumpAnalyzerService analyzerService, EmbeddingService embeddingService) {
-        this.analyzerService = analyzerService;
+    public RagService(RagConfigService ragConfig, EmbeddingService embeddingService) {
+        this.ragConfig = ragConfig;
         this.embeddingService = embeddingService;
     }
 
@@ -45,7 +45,7 @@ public class RagService {
      * 청킹 활성화 시: 각 검색 결과의 본문을 작은 청크로 분할하여 전체 글자수 한도 내에서 주입.
      */
     public String fetchContextForLlm(String query) {
-        if (!analyzerService.isRagEnabled()) return "";
+        if (!ragConfig.isRagEnabled()) return "";
         if (query == null || query.trim().isEmpty()) return "";
 
         Map<String, Object> result = search(query, null);
@@ -55,9 +55,9 @@ public class RagService {
         List<Map<String, Object>> hits = (List<Map<String, Object>>) result.get("hits");
         if (hits == null || hits.isEmpty()) return "";
 
-        boolean chunking = analyzerService.isRagChunkingEnabled();
-        int maxTotalChars = analyzerService.getRagChunkingMaxTotalChars();
-        int maxPerDoc = analyzerService.getRagChunkingMaxChunksPerDoc();
+        boolean chunking = ragConfig.isRagChunkingEnabled();
+        int maxTotalChars = ragConfig.getRagChunkingMaxTotalChars();
+        int maxPerDoc = ragConfig.getRagChunkingMaxChunksPerDoc();
 
         StringBuilder sb = new StringBuilder();
         sb.append("\n\n[참고 자료 (RAG)]\n");
@@ -75,9 +75,9 @@ public class RagService {
             List<String> chunks;
             if (chunking) {
                 chunks = chunkText(text,
-                        analyzerService.getRagChunkingStrategy(),
-                        analyzerService.getRagChunkingSize(),
-                        analyzerService.getRagChunkingOverlap(),
+                        ragConfig.getRagChunkingStrategy(),
+                        ragConfig.getRagChunkingSize(),
+                        ragConfig.getRagChunkingOverlap(),
                         maxPerDoc);
             } else {
                 chunks = Collections.singletonList(text);
@@ -224,18 +224,18 @@ public class RagService {
     public Map<String, Object> search(String query, Map<String, Object> overrides) {
         Map<String, Object> result = new LinkedHashMap<>();
 
-        String url    = pickStr(overrides, "url",    analyzerService.getRagElasticsearchUrl());
-        String index  = pickStr(overrides, "index",  analyzerService.getRagIndex());
-        String auth   = pickStr(overrides, "authType", analyzerService.getRagAuthType());
-        String user   = pickStr(overrides, "username", analyzerService.getRagUsername());
-        String pass   = pickStr(overrides, "password", analyzerService.getRagPassword());
-        String apiKey = pickStr(overrides, "apiKey",   analyzerService.getRagApiKey());
-        boolean sslVerify = pickBool(overrides, "sslVerify", analyzerService.isRagSslVerify());
-        String mode   = pickStr(overrides, "searchMode", analyzerService.getRagSearchMode());
-        String field  = pickStr(overrides, "textField",  analyzerService.getRagTextField());
-        int topK      = pickInt(overrides, "topK",     analyzerService.getRagTopK());
-        double minScore = pickDouble(overrides, "minScore", analyzerService.getRagMinScore());
-        int timeoutSec = pickInt(overrides, "timeoutSeconds", analyzerService.getRagTimeoutSeconds());
+        String url    = pickStr(overrides, "url",    ragConfig.getRagElasticsearchUrl());
+        String index  = pickStr(overrides, "index",  ragConfig.getRagIndex());
+        String auth   = pickStr(overrides, "authType", ragConfig.getRagAuthType());
+        String user   = pickStr(overrides, "username", ragConfig.getRagUsername());
+        String pass   = pickStr(overrides, "password", ragConfig.getRagPassword());
+        String apiKey = pickStr(overrides, "apiKey",   ragConfig.getRagApiKey());
+        boolean sslVerify = pickBool(overrides, "sslVerify", ragConfig.isRagSslVerify());
+        String mode   = pickStr(overrides, "searchMode", ragConfig.getRagSearchMode());
+        String field  = pickStr(overrides, "textField",  ragConfig.getRagTextField());
+        int topK      = pickInt(overrides, "topK",     ragConfig.getRagTopK());
+        double minScore = pickDouble(overrides, "minScore", ragConfig.getRagMinScore());
+        int timeoutSec = pickInt(overrides, "timeoutSeconds", ragConfig.getRagTimeoutSeconds());
 
         if (url == null || url.trim().isEmpty()) {
             result.put("success", false);
@@ -321,14 +321,14 @@ public class RagService {
     public Map<String, Object> testConnection(Map<String, Object> overrides) {
         Map<String, Object> result = new LinkedHashMap<>();
 
-        String url    = pickStr(overrides, "url",    analyzerService.getRagElasticsearchUrl());
-        String index  = pickStr(overrides, "index",  analyzerService.getRagIndex());
-        String auth   = pickStr(overrides, "authType", analyzerService.getRagAuthType());
-        String user   = pickStr(overrides, "username", analyzerService.getRagUsername());
-        String pass   = pickStr(overrides, "password", analyzerService.getRagPassword());
-        String apiKey = pickStr(overrides, "apiKey",   analyzerService.getRagApiKey());
-        boolean sslVerify = pickBool(overrides, "sslVerify", analyzerService.isRagSslVerify());
-        int timeoutSec = pickInt(overrides, "timeoutSeconds", analyzerService.getRagTimeoutSeconds());
+        String url    = pickStr(overrides, "url",    ragConfig.getRagElasticsearchUrl());
+        String index  = pickStr(overrides, "index",  ragConfig.getRagIndex());
+        String auth   = pickStr(overrides, "authType", ragConfig.getRagAuthType());
+        String user   = pickStr(overrides, "username", ragConfig.getRagUsername());
+        String pass   = pickStr(overrides, "password", ragConfig.getRagPassword());
+        String apiKey = pickStr(overrides, "apiKey",   ragConfig.getRagApiKey());
+        boolean sslVerify = pickBool(overrides, "sslVerify", ragConfig.isRagSslVerify());
+        int timeoutSec = pickInt(overrides, "timeoutSeconds", ragConfig.getRagTimeoutSeconds());
 
         if (url == null || url.trim().isEmpty()) {
             result.put("success", false);
@@ -416,10 +416,10 @@ public class RagService {
      * Phase 2 — ES 서버측 임베딩 (text_expansion / semantic).
      */
     private void buildSemanticServerQuery(Map<String, Object> body, String query, Map<String, Object> overrides) {
-        String queryType    = pickStr(overrides, "semanticQueryType", analyzerService.getRagSemanticQueryType());
-        String modelId      = pickStr(overrides, "semanticModelId", analyzerService.getRagSemanticModelId());
-        String tokensField  = pickStr(overrides, "semanticTokensField", analyzerService.getRagSemanticTokensField());
-        String semanticField = pickStr(overrides, "semanticField", analyzerService.getRagSemanticField());
+        String queryType    = pickStr(overrides, "semanticQueryType", ragConfig.getRagSemanticQueryType());
+        String modelId      = pickStr(overrides, "semanticModelId", ragConfig.getRagSemanticModelId());
+        String tokensField  = pickStr(overrides, "semanticTokensField", ragConfig.getRagSemanticTokensField());
+        String semanticField = pickStr(overrides, "semanticField", ragConfig.getRagSemanticField());
 
         if (queryType == null || queryType.trim().isEmpty()) queryType = "text_expansion";
 
@@ -455,8 +455,8 @@ public class RagService {
      * Phase 2 — 앱측 임베딩 + kNN.
      */
     private void buildSemanticClientQuery(Map<String, Object> body, String query, int topK, Map<String, Object> overrides) {
-        String vectorField   = pickStr(overrides, "knnVectorField", analyzerService.getRagKnnVectorField());
-        int numCandidates    = pickInt(overrides, "knnNumCandidates", analyzerService.getRagKnnNumCandidates());
+        String vectorField   = pickStr(overrides, "knnVectorField", ragConfig.getRagKnnVectorField());
+        int numCandidates    = pickInt(overrides, "knnNumCandidates", ragConfig.getRagKnnNumCandidates());
         if (vectorField == null || vectorField.trim().isEmpty()) {
             throw new IllegalStateException("kNN 쿼리에는 vector-field 설정이 필요합니다");
         }
