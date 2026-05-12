@@ -1,5 +1,42 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-12] Phase 7-4 — FileManagementService Phase 2 (I/O 메서드)
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/service/FileManagementService.java`
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- Phase 4A-4 Phase 2. Phase 1 (유틸/조회) 에 이어 파일 I/O 메서드를 `FileManagementService` 로 이전.
+- 분석 파이프라인(`analyzeWithProgress`) 결합도 높은 메서드 (`cleanupTmpDir`/`moveZipsToResultDir`/`deleteHistory(DB)`) 는 `HeapDumpAnalyzerService` 잔존.
+- HeapDumpAnalyzerService 내부 31 군데 호출은 private delegate 메서드를 통해 facade 위임.
+
+### 내역
+- `FileManagementService` 추가 메서드 (~300 라인):
+  - 디렉토리 helper: `tmpDirectory`/`resultDirectory(filename)`/`resultJsonFile(filename)`
+  - I/O: `uploadFile(MultipartFile)`/`getFile(filename)`/`deleteFile(filename)`
+  - 압축: `compressDumpFile(File)`/`decompressDumpFile(File, File)`
+  - 정리: `cleanupDuplicateGzFiles(File[])`
+  - 상수: `RESULT_JSON` / `TMP_DIR_NAME`
+- `HeapDumpAnalyzerService` 변경:
+  - `uploadFile`/`getFile`/`deleteFile` 본문(149 라인) → facade 위임 (3 메서드 × 3 라인)
+  - `compressDumpFile`/`decompressDumpFile` 본문(102 라인) → facade 위임 (2 × 3 라인)
+  - `cleanupDuplicateGzFiles` 본문(26 라인) → facade 위임 (3 라인)
+  - private helper (`tmpDirectory`/`resultDirectory`/`resultJsonFile`) facade 위임 — 내부 31 호출 그대로 동작
+- `FormatUtils.formatBytes()` 활용 (HDS 내 `formatBytes` 사용처 제거).
+
+### 검증
+- 빌드 성공.
+- `Started HeapAnalyzerApplication` + 13 캐시 복원.
+- `/`/`/files`/`/history` 페이지 200 OK.
+- `POST /api/upload/check` → `{"status":"OK"}` 정상.
+- `GET /download/{filename}` → 200, 23MB 파일 정상 다운로드.
+- `HeapDumpAnalyzerService` 라인 수: **2,327 → 2,064** (-263).
+- Phase 6-1 이후 누적: **3,581 → 2,064** (-1,517 라인, **-42%**).
+
+---
+
 ## [2026-05-12] Phase 7-3 — RagConfigService 분리 + RagService/EmbeddingService 재배선
 
 **변경 파일:**

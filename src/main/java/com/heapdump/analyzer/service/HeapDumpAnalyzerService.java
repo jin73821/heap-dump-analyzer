@@ -416,7 +416,7 @@ public class HeapDumpAnalyzerService {
     }
 
     private File tmpDirectory() {
-        return new File(config.getHeapDumpDirectory(), TMP_DIR_NAME);
+        return fileMgmt.tmpDirectory();
     }
 
     private File dumpFilesDirectory() {
@@ -1200,54 +1200,7 @@ public class HeapDumpAnalyzerService {
     // ── 파일 관리 ────────────────────────────────────────────────
 
     public String uploadFile(MultipartFile file) throws IOException {
-        if (file.isEmpty()) {
-            logger.warn("[Upload] Rejected: empty file");
-            throw new IllegalArgumentException("File is empty");
-        }
-
-        String originalName = file.getOriginalFilename();
-        String filename = Optional.ofNullable(originalName)
-                .map(n -> new File(n).getName()).filter(n -> !n.isEmpty())
-                .orElseThrow(() -> {
-                    logger.warn("[Upload] Rejected: invalid or missing filename");
-                    return new IllegalArgumentException("Invalid filename");
-                });
-
-        logger.info("[Upload] Started: filename={}, size={}, contentType={}",
-                filename, formatBytes(file.getSize()), file.getContentType());
-
-        if (!isValidHeapDumpFile(filename)) {
-            String ext = getExtension(filename);
-            logger.warn("[Upload] Rejected: invalid extension '{}' for file '{}'. Allowed: .hprof, .bin, .dump (+ .gz)",
-                    ext, filename);
-            throw new IllegalArgumentException(
-                    "'" + ext + "' is not a supported file type. Only .hprof, .bin, .dump (+ .gz) files are allowed.");
-        }
-
-        File dumpDir = dumpFilesDirectory();
-        Files.createDirectories(dumpDir.toPath());
-
-        // 동일 파일명 차단 — 업로드 버튼으로는 같은 이름의 파일을 덮어쓰거나 추가할 수 없음.
-        // (.gz 압축본도 동일 이름으로 간주)
-        if (Files.exists(dumpDir.toPath().resolve(filename))
-                || Files.exists(dumpDir.toPath().resolve(filename + ".gz"))) {
-            logger.warn("[Upload] Rejected: same filename already exists '{}'", filename);
-            throw new IllegalArgumentException(
-                    "동일한 이름의 파일이 이미 존재합니다: '" + filename + "'. 다른 이름으로 변경 후 업로드해 주세요.");
-        }
-
-        Path target = dumpDir.toPath().resolve(filename);
-        try {
-            Files.copy(file.getInputStream(), target);
-        } catch (IOException e) {
-            logger.error("[Upload] Failed to write file '{}' to dumpfiles: {}", filename, e.getMessage(), e);
-            throw e;
-        }
-
-        long writtenSize = Files.size(target);
-        logger.info("[Upload] Completed: filename={}, writtenSize={}, path={} (dumpfiles)",
-                filename, formatBytes(writtenSize), target.toAbsolutePath());
-        return filename;
+        return fileMgmt.uploadFile(file);
     }
 
     // ── 업로드 중복 검사 ─────────────────────────────────────────
@@ -1264,129 +1217,16 @@ public class HeapDumpAnalyzerService {
         return fileMgmt.listFiles();
     }
 
-    /**
-     * 원본 덤프 파일과 .gz 파일이 동시에 존재하면 .gz 파일을 삭제한다.
-     * 원본이 있으면 .gz는 중복이므로 제거하여 디스크 공간을 절약한다.
-     */
     private void cleanupDuplicateGzFiles(File[] files) {
-        Set<String> originals = new HashSet<>();
-        List<File> gzFiles = new ArrayList<>();
-
-        for (File f : files) {
-            String name = f.getName();
-            if (name.toLowerCase().endsWith(".gz")) {
-                gzFiles.add(f);
-            } else {
-                originals.add(name);
-            }
-        }
-
-        for (File gz : gzFiles) {
-            // example.hprof.gz → example.hprof
-            String originalName = gz.getName().substring(0, gz.getName().length() - 3);
-            if (originals.contains(originalName)) {
-                long gzSize = gz.length();
-                if (gz.delete()) {
-                    logger.info("[Cleanup] 중복 .gz 파일 삭제: {} ({})", gz.getName(), formatBytes(gzSize));
-                } else {
-                    logger.warn("[Cleanup] 중복 .gz 파일 삭제 실패: {}", gz.getName());
-                }
-            }
-        }
+        fileMgmt.cleanupDuplicateGzFiles(files);
     }
 
     public File getFile(String filename) throws IOException {
-        filename = new File(filename).getName();
-        File file = new File(config.getDumpFilesDirectory(), filename);
-        if (!file.exists()) {
-            // .gz in dumpfiles
-            File gzFile = new File(config.getDumpFilesDirectory(), filename + ".gz");
-            if (gzFile.exists()) return gzFile;
-            // fallback to legacy root
-            file = new File(config.getHeapDumpDirectory(), filename);
-        }
-        if (!file.exists()) {
-            // .gz in legacy root
-            File gzFile = new File(config.getHeapDumpDirectory(), filename + ".gz");
-            if (gzFile.exists()) return gzFile;
-        }
-        // tmp fallback
-        if (!file.exists()) {
-            File tmpFile = new File(tmpDirectory(), filename);
-            if (tmpFile.exists()) return tmpFile;
-        }
-        if (file.exists() && file.isFile()) return file;
-        throw new FileNotFoundException("File not found: " + filename);
+        return fileMgmt.getFile(filename);
     }
 
     public void deleteFile(String filename) throws IOException {
-        String safe = new File(filename).getName();
-        File file = new File(config.getDumpFilesDirectory(), safe);
-        File tmpFile = new File(tmpDirectory(), safe);
-
-        logger.info("[Delete] Started: filename={}", safe);
-
-        // tmp에 있으면 tmp에서 삭제
-        if (tmpFile.exists()) {
-            long tmpSize = tmpFile.length();
-            if (tmpFile.delete()) {
-                logger.info("[Delete] Tmp file deleted: filename={}, size={}", safe, formatBytes(tmpSize));
-            } else {
-                logger.warn("[Delete] Failed to delete tmp file: {}", safe);
-            }
-        }
-
-        // .gz 압축 파일도 확인
-        File gzFile = new File(config.getDumpFilesDirectory(), safe + ".gz");
-
-        if (!file.exists() && !tmpFile.exists() && !gzFile.exists()) {
-            logger.warn("[Delete] Heap dump file not found: {}", safe);
-            throw new FileNotFoundException("File not found: " + safe);
-        }
-
-        if (file.exists()) {
-            long fileSize = file.length();
-            if (!file.delete()) {
-                logger.error("[Delete] Failed to delete heap dump file: {}", safe);
-                throw new IOException("Failed to delete: " + safe);
-            }
-            logger.info("[Delete] Heap dump file deleted: filename={}, size={}", safe, formatBytes(fileSize));
-        }
-
-        // .gz 압축 파일 삭제
-        if (gzFile.exists()) {
-            long gzSize = gzFile.length();
-            if (gzFile.delete()) {
-                logger.info("[Delete] Compressed file deleted: filename={}, size={}", gzFile.getName(), formatBytes(gzSize));
-            } else {
-                logger.warn("[Delete] Failed to delete compressed file: {}", gzFile.getName());
-            }
-        }
-
-        // dumpfiles 디렉토리의 MAT 인덱스 파일 삭제 (예: heapdump.a2s.index, heapdump.threads 등)
-        String baseName = stripExtension(safe);
-        File parentDir = dumpFilesDirectory();
-        File[] relatedFiles = parentDir.listFiles((dir, name) ->
-                name.startsWith(baseName + ".") && !name.equals(safe));
-        int relatedCount = 0;
-        if (relatedFiles != null) {
-            for (File related : relatedFiles) {
-                if (related.isFile()) {
-                    if (related.delete()) {
-                        relatedCount++;
-                        logger.debug("[Delete] Related file deleted: {}", related.getName());
-                    } else {
-                        logger.warn("[Delete] Failed to delete related file: {}", related.getName());
-                    }
-                }
-            }
-        }
-        if (relatedCount > 0) {
-            logger.info("[Delete] {} related index files deleted for '{}'", relatedCount, safe);
-        }
-
-        // 분석 결과(data/ 디렉토리)와 메모리 캐시는 보존 — 이력 유지
-        logger.info("[Delete] Completed: heap dump file deleted for '{}', analysis data preserved in data/", safe);
+        fileMgmt.deleteFile(filename);
     }
 
     /**
@@ -2053,10 +1893,10 @@ public class HeapDumpAnalyzerService {
     // ── 경로 / 유틸리티 ──────────────────────────────────────────
 
     private File resultDirectory(String filename) {
-        return new File(config.getDataDirectory(), stripExtension(filename));
+        return fileMgmt.resultDirectory(filename);
     }
     private File resultJsonFile(String filename) {
-        return new File(resultDirectory(filename), RESULT_JSON);
+        return fileMgmt.resultJsonFile(filename);
     }
 
     /**
@@ -2091,115 +1931,12 @@ public class HeapDumpAnalyzerService {
         }
     }
 
-    /**
-     * 분석 완료된 덤프 파일을 gzip으로 압축한다.
-     * 압축 전 디스크 여유 공간이 원본 파일 크기 이상인지 점검한다.
-     */
     private void compressDumpFile(File dumpFile) {
-        if (dumpFile == null || !dumpFile.exists() || !dumpFile.isFile()) {
-            return;
-        }
-
-        // 이미 .gz 파일이면 스킵
-        if (dumpFile.getName().toLowerCase().endsWith(".gz")) {
-            return;
-        }
-
-        long fileSize = dumpFile.length();
-        long usableSpace = dumpFile.getParentFile().getUsableSpace();
-
-        if (usableSpace < fileSize) {
-            logger.warn("[Compress] 디스크 여유 공간 부족으로 압축 건너뜀: 필요={}, 여유={}, 파일={}",
-                    formatBytes(fileSize), formatBytes(usableSpace), dumpFile.getName());
-            return;
-        }
-
-        File gzFile = new File(dumpFile.getAbsolutePath() + ".gz");
-
-        // 이미 .gz 파일이 존재하면 삭제 후 재압축
-        if (gzFile.exists()) {
-            logger.info("[Compress] 기존 .gz 파일 삭제 후 재압축: {}", gzFile.getName());
-            gzFile.delete();
-        }
-
-        logger.info("[Compress] 덤프 파일 gzip 압축 시작: {} ({})", dumpFile.getName(), formatBytes(fileSize));
-
-        try (FileInputStream fis = new FileInputStream(dumpFile);
-             FileOutputStream fos = new FileOutputStream(gzFile);
-             GZIPOutputStream gzos = new GZIPOutputStream(fos, 8192)) {
-
-            byte[] buffer = new byte[8192];
-            int len;
-            while ((len = fis.read(buffer)) != -1) {
-                gzos.write(buffer, 0, len);
-            }
-            gzos.finish();
-        } catch (IOException e) {
-            logger.error("[Compress] gzip 압축 실패: {}", dumpFile.getName(), e);
-            // 실패 시 불완전한 .gz 파일 삭제
-            if (gzFile.exists()) {
-                gzFile.delete();
-            }
-            return;
-        }
-
-        // .gz 파일 검증
-        if (!gzFile.exists() || gzFile.length() == 0) {
-            logger.error("[Compress] .gz 파일 검증 실패: 파일 없거나 0바이트. 원본 보존: {}", dumpFile.getName());
-            if (gzFile.exists()) gzFile.delete();
-            return;
-        }
-
-        // 원본 파일 삭제
-        if (dumpFile.delete()) {
-            logger.info("[Compress] 압축 완료: {} → {} ({}→{})",
-                    dumpFile.getName(), gzFile.getName(),
-                    formatBytes(fileSize), formatBytes(gzFile.length()));
-        } else {
-            logger.warn("[Compress] 원본 파일 삭제 실패: {}", dumpFile.getName());
-        }
+        fileMgmt.compressDumpFile(dumpFile);
     }
 
-    /**
-     * gzip 압축된 덤프 파일을 원본으로 복원한다.
-     * 복원 전 디스크 여유 공간을 점검한다 (압축 파일 크기의 3배 이상 필요).
-     */
     private void decompressDumpFile(File gzFile, File destFile) throws IOException {
-        long gzSize = gzFile.length();
-        long usableSpace = gzFile.getParentFile().getUsableSpace();
-
-        // 압축 해제 시 원본은 압축 파일보다 클 수 있으므로 여유 있게 점검
-        if (usableSpace < gzSize * 3) {
-            throw new IOException("디스크 여유 공간 부족으로 압축 해제 불가: 여유=" +
-                    formatBytes(usableSpace) + ", 압축파일=" + formatBytes(gzSize));
-        }
-
-        logger.info("[Decompress] gzip 압축 해제 시작: {} ({})", gzFile.getName(), formatBytes(gzSize));
-
-        try (GZIPInputStream gzis = new GZIPInputStream(new FileInputStream(gzFile), 8192);
-             FileOutputStream fos = new FileOutputStream(destFile)) {
-
-            byte[] buffer = new byte[8192];
-            int len;
-            while ((len = gzis.read(buffer)) != -1) {
-                fos.write(buffer, 0, len);
-            }
-        } catch (IOException e) {
-            // 실패 시 불완전한 파일 삭제
-            if (destFile.exists()) {
-                destFile.delete();
-            }
-            throw e;
-        }
-
-        // 압축 파일 삭제
-        if (gzFile.delete()) {
-            logger.info("[Decompress] 압축 해제 완료: {} → {} ({}→{})",
-                    gzFile.getName(), destFile.getName(),
-                    formatBytes(gzSize), formatBytes(destFile.length()));
-        } else {
-            logger.warn("[Decompress] 압축 파일 삭제 실패: {}", gzFile.getName());
-        }
+        fileMgmt.decompressDumpFile(gzFile, destFile);
     }
 
     private boolean isValidHeapDumpFile(String name) {
