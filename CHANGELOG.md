@@ -1,5 +1,39 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-12] Phase 7-5 — AiInsightManager 분리
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/service/AiInsightManager.java`
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- Phase 4A 마지막 sub-task. AI 인사이트 저장/조회/삭제 + DB 마이그레이션을 별도 컴포넌트로.
+- Plan 의 "선택" 항목이지만 시리즈 마무리를 위해 진행.
+
+### 내역
+- `AiInsightManager` (161 라인):
+  - `saveAiInsight(filename, data)` — DB upsert
+  - `loadAiInsight(filename)` — DB → 파일 폴백 → DB 마이그레이션
+  - `deleteAiInsight(filename)` — DB + 파일 정리 (`@Transactional`)
+  - `migrateAiInsightsToDb()` — 일회성 파일→DB 마이그레이션 (`restoreResultsFromDisk` 호출용)
+  - 의존성: `AiInsightRepository`, `FileManagementService` (resultDirectory), `HeapDumpConfig`
+  - `AI_INSIGHT_FILE` / `RESULT_JSON` 상수 내부 보유
+- `HeapDumpAnalyzerService`:
+  - 4 개 메서드 본문(108 라인) → facade 위임 (4 × 3 라인)
+  - `AI_INSIGHT_FILE` 상수 제거 (AiInsightManager 로 이전)
+  - 생성자에 `AiInsightManager aiInsight` 주입
+  - `deleteHistory()` 내 `aiInsightRepository.deleteByFilename()` 직접 호출은 그대로 유지 (트랜잭션 컨텍스트 안)
+
+### 검증
+- 빌드 성공.
+- `GET /api/llm/insight/{filename}` → 8 키(model/latencyMs/summary/rootCause/recommendations/severity/severityDesc/analysedAt) 정상 응답.
+- `/api/history` → 43건, `/api/settings` → cachedResults: 13.
+- `HeapDumpAnalyzerService` 라인 수: **2,064 → 1,965** (-99, **2000 라인 미만 달성**).
+- Phase 6-1 이후 누적: **3,581 → 1,965** (-1,616 라인, **-45%**).
+
+---
+
 ## [2026-05-12] Phase 7-4 — FileManagementService Phase 2 (I/O 메서드)
 
 **변경 파일:**

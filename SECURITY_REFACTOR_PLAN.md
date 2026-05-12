@@ -61,7 +61,12 @@
     - [x] **4A-4 Phase 1** (Phase 7-1): 유틸/조회 8 메서드 — `listFiles`/`checkDuplicate`/`computePartialHash`/`generateUniqueName`/`isValidHeapDumpFile`/`stripExtension`/`getExtension`/`dumpFilesDirectory`. -136 라인
     - [x] **4A-4 Phase 2** (Phase 7-4): I/O 메서드 — `uploadFile`/`getFile`/`deleteFile`/`compressDumpFile`/`decompressDumpFile`/`cleanupDuplicateGzFiles` + 디렉토리 helper (`tmpDirectory`/`resultDirectory`/`resultJsonFile`). -263 라인
     - 분석 파이프라인 결합 메서드 (`cleanupTmpDir`/`moveZipsToResultDir`/`deleteHistory(DB)`/마이그레이션) 은 HeapDumpAnalyzerService 잔존.
-    - `HeapDumpAnalyzerService` 누적: 3,581 → 2,064 (**-42%**)
+  - [x] **4A-5. AiInsightManager 분리** (2026-05-12 완료, Phase 7-5)
+    - `saveAiInsight`/`loadAiInsight`/`deleteAiInsight`/`migrateAiInsightsToDb` 4 메서드 + 상수(`AI_INSIGHT_FILE`/`RESULT_JSON`) 이전
+    - 의존성: `AiInsightRepository` + `FileManagementService` + `HeapDumpConfig`
+    - -99 라인
+
+**Phase 4A 종합**: `HeapDumpAnalyzerService` 3,581 → **1,965** (-1,616 라인, **-45%**). 추출된 컴포넌트: `HeapAnalysisResultCache` / `FileManagementService` / `LlmConfigService` / `RagConfigService` / `AiInsightManager`.
 - [ ] **4B. Controller 분리** (View / API) — 보류
   - Explore 권장: `HeapDumpViewController` + 6 개 API 컨트롤러 (Analysis/Report/File/History/System/Ai)
 

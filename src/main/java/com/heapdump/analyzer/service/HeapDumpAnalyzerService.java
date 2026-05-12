@@ -46,7 +46,7 @@ public class HeapDumpAnalyzerService {
     private static final Logger logger = LoggerFactory.getLogger(HeapDumpAnalyzerService.class);
     // MAT_TIMEOUT_MINUTES → config.getMatTimeoutMinutes()로 이동
     private static final String RESULT_JSON      = "result.json";
-    private static final String AI_INSIGHT_FILE  = "ai_insight.json";
+    // AI_INSIGHT_FILE 상수는 AiInsightManager 내부로 이동 (Phase 7-5)
     private static final String MAT_LOG_FILE     = "mat.log";
     private static final String TMP_DIR_NAME     = "tmp";
 
@@ -60,6 +60,7 @@ public class HeapDumpAnalyzerService {
     private final FileManagementService fileMgmt;
     private final LlmConfigService llmConfig;
     private final RagConfigService ragConfig;
+    private final AiInsightManager aiInsight;
 
     public MatReportParser getParser() { return parser; }
     private final ObjectMapper    objectMapper = new ObjectMapper();
@@ -92,7 +93,8 @@ public class HeapDumpAnalyzerService {
                                    HeapAnalysisResultCache resultCache,
                                    FileManagementService fileMgmt,
                                    LlmConfigService llmConfig,
-                                   RagConfigService ragConfig) {
+                                   RagConfigService ragConfig,
+                                   AiInsightManager aiInsight) {
         this.config  = config;
         this.parser  = parser;
         this.analysisHistoryRepository = analysisHistoryRepository;
@@ -103,6 +105,7 @@ public class HeapDumpAnalyzerService {
         this.fileMgmt = fileMgmt;
         this.llmConfig = llmConfig;
         this.ragConfig = ragConfig;
+        this.aiInsight = aiInsight;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
         this.compressAfterAnalysis = config.isCompressAfterAnalysis();
         // LLM/RAG 초기화는 각각 LlmConfigService/RagConfigService @PostConstruct 에서 수행
@@ -231,39 +234,7 @@ public class HeapDumpAnalyzerService {
 
     @SuppressWarnings("unchecked")
     private void migrateAiInsightsToDb() {
-        File dataDir = new File(config.getDataDirectory());
-        if (!dataDir.exists()) return;
-        int migrated = 0;
-        File[] subDirs = dataDir.listFiles(File::isDirectory);
-        if (subDirs == null) return;
-        for (File dir : subDirs) {
-            File insightFile = new File(dir, AI_INSIGHT_FILE);
-            if (!insightFile.exists()) continue;
-            // 해당 디렉토리의 result.json에서 filename 추출
-            File resultFile = new File(dir, RESULT_JSON);
-            String filename = null;
-            if (resultFile.exists()) {
-                try {
-                    HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
-                    filename = r.getFilename();
-                } catch (Exception ignored) {}
-            }
-            if (filename == null) {
-                // 디렉토리명에서 추론
-                filename = dir.getName() + ".hprof";
-            }
-            if (aiInsightRepository.existsByFilename(filename)) continue;
-            try {
-                Map<String, Object> data = objectMapper.readValue(insightFile, Map.class);
-                saveAiInsight(filename, data);
-                migrated++;
-            } catch (Exception e) {
-                logger.warn("[AI-Insight Migration] Failed for {}: {}", insightFile.getAbsolutePath(), e.getMessage());
-            }
-        }
-        if (migrated > 0) {
-            logger.info("[AI-Insight Migration] {} file-based insights migrated to database", migrated);
-        }
+        aiInsight.migrateAiInsightsToDb();
     }
 
     /**
@@ -960,88 +931,18 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
-    // ── AI Insight 저장 / 불러오기 (DB 기반) ─────────────────────────
+    // ── AI Insight facade — AiInsightManager 위임 (Phase 7-5) ────
 
-    /**
-     * AI 인사이트 결과를 DB에 저장 (기존 결과 있으면 업데이트)
-     */
     public void saveAiInsight(String filename, Map<String, Object> insightData) {
-        try {
-            AiInsightEntity entity = aiInsightRepository.findByFilename(filename)
-                    .orElse(new AiInsightEntity());
-            entity.setFilename(filename);
-            entity.setModel(insightData.get("model") != null ? String.valueOf(insightData.get("model")) : null);
-            entity.setSeverity(insightData.get("severity") != null ? String.valueOf(insightData.get("severity")) : null);
-            if (insightData.get("latencyMs") instanceof Number) {
-                entity.setLatencyMs(((Number) insightData.get("latencyMs")).longValue());
-            }
-            // 전체 데이터를 JSON 문자열로 저장
-            Map<String, Object> toSave = new LinkedHashMap<>(insightData);
-            toSave.put("analysedAt", System.currentTimeMillis());
-            entity.setInsightData(objectMapper.writeValueAsString(toSave));
-            entity.setAnalysedAt(java.time.LocalDateTime.now());
-            aiInsightRepository.save(entity);
-            logger.info("[AI-Insight] Saved to DB for '{}' (severity={})", filename, entity.getSeverity());
-        } catch (Exception e) {
-            logger.error("[AI-Insight] Failed to save to DB for '{}': {}", filename, e.getMessage());
-        }
+        aiInsight.saveAiInsight(filename, insightData);
     }
 
-    /**
-     * DB에서 AI 인사이트 결과를 불러옴. 없으면 파일 폴백 후 DB 마이그레이션.
-     */
-    @SuppressWarnings("unchecked")
     public Map<String, Object> loadAiInsight(String filename) {
-        try {
-            // 1. DB 조회
-            Optional<AiInsightEntity> opt = aiInsightRepository.findByFilename(filename);
-            if (opt.isPresent()) {
-                Map<String, Object> data = objectMapper.readValue(opt.get().getInsightData(), Map.class);
-                logger.info("[AI-Insight] Loaded from DB for '{}' (analysedAt={})", filename, data.get("analysedAt"));
-                return data;
-            }
-            // 2. 파일 폴백 (기존 ai_insight.json)
-            File target = new File(resultDirectory(filename), AI_INSIGHT_FILE);
-            if (target.exists()) {
-                Map<String, Object> data = objectMapper.readValue(target, Map.class);
-                logger.info("[AI-Insight] Loaded from file for '{}', migrating to DB", filename);
-                // DB로 마이그레이션
-                saveAiInsight(filename, data);
-                return data;
-            }
-            logger.debug("[AI-Insight] No saved insight for '{}'", filename);
-            return null;
-        } catch (Exception e) {
-            logger.warn("[AI-Insight] Failed to load for '{}': {}", filename, e.getMessage());
-            return null;
-        }
+        return aiInsight.loadAiInsight(filename);
     }
 
-    /**
-     * DB에서 AI 인사이트 결과 삭제
-     */
-    @javax.transaction.Transactional
     public boolean deleteAiInsight(String filename) {
-        try {
-            if (aiInsightRepository.existsByFilename(filename)) {
-                aiInsightRepository.deleteByFilename(filename);
-                logger.info("[AI-Insight] Deleted from DB for '{}'", filename);
-                // 파일도 함께 삭제 (잔존 방지)
-                File target = new File(resultDirectory(filename), AI_INSIGHT_FILE);
-                if (target.exists()) target.delete();
-                return true;
-            }
-            // 파일만 있는 경우
-            File target = new File(resultDirectory(filename), AI_INSIGHT_FILE);
-            if (target.exists() && target.delete()) {
-                logger.info("[AI-Insight] Deleted file for '{}'", filename);
-                return true;
-            }
-            return false;
-        } catch (Exception e) {
-            logger.warn("[AI-Insight] Failed to delete for '{}': {}", filename, e.getMessage());
-            return false;
-        }
+        return aiInsight.deleteAiInsight(filename);
     }
 
     // ── LLM 호출 facade — LlmConfigService 위임 (Phase 7-2) ───────
