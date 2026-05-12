@@ -67,8 +67,14 @@
     - -99 라인
 
 **Phase 4A 종합**: `HeapDumpAnalyzerService` 3,581 → **1,965** (-1,616 라인, **-45%**). 추출된 컴포넌트: `HeapAnalysisResultCache` / `FileManagementService` / `LlmConfigService` / `RagConfigService` / `AiInsightManager`.
-- [ ] **4B. Controller 분리** (View / API) — 보류
-  - Explore 권장: `HeapDumpViewController` + 6 개 API 컨트롤러 (Analysis/Report/File/History/System/Ai)
+- [x] **4B. Controller 분리** (View / API) — *부분 완료 (2026-05-12)*
+  - [x] **4B-1. 단순 2 분할 (View + API)** (2026-05-12 완료)
+    - `HeapDumpViewController` 신규 (516 라인) — Thymeleaf 페이지 9 + form-redirect POST 4 + 분석 결과/미리보기 페이지 4 = 총 15 엔드포인트
+    - `HeapDumpController` 잔존 (2,365 라인) — REST API + SSE + 바이너리(PDF/Resource) + iframe HTML 50 엔드포인트
+    - 공유 헬퍼 6 개 (`isAdmin`/`buildHistory`/`aggregateDetections`/`buildClassSizeMap`/`formatBytes`/`truncateLog`) `private` → `public` 가시성 승격
+    - inner public static DTO 8 개는 `HeapDumpController` 잔존, view 측에서 `HeapDumpController.AnalysisHistoryItem` 으로 참조 (facade 패턴)
+    - URL/외부 시그니처 100% 무변경 — 회귀 위험 최소
+  - [ ] **4B-2. API 도메인별 6 분할** (보류) — 추가 분리 권장안 (Analysis/Report/File/History/System/Ai), 의존성·DTO 이전 영향 큼. 별도 사이클.
 
 ## Phase 5: 프론트엔드 정리
 
@@ -102,7 +108,7 @@
 | 4A-2 LlmConfigService | LLM 21 메서드 + RAG SSL 미러링, 단독 PR 권장 | Phase 7 |
 | 4A-3 RagConfigService | RAG 26 필드 + getter/setter 40+, 단독 PR | Phase 7 |
 | 4A-4 FileManagementService | 디스크/gzip/마이그레이션 결합도 큼 | Phase 7+ |
-| 4B Controller 분리 | View + 6 개 API 컨트롤러 — 의존성 큼 | 별도 사이클 |
+| 4B-2 API 도메인별 6 분할 | 4B-1 (View+API) 완료. Analysis/Report/File/History/System/Ai 추가 분리 — DTO/헬퍼 이전 영향 큼 | 별도 사이클 |
 | 5A-3 modal/btn/grid CSS | 페이지별 미세 변형 검토 필요 | 시각 회귀 테스트 인프라 후 |
 | 5B-2 Common.* 마이그레이션 | 회귀 위험, 점진적 PR | 단계적 |
 | `analyze.html` HTML/JS 분할 (4127 라인) | SPA 화 결정 후 | 별도 사이클 |

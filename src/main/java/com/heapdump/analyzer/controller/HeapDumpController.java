@@ -16,11 +16,9 @@ import org.springframework.http.*;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
 import javax.servlet.http.HttpServletRequest;
 import java.io.*;
@@ -76,174 +74,9 @@ public class HeapDumpController {
         this.pdfReportService = pdfReportService;
     }
 
-    // ── 메인 페이지 ──────────────────────────────────────────────
-    // (IllegalArgumentException 처리는 GlobalExceptionHandler 로 이동)
+    // 뷰 페이지 (/, /files, /history) 는 HeapDumpViewController 로 이전 (Phase 4B)
 
-    @GetMapping("/")
-    public String index(Model model) {
-        List<HeapDumpFile> files = analyzerService.listFiles();
-        model.addAttribute("files", files.size() > 5 ? files.subList(0, 5) : files);
-        model.addAttribute("allFiles", files);
-        model.addAttribute("fileCount", files.size());
-
-        // 통계 계산 (디스크 실제 사용량 기준: 압축 파일은 compressedSize 사용)
-        long totalBytes = files.stream()
-            .mapToLong(f -> f.isCompressed() && f.getCompressedSize() > 0 ? f.getCompressedSize() : f.getSize())
-            .sum();
-        model.addAttribute("totalSize", formatBytes(totalBytes));
-
-        // 분석 히스토리 (캐시에서 로드) — 대시보드는 deleted 항목 항상 제외 (모든 계정)
-        List<AnalysisHistoryItem> history = buildHistory(files).stream()
-            .filter(h -> !h.isFileDeleted())
-            .collect(Collectors.toList());
-        model.addAttribute("analyzedCount",
-            history.stream().filter(h -> "SUCCESS".equals(h.getStatus())).count());
-
-        // 전체 leak suspects 수
-        long totalSuspects = history.stream()
-            .filter(h -> "SUCCESS".equals(h.getStatus()))
-            .mapToLong(AnalysisHistoryItem::getSuspectCount)
-            .sum();
-        model.addAttribute("totalSuspects", totalSuspects > 0 ? totalSuspects : null);
-
-        // 분석 완료 파일 Set (View 버튼 표시용)
-        Set<String> analyzedFiles = history.stream()
-                .filter(h -> "SUCCESS".equals(h.getStatus()))
-                .map(AnalysisHistoryItem::getFilename)
-                .collect(Collectors.toSet());
-        model.addAttribute("analyzedFiles", analyzedFiles);
-
-        // 분석 실패 파일 Set (에러 표시용)
-        Set<String> errorFiles = history.stream()
-                .filter(h -> "ERROR".equals(h.getStatus()))
-                .map(AnalysisHistoryItem::getFilename)
-                .collect(Collectors.toSet());
-        model.addAttribute("errorFiles", errorFiles);
-
-        // 탐지 현황 (심각도별 집계) + 일자별·서버별 누적 (최근 14일) — helper에 위임
-        DetectionAggregate agg = aggregateDetections(history, 14, 12);
-        model.addAttribute("criticalCount", agg.getCriticalCount());
-        model.addAttribute("highCount", agg.getHighCount());
-        model.addAttribute("mediumCount", agg.getMediumCount());
-        model.addAttribute("lowCount", agg.getLowCount());
-        model.addAttribute("detectionItems", agg.getDetectionItems());
-        model.addAttribute("hasDetections",
-            agg.getCriticalCount() + agg.getHighCount() + agg.getMediumCount() + agg.getLowCount() > 0);
-
-        model.addAttribute("dailyDetections", agg.getDailyDetections());
-        model.addAttribute("serverSeries", agg.getServerSeries());
-        model.addAttribute("kpiTotal14d", agg.getTotal());
-        model.addAttribute("kpiLast7d", agg.getLast7d());
-        model.addAttribute("kpiPrev7d", agg.getPrev7d());
-        model.addAttribute("kpiDelta7d", agg.getDelta7d());
-        model.addAttribute("kpiPeakDay", agg.getPeakDay() != null ? agg.getPeakDay() : "-");
-        model.addAttribute("kpiPeakCount", agg.getPeakCount());
-
-        // 디스크 사용량
-        File dumpDir = new File(analyzerService.getHeapDumpDirectory());
-        if (dumpDir.exists() && dumpDir.getTotalSpace() > 0) {
-            long total = dumpDir.getTotalSpace();
-            long usable = dumpDir.getUsableSpace();
-            long used = total - usable;
-            model.addAttribute("diskUsedPercent", Math.round(used * 100.0 / total));
-            model.addAttribute("diskUsed", formatBytes(used));
-            model.addAttribute("diskTotal", formatBytes(total));
-        }
-
-        // MAT 설정
-        model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
-
-        return "index";
-    }
-
-    // ── 전체 파일 목록 ────────────────────────────────────────────
-
-    @GetMapping("/files")
-    public String filesPage(Model model, Authentication authentication) {
-        boolean isAdmin = isAdmin(authentication);
-        List<HeapDumpFile> files = analyzerService.listFiles();
-        List<AnalysisHistoryItem> history = buildHistory(files);
-
-        // 비관리자: deleted 기록 제외
-        List<AnalysisHistoryItem> visible = isAdmin ? history :
-                history.stream().filter(h -> !h.isFileDeleted()).collect(Collectors.toList());
-        model.addAttribute("analysisHistory", visible);
-        model.addAttribute("isAdmin", isAdmin);
-        model.addAttribute("fileCount", files.size());
-
-        // 필터용 서버 목록 (distinct, 정렬). 미지정/Local 은 별도 식별자 없이 빈 문자열.
-        // 실제 파일이 존재하는 행(fileDeleted=false)에 기반한 서버만 노출 — DB 잔존 기록 제외.
-        List<String> serverNames = visible.stream()
-                .filter(h -> !h.isFileDeleted())
-                .map(AnalysisHistoryItem::getServerName)
-                .filter(n -> n != null && !n.isEmpty())
-                .distinct()
-                .sorted()
-                .collect(Collectors.toList());
-        model.addAttribute("serverNames", serverNames);
-
-        long originalBytes = files.stream().mapToLong(HeapDumpFile::getSize).sum();
-        long diskBytes = files.stream()
-            .mapToLong(f -> f.isCompressed() && f.getCompressedSize() > 0 ? f.getCompressedSize() : f.getSize())
-            .sum();
-        model.addAttribute("totalSize", formatBytes(originalBytes));
-        model.addAttribute("diskSize", formatBytes(diskBytes));
-        model.addAttribute("hasCompressed", originalBytes != diskBytes);
-
-        long analyzedCount = visible.stream()
-            .filter(h -> "SUCCESS".equals(h.getStatus())).count();
-        model.addAttribute("analyzedCount", analyzedCount);
-
-        return "files";
-    }
-
-    // ── 분석 이력 페이지 ─────────────────────────────────────────
-
-    @GetMapping("/history")
-    public String historyPage(Model model, Authentication authentication) {
-        boolean isAdmin = isAdmin(authentication);
-        List<HeapDumpFile> files = analyzerService.listFiles();
-        List<AnalysisHistoryItem> history = buildHistory(files);
-
-        // 분석 수행된 항목만 필터 (SUCCESS + ERROR), 비관리자는 deleted 제외
-        List<AnalysisHistoryItem> analysisOnly = history.stream()
-            .filter(h -> "SUCCESS".equals(h.getStatus()) || "ERROR".equals(h.getStatus()))
-            .filter(h -> isAdmin || !h.isFileDeleted())
-            .collect(Collectors.toList());
-        model.addAttribute("analysisHistory", analysisOnly);
-        model.addAttribute("isAdmin", isAdmin);
-
-        long successCount = analysisOnly.stream()
-            .filter(h -> "SUCCESS".equals(h.getStatus())).count();
-        long errorCount = analysisOnly.stream()
-            .filter(h -> "ERROR".equals(h.getStatus())).count();
-        long deletedCount = analysisOnly.stream().filter(AnalysisHistoryItem::isFileDeleted).count();
-        model.addAttribute("totalCount", analysisOnly.size());
-        model.addAttribute("successCount", successCount);
-        model.addAttribute("errorCount", errorCount);
-        model.addAttribute("deletedCount", deletedCount);
-
-        // Detections 차트 SSR 초기값 (14d / 서버별)
-        DetectionAggregate detectAgg = aggregateDetections(analysisOnly, 14, 12);
-        model.addAttribute("detectInitDays", 14);
-        model.addAttribute("detectInitGroup", "server");
-        model.addAttribute("detectLabels", detectAgg.getLabels());
-        model.addAttribute("detectServerSeries", detectAgg.getServerSeries());
-        model.addAttribute("detectSeveritySeries", detectAgg.getSeveritySeries());
-        model.addAttribute("detectKpiTotal", detectAgg.getTotal());
-        model.addAttribute("detectKpiLast7d", detectAgg.getLast7d());
-        model.addAttribute("detectKpiPrev7d", detectAgg.getPrev7d());
-        model.addAttribute("detectKpiDelta7d", detectAgg.getDelta7d());
-        model.addAttribute("detectKpiPeakDay",
-            detectAgg.getPeakDay() != null ? detectAgg.getPeakDay() : "-");
-        model.addAttribute("detectKpiPeakCount", detectAgg.getPeakCount());
-        model.addAttribute("detectRecent",
-            detectAgg.getRecent() != null ? detectAgg.getRecent() : Collections.emptyList());
-
-        return "history";
-    }
-
-    private boolean isAdmin(Authentication authentication) {
+    public boolean isAdmin(Authentication authentication) {
         if (authentication == null) return false;
         for (GrantedAuthority a : authentication.getAuthorities()) {
             if ("ROLE_ADMIN".equals(a.getAuthority())) return true;
@@ -251,24 +84,7 @@ public class HeapDumpController {
         return false;
     }
 
-    // ── 설정 페이지 ─────────────────────────────────────────────
-
-    @GetMapping("/settings")
-    public String settingsPage(Model model) {
-        model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
-        model.addAttribute("compressAfterAnalysis", analyzerService.isCompressAfterAnalysis());
-        return "settings";
-    }
-
-    @GetMapping("/settings/llm")
-    public String llmSettingsPage() {
-        return "llm-settings";
-    }
-
-    @GetMapping("/settings/rag")
-    public String ragSettingsPage() {
-        return "rag-settings";
-    }
+    // ── 설정 페이지 (/settings, /settings/llm, /settings/rag) 는 HeapDumpViewController 로 이전 ──
 
     // ── 히스토리 삭제 ────────────────────────────────────────────
 
@@ -325,26 +141,7 @@ public class HeapDumpController {
         return ResponseEntity.ok(resp);
     }
 
-    @PostMapping("/history/delete/{filename:.+}")
-    public String deleteHistory(@PathVariable String filename,
-                                @RequestParam(value = "deleteHeapDump", defaultValue = "false") boolean deleteHeapDump,
-                                @RequestHeader(value = "Referer", required = false) String referer,
-                                RedirectAttributes redirectAttributes) {
-        filename = FilenameValidator.validate(filename);
-        logger.info("[DeleteHistory] Request received: filename={}, deleteHeapDump={}", filename, deleteHeapDump);
-        try {
-            analyzerService.deleteHistory(filename, deleteHeapDump);
-            logger.info("[DeleteHistory] Success: {}", filename);
-            redirectAttributes.addFlashAttribute("success", "히스토리 삭제 완료: " + filename);
-        } catch (IOException e) {
-            logger.error("[DeleteHistory] Failed for '{}': {}", filename, e.getMessage());
-            redirectAttributes.addFlashAttribute("error", "히스토리 삭제 실패: " + e.getMessage());
-        }
-        if (referer != null && referer.contains("/files")) {
-            return "redirect:/files";
-        }
-        return "redirect:/history";
-    }
+    // POST /history/delete/{filename} (form-redirect) 는 HeapDumpViewController 로 이전
 
     // ── 파일 업로드 ──────────────────────────────────────────────
 
@@ -383,48 +180,7 @@ public class HeapDumpController {
         }
     }
 
-    @PostMapping("/upload")
-    public String uploadFile(@RequestParam("file") MultipartFile file,
-                             RedirectAttributes redirectAttributes) {
-        String originalName = file.getOriginalFilename();
-        logger.info("[Upload] Request received: filename={}, size={}", originalName, formatBytes(file.getSize()));
-
-        try {
-            if (file.isEmpty()) {
-                logger.warn("[Upload] Rejected: empty file submitted");
-                redirectAttributes.addFlashAttribute("error", "Please select a file to upload");
-                return "redirect:/";
-            }
-            String filename = analyzerService.uploadFile(file);
-            logger.info("[Upload] Success: {}", filename);
-            String successMsg = "Uploaded: " + filename + " (" + formatBytes(file.getSize()) + ")";
-            redirectAttributes.addFlashAttribute("success", successMsg);
-
-            // 디스크 사용량 90% 이상 경고
-            try {
-                java.io.File dumpDir = new java.io.File(analyzerService.getHeapDumpDirectory());
-                long totalSpace = dumpDir.getTotalSpace();
-                long usableSpace = dumpDir.getUsableSpace();
-                if (totalSpace > 0) {
-                    double usagePercent = (double)(totalSpace - usableSpace) / totalSpace * 100;
-                    if (usagePercent >= config.getDiskWarningUsagePercent()) {
-                        logger.warn("[Upload] Disk usage warning: {}%", String.format("%.1f", usagePercent));
-                        redirectAttributes.addFlashAttribute("warning",
-                                String.format("디스크 사용량이 %.1f%%입니다. 불필요한 파일을 삭제해 주세요.", usagePercent));
-                    }
-                }
-            } catch (Exception ex) {
-                logger.debug("[Upload] Failed to check disk usage", ex);
-            }
-        } catch (IllegalArgumentException e) {
-            logger.warn("[Upload] Validation failed for '{}': {}", originalName, e.getMessage());
-            redirectAttributes.addFlashAttribute("error", e.getMessage());
-        } catch (IOException e) {
-            logger.error("[Upload] IO error for '{}': {}", originalName, e.getMessage(), e);
-            redirectAttributes.addFlashAttribute("error", "Upload failed: " + e.getMessage());
-        }
-        return "redirect:/";
-    }
+    // POST /upload (form-redirect) 는 HeapDumpViewController 로 이전
 
     // ── 업로드 중복 검사 API ────────────────────────────────────────
 
@@ -447,41 +203,7 @@ public class HeapDumpController {
         return ResponseEntity.ok(result);
     }
 
-    // ── 분석 진행 화면 ───────────────────────────────────────────
-
-    @GetMapping("/analyze/{filename:.+}")
-    public String analyzeProgress(@PathVariable String filename, Model model) {
-        filename = FilenameValidator.validate(filename);
-        HeapAnalysisResult cached = analyzerService.getCachedResult(filename);
-        if (cached != null && cached.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
-            logger.info("Cache hit for {}, redirecting to result", filename);
-            return "redirect:/analyze/result/" + filename;
-        }
-        model.addAttribute("filename", filename);
-        return "progress";
-    }
-
-    // ── 재분석 ───────────────────────────────────────────────────
-
-    @PostMapping("/analyze/rerun/{filename:.+}")
-    public String rerunAnalysis(@PathVariable String filename, RedirectAttributes redirectAttributes) {
-        filename = FilenameValidator.validate(filename);
-
-        // 덤프 파일 존재 여부 확인 (원본 + .gz)
-        File sourceFile = new File(config.getDumpFilesDirectory(), filename);
-        File gzFile = new File(config.getDumpFilesDirectory(), filename + ".gz");
-        File legacyFile = new File(config.getHeapDumpDirectory(), filename);
-        if (!sourceFile.exists() && !gzFile.exists() && !legacyFile.exists()) {
-            logger.warn("[Rerun] Dump file not found: {}. Preserving existing analysis data.", filename);
-            redirectAttributes.addFlashAttribute("rerunError",
-                    "덤프 파일이 존재하지 않아 재분석할 수 없습니다. 기존 분석 결과는 유지됩니다.");
-            return "redirect:/analyze/result/" + filename;
-        }
-
-        analyzerService.clearCache(filename);
-        logger.info("Cache cleared for {} → restarting", filename);
-        return "redirect:/analyze/" + filename;
-    }
+    // GET /analyze/{filename} (progress) + POST /analyze/rerun/{filename} 은 HeapDumpViewController 로 이전
 
     // ── SSE 진행 스트림 ──────────────────────────────────────────
 
@@ -521,125 +243,9 @@ public class HeapDumpController {
         return ResponseEntity.ok(resp);
     }
 
-    // ── 분석 결과 화면 ───────────────────────────────────────────
+    // GET /analyze/result/{filename} (analyze 페이지) + /print-preview + /print-html 은 HeapDumpViewController 로 이전
 
-    @GetMapping("/analyze/result/{filename:.+}")
-    public String analyzeResult(@PathVariable String filename, Model model) {
-        filename = FilenameValidator.validate(filename);
-        HeapAnalysisResult result = analyzerService.getCachedResult(filename);
-        if (result == null) return "redirect:/analyze/" + filename;
-
-        if (result.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.ERROR) {
-            model.addAttribute("error", result.getErrorMessage());
-            model.addAttribute("filename", filename);
-            model.addAttribute("matLog", truncateLog(result.getMatLog(), config.getMatLogMaxDisplayChars()));
-            model.addAttribute("hasHeapData", false);
-            model.addAttribute("matLogTotalLen",
-                    result.getMatLog() != null ? result.getMatLog().length() : 0);
-            // 분석 실패 일자 및 소요 시간
-            model.addAttribute("errorDate",
-                    new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-                            .format(new Date(result.getLastModified())));
-            model.addAttribute("errorAnalysisTime", result.getAnalysisTime());
-            model.addAttribute("errorFileSize", formatBytes(result.getFileSize()));
-            return "analyze";
-        }
-
-        String formattedDate = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-                .format(new Date(result.getLastModified()));
-        model.addAttribute("formattedDate", formattedDate);
-        model.addAttribute("result", result);
-
-        boolean hasHeapData = result.getTotalHeapSize() > 0 || result.getUsedHeapSize() > 0;
-        model.addAttribute("hasHeapData", hasHeapData);
-
-        List<String> topObjNames  = new ArrayList<>();
-        List<Long>   topObjSizes  = new ArrayList<>();
-        List<Long>   topObjCounts = new ArrayList<>();
-        List<Double> topObjPcts   = new ArrayList<>();
-
-        if (result.getTopMemoryObjects() != null) {
-            result.getTopMemoryObjects().stream().limit(config.getTopObjectsMaxDisplay()).forEach(o -> {
-                topObjNames .add(o.getClassName()    != null ? o.getClassName() : "");
-                topObjSizes .add(o.getTotalSize());
-                topObjCounts.add(o.getObjectCount());
-                topObjPcts  .add(o.getPercentOfHeap());
-            });
-        }
-        model.addAttribute("topObjNames",  topObjNames);
-        model.addAttribute("topObjSizes",  topObjSizes);
-        model.addAttribute("topObjCounts", topObjCounts);
-        model.addAttribute("topObjPcts",   topObjPcts);
-        model.addAttribute("matLogTotalLen",
-                result.getMatLog() != null ? result.getMatLog().length() : 0);
-
-        // Actions: Histogram / Thread Overview / Thread Stacks
-        model.addAttribute("hasHistogram", result.getHistogramHtml() != null && !result.getHistogramHtml().isEmpty());
-        model.addAttribute("hasThreadOverview", result.getThreadOverviewHtml() != null && !result.getThreadOverviewHtml().isEmpty());
-        model.addAttribute("hasThreadStacks", result.getThreadStacksText() != null && !result.getThreadStacksText().isEmpty());
-
-        // Parsed Histogram / Thread data
-        model.addAttribute("histogramEntries", result.getHistogramEntries());
-        model.addAttribute("threadInfos", result.getThreadInfos());
-        model.addAttribute("totalHistogramClasses", result.getTotalHistogramClasses());
-        model.addAttribute("threadCount", result.getThreadInfos() != null ? result.getThreadInfos().size() : 0);
-
-        // Thread stack traces as list for JS injection
-        List<String> threadStacks = new ArrayList<>();
-        if (result.getThreadInfos() != null) {
-            for (com.heapdump.analyzer.model.ThreadInfo ti : result.getThreadInfos()) {
-                threadStacks.add(ti.getStackTrace() != null ? ti.getStackTrace() : "");
-            }
-        }
-        model.addAttribute("threadStacks", threadStacks);
-
-        // Raw Data: MAT ZIP 존재 여부 (iframe용)
-        model.addAttribute("hasOverviewZip", analyzerService.hasReportZip(filename, "overview"));
-        model.addAttribute("hasTopComponentsZip", analyzerService.hasReportZip(filename, "top_components"));
-        model.addAttribute("hasSuspectsZip", analyzerService.hasReportZip(filename, "suspects"));
-
-        // LLM chat restore mode (플로팅 챗 복원 시 컨텍스트 포함 여부)
-        model.addAttribute("llmChatRestoreIncludeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
-
-        return "analyze";
-    }
-
-    // ── A4 1페이지 PDF 리포트: 미리보기 페이지 + PDF 스트림 ─────────────
-
-    /**
-     * PDF 미리보기 페이지. iframe으로 inline PDF를 표시하고 다운로드 버튼을 제공.
-     */
-    @GetMapping("/analyze/{filename:.+}/print-preview")
-    public String printPreviewPage(@PathVariable String filename, Model model) {
-        String safe = FilenameValidator.validate(filename);
-        HeapAnalysisResult result = analyzerService.getCachedResult(safe);
-        if (result == null
-                || result.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS) {
-            return "redirect:/analyze/result/" + safe;
-        }
-        model.addAttribute("filename", safe);
-        String base = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
-        model.addAttribute("baseName", base);
-        model.addAttribute("downloadName", base + "-report.pdf");
-        return "analyze-print-preview";
-    }
-
-    /**
-     * 인쇄용 리포트의 HTML 렌더 (PDF 미생성). 모바일 미리보기 iframe에서 사용.
-     * - 데스크톱은 기존 PDF iframe 유지, 모바일은 브라우저 PDF 인라인 표시 한계 때문에 HTML로 fallback.
-     * - 같은 모델을 사용하므로 표시 내용이 다운로드 PDF와 동일.
-     */
-    @GetMapping("/analyze/{filename:.+}/print-html")
-    public String printHtmlPage(@PathVariable String filename, Model model) {
-        String safe = FilenameValidator.validate(filename);
-        HeapAnalysisResult result = analyzerService.getCachedResult(safe);
-        if (result == null
-                || result.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS) {
-            return "redirect:/analyze/result/" + safe;
-        }
-        pdfReportService.buildPrintModel(safe, result).forEach(model::addAttribute);
-        return "analyze-print";
-    }
+    // ── A4 1페이지 PDF 리포트: PDF 바이트 스트림 ───────────────────────
 
     /**
      * PDF 바이트 스트림. mode=download(기본) → attachment, mode=inline → iframe 미리보기용.
@@ -721,27 +327,7 @@ public class HeapDumpController {
         }
     }
 
-    // ── 파일 삭제 ────────────────────────────────────────────────
-
-    @PostMapping("/delete/{filename:.+}")
-    public String deleteFile(@PathVariable String filename,
-                             @RequestHeader(value = "Referer", required = false) String referer,
-                             RedirectAttributes redirectAttributes) {
-        filename = FilenameValidator.validate(filename);
-        logger.info("[Delete] Request received: filename={}", filename);
-        try {
-            analyzerService.deleteFile(filename);
-            logger.info("[Delete] Success: {}", filename);
-            redirectAttributes.addFlashAttribute("success", "Deleted: " + filename);
-        } catch (IOException e) {
-            logger.error("[Delete] Failed for '{}': {}", filename, e.getMessage());
-            redirectAttributes.addFlashAttribute("error", "Delete failed: " + e.getMessage());
-        }
-        if (referer != null && referer.contains("/files")) {
-            return "redirect:/files";
-        }
-        return "redirect:/";
-    }
+    // POST /delete/{filename} (form-redirect) 는 HeapDumpViewController 로 이전
 
     // ── MAT 리포트 HTML ──────────────────────────────────────────
 
@@ -990,63 +576,7 @@ public class HeapDumpController {
                         + "style=\"opacity:0.4;cursor:not-allowed\"");
     }
 
-    // ── [NEW] Compare ────────────────────────────────────────────
-
-    @GetMapping("/compare")
-    public String compareDumps(
-            @RequestParam(required = false) String base,
-            @RequestParam(required = false) String target,
-            Model model) {
-        // 파라미터 없이 진입하면 파일 선택 화면을 노출
-        if (base == null || target == null || base.isEmpty() || target.isEmpty()) {
-            return "compare";
-        }
-        base = FilenameValidator.validate(base);
-        target = FilenameValidator.validate(target);
-
-        HeapAnalysisResult baseResult   = analyzerService.getCachedResult(base);
-        HeapAnalysisResult targetResult = analyzerService.getCachedResult(target);
-
-        if (baseResult == null || targetResult == null) {
-            model.addAttribute("error",
-                "Both files must be analyzed before comparison. " +
-                "Please analyze: " +
-                (baseResult == null ? base : "") + " " +
-                (targetResult == null ? target : ""));
-            return "compare";
-        }
-
-        model.addAttribute("baseResult",   baseResult);
-        model.addAttribute("targetResult", targetResult);
-        model.addAttribute("baseFile",   base);
-        model.addAttribute("targetFile", target);
-
-        // Top objects 비교: 클래스명 기준으로 retained heap 증감 계산
-        Map<String, Long> baseMap   = buildClassSizeMap(baseResult);
-        Map<String, Long> targetMap = buildClassSizeMap(targetResult);
-
-        List<ClassDiff> diffs = new ArrayList<>();
-        Set<String> allClasses = new HashSet<>();
-        allClasses.addAll(baseMap.keySet());
-        allClasses.addAll(targetMap.keySet());
-
-        for (String cls : allClasses) {
-            long baseSize   = baseMap.getOrDefault(cls, 0L);
-            long targetSize = targetMap.getOrDefault(cls, 0L);
-            long delta      = targetSize - baseSize;
-            if (delta != 0) diffs.add(new ClassDiff(cls, baseSize, targetSize, delta));
-        }
-        diffs.sort((a, b) -> Long.compare(Math.abs(b.getDelta()), Math.abs(a.getDelta())));
-        model.addAttribute("classDiffs", diffs.stream().limit(20).collect(Collectors.toList()));
-
-        // 힙 크기 비교
-        long heapDelta = targetResult.getUsedHeapSize() - baseResult.getUsedHeapSize();
-        model.addAttribute("heapDelta", formatBytes(Math.abs(heapDelta)));
-        model.addAttribute("heapDeltaSign", heapDelta >= 0 ? "+" : "-");
-        model.addAttribute("heapDeltaUp", heapDelta > 0);
-
-        return "compare";
-    }
+    // GET /compare 는 HeapDumpViewController 로 이전 (Phase 4B)
 
     // ── [NEW] API: 분석 히스토리 JSON ────────────────────────────
 
@@ -2170,13 +1700,13 @@ public class HeapDumpController {
                 .body(html);
     }
 
-    private String truncateLog(String log, int maxLen) {
+    public String truncateLog(String log, int maxLen) {
         if (log == null) return "";
         if (log.length() <= maxLen) return log;
         return log.substring(0, maxLen) + "\n\n[truncated — " + log.length() + " chars total]";
     }
 
-    private String formatBytes(long bytes) {
+    public String formatBytes(long bytes) {
         return FormatUtils.formatBytes(bytes);
     }
 
@@ -2190,7 +1720,7 @@ public class HeapDumpController {
         return min + "m " + sec + "s";
     }
 
-    private List<AnalysisHistoryItem> buildHistory(List<HeapDumpFile> files) {
+    public List<AnalysisHistoryItem> buildHistory(List<HeapDumpFile> files) {
         List<AnalysisHistoryItem> history = new ArrayList<>();
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
         Set<String> processedNames = new HashSet<>();
@@ -2333,7 +1863,7 @@ public class HeapDumpController {
         return history;
     }
 
-    private Map<String, Long> buildClassSizeMap(HeapAnalysisResult result) {
+    public Map<String, Long> buildClassSizeMap(HeapAnalysisResult result) {
         Map<String, Long> map = new HashMap<>();
         if (result.getTopMemoryObjects() != null) {
             for (MemoryObject obj : result.getTopMemoryObjects()) {
@@ -2346,7 +1876,7 @@ public class HeapDumpController {
     // ── Detections 집계 helper (대시보드 + History 페이지 공유) ─────
     // 가변 days 윈도우(7/14/30/90 등)에 대해 서버별 시리즈, 심각도별 시리즈,
     // 파일별 breakdown, KPI(total/last7d/prev7d/delta7d/peak)를 한 번의 순회로 산출.
-    private DetectionAggregate aggregateDetections(List<AnalysisHistoryItem> history, int days, int topN) {
+    public DetectionAggregate aggregateDetections(List<AnalysisHistoryItem> history, int days, int topN) {
         DetectionAggregate agg = new DetectionAggregate();
         if (days <= 0) days = 14;
         if (topN <= 0) topN = 12;

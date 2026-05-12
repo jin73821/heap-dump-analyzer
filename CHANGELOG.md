@@ -1,5 +1,42 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-12] Phase 4B — HeapDumpController View / API 분리
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- 수정: `SECURITY_REFACTOR_PLAN.md`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `SECURITY_REFACTOR_PLAN.md` Phase 4B. View 페이지 렌더와 REST API 가 한 컨트롤러(2,833 라인) 에 혼재되어 책임 구분이 흐릿했음.
+- 사용자 선택 "단순 2 분할 (View + API) (Recommended 안전)" — 6-API-컨트롤러 분할 대신 위험이 가장 낮은 단일 분리부터 진행.
+- 향후 API 도메인별(분석/리포트/파일/이력/시스템/AI) 분리는 별도 사이클로 이연.
+
+### 내역
+- **HeapDumpViewController (516 라인, 신규)** — Thymeleaf 페이지 + form POST→redirect 액션 15 개:
+  - GET `/`, `/files`, `/history`, `/settings`, `/settings/llm`, `/settings/rag`, `/compare`
+  - GET `/analyze/{filename}`, `/analyze/result/{filename}`, `/analyze/{filename}/print-preview`, `/analyze/{filename}/print-html`
+  - POST `/upload`, `/delete/{filename}`, `/history/delete/{filename}`, `/analyze/rerun/{filename}`
+  - 의존성: `HeapDumpAnalyzerService` + `HeapDumpConfig` + `PdfReportService` + `HeapDumpController` (헬퍼 위임용)
+- **HeapDumpController 변경** — REST API · SSE · 바이너리(PDF, Resource) · iframe HTML 만 잔류:
+  - 15 개 view 메서드 본문 제거
+  - 공유 헬퍼 6 개 `private` → `public` 가시성 승격: `isAdmin`, `buildHistory`, `aggregateDetections`, `buildClassSizeMap`, `formatBytes`, `truncateLog`
+  - 미사용 import 제거: `org.springframework.ui.Model`, `RedirectAttributes`
+  - inner public static DTO 8 개 (`AnalysisHistoryItem` 외) 는 그대로 유지 — view 측에서 `HeapDumpController.AnalysisHistoryItem` 으로 참조
+- **분리 전략**: HeapDumpViewController 가 HeapDumpController 를 주입받아 헬퍼 호출 (facade 패턴). 호출 그래프 변경 없음, 외부 URL 시그니처 100% 동일.
+
+### 검증
+- `mvn clean package -DskipTests` 성공.
+- `bash restart.sh` 후 `Started HeapAnalyzerApplication in 9.074 seconds` — 정상 기동.
+- 페이지 7 개 (`/`, `/files`, `/history`, `/settings`, `/settings/llm`, `/settings/rag`, `/compare`) 모두 `200`.
+- 분석 결과 페이지 4 개 (`/analyze/{f}` 302 redirect, `/analyze/result/{f}` 200, `/print-preview` 200, `/print-html` 200) 정상.
+- API 4 개 (`/api/history`, `/api/system/status`, `/api/queue/status`, `/api/settings`) 모두 `200`.
+- 로그 무 신규 ERROR.
+- HeapDumpController 라인 수: **2,833 → 2,365** (-468). 신규 View 컨트롤러 516 라인. 엔드포인트: 65 → 50 (API) + 15 (View).
+
+---
+
 ## [2026-05-12] Phase 7-5 — AiInsightManager 분리
 
 **변경 파일:**
