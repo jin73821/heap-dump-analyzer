@@ -47,9 +47,15 @@
   - [x] **4A-1. HeapAnalysisResultCache 분리** (2026-05-12 완료, Phase 6-1)
     - `memCache` `ConcurrentHashMap<String, HeapAnalysisResult>` 와 순수 map 연산 7 개를 별도 `@Component` 로 추출
     - 외부 API (`getCachedResult`/`clearCache`/`getCachedResultCount`/`getAllCachedResults`/`getCacheKeys`) 시그니처 무변경 — facade 패턴
-  - [ ] **4A-2. LlmConfigService 분리** (보류) — LLM 12 필드 + SSL 미러링 로직, 별도 PR
-  - [ ] **4A-3. RagConfigService 분리** (보류) — RAG 26 필드, 별도 PR
-  - [ ] **4A-4. FileManagementService 분리** (보류) — 디스크/gzip/마이그레이션 분리
+  - [x] **4A-2. LlmConfigService 분리** (2026-05-12 완료, Phase 7-2)
+    - 12 LLM 필드 + 17 getter/setter + 4 호출 메서드(`callLlmAnalysis`/`callLlmChat`/`callLlmChatStream`/`testLlmConnection`) + `disableSslVerification` + `GENSPARK_MODELS` 이전
+    - settings.json/application.properties 영속화는 `applyFromSettings`/`collectSettings`/`collectApplicationProperties` hook 으로 분리
+    - 외부 API facade 유지 — Controller 수정 없음
+    - `HeapDumpAnalyzerService` 3,445 → 2,644 (-801 라인)
+  - [ ] **4A-3. RagConfigService 분리** (보류) — RAG 26 필드, 별도 PR. `RagService`/`EmbeddingService` 생성자 재배선 필요.
+  - [~] **4A-4. FileManagementService 분리** — *Phase 1 완료 (2026-05-12, Phase 7-1)*
+    - [x] **4A-4 Phase 1**: `listFiles`/`checkDuplicate`/`computePartialHash`/`generateUniqueName`/`isValidHeapDumpFile`/`stripExtension`/`getExtension`/`dumpFilesDirectory` 8 메서드. `HeapDumpAnalyzerService` 3,581 → 3,445 (-136 라인)
+    - [ ] **4A-4 Phase 2**: I/O 메서드 (`uploadFile`/`deleteFile`/`getFile`/`compressDumpFile`/`decompressDumpFile`/마이그레이션) — 보류
 - [ ] **4B. Controller 분리** (View / API) — 보류
   - Explore 권장: `HeapDumpViewController` + 6 개 API 컨트롤러 (Analysis/Report/File/History/System/Ai)
 

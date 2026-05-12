@@ -1,5 +1,71 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-12] Phase 7-2 — LlmConfigService 분리
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/service/LlmConfigService.java`
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- Phase 4A-2. `HeapDumpAnalyzerService` 의 LLM 책임을 단일 컴포넌트로 분리.
+- 외부 시그니처 무변경 (facade 유지) — 컨트롤러 5 개 호출 위치(`HeapDumpController` 4 곳 + `AiChatController` 1 곳) 수정 없음.
+
+### 내역
+- `LlmConfigService` (919 라인):
+  - 12 개 LLM 런타임 필드 + `DEFAULT_CHAT_SYSTEM_PROMPT` + `GENSPARK_MODELS`
+  - `@PostConstruct init()` — `HeapDumpConfig` 로부터 초기값 로드 + `LLM_API_KEY` 환경변수 우선
+  - 17 개 getter/setter (setter 는 로깅만, persist 는 facade 에서 트리거)
+  - 4 개 호출 메서드: `testLlmConnection`/`callLlmAnalysis`/`callLlmChat`/`callLlmChatStream`
+  - SSL 토글 헬퍼 `disableSslVerification`
+  - HTTP 오류 분류: `classifyHttpError`/`buildHttpErrorMessage`/`extractLlmText`
+  - Settings 영속화 hook: `applyFromSettings(Map)` / `collectSettings(Map)` / `collectApplicationProperties(Map)`
+- `HeapDumpAnalyzerService`:
+  - 12 개 LLM 필드 + `DEFAULT_CHAT_SYSTEM_PROMPT` 제거
+  - 생성자에 `LlmConfigService` 주입
+  - `loadPersistedSettings` 의 LLM 13 줄 inline 로드 → `llmConfig.applyFromSettings(saved)` 한 줄
+  - `persistSettings` 의 LLM 12 줄 → `llmConfig.collectSettings(settings)` 한 줄
+  - `syncApplicationProperties` 의 LLM 11 줄 → `llmConfig.collectApplicationProperties(updates)` 한 줄
+  - getter/setter + 호출 메서드 모두 facade 위임 (시그니처 유지)
+
+### 검증
+- 빌드 성공.
+- `Started HeapAnalyzerApplication` + `Restored 13 saved results from disk`.
+- `/settings/llm` 페이지 → 200 OK, 65,400 bytes.
+- `POST /api/llm/test-connection` → `{"provider":"genspark","success":true,"latencyMs":7911,"model":"claude-sonnet-4-5"}` 정상.
+- `/api/settings` 의 `llm.enabled/provider/model/apiKeySet/chatSystemPrompt` 모두 정상 복원.
+- `HeapDumpAnalyzerService` 라인 수: **3,445 → 2,644** (-801, Phase 6-1 이후 누적 -937).
+
+---
+
+## [2026-05-12] Phase 7-1 — FileManagementService Phase 1 분리 (유틸/조회)
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/service/FileManagementService.java`
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `HeapDumpAnalyzerService` 3,581 라인의 책임 분리 — Phase 4A-4 의 안전한 Phase 1.
+- 외부 의존성 없는 순수 유틸/조회 메서드만 우선 추출 — pilot 으로 PR 패턴 검증.
+- 외부 API 시그니처 무변경 (facade 위임).
+
+### 내역
+- `FileManagementService` (211 라인): `dumpFilesDirectory`/`isValidHeapDumpFile`/`stripExtension`/`getExtension`/`computePartialHash`/`generateUniqueName`/`checkDuplicate`/`listFiles` 8 개 메서드.
+- 의존성: `HeapDumpConfig` + `HeapAnalysisResultCache` (gz 파일의 originalSize 조회용).
+- `HeapDumpAnalyzerService` 생성자에 `FileManagementService fileMgmt` 주입.
+- 내부 17 개 호출 (`isValidHeapDumpFile` 5회, `stripExtension` 8회, `getExtension` 4회 등) 은 private delegate 메서드를 통해 그대로 동작.
+- `MessageDigest` / `NoSuchAlgorithmException` import 제거 (FileManagementService 로 이동).
+
+### 검증
+- 빌드 성공, `Started HeapAnalyzerApplication` + `Restored 13 saved results from disk`.
+- `/` `/files` `/history` `/compare` 4 페이지 정상 렌더.
+- `POST /api/upload/check` → `{"status":"OK"}` 정상.
+- `GET /api/settings` → `cachedResults: 13` 유지.
+- `HeapDumpAnalyzerService` 라인 수: **3,581 → 3,445** (-136).
+
+---
+
 ## [2026-05-12] Phase 6-5 — analyze.html 인라인 CSS 분리
 
 **변경 파일:**
