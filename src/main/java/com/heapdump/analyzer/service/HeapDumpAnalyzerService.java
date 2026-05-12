@@ -58,12 +58,10 @@ public class HeapDumpAnalyzerService {
     private final AiInsightRepository aiInsightRepository;
     private final DumpTransferLogRepository transferLogRepository;
     private final TargetServerRepository targetServerRepository;
+    private final HeapAnalysisResultCache resultCache;
 
     public MatReportParser getParser() { return parser; }
     private final ObjectMapper    objectMapper = new ObjectMapper();
-
-    // 메모리 1차 캐시
-    private final ConcurrentHashMap<String, HeapAnalysisResult> memCache = new ConcurrentHashMap<>();
 
     // 비동기 실행 스레드 풀 (application.properties에서 설정, @PostConstruct에서 초기화)
     private ExecutorService executor;
@@ -139,13 +137,15 @@ public class HeapDumpAnalyzerService {
                                    AnalysisHistoryRepository analysisHistoryRepository,
                                    AiInsightRepository aiInsightRepository,
                                    DumpTransferLogRepository transferLogRepository,
-                                   TargetServerRepository targetServerRepository) {
+                                   TargetServerRepository targetServerRepository,
+                                   HeapAnalysisResultCache resultCache) {
         this.config  = config;
         this.parser  = parser;
         this.analysisHistoryRepository = analysisHistoryRepository;
         this.aiInsightRepository = aiInsightRepository;
         this.transferLogRepository = transferLogRepository;
         this.targetServerRepository = targetServerRepository;
+        this.resultCache = resultCache;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
         this.compressAfterAnalysis = config.isCompressAfterAnalysis();
         // LLM 초기화
@@ -281,7 +281,7 @@ public class HeapDumpAnalyzerService {
 
     private void migrateExistingResultsToDb() {
         int migrated = 0;
-        for (Map.Entry<String, HeapAnalysisResult> entry : memCache.entrySet()) {
+        for (Map.Entry<String, HeapAnalysisResult> entry : resultCache.entries()) {
             String filename = entry.getKey();
             if (!analysisHistoryRepository.existsByFilename(filename)) {
                 HeapAnalysisResult result = entry.getValue();
@@ -362,7 +362,7 @@ public class HeapDumpAnalyzerService {
     }
 
     /**
-     * 개별 결과 디렉토리에서 result.json을 로드하여 memCache에 적재.
+     * 개별 결과 디렉토리에서 result.json을 로드하여 resultCache에 적재.
      */
     private boolean loadResultFromDir(File dir) {
         File resultFile = new File(dir, RESULT_JSON);
@@ -396,7 +396,7 @@ public class HeapDumpAnalyzerService {
             if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
                 sanitizeCachedHtml(r);
             }
-            memCache.put(r.getFilename(), r);
+            resultCache.put(r.getFilename(), r);
             return true;
         } catch (Exception e) {
             logger.warn("Failed to restore {}: {}", resultFile, e.getMessage());
@@ -718,7 +718,7 @@ public class HeapDumpAnalyzerService {
     @PreDestroy
     public void shutdown() {
         logger.info("[Shutdown] HeapDumpAnalyzerService shutting down — saved results: {}, terminating thread pool...",
-                memCache.size());
+                resultCache.size());
         executor.shutdownNow();
         try {
             if (executor.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -1148,9 +1148,9 @@ public class HeapDumpAnalyzerService {
     public File findExternalPropertiesFilePublic() { return findExternalPropertiesFile(); }
     public String  getHeapDumpDirectory()          { return config.getHeapDumpDirectory(); }
     public String  getMatCliPath()                 { return config.getMatCliPath(); }
-    public int     getCachedResultCount()          { return memCache.size(); }
-    public Collection<HeapAnalysisResult> getAllCachedResults() { return Collections.unmodifiableCollection(memCache.values()); }
-    public Set<String> getCacheKeys()               { return Collections.unmodifiableSet(memCache.keySet()); }
+    public int     getCachedResultCount()          { return resultCache.size(); }
+    public Collection<HeapAnalysisResult> getAllCachedResults() { return resultCache.values(); }
+    public Set<String> getCacheKeys()               { return resultCache.keys(); }
     public boolean isMatCliReady()                 { return config.isMatCliReady(); }
     public String  getMatCliStatusMessage()        { return config.getMatCliStatusMessage(); }
 
@@ -2386,7 +2386,7 @@ public class HeapDumpAnalyzerService {
             boolean isGz = fName.toLowerCase().endsWith(".gz");
             if (isGz) {
                 String displayName = fName.substring(0, fName.length() - 3);
-                HeapAnalysisResult cached = memCache.get(displayName);
+                HeapAnalysisResult cached = resultCache.get(displayName);
                 existingSize = (cached != null && cached.getOriginalFileSize() > 0)
                         ? cached.getOriginalFileSize() : -1;
             } else {
@@ -2489,8 +2489,8 @@ public class HeapDumpAnalyzerService {
                     if (compressed) {
                         hdf.setCompressed(true);
                         hdf.setCompressedSize(f.length());
-                        // memCache에서 원본 크기 조회
-                        HeapAnalysisResult cached = memCache.get(displayName);
+                        // resultCache에서 원본 크기 조회
+                        HeapAnalysisResult cached = resultCache.get(displayName);
                         if (cached != null && cached.getOriginalFileSize() > 0) {
                             hdf.setOriginalSize(cached.getOriginalFileSize());
                             hdf.setSize(cached.getOriginalFileSize());
@@ -2690,7 +2690,7 @@ public class HeapDumpAnalyzerService {
         }
 
         // 4) 메모리 캐시 제거
-        memCache.remove(safe);
+        resultCache.remove(safe);
 
         // 5) DB 레코드 삭제 (analysis_history + ai_insights)
         try {
@@ -2713,7 +2713,7 @@ public class HeapDumpAnalyzerService {
 
     public HeapAnalysisResult getCachedResult(String filename) {
         String safe = new File(filename).getName();
-        HeapAnalysisResult cached = memCache.get(safe);
+        HeapAnalysisResult cached = resultCache.get(safe);
         if (cached != null) return cached;
 
         File resultFile = resultJsonFile(safe);
@@ -2729,7 +2729,7 @@ public class HeapDumpAnalyzerService {
                     if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
                         sanitizeCachedHtml(r);
                     }
-                    memCache.put(safe, r);
+                    resultCache.put(safe, r);
                     return r;
                 }
             } catch (Exception e) {
@@ -2741,7 +2741,7 @@ public class HeapDumpAnalyzerService {
 
     public void clearCache(String filename) {
         String safe = new File(filename).getName();
-        memCache.remove(safe);
+        resultCache.remove(safe);
         File resultDir = resultDirectory(safe);
         if (resultDir.exists() && resultDir.isDirectory()) {
             deleteDirectoryRecursively(resultDir);
@@ -2919,7 +2919,7 @@ public class HeapDumpAnalyzerService {
                 if (!hasHeapData) {
                     result.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
                     result.setErrorMessage("Heap data not available — MAT ZIP 파싱 결과에 힙 데이터가 없습니다.");
-                    memCache.put(safe, result);
+                    resultCache.put(safe, result);
                     saveResultToDisk(result, resultDir);
                     saveAnalysisToDb(result);
                     analysisSuccess = true;
@@ -2927,7 +2927,7 @@ public class HeapDumpAnalyzerService {
                     logger.warn("[Analysis] No heap data for {}, marked as ERROR", safe);
                 } else {
                     result.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.SUCCESS);
-                    memCache.put(safe, result);
+                    resultCache.put(safe, result);
                     saveResultToDisk(result, resultDir);
                     saveAnalysisToDb(result);
                     analysisSuccess = true;
@@ -2955,7 +2955,7 @@ public class HeapDumpAnalyzerService {
                     logger.error("[Analysis] Failed for {}", safe, e);
                     sendProgress(emitter, AnalysisProgress.error(safe, e.getMessage()));
 
-                    // 분석 실패 결과를 memCache + 디스크에 저장 (파일 삭제 전까지 유지)
+                    // 분석 실패 결과를 resultCache + 디스크에 저장 (파일 삭제 전까지 유지)
                     try {
                         File origFile = new File(config.getDumpFilesDirectory(), safe);
                         if (!origFile.exists()) origFile = new File(config.getHeapDumpDirectory(), safe);
@@ -2982,7 +2982,7 @@ public class HeapDumpAnalyzerService {
                             }
                         }
                         Files.createDirectories(errorResultDir.toPath());
-                        memCache.put(safe, errorResult);
+                        resultCache.put(safe, errorResult);
                         saveResultToDisk(errorResult, errorResultDir);
                         saveAnalysisToDb(errorResult);
                         analysisSuccess = true; // tmp 파일 삭제 방지 (이미 이동 완료)

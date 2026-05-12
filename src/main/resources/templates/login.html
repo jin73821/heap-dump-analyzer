@@ -6,13 +6,10 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
     <title>Login — Heap Dump Analyzer</title>
     <style>
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { height: 100%; }
-        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
-               color: #1F2937; background: #F3F4F6; line-height: 1.5;
-               display: flex; align-items: center; justify-content: center; }
+        body { display: flex; align-items: center; justify-content: center; }
         .login-card { background: #fff; border-radius: 16px; padding: 40px 36px;
                       width: 100%; max-width: 400px; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
         .login-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 28px;

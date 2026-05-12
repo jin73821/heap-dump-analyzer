@@ -5,26 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="_csrf" th:content="${_csrf.token}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
     <title>AI Chat — Heap Dump Analyzer</title>
     <style>
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { height: 100%; }
-        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
-               color: #1F2937; background: #F3F4F6; line-height: 1.5; overflow: hidden; }
-
-        /* ── Topbar ─────────────────────────────────── */
-        .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
-                  transition: left .25s cubic-bezier(.4,0,.2,1);
-                  background: #fff; border-bottom: 1px solid #E5E7EB;
-                  display: flex; align-items: center; justify-content: space-between;
-                  padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
-        .topbar-brand { display: flex; align-items: center; gap: 10px; }
-        .topbar-title { font-size: 16px; font-weight: 700; }
-        .topbar-right { display: flex; align-items: center; gap: 6px; }
-        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
-                      border-radius: 6px; background: transparent; color: #6B7280;
-                      cursor: pointer; text-decoration: none; }
-        .topbar-btn:hover { background: #F9FAFB; }
+        body { overflow: hidden; }  /* AI Chat 페이지 전용 */
 
         /* ── Main layout ────────────────────────────── */
         .chat-layout {

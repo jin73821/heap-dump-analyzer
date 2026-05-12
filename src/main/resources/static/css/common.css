@@ -1,0 +1,60 @@
+/*
+ * common.css — 모든 페이지 공통 패턴.
+ * 9 개 템플릿이 인라인 <style> 로 중복 정의하던 패턴 중
+ * 페이지간 100% 일치하는 것만 추출.
+ *
+ * 인클루드: <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+ * banner.html 보다 먼저 로드 권장 (banner 가 var(--banner-w) 를 사용).
+ */
+
+/* ── Reset ─────────────────────────────────────────────────────── */
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+html, body { height: 100%; }
+
+/* body base — 페이지가 추가 속성(overflow 등) 덮어쓸 수 있음 */
+body {
+    font-family: 'Segoe UI', 'Trebuchet MS', sans-serif;
+    font-size: 14px;
+    color: #1F2937;
+    background: #F3F4F6;
+    line-height: 1.5;
+}
+
+/* ── Topbar (모든 페이지 공통) ─────────────────────────────────── */
+.topbar {
+    position: fixed; top: 0;
+    left: var(--banner-w, 220px); right: 0;
+    z-index: 100; height: 52px;
+    transition: left .25s cubic-bezier(.4, 0, .2, 1);
+    background: #fff;
+    border-bottom: 1px solid #E5E7EB;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .06);
+}
+.topbar-brand {
+    display: flex; align-items: center; gap: 10px;
+}
+.topbar-logo {
+    width: 30px; height: 30px;
+    background: #2563EB;
+    border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+}
+.topbar-logo svg { width: 16px; height: 16px; fill: white; }
+.topbar-title { font-size: 16px; font-weight: 700; }
+.topbar-right {
+    display: flex; align-items: center; gap: 6px;
+}
+.topbar-btn {
+    font-size: 12px; padding: 5px 12px;
+    border: 1px solid #E5E7EB; border-radius: 6px;
+    background: transparent; color: #6B7280;
+    cursor: pointer; text-decoration: none;
+    display: inline-block;
+}
+.topbar-btn:hover { background: #F9FAFB; }

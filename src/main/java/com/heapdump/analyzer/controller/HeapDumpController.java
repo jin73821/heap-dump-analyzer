@@ -76,18 +76,8 @@ public class HeapDumpController {
         this.pdfReportService = pdfReportService;
     }
 
-    // ── 파일명 검증 실패 핸들러 ─────────────────────────────────────
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    @ResponseBody
-    public ResponseEntity<Map<String, String>> handleBadFilename(IllegalArgumentException e) {
-        logger.warn("[Validation] Rejected request: {}", e.getMessage());
-        Map<String, String> body = new LinkedHashMap<>();
-        body.put("error", e.getMessage());
-        return ResponseEntity.badRequest().body(body);
-    }
-
     // ── 메인 페이지 ──────────────────────────────────────────────
+    // (IllegalArgumentException 처리는 GlobalExceptionHandler 로 이동)
 
     @GetMapping("/")
     public String index(Model model) {

@@ -1,5 +1,138 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-12] Phase 6-5 — analyze.html 인라인 CSS 분리
+
+**변경 파일:**
+- 신규: `src/main/resources/static/css/analyze.css`
+- 수정: `src/main/resources/templates/analyze.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `analyze.html` 4,866 라인 중 인라인 `<style>` 가 738 라인 차지 — 페이지 가독성 + 브라우저 캐시 활용 저해.
+- 페이지의 CSS 변수 (`--bg`/`--text` 등) 와 페이지 고유 layout (KPI/TopConsumers/Suspects/Histogram/Threads/AI/RawData) 을 별도 파일로 분리.
+- HTML/JS 로직은 **무변경** (단순 분리만).
+
+### 내역
+- `analyze.css` (738 라인): Reset & Base, `:root` 변수, `.app-header`, `.sidebar`, KPI 카드, Top Consumers 트리, Suspects 패널, Histogram, Threads 상세, AI 인사이트 패널, 플로팅 채팅 FAB, Raw Data iframe, Component Detail 모달, media queries.
+- `analyze.html` `<head>` 에 `<link rel="stylesheet" href="/css/analyze.css?v=2026-05-12">`.
+- 인라인 `<style>` 블록 (12~753 라인) 완전 제거.
+- analyze 페이지는 자체 CSS 변수와 reset 을 가지므로 `common.css` 미사용 (의도).
+
+### 검증
+- 빌드/기동 정상.
+- `GET /css/analyze.css` → 200, 45961 bytes.
+- `GET /analyze/result/{filename}` → 200, 463856 bytes, `app-header`/`sidebar` 요소 렌더 확인.
+- `analyze.html` 라인 수: **4866 → 4127** (-739 라인).
+
+---
+
+## [2026-05-12] Phase 6-4 — 공통 JS 헬퍼 (common.js) 인프라
+
+**변경 파일:**
+- 신규: `src/main/resources/static/js/common.js`
+- 수정: `src/main/resources/templates/fragments/banner.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `escHtml`/`csrfToken`/`csrfHeader` 등이 4 페이지에서 약간씩 다른 시그니처로 중복 정의 (3 char escape vs 5 char, null 처리 유무 등).
+- 페이지 인라인 코드를 일괄 마이그레이션하면 회귀 위험 큼 → **인프라만 우선 도입**.
+
+### 내역
+- `window.Common` 네임스페이스:
+  - `Common.escHtml(s)` — 5 char escape + null 안전
+  - `Common.csrfToken()` / `Common.csrfHeaderName()` — meta 태그 조회
+  - `Common.fetchJSON(url, opts)` — CSRF 자동 부착 + 4xx/5xx 시 throw
+  - `Common.appendCsrfToForm(form)` — 동적 폼 패턴 (CLAUDE.md 의 함정 #4)
+  - `Common.formatBytes(n)` — 표시 포맷 (FormatUtils JS 미러)
+- `fragments/banner.html` 상단에서 `<script src="/js/common.js?v=2026-05-12"></script>` 로 1 회 로드.
+- 14 개 페이지 (banner 사용) 에서 자동 가용. 페이지 인라인 스크립트가 `Common.*` 호출 가능.
+
+### 보류 (의도적 — 위험 회피)
+- 페이지의 동명 함수 (`escHtml`/CSRF 인라인) 마이그레이션은 별도 PR. 현재는 무변경 (각 페이지가 자체 정의를 그대로 사용).
+
+### 검증
+- 빌드/기동 정상.
+- `GET /js/common.js` → 200, 3480 bytes, `application/javascript`.
+- 6 개 페이지 샘플 (`/`, `/files`, `/history`, `/servers`, `/admin/users`, `/ai-chat`) 모두 1 회 참조.
+
+---
+
+## [2026-05-12] Phase 6-3 — 공통 CSS 추출 (common.css)
+
+**변경 파일:**
+- 신규: `src/main/resources/static/css/common.css`
+- 수정: 12 개 템플릿 (`index.html`/`files.html`/`history.html`/`settings.html`/`servers.html`/`admin/users.html`/`ai-chat.html`/`llm-settings.html`/`rag-settings.html`/`server-detail.html`/`server-logs.html`/`login.html`)
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 9 개 이상 페이지가 동일한 reset/body/topbar CSS 를 인라인 `<style>` 로 중복 정의 — 시각적 일관성 깨질 위험 + 유지보수 비용.
+- 페이지간 **100% 일치하는** 패턴만 안전하게 추출.
+
+### 내역
+- `common.css` (70 라인): reset(`* { margin/padding/box-sizing }`, `html, body { height: 100% }`), `body` base (font/color/background), `.topbar` + `.topbar-brand`/`.topbar-logo`/`.topbar-title`/`.topbar-right`/`.topbar-btn` (anti-wrap 미적용 표준 패턴).
+- 각 페이지의 `<head>` 에 `<link rel="stylesheet" href="/css/common.css?v=2026-05-12">` 1 줄 추가.
+- anti-wrap 확장 topbar (`servers.html`/`server-logs.html`/`admin/users.html`) 는 인라인 유지 (의도된 변형).
+- page-specific body 속성(`overflow-x: hidden` 등) 은 짧은 override 로 잔존.
+
+### 검증
+- 빌드/기동 정상, `Restored 13 saved results from disk` + `Started HeapAnalyzerApplication`.
+- 12 개 페이지 모두 `GET` 200 OK + `common.css` 1 회 참조.
+- `git diff --stat`: 165 라인 삭제 / 21 라인 추가 = 페이지에서 순 144 라인 감축 (common.css 70 라인 신규).
+
+---
+
+## [2026-05-12] Phase 6-2 — GlobalExceptionHandler 중앙화
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/controller/GlobalExceptionHandler.java`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 기존 `IllegalArgumentException` 핸들러가 `HeapDumpController` 한 곳에만 존재 →
+  `ServerController`/`AdminController` 등에 `FilenameValidator` 동일 패턴 도입 시
+  500 으로 응답되는 위험 방지.
+- HTML 뷰 요청 (`Accept: text/html`) 시 JSON `400` 대신 홈 `?error=invalidFilename` 으로 redirect.
+
+### 내역
+- `@ControllerAdvice GlobalExceptionHandler`:
+  - 분기 기준: 요청 URI `/api/`로 시작 / `X-Requested-With: XMLHttpRequest` → JSON 400
+  - 그 외 + `Accept: text/html` → `?error=invalidFilename` 302 redirect
+  - 기본 → JSON 400 (`{"error": "..."}`)
+- `HeapDumpController.handleBadFilename()` 제거 (`GlobalExceptionHandler` 에서 통합 처리).
+
+### 검증
+- `GET /download/foo.txt` → 400 + `{"error":"Unsupported file type..."}` (JSON)
+- `GET /analyze/result/foo.txt` (`Accept: text/html`) → 302 redirect `http://localhost:18080/?error=invalidFilename`
+- `POST /api/history/bulk-delete` (잘못된 이름 포함) → 200 + 컨트롤러 자체 검증 결과 (기존 동작 유지)
+
+---
+
+## [2026-05-12] Phase 6-1 — HeapAnalysisResultCache 서비스 분리
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/service/HeapAnalysisResultCache.java`
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `HeapDumpAnalyzerService` (3,581 라인) 의 책임 분리 시작 (Phase 4A 안전한 일부).
+- `memCache` `ConcurrentHashMap<String, HeapAnalysisResult>` 와 순수 map 연산을 별도 `@Component` 로 추출.
+- 외부 API (`getCachedResult`, `clearCache`, `getCachedResultCount`, `getAllCachedResults`, `getCacheKeys`) 시그니처 무변경 — 컨트롤러 코드 수정 없음 (facade 패턴).
+
+### 내역
+- 신규 `HeapAnalysisResultCache`: `get`/`put`/`remove`/`size`/`values`/`keys`/`entries` 7 개 메서드.
+- `HeapDumpAnalyzerService` 생성자에 `HeapAnalysisResultCache` 주입, 내부 `memCache.xxx()` 호출 → `resultCache.xxx()` 위임.
+- 디스크 폴백/FS 정리는 서비스에 잔존 (config 경로 의존성).
+
+### 검증
+- 빌드 성공 (`mvn clean package -DskipTests`).
+- 기동: `Restored 13 saved results from disk (data directory)` + `Started HeapAnalyzerApplication`.
+- `GET /api/settings` → `cachedResults: 13` 정상.
+- `GET /api/history` → 43 건 응답 (캐시 폴백 정상).
+
+---
+
 ## [2026-05-11] Transfer Logs — 잘리지 않은 짧은 경로는 hover 미표시
 
 **변경 파일:** `src/main/resources/templates/server-logs.html`, `CHANGELOG.md`

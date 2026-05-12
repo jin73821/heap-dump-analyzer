@@ -3,6 +3,9 @@
 <!-- 좌측 시스템 배너 fragment — 모든 페이지에서 th:replace 로 삽입 -->
 <div th:fragment="banner">
 
+<!-- 공통 헬퍼 (window.Common) — 페이지 인라인 스크립트보다 먼저 로드 -->
+<script src="/js/common.js?v=2026-05-12"></script>
+
 <script>
 /* 렌더링 전 즉시 실행 — 접힌 상태 깜빡임 방지 */
 if (localStorage.getItem('bannerCollapsed') === 'true') {

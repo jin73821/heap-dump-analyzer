@@ -4,12 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
     <title>Target Servers — Heap Dump Analyzer</title>
     <style>
-        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { height: 100%; }
-        body { font-family: 'Segoe UI', 'Trebuchet MS', sans-serif; font-size: 14px;
-               color: #1F2937; background: #F3F4F6; line-height: 1.5; }
+        /* topbar 는 anti-wrap 확장이 있어 인라인 유지 */
         .topbar { position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100; height: 52px;
                   transition: left .25s cubic-bezier(.4,0,.2,1);
                   background: #fff; border-bottom: 1px solid #E5E7EB;

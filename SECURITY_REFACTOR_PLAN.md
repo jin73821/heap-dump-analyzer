@@ -43,10 +43,49 @@
 
 ## Phase 4: 구조 분리 (대형 리팩토링)
 
-- [ ] **4A. 파일 관리 서비스 분리** (HeapDumpAnalyzerService → FileManagementService)
-- [ ] **4B. Controller 분리** (View / API)
+- [~] **4A. 서비스 분리** — *부분 완료 (2026-05-12)*
+  - [x] **4A-1. HeapAnalysisResultCache 분리** (2026-05-12 완료, Phase 6-1)
+    - `memCache` `ConcurrentHashMap<String, HeapAnalysisResult>` 와 순수 map 연산 7 개를 별도 `@Component` 로 추출
+    - 외부 API (`getCachedResult`/`clearCache`/`getCachedResultCount`/`getAllCachedResults`/`getCacheKeys`) 시그니처 무변경 — facade 패턴
+  - [ ] **4A-2. LlmConfigService 분리** (보류) — LLM 12 필드 + SSL 미러링 로직, 별도 PR
+  - [ ] **4A-3. RagConfigService 분리** (보류) — RAG 26 필드, 별도 PR
+  - [ ] **4A-4. FileManagementService 분리** (보류) — 디스크/gzip/마이그레이션 분리
+- [ ] **4B. Controller 분리** (View / API) — 보류
+  - Explore 권장: `HeapDumpViewController` + 6 개 API 컨트롤러 (Analysis/Report/File/History/System/Ai)
 
 ## Phase 5: 프론트엔드 정리
 
-- [ ] **5A. 공통 CSS 추출** (7개 템플릿 → common.css)
-- [ ] **5B. JS 전역 변수 네임스페이스화**
+- [~] **5A. 공통 CSS 추출** — *부분 완료 (2026-05-12)*
+  - [x] **5A-1. common.css 인프라 + 안전 패턴 추출** (2026-05-12 완료, Phase 6-3)
+    - `static/css/common.css` (60 라인): reset, `body` base, `.topbar*` (표준 패턴)
+    - 12 개 페이지 (`index`/`files`/`history`/`settings`/`servers`/`admin/users`/`ai-chat`/`llm-settings`/`rag-settings`/`server-detail`/`server-logs`/`login`) 에 적용 — 인라인 165 라인 삭제
+    - anti-wrap topbar 확장 (servers/server-logs/admin/users) 은 의도된 변형, 인라인 유지
+  - [x] **5A-2. analyze.html 인라인 CSS 분리** (2026-05-12 완료, Phase 6-5)
+    - `static/css/analyze.css` (738 라인) — 페이지 고유 CSS 변수/레이아웃 외부화
+    - `analyze.html` 4866 → 4127 라인 (-739)
+  - [ ] **5A-3. modal/btn/grid 공통 패턴 확장** (보류) — `modalIn` 키프레임 미세 차이, btn 색상 변형 등 면밀 검토 필요
+- [~] **5B. JS 네임스페이스화** — *인프라만 도입 (2026-05-12)*
+  - [x] **5B-1. common.js (window.Common) 인프라** (2026-05-12 완료, Phase 6-4)
+    - `static/js/common.js` (97 라인): `Common.escHtml`/`csrfToken`/`csrfHeaderName`/`fetchJSON`/`appendCsrfToForm`/`formatBytes`
+    - `fragments/banner.html` 에서 1 회 로드 → 14 개 페이지 자동 가용
+  - [ ] **5B-2. 페이지 인라인 `escHtml`/CSRF 호출의 `Common.*` 마이그레이션** (보류) — 회귀 위험으로 점진적 진행 권장
+
+## Phase 6: 추가 보안/구조 개선 (2026-05-12 신규)
+
+- [x] **6-2. GlobalExceptionHandler 중앙화** (2026-05-12 완료)
+  - `@ControllerAdvice GlobalExceptionHandler` 신규
+  - `IllegalArgumentException` → JSON 400 (`/api/`/AJAX) 또는 HTML 302 redirect (`?error=invalidFilename`)
+  - `HeapDumpController.handleBadFilename()` 제거 — 향후 다른 컨트롤러에 동일 검증 도입 시 자동 적용
+  - 위 항목 외 (4A-1, 5A-1, 5A-2, 5B-1) 은 위 Phase 4·5 의 부분 완료에 통합 기록
+
+## 보류 항목 (대형 리팩토링 — 별도 사이클)
+
+| 항목 | 이연 사유 | 권장 시점 |
+|---|---|---|
+| 4A-2 LlmConfigService | LLM 21 메서드 + RAG SSL 미러링, 단독 PR 권장 | Phase 7 |
+| 4A-3 RagConfigService | RAG 26 필드 + getter/setter 40+, 단독 PR | Phase 7 |
+| 4A-4 FileManagementService | 디스크/gzip/마이그레이션 결합도 큼 | Phase 7+ |
+| 4B Controller 분리 | View + 6 개 API 컨트롤러 — 의존성 큼 | 별도 사이클 |
+| 5A-3 modal/btn/grid CSS | 페이지별 미세 변형 검토 필요 | 시각 회귀 테스트 인프라 후 |
+| 5B-2 Common.* 마이그레이션 | 회귀 위험, 점진적 PR | 단계적 |
+| `analyze.html` HTML/JS 분할 (4127 라인) | SPA 화 결정 후 | 별도 사이클 |
