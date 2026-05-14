@@ -284,56 +284,156 @@
             border-radius: 10px; background: rgba(255,255,255,.7);
         }
 
-        /* ── 신규: Picker 카드형 ───────────────── */
-        .cmp-picker-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+        /* ── Comparison redesign system ───────────────── */
+        body {
+            background:
+                radial-gradient(circle at 18% 0%, rgba(37, 99, 235, .10), transparent 28%),
+                radial-gradient(circle at 92% 10%, rgba(99, 102, 241, .10), transparent 30%),
+                #F8FAFC;
         }
+        .main { padding-top: 28px; padding-bottom: 42px; }
+        .panel {
+            border-radius: 18px; border-color: rgba(226, 232, 240, .95);
+            box-shadow: 0 18px 45px rgba(15, 23, 42, .06);
+        }
+        .panel-title { border-bottom-color: #EEF2F7; }
+        .cmp-hero {
+            position: relative; overflow: hidden;
+            border: 1px solid rgba(191, 219, 254, .85);
+            border-radius: 24px; padding: 26px; margin-bottom: 18px;
+            background:
+                linear-gradient(135deg, rgba(239, 246, 255, .98), rgba(238, 242, 255, .92) 55%, rgba(255,255,255,.96)),
+                #fff;
+            box-shadow: 0 24px 60px rgba(37, 99, 235, .10);
+        }
+        .cmp-hero::after {
+            content: ''; position: absolute; right: -90px; top: -90px; width: 260px; height: 260px;
+            background: radial-gradient(circle, rgba(37,99,235,.14), transparent 68%);
+        }
+        .cmp-hero-content { position: relative; z-index: 1; display: flex; justify-content: space-between; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
+        .cmp-eyebrow { font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #2563EB; margin-bottom: 8px; }
+        .cmp-hero h1 { font-size: 30px; line-height: 1.2; letter-spacing: -.04em; margin-bottom: 8px; color: #0F172A; }
+        .cmp-hero p { font-size: 14px; line-height: 1.75; color: #475569; max-width: 720px; }
+        .cmp-hero-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .cmp-action-primary, .cmp-action-secondary {
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            min-height: 42px; padding: 0 18px; border-radius: 12px; font-size: 13px;
+            font-weight: 800; text-decoration: none; cursor: pointer; border: 1px solid transparent;
+        }
+        .cmp-action-primary { color: #fff; background: linear-gradient(135deg,#2563EB,#4F46E5); box-shadow: 0 12px 28px rgba(37,99,235,.24); }
+        .cmp-action-primary:hover { filter: brightness(.97); }
+        .cmp-action-secondary { color: #1D4ED8; background: rgba(255,255,255,.84); border-color: #BFDBFE; }
+        .cmp-status-chip {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 6px 10px; border-radius: 999px; font-size: 11px; font-weight: 800;
+            background: #EEF2FF; color: #3730A3; border: 1px solid #C7D2FE;
+        }
+        .cmp-status-chip.warning { background:#FFF7ED; color:#9A3412; border-color:#FED7AA; }
+        .cmp-status-chip.success { background:#ECFDF5; color:#047857; border-color:#A7F3D0; }
+
+        .cmp-result-summary { display: grid; grid-template-columns: 1.2fr .8fr; gap: 16px; margin-bottom: 16px; }
+        .cmp-summary-card, .cmp-recommend-card, .cmp-snapshot-card, .cmp-option-card, .cmp-step-card {
+            background: rgba(255,255,255,.92); border: 1px solid #E2E8F0; border-radius: 18px;
+            padding: 18px; box-shadow: 0 12px 30px rgba(15,23,42,.05);
+        }
+        .cmp-summary-title { font-size: 13px; font-weight: 800; color: #64748B; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+        .cmp-summary-main { font-size: 22px; line-height: 1.35; font-weight: 850; letter-spacing: -.03em; color: #111827; margin-bottom: 12px; }
+        .cmp-summary-list { list-style: none; display: grid; gap: 8px; font-size: 13px; color: #475569; }
+        .cmp-summary-list li { display: flex; gap: 8px; align-items: flex-start; }
+        .cmp-summary-list li::before { content: ''; width: 7px; height: 7px; margin-top: 7px; border-radius: 50%; background:#2563EB; flex: 0 0 auto; }
+        .cmp-recommend-card { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; }
+        .cmp-risk-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+        .cmp-risk-box { padding: 12px; border-radius: 14px; background:#F8FAFC; border:1px solid #E2E8F0; }
+        .cmp-risk-label { font-size: 11px; color:#64748B; font-weight:800; text-transform:uppercase; letter-spacing:.06em; margin-bottom:5px; }
+        .cmp-risk-value { font-size: 18px; font-weight:850; color:#0F172A; }
+
+        .compare-header { grid-template-columns: 1fr 56px 1fr; margin-bottom: 16px; }
+        .dump-card { border-radius: 18px; padding: 18px; box-shadow: 0 12px 28px rgba(15,23,42,.05); }
+        .dump-card.before { border-color:#CBD5E1; background: linear-gradient(180deg,#fff,#F8FAFC); }
+        .dump-card.after { border-color:#BFDBFE; background: linear-gradient(180deg,#fff,#EFF6FF); }
+        .vs-circle { box-shadow: 0 12px 28px rgba(37,99,235,.22); }
+        .cmp-snapshot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+        .cmp-snapshot-card h3 { font-size: 13px; font-weight: 850; margin-bottom: 12px; color:#0F172A; }
+        .cmp-metric-list { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .cmp-mini-metric { padding: 11px 12px; border-radius: 13px; background:#F8FAFC; border:1px solid #E2E8F0; min-width:0; }
+        .cmp-mini-label { font-size: 11px; font-weight:800; color:#64748B; margin-bottom:4px; }
+        .cmp-mini-value { font-size: 14px; font-weight:850; color:#0F172A; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .kpi-grid { grid-template-columns: repeat(3, 1fr); gap: 12px; }
+        .kpi-tile { border-radius: 18px; padding: 16px; text-align:left; box-shadow:0 10px 24px rgba(15,23,42,.05); }
+        .kpi-value { font-size: 24px; }
+
+        .cmp-tabs-shell { border-radius: 20px; border:1px solid #E2E8F0; background:#fff; padding:8px; margin-bottom:16px; box-shadow:0 14px 32px rgba(15,23,42,.05); }
+        .cmp-anchor-nav { top: 60px; border: none; box-shadow: none; margin: 0; padding: 0; background: transparent; }
+        .cmp-anchor-nav a { border-radius: 12px; padding: 9px 13px; color:#475569; }
+        .cmp-anchor-nav a:hover { background:#EFF6FF; color:#1D4ED8; }
+
+        .cmp-picker-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+        .cmp-picker-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         .cmp-picker-card {
-            background: #F9FAFB; border: 1px solid #E5E7EB;
-            border-radius: 10px; padding: 16px;
-            transition: border-color .15s, box-shadow .15s;
+            background: #fff; border: 1px solid #E2E8F0;
+            border-radius: 18px; padding: 18px;
+            transition: border-color .15s, box-shadow .15s, transform .15s;
+            box-shadow: 0 12px 30px rgba(15, 23, 42, .05);
         }
-        .cmp-picker-card:hover {
-            border-color: #93C5FD;
-            box-shadow: 0 4px 10px rgba(37,99,235,.08);
+        .cmp-picker-card:hover, .cmp-picker-card.selected {
+            border-color: #93C5FD; box-shadow: 0 18px 38px rgba(37,99,235,.10); transform: translateY(-1px);
         }
+        .cmp-picker-card-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:12px; }
         .cmp-picker-card-label {
-            font-size: 11px; font-weight: 700; color: #6B7280;
-            text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px;
+            font-size: 11px; font-weight: 800; color: #475569;
+            text-transform: uppercase; letter-spacing: .08em;
             display: flex; align-items: center; gap: 6px;
         }
+        .cmp-picker-badge { font-size:10px; font-weight:800; color:#64748B; background:#F1F5F9; border:1px solid #E2E8F0; padding:4px 8px; border-radius:999px; white-space:nowrap; }
+        .cmp-picker-card.selected .cmp-picker-badge { background:#ECFDF5; border-color:#A7F3D0; color:#047857; }
         .cmp-picker-select {
-            width: 100%; padding: 10px 12px;
-            border: 1px solid #D1D5DB; border-radius: 8px;
-            font-size: 13px; background: #fff; outline: none;
+            width: 100%; padding: 12px 13px;
+            border: 1px solid #CBD5E1; border-radius: 12px;
+            font-size: 13px; background: #fff; outline: none; color:#0F172A;
         }
-        .cmp-picker-select:focus { border-color: #93C5FD; }
+        .cmp-picker-select:focus { border-color: #3B82F6; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
         .cmp-picker-meta {
-            margin-top: 10px; display: flex; flex-direction: column; gap: 4px;
-            font-size: 12px; color: #374151; min-height: 60px;
+            margin-top: 12px; display: flex; flex-direction: column; gap: 7px;
+            font-size: 12px; color: #334155; min-height: 74px;
         }
-        .cmp-picker-meta .empty { color: #9CA3AF; font-style: italic; }
-        .cmp-picker-meta .meta-row { display: flex; gap: 6px; align-items: center; }
-        .cmp-picker-meta .meta-row .icn { width: 16px; text-align: center; }
+        .cmp-picker-meta .empty { color: #94A3B8; }
+        .cmp-picker-meta .meta-row { display: flex; gap: 8px; align-items: center; }
+        .cmp-picker-meta .meta-row .icn { width: 54px; color:#64748B; font-weight:800; font-size:11px; text-transform:uppercase; }
+        .cmp-step-card { margin-bottom: 14px; }
+        .cmp-step-title, .cmp-option-title { font-size: 13px; font-weight: 850; color:#0F172A; margin-bottom: 12px; }
+        .cmp-steps { display:grid; gap:10px; }
+        .cmp-step { display:flex; gap:10px; align-items:flex-start; color:#64748B; font-size:12px; line-height:1.45; }
+        .cmp-step-num { width:24px; height:24px; border-radius:50%; background:#E2E8F0; color:#64748B; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:900; flex:0 0 auto; }
+        .cmp-step.done .cmp-step-num { background:#2563EB; color:#fff; }
+        .cmp-step.done { color:#1E293B; }
+        .cmp-option-card { margin-top:14px; }
+        .cmp-option-grid { display:grid; gap:8px; }
+        .cmp-option-pill { padding:10px 12px; border-radius:12px; background:#F8FAFC; border:1px solid #E2E8F0; font-size:12px; color:#475569; }
+        .cmp-option-pill strong { color:#0F172A; }
         .cmp-picker-hint {
-            margin-top: 14px; padding: 10px 14px;
-            background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 8px;
-            color: #92400E; font-size: 12px;
+            margin-top: 14px; padding: 11px 14px;
+            background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 12px;
+            color: #1D4ED8; font-size: 12px; line-height:1.55;
         }
-        .cmp-picker-hint.error {
-            background: #FEE2E2; border-color: #FCA5A5; color: #7F1D1D;
-        }
-        .cmp-picker-actions {
-            display: flex; justify-content: flex-end; margin-top: 16px;
-        }
+        .cmp-picker-hint.error { background: #FEE2E2; border-color: #FCA5A5; color: #7F1D1D; }
+        .cmp-picker-actions { display: flex; justify-content: flex-end; margin-top: 16px; }
         .cmp-picker-actions button {
-            padding: 10px 22px; font-size: 13px; font-weight: 600;
-            color: #fff; background: #2563EB;
-            border: none; border-radius: 8px; cursor: pointer;
+            padding: 11px 22px; font-size: 13px; font-weight: 800;
+            color: #fff; background: linear-gradient(135deg,#2563EB,#4F46E5);
+            border: none; border-radius: 12px; cursor: pointer; box-shadow:0 12px 28px rgba(37,99,235,.22);
         }
-        .cmp-picker-actions button:hover { background: #1D4ED8; }
-        @media (max-width: 600px) {
-            .cmp-picker-grid { grid-template-columns: 1fr; }
+        .cmp-picker-actions button:hover { filter: brightness(.97); }
+        .cmp-picker-actions button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
+        @media (max-width: 1024px) {
+            .cmp-result-summary, .cmp-picker-layout { grid-template-columns: 1fr; }
+            .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (max-width: 700px) {
+            .cmp-hero { padding: 20px; border-radius: 18px; }
+            .cmp-hero h1 { font-size: 23px; }
+            .cmp-picker-grid, .cmp-snapshot-grid, .cmp-risk-row { grid-template-columns: 1fr; }
+            .cmp-metric-list { grid-template-columns: 1fr; }
+            .kpi-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -359,37 +459,110 @@
     <!-- Compare results -->
     <div th:if="${baseResult != null and targetResult != null}">
 
-        <!-- 섹션 앵커 nav -->
-        <nav class="cmp-anchor-nav">
-            <a href="#kpi">KPI</a>
-            <a href="#cls">클래스</a>
-            <a href="#hist">히스토그램</a>
-            <a href="#susp">의심</a>
-            <a href="#ai">AI</a>
-        </nav>
+        <section class="cmp-hero">
+            <div class="cmp-hero-content">
+                <div>
+                    <div class="cmp-eyebrow">Comparison Analysis</div>
+                    <h1>분석 결과의 변화를 한눈에 비교합니다</h1>
+                    <p>Before/After 덤프의 핵심 지표, 클래스별 메모리 증감, 누수 의심 항목 변화를 요약에서 상세 분석까지 단계적으로 확인할 수 있습니다.</p>
+                </div>
+                <div class="cmp-hero-actions">
+                    <span class="cmp-status-chip success">분석 완료</span>
+                    <a href="/compare" class="cmp-action-secondary">다른 파일 비교</a>
+                    <a href="#ai" class="cmp-action-primary">AI 인사이트 확인</a>
+                </div>
+            </div>
+        </section>
+
+        <section class="cmp-result-summary" aria-label="분석 결과 요약">
+            <div class="cmp-summary-card">
+                <div class="cmp-summary-title">Result Summary</div>
+                <div class="cmp-summary-main">
+                    <span>힙 사용량 </span>
+                    <span th:classappend="${kpi.usedHeapUp} ? ' delta-up' : (${kpi.usedHeapDelta == 0} ? ' delta-neutral' : ' delta-down')"
+                          th:text="${kpi.formattedUsedHeapDelta}">+0 B</span>
+                    <span>, 누수 의심 항목 </span>
+                    <span th:classappend="${kpi.suspectsUp} ? ' delta-up' : (${kpi.suspectsDelta == 0} ? ' delta-neutral' : ' delta-down')"
+                          th:text="${kpi.formattedSuspectsDelta}">+0</span>
+                </div>
+                <ul class="cmp-summary-list">
+                    <li>Before와 After의 총 객체 수, 클래스 수, 스레드 수 변화를 상단 KPI에서 바로 확인합니다.</li>
+                    <li>증가/감소 방향이 색상으로 분리되어 메모리 회귀와 개선 포인트를 빠르게 구분할 수 있습니다.</li>
+                    <li>상세 표와 AI 비교 분석을 통해 원인 후보와 권장 조치를 이어서 검토하세요.</li>
+                </ul>
+            </div>
+            <div class="cmp-recommend-card">
+                <div>
+                    <div class="cmp-summary-title">Quick Reading</div>
+                    <div class="cmp-risk-row">
+                        <div class="cmp-risk-box">
+                            <div class="cmp-risk-label">Leak Suspects</div>
+                            <div class="cmp-risk-value" th:text="${baseSuspectCount} + ' → ' + ${targetSuspectCount}">0 → 0</div>
+                        </div>
+                        <div class="cmp-risk-box">
+                            <div class="cmp-risk-label">Threads</div>
+                            <div class="cmp-risk-value" th:text="${baseThreadCount} + ' → ' + ${targetThreadCount}">0 → 0</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="cmp-picker-hint">상세 분석은 요약, KPI, Before/After, Diff Table, AI 인사이트 순서로 배치했습니다.</div>
+            </div>
+        </section>
+
+        <div class="cmp-tabs-shell">
+            <nav class="cmp-anchor-nav" aria-label="비교 결과 섹션 이동">
+                <a href="#kpi">요약 KPI</a>
+                <a href="#snapshot">Before / After</a>
+                <a href="#cls">클래스 변화</a>
+                <a href="#hist">히스토그램</a>
+                <a href="#susp">누수 의심</a>
+                <a href="#ai">AI 분석</a>
+            </nav>
+        </div>
 
         <!-- Header: base vs target (컴팩트) -->
         <div class="compare-header">
-            <div class="dump-card">
+            <div class="dump-card before">
                 <div class="dump-card-label">기준 (Before)</div>
                 <div class="dump-card-name" th:text="${baseFile}">base.hprof</div>
                 <div class="dump-card-meta-row">
-                    <span>📅 <b th:text="${baseModifiedFmt}">—</b></span>
+                    <span>분석시각 <b th:text="${baseModifiedFmt}">—</b></span>
                     <span>·</span>
                     <span><b th:text="${baseResult.formattedFileSize}">—</b></span>
                 </div>
             </div>
             <div class="vs-circle">VS</div>
-            <div class="dump-card">
+            <div class="dump-card after">
                 <div class="dump-card-label">비교 (After)</div>
                 <div class="dump-card-name" th:text="${targetFile}">target.hprof</div>
                 <div class="dump-card-meta-row">
-                    <span>📅 <b th:text="${targetModifiedFmt}">—</b></span>
+                    <span>분석시각 <b th:text="${targetModifiedFmt}">—</b></span>
                     <span>·</span>
                     <span><b th:text="${targetResult.formattedFileSize}">—</b></span>
                 </div>
             </div>
         </div>
+
+        <section class="cmp-snapshot-grid" id="snapshot" aria-label="Before After 스냅샷">
+            <div class="cmp-snapshot-card">
+                <h3>Before 스냅샷</h3>
+                <div class="cmp-metric-list">
+                    <div class="cmp-mini-metric"><div class="cmp-mini-label">Used Heap</div><div class="cmp-mini-value" th:text="${baseResult.formattedUsedHeapSize}">—</div></div>
+                    <div class="cmp-mini-metric"><div class="cmp-mini-label">Usage</div><div class="cmp-mini-value" th:text="${baseResult.formattedHeapUsagePercent}">—</div></div>
+                    <div class="cmp-mini-metric"><div class="cmp-mini-label">Objects</div><div class="cmp-mini-value" th:text="${baseResult.formattedTotalObjects}">—</div></div>
+                    <div class="cmp-mini-metric"><div class="cmp-mini-label">Classes</div><div class="cmp-mini-value" th:text="${baseResult.formattedTotalClasses}">—</div></div>
+                </div>
+            </div>
+            <div class="cmp-snapshot-card">
+                <h3>After 스냅샷</h3>
+                <div class="cmp-metric-list">
+                    <div class="cmp-mini-metric"><div class="cmp-mini-label">Used Heap</div><div class="cmp-mini-value" th:text="${targetResult.formattedUsedHeapSize}">—</div></div>
+                    <div class="cmp-mini-metric"><div class="cmp-mini-label">Usage</div><div class="cmp-mini-value" th:text="${targetResult.formattedHeapUsagePercent}">—</div></div>
+                    <div class="cmp-mini-metric"><div class="cmp-mini-label">Objects</div><div class="cmp-mini-value" th:text="${targetResult.formattedTotalObjects}">—</div></div>
+                    <div class="cmp-mini-metric"><div class="cmp-mini-label">Classes</div><div class="cmp-mini-value" th:text="${targetResult.formattedTotalClasses}">—</div></div>
+                </div>
+            </div>
+        </section>
 
         <!-- KPI 6 칸 delta 배너 -->
         <div class="kpi-grid" id="kpi">
@@ -693,44 +866,86 @@
 
     </div>
 
-    <!-- 파일 선택 화면 (base/target 미입력 시) — 카드형 -->
-    <div th:if="${baseResult == null and error == null}" class="panel" id="cmpPickerPanel">
-        <div class="panel-title"><span>분석된 덤프 2개 선택</span></div>
-        <div id="cmpPickerLoading" style="text-align:center;padding:24px;color:#9CA3AF;font-size:13px">
+    <!-- 파일 선택 화면 (base/target 미입력 시) — 재설계 -->
+    <div th:if="${baseResult == null and error == null}">
+        <section class="cmp-hero">
+            <div class="cmp-hero-content">
+                <div>
+                    <div class="cmp-eyebrow">Comparison Setup</div>
+                    <h1>비교할 Before / After 덤프를 선택하세요</h1>
+                    <p>분석 완료된 두 개의 힙 덤프를 선택하면 핵심 지표, 클래스별 메모리 변화, 누수 의심 항목과 AI 인사이트를 비교 화면으로 정리합니다.</p>
+                </div>
+                <div class="cmp-hero-actions">
+                    <span class="cmp-status-chip warning">분석 전</span>
+                    <a href="/history" class="cmp-action-secondary">분석 이력 보기</a>
+                </div>
+            </div>
+        </section>
+
+        <div id="cmpPickerLoading" class="panel" style="text-align:center;padding:32px;color:#9CA3AF;font-size:13px">
             분석된 파일 목록을 불러오는 중…
         </div>
-        <div id="cmpPickerEmpty" style="display:none;text-align:center;padding:24px;color:#9CA3AF;font-size:13px">
+        <div id="cmpPickerEmpty" class="panel" style="display:none;text-align:center;padding:32px;color:#9CA3AF;font-size:13px">
             분석된 덤프가 없습니다. 먼저 두 개 이상의 힙 덤프를 분석하세요.
         </div>
-        <div id="cmpPickerForm" style="display:none">
-            <div class="cmp-picker-grid">
-                <div class="cmp-picker-card" data-role="base">
-                    <div class="cmp-picker-card-label">기준 (Before)</div>
-                    <select id="cmpBase" class="cmp-picker-select" onchange="updatePickerMeta(this)">
-                        <option value="">파일을 선택하세요…</option>
-                    </select>
-                    <div class="cmp-picker-meta">
-                        <div class="meta-row"><span class="icn">📊</span><span data-meta="heap" class="empty">—</span></div>
-                        <div class="meta-row"><span class="icn">📅</span><span data-meta="date" class="empty">—</span></div>
-                        <div class="meta-row"><span class="icn">🖥</span><span data-meta="server" class="empty">—</span></div>
+
+        <div id="cmpPickerForm" class="cmp-picker-layout" style="display:none">
+            <section class="panel" id="cmpPickerPanel">
+                <div class="panel-title"><span>분석 대상 선택</span></div>
+                <div class="cmp-picker-grid">
+                    <div class="cmp-picker-card" data-role="base">
+                        <div class="cmp-picker-card-head">
+                            <div class="cmp-picker-card-label">기준 데이터 · Before</div>
+                            <span class="cmp-picker-badge" data-badge>미선택</span>
+                        </div>
+                        <select id="cmpBase" class="cmp-picker-select" onchange="updatePickerMeta(this)">
+                            <option value="">파일을 선택하세요…</option>
+                        </select>
+                        <div class="cmp-picker-meta">
+                            <div class="meta-row"><span class="icn">HEAP</span><span data-meta="heap" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">DATE</span><span data-meta="date" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">SERVER</span><span data-meta="server" class="empty">—</span></div>
+                        </div>
+                    </div>
+                    <div class="cmp-picker-card" data-role="target">
+                        <div class="cmp-picker-card-head">
+                            <div class="cmp-picker-card-label">비교 데이터 · After</div>
+                            <span class="cmp-picker-badge" data-badge>미선택</span>
+                        </div>
+                        <select id="cmpTarget" class="cmp-picker-select" onchange="updatePickerMeta(this)">
+                            <option value="">파일을 선택하세요…</option>
+                        </select>
+                        <div class="cmp-picker-meta">
+                            <div class="meta-row"><span class="icn">HEAP</span><span data-meta="heap" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">DATE</span><span data-meta="date" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">SERVER</span><span data-meta="server" class="empty">—</span></div>
+                        </div>
                     </div>
                 </div>
-                <div class="cmp-picker-card" data-role="target">
-                    <div class="cmp-picker-card-label">비교 (After)</div>
-                    <select id="cmpTarget" class="cmp-picker-select" onchange="updatePickerMeta(this)">
-                        <option value="">파일을 선택하세요…</option>
-                    </select>
-                    <div class="cmp-picker-meta">
-                        <div class="meta-row"><span class="icn">📊</span><span data-meta="heap" class="empty">—</span></div>
-                        <div class="meta-row"><span class="icn">📅</span><span data-meta="date" class="empty">—</span></div>
-                        <div class="meta-row"><span class="icn">🖥</span><span data-meta="server" class="empty">—</span></div>
+                <div id="cmpPickerHint" class="cmp-picker-hint">서로 다른 파일 2개를 선택하면 비교를 실행할 수 있습니다.</div>
+                <div class="cmp-picker-actions">
+                    <button id="cmpRunBtn" onclick="runCompare()" disabled>비교 실행</button>
+                </div>
+            </section>
+
+            <aside>
+                <div class="cmp-step-card">
+                    <div class="cmp-step-title">분석 준비 상태</div>
+                    <div class="cmp-steps">
+                        <div class="cmp-step" id="cmpStepBase"><span class="cmp-step-num">1</span><span>Before 덤프 선택</span></div>
+                        <div class="cmp-step" id="cmpStepTarget"><span class="cmp-step-num">2</span><span>After 덤프 선택</span></div>
+                        <div class="cmp-step" id="cmpStepReady"><span class="cmp-step-num">3</span><span>비교 실행 준비 완료</span></div>
                     </div>
                 </div>
-            </div>
-            <div id="cmpPickerHint" class="cmp-picker-hint">⚠ 동일한 파일은 비교할 수 없습니다.</div>
-            <div class="cmp-picker-actions">
-                <button id="cmpRunBtn" onclick="runCompare()">비교 →</button>
-            </div>
+                <div class="cmp-option-card">
+                    <div class="cmp-option-title">적용되는 분석 옵션</div>
+                    <div class="cmp-option-grid">
+                        <div class="cmp-option-pill"><strong>기본</strong> KPI 변화율과 Before/After 메타 비교</div>
+                        <div class="cmp-option-pill"><strong>상세</strong> 클래스·히스토그램·누수 의심 Diff View</div>
+                        <div class="cmp-option-pill"><strong>AI</strong> 필요 시 결과 화면에서 종합 인사이트 생성</div>
+                    </div>
+                </div>
+            </aside>
         </div>
     </div>
 
@@ -781,25 +996,52 @@
                 span.textContent = val;
                 span.classList.remove('empty');
             } else {
-                span.textContent = hasValue ? '—' : '—';
+                span.textContent = '—';
                 span.classList.add('empty');
             }
         });
-        // 사용자가 다시 선택 시 hint 를 기본 안내로 복원
+        card.classList.toggle('selected', hasValue);
+        var badge = card.querySelector('[data-badge]');
+        if (badge) badge.textContent = hasValue ? '선택 완료' : '미선택';
+        updatePickerReadyState();
+    }
+
+    function updatePickerReadyState() {
+        var b = document.getElementById('cmpBase').value;
+        var t = document.getElementById('cmpTarget').value;
+        var ready = !!b && !!t && b !== t;
+        var runBtn = document.getElementById('cmpRunBtn');
+        if (runBtn) runBtn.disabled = !ready;
+
+        var baseStep = document.getElementById('cmpStepBase');
+        var targetStep = document.getElementById('cmpStepTarget');
+        var readyStep = document.getElementById('cmpStepReady');
+        if (baseStep) baseStep.classList.toggle('done', !!b);
+        if (targetStep) targetStep.classList.toggle('done', !!t);
+        if (readyStep) readyStep.classList.toggle('done', ready);
+
         resetPickerHint();
     }
 
     function resetPickerHint() {
         var hint = document.getElementById('cmpPickerHint');
         if (!hint) return;
+        var b = document.getElementById('cmpBase').value;
+        var t = document.getElementById('cmpTarget').value;
         hint.classList.remove('error');
-        hint.textContent = '⚠ 동일한 파일은 비교할 수 없습니다.';
+        if (b && t && b !== t) {
+            hint.textContent = '준비가 완료되었습니다. 비교 실행을 눌러 결과 화면으로 이동하세요.';
+        } else if (b && t && b === t) {
+            showPickerError('동일한 파일은 비교할 수 없습니다.');
+        } else {
+            hint.textContent = '서로 다른 파일 2개를 선택하면 비교를 실행할 수 있습니다.';
+        }
     }
     function showPickerError(msg) {
         var hint = document.getElementById('cmpPickerHint');
         if (!hint) return;
         hint.classList.add('error');
-        hint.textContent = '⚠ ' + msg;
+        hint.textContent = msg;
     }
 
     function runCompare() {
