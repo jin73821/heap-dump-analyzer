@@ -1,5 +1,39 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-14] Comparison 페이지 분석 전/후 레이아웃 재설계
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 분석 전 화면은 파일 선택만 제공해 비교 흐름과 실행 조건이 한눈에 드러나지 않음.
+- 분석 후 화면은 상세 표가 빠르게 노출되어 핵심 변화 요약과 Before/After 스냅샷의 시각적 우선순위가 약함.
+- 기존 계획에 따라 준비 화면은 입력 유도 중심, 결과 화면은 요약 → KPI → 전후 비교 → 상세 분석 → AI 인사이트 흐름으로 재배치.
+
+### 내역
+
+**분석 전 화면**
+- 상단 Hero 영역 추가: Comparison Setup, 분석 전 상태 chip, 분석 이력 이동 CTA 배치.
+- Before / After 선택 카드를 세련된 카드형 레이아웃으로 확대하고 선택 완료 badge, 메타 정보(HEAP/DATE/SERVER)를 정리.
+- 우측 준비 상태 Stepper 추가: Before 선택 → After 선택 → 비교 실행 준비 완료.
+- 기본/상세/AI 분석 옵션 안내 카드를 추가해 실행 전 제공되는 비교 범위를 명확화.
+- 비교 실행 버튼은 두 파일이 모두 선택되고 서로 다를 때만 활성화되도록 UX 개선.
+
+**분석 후 화면**
+- 결과 상단 Hero 영역 추가: 분석 완료 상태, 다른 파일 비교, AI 인사이트 CTA 배치.
+- Result Summary 카드 추가: 힙 사용량 변화와 누수 의심 항목 변화를 최상단에서 요약.
+- Quick Reading 카드 추가: Leak Suspects / Threads 전후 변화 수치를 별도 강조.
+- 섹션 이동 nav를 탭형 shell로 재정리하고 `요약 KPI / Before After / 클래스 변화 / 히스토그램 / 누수 의심 / AI 분석` 흐름으로 변경.
+- Before / After 스냅샷 카드를 추가해 Used Heap, Usage, Objects, Classes를 좌우 비교로 빠르게 확인 가능하게 구성.
+- 카드 radius, shadow, background gradient, responsive breakpoint를 보강해 desktop/tablet/mobile 모두 1~3컬럼으로 자연스럽게 전환.
+
+### 검증
+- `mvn clean package -DskipTests` 실행 시도 → 현재 sandbox에 `mvn` 명령이 없어 수행 불가 (`/bin/bash: mvn: command not found`).
+- 템플릿 정합성 기본 점검: `compare.html`의 script/style 태그 개수, 신규 레이아웃 class 존재 여부 확인.
+
+---
+
 ## [2026-05-14] Compare AI 비교 분석 — 시작 버튼 노출 + 요청/응답 로직 마감
 
 **변경 파일:**
