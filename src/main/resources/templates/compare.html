@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>Compare Dumps - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/style.css}">
@@ -14,11 +15,14 @@
                   padding: 0 20px; position: sticky; top: 0; z-index: 10;
                   margin-left: var(--banner-w, 220px);
                   transition: margin-left .25s cubic-bezier(.4,0,.2,1); }
-        .topbar-brand { display: flex; align-items: center; gap: 10px; }
+        .topbar-brand { display: flex; align-items: center; gap: 10px;
+                        min-width: 0; flex: 1 1 auto; }
         .topbar-logo { width: 28px; height: 28px; background: #2563EB; border-radius: 6px;
                        display: flex; align-items: center; justify-content: center; }
         .topbar-logo svg { width: 14px; height: 14px; fill: white; }
-        .topbar-title { font-size: 15px; font-weight: 700; }
+        .topbar-title { font-size: 15px; font-weight: 700; white-space: nowrap;
+                        overflow: hidden; text-overflow: ellipsis; }
+        .topbar-right { flex-shrink: 0; }
         .back-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
                     border-radius: 6px; background: transparent; color: #6B7280;
                     cursor: pointer; text-decoration: none; }
@@ -31,47 +35,170 @@
         .dump-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px; }
         .dump-card-label { font-size: 10px; font-weight: 600; color: #9CA3AF;
                            text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
-        .dump-card-name { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
-        .dump-card-meta { font-size: 12px; color: #6B7280; }
+        .dump-card-name { font-size: 14px; font-weight: 700; margin-bottom: 4px; word-break: break-all; }
+        .dump-card-meta { font-size: 12px; color: #6B7280; line-height: 1.7; }
+        .dump-card-meta b { color: #1F2937; }
         .vs-circle { width: 48px; height: 48px; border-radius: 50%; background: #2563EB;
                      color: white; font-size: 13px; font-weight: 700;
                      display: flex; align-items: center; justify-content: center; margin: 0 auto; }
 
-        .delta-banner { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
-                        padding: 14px 20px; margin-bottom: 20px;
-                        display: flex; align-items: center; gap: 20px; }
-        .delta-item { text-align: center; }
-        .delta-label { font-size: 11px; color: #9CA3AF; margin-bottom: 4px; }
-        .delta-value { font-size: 20px; font-weight: 700; }
+        /* ── KPI 6칸 delta 배너 ──────────────────────── */
+        .kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px;
+                    margin-bottom: 20px; }
+        .kpi-tile { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                    padding: 14px 14px; text-align: center; }
+        .kpi-label { font-size: 11px; font-weight: 600; color: #9CA3AF;
+                     text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+        .kpi-value { font-size: 20px; font-weight: 800; letter-spacing: -.02em; }
+        .kpi-sub { font-size: 10px; color: #6B7280; margin-top: 4px; }
         .delta-up   { color: #DC2626; }
         .delta-down { color: #059669; }
         .delta-neutral { color: #6B7280; }
-        .delta-sep { width: 1px; height: 40px; background: #E5E7EB; }
 
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
                  padding: 16px; margin-bottom: 16px; }
         .panel-title { font-size: 13px; font-weight: 700; margin-bottom: 14px;
-                       padding-bottom: 10px; border-bottom: 1px solid #F3F4F6; }
+                       padding-bottom: 10px; border-bottom: 1px solid #F3F4F6;
+                       display: flex; align-items: center; justify-content: space-between;
+                       gap: 10px; flex-wrap: wrap; }
+        .panel-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+                       font-weight: 400; }
+        .panel-tools input[type="text"], .panel-tools select {
+            font-size: 12px; padding: 5px 8px; border: 1px solid #D1D5DB;
+            border-radius: 6px; background: #fff; outline: none;
+        }
+        .panel-tools input[type="text"]:focus, .panel-tools select:focus {
+            border-color: #93C5FD;
+        }
+        .panel-tools label { font-size: 12px; color: #6B7280; font-weight: 600;
+                             display: inline-flex; align-items: center; gap: 4px; }
 
         .diff-table { width: 100%; border-collapse: collapse; font-size: 12px; }
         .diff-table th { padding: 8px 12px; text-align: left; font-size: 11px; font-weight: 600;
                          color: #6B7280; background: #F9FAFB;
-                         border-bottom: 1px solid #E5E7EB; }
+                         border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
         .diff-table td { padding: 9px 12px; border-bottom: 1px solid #F9FAFB; }
         .diff-table tr:hover td { background: #F9FAFB; }
         .class-name { font-family: 'Courier New', monospace; font-size: 11px;
-                      background: #F3F4F6; padding: 2px 6px; border-radius: 4px; }
-        .delta-cell { font-weight: 600; }
+                      background: #F3F4F6; padding: 2px 6px; border-radius: 4px;
+                      word-break: break-all; }
+        .delta-cell { font-weight: 600; white-space: nowrap; }
         .delta-cell.up   { color: #DC2626; }
         .delta-cell.down { color: #059669; }
+        .num-cell { font-variant-numeric: tabular-nums; white-space: nowrap; color: #374151; }
         .delta-bar-wrap { display: flex; align-items: center; gap: 6px; }
         .delta-bar { height: 8px; border-radius: 4px; min-width: 2px; }
         .delta-bar.up   { background: #FCA5A5; }
         .delta-bar.down { background: #6EE7B7; }
 
+        /* ── Pagination ───────────────────────── */
+        .pager { display: flex; justify-content: center; gap: 4px; margin-top: 12px; flex-wrap: wrap; }
+        .pager button { padding: 4px 10px; font-size: 12px; border: 1px solid #D1D5DB;
+                        border-radius: 6px; background: #fff; cursor: pointer;
+                        color: #374151; }
+        .pager button.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+        .pager button:disabled { opacity: .4; cursor: default; }
+        .pager span { font-size: 12px; color: #9CA3AF; padding: 4px 6px; }
+
+        /* ── Suspect diff 4 카테고리 카드 ─────── */
+        .suspect-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+        .suspect-cat { border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px; }
+        .suspect-cat-head { font-size: 12px; font-weight: 700; text-transform: uppercase;
+                            letter-spacing: .06em; margin-bottom: 8px;
+                            display: flex; align-items: center; justify-content: space-between; }
+        .suspect-cat.new       { background: #FEF2F2; border-color: #FCA5A5; }
+        .suspect-cat.gone      { background: #ECFDF5; border-color: #6EE7B7; }
+        .suspect-cat.changed   { background: #FEF3C7; border-color: #FCD34D; }
+        .suspect-cat.persist   { background: #F9FAFB; }
+        .suspect-cat.new      .suspect-cat-head { color: #991B1B; }
+        .suspect-cat.gone     .suspect-cat-head { color: #065F46; }
+        .suspect-cat.changed  .suspect-cat-head { color: #92400E; }
+        .suspect-cat.persist  .suspect-cat-head { color: #4B5563; }
+        .suspect-cat-count { font-size: 11px; font-weight: 700; padding: 1px 8px;
+                             border-radius: 10px; background: rgba(255,255,255,.7); }
+        .suspect-item { background: rgba(255,255,255,.7); border-radius: 6px;
+                        padding: 8px 10px; margin-top: 6px; font-size: 12px; line-height: 1.5; }
+        .suspect-item-title { font-weight: 700; color: #1F2937; margin-bottom: 2px;
+                              word-break: keep-all; }
+        .suspect-item-meta { font-size: 10px; color: #6B7280;
+                             display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+        .suspect-sev-chip { padding: 1px 8px; border-radius: 10px; font-size: 10px;
+                            font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+        .sev-critical { background: #FECACA; color: #7F1D1D; }
+        .sev-high     { background: #FED7AA; color: #7C2D12; }
+        .sev-medium   { background: #FEF08A; color: #713F12; }
+        .sev-low      { background: #BBF7D0; color: #14532D; }
+        .sev-unknown  { background: #E5E7EB; color: #374151; }
+        .suspect-empty { font-size: 11px; color: #9CA3AF; padding: 8px 4px; }
+
         .error-box { background: #FEE2E2; border: 1px solid #FCA5A5; border-radius: 10px;
                      padding: 20px; color: #7F1D1D; font-size: 13px; }
         .no-data { text-align: center; padding: 40px; color: #9CA3AF; font-size: 13px; }
+
+        /* ── AI 비교 분석 패널 ──────────────────── */
+        .ai-toggle {
+            display: inline-flex; align-items: center; gap: 8px;
+            font-size: 12px; color: #374151; font-weight: 600;
+        }
+        .ai-toggle input[type="checkbox"] {
+            appearance: none; -webkit-appearance: none;
+            width: 34px; height: 18px; background: #D1D5DB; border-radius: 10px;
+            position: relative; cursor: pointer; outline: none;
+            transition: background .15s;
+        }
+        .ai-toggle input[type="checkbox"]::after {
+            content: ''; position: absolute; top: 2px; left: 2px;
+            width: 14px; height: 14px; background: #fff; border-radius: 50%;
+            transition: left .15s;
+        }
+        .ai-toggle input[type="checkbox"]:checked { background: #2563EB; }
+        .ai-toggle input[type="checkbox"]:checked::after { left: 18px; }
+
+        #cmpAiPanel { display: none; }
+
+        .ai-step-row { display: flex; align-items: center; justify-content: center;
+                       gap: 4px; margin-bottom: 18px; flex-wrap: wrap; }
+        .ai-step { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 84px; }
+        .ai-step-circle { width: 32px; height: 32px; border-radius: 50%;
+                          background: #E5E7EB; color: #6B7280;
+                          display: flex; align-items: center; justify-content: center;
+                          font-size: 12px; font-weight: 700; }
+        .ai-step-circle.active { background: linear-gradient(135deg,#3B82F6,#6366F1); color: #fff; }
+        .ai-step-circle.done   { background: #10B981; color: #fff; }
+        .ai-step-label { font-size: 11px; color: #6B7280; }
+        .ai-step-bar { width: 24px; height: 2px; background: #E5E7EB; align-self: center; margin: 0 2px; }
+        .ai-progress-track { background: #E0E7FF; border-radius: 8px; height: 6px;
+                             margin: 12px 0 18px; overflow: hidden; }
+        .ai-progress-fill { height: 100%;
+                            background: linear-gradient(90deg,#3B82F6,#6366F1,#8B5CF6);
+                            transition: width .6s cubic-bezier(.4,0,.2,1); width: 0%; }
+
+        .ai-severity-banner { border-radius: 10px; padding: 18px 22px; margin-bottom: 14px;
+                              display: flex; align-items: center; gap: 14px;
+                              box-shadow: 0 2px 6px rgba(0,0,0,.04); }
+        .ai-sev-icon { font-size: 28px; flex-shrink: 0; }
+        .ai-sev-label { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                        letter-spacing: .1em; opacity: .65; }
+        .ai-sev-value { font-size: 22px; font-weight: 800; letter-spacing: -.02em; }
+        .ai-section { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px;
+                      padding: 14px 16px; margin-bottom: 12px; }
+        .ai-section-title { font-size: 12px; font-weight: 700; color: #1F2937;
+                            text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px;
+                            display: flex; align-items: center; gap: 6px; }
+        .ai-section-body { font-size: 13px; line-height: 1.7; color: #374151;
+                           white-space: pre-wrap; word-break: break-word; }
+        .ai-rec-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7;
+                       color: #374151; }
+        .ai-rec-list li { margin-bottom: 4px; }
+        .ai-meta-row { display: flex; gap: 12px; font-size: 11px; color: #6B7280;
+                       flex-wrap: wrap; margin-top: 6px; }
+        .ai-meta-row span { display: inline-flex; align-items: center; gap: 4px; }
+        .ai-action-btn { padding: 6px 12px; border-radius: 6px; font-size: 12px;
+                         font-weight: 600; cursor: pointer; border: 1px solid #D1D5DB;
+                         background: #fff; color: #374151; }
+        .ai-action-btn.danger { color: #DC2626; border-color: #FCA5A5; background: #FEF2F2; }
+        .ai-action-btn:hover { border-color: #2563EB; color: #2563EB; }
+        .ai-action-btn.danger:hover { background: #FEE2E2; }
 
         /* ── Desktop enhancement ──────────────────── */
         @media (min-width: 1024px) {
@@ -82,8 +209,8 @@
             .dump-card-name { font-size: 16px; }
             .dump-card-meta { font-size: 14px; }
             .vs-circle { font-size: 15px; }
-            .delta-label { font-size: 13px; }
-            .delta-value { font-size: 24px; }
+            .kpi-label { font-size: 12px; }
+            .kpi-value { font-size: 22px; }
             .panel-title { font-size: 16px; }
             .diff-table { font-size: 14px; }
             .diff-table th { font-size: 13px; padding: 10px 14px; }
@@ -95,6 +222,8 @@
         @media (max-width: 900px) {
             .topbar { margin-left: 0; }
             .main { padding-left: 20px; }
+            .kpi-grid { grid-template-columns: repeat(3, 1fr); }
+            .suspect-grid { grid-template-columns: 1fr; }
         }
         /* ── Mobile responsive ────────────────────── */
         @media (max-width: 600px) {
@@ -102,15 +231,109 @@
             .compare-header { grid-template-columns: 1fr; gap: 8px; }
             .vs-circle { width: 36px; height: 36px; font-size: 11px; }
             .dump-card { padding: 12px; }
-            .dump-card-name { font-size: 13px; word-break: break-all; }
-            .delta-banner { flex-wrap: wrap; gap: 10px; padding: 12px 14px; }
-            .delta-item { flex: 1 1 calc(50% - 10px); min-width: 80px; }
-            .delta-sep { display: none; }
-            .delta-value { font-size: 16px; }
+            .dump-card-name { font-size: 13px; }
+            .kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+            .kpi-value { font-size: 17px; }
             .panel { padding: 12px; overflow-x: auto; }
             .diff-table th, .diff-table td { padding: 6px 8px; white-space: nowrap; }
             .class-name { font-size: 10px; }
             .back-btn { min-height: 44px; display: inline-flex; align-items: center; }
+        }
+
+        /* ── 신규: 섹션 앵커 nav ─────────────────── */
+        html { scroll-behavior: smooth; }
+        .cmp-anchor-nav {
+            position: sticky; top: 52px; z-index: 5;
+            background: #fff; border: 1px solid #E5E7EB; border-radius: 8px;
+            padding: 6px 10px; margin-bottom: 16px;
+            display: flex; gap: 4px; flex-wrap: wrap;
+        }
+        .cmp-anchor-nav a {
+            font-size: 12px; font-weight: 600; color: #6B7280;
+            padding: 6px 10px; border-radius: 6px; text-decoration: none;
+            transition: background .15s, color .15s;
+        }
+        .cmp-anchor-nav a:hover { background: #F3F4F6; color: #2563EB; }
+        @media (max-width: 600px) {
+            .cmp-anchor-nav {
+                flex-wrap: nowrap; overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            .cmp-anchor-nav a { white-space: nowrap; flex-shrink: 0; }
+        }
+
+        /* ── 신규: 헤더 카드 컴팩트 메타 라인 ─────── */
+        .dump-card-meta-row {
+            font-size: 12px; color: #6B7280;
+            display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+        }
+        .dump-card-meta-row b { color: #1F2937; }
+        @media (min-width: 1024px) {
+            .dump-card-meta-row { font-size: 13px; }
+        }
+
+        /* ── 신규: AI 토글 좌측 라벨 ─────────────── */
+        .ai-toggle-text {
+            color: #6B7280; font-size: 12px; font-weight: 600;
+            margin-right: 4px;
+        }
+
+        /* ── 신규: Suspect 카드 빈 상태 ─────────── */
+        .suspect-cat-count {
+            font-size: 11px; font-weight: 700; padding: 1px 8px;
+            border-radius: 10px; background: rgba(255,255,255,.7);
+        }
+
+        /* ── 신규: Picker 카드형 ───────────────── */
+        .cmp-picker-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+        }
+        .cmp-picker-card {
+            background: #F9FAFB; border: 1px solid #E5E7EB;
+            border-radius: 10px; padding: 16px;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        .cmp-picker-card:hover {
+            border-color: #93C5FD;
+            box-shadow: 0 4px 10px rgba(37,99,235,.08);
+        }
+        .cmp-picker-card-label {
+            font-size: 11px; font-weight: 700; color: #6B7280;
+            text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .cmp-picker-select {
+            width: 100%; padding: 10px 12px;
+            border: 1px solid #D1D5DB; border-radius: 8px;
+            font-size: 13px; background: #fff; outline: none;
+        }
+        .cmp-picker-select:focus { border-color: #93C5FD; }
+        .cmp-picker-meta {
+            margin-top: 10px; display: flex; flex-direction: column; gap: 4px;
+            font-size: 12px; color: #374151; min-height: 60px;
+        }
+        .cmp-picker-meta .empty { color: #9CA3AF; font-style: italic; }
+        .cmp-picker-meta .meta-row { display: flex; gap: 6px; align-items: center; }
+        .cmp-picker-meta .meta-row .icn { width: 16px; text-align: center; }
+        .cmp-picker-hint {
+            margin-top: 14px; padding: 10px 14px;
+            background: #FFFBEB; border: 1px solid #FCD34D; border-radius: 8px;
+            color: #92400E; font-size: 12px;
+        }
+        .cmp-picker-hint.error {
+            background: #FEE2E2; border-color: #FCA5A5; color: #7F1D1D;
+        }
+        .cmp-picker-actions {
+            display: flex; justify-content: flex-end; margin-top: 16px;
+        }
+        .cmp-picker-actions button {
+            padding: 10px 22px; font-size: 13px; font-weight: 600;
+            color: #fff; background: #2563EB;
+            border: none; border-radius: 8px; cursor: pointer;
+        }
+        .cmp-picker-actions button:hover { background: #1D4ED8; }
+        @media (max-width: 600px) {
+            .cmp-picker-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -121,9 +344,11 @@
 <div class="topbar">
     <div class="topbar-brand">
         <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
-        <span class="topbar-title">Compare</span>
+        <span class="topbar-title">비교</span>
     </div>
-    <a href="/" class="back-btn">← Back</a>
+    <div class="topbar-right">
+        <a href="/" class="back-btn">← 돌아가기</a>
+    </div>
 </div>
 
 <div class="main">
@@ -134,128 +359,378 @@
     <!-- Compare results -->
     <div th:if="${baseResult != null and targetResult != null}">
 
-        <!-- Header: base vs target -->
+        <!-- 섹션 앵커 nav -->
+        <nav class="cmp-anchor-nav">
+            <a href="#kpi">KPI</a>
+            <a href="#cls">클래스</a>
+            <a href="#hist">히스토그램</a>
+            <a href="#susp">의심</a>
+            <a href="#ai">AI</a>
+        </nav>
+
+        <!-- Header: base vs target (컴팩트) -->
         <div class="compare-header">
             <div class="dump-card">
-                <div class="dump-card-label">Baseline (before)</div>
+                <div class="dump-card-label">기준 (Before)</div>
                 <div class="dump-card-name" th:text="${baseFile}">base.hprof</div>
-                <div class="dump-card-meta">
-                    <span th:text="${baseResult.formattedUsedHeapSize}">—</span>
-                    used · <span th:text="${baseResult.formattedTotalObjects}">—</span> objects
+                <div class="dump-card-meta-row">
+                    <span>📅 <b th:text="${baseModifiedFmt}">—</b></span>
+                    <span>·</span>
+                    <span><b th:text="${baseResult.formattedFileSize}">—</b></span>
                 </div>
             </div>
             <div class="vs-circle">VS</div>
             <div class="dump-card">
-                <div class="dump-card-label">Target (after)</div>
+                <div class="dump-card-label">비교 (After)</div>
                 <div class="dump-card-name" th:text="${targetFile}">target.hprof</div>
-                <div class="dump-card-meta">
-                    <span th:text="${targetResult.formattedUsedHeapSize}">—</span>
-                    used · <span th:text="${targetResult.formattedTotalObjects}">—</span> objects
+                <div class="dump-card-meta-row">
+                    <span>📅 <b th:text="${targetModifiedFmt}">—</b></span>
+                    <span>·</span>
+                    <span><b th:text="${targetResult.formattedFileSize}">—</b></span>
                 </div>
             </div>
         </div>
 
-        <!-- Delta summary -->
-        <div class="delta-banner">
-            <div class="delta-item">
-                <div class="delta-label">Heap change</div>
-                <div class="delta-value"
-                     th:classappend="${heapDeltaUp} ? ' delta-up' : ' delta-down'"
-                     th:text="${heapDeltaSign} + ${heapDelta}">+0 B</div>
+        <!-- KPI 6 칸 delta 배너 -->
+        <div class="kpi-grid" id="kpi">
+            <div class="kpi-tile">
+                <div class="kpi-label">힙 사용량</div>
+                <div class="kpi-value" th:classappend="${kpi.usedHeapUp} ? ' delta-up' : (${kpi.usedHeapDelta == 0} ? ' delta-neutral' : ' delta-down')"
+                     th:text="${kpi.formattedUsedHeapDelta}">+0 B</div>
+                <div class="kpi-sub" th:text="${kpi.formattedUsagePercentDelta} + '%pt'">+0%pt</div>
             </div>
-            <div class="delta-sep"></div>
-            <div class="delta-item">
-                <div class="delta-label">Classes changed</div>
-                <div class="delta-value delta-neutral"
-                     th:text="${#lists.size(classDiffs)}">0</div>
+            <div class="kpi-tile">
+                <div class="kpi-label">객체 수</div>
+                <div class="kpi-value" th:classappend="${kpi.objectsUp} ? ' delta-up' : (${kpi.objectsDelta == 0} ? ' delta-neutral' : ' delta-down')"
+                     th:text="${kpi.formattedObjectsDelta}">+0</div>
+                <div class="kpi-sub">전체 객체</div>
             </div>
-            <div class="delta-sep"></div>
-            <div class="delta-item">
-                <div class="delta-label">Base heap</div>
-                <div class="delta-value delta-neutral"
-                     th:text="${baseResult.formattedUsedHeapSize}">—</div>
+            <div class="kpi-tile">
+                <div class="kpi-label">클래스 수</div>
+                <div class="kpi-value" th:classappend="${kpi.classesUp} ? ' delta-up' : (${kpi.classesDelta == 0} ? ' delta-neutral' : ' delta-down')"
+                     th:text="${kpi.formattedClassesDelta}">+0</div>
+                <div class="kpi-sub">로드된 클래스</div>
             </div>
-            <div class="delta-sep"></div>
-            <div class="delta-item">
-                <div class="delta-label">Target heap</div>
-                <div class="delta-value delta-neutral"
-                     th:text="${targetResult.formattedUsedHeapSize}">—</div>
+            <div class="kpi-tile">
+                <div class="kpi-label">의심 항목</div>
+                <div class="kpi-value" th:classappend="${kpi.suspectsUp} ? ' delta-up' : (${kpi.suspectsDelta == 0} ? ' delta-neutral' : ' delta-down')"
+                     th:text="${kpi.formattedSuspectsDelta}">+0</div>
+                <div class="kpi-sub" th:text="${baseSuspectCount} + ' → ' + ${targetSuspectCount}">0 → 0</div>
+            </div>
+            <div class="kpi-tile">
+                <div class="kpi-label">스레드</div>
+                <div class="kpi-value" th:classappend="${kpi.threadsUp} ? ' delta-up' : (${kpi.threadsDelta == 0} ? ' delta-neutral' : ' delta-down')"
+                     th:text="${kpi.formattedThreadsDelta}">+0</div>
+                <div class="kpi-sub" th:text="${baseThreadCount} + ' → ' + ${targetThreadCount}">0 → 0</div>
+            </div>
+            <div class="kpi-tile">
+                <div class="kpi-label">상위 소비자</div>
+                <div class="kpi-value" th:classappend="${kpi.topConsumerCountUp} ? ' delta-up' : (${kpi.topConsumerCountDelta == 0} ? ' delta-neutral' : ' delta-down')"
+                     th:text="${kpi.formattedTopConsumerCountDelta}">+0</div>
+                <div class="kpi-sub">집계된 클래스</div>
             </div>
         </div>
 
         <!-- Class-level diff table -->
-        <div class="panel">
-            <div class="panel-title">Top class memory changes (retained heap)</div>
-
-            <div th:if="${#lists.isEmpty(classDiffs)}" class="no-data">
-                No significant differences found between the two dumps.
+        <div class="panel" id="cls">
+            <div class="panel-title">
+                <span>클래스별 메모리 변화 상위 (Retained heap) <span style="font-weight:400;color:#9CA3AF;font-size:12px" th:text="'· 변화 ' + ${#lists.size(classDiffs)} + '건'"></span></span>
+                <span class="panel-tools">
+                    <input type="text" id="classFilter" placeholder="클래스명 검색…" style="width:160px" oninput="renderClassPage()">
+                    <label>필터
+                        <select id="classDirFilter" onchange="renderClassPage()">
+                            <option value="all">전체</option>
+                            <option value="up">증가만</option>
+                            <option value="down">감소만</option>
+                        </select>
+                    </label>
+                    <label>표시
+                        <select id="classRows" onchange="onClassRowsChange(this)">
+                            <option value="20">20</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </label>
+                </span>
             </div>
 
-            <table th:if="${!#lists.isEmpty(classDiffs)}" class="diff-table">
+            <div th:if="${#lists.isEmpty(classDiffs)}" class="no-data">
+                두 덤프 간 의미 있는 차이가 없습니다.
+            </div>
+
+            <div th:if="${!#lists.isEmpty(classDiffs)}">
+                <table class="diff-table">
+                    <thead>
+                        <tr>
+                            <th style="width:40px;">#</th>
+                            <th>클래스명</th>
+                            <th style="text-align:right">기준</th>
+                            <th style="text-align:right">비교</th>
+                            <th style="text-align:right">변화</th>
+                            <th>추이</th>
+                        </tr>
+                    </thead>
+                    <tbody id="classDiffBody">
+                        <tr th:each="diff, s : ${classDiffs}"
+                            th:attr="data-name=${diff.className},data-up=${diff.increase ? '1' : '0'}">
+                            <td style="color:#9CA3AF;" class="class-rank">1</td>
+                            <td><span class="class-name" th:text="${diff.className}">—</span></td>
+                            <td class="num-cell" style="text-align:right" th:text="${diff.baseSize > 0} ? ${#numbers.formatDecimal(diff.baseSize / 1048576.0, 1, 2)} + ' MB' : '—'">—</td>
+                            <td class="num-cell" style="text-align:right" th:text="${diff.targetSize > 0} ? ${#numbers.formatDecimal(diff.targetSize / 1048576.0, 1, 2)} + ' MB' : '—'">—</td>
+                            <td class="delta-cell" style="text-align:right"
+                                th:classappend="${diff.increase} ? ' up' : ' down'"
+                                th:text="${diff.formattedDelta}">+0 B</td>
+                            <td>
+                                <div class="delta-bar-wrap">
+                                    <div class="delta-bar"
+                                         th:classappend="${diff.increase} ? ' up' : ' down'"
+                                         th:style="'width:' + ${T(java.lang.Math).min(80L, T(java.lang.Math).abs(diff.delta) / 1048576L)} + 'px'">
+                                    </div>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div id="classPager" class="pager"></div>
+            </div>
+        </div>
+
+        <!-- Histogram class diff -->
+        <div class="panel" id="hist" th:if="${histogramDiffs != null and !#lists.isEmpty(histogramDiffs)}">
+            <div class="panel-title">
+                <span>히스토그램 클래스 비교 <span style="font-weight:400;color:#9CA3AF;font-size:12px" th:text="'· Δ retained 기준 상위 ' + ${#lists.size(histogramDiffs)} + '건'"></span></span>
+                <span class="panel-tools">
+                    <input type="text" id="histFilter" placeholder="클래스명 검색…" style="width:160px" oninput="renderHistPage()">
+                    <label>표시
+                        <select id="histRows" onchange="onHistRowsChange(this)">
+                            <option value="10">10</option>
+                            <option value="20" selected>20</option>
+                            <option value="30">30</option>
+                        </select>
+                    </label>
+                </span>
+            </div>
+            <table class="diff-table">
                 <thead>
                     <tr>
                         <th style="width:40px;">#</th>
-                        <th>Class name</th>
-                        <th>Base</th>
-                        <th>Target</th>
-                        <th>Delta</th>
-                        <th>Trend</th>
+                        <th>클래스명</th>
+                        <th style="text-align:right">기준 객체</th>
+                        <th style="text-align:right">비교 객체</th>
+                        <th style="text-align:right">Δ 객체</th>
+                        <th style="text-align:right">기준 Retained</th>
+                        <th style="text-align:right">비교 Retained</th>
+                        <th style="text-align:right">Δ Retained</th>
                     </tr>
                 </thead>
-                <tbody>
-                    <tr th:each="diff, s : ${classDiffs}">
-                        <td th:text="${s.count}" style="color:#9CA3AF;">1</td>
-                        <td><span class="class-name" th:text="${diff.className}">—</span></td>
-                        <td th:text="${diff.baseSize > 0} ? ${#numbers.formatDecimal(diff.baseSize / 1048576.0, 1, 2)} + ' MB' : '—'">—</td>
-                        <td th:text="${diff.targetSize > 0} ? ${#numbers.formatDecimal(diff.targetSize / 1048576.0, 1, 2)} + ' MB' : '—'">—</td>
-                        <td class="delta-cell"
-                            th:classappend="${diff.increase} ? ' up' : ' down'"
-                            th:text="${diff.formattedDelta}">+0 B</td>
-                        <td>
-                            <div class="delta-bar-wrap">
-                                <div class="delta-bar"
-                                     th:classappend="${diff.increase} ? ' up' : ' down'"
-                                     th:style="'width:' + ${T(java.lang.Math).min(80L, T(java.lang.Math).abs(diff.delta) / 1048576L)} + 'px'">
-                                </div>
-                            </div>
-                        </td>
+                <tbody id="histDiffBody">
+                    <tr th:each="h, s : ${histogramDiffs}"
+                        th:attr="data-name=${h.className}">
+                        <td style="color:#9CA3AF;" class="hist-rank">1</td>
+                        <td><span class="class-name" th:text="${h.className}">—</span></td>
+                        <td class="num-cell" style="text-align:right" th:text="${#numbers.formatInteger(h.baseCount, 0, 'COMMA')}">0</td>
+                        <td class="num-cell" style="text-align:right" th:text="${#numbers.formatInteger(h.targetCount, 0, 'COMMA')}">0</td>
+                        <td class="delta-cell" style="text-align:right"
+                            th:classappend="${h.countDelta > 0} ? ' up' : (${h.countDelta == 0} ? ' delta-neutral' : ' down')"
+                            th:text="${h.formattedCountDelta}">+0</td>
+                        <td class="num-cell" style="text-align:right"
+                            th:text="${h.baseRetained > 1048576} ? ${#numbers.formatDecimal(h.baseRetained / 1048576.0, 1, 2)} + ' MB' : ${#numbers.formatDecimal(h.baseRetained / 1024.0, 1, 1)} + ' KB'">—</td>
+                        <td class="num-cell" style="text-align:right"
+                            th:text="${h.targetRetained > 1048576} ? ${#numbers.formatDecimal(h.targetRetained / 1048576.0, 1, 2)} + ' MB' : ${#numbers.formatDecimal(h.targetRetained / 1024.0, 1, 1)} + ' KB'">—</td>
+                        <td class="delta-cell" style="text-align:right"
+                            th:classappend="${h.increase} ? ' up' : (${h.retainedDelta == 0} ? ' delta-neutral' : ' down')"
+                            th:text="${h.formattedRetainedDelta}">+0 B</td>
                     </tr>
                 </tbody>
             </table>
+            <div id="histPager" class="pager"></div>
+        </div>
+
+        <!-- Suspect diff 4 카테고리 카드 -->
+        <div class="panel" id="susp" th:if="${suspectDiffs != null}">
+            <div class="panel-title">
+                <span>누수 의심 항목 비교 (Leak Suspects) <span style="font-weight:400;color:#9CA3AF;font-size:12px" th:text="'· 총 ' + ${#lists.size(suspectDiffs)} + '건'"></span></span>
+            </div>
+            <div th:if="${#lists.isEmpty(suspectDiffs)}" class="no-data">
+                두 덤프 모두 누수 의심 항목이 없습니다.
+            </div>
+            <div th:if="${!#lists.isEmpty(suspectDiffs)}" class="suspect-grid">
+                <!-- NEW -->
+                <div class="suspect-cat new" data-state="NEW">
+                    <div class="suspect-cat-head">
+                        <span>&#9650; NEW · 비교에만 존재</span>
+                        <span class="suspect-cat-count">0</span>
+                    </div>
+                    <div th:each="d : ${suspectDiffs}" th:if="${d.state == 'NEW'}" class="suspect-item">
+                        <div class="suspect-item-title" th:text="${d.title}">—</div>
+                        <div class="suspect-item-meta">
+                            <span class="suspect-sev-chip"
+                                  th:classappend="${d.targetSeverity != null} ? 'sev-' + ${#strings.toLowerCase(d.targetSeverity)} : 'sev-unknown'"
+                                  th:text="${d.targetSeverity != null} ? ${d.targetSeverity} : '미정'">—</span>
+                            <span th:if="${d.category != null and !#strings.isEmpty(d.category)}" th:text="${d.category}">cat</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- GONE -->
+                <div class="suspect-cat gone" data-state="GONE">
+                    <div class="suspect-cat-head">
+                        <span>&#9660; GONE · 기준에만 존재</span>
+                        <span class="suspect-cat-count">0</span>
+                    </div>
+                    <div th:each="d : ${suspectDiffs}" th:if="${d.state == 'GONE'}" class="suspect-item">
+                        <div class="suspect-item-title" th:text="${d.title}">—</div>
+                        <div class="suspect-item-meta">
+                            <span class="suspect-sev-chip"
+                                  th:classappend="${d.baseSeverity != null} ? 'sev-' + ${#strings.toLowerCase(d.baseSeverity)} : 'sev-unknown'"
+                                  th:text="${d.baseSeverity != null} ? ${d.baseSeverity} : '미정'">—</span>
+                            <span th:if="${d.category != null and !#strings.isEmpty(d.category)}" th:text="${d.category}">cat</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- SEVERITY_CHANGED -->
+                <div class="suspect-cat changed" data-state="SEVERITY_CHANGED">
+                    <div class="suspect-cat-head">
+                        <span>&#8644; 심각도 변경</span>
+                        <span class="suspect-cat-count">0</span>
+                    </div>
+                    <div th:each="d : ${suspectDiffs}" th:if="${d.state == 'SEVERITY_CHANGED'}" class="suspect-item">
+                        <div class="suspect-item-title" th:text="${d.title}">—</div>
+                        <div class="suspect-item-meta">
+                            <span class="suspect-sev-chip"
+                                  th:classappend="${d.baseSeverity != null} ? 'sev-' + ${#strings.toLowerCase(d.baseSeverity)} : 'sev-unknown'"
+                                  th:text="${d.baseSeverity != null} ? ${d.baseSeverity} : '미정'">—</span>
+                            <span>&rarr;</span>
+                            <span class="suspect-sev-chip"
+                                  th:classappend="${d.targetSeverity != null} ? 'sev-' + ${#strings.toLowerCase(d.targetSeverity)} : 'sev-unknown'"
+                                  th:text="${d.targetSeverity != null} ? ${d.targetSeverity} : '미정'">—</span>
+                            <span th:if="${d.category != null and !#strings.isEmpty(d.category)}" th:text="${d.category}">cat</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- PERSIST -->
+                <div class="suspect-cat persist" data-state="PERSIST">
+                    <div class="suspect-cat-head">
+                        <span>= PERSIST · 양쪽 모두 존재</span>
+                        <span class="suspect-cat-count">0</span>
+                    </div>
+                    <div th:each="d : ${suspectDiffs}" th:if="${d.state == 'PERSIST'}" class="suspect-item">
+                        <div class="suspect-item-title" th:text="${d.title}">—</div>
+                        <div class="suspect-item-meta">
+                            <span class="suspect-sev-chip"
+                                  th:classappend="${d.targetSeverity != null} ? 'sev-' + ${#strings.toLowerCase(d.targetSeverity)} : 'sev-unknown'"
+                                  th:text="${d.targetSeverity != null} ? ${d.targetSeverity} : '미정'">—</span>
+                            <span th:if="${d.category != null and !#strings.isEmpty(d.category)}" th:text="${d.category}">cat</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI 비교 분석 패널 -->
+        <div class="panel" id="ai">
+            <div class="panel-title">
+                <span>&#129302; AI 비교 분석</span>
+                <span class="panel-tools">
+                    <label class="ai-toggle">
+                        <span class="ai-toggle-text">AI 분석</span>
+                        <input type="checkbox" id="cmpAiToggle" onchange="onCmpAiToggle(this)">
+                    </label>
+                </span>
+            </div>
+            <div id="cmpAiPanel">
+                <!-- Header actions / badges -->
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+                    <div style="display:flex;align-items:center;gap:8px">
+                        <span id="cmpAiBadge" style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:10px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB;letter-spacing:.04em">미분석</span>
+                        <span id="cmpAiSavedChip" style="display:none;font-size:11px;font-weight:600;color:#15803D;padding:3px 10px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px">&#10003; 저장됨</span>
+                    </div>
+                    <div id="cmpAiActions" style="display:none;gap:8px">
+                        <button class="ai-action-btn" onclick="startCmpAiAnalysis()">재분석</button>
+                        <button class="ai-action-btn danger" onclick="deleteCmpAiInsight()">삭제</button>
+                    </div>
+                </div>
+
+                <!-- NotAnalyzed -->
+                <div id="cmpAiNot" style="border:2px dashed #C7D2FE;border-radius:14px;padding:36px 24px;text-align:center;background:linear-gradient(150deg,#EFF6FF 0%,#EEF2FF 50%,#F0F9FF 100%)">
+                    <div style="font-size:16px;font-weight:700;color:#1E40AF;margin-bottom:8px">AI가 두 덤프의 변화를 종합 분석합니다</div>
+                    <div style="font-size:13px;color:#64748B;line-height:1.7;margin-bottom:18px">
+                        힙 통계 / Top 클래스 변화 / 누수 의심 항목 변화 / 히스토그램 변화를 종합해<br>
+                        <span style="color:#4F46E5;font-weight:600">변화 해석 · 회귀 위험도 · 근본 원인 · 권장 조치</span>를 제공합니다.
+                    </div>
+                    <button id="cmpAiStartBtn" onclick="startCmpAiAnalysis()" style="padding:11px 28px;background:linear-gradient(135deg,#2563EB,#4F46E5);color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;box-shadow:0 4px 14px rgba(37,99,235,.3)">
+                        &#128640;&nbsp; AI 비교 분석 시작
+                    </button>
+                    <div id="cmpAiDisabledMsg" style="display:none;margin-top:14px;font-size:13px;color:#B91C1C;background:#FEF2F2;border:1px solid #FECACA;border-radius:8px;padding:10px 14px;max-width:380px;margin-left:auto;margin-right:auto;line-height:1.6">
+                        &#9888;&nbsp; LLM이 비활성화 상태입니다. <a href="/settings/llm" style="color:#2563EB;font-weight:700">Settings &rarr; AI/LLM Configuration</a>에서 활성화하세요.
+                    </div>
+                </div>
+
+                <!-- Loading -->
+                <div id="cmpAiLoading" style="display:none;border:1px solid #C7D2FE;border-radius:12px;padding:24px;background:linear-gradient(135deg,#EFF6FF,#EEF2FF)">
+                    <div class="ai-step-row">
+                        <div class="ai-step"><div class="ai-step-circle" id="cmpAiStep1">1</div><div class="ai-step-label">데이터 수집</div></div>
+                        <div class="ai-step-bar"></div>
+                        <div class="ai-step"><div class="ai-step-circle" id="cmpAiStep2">2</div><div class="ai-step-label">프롬프트 구성</div></div>
+                        <div class="ai-step-bar"></div>
+                        <div class="ai-step"><div class="ai-step-circle" id="cmpAiStep3">3</div><div class="ai-step-label">LLM 분석</div></div>
+                        <div class="ai-step-bar"></div>
+                        <div class="ai-step"><div class="ai-step-circle" id="cmpAiStep4">4</div><div class="ai-step-label">결과 저장</div></div>
+                    </div>
+                    <div class="ai-progress-track"><div id="cmpAiProgress" class="ai-progress-fill"></div></div>
+                    <div style="text-align:center">
+                        <div id="cmpAiLoadingMsg" style="font-size:14px;font-weight:700;color:#2563EB;margin-bottom:4px">데이터 수집 중&#8230;</div>
+                        <div id="cmpAiElapsed" style="font-size:12px;color:#94A3B8;font-variant-numeric:tabular-nums"></div>
+                    </div>
+                </div>
+
+                <!-- Result -->
+                <div id="cmpAiResult" style="display:none"></div>
+
+                <!-- Error -->
+                <div id="cmpAiError" style="display:none;border:1px solid #FCA5A5;background:#FEF2F2;border-radius:10px;padding:16px;color:#7F1D1D;font-size:13px"></div>
+            </div>
         </div>
 
     </div>
 
-    <!-- 파일 선택 화면 (base/target 미입력 시) -->
+    <!-- 파일 선택 화면 (base/target 미입력 시) — 카드형 -->
     <div th:if="${baseResult == null and error == null}" class="panel" id="cmpPickerPanel">
-        <div class="panel-title">Select Two Analyzed Dumps</div>
+        <div class="panel-title"><span>분석된 덤프 2개 선택</span></div>
         <div id="cmpPickerLoading" style="text-align:center;padding:24px;color:#9CA3AF;font-size:13px">
-            Loading analyzed files...
+            분석된 파일 목록을 불러오는 중…
         </div>
         <div id="cmpPickerEmpty" style="display:none;text-align:center;padding:24px;color:#9CA3AF;font-size:13px">
-            No analyzed dumps available. Analyze at least two heap dumps first.
+            분석된 덤프가 없습니다. 먼저 두 개 이상의 힙 덤프를 분석하세요.
         </div>
         <div id="cmpPickerForm" style="display:none">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
-                <div>
-                    <label style="display:block;font-size:11px;font-weight:600;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Base Dump</label>
-                    <select id="cmpBase" style="width:100%;padding:10px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;background:#fff;outline:none">
-                        <option value="">Select a file...</option>
+            <div class="cmp-picker-grid">
+                <div class="cmp-picker-card" data-role="base">
+                    <div class="cmp-picker-card-label">기준 (Before)</div>
+                    <select id="cmpBase" class="cmp-picker-select" onchange="updatePickerMeta(this)">
+                        <option value="">파일을 선택하세요…</option>
                     </select>
+                    <div class="cmp-picker-meta">
+                        <div class="meta-row"><span class="icn">📊</span><span data-meta="heap" class="empty">—</span></div>
+                        <div class="meta-row"><span class="icn">📅</span><span data-meta="date" class="empty">—</span></div>
+                        <div class="meta-row"><span class="icn">🖥</span><span data-meta="server" class="empty">—</span></div>
+                    </div>
                 </div>
-                <div>
-                    <label style="display:block;font-size:11px;font-weight:600;color:#9CA3AF;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Target Dump</label>
-                    <select id="cmpTarget" style="width:100%;padding:10px 12px;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;background:#fff;outline:none">
-                        <option value="">Select a file...</option>
+                <div class="cmp-picker-card" data-role="target">
+                    <div class="cmp-picker-card-label">비교 (After)</div>
+                    <select id="cmpTarget" class="cmp-picker-select" onchange="updatePickerMeta(this)">
+                        <option value="">파일을 선택하세요…</option>
                     </select>
+                    <div class="cmp-picker-meta">
+                        <div class="meta-row"><span class="icn">📊</span><span data-meta="heap" class="empty">—</span></div>
+                        <div class="meta-row"><span class="icn">📅</span><span data-meta="date" class="empty">—</span></div>
+                        <div class="meta-row"><span class="icn">🖥</span><span data-meta="server" class="empty">—</span></div>
+                    </div>
                 </div>
             </div>
-            <div style="display:flex;justify-content:flex-end">
-                <button id="cmpRunBtn" onclick="runCompare()" style="padding:10px 22px;font-size:13px;font-weight:600;color:#fff;background:#2563EB;border:none;border-radius:8px;cursor:pointer">
-                    Compare
-                </button>
+            <div id="cmpPickerHint" class="cmp-picker-hint">⚠ 동일한 파일은 비교할 수 없습니다.</div>
+            <div class="cmp-picker-actions">
+                <button id="cmpRunBtn" onclick="runCompare()">비교 →</button>
             </div>
-            <div id="cmpPickerError" style="display:none;margin-top:10px;font-size:12px;color:#DC2626"></div>
         </div>
     </div>
 
@@ -270,27 +745,526 @@
             if (analyzed.length < 2) { empty.style.display = ''; return; }
             form.style.display = '';
             var base = document.getElementById('cmpBase');
-            var tgt = document.getElementById('cmpTarget');
+            var tgt  = document.getElementById('cmpTarget');
             analyzed.forEach(function(it) {
-                var o1 = document.createElement('option'); o1.value = it.filename; o1.textContent = it.filename; base.appendChild(o1);
-                var o2 = document.createElement('option'); o2.value = it.filename; o2.textContent = it.filename; tgt.appendChild(o2);
+                var dateStr = it.lastModified
+                    ? new Date(it.lastModified).toISOString().substring(0,16).replace('T', ' ')
+                    : '';
+                [base, tgt].forEach(function(sel) {
+                    var o = document.createElement('option');
+                    o.value = it.filename;
+                    o.textContent = it.filename;
+                    o.dataset.heap   = it.heapUsed || it.formattedUsedHeapSize || '';
+                    o.dataset.date   = dateStr;
+                    o.dataset.server = it.serverName || '';
+                    sel.appendChild(o);
+                });
             });
         }).catch(function() {
             document.getElementById('cmpPickerLoading').style.display = 'none';
             document.getElementById('cmpPickerEmpty').style.display = '';
-            document.getElementById('cmpPickerEmpty').textContent = 'Failed to load file list.';
+            document.getElementById('cmpPickerEmpty').textContent = '파일 목록을 불러오지 못했습니다.';
         });
     })();
+
+    function updatePickerMeta(sel) {
+        var card = sel.closest('.cmp-picker-card');
+        if (!card) return;
+        var opt = sel.options[sel.selectedIndex];
+        var fields = ['heap', 'date', 'server'];
+        var hasValue = !!sel.value && opt;
+        fields.forEach(function(key) {
+            var span = card.querySelector('[data-meta="' + key + '"]');
+            if (!span) return;
+            var val = hasValue ? (opt.dataset[key] || '') : '';
+            if (val) {
+                span.textContent = val;
+                span.classList.remove('empty');
+            } else {
+                span.textContent = hasValue ? '—' : '—';
+                span.classList.add('empty');
+            }
+        });
+        // 사용자가 다시 선택 시 hint 를 기본 안내로 복원
+        resetPickerHint();
+    }
+
+    function resetPickerHint() {
+        var hint = document.getElementById('cmpPickerHint');
+        if (!hint) return;
+        hint.classList.remove('error');
+        hint.textContent = '⚠ 동일한 파일은 비교할 수 없습니다.';
+    }
+    function showPickerError(msg) {
+        var hint = document.getElementById('cmpPickerHint');
+        if (!hint) return;
+        hint.classList.add('error');
+        hint.textContent = '⚠ ' + msg;
+    }
 
     function runCompare() {
         var b = document.getElementById('cmpBase').value;
         var t = document.getElementById('cmpTarget').value;
-        var err = document.getElementById('cmpPickerError');
-        err.style.display = 'none';
-        if (!b || !t) { err.textContent = 'Please select both files.'; err.style.display = ''; return; }
-        if (b === t)  { err.textContent = 'Please select two different files.'; err.style.display = ''; return; }
+        if (!b || !t) { showPickerError('두 파일을 모두 선택해주세요.'); return; }
+        if (b === t)  { showPickerError('서로 다른 파일 두 개를 선택해주세요.'); return; }
         location.href = '/compare?base=' + encodeURIComponent(b) + '&target=' + encodeURIComponent(t);
     }
+    </script>
+
+    <!-- Compare 결과가 있을 때만 실행되는 인라인 스크립트 -->
+    <script th:if="${baseResult != null and targetResult != null}"
+            th:inline="javascript">
+    /*<![CDATA[*/
+
+    var CMP_BASE   = /*[[${baseFile}]]*/   '';
+    var CMP_TARGET = /*[[${targetFile}]]*/ '';
+
+    // ── Class diff 페이지네이션/필터 ───────────────────────────
+    var _classRows  = parseInt(localStorage.getItem('cmpClassRows') || '50', 10);
+    var _classPage  = 1;
+    document.getElementById('classRows').value = String(_classRows);
+    function onClassRowsChange(sel) {
+        _classRows = parseInt(sel.value, 10) || 50;
+        localStorage.setItem('cmpClassRows', String(_classRows));
+        _classPage = 1;
+        renderClassPage();
+    }
+    function classFilteredRows() {
+        var q   = (document.getElementById('classFilter').value || '').toLowerCase().trim();
+        var dir = document.getElementById('classDirFilter').value;
+        var rows = Array.prototype.slice.call(document.querySelectorAll('#classDiffBody > tr'));
+        return rows.filter(function(tr) {
+            var name = (tr.getAttribute('data-name') || '').toLowerCase();
+            var up   = tr.getAttribute('data-up') === '1';
+            if (q && name.indexOf(q) < 0) return false;
+            if (dir === 'up'   && !up) return false;
+            if (dir === 'down' && up)  return false;
+            return true;
+        });
+    }
+    function renderClassPage() {
+        var all = Array.prototype.slice.call(document.querySelectorAll('#classDiffBody > tr'));
+        all.forEach(function(tr) { tr.style.display = 'none'; });
+        var visible = classFilteredRows();
+        var total = visible.length;
+        var pages = Math.max(1, Math.ceil(total / _classRows));
+        if (_classPage > pages) _classPage = pages;
+        var start = (_classPage - 1) * _classRows;
+        var end = Math.min(start + _classRows, total);
+        for (var i = start; i < end; i++) {
+            visible[i].style.display = '';
+            visible[i].querySelector('.class-rank').textContent = (i + 1);
+        }
+        renderPager('classPager', pages, _classPage, function(p) {
+            _classPage = p; renderClassPage();
+        });
+    }
+    // ── Histogram diff 페이지네이션/필터 ───────────────────────
+    var _histRows = parseInt(localStorage.getItem('cmpHistRows') || '20', 10);
+    var _histPage = 1;
+    if (document.getElementById('histRows')) document.getElementById('histRows').value = String(_histRows);
+    function onHistRowsChange(sel) {
+        _histRows = parseInt(sel.value, 10) || 20;
+        localStorage.setItem('cmpHistRows', String(_histRows));
+        _histPage = 1;
+        renderHistPage();
+    }
+    function histFilteredRows() {
+        var f = document.getElementById('histFilter');
+        var q = (f && f.value || '').toLowerCase().trim();
+        var rows = Array.prototype.slice.call(document.querySelectorAll('#histDiffBody > tr'));
+        return rows.filter(function(tr) {
+            var name = (tr.getAttribute('data-name') || '').toLowerCase();
+            return !q || name.indexOf(q) >= 0;
+        });
+    }
+    function renderHistPage() {
+        if (!document.getElementById('histDiffBody')) return;
+        var all = Array.prototype.slice.call(document.querySelectorAll('#histDiffBody > tr'));
+        all.forEach(function(tr) { tr.style.display = 'none'; });
+        var visible = histFilteredRows();
+        var total = visible.length;
+        var pages = Math.max(1, Math.ceil(total / _histRows));
+        if (_histPage > pages) _histPage = pages;
+        var start = (_histPage - 1) * _histRows;
+        var end = Math.min(start + _histRows, total);
+        for (var i = start; i < end; i++) {
+            visible[i].style.display = '';
+            visible[i].querySelector('.hist-rank').textContent = (i + 1);
+        }
+        renderPager('histPager', pages, _histPage, function(p) {
+            _histPage = p; renderHistPage();
+        });
+    }
+    function renderPager(elId, pages, current, onClick) {
+        var el = document.getElementById(elId);
+        if (!el) return;
+        el.innerHTML = '';
+        if (pages <= 1) return;
+        var prev = document.createElement('button');
+        prev.textContent = '‹ 이전';
+        prev.disabled = current <= 1;
+        prev.onclick = function() { onClick(current - 1); };
+        el.appendChild(prev);
+        var win = [1];
+        for (var p = current - 2; p <= current + 2; p++) {
+            if (p > 1 && p < pages) win.push(p);
+        }
+        if (pages > 1) win.push(pages);
+        win = Array.from(new Set(win)).sort(function(a,b){return a-b;});
+        var prevP = 0;
+        win.forEach(function(p) {
+            if (prevP && p - prevP > 1) {
+                var sep = document.createElement('span'); sep.textContent = '…'; el.appendChild(sep);
+            }
+            var b = document.createElement('button');
+            b.textContent = String(p);
+            if (p === current) b.classList.add('active');
+            b.onclick = function() { onClick(p); };
+            el.appendChild(b);
+            prevP = p;
+        });
+        var next = document.createElement('button');
+        next.textContent = '다음 ›';
+        next.disabled = current >= pages;
+        next.onclick = function() { onClick(current + 1); };
+        el.appendChild(next);
+    }
+    renderClassPage();
+    renderHistPage();
+
+    // ── Suspect 카드: 건수 chip + 빈 카테고리 "해당 없음" 표시 ──
+    (function fillSuspectCounts() {
+        document.querySelectorAll('.suspect-cat').forEach(function(cat) {
+            var n = cat.querySelectorAll('.suspect-item').length;
+            var chip = cat.querySelector('.suspect-cat-count');
+            if (chip) chip.textContent = n;
+            if (n === 0) {
+                var empty = document.createElement('div');
+                empty.className = 'suspect-empty';
+                empty.textContent = '해당 없음';
+                cat.appendChild(empty);
+            }
+        });
+    })();
+
+    // ─────────────────────────────────────────────────────────
+    // ── AI 비교 분석 (cmpAi*) ────────────────────────────────
+    // ─────────────────────────────────────────────────────────
+    var _cmpAiTimer    = null;
+    var _cmpAiStart    = 0;
+    var _cmpAiData     = null;       // /api/compare/data 응답
+    var _cmpAiLlmEnabled = true;     // /api/settings.llm.enabled 결과 — 기본 낙관
+    var _cmpAiInFlight = false;      // 시작 버튼 중복 클릭 가드
+
+    function cmpAiSetState(st) {
+        document.getElementById('cmpAiNot').style.display      = (st === 'NotAnalyzed') ? '' : 'none';
+        document.getElementById('cmpAiLoading').style.display  = (st === 'Loading')     ? '' : 'none';
+        document.getElementById('cmpAiResult').style.display   = (st === 'Result')      ? '' : 'none';
+        document.getElementById('cmpAiError').style.display    = (st === 'Error')       ? '' : 'none';
+        document.getElementById('cmpAiActions').style.display  = (st === 'Result' || st === 'Error') ? 'flex' : 'none';
+    }
+    function cmpAiSetBadge(label, bg, fg, border) {
+        var el = document.getElementById('cmpAiBadge');
+        el.textContent = label;
+        el.style.background = bg || '#F3F4F6';
+        el.style.color      = fg || '#9CA3AF';
+        el.style.borderColor= border || '#E5E7EB';
+    }
+    function cmpAiSetStep(stepNum) {
+        for (var i = 1; i <= 4; i++) {
+            var c = document.getElementById('cmpAiStep' + i);
+            if (!c) continue;
+            c.classList.remove('active', 'done');
+            if (i < stepNum) c.classList.add('done');
+            else if (i === stepNum) c.classList.add('active');
+        }
+        var pct = Math.min(100, ((stepNum - 1) / 3) * 100);
+        document.getElementById('cmpAiProgress').style.width = pct + '%';
+        var msgs = ['데이터 수집 중…', '프롬프트 구성 중…', 'LLM 분석 중…', '결과 저장 중…'];
+        document.getElementById('cmpAiLoadingMsg').textContent = msgs[stepNum - 1] || '';
+    }
+    function cmpAiStartTimer() {
+        _cmpAiStart = Date.now();
+        if (_cmpAiTimer) clearInterval(_cmpAiTimer);
+        _cmpAiTimer = setInterval(function() {
+            var s = Math.floor((Date.now() - _cmpAiStart) / 1000);
+            document.getElementById('cmpAiElapsed').textContent = '경과 ' + s + '초';
+        }, 250);
+    }
+    function cmpAiStopTimer() {
+        if (_cmpAiTimer) { clearInterval(_cmpAiTimer); _cmpAiTimer = null; }
+    }
+
+    function onCmpAiToggle(cb) {
+        var visible = !!cb.checked;
+        localStorage.setItem('cmpAiVisible', visible ? '1' : '0');
+        document.getElementById('cmpAiPanel').style.display = visible ? 'block' : 'none';
+        if (visible) {
+            // 토글 ON 진입 시 한 번만 LLM 상태 + 저장본 자동 로드
+            cmpAiCheckLlmStatus().then(function() { cmpAiLoadSaved(); });
+        }
+    }
+
+    function cmpAiCheckLlmStatus() {
+        return fetch('/api/settings').then(function(r){ return r.json(); }).then(function(d) {
+            _cmpAiLlmEnabled = !!(d && d.llm && d.llm.enabled);
+            document.getElementById('cmpAiDisabledMsg').style.display = _cmpAiLlmEnabled ? 'none' : '';
+            document.getElementById('cmpAiStartBtn').disabled = !_cmpAiLlmEnabled;
+            document.getElementById('cmpAiStartBtn').style.opacity = _cmpAiLlmEnabled ? '1' : '.55';
+        }).catch(function(){
+            _cmpAiLlmEnabled = false;
+            document.getElementById('cmpAiDisabledMsg').style.display = '';
+            document.getElementById('cmpAiStartBtn').disabled = true;
+            document.getElementById('cmpAiStartBtn').style.opacity = '.55';
+            cmpAiSetState('NotAnalyzed');
+            cmpAiSetBadge('미분석', '#F3F4F6', '#9CA3AF', '#E5E7EB');
+        });
+    }
+
+    function cmpAiLoadSaved() {
+        var url = '/api/llm/compare/insight?base=' + encodeURIComponent(CMP_BASE)
+                + '&target=' + encodeURIComponent(CMP_TARGET);
+        fetch(url).then(function(r){ return r.json(); }).then(function(d) {
+            if (d && d.found) {
+                cmpAiShowResult(d, true);
+            } else {
+                cmpAiSetState('NotAnalyzed');
+                cmpAiSetBadge('미분석', '#F3F4F6', '#9CA3AF', '#E5E7EB');
+            }
+        }).catch(function() {
+            cmpAiSetState('NotAnalyzed');
+        });
+    }
+
+    function escHtml(t) {
+        if (t == null) return '';
+        return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function fmtBytes(n) {
+        if (n == null) return '—';
+        var sign = n > 0 ? '+' : (n < 0 ? '-' : '');
+        var abs = Math.abs(n);
+        if (abs < 1024) return sign + abs + ' B';
+        if (abs < 1048576) return sign + (abs / 1024).toFixed(1) + ' KB';
+        if (abs < 1073741824) return sign + (abs / 1048576).toFixed(2) + ' MB';
+        return sign + (abs / 1073741824).toFixed(2) + ' GB';
+    }
+    function fmtSignedInt(n) {
+        if (n == null) return '—';
+        var sign = n > 0 ? '+' : '';
+        return sign + n.toLocaleString();
+    }
+
+    function buildComparePrompt(data) {
+        var b = data.base, t = data.target, kpi = data.kpi;
+        var lines = [];
+        lines.push('두 Java 힙 덤프의 비교 분석을 수행해주세요.');
+        lines.push('');
+        lines.push('== 비교 대상 ==');
+        lines.push('Baseline: ' + b.filename + (b.analyzedAt ? ' (분석시각: ' + b.analyzedAt + ')' : ''));
+        lines.push('Target:   ' + t.filename + (t.analyzedAt ? ' (분석시각: ' + t.analyzedAt + ')' : ''));
+        lines.push('');
+        lines.push('== 힙 통계 변화 (target - base) ==');
+        lines.push('Used Heap:       ' + fmtBytes(kpi.usedHeapDelta)  + '   (base=' + fmtBytes(b.usedHeap) + ' → target=' + fmtBytes(t.usedHeap) + ')');
+        lines.push('Total Heap:      ' + fmtBytes(kpi.totalHeapDelta) + '   (base=' + fmtBytes(b.totalHeap) + ' → target=' + fmtBytes(t.totalHeap) + ')');
+        lines.push('Heap usage %:    ' + (kpi.usagePercentDelta > 0 ? '+' : '') + kpi.usagePercentDelta.toFixed(2) + '%pt');
+        lines.push('Objects:         ' + fmtSignedInt(kpi.objectsDelta)  + '   (' + b.totalObjects.toLocaleString() + ' → ' + t.totalObjects.toLocaleString() + ')');
+        lines.push('Classes:         ' + fmtSignedInt(kpi.classesDelta)  + '   (' + b.totalClasses.toLocaleString() + ' → ' + t.totalClasses.toLocaleString() + ')');
+        lines.push('Leak suspects:   ' + fmtSignedInt(kpi.suspectsDelta) + '   (' + b.suspectCount + ' → ' + t.suspectCount + ')');
+        lines.push('Threads:         ' + fmtSignedInt(kpi.threadsDelta)  + '   (' + b.threadCount + ' → ' + t.threadCount + ')');
+        lines.push('');
+        lines.push('== Top 메모리 소비자 변화 (상위 10) ==');
+        (data.classDiffs || []).slice(0, 10).forEach(function(d, i) {
+            lines.push((i+1) + '. ' + d.className + ' — ' + d.formattedDelta
+                + ' (base=' + fmtBytes(d.baseSize) + ' → target=' + fmtBytes(d.targetSize) + ')');
+        });
+        if ((data.classDiffs || []).length === 0) lines.push('(변화 없음)');
+        lines.push('');
+        lines.push('== Histogram 주요 변화 (상위 10, retained 기준) ==');
+        (data.histogramDiffs || []).slice(0, 10).forEach(function(h, i) {
+            lines.push((i+1) + '. ' + h.className + ' — Δobj=' + fmtSignedInt(h.countDelta)
+                + ', Δretained=' + fmtBytes(h.retainedDelta));
+        });
+        if ((data.histogramDiffs || []).length === 0) lines.push('(변화 없음)');
+        lines.push('');
+        lines.push('== Leak Suspects 변화 ==');
+        var byState = { NEW: [], GONE: [], SEVERITY_CHANGED: [], PERSIST: [] };
+        (data.suspectDiffs || []).forEach(function(d) {
+            if (byState[d.state]) byState[d.state].push(d);
+        });
+        function listState(label, key) {
+            lines.push('[' + label + ' — ' + byState[key].length + ']');
+            byState[key].slice(0, 8).forEach(function(d) {
+                if (key === 'SEVERITY_CHANGED') {
+                    lines.push('  - ' + d.title + ' (' + (d.baseSeverity||'?') + ' → ' + (d.targetSeverity||'?') + ')');
+                } else if (key === 'NEW') {
+                    lines.push('  - ' + d.title + ' (' + (d.targetSeverity||'?') + ')');
+                } else if (key === 'GONE') {
+                    lines.push('  - ' + d.title + ' (' + (d.baseSeverity||'?') + ')');
+                } else {
+                    lines.push('  - ' + d.title + ' (' + (d.targetSeverity||'?') + ')');
+                }
+            });
+        }
+        listState('NEW',              'NEW');
+        listState('GONE',             'GONE');
+        listState('SEVERITY_CHANGED', 'SEVERITY_CHANGED');
+        listState('PERSIST',          'PERSIST');
+        lines.push('');
+        lines.push('== 출력 형식 ==');
+        lines.push('아래 JSON 스키마로만 응답하세요 (마크다운 없음, JSON 만):');
+        lines.push('{');
+        lines.push('  "summary": "변화 핵심 요약 (2~3 문장)",');
+        lines.push('  "deltaInterpretation": "주요 지표 변화에 대한 해석 (한 문단)",');
+        lines.push('  "regressionRisk": "회귀/누수 진행 위험도 평가 (한 문단)",');
+        lines.push('  "rootCause": "근본 원인 후보 (한 문단)",');
+        lines.push('  "recommendations": ["조치1", "조치2", "조치3"],');
+        lines.push('  "severity": "critical | high | medium | low",');
+        lines.push('  "severityDesc": "위험도 사유"');
+        lines.push('}');
+        return lines.join('\n');
+    }
+
+    function startCmpAiAnalysis() {
+        if (_cmpAiInFlight) return;            // 중복 클릭 가드
+        if (!_cmpAiLlmEnabled) return;
+        _cmpAiInFlight = true;
+        cmpAiSetState('Loading');
+        cmpAiSetBadge('분석 중', '#DBEAFE', '#1D4ED8', '#93C5FD');
+        cmpAiSetStep(1);
+        cmpAiStartTimer();
+
+        var dataUrl = '/api/compare/data?base=' + encodeURIComponent(CMP_BASE)
+                    + '&target=' + encodeURIComponent(CMP_TARGET);
+        fetch(dataUrl).then(function(r) {
+            if (!r.ok) throw new Error('compare data 로드 실패 (' + r.status + ')');
+            return r.json();
+        }).then(function(data) {
+            if (!data || !data.success) throw new Error((data && data.error) || 'compare data 응답 오류');
+            _cmpAiData = data;
+            cmpAiSetStep(2);
+            var prompt = buildComparePrompt(data);
+            cmpAiSetStep(3);
+            return fetch('/api/llm/compare/analyze', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ base: CMP_BASE, target: CMP_TARGET, prompt: prompt, save: true })
+            });
+        }).then(function(r) { return r.json(); }).then(function(result) {
+            cmpAiSetStep(4);
+            cmpAiStopTimer();
+            _cmpAiInFlight = false;
+            if (result && result.success) {
+                cmpAiShowResult(result, !!result.saved);
+            } else {
+                cmpAiShowError(result);
+            }
+        }).catch(function(e) {
+            cmpAiStopTimer();
+            _cmpAiInFlight = false;
+            cmpAiShowError({ error: e.message || '알 수 없는 오류' });
+        });
+    }
+
+    function cmpAiShowResult(result, isSaved) {
+        cmpAiSetState('Result');
+        // result 는 분석 응답({success, data, model, latencyMs, ...}) 또는 저장본 응답({found, summary, ...}) 둘 다 처리
+        var d = result.data || result;  // 분석 응답이면 result.data, 저장본이면 result 자체
+        var sev = (d.severity || '').toLowerCase();
+        var sevMap = {
+            critical: { color: '#7F1D1D', bg: '#FECACA', icon: '🔥', label: 'CRITICAL' },
+            high:     { color: '#7C2D12', bg: '#FED7AA', icon: '⚠️',  label: 'HIGH' },
+            medium:   { color: '#713F12', bg: '#FEF08A', icon: '⚡',  label: 'MEDIUM' },
+            low:      { color: '#14532D', bg: '#BBF7D0', icon: '✓',  label: 'LOW' }
+        };
+        var sm = sevMap[sev] || { color: '#374151', bg: '#E5E7EB', icon: '?', label: sev.toUpperCase() || 'UNKNOWN' };
+        cmpAiSetBadge(sm.label, sm.bg, sm.color, sm.color);
+
+        var html = '';
+        html += '<div class="ai-severity-banner" style="background:' + sm.bg + ';color:' + sm.color + '">';
+        html += '  <div class="ai-sev-icon">' + sm.icon + '</div>';
+        html += '  <div style="flex:1;min-width:0">';
+        html += '    <div class="ai-sev-label">위험도</div>';
+        html += '    <div class="ai-sev-value">' + sm.label + '</div>';
+        if (d.severityDesc) html += '    <div style="font-size:12px;margin-top:4px;opacity:.85">' + escHtml(d.severityDesc) + '</div>';
+        html += '  </div>';
+        html += '  <div style="text-align:right;font-size:11px;opacity:.65">';
+        var at = d.analysedAt || result.analysedAt;
+        if (at) {
+            var atStr = (typeof at === 'number')
+                ? new Date(at).toISOString().substring(0, 16).replace('T', ' ')
+                : String(at);
+            html += '    <div>' + escHtml(atStr) + '</div>';
+        }
+        if (result.model || d.model) html += '    <div>model: ' + escHtml(result.model || d.model) + '</div>';
+        if (result.latencyMs || d.latencyMs) html += '    <div>latency: ' + (result.latencyMs || d.latencyMs) + 'ms</div>';
+        html += '  </div>';
+        html += '</div>';
+
+        function section(label, body) {
+            if (!body) return '';
+            return '<div class="ai-section"><div class="ai-section-title">' + label + '</div><div class="ai-section-body">' + escHtml(body) + '</div></div>';
+        }
+        html += section('📊 요약', d.summary);
+        html += section('📈 변화 해석', d.deltaInterpretation);
+        html += section('🚨 회귀/누수 위험', d.regressionRisk);
+        html += section('🔍 근본 원인', d.rootCause);
+
+        if (Array.isArray(d.recommendations) && d.recommendations.length) {
+            html += '<div class="ai-section"><div class="ai-section-title">✅ 권장 조치</div><ul class="ai-rec-list">';
+            d.recommendations.forEach(function(r) {
+                html += '<li>' + escHtml(r) + '</li>';
+            });
+            html += '</ul></div>';
+        } else if (typeof d.recommendations === 'string' && d.recommendations.trim() && d.recommendations.trim() !== '-') {
+            html += '<div class="ai-section"><div class="ai-section-title">✅ 권장 조치</div><div class="ai-section-body">' + escHtml(d.recommendations) + '</div></div>';
+        }
+        document.getElementById('cmpAiResult').innerHTML = html;
+        document.getElementById('cmpAiSavedChip').style.display = isSaved ? '' : 'none';
+    }
+
+    function cmpAiShowError(result) {
+        cmpAiSetState('Error');
+        cmpAiSetBadge('오류', '#FEE2E2', '#7F1D1D', '#FCA5A5');
+        var msg = (result && (result.error || result.errorCode)) || '알 수 없는 오류가 발생했습니다.';
+        document.getElementById('cmpAiError').innerHTML =
+            '<b>AI 비교 분석 실패</b><br>' + escHtml(msg)
+            + '<div style="margin-top:8px;font-size:11px;color:#9CA3AF">두 덤프가 모두 분석 완료 상태이며 LLM 설정이 활성화되어 있는지 확인하세요.</div>';
+    }
+
+    function deleteCmpAiInsight() {
+        if (!confirm('이 비교 분석의 AI 인사이트를 삭제하시겠습니까?')) return;
+        var url = '/api/llm/compare/insight?base=' + encodeURIComponent(CMP_BASE)
+                + '&target=' + encodeURIComponent(CMP_TARGET);
+        fetch(url, { method: 'DELETE' })
+            .then(function(r){ return r.json(); })
+            .then(function(d) {
+                if (d && d.success) {
+                    document.getElementById('cmpAiResult').innerHTML = '';
+                    cmpAiSetState('NotAnalyzed');
+                    cmpAiSetBadge('미분석', '#F3F4F6', '#9CA3AF', '#E5E7EB');
+                    document.getElementById('cmpAiSavedChip').style.display = 'none';
+                } else {
+                    alert('삭제 실패');
+                }
+            }).catch(function(e){ alert('삭제 실패: ' + e.message); });
+    }
+
+    // 초기 토글 상태 (기본 ON)
+    (function initCmpAiToggle() {
+        var saved = localStorage.getItem('cmpAiVisible');
+        var visible = (saved == null) ? true : (saved === '1');
+        var cb = document.getElementById('cmpAiToggle');
+        cb.checked = visible;
+        document.getElementById('cmpAiPanel').style.display = visible ? 'block' : 'none';
+        if (visible) {
+            cmpAiCheckLlmStatus().then(function() { cmpAiLoadSaved(); });
+        }
+    })();
+
+    /*]]>*/
     </script>
 </div>
 </body>

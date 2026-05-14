@@ -58,6 +58,24 @@ public class AdminController {
         return "admin/users";
     }
 
+    @GetMapping("/api/admin/users")
+    @ResponseBody
+    public ResponseEntity<List<Map<String, Object>>> listUsers() {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (User u : userService.findAll()) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("id", u.getId());
+            m.put("username", u.getUsername());
+            m.put("displayName", u.getDisplayName());
+            m.put("role", u.getRole().name());
+            m.put("enabled", u.isEnabled());
+            m.put("createdAt", u.getCreatedAt() != null
+                    ? u.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : null);
+            result.add(m);
+        }
+        return ResponseEntity.ok(result);
+    }
+
     @PostMapping("/api/admin/users")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> createUser(@RequestBody Map<String, String> body) {

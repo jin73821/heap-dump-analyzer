@@ -725,26 +725,85 @@ function switchTab(name) {
     document.querySelectorAll('.tab-panel').forEach(function(p) {
         p.classList.toggle('active', p.id === 'panel-' + name);
     });
-    if (name === 'history' && !_lhLoaded) {
-        _lhLoaded = true;
+    // 탭 전환 시마다 최신 데이터 fetch (사용자 요구사항: 새로고침)
+    if (name === 'users') {
+        loadUsers();
+    } else if (name === 'history') {
         loadHistory(0);
-    }
-    if (name === 'requests' && !_reqLoaded) {
-        _reqLoaded = true;
+    } else if (name === 'requests') {
         loadRequests(0);
+    } else if (name === 'active') {
+        loadActive();
     }
-    if (name === 'active') {
-        if (!_asLoaded) { _asLoaded = true; loadActive(); }
-    } else {
+    if (name !== 'active') {
         // 다른 탭으로 이동 시 자동 갱신 중지 (불필요한 폴링 방지)
         stopAutoRefresh();
         var ar = document.getElementById('asAutoRefresh');
         if (ar) ar.checked = false;
     }
+    // 펜딩 배지는 어떤 탭으로 이동해도 최신값 반영
+    refreshPendingCount();
+}
+
+// ── 사용자 목록 ────────────────────────────────────────────
+// 초기 페이지 렌더는 Thymeleaf th:each 로 처리되며, 탭 재진입 시에는 JSON API 로 재렌더한다.
+function loadUsers() {
+    var body = document.querySelector('#panel-users tbody');
+    if (!body) return;
+    fetch('/api/admin/users')
+        .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function(list) { renderUsers(list); })
+        .catch(function(e) {
+            body.innerHTML = '<tr><td colspan="7" class="lh-empty">불러오기 실패: ' + escHtml(e.message) + '</td></tr>';
+        });
+}
+
+function renderUsers(list) {
+    var body = document.querySelector('#panel-users tbody');
+    if (!body) return;
+    if (!list || list.length === 0) {
+        body.innerHTML = '<tr><td colspan="7" class="lh-empty">등록된 사용자가 없습니다.</td></tr>';
+        return;
+    }
+    var html = '';
+    for (var i = 0; i < list.length; i++) {
+        var u = list[i];
+        var roleBadge = u.role === 'ADMIN'
+            ? '<span class="badge badge-admin">ADMIN</span>'
+            : '<span class="badge badge-user">USER</span>';
+        var statusBadge = u.enabled
+            ? '<span class="badge badge-enabled">활성</span>'
+            : '<span class="badge badge-disabled">비활성</span>';
+        var dn = u.displayName || '';
+        html += '<tr>' +
+            '<td>' + u.id + '</td>' +
+            '<td style="font-weight:600">' + escHtml(u.username) + '</td>' +
+            '<td>' + (dn ? escHtml(dn) : '-') + '</td>' +
+            '<td>' + roleBadge + '</td>' +
+            '<td>' + statusBadge + '</td>' +
+            '<td>' + (u.createdAt || '-') + '</td>' +
+            '<td>' +
+                '<button class="action-btn"' +
+                    ' data-id="' + u.id + '"' +
+                    ' data-username="' + escHtml(u.username) + '"' +
+                    ' data-displayname="' + escHtml(dn) + '"' +
+                    ' data-role="' + u.role + '"' +
+                    ' data-enabled="' + u.enabled + '"' +
+                    ' onclick="openEditModal(this.dataset)">수정</button>' +
+                '<button class="action-btn" data-id="' + u.id + '"' +
+                    ' onclick="openResetPwModal(this.dataset.id)">비밀번호</button>' +
+                '<button class="action-btn danger"' +
+                    ' data-id="' + u.id + '"' +
+                    ' data-username="' + escHtml(u.username) + '"' +
+                    ' data-admin="' + (u.username === 'admin') + '"' +
+                    ' onclick="onDeleteUserClick(this.dataset)">삭제</button>' +
+            '</td>' +
+            '</tr>';
+    }
+    body.innerHTML = html;
 }
 
 // ── 계정 신청 ───────────────────────────────────────────────
-var _reqLoaded = false;
 var _reqPage = 0;
 var _reqTotalPages = 0;
 var _reqSearchTimer = null;
@@ -946,7 +1005,6 @@ function refreshPendingCount() {
 document.addEventListener('DOMContentLoaded', refreshPendingCount);
 
 // ── 접속 이력 ───────────────────────────────────────────────
-var _lhLoaded = false;
 var _lhPage = 0;
 var _lhTotalPages = 0;
 var _lhSearchTimer = null;
@@ -1025,7 +1083,6 @@ function renderHistory(d) {
 }
 
 // ── 현재 접속 중 ─────────────────────────────────────────────
-var _asLoaded = false;
 var _asAutoTimer = null;
 
 function fmtIdle(sec) {

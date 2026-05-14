@@ -264,6 +264,36 @@ public class LlmConfigService {
         }
     }
 
+    // ── URL 정규화 헬퍼 ─────────────────────────────────────────────
+
+    /**
+     * 비-Claude(OpenAI 호환) provider 의 API URL 이 /chat/completions 로 끝나지 않으면
+     * 자동으로 접미를 부착한다. OpenAI 파이썬/JS SDK 가 base_url 뒤에 자동 부착하는 동작과 동일.
+     *
+     * 사내 게이트웨이 사례:
+     *   - 매뉴얼 base_url:  https://gw/openapi/model/<UUID>
+     *   - 실제 호출 URL:    https://gw/openapi/model/<UUID>/chat/completions
+     *
+     * Claude 는 /v1/messages 가 정식 경로이므로 보정 대상에서 제외.
+     */
+    private String normalizeChatCompletionsUrl(String url) {
+        if (url == null || url.isEmpty()) return url;
+        if ("claude".equals(llmProvider)) return url;
+        String trimmed = url.trim();
+        // 쿼리스트링/프래그먼트 분리해서 path 부분만 검사
+        int qIdx = trimmed.indexOf('?');
+        String path = (qIdx >= 0) ? trimmed.substring(0, qIdx) : trimmed;
+        String tail = (qIdx >= 0) ? trimmed.substring(qIdx) : "";
+        // /chat/completions 또는 /completions(레거시) 로 끝나면 그대로 유지
+        if (path.endsWith("/chat/completions") || path.endsWith("/completions")) return trimmed;
+        // /messages 로 끝나면 Claude 직접 호출 경로 — 보정 안 함
+        if (path.endsWith("/messages")) return trimmed;
+        if (path.endsWith("/")) path = path.substring(0, path.length() - 1);
+        String normalized = path + "/chat/completions" + tail;
+        logger.warn("[LLM] API URL 자동 보정 — '/chat/completions' 접미 부착: {} → {}", trimmed, normalized);
+        return normalized;
+    }
+
     // ── 호출 메서드 ──────────────────────────────────────────────
 
     /**
@@ -274,19 +304,24 @@ public class LlmConfigService {
         result.put("provider", llmProvider);
 
         if (llmApiKey == null || llmApiKey.trim().isEmpty()) {
+            logger.warn("[LLM-Test] 연결 테스트 거부 — API 키 미설정 (provider={})", llmProvider);
             result.put("success", false);
             result.put("error", "API 키가 설정되지 않았습니다");
             return result;
         }
         if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) {
+            logger.warn("[LLM-Test] 연결 테스트 거부 — API URL 미설정 (provider={})", llmProvider);
             result.put("success", false);
             result.put("error", "API URL이 설정되지 않았습니다");
             return result;
         }
 
+        String effectiveUrl = normalizeChatCompletionsUrl(llmApiUrl);
+        logger.info("[LLM-Test] 연결 테스트 시작 — provider={}, model={}, url={}, sslVerify={}",
+            llmProvider, llmModel, effectiveUrl, llmSslVerify);
         long start = System.currentTimeMillis();
         try {
-            java.net.URL url = new java.net.URL(llmApiUrl);
+            java.net.URL url = new java.net.URL(effectiveUrl);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
             if (!llmSslVerify && conn instanceof javax.net.ssl.HttpsURLConnection) {
                 disableSslVerification((javax.net.ssl.HttpsURLConnection) conn);
@@ -331,6 +366,8 @@ public class LlmConfigService {
                         result.put("model", resp.get("model"));
                     }
                 } catch (Exception ignored) {}
+                logger.info("[LLM-Test] 연결 테스트 성공 — provider={}, model={}, status={}, latency={}ms",
+                    llmProvider, result.get("model"), code, latency);
             } else {
                 StringBuilder errSb = new StringBuilder();
                 InputStream errStream = conn.getErrorStream();
@@ -340,17 +377,55 @@ public class LlmConfigService {
                         while ((line = br.readLine()) != null) errSb.append(line);
                     }
                 }
+                String errBody = errSb.toString();
+                String errorCode = classifyHttpError(code, errBody);
                 result.put("success", false);
-                result.put("error", "HTTP " + code + ": " + errSb.toString());
+                result.put("errorCode", errorCode);
+                result.put("error", "HTTP " + code + ": " + errBody);
                 result.put("latencyMs", latency);
+                logger.error("[LLM-Test] 연결 테스트 실패 — provider={}, url={}, status={}, errorCode={}, latency={}ms, body={}",
+                    llmProvider, llmApiUrl, code, errorCode, latency, errBody);
             }
             conn.disconnect();
+        } catch (java.net.SocketTimeoutException e) {
+            long latency = System.currentTimeMillis() - start;
+            result.put("success", false);
+            result.put("errorCode", "TIMEOUT");
+            result.put("error", "연결/응답 타임아웃 (" + latency + "ms): " + e.getMessage());
+            result.put("latencyMs", latency);
+            logger.error("[LLM-Test] 타임아웃 — url={}, connectTimeout={}s, readTimeout={}s, elapsed={}ms",
+                llmApiUrl, llmTimeoutConnectSeconds, llmTimeoutReadSeconds, latency);
+        } catch (java.net.ConnectException e) {
+            long latency = System.currentTimeMillis() - start;
+            result.put("success", false);
+            result.put("errorCode", "CONNECT_FAILED");
+            result.put("error", "서버 연결 실패: " + e.getMessage());
+            result.put("latencyMs", latency);
+            logger.error("[LLM-Test] 서버 연결 실패 — url={}, msg={}", llmApiUrl, e.getMessage());
+        } catch (java.net.UnknownHostException e) {
+            long latency = System.currentTimeMillis() - start;
+            result.put("success", false);
+            result.put("errorCode", "UNKNOWN_HOST");
+            result.put("error", "호스트를 찾을 수 없습니다: " + e.getMessage());
+            result.put("latencyMs", latency);
+            logger.error("[LLM-Test] 알 수 없는 호스트 — url={}, msg={}", llmApiUrl, e.getMessage());
+        } catch (javax.net.ssl.SSLException e) {
+            long latency = System.currentTimeMillis() - start;
+            result.put("success", false);
+            result.put("errorCode", "SSL_ERROR");
+            result.put("error", "SSL 핸드셰이크 실패: " + e.getMessage()
+                + " (사내 사설 CA 인증서라면 /settings/llm 의 'SSL 검증' 토글을 OFF 하거나 truststore를 설정하세요.)");
+            result.put("latencyMs", latency);
+            logger.error("[LLM-Test] SSL 오류 — url={}, sslVerify={}, type={}, msg={}",
+                llmApiUrl, llmSslVerify, e.getClass().getSimpleName(), e.getMessage(), e);
         } catch (Exception e) {
             long latency = System.currentTimeMillis() - start;
             result.put("success", false);
+            result.put("errorCode", "INTERNAL_ERROR");
             result.put("error", e.getClass().getSimpleName() + ": " + e.getMessage());
             result.put("latencyMs", latency);
-            logger.warn("[LLM] Connection test failed: {}", e.getMessage());
+            logger.error("[LLM-Test] 예외 — url={}, type={}, msg={}, elapsed={}ms",
+                llmApiUrl, e.getClass().getSimpleName(), e.getMessage(), latency, e);
         }
         return result;
     }
@@ -382,8 +457,9 @@ public class LlmConfigService {
         }
 
         long startTime = System.currentTimeMillis();
+        String effectiveUrl = normalizeChatCompletionsUrl(llmApiUrl);
         logger.info("[AI-Insight][STEP 1/4] LLM 분석 시작 — provider={}, model={}, url={}, maxOutput={}",
-            llmProvider, llmModel, llmApiUrl, llmMaxOutputTokens);
+            llmProvider, llmModel, effectiveUrl, llmMaxOutputTokens);
 
         try {
             int maxChars = llmMaxInputTokens * 4;
@@ -401,7 +477,7 @@ public class LlmConfigService {
             logger.info("[AI-Insight][STEP 2/4] 프롬프트 준비 완료 — 길이={} chars, reasoningModel={}, effectiveMaxTokens={}",
                 prompt.length(), isReasoningModel, effectiveMaxOutputTokens);
 
-            java.net.URL url = new java.net.URL(llmApiUrl);
+            java.net.URL url = new java.net.URL(effectiveUrl);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
             if (!llmSslVerify && conn instanceof javax.net.ssl.HttpsURLConnection) {
                 disableSslVerification((javax.net.ssl.HttpsURLConnection) conn);
@@ -598,7 +674,7 @@ public class LlmConfigService {
                 ? Math.max(llmMaxOutputTokens, 8000)
                 : Math.max(llmMaxOutputTokens, 2000);
 
-            java.net.URL url = new java.net.URL(llmApiUrl);
+            java.net.URL url = new java.net.URL(normalizeChatCompletionsUrl(llmApiUrl));
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
             if (!llmSslVerify && conn instanceof javax.net.ssl.HttpsURLConnection) {
                 disableSslVerification((javax.net.ssl.HttpsURLConnection) conn);
@@ -684,25 +760,38 @@ public class LlmConfigService {
                     }
                 }
                 String errBody = errSb.toString();
+                String errorCode = classifyHttpError(code, errBody);
                 result.put("success", false);
-                result.put("errorCode", classifyHttpError(code, errBody));
+                result.put("errorCode", errorCode);
                 result.put("error", buildHttpErrorMessage(code, errBody));
+                logger.error("[AI-Chat] HTTP 오류 — provider={}, url={}, status={}, errorCode={}, elapsed={}ms, body={}",
+                    llmProvider, llmApiUrl, code, errorCode, elapsed, errBody);
             }
             conn.disconnect();
         } catch (java.net.SocketTimeoutException e) {
             long elapsed = System.currentTimeMillis() - startTime;
-            logger.error("[AI-Chat] 타임아웃 — elapsed={}ms", elapsed);
+            logger.error("[AI-Chat] 타임아웃 — url={}, connectTimeout={}s, readTimeout={}s, elapsed={}ms",
+                llmApiUrl, llmTimeoutConnectSeconds, llmTimeoutReadSeconds, elapsed);
             result.put("success", false);
             result.put("errorCode", "TIMEOUT");
             result.put("error", "LLM 응답 대기 시간이 초과되었습니다 (" + elapsed / 1000 + "초).");
         } catch (java.net.ConnectException e) {
+            logger.error("[AI-Chat] 서버 연결 실패 — url={}, msg={}", llmApiUrl, e.getMessage());
             result.put("success", false);
             result.put("errorCode", "CONNECT_FAILED");
             result.put("error", "LLM 서버에 연결할 수 없습니다: " + e.getMessage());
         } catch (java.net.UnknownHostException e) {
+            logger.error("[AI-Chat] 알 수 없는 호스트 — url={}, msg={}", llmApiUrl, e.getMessage());
             result.put("success", false);
             result.put("errorCode", "UNKNOWN_HOST");
             result.put("error", "API URL의 호스트를 찾을 수 없습니다: " + e.getMessage());
+        } catch (javax.net.ssl.SSLException e) {
+            logger.error("[AI-Chat] SSL 오류 — url={}, sslVerify={}, type={}, msg={}",
+                llmApiUrl, llmSslVerify, e.getClass().getSimpleName(), e.getMessage(), e);
+            result.put("success", false);
+            result.put("errorCode", "SSL_ERROR");
+            result.put("error", "SSL 핸드셰이크 실패: " + e.getMessage()
+                + " (사내 사설 CA 라면 'SSL 검증' OFF 또는 truststore 설정 필요)");
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - startTime;
             logger.error("[AI-Chat] 예외 — type={}, msg={}, elapsed={}ms",
@@ -749,7 +838,7 @@ public class LlmConfigService {
                 ? Math.max(llmMaxOutputTokens, 8000)
                 : Math.max(llmMaxOutputTokens, 2000);
 
-            java.net.URL url = new java.net.URL(llmApiUrl);
+            java.net.URL url = new java.net.URL(normalizeChatCompletionsUrl(llmApiUrl));
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
             if (!llmSslVerify && conn instanceof javax.net.ssl.HttpsURLConnection) {
                 disableSslVerification((javax.net.ssl.HttpsURLConnection) conn);
@@ -852,18 +941,32 @@ public class LlmConfigService {
                     }
                 }
                 String errBody = errSb.toString();
-                onError.accept(classifyHttpError(code, errBody), buildHttpErrorMessage(code, errBody));
+                long elapsed = System.currentTimeMillis() - startTime;
+                String errorCode = classifyHttpError(code, errBody);
+                logger.error("[AI-Chat-Stream] HTTP 오류 — provider={}, url={}, status={}, errorCode={}, elapsed={}ms, body={}",
+                    llmProvider, llmApiUrl, code, errorCode, elapsed, errBody);
+                onError.accept(errorCode, buildHttpErrorMessage(code, errBody));
             }
             conn.disconnect();
         } catch (java.net.SocketTimeoutException e) {
             long elapsed = System.currentTimeMillis() - startTime;
+            logger.error("[AI-Chat-Stream] 타임아웃 — url={}, connectTimeout={}s, readTimeout={}s, elapsed={}ms",
+                llmApiUrl, llmTimeoutConnectSeconds, llmTimeoutReadSeconds, elapsed);
             onError.accept("TIMEOUT", "LLM 응답 대기 시간이 초과되었습니다 (" + elapsed / 1000 + "초).");
         } catch (java.net.ConnectException e) {
+            logger.error("[AI-Chat-Stream] 서버 연결 실패 — url={}, msg={}", llmApiUrl, e.getMessage());
             onError.accept("CONNECT_FAILED", "LLM 서버에 연결할 수 없습니다: " + e.getMessage());
         } catch (java.net.UnknownHostException e) {
+            logger.error("[AI-Chat-Stream] 알 수 없는 호스트 — url={}, msg={}", llmApiUrl, e.getMessage());
             onError.accept("UNKNOWN_HOST", "API URL의 호스트를 찾을 수 없습니다: " + e.getMessage());
+        } catch (javax.net.ssl.SSLException e) {
+            logger.error("[AI-Chat-Stream] SSL 오류 — url={}, sslVerify={}, type={}, msg={}",
+                llmApiUrl, llmSslVerify, e.getClass().getSimpleName(), e.getMessage(), e);
+            onError.accept("SSL_ERROR", "SSL 핸드셰이크 실패: " + e.getMessage()
+                + " (사내 사설 CA 라면 'SSL 검증' OFF 또는 truststore 설정 필요)");
         } catch (Exception e) {
-            logger.error("[AI-Chat-Stream] 예외 — type={}, msg={}", e.getClass().getSimpleName(), e.getMessage(), e);
+            logger.error("[AI-Chat-Stream] 예외 — url={}, type={}, msg={}",
+                llmApiUrl, e.getClass().getSimpleName(), e.getMessage(), e);
             onError.accept("INTERNAL_ERROR", "[" + e.getClass().getSimpleName() + "] " + e.getMessage());
         }
     }
@@ -884,7 +987,10 @@ public class LlmConfigService {
         switch (code) {
             case 401: base = "API 키 인증 실패(401). API 키가 올바른지 확인하세요."; break;
             case 403: base = "API 키 권한 없음(403). 해당 모델 접근 권한이 있는지 확인하세요."; break;
-            case 404: base = "API 엔드포인트를 찾을 수 없습니다(404). Settings에서 API URL 끝에 /chat/completions 포함 여부를 확인하세요."; break;
+            case 404: base = "API 엔드포인트/모델을 찾을 수 없습니다(404). 확인 항목: "
+                + "(1) API URL 경로(예: 끝에 /chat/completions 포함 여부, 사내 게이트웨이의 경우 모델 UUID 정확성), "
+                + "(2) 모델명이 게이트웨이에 등록·활성화 되어 있는지, "
+                + "(3) 호출 키에 해당 모델 호출 권한이 있는지(사내 게이트웨이는 권한 없음을 404로 회신하기도 함)."; break;
             case 429: base = "API 요청 횟수 초과(429 Too Many Requests). 잠시 후 다시 시도하세요."; break;
             case 400: base = "잘못된 요청(400 Bad Request). 모델명이 허용 목록에 있는지 확인하세요."; break;
             case 500: case 502: case 503:

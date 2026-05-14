@@ -11,6 +11,8 @@ import com.heapdump.analyzer.service.RagService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -48,24 +50,48 @@ public class AiChatController {
     // ── 페이지 라우팅 ────────────────────────────────────────────
 
     @GetMapping("/ai-chat")
-    public String aiChatPage() {
+    public String aiChatPage(org.springframework.ui.Model model, Authentication authentication) {
+        model.addAttribute("isAdmin", isAdmin(authentication));
+        model.addAttribute("currentUser", authentication != null ? authentication.getName() : "");
         return "ai-chat";
     }
 
     // ── 세션 CRUD API ────────────────────────────────────────────
 
-    /** 현재 사용자의 전체 세션 목록 (최신순) */
+    /**
+     * 세션 목록 조회 (최신순).
+     * - 비-ADMIN: 본인 세션만 (username 파라미터 무시).
+     * - ADMIN  : 모든 사용자 세션. user 파라미터 지정 시 해당 사용자만 필터링.
+     * 응답에 username 필드 포함 — 프론트가 사용자 태그 표시.
+     */
     @GetMapping("/api/ai-chat/sessions")
     @ResponseBody
     public ResponseEntity<List<Map<String, Object>>> listSessions(
-            Principal principal,
-            @RequestParam(required = false) String filename) {
-        String username = principal.getName();
+            Authentication authentication,
+            @RequestParam(required = false) String filename,
+            @RequestParam(required = false) String user) {
+        String currentUser = authentication.getName();
+        boolean admin = isAdmin(authentication);
+
         List<AiChatSession> sessions;
-        if (filename != null && !filename.isEmpty()) {
-            sessions = sessionRepo.findByUsernameAndFilenameOrderByUpdatedAtDesc(username, filename);
+        if (admin) {
+            // ADMIN: user 필터 우선, 그 다음 filename, 둘 다 있으면 username + filename
+            if (user != null && !user.isEmpty() && filename != null && !filename.isEmpty()) {
+                sessions = sessionRepo.findByUsernameAndFilenameOrderByUpdatedAtDesc(user, filename);
+            } else if (user != null && !user.isEmpty()) {
+                sessions = sessionRepo.findByUsernameOrderByUpdatedAtDesc(user);
+            } else if (filename != null && !filename.isEmpty()) {
+                sessions = sessionRepo.findByFilenameOrderByUpdatedAtDesc(filename);
+            } else {
+                sessions = sessionRepo.findAllByOrderByUpdatedAtDesc();
+            }
         } else {
-            sessions = sessionRepo.findByUsernameOrderByUpdatedAtDesc(username);
+            // USER: 본인 것만
+            if (filename != null && !filename.isEmpty()) {
+                sessions = sessionRepo.findByUsernameAndFilenameOrderByUpdatedAtDesc(currentUser, filename);
+            } else {
+                sessions = sessionRepo.findByUsernameOrderByUpdatedAtDesc(currentUser);
+            }
         }
 
         // 분석 인스턴스(filename + analyzedAt) 매칭으로 분석 상태 판정
@@ -76,6 +102,7 @@ public class AiChatController {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", s.getId());
             m.put("title", s.getTitle());
+            m.put("username", s.getUsername());
             m.put("filename", s.getFilename());
             m.put("analyzedAt", s.getAnalyzedAt() != null ? s.getAnalyzedAt().toString() : null);
             m.put("model", s.getModel());
@@ -136,34 +163,34 @@ public class AiChatController {
         return ResponseEntity.ok(res);
     }
 
-    /** 세션 삭제 */
+    /** 세션 삭제 — owner 또는 ADMIN */
     @DeleteMapping("/api/ai-chat/sessions/{id}")
     @ResponseBody
     @org.springframework.transaction.annotation.Transactional
     public ResponseEntity<Map<String, Object>> deleteSession(
-            Principal principal,
+            Authentication authentication,
             @PathVariable Long id) {
-        String username = principal.getName();
+        String username = authentication.getName();
         Optional<AiChatSession> opt = sessionRepo.findById(id);
-        if (opt.isEmpty() || !opt.get().getUsername().equals(username)) {
+        if (opt.isEmpty() || !canAccess(opt.get(), authentication)) {
             return ResponseEntity.status(404).body(Map.of("success", false, "error", "세션을 찾을 수 없습니다."));
         }
         messageRepo.deleteBySessionId(id);
         sessionRepo.deleteById(id);
-        logger.info("[AI-Chat] 세션 삭제 — id={}, user={}", id, username);
+        logger.info("[AI-Chat] 세션 삭제 — id={}, by={}, owner={}",
+            id, username, opt.get().getUsername());
         return ResponseEntity.ok(Map.of("success", true));
     }
 
-    /** 세션 제목 수정 */
+    /** 세션 제목 수정 — owner 또는 ADMIN */
     @PutMapping("/api/ai-chat/sessions/{id}")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> updateSession(
-            Principal principal,
+            Authentication authentication,
             @PathVariable Long id,
             @RequestBody Map<String, String> body) {
-        String username = principal.getName();
         Optional<AiChatSession> opt = sessionRepo.findById(id);
-        if (opt.isEmpty() || !opt.get().getUsername().equals(username)) {
+        if (opt.isEmpty() || !canAccess(opt.get(), authentication)) {
             return ResponseEntity.status(404).body(Map.of("success", false, "error", "세션을 찾을 수 없습니다."));
         }
         AiChatSession session = opt.get();
@@ -175,17 +202,26 @@ public class AiChatController {
         return ResponseEntity.ok(Map.of("success", true, "title", session.getTitle()));
     }
 
+    /** ADMIN 전용: 채팅 작성자 username distinct 목록 (사용자 필터 셀렉트 옵션) */
+    @GetMapping("/api/ai-chat/users")
+    @ResponseBody
+    public ResponseEntity<?> listChatUsers(Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "error", "ADMIN 권한이 필요합니다."));
+        }
+        return ResponseEntity.ok(sessionRepo.findDistinctUsernames());
+    }
+
     // ── 메시지 CRUD API ──────────────────────────────────────────
 
-    /** 세션의 메시지 목록 조회 */
+    /** 세션의 메시지 목록 조회 — owner 또는 ADMIN */
     @GetMapping("/api/ai-chat/sessions/{sessionId}/messages")
     @ResponseBody
     public ResponseEntity<?> getMessages(
-            Principal principal,
+            Authentication authentication,
             @PathVariable Long sessionId) {
-        String username = principal.getName();
         Optional<AiChatSession> opt = sessionRepo.findById(sessionId);
-        if (opt.isEmpty() || !opt.get().getUsername().equals(username)) {
+        if (opt.isEmpty() || !canAccess(opt.get(), authentication)) {
             return ResponseEntity.status(404).body(Map.of("success", false, "error", "세션을 찾을 수 없습니다."));
         }
         List<AiChatMessage> messages = messageRepo.findBySessionIdOrderByCreatedAtAsc(sessionId);
@@ -204,12 +240,11 @@ public class AiChatController {
     @PostMapping("/api/ai-chat/sessions/{sessionId}/messages")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> saveMessage(
-            Principal principal,
+            Authentication authentication,
             @PathVariable Long sessionId,
             @RequestBody Map<String, String> body) {
-        String username = principal.getName();
         Optional<AiChatSession> opt = sessionRepo.findById(sessionId);
-        if (opt.isEmpty() || !opt.get().getUsername().equals(username)) {
+        if (opt.isEmpty() || !canAccess(opt.get(), authentication)) {
             return ResponseEntity.status(404).body(Map.of("success", false, "error", "세션을 찾을 수 없습니다."));
         }
 
@@ -251,15 +286,14 @@ public class AiChatController {
                  produces = org.springframework.http.MediaType.TEXT_EVENT_STREAM_VALUE)
     @ResponseBody
     public SseEmitter streamChat(
-            Principal principal,
+            Authentication authentication,
             @PathVariable Long sessionId,
             @RequestBody Map<String, Object> body) {
 
-        String username = principal.getName();
         SseEmitter emitter = new SseEmitter(config.getSseEmitterTimeoutMinutes() * 60L * 1000);
 
         Optional<AiChatSession> opt = sessionRepo.findById(sessionId);
-        if (opt.isEmpty() || !opt.get().getUsername().equals(username)) {
+        if (opt.isEmpty() || !canAccess(opt.get(), authentication)) {
             try {
                 emitter.send(SseEmitter.event().name("error")
                     .data("{\"errorCode\":\"NOT_FOUND\",\"error\":\"세션을 찾을 수 없습니다.\"}"));
@@ -413,5 +447,22 @@ public class AiChatController {
 
         emitter.onTimeout(emitter::complete);
         return emitter;
+    }
+
+    // ── 권한 헬퍼 ───────────────────────────────────────────────
+
+    private boolean isAdmin(Authentication authentication) {
+        if (authentication == null || authentication.getAuthorities() == null) return false;
+        for (GrantedAuthority a : authentication.getAuthorities()) {
+            if ("ROLE_ADMIN".equals(a.getAuthority())) return true;
+        }
+        return false;
+    }
+
+    /** ADMIN 이거나 세션 소유자(username 일치) 일 때만 true. */
+    private boolean canAccess(AiChatSession session, Authentication authentication) {
+        if (session == null || authentication == null) return false;
+        if (isAdmin(authentication)) return true;
+        return session.getUsername() != null && session.getUsername().equals(authentication.getName());
     }
 }

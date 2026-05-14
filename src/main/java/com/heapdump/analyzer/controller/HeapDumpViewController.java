@@ -211,20 +211,31 @@ public class HeapDumpViewController {
     // ── 설정 페이지 ─────────────────────────────────────────────
 
     @GetMapping("/settings")
-    public String settingsPage(Model model) {
+    public String settingsPage(Model model, Authentication authentication) {
         model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
         model.addAttribute("compressAfterAnalysis", analyzerService.isCompressAfterAnalysis());
+        model.addAttribute("isAdmin", isAdmin(authentication));
         return "settings";
     }
 
     @GetMapping("/settings/llm")
-    public String llmSettingsPage() {
+    public String llmSettingsPage(Model model, Authentication authentication) {
+        model.addAttribute("isAdmin", isAdmin(authentication));
         return "llm-settings";
     }
 
     @GetMapping("/settings/rag")
-    public String ragSettingsPage() {
+    public String ragSettingsPage(Model model, Authentication authentication) {
+        model.addAttribute("isAdmin", isAdmin(authentication));
         return "rag-settings";
+    }
+
+    private boolean isAdmin(Authentication authentication) {
+        if (authentication == null || authentication.getAuthorities() == null) return false;
+        for (var a : authentication.getAuthorities()) {
+            if ("ROLE_ADMIN".equals(a.getAuthority())) return true;
+        }
+        return false;
     }
 
     // ── 히스토리 삭제 (form POST → redirect) ─────────────────────
@@ -489,24 +500,30 @@ public class HeapDumpViewController {
         model.addAttribute("baseFile",   base);
         model.addAttribute("targetFile", target);
 
-        Map<String, Long> baseMap   = apiController.buildClassSizeMap(baseResult);
-        Map<String, Long> targetMap = apiController.buildClassSizeMap(targetResult);
+        // ── Compare 빌더 4종 호출 ────────────────────────────────────────
+        List<HeapDumpController.ClassDiff>     classDiffs     = apiController.buildClassDiffs(baseResult, targetResult, 50);
+        List<HeapDumpController.HistogramDiff> histogramDiffs = apiController.buildHistogramDiffs(baseResult, targetResult, 30);
+        List<HeapDumpController.SuspectDiff>   suspectDiffs   = apiController.buildSuspectDiffs(baseResult, targetResult);
+        HeapDumpController.KpiDiff             kpi            = apiController.buildKpiDiff(baseResult, targetResult);
 
-        List<HeapDumpController.ClassDiff> diffs = new ArrayList<>();
-        Set<String> allClasses = new HashSet<>();
-        allClasses.addAll(baseMap.keySet());
-        allClasses.addAll(targetMap.keySet());
+        model.addAttribute("kpi", kpi);
+        model.addAttribute("classDiffs", classDiffs);
+        model.addAttribute("histogramDiffs", histogramDiffs);
+        model.addAttribute("suspectDiffs", suspectDiffs);
 
-        for (String cls : allClasses) {
-            long baseSize   = baseMap.getOrDefault(cls, 0L);
-            long targetSize = targetMap.getOrDefault(cls, 0L);
-            long delta      = targetSize - baseSize;
-            if (delta != 0) diffs.add(new HeapDumpController.ClassDiff(cls, baseSize, targetSize, delta));
-        }
-        diffs.sort((a, b) -> Long.compare(Math.abs(b.getDelta()), Math.abs(a.getDelta())));
-        model.addAttribute("classDiffs", diffs.stream().limit(20).collect(Collectors.toList()));
+        // 보조 count (배너 표시용)
+        model.addAttribute("baseSuspectCount",   baseResult.getLeakSuspects()   != null ? baseResult.getLeakSuspects().size()   : 0);
+        model.addAttribute("targetSuspectCount", targetResult.getLeakSuspects() != null ? targetResult.getLeakSuspects().size() : 0);
+        model.addAttribute("baseThreadCount",    baseResult.getThreadInfos()    != null ? baseResult.getThreadInfos().size()    : 0);
+        model.addAttribute("targetThreadCount",  targetResult.getThreadInfos()  != null ? targetResult.getThreadInfos().size()  : 0);
 
-        long heapDelta = targetResult.getUsedHeapSize() - baseResult.getUsedHeapSize();
+        // 헤더 카드 컴팩트 메타 — 덤프 파일 mtime 을 yyyy-MM-dd HH:mm 으로 포맷
+        SimpleDateFormat dateFmt = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+        model.addAttribute("baseModifiedFmt",   baseResult.getLastModified()   > 0 ? dateFmt.format(new java.util.Date(baseResult.getLastModified()))   : "—");
+        model.addAttribute("targetModifiedFmt", targetResult.getLastModified() > 0 ? dateFmt.format(new java.util.Date(targetResult.getLastModified())) : "—");
+
+        // 기존 호환: 단순 heap delta (Top 영역 헤더에서 사용 가능)
+        long heapDelta = kpi.getUsedHeapDelta();
         model.addAttribute("heapDelta", FormatUtils.formatBytes(Math.abs(heapDelta)));
         model.addAttribute("heapDeltaSign", heapDelta >= 0 ? "+" : "-");
         model.addAttribute("heapDeltaUp", heapDelta > 0);

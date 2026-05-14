@@ -110,7 +110,14 @@
 </div>
 
 <!-- ── Content ────────────────────────────────────────────── -->
-<div class="container">
+<div class="container" th:attr="data-is-admin=${isAdmin}">
+
+    <!-- 비-ADMIN: 읽기 전용 안내 배너 -->
+    <div th:if="${!isAdmin}" id="readOnlyBanner" style="margin-bottom:18px;padding:12px 18px;background:#FEF9C3;border:1px solid #FDE047;border-radius:8px;font-size:14px;color:#713F12;display:flex;align-items:center;gap:10px">
+        <span style="font-size:16px">&#128274;</span>
+        <span><strong>읽기 전용</strong> &mdash; 이 페이지는 관리자만 변경할 수 있습니다. 현재 계정은 설정을 조회만 할 수 있습니다.</span>
+    </div>
+
     <div class="breadcrumb" style="margin-bottom:8px">
         <a href="/settings">Settings</a>
         <svg viewBox="0 0 24 24" style="width:14px;height:14px;stroke:#9CA3AF;fill:none;stroke-width:2"><polyline points="9 18 15 12 9 6"/></svg>
@@ -161,15 +168,23 @@
         <!-- API URL -->
         <div class="s-row" style="flex-wrap:wrap">
             <span class="s-key">API URL</span>
-            <div style="display:flex;flex-direction:column;gap:4px;flex:1;max-width:420px">
+            <div style="display:flex;flex-direction:column;gap:4px;flex:1;max-width:620px;min-width:320px">
                 <input type="text" id="llmApiUrlInput" placeholder="API endpoint URL"
-                       style="width:100%;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace;box-sizing:border-box">
+                       style="width:100%;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace;box-sizing:border-box">
                 <div id="gensparkHint" style="display:none;padding:7px 10px;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:6px;font-size:11px;color:#1E40AF;line-height:1.5">
                     <strong>Genspark API</strong><br>
                     기본 URL: <code style="background:#DBEAFE;padding:1px 4px;border-radius:3px">https://www.genspark.ai/api/llm_proxy/v1</code><br>
                     엔드포인트: <code style="background:#DBEAFE;padding:1px 4px;border-radius:3px">/chat/completions</code> 자동 추가됨.<br>
                     API 키: Genspark API Key (gsk-... 형식).<br>
                     GPT-5 (추론 모델): 최대 출력 토큰을 8,000 이상으로 설정하세요.
+                </div>
+                <div id="customHint" style="display:none;padding:7px 10px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:6px;font-size:11px;color:#166534;line-height:1.5">
+                    <strong>Custom (OpenAI 호환)</strong> — 사내 폐쇄망 LLM 게이트웨이 등 OpenAI Chat Completions 호환 엔드포인트.<br>
+                    URL 끝은 <code style="background:#DCFCE7;padding:1px 4px;border-radius:3px">/chat/completions</code> 이어야 합니다. 누락 시 자동으로 부착됩니다 (OpenAI SDK 와 동일 동작).<br>
+                    예) 사내 게이트웨이: <code style="background:#DCFCE7;padding:1px 4px;border-radius:3px">https://apigtw.example.com/openapi/model/&lt;UUID&gt;/chat/completions</code><br>
+                    인증: <code style="background:#DCFCE7;padding:1px 4px;border-radius:3px">Authorization: Bearer &lt;API Key&gt;</code> 자동 부착.<br>
+                    Model: 게이트웨이에 등록된 모델명 그대로 입력 (예: <code style="background:#DCFCE7;padding:1px 4px;border-radius:3px">share-gpt-oss-120b</code>).<br>
+                    사내 사설 CA 인증서 사용 시: SSL Verify OFF 또는 <code style="background:#DCFCE7;padding:1px 4px;border-radius:3px">${APP_HOME}/certs/heap-truststore.jks</code> 등록.
                 </div>
             </div>
         </div>
@@ -202,7 +217,7 @@
             <span class="s-key">API Key</span>
             <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
                 <input type="password" id="llmApiKeyInput" placeholder="API Key"
-                       style="width:200px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace">
+                       style="width:380px;max-width:100%;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace">
                 <button onclick="saveLlmApiKey()" class="btn-primary">Save Key</button>
                 <span id="llmKeyStatus" style="font-size:11px;color:#9CA3AF"></span>
             </div>
@@ -370,6 +385,8 @@ function loadLlmSettings() {
 
         var hint = document.getElementById('gensparkHint');
         if (hint) hint.style.display = (provider === 'genspark') ? '' : 'none';
+        var customHint = document.getElementById('customHint');
+        if (customHint) customHint.style.display = (provider === 'custom') ? '' : 'none';
 
         var keyStatus = document.getElementById('llmKeyStatus');
         if (keyStatus) {
@@ -443,6 +460,8 @@ function onProviderChange() {
     populateModelSelect(provider, null);
     var hint = document.getElementById('gensparkHint');
     if (hint) hint.style.display = (provider === 'genspark') ? '' : 'none';
+    var customHint = document.getElementById('customHint');
+    if (customHint) customHint.style.display = (provider === 'custom') ? '' : 'none';
 }
 
 // ── Actions ───────────────────────────────────────────
@@ -564,6 +583,33 @@ function toggleChatRestoreMode(el) {
         toast('Save failed: ' + e.message, 'error');
     });
 }
+
+// ── 비-ADMIN 읽기 전용 처리 ──
+(function() {
+    var container = document.querySelector('.container[data-is-admin]');
+    if (!container || container.getAttribute('data-is-admin') === 'true') return;
+    // loadLlmSettings 후에도 입력값이 disabled 상태여야 하므로 즉시 + 약간의 지연 후 한 번 더 적용
+    var apply = function() {
+        container.querySelectorAll('input, select, textarea').forEach(function(el) {
+            el.disabled = true;
+            el.title = (el.title ? el.title + ' — ' : '') + '관리자만 변경 가능';
+        });
+        container.querySelectorAll('button').forEach(function(btn) {
+            if (btn.classList.contains('refresh-btn')) return;
+            if (btn.closest('#readOnlyBanner')) return;
+            btn.disabled = true;
+            btn.style.cursor = 'not-allowed';
+            btn.style.opacity = '.5';
+            btn.title = '관리자만 변경 가능';
+        });
+        container.querySelectorAll('label.tog, .switch, .tog').forEach(function(el) {
+            el.style.pointerEvents = 'none';
+            el.style.opacity = '.6';
+        });
+    };
+    apply();
+    setTimeout(apply, 600);  // 비동기 로드 후에도 disabled 유지
+})();
 
 // ── Init ──────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {

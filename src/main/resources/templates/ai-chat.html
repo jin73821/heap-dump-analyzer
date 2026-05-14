@@ -18,7 +18,7 @@
 
         /* ── Session sidebar ────────────────────────── */
         .session-sidebar {
-            width: 280px; background: #fff; border-right: 1px solid #E5E7EB;
+            width: 320px; background: #F9FAFB; border-right: 1px solid #E5E7EB;
             display: flex; flex-direction: column; flex-shrink: 0;
         }
         .session-header {
@@ -38,31 +38,76 @@
             width: 100%; padding: 5px 8px; border: 1px solid #D1D5DB; border-radius: 6px;
             font-size: 12px; background: #fff;
         }
-        .session-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+        .session-list { flex: 1; overflow-y: auto; padding: 8px 10px 12px; }
         .session-item {
-            padding: 10px 16px; cursor: pointer; border-bottom: 1px solid #F9FAFB;
-            transition: background .15s;
+            position: relative; background: #FFFFFF;
+            border: 1px solid #E5E7EB; border-radius: 10px;
+            padding: 10px 12px; margin: 0 0 8px 0;
+            box-shadow: 0 1px 2px rgba(17,24,39,.04);
+            cursor: pointer;
+            transition: box-shadow .15s, transform .15s, background .15s, border-color .15s;
         }
-        .session-item:hover { background: #F9FAFB; }
-        .session-item.active { background: #EFF6FF; border-left: 3px solid #3B82F6; }
-        .session-item-title { font-size: 13px; font-weight: 600; color: #1F2937;
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .session-item-meta { font-size: 11px; color: #9CA3AF; margin-top: 2px; display: flex; gap: 8px; }
+        .session-item:hover {
+            box-shadow: 0 4px 10px rgba(17,24,39,.08);
+            transform: translateY(-1px); border-color: #D1D5DB;
+        }
+        .session-item.active {
+            background: #EFF6FF; border-color: #93C5FD;
+            box-shadow: 0 4px 12px rgba(59,130,246,.18);
+            transform: translateX(2px);
+        }
+        .session-item-head {
+            display: flex; align-items: center; gap: 6px; min-width: 0;
+        }
+        .session-item-title {
+            flex: 1; min-width: 0;
+            font-size: 13px; font-weight: 600; color: #1F2937;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .session-item-title-input {
+            display: none; flex: 1; min-width: 0;
+            box-sizing: border-box; padding: 4px 6px;
+            font: 600 13px inherit; color: #1F2937;
+            border: 1px solid #93C5FD; border-radius: 6px;
+            outline: none; background: #fff;
+        }
+        .session-item.is-renaming .session-item-title { display: none; }
+        .session-item.is-renaming .session-item-title-input { display: block; }
+        .session-item.is-renaming .session-item-actions { display: none !important; }
+        .session-item-meta { font-size: 11px; color: #9CA3AF; margin-top: 6px; display: flex; gap: 6px; }
         .session-item-file { font-size: 10px; color: #6B7280; background: #F3F4F6;
-            padding: 1px 6px; border-radius: 4px; margin-top: 3px; display: inline-block;
+            padding: 1px 6px; border-radius: 4px; margin-top: 6px; display: inline-block;
             max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .session-item-analyzed { font-size: 10px; color: #9CA3AF; margin-top: 2px; }
+        .session-item-analyzed { font-size: 10px; color: #9CA3AF; margin-top: 4px; }
         .session-item-state {
             display: inline-block; font-size: 9px; font-weight: 700; letter-spacing: .3px;
-            padding: 1px 6px; border-radius: 3px; margin-top: 3px; margin-right: 4px;
+            padding: 1px 6px; border-radius: 3px; margin-top: 6px; margin-right: 4px;
         }
         .session-item-state.deleted  { background: #FEE2E2; color: #B91C1C; }
         .session-item-state.previous { background: #FEF3C7; color: #92400E; }
+        /* 작성자 태그 (admin 화면 또는 본인 외 작성자 표시) */
+        .session-item-user {
+            display: inline-flex; align-items: center; gap: 3px;
+            font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 10px;
+            background: #EEF2FF; color: #4338CA; border: 1px solid #C7D2FE;
+            margin-top: 0; max-width: 80px; flex-shrink: 0; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap;
+        }
+        .session-item-user.is-self { background: #ECFDF5; color: #065F46; border-color: #A7F3D0; }
+        .session-item-user::before {
+            content: ''; width: 7px; height: 7px; border-radius: 50%;
+            background: currentColor; opacity: .65; flex-shrink: 0;
+        }
+        /* admin 사용자 셀렉트 */
+        .session-filter-row { display: flex; flex-direction: column; gap: 6px; }
+        .session-item.is-deleted { background: #FAFAFA; box-shadow: none; }
         .session-item.is-deleted .session-item-title { color: #9CA3AF; text-decoration: line-through; }
         .session-item.is-deleted .session-item-file  { opacity: .65; }
-        .session-item-actions { display: none; float: right; }
-        .session-item:hover .session-item-actions { display: inline-flex; gap: 4px; }
-        .session-del-btn { background: none; border: none; cursor: pointer; color: #9CA3AF; font-size: 14px; padding: 0 2px; }
+        .session-item-actions { display: none; gap: 2px; align-items: center; flex-shrink: 0; }
+        .session-item:hover .session-item-actions { display: inline-flex; }
+        .session-edit-btn,
+        .session-del-btn { background: none; border: none; cursor: pointer; color: #9CA3AF; font-size: 14px; padding: 0 2px; line-height: 1; }
+        .session-edit-btn:hover { color: #2563EB; }
         .session-del-btn:hover { color: #DC2626; }
         .session-empty { padding: 40px 16px; text-align: center; color: #9CA3AF; font-size: 13px; }
 
@@ -163,16 +208,21 @@
     </div>
 </div>
 
-<div class="chat-layout">
+<div class="chat-layout"
+     th:attr="data-is-admin=${isAdmin}, data-current-user=${currentUser}">
     <!-- 세션 사이드바 -->
     <div class="session-sidebar">
         <div class="session-header">
             <span class="session-header-title">채팅 목록</span>
             <button class="session-new-btn" onclick="createNewSession()">+ 새 채팅</button>
         </div>
-        <div class="session-filter">
-            <select id="sessionFilter" onchange="onFilterChange(this)">
-                <option value="">전체</option>
+        <div class="session-filter session-filter-row">
+            <select class="session-filter-file" onchange="onFilterChange(this)">
+                <option value="">전체 파일</option>
+            </select>
+            <!-- ADMIN 전용: 사용자별 필터 -->
+            <select th:if="${isAdmin}" class="session-filter-user" onchange="onUserFilterChange(this)">
+                <option value="">전체 사용자</option>
             </select>
         </div>
         <div class="session-list" id="sessionList">
@@ -204,11 +254,18 @@ var _activeSessionId = null;
 var _messages = [];
 var _sending = false;
 var _model = '';
+var _renamePending = null;
+
+// ── 권한/현재 사용자 (서버 모델 attr 에서 추출) ───────
+var _layoutEl = document.querySelector('.chat-layout');
+var IS_ADMIN     = _layoutEl ? _layoutEl.getAttribute('data-is-admin') === 'true' : false;
+var CURRENT_USER = _layoutEl ? (_layoutEl.getAttribute('data-current-user') || '') : '';
 
 // ── 초기화 ─────────────────────────────────────────────
 
 function init() {
     loadFilenameFilter();
+    if (IS_ADMIN) loadUserFilter();
     loadSessions();
 }
 
@@ -219,7 +276,7 @@ function loadFilenameFilter() {
             if (s.filename && filenames.indexOf(s.filename) === -1) filenames.push(s.filename);
         });
         // 원본 + 배너 클론 모두 옵션 채움
-        document.querySelectorAll('.session-filter select').forEach(function(sel) {
+        document.querySelectorAll('.session-filter-file').forEach(function(sel) {
             filenames.forEach(function(f) {
                 var opt = document.createElement('option');
                 opt.value = f;
@@ -230,13 +287,39 @@ function loadFilenameFilter() {
     }).catch(function(){});
 }
 
-function getCurrentFilter() {
-    var sel = document.querySelector('.session-filter select');
+function loadUserFilter() {
+    fetch('/api/ai-chat/users').then(function(r){
+        if (!r.ok) return [];
+        return r.json();
+    }).then(function(users) {
+        if (!Array.isArray(users)) return;
+        document.querySelectorAll('.session-filter-user').forEach(function(sel) {
+            users.forEach(function(u) {
+                var opt = document.createElement('option');
+                opt.value = u; opt.textContent = u;
+                sel.appendChild(opt);
+            });
+        });
+    }).catch(function(){});
+}
+
+function getCurrentFileFilter() {
+    var sel = document.querySelector('.session-filter-file');
+    return sel ? sel.value : '';
+}
+
+function getCurrentUserFilter() {
+    if (!IS_ADMIN) return '';
+    var sel = document.querySelector('.session-filter-user');
     return sel ? sel.value : '';
 }
 
 function syncFilterValue(value) {
-    document.querySelectorAll('.session-filter select').forEach(function(s) { s.value = value; });
+    document.querySelectorAll('.session-filter-file').forEach(function(s) { s.value = value; });
+}
+
+function syncUserFilterValue(value) {
+    document.querySelectorAll('.session-filter-user').forEach(function(s) { s.value = value; });
 }
 
 function onFilterChange(selectEl) {
@@ -244,9 +327,18 @@ function onFilterChange(selectEl) {
     loadSessions();
 }
 
+function onUserFilterChange(selectEl) {
+    syncUserFilterValue(selectEl.value);
+    loadSessions();
+}
+
 function loadSessions() {
-    var filter = getCurrentFilter();
-    var url = '/api/ai-chat/sessions' + (filter ? '?filename=' + encodeURIComponent(filter) : '');
+    var fileF = getCurrentFileFilter();
+    var userF = getCurrentUserFilter();
+    var qs = [];
+    if (fileF) qs.push('filename=' + encodeURIComponent(fileF));
+    if (userF) qs.push('user='     + encodeURIComponent(userF));
+    var url = '/api/ai-chat/sessions' + (qs.length ? '?' + qs.join('&') : '');
     fetch(url).then(function(r){ return r.json(); }).then(function(sessions) {
         _sessions = sessions;
         renderSessionList();
@@ -271,13 +363,34 @@ function renderSessionList() {
             } else if (s.analysisState === 'previousAnalysis') {
                 stateBadge = '<span class="session-item-state previous" title="동일한 파일명으로 새 분석이 이뤄져 이전 분석의 채팅입니다">이전 분석</span>';
             }
-            html += '<div class="' + itemClass + '" onclick="selectSession(' + s.id + ')">'
-                + '<div class="session-item-actions">'
-                + '<button class="session-del-btn" onclick="event.stopPropagation();deleteSession(' + s.id + ')" title="삭제">&times;</button>'
+            // 사용자 태그: ADMIN 화면에서는 항상 표시, 일반 사용자에겐 (혹시 모를 다른 사람 세션 노출 시) 표시
+            var userTag = '';
+            if (s.username && (IS_ADMIN || s.username !== CURRENT_USER)) {
+                var selfCls = (s.username === CURRENT_USER) ? ' is-self' : '';
+                var selfTitle = (s.username === CURRENT_USER) ? ' (본인)' : '';
+                userTag = '<div class="session-item-user' + selfCls + '" title="작성자: '
+                    + escHtml(s.username) + selfTitle + '">' + escHtml(s.username) + '</div>';
+            }
+            var titleText = s.title || '새 채팅';
+            html += '<div class="' + itemClass + '" data-session-id="' + s.id + '" onclick="selectSession(' + s.id + ')">'
+                + '<div class="session-item-head">'
+                +   '<div class="session-item-title">' + escHtml(titleText) + '</div>'
+                +   '<input class="session-item-title-input" type="text"'
+                +        ' data-session-id="' + s.id + '"'
+                +        ' value="' + escAttr(titleText) + '"'
+                +        ' onclick="event.stopPropagation()"'
+                +        ' onkeydown="onRenameKeyDown(event, ' + s.id + ')"'
+                +        ' onblur="commitRenameSession(' + s.id + ', this)">'
+                +   userTag
+                +   '<div class="session-item-actions">'
+                +     '<button class="session-edit-btn" title="이름 변경"'
+                +          ' onclick="event.stopPropagation();startRenameSession(' + s.id + ', event)">&#9998;</button>'
+                +     '<button class="session-del-btn" title="삭제"'
+                +          ' onclick="event.stopPropagation();deleteSession(' + s.id + ')">&times;</button>'
+                +   '</div>'
                 + '</div>'
-                + '<div class="session-item-title">' + escHtml(s.title || '새 채팅') + '</div>'
-                + '<div class="session-item-meta"><span>' + date + '</span><span>' + (s.messageCount || 0) + '개 메시지</span></div>'
                 + (s.filename ? '<div class="session-item-file">' + escHtml(s.filename) + '</div>' : '')
+                + '<div class="session-item-meta"><span>' + (s.messageCount || 0) + '개</span><span>·</span><span>' + date + '</span></div>'
                 + (analyzedAt ? '<div class="session-item-analyzed">분석 ' + analyzedAt + '</div>' : '')
                 + (stateBadge ? '<div>' + stateBadge + '</div>' : '')
                 + '</div>';
@@ -289,7 +402,7 @@ function renderSessionList() {
 // ── 세션 관리 ──────────────────────────────────────────
 
 function createNewSession() {
-    var filter = getCurrentFilter();
+    var filter = getCurrentFileFilter();
     fetch('/api/ai-chat/sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -335,6 +448,92 @@ function deleteSession(id) {
             }
             loadSessions();
         }
+    });
+}
+
+// ── 세션 이름 변경 (inline rename) ───────────────────────
+
+function startRenameSession(id, evt) {
+    var card = evt.currentTarget.closest('.session-item');
+    if (!card) return;
+    // 다른 카드가 rename 중이면 그쪽을 먼저 정리
+    document.querySelectorAll('.session-item.is-renaming').forEach(function(other) {
+        if (other !== card) {
+            var otherInput = other.querySelector('.session-item-title-input');
+            if (otherInput) otherInput.blur();
+            other.classList.remove('is-renaming');
+        }
+    });
+    card.classList.add('is-renaming');
+    var input = card.querySelector('.session-item-title-input');
+    if (input) {
+        // 원본 title 을 dataset 에 백업 (cancel 시 복원용)
+        var orig = _sessions.find(function(s){ return s.id === id; });
+        input.dataset.origTitle = orig ? (orig.title || '새 채팅') : input.value;
+        input.value = input.dataset.origTitle;
+        setTimeout(function() { input.focus(); input.select(); }, 0);
+    }
+}
+
+function onRenameKeyDown(evt, id) {
+    if (evt.key === 'Enter') {
+        evt.preventDefault();
+        commitRenameSession(id, evt.target);
+    } else if (evt.key === 'Escape') {
+        evt.preventDefault();
+        _renamePending = 'cancelled';
+        cancelRenameSession(id, evt.target);
+        evt.target.blur();
+    }
+}
+
+function commitRenameSession(id, inputEl) {
+    if (_renamePending === 'cancelled') {
+        _renamePending = null;
+        return;
+    }
+    if (_renamePending === id) return; // 중복 제출 방지
+    var orig = _sessions.find(function(s){ return s.id === id; });
+    var origTitle = orig ? (orig.title || '새 채팅') : '';
+    var newTitle = (inputEl.value || '').trim();
+    if (!newTitle || newTitle === origTitle) {
+        cancelRenameSession(id, inputEl);
+        return;
+    }
+    _renamePending = id;
+    fetch('/api/ai-chat/sessions/' + id, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle })
+    })
+    .then(checkAuth)
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+        _renamePending = null;
+        if (d && d.success) {
+            if (orig) orig.title = d.title || newTitle;
+            renderSessionList();
+        } else {
+            alert((d && d.error) || '이름 변경 실패');
+            cancelRenameSession(id, inputEl);
+        }
+    })
+    .catch(function(e) {
+        _renamePending = null;
+        alert((e && e.message) || '이름 변경 실패');
+        cancelRenameSession(id, inputEl);
+    });
+}
+
+function cancelRenameSession(id, inputEl) {
+    var cards = document.querySelectorAll('.session-item[data-session-id="' + id + '"]');
+    cards.forEach(function(c) { c.classList.remove('is-renaming'); });
+    var orig = _sessions.find(function(s){ return s.id === id; });
+    var origTitle = orig ? (orig.title || '새 채팅') : '';
+    if (inputEl) inputEl.value = origTitle;
+    // 양쪽 input value 도 원복
+    document.querySelectorAll('.session-item-title-input[data-session-id="' + id + '"]').forEach(function(el) {
+        el.value = origTitle;
     });
 }
 
@@ -557,6 +756,10 @@ function checkAuth(r) {
 
 function escHtml(t) {
     return t ? t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : '';
+}
+
+function escAttr(t) {
+    return escHtml(t).replace(/"/g,'&quot;');
 }
 
 function mdRender(text) {

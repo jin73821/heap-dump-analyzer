@@ -46,6 +46,8 @@ public class AiInsightManager {
 
     /**
      * AI 인사이트 결과를 DB 에 저장 (기존 결과 있으면 업데이트).
+     * 실패 시 스택트레이스 포함 logger.error 후 RuntimeException 으로 rethrow —
+     * 호출자(컨트롤러) 가 사용자에게 실패를 노출/재시도 안내할 수 있도록 전파한다.
      */
     public void saveAiInsight(String filename, Map<String, Object> insightData) {
         try {
@@ -64,7 +66,9 @@ public class AiInsightManager {
             aiInsightRepository.save(entity);
             logger.info("[AI-Insight] Saved to DB for '{}' (severity={})", filename, entity.getSeverity());
         } catch (Exception e) {
-            logger.error("[AI-Insight] Failed to save to DB for '{}': {}", filename, e.getMessage());
+            logger.error("[AI-Insight] Failed to save to DB for '{}' — type={}, msg={}",
+                filename, e.getClass().getSimpleName(), e.getMessage(), e);
+            throw new RuntimeException("AI 인사이트 DB 저장 실패: " + e.getMessage(), e);
         }
     }
 

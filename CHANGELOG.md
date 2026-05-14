@@ -1,5 +1,537 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-14] Compare AI 비교 분석 — 시작 버튼 노출 + 요청/응답 로직 마감
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+사용자 보고: "AI 비교 분석의 분석 시작 버튼이 보이지 않는다." 추적 결과 결정적 원인 1건 + 잠재 결함 4건 + UX 결정 1건 확인.
+
+### 내역
+
+**P-1 (결정적) — 시작 버튼 영구 숨김 해소**
+- CSS `#cmpAiPanel { display: none; }`(compare.html:157) 가 JS 의 `panel.style.display = ''` 토글과 충돌해 inline 값 비움 → CSS rule 이 재적용 → 패널 영구 숨김 → 시작 버튼 노출 불가.
+- 수정: `onCmpAiToggle()` / `initCmpAiToggle()` 두 곳을 `style.display = visible ? 'block' : 'none'` 로 명시적 block 지정. CSS rule 은 FOUC 방지 위해 유지.
+
+**P-2 — 중복 클릭 가드 (`_cmpAiInFlight`)**
+- 시작 버튼 빠른 연클릭 시 동일 base/target 으로 fetch 중복 발사 → 응답 순서 뒤바뀌어 결과 덮어쓰기 가능.
+- 모듈 변수 `_cmpAiInFlight` 추가, `startCmpAiAnalysis()` 진입 시 가드 + then/catch 양쪽에서 복구.
+
+**P-3 — `recommendations` 타입 검증**
+- LlmConfigService 의 JSON 파싱 실패 fallback 이 `"recommendations":"-"` (String) 반환 시 `cmpAiShowResult()` 의 `.forEach` 가 폭발.
+- `Array.isArray(d.recommendations)` 분기 + 문자열 fallback (`"-"` 제외) 표시 추가.
+
+**P-4 — LLM 상태 체크 실패 시 NotAnalyzed 명시**
+- `cmpAiCheckLlmStatus()` catch 가 disabled 안내만 표시하고 상태 머신 진입 누락 → 빈 패널 노출 가능.
+- catch 블록에 `cmpAiSetState('NotAnalyzed')` + `cmpAiSetBadge('미분석', ...)` 추가.
+
+**P-5 — `analysedAt` 응답 보강**
+- 신규 분석 POST 응답에 시각이 없어 결과 카드 우상단 분석시각 빈칸.
+- `HeapDumpController.analyzeCompareLlm()` 저장 성공 분기에 `result.put("analysedAt", System.currentTimeMillis())` 추가.
+- `cmpAiShowResult()` 가 `d.analysedAt || result.analysedAt` 으로 두 응답 모양 모두 처리, epoch ms 면 `yyyy-MM-dd HH:mm` 포맷.
+
+**P-6 — 토글 우측 라벨 제거 (UX 결정)**
+- "켜기/끄기" 라벨이 현재 상태인지 다음 동작인지 혼동 → 좌측 `AI 분석` 만 유지, 우측 `#cmpAiToggleLabel` span 제거 + `onCmpAiToggle`/`initCmpAiToggle` 의 라벨 갱신 라인 제거.
+
+### 검증
+- `mvn clean package -DskipTests` 성공 / `bash restart.sh` 9.8초 기동 / 에러 로그 없음.
+- 사용자 시나리오 (브라우저):
+  - `/compare?base=...&target=...` 진입 시 AI 패널 보이고 **"AI 비교 분석 시작" 버튼 명확히 노출** (P-1).
+  - 토글 우측 라벨 없음, 좌측 `AI 분석` 만 표시 (P-6).
+  - 시작 클릭 — 4 step 진행 → 결과 카드 우상단에 분석 시각 채워짐 (P-5).
+  - 시작 버튼 연클릭 시 단일 POST (P-2).
+  - `/api/settings` 차단 후 토글 ON — 미분석 배지 + LLM 비활성 안내 + 패널 본문 NotAnalyzed (P-4).
+  - 권장 조치 섹션: 배열/문자열 fallback 양쪽 모두 깨지지 않음 (P-3).
+  - 새로고침 → 저장본 자동 로드, 삭제 → NotAnalyzed 복귀.
+
+---
+
+## [2026-05-14] Compare 페이지 레이아웃 개선 + 한국어 번역
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 분석 전 picker 가 단순 select 2개로 파일명만 노출 → 어떤 덤프인지 분간 어려움.
+- 분석 후 결과 헤더 카드의 used heap / objects / classes / suspects / threads 8라인이 바로 아래 KPI 6칸과 메타 중복.
+- 전반 영어 라벨(Topbar, picker, Baseline/Target, KPI 라벨, 표 컬럼, Suspect 라벨, Pager Prev/Next)이 운영 한국어 톤과 불일치.
+
+### 내역
+
+**Picker (카드형 + 메타)**
+- `select 2개 평행 배치` → 흰 카드 2개(`기준 (Before)` / `비교 (After)`) 좌우 grid. 모바일 ≤600px 1단 stack.
+- 카드 내 메타 3줄: `📊` 힙 사용량 · `📅` 덤프 일시 · `🖥` 서버명. `/api/history` 응답의 `heapUsed / lastModified / serverName` 을 option dataset 으로 저장 후 select onchange 시 `updatePickerMeta()` 가 채움.
+- 동일 파일 비교 금지 인라인 hint (`⚠ 동일한 파일은 비교할 수 없습니다.`), 오류 시 빨강(`⚠ 두 파일을 모두 선택해주세요.` / `⚠ 서로 다른 파일 두 개를 선택해주세요.`)으로 전환.
+- 안내·라벨·placeholder 전면 한글화.
+
+**결과 헤더 카드 (컴팩트화)**
+- 8라인 메타 제거 → `📅 yyyy-MM-dd HH:mm · 파일크기` 1라인.
+- `HeapDumpViewController.compareDumps()` 에 `baseModifiedFmt / targetModifiedFmt` 모델 attribute 추가 (Thymeleaf SpEL 에서 `new java.util.Date(long)` 회피용, `SimpleDateFormat` 으로 서버 측 포맷).
+
+**섹션 앵커 네비게이션 (신규)**
+- 결과 페이지 상단 sticky nav: `KPI / 클래스 / 히스토그램 / 의심 / AI`. 각 패널에 `id="kpi|cls|hist|susp|ai"` 부여. `html { scroll-behavior:smooth }` 적용. 모바일에서 가로 스크롤.
+
+**Suspect 4 카드**
+- 각 카테고리 헤드 우측에 건수 chip 추가, IIFE 로 `.suspect-item` 수를 카운팅. 빈 카테고리에는 "해당 없음" 자동 삽입.
+- 카테고리 라벨 한글화: `▲ NEW · 비교에만 존재 / ▼ GONE · 기준에만 존재 / ⇄ 심각도 변경 / = PERSIST · 양쪽 모두 존재`.
+- severity 칩 `unknown` → `미정`.
+
+**AI 비교 분석 패널**
+- 토글에 좌측 `AI 분석` 라벨 추가, ON/OFF → `켜기 / 끄기`.
+- 패널에 `id="ai"` 부여 (앵커 nav 연동).
+
+**한글화 전수**
+- Topbar `Compare` → `비교`, `← Back` → `← 돌아가기`.
+- KPI 6칸: `Used heap / Objects / Classes / Suspects / Threads / Top consumers` → `힙 사용량 / 객체 수 / 클래스 수 / 의심 항목 / 스레드 / 상위 소비자`. 보조 라인도 한글.
+- Class diff 패널: 제목 `클래스별 메모리 변화 상위 (Retained heap)`, 도구 `필터 / 표시`, 옵션 `전체 / 증가만 / 감소만`, 컬럼 `클래스명 / 기준 / 비교 / 변화 / 추이`, 빈 상태 `두 덤프 간 의미 있는 차이가 없습니다.`.
+- Histogram diff 패널: 제목 `히스토그램 클래스 비교`, 컬럼 `기준 객체 / 비교 객체 / Δ 객체 / 기준 Retained / 비교 Retained / Δ Retained`.
+- Suspect 패널: 제목 `누수 의심 항목 비교 (Leak Suspects)`, 빈 상태 `두 덤프 모두 누수 의심 항목이 없습니다.`.
+- Pager: `‹ Prev / Next ›` → `‹ 이전 / 다음 ›`.
+- MAT 영문 용어(Retained heap)는 운영자 친숙도를 위해 그대로 유지 (한국어 + 영문 보조 톤).
+
+### 검증
+- `mvn clean package -DskipTests` 성공 / `bash restart.sh` 9.7초 기동 / 신규 에러 로그 없음.
+- `GET /compare` 200 OK.
+- SpEL `Math.min(80L, ...)` Trend 바 식은 손대지 않음 (CLAUDE.md 함정 #11).
+- 분석 완료된 두 덤프로 결과 페이지 직접 검증 필요 항목 (브라우저):
+  - 헤더 카드 컴팩트(파일명 + `📅 yyyy-MM-dd HH:mm · 크기`).
+  - 앵커 nav sticky + 부드러운 스크롤로 5개 섹션 이동.
+  - KPI 6칸 한글 라벨 + 색상 정상.
+  - Class/Histogram diff 한글 컬럼 + 페이지네이션 `‹ 이전 / 다음 ›`.
+  - Suspect 4 카드 우측 건수 chip + 빈 카테고리 "해당 없음".
+  - AI 토글 좌측 `AI 분석` + 우측 `켜기/끄기` 토글 시 패널 노출/숨김.
+- Picker 브라우저 검증:
+  - 두 카드(기준/비교) 좌우 배치, 모바일 ≤600px 1단.
+  - 파일 선택 시 `📊 / 📅 / 🖥` 메타 채워짐(서버명 null 인 로컬 업로드는 `—`).
+  - 동일 파일 선택 후 "비교 →" → hint 빨강 전환.
+
+---
+
+## [2026-05-14] Compare 고도화 — KPI/히스토그램/누수의심 diff + AI 비교 분석(on/off)
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- 수정: `src/main/resources/templates/compare.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 기존 `/compare` 는 Top 20 클래스 메모리 diff + heap delta 한 줄만 노출 → 두 덤프 사이의 누수 진행/회귀 판단에 부족.
+- MAT 가 이미 산출한 KPI / Histogram / Leak Suspects / Threads 가 비교 화면에는 거의 노출되지 않음.
+- AI 인사이트도 단일 덤프(`analyze.html`)에만 존재. 두 덤프의 변화 해석은 사용자가 직접 추론해야 했음.
+- LLM 비용/조용한 화면을 원하는 사용자를 위해 AI 패널은 토글로 on/off 가능해야 함.
+
+### 내역
+
+**Backend (HeapDumpController)**
+- 신규 inner static class 3종: `HistogramDiff` / `SuspectDiff` (state=NEW/GONE/PERSIST/SEVERITY_CHANGED) / `KpiDiff` (heap/objects/classes/suspects/threads/topConsumer delta + formatted/up 헬퍼).
+- 신규 public 빌더 4종 (`buildClassSizeMap` 옆):
+  - `buildClassDiffs(base, target, limit)` — 기존 인라인 로직 추출.
+  - `buildHistogramDiffs(base, target, limit)` — className 합집합, |retainedDelta| desc 정렬, top N.
+  - `buildSuspectDiffs(base, target)` — title 정규화 키로 매칭, severity 변경 감지, 우선순위 정렬(SEVERITY > NEW > GONE > PERSIST).
+  - `buildKpiDiff(base, target)`.
+- 신규 endpoint:
+  - `GET /api/compare/data?base=&target=` — 4종 diff + base/target 메타 JSON.
+  - `POST /api/llm/compare/analyze` — body `{base, target, prompt, save}`. 합성 키 `__compare__:` + sha256(base+"|"+target)[0..40]) 로 `AiInsightManager.saveAiInsight()` 재사용.
+  - `GET /api/llm/compare/insight?base=&target=` / `DELETE` 동형 — 동일 합성 키로 load/delete.
+- `FilenameValidator.validate()` 모든 신규 엔드포인트에서 base/target 검증.
+
+**HeapDumpViewController.compareDumps()**
+- 신규 빌더 4종 호출, classDiffs limit 20 → 50, model attr 8개 추가 (`kpi`, `classDiffs`, `histogramDiffs`, `suspectDiffs`, `baseSuspectCount`, `targetSuspectCount`, `baseThreadCount`, `targetThreadCount`).
+- 기존 `heapDelta`/`heapDeltaSign`/`heapDeltaUp` 호환 유지 (kpi 에서 파생).
+
+**compare.html (297 → ~800 라인)**
+- KPI 6칸 delta 배너 (Heap / Objects / Classes / Suspects / Threads / Top consumers) — sign + 색상 + base→target 보조 라인.
+- Class diff 패널: 검색 + Increased/Decreased/All 필터 + Top 20/50/100 셀렉트(localStorage `cmpClassRows`) + ‹Prev/1…N/Next› 페이지네이션.
+- Histogram diff 패널 (신규): Class / Base obj / Target obj / Δ obj / Base retained / Target retained / Δ retained. 검색 + 페이지네이션.
+- Leak Suspects 4 카테고리 카드 (신규): NEW(빨강) / GONE(녹색) / SEVERITY_CHANGED(황색, base→target severity 칩) / PERSIST(회색).
+- **AI 비교 분석 패널 (신규, 토글 on/off)** — analyze.html 의 panel-ai-insight 디자인을 compare 전용(`cmpAi*`) 으로 축소 이식.
+  - 토글 OFF (기본은 ON, `localStorage('cmpAiVisible')`) 시 LLM 호출/패널 모두 없음.
+  - 4 step 진행 (데이터 수집 / 프롬프트 구성 / LLM 분석 / 결과 저장) + 경과 시간 + 진행률 바.
+  - 프롬프트 빌더 `buildComparePrompt(data)` — `/api/compare/data` 응답으로부터 KPI 변화 / Top10 클래스 / Top10 히스토그램 / suspect 4 카테고리를 채우고 JSON 응답 스키마(`summary / deltaInterpretation / regressionRisk / rootCause / recommendations / severity / severityDesc`) 명시.
+  - 결과 카드: severity banner + summary / deltaInterpretation / regressionRisk / rootCause / recommendations.
+  - 헤더 액션: 재분석 / 삭제. 페이지 로드 시 저장본 자동 로드(토글 ON 시).
+  - LLM 비활성 시 안내 + 시작 버튼 비활성화(`/api/settings.llm.enabled` 확인).
+- Topbar 줄바꿈 규약(`.topbar-brand` flex/min-width:0, `.topbar-right` flex-shrink:0) 적용.
+- `<meta name="_csrf">` head 에 추가 (일관성).
+
+### 검증
+- `mvn clean package -DskipTests` 성공.
+- `bash restart.sh` 정상 기동 (9.7초, "Started HeapAnalyzerApplication" 확인, 에러 로그 없음).
+- `GET /compare` 200 OK (picker), 분석 완료된 두 덤프 선택 시 KPI 6칸 + 3 신규 diff 패널 + AI 패널 렌더링.
+- 사용자 시나리오 검증 필요 항목:
+  - AI 토글 OFF → 패널 숨김, `/api/llm/compare/insight` 호출 없음.
+  - AI 토글 ON → 시작 → 4 step 진행 → severity/summary/deltaInterpretation/regressionRisk/rootCause/recommendations 렌더.
+  - 새로고침 → 저장본 자동 로드. 재분석 / 삭제 동작.
+  - `SELECT filename FROM ai_insights WHERE filename LIKE '__compare__:%'` 로 합성 키 행 1건/쌍 존재 확인.
+  - 한 파일만 분석된 상태 `/compare?base=...&target=미분석` → 누락 파일 명시 에러.
+
+---
+
+## [2026-05-14] AI Chat — 좌측 세션 목록 카드형 UI + inline rename
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/ai-chat.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 좌측 사이드바 세션 목록이 `border-bottom` 로 구분된 평면 리스트라 시각적 위계가 약하고 항목 식별이 어렵다는 피드백.
+- 이미 존재하는 PUT `/api/ai-chat/sessions/{id}` 의 제목 변경 API 가 UI 미노출 상태라 함께 도입.
+
+### 내역
+- **카드형 디자인 (`.session-item`)**: 사이드바 배경 `#F9FAFB`, 카드 본체 흰색 + `border-radius:10px` + `box-shadow:0 1px 2px rgba(17,24,39,.04)`, 카드 간 8px gap. hover 시 `translateY(-1px)` + 그림자 강조. active 시 좌측 `border-left` 3px 막대 제거하고 파란 배경 + 보더 + 그림자 + `translateX(2px)` 로 강조.
+- **헤드 라인 신설 (`.session-item-head`)**: 제목 + 사용자 칩 + 액션을 flex 한 줄로 배치. 사용자 태그가 카드 하단이 아닌 제목 옆에 위치.
+- **메타 라인 순서 변경**: `날짜 · 메시지수` → `메시지수 · 날짜`.
+- **inline rename**: 카드 hover 시 ✎(연필) 버튼 노출 → 클릭 시 제목이 input 으로 교체 → Enter/blur 저장, Esc 취소. 클릭된 카드만 `is-renaming` 토글하여 모바일 배너 클론 영향 방지.
+- **신규 JS 함수**: `startRenameSession` / `commitRenameSession` / `cancelRenameSession` / `onRenameKeyDown` + 보조 `escAttr`. Esc↔blur 경합은 `_renamePending = 'cancelled'` 플래그로 차단, 중복 PUT 은 `_renamePending = id` 가드.
+- **클론 호환성 (CLAUDE.md 함정 #8)**: 신규 input/button 모두 `id` 속성 미사용. `data-session-id` + 클래스 셀렉터로만 식별. `cloneNode(true)` 후 ID 제거 로직과 충돌 없음.
+- **사이드바 폭 확대**: 데스크톱 `.session-sidebar` width `280px → 320px` (모바일 미디어쿼리 220px 는 유지).
+- **버그 수정**: `createNewSession()` 이 미정의 함수 `getCurrentFilter()` 호출로 ReferenceError 발생 → `+ 새 채팅` 버튼 무반응. `getCurrentFileFilter()` 로 교정.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 성공 (9.4초 기동).
+- 데스크톱: 카드 hover/active/✎/✕/Esc/blur/빈 문자열 정상 동작, 분석 삭제됨/이전 분석 배지 유지.
+- 모바일 배너 클론: 풀블리드 카드 동일 스타일, rename 동작 정상.
+
+---
+
+## [2026-05-12] AI Chat — ADMIN 전체 조회 + 작성자 태그 + 사용자별 필터
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/repository/AiChatSessionRepository.java`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/AiChatController.java`
+- 수정: `src/main/resources/templates/ai-chat.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- AI Chat 사이드바가 본인 세션만 보여줘 운영/감사 목적의 채팅 이력 검토 불가.
+- ADMIN 은 전체 채팅 목록을 보고, 각 세션이 어느 계정의 질문인지 식별할 수 있어야 하며, 사용자별 필터링도 가능해야 함.
+
+### 내역
+- **AiChatSessionRepository** — admin 전용 메서드 추가:
+  - `findAllByOrderByUpdatedAtDesc()` — 전체 세션 (최신순)
+  - `findByFilenameOrderByUpdatedAtDesc(filename)` — 모든 사용자의 특정 파일 세션
+  - `@Query select distinct s.username ... order by s.username` → `findDistinctUsernames()` (사용자 셀렉트 옵션용)
+- **AiChatController.listSessions**:
+  - `Principal` → `Authentication` 으로 교체. `isAdmin(authentication)` 분기.
+  - ADMIN: `user` + `filename` 파라미터 조합으로 필터 (둘 다 / user / filename / 무필터 4 분기). 무필터 시 `findAllByOrderByUpdatedAtDesc()`.
+  - USER: 기존 동작(본인 세션만, filename 옵션) 유지 — `user` 파라미터 무시.
+  - 응답 Map 에 `username` 필드 추가 (프론트가 작성자 태그 표시).
+- **AiChatController 신규 엔드포인트** `GET /api/ai-chat/users`:
+  - ADMIN 전용 (그 외 403).
+  - `findDistinctUsernames()` 반환 → 프론트의 사용자 셀렉트 채움.
+- **AiChatController — 5 개 ownership 체크 분기**:
+  - `deleteSession` / `updateSession` / `getMessages` / `saveMessage` / `streamChat` 모두 `Principal` → `Authentication`, `getUsername().equals(username)` → `canAccess(session, authentication)` 헬퍼로 교체.
+  - `canAccess()` = ADMIN 이거나 세션 소유자(username 일치) 일 때 true. ADMIN 은 모든 세션 읽기/삭제/제목수정/메시지 송수신 가능.
+  - 삭제 로그에 `by={admin}, owner={original}` 함께 출력.
+- **AiChatController.aiChatPage** view 핸들러 — 모델에 `isAdmin`, `currentUser` attribute 노출.
+- **ai-chat.html**:
+  - `<div class="chat-layout" data-is-admin="${isAdmin}" data-current-user="${currentUser}">` — JS 가 권한/현재 사용자 즉시 캡처.
+  - 사이드바 필터를 단일 셀렉트 → `.session-filter-row` 컨테이너 + `.session-filter-file` (전체 파일) + `.session-filter-user` (전체 사용자, ADMIN 일 때만 `th:if`) 2 단 구성.
+  - CSS `.session-item-user` — 보라색 pill (작성자 username), `.is-self` 변형(녹색)으로 본인 표시. `::before` 점 마커.
+  - JS:
+    - `IS_ADMIN`/`CURRENT_USER` 상수를 layout 의 data-* 에서 읽음.
+    - `loadUserFilter()` (admin 만 호출) → `/api/ai-chat/users` → 셀렉트 옵션 채움.
+    - `getCurrentFileFilter()` / `getCurrentUserFilter()` 분리, `loadSessions()` 가 두 필터 결합해 `?filename=...&user=...` 쿼리 조립.
+    - `renderSessionList()` — `s.username` 이 있고 (ADMIN 이거나 본인이 아닌 경우) 작성자 태그 렌더. 본인이면 `is-self` 클래스 + `(본인)` 툴팁.
+  - 배너 클론 사이드바도 `querySelectorAll('.session-filter-file' / '.session-filter-user')` 패턴으로 양쪽 동시 갱신 (CLAUDE.md 함정 #8 준수).
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 정상 (`Started in 9.12s`).
+- admin 로그인 후 `/api/ai-chat/sessions` → 모든 사용자 세션 10건, 각 항목에 `username` 필드 포함 (admin/sscuser 모두 노출).
+- `?user=sscuser` 쿼리 → sscuser 세션 2건만 반환.
+- `/api/ai-chat/users` → `["admin","sscuser"]` distinct 리스트 반환.
+- 코드 상 비-ADMIN 분기는 항상 `findByUsername(currentUser, ...)` 로 본인 것만 조회 + canAccess 가 owner 일치 검사 → 권한 격리 유지.
+- 기능 검증(요청): ADMIN 로그인해서 `/ai-chat` 진입 → 좌측 사이드바에 "전체 사용자" 셀렉트 노출 + 모든 사용자 세션의 우상단에 보라색 username 태그(본인은 녹색) 노출 확인.
+
+## [2026-05-12] 종료 추적 — 신호별 로깅 + 비정상 종료 감지 (shutdown marker)
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/HeapAnalyzerApplication.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `kill -15` / Ctrl+C 시 통합 메시지 `[Shutdown] Application is shutting down (signal received)` 한 줄만 남아 신호 종류 식별 불가.
+- `kill -9` (SIGKILL) / Linux OOM Killer / JVM crash 등은 OS 가 즉시 죽여 JVM 어떤 코드도 실행 못 하므로 직접 로깅 불가능 → **간접 추적** 메커니즘 필요.
+
+### 내역
+- **신호별 핸들러 등록** (`installSignalHandlers()`):
+  - SIGTERM/SIGINT/SIGHUP 각각 `sun.misc.Signal.handle()` 로 등록 (Java 11/17/21 의 `jdk.unsupported` 모듈 통해 사용 가능).
+  - 핸들러 동작: `[Signal] Received SIG<NAME> (<num>) — initiating graceful shutdown` 로깅 후 `System.exit(0)` → 모든 shutdown hook 정상 트리거.
+  - 등록 실패(SecurityManager 거부 등) 는 warn 로 남기고 기본 JVM 동작 유지.
+  - 등록 직후 `[Signal] 신호 핸들러 등록 완료 — ... (SIGKILL 은 OS 가 직접 죽이므로 catch 불가)` 명시.
+- **비정상 종료 감지** (`checkPreviousShutdown()` + `writeShutdownMarker()`):
+  - 마커 파일: `${app.home:user.dir}/logs/.shutdown-marker` (기본 `/opt/genspark/webapp_dump/logs/.shutdown-marker`).
+  - 기동 직후(SpringApplication.run 이전): 마커 파일이 남아있으면 직전 셧다운이 비정상이었음을 의미 → WARN 로그 4줄 (원인 후보 + 직전 마커 정보 + OS 확인 명령어 3종).
+  - 새 마커 작성: `pidName=<pid>@<host>, startedAt=<ISO>, javaVersion=<v>`.
+  - shutdown hook (정상 종료 경로): 마커 삭제 후 `[Shutdown] Shutdown marker cleared — next start will see this as a clean exit` 로깅 → 다음 기동 시 부재 = 정상 종료였음을 추정.
+- **기존 shutdown hook 메시지 정리**: `[Shutdown] Application is shutting down (signal received)` → `[Shutdown] Application is shutting down` ((signal received) 는 이제 `[Signal] Received SIG... ` 가 별도 출력하므로 중복 제거).
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 정상.
+- 시나리오 1 — `kill -15 <pid>`:
+  - `[Signal] Received SIGTERM (15) — initiating graceful shutdown`
+  - `[Shutdown] Application is shutting down`
+  - `[Shutdown] Shutdown marker cleared — next start will see this as a clean exit`
+  - 마커 파일 삭제 확인.
+- 시나리오 2 — `kill -9 <pid>` 후 재기동:
+  - 마커 파일 잔존 확인 (직전 PID/시각/JDK 버전 보존).
+  - 다음 기동 시 `nohup.out` 에 `[Startup] ⚠ 직전 종료가 정상적으로 완료되지 않았습니다 ...` + 직전 마커 정보 + OS 확인 명령어 3종 출력.
+
+### 운영 메모
+- `[Startup]` WARN 은 logback 초기화(SpringApplication.run) 이전에 발생 → `heapdump-analyzer.log` 가 아니라 **`nohup.out`** 에 기록됨. `restart.sh` 가 nohup.out 을 자동 stream 하므로 운영자에게 자연스럽게 노출. 별도 추적이 필요하면 `tail -f /opt/genspark/webapp_dump/logs/nohup.out` 사용.
+- SIGKILL 은 POSIX 명세상 catch 불가 — 본 메커니즘은 "직전 셧다운이 정상이었는지" 추정만 제공. 정확한 원인 분리는 `dmesg | grep -i 'killed process'` (OOM), `journalctl -k --since '1 hour ago'`, `ls -lt logs/hs_err_pid*.log` (JVM crash dump) 등 OS 도구 병행 필요.
+
+## [2026-05-12] LLM 설정 UX 보강 + 경로 평문 노출 + 비-ADMIN 읽기 전용 + 버전 2.0.3
+
+**변경 파일:**
+- 수정: `pom.xml`, `run.sh`, `stop.sh`, `restart.sh`, `CLAUDE.md`
+- 수정: `src/main/resources/templates/llm-settings.html`
+- 수정: `src/main/resources/templates/settings.html`
+- 수정: `src/main/resources/templates/rag-settings.html`
+- 수정: `src/main/resources/templates/progress.html`
+- 수정: `src/main/java/com/heapdump/analyzer/config/SecurityConfig.java`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- LLM custom hint 의 경로가 절대 경로 하드코딩 → 환경 토큰(`${APP_HOME}`)으로 일반화.
+- API URL/Key 입력칸이 좁아 사내 게이트웨이 URL/긴 키가 화면 밖으로 잘려 가독성 저하.
+- MAT CLI Path / Heap Dump Directory 가 `***/파일명` 으로 마스킹돼 운영자가 실제 경로를 바로 확인 못함 (서버 로컬 경로라 마스킹 효용 낮음).
+- USER 계정도 Settings 페이지에서 토글/Save 버튼이 노출돼 잘못 누르면 권한 없음 에러 후 상태 꼬임. 조회는 가능하되 변경은 ADMIN 전용으로 명시 분리.
+- 변경 사항 누적 → 마이너 버전 2.0.1 → 2.0.3 으로 올림.
+
+### 내역
+- **[1] llm-settings.html customHint** — `/opt/genspark/webapp_dump/certs/heap-truststore.jks` → `${APP_HOME}/certs/heap-truststore.jks`. 다른 환경에 배포될 때 경로 안내 일반화.
+- **[2,3] llm-settings.html 입력 폭**:
+  - API URL 컨테이너 `max-width: 420px → 620px`, `min-width: 320px` 추가. 입력 패딩 `5px → 6px`.
+  - API Key 입력 `width: 200px → 380px` (`max-width: 100%` 안전망).
+- **[4] HeapDumpController.maskPath() 제거**:
+  - `getSettings()` 의 `heapDumpDirectory`, `getMatStatus()` 의 `mat.path` 가 `maskPath()` 를 거쳐 `***/이름` 으로 잘려서 응답 → 직접 `getHeapDumpDirectory()` / `getMatCliPath()` 를 그대로 반환.
+  - 다른 호출 지점이 없어 `private maskPath()` 메서드 자체 삭제.
+- **[5] 비-ADMIN 읽기 전용**:
+  - `SecurityConfig` — `import HttpMethod` 추가 후 다음 패턴 ADMIN 전용 지정 (조회 GET 은 인증 사용자 모두 허용 유지):
+    - `POST /api/settings/**` (general/database/RAG settings 모두 포함)
+    - `POST /api/llm/{enabled,config,apikey,test-connection,chat-prompt,chat-restore-mode}`
+    - `POST /api/servers/{scan-interval,ssh-local-user}`
+    - `POST /api/llm/{analyze,insight/save,chat,chat/stream}` 및 `DELETE /api/llm/insight/{filename}` 은 사용자 액션이라 그대로 인증 사용자 허용.
+  - `HeapDumpViewController` — `/settings`, `/settings/llm`, `/settings/rag` 3 핸들러에 `Authentication` 파라미터 + `model.addAttribute("isAdmin", ...)` 추가. `private boolean isAdmin(Authentication)` 헬퍼 신규.
+  - `settings.html` / `llm-settings.html` / `rag-settings.html` 모두:
+    - `<div class="container" th:attr="data-is-admin=${isAdmin}">` 마킹.
+    - `th:if="${!isAdmin}"` 노란 "읽기 전용" 배너 (자물쇠 + 안내 문구).
+    - 페이지 끝 인라인 IIFE: container 내부의 모든 `input/select/textarea` 에 `disabled = true`, `button` (단 `.refresh-btn` 과 배너 버튼 제외) 에 `disabled + opacity .5 + cursor not-allowed`, `label.tog/.switch/.tog` 에 `pointer-events: none + opacity .6`. llm/rag 는 비동기 로드 후에도 disabled 가 유지되도록 `setTimeout(apply, 600)` 한 번 더 호출.
+- **[6] 버전 2.0.1 → 2.0.3**:
+  - `pom.xml` `<version>` 갱신.
+  - `run.sh` / `stop.sh` / `restart.sh` 의 `heap-analyzer-2.0.1.jar` 패턴 `sed` 치환.
+  - `progress.html` 푸터: `v2.0.1` → `v2.0.3`.
+  - `CLAUDE.md` 빌드 안내 jar 경로 갱신.
+
+### 검증
+- `mvn clean package -DskipTests` 성공 → `target/heap-analyzer-2.0.3.jar` 생성 확인.
+- 옛 PID(2.0.1 으로 기동 중)는 restart.sh 의 grep 패턴이 새 jar 이름을 보므로 자동 종료 대상에서 누락 — 수동 `kill -15 <pid>` 후 다시 `bash restart.sh` 로 9.93s 만에 정상 기동(`Started HeapAnalyzerApplication`).
+- 운영 메모: 향후 마이너 버전 변경 시 기존 프로세스를 먼저 옛 jar 패턴으로 종료한 다음에 restart.sh 를 실행하거나, `pkill -f heap-analyzer` 로 일괄 종료 권장.
+- 기능 검증(요청):
+  1. ADMIN 로그인 → /settings·/settings/llm·/settings/rag 모두 입력/버튼 정상 동작, 노란 배너 미노출.
+  2. USER 로그인 → 세 페이지 모두 노란 자물쇠 배너 + 모든 입력/액션 버튼 disabled. POST 시도하면 백엔드도 403.
+  3. /settings 에서 MAT CLI Path / Heap Dump Directory 가 마스킹 없이 절대 경로 그대로 표시.
+  4. /settings/llm Custom hint 의 truststore 안내가 `${APP_HOME}/certs/heap-truststore.jks` 로 출력. API URL/Key 입력칸 가로 확장 확인.
+  5. /progress/{filename} 푸터 v2.0.3 표시.
+
+## [2026-05-12] AI 인사이트 — DB 저장 실패 로깅 강화 + 수동 재저장 버튼
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/service/AiInsightManager.java`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java`
+- 수정: `src/main/resources/templates/analyze.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도 (현상 진단)
+- `AiInsightManager.saveAiInsight()` 가 모든 예외를 `try { ... } catch (Exception e) { logger.error(...) }` 로 swallow → void 정상 반환.
+  - 결과: 컨트롤러 `analyzeLlm()` 의 외부 `try { saveAiInsight(...) } catch (saveEx)` 블록이 **실제로는 도달 불가능한 dead code**. `result.put("saved", true)` 가 항상 설정됨.
+  - 화면의 "저장실패" 배너(`#aiSaveErrorBanner`)도 결국 표시될 일 없음 — 사용자가 본 배너는 다른 경로(예: 분석 직후 즉시 페이지 이탈) 였을 가능성이 큼.
+- 또한 `AiInsightManager` 의 logger.error 가 stack trace 없이 메시지만 남겨 디버깅 어려움.
+- 저장 실패 시 분석 결과는 메모리에만 존재 → 페이지 이탈 시 영구 유실. 사용자가 수동으로 재저장할 방법이 없었음.
+
+### 내역
+- **AiInsightManager.saveAiInsight()**:
+  - logger.error 에 `type=...` + 4번째 인자로 `e` 추가 → stack trace 출력.
+  - `throw new RuntimeException("AI 인사이트 DB 저장 실패: ...", e)` rethrow → 컨트롤러 try/catch 가 실제로 catch 함.
+  - JavaDoc 에 "실패 시 RuntimeException 으로 rethrow" 명시.
+- **HeapDumpController.analyzeLlm()** catch 블록:
+  - 로그에 `type` 필드 추가 (간결화 — stack trace 는 AiInsightManager 가 이미 출력).
+  - `result.saveError` 를 prefix 없이 원본 메시지로 변경 (UI 가 컨텍스트 문구 조립).
+  - **신규: `result.retryPayload`** — 저장 실패 시 보낸 인사이트 데이터를 응답에 포함 → 화면이 그대로 들고 있다 수동 저장 시 재전송.
+- **HeapDumpController 신규 엔드포인트 `POST /api/llm/insight/save`**:
+  - Body: `{ "filename": "...", "insightData": { ... } }`.
+  - 검증: filename / insightData 누락 시 400 + errorCode `MISSING_FILENAME`/`MISSING_PAYLOAD`.
+  - `analyzerService.saveAiInsight(...)` 호출. 성공: `{ success:true, savedTo:"database" }`. 실패: 500 + `{ success:false, errorCode:"SAVE_FAILED", error:... }`.
+  - 모든 경로 logger 출력: `[AI-Insight][SAVE-RETRY] 수동 저장 요청/성공/실패`.
+- **analyze.html — 저장 실패 시 수동 재시도 UX**:
+  - `_aiUnsavedPayload` 전역 변수 추가 (자동 저장 실패 시 보관, 성공/재분석 시 클리어).
+  - `aiSaveErrorBanner` 마크업: `flex-wrap` 허용 + 우측에 노란색 "저장 재시도" 버튼 추가 (회전 화살표 SVG 아이콘).
+  - 안내 문구: `결과를 잃을 수 있습니다` → `"저장 재시도" 를 누르거나, 페이지를 벗어나기 전에 재시도하세요`.
+  - `showAiResult()`: 저장 실패 분기에서 `_aiUnsavedPayload = result.retryPayload || _buildRetryPayloadFromResult(result)` 로 캐시. 성공 분기에서 클리어. 재시도 버튼 enabled 복구.
+  - 신규 함수 `retrySaveAiInsight()`: `POST /api/llm/insight/save` 호출. in-flight 동안 버튼 비활성화 + "저장 중…" 표시. 성공 시 배너 닫고 "저장됨" indicator + 경로 배너로 전환. 실패 시 alert + 버튼 복구.
+  - 신규 함수 `_buildRetryPayloadFromResult()`: 컨트롤러가 `retryPayload` 를 안 보내준 경우 result.model/latencyMs/data 에서 동등 payload 재조립 (구버전 호환).
+  - `_doStartAiAnalysis()` 시작 시 `_aiUnsavedPayload = null` 클리어.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 성공, `Started HeapAnalyzerApplication in 9.33 seconds`.
+- 기능 검증(요청):
+  1. `/analyze/{filename}` → AI 분석 시작 → 정상 시 `[AI-Insight][SAVE] 저장 완료` 로그 + "저장됨" 배지.
+  2. DB 일시 장애 재현(예: HEAPDB 일시 차단) → 분석 후 `[AI-Insight] Failed to save to DB ... type=DataAccessException, msg=...` (stack trace 포함) + 컨트롤러 `[AI-Insight][SAVE] 저장 실패` 로그 동시 출력. 화면에 노란 배너 + "저장 재시도" 버튼 노출.
+  3. DB 복구 후 "저장 재시도" 클릭 → `[AI-Insight][SAVE-RETRY] 수동 저장 요청 → 성공` 로그. 배너 닫히고 "저장됨" 표시 전환.
+
+## [2026-05-12] Transfer Logs — 긴 에러 메시지를 버튼+팝오버로 분리
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/server-logs.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `/servers/logs` 의 "에러" 컬럼이 인라인 텍스트 + hover 펼침 방식이라, 긴 에러 메시지가 들어오면 hover 시 다른 행이 압축돼 보이거나 셀이 부풀어 다른 컬럼이 좁아져 가독성 저하.
+- 에러 표시를 작은 "에러 보기" 버튼으로 변경하고 클릭 시 별도 팝오버에서 전체 메시지를 보도록 분리. 행 높이가 항상 일정.
+
+### 내역
+- **CSS**: 기존 `.td-err` (인라인 + `:hover { white-space: normal }`) 제거. 다음 신규 스타일 추가:
+  - `.err-btn` — 작은 빨간 pill 형태 버튼 ("에러 보기"). 행 높이에 영향 없음.
+  - `.err-pop` — body 직속 절대위치 팝오버 (table overflow 의 영향 안 받음). 헤더(제목/복사/닫기) + body(`pre-wrap`, `max-height: 320px`, 스크롤).
+- **renderRow()** — `errorMessage` 가 있으면 `<button class="err-btn" data-err="..." onclick="showErrorPopover(this)">에러 보기</button>`, 없으면 `-`.
+- **신규 JS 함수**:
+  - `showErrorPopover(btn)` — 버튼 위치 기준 아래 우선 배치, 화면 하단 부족 시 위로 펼침. `body.textContent` 로 XSS 이중 방어.
+  - `hideErrorPopover()`, `copyErrorPopover()` (`navigator.clipboard` 우선, `execCommand` 폴백, "복사됨" 1.2s 플래시).
+  - 외부 클릭 / Esc / window resize / scroll(capture) 시 자동 닫기. 팝오버 내부 클릭은 무시.
+- 팝오버 DOM 은 단일 인스턴스로 body 직속 (`<div id="errPopover">`).
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 성공, `Started HeapAnalyzerApplication in 9.53 seconds`.
+- 기능 검증(요청): `/servers/logs` 접근 → FAILED 행의 "에러 보기" 클릭 → 팝오버에 전체 에러 텍스트 표시. 다른 행 클릭/Esc/스크롤로 닫힘. "복사" 버튼으로 클립보드 복사 확인.
+
+## [2026-05-12] 사내 폐쇄망 LLM 게이트웨이(OpenAI 호환) 연동 호환성 개선
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/service/LlmConfigService.java`
+- 수정: `src/main/resources/templates/llm-settings.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 사내 LLM 매뉴얼이 OpenAI 파이썬 SDK 예시 코드 형태로 배포됨 (`base_url = "https://apigtw.../openapi/model/<UUID>"`).
+- OpenAI SDK 는 base_url 뒤에 `/chat/completions` 를 자동 부착하지만, 본 앱은 사용자가 입력한 URL 을 그대로 호출 → base_url 만 그대로 붙여 넣으면 404(`ione.apigtw.error.apisvc`) 발생.
+- 사용자가 SDK 의 자동 부착 동작을 모르고 base_url 만 등록해도 동작하도록 보정 + UI 안내 강화.
+
+### 내역
+- **LlmConfigService.normalizeChatCompletionsUrl(url)** 헬퍼 추가:
+  - 비-Claude provider 의 URL 이 `/chat/completions`/`/completions`/`/messages` 로 끝나지 않으면 자동으로 `/chat/completions` 접미 부착.
+  - 보정 시 `[LLM] API URL 자동 보정 — '/chat/completions' 접미 부착: A → B` warn 로그.
+  - 쿼리스트링 보존 (`?key=value` 분리 후 path 만 검사 → `path/chat/completions?...` 로 재조립).
+  - Claude 는 `/v1/messages` 가 정식 경로이므로 보정 대상에서 제외.
+- 적용 지점 (총 4 곳): `testLlmConnection()` / `callLlmAnalysis()` / `callLlmChat()` / `callLlmChatStream()` 모든 `new URL(llmApiUrl)` 호출을 `new URL(normalizeChatCompletionsUrl(llmApiUrl))` 로 교체.
+- **llm-settings.html — `customHint` 패널 추가**: provider=`custom` 선택/저장값일 때만 노출되는 녹색 안내 박스. 내용:
+  - URL 끝은 `/chat/completions` 이어야 하며 누락 시 자동 부착됨을 명시 (OpenAI SDK 동등 동작).
+  - 사내 게이트웨이 URL 예시: `https://apigtw.example.com/openapi/model/<UUID>/chat/completions`.
+  - 인증: `Authorization: Bearer <API Key>` 자동 부착.
+  - Model: 게이트웨이에 등록된 모델명 그대로 입력 (예: `share-gpt-oss-120b`).
+  - SSL: 사내 사설 CA 사용 시 SSL Verify OFF 또는 `certs/heap-truststore.jks` 등록 안내.
+- `loadLlmSettings()` / `onProviderChange()` 양쪽에서 customHint 토글 추가.
+
+### 동작 원리 (사내 게이트웨이 호환)
+1. 사용자는 매뉴얼 base_url(`https://apigtw.../openapi/model/<UUID>`) 을 그대로 API URL 에 붙여넣어도 됨.
+2. provider=`custom` 인 경우 호출 직전 `normalizeChatCompletionsUrl()` 가 `/chat/completions` 자동 부착 → `https://apigtw.../openapi/model/<UUID>/chat/completions` 로 호출.
+3. Body/헤더는 OpenAI Chat Completions 호환 (`Authorization: Bearer`, `model/messages/max_tokens`).
+4. SSL: 운영은 `restart.sh` 가 `certs/heap-truststore.jks` 자동 부착 (사내 CA 신뢰), 개발/임시는 settings 의 SSL Verify OFF.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 성공, `Started HeapAnalyzerApplication in 10.29 seconds`.
+- 기능 검증(요청): /settings/llm 에서 provider=Custom 선택 → URL 에 `https://apigtw.gapdev.shinhan.com/openapi/model/<UUID>` 만 입력하고 저장 → Test Connection 시 로그에 `[LLM] API URL 자동 보정` warn → `[LLM-Test] 연결 테스트 시작 — url=...완성된 URL...` 확인. 200 응답 시 성공, 비정상 시 `[LLM-Test] 연결 테스트 실패 — provider/url/status/errorCode/latency/body` 전체 로그 확인.
+
+## [2026-05-12] LLM 연결/테스트 에러 서버 로그 보강 + 404 안내 메시지 보완
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/service/LlmConfigService.java`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 사내 폐쇄망 LLM 게이트웨이 호출 시 화면에는 `HTTP 404: {"errorCode":"ione.apigtw.error.apisvc",...}` 가 노출되지만 서버 로그에는 흔적이 남지 않아 운영 추적이 불가능.
+- `testLlmConnection()` 의 HTTP 4xx/5xx 응답 본문 / `callLlmChat()` / `callLlmChatStream()` 의 HTTP 에러·네트워크 예외 경로가 result Map 에만 적재되고 logger 호출이 누락된 상태였음 (`callLlmAnalysis()` 만 충실히 로깅).
+
+### 내역
+- **LlmConfigService.testLlmConnection()**:
+  - 시작 시 `[LLM-Test] 연결 테스트 시작 — provider/model/url/sslVerify` info 로그 추가.
+  - 성공 경로 `[LLM-Test] 연결 테스트 성공` info 로그 추가.
+  - HTTP 비정상 경로 `[LLM-Test] 연결 테스트 실패 — provider/url/status/errorCode/latency/body` error 로그 추가, result 에 `errorCode` 필드도 함께 적재.
+  - `SocketTimeoutException` / `ConnectException` / `UnknownHostException` / `SSLException` 별도 catch 로 분리 → 각각 전용 errorCode + 한국어 메시지 + error 로그.
+  - 일반 `Exception` catch 는 stack trace 포함 logger.error.
+  - API 키 / URL 미설정 거부 케이스도 warn 로그 추가.
+- **LlmConfigService.callLlmChat()** HTTP 에러 / 네트워크 예외 경로 logger.error 추가 (provider/url/status/errorCode/elapsed/body), `SSLException` 전용 catch 추가.
+- **LlmConfigService.callLlmChatStream()** HTTP 에러 / 네트워크 예외 경로 logger.error 추가, `SSLException` 전용 catch 추가.
+- **buildHttpErrorMessage(404)** — 사내 게이트웨이 케이스 반영. 기존 `/chat/completions` 만 언급하던 문구를 (1) URL 경로/모델 UUID 정확성, (2) 모델 등록·활성 여부, (3) 키-모델 권한 매핑(권한 없음을 404 로 회신하는 정책 가능성) 3 가지 체크리스트로 확장.
+
+### 사내 LLM 404 분석 (참고)
+- `errorCode = ione.apigtw.error.apisvc` 는 게이트웨이는 통과했으나 백엔드 API Service 단계에서 라우팅 대상 자원을 못 찾은 케이스.
+- `path = /openapi/model/<UUID>` 형태 → 모델 단위 라우팅. 가능 원인: 모델 UUID 오타/미등록, 호출 키에 해당 모델 권한 없음(사내 게이트웨이는 권한 없음을 404 로 위장), URL 패턴 불일치, 환경(dev/stg/prod) UUID 분리.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 성공, `Started HeapAnalyzerApplication in 9.32 seconds`.
+- 다음 LLM 호출/테스트 발생 시 `logs/heapdump-analyzer.log` 에 `[LLM-Test]` / `[AI-Chat]` / `[AI-Chat-Stream]` HTTP 에러·예외 로그가 남는지 확인 예정.
+
+## [2026-05-12] 계정 관리 페이지 — 탭 전환 시 최신 데이터 갱신
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/controller/AdminController.java`
+- 수정: `src/main/resources/templates/admin/users.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `/admin/users` 4 개 탭(사용자/현재접속/접속이력/계정신청)이 첫 진입 시에만 데이터를 로드하고, 다시 돌아올 때는 캐시된 화면을 그대로 보여주는 한계.
+- 다른 관리자가 사용자를 추가/수정하거나 신청이 들어와도 페이지 새로고침 전까지 반영되지 않음.
+
+### 내역
+- **AdminController.java** — `GET /api/admin/users` JSON 엔드포인트 신규 추가:
+  - 응답 필드: `id`, `username`, `displayName`, `role`, `enabled`, `createdAt`(yyyy-MM-dd HH:mm).
+  - `@PreAuthorize("hasRole('ADMIN')")` 클래스 레벨 적용 그대로 상속, ADMIN 외 접근 차단.
+- **users.html** — 탭 전환 동작 변경:
+  - `switchTab()` 의 `_lhLoaded`/`_reqLoaded`/`_asLoaded` 1-회성 게이트 제거 → 탭 클릭마다 무조건 fetch.
+  - 사용자 목록 탭은 기존에 Thymeleaf `th:each` 서버 렌더에만 의존 → 탭 재진입 시 갱신 불가능했음. 신규 `loadUsers()` + `renderUsers()` 함수가 JSON API 결과로 tbody 재렌더(badge / action 버튼 dataset 포함, `th:each` 마크업과 동일 구조).
+  - 펜딩 배지(`refreshPendingCount()`)도 탭 전환마다 호출 → 카운트 항상 최신.
+  - 미사용 변수 `_lhLoaded`/`_reqLoaded`/`_asLoaded` 선언부 정리.
+- 초기 페이지 로드는 기존 `th:each` 가 그대로 처리 → FOUC/추가 fetch 없음. 탭 재진입에서만 API 호출.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 성공, `Started HeapAnalyzerApplication in 9.28 seconds`.
+- `GET /api/admin/users` 비인증 호출 → 302 (로그인 리다이렉트, 정상).
+
+## [2026-05-12] Tomcat Access Log 활성화
+
+**변경 파일:**
+- 수정: `src/main/resources/application.properties`
+- 수정: `CHANGELOG.md`
+- 신규 디렉토리: `/opt/genspark/webapp_dump/logs/access/`
+
+### 변경 의도
+- HTTP 요청 추적을 위한 Tomcat 내장 access log 도입.
+- 애플리케이션 로그(`heapdump-analyzer.log`)와 분리하기 위해 별도 하위 디렉토리(`logs/access/`)에 생성.
+
+### 내역
+- `server.tomcat.accesslog.*` 속성 9 개 추가:
+  - `enabled=true`
+  - `directory=/opt/genspark/webapp_dump/logs/access`
+  - `prefix=access`, `suffix=.log`, `file-date-format=.yyyy-MM-dd`
+  - `pattern=%h %l %u %t "%r" %s %b %D "%{Referer}i" "%{User-Agent}i"` (`%D` = 응답 소요 ms)
+  - `rotate=true`, `rename-on-rotate=true` — 활성 파일은 항상 `access.log`, 자정 회전 시 `access.YYYY-MM-DD.log`
+  - `buffered=false` — AccessLogValve 기본값(true)은 즉시 flush 되지 않아 검증/디버깅 불편. 운영 트래픽 부하 시 재고려 가능
+  - `encoding=UTF-8`, `locale=ko_KR`
+- 보존 기간 자동 삭제는 내장 Tomcat 미지원 — 필요 시 OS `logrotate` / cron 으로 별도 정리 (앱 로그의 `logging.file.max-history`와 다른 점 주의).
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 성공, `Started HeapAnalyzerApplication in 9.97 seconds`.
+- `curl http://localhost:18080/login` 후 `/opt/genspark/webapp_dump/logs/access/access.log` 에 접속 라인 즉시 기록 확인 (status code, bytes, 응답 ms, Referer/UA 모두 포함).
+
 ## [2026-05-12] Phase 4B — HeapDumpController View / API 분리
 
 **변경 파일:**

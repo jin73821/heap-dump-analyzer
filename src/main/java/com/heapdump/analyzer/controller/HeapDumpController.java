@@ -1150,13 +1150,65 @@ public class HeapDumpController {
                 logger.info("[AI-Insight][SAVE] 저장 완료 — file='{}', severity={}", filename, severity);
             } catch (Exception saveEx) {
                 // ── [Req6] 저장 실패 에러 처리: 분석 결과는 반환하되 저장 실패 알림 ──
-                logger.error("[AI-Insight][SAVE] 저장 실패 — file='{}', error={}", filename, saveEx.getMessage());
+                // AiInsightManager 에서 이미 stack trace 포함 logger.error 출력. 여기서는 컨트롤러 컨텍스트만 추가.
+                logger.error("[AI-Insight][SAVE] 저장 실패 — file='{}', type={}, msg={}",
+                    filename, saveEx.getClass().getSimpleName(), saveEx.getMessage());
                 result.put("saved", false);
-                result.put("saveError", "결과 파일 저장에 실패했습니다: " + saveEx.getMessage());
+                result.put("saveError", saveEx.getMessage());
                 result.put("saveErrorCode", "SAVE_FAILED");
+                // ── 재시도용 payload 포함: 화면이 인사이트 데이터를 보존했다 수동 저장 시 재전송 ──
+                result.put("retryPayload", toStore);
             }
         }
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * AI 인사이트 수동 저장 (자동 저장 실패 시 재시도용).
+     * Body: { "filename": "...", "insightData": { ... } }
+     *  - insightData 는 /api/llm/analyze 응답의 retryPayload 그대로 또는 동일 구조의 Map.
+     */
+    @PostMapping("/api/llm/insight/save")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> saveAiInsightManual(@RequestBody Map<String, Object> body) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        String filename = (String) body.get("filename");
+        Object dataObj = body.get("insightData");
+
+        if (filename == null || filename.trim().isEmpty()) {
+            logger.warn("[AI-Insight][SAVE-RETRY] 거부 — filename 누락");
+            resp.put("success", false);
+            resp.put("errorCode", "MISSING_FILENAME");
+            resp.put("error", "filename 이 비어있습니다.");
+            return ResponseEntity.badRequest().body(resp);
+        }
+        if (!(dataObj instanceof Map)) {
+            logger.warn("[AI-Insight][SAVE-RETRY] 거부 — insightData 누락 또는 형식 오류 (file='{}')", filename);
+            resp.put("success", false);
+            resp.put("errorCode", "MISSING_PAYLOAD");
+            resp.put("error", "insightData 가 비어있거나 형식이 올바르지 않습니다.");
+            return ResponseEntity.badRequest().body(resp);
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> insightData = (Map<String, Object>) dataObj;
+
+        logger.info("[AI-Insight][SAVE-RETRY] 수동 저장 요청 — file='{}', severity={}, model={}",
+            filename, insightData.get("severity"), insightData.get("model"));
+
+        try {
+            analyzerService.saveAiInsight(filename, insightData);
+            logger.info("[AI-Insight][SAVE-RETRY] 수동 저장 성공 — file='{}'", filename);
+            resp.put("success", true);
+            resp.put("savedTo", "database");
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            logger.error("[AI-Insight][SAVE-RETRY] 수동 저장 실패 — file='{}', type={}, msg={}",
+                filename, e.getClass().getSimpleName(), e.getMessage());
+            resp.put("success", false);
+            resp.put("errorCode", "SAVE_FAILED");
+            resp.put("error", e.getMessage());
+            return ResponseEntity.status(500).body(resp);
+        }
     }
 
     @GetMapping("/api/llm/insight/{filename}")
@@ -1192,6 +1244,210 @@ public class HeapDumpController {
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", deleted);
         return ResponseEntity.ok(res);
+    }
+
+    // ── [NEW] API: Compare 데이터/AI 분석 ──────────────────────────────
+
+    /**
+     * Compare 패널이 AI 프롬프트 빌더에 사용할 JSON 데이터.
+     * 두 덤프 모두 분석 완료되어 있어야 한다.
+     */
+    @GetMapping("/api/compare/data")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> compareData(
+            @RequestParam String base,
+            @RequestParam String target) {
+        base   = FilenameValidator.validate(base);
+        target = FilenameValidator.validate(target);
+
+        HeapAnalysisResult baseResult   = analyzerService.getCachedResult(base);
+        HeapAnalysisResult targetResult = analyzerService.getCachedResult(target);
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (baseResult == null || targetResult == null) {
+            resp.put("success", false);
+            resp.put("errorCode", "NOT_ANALYZED");
+            List<String> missing = new ArrayList<>();
+            if (baseResult == null)   missing.add(base);
+            if (targetResult == null) missing.add(target);
+            resp.put("error", "두 덤프 모두 분석되어 있어야 합니다. 누락: " + String.join(", ", missing));
+            resp.put("missing", missing);
+            return ResponseEntity.status(404).body(resp);
+        }
+
+        // 베이스/타겟 메타
+        Map<String, Object> baseMeta = new LinkedHashMap<>();
+        baseMeta.put("filename",          base);
+        baseMeta.put("analyzedAt",        baseResult.getAnalysisTime());
+        baseMeta.put("usedHeap",          baseResult.getUsedHeapSize());
+        baseMeta.put("totalHeap",         baseResult.getTotalHeapSize());
+        baseMeta.put("heapUsagePercent",  baseResult.getHeapUsagePercent());
+        baseMeta.put("totalObjects",      baseResult.getTotalObjects());
+        baseMeta.put("totalClasses",      baseResult.getTotalClasses());
+        baseMeta.put("suspectCount",      baseResult.getLeakSuspects()    != null ? baseResult.getLeakSuspects().size()    : 0);
+        baseMeta.put("threadCount",       baseResult.getThreadInfos()     != null ? baseResult.getThreadInfos().size()     : 0);
+
+        Map<String, Object> targetMeta = new LinkedHashMap<>();
+        targetMeta.put("filename",         target);
+        targetMeta.put("analyzedAt",       targetResult.getAnalysisTime());
+        targetMeta.put("usedHeap",         targetResult.getUsedHeapSize());
+        targetMeta.put("totalHeap",        targetResult.getTotalHeapSize());
+        targetMeta.put("heapUsagePercent", targetResult.getHeapUsagePercent());
+        targetMeta.put("totalObjects",     targetResult.getTotalObjects());
+        targetMeta.put("totalClasses",     targetResult.getTotalClasses());
+        targetMeta.put("suspectCount",     targetResult.getLeakSuspects()   != null ? targetResult.getLeakSuspects().size()   : 0);
+        targetMeta.put("threadCount",      targetResult.getThreadInfos()    != null ? targetResult.getThreadInfos().size()    : 0);
+
+        resp.put("success", true);
+        resp.put("base",   baseMeta);
+        resp.put("target", targetMeta);
+        resp.put("kpi",            buildKpiDiff(baseResult, targetResult));
+        resp.put("classDiffs",     buildClassDiffs(baseResult, targetResult, 50));
+        resp.put("histogramDiffs", buildHistogramDiffs(baseResult, targetResult, 30));
+        resp.put("suspectDiffs",   buildSuspectDiffs(baseResult, targetResult));
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * Compare 전용 AI 분석. AiInsightManager 를 합성 키로 재사용.
+     * compareKey = "__compare__:" + sha256(base + "|" + target).substring(0, 40)
+     */
+    @PostMapping("/api/llm/compare/analyze")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> analyzeCompareLlm(@RequestBody Map<String, Object> body) {
+        String base   = (String) body.get("base");
+        String target = (String) body.get("target");
+        String prompt = (String) body.get("prompt");
+        Boolean save  = body.get("save") instanceof Boolean ? (Boolean) body.get("save") : true;
+
+        if (base == null || target == null || base.isEmpty() || target.isEmpty()) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("errorCode", "MISSING_PARAMS");
+            err.put("error", "base, target 두 파라미터가 모두 필요합니다.");
+            return ResponseEntity.badRequest().body(err);
+        }
+        base   = FilenameValidator.validate(base);
+        target = FilenameValidator.validate(target);
+
+        if (prompt == null || prompt.trim().isEmpty()) {
+            logger.warn("[AI-Compare] 분석 요청 거부 — 프롬프트 비어있음 (base='{}', target='{}')", base, target);
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("errorCode", "EMPTY_PROMPT");
+            err.put("error", "분석 프롬프트가 비어있습니다.");
+            return ResponseEntity.badRequest().body(err);
+        }
+        if (!prompt.contains("==") || prompt.trim().length() < 50) {
+            logger.warn("[AI-Compare] 프롬프트 데이터 부족 (base='{}', target='{}', len={})", base, target, prompt.length());
+        }
+
+        String key = compareKey(base, target);
+        logger.info("[AI-Compare][REQ] base='{}', target='{}', key='{}', promptLen={}, save={}",
+            base, target, key, prompt.length(), save);
+
+        long reqStart = System.currentTimeMillis();
+        Map<String, Object> result = analyzerService.callLlmAnalysis(prompt);
+        long totalElapsed = System.currentTimeMillis() - reqStart;
+
+        boolean success = Boolean.TRUE.equals(result.get("success"));
+        Object dataObj  = result.get("data");
+        String severity = null;
+        if (dataObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> dm = (Map<String, Object>) dataObj;
+            severity = (String) dm.get("severity");
+        }
+        if (success) {
+            logger.info("[AI-Compare][RESULT] 성공 — key='{}', severity={}, elapsed={}ms, model={}",
+                key, severity, totalElapsed, result.get("model"));
+        } else {
+            logger.warn("[AI-Compare][RESULT] 실패 — key='{}', errorCode={}, elapsed={}ms, error={}",
+                key, result.get("errorCode"), totalElapsed, result.get("error"));
+        }
+
+        if (success && Boolean.TRUE.equals(save)) {
+            Map<String, Object> toStore = new LinkedHashMap<>();
+            toStore.put("model",     result.get("model"));
+            toStore.put("latencyMs", result.get("latencyMs"));
+            // compare 컨텍스트 식별용 메타
+            toStore.put("compareBase",   base);
+            toStore.put("compareTarget", target);
+            if (dataObj instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> dataMap = (Map<String, Object>) dataObj;
+                toStore.putAll(dataMap);
+            }
+            try {
+                analyzerService.saveAiInsight(key, toStore);
+                result.put("saved", true);
+                result.put("savedTo", "database");
+                result.put("analysedAt", System.currentTimeMillis());
+            } catch (Exception saveEx) {
+                logger.error("[AI-Compare][SAVE] 저장 실패 — key='{}', msg={}", key, saveEx.getMessage());
+                result.put("saved", false);
+                result.put("saveError", saveEx.getMessage());
+                result.put("saveErrorCode", "SAVE_FAILED");
+                result.put("retryPayload", toStore);
+            }
+        }
+        result.put("base", base);
+        result.put("target", target);
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/api/llm/compare/insight")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getCompareInsight(
+            @RequestParam String base,
+            @RequestParam String target) {
+        base   = FilenameValidator.validate(base);
+        target = FilenameValidator.validate(target);
+        String key = compareKey(base, target);
+        Map<String, Object> insight = analyzerService.loadAiInsight(key);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (insight == null) {
+            resp.put("found", false);
+            resp.put("base", base);
+            resp.put("target", target);
+            return ResponseEntity.ok(resp);
+        }
+        insight.put("found", true);
+        insight.put("savedTo", "database");
+        insight.put("base", base);
+        insight.put("target", target);
+        return ResponseEntity.ok(insight);
+    }
+
+    @DeleteMapping("/api/llm/compare/insight")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> deleteCompareInsight(
+            @RequestParam String base,
+            @RequestParam String target) {
+        base   = FilenameValidator.validate(base);
+        target = FilenameValidator.validate(target);
+        String key = compareKey(base, target);
+        logger.info("[AI-Compare][DELETE] key='{}' (base='{}', target='{}')", key, base, target);
+        boolean deleted = analyzerService.deleteAiInsight(key);
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", deleted);
+        res.put("base", base);
+        res.put("target", target);
+        return ResponseEntity.ok(res);
+    }
+
+    /** "__compare__:" + sha256(base+"|"+target).substring(0,40). 순서 바뀌면 다른 키. */
+    private static String compareKey(String base, String target) {
+        try {
+            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = md.digest((base + "|" + target).getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return "__compare__:" + sb.substring(0, 40);
+        } catch (java.security.NoSuchAlgorithmException e) {
+            // SHA-256 은 모든 표준 JVM에 있어 사실상 불가
+            return "__compare__:" + Math.abs((base + "|" + target).hashCode());
+        }
     }
 
     // ── [NEW] API: AI 채팅 ─────────────────────────────────────────
@@ -1560,7 +1816,7 @@ public class HeapDumpController {
     public ResponseEntity<Map<String, Object>> getSettings() {
         Map<String, Object> settings = new LinkedHashMap<>();
         settings.put("keepUnreachableObjects", analyzerService.isKeepUnreachableObjects());
-        settings.put("heapDumpDirectory",      maskPath(analyzerService.getHeapDumpDirectory()));
+        settings.put("heapDumpDirectory",      analyzerService.getHeapDumpDirectory());
         settings.put("cachedResults",          analyzerService.getCachedResultCount());
 
         // System info (JVM runtime only — no OS/vendor details)
@@ -1590,7 +1846,7 @@ public class HeapDumpController {
 
         // MAT CLI status (ready/status only — no path or file permission details)
         Map<String, Object> mat = new LinkedHashMap<>();
-        mat.put("path",       maskPath(analyzerService.getMatCliPath()));
+        mat.put("path",       analyzerService.getMatCliPath());
         mat.put("ready",      analyzerService.isMatCliReady());
         mat.put("statusMessage", analyzerService.getMatCliStatusMessage());
         String matHeapStr = analyzerService.getMatHeapSizeString();
@@ -1680,14 +1936,6 @@ public class HeapDumpController {
         settings.put("database", db);
 
         return ResponseEntity.ok(settings);
-    }
-
-    /** 절대 경로를 마스킹하여 파일/디렉토리 이름만 반환 */
-    private String maskPath(String absolutePath) {
-        if (absolutePath == null || absolutePath.isEmpty()) return "-";
-        java.nio.file.Path p = java.nio.file.Paths.get(absolutePath);
-        java.nio.file.Path fileName = p.getFileName();
-        return fileName != null ? "***/" + fileName.toString() : "-";
     }
 
     // ── 내부 헬퍼 ─────────────────────────────────────────────────
@@ -1871,6 +2119,144 @@ public class HeapDumpController {
             }
         }
         return map;
+    }
+
+    // ── Compare 빌더 4종 ─────────────────────────────────────────────
+
+    public List<ClassDiff> buildClassDiffs(HeapAnalysisResult base, HeapAnalysisResult target, int limit) {
+        Map<String, Long> baseMap   = buildClassSizeMap(base);
+        Map<String, Long> targetMap = buildClassSizeMap(target);
+        Set<String> all = new HashSet<>();
+        all.addAll(baseMap.keySet());
+        all.addAll(targetMap.keySet());
+
+        List<ClassDiff> diffs = new ArrayList<>();
+        for (String cls : all) {
+            long bs = baseMap.getOrDefault(cls, 0L);
+            long ts = targetMap.getOrDefault(cls, 0L);
+            long d  = ts - bs;
+            if (d != 0) diffs.add(new ClassDiff(cls, bs, ts, d));
+        }
+        diffs.sort((a, b) -> Long.compare(Math.abs(b.getDelta()), Math.abs(a.getDelta())));
+        if (limit > 0 && diffs.size() > limit) {
+            return new ArrayList<>(diffs.subList(0, limit));
+        }
+        return diffs;
+    }
+
+    public List<HistogramDiff> buildHistogramDiffs(HeapAnalysisResult base, HeapAnalysisResult target, int limit) {
+        Map<String, HistogramEntry> baseMap   = new HashMap<>();
+        Map<String, HistogramEntry> targetMap = new HashMap<>();
+        if (base.getHistogramEntries() != null) {
+            for (HistogramEntry h : base.getHistogramEntries()) {
+                if (h.getClassName() != null) baseMap.put(h.getClassName(), h);
+            }
+        }
+        if (target.getHistogramEntries() != null) {
+            for (HistogramEntry h : target.getHistogramEntries()) {
+                if (h.getClassName() != null) targetMap.put(h.getClassName(), h);
+            }
+        }
+        Set<String> all = new HashSet<>();
+        all.addAll(baseMap.keySet());
+        all.addAll(targetMap.keySet());
+
+        List<HistogramDiff> out = new ArrayList<>();
+        for (String cls : all) {
+            HistogramEntry b = baseMap.get(cls);
+            HistogramEntry t = targetMap.get(cls);
+            long bc = b != null ? b.getObjectCount()  : 0L;
+            long tc = t != null ? t.getObjectCount()  : 0L;
+            long br = b != null ? b.getRetainedHeap() : 0L;
+            long tr = t != null ? t.getRetainedHeap() : 0L;
+            if (bc == tc && br == tr) continue;
+            out.add(new HistogramDiff(cls, bc, tc, br, tr));
+        }
+        out.sort((a, b) -> Long.compare(Math.abs(b.getRetainedDelta()), Math.abs(a.getRetainedDelta())));
+        if (limit > 0 && out.size() > limit) {
+            return new ArrayList<>(out.subList(0, limit));
+        }
+        return out;
+    }
+
+    public List<SuspectDiff> buildSuspectDiffs(HeapAnalysisResult base, HeapAnalysisResult target) {
+        Map<String, LeakSuspect> baseMap   = new LinkedHashMap<>();
+        Map<String, LeakSuspect> targetMap = new LinkedHashMap<>();
+        if (base.getLeakSuspects() != null) {
+            for (LeakSuspect s : base.getLeakSuspects()) {
+                baseMap.put(normalizeSuspectKey(s.getTitle()), s);
+            }
+        }
+        if (target.getLeakSuspects() != null) {
+            for (LeakSuspect s : target.getLeakSuspects()) {
+                targetMap.put(normalizeSuspectKey(s.getTitle()), s);
+            }
+        }
+        List<SuspectDiff> out = new ArrayList<>();
+        // NEW & PERSIST & SEVERITY_CHANGED — target 기준 순회
+        for (Map.Entry<String, LeakSuspect> e : targetMap.entrySet()) {
+            String key = e.getKey();
+            LeakSuspect t = e.getValue();
+            LeakSuspect b = baseMap.get(key);
+            String state;
+            String baseSev = b != null ? b.getSeverity() : null;
+            String targetSev = t.getSeverity();
+            if (b == null) {
+                state = "NEW";
+            } else if (!eqNullSafe(baseSev, targetSev)) {
+                state = "SEVERITY_CHANGED";
+            } else {
+                state = "PERSIST";
+            }
+            out.add(new SuspectDiff(key, state, t.getTitle(), t.getCategory(),
+                    t.getDescription(), baseSev, targetSev));
+        }
+        // GONE — base 에만 존재
+        for (Map.Entry<String, LeakSuspect> e : baseMap.entrySet()) {
+            if (!targetMap.containsKey(e.getKey())) {
+                LeakSuspect b = e.getValue();
+                out.add(new SuspectDiff(e.getKey(), "GONE", b.getTitle(), b.getCategory(),
+                        b.getDescription(), b.getSeverity(), null));
+            }
+        }
+        // 상태 우선순위 정렬: SEVERITY_CHANGED > NEW > GONE > PERSIST
+        out.sort(Comparator.comparingInt(d -> suspectStateOrder(d.getState())));
+        return out;
+    }
+
+    public KpiDiff buildKpiDiff(HeapAnalysisResult base, HeapAnalysisResult target) {
+        int baseSuspects   = base.getLeakSuspects()    != null ? base.getLeakSuspects().size()    : 0;
+        int targetSuspects = target.getLeakSuspects()  != null ? target.getLeakSuspects().size()  : 0;
+        int baseThreads    = base.getThreadInfos()     != null ? base.getThreadInfos().size()     : 0;
+        int targetThreads  = target.getThreadInfos()   != null ? target.getThreadInfos().size()   : 0;
+        int baseTop        = base.getTopMemoryObjects()   != null ? base.getTopMemoryObjects().size()   : 0;
+        int targetTop      = target.getTopMemoryObjects() != null ? target.getTopMemoryObjects().size() : 0;
+
+        return new KpiDiff(
+            target.getUsedHeapSize()     - base.getUsedHeapSize(),
+            target.getTotalHeapSize()    - base.getTotalHeapSize(),
+            target.getFreeHeapSize()     - base.getFreeHeapSize(),
+            target.getHeapUsagePercent() - base.getHeapUsagePercent(),
+            target.getTotalObjects()     - base.getTotalObjects(),
+            target.getTotalClasses()     - base.getTotalClasses(),
+            targetSuspects - baseSuspects,
+            targetThreads  - baseThreads,
+            targetTop      - baseTop
+        );
+    }
+
+    private static String normalizeSuspectKey(String title) {
+        if (title == null) return "";
+        return title.toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", " ").trim();
+    }
+    private static boolean eqNullSafe(String a, String b) {
+        return (a == null) ? (b == null) : a.equals(b);
+    }
+    private static int suspectStateOrder(String s) {
+        if ("SEVERITY_CHANGED".equals(s)) return 0;
+        if ("NEW".equals(s))              return 1;
+        if ("GONE".equals(s))             return 2;
+        return 3;
     }
 
     // ── Detections 집계 helper (대시보드 + History 페이지 공유) ─────
@@ -2359,5 +2745,154 @@ public class HeapDumpController {
             return sign + String.format("%.2f MB", delta / (1024.0 * 1024));
         }
         public boolean isIncrease() { return delta > 0; }
+    }
+
+    public static class HistogramDiff {
+        private final String className;
+        private final long baseCount;
+        private final long targetCount;
+        private final long countDelta;
+        private final long baseRetained;
+        private final long targetRetained;
+        private final long retainedDelta;
+
+        public HistogramDiff(String className,
+                             long baseCount, long targetCount,
+                             long baseRetained, long targetRetained) {
+            this.className      = className;
+            this.baseCount      = baseCount;
+            this.targetCount    = targetCount;
+            this.countDelta     = targetCount - baseCount;
+            this.baseRetained   = baseRetained;
+            this.targetRetained = targetRetained;
+            this.retainedDelta  = targetRetained - baseRetained;
+        }
+        public String getClassName()      { return className; }
+        public long   getBaseCount()      { return baseCount; }
+        public long   getTargetCount()    { return targetCount; }
+        public long   getCountDelta()     { return countDelta; }
+        public long   getBaseRetained()   { return baseRetained; }
+        public long   getTargetRetained() { return targetRetained; }
+        public long   getRetainedDelta()  { return retainedDelta; }
+        public boolean isIncrease()       { return retainedDelta > 0; }
+        public String getFormattedCountDelta() {
+            String sign = countDelta > 0 ? "+" : "";
+            return sign + String.format("%,d", countDelta);
+        }
+        public String getFormattedRetainedDelta() {
+            String sign = retainedDelta > 0 ? "+" : "";
+            long abs = Math.abs(retainedDelta);
+            if (abs < 1024) return sign + retainedDelta + " B";
+            if (abs < 1048576) return sign + String.format("%.1f KB", retainedDelta / 1024.0);
+            return sign + String.format("%.2f MB", retainedDelta / (1024.0 * 1024));
+        }
+    }
+
+    public static class SuspectDiff {
+        // state: NEW(타겟에만) / GONE(베이스에만) / PERSIST(양쪽 동일 severity) / SEVERITY_CHANGED
+        private final String key;
+        private final String state;
+        private final String title;
+        private final String category;
+        private final String description;
+        private final String baseSeverity;
+        private final String targetSeverity;
+
+        public SuspectDiff(String key, String state, String title, String category, String description,
+                           String baseSeverity, String targetSeverity) {
+            this.key            = key;
+            this.state          = state;
+            this.title          = title;
+            this.category       = category;
+            this.description    = description;
+            this.baseSeverity   = baseSeverity;
+            this.targetSeverity = targetSeverity;
+        }
+        public String getKey()            { return key; }
+        public String getState()          { return state; }
+        public String getTitle()          { return title; }
+        public String getCategory()       { return category; }
+        public String getDescription()    { return description; }
+        public String getBaseSeverity()   { return baseSeverity; }
+        public String getTargetSeverity() { return targetSeverity; }
+    }
+
+    public static class KpiDiff {
+        private final long usedHeapDelta;
+        private final long totalHeapDelta;
+        private final long freeHeapDelta;
+        private final double usagePercentDelta;
+        private final long objectsDelta;
+        private final int  classesDelta;
+        private final int  suspectsDelta;
+        private final int  threadsDelta;
+        private final int  topConsumerCountDelta;
+
+        public KpiDiff(long usedHeapDelta, long totalHeapDelta, long freeHeapDelta,
+                       double usagePercentDelta, long objectsDelta, int classesDelta,
+                       int suspectsDelta, int threadsDelta, int topConsumerCountDelta) {
+            this.usedHeapDelta          = usedHeapDelta;
+            this.totalHeapDelta         = totalHeapDelta;
+            this.freeHeapDelta          = freeHeapDelta;
+            this.usagePercentDelta      = usagePercentDelta;
+            this.objectsDelta           = objectsDelta;
+            this.classesDelta           = classesDelta;
+            this.suspectsDelta          = suspectsDelta;
+            this.threadsDelta           = threadsDelta;
+            this.topConsumerCountDelta  = topConsumerCountDelta;
+        }
+        public long   getUsedHeapDelta()         { return usedHeapDelta; }
+        public long   getTotalHeapDelta()        { return totalHeapDelta; }
+        public long   getFreeHeapDelta()         { return freeHeapDelta; }
+        public double getUsagePercentDelta()     { return usagePercentDelta; }
+        public long   getObjectsDelta()          { return objectsDelta; }
+        public int    getClassesDelta()          { return classesDelta; }
+        public int    getSuspectsDelta()         { return suspectsDelta; }
+        public int    getThreadsDelta()          { return threadsDelta; }
+        public int    getTopConsumerCountDelta() { return topConsumerCountDelta; }
+
+        public boolean isUsedHeapUp()        { return usedHeapDelta > 0; }
+        public boolean isUsagePercentUp()    { return usagePercentDelta > 0; }
+        public boolean isObjectsUp()         { return objectsDelta > 0; }
+        public boolean isClassesUp()         { return classesDelta > 0; }
+        public boolean isSuspectsUp()        { return suspectsDelta > 0; }
+        public boolean isThreadsUp()         { return threadsDelta > 0; }
+        public boolean isTopConsumerCountUp(){ return topConsumerCountDelta > 0; }
+
+        public String getFormattedUsedHeapDelta() {
+            return formatBytesDelta(usedHeapDelta);
+        }
+        public String getFormattedUsagePercentDelta() {
+            String sign = usagePercentDelta > 0 ? "+" : "";
+            return sign + String.format("%.2f%%", usagePercentDelta);
+        }
+        public String getFormattedObjectsDelta() {
+            String sign = objectsDelta > 0 ? "+" : "";
+            return sign + String.format("%,d", objectsDelta);
+        }
+        public String getFormattedClassesDelta() {
+            String sign = classesDelta > 0 ? "+" : "";
+            return sign + String.format("%,d", classesDelta);
+        }
+        public String getFormattedSuspectsDelta() {
+            String sign = suspectsDelta > 0 ? "+" : "";
+            return sign + suspectsDelta;
+        }
+        public String getFormattedThreadsDelta() {
+            String sign = threadsDelta > 0 ? "+" : "";
+            return sign + threadsDelta;
+        }
+        public String getFormattedTopConsumerCountDelta() {
+            String sign = topConsumerCountDelta > 0 ? "+" : "";
+            return sign + topConsumerCountDelta;
+        }
+        private static String formatBytesDelta(long bytes) {
+            String sign = bytes > 0 ? "+" : (bytes < 0 ? "-" : "");
+            long abs = Math.abs(bytes);
+            if (abs < 1024) return sign + abs + " B";
+            if (abs < 1048576) return sign + String.format("%.1f KB", abs / 1024.0);
+            if (abs < 1073741824L) return sign + String.format("%.2f MB", abs / (1024.0 * 1024));
+            return sign + String.format("%.2f GB", abs / (1024.0 * 1024 * 1024));
+        }
     }
 }

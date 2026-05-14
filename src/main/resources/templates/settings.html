@@ -203,7 +203,14 @@
 </div>
 
 <!-- ── Content ────────────────────────────────────────────── -->
-<div class="container">
+<div class="container" th:attr="data-is-admin=${isAdmin}">
+
+    <!-- 비-ADMIN: 읽기 전용 안내 배너 -->
+    <div th:if="${!isAdmin}" id="readOnlyBanner" style="margin-bottom:18px;padding:12px 18px;background:#FEF9C3;border:1px solid #FDE047;border-radius:8px;font-size:14px;color:#713F12;display:flex;align-items:center;gap:10px">
+        <span style="font-size:16px">&#128274;</span>
+        <span><strong>읽기 전용</strong> &mdash; 이 페이지는 관리자만 변경할 수 있습니다. 현재 계정은 설정을 조회만 할 수 있습니다.</span>
+    </div>
+
     <div class="page-hdr">
         <div class="page-ttl">
             <svg viewBox="0 0 24 24"><path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -1277,6 +1284,34 @@ document.addEventListener('DOMContentLoaded', function() {
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') { closeClearModal(); closeKeepURModal(); closeAAModal(); closeHeapWarnModal(); closeSaveResultsModal(); closeDbEditModal(); }
 });
+
+// ── 비-ADMIN 읽기 전용 처리: container 내부의 모든 form 컨트롤/액션 버튼 비활성화 ──
+(function() {
+    var container = document.querySelector('.container[data-is-admin]');
+    if (!container || container.getAttribute('data-is-admin') === 'true') return;
+    applyReadOnlyMode(container);
+})();
+function applyReadOnlyMode(root) {
+    // input/select/textarea 비활성화
+    root.querySelectorAll('input, select, textarea').forEach(function(el) {
+        el.disabled = true;
+        el.title = (el.title ? el.title + ' — ' : '') + '관리자만 변경 가능';
+    });
+    // 액션 버튼 비활성화 (Refresh 는 조회 기능이라 예외)
+    root.querySelectorAll('button').forEach(function(btn) {
+        if (btn.classList.contains('refresh-btn')) return;
+        if (btn.closest('#readOnlyBanner')) return;
+        btn.disabled = true;
+        btn.style.cursor = 'not-allowed';
+        btn.style.opacity = '.5';
+        btn.title = '관리자만 변경 가능';
+    });
+    // 토글/스위치 클릭 차단 (label-based switches)
+    root.querySelectorAll('label.tog, .switch, .tog').forEach(function(el) {
+        el.style.pointerEvents = 'none';
+        el.style.opacity = '.6';
+    });
+}
 </script>
 
 </body>

@@ -98,9 +98,31 @@
         /* 잘린 경로(.is-truncated) 만 hover 시 펼침 및 cursor: help */
         .td-path.is-truncated { cursor: help; }
         .td-path.is-truncated:hover { white-space: normal; word-break: break-all; max-width: 480px; }
-        .td-err { font-size: 11px; color: #DC2626; max-width: 260px; overflow: hidden;
-                  text-overflow: ellipsis; white-space: nowrap; }
-        .td-err:hover { white-space: normal; word-break: break-all; }
+        /* 에러 컬럼 — 버튼 + 팝오버 (긴 메시지로 다른 행 높이가 부풀지 않도록) */
+        .err-btn { font-size: 11px; padding: 3px 9px; border-radius: 14px;
+                   background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5;
+                   cursor: pointer; font-weight: 600; white-space: nowrap; line-height: 1.2; }
+        .err-btn:hover { background: #FECACA; }
+        .err-btn:focus { outline: none; box-shadow: 0 0 0 3px rgba(239,68,68,.25); }
+        .err-dash { color: #9CA3AF; font-size: 12px; }
+
+        .err-pop { position: absolute; z-index: 1000; max-width: 520px; min-width: 260px;
+                   background: #fff; border: 1px solid #FCA5A5; border-radius: 8px;
+                   box-shadow: 0 8px 24px rgba(0,0,0,.15); padding: 0;
+                   font-size: 12px; color: #1F2937; display: none; }
+        .err-pop.show { display: block; }
+        .err-pop-hdr { display: flex; align-items: center; justify-content: space-between;
+                       padding: 8px 12px; background: #FEF2F2; border-bottom: 1px solid #FCA5A5;
+                       border-radius: 8px 8px 0 0; }
+        .err-pop-ttl { font-weight: 600; color: #991B1B; font-size: 12px; }
+        .err-pop-act { display: flex; gap: 6px; }
+        .err-pop-btn { background: transparent; border: 1px solid #D1D5DB; padding: 2px 8px;
+                       font-size: 11px; border-radius: 4px; cursor: pointer; color: #374151; }
+        .err-pop-btn:hover { background: #F3F4F6; }
+        .err-pop-body { padding: 10px 12px; max-height: 320px; overflow: auto;
+                        white-space: pre-wrap; word-break: break-all;
+                        font-family: 'JetBrains Mono','SF Mono',monospace; font-size: 12px;
+                        color: #DC2626; line-height: 1.55; }
 
         .empty-state { padding: 48px 24px; text-align: center; color: #9CA3AF; font-size: 14px; }
         .loading-state { padding: 48px 24px; text-align: center; color: #6B7280; font-size: 13px; }
@@ -292,6 +314,18 @@
     </div>
 </div>
 
+<!-- Error popover (단일 인스턴스, body 직속 — table overflow 영향 없음) -->
+<div id="errPopover" class="err-pop" role="dialog" aria-modal="false" aria-labelledby="errPopTtl">
+    <div class="err-pop-hdr">
+        <span class="err-pop-ttl" id="errPopTtl">에러 메시지</span>
+        <div class="err-pop-act">
+            <button type="button" class="err-pop-btn" onclick="copyErrorPopover()">복사</button>
+            <button type="button" class="err-pop-btn" onclick="hideErrorPopover()">닫기</button>
+        </div>
+    </div>
+    <div class="err-pop-body" id="errPopBody"></div>
+</div>
+
 <script>
 // ── State ─────────────────────────────────────────────
 var _params = {
@@ -423,8 +457,10 @@ function renderRow(t) {
         : '<span style="color:#9CA3AF">-</span>';
 
     var errHtml = t.errorMessage
-        ? '<span class="td-err" title="' + escapeAttr(t.errorMessage) + '">' + escapeHtml(t.errorMessage) + '</span>'
-        : '<span style="color:#9CA3AF">-</span>';
+        ? '<button type="button" class="err-btn" onclick="showErrorPopover(this)" '
+            + 'data-err="' + escapeAttr(t.errorMessage) + '" '
+            + 'aria-label="에러 상세 보기">에러 보기</button>'
+        : '<span class="err-dash">-</span>';
 
     return ''
         + '<td class="td-num">' + (t.id != null ? t.id : '-') + '</td>'
@@ -576,6 +612,85 @@ function escapeHtml(s) {
     });
 }
 function escapeAttr(s) { return escapeHtml(s); }
+
+// ── Error popover ─────────────────────────────────────
+var _errPopAnchor = null;
+
+function showErrorPopover(btn) {
+    var pop = document.getElementById('errPopover');
+    var body = document.getElementById('errPopBody');
+    var msg = btn.getAttribute('data-err') || '';
+    body.textContent = msg;          // textContent — XSS 방어 (이미 escape 된 attr 이지만 이중 안전)
+    _errPopAnchor = btn;
+
+    // 위치 계산: 버튼 아래 우선, 화면 아래 부족하면 위로
+    pop.style.visibility = 'hidden';
+    pop.classList.add('show');
+    var btnRect = btn.getBoundingClientRect();
+    var popRect = pop.getBoundingClientRect();
+    var sx = window.pageXOffset || document.documentElement.scrollLeft;
+    var sy = window.pageYOffset || document.documentElement.scrollTop;
+    var gap = 6;
+
+    var top = btnRect.bottom + sy + gap;
+    if (btnRect.bottom + popRect.height + gap > window.innerHeight && btnRect.top - popRect.height - gap > 0) {
+        top = btnRect.top + sy - popRect.height - gap;  // 위로 펼침
+    }
+    var left = btnRect.left + sx;
+    var maxLeft = window.innerWidth + sx - popRect.width - 8;
+    if (left > maxLeft) left = maxLeft;
+    if (left < sx + 8) left = sx + 8;
+
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+    pop.style.visibility = '';
+}
+
+function hideErrorPopover() {
+    var pop = document.getElementById('errPopover');
+    pop.classList.remove('show');
+    _errPopAnchor = null;
+}
+
+function copyErrorPopover() {
+    var body = document.getElementById('errPopBody');
+    var text = body.textContent || '';
+    if (!text) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function(){ flashCopied(); }, function(){ fallbackCopy(text); });
+    } else {
+        fallbackCopy(text);
+    }
+}
+function fallbackCopy(text) {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); flashCopied(); } catch(_) {}
+    document.body.removeChild(ta);
+}
+function flashCopied() {
+    var btns = document.querySelectorAll('#errPopover .err-pop-btn');
+    if (btns.length === 0) return;
+    var b = btns[0];
+    var orig = b.textContent;
+    b.textContent = '복사됨';
+    setTimeout(function(){ b.textContent = orig; }, 1200);
+}
+
+// 외부 클릭 / Esc / 리사이즈·스크롤 시 닫기
+document.addEventListener('click', function(e) {
+    var pop = document.getElementById('errPopover');
+    if (!pop.classList.contains('show')) return;
+    if (pop.contains(e.target)) return;                 // 팝오버 내부 클릭은 무시
+    if (_errPopAnchor && _errPopAnchor.contains(e.target)) return; // 트리거 버튼 자체 클릭은 토글로 처리
+    hideErrorPopover();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') hideErrorPopover();
+});
+window.addEventListener('resize', hideErrorPopover);
+window.addEventListener('scroll', hideErrorPopover, true);
 </script>
 
 </body>
