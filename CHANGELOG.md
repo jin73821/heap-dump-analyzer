@@ -1,5 +1,996 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-17] Leak Suspect 룰 — Export / Import 기능 추가
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/controller/LeakRuleAdminController.java` — endpoint 4개 (`/library/export`, `/fallback/export`, `/library/import`, `/fallback/import`) + 공통 헬퍼 4개 (`exportEnvelope`, `validateImportRequest`, `importValidationErrors`, `importSuccess`) + `ImportRequest<T>` 내부 클래스 + 관련 import
+- 수정: `src/main/resources/templates/leak-rules.html` — 두 탭 toolbar 에 Export/Import 버튼 2개씩, Import 모달 (파일선택 + Append/Replace 라디오 + 경고), JS 함수 6개 (`exportRules`, `openImport`, `closeImport`, `onImportModeChange`, `onImportFileChosen`, `submitImport`)
+
+### 변경 의도
+- ADMIN 이 룰을 환경 간 이동(dev↔prod)하거나 일괄 백업/복원을 하려면 페이지에서 한 건씩 클릭해야 했음. seeder JSON 포맷이 이미 있는데 운영 페이지에서 활용할 길이 없었음.
+
+### 내역
+- **Export (GET)**: wrapper 형식 `{version, type, exportedAt, count, rules}` 로 반환. `Content-Disposition: attachment; filename="leak-{library|fallback}-rules-YYYYMMDD-HHmmss.json"`. CSRF 불필요 (GET), 브라우저가 자동 다운로드.
+- **Import (POST + JSON body)**: `{mode, rules}` 또는 export wrapper 그대로(`type` 필드로 탭 mismatch 차단) 수용. bare array 도 호환 (seeder 의 `src/main/resources/leak-rules/*.json` 직접 import 가능).
+  - 모드: `append` (기본, 안전) / `replace` (truncate + insert)
+  - **Atomicity 보장**: `@Transactional` + 전건 사전 validation → 한 건이라도 실패 시 400 + `errors:[{index,error}]` 반환, DB 미터치 (replace 의 DELETE 도 함께 롤백).
+  - `id` 강제 null 화 → JPA 가 새 IDENTITY 발급 + `@PrePersist` 가 fresh timestamp.
+  - 사이즈 상한 `IMPORT_MAX_ROWS = 10000`.
+  - 성공 시 `ruleService.invalidate()` + `[LeakRuleImport]` INFO 로그.
+- **UI**: `.btn-secondary` 재사용. Import 모달은 기존 `.modal-ov`/`.modal-box` 패턴. 클라이언트가 `FileReader` → `JSON.parse` → wrapper 면 `parsed.rules`, array 면 parsed 자체. type mismatch 사전 차단. replace 모드는 모달 경고 + `confirm()` 더블 가드 (CLAUDE.md "Settings 확인 모달 for destructive changes" 원칙).
+- **Content-Disposition 함정**: 초기엔 `setContentDispositionFormData("attachment", ...)` 사용 → 헤더가 `form-data; name="attachment"` 로 잘못 생성됨 (form-data field name 의미). `h.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"...\"")` 로 직접 set 으로 교체.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS, `bash restart.sh` 정상 기동 (PID=730255)
+- API smoke (admin 로그인):
+  - Export library: HTTP 200 + `Content-Disposition: attachment; filename="leak-library-rules-...json"` + wrapper 구조 (`type:"library"`, `count:66`) ✓
+  - Export fallback: `type:"fallback"`, `count:33` ✓
+  - Append round-trip: 66 → 132 (`{success:true, mode:"append", deleted:0, inserted:66}`) ✓
+  - Replace round-trip: 132 → 66 (`{success:true, mode:"replace", deleted:132, inserted:66}`) ✓
+  - **Atomicity**: replace 모드에서 첫 룰 prefix 를 빈 문자열로 변조 후 import → 400 + errors 반환, 테이블 카운트 변경 없음 (66 유지) ✓
+  - Type mismatch: library 파일을 fallback import → 400 + "파일 type 이 'fallback' 가 아닙니다" ✓
+  - mode 누락 → append 기본 ✓
+  - CSRF 토큰 누락 → 403 ✓
+
+## [2026-05-17] History — 검색바에 서버명 매칭 추가
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/history.html` — `applyFilter()` 의 q 매칭 조건, `#searchInput` placeholder 텍스트
+
+### 변경 의도
+- History 페이지 검색바가 분석명(`data-name`) 만 매칭. 같은 서버에서 수집된 덤프들을 한 번에 좁히고 싶을 때 사용자가 dropdown 필터를 따로 사용해야 함. Files 페이지는 이미 "분석명·서버명 OR 매칭" 패턴으로 동작 → History 와 일관 유지가 필요.
+
+### 내역
+- `applyFilter()` q 분기: `data-name` 단독 → `data-name` OR `data-sort-server` (둘 중 하나라도 substring 일치하면 통과). Files 페이지의 동일 로직(`files.html` lines 729~733)과 동일.
+- placeholder: `"분석명으로 검색…"` → `"분석명·서버명으로 검색…"` (사용자 힌트).
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS
+- `bash restart.sh` 정상 기동 (PID=721869)
+- 브라우저 확인 필요: History 검색바에 서버명 입력 → 해당 서버의 분석만 노출. 분석명·서버명 키워드 어느 쪽이든 일치 시 노출.
+
+## [2026-05-17] AI Chat 검색 — LIKE ESCAPE 문자 '\\' → '|' 교체 (MariaDB SQL 문법 오류 수정)
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/repository/AiChatSessionRepository.java` — `searchSessions` JPQL `ESCAPE '\\'` → `ESCAPE '|'`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/AiChatController.java` — `listSessions()` 의 wildcard escape 로직을 `|` 기반으로 교체
+
+### 변경 의도 (버그)
+- 사용자 보고: 사이드바에서 "오늘 날씨를 알려줘" 검색해도 "채팅 이력이 없습니다" 표시.
+- 원인: JPQL `ESCAPE '\\'` → Hibernate 가 SQL `ESCAPE '\'` (single backslash) 를 MariaDB 로 전송. MariaDB 기본 SQL_MODE 는 backslash-escape 활성화라 `'\'` 를 미완성 escape 시퀀스로 해석 → `1064 SQL syntax error near '\'))) order by`. 결과적으로 모든 검색이 500 으로 실패하던 상태.
+
+### 내역
+- JPQL ESCAPE 문자를 backslash 가 아닌 `|` (파이프) 로 교체 — MariaDB 문자열 리터럴에서 특별한 의미 없음. 컨트롤러 escape 도 동일하게 `|` → `||`, `%` → `|%`, `_` → `|_` 순서로 변경.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS, `bash restart.sh` 정상 기동 (PID=720462)
+- API smoke (admin 로그인 후):
+  - `?q=오늘 날씨를 알려줘` → 2 hits (id=3, id=5, 정확히 매칭) ✓
+  - `?q=날씨` → 3 hits (제목 매칭 2 + 메시지 본문 매칭 1) ✓
+  - `?q=oom` (소문자) → 3 hits (대소문자 무시, 본문에 OOM 포함된 세션 매칭) ✓
+  - `?q=50%` → 정상 응답 (wildcard escape 처리, SQL 오류 없음) ✓
+
+## [2026-05-17] AI Chat — 세션 검색 (제목 + 메시지 본문) 추가
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/repository/AiChatSessionRepository.java` — 신규 `searchSessions` `@Query` 메서드 (EXISTS 서브쿼리)
+- 수정: `src/main/java/com/heapdump/analyzer/controller/AiChatController.java` — `listSessions()` 에 `q` 파라미터 추가 + 분기 로직 + 파라미터 정규화 + LIKE wildcard escape
+- 수정: `src/main/resources/templates/ai-chat.html` — `.session-filter-search` HTML/CSS 추가, `_searchDebounce`/`getCurrentQuery`/`syncQueryValue`/`onSessionSearchInput` JS 헬퍼 + `loadSessions()` 에 q 합류
+
+### 변경 의도
+- AI Chat 사이드바에 검색 입력이 없어, 사용자가 과거 대화를 찾으려면 카드를 일일이 훑거나 파일명 dropdown 으로만 좁힐 수 있었음. 메시지 본문 기준 검색이 불가능.
+
+### 내역
+- **Repository**: 단일 `@Query` 로 `(:usernameParam IS NULL OR ...) AND (:filenameParam IS NULL OR ...) AND (title LIKE :q OR EXISTS message)` 처리. EXISTS 는 semi-join 이라 DISTINCT 불필요. `ESCAPE '\\'` 로 wildcard 안전. `COALESCE(s.title, '')` 로 NULL 방어. 정렬은 기존 finder 와 동일 `updatedAt DESC`.
+- **Controller**: q/filename/user 모두 trim + empty→null 로 일관 정규화. `effectiveUsername = admin ? userNorm : currentUser` — 비-ADMIN 은 user 파라미터 무시 강제 (기존 정책). q 가 있으면 신규 `searchSessions` 로 분기, 없으면 기존 4 finder 그대로 (회귀 방지). LIKE wildcard escape 는 `\` → `%` → `_` 순서.
+- **Frontend**: `.session-filter-row` 최상단에 검색 input 배치 (셀렉트 위). `.session-filter-search` 클래스로 페이지 전용 CSS (공용 `.search-bar` 는 toolbar 전용이라 사이드바 220~320px 폭에 과대). 300ms debounce → `loadSessions()`. `querySelectorAll('.session-filter-search')` 로 배너 모바일 Chat 탭 클론 input 도 자동 동기화 (CLAUDE.md 함정 8번 패턴).
+- DB 스키마/인덱스/마이그레이션 변경 없음. 권한 모델 변경 없음.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS — JPA 시작 시 새 JPQL 검증 통과 (`Started HeapAnalyzerApplication in 9.873s`)
+- `bash restart.sh` 정상 기동 (PID=718018)
+- API smoke: `GET /api/ai-chat/sessions?q=test` → 302 (auth 필요 정상), JPA 쿼리 파싱 오류 없음
+- 실기 확인 필요: 사이드바 검색창 입력 → 세션 제목/메시지 본문 매칭 세션만 노출, 빈 검색 시 무필터 복귀, `%`/`_` 리터럴 매칭, 한국어 매칭, 모바일 클론 동기화, 비-ADMIN 권한 우회 차단
+
+## [2026-05-17] AI Chat — 모바일 진입 시 채팅 목록 기본 노출 + 인라인 백 네비게이션
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/ai-chat.html` — `@media (max-width: 640px)` 레이아웃 재설계, `.chat-back-btn` 신규 스타일, `selectSession()`/`deleteSession()`/`backToSessionList()` JS 로직
+
+### 변경 의도
+- 사용자 보고: 모바일에서 AI Chat 진입 시 좌측 사이드바(채팅 목록)가 `display: none` 처리되어 빈 채팅 영역만 보이고, 채팅 목록은 배너 모바일 Chat 탭을 열어야만 접근 가능 → 처음 진입한 사용자가 "좌측"이 어디 있는지 혼란.
+
+### 내역
+- **CSS @media (max-width: 640px) 재설계**: 기본 진입 시 `.session-sidebar` 풀폭 표시 + `.chat-area` 숨김. `body.mobile-chat-active` 클래스가 붙으면 사이드바 숨김 + 채팅 영역 풀폭 전환.
+- **`.chat-back-btn` 신규** — 채팅 영역 상단에 "← 채팅 목록" 백 버튼. 데스크탑/태블릿에서는 숨김, 모바일에서 `mobile-chat-active` 상태일 때만 노출.
+- **`selectSession()` 모바일 분기 추가**: ≤640px 일 때 `body.mobile-chat-active` 클래스 추가 → 채팅 영역으로 전환. 기존 배너 자동 닫기 로직(≤900px)은 유지.
+- **`backToSessionList()` 신규** — `mobile-chat-active` 클래스 제거하여 목록으로 복귀.
+- **`deleteSession()` 정리**: 활성 세션 삭제 시 `mobile-chat-active` 클래스도 제거 (빈 채팅 영역에 머무르지 않도록).
+- 데스크탑 ≥900px 동작 변경 없음. 배너 모바일 Chat 탭 클론도 그대로 유지 (보조 접근 경로).
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS
+- `bash restart.sh` 정상 기동 (PID=710065)
+- 모바일 실기 확인 필요: 진입 시 목록 노출 → 세션 클릭 → 채팅 영역 전환 → "← 채팅 목록" 버튼 복귀 흐름.
+
+## [2026-05-17] History — 테이블 분석명 / 서버 chip 글자 크기 상향
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/history.html` — `.hi-name` CSS + 서버 chip / Local 라벨 인라인 스타일
+
+### 변경 의도
+- History 테이블의 분석명(`hi-name`, 12px 모노스페이스), 서버 chip(10px), Local 라벨(11px) 이 다른 컬럼 텍스트 대비 작아 가독성 부족. Files 페이지와 동일 패턴으로 통일.
+
+### 내역
+- `.hi-name` `font-size: 12px → 13px`.
+- 서버 chip `font-size: 10px → 12px`, padding `2px 7px → 2px 8px`.
+- Local 라벨 `font-size: 11px → 12px` (서버 chip 과 동일 크기로 정렬).
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS
+- `bash restart.sh` 정상 기동 (PID=708034)
+
+## [2026-05-17] Files — 테이블 서버 칩 글자 크기 상향
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/files.html` — 서버명 chip / Local 라벨 인라인 스타일
+
+### 변경 의도
+- Files 테이블 내 서버 컬럼의 chip 글자 크기(10px)와 Local 라벨(11px) 이 다른 컬럼 텍스트 대비 너무 작아 가독성이 떨어짐.
+
+### 내역
+- 서버명 chip `font-size: 10px → 12px`, padding `2px 7px → 2px 8px` (글자 크기에 맞춘 좌우 여백 미세 보정).
+- Local 라벨 `font-size: 11px → 12px` (서버 chip 과 동일 크기로 정렬).
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS
+- `bash restart.sh` 정상 기동 (PID=707101)
+
+## [2026-05-17] Comparison History — 동일 (사용자, base, target) 조합 재진입 시 중복 row 누적 제거
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/service/ComparisonHistoryService.java` — `recordComparison()` upsert 전환, `DEDUPE_WINDOW_SEC`/`Duration` import 제거
+
+### 변경 의도 (버그)
+- 사용자 보고: Compare 화면에서 AI 인사이트 재분석 후 페이지 재방문 시 Comparison History 에 새 row 가 추가되는 현상. AI 인사이트 재분석은 기존 결과를 휘발(덮어쓰기)하는 동작이라 비교 이력에 새 row 가 누적될 이유가 없음.
+- 원인: 기존 `recordComparison()` 은 `DEDUPE_WINDOW_SEC = 60L` 짧은 윈도우만 사용 → AI 인사이트 LLM 호출이 60초 이상 걸리면 재방문 시 새 row 가 생성됨.
+
+### 내역
+- `(comparedBy, baseFilename, targetFilename)` 조합으로 기존 row 가 있으면 **새 row 생성 대신 KPI/Suspect Count/`comparedAt` 갱신** (upsert). 없으면 신규 생성.
+- 60초 dedupe 윈도우 + 관련 `Duration` import 제거. 어떤 시간 간격이든 같은 조합이면 항상 1건만 유지.
+- 신규/갱신 로그 메시지 분리: `Created`/`Refreshed` 접두어.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS
+- `bash restart.sh` 정상 기동 (PID=693179)
+- 동작 확인 필요: `/compare?base=X&target=Y` 진입 → AI 인사이트 재분석 → 재방문 시 Comparison History row 수가 1건으로 유지되고 `comparedAt` 만 갱신되는지 확인.
+
+## [2026-05-17] 분석 진척도 역행 버그 수정 — Leak Suspects 단계 진입 시 55% 회귀
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java` — MAT 출력 reader 의 phase 전환 로직 + `phaseRank` static 헬퍼 추가
+
+### 변경 의도 (버그)
+- 사용자 보고: Top Components 리포트 중 진척도 68% → Leak Suspects 단계로 넘어가는 순간 55% 로 **역행**.
+- 원인 분석:
+  - MAT CLI 출력이 `Subtask: Leak Suspects` 진행 중에도 **`Subtask: Top Component...` 로 시작하는 라인을 다시 출력**할 수 있음 (MAT 의 sub-component report 단계).
+  - 기존 코드의 분기 가드는 `!"top_components".equals(phase[0])` 형식 — phase 가 `suspects` 일 때도 조건이 true 가 되어 phase 가 `top_components` 로 **역방향 전이** + `pct[0] = 55` 로 강제 재설정.
+  - 결과적으로 단계가 뒤에서 앞으로 회귀하고 진척도가 줄어드는 현상 발생.
+
+### 내역
+- **`phaseRank(String)` static 헬퍼 추가** — `init=0` / `overview=1` / `top_components=2` / `suspects=3`. 단방향 진행 순서를 정의.
+- **분기 가드 변경**: `!"X".equals(phase[0])` → `phaseRank("X") > phaseRank(phase[0])`. 즉 *현재 단계보다 더 뒤 단계로의 전이만* 허용. 같은 단계/이전 단계로 돌아가려는 매칭은 무시.
+- **`pct[0]` 재설정 보호**: 각 단계 진입 시 `pct[0] = N` → `pct[0] = Math.max(pct[0], N)`. 이미 더 높은 진척도라면 유지 (이중 안전망).
+- 두 가드의 조합으로 어떤 출력 순서에서도 phase 와 진척도가 **단조 증가만** 보장.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (13.2s)
+- `bash restart.sh` 정상 기동 (PID=686252)
+- 다음 분석 실행 시 Leak Suspects 진입 후 진척도가 68 이상으로만 유지되는지 모니터링 필요 (코드상 역행 차단 보장).
+
+## [2026-05-17] Compare — AI 인사이트 위험도 설명 글자 크기 증가
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html` — `cmpAiShowResult()` 의 `severityDesc` div 인라인 스타일 (12px/opacity .85 → 14px/line-height 1.5/opacity .92, margin-top 4→6px)
+
+### 변경 의도
+- AI 비교 분석 결과 위험도 배너의 사유 설명(`severityDesc`)이 12px + opacity 0.85 라 위험도 라벨(`CRITICAL`/`HIGH` 등 22px) 대비 너무 작고 흐림. 정보 가치 대비 가독성 부족.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.2s)
+- `bash restart.sh` 정상 기동 (PID=677991)
+
+## [2026-05-17] Compare — AI 비교 분석 진행 중 페이지 이탈 방어 로직
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html` — 로딩 영역 시각 안내문 + `_cmpAiInFlight` 가드 핸들러 3종 (beforeunload / a click / form submit)
+
+### 변경 의도
+- AI 비교 분석은 LLM 호출이 포함되어 수 초~수십 초 소요. 진행 중 사용자가 배너 nav 클릭/URL 변경/탭 닫기/새로고침을 하면 분석이 중단되고 결과가 손실됨. 명시적 방어 필요.
+
+### 내역
+- **시각 안내**: `cmpAiLoading` 영역(데이터 수집 중 → LLM 분석 → 결과 저장 4-step indicator) 하단에 노란 배지 한 줄 추가: "⚠ 분석이 완료될 때까지 페이지를 이동하거나 새로고침/닫지 마세요. 작업이 중단됩니다."
+- **`window.beforeunload`**: `_cmpAiInFlight === true` 일 때만 `e.preventDefault()` + `e.returnValue = ''` 로 브라우저 표준 confirm 다이얼로그 유도. (커스텀 메시지는 Chrome/Firefox 가 무시하지만 다이얼로그 자체는 표시됨.)
+- **document `click` capture**: 진행 중 anchor 클릭 가로채기. `a[href]` 매치 후 fragment(`#`), `javascript:`, `target=_blank`, `download` 속성 케이스는 통과. 그 외는 confirm 으로 사용자 확인. `stopImmediatePropagation` 으로 페이지의 다른 click 핸들러 차단 (배너 nav 등).
+- **document `submit` capture**: 폼 제출도 동일 confirm 패턴. capture phase 라 폼의 자체 submit 핸들러보다 먼저 실행.
+- 핸들러는 IIFE 안에서 페이지 로드 시 1회만 바인딩 — `_cmpAiInFlight` 클로저 참조로 매번 최신 상태 검사.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.5s)
+- `bash restart.sh` 정상 기동 (PID=677187)
+
+## [2026-05-17] UI 미세 조정 — Test Connection 스피너 + History 최근 탐지 건수 강조
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/llm-settings.html` — `.spinner-tc` CSS + `@keyframes spinTC` 추가, `testLlmConnection()` 진행 메시지에 스피너 prepend
+- 수정: `src/main/resources/templates/history.html` — `.det-recent-cnt` `font-size: 12px → 14px`, `color: #9CA3AF → #1F2937`, `font-weight: 600`
+
+### 변경 의도
+- "Testing connection..." 진행 상태가 정적 텍스트라 실제 진행 중인지 즉시 인지 어렵다는 피드백 → 좌측에 회전 스피너 (13×13 border-spin) 추가.
+- Analysis History 상단 "최근 탐지 결과" 패널의 건수 표시가 회색 12px 라 정보 가치 대비 약해 보임 → 검정 14px + bold 로 강조.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.0s)
+- `bash restart.sh` 정상 기동 (PID=675050)
+
+## [2026-05-17] UI 미세 조정 — Target Servers 가로 폭 + LLM Test Connection 결과 글자
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/servers.html` (`.container max-width: 1280px → 1440px`)
+- 수정: `src/main/resources/templates/llm-settings.html` (`#llmTestResult` `font-size: 12px → 13.5px`, `line-height: 1.5` 추가)
+
+### 변경 의도
+- Target Servers 페이지가 다른 데이터 그리드 페이지(files 1600, history 1800) 대비 좁아 가독성 떨어진다는 요청 → 1280 → 1440 (≈160px 증가).
+- LLM Settings 의 Test Connection 결과 영역이 12px 로 다른 안내문 대비 작아 보임 → 13.5px + line-height 1.5 로 가독성 향상.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.3s)
+- `bash restart.sh` 정상 기동 (PID=670984)
+
+## [2026-05-17] KRDS 캘린더 위젯 공통화 + History/Comparison/Transfer Logs 적용
+
+**변경 파일:**
+- 신규: `src/main/resources/static/js/calendar.js` (260 라인, `window.Calendar` 네임스페이스)
+- 수정: `src/main/resources/static/css/common.css` (+115 라인, KRDS 캘린더 스타일 통합)
+- 수정: `src/main/resources/templates/fragments/banner.html` (calendar.js 로드 1줄 추가)
+- 수정: `src/main/resources/templates/files.html` (인라인 캘린더 CSS/JS 전부 제거 → Calendar.attach 한 줄로 축약, -270 라인)
+- 수정: `src/main/resources/templates/history.html` (date-filter-row 추가 + applyFilter 에 캘린더 범위 필터)
+- 수정: `src/main/resources/templates/comparison-history.html` (동일)
+- 수정: `src/main/resources/templates/server-logs.html` (서버 사이드 — `_params.dateFrom`/`dateTo` 추가 + onChange 에서 loadData)
+- 수정: `src/main/java/com/heapdump/analyzer/controller/ServerController.java` (3 endpoint + `buildSpec` 시그니처 확장, `parseDateBoundary` 헬퍼)
+- 수정: 모든 페이지 `common.css?v=2026-05-17d → e` 캐시 무효화
+
+### 변경 의도
+- files 페이지에 도입한 KRDS 스타일 커스텀 달력 위젯을 **History / Comparison History / Transfer Logs** 에도 동일하게 적용 요청.
+- 4페이지에 같은 코드를 중복하지 않도록 CSS·JS 를 공통 자원으로 추출 (common.* 패턴 준수).
+
+### 내역
+- **`/js/calendar.js` 신규 — `window.Calendar` 네임스페이스**:
+  - `Calendar.attach({ startInputId, endInputId, startAreaId, endAreaId, storageKey, onChange })` — 페이지당 1 인스턴스
+  - `Calendar.open(side)` / `Calendar.close(side)` / `Calendar.clear()` / `Calendar.getRange()`
+  - localStorage 자동 영속화 (`<storageKey>PeriodStart` / `<storageKey>PeriodEnd`, ISO yyyy-mm-dd)
+  - document 레벨 바깥 클릭 + ESC 핸들러는 1회만 바인딩 (`attach._docBound` 가드)
+- **`common.css` 통합** — `.date-filter-row` / `.calendar-input` / `.cal-text` / `.krds-calendar-area` / `.calendar-wrap`·head·body·footer / `.btn-cal-move(.prev|.next)` / `.btn-cal-switch` / `.calendar-select` / `.calendar-tbl`·td 변형(`old/new/today/day-off/period.start.end/disabled`) / `.btn-set-date` / `.krds-btn(.text|.tertiary|.primary)` / `.sr-only` 등. 모바일(≤640px) 변형 포함.
+- **`banner.html` 에 calendar.js 로드 추가** — common.js 직후, 모든 페이지에서 자동 사용 가능.
+- **files.html 리팩터링** — 인라인 KRDS CSS/JS (~270 라인) 전부 제거. `Calendar.attach({ storageKey: 'files', onChange: applyFilter })` 한 줄로 대체. quick `periodFilter` 드롭다운과 캘린더 범위는 AND 결합.
+- **history.html** — toolbar 아래 `date-filter-row` 신규. `storageKey: 'history'`. `applyFilter()` 가 `data-sort-date` (`h.lastModified`) 와 캘린더 범위 비교.
+- **comparison-history.html** — `storageKey: 'cmpHistory'`. `data-sort-date` (`h.comparedAt`) 기준 필터.
+- **server-logs.html — 서버 사이드 처리**:
+  - `_params` 에 `dateFrom` / `dateTo` 필드 (yyyy-MM-dd) 추가
+  - `Calendar.attach` onChange 콜백이 `_params.dateFrom/dateTo` 갱신 + `_params.page = 0` 후 `loadData()` 재호출
+  - `toIsoDate(d)` 헬퍼, `onCalendarClear()` 래퍼 추가
+  - localStorage 에서 초기 복원된 값을 `_params` 에도 반영 (페이지 reload 시 1회차 fetch 부터 기간 적용)
+- **`ServerController` 백엔드 확장**:
+  - `listTransferLogs` / `transferStats` / `exportTransferLogs` 3 endpoint 모두 `@RequestParam(required=false) String dateFrom, String dateTo` 추가
+  - `buildSpec(q, status, serverId, dateFrom, dateTo)` — `parseDateBoundary(iso, endExclusive)` 로 LocalDateTime 변환 후 `cb.greaterThanOrEqualTo(startedAt, from)` + `cb.lessThan(startedAt, to+1day)` 술어 추가
+  - 잘못된 입력(`invalid` 등)은 null 반환 → 필터 미적용으로 폴백 (방어적)
+  - stats 도 `q + serverId + 기간` 적용 (status 만 무시)
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (12.0s)
+- `bash restart.sh` 정상 기동 (Started HeapAnalyzerApplication, PID=669488)
+- `/js/calendar.js` HTTP 200 (13,596 bytes)
+- `/css/common.css?v=2026-05-17e` HTTP 200 (12,629 bytes)
+- `/api/servers/transfers?dateFrom=2026-01-01&dateTo=2026-12-31` HTTP 302 (인증 redirect — 컨트롤러까지 도달, 시그니처 정상)
+- `dateFrom=invalid` 호출 시 500 없이 302 — `parseDateBoundary` null 폴백 정상
+- `/files` `/history` `/comparison-history` `/servers/logs` 모두 HTTP 302 (인증 redirect)
+
+## [2026-05-17] Files — 기간선택(KRDS 스타일 커스텀 달력 범위) 별도 행 추가
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/files.html` (+~360 라인)
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 기존 기간 quick 필터(전체/오늘/7·30·90일) 외에 임의 기간을 달력으로 지정해 조회하는 기능 요청.
+- 사용자 제공 KRDS(한국 공공 디자인) 달력 마크업 스타일을 따르도록 toolbar 가 아닌 **별도 행**에 시작/종료일 두 개의 커스텀 캘린더 픽커 배치.
+
+### 내역
+- **별도 행 (`.date-filter-row`)**: toolbar 바로 아래 회색 패널에 `기간선택` 라벨 + 시작일 입력 + `~` + 종료일 입력 + `지우기` 버튼.
+- **커스텀 캘린더 위젯 (KRDS 마크업)**: 입력 또는 달력 아이콘 클릭 시 `.krds-calendar-area` 팝업 표시.
+  - 헤더: `‹` prev / `YYYY년` 드롭다운 / `MM월` 드롭다운 / `›` next
+  - 본문: 7×6 day grid, 일/토 색상, `today` 테두리, 선택일 `period start end` 클래스로 강조
+  - 푸터: `오늘` / `취소` / `확인` 3 버튼
+  - 연도 드롭다운은 최근 21년 (현재년-20 ~ 현재년+1), 활성 옵션 자동 스크롤
+- **상호작용**: 날짜 클릭은 임시 표시만, `확인` 클릭 시에만 input + localStorage + 필터 적용. `취소` 또는 바깥 클릭/ESC 로 닫기.
+- **필터 동작**: quick 필터(`periodThreshold`) 와 커스텀 기간(`customStart`/`customEnd`) 은 **AND 결합** (둘 다 적용 시 더 좁은 범위). 종료일은 포함 (exclusive upper bound = end + 1day).
+- **유효성**: 시작 > 종료 입력 시 양쪽 입력 빨간 테두리(`.invalid`) 시각 경고, 필터는 그대로 적용 → 자연스럽게 빈 결과.
+- **영속화**: `filesPeriod` (quick 모드), `filesPeriodStart`/`filesPeriodEnd` (ISO yyyy-mm-dd). 페이지 reload 시 input 표시값 (YYYY.MM.DD) 복원.
+- **모바일(≤640px)**: 라벨 풀폭, 두 input 가 절반씩 flex, 달력 폭 260px 축소.
+- 이전(인라인 `<input type="date">`) 방식 CSS/HTML/JS 전체 제거.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (13.4s)
+- `bash restart.sh` 정상 기동 (Started HeapAnalyzerApplication, PID=664977)
+- `/files` GET 200 (16,237 bytes), `/login` 비인증 redirect 302 확인
+
+## [2026-05-17] Phase 5C — analyze.html 인라인 JS 외부화 (-3,126 라인, -75%)
+
+**변경 파일:**
+- 신규: `src/main/resources/static/js/analyze.js` (3,125 라인, 149KB)
+- 수정: `src/main/resources/templates/analyze.html` (4,183 → 1,057 라인)
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- analyze.html 이 4,183 라인 단일 파일로 비대화 (HTML 920 + 인라인 Thymeleaf 스크립트 17 + Thymeleaf 변수 블록 16 + **순수 JS 3,127 라인**). 브라우저 캐시 / 가독성 / IDE 처리 성능 모두 저해. 순수 JS 부분만 외부화하여 분리.
+
+### 내역
+- **추출 대상 확정**: 라인 1011-4137 의 `<script>...</script>` 블록 (3,127 라인). Thymeleaf 표현식 grep 결과 0 건 — 순수 JS 로 검증.
+- **추출 방식**: `sed -n '1012,4136p' analyze.html > static/js/analyze.js` 로 JS 본문만 추출 (open/close `<script>` 태그 제외)
+- **치환**: `sed -i '1011,4137c\<script src="/js/analyze.js?v=2026-05-17"></script>' analyze.html` 로 3,127 라인 → 1 라인 치환
+- **잔존 인라인 JS (의도)**:
+  - line 101-117: 에러 페이지 전용 `<script th:if="${error}" th:inline="javascript">` (Thymeleaf `[[${filename}]]` 사용) — 외부화 불가
+  - line 993-1008: `<script th:inline="javascript">` 13 vars 정의 (`USED_BYTES`, `FREE_BYTES`, `TOTAL_BYTES`, `HEAP_PCT`, `FILENAME`, `LOG_TOTAL_LEN`, `OBJ_NAMES`, `OBJ_SIZES`, `OBJ_COUNTS`, `OBJ_PCTS`, `THREAD_STACKS`, `LLM_CHAT_RESTORE_INCLUDE_HISTORY`) — Thymeleaf 모델 노출용, 외부화 불가
+- **script 로딩 순서 보장**: 인라인 변수 블록(L993-1008) → external script(L1011) 순서 그대로. 둘 다 sync (no defer/async) 라 정의 → 사용 순서 유지
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (13.5s)
+- `bash restart.sh` 정상 기동 (PID=652356)
+- `/js/analyze.js` HTTP 200, 149,277 bytes, 3,125 라인 — 첫 라인 `// ── 사이드바 nav-item 위임 핸들러 ──` 확인
+- `/analyze/result/jeus_admin.hprof` HTTP 200, 320,949 bytes, `<script src="/js/analyze.js">` 1 참조 확인
+
+### Phase 5C 효과
+- analyze.html **4,183 → 1,057 라인** (-3,126 라인, **-75%**)
+- 브라우저 캐싱: 외부 JS 는 `?v=` 변경 시에만 재다운로드. HTML 매 요청 시 JS 본문 전송 불필요 → 약 149KB 절약/요청
+- IDE/lint/git diff 가독성 ↑
+- 보류 표 완전 비움 — **Phase 4/5/6/Phase 5B-2 모두 완결**
+
+---
+
+## [2026-05-17] Phase 5B-2 D2/D3 — settings/analyze 5 곳 추가 fetchJSON 치환
+
+**변경 파일:**
+- 수정: `settings.html` (3 곳 D2) — `saveSetting`, `saveCompressSetting`, `doDisableCompress`
+- 수정: `analyze.html` (2 곳 D3) — `loadFullErrorLog` (line 109, r.text), 컴포넌트 parsed-detail (line 1321, r.json)
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- D1 라운드에서 보류한 D2(side-effect only) + D3(r.text)) 중 catch err 가 사용자 가시 메시지에 interpolate 되지 않는 안전 케이스 5 곳을 추가 정리. `Common.fetchJSON` 의 시맨틱이 그대로 적용 가능한 마지막 안전 후보들.
+
+### 내역
+- **D2 (3 곳, settings.html)**: `.then(r => { if(!r.ok) throw; toast(...) })` 패턴 → `Common.fetchJSON(url, {method:'POST'}).then(function(){ toast(...) })`. 파싱된 JSON 값을 사용하지 않으므로 `function()` (arg 없음) 으로 discard.
+  - saveSetting (`/api/settings/unreachable?enabled=...`)
+  - saveCompressSetting (`/api/settings/compress?enabled=true`)
+  - doDisableCompress (`/api/settings/compress?enabled=false`)
+- **D3 (2 곳, analyze.html)**: r.text() / r.json() 변형 케이스
+  - line 109 `loadFullErrorLog` — 엔드포인트 `/analyze/log/{filename}` content-type `text/plain` → Common.fetchJSON 이 자동으로 text 반환. catch arg `err` 정의되어 있으나 본문에서 미사용 (`btn.textContent = 'Failed - Retry'` 만 호출). 안전.
+  - line 1321 컴포넌트 parsed-detail — 엔드포인트 JSON 반환, catch 가 `function()` (arg 없음) 이라 'Not found' 메시지 회귀 무관. 안전.
+- **D 최종 보류 (2 곳, 의도)**:
+  - analyze.html line 1352 raw-detail: catch `err` 가 사용자 가시 fallback 텍스트 `'오류: ' + err` 에 interpolate → `Error: Not found` → `Error: HTTP 404: ...` 메시지 변화 회피
+  - compare.html line 1543: catch err.message 가 `cmpAiShowError({error: e.message})` 로 사용자 표시 → 커스텀 한글 메시지 `'compare data 로드 실패 (404)'` 보존
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (13.2s)
+- `bash restart.sh` 정상 기동 (PID=650171)
+- 잔존 grep: `if (!r.ok) throw new Error` 2 건 (compare + analyze raw-detail — 의도적 보류)
+- `Common.fetchJSON` 총 사용처: 23 occurrences (D1 18 + D2/D3 5)
+- 인증 후 페이지 검증:
+  - `/settings` 200 OK + Common.fetchJSON 5 refs (loadAllData + doClearAll + 3 D2)
+  - `/history` 200 OK + 2 refs (변경 없음, D1 라운드 결과 유지)
+  - `/analyze/result/jeus_admin.hprof` 200 OK + 1 ref (parsed-detail fallback 로직)
+
+### Phase 5B-2 최종 종합 (A + B + C + D1 + D2/D3)
+- A (escHtml alias): 9 파일 12 정의
+- B (appendCsrfToForm): 6 occurrences
+- C (CSRF meta): ~14 occurrences
+- D1 (fetchJSON 안전): 18 occurrences
+- D2 (side-effect): 3 occurrences
+- D3 (r.text/r.json 안전): 2 occurrences
+- **누적 ~75 라인 인라인 축소** / 잔존 안전 fetch 패턴 0건 (사용자 가시 에러 보호 2건만 의도 보류)
+- 보류 표 잔여: **analyze.html 분할** (SPA 화 결정 후 별도 사이클) 1 건만 남음
+
+---
+
+## [2026-05-17] Phase 5B-2 D1 — fetch + r.ok throw 패턴 18 곳 Common.fetchJSON 치환
+
+**변경 파일:**
+- 수정: `llm-settings.html` (7), `rag-settings.html` (1), `server-logs.html` (2), `settings.html` (2), `history.html` (2), `admin/users.html` (4) — 총 18 곳
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- `Common.fetchJSON` 의 시맨틱(non-2xx 시 throw + 자동 JSON 파싱 + 자동 CSRF/Content-Type 부착) 이 100% 일치하는 페이지 코드 패턴 18 곳을 일괄 치환. fetch 호출 라인 + r.ok throw 체크 + r.json 반환의 3 단계를 1 단계로 축소.
+
+### 내역
+- **치환 패턴**:
+  ```js
+  // Before (5~7 라인)
+  fetch(url, { method:'POST', headers: {'Content-Type':'application/json'}, body: ... })
+      .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+      .then(function(d){ ... })
+
+  // After (2~3 라인)
+  Common.fetchJSON(url, { method:'POST', body: ... })
+      .then(function(d){ ... })
+  ```
+- **자동 부착 효과**: POST 의 수동 `headers: {'Content-Type':'application/json'}` 구성 코드도 제거. fetchJSON 이 body 존재 시 자동 Content-Type 부착 + CSRF 토큰 자동 부착 (Spring Security 가 /api/** 면제라 헤더 추가는 무해).
+- **회귀 위험 회피**:
+  - 시맨틱 100% 일치 케이스만 선별 (`if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();`)
+  - 에러 메시지 포맷 차이가 있는 케이스 (compare.html `compare data 로드 실패 (404)`) 제외
+  - side-effect only / r.text() 케이스 제외
+- **대상별 효과**:
+  - llm-settings.html (7): loadLlmSettings, toggleLlm, saveLlmConfig, saveLlmApiKey, testLlmConnection, saveChatPrompt, toggleChatRestoreMode
+  - rag-settings.html (1): loadRagSettings
+  - server-logs.html (2): Promise.all 의 두 fetch
+  - settings.html (2): loadAllData, doClearAll
+  - history.html (2): fetchDetect, openDetDayModal — `{credentials: 'same-origin'}` 옵션도 제거 (fetchJSON 이 자동 설정)
+  - admin/users.html (4): loadUsers, loadRequests, loadHistory, loadActive
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.4s)
+- `bash restart.sh` 정상 기동 (PID=647593)
+- 잔존 grep: `if (!r.ok) throw new Error('HTTP'` 패턴 4 건 (D2/D3 — 의도 보류)
+- `Common.fetchJSON` 사용처: 18 occurrences (마이그레이션 결과)
+- 인증 세션으로 6 페이지 200 OK + 응답 HTML 에 `Common.fetchJSON` 참조 정상 분포 확인:
+  - `/settings` (2) / `/settings/llm` (7) / `/settings/rag` (1) / `/history` (2) / `/admin/users` (4) / `/servers/logs` (2)
+
+### Phase 5B-2 종합 (A + B + C + D1)
+- A (escHtml alias): 9 파일 12 정의
+- B (appendCsrfToForm): 6 occurrences
+- C (CSRF meta): ~14 occurrences
+- D1 (fetchJSON): 18 occurrences
+- 누적 ~70 라인 인라인 축소 + 잔존 인라인 escHtml/CSRF 0건 / 안전 fetch 패턴 0건
+- 보류 표 잔여: 5B-2 (D2/D3 — settings side-effect / analyze r.text()) + analyze.html 분할
+
+---
+
+## [2026-05-17] Phase 5B-2 C 그룹 — CSRF meta 직접 읽기 → Common.csrfToken/HeaderName 치환
+
+**변경 파일:**
+- 수정: `comparison-history.html` (2 occurrences) / `history.html` / `files.html` / `rag-settings.html` (`getCsrfHeaders` 함수 내부) — 4 라인 `var csrfMeta + csrfHeaderMeta + if(...)headers[...]=...` → 2 라인 `var csrfToken = Common.csrfToken(); if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;`
+- 수정: `admin/users.html` / `server-detail.html` / `leak-rules.html` — 모듈 레벨 `var _csrf/_csrfToken/CSRF_TOKEN = document.querySelector('meta[name="_csrf"]').content` RHS만 `Common.csrfToken()` / `Common.csrfHeaderName()` 호출로 치환 (변수명·다운스트림 사용처 무변경)
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- A+B 라운드에서 마이그레이션 보류했던 CSRF meta 직접 읽기 ~14 occurrences 를 `Common.csrfToken()` / `Common.csrfHeaderName()` 로 통합. 잔존 인라인 `document.querySelector('meta[name="_csrf"]')` 패턴 0건 달성.
+
+### 내역
+- **var-stored csrfMeta 패턴** (4 파일 5 occurrences):
+  - comparison-history.html `submitBulkDelete` + `confirmDelete` (2), history.html `submitBulkDelete`, files.html `submitBulkDelete`, rag-settings.html `getCsrfHeaders`
+  - 4 라인 → 2 라인 압축
+- **모듈 레벨 변수 패턴** (3 파일 6 라인):
+  - admin/users.html `_csrfToken`/`_csrfHeader` (다운스트림 4 곳에서 재사용)
+  - server-detail.html `_csrf`/`_csrfHeader` (다운스트림 fetch 헤더)
+  - leak-rules.html `CSRF_TOKEN`/`CSRF_HEADER`
+  - 변수명·재사용 코드 무변경 — RHS 만 Common.* 호출로 치환해 회귀 위험 최소화
+- **D (fetchJSON) 의도적 보류**:
+  - 107 fetch 호출이 페이지별로 에러 핸들링 양상이 다양 (Common.fetchJSON 은 non-2xx throw, 페이지 코드는 `r.json().then(d => if d.success)` 패턴 다수)
+  - 일괄 sed 부적합 → rag-settings 등 페이지 단위 별도 사이클 진행 권장
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (12.0s)
+- `bash restart.sh` 정상 기동 (PID=640591)
+- 잔존 grep: `document\.querySelector\(.*meta\[name=_csrf` 패턴 0건
+- 인증 세션으로 6 페이지 200 OK + 응답 HTML 에 `Common.csrfToken`/`Common.csrfHeaderName` 참조 확인:
+  - `/files` (2) / `/history` (2) / `/comparison-history` (4) / `/admin/users` (2) / `/settings/rag` (2) / `/admin/leak-rules` (2)
+
+### Phase 5B-2 종합 (A + B + C)
+- A (escHtml alias): 9 파일 12 정의 → 12 alias 라인
+- B (appendCsrfToForm): 6 occurrences 18 라인 → 6 라인
+- C (CSRF meta): ~14 occurrences ~28 라인 → ~14 라인
+- 누적 인라인 ~50 라인 축소 + 잔존 인라인 escHtml/CSRF 0건 (D 제외)
+- 보류 표 잔여: 5B-2 (D fetchJSON) + analyze.html 분할
+
+---
+
+## [2026-05-17] Phase 5B-2 — escHtml + CSRF appendCsrfToForm 마이그레이션
+
+**변경 파일:**
+- 수정: 9 페이지 escHtml/escapeHtml 12 정의 → `var ... = Common.escHtml;` 별칭
+  - ai-chat / compare / index (2: escHtml + escapeHtml) / leak-rules / analyze (3: 2311 + 2579 + 3463) / admin/users / server-logs / history / servers
+- 수정: 5 페이지 CSRF append 6 occurrences → `Common.appendCsrfToForm(f)` 1 라인
+  - index / history / progress / analyze / files (2)
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- `common.js` (Round 5B-1 인프라) 가 `Common.escHtml` / `Common.appendCsrfToForm` 을 14 페이지에 배포한 상태에서, 페이지별 동명 함수 인라인 정의를 정리. 호출처는 무변경 (alias 패턴).
+- 보너스: textContent 트릭 기반 escHtml 3 변종(`<>&` 만 escape)이 Common 의 5 문자(`&<>"'`) escape 로 강화 → 속성 컨텍스트에서 발생할 수 있는 XSS 잠재 위험 감소.
+
+### 내역
+- **A 그룹 (escHtml/escapeHtml)**:
+  - 9 파일 12 정의 제거 → `var escHtml = Common.escHtml;` (또는 `var escapeHtml = Common.escHtml;`) 단일 라인 alias 로 치환
+  - 호환성: 함수 선언(hoisted) → var 할당(non-hoisted) 전환이나, 모든 호출처가 DOM ready/이벤트 핸들러 내부에서 실행되어 runtime 시 alias 가 이미 할당된 상태 → 동작 동일
+  - 변종 흡수:
+    - textContent + innerHTML 트릭 (`<>&` 만) — index/analyze (2 곳)/servers → 5 문자 escape 강화
+    - 3 문자 regex (`&<>`) — ai-chat/compare → 5 문자 escape 강화
+    - 4 문자 regex (`&<>"`) — leak-rules → 5 문자 escape 강화
+    - 5 문자 regex/맵 — admin-users/server-logs/history/analyze (3463) → 동작 100% 일치
+    - `&#039;` vs `&#39;` — analyze (3463) → 양쪽 모두 동일 ' 엔터티이므로 시맨틱 동일
+- **B 그룹 (CSRF appendCsrfToForm)**:
+  - 6 occurrences 의 3 라인 패턴 (`var ci = createElement('input'); ci.type='hidden'; ci.name='_csrf'; ci.value = querySelector('meta[name="_csrf"]').content; f.appendChild(ci);`) → `Common.appendCsrfToForm(f)` 1 라인
+  - 동작 100% 일치 (Common 구현이 동일 input 생성 + token 부착 + appendChild)
+  - 페이지: index `postRedirect`, history 삭제 form, progress `postRerun`, analyze `rerunAnalysis`, files 2 곳 (`_delTarget` / `_purgeTarget` 삭제 form)
+- **보류 (별도 사이클)**:
+  - C 그룹: `var _csrf = document.querySelector('meta[name="_csrf"]').content` 형태 15+ 사용처 — 변수 저장 후 재사용 패턴이 페이지별로 달라 일괄 sed 부적합
+  - D 그룹: `Common.fetchJSON` 마이그레이션 — 에러 핸들링이 페이지 코드와 다름 (Common 은 throw, 페이지는 `r.json().then(d => if d.success)`)
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.7s)
+- `bash restart.sh` 정상 기동 (PID=635826)
+- 잔존 인라인 grep: `function escHtml|function escapeHtml` 0 건 / `ci.value = ...meta[name="_csrf"]` 0 건
+- 인증 세션으로 7 페이지 200 OK + 응답 HTML 에 `Common.escHtml`/`Common.appendCsrfToForm` 참조 확인:
+  - `/` (5 refs) / `/files` (2) / `/history` (3) / `/servers` (2) / `/admin/users` (2) / `/comparison-history` (0, 마이그레이션 대상 없음) / `/ai-chat` (2)
+
+---
+
+## [2026-05-17] Phase 5A-3 Round 4 — 테이블 4 family base + sortable 통합
+
+**변경 파일:**
+- 수정: `src/main/resources/static/css/common.css` (+30 라인: 4 family table base + sortable 공통)
+- 수정: 5 페이지 (comparison-history / history / files / servers / admin/users) 인라인 테이블 정의 제거 (~50 라인)
+- 수정: 13 페이지 `common.css?v=2026-05-17c` → `?v=2026-05-17d`
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- `.htable`/`.ftable`/`.stable`/`.utable` 4 테이블 family 가 페이지별로 동일한 base 스타일을 중복 정의하던 패턴 통합. padding/font-size 변형(10px 12px @ 11px vs 12px 16px @ 12px) 과 sort-arrow font-size 차이(9 vs 10px) 는 인라인 유지하여 시각 회귀 0.
+
+### 내역
+- **common.css 확장 (table base)**: 4 family multi-selector 로 통합
+  - `.htable, .ftable, .stable, .utable { width: 100%; border-collapse: collapse; font-size: 13px }`
+  - `thead { background: #F9FAFB }`
+  - `th { text-align: left; font-weight: 600; color: #6B7280; text-transform: uppercase; letter-spacing: .3px; border-bottom: 1px solid #E5E7EB; white-space: nowrap }`
+  - `td { border-bottom: 1px solid #F3F4F6; vertical-align: middle }`
+  - `tbody tr:last-child td { border-bottom: none }`
+  - `tbody tr:hover { background: #F9FAFB }`
+- **common.css 확장 (sortable)**: htable/ftable/stable 공통
+  - `th.sortable { cursor: pointer; user-select: none }`
+  - `th.sortable:hover { background: #F3F4F6 }`
+  - `th.sortable.sort-active .sort-arrow { opacity: 1; color: #2563EB }`
+- **페이지별 잔존 (의도)**:
+  - 모든 테이블 family: `th { padding: ...; font-size: ... }` + `td { padding: ... }` 변형
+  - htable: `min-width: 960px` (history) / `1100px` (comparison-history)
+  - `.stable td a:hover { text-decoration: underline }` (페이지 고유)
+  - sort-arrow 자체: htable/ftable 9px + vertical-align:middle, stable 10px — 인라인 유지
+  - @media 반응형 `.htable { font-size: 14px }` 등 — 인라인 유지
+- **변경 없음**:
+  - `server-logs.html` (.ltable): hover `#FAFAFA` + th 직접 background 구조라 multi-selector 제외
+  - 기타 페이지의 테이블이 아닌 list/grid 구조
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.9s)
+- `bash restart.sh` 정상 기동 (PID=631467)
+- `/css/common.css` 응답에 `.htable, .ftable, .stable, .utable { ... }` multi-selector 4 family 정의 확인
+- 인증 세션으로 5 테이블 페이지 모두 **200 OK + 정상 렌더**:
+  - `/files` (ftable, 11 refs) / `/history` (htable, 12 refs) / `/servers` (stable, 14 refs) / `/admin/users` (utable, 14 refs) / `/comparison-history` (htable, 12 refs)
+
+### Phase 5A-3 종합 (Round 1~4)
+- `common.css`: `.modal-ov` + `.modal-ov.open` + `@keyframes modalIn` + `.modal-box` base + btn 색상 3 그룹 + 테이블 4 family base + sortable 공통 ≈ **+80 라인**
+- 10+ 페이지에서 **~150 라인** 인라인 중복 제거
+- 시각 회귀 0 (모든 페이지 변형은 cascade override 패턴으로 보존)
+- 보류 표에서 5A-3 완전 제거. ltable 통합은 hover 색상이 달라 별도 사이클.
+
+---
+
+## [2026-05-17] Phase 5A-3 Round 3 — 버튼 색상 utility 3 그룹 통합
+
+**변경 파일:**
+- 수정: `src/main/resources/static/css/common.css` (+22 라인: 3 색상 그룹 multi-selector + hover)
+- 수정: 8 페이지 (comparison-history / login / servers / compare / settings / files / history / admin/users) 인라인 색상 정의 제거 (~40 라인)
+- 수정: 13 페이지 `common.css?v=2026-05-17b` → `?v=2026-05-17c`
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- 동일한 색상(`#F3F4F6/#374151`, `#EF4444/#fff`, `#2563EB/#fff`)을 페이지별 다른 클래스명(`.mbtn-cancel` vs `.btn-cancel` vs `.sa-btn-cancel` 등)으로 8 페이지에 중복 정의하던 패턴을 multi-selector 로 통합. 박스 속성(padding/font-size/border-radius/font-weight) 변형은 페이지별로 큰 차이가 있어 인라인 유지 — 색상만 분리.
+
+### 내역
+- **common.css 확장**: 3 색상 그룹을 multi-selector 로 정의
+  - cancel: `.mbtn-cancel, .btn-cancel, .sa-btn-cancel { background: #F3F4F6; color: #374151 }` + `:hover { background: #E5E7EB }`
+  - danger: `.mbtn-del, .mbtn-danger, .btn-delete, .sa-btn-del { background: #EF4444; color: #fff }` + `:hover { background: #DC2626 }`
+  - primary: `.mbtn-save, .mbtn-primary, .mbtn-confirm, .btn-download { background: #2563EB; color: #fff }` + `:hover { background: #1D4ED8 }`
+- **페이지별 정리**: 각 페이지에서 위 패턴과 일치하는 인라인 색상 정의(`.클래스 { background:; color: }` + `:hover`) 제거, 박스 속성(`.modal-btns button { padding: ...; font-weight: ...; ... }`) 은 유지
+- **인라인 잔존 (의도)**:
+  - `.mbtn-save:disabled { background: #93C5FD; cursor: wait }` (login)
+  - `.sa-btn-del:disabled { background: #FCA5A5; cursor: not-allowed }` (files / history / comparison-history)
+  - `:disabled` variant 는 페이지별로 다르고 specificity 가 base 보다 높아 cascade override 가 정상 동작
+- **변경 없음**: `leak-rules.html` (common.css 미적용 — 추후 별도 사이클)
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.8s)
+- `bash restart.sh` 정상 기동 (PID=627115)
+- `/css/common.css` 응답에 3 그룹 multi-selector 정의 모두 확인 (`.mbtn-cancel, .btn-cancel, .sa-btn-cancel { ... }` 형식)
+- 8 페이지 색상 정의 제거 확인 (인라인 `/* 색상은 common.css 에서 제공 */` 주석으로 대체)
+
+### Phase 5A-3 종합 (Round 1 + 2 + 3)
+- `common.css`: `.modal-ov` + `.modal-ov.open` + `@keyframes modalIn` + `.modal-box` base 4 속성 + btn 색상 3 그룹 통합 ≈ 50 라인 추가
+- 8~10 페이지에서 ~100 라인 인라인 중복 제거
+- grid 패턴(`.htable`/`.ftable`/`.stable`/`.utable`)은 명명 + thead/td 토큰 차이가 커서 별도 사이클로 이연
+- 시각 회귀 0 (모든 페이지 변형은 cascade override 패턴으로 보존)
+
+---
+
+## [2026-05-17] Phase 5A-3 Round 2 — .modal-box base 4 속성 추출
+
+**변경 파일:**
+- 수정: `src/main/resources/static/css/common.css` (+10 라인: `.modal-box { background; border-radius:12px; padding:24px; box-shadow }`)
+- 수정: `src/main/resources/templates/history.html` / `comparison-history.html` / `admin/users.html` (.modal-box 4 속성 제거, width/max-width/animation만 유지)
+- 수정: `src/main/resources/templates/login.html` (background/padding/box-shadow 제거, border-radius:14px 변형 override 유지)
+- 수정: `src/main/resources/templates/settings.html` (`.modal-ov` + `@keyframes modalIn` 잔존 정리 + `.modal-box` 공통 속성 제거, padding:28px 30px 변형 override 유지)
+- 수정: 13 페이지 `common.css?v=2026-05-17` → `?v=2026-05-17b` 캐시 무효화
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- Round 1 (`.modal-ov` base + `@keyframes modalIn`) 추출 후 잔존하던 `.modal-box` 공통 속성 4 개를 추가 추출. 페이지별 `width`/`max-width` 변형과 일부 페이지의 `border-radius:14px` / `padding:28 30` override 는 인라인 cascade 로 보존.
+
+### 내역
+- **common.css 확장**: `.modal-box { background:#fff; border-radius:12px; padding:24px; box-shadow:0 20px 60px rgba(0,0,0,.2); }` — 5 페이지에서 100% 일치하는 4 속성. `animation` 은 files.html 이 `modalIn` 미사용이라 미포함 (페이지별 인라인 유지).
+- **페이지별 정리**:
+  - `history.html` / `comparison-history.html`: `.modal-box` 가 1 라인으로 축소 (`width:90%; max-width:420px; animation:modalIn .2s ease`)
+  - `admin/users.html`: 동일 패턴 (max-width:440px), `.modal-ov { background: rgba(0,0,0,.4) }` overlay 변형은 인라인 유지
+  - `login.html`: `.modal-box { border-radius:14px; width:calc(100%-32px); max-width:440px; animation:modalIn; max-height:calc(100vh-32px); overflow-y:auto }` — `border-radius:14px` 변형 override 유지
+  - `settings.html`: 전 라운드에서 누락된 `.modal-ov` + `.modal-ov.open` + `@keyframes modalIn` 잔존 블록 함께 정리. `.modal-box { padding:28px 30px; width:92%; max-width:500px; animation:modalIn .2s ease }`
+- **변경 없음**: `files.html` (box-shadow `0 20px 40px rgba(0,0,0,.15)` 변형 + `fadeIn` 애니메이션, `modalIn` 미사용 — 인라인 override 가 common 을 가림) / `leak-rules.html` (common.css 미적용)
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.5s)
+- `bash restart.sh` 정상 기동 (PID=622396)
+- `/css/common.css` 응답에 `.modal-box base` 정의 확인 (`background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 20px 60px rgba(0, 0, 0, .2)`)
+- `/login` 응답 200, 인라인은 `border-radius:14px` + width/max-height/overflow-y/animation 만 잔존 확인 (background/padding/box-shadow 중복 제거 확인)
+
+---
+
+## [2026-05-17] Phase 5A-3 — 모달 공통 base 패턴을 common.css 로 추출 (부분)
+
+**변경 파일:**
+- 수정: `src/main/resources/static/css/common.css` (+15 라인: `.modal-ov` base / `.modal-ov.open { display: flex }` / `@keyframes modalIn`)
+- 수정: `src/main/resources/templates/history.html` (modal-ov + open + modalIn 3 블록 제거)
+- 수정: `src/main/resources/templates/comparison-history.html` (동일 3 블록 제거)
+- 수정: `src/main/resources/templates/login.html` (modal-ov + modalIn 제거, modalFade 인라인 유지)
+- 수정: `src/main/resources/templates/admin/users.html` (modalIn 만 제거 — overlay 가 `.4` 변형이라 modal-ov 인라인 유지)
+- 수정: 13 페이지 `common.css?v=2026-05-12` → `?v=2026-05-17` 캐시 무효화
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- 6 개 페이지에서 `.modal-ov` overlay base + `@keyframes modalIn` 키프레임이 거의 동일하게 중복 정의되어 있던 것을 common.css 로 통합. 페이지별 미세 변형(overlay opacity .35/.4/.45, padding 변형, fadeIn vs modalFade vs modalIn 애니메이션)은 인라인 override 패턴으로 보존하여 시각 회귀 0.
+
+### 내역
+- **common.css 추가**: 6 페이지에서 100% 일치하던 `.modal-ov` base 속성 (`position: fixed; inset: 0; z-index: 200; background: rgba(0,0,0,.45); align-items/justify-content: center`), `.modal-ov.open { display: flex }` 기본 동작, `@keyframes modalIn` 키프레임. 페이지별 `.modal-ov.open` 의 추가 animation 속성(`fadeIn`/`modalFade` 등) 은 CSS 캐스케이드 순서상 인라인이 common 을 override 하므로 충돌 없음.
+- **history.html / comparison-history.html**: overlay `.45` + animation 없음 → 3 블록 모두 안전 제거.
+- **login.html**: overlay `.45` 일치하나 `.modal-ov.open` 에 `animation: modalFade` 있음 → `.modal-ov` base 와 `@keyframes modalIn` 만 제거, `.modal-ov.open { animation: modalFade .15s ease }` 와 `@keyframes modalFade` 는 인라인 유지.
+- **admin/users.html**: overlay 가 `.4` 변형(common 의 `.45` 와 다름) → `.modal-ov { background: rgba(0,0,0,.4) }` 인라인 유지, `@keyframes modalIn` 만 제거.
+- **변경 없음 (변형 보존)**:
+  - `files.html`: overlay `.35` + `fadeIn` 애니메이션 (modalIn 미사용)
+  - `leak-rules.html`: common.css 미적용 + overlay `padding: 20px` 변형
+- **btn/grid 패턴 미추출**: 페이지별 명명·디자인 토큰 차이 큼(`.btn-cancel`/`.mbtn-cancel`/`.mbtn-del`/`.mbtn-danger`, 버튼 padding `7px 16px`/`8px 18px`/`9px 16px`, `.modal-box` max-width `380`/`420`/`440`/`760px`, border-radius `12`/`14px`). 디자인 토큰 표준화 사이클 후 별도 진행 권장.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (11.6s)
+- `bash restart.sh` 정상 기동 (10.4s, PID=619728)
+- `/css/common.css` 200 + 본문 끝부분에 `.modal-ov` / `@keyframes modalIn` 정의 확인
+- `/login` HTML 의 `?v=2026-05-17` 적용 + 인라인 `.modal-ov.open { animation: modalFade .15s ease }` 만 남음 (base/modalIn 중복 제거 확인)
+
+---
+
+## [2026-05-17] Phase 4B-2 — HeapDumpController API 도메인별 6 분할
+
+**변경 파일:**
+- 삭제: `src/main/java/com/heapdump/analyzer/controller/HeapDumpController.java` (2,898 라인)
+- 신규: `HeapAnalysisApiController` / `HeapReportApiController` / `HeapFileApiController` / `HeapHistoryApiController` / `HeapSystemApiController` / `HeapAiApiController`
+- 신규: `model/dto/` 패키지 — DTO 11 개 (`AnalysisHistoryItem`/`DailyDetection`/`ServerSeries`/`DetectionSummaryItem`/`DetectionAggregate`/`DetectionDayFile`/`DetectionRecentItem`/`ClassDiff`/`HistogramDiff`/`SuspectDiff`/`KpiDiff`)
+- 신규: `service/HeapHistoryAggregator.java` (585 라인) — `buildHistory` / `aggregateDetections` / `build*Diff` / `buildAnalysisName` / `truncateLog` / `formatDuration`
+- 신규: `util/AuthUtil.java` — `isAdmin(Authentication)` static
+- 수정: `HeapDumpViewController` (apiController 주입 제거 → HeapHistoryAggregator 주입, DTO import 갱신)
+- 수정: `ComparisonHistoryController` (HeapDumpController 주입 제거 → AuthUtil 사용)
+- 수정: `ComparisonHistoryService` (`HeapDumpController.KpiDiff` → `model.dto.KpiDiff` import 갱신)
+- 수정: `SECURITY_REFACTOR_PLAN.md`, `CHANGELOG.md`
+
+### 변경 의도
+- 4B-1 (View + 단일 API 2 분할) 완료 후 잔존한 `HeapDumpController` (2,898 라인, 50 엔드포인트 + 11 inner DTO + 16 public helper) 를 도메인별로 분리 — 단일 파일 책임 비대화 해소 + 도메인 경계 명확화.
+
+### 내역
+- **6 도메인 분할** (URL/외부 시그니처 100% 무변경):
+  - `HeapAnalysisApiController` (80): SSE `/analyze/progress/*`, `POST /api/analyze/cancel/*`, `GET /api/queue/status`
+  - `HeapReportApiController` (350): MAT HTML (`/report/*/overview`/`/suspects`/`/top_components`/`component-detail*`/`component-list`), `/thread-stacks`, mat-page ZIP iframe, PDF print + log 청크
+  - `HeapFileApiController` (141): `/api/files/bulk-delete`, `/api/upload`, `/api/upload/check`, `/download/*`
+  - `HeapHistoryApiController` (283): `/api/history*`, `/api/history/detections*`, `/api/results/clear` (`/api/cache/clear` alias), `/api/compare/data`
+  - `HeapSystemApiController` (432): `/api/settings/unreachable|compress|database*`, `/api/mat/heap*`, `/api/mat/heap-check`, `/api/system/status`, `/api/disk/check`, `/api/settings`
+  - `HeapAiApiController` (754): `/api/llm/*` 15 + `/api/settings/rag*` 7 = 22 엔드포인트 (LLM 설정/연결/분석/인사이트/compare/chat/RAG 설정·검색·임베딩)
+- **DTO 추출 (`model/dto/`)**: 기존 inner static class 11 개를 독립 파일로 이전. 컨트롤러 import 만 변경하면 동작.
+- **헬퍼 추출 (`HeapHistoryAggregator` @Component)**: `analyzerService` 주입받아 `buildHistory` / `aggregateDetections` / `build*Diffs` / `buildKpiDiff` / `buildClassSizeMap` / `buildAnalysisName` / `truncateLog` / `formatDuration` 제공. 내부 헬퍼 (`normalizeSuspectKey`/`eqNullSafe`/`suspectStateOrder`/`severityWeight`) 는 private static.
+- **AuthUtil**: `HeapDumpController.isAdmin()` 같은 시그니처의 static util 로 추출. View 컨트롤러·ComparisonHistoryController·6 API 컨트롤러 모두 직접 호출.
+- **종속 컨트롤러 갱신**:
+  - `HeapDumpViewController`: `apiController` (HeapDumpController) 주입 제거 → `HeapHistoryAggregator` 주입. DTO 참조 `HeapDumpController.AnalysisHistoryItem` → `com.heapdump.analyzer.model.dto.AnalysisHistoryItem` (등 11 종).
+  - `ComparisonHistoryController`: HeapDumpController 주입 제거. `apiController.isAdmin(auth)` → `AuthUtil.isAdmin(auth)`.
+  - `ComparisonHistoryService`: `import com.heapdump.analyzer.controller.HeapDumpController.KpiDiff` → `import com.heapdump.analyzer.model.dto.KpiDiff`.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS (95 source files, 11.6s)
+- `bash restart.sh` 정상 기동 (10.55s, PID=616090)
+- 무인증: `/`, `/login`, `/api/*` 모두 302 (Spring Security login redirect) / `/login` 본문 200 — 매핑 정상
+- 인증 세션 후 6 도메인 대표 API 모두 **200 + 정상 JSON 본문**:
+  - `/api/system/status` → matCliReady/diskUsedPercent/jvm/queueSize
+  - `/api/queue/status`, `/api/history`, `/api/disk/check`, `/api/mat/heap`, `/api/settings/rag` 모두 OK
+- 회귀 위험 큰 SSE/PDF/iframe 경로는 로그인 후 화면 검증 권장 (URL 무변경이므로 클라이언트 코드 수정 불필요).
+
+---
+
+## [2026-05-17] SECURITY_REFACTOR_PLAN 보류 항목 표 정리
+
+**변경 파일:**
+- 수정: `SECURITY_REFACTOR_PLAN.md`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 문서 본문(Phase 4A, Line 50–63)에는 이미 4A-2 LlmConfigService / 4A-3 RagConfigService / 4A-4 FileManagementService 모두 2026-05-12 자 완료로 기록되어 있는데, 하단 "보류 항목" 표(Line 108–110)에 같은 항목이 잔존해 자체 모순이 발생.
+
+### 내역
+- 보류 항목 표에서 4A-2 / 4A-3 / 4A-4 행 제거. 실제로 보류 중인 4B-2 / 5A-3 / 5B-2 / analyze.html 분할만 남김.
+- 표 하단에 정리 기록 주석(2026-05-17, 본문 Line 50–63 참조) 추가.
+- 코드 영향 없음 — 문서 정리 단독 변경.
+
+### 검증
+- 실제 코드 상태로 검증: `LlmConfigService.java` (1,025 라인) / `RagConfigService.java` (421 라인) / `FileManagementService.java` 모두 존재. `HeapDumpAnalyzerService.java` 1,965 라인 — 플랜 본문이 명시한 완료 수치(`3,581 → 1,965`)와 정확히 일치.
+
+---
+
+## [2026-05-16] Leak Suspect 룰 엔진 DB 마이그레이션 Phase 4 (Admin CRUD UI)
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/controller/LeakRuleAdminController.java`
+- 신규: `src/main/resources/templates/leak-rules.html`
+- 수정: `src/main/resources/templates/fragments/banner.html` (Settings 아코디언에 "Leak Rules" 메뉴 추가, admin 전용 + active 하이라이트 분기)
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- DB로 옮긴 leak rule을 운영자가 코드 배포 없이 추가/수정/삭제/우선순위 조정/비활성화할 수 있는 관리 화면 제공. 미리보기 기능으로 템플릿 작성 시 즉시 결과 확인.
+
+### 내역
+- **권한**: 페이지를 `/admin/leak-rules`, API를 `/api/admin/leak-rules/**` 경로로 두어 기존 SecurityConfig의 `/admin/**`+`/api/admin/**` ADMIN 강제 규칙을 그대로 활용. CSRF 보호도 유지(`/api/admin/**` 면제 안 됨).
+- **컨트롤러 (`LeakRuleAdminController`)**: 7개 엔드포인트.
+  - View: `GET /admin/leak-rules` — Thymeleaf 페이지 렌더 (KPI: 룰 수)
+  - Library: `GET/POST/PUT/DELETE /api/admin/leak-rules/library[/{id}]`
+  - Fallback: `GET/POST/PUT/DELETE /api/admin/leak-rules/fallback[/{id}]`
+  - Preview: `POST /api/admin/leak-rules/preview` — 샘플 컨텍스트 + 템플릿 → `LeakRuleTemplate.render()` 결과 + severity 반환
+  - 모든 변경 후 `LeakRuleService.invalidate()` 호출로 캐시 즉시 갱신 → 다음 분석부터 반영
+  - 검증: 필수 필드 + 정규식 컴파일 검증(`Pattern.compile`), 실패 시 400 + 한글 에러 메시지
+- **페이지 (`leak-rules.html`)**:
+  - **2탭**: 라이브러리(prefix) / Fallback(정규식). compare.html의 `.cmp-tab-btn` 언더라인 스타일 차용.
+  - **테이블**: ID, 우선순위, 식별자(prefix or name), category, severity chip, enabled 토글, [편집][삭제]. 행 hover.
+  - **검색**: 탭별 `<input class="search">`로 즉시 필터(toLowerCase 부분 매칭).
+  - **페이지네이션**: 20개 단위, ‹Prev / 1 … 현재±2 … 마지막 / Next›.
+  - **enabled 토글**: 행 토글 즉시 PUT — 클릭 시 한 줄 반영.
+  - **편집/추가 모달**: 같은 폼 재사용(kind flag로 라이브러리/Fallback 입력 영역 토글). 우선순위 / severityHint / explanationTpl / adviceTpl / enabled 입력. 텍스트영역은 monospace 폰트 + 작은 hint로 템플릿 문법 안내(`{var}`, `{var|filter}`, `{#if flag}…{#else}…{/if}` + flag 목록).
+  - **미리보기**: 모달 안 `<details>` 펼쳐 sample ctx(simpleClassName/instanceCount/bytes/percentage/accumulatorSimple/referencedFromClass) 입력 → 서버 preview API 호출 → explanation/advice/severity 즉시 렌더.
+  - **삭제 확인 모달**: history.html과 동일 패턴(`.modal-ov`). target 표시 + 경고 문구 + 확인 시 DELETE 호출 + 행 즉시 제거.
+  - CSRF 메타 헤더 전송, 응답 처리 OK/NOT_FOUND/FORBIDDEN/검증 실패에 따라 한글 알림.
+- **Banner 메뉴**: Settings 아코디언에 `<a href="/admin/leak-rules" sec:authorize="hasRole('ADMIN')">Leak Rules</a>` 추가. 활성 경로 자동 펼침/하이라이트 로직(`path.startsWith('/admin/leak-rules')`)도 반영.
+
+### 검증
+- 빌드 SUCCESS / 기동 정상 / Library 66 + Fallback 33 데이터 유지.
+- 비로그인 호출 시 페이지·API 모두 302 (로그인 리다이렉트) — Spring Security 규칙 정상 동작.
+- 패키지된 템플릿에 핵심 마크업 10건 매칭 (`openLibCreate`/`openFbCreate`/`runPreview`/`submitEdit`/`tab-library`/`tab-fallback`).
+
+### 후속 (선택)
+- 람다 75개(`LeakSuspectAdvisor.java` 700+라인) 제거 — 사용자 회귀 검증 완료 후 코드 단순화.
+
+## [2026-05-16] Leak Suspect 룰 엔진 DB 마이그레이션 Phase 2+3 (시드 마이그레이션 + 신규 21개 큐레이션)
+
+**변경 파일:**
+- 신규: `src/main/resources/leak-rules/library-rules.json` (66개)
+- 신규: `src/main/resources/leak-rules/fallback-rules.json` (33개: 기존 9 + 신규 21 + catchall은 우선순위 9999로 재정렬)
+- 신규: `src/main/java/com/heapdump/analyzer/config/LeakRuleSeeder.java`
+- 수정: `src/main/java/com/heapdump/analyzer/util/LeakRuleTemplate.java` (Double 포맷 보정 — `String.valueOf(double)` 동일 동작)
+- 수정: `CHANGELOG.md`
+- 비고: `LeakSuspectAdvisor.java`의 람다 75개는 dual-path fallback 용도로 보존(다음 단계에서 제거 예정)
+
+### 변경 의도
+- Phase 1에서 깐 dual-path 인프라 위에 실제 DB 룰셋을 채워넣고, 사용자 요구사항인 키워드 fallback 룰 30+개를 큐레이션으로 확장. 시드 완료 후 모든 분석이 DB 경로로 처리되며 람다는 더 이상 호출되지 않음(검증 후 제거 예정).
+
+### 내역
+- **자동 변환 (66 KnownLibrary + 9 LeakRule 람다 → JSON 시드)**
+  - Python 변환 스크립트(`/tmp/convert_rules.py`)로 원본 LeakSuspectAdvisor.java를 파싱해 람다 본문을 토큰화. `ctx.X` → `{X}`, `formatBytes(ctx.bytes)` → `{bytes|bytes}`, `formatInstanceCount(ctx.instanceCount)` → `{instanceCount|instances}`, ternary `(ctx.X != null ? A : B)` → `{#if hasX}A{#else}B{/if}` 등 1:1 변환. UNCONVERTED 마커 0건 — 모든 람다 정상 변환.
+  - `simpleClassName.toLowerCase().contains(…)` 자유 표현식은 `LeakRuleContext`의 derived flag(`streamClass`/`sessionClass`/`threadClass`/`classLoaderClass`/`cacheClass`/`mapClass`)로 매핑.
+- **신규 fallback 21개 큐레이션 추가** — 다음 9개 카테고리로 분류:
+  - 비동기/리액티브 4종: CompletableFuture·Reactor Flux/Mono·RxJava·Disruptor RingBuffer
+  - 스케줄러 2종: Quartz JobDataMap·Timer/TimerTask
+  - 메시징 3종: Kafka Consumer·JMS Session·RabbitMQ Channel
+  - JDBC/ORM 세분화 3종: Statement/PreparedStatement·MyBatis SqlSession·JPA 영속성 컨텍스트
+  - HTTP/Web 3종: HTTP Connection Pool·WebSocket Session·ServletContext attribute
+  - 캐시/분산 2종: L2 캐시·분산 캐시 노드(Hazelcast/Ignite/Infinispan)
+  - 보안 1종: SSL/TLS 세션
+  - 직렬화 1종: ObjectInputStream/Kryo
+  - JVM 내부 2종: DirectByteBuffer·MappedByteBuffer/FileChannel
+  - 도메인 3종: HTTP Session attribute·Spring Batch ExecutionContext·ETL staging 버퍼
+- **우선순위 재정렬**: 기존 specific 8개(5001~5008) → 신규 21개(5009~5029) → catchall ".*" (9999). 더 구체적인 룰이 먼저 매칭되도록 보장.
+- **`LeakRuleSeeder`** `ApplicationRunner` — 시작 시 두 테이블이 비어있을 때만 classpath의 JSON에서 INSERT. 이미 데이터가 있으면 skip(운영자가 DB에서 직접 편집 가능). 시드 후 `LeakRuleService.invalidate()` 호출로 캐시 즉시 갱신.
+- **회귀 위험**: DB 우선 + 람다 fallback 구조이므로 DB 매칭이 람다와 동일한 출력을 내야 함. 변환 규칙이 1:1 매핑이고 Double 포맷도 `String.valueOf()` 동작으로 보정해 람다와 동일한 텍스트가 나오도록 처리. 미세한 차이가 보이면 람다(dual-path fallback)가 즉시 backup으로 작동하므로 분석 자체가 깨질 위험은 없음. 사용자 검증 후 다음 단계에서 람다 배열 제거.
+
+### 후속 단계
+- Phase 4: `/settings/leak-rules` admin CRUD UI (룰 추가·편집·우선순위·enabled·미리보기).
+- Phase 4 완료 후 `LeakSuspectAdvisor`의 람다 배열(약 700라인) 제거 — 코드 단순화.
+
+## [2026-05-16] Leak Suspect 룰 엔진 DB 마이그레이션 Phase 1 (인프라 + dual-path)
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/model/entity/LeakLibraryRule.java`
+- 신규: `src/main/java/com/heapdump/analyzer/model/entity/LeakFallbackRule.java`
+- 신규: `src/main/java/com/heapdump/analyzer/repository/LeakLibraryRuleRepository.java`
+- 신규: `src/main/java/com/heapdump/analyzer/repository/LeakFallbackRuleRepository.java`
+- 신규: `src/main/java/com/heapdump/analyzer/service/LeakRuleService.java`
+- 신규: `src/main/java/com/heapdump/analyzer/util/LeakRuleContext.java`
+- 신규: `src/main/java/com/heapdump/analyzer/util/LeakRuleTemplate.java`
+- 신규: `src/main/java/com/heapdump/analyzer/config/LeakSuspectAdvisorBootstrap.java`
+- 수정: `src/main/java/com/heapdump/analyzer/util/LeakSuspectAdvisor.java` (dual-path 추가, 기존 람다 75개 보존)
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `/analyze/{file}` Leak Suspects Report 패널의 분석 설명·권장 조치 텍스트가 `LeakSuspectAdvisor.java`에 70+개 ContextFunction 람다(KNOWN_LIBRARIES 66개 + FALLBACK_RULES 9개)로 하드코딩되어 있어 운영 중 문구 수정·룰 추가에 코드 배포가 필요했음. B안(자체 템플릿 엔진 + DB 룰셋)으로 단계적 마이그레이션 시작. 회귀 위험을 줄이기 위해 Phase 1은 인프라 + dual-path만 깔고 기존 람다는 그대로 보존.
+
+### 내역
+- **DB 스키마 2종 (JPA ddl-auto=update 흐름 그대로 자동 생성, MariaDB 확인):**
+  - `leak_library_rule(id, prefix, library_name, category, severity_hint, explanation_tpl, advice_tpl, enabled, priority, created_at, updated_at)` — `(enabled, priority)` 복합 인덱스 + `prefix` 인덱스
+  - `leak_fallback_rule(id, name, category, pattern_regex, explanation_tpl, advice_tpl, severity_hint, enabled, priority, created_at, updated_at)` — `(enabled, priority)` 인덱스
+- **미니 템플릿 엔진 `LeakRuleTemplate`** — 약 170줄, 문법: `{var}`, `{var|filter}`(filter: bytes/instances/number/percent), `{#if flag}…{#else}…{/if}`. 중첩 if 미지원(현 람다 분석상 불필요).
+- **`LeakRuleContext`** — 기존 LeakSuspectAdvisor 내부 SuspectContext와 동일 필드 + derived boolean flag 8종(`hasAccumulator`, `hasReferencedFrom`, `hasInstanceCount`, `highPercentage`(≥30), `veryHighPercentage`(≥50), `streamClass`, `sessionClass`, `threadClass`, `classLoaderClass`, `cacheClass`, `mapClass`) — 람다의 자유 표현식(`.toLowerCase().contains(…)`, `>= 30`)을 템플릿 `{#if flag}`로 풀기 위한 사전 계산. `resolve(key)` / `truthy(key)` 헬퍼 노출.
+- **`LeakRuleService`** — 룰셋 로딩/캐싱(`AtomicReference`) + fallback regex Pattern 사전 컴파일(`Pattern.CASE_INSENSITIVE | DOTALL`). `invalidate()` API로 변경 즉시 반영. invalid regex는 경고 로그 후 skip.
+- **`LeakSuspectAdvisor` dual-path** — `analyze()` 진입 직후 `tryDbRules()` 우선 시도. DB 룰셋이 비어있거나 매칭 실패 시 기존 람다 75개 경로로 자동 fallback. `bindRuleService()`로 정적 참조 주입(MatReportParser가 정적 호출하므로 빈 직접 주입 불가).
+- **`LeakSuspectAdvisorBootstrap`** `@Configuration` + `@PostConstruct` — 컨텍스트 초기화 후 service를 advisor에 바인딩. 로그: `[LeakRule] LeakSuspectAdvisor wired with DB rule service (dual-path enabled)`.
+- **회귀 영향**: 현재 두 테이블이 비어있으므로 `tryDbRules()`가 항상 false 반환 → 기존 람다 경로 그대로. 모든 출력 텍스트 변화 없음.
+
+### 후속 단계
+- Phase 2: 기존 람다 75개 → JSON 시드로 1:1 변환 + `LeakRuleSeeder` ApplicationRunner로 첫 부팅 시 INSERT. 시드 완료 후 람다 배열 제거.
+- Phase 3: 키워드 fallback 룰 21+개 큐레이션 추가(총 30+개 보장).
+- Phase 4: `/settings/leak-rules` admin CRUD UI(룰 추가·편집·우선순위·enabled·미리보기).
+
+## [2026-05-16] 비교 이력 단일 삭제 + 소유권 검증
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/service/ComparisonHistoryService.java`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/ComparisonHistoryController.java`
+- 수정: `src/main/resources/templates/comparison-history.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `/comparison-history`의 각 행에 "다시 보기"만 있어 단일 삭제가 불가능했음(일괄 삭제는 있었으나 다중선택 모드를 거쳐야 함). 또한 기존 bulk-delete는 누구든 ID만 알면 타인 이력도 삭제 가능한 권한 공백이 있었음. 사용자 요구: 단일 삭제 버튼 추가 + 본인만 삭제 가능 / 관리자는 모두 삭제.
+
+### 내역
+- **Service**: `DeleteResult` enum(`DELETED`/`NOT_FOUND`/`FORBIDDEN`) + `deleteOne(id, username, isAdmin)` 신설. 소유자 검증은 `comparedBy.equals(username)`. `bulkDelete(ids, username, isAdmin)`로 시그니처 변경 — 허용된 ID만 삭제하고 권한 없는 ID는 `skipped`로 카운트(404와 권한 거부를 한 번에 처리해 partial success 가능). `findAllById` → 소유권 필터 → `deleteByIdIn` 흐름.
+- **Controller**: `DELETE /api/comparison-history/{id}` 추가 — `Authentication` 주입 + `ResponseEntity`로 200/404/403 분기. `bulk-delete`도 `Authentication` 받아 service에 username·isAdmin 전달, 응답에 `deleted`/`skipped`/`requested` 노출.
+- **View**: `comparisonHistoryPage()` 모델에 `currentUsername` 주입. 각 `<tr>`에 `data-id`/`data-can-delete` 추가, 행 단위 `canDelete = isAdmin or comparedBy == currentUsername` 계산. "작업" 셀이 `<div class="row-actions">`로 묶이고 "다시 보기" 옆 빨간 톤 `.del-btn` 추가 — 권한 없는 행은 disabled + tooltip "본인이 실행한 비교 이력만 삭제할 수 있습니다". `#deleteModal`(단일 삭제 확인 모달, base vs target 표시) + JS `openDeleteModal()/closeDeleteModal()/submitDelete()` 추가, CSRF 메타 헤더 전송. 성공 시 행을 DOM에서 즉시 제거 + `initRows()` 재구성으로 페이지네이션·정렬 인덱스 동기화(전체 리로드 회피). 일괄 삭제도 `skipped > 0`이면 안내 alert.
+
+## [2026-05-16] Compare hero 문구 한국어 어절 보존 (글자 단위 줄바꿈 수정)
+
+**변경 파일:** `src/main/resources/templates/compare.html`, `CHANGELOG.md`
+
+### 내역
+- Comparison Setup 페이지의 hero 설명 문구가 "정/리합니다"처럼 한 어절 중간에서 줄이 끊기는 현상 수정. 원인은 `.cmp-hero p`에 한국어 줄바꿈 정책이 명시되지 않아 브라우저 기본값(`word-break: normal`)이 적용되었고, CJK 문자는 normal일 때 어절 중간(글자 사이)에서도 줄바꿈이 허용됨. `.cmp-hero p`에 `word-break: keep-all; overflow-wrap: break-word;` 추가 — CJK 어절은 공백 경계에서만 줄바꿈되고, 어절이 컨테이너 폭을 초과할 때만 안전망으로 글자 단위 break. 결과 화면의 hero 문구(`"…단계적으로 확인할 수 있습니다."`)에도 동일하게 적용됨.
+
+## [2026-05-16] Compare AI 인사이트 패널 — 토글 제거 / 재분석 확인 모달 / 저장 칩 타이밍
+
+**변경 파일:** `src/main/resources/templates/compare.html`, `CHANGELOG.md`
+
+### 내역
+- **AI 분석 토글 제거**: `panel-title` 우측의 on/off 토글(`#cmpAiToggle`)과 `onCmpAiToggle()` / `cmpAiVisible` localStorage 키, `.ai-toggle`·`.ai-toggle-text`·`#cmpAiPanel { display: none }` CSS, `cmpGoToAiTab()`의 토글 활성화 분기까지 모두 제거. 초기화 IIFE는 `initCmpAi()`로 단순화 — Result Summary AI 요약과 AI 탭 결과를 항상 즉시 로드.
+- **재분석 확인 모달**: 결과 영역의 `재분석` 버튼이 native `confirm` 대신 history.html과 동일한 `.modal-ov` 패턴의 커스텀 모달(`#cmpReanalyzeModal`)을 띄움. 메시지: "기존에 저장된 AI 분석 결과가 새 결과로 덮어써집니다. … 복구할 수 없습니다." 확인 클릭 시 `cmpConfirmReanalyze()` → `startCmpAiAnalysis()`. 모달 배경 클릭으로 닫힘. NotAnalyzed 상태의 "AI 비교 분석 시작" 버튼은 첫 분석이므로 모달 없음.
+- **"저장됨" 칩 타이밍 수정**: `cmpAiSetState(st)`에서 `st !== 'Result'`이면 무조건 `#cmpAiSavedChip`을 숨기도록 일원화. 분석 중/오류/미분석 상태에서 이전 결과의 칩이 잔존하지 않음. Result 상태에서는 `cmpAiShowResult(result, !!result.saved)`가 백엔드의 `result.saved` 플래그에 따라 표시.
+
+## [2026-05-16] Compare Picker 좌·우 끝선 정렬 후속 수정
+
+**변경 파일:** `src/main/resources/templates/compare.html`, `CHANGELOG.md`
+
+### 내역
+- 직전 시도(align-items: stretch + option-card flex:1)에도 좌측 패널 끝선이 우측 옵션 카드보다 16px 위로 떠 있어 사용자 피드백 발생. 원인은 글로벌 `.panel { margin-bottom: 16px }` — grid item의 visual 끝(border)이 row stretch 영역보다 위에 위치하게 되어 우측이 더 길게 보임. picker 컨텍스트 한정으로 `.cmp-picker-layout > .panel { margin-bottom: 0 }` 오버라이드 추가하여 좌측 패널 border 끝이 row 끝까지 도달하게 함. 다른 페이지/섹션의 `.panel` 마진은 영향 없음.
+
+## [2026-05-16] Compare 페이지 미세 개선 — AI step 펄스 + Picker 컬럼 정렬
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html`
+- 수정: `CHANGELOG.md`
+
+### 내역
+- **AI 분석 로딩 step 펄스**: 4단계 진행 인디케이터의 active 단계 동그라미에 keyframes 기반 동적 효과 추가. ① 본체에 `aiStepCorePulse`(1.6s) box-shadow 펄스로 인디고 빛이 안→밖으로 12px 확산. ② `::before`/`::after` 두 ring이 `aiStepRingPulse`로 .85→1.55 배 확산하며 페이드아웃, `::after`는 0.8s 시차로 시작해 끊김 없이 연속된 파동처럼 보임. active 진입 시 동그라미 본체도 `scale(1.08)` + 색상 트랜지션. done/idle 상태는 영향 없음.
+- **Comparison Setup 좌·우 컬럼 하단 정렬**: 기존 `.cmp-picker-layout`의 `align-items: start`로 좌측 "분석 대상 선택" 패널이 우측 "분석 준비 상태 + 적용 분석 옵션" aside보다 길어 하단 라인이 어긋났음. `align-items: stretch`로 변경 + `aside`를 `flex column`으로 만들고 마지막 `.cmp-option-card`에 `flex: 1 1 auto` 부여 → 우측 옵션 카드가 늘어나 좌측 패널 바닥과 정확히 일치. 모바일(`max-width: 720px`) 단일 컬럼 분기는 영향 없음.
+
+## [2026-05-16] Comparison Result Summary에 AI 인사이트 요약 슬롯 신설
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 새로 도입한 4탭 레이아웃에서 사용자가 AI 인사이트 탭으로 들어가야만 분석 결과를 볼 수 있어, 첫 화면(핵심 요약)에서 AI 의견을 미리 인지하기 어려웠음. 또한 인사이트가 아직 수행되지 않은 경우 사용자가 그 사실 자체를 모르고 지나칠 수 있음.
+
+### 내역
+- `Result Summary` 카드 안에 `#cmpAiSummaryBox` 슬롯 신설(`data-state` 속성으로 5단계 상태 토글: `loading` / `ready` / `empty` / `disabled` / `error`).
+  - **ready**: 저장된 인사이트 요약(`summary` 필드) 텍스트 + 위험도 chip(`CRITICAL/HIGH/MEDIUM/LOW`) + "전체 인사이트 보기 →" 링크.
+  - **empty**: "아직 AI 비교 인사이트가 없습니다…" 안내 + `AI 분석 실행` 버튼(클릭 시 AI 탭으로 전환하고 분석 시작 자동 트리거).
+  - **disabled**: LLM 비활성 시 빨간 배경 + Settings 링크.
+  - **error**: 조회 실패 시 안내.
+  - **loading**: 초기 페이지 진입 직후 확인 중 상태.
+- 페이지 초기화 시 토글 ON/OFF와 무관하게 항상 `cmpAiCheckLlmStatus() → cmpAiLoadSaved()` 호출하도록 변경(기존엔 토글 ON일 때만 호출). 이로써 토글을 꺼둔 사용자도 Result Summary에서 AI 의견을 인지 가능.
+- `cmpAiShowResult()`에 미러링 hook 추가 — 분석 직후 ready로 즉시 갱신. `deleteCmpAiInsight()` 성공 시 empty(또는 LLM 비활성이면 disabled)로 복귀.
+- `cmpGoToAiTab(triggerStart)` 헬퍼 추가 — Result Summary 버튼/링크가 AI 탭 버튼을 click()해 hash 동기화 + (옵션) 분석 자동 시작.
+
+## [2026-05-16] Comparison Analysis 페이지 탭 레이아웃 도입
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- `/compare` 결과 화면이 KPI / Before·After / 클래스 diff / 히스토그램 / 누수 의심 / AI 분석을 모두 세로로 한 번에 나열해 스크롤 부담이 컸음. 상단 sticky `.cmp-anchor-nav` 앵커는 시각 정리 효과가 약하고 비교 결과를 한눈에 파악하기 어려운 상태.
+
+### 내역
+- 4탭 분리: ① 핵심 요약(Before/After 카드 + Snapshot 그리드 + KPI 6칸) ② 클래스 분석(클래스 diff + 히스토그램 diff) ③ 누수 의심(SuspectDiff 4-카테고리) ④ AI 인사이트(AI 비교 분석 패널). 첫 진입 시 ①번 탭이 활성, 나머지는 `display:none`.
+- 영웅 헤더(`.cmp-hero`)와 Result Summary(`.cmp-result-summary`)는 탭 바깥에 유지 — 모든 탭에서 공통 노출.
+- 탭 UI: 수평 탭 + 언더라인. 활성 탭에 파란(`#2563EB`) 언더라인. 좁은 화면에서는 `overflow-x:auto`로 가로 스크롤.
+- URL hash 동기화: 탭 클릭 시 `#summary` / `#class` / `#suspect` / `#ai`로 `history.replaceState` 갱신. 새 진입 시 hash → 해당 탭 활성, 미지정/잘못된 hash는 `summary`로 폴백. 브라우저 뒤로/앞으로(`hashchange`)도 동기화. 영웅 헤더의 기존 "AI 인사이트 확인" 버튼(`href="#ai"`)도 새 hash 체계와 그대로 호환.
+- 기존 `.cmp-tabs-shell` + `.cmp-anchor-nav` DOM/CSS는 제거 — 다른 페이지/템플릿 참조 없음 확인. 패널 내부 id(`#kpi`, `#cls`, `#hist`, `#susp`, `#ai`) 및 JS hook(`classDiffBody`, `histDiffBody`, `cmpAiToggle` 등)은 모두 보존.
+- `renderClassPage()` / `renderHistPage()` / AI 분석 함수는 `display:none` 상태의 DOM에서도 정상 작동하므로 탭 전환 시 별도 재호출 불필요.
+
+## [2026-05-16] Analysis Files 페이지 컨테이너 폭 확장
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/files.html`
+- 수정: `CHANGELOG.md`
+
+### 내역
+- `/files` 페이지의 `.container { max-width }`를 1280px → 1600px로 확장. history.html(1800px) 대비 좁아 가로 여백이 과도하다는 사용자 피드백 반영. 모바일 미디어 쿼리(≤900px/≤640px)는 영향 없음.
+
+## [2026-05-14] Comparison 분석 이력 기능 신설
+
+**변경 파일:**
+- 신규: `src/main/java/com/heapdump/analyzer/model/entity/ComparisonHistoryEntity.java`
+- 신규: `src/main/java/com/heapdump/analyzer/repository/ComparisonHistoryRepository.java`
+- 신규: `src/main/java/com/heapdump/analyzer/service/ComparisonHistoryService.java`
+- 신규: `src/main/java/com/heapdump/analyzer/controller/ComparisonHistoryController.java`
+- 신규: `src/main/resources/templates/comparison-history.html`
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- 수정: `src/main/resources/templates/fragments/banner.html`
+- 수정: `src/main/resources/templates/compare.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 기존 `/compare`는 매 요청마다 메모리에서 diff를 재계산할 뿐 비교 행위 자체에 대한 기록이 없어, 어떤 조합을 언제 비교했는지 추적이 불가능했음.
+- 단일 dump는 `analysis_history` + `/history`로 관리되는데 비교에는 동일 자산이 없는 비대칭 상태였음.
+- 자주 보는 비교 쌍에 1-click으로 다시 진입할 수 있는 경로 필요.
+
+### 내역
+- 신규 테이블 `comparison_history` (JPA `ddl-auto=update`로 자동 생성). 메타데이터(KPI delta 6종 + base/target suspectCount + 실행자 + 비교 일시)만 저장하고 ClassDiff/HistogramDiff/SuspectDiff 상세는 재진입 시 재계산.
+- 인덱스 2종: `idx_ch_compared_at`, `idx_ch_compared_by`. (utf8mb4×500B×2 columns가 MariaDB 단일 인덱스 키 길이 한도 3072B 초과로 base+target 복합 인덱스는 채택 미보류 — 현재 dedupe 쿼리는 `compared_by` 인덱스로 충분.)
+- `ComparisonHistoryService.recordComparison()` — 동일 user+base+target 60초 이내 중복 진입 시 dedupe (시계열 의미는 유지). 저장 실패해도 `/compare` 렌더링은 정상 진행 (try/catch 처리).
+- `HeapDumpViewController.compareDumps()`에 `Authentication` 파라미터 추가 + buildKpiDiff 결과를 service로 자동 저장.
+- 신규 페이지 `/comparison-history` — `history.html` 패턴 재사용 (검색·정렬·페이지네이션·일괄선택 + admin "deleted 표시" 토글). 컬럼: #, Base, Target, Heap Δ, Suspects Δ, Classes Δ, Objects Δ, 실행자, 비교 일시, "다시 보기".
+- 가시성: 모두 공유 + ADMIN이 "deleted 표시" 토글로 양쪽 원본 파일이 삭제된 ghost 이력까지 조회 가능. `AnalysisHistoryRepository.findByFilename()` 조인으로 baseDeleted/targetDeleted 실시간 계산.
+- "다시 보기" 액션 — base/target 원본 파일이 모두 살아있을 때만 활성, 한쪽이라도 삭제이면 disabled + 한글 tooltip.
+- API: `GET /api/comparison-history` (JSON), `POST /api/comparison-history/bulk-delete` (`{ids: number[]}`). `/api/admin/**` 외이므로 CSRF 면제.
+- 배너(`fragments/banner.html`): Comparison 메뉴를 Servers/Settings와 동일한 아코디언으로 전환 → 서브 메뉴 "새 비교" / "비교 이력". 활성 경로 자동 펼침/하이라이트 로직에 `/compare`, `/comparison-history` 추가. `ACCORDION_PARENTS` 배열로 일반 메뉴 하이라이트 예외 처리 일원화.
+- compare.html hero: picker 화면과 결과 화면 모두 "비교 이력" CTA 추가.
+
+## [2026-05-14] Comparison 분석 전 페이지 배경 그라데이션 끊김 수정
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html`
+- 수정: `CHANGELOG.md`
+
+### 변경 의도
+- 분석 전 페이지(파일 선택 화면)는 본문이 짧아 body 높이가 viewport보다 작은 상황에서, 기존 radial-gradient(상단 28%/30%에서 transparent로 페이드)가 페이지 중간 어디쯤에서 끊겨 보였음.
+- 상단부에만 색이 깔리고 하단은 평면 `#F8FAFC`로 떨어지면서 시각적 단절이 발생.
+
+### 내역
+- `body` 배경을 다층 ellipse 그라데이션으로 재구성하고 페이드를 60~75%로 확장.
+- 좌상/우상 블롭에 더해 하단 중앙에 옅은 indigo 블롭을 추가하고, 베이스에 `#F8FAFC → #EEF2FF` 수직 linear-gradient를 깔아 위·아래가 자연스럽게 이어지게 함.
+- `background-attachment: fixed` 적용으로 그라데이션이 viewport 기준으로 고정되어 본문 길이와 무관하게 일관된 톤 유지.
+- `min-height: 100vh`로 본문이 짧을 때도 canvas가 항상 viewport를 채우도록 보강.
+
 ## [2026-05-14] Comparison 페이지 분석 전/후 레이아웃 재설계
 
 **변경 파일:**
