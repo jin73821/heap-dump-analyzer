@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17d">
     <title>Settings — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }  /* settings 페이지 전용 override */
@@ -123,14 +123,10 @@
         @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -10px); }
                              to   { opacity: 1; transform: translate(-50%, 0); } }
 
-        /* ── Confirm modal ───────────────────────────────── */
-        .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
-                    background: rgba(0,0,0,.45); align-items: center; justify-content: center; }
-        .modal-ov.open { display: flex; }
-        .modal-box { background: #fff; border-radius: 12px; padding: 28px 30px; width: 92%; max-width: 500px;
-                     box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease; }
-        @keyframes modalIn { from { opacity: 0; transform: translateY(12px); }
-                             to   { opacity: 1; transform: translateY(0); } }
+        /* ── Confirm modal ─────────────────────────────────
+           .modal-ov / @keyframes modalIn / .modal-box base 는 common.css 에서 제공.
+           padding 28px 30px 변형 + width/max-width 는 인라인 유지. */
+        .modal-box { padding: 28px 30px; width: 92%; max-width: 500px; animation: modalIn .2s ease; }
         .modal-ttl { font-size: 16px; font-weight: 700; margin-bottom: 14px; line-height: 1.4; }
         .modal-desc { font-size: 14px; color: #4B5563; margin-bottom: 16px; line-height: 1.7;
                       word-break: keep-all; }
@@ -139,12 +135,7 @@
         .modal-btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
         .modal-btns button { font-size: 13px; padding: 8px 20px; border-radius: 7px; border: none;
                              cursor: pointer; font-weight: 600; }
-        .mbtn-cancel { background: #F3F4F6; color: #374151; }
-        .mbtn-cancel:hover { background: #E5E7EB; }
-        .mbtn-danger { background: #EF4444; color: #fff; }
-        .mbtn-danger:hover { background: #DC2626; }
-        .mbtn-primary { background: #2563EB; color: #fff; }
-        .mbtn-primary:hover { background: #1D4ED8; }
+        /* .mbtn-cancel / .mbtn-danger / .mbtn-primary 색상은 common.css 에서 제공 */
 
         /* ── Desktop ─────────────────────────────────────── */
         @media (min-width: 1024px) {
@@ -763,10 +754,7 @@ function formatBytesJS(b) {
 
 // ── Data loading ───────────────────────────────────────
 function loadAllData(showToast) {
-    fetch('/api/settings').then(function(r){
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-    }).then(function(d) {
+    Common.fetchJSON('/api/settings').then(function(d) {
         // MAT Configuration
         document.getElementById('sMatPath').textContent = d.mat.path || '-';
         document.getElementById('sMatPath').title = d.mat.path || '';
@@ -865,11 +853,8 @@ function parseMemStr(s) {
 function saveSetting(k, v) {
     localStorage.setItem(k, v);
     if (k === 'keepUnreachable') {
-        fetch('/api/settings/unreachable?enabled=' + v, {method:'POST'})
-            .then(function(r){
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                toast('Setting saved: ' + k, 'success');
-            })
+        Common.fetchJSON('/api/settings/unreachable?enabled=' + v, {method:'POST'})
+            .then(function(){ toast('Setting saved: ' + k, 'success'); })
             .catch(function(e){ toast('Setting save failed: ' + e.message, 'error'); });
     } else {
         toast('Setting saved: ' + k, 'success');
@@ -992,11 +977,8 @@ function saveCompressSetting(el) {
         el.checked = true;
         document.getElementById('compressModal').classList.add('open');
     } else {
-        fetch('/api/settings/compress?enabled=true', {method:'POST'})
-            .then(function(r){
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                toast('Setting saved: compressAfterAnalysis=true', 'success');
-            })
+        Common.fetchJSON('/api/settings/compress?enabled=true', {method:'POST'})
+            .then(function(){ toast('Setting saved: compressAfterAnalysis=true', 'success'); })
             .catch(function(e){ toast('Setting save failed: ' + e.message, 'error'); });
     }
 }
@@ -1004,11 +986,8 @@ function closeCompressModal() { document.getElementById('compressModal').classLi
 function doDisableCompress() {
     closeCompressModal();
     document.getElementById('togCompress').checked = false;
-    fetch('/api/settings/compress?enabled=false', {method:'POST'})
-        .then(function(r){
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            toast('Setting saved: compressAfterAnalysis=false', 'success');
-        })
+    Common.fetchJSON('/api/settings/compress?enabled=false', {method:'POST'})
+        .then(function(){ toast('Setting saved: compressAfterAnalysis=false', 'success'); })
         .catch(function(e){ toast('Setting save failed: ' + e.message, 'error'); });
 }
 
@@ -1049,11 +1028,7 @@ function openClearModal() { document.getElementById('clearModal').classList.add(
 function closeClearModal() { document.getElementById('clearModal').classList.remove('open'); }
 function doClearAll() {
     closeClearModal();
-    fetch('/api/results/clear', {method:'POST'})
-        .then(function(r){
-            if (!r.ok) throw new Error('HTTP ' + r.status);
-            return r.json();
-        })
+    Common.fetchJSON('/api/results/clear', {method:'POST'})
         .then(function(d){
             toast('All results cleared (' + (d.cleared || 0) + ' files)', 'success');
             loadAllData(false);

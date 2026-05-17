@@ -1,6 +1,10 @@
 package com.heapdump.analyzer.util;
 
 import com.heapdump.analyzer.model.LeakSuspect;
+import com.heapdump.analyzer.model.entity.LeakFallbackRule;
+import com.heapdump.analyzer.model.entity.LeakLibraryRule;
+import com.heapdump.analyzer.service.LeakRuleService;
+import com.heapdump.analyzer.service.LeakRuleService.RuntimeFallback;
 
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -8,14 +12,24 @@ import java.util.regex.Pattern;
 /**
  * Leak Suspect 텍스트를 구조적으로 분석하여 카테고리, 설명, 조언, 심각도를 생성한다.
  *
- * 분석 흐름:
+ * 분석 흐름 (dual-path, Phase 1):
+ * 0. DB 룰셋(LeakLibraryRule + LeakFallbackRule)이 비어있지 않으면 우선 시도. 매칭되면 반환.
  * 1. parseContext() — MAT 텍스트에서 클래스명, 인스턴스 수, 메모리 크기/비율, 축적 대상 등 추출
- * 2. 알려진 라이브러리 매칭 — 패키지 prefix 기반으로 특화된 동적 설명 생성
- * 3. 패턴 기반 fallback — 키워드 매칭으로 일반 카테고리 분류
+ * 2. 알려진 라이브러리 매칭 (코드 람다) — 패키지 prefix 기반으로 특화된 동적 설명 생성
+ * 3. 패턴 기반 fallback (코드 람다) — 키워드 매칭으로 일반 카테고리 분류
+ *
+ * 향후 Phase 2에서 코드 람다 75개가 DB로 모두 이관되면 람다 배열은 제거 예정.
  */
 public final class LeakSuspectAdvisor {
 
     private LeakSuspectAdvisor() {}
+
+    /** Spring 빈 LeakRuleService 정적 참조 (LeakSuspectAdvisorBootstrap에서 주입). null 가능 — 미주입 시 코드 람다로 동작. */
+    private static volatile LeakRuleService ruleService;
+
+    public static void bindRuleService(LeakRuleService svc) {
+        ruleService = svc;
+    }
 
     // ─── 텍스트 파싱용 정규식 ──────────────────────────────────────────────
 
@@ -811,6 +825,9 @@ public final class LeakSuspectAdvisor {
 
         SuspectContext ctx = parseContext(fullText);
 
+        // 0. DB 룰셋 우선 시도 (Phase 1 dual-path)
+        if (tryDbRules(suspect, fullText, ctx)) return;
+
         // 1. 알려진 라이브러리 매칭 (className 기반)
         if (ctx.className != null) {
             for (KnownLibrary lib : KNOWN_LIBRARIES) {
@@ -834,6 +851,78 @@ public final class LeakSuspectAdvisor {
                 return;
             }
         }
+    }
+
+    /** DB 룰셋을 우선 시도. 매칭되면 suspect 채우고 true. service 미주입/룰 없음/미매칭이면 false. */
+    private static boolean tryDbRules(LeakSuspect suspect, String fullText, SuspectContext ctx) {
+        LeakRuleService svc = ruleService;
+        if (svc == null) return false;
+
+        // 0a. DB library rules (prefix)
+        for (LeakLibraryRule lib : svc.libraryRules()) {
+            if (matchesDbLibrary(ctx, lib.getPrefix())) {
+                suspect.setCategory(lib.getCategory());
+                suspect.setExplanation(LeakRuleTemplate.render(lib.getExplanationTpl(), toTplCtx(ctx)));
+                suspect.setAdvice(LeakRuleTemplate.render(lib.getAdviceTpl(), toTplCtx(ctx)));
+                suspect.setSeverity(pickSeverity(lib.getSeverityHint(), ctx.severity));
+                return true;
+            }
+        }
+
+        // 0b. DB fallback rules (regex)
+        for (RuntimeFallback rf : svc.fallbackRules()) {
+            if (rf.pattern.matcher(fullText).find()) {
+                suspect.setCategory(rf.rule.getCategory());
+                String tplOut = LeakRuleTemplate.render(rf.rule.getExplanationTpl(), toTplCtx(ctx));
+                suspect.setExplanation(enrichExplanation(tplOut, ctx));
+                suspect.setAdvice(LeakRuleTemplate.render(rf.rule.getAdviceTpl(), toTplCtx(ctx)));
+                suspect.setSeverity(pickSeverity(rf.rule.getSeverityHint(), ctx.severity));
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean matchesDbLibrary(SuspectContext ctx, String prefix) {
+        if (prefix == null || prefix.isEmpty()) return false;
+        if (ctx.className != null && ctx.className.startsWith(prefix)) return true;
+        if (ctx.accumulatorClass != null && ctx.accumulatorClass.startsWith(prefix)) return true;
+        if (ctx.classLoader != null && ctx.classLoader.startsWith(prefix)) return true;
+        return false;
+    }
+
+    private static String pickSeverity(String hint, String fromPercentage) {
+        return (hint != null && !hint.isEmpty()) ? hint : fromPercentage;
+    }
+
+    /** 내부 SuspectContext → 템플릿 엔진용 com.heapdump.analyzer.util.LeakRuleContext 변환. */
+    private static com.heapdump.analyzer.util.LeakRuleContext toTplCtx(SuspectContext src) {
+        com.heapdump.analyzer.util.LeakRuleContext t = new com.heapdump.analyzer.util.LeakRuleContext();
+        t.instanceCount = src.instanceCount;
+        t.className = src.className;
+        t.simpleClassName = src.simpleClassName;
+        t.classLoader = src.classLoader;
+        t.bytes = src.bytes;
+        t.percentage = src.percentage;
+        t.accumulatorClass = src.accumulatorClass;
+        t.accumulatorSimple = src.accumulatorSimple;
+        t.accumulatorBytes = src.accumulatorBytes;
+        t.accumulatorPercentage = src.accumulatorPercentage;
+        t.referencedFromClass = src.referencedFromClass;
+        t.severity = src.severity;
+        t.hasAccumulator = t.accumulatorClass != null;
+        t.hasReferencedFrom = t.referencedFromClass != null;
+        t.hasInstanceCount = t.instanceCount > 0;
+        t.highPercentage = t.percentage >= 30.0;
+        t.veryHighPercentage = t.percentage >= 50.0;
+        String lcn = t.simpleClassName == null ? "" : t.simpleClassName.toLowerCase();
+        t.streamClass = lcn.contains("inputstream") || lcn.contains("outputstream") || lcn.contains("reader") || lcn.contains("writer");
+        t.sessionClass = lcn.contains("session");
+        t.threadClass = lcn.contains("thread");
+        t.classLoaderClass = lcn.contains("classloader");
+        t.cacheClass = lcn.contains("cache");
+        t.mapClass = lcn.contains("map") || lcn.contains("hashtable") || lcn.contains("dictionary");
+        return t;
     }
 
     // ─── 텍스트 파싱 ────────────────────────────────────────────────────

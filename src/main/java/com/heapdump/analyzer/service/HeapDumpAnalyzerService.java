@@ -1558,24 +1558,27 @@ public class HeapDumpAnalyzerService {
                     if (callerThread.isInterrupted()) break;
 
                     // 리포트 단계 감지 (MAT CLI Subtask 출력 패턴 기반)
-                    if (line.startsWith("Subtask: System Overview") && !"overview".equals(phase[0])) {
+                    // 단방향 진행만 허용 — 이미 더 뒤 단계라면 같은/이전 단계 Subtask 라인이 재등장해도 무시.
+                    // (MAT 출력은 suspects 진행 중에도 "Subtask: Top Component..." 같은 라인을 다시 내보낼 수 있어
+                    //  단순 phase 불일치 가드로는 pct 가 역행할 수 있음.)
+                    int curRank = phaseRank(phase[0]);
+                    if (line.startsWith("Subtask: System Overview") && phaseRank("overview") > curRank) {
                         phase[0] = "overview";
-                        pct[0] = 40;
+                        pct[0] = Math.max(pct[0], 40);
                         logger.info("[MAT CLI] Report phase: overview (line {})", lineCount[0]);
                         sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line,
                                 "overview", "Overview 리포트 생성 중..."));
                         continue;
-                    } else if ((line.startsWith("Subtask: Top Component"))
-                               && !"top_components".equals(phase[0])) {
+                    } else if (line.startsWith("Subtask: Top Component") && phaseRank("top_components") > curRank) {
                         phase[0] = "top_components";
-                        pct[0] = 55;
+                        pct[0] = Math.max(pct[0], 55);
                         logger.info("[MAT CLI] Report phase: top_components (line {})", lineCount[0]);
                         sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line,
                                 "top_components", "Top Components 리포트 생성 중..."));
                         continue;
-                    } else if (line.startsWith("Subtask: Leak Suspects") && !"suspects".equals(phase[0])) {
+                    } else if (line.startsWith("Subtask: Leak Suspects") && phaseRank("suspects") > curRank) {
                         phase[0] = "suspects";
-                        pct[0] = 68;
+                        pct[0] = Math.max(pct[0], 68);
                         logger.info("[MAT CLI] Report phase: suspects (line {})", lineCount[0]);
                         sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line,
                                 "suspects", "Leak Suspects 리포트 생성 중..."));
@@ -1829,6 +1832,18 @@ public class HeapDumpAnalyzerService {
             // 현재 스레드 인터럽트하여 분석 중단 유도
             logger.info("[SSE] Client disconnected ({}), interrupting thread", e.getClass().getSimpleName());
             Thread.currentThread().interrupt();
+        }
+    }
+
+    /** MAT 리포트 단계의 순서. 진행률 역행 방지용 — 같은 또는 더 뒤 단계 전환 시도는 무시한다. */
+    private static int phaseRank(String phase) {
+        if (phase == null) return -1;
+        switch (phase) {
+            case "init":           return 0;
+            case "overview":       return 1;
+            case "top_components": return 2;
+            case "suspects":       return 3;
+            default:               return -1;
         }
     }
 

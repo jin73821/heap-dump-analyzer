@@ -136,34 +136,40 @@
         .no-data { text-align: center; padding: 40px; color: #9CA3AF; font-size: 13px; }
 
         /* ── AI 비교 분석 패널 ──────────────────── */
-        .ai-toggle {
-            display: inline-flex; align-items: center; gap: 8px;
-            font-size: 12px; color: #374151; font-weight: 600;
-        }
-        .ai-toggle input[type="checkbox"] {
-            appearance: none; -webkit-appearance: none;
-            width: 34px; height: 18px; background: #D1D5DB; border-radius: 10px;
-            position: relative; cursor: pointer; outline: none;
-            transition: background .15s;
-        }
-        .ai-toggle input[type="checkbox"]::after {
-            content: ''; position: absolute; top: 2px; left: 2px;
-            width: 14px; height: 14px; background: #fff; border-radius: 50%;
-            transition: left .15s;
-        }
-        .ai-toggle input[type="checkbox"]:checked { background: #2563EB; }
-        .ai-toggle input[type="checkbox"]:checked::after { left: 18px; }
-
-        #cmpAiPanel { display: none; }
-
         .ai-step-row { display: flex; align-items: center; justify-content: center;
                        gap: 4px; margin-bottom: 18px; flex-wrap: wrap; }
         .ai-step { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 84px; }
-        .ai-step-circle { width: 32px; height: 32px; border-radius: 50%;
+        .ai-step-circle { position: relative; width: 32px; height: 32px; border-radius: 50%;
                           background: #E5E7EB; color: #6B7280;
                           display: flex; align-items: center; justify-content: center;
-                          font-size: 12px; font-weight: 700; }
-        .ai-step-circle.active { background: linear-gradient(135deg,#3B82F6,#6366F1); color: #fff; }
+                          font-size: 12px; font-weight: 700;
+                          transition: background .25s, color .25s, transform .25s; }
+        /* active 상태: 동그라미 본체 살짝 부풀고, 주위로 펄스 ring 2겹이 시차 두고 퍼져나감 */
+        .ai-step-circle.active {
+            background: linear-gradient(135deg,#3B82F6,#6366F1); color: #fff;
+            transform: scale(1.08);
+            box-shadow: 0 0 0 0 rgba(59,130,246,.55);
+            animation: aiStepCorePulse 1.6s ease-out infinite;
+        }
+        .ai-step-circle.active::before,
+        .ai-step-circle.active::after {
+            content: ''; position: absolute; inset: -4px;
+            border-radius: 50%; pointer-events: none;
+            border: 2px solid rgba(99,102,241,.55);
+            opacity: 0;
+            animation: aiStepRingPulse 1.6s ease-out infinite;
+        }
+        .ai-step-circle.active::after { animation-delay: .8s; }
+        @keyframes aiStepCorePulse {
+            0%   { box-shadow: 0 0 0 0 rgba(59,130,246,.55); }
+            70%  { box-shadow: 0 0 0 12px rgba(59,130,246,0); }
+            100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+        }
+        @keyframes aiStepRingPulse {
+            0%   { transform: scale(.85); opacity: .85; }
+            70%  { transform: scale(1.55); opacity: 0; }
+            100% { transform: scale(1.55); opacity: 0; }
+        }
         .ai-step-circle.done   { background: #10B981; color: #fff; }
         .ai-step-label { font-size: 11px; color: #6B7280; }
         .ai-step-bar { width: 24px; height: 2px; background: #E5E7EB; align-self: center; margin: 0 2px; }
@@ -199,6 +205,21 @@
         .ai-action-btn.danger { color: #DC2626; border-color: #FCA5A5; background: #FEF2F2; }
         .ai-action-btn:hover { border-color: #2563EB; color: #2563EB; }
         .ai-action-btn.danger:hover { background: #FEE2E2; }
+
+        /* ── 확인 모달 (재분석 등) ───────────────── */
+        .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
+                    background: rgba(0,0,0,.45); align-items: center; justify-content: center; }
+        .modal-ov.open { display: flex; }
+        .modal-box { background: #fff; border-radius: 12px; padding: 24px; width: 90%; max-width: 420px;
+                     box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease; }
+        @keyframes modalIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .modal-ttl { font-size: 15px; font-weight: 700; margin-bottom: 10px; color:#111827; }
+        .modal-msg { font-size: 13px; color: #4B5563; margin-bottom: 18px; line-height: 1.65; }
+        .modal-msg b { color: #B91C1C; }
+        .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
+        .modal-btns button { font-size: 13px; padding: 8px 16px; border-radius: 7px; border: none;
+                             cursor: pointer; font-weight: 600; }
+        /* .mbtn-cancel / .mbtn-confirm 색상은 common.css 에서 제공 */
 
         /* ── Desktop enhancement ──────────────────── */
         @media (min-width: 1024px) {
@@ -240,27 +261,27 @@
             .back-btn { min-height: 44px; display: inline-flex; align-items: center; }
         }
 
-        /* ── 신규: 섹션 앵커 nav ─────────────────── */
+        /* ── 신규: 4-탭 네비게이션 ──────────────────── */
         html { scroll-behavior: smooth; }
-        .cmp-anchor-nav {
-            position: sticky; top: 52px; z-index: 5;
-            background: #fff; border: 1px solid #E5E7EB; border-radius: 8px;
-            padding: 6px 10px; margin-bottom: 16px;
-            display: flex; gap: 4px; flex-wrap: wrap;
+        .cmp-tabs {
+            display: flex; gap: 4px;
+            border-bottom: 1px solid #E5E7EB;
+            margin-bottom: 20px;
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
         }
-        .cmp-anchor-nav a {
-            font-size: 12px; font-weight: 600; color: #6B7280;
-            padding: 6px 10px; border-radius: 6px; text-decoration: none;
-            transition: background .15s, color .15s;
+        .cmp-tab-btn {
+            padding: 11px 20px; font-size: 13px; font-weight: 600;
+            color: #6B7280; background: transparent;
+            border: none; border-bottom: 2px solid transparent;
+            cursor: pointer; white-space: nowrap;
+            transition: color .15s, border-color .15s;
+            font-family: inherit;
         }
-        .cmp-anchor-nav a:hover { background: #F3F4F6; color: #2563EB; }
-        @media (max-width: 600px) {
-            .cmp-anchor-nav {
-                flex-wrap: nowrap; overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-            }
-            .cmp-anchor-nav a { white-space: nowrap; flex-shrink: 0; }
-        }
+        .cmp-tab-btn:hover { color: #1F2937; }
+        .cmp-tab-btn.active { color: #2563EB; border-bottom-color: #2563EB; }
+        .cmp-tab-panel { display: none; }
+        .cmp-tab-panel.active { display: block; }
 
         /* ── 신규: 헤더 카드 컴팩트 메타 라인 ─────── */
         .dump-card-meta-row {
@@ -272,12 +293,6 @@
             .dump-card-meta-row { font-size: 13px; }
         }
 
-        /* ── 신규: AI 토글 좌측 라벨 ─────────────── */
-        .ai-toggle-text {
-            color: #6B7280; font-size: 12px; font-weight: 600;
-            margin-right: 4px;
-        }
-
         /* ── 신규: Suspect 카드 빈 상태 ─────────── */
         .suspect-cat-count {
             font-size: 11px; font-weight: 700; padding: 1px 8px;
@@ -286,10 +301,13 @@
 
         /* ── Comparison redesign system ───────────────── */
         body {
+            min-height: 100vh;
             background:
-                radial-gradient(circle at 18% 0%, rgba(37, 99, 235, .10), transparent 28%),
-                radial-gradient(circle at 92% 10%, rgba(99, 102, 241, .10), transparent 30%),
-                #F8FAFC;
+                radial-gradient(ellipse 70% 60% at 18% 0%, rgba(37, 99, 235, .11), transparent 70%),
+                radial-gradient(ellipse 65% 55% at 92% 12%, rgba(99, 102, 241, .10), transparent 72%),
+                radial-gradient(ellipse 80% 55% at 50% 100%, rgba(165, 180, 252, .09), transparent 75%),
+                linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%);
+            background-attachment: fixed;
         }
         .main { padding-top: 28px; padding-bottom: 42px; }
         .panel {
@@ -313,7 +331,8 @@
         .cmp-hero-content { position: relative; z-index: 1; display: flex; justify-content: space-between; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
         .cmp-eyebrow { font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #2563EB; margin-bottom: 8px; }
         .cmp-hero h1 { font-size: 30px; line-height: 1.2; letter-spacing: -.04em; margin-bottom: 8px; color: #0F172A; }
-        .cmp-hero p { font-size: 14px; line-height: 1.75; color: #475569; max-width: 720px; }
+        .cmp-hero p { font-size: 14px; line-height: 1.75; color: #475569; max-width: 720px;
+                      word-break: keep-all; overflow-wrap: break-word; }
         .cmp-hero-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
         .cmp-action-primary, .cmp-action-secondary {
             display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -341,6 +360,37 @@
         .cmp-summary-list { list-style: none; display: grid; gap: 8px; font-size: 13px; color: #475569; }
         .cmp-summary-list li { display: flex; gap: 8px; align-items: flex-start; }
         .cmp-summary-list li::before { content: ''; width: 7px; height: 7px; margin-top: 7px; border-radius: 50%; background:#2563EB; flex: 0 0 auto; }
+        /* ── Result Summary 내부: AI 인사이트 요약 슬롯 ─────── */
+        .cmp-ai-summary { margin-top: 14px; padding: 12px 14px; border-radius: 14px;
+                          border: 1px solid #E2E8F0; background: #F8FAFC; }
+        .cmp-ai-summary[data-state="ready"]    { border-color: #BFDBFE; background: linear-gradient(135deg,#EFF6FF,#EEF2FF); }
+        .cmp-ai-summary[data-state="empty"]    { border-color: #C7D2FE; background: linear-gradient(135deg,#F5F3FF,#EFF6FF); }
+        .cmp-ai-summary[data-state="disabled"] { border-color: #FECACA; background: #FEF2F2; }
+        .cmp-ai-summary[data-state="error"]    { border-color: #FECACA; background: #FEF2F2; }
+        .cmp-ai-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+        .cmp-ai-summary-title { font-size: 12px; font-weight: 800; color: #1E40AF; letter-spacing: .04em; text-transform: uppercase; }
+        .cmp-ai-summary[data-state="disabled"] .cmp-ai-summary-title,
+        .cmp-ai-summary[data-state="error"] .cmp-ai-summary-title { color: #B91C1C; }
+        .cmp-ai-summary-chip { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 10px;
+                               background: #E5E7EB; color: #4B5563; border: 1px solid transparent;
+                               flex-shrink: 0; white-space: nowrap; }
+        .cmp-ai-summary[data-state="ready"] .cmp-ai-summary-chip    { background: #D1FAE5; color: #065F46; }
+        .cmp-ai-summary[data-state="empty"] .cmp-ai-summary-chip    { background: #DBEAFE; color: #1D4ED8; }
+        .cmp-ai-summary[data-state="disabled"] .cmp-ai-summary-chip { background: #FECACA; color: #7F1D1D; }
+        .cmp-ai-summary[data-state="error"] .cmp-ai-summary-chip    { background: #FECACA; color: #7F1D1D; }
+        .cmp-ai-summary-body { font-size: 13px; line-height: 1.7; color: #1F2937; white-space: pre-line;
+                               max-height: 9em; overflow: hidden; position: relative; }
+        .cmp-ai-summary[data-state="disabled"] .cmp-ai-summary-body,
+        .cmp-ai-summary[data-state="error"] .cmp-ai-summary-body { color: #7F1D1D; }
+        .cmp-ai-summary-body a { color: #2563EB; font-weight: 700; }
+        .cmp-ai-summary-actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+        .cmp-ai-summary-btn { font-size: 12px; font-weight: 700; padding: 6px 14px; border-radius: 8px;
+                              border: none; cursor: pointer; background: linear-gradient(135deg,#2563EB,#4F46E5);
+                              color: #fff; box-shadow: 0 4px 10px rgba(37,99,235,.25); }
+        .cmp-ai-summary-btn:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+        .cmp-ai-summary-link { font-size: 12px; font-weight: 700; color: #2563EB; text-decoration: none; }
+        .cmp-ai-summary-link:hover { text-decoration: underline; }
+
         .cmp-recommend-card { display: flex; flex-direction: column; justify-content: space-between; gap: 12px; }
         .cmp-risk-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
         .cmp-risk-box { padding: 12px; border-radius: 14px; background:#F8FAFC; border:1px solid #E2E8F0; }
@@ -362,12 +412,11 @@
         .kpi-tile { border-radius: 18px; padding: 16px; text-align:left; box-shadow:0 10px 24px rgba(15,23,42,.05); }
         .kpi-value { font-size: 24px; }
 
-        .cmp-tabs-shell { border-radius: 20px; border:1px solid #E2E8F0; background:#fff; padding:8px; margin-bottom:16px; box-shadow:0 14px 32px rgba(15,23,42,.05); }
-        .cmp-anchor-nav { top: 60px; border: none; box-shadow: none; margin: 0; padding: 0; background: transparent; }
-        .cmp-anchor-nav a { border-radius: 12px; padding: 9px 13px; color:#475569; }
-        .cmp-anchor-nav a:hover { background:#EFF6FF; color:#1D4ED8; }
-
-        .cmp-picker-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+        .cmp-picker-layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: stretch; }
+        /* picker 안의 panel은 grid stretch 효과를 죽이는 margin-bottom 제거 */
+        .cmp-picker-layout > .panel { margin-bottom: 0; }
+        .cmp-picker-layout > aside { display: flex; flex-direction: column; }
+        .cmp-picker-layout > aside > .cmp-option-card { flex: 1 1 auto; }
         .cmp-picker-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         .cmp-picker-card {
             background: #fff; border: 1px solid #E2E8F0;
@@ -469,6 +518,7 @@
                 <div class="cmp-hero-actions">
                     <span class="cmp-status-chip success">분석 완료</span>
                     <a href="/compare" class="cmp-action-secondary">다른 파일 비교</a>
+                    <a href="/comparison-history" class="cmp-action-secondary">비교 이력</a>
                     <a href="#ai" class="cmp-action-primary">AI 인사이트 확인</a>
                 </div>
             </div>
@@ -490,6 +540,22 @@
                     <li>증가/감소 방향이 색상으로 분리되어 메모리 회귀와 개선 포인트를 빠르게 구분할 수 있습니다.</li>
                     <li>상세 표와 AI 비교 분석을 통해 원인 후보와 권장 조치를 이어서 검토하세요.</li>
                 </ul>
+
+                <div class="cmp-ai-summary" id="cmpAiSummaryBox" data-state="loading">
+                    <div class="cmp-ai-summary-head">
+                        <span class="cmp-ai-summary-title">&#129302; AI 인사이트 요약</span>
+                        <span class="cmp-ai-summary-chip" id="cmpAiSummaryChip">확인 중…</span>
+                    </div>
+                    <div class="cmp-ai-summary-body" id="cmpAiSummaryBody">
+                        저장된 AI 인사이트를 확인하는 중입니다…
+                    </div>
+                    <div class="cmp-ai-summary-actions" id="cmpAiSummaryActions" style="display:none">
+                        <button type="button" class="cmp-ai-summary-btn" id="cmpAiSummaryGoBtn"
+                                onclick="cmpGoToAiTab(true)">AI 분석 실행</button>
+                        <a class="cmp-ai-summary-link" href="#ai" id="cmpAiSummaryViewLink"
+                           onclick="cmpGoToAiTab(false)">전체 인사이트 보기 →</a>
+                    </div>
+                </div>
             </div>
             <div class="cmp-recommend-card">
                 <div>
@@ -509,16 +575,15 @@
             </div>
         </section>
 
-        <div class="cmp-tabs-shell">
-            <nav class="cmp-anchor-nav" aria-label="비교 결과 섹션 이동">
-                <a href="#kpi">요약 KPI</a>
-                <a href="#snapshot">Before / After</a>
-                <a href="#cls">클래스 변화</a>
-                <a href="#hist">히스토그램</a>
-                <a href="#susp">누수 의심</a>
-                <a href="#ai">AI 분석</a>
-            </nav>
-        </div>
+        <nav class="cmp-tabs" role="tablist" aria-label="비교 결과 탭">
+            <button type="button" class="cmp-tab-btn active" data-tab="summary" role="tab" aria-controls="tab-summary">핵심 요약</button>
+            <button type="button" class="cmp-tab-btn" data-tab="class" role="tab" aria-controls="tab-class">클래스 분석</button>
+            <button type="button" class="cmp-tab-btn" data-tab="suspect" role="tab" aria-controls="tab-suspect">누수 의심</button>
+            <button type="button" class="cmp-tab-btn" data-tab="ai" role="tab" aria-controls="tab-ai">AI 인사이트</button>
+        </nav>
+
+        <!-- ===== Tab 1: 핵심 요약 ===== -->
+        <section class="cmp-tab-panel active" id="tab-summary" role="tabpanel" aria-labelledby="tab-summary">
 
         <!-- Header: base vs target (컴팩트) -->
         <div class="compare-header">
@@ -603,6 +668,12 @@
                 <div class="kpi-sub">집계된 클래스</div>
             </div>
         </div>
+
+        </section>
+        <!-- ===== /Tab 1 ===== -->
+
+        <!-- ===== Tab 2: 클래스 분석 ===== -->
+        <section class="cmp-tab-panel" id="tab-class" role="tabpanel" aria-labelledby="tab-class">
 
         <!-- Class-level diff table -->
         <div class="panel" id="cls">
@@ -719,6 +790,12 @@
             <div id="histPager" class="pager"></div>
         </div>
 
+        </section>
+        <!-- ===== /Tab 2 ===== -->
+
+        <!-- ===== Tab 3: 누수 의심 ===== -->
+        <section class="cmp-tab-panel" id="tab-suspect" role="tabpanel" aria-labelledby="tab-suspect">
+
         <!-- Suspect diff 4 카테고리 카드 -->
         <div class="panel" id="susp" th:if="${suspectDiffs != null}">
             <div class="panel-title">
@@ -799,16 +876,16 @@
             </div>
         </div>
 
+        </section>
+        <!-- ===== /Tab 3 ===== -->
+
+        <!-- ===== Tab 4: AI 인사이트 ===== -->
+        <section class="cmp-tab-panel" id="tab-ai" role="tabpanel" aria-labelledby="tab-ai">
+
         <!-- AI 비교 분석 패널 -->
         <div class="panel" id="ai">
             <div class="panel-title">
                 <span>&#129302; AI 비교 분석</span>
-                <span class="panel-tools">
-                    <label class="ai-toggle">
-                        <span class="ai-toggle-text">AI 분석</span>
-                        <input type="checkbox" id="cmpAiToggle" onchange="onCmpAiToggle(this)">
-                    </label>
-                </span>
             </div>
             <div id="cmpAiPanel">
                 <!-- Header actions / badges -->
@@ -818,7 +895,7 @@
                         <span id="cmpAiSavedChip" style="display:none;font-size:11px;font-weight:600;color:#15803D;padding:3px 10px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px">&#10003; 저장됨</span>
                     </div>
                     <div id="cmpAiActions" style="display:none;gap:8px">
-                        <button class="ai-action-btn" onclick="startCmpAiAnalysis()">재분석</button>
+                        <button class="ai-action-btn" onclick="confirmCmpReanalyze()">재분석</button>
                         <button class="ai-action-btn danger" onclick="deleteCmpAiInsight()">삭제</button>
                     </div>
                 </div>
@@ -853,6 +930,9 @@
                     <div style="text-align:center">
                         <div id="cmpAiLoadingMsg" style="font-size:14px;font-weight:700;color:#2563EB;margin-bottom:4px">데이터 수집 중&#8230;</div>
                         <div id="cmpAiElapsed" style="font-size:12px;color:#94A3B8;font-variant-numeric:tabular-nums"></div>
+                        <div style="margin-top:12px;padding:8px 12px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;display:inline-block;font-size:12px;color:#92400E">
+                            ⚠ 분석이 완료될 때까지 페이지를 이동하거나 새로고침/닫지 마세요. 작업이 중단됩니다.
+                        </div>
                     </div>
                 </div>
 
@@ -861,6 +941,24 @@
 
                 <!-- Error -->
                 <div id="cmpAiError" style="display:none;border:1px solid #FCA5A5;background:#FEF2F2;border-radius:10px;padding:16px;color:#7F1D1D;font-size:13px"></div>
+            </div>
+        </div>
+
+        </section>
+        <!-- ===== /Tab 4 ===== -->
+
+        <!-- 재분석 확인 모달 -->
+        <div class="modal-ov" id="cmpReanalyzeModal" onclick="if(event.target===this)cmpCloseReanalyzeModal()">
+            <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="cmpReanalyzeModalTitle">
+                <div class="modal-ttl" id="cmpReanalyzeModalTitle">AI 비교 분석을 다시 실행할까요?</div>
+                <div class="modal-msg">
+                    재분석을 진행하면 <b>기존에 저장된 AI 분석 결과가 새 결과로 덮어써집니다.</b><br>
+                    위험도·요약·권장 조치 등 현재 결과를 더 이상 복구할 수 없습니다.
+                </div>
+                <div class="modal-btns">
+                    <button type="button" class="mbtn-cancel" onclick="cmpCloseReanalyzeModal()">취소</button>
+                    <button type="button" class="mbtn-confirm" onclick="cmpConfirmReanalyze()">재분석 실행</button>
+                </div>
             </div>
         </div>
 
@@ -878,6 +976,7 @@
                 <div class="cmp-hero-actions">
                     <span class="cmp-status-chip warning">분석 전</span>
                     <a href="/history" class="cmp-action-secondary">분석 이력 보기</a>
+                    <a href="/comparison-history" class="cmp-action-primary">비교 이력</a>
                 </div>
             </div>
         </section>
@@ -1199,12 +1298,59 @@
     var _cmpAiLlmEnabled = true;     // /api/settings.llm.enabled 결과 — 기본 낙관
     var _cmpAiInFlight = false;      // 시작 버튼 중복 클릭 가드
 
+    // ── AI 분석 진행 중 페이지 이탈 방어 (beforeunload + 앱 내 링크/폼 가로채기) ──
+    (function() {
+        var LEAVE_MSG = 'AI 비교 분석이 진행 중입니다.\n다른 페이지로 이동하면 분석이 중단됩니다.\n계속 이동하시겠습니까?';
+
+        // 브라우저 닫기 / 새로고침 / 주소창 이동 — 브라우저 표준 confirm
+        window.addEventListener('beforeunload', function(e) {
+            if (!_cmpAiInFlight) return;
+            e.preventDefault();
+            e.returnValue = ''; // Chrome/Edge/Firefox 호환 (커스텀 메시지는 표시 안 됨)
+            return '';
+        });
+
+        // 앱 내 anchor 클릭 가로채기 (배너 navigation, topbar, modal close 등)
+        // capture phase 로 다른 핸들러보다 먼저 실행
+        document.addEventListener('click', function(e) {
+            if (!_cmpAiInFlight) return;
+            var a = e.target.closest('a[href]');
+            if (!a) return;
+            var href = a.getAttribute('href');
+            if (!href || href === '#') return;
+            if (href.charAt(0) === '#') return;             // 같은 페이지 fragment
+            if (href.indexOf('javascript:') === 0) return;  // JS 실행 링크
+            if (a.target === '_blank') return;              // 새 탭은 영향 없음
+            if (a.hasAttribute('download')) return;         // 다운로드도 영향 없음
+            if (!window.confirm(LEAVE_MSG)) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+            }
+        }, true);
+
+        // form submit 도 가드 (페이지 전환을 일으키는 POST 등)
+        document.addEventListener('submit', function(e) {
+            if (!_cmpAiInFlight) return;
+            if (!window.confirm(LEAVE_MSG)) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+            }
+        }, true);
+    })();
+
     function cmpAiSetState(st) {
         document.getElementById('cmpAiNot').style.display      = (st === 'NotAnalyzed') ? '' : 'none';
         document.getElementById('cmpAiLoading').style.display  = (st === 'Loading')     ? '' : 'none';
         document.getElementById('cmpAiResult').style.display   = (st === 'Result')      ? '' : 'none';
         document.getElementById('cmpAiError').style.display    = (st === 'Error')       ? '' : 'none';
         document.getElementById('cmpAiActions').style.display  = (st === 'Result' || st === 'Error') ? 'flex' : 'none';
+        // "저장됨" 칩은 Result 상태에서 cmpAiShowResult가 saved=true일 때만 표시.
+        // 분석 중/오류/미분석에서는 무조건 숨김 — 이전 상태 잔여 표시 방지.
+        if (st !== 'Result') {
+            document.getElementById('cmpAiSavedChip').style.display = 'none';
+        }
     }
     function cmpAiSetBadge(label, bg, fg, border) {
         var el = document.getElementById('cmpAiBadge');
@@ -1238,13 +1384,64 @@
         if (_cmpAiTimer) { clearInterval(_cmpAiTimer); _cmpAiTimer = null; }
     }
 
-    function onCmpAiToggle(cb) {
-        var visible = !!cb.checked;
-        localStorage.setItem('cmpAiVisible', visible ? '1' : '0');
-        document.getElementById('cmpAiPanel').style.display = visible ? 'block' : 'none';
-        if (visible) {
-            // 토글 ON 진입 시 한 번만 LLM 상태 + 저장본 자동 로드
-            cmpAiCheckLlmStatus().then(function() { cmpAiLoadSaved(); });
+    // ─── Result Summary 안의 AI 인사이트 요약 슬롯 ────────────
+    // state: 'loading' | 'ready' | 'empty' | 'disabled' | 'error'
+    function cmpAiSummarySet(state, opts) {
+        var box = document.getElementById('cmpAiSummaryBox');
+        if (!box) return;
+        opts = opts || {};
+        box.setAttribute('data-state', state);
+        var chip = document.getElementById('cmpAiSummaryChip');
+        var body = document.getElementById('cmpAiSummaryBody');
+        var actions = document.getElementById('cmpAiSummaryActions');
+        var goBtn = document.getElementById('cmpAiSummaryGoBtn');
+        var viewLink = document.getElementById('cmpAiSummaryViewLink');
+        switch (state) {
+            case 'ready':
+                chip.textContent = (opts.severity ? opts.severity + ' · ' : '') + '분석 완료';
+                body.textContent = opts.summary || '요약 없음';
+                actions.style.display = '';
+                goBtn.style.display = 'none';
+                viewLink.style.display = '';
+                break;
+            case 'empty':
+                chip.textContent = '미수행';
+                body.innerHTML = '아직 AI 비교 인사이트가 없습니다. <b>AI 인사이트 탭</b>에서 분석을 실행하면 변화 해석·회귀 위험·근본 원인·권장 조치를 받을 수 있습니다.';
+                actions.style.display = '';
+                goBtn.style.display = '';
+                goBtn.disabled = !_cmpAiLlmEnabled;
+                viewLink.style.display = 'none';
+                break;
+            case 'disabled':
+                chip.textContent = 'LLM 비활성';
+                body.innerHTML = 'LLM이 비활성화되어 있어 AI 인사이트를 사용할 수 없습니다. <a href="/settings/llm">Settings → AI/LLM Configuration</a>에서 활성화하세요.';
+                actions.style.display = 'none';
+                break;
+            case 'error':
+                chip.textContent = '오류';
+                body.textContent = opts.message || 'AI 인사이트를 불러오지 못했습니다.';
+                actions.style.display = '';
+                goBtn.style.display = '';
+                goBtn.disabled = false;
+                viewLink.style.display = 'none';
+                break;
+            case 'loading':
+            default:
+                chip.textContent = '확인 중…';
+                body.textContent = '저장된 AI 인사이트를 확인하는 중입니다…';
+                actions.style.display = 'none';
+                break;
+        }
+    }
+
+    function cmpGoToAiTab(triggerStart) {
+        var aiBtn = document.querySelector('.cmp-tab-btn[data-tab="ai"]');
+        if (aiBtn) aiBtn.click();
+        if (triggerStart) {
+            var startBtn = document.getElementById('cmpAiStartBtn');
+            if (startBtn && !startBtn.disabled) {
+                setTimeout(function(){ startCmpAiAnalysis(); }, 60);
+            }
         }
     }
 
@@ -1254,6 +1451,7 @@
             document.getElementById('cmpAiDisabledMsg').style.display = _cmpAiLlmEnabled ? 'none' : '';
             document.getElementById('cmpAiStartBtn').disabled = !_cmpAiLlmEnabled;
             document.getElementById('cmpAiStartBtn').style.opacity = _cmpAiLlmEnabled ? '1' : '.55';
+            if (!_cmpAiLlmEnabled) cmpAiSummarySet('disabled');
         }).catch(function(){
             _cmpAiLlmEnabled = false;
             document.getElementById('cmpAiDisabledMsg').style.display = '';
@@ -1261,6 +1459,7 @@
             document.getElementById('cmpAiStartBtn').style.opacity = '.55';
             cmpAiSetState('NotAnalyzed');
             cmpAiSetBadge('미분석', '#F3F4F6', '#9CA3AF', '#E5E7EB');
+            cmpAiSummarySet('disabled');
         });
     }
 
@@ -1270,19 +1469,24 @@
         fetch(url).then(function(r){ return r.json(); }).then(function(d) {
             if (d && d.found) {
                 cmpAiShowResult(d, true);
+                var sev = ((d.data && d.data.severity) || d.severity || '').toString().toUpperCase();
+                cmpAiSummarySet('ready', {
+                    summary: (d.data && d.data.summary) || d.summary,
+                    severity: sev || null
+                });
             } else {
                 cmpAiSetState('NotAnalyzed');
                 cmpAiSetBadge('미분석', '#F3F4F6', '#9CA3AF', '#E5E7EB');
+                if (_cmpAiLlmEnabled) cmpAiSummarySet('empty');
             }
         }).catch(function() {
             cmpAiSetState('NotAnalyzed');
+            if (_cmpAiLlmEnabled) cmpAiSummarySet('error', { message: 'AI 인사이트 조회에 실패했습니다.' });
         });
     }
 
-    function escHtml(t) {
-        if (t == null) return '';
-        return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
+    // escHtml → Common.escHtml (common.js). Common 은 5 문자(`&<>"'`) escape 라 기존 3 문자 버전보다 방어적.
+    var escHtml = Common.escHtml;
 
     function fmtBytes(n) {
         if (n == null) return '—';
@@ -1424,13 +1628,16 @@
         var sm = sevMap[sev] || { color: '#374151', bg: '#E5E7EB', icon: '?', label: sev.toUpperCase() || 'UNKNOWN' };
         cmpAiSetBadge(sm.label, sm.bg, sm.color, sm.color);
 
+        // Result Summary 카드의 AI 요약 영역도 동기화
+        cmpAiSummarySet('ready', { summary: d.summary, severity: sm.label });
+
         var html = '';
         html += '<div class="ai-severity-banner" style="background:' + sm.bg + ';color:' + sm.color + '">';
         html += '  <div class="ai-sev-icon">' + sm.icon + '</div>';
         html += '  <div style="flex:1;min-width:0">';
         html += '    <div class="ai-sev-label">위험도</div>';
         html += '    <div class="ai-sev-value">' + sm.label + '</div>';
-        if (d.severityDesc) html += '    <div style="font-size:12px;margin-top:4px;opacity:.85">' + escHtml(d.severityDesc) + '</div>';
+        if (d.severityDesc) html += '    <div style="font-size:14px;line-height:1.5;margin-top:6px;opacity:.92">' + escHtml(d.severityDesc) + '</div>';
         html += '  </div>';
         html += '  <div style="text-align:right;font-size:11px;opacity:.65">';
         var at = d.analysedAt || result.analysedAt;
@@ -1476,6 +1683,18 @@
             + '<div style="margin-top:8px;font-size:11px;color:#9CA3AF">두 덤프가 모두 분석 완료 상태이며 LLM 설정이 활성화되어 있는지 확인하세요.</div>';
     }
 
+    function confirmCmpReanalyze() {
+        if (_cmpAiInFlight || !_cmpAiLlmEnabled) return;
+        document.getElementById('cmpReanalyzeModal').classList.add('open');
+    }
+    function cmpCloseReanalyzeModal() {
+        document.getElementById('cmpReanalyzeModal').classList.remove('open');
+    }
+    function cmpConfirmReanalyze() {
+        cmpCloseReanalyzeModal();
+        startCmpAiAnalysis();
+    }
+
     function deleteCmpAiInsight() {
         if (!confirm('이 비교 분석의 AI 인사이트를 삭제하시겠습니까?')) return;
         var url = '/api/llm/compare/insight?base=' + encodeURIComponent(CMP_BASE)
@@ -1488,22 +1707,47 @@
                     cmpAiSetState('NotAnalyzed');
                     cmpAiSetBadge('미분석', '#F3F4F6', '#9CA3AF', '#E5E7EB');
                     document.getElementById('cmpAiSavedChip').style.display = 'none';
+                    cmpAiSummarySet(_cmpAiLlmEnabled ? 'empty' : 'disabled');
                 } else {
                     alert('삭제 실패');
                 }
             }).catch(function(e){ alert('삭제 실패: ' + e.message); });
     }
 
-    // 초기 토글 상태 (기본 ON)
-    (function initCmpAiToggle() {
-        var saved = localStorage.getItem('cmpAiVisible');
-        var visible = (saved == null) ? true : (saved === '1');
-        var cb = document.getElementById('cmpAiToggle');
-        cb.checked = visible;
-        document.getElementById('cmpAiPanel').style.display = visible ? 'block' : 'none';
-        if (visible) {
-            cmpAiCheckLlmStatus().then(function() { cmpAiLoadSaved(); });
+    // 초기 진입: Result Summary AI 요약과 AI 탭의 저장된 결과를 즉시 로드
+    (function initCmpAi() {
+        cmpAiSummarySet('loading');
+        cmpAiCheckLlmStatus().then(function() { cmpAiLoadSaved(); });
+    })();
+
+    // ─── 탭 전환 + URL hash 동기화 ────────────────────────────────
+    (function() {
+        var TABS = ['summary', 'class', 'suspect', 'ai'];
+        function activate(id) {
+            if (TABS.indexOf(id) < 0) id = 'summary';
+            document.querySelectorAll('.cmp-tab-btn').forEach(function(b) {
+                var on = (b.getAttribute('data-tab') === id);
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-selected', on ? 'true' : 'false');
+            });
+            document.querySelectorAll('.cmp-tab-panel').forEach(function(p) {
+                p.classList.toggle('active', p.id === 'tab-' + id);
+            });
         }
+        var initial = (location.hash || '').replace('#', '');
+        activate(TABS.indexOf(initial) >= 0 ? initial : 'summary');
+        document.querySelectorAll('.cmp-tab-btn').forEach(function(b) {
+            b.addEventListener('click', function() {
+                var id = this.getAttribute('data-tab');
+                if (location.hash !== '#' + id) {
+                    history.replaceState(null, '', '#' + id);
+                }
+                activate(id);
+            });
+        });
+        window.addEventListener('hashchange', function() {
+            activate((location.hash || '').replace('#', ''));
+        });
     })();
 
     /*]]>*/

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17d">
     <title>AI / LLM Settings — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }  /* LLM Settings 페이지 전용 */
@@ -91,6 +91,14 @@
             .card { padding: 14px 12px; }
             .s-key { font-size: 12px; }
             .setting-label { font-size: 13px; }
+        }
+        /* Test Connection 진행 스피너 */
+        @keyframes spinTC { to { transform: rotate(360deg); } }
+        .spinner-tc {
+            display: inline-block; width: 13px; height: 13px;
+            border: 2px solid #E5E7EB; border-top-color: #2563EB;
+            border-radius: 50%; animation: spinTC 0.7s linear infinite;
+            vertical-align: -2px; margin-right: 7px;
         }
     </style>
 </head>
@@ -292,7 +300,7 @@
             <button onclick="saveLlmConfig()" class="btn-primary" style="padding:8px 20px;font-size:13px">Save Config</button>
             <button onclick="testLlmConnection()" class="btn-secondary" style="padding:8px 20px;font-size:13px">Test Connection</button>
         </div>
-        <div id="llmTestResult" style="margin-top:10px;font-size:12px;display:none"></div>
+        <div id="llmTestResult" style="margin-top:10px;font-size:13.5px;line-height:1.5;display:none"></div>
     </div>
 
 </div>
@@ -363,10 +371,7 @@ var _defaultUrls = {
 
 // ── Load settings ─────────────────────────────────────
 function loadLlmSettings() {
-    fetch('/api/settings').then(function(r){
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-    }).then(function(d) {
+    Common.fetchJSON('/api/settings').then(function(d) {
         if (!d.llm) return;
         var llm = d.llm;
 
@@ -466,8 +471,7 @@ function onProviderChange() {
 
 // ── Actions ───────────────────────────────────────────
 function toggleLlm(el) {
-    fetch('/api/llm/enabled?enabled=' + el.checked, {method:'POST'})
-        .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    Common.fetchJSON('/api/llm/enabled?enabled=' + el.checked, {method:'POST'})
         .then(function(d){ updateBadge(d.enabled); toast('AI Analysis ' + (d.enabled ? 'enabled' : 'disabled'), 'success'); })
         .catch(function(e){ el.checked = !el.checked; toast('Failed: ' + e.message, 'error'); });
 }
@@ -486,12 +490,10 @@ function saveLlmConfig() {
 
     var sslVerify = document.getElementById('llmSslVerify').checked;
 
-    fetch('/api/llm/config', {
+    Common.fetchJSON('/api/llm/config', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
         body: JSON.stringify({provider:provider, apiUrl:apiUrl, model:model, maxInputTokens:maxIn, maxOutputTokens:maxOut, sslVerify:sslVerify})
     })
-    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(d){ toast('LLM config saved (Provider: ' + d.provider + ', Model: ' + d.model + ', SSL: ' + (d.sslVerify ? 'ON' : 'OFF') + ')', 'success'); })
     .catch(function(e){ toast('Save failed: ' + e.message, 'error'); });
 }
@@ -499,12 +501,10 @@ function saveLlmConfig() {
 function saveLlmApiKey() {
     var key = document.getElementById('llmApiKeyInput').value.trim();
     if (!key) { toast('API Key is required', 'error'); return; }
-    fetch('/api/llm/apikey', {
+    Common.fetchJSON('/api/llm/apikey', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
         body: JSON.stringify({apiKey: key})
     })
-    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(d){
         document.getElementById('llmApiKeyInput').value = '';
         var ks = document.getElementById('llmKeyStatus');
@@ -518,9 +518,8 @@ function saveLlmApiKey() {
 function testLlmConnection() {
     var resEl = document.getElementById('llmTestResult');
     resEl.style.display = 'block';
-    resEl.innerHTML = '<span style="color:#6B7280">Testing connection...</span>';
-    fetch('/api/llm/test-connection', {method:'POST'})
-        .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+    resEl.innerHTML = '<span class="spinner-tc" aria-hidden="true"></span><span style="color:#6B7280">Testing connection...</span>';
+    Common.fetchJSON('/api/llm/test-connection', {method:'POST'})
         .then(function(d){
             if (d.success) {
                 resEl.innerHTML = '<span style="color:#065F46;font-weight:600">&#10003; Connected</span>'
@@ -538,12 +537,10 @@ function testLlmConnection() {
 function saveChatPrompt() {
     var prompt = document.getElementById('llmChatPromptInput').value.trim();
     if (!prompt) { toast('시스템 프롬프트를 입력하세요', 'error'); return; }
-    fetch('/api/llm/chat-prompt', {
+    Common.fetchJSON('/api/llm/chat-prompt', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
         body: JSON.stringify({prompt: prompt})
     })
-    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(d){ toast('Chat system prompt saved', 'success'); })
     .catch(function(e){ toast('Save failed: ' + e.message, 'error'); });
 }
@@ -567,12 +564,10 @@ function updateChatRestoreDesc(enabled) {
 
 function toggleChatRestoreMode(el) {
     var newVal = el.checked;
-    fetch('/api/llm/chat-restore-mode', {
+    Common.fetchJSON('/api/llm/chat-restore-mode', {
         method: 'POST',
-        headers: {'Content-Type':'application/json'},
         body: JSON.stringify({includeHistory: newVal})
     })
-    .then(function(r){ if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
     .then(function(d){
         updateChatRestoreDesc(!!d.includeHistory);
         toast('대화 복원 모드: ' + (d.includeHistory ? 'ON' : 'OFF'), 'success');

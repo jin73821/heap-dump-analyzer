@@ -292,13 +292,15 @@ public class ServerController {
             @RequestParam(defaultValue = "startedAt,desc") String sort,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String status,
-            @RequestParam(required = false) Long serverId) {
+            @RequestParam(required = false) Long serverId,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo) {
 
         size = Math.max(1, Math.min(100, size));
         page = Math.max(0, page);
 
         Pageable pageable = PageRequest.of(page, size, parseSort(sort));
-        Specification<DumpTransferLog> spec = buildSpec(q, status, serverId);
+        Specification<DumpTransferLog> spec = buildSpec(q, status, serverId, dateFrom, dateTo);
 
         Page<DumpTransferLog> result = dumpTransferLogRepository.findAll(spec, pageable);
         Map<Long, String> serverNames = buildServerNames();
@@ -320,9 +322,11 @@ public class ServerController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> transferStats(
             @RequestParam(required = false) String q,
-            @RequestParam(required = false) Long serverId) {
-        // KPI는 status 필터 무시 — Total/Success/Failed 비교 의미 유지. q + serverId만 적용.
-        Specification<DumpTransferLog> spec = buildSpec(q, null, serverId);
+            @RequestParam(required = false) Long serverId,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo) {
+        // KPI는 status 필터 무시 — Total/Success/Failed 비교 의미 유지. q + serverId + 기간만 적용.
+        Specification<DumpTransferLog> spec = buildSpec(q, null, serverId, dateFrom, dateTo);
         long total = dumpTransferLogRepository.count(spec);
         long success = dumpTransferLogRepository.count(spec.and(statusEquals("SUCCESS")));
         long failed = dumpTransferLogRepository.count(spec.and(statusEquals("FAILED")));
@@ -340,10 +344,12 @@ public class ServerController {
             @RequestParam(defaultValue = "startedAt,desc") String sort,
             @RequestParam(required = false) String q,
             @RequestParam(required = false) String status,
-            @RequestParam(required = false) Long serverId) {
+            @RequestParam(required = false) Long serverId,
+            @RequestParam(required = false) String dateFrom,
+            @RequestParam(required = false) String dateTo) {
 
         Pageable pageable = PageRequest.of(0, EXPORT_CAP, parseSort(sort));
-        Specification<DumpTransferLog> spec = buildSpec(q, status, serverId);
+        Specification<DumpTransferLog> spec = buildSpec(q, status, serverId, dateFrom, dateTo);
         Page<DumpTransferLog> page = dumpTransferLogRepository.findAll(spec, pageable);
         Map<Long, String> serverNames = buildServerNames();
 
@@ -398,7 +404,10 @@ public class ServerController {
         }
     }
 
-    private Specification<DumpTransferLog> buildSpec(String q, String status, Long serverId) {
+    private Specification<DumpTransferLog> buildSpec(String q, String status, Long serverId,
+                                                     String dateFrom, String dateTo) {
+        LocalDateTime fromTs = parseDateBoundary(dateFrom, false);
+        LocalDateTime toTs = parseDateBoundary(dateTo, true); // exclusive upper (다음 날 00:00)
         return (root, query, cb) -> {
             List<Predicate> preds = new ArrayList<>();
             if (q != null && !q.trim().isEmpty()) {
@@ -415,8 +424,31 @@ public class ServerController {
             if (serverId != null) {
                 preds.add(cb.equal(root.get("serverId"), serverId));
             }
+            if (fromTs != null) {
+                preds.add(cb.greaterThanOrEqualTo(root.get("startedAt"), fromTs));
+            }
+            if (toTs != null) {
+                preds.add(cb.lessThan(root.get("startedAt"), toTs));
+            }
             return preds.isEmpty() ? cb.conjunction() : cb.and(preds.toArray(new Predicate[0]));
         };
+    }
+
+    /** yyyy-MM-dd → LocalDateTime. endExclusive=true 면 다음 날 00:00 (종료일 포함 효과). 잘못된 입력은 null. */
+    private LocalDateTime parseDateBoundary(String iso, boolean endExclusive) {
+        if (iso == null || iso.trim().isEmpty()) return null;
+        try {
+            String[] p = iso.trim().split("-");
+            if (p.length != 3) return null;
+            LocalDateTime d = LocalDateTime.of(
+                    Integer.parseInt(p[0]),
+                    Integer.parseInt(p[1]),
+                    Integer.parseInt(p[2]),
+                    0, 0, 0);
+            return endExclusive ? d.plusDays(1) : d;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private Specification<DumpTransferLog> statusEquals(String status) {

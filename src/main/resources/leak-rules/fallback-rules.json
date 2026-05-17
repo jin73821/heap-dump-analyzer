@@ -1,0 +1,332 @@
+[
+  {
+    "name": "ClassLoader 누수",
+    "category": "ClassLoader 누수",
+    "patternRegex": "classloader|webappclassloader|urlclassloader|permgen|metaspace",
+    "explanationTpl": "ClassLoader가 가비지 컬렉션되지 않아 로드된 클래스의 메타데이터와 static 필드가 메모리에 계속 남아있습니다. 주로 웹 애플리케이션 재배포(redeploy) 시 이전 ClassLoader가 해제되지 않을 때 발생합니다.",
+    "adviceTpl": "<ol><li>웹 애플리케이션 재배포 시 이전 ClassLoader에 대한 참조가 남아있지 않은지 확인하세요.</li><li>ThreadLocal, JDBC 드라이버, 로깅 프레임워크 등이 ClassLoader 참조를 유지하는지 점검하세요.</li><li>Metaspace 크기 설정(-XX:MaxMetaspaceSize)을 검토하고, 재배포보다 재시작을 권장합니다.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5001
+  },
+  {
+    "name": "Connection/Stream 누수",
+    "category": "Connection/Stream 누수",
+    "patternRegex": "connection|socket|inputstream|outputstream|\\bstatement\\b|resultset|datasource",
+    "explanationTpl": "데이터베이스 연결, 네트워크 소켓, 또는 I/O 스트림이 사용 후 제대로 닫히지 않아 리소스가 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>try-with-resources 구문을 사용하여 Connection, Statement, ResultSet 등을 자동으로 닫으세요.</li><li>커넥션 풀(HikariCP 등) 설정에서 maxLifetime, leakDetectionThreshold 값을 검토하세요.</li><li>InputStream/OutputStream 사용 코드에서 finally 블록으로 해제를 보장하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5002
+  },
+  {
+    "name": "Thread 누수",
+    "category": "Thread 누수",
+    "patternRegex": "\\bthread\\b|threadpoolexecutor|pool.*thread|scheduledexecutor",
+    "explanationTpl": "스레드가 과도하게 생성되거나 완료 후 종료되지 않아 메모리를 점유하고 있습니다. 각 스레드는 기본 1MB의 스택 메모리를 사용하므로 다수의 미종료 스레드는 심각한 메모리 부족을 유발합니다.",
+    "adviceTpl": "<ol><li>ExecutorService 사용 시 shutdown()/shutdownNow()가 적절히 호출되는지 확인하세요.</li><li>스레드 풀 크기를 제한하고(newFixedThreadPool), newCachedThreadPool 사용을 지양하세요.</li><li>Timer, ScheduledExecutorService 등 주기적 작업의 취소(cancel) 및 풀 종료를 보장하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5003
+  },
+  {
+    "name": "컬렉션 증가",
+    "category": "컬렉션 증가",
+    "patternRegex": "hashmap|arraylist|concurrenthashmap|hashset|linkedlist|hashtable|\\bentries\\b",
+    "explanationTpl": "Map, List 등 컬렉션 객체에 데이터가 지속적으로 추가되면서 제거되지 않아 메모리가 계속 증가하고 있습니다.",
+    "adviceTpl": "<ol><li>컬렉션에 최대 크기 제한을 설정하거나 LRU 정책을 적용하세요.</li><li>더 이상 필요 없는 엔트리를 명시적으로 제거하는 정리 로직을 추가하세요.</li><li>약한 참조(WeakHashMap, WeakReference)를 사용하여 GC가 자동으로 회수할 수 있게 하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5004
+  },
+  {
+    "name": "캐시/세션 누수",
+    "category": "캐시/세션 누수",
+    "patternRegex": "\\bcache\\b|\\bsession\\b|httpsession|ehcache|caffeine|guava.*cache",
+    "explanationTpl": "캐시 또는 HTTP 세션 객체가 만료·제거되지 않고 계속 누적되어 메모리를 점유하고 있습니다.",
+    "adviceTpl": "<ol><li>캐시에 TTL(Time-To-Live)과 최대 엔트리 수를 반드시 설정하세요.</li><li>HTTP 세션 타임아웃을 적절히 설정하고, 불필요한 세션 데이터 저장을 줄이세요.</li><li>캐시 히트율을 모니터링하고, 사용률이 낮은 캐시는 제거하거나 크기를 줄이세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5005
+  },
+  {
+    "name": "byte[]/char[] 누적",
+    "category": "byte[]/char[] 누적",
+    "patternRegex": "byte\\s*\\[|char\\s*\\[|string.*occupies|stringbuilder|byte\\s*array",
+    "explanationTpl": "대량의 byte[] 또는 char[] 배열이 메모리를 점유하고 있습니다. 대용량 파일 읽기, 문자열 연결, 또는 버퍼 미해제 등이 원인일 수 있습니다.",
+    "adviceTpl": "<ol><li>대용량 데이터를 한 번에 메모리에 로드하지 말고 스트리밍 방식으로 처리하세요.</li><li>StringBuilder/StringBuffer의 과도한 사용 여부를 점검하세요.</li><li>바이트 버퍼(ByteBuffer) 사용 시 Direct Buffer 누수가 없는지 확인하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5006
+  },
+  {
+    "name": "Listener/Observer 누수",
+    "category": "Listener/Observer 누수",
+    "patternRegex": "listener|observer|\\bcallback\\b|eventlistener",
+    "explanationTpl": "이벤트 리스너 또는 콜백이 등록된 후 해제되지 않아 관련 객체들이 GC되지 못하고 있습니다.",
+    "adviceTpl": "<ol><li>리스너 등록(addListener) 후 반드시 적절한 시점에 removeListener를 호출하세요.</li><li>WeakReference 기반 리스너 패턴을 사용하여 GC가 자동 해제할 수 있게 하세요.</li><li>컴포넌트 생명주기(destroy, close)에서 모든 리스너 해제 로직을 점검하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5007
+  },
+  {
+    "name": "Finalizer 문제",
+    "category": "Finalizer 문제",
+    "patternRegex": "finalizer|\\bfinalize\\b|pending.*finalization",
+    "explanationTpl": "Finalizer 큐에 대량의 객체가 대기 중입니다. finalize() 메서드가 있는 객체는 GC 시 즉시 회수되지 않고 별도 스레드에서 처리되어야 합니다.",
+    "adviceTpl": "<ol><li>finalize() 메서드 사용을 제거하고 AutoCloseable + try-with-resources 패턴으로 전환하세요.</li><li>Java 9+에서는 java.lang.ref.Cleaner 또는 PhantomReference를 사용하세요.</li><li>Finalizer 큐 크기를 모니터링하여 병목 여부를 확인하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5008
+  },
+  {
+    "name": "CompletableFuture 미완료",
+    "category": "비동기 작업 누적",
+    "patternRegex": "completablefuture|forkjoinpool|forkjoin|asynchronoustask",
+    "explanationTpl": "CompletableFuture 또는 ForkJoinPool 관련 비동기 작업이 완료되지 않거나 결과가 소비되지 않아 누적되고 있습니다. 체이닝된 stage(thenApply/thenCompose 등)의 콜백이 메모리를 유지할 수 있습니다.",
+    "adviceTpl": "<ol><li>모든 비동기 stage에 타임아웃(`orTimeout` 또는 `completeOnTimeout`)을 적용하세요.</li><li>예외 경로(`exceptionally`/`handle`)를 명시적으로 처리해 future가 완료되지 않은 채 GC root에 매달리는 상황을 막으세요.</li><li>ForkJoinPool.commonPool() 사용량을 모니터링하고, 장기 실행 작업은 별도 ExecutorService로 분리하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5009
+  },
+  {
+    "name": "Reactor Flux/Mono 누수",
+    "category": "리액티브 스트림 누수",
+    "patternRegex": "\\bflux\\b|\\bmono\\b|reactor\\.core|fluxprocessor|fluxsink|monoflatmap|publishon|subscribeon",
+    "explanationTpl": "Project Reactor의 Flux/Mono 시퀀스가 종료(complete/error) 또는 dispose되지 않아 구독(Subscription)과 buffer가 누적되고 있습니다. 특히 `cache()`/`replay()`/`publish()` 연산자나 무한 스트림이 원인일 수 있습니다.",
+    "adviceTpl": "<ol><li>모든 구독은 명시적인 `Disposable`로 보관하고 라이프사이클 종료 시 `dispose()`를 호출하세요.</li><li>`cache()`/`replay()`는 보유 한도와 TTL(`cache(Duration)`)을 반드시 설정하세요.</li><li>BlockHound나 reactor-tools `Hooks.onOperatorDebug()`로 누수 시퀀스를 디버깅하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5010
+  },
+  {
+    "name": "RxJava Subscription 누수",
+    "category": "리액티브 스트림 누수",
+    "patternRegex": "\\brxjava\\b|io\\.reactivex|rx\\.subscribers|compositedisposable|\\bobservable\\b",
+    "explanationTpl": "RxJava의 Observable/Flowable에 등록된 Subscription 또는 Disposable이 해제되지 않아 다운스트림 콜백 체인이 GC 대상이 되지 못하고 있습니다.",
+    "adviceTpl": "<ol><li>모든 `subscribe` 호출 결과는 `CompositeDisposable`에 담아 라이프사이클 종료 시점에 `clear()/dispose()`를 호출하세요.</li><li>UI/Android의 경우 화면 종료 시 RxLifecycle 또는 AutoDispose로 자동 해제하세요.</li><li>`Subject`나 `BehaviorRelay`에 직접 참조를 매다는 패턴을 점검하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5011
+  },
+  {
+    "name": "Disruptor RingBuffer 적체",
+    "category": "비동기 큐 적체",
+    "patternRegex": "disruptor|ringbuffer|com\\.lmax\\.disruptor|sequencer",
+    "explanationTpl": "LMAX Disruptor의 RingBuffer 또는 EventHandler 슬롯이 소비되지 않아 이벤트 페이로드가 누적되고 있습니다. 슬로우 컨슈머 또는 batch 처리 지연이 원인입니다.",
+    "adviceTpl": "<ol><li>RingBuffer 크기(`bufferSize`)와 backpressure 정책(`BlockingWaitStrategy` 등)을 워크로드에 맞게 조정하세요.</li><li>EventHandler 내부 처리 시간을 측정하고, 외부 호출은 비동기로 분리하세요.</li><li>Disruptor의 `RemainingCapacity` 메트릭을 모니터링하여 임계치 알람을 설정하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5012
+  },
+  {
+    "name": "Quartz JobDataMap 누적",
+    "category": "스케줄러 누수",
+    "patternRegex": "\\bquartz\\b|jobdatamap|schedulerimpl|quartzscheduler|jobpersistence",
+    "explanationTpl": "Quartz Scheduler의 JobDataMap, Trigger, Calendar 객체가 정리되지 않고 메모리에 누적되어 있습니다. 잡 종료 후에도 JobDataMap에 large object를 넣은 채 보관할 때 자주 발생합니다.",
+    "adviceTpl": "<ol><li>JobDataMap에는 식별자(ID/Key)만 넣고, 실제 큰 데이터는 잡 실행 시점에 외부에서 조회하세요.</li><li>완료된 잡은 `deleteJob()`으로 명시적으로 제거하거나 `@DisallowConcurrentExecution`으로 중복 누적을 방지하세요.</li><li>RAMJobStore 대신 JDBCJobStore를 검토하여 힙에 누적되지 않게 하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5013
+  },
+  {
+    "name": "Timer/TimerTask 미취소",
+    "category": "스케줄러 누수",
+    "patternRegex": "\\btimer\\b|timertask|scheduledthreadpool|scheduledexecutorservice|scheduledfuture",
+    "explanationTpl": "java.util.Timer/TimerTask 또는 ScheduledExecutorService에 등록된 작업이 취소되지 않아, 작업 객체와 그 클로저가 참조하는 모든 객체가 GC root에 매달려 있습니다.",
+    "adviceTpl": "<ol><li>주기적 작업은 `ScheduledFuture.cancel(true)` 또는 풀의 `shutdown()`을 라이프사이클 종료 시 반드시 호출하세요.</li><li>`Timer`보다 인터럽트가 안전한 `ScheduledExecutorService` 사용을 권장합니다.</li><li>Spring `@Scheduled` 사용 시 빈 소멸 시 task가 적절히 cancel되는지 확인하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5014
+  },
+  {
+    "name": "Kafka Consumer 누수",
+    "category": "메시징 누수",
+    "patternRegex": "kafkaconsumer|kafkaproducer|consumerrecords|consumerrebalance|recordaccumulator",
+    "explanationTpl": "Kafka Consumer/Producer 인스턴스가 close되지 않거나, ConsumerRecords가 commit·소비 없이 누적되어 메모리를 점유하고 있습니다. RecordAccumulator의 batch 버퍼도 의심 대상입니다.",
+    "adviceTpl": "<ol><li>Consumer/Producer는 애플리케이션 라이프사이클 동안 재사용하고 종료 시 `close(Duration)`을 호출하세요.</li><li>`max.poll.records`와 `fetch.max.bytes`를 적절히 조정해 한 번에 가져오는 양을 제한하세요.</li><li>처리 지연 시 `pause()/resume()` 또는 backpressure 패턴을 적용하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5015
+  },
+  {
+    "name": "JMS Session 누수",
+    "category": "메시징 누수",
+    "patternRegex": "\\bjms\\b|messageconsumer|messageproducer|activemq|artemismessage|jmstemplate",
+    "explanationTpl": "JMS Connection/Session/MessageConsumer/MessageProducer가 close되지 않아 native handle과 함께 힙 메모리도 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>JMS 리소스는 finally 또는 try-with-resources로 반드시 close하세요(Connection → Session → Consumer/Producer 순).</li><li>Spring `JmsTemplate` 사용 시 ConnectionFactory에 캐싱 래퍼(`CachingConnectionFactory`)를 적용하세요.</li><li>Acknowledge 모드(`CLIENT_ACKNOWLEDGE`)에서 ack 누락으로 인한 메시지 적체를 점검하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5016
+  },
+  {
+    "name": "RabbitMQ Channel 누수",
+    "category": "메시징 누수",
+    "patternRegex": "\\brabbitmq\\b|com\\.rabbitmq|\\bamqp\\b|\\bchannelimpl\\b|rabbittemplate",
+    "explanationTpl": "RabbitMQ Channel 또는 Connection이 close되지 않거나, 미응답 RPC future가 누적되고 있습니다. unack 상태인 메시지가 prefetch buffer에 쌓여 있을 수도 있습니다.",
+    "adviceTpl": "<ol><li>Channel은 thread-safe하지 않으므로 스레드별로 새로 만들고 사용 후 즉시 close하세요.</li><li>`prefetchCount`를 적절히 제한해 한 번에 가져오는 unack 메시지 수를 줄이세요.</li><li>RPC 패턴 사용 시 응답 타임아웃과 future 정리 로직을 추가하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5017
+  },
+  {
+    "name": "Statement/PreparedStatement 누수",
+    "category": "JDBC 리소스 누수",
+    "patternRegex": "preparedstatement|callablestatement|jdbcstatement|statementcache|resultsetimpl",
+    "explanationTpl": "JDBC PreparedStatement/CallableStatement/ResultSet이 close되지 않아 드라이버 측 cursor와 캐시 항목이 누적되고 있습니다. DB측 커서 자원도 함께 소모됩니다.",
+    "adviceTpl": "<ol><li>모든 Statement/ResultSet은 try-with-resources로 닫고, 같은 Connection에서 여러 Statement를 동시 사용하지 않도록 주의하세요.</li><li>JdbcTemplate/MyBatis 등 추상화 계층 사용을 우선 검토하세요.</li><li>드라이버의 statement cache 크기(예: HikariCP `data-source-properties.cachePrepStmts`) 설정을 적절히 조정하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5018
+  },
+  {
+    "name": "MyBatis SqlSession 누수",
+    "category": "ORM 세션 누수",
+    "patternRegex": "sqlsession|mybatis|sqlsessionfactory|sqlsessiontemplate",
+    "explanationTpl": "MyBatis의 SqlSession이 close되지 않거나 `openSession()`이 반복 호출되어 1차 캐시와 Statement 자원이 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>SqlSession은 try-with-resources로 닫거나 Spring의 `SqlSessionTemplate`(자동 close)을 사용하세요.</li><li>장기 트랜잭션에서는 주기적으로 `clearCache()`를 호출해 1차 캐시를 비우세요.</li><li>flushStatements()를 사용하여 batch 누적을 주기적으로 비우세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5019
+  },
+  {
+    "name": "JPA 영속성 컨텍스트 누적",
+    "category": "ORM 세션 누수",
+    "patternRegex": "entitymanager|persistencecontext|sessionimpl|entityentry|loadcontext|persistentbag",
+    "explanationTpl": "JPA EntityManager의 1차 캐시(영속성 컨텍스트)에 엔티티가 분리(detach) 또는 flush 없이 누적되어 메모리를 점유하고 있습니다. 대량 처리 잡에서 자주 발생합니다.",
+    "adviceTpl": "<ol><li>대량 처리 시 일정 단위마다 `em.flush()` + `em.clear()`를 호출하여 영속성 컨텍스트를 비우세요.</li><li>읽기 전용 조회는 `Session.setReadOnly(true)` 또는 stateless session을 사용하세요.</li><li>Lazy 컬렉션을 사용 후 명시적으로 `Hibernate.initialize()` 또는 detach 처리하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5020
+  },
+  {
+    "name": "HTTP Connection Pool 누수",
+    "category": "HTTP 클라이언트 누수",
+    "patternRegex": "poolingconnectionmanager|connpool|httpclientconnectionmanager|okhttp.*pool|connectionpool",
+    "explanationTpl": "HTTP 클라이언트(Apache HttpClient/OkHttp)의 ConnectionPool에 idle/leased 커넥션이 누적되거나, 응답 본문이 close되지 않아 connection이 풀로 반환되지 않습니다.",
+    "adviceTpl": "<ol><li>응답(`Response`/`HttpEntity`)은 반드시 close해서 connection을 풀로 반환하세요.</li><li>`maxTotal`/`maxPerRoute`와 `evictIdleConnections`/`idleTimeout` 설정으로 idle 커넥션을 정리하세요.</li><li>Keep-Alive 미응답 서버 대응을 위해 `validateAfterInactivity`를 활성화하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5021
+  },
+  {
+    "name": "WebSocket Session 누수",
+    "category": "웹 세션 누수",
+    "patternRegex": "websocket|stompsession|wsserversession|websocketsession|websockethandler",
+    "explanationTpl": "WebSocket/STOMP 세션이 정상 종료되지 않거나 broker 구독이 해제되지 않아 세션 상태와 메시지 큐가 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>세션 종료 콜백(`afterConnectionClosed`)에서 broker 구독·내부 buffer 정리를 누락하지 않도록 점검하세요.</li><li>Heartbeat/idle timeout을 설정해 끊긴 클라이언트의 세션이 회수되도록 하세요.</li><li>broker(STOMP relay/Redis pub-sub) 측 구독 누적도 함께 모니터링하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5022
+  },
+  {
+    "name": "ServletContext attribute 누적",
+    "category": "웹 컨텍스트 누수",
+    "patternRegex": "servletcontext|webapplicationcontext|applicationattribute|contextattribute",
+    "explanationTpl": "ServletContext(application scope)에 추가된 attribute가 제거되지 않아 애플리케이션 수명 내내 보관되고 있습니다. 캐시 용도로 잘못 사용된 경우가 흔합니다.",
+    "adviceTpl": "<ol><li>application scope는 정말 전역 공유가 필요한 객체에만 사용하고, 캐시는 별도 캐시 라이브러리(Caffeine 등)로 분리하세요.</li><li>웹 애플리케이션 종료 시 `ServletContextListener.contextDestroyed`에서 attribute를 명시적으로 제거하세요.</li><li>Spring의 `ApplicationScope` 빈에 변동 상태를 누적시키지 않도록 점검하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5023
+  },
+  {
+    "name": "L2 캐시 무한 증가",
+    "category": "캐시 누수",
+    "patternRegex": "secondlevelcache|querycache|hibernate.*cache|jcache|second_level_cache|regionfactory",
+    "explanationTpl": "Hibernate/JPA L2 캐시 또는 query cache가 만료·제한 없이 증가하여 메모리를 점유하고 있습니다. 카디널리티가 큰 엔티티/쿼리가 캐싱되면 빠르게 누적됩니다.",
+    "adviceTpl": "<ol><li>각 region에 최대 엔트리 수와 TTL/TTI를 반드시 설정하세요(Ehcache/Caffeine 설정).</li><li>읽기 중심 엔티티만 캐싱하고, 변동 빈도 높은 엔티티는 캐시 대상에서 제외하세요.</li><li>query cache는 효율이 낮은 경우가 많으니 측정 후 도입을 결정하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5024
+  },
+  {
+    "name": "분산 캐시 노드 누수",
+    "category": "분산 캐시 누수",
+    "patternRegex": "hazelcast|ignite\\.cache|infinispan|distributedmap|imap|cachemanagerimpl",
+    "explanationTpl": "Hazelcast/Ignite/Infinispan 등 분산 캐시 노드의 로컬 backup·near-cache·indexing 구조가 메모리를 과도하게 점유하고 있습니다.",
+    "adviceTpl": "<ol><li>near-cache 크기와 eviction 정책을 명시적으로 설정하세요.</li><li>indexing(`@QuerySqlField`/`@Indexed`)을 정말 필요한 필드에만 적용하여 인덱스 메모리를 줄이세요.</li><li>backup 수(`backupCount`)와 데이터 파티션 분포를 모니터링해 일부 노드 편중을 방지하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5025
+  },
+  {
+    "name": "SSL/TLS 세션 누수",
+    "category": "보안 리소스 누수",
+    "patternRegex": "sslcontext|sslengine|sslsessioncache|x509certificate|keystorebuilder|tlsv\\\\d",
+    "explanationTpl": "SSL/TLS 세션 캐시 또는 SSLEngine 인스턴스가 정리되지 않아 인증서·세션 키 자료구조가 누적되고 있습니다. native 메모리 누수와 동반될 수 있습니다.",
+    "adviceTpl": "<ol><li>SSLContext는 애플리케이션 전역에서 1개만 생성·재사용하세요.</li><li>session cache 크기(`SSLSessionContext.setSessionCacheSize`)와 timeout을 명시적으로 설정하세요.</li><li>외부 HTTPS 호출 시 클라이언트(OkHttp/Apache) close 누락이 없는지 점검하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5026
+  },
+  {
+    "name": "직렬화 스트림 누수",
+    "category": "직렬화 리소스 누수",
+    "patternRegex": "objectoutputstream|objectinputstream|\\bkryo\\b|krytoserializer|protostuff|messagepack",
+    "explanationTpl": "ObjectInputStream/ObjectOutputStream 또는 Kryo serializer 인스턴스가 close되지 않거나 reset되지 않아 직렬화 핸들 테이블과 buffer가 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>스트림은 try-with-resources로 닫고, 장기 실행 시 주기적으로 `reset()`을 호출해 핸들 테이블을 비우세요.</li><li>Kryo는 thread-safe하지 않으므로 thread-local 또는 풀(`KryoPool`)을 사용하세요.</li><li>untrusted 데이터의 ObjectInputStream 사용을 지양하고 JSON/Avro 등 안전한 포맷을 검토하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5027
+  },
+  {
+    "name": "DirectByteBuffer 누수",
+    "category": "Direct Buffer 누수",
+    "patternRegex": "directbytebuffer|cleaner|nativememory|sun\\.misc\\.cleaner|jdk\\.internal\\.ref",
+    "explanationTpl": "DirectByteBuffer가 GC root에 매달려 Cleaner가 호출되지 못하여 native 메모리와 함께 힙의 Cleaner/Phantom 참조가 누적되고 있습니다. -XX:MaxDirectMemorySize 초과 시 OOM 위험이 큽니다.",
+    "adviceTpl": "<ol><li>DirectByteBuffer 사용 후 `((DirectBuffer)b).cleaner().clean()`(JDK 8) 또는 `Unsafe.invokeCleaner`(JDK 9+)로 명시적으로 해제하거나 풀링하세요.</li><li>-XX:MaxDirectMemorySize를 명시하고 메트릭(`BufferPoolMXBean`)으로 모니터링하세요.</li><li>Netty 사용 시 `PooledByteBufAllocator`로 전환을 검토하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5028
+  },
+  {
+    "name": "MappedByteBuffer/FileChannel 누수",
+    "category": "파일 채널 누수",
+    "patternRegex": "mappedbytebuffer|filechannel|filechannelimpl|memorymappedfile|fileinputstream\\\\.channel",
+    "explanationTpl": "FileChannel.map()으로 생성된 MappedByteBuffer가 해제되지 않아 파일 매핑이 메모리에 유지되고 있습니다. JDK에서 명시적 unmap이 어려워 누수가 길어집니다.",
+    "adviceTpl": "<ol><li>FileChannel은 try-with-resources로 닫고, map된 buffer는 더 이상 참조하지 않도록 즉시 nullify하세요.</li><li>JDK 9+의 `Unsafe.invokeCleaner` 또는 Apache Commons IO `ByteBufferUtils.cleanDirectBuffer`로 명시적 unmap을 검토하세요.</li><li>대용량 파일은 매핑보다 chunked streaming 처리로 전환하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5029
+  },
+  {
+    "name": "HTTP Session attribute 누적",
+    "category": "HTTP 세션 누수",
+    "patternRegex": "httpsession|sessionattribute|standardsession|sessionscope|sessionrepositoryimpl",
+    "explanationTpl": "HTTP 세션 attribute에 large object(파일/리스트/캐시 등)가 저장되어 세션이 만료되기 전까지 메모리에 유지되고 있습니다.",
+    "adviceTpl": "<ol><li>세션에는 식별자만 두고 실제 데이터는 외부 캐시/DB에서 조회하세요.</li><li>session-timeout을 30분 이하로 짧게 유지하고, 명시적 로그아웃 시 `invalidate()`를 호출하세요.</li><li>분산 세션(Spring Session)을 사용해 노드 메모리 부담을 줄이세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5030
+  },
+  {
+    "name": "배치 잡 컨텍스트 누적",
+    "category": "배치 잡 누수",
+    "patternRegex": "jobexecution|stepexecution|batchcontext|spring\\.batch|chunkcontext|executioncontext",
+    "explanationTpl": "Spring Batch JobExecution/StepExecution의 ExecutionContext에 누적된 데이터가 정리되지 않거나, 잡 실행 이력이 메모리에 남아 누수가 발생하고 있습니다.",
+    "adviceTpl": "<ol><li>ExecutionContext에 큰 데이터를 저장하지 말고 reader/processor/writer 사이에 전달은 chunk 내부 변수로 처리하세요.</li><li>완료된 잡의 ExecutionContext를 주기적으로 JobRepository에서 정리하세요.</li><li>Step의 commit-interval/skip 정책을 점검하여 chunk가 과도하게 커지지 않게 하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5031
+  },
+  {
+    "name": "ETL/Staging 버퍼 누적",
+    "category": "ETL 버퍼 누수",
+    "patternRegex": "staging|etlbuffer|loadqueue|importer|spoolingbuffer|inflightrecords",
+    "explanationTpl": "ETL/대량 import 작업의 staging 버퍼 또는 in-flight 레코드 컬렉션이 비워지지 않고 메모리에 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>chunk 단위 처리 후 명시적으로 컬렉션을 `clear()` 또는 새 컬렉션으로 교체하세요.</li><li>입력 스트림은 buffered reader/iterator 형태로 처리하여 전체 데이터를 메모리에 적재하지 마세요.</li><li>처리 실패 항목은 별도 retry 큐(외부 저장소)로 분리하여 핫패스에서 제거하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 5032
+  },
+  {
+    "name": "메모리 누수 의심",
+    "category": "메모리 누수 의심",
+    "patternRegex": ".*",
+    "explanationTpl": "메모리 분석 도구가 비정상적으로 많은 메모리를 점유하는 객체를 감지했습니다. 해당 객체가 더 이상 필요하지 않음에도 GC Root에서 참조 체인이 유지되어 회수되지 못하고 있을 수 있습니다.",
+    "adviceTpl": "<ol><li>해당 객체의 GC Root 경로(Shortest Paths to GC Roots)를 분석하여 어떤 참조가 유지되는지 확인하세요.</li><li>Dominator Tree를 확인하여 메모리를 가장 많이 점유하는 객체의 소유 관계를 파악하세요.</li><li>힙 덤프를 시간 간격을 두고 여러 번 수집하여 지속적으로 증가하는 객체가 있는지 비교 분석하세요.</li></ol>",
+    "severityHint": null,
+    "enabled": true,
+    "priority": 9999
+  }
+]

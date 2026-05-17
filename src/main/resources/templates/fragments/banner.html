@@ -5,6 +5,8 @@
 
 <!-- 공통 헬퍼 (window.Common) — 페이지 인라인 스크립트보다 먼저 로드 -->
 <script src="/js/common.js?v=2026-05-12"></script>
+<!-- KRDS 캘린더 위젯 (window.Calendar) — 기간 범위 선택용 공통 라이브러리 -->
+<script src="/js/calendar.js?v=2026-05-17"></script>
 
 <script>
 /* 렌더링 전 즉시 실행 — 접힌 상태 깜빡임 방지 */
@@ -331,10 +333,21 @@ body.banner-no-transition .gb-header { transition: none !important; }
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 History
             </a>
-            <a href="/compare" class="gb-nav-link" id="gbNavCompare">
+            <a href="/compare" class="gb-nav-link" id="gbNavCompare" onclick="toggleSubMenu(event, 'gbSubCompare')">
                 <svg viewBox="0 0 24 24"><path d="M2 7h10M9 4l3 3-3 3M5 4L2 7l3 3"/><path d="M22 17H12M15 14l-3 3 3 3M19 14l3 3-3 3"/></svg>
                 Comparison
+                <svg class="gb-nav-toggle" viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
             </a>
+            <div class="gb-nav-sub" id="gbSubCompare">
+                <a href="/compare" id="gbNavCompareMain">
+                    <svg viewBox="0 0 24 24"><path d="M2 7h10M9 4l3 3-3 3M5 4L2 7l3 3"/><path d="M22 17H12M15 14l-3 3 3 3M19 14l3 3-3 3"/></svg>
+                    새 비교
+                </a>
+                <a href="/comparison-history" id="gbNavCompareHistory">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    비교 이력
+                </a>
+            </div>
             <a href="/ai-chat" class="gb-nav-link" id="gbNavAiChat">
                 <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 AI Chat
@@ -375,6 +388,10 @@ body.banner-no-transition .gb-header { transition: none !important; }
                 <a href="/admin/users" id="gbNavSettingsAccounts" sec:authorize="hasRole('ADMIN')">
                     <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
                     Accounts
+                </a>
+                <a href="/admin/leak-rules" id="gbNavSettingsLeakRules" sec:authorize="hasRole('ADMIN')">
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+                    Leak Rules
                 </a>
             </div>
         </div>
@@ -524,12 +541,14 @@ function registerBannerChatTab(contentElement) {
 function highlightActiveNav() {
     var path = window.location.pathname;
     // 일반 메뉴 하이라이트
+    var ACCORDION_PARENTS = ['/servers', '/settings', '/compare'];
+    var isAccordion = function(href) { return ACCORDION_PARENTS.indexOf(href) !== -1; };
     var links = document.querySelectorAll('.gb-nav-link');
     links.forEach(function(l) {
         var href = l.getAttribute('href');
-        if (href && path === href && href !== '/servers' && href !== '/settings') {
+        if (href && path === href && !isAccordion(href)) {
             l.classList.add('active');
-        } else if (href && href !== '/' && href !== '/servers' && href !== '/settings' && path.startsWith(href)) {
+        } else if (href && href !== '/' && !isAccordion(href) && path.startsWith(href)) {
             l.classList.add('active');
         }
     });
@@ -548,8 +567,22 @@ function highlightActiveNav() {
         if (serversLink) serversLink.classList.add('active', 'sub-open');
         if (sub) sub.classList.add('open');
     }
-    // /settings 또는 /admin/users 경로면 Settings 서브 메뉴 펼치기 + 부모 활성화
-    if (path.startsWith('/settings') || path.startsWith('/admin/users')) {
+    // /compare 또는 /comparison-history 경로면 Comparison 서브 메뉴 펼치기 + 부모 활성화
+    if (path === '/compare' || path.startsWith('/comparison-history')) {
+        var cmpLink = document.getElementById('gbNavCompare');
+        var cmpSub = document.getElementById('gbSubCompare');
+        if (cmpLink) cmpLink.classList.add('active', 'sub-open');
+        if (cmpSub) cmpSub.classList.add('open');
+        if (path === '/compare') {
+            var mainCmp = document.getElementById('gbNavCompareMain');
+            if (mainCmp) mainCmp.classList.add('active');
+        } else if (path.startsWith('/comparison-history')) {
+            var histCmp = document.getElementById('gbNavCompareHistory');
+            if (histCmp) histCmp.classList.add('active');
+        }
+    }
+    // /settings 또는 /admin/users 또는 /admin/leak-rules 경로면 Settings 서브 메뉴 펼치기 + 부모 활성화
+    if (path.startsWith('/settings') || path.startsWith('/admin/users') || path.startsWith('/admin/leak-rules')) {
         var settingsLink = document.getElementById('gbNavSettings');
         var subSettings = document.getElementById('gbSubSettings');
         if (settingsLink) settingsLink.classList.add('active', 'sub-open');
@@ -567,6 +600,9 @@ function highlightActiveNav() {
         } else if (path.startsWith('/admin/users')) {
             var accLink = document.getElementById('gbNavSettingsAccounts');
             if (accLink) accLink.classList.add('active');
+        } else if (path.startsWith('/admin/leak-rules')) {
+            var lrLink = document.getElementById('gbNavSettingsLeakRules');
+            if (lrLink) lrLink.classList.add('active');
         }
     }
 }

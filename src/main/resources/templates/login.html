@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17d">
     <title>Login — Heap Dump Analyzer</title>
     <style>
         body { display: flex; align-items: center; justify-content: center; }
@@ -48,16 +48,14 @@
                        font-weight: 600; cursor: pointer; padding: 0; text-decoration: underline; }
         .signup-link:hover { color: #1D4ED8; }
 
-        /* Modal */
-        .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
-                    background: rgba(0,0,0,.45); align-items: center; justify-content: center; }
-        .modal-ov.open { display: flex; animation: modalFade .15s ease; }
+        /* Modal — .modal-ov / @keyframes modalIn / .modal-box base 는 common.css 에서 제공.
+           border-radius 14px 변형 + width/max-height/overflow-y 는 인라인 유지. */
+        .modal-ov.open { animation: modalFade .15s ease; }
         @keyframes modalFade { from { opacity: 0; } to { opacity: 1; } }
-        .modal-box { background: #fff; border-radius: 14px; padding: 24px;
+        .modal-box { border-radius: 14px;
                      width: calc(100% - 32px); max-width: 440px;
-                     box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease;
+                     animation: modalIn .2s ease;
                      max-height: calc(100vh - 32px); overflow-y: auto; }
-        @keyframes modalIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
         .modal-ttl { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
         .modal-desc { font-size: 12px; color: #6B7280; margin-bottom: 16px; }
         .modal-group { margin-bottom: 12px; }
@@ -77,10 +75,7 @@
         .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
         .modal-btns button { padding: 9px 16px; border-radius: 7px; font-size: 13px; border: none;
                              cursor: pointer; font-weight: 600; }
-        .mbtn-cancel { background: #F3F4F6; color: #374151; }
-        .mbtn-cancel:hover { background: #E5E7EB; }
-        .mbtn-save { background: #2563EB; color: #fff; }
-        .mbtn-save:hover { background: #1D4ED8; }
+        /* .mbtn-cancel / .mbtn-save 색상은 common.css 에서 제공 */
         .mbtn-save:disabled { background: #93C5FD; cursor: wait; }
 
         @media (max-width: 480px) {

@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17e">
     <title>Transfer Logs — Heap Dump Analyzer</title>
     <style>
         /* topbar 는 anti-wrap 확장이 있어 인라인 유지 */
@@ -273,6 +273,31 @@
         </div>
     </div>
 
+    <!-- 기간선택 (KRDS 캘린더) — startedAt 기준 -->
+    <div class="date-filter-row" id="dateFilterRow">
+        <div class="form-tit"><label for="dateStart">기간선택</label></div>
+        <div class="form-conts calendar-conts">
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="dateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-start"></div>
+            </div>
+            <span class="calendar-input-sep">~</span>
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="dateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-end"></div>
+            </div>
+            <button type="button" class="date-clear-btn-row" onclick="onCalendarClear()" title="기간 지우기">지우기</button>
+        </div>
+    </div>
+
     <!-- Table -->
     <div class="panel">
       <div class="table-scroll">
@@ -334,7 +359,9 @@ var _params = {
     sort: 'startedAt,desc',
     q: '',
     status: '',
-    serverId: ''
+    serverId: '',
+    dateFrom: '',     // yyyy-MM-dd (포함)
+    dateTo: ''        // yyyy-MM-dd (포함, 백엔드에서 +1day exclusive)
 };
 var _searchDebounce = null;
 var _loading = false;
@@ -354,6 +381,22 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('exportMenu').classList.remove('open');
         }
     });
+    // 캘린더 위젯 부착 — onChange 에서 dateFrom/dateTo 파라미터 갱신 후 재조회
+    Calendar.attach({
+        startInputId: 'dateStart', endInputId: 'dateEnd',
+        startAreaId: 'calArea-start', endAreaId: 'calArea-end',
+        storageKey: 'logs',
+        onChange: function(start, end) {
+            _params.dateFrom = start ? toIsoDate(start) : '';
+            _params.dateTo = end ? toIsoDate(end) : '';
+            _params.page = 0;
+            loadData();
+        }
+    });
+    // localStorage 에서 복원된 초기값을 _params 에도 반영
+    var initRange = Calendar.getRange();
+    if (initRange.start) _params.dateFrom = toIsoDate(initRange.start);
+    if (initRange.end) _params.dateTo = toIsoDate(initRange.end);
     // 창 폭 변경 시 truncate 클래스 재계산 (debounce 150ms)
     var _resizeT = null;
     window.addEventListener('resize', function() {
@@ -362,6 +405,14 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     loadData();
 });
+
+// ── 캘린더 헬퍼 ───────────────────────────────────────
+function toIsoDate(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function onCalendarClear() {
+    Calendar.clear();   // onChange 콜백이 호출되며 _params + loadData 갱신
+}
 
 // ── Data fetch ────────────────────────────────────────
 function buildQuery(extra) {
@@ -382,12 +433,8 @@ function loadData() {
     var statsQuery = buildQuery({ page: undefined, size: undefined, sort: undefined, status: undefined });
 
     Promise.all([
-        fetch('/api/servers/transfers?' + listQuery).then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
-        }),
-        fetch('/api/servers/transfers/stats?' + statsQuery).then(function(r) {
-            if (!r.ok) throw new Error('HTTP ' + r.status); return r.json();
-        })
+        Common.fetchJSON('/api/servers/transfers?' + listQuery),
+        Common.fetchJSON('/api/servers/transfers/stats?' + statsQuery)
     ]).then(function(arr) {
         var page = arr[0], stats = arr[1];
         renderKpi(stats);
@@ -605,12 +652,8 @@ function exportData(format) {
 }
 
 // ── Helpers ───────────────────────────────────────────
-function escapeHtml(s) {
-    if (s == null) return '';
-    return String(s).replace(/[&<>"']/g, function(c) {
-        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-    });
-}
+// escapeHtml → Common.escHtml (common.js). 동일 5 문자 escape 라 동작 100% 일치.
+var escapeHtml = Common.escHtml;
 function escapeAttr(s) { return escapeHtml(s); }
 
 // ── Error popover ─────────────────────────────────────

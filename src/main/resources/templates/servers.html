@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17d">
     <title>Target Servers — Heap Dump Analyzer</title>
     <style>
         /* topbar 는 anti-wrap 확장이 있어 인라인 유지 */
@@ -21,7 +21,7 @@
                       border-radius: 6px; background: transparent; color: #6B7280;
                       cursor: pointer; text-decoration: none; }
         .topbar-btn:hover { background: #F9FAFB; }
-        .container { max-width: 1280px; margin: 0 auto; padding: 68px 20px 40px;
+        .container { max-width: 1440px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
         .page-hdr { display: flex; align-items: center; justify-content: space-between;
@@ -32,14 +32,9 @@
         .btn-primary:hover { background: #1D4ED8; }
 
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
-        .stable { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .stable thead { background: #F9FAFB; }
-        .stable th { padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600;
-                     color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
-                     border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
-        .stable td { padding: 12px 16px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
-        .stable tbody tr:last-child td { border-bottom: none; }
-        .stable tbody tr:hover { background: #F9FAFB; }
+        /* .stable base/thead/td 색상·hover 는 common.css 에서 제공. padding/font-size + 페이지 고유 td a:hover 만 인라인 */
+        .stable th { padding: 12px 16px; font-size: 12px; }
+        .stable td { padding: 12px 16px; }
         .stable td a:hover { text-decoration: underline; }
         .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
         .badge-on { background: #D1FAE5; color: #065F46; }
@@ -64,11 +59,9 @@
         .page-size-select:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
 
         /* Sortable headers */
-        .stable th.sortable { cursor: pointer; user-select: none; }
-        .stable th.sortable:hover { background: #F3F4F6; }
+        /* .stable sortable cursor/hover/sort-active 색상은 common.css 에서 제공. sort-arrow 는 font-size 10px 변형이라 인라인 */
         .stable th.sortable .sort-arrow { display: inline-block; margin-left: 4px; opacity: .3;
                                           font-size: 10px; transition: opacity .15s; }
-        .stable th.sortable.sort-active .sort-arrow { opacity: 1; color: #2563EB; }
 
         /* Pagination */
         .pagination-bar { display: none; align-items: center; justify-content: space-between;
@@ -144,12 +137,7 @@
         .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
         .modal-btns button { padding: 8px 18px; border-radius: 7px; font-size: 13px; border: none;
                              cursor: pointer; font-weight: 500; }
-        .mbtn-cancel { background: #F3F4F6; color: #374151; }
-        .mbtn-cancel:hover { background: #E5E7EB; }
-        .mbtn-save { background: #2563EB; color: #fff; }
-        .mbtn-save:hover { background: #1D4ED8; }
-        .mbtn-del { background: #EF4444; color: #fff; }
-        .mbtn-del:hover { background: #DC2626; }
+        /* .mbtn-cancel / .mbtn-save / .mbtn-del 색상은 common.css 에서 제공 */
 
         /* Toast */
         .toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
@@ -823,7 +811,8 @@ function updateStatusBadge(serverId, status, errMsg) {
     }
 }
 
-function escHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+// escHtml → Common.escHtml (common.js). 기존 textContent 버전은 `"` `'` 미처리 → Common 은 5 문자 escape 로 강화.
+var escHtml = Common.escHtml;
 function escAttr(s) { return s.replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
 // ── Auto-scan errors ──────────────────────────────────

@@ -1,9 +1,19 @@
 package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.config.HeapDumpConfig;
-import com.heapdump.analyzer.model.*;
+import com.heapdump.analyzer.model.HeapAnalysisResult;
+import com.heapdump.analyzer.model.HeapDumpFile;
+import com.heapdump.analyzer.model.dto.AnalysisHistoryItem;
+import com.heapdump.analyzer.model.dto.ClassDiff;
+import com.heapdump.analyzer.model.dto.DetectionAggregate;
+import com.heapdump.analyzer.model.dto.HistogramDiff;
+import com.heapdump.analyzer.model.dto.KpiDiff;
+import com.heapdump.analyzer.model.dto.SuspectDiff;
+import com.heapdump.analyzer.service.ComparisonHistoryService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.service.HeapHistoryAggregator;
 import com.heapdump.analyzer.service.PdfReportService;
+import com.heapdump.analyzer.util.AuthUtil;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
 import org.slf4j.Logger;
@@ -25,12 +35,7 @@ import java.util.stream.Collectors;
  * Heap Dump Analyzer View Controller (Phase 4B).
  *
  * Thymeleaf 페이지 렌더 + form POST → redirect 액션만 담당.
- * REST API · SSE · 바이너리/iframe 컨텐츠는 {@link HeapDumpController} 잔류.
- *
- * 분리 전략 (2 분할):
- *  - View 컨트롤러는 {@link HeapDumpController} 를 주입받아 공유 헬퍼
- *    (isAdmin / buildHistory / aggregateDetections / buildClassSizeMap / truncateLog) 위임 호출
- *  - DTO ({@code AnalysisHistoryItem}, {@code DetectionAggregate} 등) 는 HeapDumpController 의 inner public static class 그대로 사용
+ * REST API · SSE · 바이너리/iframe 컨텐츠는 6 개 API 컨트롤러로 도메인 분리됨 (Phase 4B-2).
  */
 @Controller
 public class HeapDumpViewController {
@@ -40,16 +45,19 @@ public class HeapDumpViewController {
     private final HeapDumpAnalyzerService analyzerService;
     private final HeapDumpConfig config;
     private final PdfReportService pdfReportService;
-    private final HeapDumpController apiController;
+    private final HeapHistoryAggregator aggregator;
+    private final ComparisonHistoryService comparisonHistoryService;
 
     public HeapDumpViewController(HeapDumpAnalyzerService analyzerService,
                                   HeapDumpConfig config,
                                   PdfReportService pdfReportService,
-                                  HeapDumpController apiController) {
+                                  HeapHistoryAggregator aggregator,
+                                  ComparisonHistoryService comparisonHistoryService) {
         this.analyzerService = analyzerService;
         this.config = config;
         this.pdfReportService = pdfReportService;
-        this.apiController = apiController;
+        this.aggregator = aggregator;
+        this.comparisonHistoryService = comparisonHistoryService;
     }
 
     // ── 메인 페이지 ──────────────────────────────────────────────
@@ -67,7 +75,7 @@ public class HeapDumpViewController {
         model.addAttribute("totalSize", FormatUtils.formatBytes(totalBytes));
 
         // 대시보드는 deleted 항목 항상 제외 (모든 계정)
-        List<HeapDumpController.AnalysisHistoryItem> history = apiController.buildHistory(files).stream()
+        List<AnalysisHistoryItem> history = aggregator.buildHistory(files).stream()
             .filter(h -> !h.isFileDeleted())
             .collect(Collectors.toList());
         model.addAttribute("analyzedCount",
@@ -75,23 +83,23 @@ public class HeapDumpViewController {
 
         long totalSuspects = history.stream()
             .filter(h -> "SUCCESS".equals(h.getStatus()))
-            .mapToLong(HeapDumpController.AnalysisHistoryItem::getSuspectCount)
+            .mapToLong(AnalysisHistoryItem::getSuspectCount)
             .sum();
         model.addAttribute("totalSuspects", totalSuspects > 0 ? totalSuspects : null);
 
         Set<String> analyzedFiles = history.stream()
                 .filter(h -> "SUCCESS".equals(h.getStatus()))
-                .map(HeapDumpController.AnalysisHistoryItem::getFilename)
+                .map(AnalysisHistoryItem::getFilename)
                 .collect(Collectors.toSet());
         model.addAttribute("analyzedFiles", analyzedFiles);
 
         Set<String> errorFiles = history.stream()
                 .filter(h -> "ERROR".equals(h.getStatus()))
-                .map(HeapDumpController.AnalysisHistoryItem::getFilename)
+                .map(AnalysisHistoryItem::getFilename)
                 .collect(Collectors.toSet());
         model.addAttribute("errorFiles", errorFiles);
 
-        HeapDumpController.DetectionAggregate agg = apiController.aggregateDetections(history, 14, 12);
+        DetectionAggregate agg = aggregator.aggregateDetections(history, 14, 12);
         model.addAttribute("criticalCount", agg.getCriticalCount());
         model.addAttribute("highCount", agg.getHighCount());
         model.addAttribute("mediumCount", agg.getMediumCount());
@@ -128,11 +136,11 @@ public class HeapDumpViewController {
 
     @GetMapping("/files")
     public String filesPage(Model model, Authentication authentication) {
-        boolean isAdmin = apiController.isAdmin(authentication);
+        boolean isAdmin = AuthUtil.isAdmin(authentication);
         List<HeapDumpFile> files = analyzerService.listFiles();
-        List<HeapDumpController.AnalysisHistoryItem> history = apiController.buildHistory(files);
+        List<AnalysisHistoryItem> history = aggregator.buildHistory(files);
 
-        List<HeapDumpController.AnalysisHistoryItem> visible = isAdmin ? history :
+        List<AnalysisHistoryItem> visible = isAdmin ? history :
                 history.stream().filter(h -> !h.isFileDeleted()).collect(Collectors.toList());
         model.addAttribute("analysisHistory", visible);
         model.addAttribute("isAdmin", isAdmin);
@@ -141,7 +149,7 @@ public class HeapDumpViewController {
         // 실제 파일이 존재하는 행(fileDeleted=false)에 기반한 서버만 노출 — DB 잔존 기록 제외.
         List<String> serverNames = visible.stream()
                 .filter(h -> !h.isFileDeleted())
-                .map(HeapDumpController.AnalysisHistoryItem::getServerName)
+                .map(AnalysisHistoryItem::getServerName)
                 .filter(n -> n != null && !n.isEmpty())
                 .distinct()
                 .sorted()
@@ -167,11 +175,11 @@ public class HeapDumpViewController {
 
     @GetMapping("/history")
     public String historyPage(Model model, Authentication authentication) {
-        boolean isAdmin = apiController.isAdmin(authentication);
+        boolean isAdmin = AuthUtil.isAdmin(authentication);
         List<HeapDumpFile> files = analyzerService.listFiles();
-        List<HeapDumpController.AnalysisHistoryItem> history = apiController.buildHistory(files);
+        List<AnalysisHistoryItem> history = aggregator.buildHistory(files);
 
-        List<HeapDumpController.AnalysisHistoryItem> analysisOnly = history.stream()
+        List<AnalysisHistoryItem> analysisOnly = history.stream()
             .filter(h -> "SUCCESS".equals(h.getStatus()) || "ERROR".equals(h.getStatus()))
             .filter(h -> isAdmin || !h.isFileDeleted())
             .collect(Collectors.toList());
@@ -183,13 +191,13 @@ public class HeapDumpViewController {
         long errorCount = analysisOnly.stream()
             .filter(h -> "ERROR".equals(h.getStatus())).count();
         long deletedCount = analysisOnly.stream()
-            .filter(HeapDumpController.AnalysisHistoryItem::isFileDeleted).count();
+            .filter(AnalysisHistoryItem::isFileDeleted).count();
         model.addAttribute("totalCount", analysisOnly.size());
         model.addAttribute("successCount", successCount);
         model.addAttribute("errorCount", errorCount);
         model.addAttribute("deletedCount", deletedCount);
 
-        HeapDumpController.DetectionAggregate detectAgg = apiController.aggregateDetections(analysisOnly, 14, 12);
+        DetectionAggregate detectAgg = aggregator.aggregateDetections(analysisOnly, 14, 12);
         model.addAttribute("detectInitDays", 14);
         model.addAttribute("detectInitGroup", "server");
         model.addAttribute("detectLabels", detectAgg.getLabels());
@@ -214,28 +222,20 @@ public class HeapDumpViewController {
     public String settingsPage(Model model, Authentication authentication) {
         model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
         model.addAttribute("compressAfterAnalysis", analyzerService.isCompressAfterAnalysis());
-        model.addAttribute("isAdmin", isAdmin(authentication));
+        model.addAttribute("isAdmin", AuthUtil.isAdmin(authentication));
         return "settings";
     }
 
     @GetMapping("/settings/llm")
     public String llmSettingsPage(Model model, Authentication authentication) {
-        model.addAttribute("isAdmin", isAdmin(authentication));
+        model.addAttribute("isAdmin", AuthUtil.isAdmin(authentication));
         return "llm-settings";
     }
 
     @GetMapping("/settings/rag")
     public String ragSettingsPage(Model model, Authentication authentication) {
-        model.addAttribute("isAdmin", isAdmin(authentication));
+        model.addAttribute("isAdmin", AuthUtil.isAdmin(authentication));
         return "rag-settings";
-    }
-
-    private boolean isAdmin(Authentication authentication) {
-        if (authentication == null || authentication.getAuthorities() == null) return false;
-        for (var a : authentication.getAuthorities()) {
-            if ("ROLE_ADMIN".equals(a.getAuthority())) return true;
-        }
-        return false;
     }
 
     // ── 히스토리 삭제 (form POST → redirect) ─────────────────────
@@ -353,7 +353,7 @@ public class HeapDumpViewController {
             model.addAttribute("error", result.getErrorMessage());
             model.addAttribute("filename", filename);
             model.addAttribute("matLog",
-                    apiController.truncateLog(result.getMatLog(), config.getMatLogMaxDisplayChars()));
+                    aggregator.truncateLog(result.getMatLog(), config.getMatLogMaxDisplayChars()));
             model.addAttribute("hasHeapData", false);
             model.addAttribute("matLogTotalLen",
                     result.getMatLog() != null ? result.getMatLog().length() : 0);
@@ -476,7 +476,8 @@ public class HeapDumpViewController {
     public String compareDumps(
             @RequestParam(required = false) String base,
             @RequestParam(required = false) String target,
-            Model model) {
+            Model model,
+            Authentication authentication) {
         if (base == null || target == null || base.isEmpty() || target.isEmpty()) {
             return "compare";
         }
@@ -501,15 +502,25 @@ public class HeapDumpViewController {
         model.addAttribute("targetFile", target);
 
         // ── Compare 빌더 4종 호출 ────────────────────────────────────────
-        List<HeapDumpController.ClassDiff>     classDiffs     = apiController.buildClassDiffs(baseResult, targetResult, 50);
-        List<HeapDumpController.HistogramDiff> histogramDiffs = apiController.buildHistogramDiffs(baseResult, targetResult, 30);
-        List<HeapDumpController.SuspectDiff>   suspectDiffs   = apiController.buildSuspectDiffs(baseResult, targetResult);
-        HeapDumpController.KpiDiff             kpi            = apiController.buildKpiDiff(baseResult, targetResult);
+        List<ClassDiff>     classDiffs     = aggregator.buildClassDiffs(baseResult, targetResult, 50);
+        List<HistogramDiff> histogramDiffs = aggregator.buildHistogramDiffs(baseResult, targetResult, 30);
+        List<SuspectDiff>   suspectDiffs   = aggregator.buildSuspectDiffs(baseResult, targetResult);
+        KpiDiff             kpi            = aggregator.buildKpiDiff(baseResult, targetResult);
 
         model.addAttribute("kpi", kpi);
         model.addAttribute("classDiffs", classDiffs);
         model.addAttribute("histogramDiffs", histogramDiffs);
         model.addAttribute("suspectDiffs", suspectDiffs);
+
+        // 비교 이력 자동 저장 (60초 dedupe). 저장 실패해도 화면은 정상 렌더.
+        try {
+            int baseSuspectCnt   = baseResult.getLeakSuspects()   != null ? baseResult.getLeakSuspects().size()   : 0;
+            int targetSuspectCnt = targetResult.getLeakSuspects() != null ? targetResult.getLeakSuspects().size() : 0;
+            String user = authentication != null ? authentication.getName() : "unknown";
+            comparisonHistoryService.recordComparison(base, target, kpi, baseSuspectCnt, targetSuspectCnt, user);
+        } catch (Exception ex) {
+            logger.warn("[CompareHistory] Failed to record comparison: {}", ex.getMessage());
+        }
 
         // 보조 count (배너 표시용)
         model.addAttribute("baseSuspectCount",   baseResult.getLeakSuspects()   != null ? baseResult.getLeakSuspects().size()   : 0);

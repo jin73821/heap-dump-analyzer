@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17e">
+    <title>Comparison History — Heap Dump Analyzer</title>
+    <style>
+        .container { max-width: 1800px; margin: 0 auto; padding: 68px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+        .page-hdr { display: flex; align-items: center; justify-content: space-between;
+                    margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+        .page-ttl { font-size: 18px; font-weight: 700; }
+        .page-stats { display: flex; gap: 16px; }
+        .page-stat { font-size: 12px; color: #6B7280; }
+        .page-stat strong { color: #1F2937; }
+        .search-bar { width: 100%; padding: 10px 14px; border: 1px solid #E5E7EB;
+                      border-radius: 8px; font-size: 13px; outline: none; background: #fff; }
+        .search-bar:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .table-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+        .table-toolbar .search-bar { flex: 1; }
+        .page-size-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .page-size-label { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .page-size-select { padding: 8px 28px 8px 10px; font-size: 13px; border: 1px solid #E5E7EB;
+                            border-radius: 8px; background: #fff; color: #1F2937; cursor: pointer;
+                            outline: none; appearance: none; -webkit-appearance: none;
+                            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+                            background-repeat: no-repeat; background-position: right 10px center; }
+        .page-size-select:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .deleted-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px;
+                          font-size: 12px; color: #6B7280; cursor: pointer; user-select: none;
+                          border: 1px solid #E5E7EB; border-radius: 8px; background: #fff; flex-shrink: 0; }
+        .deleted-toggle:hover { border-color: #D1D5DB; background: #F9FAFB; }
+        .deleted-toggle input[type=checkbox] { width: 14px; height: 14px; accent-color: #6B7280; cursor: pointer; }
+        .select-toggle-btn { padding: 7px 12px; font-size: 12px; color: #374151; background: #fff;
+                             border: 1px solid #E5E7EB; border-radius: 8px; cursor: pointer;
+                             display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .select-toggle-btn:hover { border-color: #93C5FD; background: #F9FAFB; }
+        .select-toggle-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+        .select-toggle-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
+        .td-check { width: 38px; text-align: center; display: none; }
+        .htable.select-mode .td-check { display: table-cell; }
+        .row-check, .all-check { width: 15px; height: 15px; accent-color: #2563EB; cursor: pointer; vertical-align: middle; }
+        .select-action-bar { position: fixed; left: var(--banner-w, 220px); right: 0; bottom: 0; z-index: 90;
+                             background: #fff; border-top: 1px solid #E5E7EB; padding: 12px 20px;
+                             display: none; align-items: center; justify-content: space-between;
+                             box-shadow: 0 -4px 12px rgba(0,0,0,.06);
+                             transition: left .25s cubic-bezier(.4,0,.2,1); }
+        .select-action-bar.show { display: flex; }
+        .sa-info { font-size: 13px; color: #374151; }
+        .sa-info strong { color: #2563EB; }
+        .sa-btns { display: flex; gap: 8px; }
+        .sa-btn { padding: 8px 16px; font-size: 13px; border-radius: 7px; border: none; cursor: pointer; font-weight: 500; }
+        /* .sa-btn-cancel / .sa-btn-del 색상은 common.css 에서 제공 */
+        .sa-btn-del:disabled { background: #FCA5A5; cursor: not-allowed; }
+
+        /* .htable sortable cursor/hover/sort-active 색상은 common.css 에서 제공 */
+        .htable th.sortable .sort-arrow { display: inline-block; margin-left: 4px; opacity: 0.3;
+                                          font-size: 9px; vertical-align: middle; transition: opacity .15s; }
+
+        .pagination-bar { display: none; align-items: center; justify-content: space-between;
+                          padding: 12px 16px; border-top: 1px solid #E5E7EB; background: #FAFBFC;
+                          flex-wrap: wrap; gap: 8px; }
+        .pagination-bar.show { display: flex; }
+        .pg-info { font-size: 12px; color: #6B7280; }
+        .pg-info strong { color: #1F2937; }
+        .pg-list { display: flex; gap: 4px; align-items: center; }
+        .pg-btn { min-width: 32px; height: 32px; padding: 0 8px; border: 1px solid #E5E7EB;
+                  border-radius: 6px; background: #fff; color: #374151; font-size: 12px;
+                  cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+                  font-variant-numeric: tabular-nums; }
+        .pg-btn:hover:not(:disabled):not(.active) { background: #F3F4F6; border-color: #D1D5DB; }
+        .pg-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; cursor: default; }
+        .pg-btn:disabled { color: #D1D5DB; cursor: not-allowed; background: #F9FAFB; }
+        .pg-ellipsis { padding: 0 4px; color: #9CA3AF; font-size: 12px; }
+        .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
+        .no-match { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; display: none; }
+        .empty-msg { text-align: center; padding: 48px 24px; color: #9CA3AF; font-size: 13px; }
+        .empty-msg a { color: #2563EB; text-decoration: none; font-weight: 600; }
+        .empty-msg a:hover { text-decoration: underline; }
+
+        .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+        .table-scroll::-webkit-scrollbar { height: 8px; }
+        .table-scroll::-webkit-scrollbar-track { background: #F9FAFB; }
+        .table-scroll::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 4px; }
+        /* .htable base/thead/td 색상·hover 는 common.css 에서 제공. min-width + padding/font-size 만 인라인 */
+        .htable { min-width: 1100px; }
+        .htable th { padding: 10px 12px; font-size: 11px; }
+        .htable td { padding: 10px 12px; }
+        .td-seq { width: 56px; text-align: center; color: #9CA3AF; font-size: 12px;
+                  font-variant-numeric: tabular-nums; }
+        .td-delta { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 12px; }
+        .delta-up   { color: #DC2626; font-weight: 600; }
+        .delta-down { color: #059669; font-weight: 600; }
+        .delta-zero { color: #6B7280; }
+        .file-cell { font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px;
+                     color: #1F2937; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+                     white-space: nowrap; display: inline-block; vertical-align: middle; }
+        .file-cell.deleted { color: #9CA3AF; text-decoration: line-through; }
+        .hi-badge { font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 500;
+                    display: inline-block; margin-left: 6px; vertical-align: middle; }
+        .hb-del { background: #F3F4F6; color: #6B7280; }
+        .td-meta { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .user-chip { display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 600;
+                     border-radius: 10px; background: #EFF6FF; color: #2563EB; }
+        .run-btn { display: inline-flex; align-items: center; gap: 4px;
+                   padding: 5px 10px; font-size: 12px; font-weight: 600;
+                   color: #2563EB; background: #EFF6FF; border: 1px solid #BFDBFE;
+                   border-radius: 6px; text-decoration: none; }
+        .run-btn:hover { background: #DBEAFE; border-color: #93C5FD; }
+        .run-btn.disabled { color: #9CA3AF; background: #F3F4F6; border-color: #E5E7EB;
+                            cursor: not-allowed; pointer-events: none; }
+        .row-actions { display: inline-flex; gap: 6px; align-items: center; }
+        .del-btn { display: inline-flex; align-items: center; gap: 4px;
+                   padding: 5px 10px; font-size: 12px; font-weight: 600;
+                   color: #DC2626; background: #FEF2F2; border: 1px solid #FECACA;
+                   border-radius: 6px; cursor: pointer; font-family: inherit; }
+        .del-btn:hover { background: #FEE2E2; border-color: #FCA5A5; }
+        .del-btn:disabled, .del-btn.disabled { color: #9CA3AF; background: #F3F4F6;
+                                               border-color: #E5E7EB; cursor: not-allowed; }
+
+        /* .modal-ov / @keyframes modalIn / .modal-box base 는 common.css 에서 제공 */
+        .modal-box { width: 90%; max-width: 420px; animation: modalIn .2s ease; }
+        .modal-ttl { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+        .modal-msg { font-size: 13px; color: #6B7280; margin-bottom: 16px; line-height: 1.6; }
+        .modal-msg b { color: #1F2937; }
+        .modal-fname { font-size: 12px; color: #1F2937; background: #F3F4F6;
+                       padding: 8px 10px; border-radius: 6px; margin-bottom: 12px;
+                       word-break: break-all; line-height: 1.5; }
+        .modal-warn { font-size: 11px; color: #EF4444; margin-bottom: 16px; }
+        .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
+        .modal-btns button { font-size: 13px; padding: 7px 16px; border-radius: 7px; border: none;
+                             cursor: pointer; font-weight: 500; }
+        /* .mbtn-cancel / .mbtn-del 색상은 common.css 에서 제공 */
+
+        @media (min-width: 1024px) {
+            .htable { font-size: 14px; }
+            .td-meta, .td-delta { font-size: 13px; }
+        }
+        @media (max-width: 900px) {
+            .topbar { left: 0; }
+            .container { padding-left: 20px; }
+            .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+            .select-action-bar { left: 0; }
+        }
+        @media (max-width: 640px) {
+            .page-stats { gap: 10px; }
+            .htable .col-hide-sm { display: none; }
+            .htable { min-width: 700px; }
+            .table-toolbar { flex-direction: column; align-items: stretch; }
+            .page-size-wrap { justify-content: flex-end; }
+            .pagination-bar { flex-direction: column; align-items: stretch; }
+            .pg-list { justify-content: center; flex-wrap: wrap; }
+        }
+    </style>
+</head>
+<body>
+
+<div th:replace="fragments/banner :: banner"></div>
+
+<div class="topbar">
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title">Comparison History</span>
+    </div>
+    <div class="topbar-right">
+        <a href="/compare" class="topbar-btn">＋ 새 비교</a>
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-hdr">
+        <div class="page-ttl">Comparison History</div>
+        <div class="page-stats">
+            <span class="page-stat"><strong th:text="${totalCount}">0</strong> total</span>
+            <span th:if="${isAdmin and deletedCount > 0}" class="page-stat" style="color:#9CA3AF">
+                <strong th:text="${deletedCount}">0</strong> deleted source
+            </span>
+        </div>
+    </div>
+
+    <div class="table-toolbar">
+        <input type="text" class="search-bar" id="searchInput"
+               placeholder="파일명 / 실행자 검색…" oninput="onSearchInput()">
+        <button type="button" class="select-toggle-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="다중 선택 모드">
+            <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            <span id="selectModeBtnLabel">선택</span>
+        </button>
+        <label th:if="${isAdmin}" class="deleted-toggle" id="deletedToggleWrap" title="원본 파일이 삭제된 비교 이력 표시 여부 (관리자 전용)">
+            <input type="checkbox" id="showDeletedChk" onchange="onToggleShowDeleted()">
+            <span>deleted 표시</span>
+        </label>
+        <div class="page-size-wrap">
+            <span class="page-size-label">행 표시</span>
+            <select class="page-size-select" id="pageSizeSelect" onchange="onPageSizeChange()">
+                <option value="20" selected>20</option>
+                <option value="30">30</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- 기간선택 (KRDS 캘린더) — 비교 일시 기준 -->
+    <div class="date-filter-row" id="dateFilterRow">
+        <div class="form-tit"><label for="dateStart">기간선택</label></div>
+        <div class="form-conts calendar-conts">
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="dateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-start"></div>
+            </div>
+            <span class="calendar-input-sep">~</span>
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="dateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-end"></div>
+            </div>
+            <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()" title="기간 지우기">지우기</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div th:if="${#lists.isEmpty(comparisonHistory)}" class="empty-msg">
+            저장된 비교 이력이 없습니다. <a href="/compare">새 비교 시작 →</a>
+        </div>
+        <div class="table-scroll" th:unless="${#lists.isEmpty(comparisonHistory)}">
+        <table class="htable" id="cmpHistoryTable">
+            <thead>
+                <tr>
+                    <th class="td-check"><input type="checkbox" class="all-check" id="allCheck" onchange="onSelectAll()"></th>
+                    <th class="td-seq sortable" data-sort-key="id" data-sort-type="num" onclick="onHeaderSort(this)"># <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="base" data-sort-type="str" onclick="onHeaderSort(this)">Base <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="target" data-sort-type="str" onclick="onHeaderSort(this)">Target <span class="sort-arrow">▲</span></th>
+                    <th class="td-delta sortable" data-sort-key="heap" data-sort-type="num" onclick="onHeaderSort(this)">Heap Δ <span class="sort-arrow">▲</span></th>
+                    <th class="td-delta sortable col-hide-sm" data-sort-key="suspects" data-sort-type="num" onclick="onHeaderSort(this)">Suspects Δ <span class="sort-arrow">▲</span></th>
+                    <th class="td-delta sortable col-hide-sm" data-sort-key="classes" data-sort-type="num" onclick="onHeaderSort(this)">Classes Δ <span class="sort-arrow">▲</span></th>
+                    <th class="td-delta sortable col-hide-sm" data-sort-key="objects" data-sort-type="num" onclick="onHeaderSort(this)">Objects Δ <span class="sort-arrow">▲</span></th>
+                    <th class="sortable col-hide-sm" data-sort-key="by" data-sort-type="str" onclick="onHeaderSort(this)">실행자 <span class="sort-arrow">▲</span></th>
+                    <th class="sortable" data-sort-key="date" data-sort-type="num" onclick="onHeaderSort(this)">비교 일시 <span class="sort-arrow">▲</span></th>
+                    <th>작업</th>
+                </tr>
+            </thead>
+            <tbody id="cmpHistoryTableBody">
+                <tr th:each="h : ${comparisonHistory}"
+                    th:with="canDelete=${isAdmin or (h.comparedBy != null and h.comparedBy == currentUsername)}"
+                    th:data-base="${h.baseFilename}"
+                    th:data-target="${h.targetFilename}"
+                    th:data-by="${h.comparedBy}"
+                    th:data-id="${h.id}"
+                    th:data-can-delete="${canDelete} ? '1' : '0'"
+                    th:data-deleted="${h.baseDeleted or h.targetDeleted}"
+                    th:attr="data-sort-id=${h.id != null ? h.id : 0},
+                             data-sort-base=${h.baseFilename},
+                             data-sort-target=${h.targetFilename},
+                             data-sort-heap=${h.usedHeapDelta},
+                             data-sort-suspects=${h.suspectsDelta},
+                             data-sort-classes=${h.classesDelta},
+                             data-sort-objects=${h.objectsDelta},
+                             data-sort-by=${h.comparedBy},
+                             data-sort-date=${h.comparedAt}">
+                    <td class="td-check"><input type="checkbox" class="row-check" th:value="${h.id}" onchange="onRowCheck()"></td>
+                    <td class="td-seq" th:text="${h.id}">1</td>
+                    <td>
+                        <span class="file-cell" th:classappend="${h.baseDeleted} ? 'deleted'"
+                              th:title="${h.baseFilename}"
+                              th:text="${h.baseFilename}">base.hprof</span>
+                        <span th:if="${h.baseDeleted}" class="hi-badge hb-del">deleted</span>
+                    </td>
+                    <td>
+                        <span class="file-cell" th:classappend="${h.targetDeleted} ? 'deleted'"
+                              th:title="${h.targetFilename}"
+                              th:text="${h.targetFilename}">target.hprof</span>
+                        <span th:if="${h.targetDeleted}" class="hi-badge hb-del">deleted</span>
+                    </td>
+                    <td class="td-delta">
+                        <span th:classappend="${h.usedHeapUp} ? 'delta-up' : (${h.usedHeapDown} ? 'delta-down' : 'delta-zero')"
+                              th:text="${h.formattedUsedHeapDelta}">+0 B</span>
+                    </td>
+                    <td class="td-delta col-hide-sm">
+                        <span th:classappend="${h.suspectsUp} ? 'delta-up' : (${h.suspectsDown} ? 'delta-down' : 'delta-zero')"
+                              th:text="${h.formattedSuspectsDelta}">0</span>
+                    </td>
+                    <td class="td-delta col-hide-sm">
+                        <span th:classappend="${h.classesUp} ? 'delta-up' : (${h.classesDown} ? 'delta-down' : 'delta-zero')"
+                              th:text="${h.formattedClassesDelta}">0</span>
+                    </td>
+                    <td class="td-delta col-hide-sm">
+                        <span th:classappend="${h.objectsUp} ? 'delta-up' : (${h.objectsDown} ? 'delta-down' : 'delta-zero')"
+                              th:text="${h.formattedObjectsDelta}">0</span>
+                    </td>
+                    <td class="td-meta col-hide-sm">
+                        <span class="user-chip" th:text="${h.comparedBy}">user</span>
+                    </td>
+                    <td class="td-meta" th:text="${h.formattedComparedAt}">2026-05-14 15:00</td>
+                    <td>
+                        <div class="row-actions"
+                             th:with="canDelete=${isAdmin or (h.comparedBy != null and h.comparedBy == currentUsername)}">
+                            <a class="run-btn" th:if="${h.runnable}"
+                               th:href="@{/compare(base=${h.baseFilename}, target=${h.targetFilename})}"
+                               title="비교 결과 다시 보기">다시 보기</a>
+                            <span class="run-btn disabled" th:unless="${h.runnable}"
+                                  title="원본 분석이 삭제되어 재실행 불가">다시 보기</span>
+                            <button type="button" class="del-btn"
+                                    th:if="${canDelete}"
+                                    th:attr="data-id=${h.id},data-base=${h.baseFilename},data-target=${h.targetFilename}"
+                                    onclick="openDeleteModal(this)"
+                                    title="이 비교 이력 삭제">삭제</button>
+                            <button type="button" class="del-btn disabled" disabled
+                                    th:unless="${canDelete}"
+                                    title="본인이 실행한 비교 이력만 삭제할 수 있습니다">삭제</button>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+        </div>
+        <div class="no-match" id="noMatch">검색 결과가 없습니다.</div>
+        <div class="pagination-bar" id="paginationBar">
+            <div class="pg-info" id="pgInfo">-</div>
+            <div class="pg-list" id="pgList"></div>
+        </div>
+    </div>
+</div>
+
+<div class="select-action-bar" id="selectActionBar">
+    <div class="sa-info"><strong id="saCount">0</strong>건 선택됨</div>
+    <div class="sa-btns">
+        <button class="sa-btn sa-btn-cancel" onclick="exitSelectMode()">취소</button>
+        <button class="sa-btn sa-btn-del" id="saDelBtn" onclick="openBulkDeleteModal()" disabled>선택 삭제</button>
+    </div>
+</div>
+
+<div class="modal-ov" id="bulkDeleteModal" onclick="if(event.target===this)closeBulkDeleteModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">선택 항목 일괄 삭제</div>
+        <div class="modal-msg"><strong id="bulkDelCount">0</strong>건의 비교 이력을 삭제합니다.</div>
+        <div class="modal-warn">⚠ 이 작업은 되돌릴 수 없습니다.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeBulkDeleteModal()">취소</button>
+            <button class="mbtn-del" id="bulkDelConfirmBtn" onclick="submitBulkDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<div class="modal-ov" id="deleteModal" onclick="if(event.target===this)closeDeleteModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">비교 이력 삭제</div>
+        <div class="modal-msg">이 비교 이력을 삭제할까요?</div>
+        <div class="modal-fname"><span id="delModalFiles">— vs —</span></div>
+        <div class="modal-warn">⚠ 이 작업은 되돌릴 수 없습니다.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeDeleteModal()">취소</button>
+            <button class="mbtn-del" id="delConfirmBtn" onclick="submitDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── 검색 + 페이지네이션 + 정렬 ───────────────────────────────
+var _allRows = [];
+var _filteredRows = [];
+var _pageSize = 20;
+var _currentPage = 1;
+var _showDeleted = false;
+var _sortKey = 'date';
+var _sortDir = 'desc';
+var _sortType = 'num';
+
+function initRows() {
+    _allRows = Array.prototype.slice.call(document.querySelectorAll('#cmpHistoryTableBody tr'));
+    var saved = parseInt(localStorage.getItem('cmpHistoryPageSize') || '20', 10);
+    if ([20, 30, 50, 100].indexOf(saved) !== -1) {
+        _pageSize = saved;
+        var psSel = document.getElementById('pageSizeSelect');
+        if (psSel) psSel.value = String(saved);
+    }
+    var chk = document.getElementById('showDeletedChk');
+    if (chk) {
+        _showDeleted = localStorage.getItem('cmpHistoryShowDeleted') === 'true';
+        chk.checked = _showDeleted;
+    }
+    Calendar.attach({
+        startInputId: 'dateStart', endInputId: 'dateEnd',
+        startAreaId: 'calArea-start', endAreaId: 'calArea-end',
+        storageKey: 'cmpHistory',
+        onChange: function() { applyFilter(); }
+    });
+    sortRows();
+    updateSortIndicators();
+    applyFilter();
+}
+
+function onHeaderSort(th) {
+    var key = th.getAttribute('data-sort-key');
+    var type = th.getAttribute('data-sort-type') || 'str';
+    if (_sortKey === key) {
+        _sortDir = (_sortDir === 'asc') ? 'desc' : 'asc';
+    } else {
+        _sortKey = key;
+        _sortType = type;
+        _sortDir = 'asc';
+    }
+    _sortType = type;
+    sortRows();
+    updateSortIndicators();
+    applyFilter();
+}
+
+function sortRows() {
+    var key = 'data-sort-' + _sortKey;
+    var dir = _sortDir === 'asc' ? 1 : -1;
+    var isNum = _sortType === 'num';
+    _allRows.sort(function(a, b) {
+        var va = a.getAttribute(key) || '';
+        var vb = b.getAttribute(key) || '';
+        if (isNum) { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; return (va - vb) * dir; }
+        return va.localeCompare(vb, 'ko') * dir;
+    });
+    var tbody = document.getElementById('cmpHistoryTableBody');
+    if (tbody) _allRows.forEach(function(r) { tbody.appendChild(r); });
+}
+
+function updateSortIndicators() {
+    document.querySelectorAll('.htable th.sortable').forEach(function(th) {
+        var arrow = th.querySelector('.sort-arrow');
+        if (!arrow) return;
+        if (th.getAttribute('data-sort-key') === _sortKey) {
+            th.classList.add('sort-active');
+            arrow.textContent = (_sortDir === 'asc') ? '▲' : '▼';
+        } else {
+            th.classList.remove('sort-active');
+            arrow.textContent = '▲';
+        }
+    });
+}
+
+function applyFilter() {
+    var q = (document.getElementById('searchInput').value || '').toLowerCase();
+    var range = Calendar.getRange();
+    var dayMs = 24 * 60 * 60 * 1000;
+    var customStart = range.start ? new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate()).getTime() : 0;
+    var customEnd = range.end ? new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate()).getTime() + dayMs : 0;
+    _filteredRows = _allRows.filter(function(el) {
+        if (!_showDeleted && el.getAttribute('data-deleted') === 'true') return false;
+        if (q) {
+            var base   = (el.getAttribute('data-base')   || '').toLowerCase();
+            var target = (el.getAttribute('data-target') || '').toLowerCase();
+            var by     = (el.getAttribute('data-by')     || '').toLowerCase();
+            if (base.indexOf(q) === -1 && target.indexOf(q) === -1 && by.indexOf(q) === -1) return false;
+        }
+        var ts = parseFloat(el.getAttribute('data-sort-date')) || 0;
+        if (customStart > 0 && ts < customStart) return false;
+        if (customEnd > 0 && ts >= customEnd) return false;
+        return true;
+    });
+    _currentPage = 1;
+    render();
+}
+
+function onSearchInput() { applyFilter(); }
+function onToggleShowDeleted() {
+    _showDeleted = document.getElementById('showDeletedChk').checked;
+    localStorage.setItem('cmpHistoryShowDeleted', String(_showDeleted));
+    applyFilter();
+}
+function onPageSizeChange() {
+    _pageSize = parseInt(document.getElementById('pageSizeSelect').value, 10) || 20;
+    localStorage.setItem('cmpHistoryPageSize', String(_pageSize));
+    _currentPage = 1;
+    render();
+}
+function gotoPage(p) {
+    var total = _filteredRows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
+    if (p < 1) p = 1; if (p > totalPages) p = totalPages;
+    _currentPage = p;
+    render();
+}
+function render() {
+    _allRows.forEach(function(el) { el.style.display = 'none'; });
+    var total = _filteredRows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
+    if (_currentPage > totalPages) _currentPage = totalPages;
+    var start = (_currentPage - 1) * _pageSize;
+    var end = Math.min(start + _pageSize, total);
+    for (var i = start; i < end; i++) _filteredRows[i].style.display = '';
+    document.getElementById('noMatch').style.display = total === 0 ? 'block' : 'none';
+    renderPagination(total, totalPages, start, end);
+    if (_selectMode) updateSelectionCount();
+}
+function renderPagination(total, totalPages, start, end) {
+    var bar = document.getElementById('paginationBar');
+    if (total <= _pageSize) { bar.classList.remove('show'); return; }
+    bar.classList.add('show');
+    document.getElementById('pgInfo').innerHTML =
+        '<strong>' + (total === 0 ? 0 : (start + 1)) + '–' + end + '</strong> / 전체 <strong>' + total + '</strong>건';
+    var list = document.getElementById('pgList');
+    list.innerHTML = '';
+    var addBtn = function(label, page, opts) {
+        opts = opts || {};
+        var b = document.createElement('button');
+        b.className = 'pg-btn' + (opts.active ? ' active' : '');
+        b.textContent = label;
+        if (opts.disabled) b.disabled = true;
+        else b.onclick = function() { gotoPage(page); };
+        list.appendChild(b);
+    };
+    var addEllipsis = function() {
+        var s = document.createElement('span');
+        s.className = 'pg-ellipsis'; s.textContent = '…';
+        list.appendChild(s);
+    };
+    addBtn('‹', _currentPage - 1, { disabled: _currentPage === 1 });
+    var pages = new Set([1, totalPages, _currentPage]);
+    for (var d = 1; d <= 2; d++) {
+        if (_currentPage - d >= 1) pages.add(_currentPage - d);
+        if (_currentPage + d <= totalPages) pages.add(_currentPage + d);
+    }
+    var sorted = Array.from(pages).sort(function(a, b) { return a - b; });
+    var prev = 0;
+    sorted.forEach(function(p) {
+        if (p - prev > 1) addEllipsis();
+        addBtn(String(p), p, { active: p === _currentPage });
+        prev = p;
+    });
+    addBtn('›', _currentPage + 1, { disabled: _currentPage === totalPages });
+}
+
+// ── 다중 선택 ────────────────────────────────────────────
+var _selectMode = false;
+function toggleSelectMode() {
+    _selectMode = !_selectMode;
+    var table = document.getElementById('cmpHistoryTable');
+    var btn = document.getElementById('selectModeBtn');
+    var label = document.getElementById('selectModeBtnLabel');
+    var bar = document.getElementById('selectActionBar');
+    if (!table) return;
+    if (_selectMode) {
+        table.classList.add('select-mode');
+        btn.classList.add('active');
+        label.textContent = '선택 종료';
+        bar.classList.add('show');
+        updateSelectionCount();
+    } else {
+        exitSelectMode();
+    }
+}
+function exitSelectMode() {
+    _selectMode = false;
+    var table = document.getElementById('cmpHistoryTable');
+    if (table) table.classList.remove('select-mode');
+    document.getElementById('selectModeBtn').classList.remove('active');
+    document.getElementById('selectModeBtnLabel').textContent = '선택';
+    document.getElementById('selectActionBar').classList.remove('show');
+    document.querySelectorAll('.row-check').forEach(function(c) { c.checked = false; });
+    var all = document.getElementById('allCheck');
+    if (all) { all.checked = false; all.indeterminate = false; }
+}
+function getSelectedIds() {
+    var sel = [];
+    document.querySelectorAll('#cmpHistoryTableBody tr').forEach(function(tr) {
+        if (tr.style.display === 'none') return;
+        var c = tr.querySelector('.row-check');
+        if (c && c.checked) {
+            var n = parseInt(c.value, 10);
+            if (!isNaN(n)) sel.push(n);
+        }
+    });
+    return sel;
+}
+function updateSelectionCount() {
+    var n = getSelectedIds().length;
+    document.getElementById('saCount').textContent = n;
+    document.getElementById('saDelBtn').disabled = (n === 0);
+    var visible = [];
+    document.querySelectorAll('#cmpHistoryTableBody tr').forEach(function(tr) {
+        if (tr.style.display === 'none') return;
+        var c = tr.querySelector('.row-check');
+        if (c) visible.push(c);
+    });
+    var all = document.getElementById('allCheck');
+    if (all) {
+        var checkedCount = visible.filter(function(c) { return c.checked; }).length;
+        all.checked = (visible.length > 0 && checkedCount === visible.length);
+        all.indeterminate = (checkedCount > 0 && checkedCount < visible.length);
+    }
+}
+function onRowCheck() { updateSelectionCount(); }
+function onSelectAll() {
+    var checked = document.getElementById('allCheck').checked;
+    document.querySelectorAll('#cmpHistoryTableBody tr').forEach(function(tr) {
+        if (tr.style.display === 'none') return;
+        var c = tr.querySelector('.row-check');
+        if (c) c.checked = checked;
+    });
+    updateSelectionCount();
+}
+
+function openBulkDeleteModal() {
+    var sel = getSelectedIds();
+    if (sel.length === 0) return;
+    document.getElementById('bulkDelCount').textContent = sel.length;
+    document.getElementById('bulkDeleteModal').classList.add('open');
+}
+function closeBulkDeleteModal() { document.getElementById('bulkDeleteModal').classList.remove('open'); }
+function submitBulkDelete() {
+    var sel = getSelectedIds();
+    if (sel.length === 0) return;
+    var btn = document.getElementById('bulkDelConfirmBtn');
+    btn.disabled = true; btn.textContent = '삭제 중...';
+    var headers = { 'Content-Type': 'application/json' };
+    var csrfToken = Common.csrfToken();
+    if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;
+    fetch('/api/comparison-history/bulk-delete', {
+        method: 'POST', headers: headers,
+        body: JSON.stringify({ ids: sel })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        closeBulkDeleteModal();
+        if (d && d.skipped > 0) {
+            alert('일부 항목은 본인이 실행하지 않아 건너뛰었습니다. (삭제 ' + (d.deleted || 0) + '건 / 건너뜀 ' + d.skipped + '건)');
+        }
+        location.reload();
+    }).catch(function(e) {
+        btn.disabled = false; btn.textContent = '삭제';
+        alert('일괄 삭제 실패: ' + e.message);
+    });
+}
+
+// ── 단일 삭제 ───────────────────────────────────────────────
+var _pendingDeleteId = null;
+function openDeleteModal(btn) {
+    var id = btn.getAttribute('data-id');
+    var base = btn.getAttribute('data-base') || '—';
+    var target = btn.getAttribute('data-target') || '—';
+    if (!id) return;
+    _pendingDeleteId = id;
+    document.getElementById('delModalFiles').textContent = base + '   vs   ' + target;
+    var ok = document.getElementById('delConfirmBtn');
+    ok.disabled = false; ok.textContent = '삭제';
+    document.getElementById('deleteModal').classList.add('open');
+}
+function closeDeleteModal() {
+    _pendingDeleteId = null;
+    document.getElementById('deleteModal').classList.remove('open');
+}
+function submitDelete() {
+    if (!_pendingDeleteId) return;
+    var id = _pendingDeleteId;
+    var btn = document.getElementById('delConfirmBtn');
+    btn.disabled = true; btn.textContent = '삭제 중...';
+    var headers = {};
+    var csrfToken = Common.csrfToken();
+    if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;
+    fetch('/api/comparison-history/' + encodeURIComponent(id), {
+        method: 'DELETE', headers: headers
+    }).then(function(r) {
+        return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; });
+    }).then(function(res) {
+        if (res.ok && res.data && res.data.success) {
+            closeDeleteModal();
+            // 행 즉시 제거 + 인덱스 재구성
+            var row = document.querySelector('#cmpHistoryTableBody tr[data-id="' + id + '"]');
+            if (row && row.parentNode) row.parentNode.removeChild(row);
+            initRows();
+        } else {
+            btn.disabled = false; btn.textContent = '삭제';
+            alert((res.data && res.data.error) || '삭제 실패 (HTTP ' + res.status + ')');
+        }
+    }).catch(function(e) {
+        btn.disabled = false; btn.textContent = '삭제';
+        alert('삭제 실패: ' + e.message);
+    });
+}
+
+initRows();
+</script>
+</body>
+</html>

@@ -74,9 +74,23 @@
     - 공유 헬퍼 6 개 (`isAdmin`/`buildHistory`/`aggregateDetections`/`buildClassSizeMap`/`formatBytes`/`truncateLog`) `private` → `public` 가시성 승격
     - inner public static DTO 8 개는 `HeapDumpController` 잔존, view 측에서 `HeapDumpController.AnalysisHistoryItem` 으로 참조 (facade 패턴)
     - URL/외부 시그니처 100% 무변경 — 회귀 위험 최소
-  - [ ] **4B-2. API 도메인별 6 분할** (보류) — 추가 분리 권장안 (Analysis/Report/File/History/System/Ai), 의존성·DTO 이전 영향 큼. 별도 사이클.
+  - [x] **4B-2. API 도메인별 6 분할** (2026-05-17 완료)
+    - 6 신규 컨트롤러: `HeapAnalysisApiController` (80, SSE/큐/취소) / `HeapReportApiController` (350, MAT HTML·iframe·PDF·log·thread-stacks) / `HeapFileApiController` (141, upload/download/bulk-delete) / `HeapHistoryApiController` (283, history·detections·compare data·cache clear) / `HeapSystemApiController` (432, settings·DB·MAT·disk·system) / `HeapAiApiController` (754, LLM + RAG)
+    - DTO 11 개 → `model/dto/` 패키지로 추출 (`AnalysisHistoryItem`/`DailyDetection`/`ServerSeries`/`DetectionSummaryItem`/`DetectionAggregate`/`DetectionDayFile`/`DetectionRecentItem`/`ClassDiff`/`HistogramDiff`/`SuspectDiff`/`KpiDiff`)
+    - 공유 헬퍼 → `HeapHistoryAggregator` @Component 신규 (585 라인): `buildHistory`/`buildAnalysisName`/`buildClassSizeMap`/`buildClassDiffs`/`buildHistogramDiffs`/`buildSuspectDiffs`/`buildKpiDiff`/`aggregateDetections`/`truncateLog`/`formatDuration` + 내부 helpers
+    - `AuthUtil.isAdmin(Authentication)` static util 추출 → View/Comparison 컨트롤러 공용
+    - `HeapDumpController.java` (2,898 라인) 완전 삭제. `HeapDumpViewController`/`ComparisonHistoryController`/`ComparisonHistoryService` import 갱신
+    - URL/외부 시그니처 100% 무변경. 인증 세션으로 6 도메인 모든 대표 API 200 OK 회귀 검증
+    - 빌드 SUCCESS / 기동 10.55s 정상
 
 ## Phase 5: 프론트엔드 정리
+
+- [x] **5C. analyze.html 인라인 JS 외부화** (2026-05-17 완료)
+  - `static/js/analyze.js` (3,125 라인, 149KB) 신규 — 라인 1011-4137 의 순수 JS (Thymeleaf 표현식 0건) 추출
+  - `analyze.html` 4,183 → 1,057 라인 (**-3,126 라인**, -75%)
+  - 인라인 `<script>` 블록 → `<script src="/js/analyze.js?v=2026-05-17"></script>` 1 라인 치환
+  - Thymeleaf 인라인 변수 블록 (line 993-1008, `USED_BYTES`/`FILENAME`/`OBJ_NAMES` 등 13 vars) 은 인라인 유지 — external JS 가 같은 글로벌 vars 를 참조 (script 순서 보장)
+  - 빌드 SUCCESS / 기동 정상 / `/js/analyze.js` 200 + `/analyze/result/{filename}` 200 + script src 참조 확인
 
 - [~] **5A. 공통 CSS 추출** — *부분 완료 (2026-05-12)*
   - [x] **5A-1. common.css 인프라 + 안전 패턴 추출** (2026-05-12 완료, Phase 6-3)
@@ -86,12 +100,41 @@
   - [x] **5A-2. analyze.html 인라인 CSS 분리** (2026-05-12 완료, Phase 6-5)
     - `static/css/analyze.css` (738 라인) — 페이지 고유 CSS 변수/레이아웃 외부화
     - `analyze.html` 4866 → 4127 라인 (-739)
-  - [ ] **5A-3. modal/btn/grid 공통 패턴 확장** (보류) — `modalIn` 키프레임 미세 차이, btn 색상 변형 등 면밀 검토 필요
+  - [x] **5A-3. modal/btn/grid 공통 패턴 확장** — *2026-05-17 완료 (modal + btn 색상, grid 는 토큰 표준화 사이클 이연)*
+    - **Round 1**: `common.css` 에 `.modal-ov` base + `.modal-ov.open { display: flex }` + `@keyframes modalIn` 추가. history / comparison-history / login / admin-users 4 페이지에서 중복 제거. files (`.35` + fadeIn) / leak-rules (common.css 미적용) 보존.
+    - **Round 2**: `common.css` 에 `.modal-box` base 4 속성 (background / border-radius:12px / padding:24px / box-shadow) 추가. 5 페이지 인라인 정리:
+      - history.html / comparison-history.html: 4 속성 제거, `width:90%; max-width:420px; animation:modalIn`만 잔존 (1라인)
+      - admin/users.html: 4 속성 제거, `width:90%; max-width:440px; animation:modalIn`만 잔존
+      - login.html: 4 속성 중 background/padding/box-shadow 제거, `border-radius:14px` 변형 override 유지 + width/max-height/overflow-y/animation 인라인
+      - settings.html: 4 속성 중 background/border-radius/box-shadow 제거, `padding:28px 30px` 변형 override 유지 + 이번 라운드에 `.modal-ov` / `@keyframes modalIn` 잔존 제거
+    - 변형 보존: `files.html` (box-shadow 다름 `.15`, modalIn 미사용) / `leak-rules.html` (common.css 미적용 + padding 변형) 변경 없음
+    - **Round 3**: 페이지별 명명 분기(`.mbtn-cancel` / `.btn-cancel` / `.sa-btn-cancel` 등)를 multi-selector 로 묶어 색상만 common.css 에 통합. 박스 속성(padding/font-size/border-radius/font-weight)은 페이지별 인라인 유지.
+      - cancel(`#F3F4F6/#374151` → hover `#E5E7EB`): `.mbtn-cancel, .btn-cancel, .sa-btn-cancel`
+      - danger(`#EF4444/#fff` → hover `#DC2626`): `.mbtn-del, .mbtn-danger, .btn-delete, .sa-btn-del`
+      - primary(`#2563EB/#fff` → hover `#1D4ED8`): `.mbtn-save, .mbtn-primary, .mbtn-confirm, .btn-download`
+      - 8 페이지 인라인 색상 정의 ~40 라인 제거: comparison-history / login / servers / compare / settings / files / history / admin-users
+      - `:disabled` variant (login `mbtn-save`, files/history/comparison-history `sa-btn-del`) 는 페이지별 색상 차이가 있어 인라인 유지 (cascade 가 base 위에 override)
+      - `leak-rules.html` 은 common.css 미적용이라 제외
+    - **Round 4 (grid CSS)**: 4 테이블 family (htable/ftable/stable/utable) multi-selector base 통합. width/thead bg/th 색상속성·typography/td 테두리·hover/last-child border 통합. `.sortable` cursor+hover+sort-active 색상도 통합 (sort-arrow 자체는 font-size 9/10px 차이로 인라인 유지). `padding`/`font-size`/`min-width` 변형은 페이지별 인라인. ltable (server-logs.html) 은 hover #FAFAFA + th 직접 background 구조라 제외. 5 페이지 (comparison-history / history / files / servers / admin/users) 정리, ~50 라인 추가 제거.
+    - 13 페이지 `common.css?v=` 캐시 무효화 (2026-05-12 → 2026-05-17c). 빌드 SUCCESS / 기동 정상 / `/css/common.css` 본문에 modal-ov/modalIn/modal-box/btn 색상 utility 모두 확인.
 - [~] **5B. JS 네임스페이스화** — *인프라만 도입 (2026-05-12)*
   - [x] **5B-1. common.js (window.Common) 인프라** (2026-05-12 완료, Phase 6-4)
     - `static/js/common.js` (97 라인): `Common.escHtml`/`csrfToken`/`csrfHeaderName`/`fetchJSON`/`appendCsrfToForm`/`formatBytes`
     - `fragments/banner.html` 에서 1 회 로드 → 14 개 페이지 자동 가용
-  - [ ] **5B-2. 페이지 인라인 `escHtml`/CSRF 호출의 `Common.*` 마이그레이션** (보류) — 회귀 위험으로 점진적 진행 권장
+  - [x] **5B-2. 페이지 인라인 `escHtml`/CSRF 호출의 `Common.*` 마이그레이션** (2026-05-17 완료, A+B+C, D 의도적 보류)
+    - **A 그룹 (escHtml/escapeHtml alias)**: 9 파일 12 정의 → `var escHtml = Common.escHtml;` (또는 escapeHtml) 별칭으로 치환. 호출처 무변경. textContent 기반 3 문자 버전(`<>&` 만) → Common 의 5 문자(`&<>"'`) escape 로 XSS 방어 강화.
+      - 대상: ai-chat / compare / index (2) / leak-rules / analyze (3: 2311/2579/3463) / admin-users / server-logs / history / servers
+    - **B 그룹 (CSRF appendCsrfToForm)**: 6 곳의 3 라인 패턴(`var ci = createElement; ci.type/name; ci.value = querySelector(meta); appendChild`) → `Common.appendCsrfToForm(f)` 1 라인 치환.
+      - 대상: index / history / progress / analyze / files (2)
+    - **C 그룹 (CSRF meta 직접 읽기)** — 7 페이지 14 라인 → 4 라인 `var csrfMeta/csrfHeaderMeta` 패턴은 2 라인 `var csrfToken = Common.csrfToken(); if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;` 으로, 모듈 레벨 `var _csrf = ...content` 변수는 RHS만 `Common.csrfToken()` / `Common.csrfHeaderName()` 호출로 치환 (변수명·호출처 무변경).
+      - 대상: comparison-history (2 occurrences) / history / files / rag-settings / admin/users / server-detail / leak-rules
+    - **D1 (안전 fetchJSON)** — 2026-05-17 추가: `if (!r.ok) throw + return r.json()` 패턴 18 곳을 `Common.fetchJSON` 으로 치환. Common.fetchJSON 의 시맨틱(non-2xx throw + 자동 JSON 파싱)이 100% 일치하는 안전 후보만 선별. POST 의 수동 `headers: {Content-Type, X-CSRF-TOKEN}` 구성 코드도 함께 제거 (fetchJSON 이 자동 부착).
+      - 대상: llm-settings (7) / rag-settings (1) / server-logs (2) / settings (2) / history (2) / admin-users (4)
+      - 보류: compare.html (1 곳 — 에러 메시지 포맷 `compare data 로드 실패 (404)` 가 `HTTP 404: <body>` 로 변경되어 시각적 회귀)
+    - **D2 (side-effect only)** — 2026-05-17 추가: settings.html 3 곳 (`saveSetting` / `saveCompressSetting` / `doDisableCompress`) — `.then(r => { if (!r.ok) throw; toast(...) })` 패턴 → `Common.fetchJSON(...).then(function(){ toast(...) })` 로 치환. 파싱된 JSON 을 discard 해 동작 동일.
+    - **D3 (r.text)** — 2026-05-17 추가: analyze.html 2 곳 (`loadFullErrorLog` line 109 — `.catch err 미사용` / 컴포넌트 parsed 폴백 line 1321 — `.catch()` 인자 없음). Common.fetchJSON 이 non-JSON Content-Type 시 text 반환하므로 양쪽 안전. 엔드포인트 `/analyze/log/*` text/plain, `/report/.../component-detail-parsed` JSON ✓.
+    - **D 최종 보류 (2건)**: analyze.html line 1352 (raw-detail) — catch err 가 사용자 가시 fallback 텍스트에 interpolate / compare.html line 1543 — 커스텀 에러 메시지가 .catch 에서 사용자 표시 → 메시지 회귀 회피.
+    - 검증: 빌드 SUCCESS / 기동 정상 / 7 페이지 200 OK + Common.csrf* 참조 확인 (`/files` 2, `/history` 2, `/comparison-history` 4, `/admin/users` 2, `/settings/rag` 2, `/admin/leak-rules` 2).
 
 ## Phase 6: 추가 보안/구조 개선 (2026-05-12 신규)
 
@@ -103,12 +146,16 @@
 
 ## 보류 항목 (대형 리팩토링 — 별도 사이클)
 
-| 항목 | 이연 사유 | 권장 시점 |
-|---|---|---|
-| 4A-2 LlmConfigService | LLM 21 메서드 + RAG SSL 미러링, 단독 PR 권장 | Phase 7 |
-| 4A-3 RagConfigService | RAG 26 필드 + getter/setter 40+, 단독 PR | Phase 7 |
-| 4A-4 FileManagementService | 디스크/gzip/마이그레이션 결합도 큼 | Phase 7+ |
-| 4B-2 API 도메인별 6 분할 | 4B-1 (View+API) 완료. Analysis/Report/File/History/System/Ai 추가 분리 — DTO/헬퍼 이전 영향 큼 | 별도 사이클 |
-| 5A-3 modal/btn/grid CSS | 페이지별 미세 변형 검토 필요 | 시각 회귀 테스트 인프라 후 |
-| 5B-2 Common.* 마이그레이션 | 회귀 위험, 점진적 PR | 단계적 |
-| `analyze.html` HTML/JS 분할 (4127 라인) | SPA 화 결정 후 | 별도 사이클 |
+> **2026-05-17 전체 완료** — 모든 보류 항목 해소.
+
+| 완료 항목 | 완료 라운드 |
+|---|---|
+| 4A-2 LlmConfigService 분리 | 2026-05-12 (Phase 7-2) |
+| 4A-3 RagConfigService 분리 | 2026-05-12 (Phase 7-3) |
+| 4A-4 FileManagementService 분리 | 2026-05-12 |
+| 4B-2 API 도메인별 6 분할 | 2026-05-17 |
+| 5A-3 modal/btn/grid 공통 패턴 (Round 1~4) | 2026-05-17 |
+| 5B-2 Common.* 마이그레이션 (A+B+C+D1+D2/D3) | 2026-05-17 |
+| 5C analyze.html JS 외부화 | 2026-05-17 |
+
+> 향후 작업은 새로 식별되는 항목 기준으로 본 문서를 갱신할 것.

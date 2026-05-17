@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17d">
     <title>RAG Configuration — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }  /* RAG Settings 페이지 전용 */
@@ -407,9 +407,8 @@ function toast(msg, type) {
 
 function getCsrfHeaders(base) {
     var h = base || {};
-    var meta = document.querySelector('meta[name="_csrf"]');
-    var headerMeta = document.querySelector('meta[name="_csrf_header"]');
-    if (meta && headerMeta) h[headerMeta.content] = meta.content;
+    var csrfToken = Common.csrfToken();
+    if (csrfToken) h[Common.csrfHeaderName()] = csrfToken;
     return h;
 }
 
@@ -426,10 +425,7 @@ function updateBadge(enabled) {
 }
 
 function loadRagSettings() {
-    fetch('/api/settings/rag').then(function(r){
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        return r.json();
-    }).then(function(d) {
+    Common.fetchJSON('/api/settings/rag').then(function(d) {
         document.getElementById('togRagEnabled').checked = !!d.enabled;
         updateBadge(d.enabled);
         document.getElementById('ragUrl').value      = d.url || '';

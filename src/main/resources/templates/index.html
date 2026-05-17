@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17d">
     <title>Heap Dump Analyzer</title>
     <script src="/js/lib/chart.umd.min.js"></script>
     <style>
@@ -1078,7 +1078,8 @@ function showExtWarning(filename, ext) {
     overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
 }
 
-function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+// escapeHtml → Common.escHtml (common.js). 기존 textContent 버전은 `"` `'` 미처리 → Common 은 5 문자 escape 로 강화.
+var escapeHtml = Common.escHtml;
 
 /* ═══ Multi-file upload queue system ═══ */
 var _uploadQueue = [];   // [{file, uploadName, status:'pending'|'uploading'|'done'|'error'|'skipped'|'cancelled'}]
@@ -1514,8 +1515,7 @@ function showDeleteModal(filename, url) {
 function postRedirect(url) {
     var f = document.createElement('form');
     f.method = 'POST'; f.action = url; f.style.display = 'none';
-    var ci = document.createElement('input'); ci.type = 'hidden'; ci.name = '_csrf';
-    ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(ci);
+    Common.appendCsrfToForm(f);
     document.body.appendChild(f); f.submit();
 }
 function closeDeleteModal() {
@@ -1648,11 +1648,8 @@ function renderQueuePanel(d) {
 
 }
 
-function escHtml(s) {
-    var div = document.createElement('div');
-    div.appendChild(document.createTextNode(s));
-    return div.innerHTML;
-}
+// escHtml → Common.escHtml (common.js). 기존 textContent 버전은 `"` `'` 미처리 → Common 은 5 문자 escape 로 강화.
+var escHtml = Common.escHtml;
 
 function startQueuePolling() {
     if (_queuePollTimer) return;
