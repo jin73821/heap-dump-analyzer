@@ -1,0 +1,883 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>Leak Rules — Heap Dump Analyzer</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #F3F4F6; color: #1F2937; }
+        .topbar { height: 52px; background: #fff; border-bottom: 1px solid #E5E7EB;
+                  display: flex; align-items: center; justify-content: space-between;
+                  padding: 0 20px; position: sticky; top: 0; z-index: 10;
+                  margin-left: var(--banner-w, 220px);
+                  transition: margin-left .25s cubic-bezier(.4,0,.2,1); }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+        .topbar-logo { width: 28px; height: 28px; background: #2563EB; border-radius: 6px;
+                       display: flex; align-items: center; justify-content: center; }
+        .topbar-logo svg { width: 14px; height: 14px; fill: white; }
+        .topbar-title { font-size: 15px; font-weight: 700; white-space: nowrap;
+                        overflow: hidden; text-overflow: ellipsis; }
+        .topbar-right { flex-shrink: 0; }
+        .container { max-width: 1480px; margin: 0 auto; padding: 24px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+        .page-hdr { display: flex; align-items: center; justify-content: space-between;
+                    margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
+        .page-ttl { font-size: 18px; font-weight: 700; }
+        .page-stats { display: flex; gap: 16px; }
+        .page-stat { font-size: 12px; color: #6B7280; }
+        .page-stat strong { color: #1F2937; }
+
+        .tabs { display: flex; gap: 4px; border-bottom: 1px solid #E5E7EB;
+                margin-bottom: 18px; overflow-x: auto; }
+        .tab-btn { padding: 11px 20px; font-size: 13px; font-weight: 600;
+                   color: #6B7280; background: transparent;
+                   border: none; border-bottom: 2px solid transparent;
+                   cursor: pointer; white-space: nowrap;
+                   transition: color .15s, border-color .15s; font-family: inherit; }
+        .tab-btn:hover { color: #1F2937; }
+        .tab-btn.active { color: #2563EB; border-bottom-color: #2563EB; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
+        .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+        .toolbar .search { flex: 1 1 280px; min-width: 200px;
+                           padding: 9px 13px; border: 1px solid #E5E7EB; border-radius: 8px;
+                           font-size: 13px; background: #fff; outline: none; }
+        .toolbar .search:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .btn-primary, .btn-secondary { font-size: 12px; padding: 9px 16px; border-radius: 8px;
+                                       font-weight: 700; cursor: pointer; border: none; font-family: inherit; }
+        .btn-primary { background: linear-gradient(135deg,#2563EB,#4F46E5); color: #fff;
+                       box-shadow: 0 4px 10px rgba(37,99,235,.20); }
+        .btn-primary:hover { filter: brightness(1.05); }
+        .btn-secondary { background: #F3F4F6; color: #374151; border: 1px solid #E5E7EB; }
+        .btn-secondary:hover { background: #E5E7EB; }
+
+        .rule-table { width: 100%; border-collapse: collapse; font-size: 13px;
+                      background: #fff; border-radius: 10px; overflow: hidden;
+                      box-shadow: 0 1px 3px rgba(0,0,0,.04); }
+        .rule-table thead { background: #F9FAFB; }
+        .rule-table th { padding: 10px 12px; text-align: left; font-size: 11px;
+                         font-weight: 600; color: #6B7280; text-transform: uppercase;
+                         letter-spacing: .04em; border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
+        .rule-table td { padding: 10px 12px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
+        .rule-table tbody tr:last-child td { border-bottom: none; }
+        .rule-table tbody tr:hover { background: #F9FAFB; }
+        .col-prio, .col-id { width: 60px; color: #9CA3AF; font-variant-numeric: tabular-nums; }
+        .col-enabled { width: 70px; text-align: center; }
+        .col-actions { width: 140px; text-align: right; white-space: nowrap; }
+        .col-sev { width: 90px; }
+
+        .rule-name { font-weight: 600; }
+        .rule-prefix { font-family: 'Consolas','Monaco',monospace; font-size: 12px;
+                       background: #F3F4F6; padding: 2px 6px; border-radius: 4px;
+                       color: #1F2937; word-break: break-all; }
+        .rule-pattern { font-family: 'Consolas','Monaco',monospace; font-size: 11px;
+                        color: #6B7280; word-break: break-all; max-width: 360px;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                        display: inline-block; }
+        .rule-category { font-size: 12px; color: #4B5563; }
+        .sev-chip { display: inline-block; font-size: 10px; font-weight: 700;
+                    padding: 2px 8px; border-radius: 10px; text-transform: uppercase; letter-spacing: .04em; }
+        .sev-critical { background: #FECACA; color: #7F1D1D; }
+        .sev-high { background: #FED7AA; color: #7C2D12; }
+        .sev-medium { background: #FEF08A; color: #713F12; }
+        .sev-low { background: #BBF7D0; color: #14532D; }
+        .sev-auto { background: #E5E7EB; color: #6B7280; }
+
+        .toggle { position: relative; display: inline-block;
+                  width: 34px; height: 18px; vertical-align: middle; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle .slider { position: absolute; cursor: pointer; inset: 0;
+                          background: #D1D5DB; border-radius: 10px; transition: .15s; }
+        .toggle .slider::before { content: ''; position: absolute; top: 2px; left: 2px;
+                                  width: 14px; height: 14px; background: #fff; border-radius: 50%;
+                                  transition: left .15s; }
+        .toggle input:checked + .slider { background: #2563EB; }
+        .toggle input:checked + .slider::before { left: 18px; }
+
+        .row-btn { font-size: 11px; padding: 5px 10px; border-radius: 6px; font-weight: 600;
+                   cursor: pointer; border: 1px solid; font-family: inherit; margin-left: 4px; }
+        .row-btn.edit { color: #2563EB; background: #EFF6FF; border-color: #BFDBFE; }
+        .row-btn.edit:hover { background: #DBEAFE; }
+        .row-btn.del { color: #DC2626; background: #FEF2F2; border-color: #FECACA; }
+        .row-btn.del:hover { background: #FEE2E2; }
+
+        .pager { display: flex; align-items: center; justify-content: space-between;
+                 margin-top: 14px; font-size: 12px; color: #6B7280; flex-wrap: wrap; gap: 8px; }
+        .pg-list { display: flex; gap: 4px; }
+        .pg-btn { padding: 5px 10px; font-size: 12px; border-radius: 6px;
+                  border: 1px solid #E5E7EB; background: #fff; color: #374151;
+                  cursor: pointer; font-family: inherit; }
+        .pg-btn:hover { background: #F3F4F6; }
+        .pg-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+        .pg-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+        .empty-msg { padding: 32px; text-align: center; color: #9CA3AF; font-size: 13px; }
+
+        /* ── 편집 모달 ────────────────────────────────────────── */
+        .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
+                    background: rgba(0,0,0,.45); align-items: center; justify-content: center; padding: 20px; }
+        .modal-ov.open { display: flex; }
+        .modal-box { background: #fff; border-radius: 12px; padding: 24px;
+                     width: 100%; max-width: 760px; max-height: 92vh; overflow-y: auto;
+                     box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease; }
+        @keyframes modalIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .modal-ttl { font-size: 16px; font-weight: 700; margin-bottom: 12px; color: #111827; }
+        .modal-msg { font-size: 13px; color: #6B7280; margin-bottom: 14px; line-height: 1.6; }
+        .modal-warn { font-size: 11px; color: #EF4444; margin-bottom: 14px; }
+        .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+        .modal-btns button { font-size: 13px; padding: 8px 16px; border-radius: 7px; border: none;
+                             cursor: pointer; font-weight: 600; font-family: inherit; }
+        .mbtn-cancel { background: #F3F4F6; color: #374151; }
+        .mbtn-cancel:hover { background: #E5E7EB; }
+        .mbtn-confirm { background: #2563EB; color: #fff; }
+        .mbtn-confirm:hover { background: #1D4ED8; }
+        .mbtn-del { background: #EF4444; color: #fff; }
+        .mbtn-del:hover { background: #DC2626; }
+
+        .form-row { margin-bottom: 12px; }
+        .form-row label { display: block; font-size: 11px; font-weight: 700; color: #6B7280;
+                          text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+        .form-row input[type=text], .form-row input[type=number],
+        .form-row select, .form-row textarea {
+            width: 100%; padding: 8px 11px; border: 1px solid #D1D5DB; border-radius: 6px;
+            font-size: 13px; font-family: inherit; background: #fff; outline: none; color: #111827;
+        }
+        .form-row input:focus, .form-row select:focus, .form-row textarea:focus {
+            border-color: #2563EB; box-shadow: 0 0 0 3px rgba(37,99,235,.10);
+        }
+        .form-row textarea { min-height: 80px; resize: vertical; font-family: 'Consolas','Monaco',monospace; font-size: 12px; }
+        .form-row .hint { font-size: 11px; color: #9CA3AF; margin-top: 4px; line-height: 1.5; }
+        .form-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 600px) { .form-grid2 { grid-template-columns: 1fr; } }
+
+        .preview-block { margin-top: 14px; padding: 12px; background: #F8FAFC;
+                         border: 1px solid #E2E8F0; border-radius: 8px; }
+        .preview-block .pb-ttl { font-size: 11px; font-weight: 700; color: #1E40AF;
+                                 text-transform: uppercase; margin-bottom: 8px; }
+        .preview-block .pb-out { font-size: 12px; color: #1F2937; line-height: 1.6;
+                                 background: #fff; padding: 10px; border-radius: 6px;
+                                 border: 1px solid #E5E7EB; min-height: 60px;
+                                 word-break: break-word; }
+        .preview-block .pb-out h4 { font-size: 11px; color: #6B7280; margin-bottom: 4px;
+                                    text-transform: uppercase; }
+
+        @media (max-width: 900px) {
+            .topbar { margin-left: 0; }
+            .container { padding-left: 20px; }
+        }
+    </style>
+    <script>
+        (function(){ try {
+            if (localStorage.getItem('bannerCollapsed') === '1') {
+                document.documentElement.classList.add('banner-collapsed');
+                document.documentElement.style.setProperty('--banner-w', '44px');
+            }
+        } catch(e) {} })();
+    </script>
+</head>
+<body>
+<div th:replace="fragments/banner :: banner"></div>
+
+<div class="topbar">
+    <div class="topbar-brand">
+        <div class="topbar-logo"><svg viewBox="0 0 24 24"><path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/></svg></div>
+        <div class="topbar-title">Leak Rules</div>
+    </div>
+    <div class="topbar-right"></div>
+</div>
+
+<div class="container">
+    <div class="page-hdr">
+        <div class="page-ttl">Leak Suspect 룰 관리</div>
+        <div class="page-stats">
+            <div class="page-stat">라이브러리 룰: <strong id="libCountChip" th:text="${libraryCount}">0</strong></div>
+            <div class="page-stat">Fallback 룰: <strong id="fbCountChip" th:text="${fallbackCount}">0</strong></div>
+        </div>
+    </div>
+
+    <nav class="tabs" role="tablist">
+        <button type="button" class="tab-btn active" data-tab="library" role="tab">라이브러리 (prefix)</button>
+        <button type="button" class="tab-btn" data-tab="fallback" role="tab">Fallback (정규식)</button>
+    </nav>
+
+    <!-- ===== 라이브러리 ===== -->
+    <section class="tab-panel active" id="tab-library">
+        <div class="toolbar">
+            <input type="text" class="search" id="libSearch" placeholder="prefix · 이름 · 카테고리 검색…" oninput="renderLibrary()">
+            <button class="btn-primary" onclick="openLibCreate()">+ 새 라이브러리 룰</button>
+            <button class="btn-secondary" onclick="exportRules('library')" title="라이브러리 룰을 JSON 파일로 내보내기">⬇ Export</button>
+            <button class="btn-secondary" onclick="openImport('library')" title="JSON 파일에서 라이브러리 룰 가져오기">⬆ Import</button>
+        </div>
+        <table class="rule-table" id="libTable">
+            <thead>
+                <tr>
+                    <th class="col-id">#</th>
+                    <th class="col-prio">우선</th>
+                    <th>Prefix</th>
+                    <th>Library</th>
+                    <th>Category</th>
+                    <th class="col-sev">Severity</th>
+                    <th class="col-enabled">사용</th>
+                    <th class="col-actions">작업</th>
+                </tr>
+            </thead>
+            <tbody id="libBody"></tbody>
+        </table>
+        <div class="pager">
+            <div id="libPgInfo">-</div>
+            <div class="pg-list" id="libPgList"></div>
+        </div>
+    </section>
+
+    <!-- ===== Fallback ===== -->
+    <section class="tab-panel" id="tab-fallback">
+        <div class="toolbar">
+            <input type="text" class="search" id="fbSearch" placeholder="이름 · 카테고리 · 정규식 검색…" oninput="renderFallback()">
+            <button class="btn-primary" onclick="openFbCreate()">+ 새 Fallback 룰</button>
+            <button class="btn-secondary" onclick="exportRules('fallback')" title="Fallback 룰을 JSON 파일로 내보내기">⬇ Export</button>
+            <button class="btn-secondary" onclick="openImport('fallback')" title="JSON 파일에서 Fallback 룰 가져오기">⬆ Import</button>
+        </div>
+        <table class="rule-table" id="fbTable">
+            <thead>
+                <tr>
+                    <th class="col-id">#</th>
+                    <th class="col-prio">우선</th>
+                    <th>Name</th>
+                    <th>Category</th>
+                    <th>Pattern</th>
+                    <th class="col-sev">Severity</th>
+                    <th class="col-enabled">사용</th>
+                    <th class="col-actions">작업</th>
+                </tr>
+            </thead>
+            <tbody id="fbBody"></tbody>
+        </table>
+        <div class="pager">
+            <div id="fbPgInfo">-</div>
+            <div class="pg-list" id="fbPgList"></div>
+        </div>
+    </section>
+</div>
+
+<!-- 편집/추가 모달 -->
+<div class="modal-ov" id="editModal" onclick="if(event.target===this)closeEdit()">
+    <div class="modal-box" role="dialog" aria-modal="true">
+        <div class="modal-ttl" id="editTitle">룰 편집</div>
+        <input type="hidden" id="editKind">
+        <input type="hidden" id="editId">
+
+        <!-- 라이브러리 폼 -->
+        <div id="libForm">
+            <div class="form-row">
+                <label>Prefix *</label>
+                <input type="text" id="libPrefix" placeholder="예) com.example.">
+                <div class="hint">MAT 텍스트의 className/accumulatorClass/classLoader 중 하나가 이 prefix로 시작하면 매칭됩니다.</div>
+            </div>
+            <div class="form-grid2">
+                <div class="form-row">
+                    <label>Library 이름 *</label>
+                    <input type="text" id="libName" placeholder="예) New Relic APM">
+                </div>
+                <div class="form-row">
+                    <label>Category *</label>
+                    <input type="text" id="libCategory" placeholder="예) APM Agent 메모리 점유">
+                </div>
+            </div>
+        </div>
+
+        <!-- Fallback 폼 -->
+        <div id="fbForm" style="display:none">
+            <div class="form-grid2">
+                <div class="form-row">
+                    <label>Name *</label>
+                    <input type="text" id="fbName" placeholder="예) Quartz JobDataMap 누적">
+                </div>
+                <div class="form-row">
+                    <label>Category *</label>
+                    <input type="text" id="fbCategory" placeholder="예) 스케줄러 누수">
+                </div>
+            </div>
+            <div class="form-row">
+                <label>Pattern (정규식) *</label>
+                <input type="text" id="fbPattern" placeholder="예) \\bquartz\\b|jobdatamap|schedulerimpl">
+                <div class="hint">전체 텍스트에 대해 CASE_INSENSITIVE + DOTALL로 적용됩니다. 잘못된 정규식은 저장 시 거부됩니다.</div>
+            </div>
+        </div>
+
+        <div class="form-grid2">
+            <div class="form-row">
+                <label>Severity Hint (선택)</label>
+                <select id="editSeverity">
+                    <option value="">자동 (점유율 기반)</option>
+                    <option value="critical">critical</option>
+                    <option value="high">high</option>
+                    <option value="medium">medium</option>
+                    <option value="low">low</option>
+                </select>
+            </div>
+            <div class="form-row">
+                <label>Priority (낮을수록 먼저)</label>
+                <input type="number" id="editPriority" value="5000" min="0" max="99999">
+            </div>
+        </div>
+
+        <div class="form-row">
+            <label>Explanation 템플릿 *</label>
+            <textarea id="editExpl" rows="5" placeholder="{simpleClassName}가 힙의 {percentage}% ({bytes|bytes})를 점유..."></textarea>
+            <div class="hint">지원: <code>{var}</code>, <code>{var|filter}</code>(bytes/instances/number), <code>{#if flag}A{#else}B{/if}</code>. flag: hasAccumulator, hasReferencedFrom, hasInstanceCount, highPercentage, veryHighPercentage, streamClass, sessionClass, threadClass, classLoaderClass, cacheClass, mapClass.</div>
+        </div>
+        <div class="form-row">
+            <label>Advice 템플릿 (HTML 허용) *</label>
+            <textarea id="editAdvice" rows="5" placeholder="<ol><li>...</li></ol>"></textarea>
+        </div>
+
+        <div class="form-row">
+            <label class="toggle"><input type="checkbox" id="editEnabled" checked><span class="slider"></span></label>
+            <span style="margin-left:8px;font-size:12px;color:#374151;font-weight:600;vertical-align:middle">사용 (enabled)</span>
+        </div>
+
+        <!-- 미리보기 -->
+        <details class="preview-block">
+            <summary style="cursor:pointer;font-size:12px;font-weight:700;color:#1E40AF">▶ 샘플 데이터로 미리보기</summary>
+            <div class="form-grid2" style="margin-top:10px">
+                <div class="form-row"><label>simpleClassName</label><input type="text" id="pvSimpleName" value="HttpSession"></div>
+                <div class="form-row"><label>instanceCount</label><input type="number" id="pvInstanceCount" value="1234"></div>
+                <div class="form-row"><label>bytes</label><input type="number" id="pvBytes" value="104857600"></div>
+                <div class="form-row"><label>percentage</label><input type="number" id="pvPercentage" value="32.5" step="0.1"></div>
+                <div class="form-row"><label>accumulatorSimple (있으면)</label><input type="text" id="pvAcc" value="ConcurrentHashMap"></div>
+                <div class="form-row"><label>referencedFromClass (있으면)</label><input type="text" id="pvRef" value=""></div>
+            </div>
+            <button type="button" class="btn-secondary" onclick="runPreview()">미리보기 실행</button>
+            <div class="pb-ttl" style="margin-top:12px">결과</div>
+            <div class="pb-out" id="pvOut">— 미리보기 실행 버튼을 클릭하세요 —</div>
+        </details>
+
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeEdit()">취소</button>
+            <button class="mbtn-confirm" id="editSaveBtn" onclick="submitEdit()">저장</button>
+        </div>
+    </div>
+</div>
+
+<!-- 삭제 확인 모달 -->
+<div class="modal-ov" id="deleteModal" onclick="if(event.target===this)closeDelete()">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:420px">
+        <div class="modal-ttl">룰 삭제</div>
+        <div class="modal-msg">이 룰을 삭제하시겠습니까?</div>
+        <div class="modal-msg" id="delTarget" style="font-size:12px;background:#F3F4F6;padding:8px 10px;border-radius:6px">—</div>
+        <div class="modal-warn">⚠ 삭제 후에는 복구할 수 없습니다. JSON 시드는 재기동 시 빈 테이블에만 적용되므로 자동 복원되지 않습니다.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeDelete()">취소</button>
+            <button class="mbtn-del" id="delConfirmBtn" onclick="submitDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<!-- Import 모달 -->
+<div class="modal-ov" id="importModal" onclick="if(event.target===this)closeImport()">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:560px">
+        <div class="modal-ttl" id="impTitle">룰 가져오기</div>
+        <div class="modal-msg">Export 한 JSON 파일을 선택하고 가져오기 방식을 선택하세요.</div>
+
+        <div class="form-row">
+            <label>JSON 파일 *</label>
+            <input type="file" id="impFile" accept=".json,application/json" onchange="onImportFileChosen()"
+                   style="width:100%;padding:6px;font-size:12px;border:1px solid #D1D5DB;border-radius:6px;background:#fff;box-sizing:border-box">
+            <div id="impFileInfo" style="margin-top:6px;font-size:12px;color:#6B7280">— 파일을 선택하세요 —</div>
+        </div>
+
+        <div class="form-row">
+            <label>가져오기 방식 *</label>
+            <label style="display:block;margin:6px 0;font-weight:normal;text-transform:none;letter-spacing:0;color:#1F2937;font-size:13px;cursor:pointer">
+                <input type="radio" name="impMode" value="append" checked onchange="onImportModeChange()" style="margin-right:6px">
+                <strong>추가 (Append)</strong> — 기존 룰은 유지하고 파일의 모든 룰을 새로 추가합니다.
+            </label>
+            <label style="display:block;margin:6px 0;font-weight:normal;text-transform:none;letter-spacing:0;color:#1F2937;font-size:13px;cursor:pointer">
+                <input type="radio" name="impMode" value="replace" onchange="onImportModeChange()" style="margin-right:6px">
+                <strong>전체 교체 (Replace)</strong> — 기존 룰을 모두 삭제하고 파일의 룰로 대체합니다.
+            </label>
+        </div>
+
+        <div class="modal-warn" id="impReplaceWarn" style="display:none">
+            ⚠ 전체 교체 모드는 현재 <strong id="impCurCount">?</strong>건의 룰을 모두 삭제합니다. 복구할 수 없습니다.
+        </div>
+
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeImport()">취소</button>
+            <button class="mbtn-confirm" id="impSubmitBtn" onclick="submitImport()" disabled>가져오기</button>
+        </div>
+    </div>
+</div>
+
+<script th:inline="javascript">
+// ── 공통 ────────────────────────────────────────────────────────
+var CSRF_TOKEN = Common.csrfToken();
+var CSRF_HEADER = Common.csrfHeaderName();
+function authHeaders(extra) {
+    var h = extra || {};
+    h[CSRF_HEADER] = CSRF_TOKEN;
+    return h;
+}
+// escHtml → Common.escHtml (common.js). Common 은 추가로 `'` 도 escape.
+var escHtml = Common.escHtml;
+function sevChip(s) {
+    if (!s) return '<span class="sev-chip sev-auto">자동</span>';
+    return '<span class="sev-chip sev-' + escHtml(s) + '">' + escHtml(s) + '</span>';
+}
+
+// ── 탭 ──────────────────────────────────────────────────────────
+function activateTab(id) {
+    document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.toggle('active', b.dataset.tab === id); });
+    document.querySelectorAll('.tab-panel').forEach(function(p){ p.classList.toggle('active', p.id === 'tab-' + id); });
+}
+document.querySelectorAll('.tab-btn').forEach(function(b){
+    b.addEventListener('click', function(){ activateTab(this.dataset.tab); });
+});
+
+// ── 라이브러리 룰 ───────────────────────────────────────────────
+var _libRules = [];
+var _libPage = 1;
+var _libPageSize = 20;
+function loadLibrary() {
+    fetch('/api/admin/leak-rules/library').then(function(r){ return r.json(); }).then(function(rows) {
+        _libRules = rows || [];
+        document.getElementById('libCountChip').textContent = _libRules.length;
+        renderLibrary();
+    });
+}
+function filteredLibrary() {
+    var q = (document.getElementById('libSearch').value || '').toLowerCase();
+    if (!q) return _libRules;
+    return _libRules.filter(function(r){
+        return (r.prefix||'').toLowerCase().indexOf(q) >= 0
+            || (r.libraryName||'').toLowerCase().indexOf(q) >= 0
+            || (r.category||'').toLowerCase().indexOf(q) >= 0;
+    });
+}
+function renderLibrary() {
+    var rows = filteredLibrary();
+    var total = rows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _libPageSize));
+    if (_libPage > totalPages) _libPage = totalPages;
+    var start = (_libPage - 1) * _libPageSize;
+    var slice = rows.slice(start, start + _libPageSize);
+    var body = document.getElementById('libBody');
+    if (slice.length === 0) {
+        body.innerHTML = '<tr><td colspan="8" class="empty-msg">데이터가 없습니다.</td></tr>';
+    } else {
+        body.innerHTML = slice.map(function(r){
+            return '<tr data-id="' + r.id + '">' +
+                '<td class="col-id">' + r.id + '</td>' +
+                '<td class="col-prio">' + r.priority + '</td>' +
+                '<td><span class="rule-prefix">' + escHtml(r.prefix) + '</span></td>' +
+                '<td class="rule-name">' + escHtml(r.libraryName) + '</td>' +
+                '<td class="rule-category">' + escHtml(r.category) + '</td>' +
+                '<td>' + sevChip(r.severityHint) + '</td>' +
+                '<td class="col-enabled"><label class="toggle"><input type="checkbox"' +
+                    (r.enabled ? ' checked' : '') + ' onchange="toggleLib(' + r.id + ', this.checked)"><span class="slider"></span></label></td>' +
+                '<td class="col-actions">' +
+                    '<button class="row-btn edit" onclick="openLibEdit(' + r.id + ')">편집</button>' +
+                    '<button class="row-btn del" onclick="openDelete(\'library\',' + r.id + ',\'' + escHtml(r.libraryName) + '\')">삭제</button>' +
+                '</td>' +
+            '</tr>';
+        }).join('');
+    }
+    document.getElementById('libPgInfo').textContent =
+        total + '건 중 ' + (total === 0 ? 0 : (start + 1)) + '–' + Math.min(start + _libPageSize, total) + ' 표시';
+    renderPager('libPgList', _libPage, totalPages, function(p){ _libPage = p; renderLibrary(); });
+}
+function toggleLib(id, enabled) {
+    var r = _libRules.find(function(x){ return x.id === id; });
+    if (!r) return;
+    r.enabled = enabled;
+    fetch('/api/admin/leak-rules/library/' + id, {
+        method: 'PUT', headers: authHeaders({'Content-Type':'application/json'}),
+        body: JSON.stringify(r)
+    }).then(function(r){ return r.json(); }).then(function(d){
+        if (!d || !d.success) alert('변경 실패: ' + (d && d.error || '알 수 없음'));
+    });
+}
+function openLibCreate() {
+    setEditMode('library', null, {
+        prefix: '', libraryName: '', category: '',
+        severityHint: '', priority: 1500,
+        explanationTpl: '', adviceTpl: '<ol><li></li></ol>',
+        enabled: true
+    });
+}
+function openLibEdit(id) {
+    var r = _libRules.find(function(x){ return x.id === id; });
+    if (!r) return;
+    setEditMode('library', id, r);
+}
+
+// ── Fallback 룰 ─────────────────────────────────────────────────
+var _fbRules = [];
+var _fbPage = 1;
+var _fbPageSize = 20;
+function loadFallback() {
+    fetch('/api/admin/leak-rules/fallback').then(function(r){ return r.json(); }).then(function(rows) {
+        _fbRules = rows || [];
+        document.getElementById('fbCountChip').textContent = _fbRules.length;
+        renderFallback();
+    });
+}
+function filteredFallback() {
+    var q = (document.getElementById('fbSearch').value || '').toLowerCase();
+    if (!q) return _fbRules;
+    return _fbRules.filter(function(r){
+        return (r.name||'').toLowerCase().indexOf(q) >= 0
+            || (r.category||'').toLowerCase().indexOf(q) >= 0
+            || (r.patternRegex||'').toLowerCase().indexOf(q) >= 0;
+    });
+}
+function renderFallback() {
+    var rows = filteredFallback();
+    var total = rows.length;
+    var totalPages = Math.max(1, Math.ceil(total / _fbPageSize));
+    if (_fbPage > totalPages) _fbPage = totalPages;
+    var start = (_fbPage - 1) * _fbPageSize;
+    var slice = rows.slice(start, start + _fbPageSize);
+    var body = document.getElementById('fbBody');
+    if (slice.length === 0) {
+        body.innerHTML = '<tr><td colspan="8" class="empty-msg">데이터가 없습니다.</td></tr>';
+    } else {
+        body.innerHTML = slice.map(function(r){
+            return '<tr data-id="' + r.id + '">' +
+                '<td class="col-id">' + r.id + '</td>' +
+                '<td class="col-prio">' + r.priority + '</td>' +
+                '<td class="rule-name">' + escHtml(r.name) + '</td>' +
+                '<td class="rule-category">' + escHtml(r.category) + '</td>' +
+                '<td><span class="rule-pattern" title="' + escHtml(r.patternRegex) + '">' + escHtml(r.patternRegex) + '</span></td>' +
+                '<td>' + sevChip(r.severityHint) + '</td>' +
+                '<td class="col-enabled"><label class="toggle"><input type="checkbox"' +
+                    (r.enabled ? ' checked' : '') + ' onchange="toggleFb(' + r.id + ', this.checked)"><span class="slider"></span></label></td>' +
+                '<td class="col-actions">' +
+                    '<button class="row-btn edit" onclick="openFbEdit(' + r.id + ')">편집</button>' +
+                    '<button class="row-btn del" onclick="openDelete(\'fallback\',' + r.id + ',\'' + escHtml(r.name) + '\')">삭제</button>' +
+                '</td>' +
+            '</tr>';
+        }).join('');
+    }
+    document.getElementById('fbPgInfo').textContent =
+        total + '건 중 ' + (total === 0 ? 0 : (start + 1)) + '–' + Math.min(start + _fbPageSize, total) + ' 표시';
+    renderPager('fbPgList', _fbPage, totalPages, function(p){ _fbPage = p; renderFallback(); });
+}
+function toggleFb(id, enabled) {
+    var r = _fbRules.find(function(x){ return x.id === id; });
+    if (!r) return;
+    r.enabled = enabled;
+    fetch('/api/admin/leak-rules/fallback/' + id, {
+        method: 'PUT', headers: authHeaders({'Content-Type':'application/json'}),
+        body: JSON.stringify(r)
+    }).then(function(r){ return r.json(); }).then(function(d){
+        if (!d || !d.success) alert('변경 실패: ' + (d && d.error || '알 수 없음'));
+    });
+}
+function openFbCreate() {
+    setEditMode('fallback', null, {
+        name: '', category: '',
+        patternRegex: '', severityHint: '', priority: 5500,
+        explanationTpl: '', adviceTpl: '<ol><li></li></ol>',
+        enabled: true
+    });
+}
+function openFbEdit(id) {
+    var r = _fbRules.find(function(x){ return x.id === id; });
+    if (!r) return;
+    setEditMode('fallback', id, r);
+}
+
+// ── 페이지네이션 ───────────────────────────────────────────────
+function renderPager(containerId, current, totalPages, onClick) {
+    var el = document.getElementById(containerId);
+    if (totalPages <= 1) { el.innerHTML = ''; return; }
+    var html = '';
+    html += '<button class="pg-btn" ' + (current === 1 ? 'disabled' : '') + ' data-p="prev">‹</button>';
+    var s = Math.max(1, current - 2);
+    var e = Math.min(totalPages, current + 2);
+    if (s > 1) {
+        html += '<button class="pg-btn" data-p="1">1</button>';
+        if (s > 2) html += '<span class="pg-btn" style="border-color:transparent;cursor:default">…</span>';
+    }
+    for (var i = s; i <= e; i++) {
+        html += '<button class="pg-btn ' + (i === current ? 'active' : '') + '" data-p="' + i + '">' + i + '</button>';
+    }
+    if (e < totalPages) {
+        if (e < totalPages - 1) html += '<span class="pg-btn" style="border-color:transparent;cursor:default">…</span>';
+        html += '<button class="pg-btn" data-p="' + totalPages + '">' + totalPages + '</button>';
+    }
+    html += '<button class="pg-btn" ' + (current === totalPages ? 'disabled' : '') + ' data-p="next">›</button>';
+    el.innerHTML = html;
+    el.querySelectorAll('button[data-p]').forEach(function(b){
+        b.addEventListener('click', function(){
+            var p = this.dataset.p;
+            if (p === 'prev') p = Math.max(1, current - 1);
+            else if (p === 'next') p = Math.min(totalPages, current + 1);
+            else p = parseInt(p, 10);
+            onClick(p);
+        });
+    });
+}
+
+// ── 편집 모달 ───────────────────────────────────────────────────
+function setEditMode(kind, id, r) {
+    document.getElementById('editKind').value = kind;
+    document.getElementById('editId').value = id == null ? '' : id;
+    document.getElementById('editTitle').textContent = (id == null ? '새 ' : '') + (kind === 'library' ? '라이브러리 룰' : 'Fallback 룰');
+    document.getElementById('libForm').style.display = kind === 'library' ? '' : 'none';
+    document.getElementById('fbForm').style.display = kind === 'fallback' ? '' : 'none';
+    if (kind === 'library') {
+        document.getElementById('libPrefix').value = r.prefix || '';
+        document.getElementById('libName').value = r.libraryName || '';
+        document.getElementById('libCategory').value = r.category || '';
+    } else {
+        document.getElementById('fbName').value = r.name || '';
+        document.getElementById('fbCategory').value = r.category || '';
+        document.getElementById('fbPattern').value = r.patternRegex || '';
+    }
+    document.getElementById('editSeverity').value = r.severityHint || '';
+    document.getElementById('editPriority').value = r.priority || 1500;
+    document.getElementById('editExpl').value = r.explanationTpl || '';
+    document.getElementById('editAdvice').value = r.adviceTpl || '';
+    document.getElementById('editEnabled').checked = !!r.enabled;
+    document.getElementById('pvOut').innerHTML = '— 미리보기 실행 버튼을 클릭하세요 —';
+    document.getElementById('editModal').classList.add('open');
+}
+function closeEdit() { document.getElementById('editModal').classList.remove('open'); }
+function submitEdit() {
+    var kind = document.getElementById('editKind').value;
+    var id = document.getElementById('editId').value;
+    var sev = document.getElementById('editSeverity').value;
+    var body;
+    if (kind === 'library') {
+        body = {
+            prefix: document.getElementById('libPrefix').value.trim(),
+            libraryName: document.getElementById('libName').value.trim(),
+            category: document.getElementById('libCategory').value.trim()
+        };
+    } else {
+        body = {
+            name: document.getElementById('fbName').value.trim(),
+            category: document.getElementById('fbCategory').value.trim(),
+            patternRegex: document.getElementById('fbPattern').value
+        };
+    }
+    body.severityHint = sev || null;
+    body.priority = parseInt(document.getElementById('editPriority').value, 10) || 5000;
+    body.explanationTpl = document.getElementById('editExpl').value;
+    body.adviceTpl = document.getElementById('editAdvice').value;
+    body.enabled = document.getElementById('editEnabled').checked;
+    var url = '/api/admin/leak-rules/' + kind + (id ? '/' + id : '');
+    var method = id ? 'PUT' : 'POST';
+    var btn = document.getElementById('editSaveBtn');
+    btn.disabled = true; btn.textContent = '저장 중...';
+    fetch(url, { method: method, headers: authHeaders({'Content-Type':'application/json'}),
+        body: JSON.stringify(body)
+    }).then(function(r){ return r.json().then(function(d){ return {ok: r.ok, status: r.status, data: d}; }); })
+      .then(function(res){
+        btn.disabled = false; btn.textContent = '저장';
+        if (res.ok && res.data && res.data.success) {
+            closeEdit();
+            (kind === 'library' ? loadLibrary : loadFallback)();
+        } else {
+            alert((res.data && res.data.error) || '저장 실패 (HTTP ' + res.status + ')');
+        }
+    }).catch(function(e){
+        btn.disabled = false; btn.textContent = '저장';
+        alert('저장 실패: ' + e.message);
+    });
+}
+
+// ── 삭제 ────────────────────────────────────────────────────────
+var _pendingDelete = null;  // {kind, id}
+function openDelete(kind, id, name) {
+    _pendingDelete = { kind: kind, id: id };
+    document.getElementById('delTarget').textContent = (kind === 'library' ? '라이브러리' : 'Fallback') + ' · ' + name + ' (#' + id + ')';
+    var btn = document.getElementById('delConfirmBtn');
+    btn.disabled = false; btn.textContent = '삭제';
+    document.getElementById('deleteModal').classList.add('open');
+}
+function closeDelete() { _pendingDelete = null; document.getElementById('deleteModal').classList.remove('open'); }
+function submitDelete() {
+    if (!_pendingDelete) return;
+    var p = _pendingDelete;
+    var btn = document.getElementById('delConfirmBtn');
+    btn.disabled = true; btn.textContent = '삭제 중...';
+    fetch('/api/admin/leak-rules/' + p.kind + '/' + p.id, {
+        method: 'DELETE', headers: authHeaders({})
+    }).then(function(r){ return r.json().then(function(d){ return {ok: r.ok, data: d, status: r.status}; }); })
+      .then(function(res){
+        if (res.ok && res.data && res.data.success) {
+            closeDelete();
+            (p.kind === 'library' ? loadLibrary : loadFallback)();
+        } else {
+            btn.disabled = false; btn.textContent = '삭제';
+            alert((res.data && res.data.error) || '삭제 실패 (HTTP ' + res.status + ')');
+        }
+    }).catch(function(e){
+        btn.disabled = false; btn.textContent = '삭제';
+        alert('삭제 실패: ' + e.message);
+    });
+}
+
+// ── Export / Import ─────────────────────────────────────────────
+function exportRules(kind) {
+    // GET → Content-Disposition 으로 브라우저가 자동 다운로드. CSRF 불필요.
+    window.location.href = '/api/admin/leak-rules/' + kind + '/export';
+}
+
+var _importKind = null;   // 'library' | 'fallback'
+var _importRules = null;  // 파싱된 rules 배열
+
+function openImport(kind) {
+    _importKind = kind;
+    _importRules = null;
+    document.getElementById('impTitle').textContent =
+        (kind === 'library' ? '라이브러리' : 'Fallback') + ' 룰 가져오기';
+    document.getElementById('impFile').value = '';
+    document.getElementById('impFileInfo').textContent = '— 파일을 선택하세요 —';
+    document.getElementById('impFileInfo').style.color = '#6B7280';
+    document.querySelector('input[name=impMode][value=append]').checked = true;
+    document.getElementById('impSubmitBtn').disabled = true;
+    document.getElementById('impSubmitBtn').textContent = '가져오기';
+    var cur = (kind === 'library' ? _libRules.length : _fbRules.length);
+    document.getElementById('impCurCount').textContent = cur;
+    onImportModeChange();
+    document.getElementById('importModal').classList.add('open');
+}
+function closeImport() {
+    document.getElementById('importModal').classList.remove('open');
+    _importKind = null; _importRules = null;
+}
+function onImportModeChange() {
+    var mode = document.querySelector('input[name=impMode]:checked').value;
+    document.getElementById('impReplaceWarn').style.display = (mode === 'replace' ? '' : 'none');
+}
+function onImportFileChosen() {
+    var f = document.getElementById('impFile').files[0];
+    var info = document.getElementById('impFileInfo');
+    var btn = document.getElementById('impSubmitBtn');
+    _importRules = null;
+    btn.disabled = true;
+    if (!f) { info.textContent = '— 파일을 선택하세요 —'; info.style.color = '#6B7280'; return; }
+    if (f.size > 10 * 1024 * 1024) {
+        info.innerHTML = '⚠ 파일이 너무 큽니다 (>10MB)';
+        info.style.color = '#DC2626';
+        return;
+    }
+    var reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            var parsed = JSON.parse(e.target.result);
+            // wrapper({rules:[...]}) 또는 bare array 모두 수용
+            var rules = Array.isArray(parsed) ? parsed : parsed.rules;
+            if (!Array.isArray(rules)) throw new Error('rules 배열을 찾을 수 없습니다.');
+            // wrapper 의 type 이 다르면 사전 차단
+            if (!Array.isArray(parsed) && parsed.type && parsed.type !== _importKind) {
+                info.innerHTML = '⚠ 파일 type 이 \'' + escHtml(parsed.type)
+                    + '\' 입니다. 현재 탭(' + _importKind + ')과 일치하지 않습니다.';
+                info.style.color = '#DC2626';
+                return;
+            }
+            _importRules = rules;
+            var extra = (!Array.isArray(parsed) && parsed.exportedAt)
+                ? ' · 내보낸 시각: ' + escHtml(parsed.exportedAt) : '';
+            info.innerHTML = '✅ ' + rules.length + '건 인식됨' + extra;
+            info.style.color = '#065F46';
+            btn.disabled = false;
+        } catch (err) {
+            info.innerHTML = '⚠ JSON 파싱 실패: ' + escHtml(err.message);
+            info.style.color = '#DC2626';
+        }
+    };
+    reader.onerror = function() {
+        info.innerHTML = '⚠ 파일 읽기 실패';
+        info.style.color = '#DC2626';
+    };
+    reader.readAsText(f);
+}
+function submitImport() {
+    if (!_importRules) return;
+    var mode = document.querySelector('input[name=impMode]:checked').value;
+    var kind = _importKind;
+    // replace + 빈 파일 → 추가 확인
+    if (mode === 'replace' && _importRules.length === 0) {
+        if (!confirm('빈 파일로 전체 교체 시 모든 룰이 삭제됩니다. 정말 진행하시겠습니까?')) return;
+    }
+    // replace → 한 번 더 확인 (CLAUDE.md: 파괴적 변경은 확인 모달)
+    if (mode === 'replace') {
+        var cur = (kind === 'library' ? _libRules.length : _fbRules.length);
+        if (!confirm('전체 교체: 현재 ' + cur + '건 삭제 → ' + _importRules.length + '건 삽입. 계속할까요?')) return;
+    }
+    var btn = document.getElementById('impSubmitBtn');
+    btn.disabled = true; btn.textContent = '가져오는 중...';
+    fetch('/api/admin/leak-rules/' + kind + '/import', {
+        method: 'POST',
+        headers: authHeaders({'Content-Type':'application/json'}),
+        body: JSON.stringify({ mode: mode, type: kind, rules: _importRules })
+    }).then(function(r){ return r.json().then(function(d){ return {ok: r.ok, status: r.status, data: d}; }); })
+      .then(function(res){
+        btn.disabled = false; btn.textContent = '가져오기';
+        if (res.ok && res.data && res.data.success) {
+            var msg = '가져오기 완료\n· 모드: ' + (res.data.mode === 'replace' ? '전체 교체' : '추가')
+                    + (res.data.deleted > 0 ? '\n· 삭제: ' + res.data.deleted + '건' : '')
+                    + '\n· 추가: ' + res.data.inserted + '건';
+            alert(msg);
+            closeImport();
+            (kind === 'library' ? loadLibrary : loadFallback)();
+        } else {
+            var errMsg = (res.data && res.data.error) || '가져오기 실패 (HTTP ' + res.status + ')';
+            if (res.data && Array.isArray(res.data.errors) && res.data.errors.length > 0) {
+                var first = res.data.errors.slice(0, 5).map(function(e){
+                    return '  · #' + e.index + ': ' + e.error;
+                }).join('\n');
+                errMsg += '\n\n' + first;
+                if (res.data.errors.length > 5) errMsg += '\n  ... 외 ' + (res.data.errors.length - 5) + '건';
+            }
+            alert(errMsg);
+        }
+    }).catch(function(e){
+        btn.disabled = false; btn.textContent = '가져오기';
+        alert('가져오기 실패: ' + e.message);
+    });
+}
+
+// ── 미리보기 ────────────────────────────────────────────────────
+function runPreview() {
+    var body = {
+        explanationTpl: document.getElementById('editExpl').value,
+        adviceTpl: document.getElementById('editAdvice').value,
+        simpleClassName: document.getElementById('pvSimpleName').value,
+        instanceCount: parseInt(document.getElementById('pvInstanceCount').value, 10) || 0,
+        bytes: parseInt(document.getElementById('pvBytes').value, 10) || 0,
+        percentage: parseFloat(document.getElementById('pvPercentage').value) || 0,
+        accumulatorSimple: document.getElementById('pvAcc').value,
+        referencedFromClass: document.getElementById('pvRef').value
+    };
+    fetch('/api/admin/leak-rules/preview', {
+        method: 'POST', headers: authHeaders({'Content-Type':'application/json'}),
+        body: JSON.stringify(body)
+    }).then(function(r){ return r.json(); }).then(function(d){
+        var out = '<h4>📊 Explanation</h4><div style="margin-bottom:10px">' + escHtml(d.explanation || '—') + '</div>'
+                + '<h4>✅ Advice (HTML)</h4><div>' + (d.advice || '—') + '</div>'
+                + '<h4 style="margin-top:8px">Severity</h4><div>' + escHtml(d.severity || '—') + '</div>';
+        document.getElementById('pvOut').innerHTML = out;
+    }).catch(function(e){
+        document.getElementById('pvOut').innerHTML = '<span style="color:#DC2626">미리보기 실패: ' + escHtml(e.message) + '</span>';
+    });
+}
+
+// ── 초기 로드 ───────────────────────────────────────────────────
+loadLibrary();
+loadFallback();
+</script>
+</body>
+</html>
