@@ -6,10 +6,10 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17e">
     <title>Analysis Files — Heap Dump Analyzer</title>
     <style>
-        .container { max-width: 1280px; margin: 0 auto; padding: 68px 20px 40px;
+        .container { max-width: 1600px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
         .page-hdr { display: flex; align-items: center; justify-content: space-between;
@@ -29,6 +29,7 @@
                       background: #fff; cursor: pointer; color: #374151;
                       min-width: 140px; outline: none; }
         .filter-sel:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        /* KRDS 캘린더 스타일은 common.css 에서 제공 */
         .page-size-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
         .page-size-label { font-size: 12px; color: #6B7280; white-space: nowrap; }
         .page-size-select { padding: 8px 28px 8px 10px; font-size: 13px; border: 1px solid #E5E7EB;
@@ -61,26 +62,16 @@
         .sa-info strong { color: #2563EB; }
         .sa-btns { display: flex; gap: 8px; }
         .sa-btn { padding: 8px 16px; font-size: 13px; border-radius: 7px; border: none; cursor: pointer; font-weight: 500; }
-        .sa-btn-cancel { background: #F3F4F6; color: #374151; }
-        .sa-btn-cancel:hover { background: #E5E7EB; }
-        .sa-btn-del { background: #EF4444; color: #fff; }
-        .sa-btn-del:hover { background: #DC2626; }
+        /* .sa-btn-cancel / .sa-btn-del 색상은 common.css 에서 제공 */
         .sa-btn-del:disabled { background: #FCA5A5; cursor: not-allowed; }
         /* 정렬 가능 헤더 */
-        .ftable th.sortable { cursor: pointer; user-select: none; }
-        .ftable th.sortable:hover { background: #F3F4F6; }
+        /* .ftable sortable cursor/hover/sort-active 색상은 common.css 에서 제공 */
         .ftable th.sortable .sort-arrow { display: inline-block; margin-left: 4px; opacity: 0.3;
                                           font-size: 9px; vertical-align: middle; transition: opacity .15s; }
-        .ftable th.sortable.sort-active .sort-arrow { opacity: 1; color: #2563EB; }
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
-        .ftable { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .ftable thead { background: #F9FAFB; }
-        .ftable th { padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 600;
-                     color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
-                     border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
-        .ftable td { padding: 10px 12px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
-        .ftable tbody tr:last-child td { border-bottom: none; }
-        .ftable tbody tr:hover { background: #F9FAFB; }
+        /* .ftable base/thead/td 색상·hover 는 common.css 에서 제공. padding/font-size 만 인라인 */
+        .ftable th { padding: 10px 12px; font-size: 11px; }
+        .ftable td { padding: 10px 12px; }
         .td-seq { width: 48px; text-align: center; color: #9CA3AF; font-size: 12px;
                   font-variant-numeric: tabular-nums; }
 
@@ -147,12 +138,7 @@
         .modal-btns { display: flex; gap: 8px; justify-content: center; }
         .modal-btns button { padding: 7px 20px; border-radius: 7px; font-size: 13px;
                              border: none; cursor: pointer; font-weight: 500; }
-        .btn-cancel { background: #F3F4F6; color: #374151; }
-        .btn-cancel:hover { background: #E5E7EB; }
-        .btn-delete { background: #EF4444; color: #fff; }
-        .btn-delete:hover { background: #DC2626; }
-        .btn-download { background: #2563EB; color: #fff; }
-        .btn-download:hover { background: #1D4ED8; }
+        /* .btn-cancel / .btn-delete / .btn-download 색상은 common.css 에서 제공 */
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
         @media (min-width: 1024px) {
@@ -241,6 +227,31 @@
         </div>
     </div>
 
+    <!-- 기간선택 (달력 범위) — KRDS 캘린더 위젯 -->
+    <div class="date-filter-row" id="dateFilterRow">
+        <div class="form-tit"><label for="dateStart">기간선택</label></div>
+        <div class="form-conts calendar-conts">
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="dateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-start"></div>
+            </div>
+            <span class="calendar-input-sep">~</span>
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="dateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-end"></div>
+            </div>
+            <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()" title="기간 지우기">지우기</button>
+        </div>
+    </div>
+
     <div class="panel">
         <table class="ftable" id="filesTable">
             <thead>
@@ -292,8 +303,8 @@
                         <span th:unless="${h.hasAiInsight}" class="ai-none">—</span>
                     </td>
                     <td class="col-hide-sm">
-                        <span th:if="${h.serverName != null}" th:text="${h.serverName}" style="background:#EFF6FF;color:#2563EB;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600">server1</span>
-                        <span th:unless="${h.serverName != null}" style="color:#9CA3AF;font-size:11px">Local</span>
+                        <span th:if="${h.serverName != null}" th:text="${h.serverName}" style="background:#EFF6FF;color:#2563EB;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">server1</span>
+                        <span th:unless="${h.serverName != null}" style="color:#9CA3AF;font-size:12px">Local</span>
                     </td>
                     <td class="col-date">
                         <span class="fdate" th:text="${h.formattedDate}">03-18 10:00</span>
@@ -430,8 +441,7 @@ document.getElementById('btnConfirmDel').onclick = function() {
     if (_delTarget) {
         var f = document.createElement('form');
         f.method = 'POST'; f.action = '/delete/' + encodeURIComponent(_delTarget); f.style.display = 'none';
-        var ci = document.createElement('input'); ci.type = 'hidden'; ci.name = '_csrf';
-        ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(ci);
+        Common.appendCsrfToForm(f);
         document.body.appendChild(f); f.submit();
     }
 };
@@ -451,8 +461,7 @@ document.getElementById('btnConfirmPurge').onclick = function() {
     if (_purgeTarget) {
         var f = document.createElement('form');
         f.method = 'POST'; f.action = '/history/delete/' + encodeURIComponent(_purgeTarget); f.style.display = 'none';
-        var ci = document.createElement('input'); ci.type = 'hidden'; ci.name = '_csrf';
-        ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(ci);
+        Common.appendCsrfToForm(f);
         document.body.appendChild(f); f.submit();
     }
 };
@@ -575,9 +584,8 @@ function submitBulkDelete() {
     var btn = document.getElementById('bulkDelConfirmBtn');
     btn.disabled = true; btn.textContent = '삭제 중...';
     var headers = { 'Content-Type': 'application/json' };
-    var csrfMeta = document.querySelector('meta[name="_csrf"]');
-    var csrfHeaderMeta = document.querySelector('meta[name="_csrf_header"]');
-    if (csrfMeta && csrfHeaderMeta) headers[csrfHeaderMeta.content] = csrfMeta.content;
+    var csrfToken = Common.csrfToken();
+    if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;
 
     var tasks = [];
     if (liveFiles.length > 0) {
@@ -626,6 +634,19 @@ function initRows() {
         _showDeleted = localStorage.getItem('filesShowDeleted') === 'true';
         chk.checked = _showDeleted;
     }
+    var savedPeriod = localStorage.getItem('filesPeriod');
+    var periodSel = document.getElementById('periodFilter');
+    if (savedPeriod && periodSel) {
+        var opt = periodSel.querySelector('option[value="' + savedPeriod + '"]');
+        if (opt) periodSel.value = savedPeriod;
+    }
+    // 캘린더 위젯 부착 (localStorage 자동 복원 + onChange 콜백)
+    Calendar.attach({
+        startInputId: 'dateStart', endInputId: 'dateEnd',
+        startAreaId: 'calArea-start', endAreaId: 'calArea-end',
+        storageKey: 'files',
+        onChange: function() { applyFilter(); }
+    });
     sortRows();
     updateSortIndicators();
     applyFilter();
@@ -682,7 +703,6 @@ function applyFilter() {
     var server = serverSel ? serverSel.value : '';
     var period = periodSel ? periodSel.value : 'all';
 
-    // 기간 필터: epoch 임계값 산정 (period === 'all' 이면 0)
     var now = Date.now();
     var dayMs = 24 * 60 * 60 * 1000;
     var periodThreshold = 0;
@@ -693,29 +713,36 @@ function applyFilter() {
     else if (period === '30d') periodThreshold = now - 30 * dayMs;
     else if (period === '90d') periodThreshold = now - 90 * dayMs;
 
+    // 캘린더 범위
+    var range = Calendar.getRange();
+    var customStart = 0, customEnd = 0;
+    if (range.start) {
+        customStart = new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate()).getTime();
+    }
+    if (range.end) {
+        customEnd = new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate()).getTime() + dayMs;
+    }
+
     _filteredRows = _allRows.filter(function(el) {
         if (!_showDeleted && el.getAttribute('data-deleted') === 'true') return false;
 
-        // 검색어: 파일명 + 서버명 모두에서 매치
         if (q) {
             var name = (el.getAttribute('data-name') || '').toLowerCase();
             var srv  = (el.getAttribute('data-sort-server') || '').toLowerCase();
             if (name.indexOf(q) === -1 && srv.indexOf(q) === -1) return false;
         }
 
-        // 서버 필터
         if (server) {
             var rowServer = el.getAttribute('data-sort-server') || '';
             if (server === '__local__') {
-                if (rowServer !== '') return false;     // Local = 서버명 빈 값
+                if (rowServer !== '') return false;
             } else if (rowServer !== server) return false;
         }
 
-        // 기간 필터
-        if (periodThreshold > 0) {
-            var ts = parseFloat(el.getAttribute('data-sort-date')) || 0;
-            if (ts < periodThreshold) return false;
-        }
+        var ts = parseFloat(el.getAttribute('data-sort-date')) || 0;
+        if (periodThreshold > 0 && ts < periodThreshold) return false;
+        if (customStart > 0 && ts < customStart) return false;
+        if (customEnd > 0 && ts >= customEnd) return false;
 
         return true;
     });
@@ -724,7 +751,12 @@ function applyFilter() {
 }
 
 function onSearchInput() { applyFilter(); }
-function onFilterChange() { applyFilter(); }
+function onFilterChange() {
+    var periodSel = document.getElementById('periodFilter');
+    var period = periodSel ? periodSel.value : 'all';
+    localStorage.setItem('filesPeriod', period);
+    applyFilter();
+}
 function onToggleShowDeleted() {
     _showDeleted = document.getElementById('showDeletedChk').checked;
     localStorage.setItem('filesShowDeleted', String(_showDeleted));

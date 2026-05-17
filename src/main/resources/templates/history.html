@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-17e">
     <title>Analysis History — Heap Dump Analyzer</title>
     <script src="/js/lib/chart.umd.min.js"></script>
     <style>
@@ -59,17 +59,12 @@
         .sa-info strong { color: #2563EB; }
         .sa-btns { display: flex; gap: 8px; }
         .sa-btn { padding: 8px 16px; font-size: 13px; border-radius: 7px; border: none; cursor: pointer; font-weight: 500; }
-        .sa-btn-cancel { background: #F3F4F6; color: #374151; }
-        .sa-btn-cancel:hover { background: #E5E7EB; }
-        .sa-btn-del { background: #EF4444; color: #fff; }
-        .sa-btn-del:hover { background: #DC2626; }
+        /* .sa-btn-cancel / .sa-btn-del 색상은 common.css 에서 제공 */
         .sa-btn-del:disabled { background: #FCA5A5; cursor: not-allowed; }
         /* 정렬 가능 헤더 */
-        .htable th.sortable { cursor: pointer; user-select: none; }
-        .htable th.sortable:hover { background: #F3F4F6; }
+        /* .htable sortable cursor/hover/sort-active 색상은 common.css 에서 제공 */
         .htable th.sortable .sort-arrow { display: inline-block; margin-left: 4px; opacity: 0.3;
                                           font-size: 9px; vertical-align: middle; transition: opacity .15s; }
-        .htable th.sortable.sort-active .sort-arrow { opacity: 1; color: #2563EB; }
 
         /* Pagination */
         .pagination-bar { display: none; align-items: center; justify-content: space-between;
@@ -97,20 +92,16 @@
         .table-scroll::-webkit-scrollbar-track { background: #F9FAFB; }
         .table-scroll::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 4px; }
         .table-scroll::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
-        .htable { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 960px; }
-        .htable thead { background: #F9FAFB; }
-        .htable th { padding: 10px 12px; text-align: left; font-size: 11px; font-weight: 600;
-                     color: #6B7280; text-transform: uppercase; letter-spacing: .3px;
-                     border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
-        .htable td { padding: 10px 12px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
-        .htable tbody tr:last-child td { border-bottom: none; }
-        .htable tbody tr:hover { background: #F9FAFB; }
+        /* .htable base/thead/td 색상·hover 는 common.css 에서 제공. min-width + padding/font-size 만 인라인 */
+        .htable { min-width: 960px; }
+        .htable th { padding: 10px 12px; font-size: 11px; }
+        .htable td { padding: 10px 12px; }
         .td-seq { width: 48px; text-align: center; color: #9CA3AF; font-size: 12px;
                   font-variant-numeric: tabular-nums; }
         .td-result { width: 84px; white-space: nowrap; }
         .hi-name { font-weight: 500; max-width: 480px; overflow: hidden; text-overflow: ellipsis;
                    white-space: nowrap; display: inline-block; text-decoration: none;
-                   font-family: 'JetBrains Mono', Consolas, monospace; font-size: 12px; }
+                   font-family: 'JetBrains Mono', Consolas, monospace; font-size: 13px; }
         .hi-name-link { color: #2563EB; }
         .hi-name-link:hover { text-decoration: underline; }
         .hi-name-err { color: #EF4444; }
@@ -131,13 +122,8 @@
         .hi-del-btn:hover { border-color: #FCA5A5; background: #FEF2F2; }
         .hi-del-btn:hover svg { stroke: #EF4444; }
 
-        /* 삭제 확인 모달 */
-        .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
-                    background: rgba(0,0,0,.45); align-items: center; justify-content: center; }
-        .modal-ov.open { display: flex; }
-        .modal-box { background: #fff; border-radius: 12px; padding: 24px; width: 90%; max-width: 420px;
-                     box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease; }
-        @keyframes modalIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        /* 삭제 확인 모달 — .modal-ov / @keyframes modalIn / .modal-box base 는 common.css 에서 제공 */
+        .modal-box { width: 90%; max-width: 420px; animation: modalIn .2s ease; }
         .modal-ttl { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
         .modal-msg { font-size: 13px; color: #6B7280; margin-bottom: 6px; line-height: 1.6; }
         .modal-fname { font-size: 12px; color: #1F2937; background: #F3F4F6; padding: 6px 10px;
@@ -153,10 +139,7 @@
         .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
         .modal-btns button { font-size: 13px; padding: 7px 16px; border-radius: 7px; border: none;
                              cursor: pointer; font-weight: 500; }
-        .mbtn-cancel { background: #F3F4F6; color: #374151; }
-        .mbtn-cancel:hover { background: #E5E7EB; }
-        .mbtn-del { background: #EF4444; color: #fff; }
-        .mbtn-del:hover { background: #DC2626; }
+        /* .mbtn-cancel / .mbtn-del 색상은 common.css 에서 제공 */
 
         @media (min-width: 1024px) {
             .htable { font-size: 14px; }
@@ -204,7 +187,7 @@
             margin-bottom: 10px;
         }
         .det-recent-ttl { font-size: 15px; font-weight: 700; color: #1F2937; }
-        .det-recent-cnt { font-size: 12px; color: #9CA3AF; }
+        .det-recent-cnt { font-size: 14px; color: #1F2937; font-weight: 600; }
         .det-recent-list {
             flex: 1; min-height: 0;
             max-height: 540px; overflow-y: auto;
@@ -443,7 +426,7 @@
 
     <div class="table-toolbar">
         <input type="text" class="search-bar" id="searchInput"
-               placeholder="분석명으로 검색…" oninput="onSearchInput()">
+               placeholder="분석명·서버명으로 검색…" oninput="onSearchInput()">
         <button type="button" class="select-toggle-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="다중 선택 모드">
             <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
             <span id="selectModeBtnLabel">선택</span>
@@ -460,6 +443,31 @@
                 <option value="50">50</option>
                 <option value="100">100</option>
             </select>
+        </div>
+    </div>
+
+    <!-- 기간선택 (KRDS 캘린더) -->
+    <div class="date-filter-row" id="dateFilterRow">
+        <div class="form-tit"><label for="dateStart">기간선택</label></div>
+        <div class="form-conts calendar-conts">
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="dateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-start"></div>
+            </div>
+            <span class="calendar-input-sep">~</span>
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="dateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-end"></div>
+            </div>
+            <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()" title="기간 지우기">지우기</button>
         </div>
     </div>
 
@@ -516,8 +524,8 @@
                     <td class="td-meta col-hide-sm" th:text="${h.suspectCount}">0</td>
                     <td class="td-meta" th:text="${h.formattedSize}">-</td>
                     <td class="td-meta col-hide-sm">
-                        <span th:if="${h.serverName != null}" th:text="${h.serverName}" style="background:#EFF6FF;color:#2563EB;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600">server1</span>
-                        <span th:unless="${h.serverName != null}" style="color:#9CA3AF;font-size:11px">Local</span>
+                        <span th:if="${h.serverName != null}" th:text="${h.serverName}" style="background:#EFF6FF;color:#2563EB;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">server1</span>
+                        <span th:unless="${h.serverName != null}" style="color:#9CA3AF;font-size:12px">Local</span>
                     </td>
                     <td class="td-meta" th:text="${h.formattedDate}">03-18</td>
                     <td>
@@ -674,8 +682,7 @@ function submitDelete() {
     if (!_delFilename) return;
     var f = document.createElement('form');
     f.method = 'POST'; f.action = '/history/delete/' + encodeURIComponent(_delFilename); f.style.display = 'none';
-    var ci = document.createElement('input'); ci.type = 'hidden'; ci.name = '_csrf';
-    ci.value = document.querySelector('meta[name="_csrf"]').content; f.appendChild(ci);
+    Common.appendCsrfToForm(f);
     var chk = document.getElementById('deleteHeapDumpChk');
     if (chk.checked) {
         var input = document.createElement('input');
@@ -781,9 +788,8 @@ function submitBulkDelete() {
     var btn = document.getElementById('bulkDelConfirmBtn');
     btn.disabled = true; btn.textContent = '삭제 중...';
     var headers = { 'Content-Type': 'application/json' };
-    var csrfMeta = document.querySelector('meta[name="_csrf"]');
-    var csrfHeaderMeta = document.querySelector('meta[name="_csrf_header"]');
-    if (csrfMeta && csrfHeaderMeta) headers[csrfHeaderMeta.content] = csrfMeta.content;
+    var csrfToken = Common.csrfToken();
+    if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;
     fetch('/api/history/bulk-delete', {
         method: 'POST', headers: headers,
         body: JSON.stringify({ filenames: sel, deleteHeapDump: deleteHeapDump })
@@ -832,6 +838,12 @@ function initRows() {
         _showDeleted = localStorage.getItem('historyShowDeleted') === 'true';
         chk.checked = _showDeleted;
     }
+    Calendar.attach({
+        startInputId: 'dateStart', endInputId: 'dateEnd',
+        startAreaId: 'calArea-start', endAreaId: 'calArea-end',
+        storageKey: 'history',
+        onChange: function() { applyFilter(); }
+    });
     sortRows();          // 기본 정렬 적용
     updateSortIndicators();
     applyFilter();
@@ -883,10 +895,23 @@ function updateSortIndicators() {
 
 function applyFilter() {
     var q = (document.getElementById('searchInput').value || '').toLowerCase();
+    // 캘린더 범위 (시작/종료일 epoch ms)
+    var range = Calendar.getRange();
+    var dayMs = 24 * 60 * 60 * 1000;
+    var customStart = range.start ? new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate()).getTime() : 0;
+    var customEnd = range.end ? new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate()).getTime() + dayMs : 0;
+
     _filteredRows = _allRows.filter(function(el) {
         // 관리자: 토글 off일 때 deleted 행 제외 / 비관리자: data-deleted 속성 자체가 없거나 false (서버 측 필터)
         if (!_showDeleted && el.getAttribute('data-deleted') === 'true') return false;
-        if (q && (el.getAttribute('data-name') || '').toLowerCase().indexOf(q) === -1) return false;
+        if (q) {
+            var name = (el.getAttribute('data-name')        || '').toLowerCase();
+            var srv  = (el.getAttribute('data-sort-server') || '').toLowerCase();
+            if (name.indexOf(q) === -1 && srv.indexOf(q) === -1) return false;
+        }
+        var ts = parseFloat(el.getAttribute('data-sort-date')) || 0;
+        if (customStart > 0 && ts < customStart) return false;
+        if (customEnd > 0 && ts >= customEnd) return false;
         return true;
     });
     _currentPage = 1;
@@ -1131,12 +1156,7 @@ initRows();
     }
 
     function fetchDetect() {
-        fetch('/api/history/detections?days=' + _detDays + '&groupBy=' + _detGroup,
-              { credentials: 'same-origin' })
-            .then(function(r) {
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.json();
-            })
+        Common.fetchJSON('/api/history/detections?days=' + _detDays + '&groupBy=' + _detGroup)
             .then(function(d) { renderChart(d); })
             .catch(function(e) { console.error('detect fetch failed', e); });
     }
@@ -1198,11 +1218,8 @@ initRows();
     };
 
     // ── 드릴다운 모달 ────────────────────────────────────
-    function escapeHtml(s) {
-        return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
-            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-        });
-    }
+    // escapeHtml → Common.escHtml (common.js). 동일 5 문자 escape 라 동작 100% 일치.
+    var escapeHtml = Common.escHtml;
 
     function openDetDayModal(date) {
         document.getElementById('detDayModalDate').textContent = date;
@@ -1210,13 +1227,8 @@ initRows();
         document.getElementById('detDayList').innerHTML = '';
         document.getElementById('detDayModal').classList.add('open');
 
-        fetch('/api/history/detections/day?date=' + encodeURIComponent(date)
-              + '&groupBy=' + encodeURIComponent(_detGroup),
-              { credentials: 'same-origin' })
-            .then(function(r) {
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                return r.json();
-            })
+        Common.fetchJSON('/api/history/detections/day?date=' + encodeURIComponent(date)
+              + '&groupBy=' + encodeURIComponent(_detGroup))
             .then(function(d) { renderDetDayList(d); })
             .catch(function(e) {
                 document.getElementById('detDayModalSummary').textContent = '로드 실패: ' + e.message;
