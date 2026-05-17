@@ -69,26 +69,43 @@ public class AiChatController {
     public ResponseEntity<List<Map<String, Object>>> listSessions(
             Authentication authentication,
             @RequestParam(required = false) String filename,
-            @RequestParam(required = false) String user) {
+            @RequestParam(required = false) String user,
+            @RequestParam(required = false) String q) {
         String currentUser = authentication.getName();
         boolean admin = isAdmin(authentication);
 
+        // 파라미터 정규화: trim + empty → null. 분기 가독성 향상 + 검색 경로와 정책 통일.
+        String qNorm = (q == null) ? null : q.trim();
+        if (qNorm != null && qNorm.isEmpty()) qNorm = null;
+        String filenameNorm = (filename == null || filename.isEmpty()) ? null : filename;
+        String userNorm     = (user     == null || user.isEmpty())     ? null : user;
+        // 비-ADMIN 은 user 파라미터를 무시하고 본인 username 강제 (기존 정책 유지)
+        String effectiveUsername = admin ? userNorm : currentUser;
+
         List<AiChatSession> sessions;
-        if (admin) {
+        if (qNorm != null) {
+            // LIKE wildcard escape: '|' 가 ESCAPE 문자 (Repository @Query 와 동일). 먼저 '|' 자체를 이중화한 뒤 %/_ escape.
+            String escaped = qNorm.replace("|", "||")
+                                  .replace("%", "|%")
+                                  .replace("_", "|_");
+            sessions = sessionRepo.searchSessions("%" + escaped + "%", effectiveUsername, filenameNorm);
+            logger.debug("[AI-Chat] search q='{}' user={} file={} hits={}",
+                qNorm, effectiveUsername, filenameNorm, sessions.size());
+        } else if (admin) {
             // ADMIN: user 필터 우선, 그 다음 filename, 둘 다 있으면 username + filename
-            if (user != null && !user.isEmpty() && filename != null && !filename.isEmpty()) {
-                sessions = sessionRepo.findByUsernameAndFilenameOrderByUpdatedAtDesc(user, filename);
-            } else if (user != null && !user.isEmpty()) {
-                sessions = sessionRepo.findByUsernameOrderByUpdatedAtDesc(user);
-            } else if (filename != null && !filename.isEmpty()) {
-                sessions = sessionRepo.findByFilenameOrderByUpdatedAtDesc(filename);
+            if (effectiveUsername != null && filenameNorm != null) {
+                sessions = sessionRepo.findByUsernameAndFilenameOrderByUpdatedAtDesc(effectiveUsername, filenameNorm);
+            } else if (effectiveUsername != null) {
+                sessions = sessionRepo.findByUsernameOrderByUpdatedAtDesc(effectiveUsername);
+            } else if (filenameNorm != null) {
+                sessions = sessionRepo.findByFilenameOrderByUpdatedAtDesc(filenameNorm);
             } else {
                 sessions = sessionRepo.findAllByOrderByUpdatedAtDesc();
             }
         } else {
             // USER: 본인 것만
-            if (filename != null && !filename.isEmpty()) {
-                sessions = sessionRepo.findByUsernameAndFilenameOrderByUpdatedAtDesc(currentUser, filename);
+            if (filenameNorm != null) {
+                sessions = sessionRepo.findByUsernameAndFilenameOrderByUpdatedAtDesc(currentUser, filenameNorm);
             } else {
                 sessions = sessionRepo.findByUsernameOrderByUpdatedAtDesc(currentUser);
             }
