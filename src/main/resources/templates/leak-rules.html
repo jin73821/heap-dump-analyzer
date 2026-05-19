@@ -168,9 +168,101 @@
         .preview-block .pb-out h4 { font-size: 11px; color: #6B7280; margin-bottom: 4px;
                                     text-transform: uppercase; }
 
+        /* ── 테이블 가로 스크롤 wrapper (태블릿) ─────────────── */
+        .rule-table-wrap { width: 100%; }
+
         @media (max-width: 900px) {
             .topbar { margin-left: 0; }
             .container { padding-left: 20px; }
+            .rule-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch;
+                               border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.04); background: #fff; }
+            .rule-table { min-width: 760px; box-shadow: none; border-radius: 0; }
+        }
+
+        /* ── ≤640px: 카드 레이아웃 + 콤팩트 UI ───────────────── */
+        @media (max-width: 640px) {
+            .container { padding: 16px 14px 32px; }
+            .topbar { padding: 0 14px; }
+            .page-hdr { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+            .page-stats { gap: 12px; flex-wrap: wrap; }
+            .tabs { margin-bottom: 14px; gap: 0; }
+            .tab-btn { flex: 1 1 0; padding: 11px 10px; font-size: 13px; text-align: center; }
+
+            /* 툴바: 검색 풀폭 + 버튼 3개 균등 */
+            .toolbar { gap: 8px; }
+            .toolbar .search { flex: 1 1 100%; padding: 11px 13px; font-size: 14px; }
+            .toolbar .btn-primary,
+            .toolbar .btn-secondary { flex: 1 1 0; min-width: 0; padding: 11px 6px;
+                                       font-size: 12px; white-space: nowrap;
+                                       overflow: hidden; text-overflow: ellipsis; }
+
+            /* 테이블 → 카드 레이아웃 */
+            .rule-table-wrap { overflow-x: visible; border-radius: 0;
+                               box-shadow: none; background: transparent; }
+            .rule-table { display: block; min-width: 0; background: transparent;
+                          box-shadow: none; border-radius: 0; }
+            .rule-table thead { display: none; }
+            .rule-table tbody { display: block; }
+            .rule-table tr {
+                display: block; background: #fff; border: 1px solid #E5E7EB;
+                border-radius: 10px; padding: 10px 14px; margin-bottom: 10px;
+                box-shadow: 0 1px 2px rgba(0,0,0,.04);
+            }
+            .rule-table tr:hover { background: #fff; }
+            .rule-table td {
+                display: flex; align-items: center; justify-content: space-between;
+                gap: 12px; padding: 7px 0; border-bottom: 1px dashed #F3F4F6;
+                width: auto !important; white-space: normal !important; text-align: right;
+            }
+            .rule-table td:last-child { border-bottom: none; }
+            .rule-table td::before {
+                content: attr(data-label);
+                font-size: 10px; font-weight: 700; color: #9CA3AF;
+                text-transform: uppercase; letter-spacing: .04em;
+                flex-shrink: 0; min-width: 64px; text-align: left;
+            }
+            /* # / 우선 컬럼: 카드 헤더로 변환 */
+            .rule-table .col-id {
+                padding: 0 0 8px 0; border-bottom: 1px solid #F3F4F6;
+                margin-bottom: 4px; font-size: 11px;
+            }
+            .rule-table .col-id::before { color: #6B7280; }
+            .rule-table .col-prio { color: #6B7280; }
+
+            /* prefix / pattern: 줄바꿈 허용, 우측 정렬 해제 */
+            .rule-table .rule-prefix { word-break: break-all; text-align: right;
+                                        max-width: 70%; display: inline-block; }
+            .rule-table .rule-pattern {
+                white-space: normal !important; overflow: visible !important;
+                text-overflow: clip !important; word-break: break-all;
+                max-width: 70%; display: inline-block; text-align: right;
+            }
+
+            /* 사용 / 작업 행: 라벨 숨김 + 액션 풀폭 */
+            .rule-table .col-enabled { justify-content: space-between; }
+            .rule-table .col-actions {
+                justify-content: flex-end; padding-top: 10px;
+                border-top: 1px solid #F3F4F6; border-bottom: none;
+                margin-top: 4px;
+            }
+            .rule-table .col-actions::before { display: none; }
+            .rule-table .row-btn { padding: 8px 14px; font-size: 12px; margin-left: 6px; }
+
+            .empty-msg { padding: 24px 16px; }
+
+            /* 페이저: 정보 위, 버튼 가운데 */
+            .pager { flex-direction: column; align-items: stretch; gap: 10px; }
+            .pager > div:first-child { text-align: center; }
+            .pg-list { justify-content: center; flex-wrap: wrap; }
+
+            /* 모달: bottom sheet 스타일 */
+            .modal-ov { padding: 0; align-items: flex-end; }
+            .modal-box { width: 100%; max-width: 100%; max-height: 92vh;
+                         padding: 18px 16px 20px; border-radius: 14px 14px 0 0; }
+            .modal-ttl { font-size: 15px; }
+            .modal-btns { gap: 8px; }
+            .modal-btns button { flex: 1 1 0; padding: 11px 10px; font-size: 13px; }
+            .preview-block { padding: 10px; }
         }
     </style>
     <script>
@@ -187,6 +279,7 @@
 
 <div class="topbar">
     <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
         <div class="topbar-logo"><svg viewBox="0 0 24 24"><path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/></svg></div>
         <div class="topbar-title">Leak Rules</div>
     </div>
@@ -212,24 +305,26 @@
         <div class="toolbar">
             <input type="text" class="search" id="libSearch" placeholder="prefix · 이름 · 카테고리 검색…" oninput="renderLibrary()">
             <button class="btn-primary" onclick="openLibCreate()">+ 새 라이브러리 룰</button>
-            <button class="btn-secondary" onclick="exportRules('library')" title="라이브러리 룰을 JSON 파일로 내보내기">⬇ Export</button>
+            <button class="btn-secondary" onclick="openExport('library')" title="라이브러리 룰을 JSON 파일로 내보내기">⬇ Export</button>
             <button class="btn-secondary" onclick="openImport('library')" title="JSON 파일에서 라이브러리 룰 가져오기">⬆ Import</button>
         </div>
-        <table class="rule-table" id="libTable">
-            <thead>
-                <tr>
-                    <th class="col-id">#</th>
-                    <th class="col-prio">우선</th>
-                    <th>Prefix</th>
-                    <th>Library</th>
-                    <th>Category</th>
-                    <th class="col-sev">Severity</th>
-                    <th class="col-enabled">사용</th>
-                    <th class="col-actions">작업</th>
-                </tr>
-            </thead>
-            <tbody id="libBody"></tbody>
-        </table>
+        <div class="rule-table-wrap">
+            <table class="rule-table" id="libTable">
+                <thead>
+                    <tr>
+                        <th class="col-id">#</th>
+                        <th class="col-prio">우선</th>
+                        <th>Prefix</th>
+                        <th>Library</th>
+                        <th>Category</th>
+                        <th class="col-sev">Severity</th>
+                        <th class="col-enabled">사용</th>
+                        <th class="col-actions">작업</th>
+                    </tr>
+                </thead>
+                <tbody id="libBody"></tbody>
+            </table>
+        </div>
         <div class="pager">
             <div id="libPgInfo">-</div>
             <div class="pg-list" id="libPgList"></div>
@@ -241,24 +336,26 @@
         <div class="toolbar">
             <input type="text" class="search" id="fbSearch" placeholder="이름 · 카테고리 · 정규식 검색…" oninput="renderFallback()">
             <button class="btn-primary" onclick="openFbCreate()">+ 새 Fallback 룰</button>
-            <button class="btn-secondary" onclick="exportRules('fallback')" title="Fallback 룰을 JSON 파일로 내보내기">⬇ Export</button>
+            <button class="btn-secondary" onclick="openExport('fallback')" title="Fallback 룰을 JSON 파일로 내보내기">⬇ Export</button>
             <button class="btn-secondary" onclick="openImport('fallback')" title="JSON 파일에서 Fallback 룰 가져오기">⬆ Import</button>
         </div>
-        <table class="rule-table" id="fbTable">
-            <thead>
-                <tr>
-                    <th class="col-id">#</th>
-                    <th class="col-prio">우선</th>
-                    <th>Name</th>
-                    <th>Category</th>
-                    <th>Pattern</th>
-                    <th class="col-sev">Severity</th>
-                    <th class="col-enabled">사용</th>
-                    <th class="col-actions">작업</th>
-                </tr>
-            </thead>
-            <tbody id="fbBody"></tbody>
-        </table>
+        <div class="rule-table-wrap">
+            <table class="rule-table" id="fbTable">
+                <thead>
+                    <tr>
+                        <th class="col-id">#</th>
+                        <th class="col-prio">우선</th>
+                        <th>Name</th>
+                        <th>Category</th>
+                        <th>Pattern</th>
+                        <th class="col-sev">Severity</th>
+                        <th class="col-enabled">사용</th>
+                        <th class="col-actions">작업</th>
+                    </tr>
+                </thead>
+                <tbody id="fbBody"></tbody>
+            </table>
+        </div>
         <div class="pager">
             <div id="fbPgInfo">-</div>
             <div class="pg-list" id="fbPgList"></div>
@@ -380,6 +477,26 @@
     </div>
 </div>
 
+<!-- Export 모달 -->
+<div class="modal-ov" id="exportModal" onclick="if(event.target===this)closeExport()">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:480px">
+        <div class="modal-ttl" id="expTitle">룰 내보내기</div>
+        <div class="modal-msg" id="expMsg">현재 룰을 JSON 파일로 다운로드합니다.</div>
+        <div class="modal-msg" style="font-size:12px;background:#F3F4F6;padding:10px 12px;border-radius:6px">
+            <div style="margin-bottom:4px">· 종류: <strong id="expKindLabel">—</strong></div>
+            <div style="margin-bottom:4px">· 룰 개수: <strong id="expCount">—</strong>건</div>
+            <div>· 파일명: <code style="font-size:11px" id="expFilename">—</code></div>
+        </div>
+        <div class="modal-msg" style="font-size:11px;color:#9CA3AF">
+            JSON 포맷 <code>{version, type, exportedAt, count, rules}</code> wrapper 로 내보내며, Import 모달로 다른 환경에 그대로 적용할 수 있습니다.
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeExport()">취소</button>
+            <button class="mbtn-confirm" id="expConfirmBtn" onclick="confirmExport()">⬇ 다운로드</button>
+        </div>
+    </div>
+</div>
+
 <!-- Import 모달 -->
 <div class="modal-ov" id="importModal" onclick="if(event.target===this)closeImport()">
     <div class="modal-box" role="dialog" aria-modal="true" style="max-width:560px">
@@ -474,15 +591,15 @@ function renderLibrary() {
     } else {
         body.innerHTML = slice.map(function(r){
             return '<tr data-id="' + r.id + '">' +
-                '<td class="col-id">' + r.id + '</td>' +
-                '<td class="col-prio">' + r.priority + '</td>' +
-                '<td><span class="rule-prefix">' + escHtml(r.prefix) + '</span></td>' +
-                '<td class="rule-name">' + escHtml(r.libraryName) + '</td>' +
-                '<td class="rule-category">' + escHtml(r.category) + '</td>' +
-                '<td>' + sevChip(r.severityHint) + '</td>' +
-                '<td class="col-enabled"><label class="toggle"><input type="checkbox"' +
+                '<td class="col-id" data-label="#">' + r.id + '</td>' +
+                '<td class="col-prio" data-label="우선">' + r.priority + '</td>' +
+                '<td data-label="Prefix"><span class="rule-prefix">' + escHtml(r.prefix) + '</span></td>' +
+                '<td class="rule-name" data-label="Library">' + escHtml(r.libraryName) + '</td>' +
+                '<td class="rule-category" data-label="Category">' + escHtml(r.category) + '</td>' +
+                '<td data-label="Severity">' + sevChip(r.severityHint) + '</td>' +
+                '<td class="col-enabled" data-label="사용"><label class="toggle"><input type="checkbox"' +
                     (r.enabled ? ' checked' : '') + ' onchange="toggleLib(' + r.id + ', this.checked)"><span class="slider"></span></label></td>' +
-                '<td class="col-actions">' +
+                '<td class="col-actions" data-label="작업">' +
                     '<button class="row-btn edit" onclick="openLibEdit(' + r.id + ')">편집</button>' +
                     '<button class="row-btn del" onclick="openDelete(\'library\',' + r.id + ',\'' + escHtml(r.libraryName) + '\')">삭제</button>' +
                 '</td>' +
@@ -551,15 +668,15 @@ function renderFallback() {
     } else {
         body.innerHTML = slice.map(function(r){
             return '<tr data-id="' + r.id + '">' +
-                '<td class="col-id">' + r.id + '</td>' +
-                '<td class="col-prio">' + r.priority + '</td>' +
-                '<td class="rule-name">' + escHtml(r.name) + '</td>' +
-                '<td class="rule-category">' + escHtml(r.category) + '</td>' +
-                '<td><span class="rule-pattern" title="' + escHtml(r.patternRegex) + '">' + escHtml(r.patternRegex) + '</span></td>' +
-                '<td>' + sevChip(r.severityHint) + '</td>' +
-                '<td class="col-enabled"><label class="toggle"><input type="checkbox"' +
+                '<td class="col-id" data-label="#">' + r.id + '</td>' +
+                '<td class="col-prio" data-label="우선">' + r.priority + '</td>' +
+                '<td class="rule-name" data-label="Name">' + escHtml(r.name) + '</td>' +
+                '<td class="rule-category" data-label="Category">' + escHtml(r.category) + '</td>' +
+                '<td data-label="Pattern"><span class="rule-pattern" title="' + escHtml(r.patternRegex) + '">' + escHtml(r.patternRegex) + '</span></td>' +
+                '<td data-label="Severity">' + sevChip(r.severityHint) + '</td>' +
+                '<td class="col-enabled" data-label="사용"><label class="toggle"><input type="checkbox"' +
                     (r.enabled ? ' checked' : '') + ' onchange="toggleFb(' + r.id + ', this.checked)"><span class="slider"></span></label></td>' +
-                '<td class="col-actions">' +
+                '<td class="col-actions" data-label="작업">' +
                     '<button class="row-btn edit" onclick="openFbEdit(' + r.id + ')">편집</button>' +
                     '<button class="row-btn del" onclick="openDelete(\'fallback\',' + r.id + ',\'' + escHtml(r.name) + '\')">삭제</button>' +
                 '</td>' +
@@ -729,9 +846,37 @@ function submitDelete() {
 }
 
 // ── Export / Import ─────────────────────────────────────────────
-function exportRules(kind) {
+var _exportKind = null;
+
+function openExport(kind) {
+    _exportKind = kind;
+    var count = (kind === 'library' ? _libRules.length : _fbRules.length);
+    var label = (kind === 'library' ? '라이브러리 (prefix)' : 'Fallback (정규식)');
+    var ts = new Date();
+    var pad = function(n) { return n < 10 ? '0' + n : '' + n; };
+    var fname = 'leak-' + kind + '-rules-'
+              + ts.getFullYear() + pad(ts.getMonth()+1) + pad(ts.getDate())
+              + '-' + pad(ts.getHours()) + pad(ts.getMinutes()) + pad(ts.getSeconds())
+              + '.json';
+    document.getElementById('expTitle').textContent = (kind === 'library' ? '라이브러리' : 'Fallback') + ' 룰 내보내기';
+    document.getElementById('expKindLabel').textContent = label;
+    document.getElementById('expCount').textContent = count;
+    document.getElementById('expFilename').textContent = fname;
+    var btn = document.getElementById('expConfirmBtn');
+    btn.disabled = (count === 0);
+    btn.textContent = (count === 0 ? '내보낼 룰 없음' : '⬇ 다운로드');
+    document.getElementById('exportModal').classList.add('open');
+}
+function closeExport() {
+    document.getElementById('exportModal').classList.remove('open');
+    _exportKind = null;
+}
+function confirmExport() {
+    if (!_exportKind) return;
     // GET → Content-Disposition 으로 브라우저가 자동 다운로드. CSRF 불필요.
-    window.location.href = '/api/admin/leak-rules/' + kind + '/export';
+    // 파일명은 서버가 정하므로 클라이언트 미리보기와 초 단위 다를 수 있음.
+    window.location.href = '/api/admin/leak-rules/' + _exportKind + '/export';
+    closeExport();
 }
 
 var _importKind = null;   // 'library' | 'fallback'

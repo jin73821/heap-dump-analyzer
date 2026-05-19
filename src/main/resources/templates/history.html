@@ -23,8 +23,13 @@
                       border-radius: 8px; font-size: 13px;
                       outline: none; background: #fff; }
         .search-bar:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
-        .table-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-        .table-toolbar .search-bar { flex: 1; }
+        .table-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+        .table-toolbar .search-bar { flex: 1 1 220px; min-width: 200px; }
+        .filter-sel { padding: 8px 28px 8px 10px; font-size: 13px;
+                      border: 1px solid #E5E7EB; border-radius: 8px;
+                      background: #fff; cursor: pointer; color: #374151;
+                      min-width: 140px; outline: none; }
+        .filter-sel:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
         .page-size-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
         .page-size-label { font-size: 12px; color: #6B7280; white-space: nowrap; }
         .page-size-select { padding: 8px 28px 8px 10px; font-size: 13px; border: 1px solid #E5E7EB;
@@ -427,6 +432,11 @@
     <div class="table-toolbar">
         <input type="text" class="search-bar" id="searchInput"
                placeholder="분석명·서버명으로 검색…" oninput="onSearchInput()">
+        <select class="filter-sel" id="statusFilter" onchange="onFilterChange()" title="분석 상태 필터">
+            <option value="all" selected>상태: 전체</option>
+            <option value="SUCCESS">분석완료</option>
+            <option value="ERROR">분석실패</option>
+        </select>
         <button type="button" class="select-toggle-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="다중 선택 모드">
             <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
             <span id="selectModeBtnLabel">선택</span>
@@ -838,6 +848,12 @@ function initRows() {
         _showDeleted = localStorage.getItem('historyShowDeleted') === 'true';
         chk.checked = _showDeleted;
     }
+    var savedStatus = localStorage.getItem('historyStatus');
+    var statusSel = document.getElementById('statusFilter');
+    if (savedStatus && statusSel) {
+        var sopt = statusSel.querySelector('option[value="' + savedStatus + '"]');
+        if (sopt) statusSel.value = savedStatus;
+    }
     Calendar.attach({
         startInputId: 'dateStart', endInputId: 'dateEnd',
         startAreaId: 'calArea-start', endAreaId: 'calArea-end',
@@ -895,6 +911,8 @@ function updateSortIndicators() {
 
 function applyFilter() {
     var q = (document.getElementById('searchInput').value || '').toLowerCase();
+    var statusSel = document.getElementById('statusFilter');
+    var status = statusSel ? statusSel.value : 'all';
     // 캘린더 범위 (시작/종료일 epoch ms)
     var range = Calendar.getRange();
     var dayMs = 24 * 60 * 60 * 1000;
@@ -909,6 +927,10 @@ function applyFilter() {
             var srv  = (el.getAttribute('data-sort-server') || '').toLowerCase();
             if (name.indexOf(q) === -1 && srv.indexOf(q) === -1) return false;
         }
+        if (status && status !== 'all') {
+            var rowStatus = el.getAttribute('data-sort-status') || '';
+            if (rowStatus !== status) return false;
+        }
         var ts = parseFloat(el.getAttribute('data-sort-date')) || 0;
         if (customStart > 0 && ts < customStart) return false;
         if (customEnd > 0 && ts >= customEnd) return false;
@@ -919,6 +941,12 @@ function applyFilter() {
 }
 
 function onSearchInput() { applyFilter(); }
+function onFilterChange() {
+    var statusSel = document.getElementById('statusFilter');
+    var status = statusSel ? statusSel.value : 'all';
+    localStorage.setItem('historyStatus', status);
+    applyFilter();
+}
 function onToggleShowDeleted() {
     _showDeleted = document.getElementById('showDeletedChk').checked;
     localStorage.setItem('historyShowDeleted', String(_showDeleted));

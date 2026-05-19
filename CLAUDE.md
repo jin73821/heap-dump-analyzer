@@ -135,7 +135,7 @@ semantic 설정 누락 시 keyword 폴백 없이 명확한 에러 (디버깅 용
 
 ## Authentication & Security
 
-Spring Security 세션. `/login` 공개, `/admin/**` + `/api/admin/**` ADMIN 전용. CSRF: `/api/**` 면제, **단 `/api/admin/**`은 보호 유지**.
+Spring Security 세션. `/login` 공개, `/admin/**` + `/api/admin/**` ADMIN 전용. **CSRF 보호 유지 (면제하지 않음)**: `/api/admin/**`, `/api/settings/**`, `/api/llm/{enabled,config,apikey,test-connection,chat-prompt,chat-restore-mode}`, `/api/servers/{scan-interval,ssh-local-user}` — 모두 `authorizeRequests` 의 `hasRole("ADMIN")` 매처와 1:1 미러링. 그 외 `/api/**` 는 CSRF 면제 (인증은 유지). **새 ADMIN mutation 추가 시 SecurityConfig 두 곳 (authorize + csrf ignore) 동시 갱신 필수**.
 
 **Spring Session JDBC**: `SPRING_SESSION` / `SPRING_SESSION_ATTRIBUTES` 자동 생성. 무동작 만료 60분, cleanup cron 10분. 앱 재시작에도 로그인 유지.
 

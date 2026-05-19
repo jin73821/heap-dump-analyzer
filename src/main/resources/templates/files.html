@@ -208,6 +208,12 @@
             <option value="30d">최근 30일</option>
             <option value="90d">최근 90일</option>
         </select>
+        <select class="filter-sel" id="statusFilter" onchange="onFilterChange()" title="분석 상태 필터">
+            <option value="all" selected>상태: 전체</option>
+            <option value="SUCCESS">분석완료</option>
+            <option value="ERROR">분석실패</option>
+            <option value="NOT_ANALYZED">미분석</option>
+        </select>
         <button type="button" class="select-toggle-btn" id="selectModeBtn" onclick="toggleSelectMode()" title="다중 선택 모드">
             <svg viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
             <span id="selectModeBtnLabel">선택</span>
@@ -270,6 +276,7 @@
             <tbody id="fileTableBody">
                 <tr th:each="h : ${analysisHistory}" th:classappend="${h.fileDeleted} ? 'fi-deleted'"
                     th:data-name="${h.filename}" th:data-deleted="${h.fileDeleted}"
+                    th:data-status="${h.status}"
                     th:attr="data-sort-id=${h.id != null ? h.id : 0},
                              data-sort-osize=${h.originalSizeBytes},
                              data-sort-csize=${h.compressedSizeBytes},
@@ -640,6 +647,12 @@ function initRows() {
         var opt = periodSel.querySelector('option[value="' + savedPeriod + '"]');
         if (opt) periodSel.value = savedPeriod;
     }
+    var savedStatus = localStorage.getItem('filesStatus');
+    var statusSel = document.getElementById('statusFilter');
+    if (savedStatus && statusSel) {
+        var sopt = statusSel.querySelector('option[value="' + savedStatus + '"]');
+        if (sopt) statusSel.value = savedStatus;
+    }
     // 캘린더 위젯 부착 (localStorage 자동 복원 + onChange 콜백)
     Calendar.attach({
         startInputId: 'dateStart', endInputId: 'dateEnd',
@@ -700,8 +713,10 @@ function applyFilter() {
     var q = (document.getElementById('searchInput').value || '').toLowerCase();
     var serverSel = document.getElementById('serverFilter');
     var periodSel = document.getElementById('periodFilter');
+    var statusSel = document.getElementById('statusFilter');
     var server = serverSel ? serverSel.value : '';
     var period = periodSel ? periodSel.value : 'all';
+    var status = statusSel ? statusSel.value : 'all';
 
     var now = Date.now();
     var dayMs = 24 * 60 * 60 * 1000;
@@ -739,6 +754,11 @@ function applyFilter() {
             } else if (rowServer !== server) return false;
         }
 
+        if (status && status !== 'all') {
+            var rowStatus = el.getAttribute('data-status') || '';
+            if (rowStatus !== status) return false;
+        }
+
         var ts = parseFloat(el.getAttribute('data-sort-date')) || 0;
         if (periodThreshold > 0 && ts < periodThreshold) return false;
         if (customStart > 0 && ts < customStart) return false;
@@ -755,6 +775,9 @@ function onFilterChange() {
     var periodSel = document.getElementById('periodFilter');
     var period = periodSel ? periodSel.value : 'all';
     localStorage.setItem('filesPeriod', period);
+    var statusSel = document.getElementById('statusFilter');
+    var status = statusSel ? statusSel.value : 'all';
+    localStorage.setItem('filesStatus', status);
     applyFilter();
 }
 function onToggleShowDeleted() {

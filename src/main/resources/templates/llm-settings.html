@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/common.css?v=2026-05-17d">
     <title>AI / LLM Settings — Heap Dump Analyzer</title>
@@ -221,13 +223,13 @@
             <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zM15.5 7.5l2 2L21 6l-3-3z"/></svg>
             API Key
         </div>
-        <div class="s-row" style="border-bottom:none">
+        <div class="s-row" style="border-bottom:none;flex-wrap:wrap">
             <span class="s-key">API Key</span>
-            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;flex:1 1 240px;min-width:0;max-width:100%">
                 <input type="password" id="llmApiKeyInput" placeholder="API Key"
-                       style="width:380px;max-width:100%;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace">
+                       style="flex:1 1 220px;min-width:0;max-width:380px;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:12px;font-family:'JetBrains Mono','SF Mono',monospace;box-sizing:border-box">
                 <button onclick="saveLlmApiKey()" class="btn-primary">Save Key</button>
-                <span id="llmKeyStatus" style="font-size:11px;color:#9CA3AF"></span>
+                <span id="llmKeyStatus" style="font-size:11px;color:#9CA3AF;word-break:break-all"></span>
             </div>
         </div>
     </div>
@@ -298,7 +300,7 @@
     <div class="card">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button onclick="saveLlmConfig()" class="btn-primary" style="padding:8px 20px;font-size:13px">Save Config</button>
-            <button onclick="testLlmConnection()" class="btn-secondary" style="padding:8px 20px;font-size:13px">Test Connection</button>
+            <button onclick="testLlmConnection(this)" class="btn-secondary" style="padding:8px 20px;font-size:13px">Test Connection</button>
         </div>
         <div id="llmTestResult" style="margin-top:10px;font-size:13.5px;line-height:1.5;display:none"></div>
     </div>
@@ -515,10 +517,25 @@ function saveLlmApiKey() {
     .catch(function(e){ toast('API Key save failed: ' + e.message, 'error'); });
 }
 
-function testLlmConnection() {
+function testLlmConnection(btn) {
     var resEl = document.getElementById('llmTestResult');
     resEl.style.display = 'block';
     resEl.innerHTML = '<span class="spinner-tc" aria-hidden="true"></span><span style="color:#6B7280">Testing connection...</span>';
+    if (btn) {
+        if (btn.disabled) return;
+        btn.dataset._origText = btn.dataset._origText || btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Testing...';
+        btn.style.opacity = '.6';
+        btn.style.cursor = 'wait';
+    }
+    var restore = function() {
+        if (!btn) return;
+        btn.disabled = false;
+        if (btn.dataset._origText) btn.textContent = btn.dataset._origText;
+        btn.style.opacity = '';
+        btn.style.cursor = '';
+    };
     Common.fetchJSON('/api/llm/test-connection', {method:'POST'})
         .then(function(d){
             if (d.success) {
@@ -530,7 +547,8 @@ function testLlmConnection() {
                     + ' — ' + (d.error||'Unknown error');
             }
         })
-        .catch(function(e){ resEl.innerHTML = '<span style="color:#DC2626">Error: ' + e.message + '</span>'; });
+        .catch(function(e){ resEl.innerHTML = '<span style="color:#DC2626">Error: ' + e.message + '</span>'; })
+        .then(restore, restore);
 }
 
 // ── Chat Prompt ──────────────────────────────────────

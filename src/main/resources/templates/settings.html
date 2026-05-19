@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/common.css?v=2026-05-17d">
     <title>Settings — Heap Dump Analyzer</title>
@@ -714,6 +716,14 @@
 
 <!-- ── JavaScript ─────────────────────────────────────────── -->
 <script>
+// ── CSRF 헤더 헬퍼 ──────────────────────────────────────
+function csrfHeaders(extra) {
+    var h = extra || {};
+    var token = Common.csrfToken();
+    if (token) h[Common.csrfHeaderName()] = token;
+    return h;
+}
+
 // ── Toast ──────────────────────────────────────────────
 function toast(msg, type) {
     var t = document.createElement('div');
@@ -918,7 +928,7 @@ function saveMatXms() {
 
 function doApplyHeap(type, val) {
     var url = '/api/mat/heap?size=' + encodeURIComponent(val) + '&type=' + type;
-    fetch(url, {method:'POST'})
+    fetch(url, {method:'POST', headers: csrfHeaders()})
         .then(function(r){
             if (!r.ok && r.status !== 400) throw new Error('HTTP ' + r.status);
             return r.json();
@@ -1098,7 +1108,7 @@ function loadScpTempDir() {
 function saveScpTempDir() {
     var dir = document.getElementById('scpTempDirInput').value.trim() || '/tmp';
     fetch('/api/servers/scp-temp-dir', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: csrfHeaders({'Content-Type':'application/json'}),
         body: JSON.stringify({ tempDir: dir })
     }).then(function(r){ return r.json(); }).then(function(d) {
         if (d.success) toast('SCP 임시 경로 변경: ' + d.tempDir, 'success');
@@ -1117,7 +1127,7 @@ function loadSshLocalUser() {
 function saveSshLocalUser() {
     var user = document.getElementById('sshLocalUserInput').value.trim();
     fetch('/api/servers/ssh-local-user', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: csrfHeaders({'Content-Type':'application/json'}),
         body: JSON.stringify({ localUser: user })
     }).then(function(r){ return r.json(); }).then(function(d) {
         if (d.success) toast('SSH 로컬 계정 변경: ' + (d.localUser || '(현재 계정)'), 'success');
@@ -1145,7 +1155,7 @@ function loadScanInterval() {
 
 function saveScanInterval(val) {
     fetch('/api/servers/scan-interval', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+        method: 'POST', headers: csrfHeaders({'Content-Type':'application/json'}),
         body: JSON.stringify({ intervalSec: parseInt(val) })
     }).then(function(r){ return r.json(); }).then(function(d) {
         if (d.success) toast('스캔 주기 변경: ' + d.intervalSec + '초', 'success');
@@ -1203,7 +1213,7 @@ function testDbConn() {
     }
     showDbTestResult(null, '연결 테스트 중...');
     fetch('/api/settings/database/test', {
-        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+        method: 'POST', headers: csrfHeaders({'Content-Type':'application/json'}), body: JSON.stringify(data)
     }).then(function(r) { return r.json(); }).then(function(d) {
         showDbTestResult(d.success, d.success ? d.version + ' — ' + d.message : d.message);
     }).catch(function(e) { showDbTestResult(false, '요청 실패: ' + e.message); });
@@ -1235,7 +1245,7 @@ function saveDbSettings() {
         return;
     }
     fetch('/api/settings/database', {
-        method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
+        method: 'POST', headers: csrfHeaders({'Content-Type':'application/json'}), body: JSON.stringify(data)
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.success) {
             toast(d.message, 'success');

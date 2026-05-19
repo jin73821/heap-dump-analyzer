@@ -72,11 +72,20 @@ public class SecurityConfig {
             .csrf()
                 .ignoringRequestMatchers(request -> {
                     String uri = request.getRequestURI();
-                    // /api/admin/** 경로는 CSRF 보호 유지 (면제하지 않음)
-                    if (uri.startsWith("/api/admin/")) {
-                        return false;
-                    }
-                    // 나머지 /api/** 경로는 CSRF 면제
+                    // ── CSRF 보호 유지 (면제하지 않음) ──
+                    // 1) /api/admin/** — ADMIN 페이지 전용 영역
+                    if (uri.startsWith("/api/admin/")) return false;
+                    // 2) ADMIN-only mutation (authorizeRequests 의 hasRole("ADMIN") 매처와 1:1 매칭)
+                    if (uri.startsWith("/api/settings/")) return false;
+                    if (uri.equals("/api/llm/enabled")
+                        || uri.equals("/api/llm/config")
+                        || uri.equals("/api/llm/apikey")
+                        || uri.equals("/api/llm/test-connection")
+                        || uri.equals("/api/llm/chat-prompt")
+                        || uri.equals("/api/llm/chat-restore-mode")) return false;
+                    if (uri.equals("/api/servers/scan-interval")
+                        || uri.equals("/api/servers/ssh-local-user")) return false;
+                    // ── 나머지 /api/** 경로는 CSRF 면제 (일반 사용자 액션) ──
                     return uri.startsWith("/api/");
                 });
 

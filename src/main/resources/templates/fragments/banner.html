@@ -225,6 +225,28 @@ body.banner-no-transition .gb-header { transition: none !important; }
     background: rgba(0,0,0,.4); z-index: 199;
 }
 .gb-banner-overlay.open { display: block; }
+
+/* ── Page navigation loading overlay (global) ──────────────── */
+.gb-page-loading {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(255,255,255,.55); z-index: 9999;
+    display: none; align-items: center; justify-content: center;
+    pointer-events: all; backdrop-filter: blur(1px);
+    -webkit-backdrop-filter: blur(1px);
+}
+.gb-page-loading.show { display: flex; }
+.gb-page-loading-spinner {
+    width: 48px; height: 48px; border-radius: 50%;
+    border: 4px solid rgba(37,99,235,.15);
+    border-top-color: #2563EB;
+    animation: gbPageSpin .8s linear infinite;
+}
+.gb-page-loading-label {
+    position: absolute; top: calc(50% + 40px); left: 0; right: 0;
+    text-align: center; font-size: 12px; color: #6B7280; font-weight: 500;
+    letter-spacing: .02em;
+}
+@keyframes gbPageSpin { to { transform: rotate(360deg); } }
 </style>
 
 <aside class="g-banner" id="gBanner">
@@ -432,6 +454,11 @@ body.banner-no-transition .gb-header { transition: none !important; }
     </div>
 </aside>
 <div class="gb-banner-overlay" id="gbBannerOverlay" onclick="closeMobileBanner()"></div>
+<!-- 전역 페이지 로딩 스피너 (navigation 클릭 ↔ 새 페이지 paint 사이) -->
+<div class="gb-page-loading" id="gbPageLoading" aria-hidden="true">
+    <div class="gb-page-loading-spinner"></div>
+    <div class="gb-page-loading-label">페이지 로딩 중...</div>
+</div>
 
 <script>
 /* ── Banner toggle + system status ─────────── */
@@ -441,12 +468,13 @@ var _GB_INTERVAL = 60000; // 1분
 (function() {
     highlightActiveNav();
 
-    // 모바일: 내비게이션 링크 클릭 시 배너 자동 닫기
-    var navLinks = document.querySelectorAll('.gb-nav-link:not([onclick*="toggleSubMenu"]), .gb-nav-sub a');
-    navLinks.forEach(function(link) {
-        link.addEventListener('click', function() {
-            if (window.innerWidth <= 900) closeMobileBanner();
-        });
+    // 전역 navigation 핸들러 — 모바일 배너 닫기 + 페이지 로딩 스피너
+    document.addEventListener('click', handlePageNavClick, false);
+    document.addEventListener('submit', handlePageNavSubmit, false);
+
+    // bfcache 복귀 시 스피너 제거 (브라우저 뒤로/앞으로)
+    window.addEventListener('pageshow', function(e) {
+        if (e.persisted) hidePageLoading();
     });
 
     // 로드 완료 후 transition 복원
@@ -469,6 +497,78 @@ var _GB_INTERVAL = 60000; // 1분
     }
     setInterval(fetchBannerStatus, _GB_INTERVAL);
 })();
+
+/* ── 페이지 로딩 스피너 ─────────────────────── */
+var _GB_LOADING_DELAY_MS = 100; // 100ms 안에 페이지 전환되면 스피너 미표시 (flash 방지)
+var _gbLoadingTimer = null;
+function showPageLoading() {
+    var el = document.getElementById('gbPageLoading');
+    if (el) el.classList.add('show');
+}
+function hidePageLoading() {
+    if (_gbLoadingTimer) { clearTimeout(_gbLoadingTimer); _gbLoadingTimer = null; }
+    var el = document.getElementById('gbPageLoading');
+    if (el) el.classList.remove('show');
+}
+function schedulePageLoading() {
+    if (_gbLoadingTimer) return;
+    _gbLoadingTimer = setTimeout(function() {
+        _gbLoadingTimer = null;
+        showPageLoading();
+    }, _GB_LOADING_DELAY_MS);
+}
+
+/* anchor 클릭이 실제 페이지 이동을 일으키는지 판정 */
+function _isNavigatingClick(e, link) {
+    if (e.defaultPrevented) return false;
+    if (e.button !== 0) return false;
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return false;
+    if (!link || link.tagName !== 'A') return false;
+    if (link.target && link.target !== '' && link.target !== '_self') return false;
+    if (link.hasAttribute('download')) return false;
+    var href = link.getAttribute('href');
+    if (!href) return false;
+    if (href === '#' || href.charAt(0) === '#') return false;
+    if (/^(javascript:|mailto:|tel:)/i.test(href)) return false;
+    try {
+        var url = new URL(href, location.href);
+        if (url.origin !== location.origin) return false;  // 외부 링크는 새 탭일 가능성 + 제어 어려움
+        // 같은 페이지 내 anchor 점프는 제외
+        if (url.pathname === location.pathname && url.search === location.search && url.hash) return false;
+    } catch (err) { return false; }
+    return true;
+}
+
+function handlePageNavClick(e) {
+    var link = e.target.closest ? e.target.closest('a') : null;
+    if (!link) return;
+    if (!_isNavigatingClick(e, link)) return;
+
+    var banner = document.getElementById('gBanner');
+    var isMobileOpen = window.innerWidth <= 900 && banner && banner.classList.contains('mobile-open');
+
+    if (isMobileOpen) {
+        // 모바일: 패널 닫는 애니메이션 완료 후 navigate (브라우저 요청이 transition을 정지시키는 현상 회피)
+        e.preventDefault();
+        var href = link.getAttribute('href');
+        closeMobileBanner();
+        setTimeout(function() {
+            schedulePageLoading();      // navigate 시점부터 100ms 후 스피너
+            window.location.href = href;
+        }, 260);
+    } else {
+        // 데스크톱 또는 배너 닫힌 모바일: 100ms 후 스피너 (빠른 페이지면 표시 안 됨)
+        schedulePageLoading();
+    }
+}
+
+function handlePageNavSubmit(e) {
+    if (e.defaultPrevented) return;
+    var form = e.target;
+    if (!form || form.tagName !== 'FORM') return;
+    if (form.target && form.target !== '' && form.target !== '_self') return;
+    schedulePageLoading();
+}
 
 function toggleBanner() {
     document.body.classList.toggle('banner-collapsed');

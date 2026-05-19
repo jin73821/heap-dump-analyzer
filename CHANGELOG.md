@@ -1,5 +1,221 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-19] AI 인사이트 진행 단계 — 원 사이 연결선 수직 정렬 수정
+
+**변경 파일:**
+- 수정: `src/main/resources/static/css/analyze.css` — `.ai-step-line` `margin-bottom:18px` → `margin-top:17px`
+- 수정: `src/main/resources/templates/analyze.html` — analyze.css 캐시 키 `?v=2026-05-12` → `?v=2026-05-19`
+
+### 변경 의도
+- `#aiStepIndicator` 컨테이너가 `align-items: flex-start` 이므로 모든 자식이 상단 정렬됨. line 은 2px 박스라 row 상단에 그대로 붙어 원의 위쪽 가장자리(또는 그보다 위)에 표시되고 있었음. 기존 `margin-bottom:18px` 는 row 하단 여백만 늘릴 뿐 line 자체의 top 위치를 이동시키지 못함.
+
+### 내역
+- 원 크기 36px (border-box, border 2px 포함) → 중심 y=18px. line 2px → top 17px 두면 line 중심이 y=18px 으로 원 중심과 일치.
+- 단순히 margin-top 만 교체 → 동일한 row height 유지 (`.ai-step` 의 circle+label 합산이 여전히 row 높이 결정).
+- CSS 변경이라 `?v=` 캐시 키 갱신 필요 — `2026-05-12` → `2026-05-19`.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 정상 기동 (Started in 10.4s). 브라우저에서 AI 인사이트 실행 후 단계 라인이 원 가운데에 정렬되는지 수동 확인.
+
+## [2026-05-19] History 페이지 — 분석 상태 필터 추가 + "실패" 라벨 통일
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/history.html`
+  - toolbar 검색바 옆에 `statusFilter` `<select>` 추가 (전체 / 분석완료 / 분석실패) — 컨트롤러가 SUCCESS/ERROR 만 통과시키므로 `NOT_ANALYZED` 옵션 제외
+  - inline CSS: `.filter-sel` (files.html 동일 패턴) + `.table-toolbar { flex-wrap: wrap }` + `.search-bar { flex: 1 1 220px }` 좁은 폭 대응
+  - JS `initRows()` 에 `localStorage('historyStatus')` 복원, `applyFilter()` 에 `data-sort-status === status` 분기, 신규 `onFilterChange()` 헬퍼
+  - row 의 기존 `data-sort-status` 속성 재사용 (별도 `data-status` 추가 불필요)
+- 수정: `src/main/resources/templates/files.html` — status 필터 옵션 `"실패"` → `"분석실패"` (history 와 라벨 통일)
+
+### 변경 의도
+- Files 페이지에 이어 Analysis History 에서도 동일하게 SUCCESS/ERROR 한 번에 골라내는 흐름 필요. 라벨도 "분석실패" 로 통일해 두 페이지 간 일관성 확보.
+
+### 내역
+- History 의 `data-sort-status` 는 이미 정렬용으로 존재해 필터 분기에 그대로 사용 — DOM 변경 최소화.
+- localStorage 키 `historyStatus` (files 는 `filesStatus`) 분리 — 두 페이지 독립 보존.
+- 라벨 변경은 dropdown text 만 영향, 백엔드 status enum 값 (`ERROR`) 은 그대로.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 정상 기동 (Started in 9.9s).
+
+## [2026-05-19] Files 페이지 — 분석 상태 필터 추가
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/files.html`
+  - toolbar `periodFilter` 옆에 `statusFilter` `<select>` 추가 (전체 / 분석완료(SUCCESS) / 실패(ERROR) / 미분석(NOT_ANALYZED))
+  - `<tr>` 행에 `th:data-status="${h.status}"` 속성 추가 (클라이언트 필터 분기 기준)
+  - JS `initRows()` 에 `localStorage('filesStatus')` 복원, `onFilterChange()` 에 저장 로직 추가
+  - `applyFilter()` 에 `status` 분기 추가 — `'all'` 아닐 때 `data-status` 일치 행만 통과
+
+### 변경 의도
+- 실패(ERROR) 케이스 분류 또는 미분석(NOT_ANALYZED) 잔존 파일 정리 시, 기존엔 검색어 / 서버 / 기간만으로는 즉시 골라낼 수 없어 사용자가 시각적으로 빨간 아이콘을 훑어야 했음. 상태 필터로 한 번에 선별 → 일괄 삭제 / 재시도 흐름 단축.
+
+### 내역
+- 기존 `serverFilter` / `periodFilter` / `Calendar` 와 동일한 클라이언트 측 row hide 패턴. 페이지네이션·정렬·다중선택과 자연 호환.
+- localStorage 키 `filesStatus` 로 새로고침 후에도 선택 유지 (기존 `filesPeriod` / `filesShowDeleted` / `filesPageSize` 와 동일 패턴).
+- `cache busting` 키 변경 없음 — files.html 변경은 JAR 재패키징으로 캐시 무효화됨.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 정상 기동 (Started in 9.6s).
+
+## [2026-05-18] LLM Settings — Test Connection 중복 클릭 방지
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/llm-settings.html`
+  - 버튼 onclick: `testLlmConnection()` → `testLlmConnection(this)` (자기 참조 전달)
+  - `testLlmConnection(btn)` 함수: 진입 시 `btn.disabled=true` + 라벨 "Testing..." + opacity/cursor 변경, 응답 수신(success/catch 어느 쪽이든) 후 `restore()` 로 원상복귀. 이미 disabled 상태로 호출되면 조기 return.
+
+### 변경 의도
+- 응답 지연이 긴 LLM 게이트웨이(사내 폐쇄망, SSL 협상 포함) 환경에서 사용자가 결과를 기다리지 못하고 Test Connection 을 연타하는 사례 발생. 동시 다중 요청이 백엔드 단일 connection pool 을 점유하고 race condition 으로 마지막 응답만 화면에 표시되는 혼란.
+
+### 내역
+- 진행 중 시각 단서 3종: 버튼 비활성화, 라벨 변경, 커서 `wait`. 결과 영역 스피너는 기존 유지.
+- 복구는 `.then(restore, restore)` 로 fulfilled/rejected 양쪽 처리 (`.finally` 대체 패턴 — 일부 구형 브라우저 호환).
+- 원본 라벨은 `dataset._origText` 에 저장해 i18n / 라벨 변경에도 안전.
+
+## [2026-05-18] LLM Settings — 모바일 API Key 행 오버플로우 수정
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/llm-settings.html` — API Key `.s-row` 인라인 스타일 보정
+
+### 변경 의도
+- 모바일 폭(≤768px)에서 `.s-row { flex-wrap: wrap }` 가 활성화되면 라벨/입력 래퍼가 별도 줄로 분리됨. 그런데 입력 래퍼에 `flex:1; min-width:0` 가 없고, 내부 `<input>` 이 고정 `width:380px;max-width:100%` 였음. flex item 기본 `min-width:auto` 때문에 래퍼가 380px 아래로 줄어들지 못해 카드/컨테이너를 가로로 뚫고 나가는 현상.
+
+### 내역
+- `.s-row` 에 `flex-wrap:wrap` 명시 (기본은 미디어쿼리 ≤768 에서만 적용 — desktop·tablet 의 wrap 강제는 영향 없음, 좁아질 때 더 일찍 wrap).
+- 래퍼 div: `flex:1 1 240px; min-width:0; max-width:100%` 추가.
+- input: `width:380px` 제거 → `flex:1 1 220px; min-width:0; max-width:380px; box-sizing:border-box` 로 교체. 데스크탑에선 최대 380px 유지, 좁아지면 자연스럽게 축소.
+- 키 상태 표시 `span#llmKeyStatus` 에 `word-break:break-all` 추가 — 마스킹 문자열이 길어도 줄바꿈 가능.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 정상 기동 후 모바일 viewport (375px, 360px, 320px) 에서 API Key 카드가 컨테이너 안에 머무는지 수동 확인 권장.
+
+## [2026-05-18] CSRF 보호 — ADMIN-only mutation endpoint 면제 해제
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/config/SecurityConfig.java` — `csrf().ignoringRequestMatchers` 람다에 ADMIN endpoint 면제 차단 분기 3 그룹 추가 (`/api/settings/**`, `/api/llm/{enabled,config,apikey,test-connection,chat-prompt,chat-restore-mode}`, `/api/servers/{scan-interval,ssh-local-user}`)
+- 수정: `src/main/resources/templates/settings.html` — `<meta name="_csrf">` 2 태그 추가 + `csrfHeaders()` 헬퍼 + 6 fetch 호출 (`/api/mat/heap`, `/api/servers/{scp-temp-dir,ssh-local-user,scan-interval}`, `/api/settings/database{,/test}`) 에 헤더 부착
+- 수정: `src/main/resources/templates/llm-settings.html` — `<meta name="_csrf">` 2 태그 추가 (Common.fetchJSON 이 토큰 읽을 수 있도록)
+
+### 변경 의도
+- CSRF 점검 결과 `/api/admin/**` 외 `.hasRole("ADMIN")` 으로 보호되던 mutation endpoint 들이 모두 `/api/**` 면제 범위에 들어가 있었음. modern 브라우저 SameSite=Lax 와 CORS 부재로 실질 위험은 낮지만, 환경 변화(SameSite 정책 회귀, CORS 활성화) 에 무방비. 명시적 토큰 검증으로 방어 계층 추가.
+- `settings.html`/`llm-settings.html` 에 CSRF meta 태그가 없어 토큰 부착이 불가능했음 (`rag-settings.html` 만 정상).
+
+### 내역
+- **SecurityConfig 분기**: `authorizeRequests` 의 `hasRole("ADMIN")` 매처와 1:1 미러링. 새 ADMIN mutation 추가 시 양쪽 동시 갱신 필요.
+- **클라이언트 패턴**: `csrfHeaders({'Content-Type':'application/json'})` 형태. `Common.csrfToken()` null 안전 (토큰 없으면 헤더 미부착) — 점진적 적용 가능.
+- **유지된 면제 범위**: 일반 사용자 액션 (`/api/upload*`, `/api/files/bulk-delete`, `/api/history/bulk-delete`, `/api/ai-chat/sessions*`, `/api/llm/{analyze,chat,chat/stream,insight/save,compare/analyze}`, `/api/comparison-history/*`, `/api/results/clear`, `/api/analyze/cancel/*`, `/api/servers` CRUD 등) — 인증은 유지, CSRF 면제만 유지.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS, `bash restart.sh` 정상 기동 (PID=1035374, Started in 10.3s)
+- **smoke test** (admin 로그인 후 curl):
+  - 토큰 없이 ADMIN endpoint 호출 → **HTTP 403** (`/api/llm/enabled`, `/api/settings/compress`, `/api/servers/scan-interval` 3/3) ✓
+  - 토큰 부착 시 동일 endpoint → **HTTP 200** ✓
+  - 중첩 경로 `/api/settings/rag/enabled` 도 `/api/settings/**` startsWith 분기로 정확히 매칭 ✓
+  - 면제 유지 endpoint (`/api/upload/check`, `/api/ai-chat/sessions`) 는 토큰 없이도 200 — 회귀 없음 ✓
+- **수동 확인 권장**: `/settings`/`/settings/llm`/`/settings/rag` 페이지의 모든 토글/저장 버튼이 정상 동작하는지
+
+## [2026-05-18] Leak Rules — Export 확인 모달 추가
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/leak-rules.html`
+  - 두 Export 버튼 onclick: `exportRules('library'|'fallback')` → `openExport(...)`
+  - 새 `#exportModal` (max-width 480px) — 종류/룰 개수/예상 파일명 미리보기 + 다운로드/취소 버튼
+  - JS: `openExport`/`closeExport`/`confirmExport` 함수 추가, `exportRules` 함수는 `confirmExport` 안으로 흡수
+
+### 변경 의도
+- Export 버튼이 클릭 즉시 다운로드를 시작해 "내가 정말 그 탭의 룰을 받고 있는 게 맞나?" 확인 단계가 없었음. 빈 테이블에서도 빈 JSON 이 다운로드되는 무의미한 동작.
+
+### 내역
+- 모달이 보여주는 정보:
+  - 종류 (`라이브러리 (prefix)` / `Fallback (정규식)`)
+  - 현재 룰 개수 (`_libRules.length` 또는 `_fbRules.length`)
+  - 예상 파일명 (`leak-{kind}-rules-YYYYMMDD-HHmmss.json` — 클라이언트 시각 기준, 실제 파일명은 서버 시각으로 결정됨을 캡션에 표기)
+- 룰 개수 0이면 다운로드 버튼 disabled + 텍스트 "내보낼 룰 없음".
+- 확인 시 기존 동작 그대로: `window.location.href = '/api/admin/leak-rules/{kind}/export'` (GET, CSRF 불필요).
+- 기존 모달 CSS (`.modal-ov`/`.modal-box`/`.mbtn-confirm` 등) 재사용 — 모바일 bottom-sheet 패턴 자동 적용.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS, `bash restart.sh` 정상 기동 (PID=1015447, Started in 9.6s)
+- **수동 확인 필요**: Export 클릭 → 모달 표시 → 종류/개수/파일명 확인 → 다운로드 버튼 클릭 시 기존과 동일하게 JSON 파일이 다운로드되는지
+
+## [2026-05-18] Leak Rules — 모바일 카드 레이아웃 + 햄버거 버튼
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/leak-rules.html`
+  - `topbar` 에 `<button class="gb-menu-btn">` 추가 (모바일에서 배너 호출 불가하던 문제)
+  - 두 `<table>` 을 `<div class="rule-table-wrap">` 으로 wrapping (태블릿 가로 스크롤용)
+  - 두 render 함수의 모든 `<td>` 에 `data-label` 속성 추가 (8개 컬럼 × 2 탭)
+  - CSS 미디어 쿼리 2단계 추가:
+    - **≤900px**: `.rule-table-wrap { overflow-x: auto }` + `.rule-table { min-width: 760px }` → 태블릿에서 가로 스크롤
+    - **≤640px**: 카드 레이아웃 (`thead` 숨김, `tr` → 카드, `td` flex + `::before { content: attr(data-label) }`), 툴바/페이저 세로 정렬, modal bottom-sheet, # 컬럼은 카드 헤더로 변환
+
+### 변경 의도
+- 8 컬럼 룰 테이블(Prefix/Library/Category/Severity/사용/작업 등)이 모바일에서 가로 잘림 + 횡 스크롤 미적용으로 우측 액션 버튼이 보이지 않았음.
+- 햄버거 버튼 자체가 누락되어 모바일에서 좌측 배너에 접근할 길이 없었음.
+
+### 내역
+- **햄버거**: `files.html`/`history.html` 와 동일 패턴 (`gb-menu-btn` + `toggleMobileBanner()`). `.topbar-brand` 안 첫 자식.
+- **wrapper 추가**: HTML 4 라인 증가. 기본 (`>900px`)에서는 시각적 변화 없음 — `.rule-table-wrap` 자체에 스타일 없음, 모바일에서만 활성화.
+- **카드 레이아웃 (`≤640px`)**:
+  - 각 row 가 `border-radius: 10px` + `box-shadow` + 10px gap 카드로 변환
+  - 좌측 라벨 (`::before`, 64px min-width, 회색 caps) + 우측 값 (오른쪽 정렬)
+  - `# (col-id)` 는 카드 상단의 헤더로 변환 (`border-bottom` 만)
+  - `작업 (col-actions)` 는 카드 하단에 `border-top` 으로 분리, 라벨 숨김 + 우측 정렬 액션 버튼 2개 (terminal padding 8px 14px)
+  - `Prefix`/`Pattern` 같은 긴 monospace 값은 `word-break: break-all` + `max-width: 70%` 로 카드 폭 내 줄바꿈
+- **모달**: bottom sheet 스타일 (`align-items: flex-end` + `border-radius: 14px 14px 0 0` + `max-width: 100%`), 모달 버튼은 `flex: 1` 로 풀폭 분배
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS, `bash restart.sh` 정상 기동 (PID=1014460, Started in 9.7s)
+- **수동 확인 필요** (UI 변경):
+  - 모바일(≤640px) `/admin/leak-rules`: 햄버거 → 배너 호출 가능 + 표가 카드로 변환 + 검색/Create/Export/Import 버튼이 잘 배치 + 편집 모달이 bottom-sheet 로 올라옴
+  - 태블릿(641–900px): 표가 가로 스크롤되며 모든 컬럼 + 액션 버튼 접근 가능
+  - 데스크톱(>900px): 기존 8 컬럼 표 동작 변화 없음
+
+## [2026-05-18] 페이지 로딩 스피너 — 100ms 지연 표시로 flash 제거
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/fragments/banner.html` — `_GB_LOADING_DELAY_MS = 100` 상수 + `_gbLoadingTimer` + `schedulePageLoading()` 추가. `handlePageNavClick` / `handlePageNavSubmit` 가 `showPageLoading()` 대신 `schedulePageLoading()` 호출. `hidePageLoading()` 에 timer clear 포함.
+
+### 변경 의도
+- 빠른 페이지 전환에서도 스피너가 짧게 깜빡이며 표시 → 시각적 노이즈. 100ms 안에 전환되면 표시 자체를 생략하는 게 표준 UX 패턴.
+
+### 내역
+- **메커니즘**: 클릭 시점에 `setTimeout(show, 100)` 만 예약. navigate 가 100ms 안에 완료되면 현재 페이지(와 함께 pending timer)가 파기되어 스피너 표시 함수 자체가 호출되지 않음. 100ms 이상 걸리는 무거운 페이지에서만 스피너 노출.
+- 모바일도 동일 — 패널 닫힘(260ms) 후 navigate 시점부터 100ms 카운트. 패널 닫힘은 즉시 시작되므로 클릭 피드백은 유지.
+- `hidePageLoading()` 이 pending timer 도 함께 clear → bfcache 복귀 시 중복 표시 방지.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS, `bash restart.sh` 정상 기동 (PID=1010932, Started in 9.5s)
+- 수동 확인 권장: 빠른 페이지(`/files`, `/history` 등 캐시 hit) 이동 시 스피너 미표시, 무거운 페이지(`/analyze/xxx` 대용량) 이동 시 ~100ms 후 스피너 등장.
+
+## [2026-05-18] 페이지 이동 UX — 모바일 배너 닫힘 jank 제거 + 전역 로딩 스피너
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/fragments/banner.html`
+  - CSS: `.gb-page-loading` / `.gb-page-loading-spinner` / `.gb-page-loading-label` + `@keyframes gbPageSpin` 추가
+  - HTML: `gbBannerOverlay` 옆에 `<div id="gbPageLoading">` 전역 스피너 삽입
+  - JS: 기존 mobile 자동닫기 핸들러(`navLinks.forEach`) → 통합 `handlePageNavClick` / `handlePageNavSubmit` 로 교체. `showPageLoading`/`hidePageLoading`/`_isNavigatingClick` 헬퍼 + `pageshow`(bfcache) 리스너 추가
+
+### 변경 의도
+- 모바일에서 좌측 드로어 열린 상태로 메뉴 링크 탭 시 **닫힘 애니메이션이 70~80% 진행 후 멈추고 새 페이지 로드 완료 시점에 비로소 사라지는 jank**. 원인: 클릭 직후 브라우저가 다음 페이지 요청을 시작하면서 현재 페이지의 transform transition 이 정지/중단됨.
+- 동시에 데스크톱/모바일 모두 페이지 이동 중 "내가 클릭이 먹혔나" 피드백이 부족했음.
+
+### 내역
+- **모바일 드로어 닫힘 보장**: anchor 클릭 시 `e.preventDefault()` → `closeMobileBanner()` → 260ms `setTimeout` 후 `window.location.href = href`. CSS transition(300ms) 이 거의 완료된 뒤 navigate → 닫힘 동작이 매끄럽게 끝나고 새 페이지로 전환.
+- **전역 페이지 로딩 스피너**: 모든 same-origin anchor 클릭 + same-window form submit 시 `.gb-page-loading.show` 표시. 새 페이지 paint 직전까지 현재 페이지 위에 떠 있음. fixed 오버레이 + 48px 회전 spinner + "페이지 로딩 중..." 라벨 + 반투명 backdrop.
+- **클릭 판정 로직** (`_isNavigatingClick`): `defaultPrevented`/`target=_blank`/`download`/`Ctrl/Cmd/Shift/Alt`/`button≠0`/`#`/`javascript:`/`mailto:`/`tel:`/외부 origin/같은 페이지 hash 점프 — 모두 제외. submit 핸들러도 동일 원칙.
+- **inline `onclick=preventDefault` 호환**: `toggleSubMenu(event,...)` 및 `logout` 링크는 `event.preventDefault()` 호출 → `defaultPrevented` 체크로 스피너 미표시. logout form submit 시점에는 submit 리스너가 스피너 표시.
+- **bfcache 복귀 처리**: `window.pageshow(e.persisted)` 시 스피너 강제 hide → 브라우저 뒤로/앞으로로 돌아온 페이지에 잔존 스피너 방지.
+
+### 검증
+- `mvn clean package -DskipTests` SUCCESS, `bash restart.sh` 정상 기동 (PID=1004780, Started in 9.5s)
+- **수동 확인 필요 (UI 변경이라 자동 테스트 불가)**:
+  - 모바일(폭 ≤900px): 햄버거 → 메뉴 열림 → "Files" 탭 → 드로어가 부드럽게 끝까지 슬라이드 닫힌 뒤 페이지 전환되는지 + 스피너 노출
+  - 데스크톱: 좌측 배너에서 임의 메뉴 클릭 → 즉시 중앙 스피너 표시 → 새 페이지 로드 후 자연 소실
+  - bfcache: 페이지 이동 후 브라우저 뒤로가기 → 스피너 잔존 없음
+  - Logout / 외부 링크 / `#anchor` 클릭은 스피너 미표시인지
+
 ## [2026-05-17] Leak Suspect 룰 — Export / Import 기능 추가
 
 **변경 파일:**
