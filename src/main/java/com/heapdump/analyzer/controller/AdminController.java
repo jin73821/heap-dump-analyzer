@@ -19,8 +19,8 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 
-import javax.persistence.criteria.Predicate;
-import javax.servlet.http.HttpServletRequest;
+import jakarta.persistence.criteria.Predicate;
+import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;

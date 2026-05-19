@@ -6,7 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Configuration;
 
-import javax.annotation.PostConstruct;
+import jakarta.annotation.PostConstruct;
 
 /**
  * 스프링 컨텍스트가 초기화되면 LeakRuleService를 LeakSuspectAdvisor의 정적 참조로 주입한다.

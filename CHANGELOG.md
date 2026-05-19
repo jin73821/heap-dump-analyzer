@@ -1,5 +1,53 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-19] Boot 3 마이그레이션 — Phase 3 BIG BANG (Boot 2.7 → 3.5.14 / Security 5.7 → 6.5.10)
+
+**변경 파일:**
+- 수정: `pom.xml`
+  - `spring-boot-starter-parent` 2.7.18 → **3.5.14**
+  - `mariadb-java-client` 3.1.4 → 3.4.2
+  - `thymeleaf-extras-springsecurity5` → `thymeleaf-extras-springsecurity6`
+- sed 일괄 치환 (28 파일): `javax.{persistence,servlet,annotation.PostConstruct/PreDestroy,transaction.Transactional}` → `jakarta.*`
+  - `javax.{crypto,net.ssl,sql,xml}` 는 치환 금지 (jakarta 이전 대상 아님) — `AesEncryptor` / `DataSourceConfig` / `MatReportParser` / `LlmConfigService` SSL / `RagService` SSL / `RemoteDumpService` SSL / `EmbeddingService` 그대로
+- 수정: `SecurityConfig.java` — `.antMatchers(...)` → `.requestMatchers(...)` 전체 (Security 6.x 에서 antMatchers/regexMatchers/mvcMatchers 제거됨)
+- 수정: `application.properties` — `spring.jpa.properties.hibernate.dialect=MariaDB103Dialect` 주석 처리 (Hibernate 6 dialect 자동 감지)
+- 수정: `LeakLibraryRule.java` / `LeakFallbackRule.java` — `@Lob` → `@Column(columnDefinition = "TEXT")` 명시 (Hibernate 6 가 `@Lob` String 을 `longtext` → `tinytext(255)` 로 default 변경한 영향 회피)
+- 수동 DDL: `ALTER TABLE leak_{library,fallback}_rule MODIFY ... TEXT NOT NULL` 5 컬럼 정렬
+
+**환경 인프라:**
+- Maven 3.5.4 → 3.9.9 업그레이드 (`/opt/apache-maven-3.9.9/` 영구 설치 + `/usr/local/bin/mvn` 심볼릭) — Boot 3.5 의 maven-clean-plugin 3.4.1 이 Maven 3.6.3+ 요구
+- DB: `TRUNCATE SPRING_SESSION_ATTRIBUTES; TRUNCATE SPRING_SESSION;` (Spring Session 3.x 가 2.x 직렬화 포맷 역직렬화 불가 — 모든 사용자 재로그인 필요)
+
+### 변경 의도
+- Boot 2.7 / Security 5.7 EOL 탈출. Spring Framework 6.2 + Hibernate 6.6 + Tomcat 10.1 + jakarta 네임스페이스 일괄 전환으로 신규 CVE 패치 대상 진입.
+
+### 번들 검증 (실측)
+```
+spring-boot-3.5.14.jar
+spring-security-{config,core,crypto,web}-6.5.10.jar
+spring-session-{core,jdbc}-3.5.6.jar
+hibernate-core-6.6.49.Final.jar
+tomcat-embed-core-10.1.54.jar
+thymeleaf-3.1.5.RELEASE.jar
+jakarta.persistence-api-3.1.0.jar
+jakarta.annotation-api-2.1.1.jar
+jakarta.transaction-api-2.0.1.jar
+mariadb-java-client-3.4.2.jar
+```
+
+### Smoke test 결과
+- 12 인증 페이지 GET (`/`, `/files`, `/history`, `/compare`, `/settings`, `/settings/llm`, `/settings/rag`, `/admin/users`, `/admin/leak-rules`, `/ai-chat`, `/servers`, `/comparison-history`) 모두 **HTTP 200**
+- 5 API endpoint (`/api/system/status`, `/api/history`, `/api/queue/status`, `/api/disk/check`, `/api/settings`) 모두 **HTTP 200**
+- CSRF 보호: `POST /api/llm/test-connection` (헤더 없이) **403** / (포함) **200** / `POST /api/settings/general` (헤더 없이) **403** ← ADMIN 면제 차단 유지
+- 미인증 8 페이지 모두 **302** redirect
+- 기동 시간 **12.76초** (Boot 2.7 의 10초 대비 +2.7초)
+- ERROR / Exception 0건
+
+### Phase 4 안정화 TODO (비-블로커)
+- Thymeleaf 3.1 deprecated fragment syntax: `fragments/banner :: banner` → `~{fragments/banner :: banner}` (banner 호출 6+ 템플릿). 현재 작동하나 향후 버전에서 제거 예고
+- 운영 환경의 Maven 도 3.6.3+ 로 영구 업그레이드 필요 (현재 작업 시스템만 3.9.9 설치됨)
+- LLM Chat 스트리밍 / SSE 동작 / PDF 생성 (openhtmltopdf) / 실제 분석 실행 흐름은 별도 수동 테스트 권장
+
 ## [2026-05-19] Boot 3 마이그레이션 — Phase 2 (SecurityConfig lambda DSL 사전 modernization)
 
 **변경 파일:**

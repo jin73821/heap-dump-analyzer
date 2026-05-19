@@ -30,15 +30,15 @@ public class SecurityConfig {
         http
             .userDetailsService(userDetailsService)
             .authorizeHttpRequests(auth -> auth
-                .antMatchers("/login", "/css/**", "/js/**", "/favicon.ico", "/favicon.svg").permitAll()
-                .antMatchers(HttpMethod.POST, "/api/account-requests").permitAll()
-                .antMatchers("/admin/**", "/api/admin/**").hasRole("ADMIN")
+                .requestMatchers("/login", "/css/**", "/js/**", "/favicon.ico", "/favicon.svg").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/account-requests").permitAll()
+                .requestMatchers("/admin/**", "/api/admin/**").hasRole("ADMIN")
 
                 // ── Settings 변경 API: ADMIN 전용 (USER 는 GET 으로 조회만 가능) ──
                 // 일반 General 설정 (compress / unreachable / DB 설정)
-                .antMatchers(HttpMethod.POST, "/api/settings/**").hasRole("ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/settings/**").hasRole("ADMIN")
                 // LLM 설정 mutation (분석/채팅/인사이트 액션과 분리)
-                .antMatchers(HttpMethod.POST,
+                .requestMatchers(HttpMethod.POST,
                     "/api/llm/enabled",
                     "/api/llm/config",
                     "/api/llm/apikey",
@@ -48,7 +48,7 @@ public class SecurityConfig {
                 ).hasRole("ADMIN")
                 // RAG 설정 mutation 은 위 /api/settings/** 패턴에 이미 포함됨
                 // 서버 스캔 주기 / SSH local user 변경 (Servers Settings 영역)
-                .antMatchers(HttpMethod.POST,
+                .requestMatchers(HttpMethod.POST,
                     "/api/servers/scan-interval",
                     "/api/servers/ssh-local-user"
                 ).hasRole("ADMIN")

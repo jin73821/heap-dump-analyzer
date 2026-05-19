@@ -1,6 +1,6 @@
 package com.heapdump.analyzer.model.entity;
 
-import javax.persistence.*;
+import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 /**
@@ -30,12 +30,10 @@ public class LeakLibraryRule {
     @Column(name = "severity_hint", length = 16)
     private String severityHint;
 
-    @Lob
-    @Column(name = "explanation_tpl", nullable = false)
+    @Column(name = "explanation_tpl", nullable = false, columnDefinition = "TEXT")
     private String explanationTpl;
 
-    @Lob
-    @Column(name = "advice_tpl", nullable = false)
+    @Column(name = "advice_tpl", nullable = false, columnDefinition = "TEXT")
     private String adviceTpl;
 
     @Column(name = "enabled", nullable = false)

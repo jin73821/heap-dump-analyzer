@@ -1,6 +1,6 @@
 package com.heapdump.analyzer.model.entity;
 
-import javax.persistence.*;
+import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 /**
@@ -23,16 +23,13 @@ public class LeakFallbackRule {
     @Column(name = "category", nullable = false, length = 80)
     private String category;
 
-    @Lob
-    @Column(name = "pattern_regex", nullable = false)
+    @Column(name = "pattern_regex", nullable = false, columnDefinition = "TEXT")
     private String patternRegex;
 
-    @Lob
-    @Column(name = "explanation_tpl", nullable = false)
+    @Column(name = "explanation_tpl", nullable = false, columnDefinition = "TEXT")
     private String explanationTpl;
 
-    @Lob
-    @Column(name = "advice_tpl", nullable = false)
+    @Column(name = "advice_tpl", nullable = false, columnDefinition = "TEXT")
     private String adviceTpl;
 
     @Column(name = "severity_hint", length = 16)
