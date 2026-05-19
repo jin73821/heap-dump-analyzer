@@ -1,5 +1,35 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-19] Boot 3 마이그레이션 — Phase 2 (SecurityConfig lambda DSL 사전 modernization)
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/config/SecurityConfig.java`
+  - import: `EnableGlobalMethodSecurity` → `EnableMethodSecurity` (Spring Security 5.6+ 도입, 5.6+ 부터 `prePostEnabled=true` default)
+  - 어노테이션: `@EnableGlobalMethodSecurity(prePostEnabled = true)` → `@EnableMethodSecurity`
+  - `authorizeRequests()` → `authorizeHttpRequests(auth -> auth.…)` lambda DSL
+  - `.formLogin()` / `.logout()` / `.headers()` / `.csrf()` 모두 lambda DSL 로 통일
+  - `.and()` chain 완전 제거
+  - `antMatchers` 는 유지 (Phase 3 에서 `requestMatchers` 로 일괄 치환 예정)
+
+### 변경 의도
+- Boot 3 / Security 6 BIG BANG PR 의 diff 크기를 사전에 축소. lambda DSL 과 `authorizeHttpRequests` / `@EnableMethodSecurity` 는 모두 5.6/5.7 호환 API 라 Boot 2.7 유지 상태에서 무위험 도입 가능.
+- `@PreAuthorize` 6 곳 (AdminController + AccountRequestController 5 메서드) 활성 → `@EnableMethodSecurity` 유지 필수 확인.
+
+### 내역
+- 함수형/람다 전환으로 가독성 향상 (`.and()` 체인 보일러플레이트 제거).
+- CSRF `ignoringRequestMatchers` 람다 본문은 1:1 보존 — ADMIN-only mutation endpoint 면제 차단 로직 (2026-05-18 의 CSRF tighten 작업) 그대로.
+- `frameOptions().sameOrigin()` → `headers(h -> h.frameOptions(f -> f.sameOrigin()))` — Raw Data iframe 의 SAMEORIGIN 정책 유지 (CLAUDE.md pitfall #6).
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 정상 기동 (Started in 10.0s).
+- 6-시나리오 curl smoke test 전부 통과:
+  1. 미인증 `GET /api/system/status`, `/admin/users`, `/` 모두 302 redirect
+  2. CSRF 토큰 발급 OK
+  3. ADMIN 로그인 302 → `/`
+  4. 로그인 후 `/admin/users` / `/api/admin/active-sessions` / `/api/system/status` 모두 200
+  5. CSRF 헤더 없이 `POST /api/llm/test-connection` → 403
+  6. CSRF 헤더 포함 → 200
+
 ## [2026-05-19] Boot 3 마이그레이션 — Phase 0 + Phase 1 (Java compile target 11 → 17)
 
 **변경 파일:**

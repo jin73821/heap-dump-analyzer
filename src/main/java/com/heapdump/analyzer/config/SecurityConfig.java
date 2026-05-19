@@ -4,14 +4,14 @@ import com.heapdump.analyzer.service.CustomUserDetailsService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import org.springframework.security.config.annotation.method.configuration.EnableGlobalMethodSecurity;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 
 @Configuration
-@EnableGlobalMethodSecurity(prePostEnabled = true)
+@EnableMethodSecurity
 public class SecurityConfig {
 
     private final CustomUserDetailsService userDetailsService;
@@ -29,7 +29,7 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .userDetailsService(userDetailsService)
-            .authorizeRequests()
+            .authorizeHttpRequests(auth -> auth
                 .antMatchers("/login", "/css/**", "/js/**", "/favicon.ico", "/favicon.svg").permitAll()
                 .antMatchers(HttpMethod.POST, "/api/account-requests").permitAll()
                 .antMatchers("/admin/**", "/api/admin/**").hasRole("ADMIN")
@@ -54,28 +54,28 @@ public class SecurityConfig {
                 ).hasRole("ADMIN")
 
                 .anyRequest().authenticated()
-            .and()
-            .formLogin()
+            )
+            .formLogin(form -> form
                 .loginPage("/login")
                 .defaultSuccessUrl("/", true)
                 .failureUrl("/login?error=true")
                 .permitAll()
-            .and()
-            .logout()
+            )
+            .logout(logout -> logout
                 .logoutUrl("/logout")
                 .logoutSuccessUrl("/login?logout=true")
                 .permitAll()
-            .and()
-            .headers()
-                .frameOptions().sameOrigin()
-            .and()
-            .csrf()
+            )
+            .headers(headers -> headers
+                .frameOptions(frame -> frame.sameOrigin())
+            )
+            .csrf(csrf -> csrf
                 .ignoringRequestMatchers(request -> {
                     String uri = request.getRequestURI();
                     // ── CSRF 보호 유지 (면제하지 않음) ──
                     // 1) /api/admin/** — ADMIN 페이지 전용 영역
                     if (uri.startsWith("/api/admin/")) return false;
-                    // 2) ADMIN-only mutation (authorizeRequests 의 hasRole("ADMIN") 매처와 1:1 매칭)
+                    // 2) ADMIN-only mutation (authorizeHttpRequests 의 hasRole("ADMIN") 매처와 1:1 매칭)
                     if (uri.startsWith("/api/settings/")) return false;
                     if (uri.equals("/api/llm/enabled")
                         || uri.equals("/api/llm/config")
@@ -87,7 +87,8 @@ public class SecurityConfig {
                         || uri.equals("/api/servers/ssh-local-user")) return false;
                     // ── 나머지 /api/** 경로는 CSRF 면제 (일반 사용자 액션) ──
                     return uri.startsWith("/api/");
-                });
+                })
+            );
 
         return http.build();
     }
