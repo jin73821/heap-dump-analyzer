@@ -1,5 +1,31 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-19] 운영 환경 Maven 영구 업그레이드 (3.5.4 → 3.9.9)
+
+**변경 (운영 시스템 측):**
+- `/etc/profile.d/maven.sh` 신규 — 시스템-와이드 `MAVEN_HOME` / `M2_HOME` = `/opt/apache-maven-3.9.9`
+- `alternatives --install /usr/bin/mvn mvn /opt/apache-maven-3.9.9/bin/mvn 200` + `--set mvn ...` (수동 모드 잠금)
+- Phase 3 의 `/usr/local/bin/mvn` 심볼릭 (3.9.9) 그대로 보존 — 이중 안전망
+
+**변경 (repo):**
+- 수정: `CLAUDE.md` — Build & Run 섹션에 Maven 3.6.3+ 요구사항 한 줄 추가
+
+### 변경 의도
+- Phase 3 BIG BANG 시 임시로 `/usr/local/bin/mvn` 심볼릭으로 회피했던 Maven 버전 의존성을 영구화. RHEL `alternatives` 시스템 표준 방식 사용 → `/usr/bin/mvn` 도 3.9.9 가리킴. cron/systemd/CI 등 비대화식 컨텍스트에서도 일관됨.
+
+### 검증
+- `/usr/bin/mvn -version` → Apache Maven 3.9.9
+- `/usr/local/bin/mvn -version` → Apache Maven 3.9.9
+- `bash -lc 'echo $MAVEN_HOME; mvn -version | head -1'` → `MAVEN_HOME=/opt/apache-maven-3.9.9` + 3.9.9
+- alternatives 상태: 수동 모드, `/opt/apache-maven-3.9.9/bin/mvn priority 200` (기존 RHEL 패키지 3.5.4 priority 0 은 그대로 두되 비활성)
+
+### 신규 운영 환경 배포 절차
+1. JDK 17+ 설치 (현재 OpenJDK 21)
+2. `/opt/apache-maven-3.9.9/` 압축 해제 (또는 동일 버전 이상)
+3. `alternatives --install /usr/bin/mvn mvn /opt/apache-maven-3.9.9/bin/mvn 200 --slave /usr/bin/mvnDebug mvnDebug /opt/apache-maven-3.9.9/bin/mvnDebug`
+4. `alternatives --set mvn /opt/apache-maven-3.9.9/bin/mvn`
+5. `/etc/profile.d/maven.sh` 동일 내용 배포
+
 ## [2026-05-19] Boot 3 마이그레이션 — Phase 4 안정화 (Thymeleaf 3.1 fragment syntax + 확장 smoke test)
 
 **변경 파일:**

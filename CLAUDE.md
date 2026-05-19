@@ -18,6 +18,8 @@ java -jar target/heap-analyzer-2.0.3.jar
 bash restart.sh                          # 운영(18080) 재기동
 ```
 
+**Maven 요구사항:** Maven 3.6.3+ (Boot 3.5 의 maven-clean-plugin 3.4.1 요구). 본 시스템 설정: Maven 3.9.9 (`/opt/apache-maven-3.9.9`, alternatives 수동 모드 + `/etc/profile.d/maven.sh` 로 `MAVEN_HOME` 설정). 신규 운영 환경 배포 시 동일 버전 설치 필수.
+
 **CRITICAL:** 모든 프론트엔드 리소스(CSS/HTML/JS)는 JAR 내부에 있음. **어떤 변경이든 `mvn clean package -DskipTests && bash restart.sh` 필수.** 빌드+기동 약 20~24초.
 
 **기동 검증:**
