@@ -1,5 +1,26 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-19] Boot 3 마이그레이션 — Phase 0 + Phase 1 (Java compile target 11 → 17)
+
+**변경 파일:**
+- 신규: `BOOT3_MIGRATION_PLAN.md` (root) — 영향 인벤토리 / 5-Phase 전략 / 위험 매트릭스 / smoke test 체크리스트
+- 수정: `pom.xml` — `<java.version>11</java.version>` → `17`
+- 신규 (repo 외): `/opt/heapdumps/backups/HEAPDB-pre-boot3-20260519-1103.sql` (260KB, 14 테이블)
+- 신규 브랜치: `migration/boot3` (main 에서 분기)
+
+### 변경 의도
+- Boot 2.7.18 / Spring Security 5.7.11 모두 OSS·상용 지원 종료 → Boot 3.4 + Security 6.4 마이그레이션 착수.
+- Phase 1 은 가장 안전한 첫 단계: JVM 컴파일 타깃만 변경 (이미 운영 JVM 은 OpenJDK 21 사용 중이라 런타임 변경 없음). Boot 2.7 은 Java 8/11/17 모두 지원하므로 단독 무위험 검증 가능.
+
+### 내역
+- **Phase 0 산출물**: DB 백업 (mysqldump --single-transaction --routines --triggers --events --add-drop-table) — SHA256 `1cdb5a74...d517d8`, 14 테이블 (SPRING_SESSION 2종 / analysis_history / ai_chat_* 2종 / ai_insights / users / account_requests / leak_*_rule 2종 / target_servers / dump_transfer_log / login_history / comparison_history).
+- **Phase 1 변경**: `pom.xml` 1 라인. maven-compiler-plugin 은 Spring Boot 2.7 parent default 사용 (Java 17 호환 plugin 자동 제공).
+- 운영 JVM 은 변경 없음 (이미 JDK 21 사용). 검증 단계에서 코드가 17 바이트코드로 컴파일되어 JDK 21 위에서 정상 실행되는지만 확인.
+
+### 검증
+- `mvn clean package -DskipTests && bash restart.sh` 정상 기동.
+- 컴파일 target 확인: `javap -v target/classes/com/heapdump/analyzer/HeapAnalyzerApplication.class | head -3` → major version 61 (= Java 17).
+
 ## [2026-05-19] AI 인사이트 진행 단계 — 원 사이 연결선 수직 정렬 수정
 
 **변경 파일:**
