@@ -1,5 +1,24 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-19] CLAUDE.md 광범위 갱신 — Boot 3 마이그레이션 반영
+
+**변경 파일:**
+- 수정: `CLAUDE.md` — 4 영역 갱신
+  1. **Project Overview**: "Boot 2.7.18 + Java 11" → "Boot 3.5.14 + Java 17 (런타임 JDK 21) + Security 6.5 + Hibernate 6.6 + jakarta 네임스페이스"
+  2. **Authentication & Security**: `authorizeRequests` → `authorizeHttpRequests(auth -> auth.requestMatchers(...))`, lambda DSL + `@EnableMethodSecurity` 명시
+  3. **Pitfalls 신규 2건**:
+     - #15: Spring Session JDBC 3.x ↔ 2.x 직렬화 비호환 (Boot 다운/업그레이드 시 TRUNCATE 필수)
+     - #16: Hibernate 6 `@Lob String` → tinytext(255) default 변경, `@Column(columnDefinition="TEXT")` 권장
+  4. **Refactoring History**: Boot 3 마이그레이션 항목 추가 (5 phase 요약 + 영향 통계 + 운영 인프라 변경)
+
+### 변경 의도
+- 마이그레이션 완료 후 향후 작업자가 CLAUDE.md 만 읽고도 현재 스택 / API / 함정을 정확히 파악 가능하게 동기화.
+- 특히 SecurityConfig 의 lambda DSL + `requestMatchers` + `@EnableMethodSecurity` 는 신규 ADMIN endpoint 추가 시 잘못된 옛 API 사용 방지.
+- Spring Session / Hibernate `@Lob` 함정 2건은 미래 Boot 버전 변경 또는 신규 entity 추가 시 재발 가능 — pitfalls 섹션에 영속화.
+
+### 검증
+- 텍스트 갱신만 (코드 변경 없음). 빌드/기동 영향 없음.
+
 ## [2026-05-19] 운영 환경 Maven 영구 업그레이드 (3.5.4 → 3.9.9)
 
 **변경 (운영 시스템 측):**

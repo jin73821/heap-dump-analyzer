@@ -8,7 +8,7 @@ Always respond in Korean (한국어). Code and technical identifiers remain in E
 
 ## Project Overview
 
-Java Spring Boot 2.7.18 + Java 11 웹앱. Eclipse MAT CLI로 .hprof/.bin/.dump 분석. MariaDB(`192.168.56.9:3306/HEAPDB`) + Spring Security 세션 기반.
+Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse MAT CLI로 .hprof/.bin/.dump 분석. MariaDB(`192.168.56.9:3306/HEAPDB`) + Spring Security **6.5** 세션 기반. Hibernate **6.6** + jakarta 네임스페이스 (jakarta.persistence/servlet/annotation/transaction). 2026-05-19 Boot 2.7→3.5 마이그레이션 완료 — 상세는 `BOOT3_MIGRATION_PLAN.md` 참조.
 
 ## Build & Run
 
@@ -137,7 +137,7 @@ semantic 설정 누락 시 keyword 폴백 없이 명확한 에러 (디버깅 용
 
 ## Authentication & Security
 
-Spring Security 세션. `/login` 공개, `/admin/**` + `/api/admin/**` ADMIN 전용. **CSRF 보호 유지 (면제하지 않음)**: `/api/admin/**`, `/api/settings/**`, `/api/llm/{enabled,config,apikey,test-connection,chat-prompt,chat-restore-mode}`, `/api/servers/{scan-interval,ssh-local-user}` — 모두 `authorizeRequests` 의 `hasRole("ADMIN")` 매처와 1:1 미러링. 그 외 `/api/**` 는 CSRF 면제 (인증은 유지). **새 ADMIN mutation 추가 시 SecurityConfig 두 곳 (authorize + csrf ignore) 동시 갱신 필수**.
+Spring Security **6.5** 세션. `/login` 공개, `/admin/**` + `/api/admin/**` ADMIN 전용. **CSRF 보호 유지 (면제하지 않음)**: `/api/admin/**`, `/api/settings/**`, `/api/llm/{enabled,config,apikey,test-connection,chat-prompt,chat-restore-mode}`, `/api/servers/{scan-interval,ssh-local-user}` — 모두 `authorizeHttpRequests(auth -> auth.requestMatchers(...).hasRole("ADMIN"))` 매처와 1:1 미러링. 그 외 `/api/**` 는 CSRF 면제 (인증은 유지). **새 ADMIN mutation 추가 시 SecurityConfig 두 곳 (authorize + csrf ignore) 동시 갱신 필수**. `SecurityConfig` 는 lambda DSL + `@EnableMethodSecurity` (`@PreAuthorize` 지원) 사용 — `.and()` chain / `@EnableGlobalMethodSecurity` / `antMatchers` 미사용.
 
 **Spring Session JDBC**: `SPRING_SESSION` / `SPRING_SESSION_ATTRIBUTES` 자동 생성. 무동작 만료 60분, cleanup cron 10분. 앱 재시작에도 로그인 유지.
 
@@ -187,6 +187,10 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 
 14. **`Common.fetchJSON` 시맨틱** — non-2xx 응답을 throw 한다. 페이지 코드가 에러 응답의 JSON body 를 검사해야 하는 경우 (`r.json().then(d => if d.success else show d.error)`) 마이그레이션 금지 — `.catch(e => ...)` 에서 `e.body` 는 raw 텍스트라 `JSON.parse` 추가 필요. 메시지 포맷도 `HTTP {status}: {body}` 라 커스텀 한글 메시지 보존이 필요한 곳은 원래 fetch 유지.
 
+15. **Spring Session JDBC 3.x ↔ 2.x 직렬화 비호환** — Spring Session 3.x (Boot 3) 는 2.x (Boot 2.7) 가 저장한 SPRING_SESSION_ATTRIBUTES 행을 deserialize 못 함 (`ConversionFailedException: byte[] → Object`). 응답 자체는 200 이지만 백그라운드 session save 가 실패해 로그 오염. **Boot 버전 다운/업그레이드 시 `TRUNCATE SPRING_SESSION_ATTRIBUTES; TRUNCATE SPRING_SESSION;` 필수** — 모든 사용자 재로그인 발생.
+
+16. **Hibernate 6 의 `@Lob String` default 변경** — Hibernate 5 는 `@Lob String` → `longtext` (MariaDB), Hibernate 6 는 동일 매핑을 **`tinytext(255)` 로 default 축소**. 기존 `longtext` 컬럼에 대해 `ALTER TABLE ... MODIFY ... tinytext` 시도 → 255 byte 초과 데이터 있으면 실패 WARN. **해결**: `@Lob` 제거 + `@Column(columnDefinition = "TEXT")` 명시. `leak_library_rule` / `leak_fallback_rule` 의 advice_tpl / explanation_tpl / pattern_regex 5 컬럼이 이미 적용됨. 신규 String 컬럼 추가 시 size 가 255 초과 가능하면 `columnDefinition` 또는 `length` 명시.
+
 ## Key Design Decisions
 
 - **Two-tier cache:** In-memory `ConcurrentHashMap` ← disk `result.json` 복원. 누락 필드(componentDetailHtmlMap/histogramHtml/threadOverviewHtml)는 ZIP에서 lazy 재추출.
@@ -213,3 +217,5 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 ## Refactoring History
 
 `SECURITY_REFACTOR_PLAN.md` 에 단계별 리팩토링 이력 보관. **2026-05-17 기준 모든 보류 항목 해소** (Phase 4A 서비스 분리 / 4B-2 컨트롤러 6 분할 / 5A-3 CSS 통합 / 5B-2 Common.* 마이그레이션 / 5C analyze.html JS 외부화). 새 항목 식별 시 본 문서에 추가.
+
+**Boot 3 마이그레이션 (`BOOT3_MIGRATION_PLAN.md`, 2026-05-19 완료):** Boot 2.7.18 → 3.5.14 / Security 5.7.11 → 6.5.10 / Hibernate 5.6 → 6.6 / Tomcat 9 → 10 / Java 11 → 17 (런타임 JDK 21). 5 phase 분할 (DB 백업 → Java 17 baseline → SecurityConfig lambda DSL 사전 modernize → BIG BANG: jakarta 28 파일 일괄 치환 + requestMatchers + dialect auto-detect → 안정화: Thymeleaf 3.1 fragment syntax + smoke test). 영향: 50 파일 변경, +1185/−157 라인. 운영 인프라: Maven 3.5.4 → 3.9.9 영구 업그레이드 (alternatives + /etc/profile.d). DB: SPRING_SESSION 2종 TRUNCATE + leak_*_rule 5 컬럼 TEXT ALTER. 검증: 14 페이지 200 / 4 ADMIN API 200 / PDF 생성 OK / 기동 12.8s.
