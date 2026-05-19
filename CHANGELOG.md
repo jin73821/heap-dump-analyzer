@@ -1,5 +1,36 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-19] Boot 3 마이그레이션 — Phase 4 안정화 (Thymeleaf 3.1 fragment syntax + 확장 smoke test)
+
+**변경 파일:**
+- 수정: 16 templates — `th:replace="fragments/banner :: banner"` → `th:replace="~{fragments/banner :: banner}"`
+  - `analyze.html` / `ai-chat.html` / `comparison-history.html` / `compare.html`
+  - `files.html` / `history.html` / `index.html` / `leak-rules.html`
+  - `llm-settings.html` / `progress.html` / `rag-settings.html` / `settings.html`
+  - `server-detail.html` / `server-logs.html` / `servers.html` / `admin/users.html`
+
+### 변경 의도
+- Thymeleaf 3.1 가 미감싼 fragment expression (`templateName :: fragmentName`) 을 deprecated 처리. 향후 버전에서 제거 예고. 모든 호출처를 권장 `~{...}` 문법으로 통일.
+- 동시에 Phase 3 BIG BANG 직후 확장 smoke test 로 비-회귀 검증 수행.
+
+### 내역
+- 6+ 템플릿이 사용하는 banner fragment 포함 16 곳 일괄 sed. 다른 fragment 호출은 모두 이미 `~{...}` 사용 중이라 추가 변경 없음.
+- 운영 환경 인프라 (이전 Phase 3 의 Maven 업그레이드 + DB 정리 + Session 초기화) 그대로 유지.
+
+### 확장 검증 (Phase 4 추가)
+- 14 페이지 페이지 GET 모두 200 (Phase 3 12 페이지 + `/servers/logs`, `/admin/leak-rules` + `/analyze/result/{file}`)
+- 4 ADMIN API (`/api/admin/login-history`, `/active-sessions`, `/users`, `/account-requests`) 모두 200 + 페이지네이션·정렬 동작 (Hibernate 6 + jakarta.persistence + `Specification` API)
+- 익명 `POST /api/account-requests` 빈 body → 400 + 한글 validation 메시지 (CSRF 면제 경로 동작)
+- **PDF 생성** `/analyze/{file}/print-pdf` → HTTP 200, 45KB, `%PDF-1.4` magic, 2.2s 렌더 → **openhtmltopdf 1.0.10 + Java 17 + Boot 3 호환 확인** (plan Risk #3 해소)
+- 기동 후 ERROR / Exception / Deprecated Thymeleaf WARN **0건**
+- 기동 시간 12.82초
+
+### Phase 4 잔여 (별도 작업)
+- **운영 환경 Maven 영구 업그레이드** (현재는 작업 시스템만 `/opt/apache-maven-3.9.9`)
+- **실제 분석 실행 흐름** (MAT CLI + SSE Emitter — 인터랙티브 검증 필요)
+- **LLM Chat 스트리밍** (`/api/ai-chat/sessions/{id}/stream` — 외부 LLM 게이트웨이 통신)
+- **Server SSH/SCP** 원격 덤프 전송 흐름
+
 ## [2026-05-19] Boot 3 마이그레이션 — Phase 3 BIG BANG (Boot 2.7 → 3.5.14 / Security 5.7 → 6.5.10)
 
 **변경 파일:**
