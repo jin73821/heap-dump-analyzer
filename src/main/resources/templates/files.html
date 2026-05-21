@@ -140,6 +140,8 @@
                              border: none; cursor: pointer; font-weight: 500; }
         /* .btn-cancel / .btn-delete / .btn-download 색상은 common.css 에서 제공 */
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .dl-modal-fname { font-weight: 700; font-size: 12px; max-width: 260px;
+                          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
         @media (min-width: 1024px) {
             .ftable { font-size: 14px; }
@@ -152,18 +154,131 @@
             .select-action-bar { left: 0; }
         }
         @media (max-width: 640px) {
-            .ftable .col-date, .ftable .col-compressed, .ftable .col-hide-sm { display: none; }
-            .page-stats { gap: 10px; }
-            .ftable { min-width: 500px; }
-            /* 콤팩트 mobile 툴바: 검색 풀폭, 서버·기간 50/50, 나머지 잔여 폭 분배 */
+            /* (a) 페이지 헤더 */
+            .container { padding: 60px 14px 80px; }
+            .page-hdr { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
+            .page-stats { gap: 10px; flex-wrap: wrap; }
+
+            /* (b) 툴바: 검색 풀폭 / select 3등분 / 토글류 균등 */
             .table-toolbar { gap: 8px; }
-            .table-toolbar .search-bar { flex: 1 1 100%; min-width: 0; padding: 9px 12px; }
-            .filter-sel { flex: 1 1 calc(50% - 4px); min-width: 0; padding: 8px 28px 8px 10px; }
-            .select-toggle-btn { flex: 0 0 auto; }
-            .deleted-toggle { flex: 1 1 auto; justify-content: center; }
-            .page-size-wrap { flex: 1 1 auto; justify-content: flex-end; }
-            .pagination-bar { flex-direction: column; align-items: stretch; }
+            .table-toolbar .search-bar {
+                flex: 1 1 100%; min-width: 0; padding: 11px 13px; font-size: 14px;
+            }
+            .table-toolbar .filter-sel {
+                flex: 1 1 calc(33.333% - 6px); min-width: 0;
+                padding: 9px 24px 9px 10px; font-size: 12px;
+            }
+            .table-toolbar .select-toggle-btn { flex: 1 1 auto; justify-content: center; padding: 9px 12px; }
+            .table-toolbar .deleted-toggle    { flex: 1 1 auto; justify-content: center; padding: 9px 10px; font-size: 12px; }
+            .table-toolbar .page-size-wrap    { flex: 1 1 auto; justify-content: flex-end; }
+            .page-size-label { display: none; }
+
+            /* (c) panel 평탄화 — 카드들이 컨테이너 외부에 직접 노출 */
+            .panel { background: transparent; border: none; border-radius: 0;
+                     overflow: visible; box-shadow: none; }
+
+            /* (d) 테이블 → 카드 변환 */
+            .ftable { display: block; min-width: 0; background: transparent;
+                      box-shadow: none; font-size: 13px; }
+            .ftable thead { display: none; }
+            .ftable tbody { display: block; }
+            .ftable tr {
+                display: block; background: #fff; border: 1px solid #E5E7EB;
+                border-radius: 10px; padding: 10px 14px; margin-bottom: 10px;
+                box-shadow: 0 1px 2px rgba(0,0,0,.04); position: relative;
+            }
+            .ftable tr:hover { background: #fff; }
+            .ftable td {
+                display: flex; align-items: center; justify-content: space-between;
+                gap: 12px; padding: 8px 0; border-bottom: 1px dashed #F3F4F6;
+                width: auto !important; white-space: normal !important; text-align: right;
+                font-size: 13px;
+            }
+            .ftable td:last-child { border-bottom: none; }
+            .ftable td::before {
+                content: attr(data-label);
+                font-size: 10px; font-weight: 700; color: #9CA3AF;
+                text-transform: uppercase; letter-spacing: .04em;
+                flex-shrink: 0; min-width: 56px; text-align: left;
+            }
+
+            /* (d-1) 카드 모드에서 컬럼 전부 표시 — desktop 의 숨김 override */
+            .ftable .col-date, .ftable .col-compressed, .ftable .col-hide-sm { display: flex; }
+
+            /* (d-2) 파일명 = 카드 헤더 */
+            .ftable .col-fname {
+                padding: 4px 0 10px 0; border-bottom: 1px solid #E5E7EB;
+                flex-wrap: wrap; gap: 6px; padding-right: 40px;
+            }
+            .ftable .col-fname::before { display: none; }
+            .ftable .col-fname .fname {
+                max-width: 100%; white-space: normal; word-break: break-all;
+                text-align: left; font-size: 14px; font-weight: 600; flex: 1 1 100%;
+            }
+            .ftable .col-fname .fi-del-badge { align-self: flex-start; }
+
+            /* (d-3) # 카드 우상단 absolute */
+            .ftable .col-seq {
+                position: absolute; top: 8px; right: 12px; padding: 0;
+                font-size: 10px; color: #D1D5DB; border-bottom: none;
+                min-width: 0; display: block; text-align: right;
+            }
+            .ftable .col-seq::before { display: none; }
+
+            /* (d-4) 체크박스 — 선택 모드일 때만 카드 좌상단 absolute */
+            .ftable .td-check { display: none; }
+            .ftable.select-mode .td-check {
+                display: block; position: absolute; top: 10px; left: 10px;
+                padding: 0; border: none; background: transparent;
+                width: auto; min-width: 0;
+            }
+            .ftable.select-mode .td-check::before { display: none; }
+            .ftable.select-mode .col-fname { padding-left: 28px; }
+            .ftable .row-check { width: 18px; height: 18px; }
+
+            /* (d-5) 서버 chip 정렬 */
+            .ftable .col-server span { display: inline-block; }
+
+            /* (d-6) 액션 행 — 풀폭 + 큰 탭 타깃 */
+            .ftable .col-actions {
+                justify-content: flex-end; padding-top: 12px;
+                border-top: 1px solid #F3F4F6; border-bottom: none; margin-top: 4px;
+            }
+            .ftable .col-actions::before { display: none; }
+            .ftable .file-actions { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+            .ftable .fb { width: 38px; height: 38px; border-radius: 7px; }
+            .ftable .fb svg { width: 16px; height: 16px; stroke-width: 1.6; }
+
+            /* (e) 다중선택 액션바 — 마지막 카드 가림 방지 */
+            body.has-select-bar { padding-bottom: 72px; }
+            .select-action-bar { padding: 10px 14px; }
+            .sa-btn { padding: 9px 14px; font-size: 13px; }
+
+            /* (f) no-match 카드 톤 */
+            .no-match { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                        margin-bottom: 10px; }
+
+            /* (g) 페이지네이션 */
+            .pagination-bar { flex-direction: column; align-items: stretch;
+                              background: #fff; border-top: none;
+                              border: 1px solid #E5E7EB; border-radius: 10px; margin-top: 4px; }
             .pg-list { justify-content: center; flex-wrap: wrap; }
+            .pg-btn { min-width: 36px; height: 36px; }
+
+            /* (h) 모달 → bottom sheet */
+            .modal-ov { padding: 0; align-items: flex-end; }
+            .modal-box {
+                width: 100%; max-width: 100%; max-height: 92vh;
+                padding: 18px 16px 22px; border-radius: 14px 14px 0 0;
+                text-align: left;
+            }
+            .modal-box h3 { font-size: 15px; }
+            .modal-btns { gap: 8px; }
+            .modal-btns button { flex: 1 1 0; padding: 11px 10px; font-size: 13px; }
+
+            /* (i) DownloadModal 파일명 — 풀폭 + 줄바꿈 */
+            .dl-modal-fname { max-width: 100%; white-space: normal; word-break: break-all;
+                              text-align: right; font-size: 13px; }
         }
     </style>
 </head>
@@ -283,25 +398,25 @@
                              data-sort-ai=${h.hasAiInsight ? (h.aiInsightSeverity == 'critical' ? 4 : (h.aiInsightSeverity == 'warning' ? 3 : (h.aiInsightSeverity == 'info' ? 2 : 1))) : 0},
                              data-sort-server=${h.serverName != null ? h.serverName : ''},
                              data-sort-date=${h.lastModified}">
-                    <td class="td-check"><input type="checkbox" class="row-check" th:value="${h.filename}"
+                    <td class="td-check" data-label="선택"><input type="checkbox" class="row-check" th:value="${h.filename}"
                                                 th:data-deleted="${h.fileDeleted}" onchange="onRowCheck()"></td>
-                    <td class="td-seq" th:text="${h.id != null ? h.id : '-'}">1</td>
-                    <td>
+                    <td class="td-seq col-seq" data-label="#" th:text="${h.id != null ? h.id : '-'}">1</td>
+                    <td class="col-fname" data-label="파일명">
                         <span class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</span>
                         <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
                     </td>
-                    <td>
+                    <td class="col-osize" data-label="원본">
                         <span th:if="${h.compressed}" class="fsize" th:text="${h.formattedOriginalSize}">500 MB</span>
                         <span th:unless="${h.compressed}" class="fsize" th:text="${h.formattedSize}">157 MB</span>
                     </td>
-                    <td class="col-compressed">
+                    <td class="col-compressed" data-label="압축">
                         <span th:if="${h.compressed}">
                             <span class="fsize" th:text="${h.formattedCompressedSize}">120 MB</span>
                             <span class="gz-badge">GZ</span>
                         </span>
                         <span th:unless="${h.compressed}" class="ai-none">—</span>
                     </td>
-                    <td>
+                    <td class="col-ai" data-label="AI">
                         <span th:if="${h.hasAiInsight}" class="ai-badge"
                               th:classappend="${h.aiInsightSeverity == 'critical'} ? 'ai-critical' : (${h.aiInsightSeverity == 'warning'} ? 'ai-warning' : (${h.aiInsightSeverity == 'info'} ? 'ai-info' : 'ai-default'))">
                             <svg style="width:10px;height:10px;fill:currentColor" viewBox="0 0 16 16"><path d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm0 3a.75.75 0 0 0-.75.75v4.5a.75.75 0 0 0 1.5 0v-4.5A.75.75 0 0 0 8 4zm0 8a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5z"/></svg>
@@ -309,14 +424,14 @@
                         </span>
                         <span th:unless="${h.hasAiInsight}" class="ai-none">—</span>
                     </td>
-                    <td class="col-hide-sm">
+                    <td class="col-hide-sm col-server" data-label="서버">
                         <span th:if="${h.serverName != null}" th:text="${h.serverName}" style="background:#EFF6FF;color:#2563EB;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">server1</span>
                         <span th:unless="${h.serverName != null}" style="color:#9CA3AF;font-size:12px">Local</span>
                     </td>
-                    <td class="col-date">
+                    <td class="col-date" data-label="날짜">
                         <span class="fdate" th:text="${h.formattedDate}">03-18 10:00</span>
                     </td>
-                    <td>
+                    <td class="col-actions" data-label="작업">
                         <div class="file-actions">
                             <a th:if="${h.status == 'SUCCESS'}"
                                th:href="@{/analyze/result/{f}(f=${h.filename})}"
@@ -419,7 +534,7 @@
         <div style="background:#f9fafb;border-radius:8px;padding:12px 16px;margin-bottom:14px;text-align:left">
             <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
                 <span style="color:#6b7280">Filename</span>
-                <span id="dlModalFilename" style="font-weight:700;font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">-</span>
+                <span id="dlModalFilename" class="dl-modal-fname">-</span>
             </div>
             <div style="display:flex;justify-content:space-between;font-size:12px">
                 <span style="color:#6b7280">File Size</span>
@@ -513,6 +628,7 @@ function toggleSelectMode() {
         btn.classList.add('active');
         label.textContent = '선택 종료';
         bar.classList.add('show');
+        document.body.classList.add('has-select-bar');
         updateSelectionCount();
     } else {
         exitSelectMode();
@@ -526,6 +642,7 @@ function exitSelectMode() {
     document.getElementById('selectModeBtn').classList.remove('active');
     document.getElementById('selectModeBtnLabel').textContent = '선택';
     document.getElementById('selectActionBar').classList.remove('show');
+    document.body.classList.remove('has-select-bar');
     document.querySelectorAll('.row-check').forEach(function(c) { c.checked = false; });
     var all = document.getElementById('allCheck');
     if (all) { all.checked = false; all.indeterminate = false; }

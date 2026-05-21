@@ -14,7 +14,7 @@ Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초). test 디렉토리 비어있음
-java -jar target/heap-analyzer-2.0.3.jar
+java -jar target/heap-analyzer-2.0.6.jar
 bash restart.sh                          # 운영(18080) 재기동
 ```
 

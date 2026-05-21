@@ -33,15 +33,26 @@
         .page-stat { font-size: 12px; color: #6B7280; }
         .page-stat strong { color: #1F2937; }
 
-        .tabs { display: flex; gap: 4px; border-bottom: 1px solid #E5E7EB;
-                margin-bottom: 18px; overflow-x: auto; }
-        .tab-btn { padding: 11px 20px; font-size: 13px; font-weight: 600;
-                   color: #6B7280; background: transparent;
-                   border: none; border-bottom: 2px solid transparent;
+        .tabs { display: inline-flex; gap: 4px; padding: 4px;
+                background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
+                margin-bottom: 18px; overflow-x: auto; max-width: 100%;
+                box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+        .tab-btn { padding: 9px 20px; font-size: 13px; font-weight: 600;
+                   color: #374151; background: transparent;
+                   border: none; border-radius: 7px;
                    cursor: pointer; white-space: nowrap;
-                   transition: color .15s, border-color .15s; font-family: inherit; }
-        .tab-btn:hover { color: #1F2937; }
-        .tab-btn.active { color: #2563EB; border-bottom-color: #2563EB; }
+                   transition: background .15s, color .15s, box-shadow .15s; font-family: inherit;
+                   display: inline-flex; align-items: center; gap: 6px; }
+        .tab-btn:hover { color: #111827; background: #F3F4F6; }
+        .tab-btn.active { color: #fff;
+                          background: linear-gradient(135deg,#2563EB,#4F46E5);
+                          box-shadow: 0 2px 8px rgba(37,99,235,.25); }
+        .tab-btn.active:hover { color: #fff; background: linear-gradient(135deg,#1D4ED8,#4338CA); }
+        .tab-count { display: inline-block; min-width: 22px; padding: 0 7px; height: 18px;
+                     line-height: 18px; font-size: 11px; font-weight: 700; border-radius: 9px;
+                     background: #E5E7EB; color: #4B5563; text-align: center;
+                     font-variant-numeric: tabular-nums; }
+        .tab-btn.active .tab-count { background: rgba(255,255,255,.25); color: #fff; }
         .tab-panel { display: none; }
         .tab-panel.active { display: block; }
 
@@ -185,8 +196,9 @@
             .topbar { padding: 0 14px; }
             .page-hdr { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
             .page-stats { gap: 12px; flex-wrap: wrap; }
-            .tabs { margin-bottom: 14px; gap: 0; }
-            .tab-btn { flex: 1 1 0; padding: 11px 10px; font-size: 13px; text-align: center; }
+            .tabs { display: flex; margin-bottom: 14px; gap: 4px; width: 100%; }
+            .tab-btn { flex: 1 1 0; padding: 10px 8px; font-size: 13px;
+                       justify-content: center; }
 
             /* 툴바: 검색 풀폭 + 버튼 3개 균등 */
             .toolbar { gap: 8px; }
@@ -296,8 +308,14 @@
     </div>
 
     <nav class="tabs" role="tablist">
-        <button type="button" class="tab-btn active" data-tab="library" role="tab">라이브러리 (prefix)</button>
-        <button type="button" class="tab-btn" data-tab="fallback" role="tab">Fallback (정규식)</button>
+        <button type="button" class="tab-btn active" data-tab="library" role="tab">
+            라이브러리 (prefix)
+            <span class="tab-count" id="libCountTab" th:text="${libraryCount}">0</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="fallback" role="tab">
+            Fallback (정규식)
+            <span class="tab-count" id="fbCountTab" th:text="${fallbackCount}">0</span>
+        </button>
     </nav>
 
     <!-- ===== 라이브러리 ===== -->
@@ -566,6 +584,7 @@ function loadLibrary() {
     fetch('/api/admin/leak-rules/library').then(function(r){ return r.json(); }).then(function(rows) {
         _libRules = rows || [];
         document.getElementById('libCountChip').textContent = _libRules.length;
+        document.getElementById('libCountTab').textContent = _libRules.length;
         renderLibrary();
     });
 }
@@ -643,6 +662,7 @@ function loadFallback() {
     fetch('/api/admin/leak-rules/fallback').then(function(r){ return r.json(); }).then(function(rows) {
         _fbRules = rows || [];
         document.getElementById('fbCountChip').textContent = _fbRules.length;
+        document.getElementById('fbCountTab').textContent = _fbRules.length;
         renderFallback();
     });
 }

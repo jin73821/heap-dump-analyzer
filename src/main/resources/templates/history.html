@@ -160,8 +160,16 @@
             .page-stats { gap: 10px; }
             .htable .col-hide-sm { display: none; }
             .htable { min-width: 600px; }
-            .table-toolbar { flex-direction: column; align-items: stretch; }
-            .page-size-wrap { justify-content: flex-end; }
+            /* table-toolbar 모바일 재배치: 검색 = 1행 full-width, 그 외는 2행에서 wrap. column → row+wrap */
+            .table-toolbar { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+            .table-toolbar .search-bar { flex: 1 1 100%; min-width: 0; padding: 8px 12px; font-size: 13px; }
+            .table-toolbar .filter-sel { flex: 1 1 130px; min-width: 0; padding: 7px 26px 7px 10px; font-size: 12px; }
+            .table-toolbar .select-toggle-btn { flex: 0 0 auto; padding: 7px 10px; font-size: 12px; }
+            .table-toolbar .deleted-toggle { flex: 0 0 auto; padding: 6px 9px; font-size: 12px; }
+            .table-toolbar .deleted-toggle span { font-size: 11px; }
+            .table-toolbar .page-size-wrap { flex: 0 0 auto; margin-left: auto; gap: 4px; }
+            .table-toolbar .page-size-label { font-size: 11px; }
+            .table-toolbar .page-size-select { padding: 7px 22px 7px 8px; font-size: 12px; }
             .pagination-bar { flex-direction: column; align-items: stretch; }
             .pg-list { justify-content: center; flex-wrap: wrap; }
         }
@@ -264,6 +272,32 @@
         .det-empty-chart { text-align: center; padding: 40px 0; color: #9CA3AF; font-size: 12px; }
         .detect-panel canvas { cursor: pointer; }
 
+        /* ── Detections 좌측 하단 Top Breakdown 위젯 ──────── */
+        .det-breakdown { margin-top: 14px; padding-top: 14px; border-top: 1px solid #F3F4F6; }
+        .det-breakdown-hdr { display: flex; align-items: baseline; justify-content: space-between;
+                             margin-bottom: 10px; }
+        .det-breakdown-ttl { font-size: 12px; font-weight: 700; color: #374151;
+                             text-transform: uppercase; letter-spacing: .04em; }
+        .det-breakdown-sub { font-size: 11px; color: #9CA3AF; }
+        .det-breakdown-list { display: flex; flex-direction: column; gap: 6px; }
+        .det-bd-row {
+            display: grid;
+            grid-template-columns: 110px 36px 1fr 44px;
+            gap: 10px; align-items: center;
+            font-size: 12px; line-height: 1.4;
+        }
+        .det-bd-name { color: #1F2937; font-weight: 500;
+                       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .det-bd-name.local { color: #6B7280; }
+        .det-bd-cnt { text-align: right; color: #1F2937;
+                      font-variant-numeric: tabular-nums; font-weight: 600; }
+        .det-bd-bar { position: relative; height: 8px; background: #F3F4F6;
+                      border-radius: 4px; overflow: hidden; }
+        .det-bd-bar-fill { position: absolute; left: 0; top: 0; bottom: 0;
+                           border-radius: 4px; transition: width .3s ease; }
+        .det-bd-pct { text-align: right; color: #6B7280;
+                      font-variant-numeric: tabular-nums; font-size: 11px; }
+
         /* ── 드릴다운 모달 ─────────────────────────────────── */
         .det-day-modal .modal-box {
             max-width: 720px; width: 92%;
@@ -306,8 +340,15 @@
             .detect-panel-hdr { flex-direction: column; align-items: stretch; }
             .det-controls { flex-direction: column; align-items: stretch; }
             .det-period-chips, .det-group-toggle { justify-content: center; }
-            .det-kpi { grid-template-columns: 1fr; }
+            /* KPI 3 카드(14d Total / 7d vs Prev / Peak Day)를 모바일에서도 한 줄 유지 */
+            .det-kpi { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+            .det-kpi-card { padding: 8px 9px; border-radius: 7px; }
+            .det-kpi-lbl { font-size: 9px; letter-spacing: 0; }
+            .det-kpi-val { font-size: 16px; margin-top: 2px; }
+            .det-kpi-sub { font-size: 10px; margin-top: 1px; }
             .det-day-row { flex-wrap: wrap; }
+            .det-bd-row { grid-template-columns: 88px 32px 1fr 38px; gap: 8px; font-size: 11px; }
+            .det-bd-pct { font-size: 10px; }
         }
     </style>
 </head>
@@ -389,6 +430,13 @@
         </div>
         <div class="det-empty-chart" id="detEmptyChart" style="display:none">
             해당 기간에 탐지된 의심 항목이 없습니다.
+        </div>
+        <div class="det-breakdown" id="detBreakdown" style="display:none">
+            <div class="det-breakdown-hdr">
+                <span class="det-breakdown-ttl" id="detBreakdownTtl">Top Servers</span>
+                <span class="det-breakdown-sub">기간 내 점유율</span>
+            </div>
+            <div class="det-breakdown-list" id="detBreakdownList"></div>
         </div>
     </div>
 
@@ -1125,6 +1173,59 @@ initRows();
         document.getElementById('detKpiPeakDay').textContent = kpi.peakDay || '-';
     }
 
+    function renderTopBreakdown(rawDatasets, groupBy, total) {
+        var wrap = document.getElementById('detBreakdown');
+        var list = document.getElementById('detBreakdownList');
+        var ttl  = document.getElementById('detBreakdownTtl');
+        if (!wrap || !list || !ttl) return;
+
+        var rows = (rawDatasets || []).map(function(s, idx) {
+            var sum = (s.counts || []).reduce(function(a, b) { return a + (b || 0); }, 0);
+            var color;
+            if (groupBy === 'severity') {
+                color = SEVERITY_COLORS[s.name] || '#6B7280';
+            } else {
+                color = (s.name === '기타') ? OTHERS_COLOR : PALETTE[idx % PALETTE.length];
+            }
+            return { name: s.name, count: sum, color: color };
+        }).filter(function(r) { return r.count > 0; });
+
+        rows.sort(function(a, b) { return b.count - a.count; });
+
+        if (groupBy === 'server') {
+            rows = rows.slice(0, 5);
+            ttl.textContent = 'Top Servers';
+        } else {
+            ttl.textContent = '심각도 분포';
+        }
+
+        if (rows.length === 0 || total <= 0) {
+            wrap.style.display = 'none';
+            list.innerHTML = '';
+            return;
+        }
+
+        var maxCount = rows[0].count;
+        var html = rows.map(function(r) {
+            var pct = total > 0 ? Math.round(r.count * 1000 / total) / 10 : 0;
+            var widthPct = maxCount > 0 ? (r.count * 100 / maxCount) : 0;
+            var lname = (r.name || '').toLowerCase();
+            var nameCls = (r.name === '기타' || lname === 'local') ? ' local' : '';
+            var displayName = (groupBy === 'severity') ? r.name.toUpperCase() : r.name;
+            var safeName = Common.escHtml(displayName);
+            return '<div class="det-bd-row">'
+                 +   '<span class="det-bd-name' + nameCls + '" title="' + safeName + '">' + safeName + '</span>'
+                 +   '<span class="det-bd-cnt">' + r.count + '</span>'
+                 +   '<span class="det-bd-bar"><span class="det-bd-bar-fill"'
+                 +     ' style="width:' + widthPct.toFixed(1) + '%;background:' + r.color + '"></span></span>'
+                 +   '<span class="det-bd-pct">' + pct.toFixed(1) + '%</span>'
+                 + '</div>';
+        }).join('');
+
+        list.innerHTML = html;
+        wrap.style.display = '';
+    }
+
     function renderChart(payload) {
         var labels = payload.labels || [];
         _currentLabels = labels.slice();
@@ -1132,6 +1233,7 @@ initRows();
 
         applyKpi(payload.kpi || {});
         applyRecent(payload.recent);
+        renderTopBreakdown(payload.datasets, _detGroup, (payload.kpi && payload.kpi.total) || 0);
 
         var hasData = (payload.kpi && payload.kpi.total > 0) && datasets.length > 0;
         document.getElementById('detEmptyChart').style.display = hasData ? 'none' : 'block';

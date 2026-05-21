@@ -51,6 +51,8 @@
                             transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
         .tog:checked + .tog-track { background: #2563EB; }
         .tog:checked + .tog-track::after { transform: translateX(16px); }
+        /* 비-ADMIN 진입 시 ON 토글 색을 하늘색으로 (settings.html 과 동일 패턴) */
+        .container[data-is-admin="false"] .tog:checked + .tog-track { background: #7DD3FC; }
 
         /* ── Buttons ─────────────────────────────────────── */
         .btn-primary { padding: 6px 14px; border: none; border-radius: 6px; background: #2563EB;

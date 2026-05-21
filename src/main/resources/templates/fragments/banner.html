@@ -203,18 +203,26 @@ body.banner-no-transition .gb-header { transition: none !important; }
     .gb-tab-content.active { display: flex; flex-direction: column; }
 
     /* Dynamic tabs hidden by default (only shown when page injects content) */
-    .gb-mobile-tab[data-tab="upload"] { display: none; }
     .gb-mobile-tab[data-tab="analysis"] { display: none; }
     .gb-mobile-tab[data-tab="chat"] { display: none; }
-    body.has-upload-tab .gb-mobile-tab[data-tab="upload"] { display: block; }
     body.has-analysis-tab .gb-mobile-tab[data-tab="analysis"] { display: block; }
     body.has-chat-tab .gb-mobile-tab[data-tab="chat"] { display: block; }
 }
+/* ── Navigation 탭 안 Upload 슬롯 (모바일 전용, 비어있을 땐 숨김) ── */
+#gbNavUploadSlot:empty { display: none; }
+@media (min-width: 901px) { #gbNavUploadSlot { display: none; } }
+/* 모바일에서 Upload 슬롯과 System Status 사이 간격 축소 (.gb-body 기본 gap 16px → 8px) */
+@media (max-width: 900px) {
+    /* .gb-body 의 top padding(42px)은 데스크탑의 absolute-positioned .gb-toggle 회피용 — 모바일에선
+       toggle 이 hidden 이고 mobile-tabs 가 normal flow 라 42px 가 빈 공간으로 보이므로 축소 */
+    .gb-body { padding-top: 10px; }
+    #gbNavUploadSlot:not(:empty) + .gb-section { margin-top: -8px; }
+}
+
 /* ── Desktop: hide mobile elements ──────────────── */
 @media (min-width: 901px) {
     .gb-mobile-tabs { display: none; }
     .gb-tab-content.gb-tab-nav { display: flex; flex-direction: column; }
-    .gb-tab-content.gb-tab-upload { display: none; }
     .gb-tab-content.gb-tab-analysis { display: none; }
     .gb-tab-content.gb-tab-chat { display: none; }
     .gb-banner-overlay { display: none !important; }
@@ -257,7 +265,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         </div>
         <div class="gb-header-text">
             <div class="gb-header-title">Heap Dump Analyzer</div>
-            <div class="gb-header-sub">v2.0 · MAT CLI</div>
+            <div class="gb-header-sub">v2.0.6 · MAT CLI</div>
         </div>
     </a>
 
@@ -280,14 +288,13 @@ body.banner-no-transition .gb-header { transition: none !important; }
             <span class="gb-mobile-tab-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></span>
             Chat
         </button>
-        <button class="gb-mobile-tab" data-tab="upload" onclick="switchBannerTab('upload')">
-            <span class="gb-mobile-tab-icon"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
-            Upload
-        </button>
     </div>
 
     <!-- Expanded body -->
     <div class="gb-body gb-tab-content gb-tab-nav active" id="gbBody">
+        <!-- Mobile-only upload slot (populated by index.html). 비어있거나 desktop 일 땐 자동 숨김 -->
+        <div id="gbNavUploadSlot"></div>
+
         <div class="gb-section">
             <div class="gb-title">
                 System Status
@@ -431,9 +438,6 @@ body.banner-no-transition .gb-header { transition: none !important; }
             <form id="logoutForm" th:action="@{/logout}" method="post" style="display:none"></form>
         </div>
     </div>
-
-    <!-- Mobile upload tab content (populated by index.html) -->
-    <div class="gb-tab-content gb-tab-upload" id="gbMobileUpload"></div>
 
     <!-- Mobile analysis tab content (populated by analyze.html) -->
     <div class="gb-tab-content gb-tab-analysis" id="gbMobileAnalysis"></div>
@@ -609,17 +613,16 @@ function switchBannerTab(tabName) {
     tabs.forEach(function(t) { t.classList.toggle('active', t.getAttribute('data-tab') === tabName); });
     // Tab contents
     document.querySelectorAll('.gb-tab-content').forEach(function(el) { el.classList.remove('active'); });
-    var map = { nav: 'gbBody', upload: 'gbMobileUpload', analysis: 'gbMobileAnalysis', chat: 'gbMobileChat' };
+    var map = { nav: 'gbBody', analysis: 'gbMobileAnalysis', chat: 'gbMobileChat' };
     var target = document.getElementById(map[tabName]);
     if (target) target.classList.add('active');
 }
 
-/* ── Register upload content into banner (called by index.html) ── */
+/* ── Register upload content into banner Navigation tab — System Status 위에 prepend (called by index.html) ── */
 function registerBannerUploadTab(contentElement) {
-    var slot = document.getElementById('gbMobileUpload');
+    var slot = document.getElementById('gbNavUploadSlot');
     if (!slot || !contentElement) return;
     slot.appendChild(contentElement);
-    document.body.classList.add('has-upload-tab');
 }
 
 /* ── Register analysis content into banner (called by analyze.html) ── */

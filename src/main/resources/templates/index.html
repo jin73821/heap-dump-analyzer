@@ -236,6 +236,32 @@
         .det-chart-wrap { position: relative; height: 220px; }
         .det-empty-chart { text-align: center; padding: 40px 0; color: #9CA3AF; font-size: 12px; }
 
+        /* ── Detections Top Breakdown 위젯 ──────────── */
+        .det-breakdown { margin-top: 14px; padding-top: 14px; border-top: 1px solid #F3F4F6; }
+        .det-breakdown-hdr { display: flex; align-items: baseline; justify-content: space-between;
+                             margin-bottom: 10px; }
+        .det-breakdown-ttl { font-size: 12px; font-weight: 700; color: #374151;
+                             text-transform: uppercase; letter-spacing: .04em; }
+        .det-breakdown-sub { font-size: 11px; color: #9CA3AF; }
+        .det-breakdown-list { display: flex; flex-direction: column; gap: 6px; }
+        .det-bd-row { display: grid; grid-template-columns: 110px 36px 1fr 44px;
+                      gap: 10px; align-items: center; font-size: 12px; line-height: 1.4; }
+        .det-bd-name { color: #1F2937; font-weight: 500;
+                       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .det-bd-name.local { color: #6B7280; }
+        .det-bd-cnt { text-align: right; color: #1F2937;
+                      font-variant-numeric: tabular-nums; font-weight: 600; }
+        .det-bd-bar { position: relative; height: 8px; background: #F3F4F6;
+                      border-radius: 4px; overflow: hidden; }
+        .det-bd-bar-fill { position: absolute; left: 0; top: 0; bottom: 0;
+                           border-radius: 4px; transition: width .3s ease; }
+        .det-bd-pct { text-align: right; color: #6B7280;
+                      font-variant-numeric: tabular-nums; font-size: 11px; }
+        @media (max-width: 640px) {
+            .det-bd-row { grid-template-columns: 88px 32px 1fr 38px; gap: 8px; font-size: 11px; }
+            .det-bd-pct { font-size: 10px; }
+        }
+
         .ra-item { padding: 10px 0; border-bottom: 1px solid #F3F4F6; }
         .ra-item:last-child { border-bottom: none; }
         .ra-top { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
@@ -564,7 +590,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.0 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.0.6 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -575,8 +601,8 @@
                         <svg viewBox="0 0 20 20"><path d="M10 13V5M6 8l4-4 4 4"/><path d="M3 16h14"/></svg>
                     </div>
                     <div class="upload-zone-title">Drop file here</div>
-                    <div class="upload-zone-sub">.hprof .bin .dump (.gz) · Max 5 GB</div>
-                    <input type="file" id="fileInput" name="file" accept=".hprof,.bin,.dump,.gz" style="display:none" multiple>
+                    <div class="upload-zone-sub" th:text="${allowAllExtensions} ? 'All file extensions · Max ' + ${maxUploadSizeGb} + ' GB' : '.hprof .bin .dump (.gz) · Max ' + ${maxUploadSizeGb} + ' GB'">.hprof .bin .dump (.gz) · Max 5 GB</div>
+                    <input type="file" id="fileInput" name="file" th:attr="accept=${allowAllExtensions} ? '' : '.hprof,.bin,.dump,.gz'" style="display:none" multiple>
                     <button type="button" class="upload-zone-btn" id="uploadBtn"
                             onclick="document.getElementById('fileInput').click()">Choose files</button>
                     <div id="uploadQueueUI" style="display:none;width:100%;margin-top:10px">
@@ -794,6 +820,13 @@
                     <div class="det-chart-wrap">
                         <canvas id="dailyDetectChart"></canvas>
                     </div>
+                    <div class="det-breakdown" id="dailyBreakdown" style="display:none">
+                        <div class="det-breakdown-hdr">
+                            <span class="det-breakdown-ttl">Top Servers</span>
+                            <span class="det-breakdown-sub">최근 14일 점유율</span>
+                        </div>
+                        <div class="det-breakdown-list" id="dailyBreakdownList"></div>
+                    </div>
                 </div>
                 <div th:unless="${kpiTotal14d > 0}" class="det-empty-chart">
                     최근 14일간 탐지된 의심 항목이 없습니다.
@@ -913,6 +946,9 @@
 /*<![CDATA[*/
 var DAILY_DETECT   = /*[[${dailyDetections}]]*/ [];
 var SERVER_SERIES  = /*[[${serverSeries}]]*/ [];
+var MAX_UPLOAD_BYTES = /*[[${maxUploadSizeBytes}]]*/ 5368709120;
+var MAX_UPLOAD_GB    = /*[[${maxUploadSizeGb}]]*/ 5;
+var ALLOW_ALL_EXT    = /*[[${allowAllExtensions}]]*/ false;
 /*]]>*/
 </script>
 <script>
@@ -938,6 +974,45 @@ var SERVER_SERIES  = /*[[${serverSeries}]]*/ [];
     });
 
     if (datasets.length === 0) return; // 표시할 시리즈 없음
+
+    // ── Top 5 서버 점유율 막대 위젯 ───────────────────────────
+    (function renderBreakdown(){
+        var wrap = document.getElementById('dailyBreakdown');
+        var list = document.getElementById('dailyBreakdownList');
+        if (!wrap || !list) return;
+
+        var rows = (SERVER_SERIES || []).map(function(s, idx){
+            var sum = (s.counts || []).reduce(function(a, b){ return a + (b || 0); }, 0);
+            var color = (s.name === '기타') ? OTHERS_COLOR : PALETTE[idx % PALETTE.length];
+            return { name: s.name, count: sum, color: color };
+        }).filter(function(r){ return r.count > 0; });
+
+        if (rows.length === 0) return;
+
+        rows.sort(function(a, b){ return b.count - a.count; });
+        rows = rows.slice(0, 5);
+
+        var total = rows.reduce(function(a, r){ return a + r.count; }, 0);
+        var maxCount = rows[0].count;
+
+        var html = rows.map(function(r){
+            var pct = total > 0 ? Math.round(r.count * 1000 / total) / 10 : 0;
+            var widthPct = maxCount > 0 ? (r.count * 100 / maxCount) : 0;
+            var lname = (r.name || '').toLowerCase();
+            var nameCls = (r.name === '기타' || lname === 'local') ? ' local' : '';
+            var safeName = Common.escHtml(r.name);
+            return '<div class="det-bd-row">'
+                 +   '<span class="det-bd-name' + nameCls + '" title="' + safeName + '">' + safeName + '</span>'
+                 +   '<span class="det-bd-cnt">' + r.count + '</span>'
+                 +   '<span class="det-bd-bar"><span class="det-bd-bar-fill"'
+                 +     ' style="width:' + widthPct.toFixed(1) + '%;background:' + r.color + '"></span></span>'
+                 +   '<span class="det-bd-pct">' + pct.toFixed(1) + '%</span>'
+                 + '</div>';
+        }).join('');
+
+        list.innerHTML = html;
+        wrap.style.display = '';
+    })();
 
     new Chart(canvas, {
         type: 'bar',
@@ -991,7 +1066,7 @@ var SERVER_SERIES  = /*[[${serverSeries}]]*/ [];
         if (clonedQueueUI) clonedQueueUI.id = 'uploadQueueUIBanner';
         var clonedQueueList = clone.querySelector('#uploadQueueList');
         if (clonedQueueList) clonedQueueList.id = 'uploadQueueListBanner';
-        clone.style.padding = '14px 12px';
+        clone.style.padding = '10px 12px 4px';
         registerBannerUploadTab(clone);
 
         // 배너 Upload 탭의 fileInput에도 이벤트 연결
@@ -1094,9 +1169,10 @@ function enqueueFiles(files) {
     var validExts = ['.hprof','.bin','.dump','.hprof.gz','.bin.gz','.dump.gz'];
     for (var i = 0; i < files.length; i++) {
         var lower = files[i].name.toLowerCase();
-        if (!validExts.some(function(ext){return lower.endsWith(ext);})) {
+        var extOk = ALLOW_ALL_EXT || validExts.some(function(ext){return lower.endsWith(ext);});
+        if (!extOk) {
             rejected.push(files[i].name);
-        } else if (files[i].size > 5*1024*1024*1024) {
+        } else if (files[i].size > MAX_UPLOAD_BYTES) {
             oversized.push(files[i].name);
         } else {
             valid.push(files[i]);
@@ -1130,7 +1206,7 @@ function showFileFilterModal(rejected, oversized, valid, callback) {
         html += '</div>';
     }
     if (oversized.length > 0) {
-        html += '<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:700;color:#F59E0B;margin-bottom:6px">용량 초과 — 5 GB 제한 (' + oversized.length + '개)</div>';
+        html += '<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:700;color:#F59E0B;margin-bottom:6px">용량 초과 — ' + MAX_UPLOAD_GB + ' GB 제한 (' + oversized.length + '개)</div>';
         oversized.forEach(function(n) {
             html += '<div style="font-size:12px;color:#6B7280;padding:3px 0;display:flex;align-items:center;gap:6px">'
                 + '<span style="color:#F59E0B">✕</span> ' + escapeHtml(n) + '</div>';

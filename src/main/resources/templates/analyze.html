@@ -946,19 +946,19 @@ function loadFullErrorLog() {
     <div class="modal-box">
         <div class="modal-header">
             <div class="modal-icon" style="background:#ecfdf5;color:#059669">&#11015;</div>
-            <div class="modal-title">Download File</div>
+            <div class="modal-title">파일 다운로드</div>
         </div>
         <div class="modal-body">
-            Heap dump file will be downloaded to your device.
+            힙 덤프 파일을 사용자 기기로 다운로드합니다.
             <div class="modal-filename" th:text="${result.filename}">-</div>
             <div class="modal-info">
-                <div>File Size: <span th:text="${result.formattedFileSize}">-</span></div>
-                <div>Format: <span th:text="${result.format}">-</span></div>
+                <div>파일 크기: <span th:text="${result.formattedFileSize}">-</span></div>
+                <div>형식: <span th:text="${result.format}">-</span></div>
             </div>
         </div>
         <div class="modal-footer">
-            <button class="modal-btn modal-btn-cancel" onclick="closeDlModal()">Cancel</button>
-            <button class="modal-btn modal-btn-primary" onclick="doDlFile()">Download</button>
+            <button class="modal-btn modal-btn-cancel" onclick="closeDlModal()">취소</button>
+            <button class="modal-btn modal-btn-primary" onclick="doDlFile()">다운로드</button>
         </div>
     </div>
 </div>
@@ -968,19 +968,19 @@ function loadFullErrorLog() {
     <div class="modal-box">
         <div class="modal-header">
             <div class="modal-icon icon-csv">&#128190;</div>
-            <div class="modal-title">Export CSV</div>
+            <div class="modal-title">CSV 내보내기</div>
         </div>
         <div class="modal-body">
-            Top Memory Consumers data will be exported as a CSV file.
+            Top Memory Consumers 데이터를 CSV 파일로 내보냅니다.
             <div class="modal-filename" id="csvModalFilename"></div>
             <div class="modal-info">
-                <div>Rows: <span id="csvModalRows">0</span></div>
-                <div>Columns: <span>5</span></div>
+                <div>행 수: <span id="csvModalRows">0</span></div>
+                <div>열 수: <span>5</span></div>
             </div>
         </div>
         <div class="modal-footer">
-            <button class="modal-btn modal-btn-cancel" onclick="closeCsvModal()">Cancel</button>
-            <button class="modal-btn modal-btn-primary" onclick="doExportCSV()">Download</button>
+            <button class="modal-btn modal-btn-cancel" onclick="closeCsvModal()">취소</button>
+            <button class="modal-btn modal-btn-primary" onclick="doExportCSV()">다운로드</button>
         </div>
     </div>
 </div>

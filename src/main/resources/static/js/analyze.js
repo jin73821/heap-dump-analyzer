@@ -812,18 +812,57 @@ var MAT_SENTENCE_PATTERNS = [
     // "No objects totalling X B are retained (kept alive) only via soft/weak references."
     [/No objects totalling ([\d,]+ \w+) are retained \(kept alive\) only via (soft|weak|phantom) references\./ig,
         function(m) { var t = m[2]==='soft'?'소프트':m[2]==='weak'?'약한':'팬텀'; return t + ' 참조만으로 유지(alive)되는 객체는 없습니다 (총 ' + m[1] + ').'; }],
+    // "N objects totalling X unit are retained (kept alive) only via soft/weak references." — 실제 MAT 출력 포맷
+    [/(\d[\d,]*) objects totalling ([\d,.]+ \w+) are retained \(kept alive\) only via (soft|weak|phantom) references\./ig,
+        function(m) { var t = m[3]==='soft'?'소프트':m[3]==='weak'?'약한':'팬텀'; return t + ' 참조만으로 유지(alive)되는 객체가 ' + m[1] + '개 있습니다 (총 ' + m[2] + ').'; }],
     [/([\d,]+ \w+) of objects are retained \(kept alive\) only via (soft|weak|phantom) references\./ig,
         function(m) { var t = m[2]==='soft'?'소프트':m[2]==='weak'?'약한':'팬텀'; return t + ' 참조만으로 유지(alive)되는 객체가 ' + m[1] + ' 있습니다.'; }],
     // "No objects totalling X B are softly/weakly referenced and also strongly retained..."
     [/No objects totalling ([\d,]+ \w+) are (softly|weakly) referenced and also strongly retained \(kept alive\) via (soft|weak|phantom) references\./ig,
         function(m) { var t = m[3]==='soft'?'소프트':m[3]==='weak'?'약한':'팬텀'; var r = m[2]==='softly'?'소프트':'약한'; return r + ' 참조되면서 ' + t + ' 참조를 통해 강하게 유지(alive)되는 객체는 없습니다 (총 ' + m[1] + ').'; }],
+    // "N objects totalling X unit are softly/weakly referenced and also strongly retained..." — 실제 MAT 출력 포맷
+    [/(\d[\d,]*) objects totalling ([\d,.]+ \w+) are (softly|weakly) referenced and also strongly retained \(kept alive\) via (soft|weak|phantom) references\./ig,
+        function(m) { var t = m[4]==='soft'?'소프트':m[4]==='weak'?'약한':'팬텀'; var r = m[3]==='softly'?'소프트':'약한'; return r + ' 참조되면서 ' + t + ' 참조를 통해 강하게 유지(alive)되는 객체가 ' + m[1] + '개 있습니다 (총 ' + m[2] + ').'; }],
+    // "One object totalling X unit are softly/weakly referenced and also strongly retained..." — 단수형 (1 개) 변형
+    [/One object totalling ([\d,.]+ \w+) (?:is|are) (softly|weakly) referenced and also strongly retained \(kept alive\) via (soft|weak|phantom) references\./ig,
+        function(m) { var t = m[3]==='soft'?'소프트':m[3]==='weak'?'약한':'팬텀'; var r = m[2]==='softly'?'소프트':'약한'; return r + ' 참조되면서 ' + t + ' 참조를 통해 강하게 유지(alive)되는 객체가 1개 있습니다 (총 ' + m[1] + ').'; }],
+    // "One object totalling X unit is retained (kept alive) only via soft/weak/phantom references." — 단수형 (only via) 변형
+    [/One object totalling ([\d,.]+ \w+) (?:is|are) retained \(kept alive\) only via (soft|weak|phantom) references\./ig,
+        function(m) { var t = m[2]==='soft'?'소프트':m[2]==='weak'?'약한':'팬텀'; return t + ' 참조만으로 유지(alive)되는 객체가 1개 있습니다 (총 ' + m[1] + ').'; }],
     [/([\d,]+ \w+) of objects are (softly|weakly) referenced and also strongly retained \(kept alive\) via (soft|weak|phantom) references\./ig,
         function(m) { var t = m[3]==='soft'?'소프트':m[3]==='weak'?'약한':'팬텀'; var r = m[2]==='softly'?'소프트':'약한'; return r + ' 참조되면서 ' + t + ' 참조를 통해 강하게 유지(alive)되는 객체가 ' + m[1] + ' 있습니다.'; }],
+    // "Possible Memory Leak" — 라벨 (위 retained 문장 앞에 자주 등장)
+    [/Possible Memory Leak/ig,
+        function() { return '잠재적 메모리 누수'; }],
+    // Reference type component-keep statements (Soft/Weak/Phantom References)
+    [/Component does not keep (Soft|Weak|Phantom) References alive\./ig,
+        function(m) { var t = m[1].toLowerCase()==='soft'?'소프트':m[1].toLowerCase()==='weak'?'약한':'팬텀'; return '이 컴포넌트는 ' + t + ' 참조를 유지(alive)하지 않습니다.'; }],
     // Finalizer
     [/Component does not keep objects? with Finalizer methods? alive\./i,
         function() { return '이 컴포넌트는 Finalizer 메서드를 가진 객체를 유지(alive)하지 않습니다.'; }],
     [/A total of (\d[\d,]*) objects with finalizers? have been found\./i,
         function(m) { return 'Finalizer를 가진 객체가 총 ' + m[1] + '개 발견되었습니다.'; }],
+    [/A total of (\d[\d,]*) objects? implement the finalize method\./i,
+        function(m) { return '총 ' + m[1] + '개의 객체가 finalize 메서드를 구현하고 있습니다.'; }],
+    [/Heap dump contains no java\.lang\.ref\.Finalizer objects?\.\s*IBM VMs implement Finalizer differently and are currently not supported by this report\./i,
+        function() { return '힙 덤프에 java.lang.ref.Finalizer 객체가 없습니다. IBM VM 은 Finalizer 를 다르게 구현하며, 본 리포트에서는 현재 지원되지 않습니다.'; }],
+    [/Heap dump contains no java\.lang\.ref\.Finalizer objects?\./i,
+        function() { return '힙 덤프에 java.lang.ref.Finalizer 객체가 없습니다.'; }],
+    [/IBM VMs implement Finalizer differently and are currently not supported by this report\./i,
+        function() { return 'IBM VM 은 Finalizer 를 다르게 구현하며, 본 리포트에서는 현재 지원되지 않습니다.'; }],
+    // Map collision ratios
+    [/No maps found with collision ratios greater than (\d+)%\./i,
+        function(m) { return '충돌 비율이 ' + m[1] + '%를 초과하는 맵이 발견되지 않았습니다.'; }],
+    [/Detected the following maps with collision ratios greater than (\d+)%:/i,
+        function(m) { return '충돌 비율이 ' + m[1] + '%를 초과하는 다음 맵이 발견되었습니다:'; }],
+    // Collection fill ratios
+    [/Detected the following collections with fill ratios below (\d+)%:/i,
+        function(m) { return '채움 비율이 ' + m[1] + '% 미만인 다음 컬렉션이 발견되었습니다:'; }],
+    [/Detected the following arrays with fill ratios below (\d+)%:/i,
+        function(m) { return '채움 비율이 ' + m[1] + '% 미만인 다음 배열이 발견되었습니다:'; }],
+    // "211 instances of java.util.HashMap retain >= 4,045,896 bytes."
+    [/(\d[\d,]*) instances? of ([\w.$]+) retain >= ([\d,]+) bytes\./ig,
+        function(m) { return m[2] + ' 인스턴스 ' + m[1] + '개가 ' + m[3] + ' 바이트 이상을 유지하고 있습니다.'; }],
     // Empty collections / duplicate strings
     [/No excessive duplicate strings found\./i,
         function() { return '과도한 중복 문자열이 발견되지 않았습니다.'; }],
@@ -847,13 +886,15 @@ var MAT_SENTENCE_PATTERNS = [
         function() { return '의심스러운 상수 값 원시 배열이 발견되지 않았습니다.'; }],
     [/No excessive usage of primitive arrays with a constant value found\./i,
         function() { return '상수 값 원시 배열의 과도한 사용이 발견되지 않았습니다.'; }],
-    // Table Of Contents / Created by (inline 형태)
-    [/Table Of Contents\s+Created by Eclipse Memory Analyzer/i,
-        function() { return '목차 — Eclipse Memory Analyzer에 의해 생성됨'; }],
-    [/Table Of Contents/i,
-        function() { return '목차'; }],
-    [/Created by Eclipse Memory Analyzer/i,
-        function() { return 'Eclipse Memory Analyzer에 의해 생성됨'; }]
+    // MAT 리포트 footer (Table Of Contents / Created by Eclipse Memory Analyzer) — 본문 inline 등장 시 제거.
+    // 표시 가치가 없고 단락 끝에 붙어 시각적 노이즈만 유발.
+    // (단독 라인 형태는 MAT_LINE_PATTERNS 의 ^Table Of Contents$ / ^Created by Eclipse... 규칙이 별도 처리)
+    [/Table Of Contents\s+Created by Eclipse Memory Analyzer/ig,
+        function() { return ''; }],
+    [/Created by Eclipse Memory Analyzer/ig,
+        function() { return ''; }],
+    [/Table Of Contents/ig,
+        function() { return ''; }]
 ];
 
 function trTitle(title) {
@@ -923,7 +964,8 @@ function trText(text) {
         }
         if (!translated) result.push(line);
     }
-    return result.join('\n');
+    // blanked 패턴(e.g. MAT footer) 제거 후 남은 다중 공백/끝 공백 정돈
+    return result.join('\n').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+(\n|$)/g, '$1');
 }
 
 // 섹션 트리에서 경고/오류 수 집계

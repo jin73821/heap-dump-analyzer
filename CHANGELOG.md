@@ -1,5 +1,509 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-22] 앱 JVM 힙 옵션 고정 — Xms 256m / Xmx 1g
+
+**요청 배경:** 기존 기동 명령에 JVM 힙 옵션이 없어 JDK 기본값(시스템 메모리 기반 자동 산정) 적용. 운영 환경에서 메모리 사용량을 예측 가능하게 고정 필요.
+
+**변경 파일:**
+- 수정: `restart.sh` / `run.sh` — `java -jar ...` 명령 직전에 `JVM_HEAP_OPTS="-Xms256m -Xmx1g"` 변수 정의 후 `java $JVM_HEAP_OPTS ...` 형태로 부착. (restart.sh 는 기존 `-Dfile.encoding=UTF-8 $TRUST_OPTS` 다음에, run.sh 는 동일 위치에 추가).
+
+### 검증
+- `bash restart.sh` 후 `ps -ef` 출력 확인 — `java -Xms256m -Xmx1g -Dfile.encoding=UTF-8 -jar ...heap-analyzer-2.0.6.jar` 정상 부착.
+- `/api/system/status` JSON 응답: `jvmMaxMb: 1024` (= -Xmx1g), `jvmUsedMb: 125` — 최대 힙 1 GB 적용 확인.
+
+## [2026-05-22] 버전 2.0.3 → 2.0.6
+
+**변경 파일:**
+- 수정: `pom.xml` — `<version>2.0.3</version>` → `<version>2.0.6</version>`. mvn 빌드 산출물 파일명이 `heap-analyzer-2.0.6.jar` 로 변경됨.
+- 수정: `stop.sh` / `run.sh` / `restart.sh` — `heap-analyzer-2.0.3.jar` → `heap-analyzer-2.0.6.jar` (각 파일 안 grep / JAR 경로 패턴 일괄 치환).
+- 수정: `src/main/resources/templates/progress.html` 푸터 — `Heap Dump Analyzer v2.0.3` → `v2.0.6`.
+- 수정: `src/main/resources/templates/fragments/banner.html` 좌측 배너 헤더 — `v2.0 · MAT CLI` → `v2.0.6 · MAT CLI` (분석 페이지 포함 모든 페이지에 노출).
+- 수정: `src/main/resources/templates/index.html` 모바일 사이드바 헤더 — `v2.0 · MAT CLI Edition` → `v2.0.6 · MAT CLI Edition`.
+- 수정: `CLAUDE.md` — `java -jar target/heap-analyzer-2.0.3.jar` → `2.0.6` (개발자 문서 정합).
+
+**전환 절차:**
+1. 기존 2.0.3 프로세스 SIGTERM (`kill -15 <PID>`) — 새 restart.sh 가 2.0.6 패턴으로 grep 하므로 직접 종료 필요.
+2. `mvn clean package -DskipTests` 으로 새 JAR 생성: `target/heap-analyzer-2.0.6.jar` (`target/heap-analyzer-2.0.3.jar` 는 `mvn clean` 으로 제거).
+3. `bash restart.sh` → 새 JAR 로 정상 기동 (13.2s).
+
+### 검증
+- 빌드 OK, 새 JAR `heap-analyzer-2.0.6.jar` 생성 (~76.5 MB).
+- 프로세스 확인: `java ... heap-analyzer-2.0.6.jar --server.port=18080` 가동 중.
+- 페이지 응답 grep:
+  - 배너 헤더: `<div class="gb-header-sub">v2.0.6 · MAT CLI</div>`
+  - 인덱스 모바일 헤더: `<div class="ms-sub">v2.0.6 · MAT CLI Edition</div>`
+  - progress 푸터: `Heap Dump Analyzer v2.0.6`
+
+## [2026-05-22] MAT 리포트 번역 보완 — "Component does not keep <Type> References alive" / "Possible Memory Leak" / 단수형 "One object"
+
+**누락 사례:**
+1. "Component does not keep Weak References alive." — 기존엔 Finalizer 변형(`with Finalizer methods`)만 처리.
+2. "Possible Memory Leak One object totalling 32 B are weakly referenced and also strongly retained (kept alive) via weak references." — 두 문제 결합:
+   - "Possible Memory Leak" 라벨 누락
+   - "One object totalling ..." (단수형 `One`) 패턴 누락 — 기존엔 `(\d[\d,]*) objects totalling ...` 복수형만 처리
+
+**변경 파일:**
+- 수정: `src/main/resources/static/js/analyze.js` — `MAT_SENTENCE_PATTERNS` 에 4 패턴 추가:
+  - `One object totalling ([\d,.]+ \w+) (?:is|are) (softly|weakly) referenced and also strongly retained \(kept alive\) via (soft|weak|phantom) references\.` → "{r} 참조되면서 {t} 참조를 통해 강하게 유지(alive)되는 객체가 1개 있습니다 (총 X 단위)." (is/are 양쪽 허용)
+  - `One object totalling ([\d,.]+ \w+) (?:is|are) retained \(kept alive\) only via (soft|weak|phantom) references\.` → "{t} 참조만으로 유지(alive)되는 객체가 1개 있습니다 (총 X 단위)." (only via 단수형 변형)
+  - `Possible Memory Leak` → "잠재적 메모리 누수" (global, 단독/인라인 모두 매칭)
+  - `Component does not keep (Soft|Weak|Phantom) References alive\.` → "이 컴포넌트는 {t} 참조를 유지(alive)하지 않습니다." (3 가지 참조 타입 일괄)
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- Node 로 7 케이스 sanity test:
+  - Component does not keep (Weak/Soft/Phantom) References alive → 한글 변환 OK
+  - "Possible Memory Leak One object totalling 32 B are weakly referenced and also strongly retained..." → "잠재적 메모리 누수 약한 참조되면서 약한 참조를 통해 강하게 유지(alive)되는 객체가 1개 있습니다 (총 32 B)." 정상
+  - `is` 변형 동일 처리 OK
+  - "One object totalling 232 B is retained (kept alive) only via weak references." → "약한 참조만으로 유지(alive)되는 객체가 1개 있습니다 (총 232 B)." 정상
+
+## [2026-05-21] MAT 리포트 footer 노이즈 제거 — "Table Of Contents / Created by Eclipse Memory Analyzer" inline 출현 제거
+
+**요청 배경:** "맵 충돌 비율" 같은 섹션 본문 끝에 "목차 — Eclipse Memory Analyzer에 의해 생성됨" 이 붙어 시각적 노이즈만 유발. 섹션 표시에 가치 없음.
+
+**변경 파일:**
+- 수정: `src/main/resources/static/js/analyze.js`
+  - 기존 inline 형태 3 패턴이 한글로 번역만 했었음 → 모두 빈 문자열 반환으로 변경:
+    - `Table Of Contents\s+Created by Eclipse Memory Analyzer` (combined) → `''`
+    - `Created by Eclipse Memory Analyzer` (standalone) → `''`
+    - `Table Of Contents` (standalone) → `''`
+  - 세 패턴 모두 `global` 플래그(`/ig`) 추가 — 한 문장 안에 2 번 이상 등장 시 모두 제거.
+  - 단독 라인 형태 (`^Table Of Contents$` / `^Created by Eclipse Memory Analyzer$`) 는 `MAT_LINE_PATTERNS` 에서 별도 처리 중이므로 그대로 한글 번역 유지 (실제 TOC 헤딩 라인의 번역).
+  - `trText()` 끝부분에 whitespace 정돈 추가 — `replace(/[ \t]{2,}/g, ' ')` (다중 공백 → 단일) + `replace(/[ \t]+(\n|$)/g, '$1')` (라인 끝 공백 제거) — 블랭크된 footer 위치에 남는 공백 정돈.
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- Node 로 3 케이스 sanity test:
+  - "No maps found with collision ratios greater than 80%. Table Of Contents Created by Eclipse Memory Analyzer." → "충돌 비율이 80%를 초과하는 맵이 발견되지 않았습니다."
+  - "Some content here. Table Of Contents" → "Some content here."
+  - "Section text. Created by Eclipse Memory Analyzer" → "Section text."
+- `/js/analyze.js` 응답 grep — 새 패턴 3 줄과 새 whitespace cleanup 1 줄 모두 출력 확인.
+
+## [2026-05-21] MAT 리포트 번역 누락 보완 — soft/weak retained, 맵 충돌, fill ratio, finalize 카운트
+
+**누락 사례:**
+1. "39,615 objects totalling 2.1 MB are retained (kept alive) only via soft references." → 영문 그대로 노출. 기존 패턴 `([\d,]+ \w+) of objects are retained...` 가 실제 MAT 포맷(`N objects totalling X unit ...`)과 어순이 달라 매칭 실패.
+2. "20 objects totalling 792 B are retained (kept alive) only via weak references." → 동일 원인.
+3. "No maps found with collision ratios greater than 80%." → 패턴 미존재.
+4. "A total of 1 object implement the finalize method." → 기존 finalize 패턴(`objects with finalizers? have been found`) 과 동사 형태가 달라 매칭 실패.
+5. "Detected the following collections with fill ratios below 20%:" → 패턴 미존재.
+6. "211 instances of java.util.concurrent.ConcurrentHashMap retain >= 6,898,592 bytes." → 패턴 미존재.
+
+**변경 파일:**
+- 수정: `src/main/resources/static/js/analyze.js` — `MAT_SENTENCE_PATTERNS` 에 6 패턴 추가:
+  - `(\d[\d,]*) objects totalling ([\d,.]+ \w+) are retained \(kept alive\) only via (soft|weak|phantom) references\.` → "{ref} 참조만으로 유지(alive)되는 객체가 N개 있습니다 (총 X 단위)."
+  - `(\d[\d,]*) objects totalling ([\d,.]+ \w+) are (softly|weakly) referenced and also strongly retained \(kept alive\) via (soft|weak|phantom) references\.` → "{r} 참조되면서 {t} 참조를 통해 강하게 유지(alive)되는 객체가 N개 있습니다 (총 X 단위)."
+  - `A total of (\d[\d,]*) objects? implement the finalize method\.` → "총 N개의 객체가 finalize 메서드를 구현하고 있습니다."
+  - `No maps found with collision ratios greater than (\d+)%\.` → "충돌 비율이 N%를 초과하는 맵이 발견되지 않았습니다."
+  - `Detected the following maps with collision ratios greater than (\d+)%:` → "충돌 비율이 N%를 초과하는 다음 맵이 발견되었습니다:" (안전망)
+  - `Detected the following collections with fill ratios below (\d+)%:` / `Detected the following arrays with fill ratios below (\d+)%:` → "채움 비율이 N% 미만인 다음 컬렉션/배열이 발견되었습니다:"
+  - `(\d[\d,]*) instances? of ([\w.$]+) retain >= ([\d,]+) bytes\.` → "<class> 인스턴스 N개가 X 바이트 이상을 유지하고 있습니다."
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- Node 로 8 케이스 sanity test 수행 — 입력 8건 모두 한글로 정상 변환 확인 (소프트/약한 retained, 맵 충돌, finalize 카운트(단/복수), fill ratio 헤더, instances retain).
+- `/js/analyze.js` 응답에 새 정규식 6 라인 모두 grep 확인.
+
+## [2026-05-21] 3건 — progress 모바일 라인 정렬 / Finalizer IBM 문구 번역 / Download 모달 한글화
+
+**요청 3건:**
+1. 분석 진행 페이지(/progress)에서 sub-step(Overview/Top Components/Leak Suspects 리포트)의 점-아래 연결선이 모바일에서 점 오른쪽으로 어긋남 → 정렬.
+2. 클래스 상세 모달의 "Finalizer Statistics" 섹션의 "Heap dump contains no java.lang.ref.Finalizer objects. IBM VMs implement Finalizer differently..." 문장이 영문 그대로 노출 → 한글 번역.
+3. /analyze 의 Download 버튼 클릭 시 뜨는 모달(Download File / CSV Export)이 영문 → 한글화.
+
+**원인 분석 (1번):**
+`@media (max-width: 480px)` 에서 `.timeline-item.sub-step { padding-left: 14px }` 으로 점 시작 위치가 좌측으로 이동했으나, 베이스 sub-step 규칙의 `timeline-line { left: 35px }` 는 그대로 적용 → 점 중심(14+12=26) 과 라인 중심(35+1=36) 이 10px 어긋남.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/progress.html`
+  - `@media (max-width: 480px)` 블록 안에 `.timeline-item.sub-step .timeline-line { left: 25px; }` 1줄 추가 — sub-step 24px dot 중심(14+12=26) 과 라인 중심(25+1=26) 일치.
+- 수정: `src/main/resources/static/js/analyze.js`
+  - `MAT_SENTENCE_PATTERNS` 의 Finalizer 섹션에 3 패턴 추가:
+    - "Heap dump contains no java.lang.ref.Finalizer objects. IBM VMs implement Finalizer differently and are currently not supported by this report." 전체 일치
+    - "Heap dump contains no java.lang.ref.Finalizer objects." 부분 일치 (안전망)
+    - "IBM VMs implement Finalizer differently and are currently not supported by this report." 부분 일치 (안전망)
+- 수정: `src/main/resources/templates/analyze.html`
+  - Download File 모달: title "Download File" → "파일 다운로드", body "Heap dump file will be downloaded to your device." → "힙 덤프 파일을 사용자 기기로 다운로드합니다.", "File Size" → "파일 크기", "Format" → "형식", 버튼 "Cancel/Download" → "취소/다운로드".
+  - CSV Export 모달: title "Export CSV" → "CSV 내보내기", body "Top Memory Consumers data will be exported as a CSV file." → "Top Memory Consumers 데이터를 CSV 파일로 내보냅니다.", "Rows/Columns" → "행 수/열 수", 버튼 "Cancel/Download" → "취소/다운로드".
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- `progress.html` source grep — 488 라인 `padding-left: 14px` 다음 라인 490 에 `timeline-line { left: 25px }` 출력 확인.
+- `/js/analyze.js` 응답에 새 3 패턴 grep 확인 — IBM VMs / java.lang.ref.Finalizer 문구가 한글로 변환되는 정규식 정상 추가.
+- `/analyze/jeus_admin_20260517.hprof` 응답에서 "파일 다운로드" / "힙 덤프 파일을 사용자 기기로 다운로드합니다." / "CSV 내보내기" / "Top Memory Consumers 데이터를 CSV 파일로 내보냅니다." 모두 grep 으로 출력 확인.
+
+## [2026-05-21] Analysis History 모바일 — Detections KPI 한 줄 + 툴바 재배치
+
+**요청 2건:**
+1. Detections 위젯의 3 KPI (14d Total / 7d vs Prev / Peak Day) 가 모바일에서 1열 stack 으로 떨어져 세로 공간 차지 → 한 줄(3 열) 유지.
+2. 검색 input 이 비정상적으로 거대해 보이고 상태 select / 선택 버튼 / deleted 표시 / 행 표시 가 각각 한 줄씩 차지 → 검색만 1행 전폭으로 두고 나머지는 같은 행에서 wrap 으로 컴팩트 배치.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/history.html`
+  - `@media (max-width: 640px)` 의 `.det-kpi { grid-template-columns: 1fr }` → `repeat(3, 1fr); gap: 6px;`. 카드 내부 `.det-kpi-card { padding: 14px 16px → 8px 9px }`, `.det-kpi-lbl { font-size: 11 → 9px; letter-spacing: 0 }`, `.det-kpi-val { 24 → 16px }`, `.det-kpi-sub { 12 → 10px }` 로 컴팩트화 — 3 카드가 360px 화면에서도 자연 배치.
+  - `@media (max-width: 640px)` 의 `.table-toolbar { flex-direction: column; align-items: stretch }` → `flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px`. 각 자식별 flex 규칙 신규:
+    - `.search-bar { flex: 1 1 100%; padding: 10 14 → 8 12px; font-size: 13px }` — 1 행 full-width 강제, padding 축소로 높이 정상화.
+    - `.filter-sel { flex: 1 1 130px; padding/font 축소 }` — 남는 공간 확장.
+    - `.select-toggle-btn / .deleted-toggle { flex: 0 0 auto; padding/font 축소 }` — 자연 폭.
+    - `.page-size-wrap { flex: 0 0 auto; margin-left: auto }` — 우측 정렬.
+  - 결과: 1행 검색 input + 2행 (상태 select | 선택 | deleted 표시 | 행 표시) wrap 배치.
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- `/history` 렌더 HTML 의 `@media (max-width: 640px)` 블록에서 두 영역 모두 grep 으로 새 규칙 출력 확인.
+- 모바일 (≤640px) 에서 Detections KPI 3 카드가 가로 1 행으로 표시되고, 검색바가 1 행 full-width, 그 아래 row 에 상태/선택/deleted/페이지 표시가 컴팩트하게 배치됨.
+
+## [2026-05-21] 모바일 배너 — 탭 버튼과 Upload 사이 상단 여백 축소
+
+**원인:** `.gb-body { padding: 42px 12px 14px }` 의 42px top padding 은 데스크탑에서 `position: absolute; top: 62px` 인 `.gb-toggle` (배너 접기 버튼) 과 콘텐츠가 겹치지 않게 두는 공간. 모바일에서는 toggle 이 `display: none !important` 로 숨겨지고 `.gb-mobile-tabs` 가 normal flow 로 그 위치에 들어오므로, 그 아래의 42px 가 그대로 빈 공간으로 남았다.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/fragments/banner.html`
+  - `@media (max-width: 900px)` 블록 안에 `.gb-body { padding-top: 10px; }` 1줄 추가 — 모바일에서만 top padding 을 42px → 10px 로 축소. 좌우(12px) / 하단(14px) 은 그대로.
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- `/` 렌더 HTML 에서 데스크탑 기본 `.gb-body { padding: 42px 12px 14px }` 다음 줄에 모바일 override `.gb-body { padding-top: 10px; }` 가 cascade 순서대로 출력됨 (≤900px 화면에서 후자가 적용).
+- 결과: 모바일에서 Navigation/Analysis/Chat 탭 버튼 하단 ↔ Upload 섹션 상단 사이의 빈 공간이 ~32px 축소.
+
+## [2026-05-21] 비교 페이지 모바일 미세 조정 — Quick Reading 한 줄 + 스냅샷 가독성 회복
+
+**요청 배경:**
+- 직전 컴팩트화 작업에서 `.cmp-risk-row` 가 1fr 으로 강제되어 Quick Reading 의 Leak Suspects / Threads 가 모바일에서 세로 stack 됨 → 사용자 요청: 같은 라인으로 복원.
+- Before/After 스냅샷이 2-column × 2x2 mini-metric 구조로 너무 압축돼 라벨/값 가독성 저하 → 사용자 요청: 더 시원하게.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/compare.html`
+  - `@media (max-width: 700px)` 블록 미세 조정:
+    - `.cmp-picker-grid, .cmp-risk-row { 1fr }` → `.cmp-picker-grid { 1fr }` 만 남기고 `.cmp-risk-row { 1fr 1fr; gap: 8px }` 로 별도 규칙. Quick Reading 의 두 박스가 한 라인 유지.
+    - `.cmp-snapshot-grid { 1fr 1fr → 1fr; gap: 8px → 10px; margin-bottom: 12 → 14px }` — 두 스냅샷 카드를 세로 stack 으로 변경하여 각 카드가 풀폭 확보.
+    - `.cmp-snapshot-card { padding: 12 → 14px }`, `h3 { font-size: 12 → 13px; margin-bottom: 8 → 10px }` — 헤더 가독성.
+    - `.cmp-metric-list { gap: 6 → 8px }` 유지 (2x2).
+    - `.cmp-mini-metric { padding: 8 9 → 10 11; border-radius: 10 → 11 }` — 터치 타겟·여백 회복.
+    - `.cmp-mini-label { font-size: 10 → 11; margin-bottom: 2 → 4 }`, `.cmp-mini-value { font-size: 12 → 15 }` — 값이 한눈에 들어오도록 폰트 키움.
+  - 그 외 KPI/Hero/Summary 컴팩트 규칙은 직전 작업과 동일하게 유지 (스크롤 단축 효과 보존).
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- `/compare` 렌더 HTML 의 700px 미디어쿼리 블록에서 다음 모두 확인:
+  - `.cmp-risk-row { grid-template-columns: 1fr 1fr; gap: 8px; }` 단독.
+  - `.cmp-snapshot-grid { grid-template-columns: 1fr; gap: 10px; margin-bottom: 14px; }`.
+  - `.cmp-mini-value { font-size: 15px; }`, `.cmp-mini-label { font-size: 11px; }`.
+- 결과 (모바일 ≤700px): Before/After 스냅샷 카드가 세로 2 행으로 stack 되어 각 카드 안의 4 metric 이 2x2 로 더 넓게 배치, 값 폰트가 15px 로 확대돼 가독성 향상. Quick Reading 의 Leak Suspects + Threads 는 1 행 2 열로 한 줄 표시 유지.
+
+## [2026-05-21] 모바일 UX 정돈 4건 — 배너 여백, 비교 페이지 요약/위험도/레이아웃
+
+**요청 4건:**
+1. 모바일 배너에서 Upload 와 System Status 사이 여백이 너무 큼 → 축소.
+2. 비교 페이지의 "AI 인사이트 요약" 본문이 길면 9em 에서 잘려 사라짐 → 모두 노출.
+3. 비교 페이지 "핵심 요약" 탭이 모바일에서 스크롤 폭발 → 2-column 유지 + 패딩 축소.
+4. 비교 페이지 AI 인사이트의 위험도 결과가 오른쪽 메타데이터(일자/모델/레이턴시)와 같은 row 에 있어 좁은 화면에서 텍스트 줄바꿈 다발 → 세로 stack + 메타 하단 한 줄.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/fragments/banner.html`
+  - 추가 CSS: `@media (max-width: 900px) { #gbNavUploadSlot:not(:empty) + .gb-section { margin-top: -8px; } }` — 모바일에서 Upload 슬롯과 System Status 사이의 .gb-body flex gap (16px) 을 -8px margin 으로 보정해 ~8px 로 축소.
+- 수정: `src/main/resources/templates/index.html`
+  - `clone.style.padding = '14px 12px'` → `'10px 12px 4px'` (상/좌우/하 패딩 축소, 특히 하단 6px → 4px 로 감소해 다음 섹션과의 간격 추가 단축).
+- 수정: `src/main/resources/templates/compare.html`
+  - `.cmp-ai-summary-body` 의 `max-height: 9em; overflow: hidden;` 제거. `word-break: break-word; overflow-wrap: anywhere;` 추가하여 긴 LLM 응답도 줄바꿈으로 전부 표시.
+  - `@media (max-width: 700px)` 블록을 확장:
+    - `.compare-header { grid-template-columns: 1fr 1fr; }` + `.compare-header .vs-circle { display: none; }` — VS 원 숨기고 Before/After 2-column 유지.
+    - `.dump-card / .dump-card-label / .dump-card-name / .dump-card-meta-row` 폰트/패딩 축소.
+    - `.cmp-snapshot-grid { 1fr 1fr; }` + `.cmp-metric-list { 1fr 1fr; }` — 모바일에서도 두 스냅샷을 가로로 2 열, 각 mini-metric 도 2x2 격자.
+    - `.cmp-snapshot-card / .cmp-mini-metric / .cmp-mini-label / .cmp-mini-value` 패딩·폰트 축소.
+    - `.kpi-grid { 1fr 1fr; }` + `.kpi-tile / .kpi-value / .kpi-label / .kpi-sub` 축소 — 6 KPI 를 6 행 stack 에서 3 행 × 2 열로 변경.
+    - `.cmp-hero` 패딩/폰트 축소, `.cmp-summary-card / .cmp-recommend-card / .cmp-summary-main / .cmp-summary-list` 축소.
+    - `.cmp-result-summary` gap·margin 축소.
+  - 신규 `@media (max-width: 700px)` 안에서 `.ai-severity-banner` flex-direction 을 `column` 으로 변경, `align-items: flex-start; gap: 8px;`. 마지막 자식(메타 div) 을 `text-align: left !important; width: 100%; padding-top: 6px; border-top: 1px solid currentColor; opacity: .55; display: flex; flex-wrap: wrap; gap: 6px 12px;` 로 변경하여 일자·model·latency 가 위험도 결과 영역과 별도 행에 한 줄로 가로 배치되도록 함.
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- `/` 응답: `#gbNavUploadSlot:not(:empty) + .gb-section { margin-top: -8px; }` 및 clone padding `10px 12px 4px` 모두 출력됨.
+- `/compare` 응답: `.cmp-ai-summary-body` 규칙에 `max-height` 없음. 700px 미디어쿼리 안에 `.compare-header .vs-circle { display: none; }` / `.cmp-snapshot-grid { 1fr 1fr; }` / `.kpi-grid { 1fr 1fr; }` / `.ai-severity-banner { flex-direction: column; }` 모두 출력됨.
+
+## [2026-05-21] 모바일 배너 Upload 탭 제거 + Navigation 탭 통합 / Allow all ext 설명 정돈
+
+**요청 2건:**
+1. Settings 의 "Allow all file extensions" 설명 끝 "보안상 운영 환경에서 비활성 권장." 문구 제거.
+2. 모바일 배너의 별도 Upload 탭을 삭제하고, 업로드 UI 를 Navigation 탭 안 System Status 위쪽으로 옮김.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/settings.html`
+  - `Allow all file extensions` setting-desc 끝 보안 권장 문구 한 줄 제거 (label/toggle 동작 유지).
+- 수정: `src/main/resources/templates/fragments/banner.html`
+  - HTML: 모바일 탭바에서 `<button class="gb-mobile-tab" data-tab="upload">` 통째 제거. `#gbBody` 최상단(System Status 직전)에 `<div id="gbNavUploadSlot"></div>` 슬롯 추가. 기존 `<div class="gb-tab-content gb-tab-upload" id="gbMobileUpload"></div>` 슬롯 삭제.
+  - CSS: dynamic-tab hide 규칙 목록에서 `[data-tab="upload"]` 제거, `body.has-upload-tab` 표시 규칙 제거, 데스크탑 `.gb-tab-content.gb-tab-upload` 숨김 규칙 제거. 신규 `#gbNavUploadSlot:empty { display: none; }` + `@media (min-width: 901px) { #gbNavUploadSlot { display: none; } }` — 모바일 + 콘텐츠 있을 때만 표시.
+  - JS: `switchBannerTab` map 에서 `upload: 'gbMobileUpload'` 항목 제거. `registerBannerUploadTab(contentElement)` 가 `#gbMobileUpload` 대신 `#gbNavUploadSlot` 에 appendChild + `document.body.classList.add('has-upload-tab')` 호출 제거 (더는 필요 없음).
+- index.html 변경 없음 — 기존 `registerBannerUploadTab(clone)` 호출이 그대로 새 슬롯에 주입됨. clone 의 inline padding(14px 12px) + `.gb-body` flex gap 16px 로 시각 정렬 유지.
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- `/` 응답 grep — `data-tab="upload"` / `gbMobileUpload` / `gb-tab-upload` / `has-upload-tab` 모두 0건. 잔존 dead 참조 없음.
+- 신규 `#gbNavUploadSlot` 가 `#gbBody` 의 첫 자식, 직후 `<div class="gb-section">…System Status…</div>` 순서로 출력 확인 (즉, System Status 위에 위치).
+- 데스크탑(≥901px) 에서는 슬롯 자체가 `display: none` → 좌측 사이드바의 Upload 와 중복 안 됨.
+- 비-인덱스 페이지 (예: /history) 에서는 슬롯이 비어 있어 `:empty` 규칙으로 자동 숨김.
+- Settings UI: "Allow all file extensions" setting-desc 끝부분이 "허용." 으로 단축됨.
+
+## [2026-05-21] Settings — 비-ADMIN 토글 ON 하늘색 적용을 LLM/RAG 페이지로 확대
+
+**요청 배경:** 비-ADMIN 진입 시 토글 ON 색을 하늘색으로 변경한 직전 변경(General Settings)이 `/settings/llm`, `/settings/rag` 에는 미반영. 동일 일관성 요청.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/llm-settings.html` — `.tog:checked + .tog-track` 규칙 직후에 `.container[data-is-admin="false"] .tog:checked + .tog-track { background: #7DD3FC; }` 한 줄 추가.
+- 수정: `src/main/resources/templates/rag-settings.html` — 동일 한 줄 추가.
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- `/settings/llm`, `/settings/rag` 두 응답 모두에서 `.container[data-is-admin="false"] .tog:checked + .tog-track { background: #7DD3FC; }` 규칙 grep 확인.
+- 두 페이지 모두 이미 `<div class="container" th:attr="data-is-admin=${isAdmin}">` 와 `applyReadOnlyMode()` 가 기존 구현되어 있어 CSS 만 추가하면 적용됨.
+
+## [2026-05-21] Settings — Max upload size 볼드 / 확장자 제한 해제 토글 / 비-ADMIN 토글색
+
+**요청 3건:**
+1. Max upload size 현재값을 강조 표시(볼드).
+2. 관리자가 기본 확장자 화이트리스트(.hprof/.bin/.dump + .gz)를 해제해 임의 확장자 업로드를 허용하는 토글 추가.
+3. 비-ADMIN 사용자가 Settings 진입 시, ON 상태 토글의 색을 진한 파란색 대신 하늘색으로 표시.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/settings.html`
+  - `#sMaxUploadCurrent` 인라인 style 보정 — `font-size:13px;font-weight:700;color:#1F2937;min-width:60px`.
+  - Analysis Options 카드에 "Allow all file extensions" 토글 추가 (`#togAllowAllExt`), `onchange=confirmAllowAllExtensions(this)`. 활성화 시 경고 모달(`#allowAllExtModal`), 비활성화 시 모달 없이 즉시 저장.
+  - `loadAllData()` 응답 핸들러에서 `d.allowAllExtensions` 로 토글 상태 동기화.
+  - JS: `confirmAllowAllExtensions` / `closeAllowAllExtModal` / `doEnableAllowAllExt` / `saveAllowAllExtensions(v)` 신규. Escape 핸들러에 `closeAllowAllExtModal` 추가.
+  - CSS: `.container[data-is-admin="false"] .tog:checked + .tog-track { background: #7DD3FC; }` 추가 — 비-ADMIN 진입 시 ON 토글 색을 sky blue 로 시각화 (기존 `applyReadOnlyMode` 의 opacity:.6 와 결합되어 readonly 인지가 더 분명함).
+- 수정: `src/main/resources/templates/index.html`
+  - 인라인 스크립트에 `ALLOW_ALL_EXT` 변수 추가 (Thymeleaf 인라인 binding).
+  - 큐 검증 `validExts.some(...)` → `ALLOW_ALL_EXT || validExts.some(...)` 분기.
+  - `<input type="file" accept>` 속성을 Thymeleaf `th:attr` 로 동적 — 토글 ON 이면 accept 미설정 (모든 파일), OFF 면 `.hprof,.bin,.dump,.gz`.
+  - `.upload-zone-sub` 텍스트도 분기 — ON: "All file extensions · Max N GB", OFF: ".hprof .bin .dump (.gz) · Max N GB".
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+  - `volatile boolean allowAllExtensions` 필드 + `isAllowAllExtensions()` / `setAllowAllExtensions(boolean)` getter/setter (setter 가 `persistSettings()` 호출).
+  - `loadPersistedSettings()` 복원 분기 추가 (Boolean / String 타입 안전 처리).
+  - `persistSettings()` 에 settings.json 키 추가. `syncApplicationProperties()` 는 영향 없음 (Spring 바인딩 프로퍼티가 없음 — 앱 내부 toggle).
+  - `uploadFile(MultipartFile)` 가 `fileMgmt.uploadFile(file, allowAllExtensions)` 로 플래그 전달.
+- 수정: `src/main/java/com/heapdump/analyzer/service/FileManagementService.java`
+  - `uploadFile(MultipartFile file)` → `uploadFile(MultipartFile file, boolean allowAllExtensions)`. 확장자 검증 분기 `if (!allowAllExtensions && !isValidHeapDumpFile(filename))`. 로그에 플래그 노출.
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapSystemApiController.java`
+  - 신규 `POST /api/settings/allow-all-extensions?enabled={bool}` — ADMIN 전용 (`/api/settings/**` 매처에 자동 포함).
+  - `GET /api/settings` 응답에 `allowAllExtensions` 키 추가.
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+  - `index()` model 에 `allowAllExtensions` attribute 주입 (Thymeleaf 인라인 변수 + accept 속성 + 안내 텍스트가 사용).
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- 토글 OFF: `/api/settings` → `allowAllExtensions=false`, settings.json 미존재 시 기본 false. 인덱스 페이지 `ALLOW_ALL_EXT=false`, 안내 ".hprof .bin .dump (.gz) · Max 5 GB", accept 속성 표시.
+- 토글 ON: `POST /api/settings/allow-all-extensions?enabled=true` → 응답 success, settings.json `"allowAllExtensions" : true`. 인덱스 페이지 `ALLOW_ALL_EXT=true`, 안내 "All file extensions · Max 5 GB", accept 속성 제거.
+- 토글 OFF 복원: 안내·accept 모두 원상 복귀.
+- 비-ADMIN CSS: `.container[data-is-admin="false"] .tog:checked + .tog-track { background: #7DD3FC; }` 렌더 확인.
+
+## [2026-05-21] Settings — DB 설정 변경 시 "재시작 필요" 안내 강화 (사전 경고 + 저장 후 영구 모달)
+
+**요청 배경:**
+- 기존에는 DB 패스워드 변경 후 백엔드가 내려준 "변경사항을 적용하려면 앱을 재시작하세요." 메시지를 2.5초 토스트로만 표시 → 사용자가 한눈 팔면 안내를 놓침.
+- 백엔드 응답에 이미 존재하던 `requireRestart: true` 플래그를 프론트가 무시하고 있던 상태.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/settings.html`
+  - DB 설정 변경 모달 (`#dbEditModal`) 내 저장 버튼 직전 `<div class="modal-warn">` 추가 — 저장 시 패스워드 AES-256 암호화 + 재시작 필요 명시 (사전 안내).
+  - 신규 공용 영구 모달 `#restartRequiredModal` — title "변경 저장 완료 — 앱 재시작 필요" / desc(동적 메시지) / `modal-warn` (restart.sh 안내) / 확인 버튼 단일 (자동 닫힘 없음).
+  - JS: `saveDbSettings()` 응답 분기 — `d.requireRestart` 가 true 면 토스트 대신 `openRestartRequiredModal(d.message)` 호출, false 면 기존 토스트 유지. 신규 헬퍼 `openRestartRequiredModal(msg)` / `closeRestartRequiredModal()`.
+  - Escape 키 핸들러에 `closeRestartRequiredModal()` 추가.
+
+### 동작 흐름
+- 사전: DB 설정 변경 모달 진입 → "AES-256 암호화 / 재시작 필요" 경고를 사용자가 저장 전 확인.
+- 저장 성공 (`requireRestart: true`) → DB 모달 닫힘 + `loadAllData(false)` 후 영구 모달 오픈 → 사용자가 "확인" 클릭해야 사라짐 (Esc / 배경 클릭 도 허용).
+- 향후 다른 endpoint 가 `requireRestart: true` 를 리턴하면 같은 모달을 재사용 가능.
+
+### 검증
+- 빌드 OK, 재기동 정상.
+- `/settings` 렌더 시 두 영역 모두 출력 확인: 사전 경고 (#dbEditModal 내) + 영구 모달 (`#restartRequiredModal`).
+- 백엔드 응답 메시지가 영구 모달 desc 에 그대로 노출되는 패턴 (호출자가 메시지를 직접 보존).
+
+## [2026-05-21] Settings General 카드 레이아웃 재구성 — AI/LLM 카드 제거 + Analysis Options 풀폭 확장
+
+**요청 배경:**
+- AI/LLM Configuration 카드가 좌측 배너 Settings 아코디언 안에 이미 별도 메뉴로 존재 → 중복 표시 제거 요청.
+- 슬롯 재배치 요청: Database 를 구 AI/LLM 자리로, MAT Configuration 을 구 Database 자리로 이동.
+- Analysis Options 가 가장 옵션이 많은 카드이므로 비게 된 row 1 col 1 (MAT 자리) 까지 가로로 확장.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/settings.html`
+  - CSS: `#llmCard:hover` 규칙 삭제 (orphan), 신규 `.ao-grid` 2-column 내부 grid + 마지막 행 border 정리 + `@media (max-width: 900px)` 단일 컬럼 폴백 추가.
+  - HTML: 4 카드 (MAT Configuration / Analysis Options / Database / AI/LLM) 블록을 통째로 잘라 새 순서로 재배치 — `<div class="card card-full">` Analysis Options (내부 `.ao-grid` 래퍼로 setting-row 9개를 2열 분배) → MAT Configuration (구 Database 자리, 표준 card) → Database (구 AI/LLM 자리, 표준 card). AI/LLM 카드는 완전 삭제.
+  - JS: `loadAllData()` 안 `if (d.llm) { updateLlmCard(d.llm); }` 호출 + `updateLlmCard(llm)` 함수 정의 (22 라인) 모두 제거.
+
+### 레이아웃 변경 (Before → After)
+- Before: row1=[MAT|AnalysisOpts], row2=[Database|AI/LLM], row3=[Storage|Disk], row4=[System|JVM], API/Danger full.
+- After: row1=AnalysisOpts(full), row2=[MAT|Database], row3=[Storage|Disk], row4=[System|JVM], API/Danger full.
+
+### 검증
+- 빌드 OK (mvn clean package -DskipTests).
+- 재기동 정상.
+- `/settings` HTML 응답에서 `AI / LLM Configuration` / `llmCard` / `updateLlmCard` / `llmStatusBadge` / `llmSummary` 모두 grep 0건 — 잔존 dead code 없음.
+- 카드 순서 `Analysis Options (card-full)` → `MAT Configuration` → `Database` → `Storage` 순으로 출력 확인.
+- 좌측 배너 Settings/LLM 메뉴는 영향 없음 (URL `/settings/llm` 그대로 유지).
+
+## [2026-05-21] Settings — Max upload size 관리자 변경 기능 추가 (최대 50 GB)
+
+**요청 배경:**
+- 기존 업로드 한도 5 GB 가 application.properties 에 하드코딩 + index.html 클라이언트 검증에도 5 GB 가 박혀 있어 운영자가 바꾸려면 코드 수정 + 재배포가 필요.
+- 운영자가 Settings 화면에서 5/10/20/30/40/50 GB 중 선택해 변경할 수 있도록 요청.
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+  - 신규 상수 `MAX_UPLOAD_LIMIT_BYTES = 50 GB`, 기본값 `DEFAULT_UPLOAD_SIZE_BYTES = 5 GB`
+  - `volatile long maxUploadSizeBytes` 필드 + getter/setter (setter 가 0 초과 / 50 GB 이하 검증 후 `persistSettings()` 호출)
+  - 생성자에 `MultipartProperties` 주입 — 부트 시점 application.properties 의 `spring.servlet.multipart.max-file-size` 값을 초기값으로 채택
+  - `loadPersistedSettings()` 에 `maxUploadSizeBytes` 복원 분기 추가 (Number / String 타입 안전 처리, 0~50GB 범위 검증)
+  - `persistSettings()` 에 settings.json 키 추가
+  - `syncApplicationProperties()` 에 `spring.servlet.multipart.max-file-size` / `max-request-size` 두 키 동기화 추가
+  - 신규 helper `formatBytesAsSpringSize(long)` — bytes → "5GB"/"512MB" Spring DataSize 표기 변환
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapSystemApiController.java`
+  - 신규 `POST /api/settings/max-upload-size?bytes=N` — ADMIN 전용 (기존 `/api/settings/**` 매처에 자동 포함, SecurityConfig 변경 불필요), 검증 실패 시 400 JSON, 성공 시 `requireRestart: true` 응답
+  - `GET /api/settings` 응답에 `maxUploadSizeBytes` / `maxUploadSizeGb` / `maxUploadSizeFormatted` / `maxUploadLimitBytes` 4 키 추가
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+  - `index()` 메서드에서 model 에 `maxUploadSizeBytes` / `maxUploadSizeGb` 두 attribute 추가
+- 수정: `src/main/resources/templates/settings.html`
+  - Analysis Options 카드 하단에 "Max upload size" 행 추가 — 현재값 표시 + 5/10/20/30/40/50 GB select + Apply 버튼
+  - 신규 modal `#maxUploadModal` — "재시작 필요" 경고 포함 확인 모달
+  - JS: `openMaxUploadModal()` / `closeMaxUploadModal()` / `doSaveMaxUploadSize()` — Common.fetchJSON 으로 POST, 성공 시 toast + loadAllData(false) 갱신
+  - `loadAllData()` 의 `/api/settings` 응답 처리부에 `sMaxUploadCurrent` 텍스트 + select selectedIndex 복원 로직 추가 (옵션에 없는 값이면 동적 옵션 추가)
+  - Escape 키 핸들러에 `closeMaxUploadModal()` 추가
+  - 기존 비-ADMIN readonly 처리 (`applyReadOnlyMode`) 가 input/select/button 일괄 disable 하므로 별도 권한 체크 불필요
+- 수정: `src/main/resources/templates/index.html`
+  - `.upload-zone-sub` 텍스트 `Max 5 GB` → Thymeleaf `${maxUploadSizeGb}` 동적 치환
+  - 인라인 `th:inline="javascript"` 블록에 `MAX_UPLOAD_BYTES` / `MAX_UPLOAD_GB` 전역 변수 추가
+  - 큐 업로드 검증 `files[i].size > 5*1024*1024*1024` → `MAX_UPLOAD_BYTES`
+  - 용량 초과 모달 "5 GB 제한" 텍스트 → `MAX_UPLOAD_GB + ' GB 제한'`
+
+### 동작 방식
+- 운영자가 Settings UI 에서 값 선택 → 확인 모달 → POST 가 settings.json + (외부 / 소스) application.properties 두 파일 동기화.
+- 즉시 효과: 분석 서비스의 `maxUploadSizeBytes` getter 가 새 값 반환 → /api/settings, /(index) 의 model attribute 가 즉시 반영.
+- Tomcat 멀티파트 한도는 부팅 시점 `MultipartProperties` 바인딩으로 고정되므로 실제 한도 적용은 앱 재시작 필요 (모달 + API 응답 메시지에 명시).
+- 재시작 시 `loadPersistedSettings()` 가 settings.json 의 값을 application.properties 보다 우선 복원, `syncApplicationProperties()` 가 properties 파일도 같은 값으로 다시 정렬 → 다음 build+restart 시점에 JAR 번들 값도 정합.
+
+### 검증
+- 빌드 OK (mvn clean package -DskipTests).
+- 재기동 12.6초 (`Started HeapAnalyzerApplication in 12.665 seconds`).
+- `GET /api/settings` → `maxUploadSizeBytes: 5368709120 / maxUploadSizeGb: 5 / maxUploadSizeFormatted: "5.00 GB" / maxUploadLimitBytes: 53687091200`.
+- `POST /api/settings/max-upload-size?bytes=10737418240` → `success: true / requireRestart: true`, settings.json 갱신 (`"maxUploadSizeBytes" : 10737418240`), application.properties `max-file-size=10GB / max-request-size=10GB` 동기화 확인 → 다시 5GB 로 원복 검증.
+- 검증 실패 케이스: 50 GB 초과 (64 GB) → 400 `"업로드 크기는 최대 50 GB를 초과할 수 없습니다."`, 음수 → 400 `"업로드 크기는 0보다 커야 합니다."`.
+- index 페이지 HTML 에서 `Max 5 GB` 표시 + `MAX_UPLOAD_BYTES = 5368709120` / `MAX_UPLOAD_GB = 5` 인라인 변수 + 검증 로직 모두 동적 치환 확인.
+- settings 페이지 HTML 에서 "Max upload size" 행 + select + 모달 모두 렌더 확인.
+
+## [2026-05-19] Dashboard (메인) Detections 패널 — Top Breakdown 위젯 추가
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/index.html`
+  - HTML: `.det-chart-wrap` (line 794~796) 직후에 `<div class="det-breakdown" id="dailyBreakdown">` 추가 (헤더: "Top Servers · 최근 14일 점유율" + 리스트)
+  - CSS: `.det-breakdown*` / `.det-bd-row` (grid `110px 36px 1fr 44px`) / `.det-bd-bar` + `.det-bd-bar-fill` / `.det-bd-pct` 신규 + `@media (max-width: 640px)` 컴팩트 grid (`88px 32px 1fr 38px`). history.html 패턴과 1:1 미러링.
+  - JS: 기존 차트 IIFE (line 920~) 안 `datasets` 생성 직후에 익명 IIFE `renderBreakdown()` 추가
+    - `SERVER_SERIES` 의 각 `s.counts` 합산 → 총합 / 비율 계산
+    - 카운트>0 만 필터, 내림차순 정렬, Top 5 slice
+    - 동일 PALETTE/OTHERS_COLOR 사용 (차트 막대 색상과 1:1 매칭)
+
+### 변경 의도
+- 사용자가 "Detections · 최근 14일 · 서버별 레이아웃 하단이 여백이 많다" 보고 (메인 페이지)
+- 좌측 Detections 패널이 우측 "탐지 현황" 패널보다 짧아 하단 빈 공간 발생
+- history.html 에 먼저 같은 위젯을 추가했고, 사용자가 메인 페이지에도 동일 적용 요청
+- 메인 페이지는 그룹 토글이 없는 **서버 모드 전용** 이므로 history 보다 단순한 구현 (서버 5개만 표시, severity 분기 불필요)
+- 데이터 (`SERVER_SERIES`) 가 이미 SSR Thymeleaf 인라인으로 도착, 백엔드 변경 없음
+
+### 검증
+- 빌드 OK (mvn clean package -DskipTests).
+- 재기동 12.7초 (`Started HeapAnalyzerApplication in 12.664 seconds`).
+- JAR 패키징 확인: `dailyBreakdown` / `dailyBreakdownList` / `det-breakdown` / `det-bd-row` / `det-bd-bar-fill` / `renderBreakdown` 모두 임베드.
+- `/` 메인 페이지에서:
+  - 좌측 Detections 차트 하단에 Top 5 서버 막대 표시
+  - 차트 stacked bar 색상과 breakdown 막대 색상 1:1 매칭
+  - 빈 데이터 (kpiTotal14d = 0) 시 위젯 자체가 thymeleaf `th:if` 영역 밖이므로 차트 + breakdown 동시 숨김 (기존 `.det-empty-chart` 만 표시)
+  - 모바일 ≤640px: 컴팩트 grid 자동 적용
+
+## [2026-05-19] History Detections 패널 — Top Breakdown 위젯 추가
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/history.html`
+  - HTML: `.detect-panel` 안 차트(`.det-chart-wrap`) + empty 메시지 뒤에 `<div class="det-breakdown" id="detBreakdown">` 컨테이너 추가 (title + sub + list)
+  - CSS: `.det-breakdown` / `.det-breakdown-hdr` / `.det-breakdown-ttl` / `.det-bd-row` (grid `110px 36px 1fr 44px`) / `.det-bd-bar` + `.det-bd-bar-fill` (progress) / `.det-bd-pct` 신규 (약 28라인)
+  - JS: `renderTopBreakdown(rawDatasets, groupBy, total)` 함수 추가 (`applyKpi` 다음 위치)
+    - 그룹 모드 `server`: Top 5 서버 + PALETTE 색상, "기타" 는 회색 OTHERS_COLOR
+    - 그룹 모드 `severity`: critical/high/medium/low 4행 + SEVERITY_COLORS
+    - 각 행: 이름 / 카운트 / progress bar (max 기준 상대 폭) / 백분율
+    - 총 0 또는 빈 데이터 시 위젯 숨김
+  - `renderChart()` 안에서 `applyKpi` / `applyRecent` 직후 `renderTopBreakdown(payload.datasets, _detGroup, payload.kpi.total)` 호출 → 기간/그룹 변경 시 자동 갱신
+  - `@media (max-width: 640px)`: `.det-bd-row { grid-template-columns: 88px 32px 1fr 38px; font-size:11px }` 컴팩트화
+
+### 변경 의도
+- `detect-row { align-items: stretch }` 로 좌측 Detections 패널(헤더+KPI+차트 340px = 약 507px) 이 우측 Recent 패널(max-height 540px)에 맞춰 늘어나면서 차트 아래 빈 공간 발생
+- 데이터는 이미 `/api/history/detections` 응답의 `datasets: ServerSeries[]` 에 그룹 모드별 카운트가 정렬되어 도착 (서버에서 Top 12 + "기타" 묶음). 클라이언트에서 `counts.reduce(sum)` 으로 점유율 계산 가능 → **백엔드 변경 없음**
+- 차트와 동일 PALETTE/SEVERITY_COLORS 사용으로 시각적 일관성 (스택 막대의 각 색상 ↔ breakdown 막대 색상 1:1 매칭)
+
+### 검증
+- 빌드 OK (mvn clean package -DskipTests).
+- 재기동 14.2초 (`Started HeapAnalyzerApplication in 14.19 seconds`).
+- LeakRuleSeeder 정상 (library 66 / fallback 33 skip).
+- JAR 패키징 확인: `det-breakdown` / `det-bd-row` / `det-bd-bar-fill` / `renderTopBreakdown` / `detBreakdownTtl` 모두 임베드.
+- `/history` 페이지에서:
+  - 기본(14d/서버별): Top 5 서버 막대 표시
+  - 그룹 토글 "심각도": 헤더 "심각도 분포" + 4행 (CRITICAL/HIGH/MEDIUM/LOW)
+  - 기간 칩(7/30/90d): API 재호출과 함께 위젯 자동 갱신
+  - 빈 기간: 위젯 숨김
+  - 모바일 ≤640px: 컴팩트 grid 자동 적용
+
+## [2026-05-19] Analysis Files — 모바일 카드 레이아웃 + bottom sheet 모달
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/files.html`
+  - `<td>` 9개에 `data-label="..."` 부여 (선택/#/파일명/원본/압축/AI/서버/날짜/작업)
+  - 신규 클래스: `col-fname` / `col-seq` / `col-server` / `col-actions` (≤640 selector 활용)
+  - 다운로드 모달 파일명 인라인 `max-width:260px` 제거 → `.dl-modal-fname` 클래스로 추출 (인라인은 미디어쿼리 override 불가)
+  - `@media (max-width: 640px)` 블록 교체 — 14 라인 → 약 100 라인:
+    - 테이블 → 카드 변환 (`tr { display: block; background:#fff; border-radius:10px; padding:10px 14px; margin-bottom:10px; position:relative; }`)
+    - `td::before { content: attr(data-label); }` 로 라벨 prefix
+    - 파일명 = 카드 헤더 (풀폭, 줄바꿈 허용, 14px 굵게)
+    - `# 번호` 카드 우상단 absolute (회색)
+    - 체크박스 (선택 모드) 카드 좌상단 absolute + row-check 15→18px
+    - 액션 버튼 26→38px, 6개 wrap 가능
+    - panel/no-match/pagination 카드 톤 통일
+  - 모달 4종 (단일/일괄/purge/다운로드) bottom sheet 변환 (`align-items: flex-end; border-radius:14px 14px 0 0;` + 버튼 풀폭 `flex:1 1 0`)
+  - `toggleSelectMode` / `exitSelectMode` 에 `document.body.classList.toggle('has-select-bar')` 추가 → fixed 액션바가 마지막 카드 가리는 문제 해소 (`body.has-select-bar { padding-bottom: 72px; }`)
+  - 툴바 모바일 재배치: 3개 select 동일줄 1/3 분할 (이전 50/50/50% 어색함 해소), 검색바 풀폭, 행 표시 라벨 숨김
+
+### 변경 의도
+- 기존 ≤640 처리는 (1) `col-date/col-compressed/col-hide-sm` 숨김으로 정보 누락 (2) `min-width:500px` 강제 가로 스크롤로 액션 컬럼 접근 어려움 + 작은 26x26 탭 타깃 → 모바일 사용성 저하
+- leak-rules.html 의 검증된 카드 패턴 차용 (CLAUDE.md "Files/History 공통 데이터 그리드 패턴" 의 모바일 확장)
+- 정렬 헤더 손실은 기본 정렬(`_sortKey='date', _sortDir='desc'` = 최신순) 이 모바일 워크플로에 부합해 정렬 select 미추가 (사용자 확인)
+
+### 검증
+- 빌드 OK (mvn clean package -DskipTests).
+- 재기동 12.3초 (`Started HeapAnalyzerApplication in 12.307 seconds`).
+- LeakRuleSeeder 정상 (library 66 / fallback 33 skip).
+- JAR 패키징 확인: `data-label="..."` 7종, `col-fname/col-actions/dl-modal-fname` 3 클래스, `has-select-bar` 토글 모두 정상 임베드.
+- 권장 viewport 시각 검증: 1280 (테이블) / 768 (테이블+스크롤) / 640 boundary / 414/375/360/320 (카드).
+
+## [2026-05-19] Leak Rules 탭 디자인 개선 — pill 스타일 + 카운트 뱃지
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/leak-rules.html`
+  - `.tabs` 컨테이너: 투명 underline → 흰색 카드 (`background:#fff`, `border-radius:10px`, `padding:4px`, `box-shadow`)
+  - `.tab-btn` 비활성: `color:#6B7280` → `#374151` (대비 강화), `border-radius:7px` pill 형태
+  - `.tab-btn.active`: 파란 underline → 그라데이션 배경 (`linear-gradient(135deg,#2563EB,#4F46E5)`) + 흰 글자 + `box-shadow`
+  - `.tab-btn:hover` 비활성: 배경 `#F3F4F6` 추가로 hover 명확화
+  - `.tab-count` 뱃지 신규 — 탭 텍스트 옆 룰 개수 표시 (비활성=회색 pill / 활성=반투명 흰색 pill)
+  - 모바일 (≤640px): `.tabs` 도 `display:flex; width:100%`로 균등 분배 유지
+  - JS: `loadLibrary()`/`loadFallback()` 가 기존 `*CountChip` 외 신규 `*CountTab` 도 동시 갱신
+  - HTML: `<button>` 안에 `<span class="tab-count" th:text="${...Count}">` 추가
+
+### 변경 의도
+- 사용자 보고: "라이브러리 / 정규식 탭의 배경색과 글자색이 겹쳐서 인식 어려움".
+- 원인: 투명 배경 + `#6B7280` 회색 텍스트가 `#F3F4F6` 페이지 배경과 대비 부족, 활성 underline 만으론 영역 구분 약함.
+- 개선: 카드형 컨테이너 + 활성 탭 강한 그라데이션 → 활성 / 비활성 즉시 구분. 카운트 뱃지로 어느 탭에 몇 개 룰이 있는지 한눈에.
+
+### 검증
+- 빌드 OK (mvn clean package -DskipTests).
+- 재기동 12.4초 (`Started HeapAnalyzerApplication in 12.414 seconds`).
+- LeakRuleSeeder 정상 (library 66 / fallback 33 skip).
+
 ## [2026-05-19] CLAUDE.md 광범위 갱신 — Boot 3 마이그레이션 반영
 
 **변경 파일:**

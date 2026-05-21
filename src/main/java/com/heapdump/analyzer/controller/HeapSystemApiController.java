@@ -75,6 +75,37 @@ public class HeapSystemApiController {
         return ResponseEntity.ok(resp);
     }
 
+    @PostMapping("/api/settings/allow-all-extensions")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setAllowAllExtensions(@RequestParam boolean enabled) {
+        analyzerService.setAllowAllExtensions(enabled);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("allowAllExtensions", enabled);
+        resp.put("message", "확장자 제한 해제 = " + enabled + ". 다음 업로드부터 즉시 반영됩니다.");
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/api/settings/max-upload-size")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setMaxUploadSize(@RequestParam long bytes) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        try {
+            analyzerService.setMaxUploadSizeBytes(bytes);
+        } catch (IllegalArgumentException e) {
+            resp.put("success", false);
+            resp.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(resp);
+        }
+        long gb = bytes / (1024L * 1024 * 1024);
+        resp.put("success", true);
+        resp.put("maxUploadSizeBytes", bytes);
+        resp.put("maxUploadSizeFormatted", FormatUtils.formatBytes(bytes));
+        resp.put("requireRestart", true);
+        resp.put("message", "최대 업로드 크기가 " + gb + " GB 로 변경되었습니다. Tomcat 멀티파트 한도는 앱 재시작 후 적용됩니다.");
+        logger.info("[Settings] Max upload size changed to {} bytes ({} GB)", bytes, gb);
+        return ResponseEntity.ok(resp);
+    }
+
     @PostMapping("/api/settings/database/test")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> testDbConnection(@RequestBody Map<String, String> body) {
@@ -311,6 +342,13 @@ public class HeapSystemApiController {
         settings.put("keepUnreachableObjects", analyzerService.isKeepUnreachableObjects());
         settings.put("heapDumpDirectory",      analyzerService.getHeapDumpDirectory());
         settings.put("cachedResults",          analyzerService.getCachedResultCount());
+        settings.put("allowAllExtensions",     analyzerService.isAllowAllExtensions());
+
+        long maxUploadBytes = analyzerService.getMaxUploadSizeBytes();
+        settings.put("maxUploadSizeBytes",     maxUploadBytes);
+        settings.put("maxUploadSizeGb",        maxUploadBytes / (1024L * 1024 * 1024));
+        settings.put("maxUploadSizeFormatted", FormatUtils.formatBytes(maxUploadBytes));
+        settings.put("maxUploadLimitBytes",    com.heapdump.analyzer.service.HeapDumpAnalyzerService.MAX_UPLOAD_LIMIT_BYTES);
 
         // System info (JVM runtime only — no OS/vendor details)
         Map<String, Object> system = new LinkedHashMap<>();

@@ -65,6 +65,8 @@
                             transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
         .tog:checked + .tog-track { background: #2563EB; }
         .tog:checked + .tog-track::after { transform: translateX(16px); }
+        /* 비-ADMIN 읽기 전용 진입 시 ON 토글 색상은 진한 파란색 대신 하늘색으로 표시 (관리자 권한 시각화) */
+        .container[data-is-admin="false"] .tog:checked + .tog-track { background: #7DD3FC; }
 
         /* ── Meter bar ───────────────────────────────────── */
         .s-meter { flex: 1; max-width: 140px; }
@@ -105,8 +107,17 @@
                       font-size: 11px; cursor: pointer; color: #6B7280; transition: all .15s; vertical-align: middle; }
         .s-copy-btn:hover { border-color: #2563EB; color: #2563EB; }
 
-        /* ── LLM link card ───────────────────────────────── */
-        #llmCard:hover { border-color: #93C5FD; box-shadow: 0 2px 8px rgba(37,99,235,.1); }
+        /* ── Analysis Options inner 2-column grid (full-width 카드용) ─ */
+        .ao-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 28px; row-gap: 0; }
+        .ao-grid .setting-row { border-bottom: 1px solid #F3F4F6; }
+        /* 마지막 두 행의 하단 border 제거 (한 줄에 두 칸 배치되므로) */
+        .ao-grid .setting-row:nth-last-child(-n+2):nth-child(even),
+        .ao-grid .setting-row:last-child:nth-child(odd) { border-bottom: none; }
+        @media (max-width: 900px) {
+            .ao-grid { grid-template-columns: 1fr; column-gap: 0; }
+            .ao-grid .setting-row:nth-last-child(-n+2):nth-child(even) { border-bottom: 1px solid #F3F4F6; }
+            .ao-grid .setting-row:last-child { border-bottom: none; }
+        }
 
         /* ── Danger zone ─────────────────────────────────── */
         .danger-zone { border-color: #FECACA; }
@@ -218,7 +229,141 @@
         <!-- LEFT COLUMN                                       -->
         <!-- ══════════════════════════════════════════════════ -->
 
-        <!-- MAT Configuration -->
+        <!-- Analysis Options (full width — 기존 MAT Configuration 자리까지 확장) -->
+        <div class="card card-full">
+            <div class="card-title">
+                <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                Analysis Options
+            </div>
+            <div class="ao-grid">
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Compress after analysis</div>
+                        <div class="setting-desc">분석 완료 후 원본 덤프를 gzip 압축하여 디스크 절약 (원본 삭제)</div>
+                    </div>
+                    <div>
+                        <input type="checkbox" class="tog" id="togCompress"
+                               th:checked="${compressAfterAnalysis}"
+                               onchange="saveCompressSetting(this)">
+                        <label class="tog-track" for="togCompress"></label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Keep unreachable objects</div>
+                        <div class="setting-desc">GC Root에서 도달 불가능한 객체도 분석에 포함</div>
+                    </div>
+                    <div>
+                        <input type="checkbox" class="tog" id="togUR"
+                               th:checked="${matKeepUnreachable}"
+                               onchange="confirmKeepUnreachable(this)">
+                        <label class="tog-track" for="togUR"></label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Auto-analyze on upload</div>
+                        <div class="setting-desc">업로드 시 자동으로 분석 시작</div>
+                    </div>
+                    <div>
+                        <input type="checkbox" class="tog" id="togAA"
+                               onchange="confirmAutoAnalyze(this)">
+                        <label class="tog-track" for="togAA"></label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Save results to disk</div>
+                        <div class="setting-desc">분석 결과를 디스크에 저장하여 재시작 후에도 유지</div>
+                    </div>
+                    <div>
+                        <input type="checkbox" class="tog" id="togCache" checked
+                               onchange="confirmSaveResults(this)">
+                        <label class="tog-track" for="togCache"></label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Skip heap memory warning</div>
+                        <div class="setting-desc">덤프 분석 시 힙 메모리 부족 경고를 건너뛰고 바로 진행</div>
+                    </div>
+                    <div>
+                        <input type="checkbox" class="tog" id="togSkipHeapWarn"
+                               onchange="saveSetting('skipHeapWarning',this.checked)">
+                        <label class="tog-track" for="togSkipHeapWarn"></label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Allow all file extensions</div>
+                        <div class="setting-desc">기본 .hprof/.bin/.dump (+ .gz) 화이트리스트를 해제하고 모든 확장자 업로드 허용.</div>
+                    </div>
+                    <div>
+                        <input type="checkbox" class="tog" id="togAllowAllExt"
+                               onchange="confirmAllowAllExtensions(this)">
+                        <label class="tog-track" for="togAllowAllExt"></label>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">SCP temp directory</div>
+                        <div class="setting-desc">SCP 임시 저장 경로 (SSH 계정 쓰기 가능 필요)</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <input id="scpTempDirInput" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;width:160px" placeholder="/tmp">
+                        <button class="heap-btn-apply" style="padding:5px 12px;font-size:12px" onclick="saveScpTempDir()">Save</button>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">SSH local user</div>
+                        <div class="setting-desc">SSH/SCP 실행 시 로컬 계정 (runuser 로 전환). 빈 값으로 저장 시 현재 프로세스 기동 계정으로 자동 채움.</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <input id="sshLocalUserInput" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;width:140px" placeholder="비워두면 자동 채움">
+                        <button class="heap-btn-apply" style="padding:5px 12px;font-size:12px" onclick="saveSshLocalUser()">Save</button>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Remote scan interval</div>
+                        <div class="setting-desc">Target Server 덤프 자동 탐지 주기</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <select id="scanIntervalSelect" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:110px" onchange="saveScanInterval(this.value)">
+                            <option value="10">10초</option>
+                            <option value="30">30초</option>
+                            <option value="60">1분</option>
+                            <option value="120">2분</option>
+                            <option value="300">5분</option>
+                            <option value="600">10분</option>
+                            <option value="1800">30분</option>
+                            <option value="3600">1시간</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Max upload size</div>
+                        <div class="setting-desc">힙 덤프 업로드 최대 크기 (최대 50 GB). 변경 후 앱 재시작이 필요합니다.</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <span id="sMaxUploadCurrent" class="s-val-mono" style="font-size:13px;font-weight:700;color:#1F2937;min-width:60px;text-align:right">-</span>
+                        <select id="maxUploadSizeSelect" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:90px">
+                            <option value="5">5 GB</option>
+                            <option value="10">10 GB</option>
+                            <option value="20">20 GB</option>
+                            <option value="30">30 GB</option>
+                            <option value="40">40 GB</option>
+                            <option value="50">50 GB</option>
+                        </select>
+                        <button class="heap-btn-apply" style="padding:5px 12px;font-size:12px" onclick="openMaxUploadModal()">Apply</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MAT Configuration (구 Database 자리) -->
         <div class="card">
             <div class="card-title">
                 <svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
@@ -286,110 +431,7 @@
             </div>
         </div>
 
-        <!-- Analysis Options -->
-        <div class="card">
-            <div class="card-title">
-                <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                Analysis Options
-            </div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">Compress after analysis</div>
-                    <div class="setting-desc">분석 완료 후 원본 덤프를 gzip 압축하여 디스크 절약 (원본 삭제)</div>
-                </div>
-                <div>
-                    <input type="checkbox" class="tog" id="togCompress"
-                           th:checked="${compressAfterAnalysis}"
-                           onchange="saveCompressSetting(this)">
-                    <label class="tog-track" for="togCompress"></label>
-                </div>
-            </div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">Keep unreachable objects</div>
-                    <div class="setting-desc">GC Root에서 도달 불가능한 객체도 분석에 포함</div>
-                </div>
-                <div>
-                    <input type="checkbox" class="tog" id="togUR"
-                           th:checked="${matKeepUnreachable}"
-                           onchange="confirmKeepUnreachable(this)">
-                    <label class="tog-track" for="togUR"></label>
-                </div>
-            </div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">Auto-analyze on upload</div>
-                    <div class="setting-desc">업로드 시 자동으로 분석 시작</div>
-                </div>
-                <div>
-                    <input type="checkbox" class="tog" id="togAA"
-                           onchange="confirmAutoAnalyze(this)">
-                    <label class="tog-track" for="togAA"></label>
-                </div>
-            </div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">Save results to disk</div>
-                    <div class="setting-desc">분석 결과를 디스크에 저장하여 재시작 후에도 유지</div>
-                </div>
-                <div>
-                    <input type="checkbox" class="tog" id="togCache" checked
-                           onchange="confirmSaveResults(this)">
-                    <label class="tog-track" for="togCache"></label>
-                </div>
-            </div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">Skip heap memory warning</div>
-                    <div class="setting-desc">덤프 분석 시 힙 메모리 부족 경고를 건너뛰고 바로 진행</div>
-                </div>
-                <div>
-                    <input type="checkbox" class="tog" id="togSkipHeapWarn"
-                           onchange="saveSetting('skipHeapWarning',this.checked)">
-                    <label class="tog-track" for="togSkipHeapWarn"></label>
-                </div>
-            </div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">SCP temp directory</div>
-                    <div class="setting-desc">SCP 임시 저장 경로 (SSH 계정 쓰기 가능 필요)</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:6px">
-                    <input id="scpTempDirInput" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;width:160px" placeholder="/tmp">
-                    <button class="heap-btn-apply" style="padding:5px 12px;font-size:12px" onclick="saveScpTempDir()">Save</button>
-                </div>
-            </div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">SSH local user</div>
-                    <div class="setting-desc">SSH/SCP 실행 시 로컬 계정 (runuser 로 전환). 빈 값으로 저장 시 현재 프로세스 기동 계정으로 자동 채움.</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:6px">
-                    <input id="sshLocalUserInput" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;width:140px" placeholder="비워두면 자동 채움">
-                    <button class="heap-btn-apply" style="padding:5px 12px;font-size:12px" onclick="saveSshLocalUser()">Save</button>
-                </div>
-            </div>
-            <div class="setting-row">
-                <div>
-                    <div class="setting-label">Remote scan interval</div>
-                    <div class="setting-desc">Target Server 덤프 자동 탐지 주기</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:6px">
-                    <select id="scanIntervalSelect" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:110px" onchange="saveScanInterval(this.value)">
-                        <option value="10">10초</option>
-                        <option value="30">30초</option>
-                        <option value="60">1분</option>
-                        <option value="120">2분</option>
-                        <option value="300">5분</option>
-                        <option value="600">10분</option>
-                        <option value="1800">30분</option>
-                        <option value="3600">1시간</option>
-                    </select>
-                </div>
-            </div>
-        </div>
-
-        <!-- Database Configuration -->
+        <!-- Database Configuration (구 AI/LLM 자리) -->
         <div class="card">
             <div class="card-title">
                 <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
@@ -426,22 +468,6 @@
                 </button>
             </div>
         </div>
-
-        <!-- AI / LLM Configuration (링크) -->
-        <a href="/settings/llm" class="card" id="llmCard" style="text-decoration:none;color:inherit;cursor:pointer;transition:border-color .15s,box-shadow .15s;display:block">
-            <div class="card-title">
-                <svg viewBox="0 0 24 24"><path d="M12 2a4 4 0 014 4c0 1.1-.9 2-2 2h-4a2 2 0 01-2-2 4 4 0 014-4z"/><path d="M8 8v8a4 4 0 008 0V8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
-                AI / LLM Configuration
-                <span id="llmStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;margin-left:auto;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">OFF</span>
-            </div>
-            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0">
-                <div>
-                    <div style="font-size:13px;font-weight:500;color:#374151">LLM을 사용한 힙 덤프 AI 분석 기능 설정</div>
-                    <div style="font-size:11px;color:#9CA3AF;margin-top:4px" id="llmSummary">Provider, Model, API Key 등을 설정합니다</div>
-                </div>
-                <svg viewBox="0 0 24 24" style="width:20px;height:20px;stroke:#9CA3AF;fill:none;stroke-width:2;flex-shrink:0"><polyline points="9 18 15 12 9 6"/></svg>
-            </div>
-        </a>
 
         <!-- Storage -->
         <div class="card">
@@ -666,6 +692,32 @@
     </div>
 </div>
 
+<!-- ── Allow all extensions confirm modal ─────────────────── -->
+<div class="modal-ov" id="allowAllExtModal" onclick="if(event.target===this)closeAllowAllExtModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">확장자 제한 해제</div>
+        <div class="modal-desc">기본 .hprof/.bin/.dump (+.gz) 확장자 화이트리스트가 해제됩니다. 이후 업로드되는 파일은 확장자에 상관없이 모두 허용됩니다.</div>
+        <div class="modal-warn">&#9888; 임의 파일 업로드가 가능해지므로 디스크 사용량이 증가하고, 분석이 불가능한 파일이 섞일 수 있습니다.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeAllowAllExtModal()">Cancel</button>
+            <button class="mbtn-danger" onclick="doEnableAllowAllExt()">Enable</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Max upload size confirm modal ──────────────────────── -->
+<div class="modal-ov" id="maxUploadModal" onclick="if(event.target===this)closeMaxUploadModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">Max upload size 변경</div>
+        <div class="modal-desc">힙 덤프 업로드 최대 크기를 <b id="maxUploadModalSize">-</b> 로 변경합니다.</div>
+        <div class="modal-warn">&#9888; Tomcat 멀티파트 한도가 부팅 시점에 결정되므로 변경 사항을 적용하려면 <b>앱 재시작</b>이 필요합니다 (restart.sh).</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeMaxUploadModal()">Cancel</button>
+            <button class="mbtn-primary" onclick="doSaveMaxUploadSize()">Apply</button>
+        </div>
+    </div>
+</div>
+
 <!-- ── Compress disable confirm modal ─────────────────────── -->
 <div class="modal-ov" id="compressModal" onclick="if(event.target===this)closeCompressModal()">
     <div class="modal-box">
@@ -706,10 +758,23 @@
             <input class="heap-select" id="dbEditPassword" type="password" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #D1D5DB;font-size:13px" placeholder="비밀번호 입력">
         </div>
         <div id="dbTestResult" style="display:none;padding:8px 12px;border-radius:6px;font-size:12px;margin-bottom:12px"></div>
+        <div class="modal-warn" style="margin-bottom:12px">&#9888; 저장 시 패스워드는 AES-256 으로 암호화되어 보관되며, 변경 사항을 적용하려면 <b>앱 재시작</b>이 필요합니다 (restart.sh).</div>
         <div class="modal-btns" style="gap:8px">
             <button class="mbtn-cancel" onclick="closeDbEditModal()">취소</button>
             <button class="heap-btn-apply" style="background:#059669" onclick="testDbConn()">연결 테스트</button>
             <button class="mbtn-primary" onclick="saveDbSettings()">저장</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── 재시작 필요 안내 모달 (DB 등 requireRestart 응답 공용) ── -->
+<div class="modal-ov" id="restartRequiredModal" onclick="if(event.target===this)closeRestartRequiredModal()">
+    <div class="modal-box">
+        <div class="modal-ttl">변경 저장 완료 — 앱 재시작 필요</div>
+        <div class="modal-desc" id="restartRequiredMsg">변경 사항이 저장되었습니다.</div>
+        <div class="modal-warn">&#9888; 변경된 설정은 <b>앱 재시작 후</b> 적용됩니다. 운영 환경에서는 <code>bash restart.sh</code> 를 실행하세요.</div>
+        <div class="modal-btns">
+            <button class="mbtn-primary" onclick="closeRestartRequiredModal()">확인</button>
         </div>
     </div>
 </div>
@@ -798,6 +863,30 @@ function loadAllData(showToast) {
             document.getElementById('sTotalDumpSize').textContent = d.files.totalSize;
         }
 
+        // Allow all extensions
+        var togExt = document.getElementById('togAllowAllExt');
+        if (togExt) togExt.checked = !!d.allowAllExtensions;
+
+        // Max upload size
+        if (d.maxUploadSizeGb != null) {
+            var curEl = document.getElementById('sMaxUploadCurrent');
+            if (curEl) curEl.textContent = (d.maxUploadSizeFormatted || (d.maxUploadSizeGb + ' GB'));
+            var sel = document.getElementById('maxUploadSizeSelect');
+            if (sel) {
+                var v = String(d.maxUploadSizeGb);
+                var found = false;
+                for (var i = 0; i < sel.options.length; i++) {
+                    if (sel.options[i].value === v) { sel.selectedIndex = i; found = true; break; }
+                }
+                if (!found) {
+                    var opt = document.createElement('option');
+                    opt.value = v; opt.textContent = v + ' GB (current)';
+                    sel.appendChild(opt);
+                    sel.value = v;
+                }
+            }
+        }
+
         // Disk
         if (d.disk) {
             document.getElementById('sDiskUsed').textContent = (d.disk.usedSpace||'-') + ' / ' + (d.disk.totalSpace||'-');
@@ -826,8 +915,6 @@ function loadAllData(showToast) {
         }
         // Database
         if (d.database) { updateDbCard(d.database); }
-        // LLM (상태 뱃지만 업데이트)
-        if (d.llm) { updateLlmCard(d.llm); }
 
         if (showToast) toast('Settings refreshed', 'success');
     }).catch(function(e) { toast('Failed to load settings: ' + e.message, 'error'); });
@@ -1033,6 +1120,54 @@ function doEnableAA() {
     saveSetting('autoAnalyze', true);
 }
 
+// ── Allow all extensions toggle ────────────────────────
+function confirmAllowAllExtensions(el) {
+    if (el.checked) {
+        // 활성화 = 보안 약화이므로 확인 모달 후 진행 (Auto-analyze 와 동일 패턴)
+        el.checked = false;
+        document.getElementById('allowAllExtModal').classList.add('open');
+    } else {
+        // 비활성화 = 기본 화이트리스트 복귀, 모달 없이 즉시 저장
+        saveAllowAllExtensions(false);
+    }
+}
+function closeAllowAllExtModal() { document.getElementById('allowAllExtModal').classList.remove('open'); }
+function doEnableAllowAllExt() {
+    closeAllowAllExtModal();
+    document.getElementById('togAllowAllExt').checked = true;
+    saveAllowAllExtensions(true);
+}
+function saveAllowAllExtensions(v) {
+    Common.fetchJSON('/api/settings/allow-all-extensions?enabled=' + v, {method:'POST'})
+        .then(function(d){ toast(d.message || ('Allow all extensions = ' + v), 'success'); })
+        .catch(function(e){ toast('변경 실패: ' + e.message, 'error'); });
+}
+
+// ── Max upload size ────────────────────────────────────
+function openMaxUploadModal() {
+    var sel = document.getElementById('maxUploadSizeSelect');
+    if (!sel) return;
+    var gb = parseInt(sel.value, 10);
+    if (!gb || gb <= 0) { toast('잘못된 값입니다.', 'error'); return; }
+    if (gb > 50) { toast('최대 50 GB 까지만 설정할 수 있습니다.', 'error'); return; }
+    var lbl = document.getElementById('maxUploadModalSize');
+    if (lbl) lbl.textContent = gb + ' GB';
+    document.getElementById('maxUploadModal').classList.add('open');
+}
+function closeMaxUploadModal() { document.getElementById('maxUploadModal').classList.remove('open'); }
+function doSaveMaxUploadSize() {
+    closeMaxUploadModal();
+    var sel = document.getElementById('maxUploadSizeSelect');
+    var gb = parseInt(sel.value, 10);
+    var bytes = gb * 1024 * 1024 * 1024;
+    Common.fetchJSON('/api/settings/max-upload-size?bytes=' + bytes, {method:'POST'})
+        .then(function(d) {
+            toast(d.message || ('Max upload size: ' + gb + ' GB'), 'success');
+            loadAllData(false);
+        })
+        .catch(function(e){ toast('변경 실패: ' + e.message, 'error'); });
+}
+
 // ── Clear all results ──────────────────────────────────
 function openClearModal() { document.getElementById('clearModal').classList.add('open'); }
 function closeClearModal() { document.getElementById('clearModal').classList.remove('open'); }
@@ -1072,30 +1207,6 @@ function fallbackCopy(text) {
     document.body.removeChild(ta);
 }
 
-// ── LLM Card (상태 뱃지 + 요약만) ────────────────────────
-function updateLlmCard(llm) {
-    var badge = document.getElementById('llmStatusBadge');
-    if (badge) {
-        if (llm.enabled) {
-            badge.textContent = 'ON';
-            badge.style.background = '#DBEAFE';
-            badge.style.color = '#1D4ED8';
-            badge.style.borderColor = '#93C5FD';
-        } else {
-            badge.textContent = 'OFF';
-            badge.style.background = '#F3F4F6';
-            badge.style.color = '#9CA3AF';
-            badge.style.borderColor = '#E5E7EB';
-        }
-    }
-    var summary = document.getElementById('llmSummary');
-    if (summary) {
-        var provider = (llm.provider || 'claude').charAt(0).toUpperCase() + (llm.provider || 'claude').slice(1);
-        var model = llm.model || '-';
-        var key = llm.apiKeySet ? 'API Key 설정됨' : 'API Key 미설정';
-        summary.textContent = provider + ' / ' + model + ' / ' + key;
-    }
-}
 
 // ── SCP temp dir ──────────────────────────────────────
 function loadScpTempDir() {
@@ -1248,13 +1359,27 @@ function saveDbSettings() {
         method: 'POST', headers: csrfHeaders({'Content-Type':'application/json'}), body: JSON.stringify(data)
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.success) {
-            toast(d.message, 'success');
             closeDbEditModal();
             loadAllData(false);
+            if (d.requireRestart) {
+                openRestartRequiredModal(d.message || 'DB 설정이 저장되었습니다.');
+            } else {
+                toast(d.message, 'success');
+            }
         } else {
             toast(d.message || '저장 실패', 'error');
         }
     }).catch(function(e) { toast('요청 실패: ' + e.message, 'error'); });
+}
+
+// ── Restart required modal (공용) ──────────────────────
+function openRestartRequiredModal(msg) {
+    var m = document.getElementById('restartRequiredMsg');
+    if (m && msg) m.textContent = msg;
+    document.getElementById('restartRequiredModal').classList.add('open');
+}
+function closeRestartRequiredModal() {
+    document.getElementById('restartRequiredModal').classList.remove('open');
 }
 
 // ── Init ───────────────────────────────────────────────
@@ -1267,7 +1392,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') { closeClearModal(); closeKeepURModal(); closeAAModal(); closeHeapWarnModal(); closeSaveResultsModal(); closeDbEditModal(); }
+    if (e.key === 'Escape') { closeClearModal(); closeKeepURModal(); closeAAModal(); closeHeapWarnModal(); closeSaveResultsModal(); closeDbEditModal(); closeMaxUploadModal(); closeRestartRequiredModal(); closeAllowAllExtModal(); }
 });
 
 // ── 비-ADMIN 읽기 전용 처리: container 내부의 모든 form 컨트롤/액션 버튼 비활성화 ──

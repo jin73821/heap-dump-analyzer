@@ -238,9 +238,10 @@ public class FileManagementService {
 
     /**
      * MultipartFile 을 dumpfiles/ 디렉토리에 저장. 검증 + 중복 차단 포함.
+     * @param allowAllExtensions true 면 확장자 화이트리스트 검증 우회 (운영자가 토글로 설정)
      * @return 저장된 파일명 (path 제거된)
      */
-    public String uploadFile(MultipartFile file) throws IOException {
+    public String uploadFile(MultipartFile file, boolean allowAllExtensions) throws IOException {
         if (file.isEmpty()) {
             logger.warn("[Upload] Rejected: empty file");
             throw new IllegalArgumentException("File is empty");
@@ -254,10 +255,10 @@ public class FileManagementService {
                     return new IllegalArgumentException("Invalid filename");
                 });
 
-        logger.info("[Upload] Started: filename={}, size={}, contentType={}",
-                filename, FormatUtils.formatBytes(file.getSize()), file.getContentType());
+        logger.info("[Upload] Started: filename={}, size={}, contentType={}, allowAllExtensions={}",
+                filename, FormatUtils.formatBytes(file.getSize()), file.getContentType(), allowAllExtensions);
 
-        if (!isValidHeapDumpFile(filename)) {
+        if (!allowAllExtensions && !isValidHeapDumpFile(filename)) {
             String ext = getExtension(filename);
             logger.warn("[Upload] Rejected: invalid extension '{}' for file '{}'. Allowed: .hprof, .bin, .dump (+ .gz)",
                     ext, filename);

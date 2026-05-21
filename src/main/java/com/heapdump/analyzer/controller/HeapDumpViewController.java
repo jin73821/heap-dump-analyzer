@@ -129,6 +129,11 @@ public class HeapDumpViewController {
 
         model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
 
+        long maxUpload = analyzerService.getMaxUploadSizeBytes();
+        model.addAttribute("maxUploadSizeBytes", maxUpload);
+        model.addAttribute("maxUploadSizeGb", maxUpload / (1024L * 1024 * 1024));
+        model.addAttribute("allowAllExtensions", analyzerService.isAllowAllExtensions());
+
         return "index";
     }
 

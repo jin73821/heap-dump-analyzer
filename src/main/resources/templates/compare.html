@@ -186,6 +186,21 @@
         .ai-sev-label { font-size: 11px; font-weight: 700; text-transform: uppercase;
                         letter-spacing: .1em; opacity: .65; }
         .ai-sev-value { font-size: 22px; font-weight: 800; letter-spacing: -.02em; }
+        /* 모바일: severity-banner column 방향 + 메타데이터(일자/모델/레이턴시) 하단 가로 한 줄로 */
+        @media (max-width: 700px) {
+            .ai-severity-banner { flex-direction: column; align-items: flex-start;
+                                  padding: 14px 16px; gap: 8px; }
+            .ai-severity-banner > div:last-child {
+                text-align: left !important;
+                width: 100%;
+                padding-top: 6px;
+                border-top: 1px solid currentColor;
+                opacity: .55;
+                display: flex; flex-wrap: wrap; gap: 6px 12px;
+                font-size: 10px;
+            }
+            .ai-severity-banner > div:last-child > div { white-space: nowrap; }
+        }
         .ai-section { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 10px;
                       padding: 14px 16px; margin-bottom: 12px; }
         .ai-section-title { font-size: 12px; font-weight: 700; color: #1F2937;
@@ -379,7 +394,7 @@
         .cmp-ai-summary[data-state="disabled"] .cmp-ai-summary-chip { background: #FECACA; color: #7F1D1D; }
         .cmp-ai-summary[data-state="error"] .cmp-ai-summary-chip    { background: #FECACA; color: #7F1D1D; }
         .cmp-ai-summary-body { font-size: 13px; line-height: 1.7; color: #1F2937; white-space: pre-line;
-                               max-height: 9em; overflow: hidden; position: relative; }
+                               word-break: break-word; overflow-wrap: anywhere; position: relative; }
         .cmp-ai-summary[data-state="disabled"] .cmp-ai-summary-body,
         .cmp-ai-summary[data-state="error"] .cmp-ai-summary-body { color: #7F1D1D; }
         .cmp-ai-summary-body a { color: #2563EB; font-weight: 700; }
@@ -478,11 +493,38 @@
             .kpi-grid { grid-template-columns: repeat(2, 1fr); }
         }
         @media (max-width: 700px) {
-            .cmp-hero { padding: 20px; border-radius: 18px; }
-            .cmp-hero h1 { font-size: 23px; }
-            .cmp-picker-grid, .cmp-snapshot-grid, .cmp-risk-row { grid-template-columns: 1fr; }
-            .cmp-metric-list { grid-template-columns: 1fr; }
-            .kpi-grid { grid-template-columns: 1fr; }
+            .cmp-hero { padding: 18px 16px; border-radius: 16px; margin-bottom: 12px; }
+            .cmp-hero h1 { font-size: 20px; }
+            .cmp-hero p { font-size: 12px; line-height: 1.5; }
+            .cmp-picker-grid { grid-template-columns: 1fr; }
+            /* Quick Reading: Leak Suspects + Threads 같은 라인 유지 */
+            .cmp-risk-row { grid-template-columns: 1fr 1fr; gap: 8px; }
+            /* compare-header (Before/VS/After 파일카드): 모바일에서 2-column + VS 원 숨김 */
+            .compare-header { grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+            .compare-header .vs-circle { display: none; }
+            .dump-card { padding: 10px; border-radius: 12px; }
+            .dump-card-label { font-size: 10px; }
+            .dump-card-name { font-size: 11px; line-height: 1.35; word-break: break-all; }
+            .dump-card-meta-row { font-size: 10px; gap: 4px; }
+            /* Before/After 스냅샷: 카드는 세로 stack (각 카드 full-width), 내부 mini-metric 은 2x2 → 가독성 확보 */
+            .cmp-snapshot-grid { grid-template-columns: 1fr; gap: 10px; margin-bottom: 14px; }
+            .cmp-snapshot-card { padding: 14px; border-radius: 14px; }
+            .cmp-snapshot-card h3 { font-size: 13px; margin-bottom: 10px; }
+            .cmp-metric-list { grid-template-columns: 1fr 1fr; gap: 8px; }
+            .cmp-mini-metric { padding: 10px 11px; border-radius: 11px; }
+            .cmp-mini-label { font-size: 11px; margin-bottom: 4px; }
+            .cmp-mini-value { font-size: 15px; }
+            .kpi-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+            .kpi-tile { padding: 12px; border-radius: 14px; }
+            .kpi-value { font-size: 18px; }
+            .kpi-label { font-size: 11px; }
+            .kpi-sub { font-size: 10px; }
+            /* Result Summary 카드 padding 축소 */
+            .cmp-summary-card, .cmp-recommend-card { padding: 14px; }
+            .cmp-summary-main { font-size: 17px; margin-bottom: 8px; }
+            .cmp-summary-list { font-size: 12px; }
+            .cmp-summary-list li::before { margin-top: 6px; }
+            .cmp-result-summary { gap: 10px; margin-bottom: 10px; }
         }
     </style>
 </head>

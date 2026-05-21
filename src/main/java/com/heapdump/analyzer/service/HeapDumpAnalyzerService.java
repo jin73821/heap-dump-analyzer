@@ -15,6 +15,7 @@ import com.heapdump.analyzer.repository.TargetServerRepository;
 import com.heapdump.analyzer.util.FormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.web.servlet.MultipartProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -81,6 +82,14 @@ public class HeapDumpAnalyzerService {
     private volatile boolean keepUnreachableObjects;
     private volatile boolean compressAfterAnalysis;
 
+    // 업로드 최대 파일 크기 (bytes). 기본 5 GB. 최대 50 GB.
+    public  static final long MAX_UPLOAD_LIMIT_BYTES = 50L * 1024 * 1024 * 1024;
+    private static final long DEFAULT_UPLOAD_SIZE_BYTES = 5L * 1024 * 1024 * 1024;
+    private volatile long maxUploadSizeBytes = DEFAULT_UPLOAD_SIZE_BYTES;
+
+    // 확장자 화이트리스트(.hprof/.bin/.dump + .gz) 우회 — 기본 false (검증 유지)
+    private volatile boolean allowAllExtensions = false;
+
     // LLM 런타임 설정은 LlmConfigService 로 이동 (Phase 7-2)
     // RAG 런타임 설정은 RagConfigService 로 이동 (Phase 7-3)
     // DEFAULT_CHAT_SYSTEM_PROMPT 는 LlmConfigService 내부 상수 (Phase 7-2)
@@ -94,7 +103,8 @@ public class HeapDumpAnalyzerService {
                                    FileManagementService fileMgmt,
                                    LlmConfigService llmConfig,
                                    RagConfigService ragConfig,
-                                   AiInsightManager aiInsight) {
+                                   AiInsightManager aiInsight,
+                                   MultipartProperties multipartProperties) {
         this.config  = config;
         this.parser  = parser;
         this.analysisHistoryRepository = analysisHistoryRepository;
@@ -108,6 +118,16 @@ public class HeapDumpAnalyzerService {
         this.aiInsight = aiInsight;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
         this.compressAfterAnalysis = config.isCompressAfterAnalysis();
+        // application.properties 의 spring.servlet.multipart.max-file-size 초기값 채택
+        // (settings.json 로 덮어쓸 수 있음)
+        try {
+            if (multipartProperties != null && multipartProperties.getMaxFileSize() != null) {
+                long initBytes = multipartProperties.getMaxFileSize().toBytes();
+                if (initBytes > 0 && initBytes <= MAX_UPLOAD_LIMIT_BYTES) {
+                    this.maxUploadSizeBytes = initBytes;
+                }
+            }
+        } catch (Exception ignored) { /* DEFAULT_UPLOAD_SIZE_BYTES 유지 */ }
         // LLM/RAG 초기화는 각각 LlmConfigService/RagConfigService @PostConstruct 에서 수행
     }
 
@@ -626,6 +646,26 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
+    public boolean isAllowAllExtensions()         { return allowAllExtensions; }
+    public void    setAllowAllExtensions(boolean v) {
+        this.allowAllExtensions = v;
+        logger.info("allow_all_extensions set to {}", v);
+        persistSettings();
+    }
+
+    public long getMaxUploadSizeBytes()           { return maxUploadSizeBytes; }
+    public void setMaxUploadSizeBytes(long bytes) {
+        if (bytes <= 0) {
+            throw new IllegalArgumentException("업로드 크기는 0보다 커야 합니다.");
+        }
+        if (bytes > MAX_UPLOAD_LIMIT_BYTES) {
+            throw new IllegalArgumentException("업로드 크기는 최대 50 GB를 초과할 수 없습니다.");
+        }
+        this.maxUploadSizeBytes = bytes;
+        logger.info("max_upload_size_bytes set to {} ({} GB)", bytes, bytes / (1024.0 * 1024 * 1024));
+        persistSettings();
+    }
+
     // ── 런타임 설정 영속화 (settings.json) ─────────────────────────
 
     private File getSettingsFile() {
@@ -685,6 +725,34 @@ public class HeapDumpAnalyzerService {
                 logger.info("[Settings] Restored compressAfterAnalysis={}", compressAfterAnalysis);
             }
 
+            if (saved.containsKey("allowAllExtensions")) {
+                Object val = saved.get("allowAllExtensions");
+                if (val instanceof Boolean) {
+                    this.allowAllExtensions = (Boolean) val;
+                } else {
+                    this.allowAllExtensions = Boolean.parseBoolean(String.valueOf(val));
+                }
+                logger.info("[Settings] Restored allowAllExtensions={}", allowAllExtensions);
+            }
+
+            if (saved.containsKey("maxUploadSizeBytes")) {
+                Object val = saved.get("maxUploadSizeBytes");
+                long bytes = 0;
+                if (val instanceof Number) {
+                    bytes = ((Number) val).longValue();
+                } else if (val != null) {
+                    try { bytes = Long.parseLong(String.valueOf(val)); } catch (NumberFormatException ignored) {}
+                }
+                if (bytes > 0 && bytes <= MAX_UPLOAD_LIMIT_BYTES) {
+                    this.maxUploadSizeBytes = bytes;
+                    logger.info("[Settings] Restored maxUploadSizeBytes={} ({} GB)",
+                            bytes, bytes / (1024.0 * 1024 * 1024));
+                } else {
+                    logger.warn("[Settings] Invalid maxUploadSizeBytes={}, using default {} GB",
+                            val, DEFAULT_UPLOAD_SIZE_BYTES / (1024 * 1024 * 1024));
+                }
+            }
+
             // LLM/RAG 설정 복원 — 각 ConfigService 에 위임
             llmConfig.applyFromSettings(saved);
             ragConfig.applyFromSettings(saved);
@@ -731,6 +799,8 @@ public class HeapDumpAnalyzerService {
             Map<String, Object> settings = new LinkedHashMap<>();
             settings.put("keepUnreachableObjects", keepUnreachableObjects);
             settings.put("compressAfterAnalysis", compressAfterAnalysis);
+            settings.put("maxUploadSizeBytes", maxUploadSizeBytes);
+            settings.put("allowAllExtensions", allowAllExtensions);
             // LLM/RAG 설정 — 각 ConfigService 에 위임
             llmConfig.collectSettings(settings);
             ragConfig.collectSettings(settings);
@@ -760,6 +830,9 @@ public class HeapDumpAnalyzerService {
             Map<String, String> updates = new LinkedHashMap<>();
             updates.put("mat.keep.unreachable.objects", String.valueOf(keepUnreachableObjects));
             updates.put("analysis.compress-after-analysis", String.valueOf(compressAfterAnalysis));
+            String multipartSize = formatBytesAsSpringSize(maxUploadSizeBytes);
+            updates.put("spring.servlet.multipart.max-file-size", multipartSize);
+            updates.put("spring.servlet.multipart.max-request-size", multipartSize);
             // LLM/RAG 설정 — 각 ConfigService 에 위임
             llmConfig.collectApplicationProperties(updates);
             ragConfig.collectApplicationProperties(updates);
@@ -783,6 +856,20 @@ public class HeapDumpAnalyzerService {
         } catch (IOException e) {
             logger.warn("[Settings] application.properties 동기화 실패: {}", e.getMessage());
         }
+    }
+
+    /**
+     * bytes 를 Spring DataSize 표기 (예: 5GB / 512MB / 1024KB) 로 변환.
+     * 정확히 GB/MB/KB 단위로 떨어지면 해당 단위, 아니면 byte 값을 그대로 반환.
+     */
+    private static String formatBytesAsSpringSize(long bytes) {
+        long gb = 1024L * 1024 * 1024;
+        long mb = 1024L * 1024;
+        long kb = 1024L;
+        if (bytes % gb == 0) return (bytes / gb) + "GB";
+        if (bytes % mb == 0) return (bytes / mb) + "MB";
+        if (bytes % kb == 0) return (bytes / kb) + "KB";
+        return String.valueOf(bytes) + "B";
     }
 
     private File findExternalPropertiesFile() {
@@ -1101,7 +1188,7 @@ public class HeapDumpAnalyzerService {
     // ── 파일 관리 ────────────────────────────────────────────────
 
     public String uploadFile(MultipartFile file) throws IOException {
-        return fileMgmt.uploadFile(file);
+        return fileMgmt.uploadFile(file, allowAllExtensions);
     }
 
     // ── 업로드 중복 검사 ─────────────────────────────────────────

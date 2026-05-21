@@ -1,9 +1,9 @@
-JAR=/opt/genspark/webapp_dump/target/heap-analyzer-2.0.3.jar
+JAR=/opt/genspark/webapp_dump/target/heap-analyzer-2.0.6.jar
 LOG_DIR=/opt/genspark/webapp_dump/logs
 NOHUP_LOG="$LOG_DIR/nohup.out"
 
 # 이미 실행 중이면 거절 (재기동은 restart.sh 사용)
-RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.0.3.jar | grep -v grep | awk '{print $2}')
+RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.0.6.jar | grep -v grep | awk '{print $2}')
 if [ -n "$RUNNING_PIDS" ]; then
     echo "[run] 이미 실행 중: PID=$RUNNING_PIDS"
     echo "[run] 'bash stop.sh' 후 다시 실행하거나 'bash restart.sh' 를 사용하세요."
@@ -18,7 +18,10 @@ fi
 # stdbuf -oL -eL : 파일로 redirect 되어도 라인 단위로 flush
 # < /dev/null    : stdin 도 명시적으로 분리
 : > "$NOHUP_LOG"
-setsid nohup stdbuf -oL -eL java -jar "$JAR" --server.port=18080 \
+# JVM 힙 설정: 초기 256 MB / 최대 1 GB
+JVM_HEAP_OPTS="-Xms256m -Xmx1g"
+
+setsid nohup stdbuf -oL -eL java $JVM_HEAP_OPTS -jar "$JAR" --server.port=18080 \
     < /dev/null > "$NOHUP_LOG" 2>&1 &
 PID=$!
 disown $PID 2>/dev/null || true
