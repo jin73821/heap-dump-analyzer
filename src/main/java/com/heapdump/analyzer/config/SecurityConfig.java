@@ -53,6 +53,9 @@ public class SecurityConfig {
                     "/api/servers/ssh-local-user"
                 ).hasRole("ADMIN")
 
+                // 본인 자기서비스 — 인증된 모든 사용자
+                .requestMatchers("/account", "/api/account/**").authenticated()
+
                 .anyRequest().authenticated()
             )
             .formLogin(form -> form
@@ -85,6 +88,8 @@ public class SecurityConfig {
                         || uri.equals("/api/llm/chat-restore-mode")) return false;
                     if (uri.equals("/api/servers/scan-interval")
                         || uri.equals("/api/servers/ssh-local-user")) return false;
+                    // 3) 본인 자기서비스 — CSRF 보호 유지 (비밀번호/메모 변경은 민감)
+                    if (uri.startsWith("/api/account/")) return false;
                     // ── 나머지 /api/** 경로는 CSRF 면제 (일반 사용자 액션) ──
                     return uri.startsWith("/api/");
                 })

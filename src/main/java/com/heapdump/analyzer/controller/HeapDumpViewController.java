@@ -173,6 +173,11 @@ public class HeapDumpViewController {
             .filter(h -> "SUCCESS".equals(h.getStatus())).count();
         model.addAttribute("analyzedCount", analyzedCount);
 
+        long maxUpload = analyzerService.getMaxUploadSizeBytes();
+        model.addAttribute("maxUploadSizeBytes", maxUpload);
+        model.addAttribute("maxUploadSizeGb", maxUpload / (1024L * 1024 * 1024));
+        model.addAttribute("allowAllExtensions", analyzerService.isAllowAllExtensions());
+
         return "files";
     }
 
@@ -270,7 +275,8 @@ public class HeapDumpViewController {
 
     @PostMapping("/upload")
     public String uploadFile(@RequestParam("file") MultipartFile file,
-                             RedirectAttributes redirectAttributes) {
+                             RedirectAttributes redirectAttributes,
+                             Authentication authentication) {
         String originalName = file.getOriginalFilename();
         logger.info("[Upload] Request received: filename={}, size={}", originalName, FormatUtils.formatBytes(file.getSize()));
 
@@ -281,6 +287,8 @@ public class HeapDumpViewController {
                 return "redirect:/";
             }
             String filename = analyzerService.uploadFile(file);
+            String uploadedBy = authentication != null ? authentication.getName() : null;
+            analyzerService.saveUploadRecord(filename, file.getSize(), uploadedBy);
             logger.info("[Upload] Success: {}", filename);
             String successMsg = "Uploaded: " + filename + " (" + FormatUtils.formatBytes(file.getSize()) + ")";
             redirectAttributes.addFlashAttribute("success", successMsg);

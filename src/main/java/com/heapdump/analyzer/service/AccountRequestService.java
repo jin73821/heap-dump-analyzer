@@ -39,16 +39,21 @@ public class AccountRequestService {
                                  String reason, String requestIp) {
         UserService.validateUsername(username);
         UserService.validatePassword(password);
+
+        String encoded = passwordEncoder.encode(password);
+
         if (userService.existsByUsername(username)) {
-            throw new IllegalArgumentException("이미 사용 중인 사용자명입니다.");
+            logger.warn("[AccountRequest] 기존 사용자명과 충돌 — 무시: username={}", username);
+            return null;
         }
         if (repository.existsByUsernameAndStatus(username, AccountRequest.Status.PENDING)) {
-            throw new IllegalArgumentException("해당 사용자명으로 이미 대기 중인 신청이 있습니다.");
+            logger.warn("[AccountRequest] 대기 중 신청과 충돌 — 무시: username={}", username);
+            return null;
         }
 
         AccountRequest req = new AccountRequest();
         req.setUsername(username);
-        req.setPassword(passwordEncoder.encode(password));
+        req.setPassword(encoded);
         req.setDisplayName(displayName);
         req.setReason(reason);
         req.setStatus(AccountRequest.Status.PENDING);

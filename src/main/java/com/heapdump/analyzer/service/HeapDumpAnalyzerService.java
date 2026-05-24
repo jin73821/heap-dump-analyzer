@@ -649,6 +649,7 @@ public class HeapDumpAnalyzerService {
     public boolean isAllowAllExtensions()         { return allowAllExtensions; }
     public void    setAllowAllExtensions(boolean v) {
         this.allowAllExtensions = v;
+        com.heapdump.analyzer.util.FilenameValidator.setAllowAllExtensions(v);
         logger.info("allow_all_extensions set to {}", v);
         persistSettings();
     }
@@ -734,6 +735,8 @@ public class HeapDumpAnalyzerService {
                 }
                 logger.info("[Settings] Restored allowAllExtensions={}", allowAllExtensions);
             }
+            // FilenameValidator 정적 플래그 동기화 — 컨트롤러 입구 검증이 토글을 인식하도록.
+            com.heapdump.analyzer.util.FilenameValidator.setAllowAllExtensions(this.allowAllExtensions);
 
             if (saved.containsKey("maxUploadSizeBytes")) {
                 Object val = saved.get("maxUploadSizeBytes");
@@ -1194,7 +1197,7 @@ public class HeapDumpAnalyzerService {
     // ── 업로드 중복 검사 ─────────────────────────────────────────
 
     public Map<String, String> checkDuplicate(String filename, long fileSize, String partialHash) {
-        return fileMgmt.checkDuplicate(filename, fileSize, partialHash);
+        return fileMgmt.checkDuplicate(filename, fileSize, partialHash, allowAllExtensions);
     }
 
     private String formatBytes(long bytes) {
@@ -1202,7 +1205,7 @@ public class HeapDumpAnalyzerService {
     }
 
     public List<HeapDumpFile> listFiles() {
-        return fileMgmt.listFiles();
+        return fileMgmt.listFiles(allowAllExtensions);
     }
 
     private void cleanupDuplicateGzFiles(File[] files) {
@@ -1777,6 +1780,27 @@ public class HeapDumpAnalyzerService {
             logger.info("[DB] Analysis history saved for: {}", result.getFilename());
         } catch (Exception e) {
             logger.warn("[DB] Failed to save analysis history for {}: {}", result.getFilename(), e.getMessage());
+        }
+    }
+
+    /**
+     * 업로드 완료 직후 analysis_history 에 NOT_ANALYZED 레코드를 삽입해 ID(순번)를 채번한다.
+     * 이후 분석이 실행되면 saveAnalysisToDb() 가 동일 레코드를 findByFilename 으로 찾아 update 한다.
+     * 이미 레코드가 존재하면(재업로드 방지 로직 우회 등) 삽입하지 않고 기존 ID 를 유지한다.
+     */
+    public void saveUploadRecord(String filename, long fileSize, String uploadedBy) {
+        try {
+            if (analysisHistoryRepository.findByFilename(filename).isPresent()) return;
+            AnalysisHistoryEntity entity = new AnalysisHistoryEntity();
+            entity.setFilename(filename);
+            entity.setStatus("NOT_ANALYZED");
+            entity.setFileSize(fileSize);
+            entity.setFileDeleted(false);
+            if (uploadedBy != null) entity.setUploadedBy(uploadedBy);
+            analysisHistoryRepository.save(entity);
+            logger.info("[DB] Upload record saved (NOT_ANALYZED) for: {}", filename);
+        } catch (Exception e) {
+            logger.warn("[DB] Failed to save upload record for {}: {}", filename, e.getMessage());
         }
     }
 

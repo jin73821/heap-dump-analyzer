@@ -40,6 +40,12 @@ public class User {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    @Column(name = "memo", columnDefinition = "MEDIUMTEXT")
+    private String memo;
+
+    @Column(name = "memo_updated_at")
+    private LocalDateTime memoUpdatedAt;
+
     public enum Role {
         ADMIN, USER
     }

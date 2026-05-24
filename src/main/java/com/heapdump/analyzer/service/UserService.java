@@ -8,6 +8,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
+import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -154,5 +156,54 @@ public class UserService {
             throw new IllegalArgumentException("기본 관리자 계정은 삭제할 수 없습니다.");
         }
         userRepository.deleteById(id);
+    }
+
+    // ── 자기서비스 (My Account 페이지) ─────────────────────────────
+
+    /** 본인 비밀번호 변경: 현재 PW 검증 + 복잡도 검증 + 동일 PW 차단. */
+    public void changeOwnPassword(String username, String currentPassword, String newPassword) {
+        if (currentPassword == null || currentPassword.isEmpty()) {
+            throw new IllegalArgumentException("현재 비밀번호를 입력하세요.");
+        }
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
+            throw new IllegalArgumentException("현재 비밀번호가 일치하지 않습니다.");
+        }
+        validatePassword(newPassword);
+        if (passwordEncoder.matches(newPassword, user.getPassword())) {
+            throw new IllegalArgumentException("새 비밀번호는 현재 비밀번호와 달라야 합니다.");
+        }
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+        logger.info("[UserService] 비밀번호 변경 (self): {}", username);
+    }
+
+    private static final int MEMO_MAX_BYTES = 10 * 1024 * 1024; // 10 MB (UTF-8 byte 기준)
+
+    public Optional<User> getOwnMemo(String username) {
+        return userRepository.findByUsername(username);
+    }
+
+    public LocalDateTime saveMemo(String username, String text) {
+        String memo = text == null ? "" : text;
+        if (memo.getBytes(StandardCharsets.UTF_8).length > MEMO_MAX_BYTES) {
+            throw new IllegalArgumentException("메모는 최대 10MB까지 저장할 수 있습니다.");
+        }
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        user.setMemo(memo.isEmpty() ? null : memo);
+        LocalDateTime now = memo.isEmpty() ? null : LocalDateTime.now();
+        user.setMemoUpdatedAt(now);
+        userRepository.save(user);
+        return now;
+    }
+
+    public void clearMemo(String username) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        user.setMemo(null);
+        user.setMemoUpdatedAt(null);
+        userRepository.save(user);
     }
 }

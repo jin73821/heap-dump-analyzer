@@ -1,5 +1,300 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-24] SpringSessionTableChecker 실행 시점 수정
+
+`@EventListener(ApplicationReadyEvent.class)` → `InitializingBean.afterPropertiesSet()` 변경.
+기존에는 앱 기동 완료 후 세션 테이블을 점검했으나, Spring Session JDBC가 기동 중에 이미 테이블에 접근하므로 테이블 누락 시 자동 생성 기회를 놓치는 문제가 있었음. `InitializingBean`으로 변경해 빈 초기화 시점에 점검·생성이 이루어지도록 수정.
+
+**변경 파일:** `src/main/java/.../config/SpringSessionTableChecker.java`
+
+## [2026-05-24] 보안 개선: /login 계정 신청 endpoint 강화
+
+**Issue 1 — 사용자명 열거 방지 (Critical):**
+`POST /api/account-requests`에서 사용자명 충돌 시 구분 가능한 에러 메시지를 반환하던 취약점 수정.
+- `AccountRequestService.submit()` — 기존 사용자명/대기 신청 충돌 시 `IllegalArgumentException` 대신 `null` 반환 (서버 WARN 로그만 기록)
+- `AccountRequestController.submit()` — `null` 응답을 `success:true`로 통일, 응답에서 `id` 필드 제거
+- 타이밍 공격 방지: BCrypt 해싱을 충돌 검사 전에 항상 수행
+
+**Issue 2 — 공개 endpoint 요청 제한 (Medium):**
+- `RateLimiter.java` 신규 — `ConcurrentHashMap` 기반 IP별 슬라이딩 윈도우 카운터 (외부 의존성 없음)
+- `AccountRequestController` — IP당 60초 5회 제한, 초과 시 HTTP 429
+- `@Scheduled` 5분 주기 만료 엔트리 정리
+
+**Issue 3 — 프론트엔드 주석 정리 (Low):**
+- `login.html` — HTML/JS 주석 4건 제거 (HTML 주석·JS 설명 주석)
+- `common.css` — 내부 아키텍처 상세 설명 주석 축소 (섹션 헤더 1줄만 유지)
+- 캐시 키 `?v=2026-05-24a`로 14개 템플릿 일괄 갱신
+
+**변경 파일:**
+- `src/main/java/.../service/AccountRequestService.java`
+- `src/main/java/.../controller/AccountRequestController.java`
+- `src/main/java/.../util/RateLimiter.java` (신규)
+- `src/main/resources/templates/login.html`
+- `src/main/resources/static/css/common.css`
+- 14개 템플릿 `?v=` 캐시 키 갱신
+
+## [2026-05-23] 모바일 Topbar 버튼 개행 방지 — common.css 전역 수정
+
+**현상:** Comparison History 등 모바일 화면에서 topbar 의 `+새비교` / `Dashboard` 버튼이 우측 폭 압력으로 제목 아래로 개행됨.
+
+**원인:** `common.css` 의 `.topbar-brand` / `.topbar-title` / `.topbar-right` 에 CLAUDE.md 규약(줄바꿈 방지 패턴)이 미적용.
+
+**변경 (`src/main/resources/static/css/common.css`):**
+- `.topbar-brand` — `flex: 1 1 auto; min-width: 0` 추가 (브랜드 영역이 남은 공간만 차지, 수축 허용)
+- `.topbar-title` — `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` 추가 (타이틀 단일 라인 유지)
+- `.topbar-right` — `flex-shrink: 0` 추가 (버튼 영역 절대 축소 금지)
+- 캐시 키 `?v=2026-05-23b` 로 14개 템플릿 일괄 갱신
+
+## [2026-05-23] 업로드 시 Analysis Files 순번(ID) 즉시 채번
+
+**배경:** 덤프 파일이 아닌 파일을 포함해 파일 업로드 후 분석을 실행하지 않으면 `analysis_history` DB 레코드가 없어 순번(ID)이 채번되지 않고 Files 페이지에 `-` 로 표시됨.
+
+**변경:**
+- `HeapDumpAnalyzerService.saveUploadRecord(filename, fileSize, uploadedBy)` 신규 추가 — 업로드 성공 직후 `analysis_history` 에 `status=NOT_ANALYZED` 레코드를 INSERT 해 ID 를 채번. 동명 파일 레코드가 이미 존재하면 스킵(중복 방지).
+- `HeapFileApiController.uploadFileApi()` — `Authentication` 파라미터 추가, 업로드 성공 후 `saveUploadRecord()` 호출.
+- `HeapDumpViewController.uploadFile()` — 동일하게 `saveUploadRecord()` 호출 추가.
+- 이후 분석 실행 시 `saveAnalysisToDb()` 가 기존 `findByFilename().orElse(new)` 패턴으로 동일 레코드를 찾아 update → 순번 유지.
+
+**변경 파일:**
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapFileApiController.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+
+## [2026-05-23] 동일 파일명 업로드 차단 모달 너비 확대
+
+**변경:** `src/main/resources/static/js/upload-queue.js` 251번 라인 — 모달 `max-width` 420px → **520px**.
+
+## [2026-05-23] SpringSessionTableChecker — 수동 안내 → 자동 부트스트랩
+
+**배경:** 신규 DB 배포 시 운영자가 `schema-mysql.sql` 을 수동 실행해야 하는 부담. 사용자가 자동 부트스트랩 로직 도입을 제안.
+
+**대안 분석:** `initialize-schema=always` 로 되돌리는 단순한 방법은 직전에 제거한 1050/1061 WARN 회귀(Spring Session 의 schema-mysql.sql 이 `IF NOT EXISTS` 미사용) 를 일으킴. 따라서 `never` 유지 + 우리 checker 가 직접 부트스트랩하는 방식 채택.
+
+**변경 (`src/main/java/com/heapdump/analyzer/config/SpringSessionTableChecker.java`):**
+- 누락 시 ERROR 안내 → **`ScriptUtils.executeSqlScript()` 로 자동 실행** 으로 교체.
+- 스크립트 소스: `classpath:org/springframework/session/jdbc/schema-mysql.sql` (Spring Session JDBC JAR 내장, `spring-jdbc:6.2.18` 의 ScriptUtils 사용 — 별도 의존성 추가 없음).
+- `continueOnError=true` — 한쪽만 누락된 비정상 상태에서 기존 테이블의 1050 오류 흘려보냄, 누락 테이블 CREATE 만 성공시킴.
+- 부트스트랩 실패 시 ERROR + stack trace + 수동 안내로 폴백.
+- 기존 보강(LIKE wildcard escape / catalog 명시 / 단일 connection / SQLException ERROR)은 그대로 유지.
+- `application.properties` 의 `initialize-schema=never` 설정은 변경하지 않음.
+
+**검증:**
+- 정상 케이스 (테이블 둘 다 존재) — 재기동 후 INFO `테이블 확인 완료 (catalog=HEAPDB).` 출력, 부트스트랩 미실행 확인.
+- 누락 케이스 — 운영 DB DROP 검증은 활성 세션 영향으로 미실시. 코드 경로는 `ScriptUtils.executeSqlScript()` 표준 동작 + `continueOnError=true` 의 검증된 시맨틱에 의존.
+
+## [2026-05-23] SpringSessionTableChecker 정합성 보완 (4건)
+
+**배경:** 신규 추가한 `SpringSessionTableChecker` 코드 리뷰에서 잠재적 결함 2건 + 개선 사항 2건 식별.
+
+**변경 (`src/main/java/com/heapdump/analyzer/config/SpringSessionTableChecker.java`):**
+1. **JDBC LIKE 패턴 wildcard escape** — `getTables()` 의 tableNamePattern 인자는 SQL LIKE 패턴이라 `_` 가 wildcard 로 해석됨. `meta.getSearchStringEscape()` 로 escape 문자(`\`)를 얻어 `_`/`%`/escape 자체 3종을 모두 escape. `SPRING_SESSION` 이 `SPRINGXSESSION` 같은 false positive 에 잡히지 않도록 보강.
+2. **catalog 명시** — `conn.getCatalog()` 로 현재 DB(`HEAPDB`)를 얻어 첫 인자로 전달. 동일 사용자가 다른 DB 권한을 가졌을 때 그쪽 동명 테이블이 매치되는 것 방지.
+3. **Connection 재사용** — 두 테이블 검사를 단일 connection 으로 통합. HikariCP 풀에서 2회 빌리던 것을 1회로 단축.
+4. **SQLException 시 ERROR 격상** — 메타데이터 조회 자체 실패는 앱 동작 불가 상태이므로 WARN → ERROR. 누락 오탐 방지 로직(누락 경고 미출력)은 유지.
+
+**검증:** 재기동 로그에서 `[SpringSession] SPRING_SESSION / SPRING_SESSION_ATTRIBUTES 테이블 확인 완료 (catalog=HEAPDB).` 출력 확인.
+
+## [2026-05-23] 기동 시 SPRING_SESSION 테이블 누락 감지 로깅 추가
+
+**배경:** `initialize-schema=never` 환경에서 신규 DB에 배포 시 `SPRING_SESSION` 테이블이 없어도 앱이 정상 기동되다가 첫 로그인 시점에 오류가 발생. 기동 시점에 조기 경고가 없었음.
+
+**변경:** `src/main/java/com/heapdump/analyzer/config/SpringSessionTableChecker.java` 신규 추가.
+- `@EventListener(ApplicationReadyEvent.class)` — 기동 완료 시점에 `DatabaseMetaData.getTables()`로 `SPRING_SESSION` / `SPRING_SESSION_ATTRIBUTES` 테이블 존재 여부 확인.
+- 테이블 누락 시 `ERROR` 레벨 경고 블록 출력 (누락 테이블 명시 + 수동 생성 안내).
+- 테이블 정상 존재 시 `INFO` 레벨 확인 로그 출력.
+- SQL 확인 중 예외 발생 시 `WARN` 출력 후 과도한 경고 방지를 위해 존재로 간주.
+
+**검증:** 재기동 후 `[SpringSession] SPRING_SESSION / SPRING_SESSION_ATTRIBUTES 테이블 확인 완료.` INFO 로그 출력 확인.
+
+## [2026-05-23] 기동 시 SPRING_SESSION WARN(1050/1061) 제거
+
+**원인:** `spring.session.jdbc.initialize-schema=always` 설정으로 매 기동마다 `CREATE TABLE SPRING_SESSION` / `CREATE INDEX` DDL이 실행되었으나 테이블·인덱스가 이미 존재해 MariaDB가 1050/1061 에러를 반환, 드라이버가 WARN으로 기록.
+
+**변경:** `src/main/resources/application.properties` — `initialize-schema` 값을 `always` → **`never`** 로 변경. 테이블은 최초 기동 시(`always`) 이미 생성되어 있으므로 이후 기동에서는 DDL 실행 불필요.
+
+**검증:** 변경 후 재기동 로그에서 `1050-42S01` / `1061-42000` WARN 미발생 확인.
+
+## [2026-05-23] My Account — 비밀번호 변경을 계정 정보 카드 우측 상단 버튼으로 이동
+
+**변경 내용:**
+- "비밀번호 변경" 별도 카드 제거.
+- "계정 정보" 카드 타이틀(`.card-title`) 우측에 작은 `비밀번호 변경` 버튼 추가 (`card-title-btn` 스타일).
+- 버튼 클릭 시 모달(`#pwModal`, `.pw-modal-box`)이 열려 3개 input 표시. 성공 시 모달 자동 닫힘 + toast 표시.
+- JS: `openPwModal()` / `closePwModal()` 추가. `changePassword()` 성공 콜백에서 `closePwModal()` 호출로 변경.
+
+**변경 파일:** `src/main/resources/templates/account.html`
+
+## [2026-05-23] My Account 메모 초기화 모달 디자인 보정
+
+**현상:** 메모 초기화 확인 모달이 max-width 없이 화면 가득 펼쳐지고 h3·p·버튼 모두 기본 폰트로 렌더링되어 디자인 깨짐.
+
+**원인 (CLAUDE.md 함정 13 — CSS cascade):** `common.css` 의 `.modal-ov`/`.modal-box` 는 background/radius/padding/box-shadow 의 **공통 base 만** 제공하고 `max-width`/`width`/`text-align`/`h3`/`p`/`.modal-btns` 변형은 페이지별 인라인 정의 패턴이다. account.html 에서 이 인라인 변형을 누락.
+
+**변경:** `src/main/resources/templates/account.html` `<style>` 에 files.html 패턴 동일하게 5 룰 추가 — `.modal-box { max-width:380px; width:90%; text-align:center }` / `.modal-box h3 {font-size:15px;font-weight:600;margin-bottom:8px}` / `.modal-box p {font-size:13px;color:#6B7280;margin-bottom:16px;line-height:1.55}` / `.modal-btns {display:flex;gap:8px;justify-content:center}` / `.modal-btns button {padding:7px 20px;...}`. 색상 utility (`.btn-cancel`/`.btn-delete`)는 common.css 그대로 사용.
+
+**검증:** `/account` 응답 본문에 `.modal-box { max-width: 380px; ... }` 룰 포함 확인. 브라우저에서 [초기화] 클릭 시 380px 정사각 카드 + 가운데 정렬 텍스트 + 작은 버튼 두 개 정상 렌더.
+
+## [2026-05-23] My Account 메모 한도 64KB → 10MB 확장
+
+**요청 배경:** 64KB(=65,535 byte) 한도가 짧다는 사용자 피드백. UI 카운터의 단위가 모호("13,809 / 64KB" — 단위 미명시 byte) 했던 점도 함께 개선.
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/model/entity/User.java` — `memo` 컬럼 `columnDefinition`: `TEXT` (64KB) → **`MEDIUMTEXT`** (16MB).
+- 수정: `src/main/java/com/heapdump/analyzer/service/UserService.java` — `MEMO_MAX_BYTES` 상수 `65_535` → **`10 * 1024 * 1024` (10 MB UTF-8 byte)** + 한글 에러 메시지 갱신.
+- 수정: `src/main/resources/templates/account.html` —
+  - JS `MEMO_MAX` 상수 동일 갱신.
+  - 카운터 표시를 raw byte 숫자 → 사람이 읽기 좋은 단위(`fmtBytes()` — B/KB/MB 자동 전환)로 변경. 표시 형식 예: `5.00 MB / 10 MB (UTF-8 byte)` — 단위 모호성 해소.
+- 수동 마이그레이션: `ALTER TABLE users MODIFY COLUMN memo MEDIUMTEXT;` 적용 (Hibernate `ddl-auto=update` 가 컬럼 타입 변경은 자동 처리하지 않음).
+- 수정: `CHANGELOG.md`.
+
+**검증:**
+1. `mvn clean package` BUILD SUCCESS, 재기동 정상.
+2. `SHOW COLUMNS FROM users WHERE Field='memo'` → `mediumtext`.
+3. **5MB 메모 저장** (`'A' * 5242880`) → HTTP 200 + DB `OCTET_LENGTH(memo) = 5,242,880`.
+4. **11MB 시도** → HTTP 400 + `메모는 최대 10MB까지 저장할 수 있습니다.`
+5. 페이지 카운터 표시 `0 B / 10 MB (UTF-8 byte)` 노출 확인.
+
+**참고 — 단위 해설:** account.html 의 `utf8ByteLen(str) = new Blob([str]).size` 는 UTF-8 인코딩 후 바이트 수를 측정. 한글 1글자는 UTF-8 로 3 byte 차지 → 글자수보다 항상 더 큰 값이 표시됨 (서버 측 cap 도 `String.getBytes(StandardCharsets.UTF_8).length` 라 1:1 일치).
+
+## [2026-05-23] My Account 페이지 신설 (계정 정보 + 비밀번호 변경 + 개인 메모장)
+
+**요청 배경:** 좌측 배너 하단 계정명이 plain `<span>` 이어서 클릭 동작이 없었고, 일반 사용자가 본인 비밀번호를 자체 변경할 통로(`UserService.resetPassword()` 는 ADMIN 전용)도 자기서비스 페이지도 부재. 사용자가 본인 정보를 보고 비밀번호를 바꾸며 본인만의 메모를 저장할 수 있는 페이지 신설.
+
+**진입 UX:** 배너 좌하단 **계정명 row 전체** (아이콘 + username) 가 `/account` 링크. 기존 Logout 버튼은 분리 유지.
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/model/entity/User.java` — `memo` (TEXT, 명시 columnDefinition 으로 Hibernate 6 의 `tinytext(255)` default 회피) + `memo_updated_at` (LocalDateTime) 2개 컬럼 추가. Lombok `@Data` 라 getter/setter 자동. `ddl-auto=update` 로 재기동 시 `users` 테이블 자동 ALTER.
+- 수정: `src/main/java/com/heapdump/analyzer/service/UserService.java` — 자기서비스 메서드 4종 추가:
+  - `changeOwnPassword(username, currentPw, newPw)` — `passwordEncoder.matches()` 로 현재 PW 검증 + 기존 `validatePassword()` 재사용 + 동일 PW 재변경 차단 + BCrypt 인코딩 후 save.
+  - `getOwnMemo(username)` / `saveMemo(username, text)` (UTF-8 65,535 byte cap) / `clearMemo(username)`.
+- 신규: `src/main/java/com/heapdump/analyzer/controller/AccountController.java` (~95 라인) — `GET /account` 페이지 렌더 + 4 API endpoint. 모든 mutation 이 `Principal.getName()` 으로 본인 username 확정, 외부 path/query 파라미터로 username 받지 않음 → 타인 데이터 접근 경로 차단. `IllegalArgumentException` 은 `GlobalExceptionHandler` 가 JSON 400 으로 자동 변환.
+- 수정: `src/main/java/com/heapdump/analyzer/config/SecurityConfig.java` —
+  - `requestMatchers("/account", "/api/account/**").authenticated()` 명시 매처 추가.
+  - CSRF ignore 람다에 `if (uri.startsWith("/api/account/")) return false;` 추가 → 비밀번호/메모 변경 mutation 은 **CSRF 보호 유지** (계정 보안 변경에 해당). `Common.fetchJSON` 이 자동으로 CSRF 헤더 부착.
+- 수정: `src/main/resources/templates/fragments/banner.html` (L428~433) — 계정명 wrapper `<div>` → `<a href="/account" class="gb-nav-link" id="gbNavAccount">` 변경. 기존 `highlightActiveNav()` 가 자동으로 `.active` 클래스 부착 → /account 진입 시 시각 피드백.
+- 신규: `src/main/resources/templates/account.html` (~250 라인) — 3 카드 패널:
+  - 계정 정보 (read-only): username · displayName · role(badge) · enabled · createdAt · updatedAt — `<dl class="info-dl">` grid.
+  - 비밀번호 변경: 3 input + 클라이언트 사전검증 (length/match) + `Common.fetchJSON` POST + 한글 에러 표시.
+  - 메모장: textarea + UTF-8 바이트 카운터 (64KB 초과 시 빨강) + 저장/초기화 버튼. 초기화는 `.modal-ov` confirm 모달.
+- 수정: `CHANGELOG.md`.
+
+**SecurityConfig 1:1 미러링 규약 (CLAUDE.md 보안 섹션) 준수:**
+- ADMIN matcher 와 ADMIN CSRF ignore 의 1:1 미러링은 그대로 유지.
+- `/api/account/**` 는 **ADMIN 영역이 아니므로** authorize 측 `hasRole("ADMIN")` 매처에는 추가되지 않음. 그러나 CSRF 보호는 유지가 필요하므로 `ignoringRequestMatchers` 람다에서 `/api/account/` 를 명시적으로 `return false` 처리. (그렇지 않으면 마지막 `return uri.startsWith("/api/")` 가 면제해 버림.)
+
+**검증 (mvn build + restart 후):**
+1. `GET /account` 200 — admin/displayName/role(ADMIN badge)/createdAt 표시.
+2. `POST /api/account/password` CSRF 토큰 없이 → 403. 토큰 포함 + 정확한 currentPw → `{success:true}`. 잘못된 currentPw → 400 + `현재 비밀번호가 일치하지 않습니다.` 동일 PW 재시도 → 400 + 한글 메시지.
+3. `POST /api/account/memo` 정상 텍스트 → 200 + memoUpdatedAt 반환. 64KB+ 초과 → 400. `DELETE /api/account/memo` → 200 + DB 컬럼 NULL.
+4. `users` 테이블 `DESC` 로 `memo TEXT` / `memo_updated_at DATETIME(6)` 컬럼 자동 추가 확인.
+5. 미인증 `GET /account` → 302 → `/login`. 미인증 mutation → 302/401.
+6. 회귀: `/admin/users` ADMIN reset-password 기능 정상.
+
+**연관 함정 (CLAUDE.md §⚠️):**
+- 함정 16 (`@Lob String` → Hibernate 6 default tinytext): memo 컬럼은 `@Column(columnDefinition="TEXT")` 명시.
+- 함정 14 (`Common.fetchJSON` non-2xx throw): account.html JS 의 `extractErrorMessage(e)` 가 `e.body` JSON parse 후 `error`/`message` 필드 추출. 한글 에러 메시지 보존.
+- 함정 13 (CSS cascade): `common.css` 의 `.modal-ov` / `.modal-box` / `.btn-cancel` / `.btn-delete` base 재사용, account.html 인라인 `<style>` 은 페이지 고유 변형만 정의.
+
+## [2026-05-23] Files 페이지에 업로드 영역 추가 + 업로드 큐 JS 공유 모듈화
+
+**요청:** Analysis Files(`/files`) 페이지의 기간선택 영역을 가로 절반으로 줄이고, 그 빈 자리에 업로드 레이아웃 추가. 동작은 대시보드와 동일하게 드래그&드롭 + 다중 큐 + 부분해시 중복검사 + 진행률 모달 풀세트.
+
+**변경 파일:**
+- 신규: `src/main/resources/static/js/upload-queue.js` (~520 라인) — `index.html` 인라인에 있던 멀티파일 업로드 큐 시스템 일체를 추출한 자기충족 모듈. `enqueueFiles` / `bindZone` / `fmtB` / `fmtSpeed` / `toast` / `escapeHtml` 을 `window.UploadQueue` 네임스페이스 + 호환용 글로벌로 노출. 페이지 글로벌 `MAX_UPLOAD_BYTES` / `MAX_UPLOAD_GB` / `ALLOW_ALL_EXT` 를 의존성으로 사용. DOMContentLoaded 시 `#uploadZone` / `#fileInput` 자동 바인딩. 진행률 모달의 "확인" 클릭 시 `window.onUploadQueueDone` 콜백이 있으면 호출하고 없으면 `location.reload()`.
+- 수정: `src/main/resources/templates/files.html` —
+  - 기존 `.date-filter-row` 단독 행을 `.top-row > .top-col × 2` 좌우 2분할 컨테이너로 감싸고, 좌측 `.top-col` 에 업로드 카드 추가. 모바일(`max-width:900px`) 에서는 세로 stack 으로 자동 분기.
+  - 인라인 CSS 에 `.upload-card` / `.upload-card.upload-zone` / `.upload-icon` / `.upload-zone-btn` (`.uploading` spinner 포함) / `.uq-item` 외 큐 모달용 base style 추가. `upload-zone` 은 hover/drag-over 시 색상 변경, 가로형 (icon · text · button) flex 레이아웃.
+  - `<head>` 의 `common.css` 캐시 키 `?v=2026-05-17e` → `?v=2026-05-23a` 갱신.
+  - 페이지 하단 인라인 script 직전에 `<script th:inline="javascript">` 블록 추가 — `MAX_UPLOAD_BYTES` / `MAX_UPLOAD_GB` / `ALLOW_ALL_EXT` 글로벌 정의. 직후 `<script src="/js/upload-queue.js?v=2026-05-23a">` 로드.
+- 수정: `src/main/resources/templates/index.html` —
+  - L1099~L1587 의 업로드 인라인 JS 블록 (`validateFileExt` / `showExtWarning` / `escapeHtml` / `enqueueFiles` / `continueEnqueue` / `startDuplicateChecks` / 두 dup 모달 / `showUploadProgressModal` / `renderUploadModalList` / `cancelUploadQueue` / `doCancelUpload` / `startQueueUploads` / `processNextInQueue` / `setUploadZoneDisabled` × 2 / `computePartialHash` / `simpleHash` / `showDiskFullModal` / `fileInput` & `zone` DOM 바인딩) 통째 제거 — 488 라인 감소.
+  - `fmtB` / `fmtSpeed` / `toast` 인라인 함수 정의 제거 (모듈이 글로벌로 노출).
+  - 글로벌 변수 정의 `<script th:inline>` 직후에 `<script src="/js/upload-queue.js?v=2026-05-23a">` 로드 추가. 사이드바 → 배너 Upload 탭 클론 IIFE 는 모듈 노출 글로벌(`enqueueFiles`)을 그대로 사용하므로 유지.
+- 수정: `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java` —
+  - `filesPage()` 에 `maxUploadSizeBytes` / `maxUploadSizeGb` / `allowAllExtensions` 3개 model attribute 추가 (대시보드와 동일 소스). 업로드 카드의 "Max N GB" 표시 및 클라이언트 사이드 사전 검증용.
+
+**검증:**
+1. `mvn clean package -DskipTests` → BUILD SUCCESS (10.7s). 기동 12.9초.
+2. admin 로그인 후 `GET /` / `GET /files` / `GET /js/upload-queue.js` 모두 **200** (upload-queue.js 36,579 bytes).
+3. `/files` 응답 본문에 `id="uploadZone"` × 1, `top-row`/`top-col` 매치 9건, `/js/upload-queue.js` 스크립트 태그, `MAX_UPLOAD_BYTES = 5368709120` / `ALLOW_ALL_EXT = true` 글로벌 모두 포함.
+4. `/` 응답 본문에 `Multi-file upload queue` / `function fmtB` / `function toast` 인라인 잔존 0건 — 정확히 모듈로 이전됨. 배너 클론 IIFE 의 `enqueueFiles(files)` 호출 2건은 정상 유지.
+
+**연관 함정 (CLAUDE.md §⚠️):** 새 화면에 업로드 도입 시 (1) 컨트롤러에 3개 model attribute 추가, (2) `<head>` 에 `<meta name="_csrf">` (이미 있음), (3) `MAX_UPLOAD_BYTES`/`MAX_UPLOAD_GB`/`ALLOW_ALL_EXT` 글로벌 사전정의 후 `upload-queue.js` 로드, (4) DOM 에 `#uploadZone`/`#fileInput`/`#uploadBtn` ID 사용 → 모듈이 자동 바인딩.
+
+## [2026-05-22] Allow all extensions 토글 ON 시 비표준 확장자 파일 분석 진입 실패 수정
+
+**현상:** 토글 ON 상태로 `foo.xyz` 같은 비표준 확장자 파일을 업로드한 뒤(이전 수정으로 /files 목록에는 정상 노출), Files 행의 "Analyze" 버튼을 클릭하면 `/?error=invalidFilename` 로 홈 리다이렉트되며 분석 진입 불가.
+
+**원인:** `FilenameValidator.validate()` 가 컨트롤러 입구(`/analyze/{filename}` 등 33개 호출 지점)에서 `.hprof/.bin/.dump (+.gz)` 화이트리스트를 강제하고, 비매칭 시 `IllegalArgumentException` → `GlobalExceptionHandler` 가 HTML 요청을 `/?error=invalidFilename` 로 redirect. 토글은 인지하지 못하던 비대칭 — Listing/Upload 경로는 토글 반영, Validator 만 미반영.
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/util/FilenameValidator.java` — 정적 `volatile boolean allowAllExtensions` 필드 + `setAllowAllExtensions(v)` / `isAllowAllExtensions()` 공개 API 추가. `validate()` 의 확장자 검사 조건을 `!allowAllExtensions && !hasAllowedExtension(safe)` 로 변경 — 경로 traversal/null byte/빈 파일명 검증은 모든 모드에서 그대로 유지.
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java` —
+  - `setAllowAllExtensions(boolean v)` 에서 `FilenameValidator.setAllowAllExtensions(v)` 동시 호출 (런타임 토글 즉시 반영).
+  - `loadSettings()` 의 allowAllExtensions 복원 블록 직후에도 동기화 호출 추가 (재기동 시 settings.json 상태 반영).
+
+**검증:**
+1. 토글 ON + `/analyze/foo.xyz` → HTTP **200** + `<title>Analyzing... - Heap Dump Analyzer</title>` (progress 페이지 진입).
+2. 토글 OFF + `/analyze/foo.hprof` → HTTP **200** (기존 동작 유지).
+3. 토글 OFF + `/analyze/foo.xyz` → HTTP **302** → `/?error=invalidFilename` (회귀 검증 — 정상 거부).
+4. 부팅 로그에 `[Settings] Restored allowAllExtensions=true` 확인 — validator 정적 플래그가 부팅 시점에 동기화됨.
+
+## [2026-05-22] 업로드 진행 모달 폰트 추가 확대 (2차)
+
+**요청 배경:** 1차 확대(13/12px 단계) 후에도 모달 내 글자가 살짝 작아 보임. 한 단계 더 키움.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/index.html`
+  - `.uq-item` 13→15px / gap 10→11 / padding 7→8, `.uq-icon` 18→20px(svg 동일), `.uq-status` 12→14px, 파일 사이즈 인라인 12→13px.
+  - 모달 박스: max-width 560→600px / padding 26→28 / max-height 82→84vh, 헤더 아이콘 44→46px(SVG 22→24), 제목 17→19px, 부제 13→14px, 취소·확인 버튼 14→15px, 버튼 padding 9·22 → 10·24 (취소) / 11·26 → 12·28 (확인).
+
+**검증:** 빌드 후 `curl /` HTML 응답에서 신 사이즈(`.uq-item ... font-size:15px`, `.uq-status font-size:14px`, `max-width:600px`, `font-size:19px ... 파일 업로드`) 노출 확인.
+
+## [2026-05-22] 업로드 진행 모달 확대 + 전송 속도 표시 추가
+
+**요청 배경:** Dashboard "Choose files" 클릭 후 표시되는 업로드 진행 모달이 너무 작고(폰트 10~13px, max-width 480px) 가독성이 떨어진다. 또한 진행률(%) 과 크기(loaded/total) 만 보여 실제 전송 속도(MB/s) 확인 불가.
+
+**변경 파일:**
+- 수정: `src/main/resources/templates/index.html`
+  - `.uq-*` CSS: `.uq-item` font-size 11→13px / padding 5→7px / gap 8→10px, `.uq-icon` 16→18px (svg 강제 동일 크기), `.uq-status` 10→12px, `.uq-bar-bg` height 4→5px (radius 2→3px), 파일 사이즈 인라인 10→12px.
+  - `showUploadProgressModal()` 모달 박스 인라인 스타일: max-width 480→560px, width 90→92%, max-height 80→82vh, padding 24→26px, 헤더 gap 12→14, 아이콘 원 40→44px, 헤더 제목 16→17px, 부제 12→13px, 취소 버튼 padding 8→9 / font 13→14px, 확인 버튼 padding 10→11·24→26 / font 13→14px.
+  - `processNextInQueue()` xhr.upload.progress 핸들러에 전송 속도 계산 추가 — `item._lastTs` / `item._lastLoaded` 누적 + EMA(α=0.3) 평활 (`item._speed = item._speed * 0.7 + instSpeed * 0.3`). dt < 0.25s 인 짧은 progress event 는 무시(노이즈 억제). 라벨에 `42% (12.3/29.4 MB · 4.1 MB/s)` 형식 인라인 노출.
+  - `renderUploadModalList()` uploading 상태 라벨도 `_speed` 존재 시 `· 4.1 MB/s` 부착 — 중도 재렌더 시에도 속도 유지.
+  - 신규 헬퍼 `fmtSpeed(bps)` — B/s · KB/s · MB/s · GB/s 자동 단위 선택 (`fmtB` 와 동일 패턴).
+
+**검증:**
+1. `mvn clean package -DskipTests` 빌드 성공, `bash restart.sh` 기동 11.9s.
+2. `curl -s http://localhost:18080/` HTML 응답에 새 CSS(`.uq-item { ... font-size:13px ... }`) + `function fmtSpeed` + `fmtSpeed(item._speed)` + `max-width:560px` 모두 포함 확인.
+3. 브라우저에서 실제 파일 업로드 시 전송 속도 표시는 사용자 측 확인 필요(curl 로는 progress event 재현 불가).
+
+## [2026-05-22] Allow all extensions 토글 ON 시 Files 목록 누락 버그 수정
+
+**현상:** `/settings` 의 "Allow all file extensions" 토글을 ON 으로 설정한 뒤 `.hprof/.bin/.dump` 외 확장자(예: `.xyz`) 파일을 업로드하면 — 업로드 자체는 200 으로 성공하고 `dumpfiles/` 에도 정상 저장되지만 — `/files` 페이지 목록과 `/api/history` 등 모든 listing 결과에서 누락되어 사용자가 확인/삭제/분석할 수 없는 상태.
+
+**원인:** `FileManagementService.listFiles()` 와 `checkDuplicate()` 가 디렉토리 스캔 시 `isValidHeapDumpFile()` 화이트리스트 필터를 강제 — 토글 값을 무시하고 항상 `.hprof/.bin/.dump (+.gz)` 만 통과시킴. 업로드 경로(`uploadFile`) 는 토글을 인식했지만 조회·중복검사 경로는 동기화되지 않은 비대칭.
+
+**변경 파일:**
+- 수정: `src/main/java/com/heapdump/analyzer/service/FileManagementService.java` — `listFiles(boolean allowAllExtensions)` 오버로드 추가 + 기존 무인자 시그니처는 `listFiles(false)` 위임. `checkDuplicate(filename, fileSize, hash, boolean allowAllExtensions)` 4-arg 오버로드 추가 + 기존 3-arg 시그니처 보존. 통합 필터 헬퍼 `isListableDumpFile(dir, name, allowAllExtensions)` — 디렉토리/숨김 파일(`.`로 시작)은 항상 제외하되 토글 ON 시 모든 일반 파일 허용.
+- 수정: `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java` — `listFiles()` / `checkDuplicate()` facade 메서드가 자신의 `allowAllExtensions` 필드를 새 오버로드에 전달하도록 변경.
+
+**검증:**
+1. `POST /api/settings/allow-all-extensions?enabled=true` → 200, `/api/settings` 응답에서 `allowAllExtensions=true` 확인.
+2. `POST /api/upload` 로 `test_upload_dummy.xyz` 업로드 → `{"status":"ok"}` 200.
+3. `dumpfiles/test_upload_dummy.xyz` 실 파일 존재 확인.
+4. `GET /files` HTML 응답에 `test_upload_dummy.xyz` 노출(과거에는 누락).
+5. 테스트 아티팩트 삭제 후 종료.
+
+**영향 범위:** 7 컨트롤러(HeapDumpView/HeapHistoryApi/HeapSystemApi 등) 가 모두 `analyzerService.listFiles()` 를 거치므로 한 곳 수정으로 일관 반영. 토글 OFF 일 때의 기존 동작은 변경 없음(기본 인자 `false` 로 위임).
+
+## [2026-05-22] application.properties 주석 구조 정리 — 옵션별 인라인 → 그룹 상단 통합
+
+**요청 배경:** 각 옵션 바로 위에 설명 주석이 인터리브된 구조는 옵션을 수정/주석 처리할 때 인접 옵션과 시각적으로 분리되어 가독성이 떨어진다. 섹션 헤더 아래에 설명 주석을 모두 모으고 그 다음에 옵션 값을 나열하는 구조로 통일.
+
+**변경 파일:**
+- 수정: `src/main/resources/application.properties` — 섹션 헤더(`# ── 섹션명 ─`) 직하에 인라인되어 있던 옵션별 설명 주석을 모두 헤더 바로 아래로 끌어올리고, 옵션 키-값 라인은 주석 블록 다음에 연속 배치. 적용 섹션: 세션 관리 / MAT CLI 실행 설정 / 분석 스레드 풀 / 원격 서버 SSH·SCP / LLM 분석 / RAG (Elasticsearch) / Phase 2 semantic-server / Phase 2 semantic-client / RAG 청킹 / 분석 결과 표시 / MariaDB (예시 주석 위치 조정). 옵션이 단 1개거나 설명 주석이 없는 섹션(서버 설정, 힙 덤프 디렉토리, MAT CLI 경로, MAT CLI 옵션, gzip 압축, 디스크 모니터링, 파일 업로드 제한, Thymeleaf, 로그 레벨, 로그 파일 출력, Tomcat Access Log)은 변경 없음.
+
+**키 보존 검증:** 변환 전후 키 개수 동일(97개). `syncApplicationProperties()` 는 `line.startsWith(key + "=")` 매칭이라 주석 위치와 무관 — 런타임 설정 영속화 동작에 영향 없음.
+
 ## [2026-05-22] 앱 JVM 힙 옵션 고정 — Xms 256m / Xmx 1g
 
 **요청 배경:** 기존 기동 명령에 JVM 힙 옵션이 없어 JDK 기본값(시스템 메모리 기반 자동 산정) 적용. 운영 환경에서 메모리 사용량을 예측 가능하게 고정 필요.

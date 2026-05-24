@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-24a">
+    <title>My Account — Heap Dump Analyzer</title>
+    <style>
+        body { overflow-x: hidden; }
+        .container { max-width: 960px; margin: 0 auto; padding: 68px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+        .page-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 22px; }
+        .page-ttl { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+        .page-ttl svg { width: 22px; height: 22px; stroke: #6B7280; fill: none; stroke-width: 2; }
+
+        .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px;
+                padding: 20px; margin-bottom: 16px; }
+        .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+                      color: #6B7280; margin-bottom: 14px; padding-bottom: 8px;
+                      border-bottom: 1px solid #F3F4F6;
+                      display: flex; align-items: center; gap: 8px; }
+        .card-title svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+
+        /* 계정 정보 read-only dl */
+        .info-dl { display: grid; grid-template-columns: 110px 1fr; row-gap: 10px; column-gap: 16px;
+                   font-size: 13px; margin: 0; }
+        .info-dl dt { color: #6B7280; font-weight: 500; }
+        .info-dl dd { margin: 0; color: #1F2937; word-break: break-all; }
+        .role-badge { display: inline-block; padding: 2px 10px; border-radius: 10px;
+                      font-size: 11px; font-weight: 700; }
+        .role-badge.admin { background: #FEE2E2; color: #991B1B; }
+        .role-badge.user  { background: #DBEAFE; color: #1E40AF; }
+
+        /* form 공통 */
+        .form-row { margin-bottom: 12px; }
+        .form-row label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 5px; }
+        .input {
+            width: 100%; padding: 9px 12px; font-size: 13px;
+            border: 1px solid #E5E7EB; border-radius: 7px; background: #fff;
+            color: #1F2937; outline: none; font-family: inherit;
+        }
+        .input:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .input.invalid { border-color: #FCA5A5; background: #FEF2F2; }
+        .form-hint { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
+        .form-err  { font-size: 12px; color: #DC2626; margin-top: 6px; min-height: 16px; }
+        .form-ok   { font-size: 12px; color: #059669; margin-top: 6px; min-height: 16px; }
+        .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+        .btn {
+            padding: 9px 18px; font-size: 13px; font-weight: 600; border-radius: 7px;
+            border: 1px solid transparent; cursor: pointer; font-family: inherit;
+        }
+        .btn-primary { background: #2563EB; color: #fff; }
+        .btn-primary:hover:not(:disabled) { background: #1D4ED8; }
+        .btn-primary:disabled { background: #93C5FD; cursor: not-allowed; }
+        .btn-secondary { background: #fff; color: #374151; border-color: #E5E7EB; }
+        .btn-secondary:hover { background: #F9FAFB; border-color: #D1D5DB; }
+        .btn-danger { background: #fff; color: #DC2626; border-color: #FCA5A5; }
+        .btn-danger:hover { background: #FEF2F2; border-color: #F87171; }
+
+        /* 메모장 */
+        .memo-area {
+            width: 100%; min-height: 240px; padding: 12px 14px;
+            font-size: 13px; line-height: 1.6; font-family: ui-monospace, monospace;
+            border: 1px solid #E5E7EB; border-radius: 8px; background: #FCFCFD;
+            color: #1F2937; outline: none; resize: vertical;
+        }
+        .memo-area:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .memo-meta { display: flex; justify-content: space-between; align-items: center;
+                     font-size: 11px; color: #9CA3AF; margin-top: 6px; }
+        .memo-meta strong { color: #6B7280; font-weight: 600; }
+        .memo-count.warn { color: #DC2626; font-weight: 600; }
+
+        /* Modal 변형 (common.css 의 .modal-ov/.modal-box base 를 채움) */
+        .modal-box { max-width: 380px; width: 90%; text-align: center; }
+        .modal-box h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: #1F2937; }
+        .modal-box p  { font-size: 13px; color: #6B7280; margin-bottom: 16px; line-height: 1.55; }
+        .modal-btns { display: flex; gap: 8px; justify-content: center; }
+        .modal-btns button { padding: 7px 20px; border-radius: 7px; font-size: 13px;
+                             border: none; cursor: pointer; font-weight: 500; font-family: inherit; }
+
+        /* 비밀번호 변경 모달 */
+        .pw-modal-box { max-width: 420px; width: 90%; text-align: left; }
+        .pw-modal-box h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; color: #1F2937;
+                           display: flex; align-items: center; gap: 8px; }
+        .pw-modal-box h3 svg { width: 18px; height: 18px; stroke: #6B7280; fill: none; stroke-width: 1.5; }
+        .pw-modal-btns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+
+        /* 카드 타이틀 우측 버튼 */
+        .card-title-btn { margin-left: auto; padding: 4px 11px; font-size: 11px; font-weight: 600;
+                          border: 1px solid #D1D5DB; border-radius: 6px; background: #fff;
+                          color: #374151; cursor: pointer; font-family: inherit; line-height: 1.5; }
+        .card-title-btn:hover { background: #F3F4F6; border-color: #9CA3AF; }
+
+        /* Toast */
+        .toast-msg { position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+                     z-index: 9999; padding: 12px 18px; border-radius: 8px; font-size: 13px;
+                     font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,.15); transition: opacity .4s; }
+        .toast-msg.ok  { background: #D1FAE5; color: #065F46; border-left: 4px solid #10B981; }
+        .toast-msg.err { background: #FEE2E2; color: #7F1D1D; border-left: 4px solid #EF4444; }
+
+        @media (max-width: 900px) {
+            .topbar { left: 0; }
+            .container { padding-left: 20px; }
+        }
+        @media (max-width: 640px) {
+            .container { padding: 60px 14px 32px; }
+            .info-dl { grid-template-columns: 90px 1fr; column-gap: 10px; font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+
+<div th:replace="~{fragments/banner :: banner}"></div>
+
+<div class="topbar">
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title">My Account</span>
+    </div>
+    <div class="topbar-right">
+        <a href="/" class="topbar-btn">← Dashboard</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-hdr">
+        <div class="page-ttl">
+            <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            My Account
+        </div>
+    </div>
+
+    <!-- ── 계정 정보 (read-only) ───────────────────────── -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            계정 정보
+            <button class="card-title-btn" onclick="openPwModal()">비밀번호 변경</button>
+        </div>
+        <dl class="info-dl">
+            <dt>사용자명</dt>
+            <dd th:text="${user.username}">admin</dd>
+
+            <dt>표시 이름</dt>
+            <dd th:text="${user.displayName != null and !#strings.isEmpty(user.displayName)} ? ${user.displayName} : '—'">관리자</dd>
+
+            <dt>권한</dt>
+            <dd>
+                <span class="role-badge"
+                      th:classappend="${user.role.name() == 'ADMIN'} ? 'admin' : 'user'"
+                      th:text="${user.role.name()}">ADMIN</span>
+            </dd>
+
+            <dt>활성 상태</dt>
+            <dd th:text="${user.enabled} ? '활성' : '비활성'">활성</dd>
+
+            <dt>생성일</dt>
+            <dd th:text="${user.createdAt != null} ? ${#temporals.format(user.createdAt, 'yyyy-MM-dd HH:mm')} : '—'">2025-01-01 00:00</dd>
+
+            <dt>최종 수정</dt>
+            <dd th:text="${user.updatedAt != null} ? ${#temporals.format(user.updatedAt, 'yyyy-MM-dd HH:mm')} : '—'">2025-01-01 00:00</dd>
+        </dl>
+    </div>
+
+    <!-- ── 개인 메모장 ────────────────────────────── -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            개인 메모장
+        </div>
+        <textarea id="memoBox" class="memo-area"
+                  placeholder="자유 메모… 본인만 볼 수 있습니다."
+                  th:text="${user.memo}"
+                  oninput="updateMemoCount()"></textarea>
+        <div class="memo-meta">
+            <span>
+                저장 시각:
+                <strong id="memoUpdatedAt"
+                        th:text="${user.memoUpdatedAt != null} ? ${#temporals.format(user.memoUpdatedAt, 'yyyy-MM-dd HH:mm')} : '—'">—</strong>
+            </span>
+            <span>
+                <span id="memoCount" class="memo-count">0</span> / 10 MB <span style="color:#D1D5DB">(UTF-8 byte)</span>
+            </span>
+        </div>
+        <div id="memoMsg" class="form-err"></div>
+        <div class="btn-row">
+            <button id="btnSaveMemo" class="btn btn-primary" onclick="saveMemo()">저장</button>
+            <button id="btnClearMemo" class="btn btn-danger" onclick="openClearMemoModal()">초기화</button>
+        </div>
+    </div>
+</div>
+
+<!-- 메모 초기화 확인 모달 -->
+<div class="modal-ov" id="clearMemoModal" onclick="if(event.target===this)closeClearMemoModal()">
+    <div class="modal-box">
+        <h3>메모 초기화</h3>
+        <p>저장된 메모를 삭제합니다.<br>
+           <span style="color:#DC2626;font-size:11px">⚠ 이 작업은 되돌릴 수 없습니다.</span></p>
+        <div class="modal-btns">
+            <button class="btn-cancel" onclick="closeClearMemoModal()">취소</button>
+            <button class="btn-delete" onclick="confirmClearMemo()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<!-- 비밀번호 변경 모달 -->
+<div class="modal-ov" id="pwModal" onclick="if(event.target===this)closePwModal()">
+    <div class="modal-box pw-modal-box">
+        <h3>
+            <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            비밀번호 변경
+        </h3>
+        <div class="form-row">
+            <label for="pwCurrent">현재 비밀번호</label>
+            <input id="pwCurrent" type="password" class="input" autocomplete="current-password">
+        </div>
+        <div class="form-row">
+            <label for="pwNew">새 비밀번호</label>
+            <input id="pwNew" type="password" class="input" autocomplete="new-password">
+            <div class="form-hint">8자 이상 · 영문/숫자/특수문자 각각 1개 이상 포함</div>
+        </div>
+        <div class="form-row">
+            <label for="pwConfirm">새 비밀번호 확인</label>
+            <input id="pwConfirm" type="password" class="input" autocomplete="new-password">
+        </div>
+        <div id="pwMsg" class="form-err"></div>
+        <div class="pw-modal-btns">
+            <button class="btn btn-secondary" onclick="closePwModal()">취소</button>
+            <button id="btnChangePw" class="btn btn-primary" onclick="changePassword()">변경</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/* ── Toast ───────────────────────────────────── */
+function toast(msg, type) {
+    var old = document.querySelector('.toast-msg');
+    if (old) old.remove();
+    var t = document.createElement('div');
+    t.className = 'toast-msg ' + (type === 'err' ? 'err' : 'ok');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(function() { t.style.opacity = '0'; }, 3000);
+    setTimeout(function() { t.remove(); }, 3500);
+}
+
+/* ── 비밀번호 변경 모달 ─────────────────────── */
+function openPwModal() {
+    document.getElementById('pwCurrent').value = '';
+    document.getElementById('pwNew').value = '';
+    document.getElementById('pwConfirm').value = '';
+    document.getElementById('pwMsg').textContent = '';
+    document.getElementById('pwModal').classList.add('open');
+    setTimeout(function() { document.getElementById('pwCurrent').focus(); }, 100);
+}
+function closePwModal() {
+    document.getElementById('pwModal').classList.remove('open');
+}
+
+function changePassword() {
+    var cur = document.getElementById('pwCurrent').value;
+    var nw  = document.getElementById('pwNew').value;
+    var cf  = document.getElementById('pwConfirm').value;
+    var msg = document.getElementById('pwMsg');
+    msg.textContent = '';
+    msg.className = 'form-err';
+    if (!cur) { msg.textContent = '현재 비밀번호를 입력하세요.'; return; }
+    if (!nw || nw.length < 8) { msg.textContent = '새 비밀번호는 8자 이상이어야 합니다.'; return; }
+    if (nw !== cf) { msg.textContent = '새 비밀번호와 확인 입력이 일치하지 않습니다.'; return; }
+
+    var btn = document.getElementById('btnChangePw');
+    btn.disabled = true; btn.textContent = '변경 중...';
+    Common.fetchJSON('/api/account/password', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: cur, newPassword: nw, confirmPassword: cf })
+    }).then(function() {
+        closePwModal();
+        toast('비밀번호가 변경되었습니다.', 'ok');
+    }).catch(function(e) {
+        var detail = extractErrorMessage(e);
+        msg.textContent = detail || '비밀번호 변경에 실패했습니다.';
+    }).finally(function() {
+        btn.disabled = false; btn.textContent = '변경';
+    });
+}
+
+/* ── 메모장 ────────────────────────────────── */
+var MEMO_MAX = 10 * 1024 * 1024;  // 10 MB (UTF-8 byte)
+
+function utf8ByteLen(str) {
+    return new Blob([str]).size;
+}
+
+function fmtBytes(n) {
+    if (n < 1024) return n.toLocaleString() + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / (1024 * 1024)).toFixed(2) + ' MB';
+}
+
+function updateMemoCount() {
+    var v = document.getElementById('memoBox').value;
+    var n = utf8ByteLen(v);
+    var el = document.getElementById('memoCount');
+    el.textContent = fmtBytes(n);
+    el.classList.toggle('warn', n > MEMO_MAX);
+}
+
+function saveMemo() {
+    var v = document.getElementById('memoBox').value;
+    var msg = document.getElementById('memoMsg');
+    msg.textContent = '';
+    msg.className = 'form-err';
+    if (utf8ByteLen(v) > MEMO_MAX) {
+        msg.textContent = '메모는 최대 10MB까지 저장할 수 있습니다.';
+        return;
+    }
+    var btn = document.getElementById('btnSaveMemo');
+    btn.disabled = true; btn.textContent = '저장 중...';
+    Common.fetchJSON('/api/account/memo', {
+        method: 'POST',
+        body: JSON.stringify({ memo: v })
+    }).then(function(d) {
+        document.getElementById('memoUpdatedAt').textContent = formatTs(d.memoUpdatedAt) || '—';
+        msg.className = 'form-ok';
+        msg.textContent = '메모가 저장되었습니다.';
+        toast('메모가 저장되었습니다.', 'ok');
+    }).catch(function(e) {
+        msg.textContent = extractErrorMessage(e) || '메모 저장에 실패했습니다.';
+    }).finally(function() {
+        btn.disabled = false; btn.textContent = '저장';
+    });
+}
+
+function openClearMemoModal()  { document.getElementById('clearMemoModal').classList.add('open'); }
+function closeClearMemoModal() { document.getElementById('clearMemoModal').classList.remove('open'); }
+
+function confirmClearMemo() {
+    closeClearMemoModal();
+    Common.fetchJSON('/api/account/memo', { method: 'DELETE' }).then(function() {
+        document.getElementById('memoBox').value = '';
+        document.getElementById('memoUpdatedAt').textContent = '—';
+        updateMemoCount();
+        toast('메모가 초기화되었습니다.', 'ok');
+    }).catch(function(e) {
+        toast(extractErrorMessage(e) || '초기화에 실패했습니다.', 'err');
+    });
+}
+
+/* ── 유틸 ──────────────────────────────────── */
+function extractErrorMessage(e) {
+    if (!e) return '';
+    if (e.body) {
+        try {
+            var j = JSON.parse(e.body);
+            if (j && (j.error || j.message)) return j.error || j.message;
+        } catch (_) { /* raw text */ }
+        return e.body;
+    }
+    return e.message || '';
+}
+
+function formatTs(iso) {
+    if (!iso) return '';
+    var s = String(iso);
+    // 서버는 LocalDateTime → ISO8601 (Jackson). 분 단위까지만 표시.
+    if (s.length >= 16) return s.substring(0, 10) + ' ' + s.substring(11, 16);
+    return s;
+}
+
+updateMemoCount();
+</script>
+
+</body>
+</html>

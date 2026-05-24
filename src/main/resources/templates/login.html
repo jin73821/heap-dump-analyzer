@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-17d">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-24a">
     <title>Login — Heap Dump Analyzer</title>
     <style>
         body { display: flex; align-items: center; justify-content: center; }
@@ -148,7 +148,6 @@
     </div>
 </div>
 
-<!-- 계정 신청 모달 -->
 <div class="modal-ov" id="signupModal" onclick="if(event.target===this)closeSignupModal()">
     <div class="modal-box">
         <div class="modal-ttl">계정 신청</div>
@@ -187,9 +186,6 @@
 </div>
 
 <script>
-// 새로고침 시 ?error / ?logout 쿼리 잔존으로 메시지가 재표시되는 것 방지.
-// 메시지는 이미 서버에서 렌더링됐으므로, URL만 깨끗하게 교체하면
-// 새로고침(F5/Ctrl+R) 시 깔끔한 /login 으로 다시 요청한다.
 (function () {
     try {
         if (window.history && window.history.replaceState
@@ -230,7 +226,6 @@
     });
 })();
 
-// ── 계정 신청 모달 ─────────────────────────────────────
 function openSignupModal() {
     document.getElementById('suUsername').value = '';
     document.getElementById('suPassword').value = '';
@@ -293,7 +288,6 @@ function submitSignup() {
         showSignupMsg('네트워크 오류가 발생했습니다. 잠시 후 다시 시도하세요.', 'error');
     });
 }
-// ESC 키로 모달 닫기
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         var m = document.getElementById('signupModal');

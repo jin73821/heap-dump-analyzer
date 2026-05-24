@@ -8,8 +8,11 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+
+import com.heapdump.analyzer.util.RateLimiter;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.security.Principal;
@@ -25,25 +28,29 @@ public class AccountRequestController {
     private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final AccountRequestService service;
+    private final RateLimiter signupLimiter = new RateLimiter(5, 60_000);
 
     public AccountRequestController(AccountRequestService service) {
         this.service = service;
     }
 
-    /** 공개 신청 (비로그인 가능). SecurityConfig에서 permitAll. */
     @PostMapping("/api/account-requests")
     public ResponseEntity<Map<String, Object>> submit(@RequestBody Map<String, String> body,
                                                       HttpServletRequest request) {
         Map<String, Object> result = new HashMap<>();
+        String ip = clientIp(request);
+        if (!signupLimiter.isAllowed(ip)) {
+            result.put("success", false);
+            result.put("message", "요청이 너무 많습니다. 잠시 후 다시 시도하세요.");
+            return ResponseEntity.status(429).body(result);
+        }
         try {
             String username = nz(body.get("username"));
             String password = body.get("password");
             String displayName = nz(body.get("displayName"));
             String reason = nz(body.get("reason"));
-            String ip = clientIp(request);
-            AccountRequest saved = service.submit(username, password, displayName, reason, ip);
+            service.submit(username, password, displayName, reason, ip);
             result.put("success", true);
-            result.put("id", saved.getId());
             return ResponseEntity.ok(result);
         } catch (IllegalArgumentException e) {
             result.put("success", false);
@@ -158,6 +165,11 @@ public class AccountRequestController {
             result.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(result);
         }
+    }
+
+    @Scheduled(fixedDelay = 300_000)
+    public void cleanupRateLimiter() {
+        signupLimiter.evictExpired();
     }
 
     private static String nz(String s) {

@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-17e">
+    <link rel="stylesheet" href="/css/common.css?v=2026-05-24a">
     <title>Analysis Files — Heap Dump Analyzer</title>
     <style>
         .container { max-width: 1600px; margin: 0 auto; padding: 68px 20px 40px;
@@ -30,6 +30,58 @@
                       min-width: 140px; outline: none; }
         .filter-sel:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
         /* KRDS 캘린더 스타일은 common.css 에서 제공 */
+
+        /* ── 상단 2분할 (좌: 업로드 · 우: 기간선택) ─────────────── */
+        .top-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+        .top-row > .top-col { flex: 1 1 0; min-width: 0; min-height: 60px; }
+        .top-row .date-filter-row { margin-bottom: 0; height: 100%; }
+
+        /* 업로드 카드 — 사이드바와 다른 가로형 컴팩트 레이아웃 */
+        .upload-card {
+            display: flex; align-items: center; gap: 12px; height: 100%;
+            padding: 10px 14px; background: #F9FAFB; border: 1px solid #E5E7EB;
+            border-radius: 10px;
+        }
+        .upload-card.upload-zone {
+            border-style: dashed; border-width: 1.5px; border-color: #93C5FD;
+            background: #F8FAFF; cursor: default;
+        }
+        .upload-card .upload-icon {
+            width: 38px; height: 38px; background: #DBEAFE; border-radius: 8px;
+            display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        }
+        .upload-card .upload-icon svg { width: 20px; height: 20px; stroke: #2563EB; fill: none; stroke-width: 1.5; }
+        .upload-card .upload-text { flex: 1 1 auto; min-width: 0; }
+        .upload-card .upload-zone-title { font-size: 13px; font-weight: 600; color: #1F2937; }
+        .upload-card .upload-zone-sub { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+        .upload-card .upload-zone-btn {
+            padding: 8px 18px; background: #2563EB; color: #fff; border: none;
+            border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer;
+            flex-shrink: 0; min-width: 110px;
+        }
+        .upload-card .upload-zone-btn:hover { background: #1D4ED8; }
+        .upload-card .upload-zone-btn.uploading { pointer-events: none; position: relative; color: transparent; }
+        .upload-card .upload-zone-btn.uploading::after {
+            content: ''; position: absolute; left: 50%; top: 50%;
+            width: 16px; height: 16px; margin: -8px 0 0 -8px;
+            border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+            border-radius: 50%; animation: btnSpin .6s linear infinite;
+        }
+        @keyframes btnSpin { to { transform: rotate(360deg); } }
+        /* upload-queue.js modal 내부에서 사용 */
+        .uq-item { display:flex; align-items:center; gap:11px; padding:8px 0; border-bottom:1px solid #F3F4F6; font-size:15px; }
+        .uq-item:last-child { border-bottom:none; }
+        .uq-icon { width:20px; height:20px; flex-shrink:0; }
+        .uq-icon svg { width:20px; height:20px; }
+        .uq-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#374151; }
+        .uq-status { font-size:14px; font-weight:600; flex-shrink:0; }
+        .uq-status.pending { color:#9CA3AF; }
+        .uq-status.uploading { color:#2563EB; }
+        .uq-status.done { color:#059669; }
+        .uq-status.error { color:#DC2626; }
+        .uq-status.skipped { color:#F59E0B; }
+        .uq-bar-bg { width:100%; height:5px; background:#E5E7EB; border-radius:3px; margin-top:3px; }
+        .uq-bar { height:100%; background:#2563EB; border-radius:3px; width:0%; transition:width .2s; }
         .page-size-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
         .page-size-label { font-size: 12px; color: #6B7280; white-space: nowrap; }
         .page-size-select { padding: 8px 28px 8px 10px; font-size: 13px; border: 1px solid #E5E7EB;
@@ -153,7 +205,13 @@
             .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
             .select-action-bar { left: 0; }
         }
+        @media (max-width: 900px) {
+            .top-row > .top-col { flex: 1 1 100%; }
+        }
         @media (max-width: 640px) {
+            /* 업로드 카드 모바일 */
+            .upload-card { flex-wrap: wrap; padding: 12px; }
+            .upload-card .upload-zone-btn { flex: 1 1 100%; padding: 10px; font-size: 13px; }
             /* (a) 페이지 헤더 */
             .container { padding: 60px 14px 80px; }
             .page-hdr { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
@@ -348,28 +406,49 @@
         </div>
     </div>
 
-    <!-- 기간선택 (달력 범위) — KRDS 캘린더 위젯 -->
-    <div class="date-filter-row" id="dateFilterRow">
-        <div class="form-tit"><label for="dateStart">기간선택</label></div>
-        <div class="form-conts calendar-conts">
-            <div class="calendar-input">
-                <input type="text" class="cal-text" id="dateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
-                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
-                    <span class="sr-only">달력 열기</span>
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
-                </button>
-                <div class="krds-calendar-area" id="calArea-start"></div>
+    <!-- 상단 2분할: 좌(업로드) / 우(기간선택) -->
+    <div class="top-row">
+        <div class="top-col">
+            <form id="uploadForm" method="post" action="/upload" enctype="multipart/form-data">
+                <div class="upload-card upload-zone" id="uploadZone">
+                    <div class="upload-icon">
+                        <svg viewBox="0 0 20 20"><path d="M10 13V5M6 8l4-4 4 4"/><path d="M3 16h14"/></svg>
+                    </div>
+                    <div class="upload-text">
+                        <div class="upload-zone-title">파일 업로드</div>
+                        <div class="upload-zone-sub" th:text="${allowAllExtensions} ? 'Drag & drop · All extensions · Max ' + ${maxUploadSizeGb} + ' GB' : 'Drag & drop · .hprof .bin .dump (.gz) · Max ' + ${maxUploadSizeGb} + ' GB'">Drag & drop · .hprof .bin .dump (.gz) · Max 5 GB</div>
+                    </div>
+                    <input type="file" id="fileInput" name="file" th:attr="accept=${allowAllExtensions} ? '' : '.hprof,.bin,.dump,.gz'" style="display:none" multiple>
+                    <button type="button" class="upload-zone-btn" id="uploadBtn"
+                            onclick="document.getElementById('fileInput').click()">Choose files</button>
+                </div>
+            </form>
+        </div>
+        <div class="top-col">
+            <!-- 기간선택 (달력 범위) — KRDS 캘린더 위젯 -->
+            <div class="date-filter-row" id="dateFilterRow">
+                <div class="form-tit"><label for="dateStart">기간선택</label></div>
+                <div class="form-conts calendar-conts">
+                    <div class="calendar-input">
+                        <input type="text" class="cal-text" id="dateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
+                        <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
+                            <span class="sr-only">달력 열기</span>
+                            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                        </button>
+                        <div class="krds-calendar-area" id="calArea-start"></div>
+                    </div>
+                    <span class="calendar-input-sep">~</span>
+                    <div class="calendar-input">
+                        <input type="text" class="cal-text" id="dateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
+                        <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
+                            <span class="sr-only">달력 열기</span>
+                            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                        </button>
+                        <div class="krds-calendar-area" id="calArea-end"></div>
+                    </div>
+                    <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()" title="기간 지우기">지우기</button>
+                </div>
             </div>
-            <span class="calendar-input-sep">~</span>
-            <div class="calendar-input">
-                <input type="text" class="cal-text" id="dateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
-                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
-                    <span class="sr-only">달력 열기</span>
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
-                </button>
-                <div class="krds-calendar-area" id="calArea-end"></div>
-            </div>
-            <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()" title="기간 지우기">지우기</button>
         </div>
     </div>
 
@@ -548,6 +627,14 @@
     </div>
 </div>
 
+<script th:inline="javascript">
+/*<![CDATA[*/
+var MAX_UPLOAD_BYTES = /*[[${maxUploadSizeBytes}]]*/ 5368709120;
+var MAX_UPLOAD_GB    = /*[[${maxUploadSizeGb}]]*/ 5;
+var ALLOW_ALL_EXT    = /*[[${allowAllExtensions}]]*/ false;
+/*]]>*/
+</script>
+<script src="/js/upload-queue.js?v=2026-05-23a"></script>
 <script>
 var _delTarget = '';
 function confirmDelete(filename) {

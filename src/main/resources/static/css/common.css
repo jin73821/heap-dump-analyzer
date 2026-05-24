@@ -1,13 +1,4 @@
-/*
- * common.css — 모든 페이지 공통 패턴.
- * 9 개 템플릿이 인라인 <style> 로 중복 정의하던 패턴 중
- * 페이지간 100% 일치하는 것만 추출.
- *
- * 인클루드: <link rel="stylesheet" href="/css/common.css?v=2026-05-12">
- * banner.html 보다 먼저 로드 권장 (banner 가 var(--banner-w) 를 사용).
- */
-
-/* ── Reset ─────────────────────────────────────────────────────── */
+/* ── Reset ── */
 *, *::before, *::after {
     margin: 0;
     padding: 0;
@@ -15,7 +6,6 @@
 }
 html, body { height: 100%; }
 
-/* body base — 페이지가 추가 속성(overflow 등) 덮어쓸 수 있음 */
 body {
     font-family: 'Segoe UI', 'Trebuchet MS', sans-serif;
     font-size: 14px;
@@ -24,7 +14,7 @@ body {
     line-height: 1.5;
 }
 
-/* ── Topbar (모든 페이지 공통) ─────────────────────────────────── */
+/* ── Topbar ── */
 .topbar {
     position: fixed; top: 0;
     left: var(--banner-w, 220px); right: 0;
@@ -38,6 +28,7 @@ body {
 }
 .topbar-brand {
     display: flex; align-items: center; gap: 10px;
+    flex: 1 1 auto; min-width: 0;
 }
 .topbar-logo {
     width: 30px; height: 30px;
@@ -49,6 +40,7 @@ body {
 .topbar-title { font-size: 16px; font-weight: 700; }
 .topbar-right {
     display: flex; align-items: center; gap: 6px;
+    flex-shrink: 0;
 }
 .topbar-btn {
     font-size: 12px; padding: 5px 12px;
@@ -59,12 +51,7 @@ body {
 }
 .topbar-btn:hover { background: #F9FAFB; }
 
-/* ── Modal overlay (모든 모달 공통 base) ───────────────────────
- * .modal-ov base + @keyframes modalIn 만 추출. 페이지별로 다른
- * .modal-box (max-width/border-radius/padding), .modal-ttl/.modal-btns
- * 의 변형은 인라인 유지. .modal-ov.open 의 추가 animation(fadeIn,
- * modalFade 등)도 페이지별 override 로 적용 — common 정의를 덮어쓰므로 충돌 없음.
- */
+/* ── Modal overlay ── */
 .modal-ov {
     display: none; position: fixed; inset: 0; z-index: 200;
     background: rgba(0, 0, 0, .45);
@@ -76,11 +63,7 @@ body {
     to   { opacity: 1; transform: translateY(0); }
 }
 
-/* .modal-box base — 5 페이지(history/comparison-history/admin/users/login/settings)
- * 공통 속성 4 개만 추출. animation 은 files.html 이 modalIn 미사용이라 미포함
- * (페이지별 인라인 유지). width/max-width/max-height/overflow-y/border-radius 변형
- * (login 14px, settings padding 28 30) 도 인라인 override 패턴 유지.
- */
+/* ── .modal-box base ── */
 .modal-box {
     background: #fff;
     border-radius: 12px;
@@ -88,12 +71,7 @@ body {
     box-shadow: 0 20px 60px rgba(0, 0, 0, .2);
 }
 
-/* ── Button color utilities ────────────────────────────────────
- * 8 페이지에서 같은 색상을 페이지별 다른 클래스명으로 정의하던 패턴을 통합.
- * padding/font-size/border-radius/font-weight 등 박스 속성은 페이지별로 다르므로
- * 색상만 multi-selector 로 묶고 박스는 인라인 유지.
- * :disabled / .disabled 등 페이지별 variant 도 인라인 유지 (cascade override).
- */
+/* ── Button color utilities ── */
 .mbtn-cancel, .btn-cancel, .sa-btn-cancel {
     background: #F3F4F6; color: #374151;
 }
@@ -115,13 +93,7 @@ body {
     background: #1D4ED8;
 }
 
-/* ── Data table 4 family (htable/ftable/stable/utable) base ───────
- * 5 페이지(history/comparison-history/files/servers/admin-users)에서
- * 페이지별 다른 클래스명으로 동일 테이블 스타일을 중복 정의하던 패턴 통합.
- * padding 과 font-size 는 family 별로 차이 있어 (10px 12px @ 11px vs 12px 16px @ 12px)
- * 인라인 유지. min-width / media query 등 페이지별 변형도 인라인.
- * server-logs.html .ltable 은 hover #FAFAFA + th 직접 background 구조라 제외.
- */
+/* ── Data table base ── */
 .htable, .ftable, .stable, .utable {
     width: 100%; border-collapse: collapse; font-size: 13px;
 }
@@ -145,8 +117,7 @@ body {
     background: #F9FAFB;
 }
 
-/* Sortable th 공통 (htable/ftable/stable. utable 은 sortable 미사용. ltable 은
- * sort-arrow 색상 패턴이 달라 제외). sort-arrow 자체는 font-size 9/10px 차이라 인라인. */
+/* ── Sortable th ── */
 .htable th.sortable, .ftable th.sortable, .stable th.sortable {
     cursor: pointer; user-select: none;
 }

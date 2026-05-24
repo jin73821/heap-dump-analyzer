@@ -19,6 +19,16 @@ public final class FilenameValidator {
     ));
 
     /**
+     * 운영자 토글 `allow_all_extensions` 와 동기화되는 플래그.
+     * HeapDumpAnalyzerService 가 settings.json 로드 시점 및 setter 호출 시 갱신.
+     * true 면 확장자 화이트리스트 검증을 우회 (경로 traversal/null byte/빈 파일명 검증은 항상 수행).
+     */
+    private static volatile boolean allowAllExtensions = false;
+
+    public static void setAllowAllExtensions(boolean v) { allowAllExtensions = v; }
+    public static boolean isAllowAllExtensions()        { return allowAllExtensions; }
+
+    /**
      * 파일명을 검증하고 안전한 파일명(경로 구성요소 없음)을 반환합니다.
      *
      * @param filename 사용자 입력 파일명
@@ -48,8 +58,8 @@ public final class FilenameValidator {
             throw new IllegalArgumentException("Invalid filename");
         }
 
-        // 허용 확장자 확인
-        if (!hasAllowedExtension(safe)) {
+        // 허용 확장자 확인 — 토글 ON 시 우회
+        if (!allowAllExtensions && !hasAllowedExtension(safe)) {
             throw new IllegalArgumentException("Unsupported file type. Allowed: .hprof, .bin, .dump");
         }
 

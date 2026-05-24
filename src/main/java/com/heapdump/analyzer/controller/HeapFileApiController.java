@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
@@ -74,7 +75,8 @@ public class HeapFileApiController {
      */
     @PostMapping("/api/upload")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> uploadFileApi(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<Map<String, Object>> uploadFileApi(@RequestParam("file") MultipartFile file,
+                                                             Authentication authentication) {
         String originalName = file.getOriginalFilename();
         Map<String, Object> resp = new LinkedHashMap<>();
         logger.info("[Upload API] Request: filename={}, size={}", originalName, FormatUtils.formatBytes(file.getSize()));
@@ -85,6 +87,8 @@ public class HeapFileApiController {
                 return ResponseEntity.badRequest().body(resp);
             }
             String filename = analyzerService.uploadFile(file);
+            String uploadedBy = authentication != null ? authentication.getName() : null;
+            analyzerService.saveUploadRecord(filename, file.getSize(), uploadedBy);
             resp.put("status", "ok");
             resp.put("filename", filename);
             resp.put("size", file.getSize());

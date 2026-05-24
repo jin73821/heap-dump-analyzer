@@ -86,6 +86,17 @@ public class FileManagementService {
                 || l.endsWith(".hprof.gz") || l.endsWith(".bin.gz") || l.endsWith(".dump.gz");
     }
 
+    /**
+     * listFiles / checkDuplicate 용 통합 필터.
+     * allowAllExtensions=true 면 확장자 무관 — 단, 디렉토리·숨김 파일은 항상 제외.
+     */
+    boolean isListableDumpFile(File dir, String name, boolean allowAllExtensions) {
+        if (name == null || name.isEmpty() || name.charAt(0) == '.') return false;
+        if (!allowAllExtensions) return isValidHeapDumpFile(name);
+        File f = new File(dir, name);
+        return f.isFile();
+    }
+
     /** `.hprof.gz` → base name (strip `.gz` first, then `.hprof`). */
     public String stripExtension(String name) {
         String l = name.toLowerCase();
@@ -138,9 +149,14 @@ public class FileManagementService {
     }
 
     public Map<String, String> checkDuplicate(String filename, long fileSize, String partialHash) {
+        return checkDuplicate(filename, fileSize, partialHash, false);
+    }
+
+    public Map<String, String> checkDuplicate(String filename, long fileSize, String partialHash,
+                                              boolean allowAllExtensions) {
         Map<String, String> result = new LinkedHashMap<>();
         File dir = dumpFilesDirectory();
-        File[] files = dir.listFiles((d, n) -> isValidHeapDumpFile(n));
+        File[] files = dir.listFiles((d, n) -> isListableDumpFile(d, n, allowAllExtensions));
         if (files == null) {
             result.put("status", "OK");
             return result;
@@ -195,10 +211,18 @@ public class FileManagementService {
     // ── 조회 ──────────────────────────────────────────────────────
 
     public List<HeapDumpFile> listFiles() {
+        return listFiles(false);
+    }
+
+    /**
+     * dumpfiles/ 디렉토리의 파일 목록을 반환.
+     * @param allowAllExtensions true 면 확장자 화이트리스트(.hprof/.bin/.dump 및 .gz) 우회 — 디렉토리/숨김파일만 제외.
+     */
+    public List<HeapDumpFile> listFiles(boolean allowAllExtensions) {
         List<HeapDumpFile> result = new ArrayList<>();
 
         File dir = dumpFilesDirectory();
-        File[] files = dir.listFiles((d, n) -> isValidHeapDumpFile(n));
+        File[] files = dir.listFiles((d, n) -> isListableDumpFile(d, n, allowAllExtensions));
         Set<String> existing = new HashSet<>();
         if (files != null) {
             for (File f : files) {
