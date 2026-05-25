@@ -172,21 +172,21 @@
                 <div class="sub">전체 힙 크기</div>
             </div>
             <div class="kpi k-orange">
-                <div class="label">Used Heap</div>
-                <div class="value" th:text="${result.formattedUsedHeapSize}">-</div>
-                <div class="sub">사용 메모리</div>
+                <div class="label">Objects</div>
+                <div class="value" th:text="${result.formattedTotalObjects}">-</div>
+                <div class="sub">전체 객체 수</div>
             </div>
             <div class="kpi k-green">
-                <div class="label">Free Heap</div>
-                <div class="value" th:text="${result.formattedFreeHeapSize}">-</div>
-                <div class="sub">여유 메모리</div>
+                <div class="label">Class Loaders</div>
+                <div class="value" th:text="${result.formattedClassLoaderCount}">-</div>
+                <div class="sub">클래스 로더 수</div>
             </div>
         </div>
         <div class="kpi-row">
             <div class="kpi k-purple">
-                <div class="label">Usage</div>
-                <div class="value" th:text="${result.formattedHeapUsagePercent}">-</div>
-                <div class="sub">힙 사용률</div>
+                <div class="label">GC Roots</div>
+                <div class="value" th:text="${result.formattedGcRootCount}">-</div>
+                <div class="sub">GC 루트 수</div>
             </div>
             <div class="kpi k-cyan">
                 <div class="label">Classes</div>

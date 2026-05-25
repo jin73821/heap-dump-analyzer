@@ -43,7 +43,7 @@ public class HeapReportApiController {
 
     private static final Logger logger = LoggerFactory.getLogger(HeapReportApiController.class);
 
-    private static final Set<String> ALLOWED_REPORT_TYPES = Set.of("overview", "top_components", "suspects");
+    private static final Set<String> ALLOWED_REPORT_TYPES = Set.of("overview", "top_components", "suspects", "dominator_tree");
 
     private final HeapDumpAnalyzerService analyzerService;
     private final PdfReportService pdfReportService;

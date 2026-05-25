@@ -1,5 +1,50 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-25] Dominator Tree 탭 신설
+
+분석 페이지에 Dominator Tree 탭 추가. MAT CLI에 `org.eclipse.mat.api:query` (`-command=dominator_tree -groupBy NONE`) 4번째 리포트를 추가하여 최상위 500개 dominator 객체를 파싱, 네이티브 테이블로 렌더링. 검색 필터, 행 클릭 시 Component Detail 모달 연동. Raw Data 섹션에 MAT HTML iframe(Dominator Tree Raw) 패널도 추가.
+
+기존 분석 결과는 앱 기동 시 Query ZIP에서 자동 재파싱하여 탭 표시.
+
+**변경 파일:** `DominatorTreeEntry.java` (신규 모델), `MatParseResult.java`·`HeapAnalysisResult.java` (필드 추가), `MatReportParser.java` (parseDominatorTreeZip + reparseDominatorTree), `HeapDumpAnalyzerService.java` (MAT CLI 4번째 리포트 + 진행률 단계 + buildResult + 캐시 복원), `HeapDumpViewController.java` (모델 속성), `HeapReportApiController.java` (report type), `analyze.html` (사이드바 + 패널 + iframe), `analyze.js` (filterDomTree)
+
+## [2026-05-24] 분석 페이지 KPI 핵심 지표 교체
+
+기존 KPI 6칸 중 "Top Consumers / Others / Usage" 3칸이 MAT Top Components의 class loader 기준 dominator 합산 특성상 거의 항상 100%/0%/100%로 무의미하던 문제 개선. Objects, Class Loaders, GC Roots로 교체.
+
+- `Before`: Total Heap | Top Consumers | Others | Usage % | Classes | Suspects
+- `After`:  Total Heap | Objects | Class Loaders | GC Roots | Classes | Suspects
+
+MAT Overview에서 "Number of class loaders" / "Number of GC roots" 신규 파싱. 기존 result.json(신규 필드 없음)에서는 0으로 표시되며 재분석 시 정상 반영. 스택 바 차트(Top Consumers 비율)는 그대로 유지.
+
+**변경 파일:** `MatParseResult.java`, `HeapAnalysisResult.java` (필드+포맷 헬퍼), `MatReportParser.java` (파싱), `HeapDumpAnalyzerService.java` (빌드+클론), `analyze.html` (KPI+사이드바), `analyze-print.html` (PDF KPI)
+
+## [2026-05-24] Leak Suspects — stacktrace 모달 뷰어
+
+MAT Leak Suspects에서 "See stacktrace" / "See stacktrace with involved local variables" 링크가 있는 경우, suspect 아이템에 버튼을 표시하고 클릭 시 모달로 stacktrace 내용 로드. 기존에는 HtmlSanitizer가 상대 경로 href를 `javascript:void(0)`로 치환하여 링크가 동작하지 않았음.
+
+파서에서 각 suspect 섹션의 원본 HTML에서 stacktrace 페이지 경로를 추출하여 `LeakSuspect.stacktracePage` / `stacktraceLocalVarsPage` 필드에 저장. 기존 result.json(새 필드 없음)은 앱 기동 시 Suspects ZIP에서 자동 재파싱.
+
+**변경 파일:** `LeakSuspect.java` (필드 추가), `MatReportParser.java` (stacktrace 링크 추출 + reparseSuspects/reparseOverviewMeta 공개 메서드), `HeapDumpAnalyzerService.java` (캐시 복원 시 재파싱), `analyze.html` (버튼 + 모달), `analyze.js` (openStacktraceModal/closeStacktraceModal)
+
+## [2026-05-24] AI 인사이트 — Custom Provider + SSL 미검증 시 API 비용 경고 숨김
+
+LLM Provider가 "custom"이고 SSL Verify가 해제된 경우(사내 자체 LLM 서버) AI 분석 확인 모달에서 "API 비용이 발생할 수 있습니다" 경고 문구를 자동으로 숨김.
+
+**변경 파일:** `analyze.html` (경고 `<li>`에 id 부여), `analyze.js` (모달 열기 시 `/api/settings` 조회 후 조건부 숨김)
+
+## [2026-05-24] AI 인사이트 — JVM Xms/Xmx 입력 지원
+
+AI 분석 확인 모달에 대상 애플리케이션의 JVM 힙 설정(-Xms, -Xmx) 입력 필드 추가. 입력 시 LLM 프롬프트에 JVM 설정 섹션이 포함되어 힙 여유 공간 비율, 메모리 압박 수준, Xmx 증설/축소 권고를 포함한 정밀 분석 제공. 결과에 "JVM 힙 설정 분석" 전용 카드로 표시.
+
+**변경 파일:** `analyze.html` (모달 입력 필드 + 결과 카드), `analyze.js` (데이터 수집 + 프롬프트 생성 + 결과 렌더링), `LlmConfigService.java` (시스템 프롬프트 JVM 분석 지시 추가)
+
+## [2026-05-24] GC 로깅 JVM 옵션 추가
+
+`restart.sh` 및 `run.sh`에 `-Xlog:gc*` JVM 옵션 추가. GC 이벤트를 `logs/gc.log`에 기록하며 로테이션(20MB × 5파일) 적용.
+
+**변경 파일:** `restart.sh`, `run.sh`
+
 ## [2026-05-24] SpringSessionTableChecker 실행 시점 수정
 
 `@EventListener(ApplicationReadyEvent.class)` → `InitializingBean.afterPropertiesSet()` 변경.

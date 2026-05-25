@@ -30,6 +30,12 @@ public class LeakSuspect {
     /** 심각도: "critical" / "high" / "medium" / "low" */
     private String severity;
 
+    /** stacktrace 페이지 경로 (ZIP 내 상대 경로, 예: "pages/25.html") */
+    private String stacktracePage;
+
+    /** stacktrace with local variables 페이지 경로 */
+    private String stacktraceLocalVarsPage;
+
     public LeakSuspect(String title, String description) {
         this.title = title;
         this.description = description;

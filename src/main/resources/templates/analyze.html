@@ -134,12 +134,12 @@ function loadFullErrorLog() {
                 <span class="stat-val" th:text="${result.formattedTotalHeapSize}">-</span>
             </div>
             <div class="sidebar-stat">
-                <span class="stat-key">Top Consumers</span>
-                <span class="stat-val" th:text="${result.formattedUsedHeapSize}">-</span>
+                <span class="stat-key">Objects</span>
+                <span class="stat-val" th:text="${result.formattedTotalObjects}">-</span>
             </div>
             <div class="sidebar-stat">
-                <span class="stat-key">Others</span>
-                <span class="stat-val" th:text="${result.formattedFreeHeapSize}">-</span>
+                <span class="stat-key">Class Loaders</span>
+                <span class="stat-val" th:text="${result.formattedClassLoaderCount}">-</span>
             </div>
             <div class="sidebar-stat">
                 <span class="stat-key">Classes</span>
@@ -178,8 +178,12 @@ function loadFullErrorLog() {
         </button>
     </div>
 
-    <div class="sidebar-section" th:if="${hasHistogram or hasThreadOverview or hasThreadStacks}">
+    <div class="sidebar-section" th:if="${hasDominatorTree or hasHistogram or hasThreadOverview or hasThreadStacks}">
         <div class="sidebar-section-title">Actions</div>
+        <button type="button" class="nav-item" data-panel="dominator-tree" th:if="${hasDominatorTree}">
+            <span class="nav-icon">&#127795;</span> Dominator Tree
+            <span class="nav-badge" th:text="${result.dominatorTreeEntries != null ? #lists.size(result.dominatorTreeEntries) : 0}"></span>
+        </button>
         <button type="button" class="nav-item" data-panel="histogram" th:if="${hasHistogram}">
             <span class="nav-icon">&#9776;</span> Histogram
         </button>
@@ -221,6 +225,10 @@ function loadFullErrorLog() {
         <button type="button" class="nav-item" data-panel="mat-suspects"
                 th:if="${hasSuspectsZip}">
             <span class="nav-icon">&#128269;</span> Suspect Details
+        </button>
+        <button type="button" class="nav-item" data-panel="mat-domtree"
+                th:if="${hasDominatorTreeZip}">
+            <span class="nav-icon">&#127795;</span> Dominator Tree (Raw)
         </button>
         <button type="button" class="nav-item" data-panel="raw-histogram" th:if="${hasHistogram}">
             <span class="nav-icon">&#9776;</span> Histogram (Raw)
@@ -422,6 +430,15 @@ function loadFullErrorLog() {
                         </div>
                         <div id="aiRiskDesc" style="font-size:15px;color:#374151;line-height:1.85;word-break:break-word"></div>
                     </div>
+
+                    <!-- JVM 힙 설정 분석 카드 -->
+                    <div id="aiJvmAdviceCard" style="display:none;background:#fff;border:1px solid #A5D8FF;border-radius:12px;padding:22px 24px;box-shadow:0 1px 4px rgba(0,0,0,.04)">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                            <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#EFF6FF,#DBEAFE);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">&#9881;</div>
+                            <span style="font-size:13px;font-weight:800;color:#1E40AF;text-transform:uppercase;letter-spacing:.08em">JVM 힙 설정 분석</span>
+                        </div>
+                        <div id="aiJvmAdviceDesc" style="font-size:15px;color:#374151;line-height:1.85;word-break:break-word"></div>
+                    </div>
                 </div>
             </div>
 
@@ -462,10 +479,25 @@ function loadFullErrorLog() {
             <div style="font-size:14px;color:#4B5563;line-height:1.7;margin-bottom:18px" id="aiConfirmDesc">
                 LLM API를 호출하여 힙 덤프 분석 결과를 AI가 종합 분석합니다.
             </div>
+            <!-- JVM Xms/Xmx 입력 -->
+            <div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:14px 16px;margin-bottom:16px">
+                <div style="font-size:13px;font-weight:700;color:#1E40AF;margin-bottom:8px">JVM 힙 설정 (선택)</div>
+                <div style="font-size:12px;color:#6B7280;margin-bottom:10px;line-height:1.5">대상 애플리케이션의 JVM 힙 설정을 입력하면 더 정확한 분석이 가능합니다.</div>
+                <div style="display:flex;gap:12px">
+                    <div style="flex:1">
+                        <label for="aiJvmXms" style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">-Xms (초기 힙)</label>
+                        <input type="text" id="aiJvmXms" placeholder="예: 512m, 2g" style="width:100%;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;box-sizing:border-box">
+                    </div>
+                    <div style="flex:1">
+                        <label for="aiJvmXmx" style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px">-Xmx (최대 힙)</label>
+                        <input type="text" id="aiJvmXmx" placeholder="예: 4g, 8192m" style="width:100%;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;box-sizing:border-box">
+                    </div>
+                </div>
+            </div>
             <div style="background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:13px;color:#92400E;line-height:1.6">
                 <div style="font-weight:700;margin-bottom:4px">&#9888; 주의 사항</div>
                 <ul style="margin:0;padding-left:18px">
-                    <li>외부 LLM API 호출로 인해 <strong>API 비용이 발생</strong>할 수 있습니다.</li>
+                    <li id="aiConfirmCostWarn">외부 LLM API 호출로 인해 <strong>API 비용이 발생</strong>할 수 있습니다.</li>
                     <li>분석 중에는 <strong>페이지를 벗어나지 마세요.</strong> 이탈 시 분석이 중단됩니다.</li>
                     <li id="aiConfirmReanalyzeWarn" style="display:none">기존 분석 결과가 <strong>새 결과로 대체</strong>됩니다.</li>
                 </ul>
@@ -490,24 +522,24 @@ function loadFullErrorLog() {
                 </div>
             </div>
             <div class="kpi-item">
-                <div class="kpi-icon kpi-icon-orange">&#9650;</div>
+                <div class="kpi-icon kpi-icon-orange">&#128203;</div>
                 <div class="kpi-info">
-                    <div class="kpi-value" th:text="${result.formattedUsedHeapSize}">-</div>
-                    <div class="kpi-label">Top Consumers</div>
+                    <div class="kpi-value" th:text="${result.formattedTotalObjects}">-</div>
+                    <div class="kpi-label">Objects</div>
                 </div>
             </div>
             <div class="kpi-item">
-                <div class="kpi-icon kpi-icon-green">&#9660;</div>
+                <div class="kpi-icon kpi-icon-green">&#128230;</div>
                 <div class="kpi-info">
-                    <div class="kpi-value" th:text="${result.formattedFreeHeapSize}">-</div>
-                    <div class="kpi-label">Others</div>
+                    <div class="kpi-value" th:text="${result.formattedClassLoaderCount}">-</div>
+                    <div class="kpi-label">Class Loaders</div>
                 </div>
             </div>
             <div class="kpi-item">
-                <div class="kpi-icon kpi-icon-purple">&#37;</div>
+                <div class="kpi-icon kpi-icon-purple">&#128279;</div>
                 <div class="kpi-info">
-                    <div class="kpi-value" th:text="${result.formattedHeapUsagePercent}">-</div>
-                    <div class="kpi-label">Usage</div>
+                    <div class="kpi-value" th:text="${result.formattedGcRootCount}">-</div>
+                    <div class="kpi-label">GC Roots</div>
                 </div>
             </div>
             <div class="kpi-item">
@@ -664,9 +696,86 @@ function loadFullErrorLog() {
                                 <div class="suspect-advice-title">&#9889; 권장 조치</div>
                                 <span th:utext="${s.advice}"></span>
                             </div>
+                            <div th:if="${s.stacktracePage != null or s.stacktraceLocalVarsPage != null}" style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+                                <button th:if="${s.stacktracePage != null}" type="button" class="btn-stacktrace"
+                                        th:data-url="'/report/' + ${filename} + '/mat-page/suspects/' + ${s.stacktracePage}"
+                                        onclick="openStacktraceModal(this.dataset.url, 'Thread Stack')"
+                                        style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid #C7D2FE;border-radius:7px;background:#EEF2FF;color:#4338CA;font-size:13px;font-weight:600;cursor:pointer">
+                                    &#128209; See stacktrace
+                                </button>
+                                <button th:if="${s.stacktraceLocalVarsPage != null}" type="button" class="btn-stacktrace"
+                                        th:data-url="'/report/' + ${filename} + '/mat-page/suspects/' + ${s.stacktraceLocalVarsPage}"
+                                        onclick="openStacktraceModal(this.dataset.url, 'Thread Stack &amp; Local Variables')"
+                                        style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border:1px solid #C7D2FE;border-radius:7px;background:#EEF2FF;color:#4338CA;font-size:13px;font-weight:600;cursor:pointer">
+                                    &#128270; See stacktrace with local variables
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ Stacktrace 모달 ═══ -->
+    <div class="modal-overlay" id="stacktraceModal" onclick="if(event.target===this)closeStacktraceModal()">
+        <div class="modal-box" style="max-width:900px;max-height:85vh;display:flex;flex-direction:column">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-shrink:0">
+                <div style="display:flex;align-items:center;gap:10px">
+                    <div style="width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,#EEF2FF,#C7D2FE);display:flex;align-items:center;justify-content:center;font-size:17px;flex-shrink:0">&#128209;</div>
+                    <span id="stacktraceModalTitle" style="font-size:16px;font-weight:700;color:#111827">Thread Stack</span>
+                </div>
+                <button onclick="closeStacktraceModal()" style="border:none;background:none;font-size:22px;cursor:pointer;color:#9CA3AF;padding:4px">&#10005;</button>
+            </div>
+            <div id="stacktraceModalBody" style="overflow:auto;flex:1;border:1px solid #E5E7EB;border-radius:8px;padding:16px;background:#F9FAFB;font-size:13px;line-height:1.7">
+                <div style="text-align:center;color:#9CA3AF;padding:40px 0">로딩 중...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ▌ DOMINATOR TREE PANEL ▌ -->
+    <div id="panel-dominator-tree" class="panel" th:if="${hasDominatorTree}">
+        <div class="card">
+            <div class="card-title"><span class="card-icon">&#127795;</span> Dominator Tree</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                <p style="font-size:13px;color:var(--text-secondary);margin:0">
+                    Top <strong th:text="${result.dominatorTreeEntries != null ? #lists.size(result.dominatorTreeEntries) : 0}">500</strong>
+                    dominator objects by retained heap
+                </p>
+                <input type="text" class="table-search" id="domTreeSearch" placeholder="Search class name..." oninput="filterDomTree()" style="width:220px">
+            </div>
+            <div style="max-height:700px;overflow:auto;border:1px solid var(--border);border-radius:8px">
+                <table class="data-table" id="domTreeTable">
+                    <thead>
+                        <tr>
+                            <th style="width:50px;text-align:center">#</th>
+                            <th>Class Name</th>
+                            <th style="width:120px;text-align:right">Shallow Heap</th>
+                            <th style="width:140px;text-align:right">Retained Heap</th>
+                            <th style="width:80px;text-align:right">%</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="d,s : ${result.dominatorTreeEntries}"
+                            th:data-class="${d.className}"
+                            th:data-address="${d.objectAddress}"
+                            th:data-retained="${d.retainedHeap}"
+                            th:data-shallow="${d.shallowHeap}"
+                            onclick="showComponentDetail(this.dataset['class'])"
+                            style="cursor:pointer" title="클릭하여 상세 보기">
+                            <td style="text-align:center"><span class="rank-num" th:text="${s.count}">1</span></td>
+                            <td><div class="class-name-cell" th:text="${d.className}">-</div></td>
+                            <td style="text-align:right;font-family:var(--mono);font-size:12px"
+                                th:title="${#numbers.formatInteger(d.shallowHeap, 1, 'COMMA') + ' bytes'}"
+                                th:text="${d.shallowHeapHuman}">0</td>
+                            <td style="text-align:right;font-family:var(--mono);font-size:12px"
+                                th:title="${#numbers.formatInteger(d.retainedHeap, 1, 'COMMA') + ' bytes'}"
+                                th:text="${d.retainedHeapHuman}">0</td>
+                            <td style="text-align:right;font-family:var(--mono);font-size:12px"
+                                th:text="${#numbers.formatDecimal(d.percentOfHeap, 1, 2) + '%'}">0%</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>
@@ -812,6 +921,19 @@ function loadFullErrorLog() {
             </div>
             <iframe id="matSuspectsIframe"
                     th:data-src="'/report/' + ${filename} + '/mat-page/suspects/index.html'"
+                    style="width:100%;height:75vh;min-height:500px;border:none;border-top:1px solid var(--border);background:#fff;display:block"
+                    referrerpolicy="no-referrer"></iframe>
+        </div>
+    </div>
+
+    <!-- ▌ DOMINATOR TREE RAW PANEL ▌ -->
+    <div id="panel-mat-domtree" class="panel" th:if="${hasDominatorTreeZip}">
+        <div class="card" style="padding:0;overflow:hidden">
+            <div class="card-title" style="padding:16px 20px;margin:0">
+                <span class="card-icon">&#127795;</span> MAT Dominator Tree Report
+            </div>
+            <iframe id="matDomTreeIframe"
+                    th:data-src="'/report/' + ${filename} + '/mat-page/dominator_tree/index.html'"
                     style="width:100%;height:75vh;min-height:500px;border:none;border-top:1px solid var(--border);background:#fff;display:block"
                     referrerpolicy="no-referrer"></iframe>
         </div>
@@ -1008,7 +1130,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-05-17"></script>
+<script src="/js/analyze.js?v=2026-05-25"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

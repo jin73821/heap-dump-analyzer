@@ -51,7 +51,10 @@ fi
 # JVM 힙 설정: 초기 256 MB / 최대 1 GB
 JVM_HEAP_OPTS="-Xms256m -Xmx1g"
 
-setsid nohup stdbuf -oL -eL java $JVM_HEAP_OPTS -Dfile.encoding=UTF-8 $TRUST_OPTS -jar "$JAR" --server.port=18080 \
+# GC 로깅: 로테이션 20MB × 5파일
+GC_LOG_OPTS="-Xlog:gc*:file=$LOG_DIR/gc.log:time,uptime,level,tags:filecount=5,filesize=20m"
+
+setsid nohup stdbuf -oL -eL java $JVM_HEAP_OPTS $GC_LOG_OPTS -Dfile.encoding=UTF-8 $TRUST_OPTS -jar "$JAR" --server.port=18080 \
     < /dev/null > "$NOHUP_LOG" 2>&1 &
 PID=$!
 disown $PID 2>/dev/null || true

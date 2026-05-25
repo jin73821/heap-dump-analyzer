@@ -21,6 +21,8 @@ public class MatParseResult {
     private long freeHeapSize;
     private int  totalClasses;
     private long totalObjects;
+    private int  classLoaderCount;
+    private long gcRootCount;
 
     // ── 상위 메모리 객체 (Top Components) ────────────
     private List<MemoryObject> topMemoryObjects = new ArrayList<>();
@@ -42,6 +44,9 @@ public class MatParseResult {
     // ── MAT Actions (Histogram / Thread Overview) ─────
     private String histogramHtml = "";
     private String threadOverviewHtml = "";
+
+    // ── Dominator Tree ────────────────────────────────────
+    private List<DominatorTreeEntry> dominatorTreeEntries = new ArrayList<>();
 
     // ── Parsed Histogram / Thread data ──────────────────
     private List<HistogramEntry> histogramEntries = new ArrayList<>();

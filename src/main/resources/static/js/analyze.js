@@ -160,6 +160,32 @@ function toggleSuspect(header) {
     item.classList.toggle('open');
 }
 
+function openStacktraceModal(url, title) {
+    var modal = document.getElementById('stacktraceModal');
+    var titleEl = document.getElementById('stacktraceModalTitle');
+    var bodyEl = document.getElementById('stacktraceModalBody');
+    if (!modal || !bodyEl) return;
+    titleEl.textContent = title || 'Thread Stack';
+    bodyEl.innerHTML = '<div style="text-align:center;color:#9CA3AF;padding:40px 0">로딩 중...</div>';
+    modal.classList.add('open');
+    fetch(url)
+        .then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.text();
+        })
+        .then(function(html) {
+            bodyEl.innerHTML = html;
+        })
+        .catch(function(e) {
+            bodyEl.innerHTML = '<div style="text-align:center;color:#EF4444;padding:40px 0">로드 실패: ' + Common.escHtml(e.message) + '</div>';
+        });
+}
+
+function closeStacktraceModal() {
+    var modal = document.getElementById('stacktraceModal');
+    if (modal) modal.classList.remove('open');
+}
+
 // ── Table Filter ──────────────────────────────────────
 function filterTable() {
     var q = document.getElementById('objSearch').value.toLowerCase();
@@ -174,6 +200,14 @@ function filterTable() {
 function filterHistogram() {
     var q = document.getElementById('histSearch').value.toLowerCase();
     document.querySelectorAll('#histogramTable tbody tr').forEach(function(r) {
+        r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+    });
+}
+
+// ── Dominator Tree Filter ────────────────────────────
+function filterDomTree() {
+    var q = document.getElementById('domTreeSearch').value.toLowerCase();
+    document.querySelectorAll('#domTreeTable tbody tr').forEach(function(r) {
         r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
     });
 }
@@ -2074,6 +2108,16 @@ function startAiAnalysis() {
         desc.textContent = 'LLM API를 호출하여 힙 덤프 분석 결과를 AI가 종합 분석합니다.';
         reWarn.style.display = 'none';
     }
+    var costWarn = document.getElementById('aiConfirmCostWarn');
+    if (costWarn) {
+        costWarn.style.display = '';
+        fetch('/api/settings').then(function(r) { return r.json(); }).then(function(s) {
+            var llm = s.llm || {};
+            if (llm.provider === 'custom' && llm.sslVerify === false) {
+                costWarn.style.display = 'none';
+            }
+        }).catch(function() {});
+    }
     document.getElementById('aiConfirmModal').classList.add('open');
 }
 
@@ -2108,7 +2152,8 @@ function _doStartAiAnalysis() {
     console.log('[AI-Insight] 분석 시작 — file=' + (data.filename || '') +
         ', kpis=' + (data.kpis ? data.kpis.length : 0) +
         ', suspects=' + (data.suspects ? data.suspects.length : 0) +
-        ', topConsumers=' + (data.topConsumers ? data.topConsumers.length : 0));
+        ', topConsumers=' + (data.topConsumers ? data.topConsumers.length : 0) +
+        ', jvmXms=' + (data.jvmXms || 'N/A') + ', jvmXmx=' + (data.jvmXmx || 'N/A'));
 
     // STEP 2: 프롬프트 구성
     setTimeout(function() {
@@ -2160,6 +2205,10 @@ function collectAnalysisData() {
             });
         }
     });
+    var xmsEl = document.getElementById('aiJvmXms');
+    var xmxEl = document.getElementById('aiJvmXmx');
+    data.jvmXms = xmsEl ? xmsEl.value.trim() : '';
+    data.jvmXmx = xmxEl ? xmxEl.value.trim() : '';
     return data;
 }
 
@@ -2168,6 +2217,13 @@ function buildAnalysisPrompt(data) {
     var p = [];
     p.push('Java 힙 덤프 분석 결과를 해석해주세요. 파일: ' + data.filename);
     p.push('');
+    if (data.jvmXms || data.jvmXmx) {
+        p.push('== JVM 힙 설정 ==');
+        if (data.jvmXms) p.push('-Xms (초기 힙 크기): ' + data.jvmXms);
+        if (data.jvmXmx) p.push('-Xmx (최대 힙 크기): ' + data.jvmXmx);
+        p.push('※ 위 JVM 설정과 실제 힙 사용량을 비교하여 힙 여유 공간, 메모리 압박 수준, Xmx 증설 필요 여부를 판단해주세요.');
+        p.push('');
+    }
     if (data.kpis && data.kpis.length) {
         p.push('== 힙 통계 ==');
         data.kpis.forEach(function(k) { p.push(k.label + ': ' + k.value); });
@@ -2190,7 +2246,12 @@ function buildAnalysisPrompt(data) {
     }
     p.push('위 데이터를 기반으로 아래 JSON 형식으로만 응답하세요.');
     p.push('절대 마크다운 코드블록(```)을 사용하지 마세요. 순수 JSON만 반환하세요.');
-    p.push('{"summary":"전체 요약(2-3문장)","rootCause":"근본 원인 분석(상세)","recommendations":"권장 조치(1. 2. 3. 번호 매기기)","severity":"Critical|High|Medium|Low 중 하나","severityDesc":"위험도 판단 근거"}');
+    var schema = '{"summary":"전체 요약(2-3문장)","rootCause":"근본 원인 분석(상세)","recommendations":"권장 조치(1. 2. 3. 번호 매기기)","severity":"Critical|High|Medium|Low 중 하나","severityDesc":"위험도 판단 근거"';
+    if (data.jvmXms || data.jvmXmx) {
+        schema += ',"jvmAdvice":"JVM 힙 설정 분석: 현재 설정 대비 사용량 평가, 힙 여유 공간 비율, Xmx 증설/축소 권고 및 권장 값"';
+    }
+    schema += '}';
+    p.push(schema);
     return p.join('\n');
 }
 
@@ -2318,6 +2379,16 @@ function showAiResult(result, isSaved) {
         setTextWithLineBreaks(riskDesc, data.severityDesc);
     } else if (riskCard) {
         riskCard.style.display = 'none';
+    }
+
+    // JVM 힙 설정 분석 카드
+    var jvmCard = document.getElementById('aiJvmAdviceCard');
+    var jvmDesc = document.getElementById('aiJvmAdviceDesc');
+    if (jvmCard && jvmDesc && data.jvmAdvice && data.jvmAdvice.trim()) {
+        jvmCard.style.display = '';
+        setTextWithLineBreaks(jvmDesc, data.jvmAdvice);
+    } else if (jvmCard) {
+        jvmCard.style.display = 'none';
     }
 
     // 메타 정보

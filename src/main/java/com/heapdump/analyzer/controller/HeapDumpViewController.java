@@ -426,6 +426,11 @@ public class HeapDumpViewController {
         model.addAttribute("hasOverviewZip", analyzerService.hasReportZip(filename, "overview"));
         model.addAttribute("hasTopComponentsZip", analyzerService.hasReportZip(filename, "top_components"));
         model.addAttribute("hasSuspectsZip", analyzerService.hasReportZip(filename, "suspects"));
+        model.addAttribute("hasDominatorTreeZip", analyzerService.hasReportZip(filename, "dominator_tree"));
+
+        boolean hasDominatorTree = result.getDominatorTreeEntries() != null
+                && !result.getDominatorTreeEntries().isEmpty();
+        model.addAttribute("hasDominatorTree", hasDominatorTree);
 
         model.addAttribute("llmChatRestoreIncludeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
 

@@ -74,6 +74,12 @@ public class MatReportParser {
             "(?:Problem|Suspect)\\s*\\d+[^<]*<.*?>(.*?)(?=(?:Problem|Suspect)\\s*\\d+|$)",
             Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
     // extractCleanClassName 용
+    private static final Pattern STACKTRACE_LINK_PATTERN = Pattern.compile(
+            "<a\\s+href=\"(pages/[^\"]+\\.html)\"[^>]*>\\s*See\\s+stacktrace\\s*</a>",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern STACKTRACE_LOCALVARS_LINK_PATTERN = Pattern.compile(
+            "<a\\s+href=\"(pages/[^\"]+\\.html)\"[^>]*>\\s*See\\s+stacktrace\\s+with\\s+involved\\s+local\\s+variables\\s*</a>",
+            Pattern.CASE_INSENSITIVE);
     private static final Pattern ARROW_CHAR_PATTERN = Pattern.compile("[\u00BB\u203A\u2039\u00AB]");
     private static final Pattern ARROW_SPACE_PATTERN = Pattern.compile("\u00BB\\s*");
     private static final Pattern ONLY_OBJECT_PATTERN = Pattern.compile("(?i)\\bOnly\\s+object\\b.*");
@@ -170,9 +176,18 @@ public class MatReportParser {
             logger.warn("[Parser] suspects ZIP not found in: {} for base: {}", heapDumpDir, dumpBaseName);
         }
 
-        logger.info("[Parser] Parse complete: totalHeap={}, usedHeap={}, freeHeap={}, topObjects={}, suspects={}",
+        // 4) Dominator Tree Query ZIP 파싱
+        File domZip = findZip(heapDumpDir, dumpBaseName, "dominator_tree");
+        if (domZip != null) {
+            parseDominatorTreeZip(domZip, result);
+        } else {
+            logger.warn("[Parser] dominator_tree ZIP not found: base={}", dumpBaseName);
+        }
+
+        logger.info("[Parser] Parse complete: totalHeap={}, usedHeap={}, freeHeap={}, topObjects={}, suspects={}, dominatorEntries={}",
             result.getTotalHeapSize(), result.getUsedHeapSize(), result.getFreeHeapSize(),
-            result.getTopMemoryObjects().size(), result.getLeakSuspects().size());
+            result.getTopMemoryObjects().size(), result.getLeakSuspects().size(),
+            result.getDominatorTreeEntries().size());
 
         return result;
     }
@@ -199,6 +214,35 @@ public class MatReportParser {
         logger.info("[Parser] Re-extracted actions: histogram={}, threadOverview={}",
                 result.getHistogramHtml() != null && !result.getHistogramHtml().isEmpty(),
                 result.getThreadOverviewHtml() != null && !result.getThreadOverviewHtml().isEmpty());
+    }
+
+    public void reparseDominatorTree(String heapDumpDir, String dumpBaseName, MatParseResult result) {
+        File zip = findZip(heapDumpDir, dumpBaseName, "dominator_tree");
+        if (zip == null) return;
+        parseDominatorTreeZip(zip, result);
+    }
+
+    public void reparseSuspects(String heapDumpDir, String dumpBaseName, MatParseResult result) {
+        File suspectsZip = findZip(heapDumpDir, dumpBaseName, "suspects");
+        if (suspectsZip == null) return;
+        parseSuspectsZip(suspectsZip, result);
+    }
+
+    public void reparseOverviewMeta(String heapDumpDir, String dumpBaseName, MatParseResult result) {
+        File overviewZip = findZip(heapDumpDir, dumpBaseName, "overview");
+        if (overviewZip == null) return;
+        String html = extractHtmlFromZip(overviewZip, "overview");
+        if (html == null || html.isEmpty()) return;
+        Matcher m = TD_KEY_VALUE_PATTERN.matcher(html);
+        while (m.find()) {
+            String key = TAG_PATTERN.matcher(m.group(1)).replaceAll("").trim().toLowerCase();
+            String val = TAG_PATTERN.matcher(m.group(2)).replaceAll("").trim();
+            if (key.contains("class loaders")) {
+                result.setClassLoaderCount((int) parseLong(digitsOnly(val)));
+            } else if (key.contains("gc roots")) {
+                result.setGcRootCount(parseLong(digitsOnly(val)));
+            }
+        }
     }
 
     /**
@@ -249,6 +293,9 @@ public class MatReportParser {
                 break;
             case "suspects":
                 keywords = Arrays.asList("leak_suspects", "suspects");
+                break;
+            case "dominator_tree":
+                keywords = Collections.singletonList("query");
                 break;
             default:
                 keywords = Collections.singletonList(reportType);
@@ -319,6 +366,14 @@ public class MatReportParser {
             // "Number of classes"
             else if (keyL.contains("number of classes") || keyL.equals("classes")) {
                 result.setTotalClasses((int) parseLong(digitsOnly(val)));
+            }
+            // "Number of class loaders"
+            else if (keyL.contains("class loaders")) {
+                result.setClassLoaderCount((int) parseLong(digitsOnly(val)));
+            }
+            // "Number of GC roots"
+            else if (keyL.contains("gc roots")) {
+                result.setGcRootCount(parseLong(digitsOnly(val)));
             }
         }
 
@@ -920,10 +975,19 @@ public class MatReportParser {
         Matcher pm = PROBLEM_SUSPECT_PATTERN.matcher(html);
         int idx = 1;
         while (pm.find() && suspects.size() < 5) {
-            String section = stripTags(pm.group(1));
+            String rawSection = pm.group(1);
+            String section = stripTags(rawSection);
             if (section.length() > 30) {
                 LeakSuspect suspect = new LeakSuspect("Suspect #" + idx, section.substring(0, Math.min(section.length(), 500)));
                 LeakSuspectAdvisor.analyze(suspect, section);
+                Matcher stm = STACKTRACE_LOCALVARS_LINK_PATTERN.matcher(rawSection);
+                if (stm.find()) {
+                    suspect.setStacktraceLocalVarsPage(stm.group(1));
+                }
+                Matcher stm2 = STACKTRACE_LINK_PATTERN.matcher(rawSection);
+                if (stm2.find()) {
+                    suspect.setStacktracePage(stm2.group(1));
+                }
                 suspects.add(suspect);
                 idx++;
             }
@@ -969,6 +1033,7 @@ public class MatReportParser {
                 case "overview":
                 case "top_components_index":
                 case "suspects":
+                case "dominator_tree_query":
                     // index.html 우선
                     for (Map.Entry<String, String> e : htmlFiles.entrySet()) {
                         if (e.getKey().toLowerCase().equals("index.html")) return e.getValue();
@@ -1064,6 +1129,72 @@ public class MatReportParser {
     private String sanitizeHtml(String html) {
         if (html == null) return "";
         return HtmlSanitizer.sanitize(html);
+    }
+
+    // ─── Dominator Tree 파싱 ─────────────────────────────────────────────────────
+
+    private static final Pattern DOM_TREE_ADDR_PATTERN = Pattern.compile(
+            "mat://object/(0x[0-9a-fA-F]+)", Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern DOM_TREE_TOTAL_PATTERN = Pattern.compile(
+            "Total:\\s*[\\d,]+\\s+of\\s+([\\d,]+)\\s+entries", Pattern.CASE_INSENSITIVE);
+
+    private void parseDominatorTreeZip(File zip, MatParseResult result) {
+        String html = extractHtmlFromZip(zip, "dominator_tree_query");
+        if (html == null || html.isEmpty()) {
+            logger.warn("[Parser] No HTML extracted from dominator tree ZIP: {}", zip.getName());
+            return;
+        }
+
+        List<DominatorTreeEntry> entries = new ArrayList<>();
+
+        Matcher rowM = TR_PATTERN.matcher(html);
+        while (rowM.find()) {
+            String row = rowM.group(1);
+            if (row.contains("<th")) continue;
+
+            List<String> cells = new ArrayList<>();
+            Matcher cellM = TD_PATTERN.matcher(row);
+            while (cellM.find()) cells.add(cellM.group(1));
+
+            // 기대 구조: [className+icon+link, shallowHeap, retainedHeap, percentage]
+            if (cells.size() < 4) continue;
+
+            // "Total: 500 of 67,423 entries" 같은 요약 행 스킵
+            String firstCellText = stripTags(cells.get(0)).trim();
+            if (firstCellText.startsWith("Total:")) continue;
+
+            // 객체 주소 추출
+            String objectAddress = null;
+            Matcher addrM = DOM_TREE_ADDR_PATTERN.matcher(cells.get(0));
+            if (addrM.find()) objectAddress = addrM.group(1);
+
+            // 클래스명 추출 (extractCleanClassName 재사용)
+            String rawName = stripTags(cells.get(0));
+            String className = extractCleanClassName(rawName);
+            if (className.startsWith("class ")) {
+                className = className.substring(6).trim();
+            }
+            if (className.isEmpty()) continue;
+
+            // "System Class" 같은 태그 제거
+            className = className.replace("System Class", "").trim();
+
+            // 숫자 파싱
+            String shallowStr = stripTags(cells.get(1)).trim();
+            String retainedStr = stripTags(cells.get(2)).trim();
+            String pctStr = stripTags(cells.get(3)).trim().replace("%", "");
+
+            long shallowHeap = parseLong(COMMA_SPACE_PATTERN.matcher(shallowStr).replaceAll(""));
+            long retainedHeap = parseLong(COMMA_SPACE_PATTERN.matcher(retainedStr).replaceAll(""));
+            double pct = 0;
+            try { pct = Double.parseDouble(pctStr); } catch (NumberFormatException ignored) {}
+
+            entries.add(new DominatorTreeEntry(className, objectAddress, shallowHeap, retainedHeap, pct));
+        }
+
+        result.setDominatorTreeEntries(entries);
+        logger.info("[Parser] Dominator tree parsed: {} entries from {}", entries.size(), zip.getName());
     }
 
     // ─── Histogram 파싱 ─────────────────────────────────────────────────────────

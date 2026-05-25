@@ -42,6 +42,8 @@ public class HeapAnalysisResult {
     // ── 통계 ─────────────────────────────────────────
     private int  totalClasses;
     private long totalObjects;
+    private int  classLoaderCount;
+    private long gcRootCount;
 
     // ── 분석 메타 ────────────────────────────────────
     private long   analysisTime;
@@ -58,6 +60,9 @@ public class HeapAnalysisResult {
 
     // ── Top Component 별 파싱된 상세 데이터 (className → parsed) ──
     private Map<String, ComponentDetailParsed> componentDetailParsedMap = new LinkedHashMap<>();
+
+    // ── Dominator Tree ────────────────────────────────────
+    private List<DominatorTreeEntry> dominatorTreeEntries = new ArrayList<>();
 
     // ── MAT Actions (Histogram / Thread Overview) ─────
     private String histogramHtml;
@@ -85,7 +90,9 @@ public class HeapAnalysisResult {
     public String getFormattedFreeHeapSize()    { return formatBytes(freeHeapSize); }
     public String getFormattedHeapUsagePercent(){ return String.format("%.2f%%", heapUsagePercent); }
     public String getFormattedTotalClasses()    { return String.format("%,d", totalClasses); }
-    public String getFormattedTotalObjects()    { return String.format("%,d", totalObjects); }
+    public String getFormattedTotalObjects()      { return String.format("%,d", totalObjects); }
+    public String getFormattedClassLoaderCount() { return String.format("%,d", classLoaderCount); }
+    public String getFormattedGcRootCount()      { return String.format("%,d", gcRootCount); }
 
     public boolean hasLeakSuspects() {
         return leakSuspects != null && !leakSuspects.isEmpty();

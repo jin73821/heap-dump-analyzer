@@ -456,8 +456,39 @@ public class HeapDumpAnalyzerService {
             reparseActions(r);
         }
 
+        // suspects stacktrace 페이지 경로 재파싱 (기존 result.json에 없는 경우)
+        reparseSuspectsStacktrace(r);
+
+        // classLoaderCount/gcRootCount가 0이면 Overview ZIP에서 재파싱
+        if (r.getClassLoaderCount() == 0 && r.getGcRootCount() == 0) {
+            reparseOverviewMeta(r);
+        }
+
+        // dominatorTreeEntries가 없으면 Query ZIP에서 재파싱
+        if (r.getDominatorTreeEntries() == null || r.getDominatorTreeEntries().isEmpty()) {
+            reparseDominatorTree(r);
+        }
+
         // .threads 파일 로드
         loadThreadStacksText(r);
+    }
+
+    private void reparseDominatorTree(HeapAnalysisResult r) {
+        if (r.getFilename() == null) return;
+        String baseName = stripExtension(r.getFilename());
+        File resultDir = resultDirectory(r.getFilename());
+        if (!resultDir.exists()) return;
+        try {
+            MatParseResult tmp = new MatParseResult();
+            parser.reparseDominatorTree(resultDir.getAbsolutePath(), baseName, tmp);
+            if (!tmp.getDominatorTreeEntries().isEmpty()) {
+                r.setDominatorTreeEntries(tmp.getDominatorTreeEntries());
+                logger.info("Re-extracted {} dominator tree entries for {}",
+                        tmp.getDominatorTreeEntries().size(), r.getFilename());
+            }
+        } catch (Exception e) {
+            logger.debug("Could not re-extract dominator tree for {}: {}", r.getFilename(), e.getMessage());
+        }
     }
 
     /**
@@ -509,6 +540,50 @@ public class HeapDumpAnalyzerService {
             }
         } catch (Exception e) {
             logger.debug("Could not re-extract actions for {}: {}", r.getFilename(), e.getMessage());
+        }
+    }
+
+    private void reparseSuspectsStacktrace(HeapAnalysisResult r) {
+        if (r.getLeakSuspects() == null || r.getLeakSuspects().isEmpty()) return;
+        boolean anyMissing = r.getLeakSuspects().stream()
+                .allMatch(s -> s.getStacktracePage() == null && s.getStacktraceLocalVarsPage() == null);
+        if (!anyMissing) return;
+        if (r.getFilename() == null) return;
+        String baseName = stripExtension(r.getFilename());
+        File resultDir = resultDirectory(r.getFilename());
+        if (!resultDir.exists()) return;
+        try {
+            MatParseResult tmp = new MatParseResult();
+            parser.reparseSuspects(resultDir.getAbsolutePath(), baseName, tmp);
+            if (tmp.getLeakSuspects() != null && tmp.getLeakSuspects().size() == r.getLeakSuspects().size()) {
+                for (int i = 0; i < r.getLeakSuspects().size(); i++) {
+                    LeakSuspect orig = r.getLeakSuspects().get(i);
+                    LeakSuspect fresh = tmp.getLeakSuspects().get(i);
+                    if (orig.getStacktracePage() == null && fresh.getStacktracePage() != null) {
+                        orig.setStacktracePage(fresh.getStacktracePage());
+                    }
+                    if (orig.getStacktraceLocalVarsPage() == null && fresh.getStacktraceLocalVarsPage() != null) {
+                        orig.setStacktraceLocalVarsPage(fresh.getStacktraceLocalVarsPage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Could not re-extract suspects stacktrace for {}: {}", r.getFilename(), e.getMessage());
+        }
+    }
+
+    private void reparseOverviewMeta(HeapAnalysisResult r) {
+        if (r.getFilename() == null) return;
+        String baseName = stripExtension(r.getFilename());
+        File resultDir = resultDirectory(r.getFilename());
+        if (!resultDir.exists()) return;
+        try {
+            MatParseResult tmp = new MatParseResult();
+            parser.reparseOverviewMeta(resultDir.getAbsolutePath(), baseName, tmp);
+            if (tmp.getClassLoaderCount() > 0) r.setClassLoaderCount(tmp.getClassLoaderCount());
+            if (tmp.getGcRootCount() > 0) r.setGcRootCount(tmp.getGcRootCount());
+        } catch (Exception e) {
+            logger.debug("Could not re-extract overview meta for {}: {}", r.getFilename(), e.getMessage());
         }
     }
 
@@ -1621,6 +1696,8 @@ public class HeapDumpAnalyzerService {
         cmd.add("org.eclipse.mat.api:overview");
         cmd.add("org.eclipse.mat.api:top_components");
         cmd.add("org.eclipse.mat.api:suspects");
+        cmd.add("-command=dominator_tree -groupBy NONE");
+        cmd.add("org.eclipse.mat.api:query");
 
         logger.info("Running MAT CLI: {}", String.join(" ", cmd));
         sendProgress(emitter, AnalysisProgress.step(filename, 15, "MAT CLI 실행 중..."));
@@ -1668,19 +1745,27 @@ public class HeapDumpAnalyzerService {
                         continue;
                     } else if (line.startsWith("Subtask: Leak Suspects") && phaseRank("suspects") > curRank) {
                         phase[0] = "suspects";
-                        pct[0] = Math.max(pct[0], 68);
+                        pct[0] = Math.max(pct[0], 62);
                         logger.info("[MAT CLI] Report phase: suspects (line {})", lineCount[0]);
                         sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line,
                                 "suspects", "Leak Suspects 리포트 생성 중..."));
+                        continue;
+                    } else if (line.startsWith("Subtask: Single Query") && phaseRank("dominator") > curRank) {
+                        phase[0] = "dominator";
+                        pct[0] = Math.max(pct[0], 72);
+                        logger.info("[MAT CLI] Report phase: dominator (line {})", lineCount[0]);
+                        sendProgress(emitter, AnalysisProgress.reportLog(filename, pct[0], line,
+                                "dominator", "Dominator Tree 리포트 생성 중..."));
                         continue;
                     }
 
                     // 현재 단계별 최대 진행률 제한
                     int maxPct;
                     switch (phase[0]) {
-                        case "overview":       maxPct = 55; break;
-                        case "top_components": maxPct = 68; break;
-                        case "suspects":       maxPct = 80; break;
+                        case "overview":       maxPct = 50; break;
+                        case "top_components": maxPct = 62; break;
+                        case "suspects":       maxPct = 72; break;
+                        case "dominator":      maxPct = 80; break;
                         default:               maxPct = 40; break; // init
                     }
                     int prevPct = pct[0];
@@ -1838,6 +1923,7 @@ public class HeapDumpAnalyzerService {
         c.setTopMemoryObjects(r.getTopMemoryObjects());
         c.setLeakSuspects(r.getLeakSuspects());
         c.setTotalClasses(r.getTotalClasses());   c.setTotalObjects(r.getTotalObjects());
+        c.setClassLoaderCount(r.getClassLoaderCount()); c.setGcRootCount(r.getGcRootCount());
         c.setAnalysisTime(r.getAnalysisTime());   c.setAnalysisStatus(r.getAnalysisStatus());
         c.setErrorMessage(r.getErrorMessage());
         c.setOverviewHtml(r.getOverviewHtml());   c.setTopComponentsHtml(r.getTopComponentsHtml());
@@ -1849,6 +1935,7 @@ public class HeapDumpAnalyzerService {
         c.setTotalHistogramClasses(r.getTotalHistogramClasses());
         c.setOriginalFileSize(r.getOriginalFileSize());
         c.setComponentDetailParsedMap(r.getComponentDetailParsedMap());
+        c.setDominatorTreeEntries(r.getDominatorTreeEntries());
         // threadStacksText는 @JsonIgnore이므로 저장하지 않음
         return c;
     }
@@ -1888,6 +1975,8 @@ public class HeapDumpAnalyzerService {
         r.setLeakSuspects(parsed.getLeakSuspects());
         r.setTotalClasses(parsed.getTotalClasses());
         r.setTotalObjects(parsed.getTotalObjects());
+        r.setClassLoaderCount(parsed.getClassLoaderCount());
+        r.setGcRootCount(parsed.getGcRootCount());
         r.setOverviewHtml(parsed.getOverviewHtml());
         r.setTopComponentsHtml(parsed.getTopComponentsHtml());
         r.setSuspectsHtml(parsed.getSuspectsHtml());
@@ -1898,6 +1987,7 @@ public class HeapDumpAnalyzerService {
         r.setHistogramEntries(parsed.getHistogramEntries());
         r.setThreadInfos(parsed.getThreadInfos());
         r.setTotalHistogramClasses(parsed.getTotalHistogramClasses());
+        r.setDominatorTreeEntries(parsed.getDominatorTreeEntries());
 
         // .threads 파일 로드
         loadThreadStacksText(r);
@@ -1954,6 +2044,7 @@ public class HeapDumpAnalyzerService {
             case "overview":       return 1;
             case "top_components": return 2;
             case "suspects":       return 3;
+            case "dominator":      return 4;
             default:               return -1;
         }
     }
