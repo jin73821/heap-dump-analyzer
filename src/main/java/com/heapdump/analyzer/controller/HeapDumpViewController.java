@@ -423,6 +423,32 @@ public class HeapDumpViewController {
         }
         model.addAttribute("threadStacks", threadStacks);
 
+        // OOM 감지 요약 (Thread Overview 배너용)
+        int oomCount = 0;
+        List<String> oomSamples = new ArrayList<>();
+        List<Integer> oomIndices = new ArrayList<>();
+        String oomFirstType = null;
+        if (result.getThreadInfos() != null) {
+            int idx = 0;
+            for (com.heapdump.analyzer.model.ThreadInfo ti : result.getThreadInfos()) {
+                if (ti.isOom()) {
+                    oomCount++;
+                    if (oomSamples.size() < 3) {
+                        oomSamples.add(ti.getName() != null ? ti.getName() : ("Thread #" + idx));
+                        oomIndices.add(idx);
+                    }
+                    if (oomFirstType == null && ti.getOomType() != null) {
+                        oomFirstType = ti.getOomType();
+                    }
+                }
+                idx++;
+            }
+        }
+        model.addAttribute("oomThreadCount", oomCount);
+        model.addAttribute("oomThreadSamples", oomSamples);
+        model.addAttribute("oomThreadIndices", oomIndices);
+        model.addAttribute("oomFirstType", oomFirstType);
+
         model.addAttribute("hasOverviewZip", analyzerService.hasReportZip(filename, "overview"));
         model.addAttribute("hasTopComponentsZip", analyzerService.hasReportZip(filename, "top_components"));
         model.addAttribute("hasSuspectsZip", analyzerService.hasReportZip(filename, "suspects"));

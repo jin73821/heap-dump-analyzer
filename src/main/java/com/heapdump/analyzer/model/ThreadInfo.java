@@ -18,6 +18,8 @@ public class ThreadInfo {
     private boolean daemon;
     private String address;      // 0xc1299f88
     private String stackTrace;   // from .threads file
+    private boolean oom;         // stackTrace 에 java.lang.OutOfMemoryError 등장 여부
+    private String oomType;      // OOM 메시지 ("Java heap space" 등). 미보유 시 null
 
     public String getFormattedShallowHeap() { return String.format("%,d", shallowHeap); }
     public String getFormattedRetainedHeap() { return String.format("%,d", retainedHeap); }
