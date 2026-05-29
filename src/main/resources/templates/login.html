@@ -127,7 +127,7 @@
 
     <form th:action="@{/login}" method="post" id="loginForm">
         <div class="form-group">
-            <label class="form-label" for="username">사용자명</label>
+            <label class="form-label" for="username">사용자명(사번)</label>
             <input class="form-input" type="text" id="username" name="username"
                    placeholder="Username" autocomplete="username" autofocus required>
         </div>
@@ -138,7 +138,7 @@
         </div>
         <label class="form-remember">
             <input type="checkbox" id="rememberUsername">
-            <span>사용자명 저장</span>
+            <span>사용자명(사번) 저장</span>
         </label>
         <button class="login-btn" type="submit">로그인</button>
     </form>
@@ -148,7 +148,7 @@
     </div>
 </div>
 
-<div class="modal-ov" id="signupModal" onclick="if(event.target===this)closeSignupModal()">
+<div class="modal-ov" id="signupModal">
     <div class="modal-box">
         <div class="modal-ttl">계정 신청</div>
         <div class="modal-desc">관리자 승인 후 로그인하실 수 있습니다.</div>
@@ -156,9 +156,9 @@
         <div class="modal-msg" id="signupMsg"></div>
 
         <div class="modal-group">
-            <label class="modal-label" for="suUsername">사용자명 *</label>
+            <label class="modal-label" for="suUsername">사용자명(사번) *</label>
             <input class="modal-input" id="suUsername" autocomplete="off" maxlength="50" placeholder="영문/숫자 3~50자">
-            <div class="modal-hint">로그인 시 사용할 ID</div>
+            <div class="modal-hint">로그인 시 사용할 ID (사번)</div>
         </div>
         <div class="modal-group">
             <label class="modal-label" for="suPassword">비밀번호 *</label>
@@ -255,7 +255,7 @@ function submitSignup() {
     var displayName = (document.getElementById('suDisplayName').value || '').trim();
     var reason = (document.getElementById('suReason').value || '').trim();
 
-    if (!username) { showSignupMsg('사용자명을 입력하세요.', 'error'); return; }
+    if (!username) { showSignupMsg('사용자명(사번)을 입력하세요.', 'error'); return; }
     if (!password) { showSignupMsg('비밀번호를 입력하세요.', 'error'); return; }
     if (password !== passwordConfirm) { showSignupMsg('비밀번호 확인이 일치하지 않습니다.', 'error'); return; }
 

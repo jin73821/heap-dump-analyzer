@@ -207,8 +207,8 @@
     </div>
 </div>
 
-<!-- 비밀번호 변경 모달 -->
-<div class="modal-ov" id="pwModal" onclick="if(event.target===this)closePwModal()">
+<!-- 비밀번호 변경 모달 (외부 클릭으로 닫히지 않음 — 입력 실수 방지) -->
+<div class="modal-ov" id="pwModal">
     <div class="modal-box pw-modal-box">
         <h3>
             <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>

@@ -28,6 +28,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -346,5 +347,132 @@ public class HeapReportApiController {
                 "href\\s*=\\s*\"mat://[^\"]*\"",
                 "href=\"javascript:void(0)\" title=\"MAT desktop 전용 링크\" "
                         + "style=\"opacity:0.4;cursor:not-allowed\"");
+    }
+
+    // ── Dominator Tree 행 클릭 시점 lazy on-demand 참조 추출 ──────────────────
+    // path2gc  (incoming = GC root까지의 경로) + show_retained_set (outgoing = 보유 객체)
+    // 두 MAT 쿼리를 순차 실행. 인덱스(.index) 재사용으로 보통 4~8초.
+    @GetMapping(value = "/api/dominator-refs/{filename:.+}", produces = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> dominatorRefs(@PathVariable String filename,
+                                                              @RequestParam("address") String address) {
+        Map<String, Object> resp = new HashMap<>();
+        try {
+            String safe = FilenameValidator.validate(filename);
+            if (address == null || !address.matches("0x[0-9a-fA-F]+")) {
+                resp.put("error", "유효하지 않은 객체 주소");
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(resp);
+            }
+            HeapAnalysisResult cached = analyzerService.getCachedResult(safe);
+            if (cached == null) {
+                resp.put("error", "분석 결과 캐시 없음 — 재분석 필요");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(resp);
+            }
+
+            String base = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
+            File resultDir = analyzerService.resultDirectoryPublic(safe);
+            if (!resultDir.exists()) {
+                resp.put("error", "결과 디렉토리 없음");
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(resp);
+            }
+
+            // 원본 hprof를 resultDir에 (심볼릭 링크로) 두어 MAT가 .index 파일과 같이 발견하도록 함.
+            // 압축된 .gz 만 있는 경우 tmp/ 에 1회 압축 해제 후 캐시.
+            File hprofInResultDir = new File(resultDir, base + ".hprof");
+            boolean createdLink = false;
+            if (!hprofInResultDir.exists()) {
+                String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
+                File originalHprof = new File(dumpfiles, safe);
+                File tmpHprof = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
+                                          base + ".hprof");
+                File sourceHprof = null;
+                if (originalHprof.exists()) {
+                    sourceHprof = originalHprof;
+                } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
+                    sourceHprof = tmpHprof;
+                } else {
+                    File gzFile = new File(dumpfiles, safe + ".gz");
+                    if (gzFile.exists()) {
+                        // tmp/ 로 압축 해제 (1회, 이후 재사용)
+                        if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
+                        logger.info("[Dominator Refs] Decompressing {} → {} (1-time)",
+                                gzFile.getName(), tmpHprof.getName());
+                        try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
+                                java.nio.file.Files.newInputStream(gzFile.toPath()));
+                             java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
+                            byte[] buf = new byte[64 * 1024];
+                            int n;
+                            while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
+                        }
+                        sourceHprof = tmpHprof;
+                    } else {
+                        resp.put("error", "원본 hprof 파일을 찾을 수 없습니다");
+                        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(resp);
+                    }
+                }
+                try {
+                    java.nio.file.Files.createSymbolicLink(hprofInResultDir.toPath(), sourceHprof.toPath());
+                    createdLink = true;
+                } catch (IOException linkErr) {
+                    logger.warn("[Dominator Refs] symlink 실패, copy 로 폴백: {}", linkErr.getMessage());
+                    java.nio.file.Files.copy(sourceHprof.toPath(), hprofInResultDir.toPath());
+                    createdLink = true;
+                }
+            }
+
+            try {
+                long timeout = 90L;
+                File queryZip = new File(resultDir, base + "_Query.zip");
+                // 기존 dominator_tree Query.zip 백업 (재분석 없이 가능)
+                File backupZip = null;
+                if (queryZip.exists()) {
+                    backupZip = new File(resultDir, base + "_Query.dt.bak");
+                    java.nio.file.Files.move(queryZip.toPath(), backupZip.toPath(),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                try {
+                    // 1) Incoming: path to GC roots
+                    analyzerService.runMatSingleQuery(hprofInResultDir.getAbsolutePath(), resultDir,
+                            "path2gc " + address, timeout);
+                    List<com.heapdump.analyzer.model.DominatorRefEntry> incoming =
+                            queryZip.exists() ? analyzerService.getParser().parseRefZipPublic(queryZip, 50)
+                                              : Collections.emptyList();
+
+                    // 2) Outgoing: retained set
+                    if (queryZip.exists()) queryZip.delete();
+                    analyzerService.runMatSingleQuery(hprofInResultDir.getAbsolutePath(), resultDir,
+                            "show_retained_set " + address, timeout);
+                    List<com.heapdump.analyzer.model.DominatorRefEntry> outgoing =
+                            queryZip.exists() ? analyzerService.getParser().parseRefZipPublic(queryZip, 50)
+                                              : Collections.emptyList();
+
+                    if (queryZip.exists()) queryZip.delete();
+                    resp.put("address", address);
+                    resp.put("incoming", incoming);
+                    resp.put("outgoing", outgoing);
+                    return ResponseEntity.ok(resp);
+                } finally {
+                    // dominator_tree 원본 ZIP 복원
+                    if (backupZip != null && backupZip.exists()) {
+                        if (queryZip.exists()) queryZip.delete();
+                        java.nio.file.Files.move(backupZip.toPath(), queryZip.toPath(),
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+            } finally {
+                if (createdLink && hprofInResultDir.exists()) {
+                    try { java.nio.file.Files.delete(hprofInResultDir.toPath()); }
+                    catch (IOException ignore) {}
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            resp.put("error", e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(resp);
+        } catch (Exception e) {
+            logger.error("[Dominator Refs] 추출 실패 (filename={}, addr={}): {}",
+                    filename, address, e.getMessage(), e);
+            resp.put("error", "참조 추출 실패: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(resp);
+        }
     }
 }

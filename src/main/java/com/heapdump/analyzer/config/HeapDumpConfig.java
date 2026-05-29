@@ -87,6 +87,11 @@ public class HeapDumpConfig {
     @Value("${analysis.compress-after-analysis:true}")
     private boolean compressAfterAnalysis;
 
+    /** Dominator Tree Top 50 객체의 inbound/outbound 참조 사전 추출 여부 (2-pass MAT) */
+    @Value("${mat.dominator-refs.enabled:true}")
+    private boolean dominatorRefsEnabled;
+    public boolean isDominatorRefsEnabled() { return dominatorRefsEnabled; }
+
     /** SSH/SCP 로컬 실행 계정 (runuser 로 전환). 비어있으면 현재 프로세스 계정 */
     @Value("${remote.ssh.local-user:}")
     private String sshLocalUser;
