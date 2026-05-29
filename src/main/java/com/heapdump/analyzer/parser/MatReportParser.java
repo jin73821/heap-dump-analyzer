@@ -80,6 +80,13 @@ public class MatReportParser {
     private static final Pattern STACKTRACE_LOCALVARS_LINK_PATTERN = Pattern.compile(
             "<a\\s+href=\"(pages/[^\"]+\\.html)\"[^>]*>\\s*See\\s+stacktrace\\s+with\\s+involved\\s+local\\s+variables\\s*</a>",
             Pattern.CASE_INSENSITIVE);
+    // MAT Leak Suspects 의 Keywords 섹션: <p><strong>Keywords</strong></p><ul ...><li>FQCN</li>...</ul>
+    private static final Pattern KEYWORDS_BLOCK_PATTERN = Pattern.compile(
+            "<strong>\\s*Keywords\\s*</strong>\\s*</p>\\s*<ul[^>]*>(.*?)</ul>",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    private static final Pattern KEYWORD_LI_PATTERN = Pattern.compile(
+            "<li[^>]*>(.*?)</li>",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
     private static final Pattern ARROW_CHAR_PATTERN = Pattern.compile("[\u00BB\u203A\u2039\u00AB]");
     private static final Pattern ARROW_SPACE_PATTERN = Pattern.compile("\u00BB\\s*");
     private static final Pattern ONLY_OBJECT_PATTERN = Pattern.compile("(?i)\\bOnly\\s+object\\b.*");
@@ -298,7 +305,28 @@ public class MatReportParser {
                 keywords = Collections.singletonList("query");
                 break;
             default:
-                keywords = Collections.singletonList(reportType);
+                // inbounds_<addr> / outbounds_<addr> 패턴 처리 — 첫 실행 후 정확한 파일명 패턴 확정 필요
+                if (reportType.startsWith("inbounds_")) {
+                    String addr = reportType.substring("inbounds_".length()).toLowerCase();
+                    keywords = Arrays.asList(
+                            "list_with_inbounds_" + addr,
+                            "list_inbound_references_" + addr,
+                            "inbound_references_" + addr,
+                            "with_incoming_references_" + addr,
+                            "inbounds_" + addr,
+                            "inbound_" + addr);
+                } else if (reportType.startsWith("outbounds_")) {
+                    String addr = reportType.substring("outbounds_".length()).toLowerCase();
+                    keywords = Arrays.asList(
+                            "list_with_outbounds_" + addr,
+                            "list_outbound_references_" + addr,
+                            "outbound_references_" + addr,
+                            "with_outgoing_references_" + addr,
+                            "outbounds_" + addr,
+                            "outbound_" + addr);
+                } else {
+                    keywords = Collections.singletonList(reportType);
+                }
         }
 
         // 1) baseName 포함 + keyword 포함 파일 우선 탐색 (대소문자 무시)
@@ -979,7 +1007,10 @@ public class MatReportParser {
             String section = stripTags(rawSection);
             if (section.length() > 30) {
                 LeakSuspect suspect = new LeakSuspect("Suspect #" + idx, section.substring(0, Math.min(section.length(), 500)));
+                List<String> kws = extractKeywords(rawSection);
+                suspect.setKeywords(kws);
                 LeakSuspectAdvisor.analyze(suspect, section);
+                appendKeywordsToExplanation(suspect);
                 Matcher stm = STACKTRACE_LOCALVARS_LINK_PATTERN.matcher(rawSection);
                 if (stm.find()) {
                     suspect.setStacktraceLocalVarsPage(stm.group(1));
@@ -998,7 +1029,10 @@ public class MatReportParser {
             String plain = stripTags(html);
             if (plain.length() > 100) {
                 LeakSuspect suspect = new LeakSuspect("Leak Analysis", plain.substring(0, Math.min(plain.length(), 1000)));
+                List<String> kws = extractKeywords(html);
+                suspect.setKeywords(kws);
                 LeakSuspectAdvisor.analyze(suspect, plain);
+                appendKeywordsToExplanation(suspect);
                 suspects.add(suspect);
             }
         }
@@ -1006,6 +1040,36 @@ public class MatReportParser {
         result.setLeakSuspects(suspects);
         result.setSuspectsHtml(sanitizeHtml(html));
         logger.info("Parsed {} leak suspects", suspects.size());
+    }
+
+    /** MAT Leak Suspects section 의 <p><strong>Keywords</strong></p><ul><li>FQCN</li>...</ul> 추출. */
+    private List<String> extractKeywords(String rawHtml) {
+        List<String> result = new ArrayList<>();
+        if (rawHtml == null || rawHtml.isEmpty()) return result;
+        Matcher block = KEYWORDS_BLOCK_PATTERN.matcher(rawHtml);
+        while (block.find()) {
+            Matcher li = KEYWORD_LI_PATTERN.matcher(block.group(1));
+            while (li.find()) {
+                String kw = stripTags(li.group(1)).trim();
+                if (!kw.isEmpty() && !result.contains(kw)) {
+                    result.add(kw);
+                }
+            }
+        }
+        return result;
+    }
+
+    /** 추출된 keywords 가 있으면 explanation 끝에 "관련 키워드: A, B, C" 라인 한 줄 추가. */
+    private void appendKeywordsToExplanation(LeakSuspect s) {
+        List<String> kws = s.getKeywords();
+        if (kws == null || kws.isEmpty()) return;
+        String joined = String.join(", ", kws);
+        String existing = s.getExplanation();
+        if (existing == null || existing.isEmpty()) {
+            s.setExplanation("관련 키워드: " + joined);
+        } else if (!existing.contains("관련 키워드:")) {
+            s.setExplanation(existing + "\n\n관련 키워드: " + joined);
+        }
     }
 
     // ─── ZIP 내 HTML 추출 ────────────────────────────────────────────────────
@@ -1190,11 +1254,137 @@ public class MatReportParser {
             double pct = 0;
             try { pct = Double.parseDouble(pctStr); } catch (NumberFormatException ignored) {}
 
-            entries.add(new DominatorTreeEntry(className, objectAddress, shallowHeap, retainedHeap, pct));
+            entries.add(new DominatorTreeEntry(className, objectAddress, shallowHeap, retainedHeap, pct, null, null));
         }
 
         result.setDominatorTreeEntries(entries);
         logger.info("[Parser] Dominator tree parsed: {} entries from {}", entries.size(), zip.getName());
+    }
+
+    // ─── Dominator Tree Inbound/Outbound 참조 파싱 ─────────────────────────────
+
+    /**
+     * MAT inbounds/outbounds 쿼리 ZIP HTML에서 참조 객체 목록을 추출합니다.
+     * dominator_tree와 동일한 4-컬럼 구조 (className+addr / shallow / retained / pct) 사용.
+     */
+    public List<DominatorRefEntry> parseRefZipPublic(File zip, int cap) {
+        return parseRefZip(zip, cap);
+    }
+
+    private List<DominatorRefEntry> parseRefZip(File zip, int cap) {
+        List<DominatorRefEntry> refs = new ArrayList<>();
+        String html = extractFirstHtmlFromZip(zip);
+        if (html == null || html.isEmpty()) {
+            logger.warn("[Parser] No HTML extracted from ref ZIP: {}", zip.getName());
+            return refs;
+        }
+
+        Matcher rowM = TR_PATTERN.matcher(html);
+        while (rowM.find()) {
+            if (refs.size() >= cap) break;
+            String row = rowM.group(1);
+            if (row.contains("<th")) continue;
+
+            List<String> cells = new ArrayList<>();
+            Matcher cellM = TD_PATTERN.matcher(row);
+            while (cellM.find()) cells.add(cellM.group(1));
+            if (cells.size() < 3) continue;
+
+            String firstCellText = stripTags(cells.get(0)).trim();
+            if (firstCellText.startsWith("Total:")) continue;
+
+            String objectAddress = null;
+            Matcher addrM = DOM_TREE_ADDR_PATTERN.matcher(cells.get(0));
+            if (addrM.find()) objectAddress = addrM.group(1);
+
+            String rawName = stripTags(cells.get(0));
+            String className = extractCleanClassName(rawName);
+            if (className.startsWith("class ")) className = className.substring(6).trim();
+            className = className.replace("System Class", "").trim();
+            if (className.isEmpty()) continue;
+
+            long shallowHeap = 0L, retainedHeap = 0L;
+            if (cells.size() >= 2) {
+                String s = stripTags(cells.get(1)).trim();
+                shallowHeap = parseLong(COMMA_SPACE_PATTERN.matcher(s).replaceAll(""));
+            }
+            if (cells.size() >= 3) {
+                String s = stripTags(cells.get(2)).trim();
+                retainedHeap = parseLong(COMMA_SPACE_PATTERN.matcher(s).replaceAll(""));
+            }
+
+            refs.add(new DominatorRefEntry(className, objectAddress, shallowHeap, retainedHeap));
+        }
+        return refs;
+    }
+
+    /**
+     * ZIP 내부의 첫 번째 HTML 페이지 추출 (페이지명을 모를 때 사용).
+     * MAT inbound/outbound 리포트는 페이지명이 객체 주소 기반이라 사전 예측 불가.
+     */
+    private String extractFirstHtmlFromZip(File zip) {
+        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(zip)) {
+            String fallbackIndex = null;
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+            while (en.hasMoreElements()) {
+                java.util.zip.ZipEntry e = en.nextElement();
+                String name = e.getName().toLowerCase();
+                if (name.endsWith("/index.html") || name.equals("index.html")) {
+                    fallbackIndex = e.getName();
+                }
+                if (name.endsWith(".html") && name.contains("pages/")) {
+                    try (java.io.InputStream in = zf.getInputStream(e)) {
+                        return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                    }
+                }
+            }
+            if (fallbackIndex != null) {
+                java.util.zip.ZipEntry e = zf.getEntry(fallbackIndex);
+                try (java.io.InputStream in = zf.getInputStream(e)) {
+                    return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("[Parser] Failed to read ref ZIP {}: {}", zip.getName(), e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * Top N dominator entry에 대해 inbound/outbound 참조 ZIP을 매칭하여 채운다.
+     */
+    public void parseDominatorReferences(String heapDumpDir, String dumpBaseName,
+                                          MatParseResult result, int topN, int capPerList) {
+        List<DominatorTreeEntry> dt = result.getDominatorTreeEntries();
+        if (dt == null || dt.isEmpty()) return;
+        int n = Math.min(topN, dt.size());
+        int populated = 0;
+        for (int i = 0; i < n; i++) {
+            DominatorTreeEntry e = dt.get(i);
+            if (e.getObjectAddress() == null) continue;
+            String addr = e.getObjectAddress();
+            File inZip  = findZip(heapDumpDir, dumpBaseName, "inbounds_" + addr);
+            File outZip = findZip(heapDumpDir, dumpBaseName, "outbounds_" + addr);
+            if (inZip != null) {
+                e.setIncomingRefs(parseRefZip(inZip, capPerList));
+            }
+            if (outZip != null) {
+                e.setOutgoingRefs(parseRefZip(outZip, capPerList));
+            }
+            if ((e.getIncomingRefs() != null && !e.getIncomingRefs().isEmpty())
+                    || (e.getOutgoingRefs() != null && !e.getOutgoingRefs().isEmpty())) {
+                populated++;
+            }
+        }
+        logger.info("[Parser] Dominator refs parsed for {} / {} top entries", populated, n);
+    }
+
+    /**
+     * 캐시 복원 시점에 ZIP이 디스크에 남아 있으면 ref 데이터도 재추출.
+     */
+    public void reparseDominatorReferences(String heapDumpDir, String dumpBaseName,
+                                            MatParseResult result, int topN, int capPerList) {
+        parseDominatorReferences(heapDumpDir, dumpBaseName, result, topN, capPerList);
     }
 
     // ─── Histogram 파싱 ─────────────────────────────────────────────────────────
