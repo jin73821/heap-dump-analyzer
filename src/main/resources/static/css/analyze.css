@@ -208,6 +208,44 @@
         .pct-bar-fill { height:100%; border-radius:9px; transition:width .8s ease; min-width:2px; }
         .pct-bar-text { font-size:11px; font-weight:700; font-family:var(--mono); color:var(--text); width:48px; text-align:right; }
 
+        /* ── Dominator Tree disclosure (Top 50 incoming/outgoing refs) ── */
+        .dom-chevron {
+            display:inline-block; font-size:10px; color:#9CA3AF; user-select:none;
+            transition:transform .15s ease;
+        }
+        .dom-row.dom-open .dom-chevron { transform:rotate(90deg); color:var(--primary); }
+        .dom-row.dom-open { background:#F8FAFC; }
+        .dom-detail-row td { background:#FAFBFC; padding:14px 18px; border-top:1px dashed #E5E7EB; }
+        .dom-refs-wrap { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+        .dom-refs-section h4 {
+            font-size:11px; margin:0 0 8px; color:#6B7280;
+            text-transform:uppercase; letter-spacing:.6px; font-weight:700;
+        }
+        .dom-refs-tbl { width:100%; font-size:12px; border-collapse:collapse; background:#fff;
+                        border:1px solid #E5E7EB; border-radius:6px; overflow:hidden; }
+        .dom-refs-tbl th { text-align:left; background:#F3F4F6; padding:6px 8px;
+                           font-weight:600; color:#6B7280; font-size:11px; border-bottom:1px solid #E5E7EB; }
+        .dom-refs-tbl td { padding:6px 8px; border-bottom:1px solid #F3F4F6; vertical-align:top; }
+        .dom-refs-tbl tr:last-child td { border-bottom:none; }
+        .dom-refs-tbl td.dom-refs-num { text-align:right; font-family:var(--mono); color:#374151; white-space:nowrap; }
+        .dom-refs-tbl code { font-family:var(--mono); font-size:11px; color:#9CA3AF; }
+        .dom-refs-empty { padding:10px; color:#9CA3AF; font-size:12px; font-style:italic; text-align:center;
+                          background:#fff; border:1px dashed #E5E7EB; border-radius:6px; }
+        .dom-refs-loading { padding:14px; color:#6B7280; font-size:13px; text-align:center;
+                            background:#fff; border:1px dashed #E5E7EB; border-radius:6px; }
+        .dom-refs-error { padding:14px; color:#B91C1C; font-size:13px; text-align:center;
+                          background:#FEF2F2; border:1px solid #FECACA; border-radius:6px; }
+        .dom-spinner {
+            display:inline-block; width:14px; height:14px;
+            border:2px solid #D1D5DB; border-top-color:var(--primary);
+            border-radius:50%; animation:dom-spin 0.8s linear infinite;
+            vertical-align:-3px; margin-right:4px;
+        }
+        @keyframes dom-spin { to { transform: rotate(360deg); } }
+        @media (max-width: 900px) {
+            .dom-refs-wrap { grid-template-columns:1fr; }
+        }
+
         /* ── Leak Suspects ────────────────────────── */
         .suspect-list { display:flex; flex-direction:column; gap:14px; }
         .suspect-item {
@@ -248,6 +286,23 @@
         }
         .suspect-explanation-title {
             font-weight:700; margin-bottom:6px; font-size:12px; color:#1e3a8a;
+        }
+        .suspect-explanation-body {
+            margin:0;
+        }
+        .suspect-keywords {
+            margin-top:10px; padding-top:10px; border-top:1px dashed #bfdbfe;
+            display:flex; flex-wrap:wrap; gap:6px; align-items:center;
+        }
+        .suspect-keywords-label {
+            font-size:11px; font-weight:700; color:#1e3a8a;
+            text-transform:uppercase; letter-spacing:.04em; margin-right:4px;
+        }
+        .suspect-kw-chip {
+            display:inline-block; padding:3px 9px; border-radius:6px;
+            background:#dbeafe; color:#1e3a8a; border:1px solid #bfdbfe;
+            font-family:var(--mono); font-size:11.5px; line-height:1.5;
+            word-break:break-all;
         }
         .suspect-advice {
             background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px;
@@ -735,4 +790,40 @@
             .app-header .header-logo { width:26px; height:26px; }
             .app-header .logo { font-size:13px; }
             .app-header .btn-sm { font-size:10px; padding:4px 6px; }
+        }
+
+        /* ── Thread Overview OOM 감지 ─────────────────────── */
+        .oom-banner {
+            background: var(--danger-light); border:1px solid #fecaca; border-radius:8px;
+            padding:12px 16px; margin-bottom:14px; color:#991b1b;
+            font-size:13px; line-height:1.7;
+            display:flex; flex-wrap:wrap; align-items:center; gap:6px;
+        }
+        .oom-banner-icon { font-size:15px; color:var(--danger); }
+        .oom-banner-type { font-family:var(--mono); font-size:12px; color:#7f1d1d; }
+        .oom-banner-sep { margin:0 4px; color:#fca5a5; }
+        .oom-banner-more { font-size:11.5px; color:#7f1d1d; }
+        .oom-link {
+            display:inline-block; padding:2px 8px;
+            background:#fee2e2; border:1px solid #fecaca; border-radius:5px;
+            font-family:var(--mono); font-size:11.5px; color:#991b1b;
+            cursor:pointer; text-decoration:none;
+        }
+        .oom-link:hover { background:#fecaca; }
+        .thread-row.oom {
+            background: var(--danger-light);
+            box-shadow: inset 3px 0 0 var(--danger);
+        }
+        .thread-row.oom:hover { background:#fde8e8; }
+        .oom-badge {
+            display:inline-block; color:var(--danger);
+            font-size:13px; line-height:1;
+        }
+        @keyframes oomFlash {
+            0%, 100% { background: var(--danger-light); }
+            50% { background:#fecaca; }
+        }
+        .thread-row.oom-flash {
+            animation: oomFlash .4s ease-in-out 3;
+            outline:2px solid var(--danger); outline-offset:-2px;
         }

@@ -137,6 +137,18 @@ public class HeapAiApiController {
             logger.warn("[AI-Insight] 분석 요청 경고 — 프롬프트 데이터 부족 (file={}, len={})", filename, prompt.length());
         }
 
+        // OOM 감지 시 prompt 헤더 직후, 첫 '== ... ==' 섹션 직전에 OOM 블록 splice (마지막 JSON 스키마 지시문은 그대로 prompt 끝에 유지)
+        String oomSection = analyzerService.buildOomPromptSection(filename);
+        if (!oomSection.isEmpty()) {
+            int firstSection = prompt.indexOf("\n== ");
+            if (firstSection > 0) {
+                prompt = prompt.substring(0, firstSection) + "\n\n" + oomSection + prompt.substring(firstSection);
+            } else {
+                prompt = prompt + "\n\n" + oomSection;
+            }
+            logger.info("[AI-Insight] OOM context injected: {} char(s)", oomSection.length());
+        }
+
         logger.info("[AI-Insight][REQ] 분석 요청 수신 — file='{}', promptLen={} chars, save={}, provider={}",
             filename, prompt.length(), save, analyzerService.getLlmProvider());
 
@@ -439,6 +451,11 @@ public class HeapAiApiController {
             String ragContext = ragService.fetchContextForLlm(lastMsg.get("content"));
             if (!ragContext.isEmpty()) systemPrompt += ragContext;
         }
+        String oomChatSection = analyzerService.buildOomPromptSection(filename);
+        if (!oomChatSection.isEmpty()) {
+            systemPrompt += "\n\n" + oomChatSection;
+            logger.info("[AI-Chat] OOM context injected: {} char(s)", oomChatSection.length());
+        }
 
         Map<String, Object> result = analyzerService.callLlmChat(messages, systemPrompt);
 
@@ -483,6 +500,11 @@ public class HeapAiApiController {
         if (lastStreamMsg != null && "user".equals(lastStreamMsg.get("role"))) {
             String ragContext = ragService.fetchContextForLlm(lastStreamMsg.get("content"));
             if (!ragContext.isEmpty()) systemPrompt += ragContext;
+        }
+        String oomStreamSection = analyzerService.buildOomPromptSection(filename);
+        if (!oomStreamSection.isEmpty()) {
+            systemPrompt += "\n\n" + oomStreamSection;
+            logger.info("[AI-Chat-Stream] OOM context injected: {} char(s)", oomStreamSection.length());
         }
 
         final String finalSystemPrompt = systemPrompt;

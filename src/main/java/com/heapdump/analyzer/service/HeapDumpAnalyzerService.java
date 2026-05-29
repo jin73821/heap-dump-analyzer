@@ -81,6 +81,7 @@ public class HeapDumpAnalyzerService {
     private static final String SETTINGS_FILE = "settings.json";
     private volatile boolean keepUnreachableObjects;
     private volatile boolean compressAfterAnalysis;
+    private volatile boolean dominatorRefsEnabled;
 
     // 업로드 최대 파일 크기 (bytes). 기본 5 GB. 최대 50 GB.
     public  static final long MAX_UPLOAD_LIMIT_BYTES = 50L * 1024 * 1024 * 1024;
@@ -118,6 +119,7 @@ public class HeapDumpAnalyzerService {
         this.aiInsight = aiInsight;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
         this.compressAfterAnalysis = config.isCompressAfterAnalysis();
+        this.dominatorRefsEnabled = config.isDominatorRefsEnabled();
         // application.properties 의 spring.servlet.multipart.max-file-size 초기값 채택
         // (settings.json 로 덮어쓸 수 있음)
         try {
@@ -491,6 +493,28 @@ public class HeapDumpAnalyzerService {
         }
     }
 
+    private void reparseDominatorReferences(HeapAnalysisResult r) {
+        if (r.getFilename() == null) return;
+        if (r.getDominatorTreeEntries() == null || r.getDominatorTreeEntries().isEmpty()) return;
+        // 이미 ref 가 채워져 있으면 스킵
+        boolean alreadyPopulated = r.getDominatorTreeEntries().stream()
+                .limit(50)
+                .anyMatch(d -> (d.getIncomingRefs() != null && !d.getIncomingRefs().isEmpty())
+                            || (d.getOutgoingRefs() != null && !d.getOutgoingRefs().isEmpty()));
+        if (alreadyPopulated) return;
+
+        String baseName = stripExtension(r.getFilename());
+        File resultDir = resultDirectory(r.getFilename());
+        if (!resultDir.exists()) return;
+        try {
+            MatParseResult tmp = new MatParseResult();
+            tmp.setDominatorTreeEntries(r.getDominatorTreeEntries());
+            parser.reparseDominatorReferences(resultDir.getAbsolutePath(), baseName, tmp, 50, 50);
+        } catch (Exception e) {
+            logger.debug("Could not re-extract dominator refs for {}: {}", r.getFilename(), e.getMessage());
+        }
+    }
+
     /**
      * 기존 캐시에 componentDetailHtmlMap이 없을 때 ZIP에서 재추출.
      */
@@ -661,6 +685,40 @@ public class HeapDumpAnalyzerService {
             }
         }
         logger.debug("Matched {} thread stack traces out of {} threads", matched, r.getThreadInfos().size());
+        detectOomInThreads(r.getThreadInfos());
+    }
+
+    private static final java.util.regex.Pattern OOM_PATTERN =
+            java.util.regex.Pattern.compile("java\\.lang\\.OutOfMemoryError(?::\\s*([^\\r\\n]+))?");
+
+    /**
+     * 각 ThreadInfo 의 stackTrace 에 java.lang.OutOfMemoryError 가 등장하면 oom=true 로 표시하고,
+     * 메시지(예: "Java heap space") 가 있으면 oomType 에 저장한다. 매번 idempotent.
+     */
+    private void detectOomInThreads(java.util.List<com.heapdump.analyzer.model.ThreadInfo> threads) {
+        if (threads == null || threads.isEmpty()) return;
+        int oomCount = 0;
+        for (com.heapdump.analyzer.model.ThreadInfo ti : threads) {
+            String stack = ti.getStackTrace();
+            if (stack == null || stack.isEmpty()) {
+                ti.setOom(false);
+                ti.setOomType(null);
+                continue;
+            }
+            java.util.regex.Matcher m = OOM_PATTERN.matcher(stack);
+            if (m.find()) {
+                ti.setOom(true);
+                String msg = m.group(1);
+                ti.setOomType(msg != null ? msg.trim() : null);
+                oomCount++;
+            } else {
+                ti.setOom(false);
+                ti.setOomType(null);
+            }
+        }
+        if (oomCount > 0) {
+            logger.info("[OOM] Detected OutOfMemoryError in {} thread(s)", oomCount);
+        }
     }
 
     /**
@@ -718,6 +776,13 @@ public class HeapDumpAnalyzerService {
     public void    setCompressAfterAnalysis(boolean v) {
         this.compressAfterAnalysis = v;
         logger.info("compress_after_analysis set to {}", v);
+        persistSettings();
+    }
+
+    public boolean isDominatorRefsEnabled()       { return dominatorRefsEnabled; }
+    public void    setDominatorRefsEnabled(boolean v) {
+        this.dominatorRefsEnabled = v;
+        logger.info("mat.dominator-refs.enabled set to {}", v);
         persistSettings();
     }
 
@@ -801,6 +866,16 @@ public class HeapDumpAnalyzerService {
                 logger.info("[Settings] Restored compressAfterAnalysis={}", compressAfterAnalysis);
             }
 
+            if (saved.containsKey("dominatorRefsEnabled")) {
+                Object val = saved.get("dominatorRefsEnabled");
+                if (val instanceof Boolean) {
+                    this.dominatorRefsEnabled = (Boolean) val;
+                } else {
+                    this.dominatorRefsEnabled = Boolean.parseBoolean(String.valueOf(val));
+                }
+                logger.info("[Settings] Restored dominatorRefsEnabled={}", dominatorRefsEnabled);
+            }
+
             if (saved.containsKey("allowAllExtensions")) {
                 Object val = saved.get("allowAllExtensions");
                 if (val instanceof Boolean) {
@@ -877,6 +952,7 @@ public class HeapDumpAnalyzerService {
             Map<String, Object> settings = new LinkedHashMap<>();
             settings.put("keepUnreachableObjects", keepUnreachableObjects);
             settings.put("compressAfterAnalysis", compressAfterAnalysis);
+            settings.put("dominatorRefsEnabled", dominatorRefsEnabled);
             settings.put("maxUploadSizeBytes", maxUploadSizeBytes);
             settings.put("allowAllExtensions", allowAllExtensions);
             // LLM/RAG 설정 — 각 ConfigService 에 위임
@@ -908,6 +984,7 @@ public class HeapDumpAnalyzerService {
             Map<String, String> updates = new LinkedHashMap<>();
             updates.put("mat.keep.unreachable.objects", String.valueOf(keepUnreachableObjects));
             updates.put("analysis.compress-after-analysis", String.valueOf(compressAfterAnalysis));
+            updates.put("mat.dominator-refs.enabled", String.valueOf(dominatorRefsEnabled));
             String multipartSize = formatBytesAsSpringSize(maxUploadSizeBytes);
             updates.put("spring.servlet.multipart.max-file-size", multipartSize);
             updates.put("spring.servlet.multipart.max-request-size", multipartSize);
@@ -1136,6 +1213,22 @@ public class HeapDumpAnalyzerService {
                                    java.util.function.BiConsumer<String, Long> onDone,
                                    java.util.function.BiConsumer<String, String> onError) {
         llmConfig.callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError);
+    }
+
+    /**
+     * LLM 호출 시 prompt 에 합칠 OOM 컨텍스트 블록을 반환.
+     * cached HeapAnalysisResult 의 ThreadInfo 목록에서 oom=true 인 스레드를 집계한다.
+     * - OOM 미감지 / filename 누락 / result 미존재 시 빈 문자열 반환 → 호출자가 합치지 않음.
+     */
+    public String buildOomPromptSection(String filename) {
+        if (filename == null || filename.isEmpty()) return "";
+        try {
+            HeapAnalysisResult r = getCachedResult(filename);
+            return r != null ? r.getOomContextSummary() : "";
+        } catch (Exception e) {
+            logger.debug("[OOM] buildOomPromptSection failed for {}: {}", filename, e.getMessage());
+            return "";
+        }
     }
 
     // ── MAT JVM 힙 메모리 설정 ───────────────────────────────────
@@ -1816,6 +1909,59 @@ public class HeapDumpAnalyzerService {
         return matOutput;
     }
 
+    /**
+     * 단일 MAT 쿼리를 실행해 `<base>_Query.zip` 을 생성한다 (lazy on-demand 용).
+     *
+     * MAT batch CLI 가 단일 invocation 내 다중 `org.eclipse.mat.api:query` 보고서를
+     * 동일 파일명 (`<base>_Query.zip`) 으로 덮어쓰는 제약 때문에, top 50 사전 추출은
+     * 비현실적 → 클릭 시점 endpoint 가 1 회 호출 당 1 쿼리만 실행.
+     *
+     * 인덱스(.index) 파일이 dataDir 에 이미 있고 hprof 도 같이 있으면 MAT 는
+     * 재파싱 없이 곧바로 쿼리 실행 → 보통 2~5s.
+     */
+    public String runMatSingleQuery(String dumpPath, File workDir, String queryWithArgs, long timeoutSeconds)
+            throws IOException, InterruptedException {
+        List<String> cmd = new ArrayList<>();
+        cmd.add("sh");
+        cmd.add(config.getMatCliPath());
+        cmd.add(dumpPath);
+        if (keepUnreachableObjects) cmd.add("-keep_unreachable_objects");
+        cmd.add("-command=" + queryWithArgs);
+        cmd.add("org.eclipse.mat.api:query");
+        logger.info("[MAT Lazy] Query: {} (workDir={})", queryWithArgs, workDir.getName());
+
+        ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.environment().put("MALLOC_ARENA_MAX", "2");
+        pb.directory(workDir);
+        pb.redirectErrorStream(true);
+
+        Process process = pb.start();
+        StringBuilder output = new StringBuilder();
+        Thread reader = new Thread(() -> {
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = br.readLine()) != null) {
+                    output.append(line).append('\n');
+                }
+            } catch (IOException ignored) {}
+        }, "mat-lazy-reader");
+        reader.setDaemon(true);
+        reader.start();
+
+        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        reader.join(1000);
+
+        if (!finished) {
+            process.destroyForcibly();
+            throw new RuntimeException("MAT 쿼리 타임아웃 (" + timeoutSeconds + "s): " + queryWithArgs);
+        }
+        int exitCode = process.exitValue();
+        if (exitCode != 0) {
+            logger.warn("[MAT Lazy] Query exited with code {} for '{}'", exitCode, queryWithArgs);
+        }
+        return output.toString();
+    }
+
     // ── DB 저장 ───────────────────────────────────────────────────
 
     public void saveAnalysisToDb(HeapAnalysisResult result) {
@@ -1841,8 +1987,12 @@ public class HeapDumpAnalyzerService {
 
     public void saveAnalysisToDb(HeapAnalysisResult result, Long serverId, String serverName, String uploadedBy) {
         try {
-            AnalysisHistoryEntity entity = analysisHistoryRepository.findByFilename(result.getFilename())
-                    .orElse(new AnalysisHistoryEntity());
+            AnalysisHistoryEntity existing = analysisHistoryRepository.findByFilename(result.getFilename()).orElse(null);
+            AnalysisHistoryEntity entity = existing != null ? existing : new AnalysisHistoryEntity();
+            // 재분석 식별: 기존 SUCCESS 레코드가 있고 analyzed_at 이 이미 채워져 있으면 보존
+            boolean preserveAnalyzedAt = existing != null
+                    && "SUCCESS".equals(existing.getStatus())
+                    && existing.getAnalyzedAt() != null;
             entity.setFilename(result.getFilename());
             entity.setStatus(result.getAnalysisStatus() != null ? result.getAnalysisStatus().name() : "ERROR");
             entity.setFileSize(result.getFileSize());
@@ -1860,7 +2010,9 @@ public class HeapDumpAnalyzerService {
             if (serverId != null) entity.setServerId(serverId);
             if (serverName != null) entity.setServerName(serverName);
             if (uploadedBy != null) entity.setUploadedBy(uploadedBy);
-            entity.setAnalyzedAt(java.time.LocalDateTime.now());
+            if (!preserveAnalyzedAt) {
+                entity.setAnalyzedAt(java.time.LocalDateTime.now());
+            }
             analysisHistoryRepository.save(entity);
             logger.info("[DB] Analysis history saved for: {}", result.getFilename());
         } catch (Exception e) {
@@ -1996,6 +2148,10 @@ public class HeapDumpAnalyzerService {
     }
 
     // ── 경로 / 유틸리티 ──────────────────────────────────────────
+
+    public File resultDirectoryPublic(String filename) {
+        return fileMgmt.resultDirectory(filename);
+    }
 
     private File resultDirectory(String filename) {
         return fileMgmt.resultDirectory(filename);

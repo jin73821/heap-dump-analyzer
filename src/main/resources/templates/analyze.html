@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-05-19">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-05-29b">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -690,7 +690,11 @@ function loadFullErrorLog() {
                             <p class="suspect-desc" th:text="${s.description}">-</p>
                             <div th:if="${s.explanation != null}" class="suspect-explanation">
                                 <div class="suspect-explanation-title">&#128269; 분석 설명</div>
-                                <span th:text="${s.explanation}"></span>
+                                <p class="suspect-explanation-body" th:text="${s.explanationBody}"></p>
+                                <div th:if="${s.keywords != null and !#lists.isEmpty(s.keywords)}" class="suspect-keywords">
+                                    <span class="suspect-keywords-label">관련 키워드</span>
+                                    <span th:each="kw : ${s.keywords}" class="suspect-kw-chip" th:text="${kw}"></span>
+                                </div>
                             </div>
                             <div th:if="${s.advice != null}" class="suspect-advice">
                                 <div class="suspect-advice-title">&#9889; 권장 조치</div>
@@ -748,6 +752,7 @@ function loadFullErrorLog() {
                 <table class="data-table" id="domTreeTable">
                     <thead>
                         <tr>
+                            <th style="width:32px;text-align:center"></th>
                             <th style="width:50px;text-align:center">#</th>
                             <th>Class Name</th>
                             <th style="width:120px;text-align:right">Shallow Heap</th>
@@ -756,15 +761,25 @@ function loadFullErrorLog() {
                         </tr>
                     </thead>
                     <tbody>
-                        <tr th:each="d,s : ${result.dominatorTreeEntries}"
+                        <tr class="dom-row" th:each="d,s : ${result.dominatorTreeEntries}"
                             th:data-class="${d.className}"
                             th:data-address="${d.objectAddress}"
                             th:data-retained="${d.retainedHeap}"
                             th:data-shallow="${d.shallowHeap}"
-                            onclick="showComponentDetail(this.dataset['class'])"
-                            style="cursor:pointer" title="클릭하여 상세 보기">
+                            th:data-idx="${s.index}"
+                            onclick="domRowClick(this)"
+                            style="cursor:pointer"
+                            th:title="${s.index &lt; 50} ? 'inbound/outbound 참조 펼치기' : '클릭하여 상세 보기'">
+                            <td style="text-align:center;color:#9CA3AF">
+                                <span th:if="${s.index &lt; 50}" class="dom-chevron">&#9654;</span>
+                            </td>
                             <td style="text-align:center"><span class="rank-num" th:text="${s.count}">1</span></td>
-                            <td><div class="class-name-cell" th:text="${d.className}">-</div></td>
+                            <td>
+                                <div class="class-name-cell" th:text="${d.className}"
+                                     th:title="${d.objectAddress}"
+                                     onclick="event.stopPropagation();showComponentDetail(this.parentNode.parentNode.dataset['class'])"
+                                     style="cursor:pointer">-</div>
+                            </td>
                             <td style="text-align:right;font-family:var(--mono);font-size:12px"
                                 th:title="${#numbers.formatInteger(d.shallowHeap, 1, 'COMMA') + ' bytes'}"
                                 th:text="${d.shallowHeapHuman}">0</td>
@@ -823,6 +838,18 @@ function loadFullErrorLog() {
     <div id="panel-threads" class="panel" th:if="${hasThreadOverview}">
         <div class="card">
             <div class="card-title"><span class="card-icon">&#128279;</span> Thread Overview</div>
+            <div th:if="${oomThreadCount > 0}" class="oom-banner">
+                <span class="oom-banner-icon">&#9888;</span>
+                <span><strong>OutOfMemoryError</strong> 감지: <strong th:text="${oomThreadCount}">0</strong>개 스레드</span>
+                <span th:if="${oomFirstType != null}" class="oom-banner-type" th:text="'(' + ${oomFirstType} + ')'">(Java heap space)</span>
+                <span class="oom-banner-sep">&middot;</span>
+                <a th:each="name,it : ${oomThreadSamples}" class="oom-link"
+                   th:data-idx="${oomThreadIndices[it.index]}"
+                   onclick="scrollToOomThread(this.dataset.idx)"
+                   th:text="${name}">thread-name</a>
+                <span th:if="${oomThreadCount > 3}" class="oom-banner-more"
+                      th:text="'+' + ${oomThreadCount - 3} + ' more'">+ N more</span>
+            </div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                 <p style="font-size:13px;color:var(--text-secondary);margin:0">
                     <strong th:text="${threadCount}">62</strong> threads found in heap dump
@@ -843,12 +870,13 @@ function loadFullErrorLog() {
                         </tr>
                     </thead>
                     <tbody>
-                        <tr th:each="t,s : ${threadInfos}" class="thread-row" style="cursor:pointer"
+                        <tr th:each="t,s : ${threadInfos}" class="thread-row" th:classappend="${t.oom} ? 'oom'" style="cursor:pointer"
                             th:data-idx="${s.index}" onclick="toggleThreadDetail(this)">
                             <td style="text-align:center"><span class="rank-num" th:text="${s.count}">1</span></td>
                             <td>
                                 <div style="display:flex;align-items:center;gap:6px">
                                     <span class="thread-chevron" style="font-size:10px;color:var(--text-secondary);transition:transform .2s">&#9654;</span>
+                                    <span th:if="${t.oom}" class="oom-badge" th:title="${t.oomType != null ? 'OOM: ' + t.oomType : 'OutOfMemoryError detected'}">&#9888;</span>
                                     <span style="font-weight:600" th:text="${t.name}">-</span>
                                 </div>
                             </td>
@@ -1130,7 +1158,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-05-25"></script>
+<script src="/js/analyze.js?v=2026-05-29b"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

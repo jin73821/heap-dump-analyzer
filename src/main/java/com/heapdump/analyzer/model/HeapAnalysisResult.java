@@ -98,6 +98,57 @@ public class HeapAnalysisResult {
         return leakSuspects != null && !leakSuspects.isEmpty();
     }
 
+    // ── OOM 요약 (transient, threadInfos 파생) ─────────
+    @JsonIgnore
+    public int getOomThreadCount() {
+        if (threadInfos == null || threadInfos.isEmpty()) return 0;
+        int n = 0;
+        for (ThreadInfo ti : threadInfos) if (ti != null && ti.isOom()) n++;
+        return n;
+    }
+
+    @JsonIgnore
+    public String getOomFirstType() {
+        if (threadInfos == null || threadInfos.isEmpty()) return null;
+        for (ThreadInfo ti : threadInfos) {
+            if (ti != null && ti.isOom() && ti.getOomType() != null && !ti.getOomType().isEmpty()) {
+                return ti.getOomType();
+            }
+        }
+        return null;
+    }
+
+    @JsonIgnore
+    public List<String> getOomThreadNames(int limit) {
+        List<String> out = new ArrayList<>();
+        if (threadInfos == null || limit <= 0) return out;
+        for (ThreadInfo ti : threadInfos) {
+            if (ti != null && ti.isOom() && ti.getName() != null) {
+                out.add(ti.getName());
+                if (out.size() >= limit) break;
+            }
+        }
+        return out;
+    }
+
+    /** LLM prompt 용 OOM 컨텍스트 블록. count==0 이면 "" 반환 (호출자 isEmpty 가드). */
+    @JsonIgnore
+    public String getOomContextSummary() {
+        int count = getOomThreadCount();
+        if (count == 0) return "";
+        String firstType = getOomFirstType();
+        int shown = Math.min(count, 5);
+        List<String> names = getOomThreadNames(shown);
+        StringBuilder sb = new StringBuilder();
+        sb.append("== OutOfMemoryError 감지 ==\n");
+        sb.append("감지된 스레드: ").append(count).append("개");
+        if (firstType != null) sb.append(" (").append(firstType).append(")");
+        sb.append('\n');
+        for (String n : names) sb.append("- ").append(n).append('\n');
+        if (count > names.size()) sb.append("(외 ").append(count - names.size()).append("개)\n");
+        return sb.toString();
+    }
+
     private String formatBytes(long bytes) {
         return com.heapdump.analyzer.util.FormatUtils.formatBytes(bytes);
     }

@@ -1,5 +1,167 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-29] OOM 감지 → AI 인사이트/채팅 LLM 컨텍스트 자동 주입
+
+**배경:** 직전 변경으로 `ThreadInfo.oom`/`oomType` 로 OOM 스레드를 감지·표시했지만 LLM 호출 (분석 인사이트, 분석 페이지 채팅) prompt 에는 OOM 정보가 들어가지 않아 진단 품질에 한계. heap vs metaspace OOM 처방이 다르고 OOM 을 던진 스레드 컨텍스트가 누수 원인 추론의 핵심 단서이므로 자동 주입 필요.
+
+**구현:**
+- `model/HeapAnalysisResult.java` — `@JsonIgnore` transient getter 4개 추가: `getOomThreadCount()`, `getOomFirstType()`, `getOomThreadNames(int limit)`, `getOomContextSummary()`. 모두 `threadInfos` 1회 stream 집계. `getOomContextSummary()` 가 LLM prompt 용 텍스트 블록 (`== OutOfMemoryError 감지 ==\n감지된 스레드: N개 (Java heap space)\n- name1\n- name2\n...(외 M개)\n`) 을 반환하고 count==0 이면 `""` 반환 (단일 소스 진실).
+- `service/HeapDumpAnalyzerService.java` — `public String buildOomPromptSection(String filename)` 헬퍼 추가. `getCachedResult(filename)` (cache + disk 복원 자동) 활용해 `r.getOomContextSummary()` 반환. filename 누락 / result 미존재 / OOM 0 케이스 모두 `""` 반환.
+- `controller/HeapAiApiController.java` 3 곳 보강 (각 1줄):
+  - `analyzeLlm` (라인 121-188) — `callLlmAnalysis()` 호출 직전 prompt 의 첫 `\n== ` 위치 직전에 OOM 섹션 splice. 폴백: 첫 `==` 없으면 끝에 append. 마지막 JSON 스키마 지시문이 prompt 끝에 그대로 남아 "JSON 응답" framing 보존.
+  - `aiChat` (라인 414-454) — RAG 주입 직후 `systemPrompt += "\n\n" + oomChatSection` (RAG 와 같은 자리에 한 줄).
+  - `aiChatStream` (라인 457-543) — 동일 패턴.
+- `controller/AiChatController.java` `streamChat` (라인 305-467) — RAG 주입 직후 `opt.get().getFilename()` 으로 세션에 바인딩된 분석 파일명을 가져와 동일 패턴으로 systemPrompt 에 append.
+- 모든 호출 지점에 `isEmpty()` 가드 → OOM 0 케이스에선 systemPrompt 변경 없음. **"감지된 스레드: 0개" 같은 잘못된 단정 정보가 LLM 에 전달되지 않음**.
+
+**검증 (jeus_admin.hprof.gz 의 .threads 임시 변조 + 즉시 원복):**
+- 첫 2개 스레드 블록에 `at java.lang.OutOfMemoryError: Java heap space` / `GC overhead limit exceeded` 합성.
+- 앱 재기동 → 페이지 fetch → ThreadInfo.oom=true 2건 채워짐 확인 (`oom-banner=4` markup, `thread-row oom=2`).
+- 3 경로 LLM 호출 모두 OOM injection 정확:
+  - `POST /api/llm/analyze` → `[AI-Insight] OOM context injected: 104 char(s)` (`promptLen` 218 = 원본 114 + OOM 104).
+  - `POST /api/llm/chat/stream` → `[AI-Chat-Stream] OOM context injected: 104 char(s)`.
+  - `POST /api/ai-chat/sessions/17/stream` (세션 17 = filename binding=jeus_admin.hprof.gz) → `[AI-Chat-Stream] OOM context injected for session 17 (jeus_admin.hprof.gz): 104 char(s)`.
+- .threads 원본 강제 복원 (`\cp -f`) → 앱 재기동 → 페이지 fetch → `oom-banner=0`/`thread-row oom=0`/`oom-badge=0` (UI 회귀 없음). 새 LLM stream 호출 → `OOM context injected` 로그 **0건** (빈 OOM 가드 정상 동작).
+
+**역호환:** 신규 4개 getter 모두 `@JsonIgnore` transient → result.json 직렬화/역직렬화 0 영향. 기존 분석 페이지 200 OK (`jeus_admin.hprof.gz`, `heap-analyzer_20260521.hprof`, `wgdist_1_heapdump_20260326.hprof.gz`). OOM 미감지 케이스는 LLM 입력 변화 없음.
+
+**클라이언트 무변경:** `analyze.js` `buildAnalysisPrompt()` (라인 2352-2392), `collectAnalysisData()`, 채팅 흐름 변경 없음. analyze.html 인라인 변수 추가 없음. CSS/JS 캐시 키 갱신 불필요. CLAUDE.md 함정 #4 (`th:onclick` 차단) 무관.
+
+**미스코프 (의도):** PDF 리포트 OOM 별도 섹션 / 비교 분석(`/api/llm/compare/analyze`) OOM 주입 / OOM 별 권장 처방 데이터셋 — 별도 분리 작업.
+
+**변경 파일:** `model/HeapAnalysisResult.java`, `service/HeapDumpAnalyzerService.java`, `controller/HeapAiApiController.java`, `controller/AiChatController.java`
+
+---
+
+## [2026-05-29] Thread Overview OOM 감지 — 배너 + 행 강조
+
+**배경:** Thread Overview 탭은 스레드 이름/타입/heap/loader 만 평면 테이블로 나열했음. heap dump 가 OOM 으로 인해 생성된 경우 어떤 스레드가 `java.lang.OutOfMemoryError` 를 던졌는지(=trigger 스택) 가 진단 핵심이지만 사용자는 60+ 행을 직접 펼쳐야 확인 가능했음.
+
+**구현:**
+- `model/ThreadInfo.java` — `boolean oom` + `String oomType` 필드 추가. Lombok `@Data` 자동 getter/setter. `@JsonIgnoreProperties(ignoreUnknown=true)` 가 이미 있어 기존 result.json 역호환 안전.
+- `service/HeapDumpAnalyzerService.java` — `static final Pattern OOM_PATTERN = "java\\.lang\\.OutOfMemoryError(?::\\s*([^\\r\\n]+))?"` (FQCN 강제로 본문 오탐 차단, 그룹1 로 메시지 추출). `private detectOomInThreads(List<ThreadInfo>)` 가 각 스레드의 stackTrace 를 1회 검사해 `oom=true` 와 `oomType` 설정 (idempotent). `matchThreadStackTraces()` 종료 직전 1줄 호출 — **신규 분석 + 캐시 복원(`loadThreadStacksText` 경로)** 양쪽 모두 자동 커버. 별도 lazy 보강 메서드 불필요.
+- `controller/HeapDumpViewController.java` `analyzeResult()` (라인 414 `threadInfos` 주입 직후) — model attribute 4개 신규: `oomThreadCount` (int), `oomThreadSamples` (List<String>, 최대 3), `oomThreadIndices` (List<Integer>, 클릭 스크롤용), `oomFirstType` (String|null, 배너 부제목).
+- `templates/analyze.html` panel-threads 상단 — `<div th:if="${oomThreadCount > 0}" class="oom-banner">` 신규. 내용: 경고 아이콘 + 카운트 + OOM 타입 + 샘플 chip(`onclick="scrollToOomThread(this.dataset.idx)"`, CLAUDE.md 함정 #4 준수) + `+N more`. 행 렌더에 `th:classappend="${t.oom} ? 'oom'"` 추가, Thread Name 셀 머리에 `<span th:if="${t.oom}" class="oom-badge" th:title="...">⚠</span>`. CSS/JS 캐시 키 `?v=2026-05-29b`.
+- `static/js/analyze.js` — `scrollToOomThread(idx)` 신규: `querySelector('tr.thread-row[data-idx=...]')` + `scrollIntoView({block:'center', behavior:'smooth'})` + `.oom-flash` 클래스 1.2s 토글.
+- `static/css/analyze.css` — `.oom-banner`/`.oom-banner-icon`/`.oom-banner-type`/`.oom-banner-sep`/`.oom-banner-more`/`.oom-link`(hover 포함)/`.thread-row.oom`(`box-shadow: inset 3px 0 0 var(--danger)` 로 컬럼 width 흔들림 회피)/`.thread-row.oom:hover`/`.oom-badge`/`.oom-flash` + `@keyframes oomFlash` (0/100% → danger-light, 50% → #fecaca, 3회 반복).
+
+**검증 (jeus_admin.hprof.gz 의 .threads 임시 변조 + 즉시 원복 — 사용자 동의):**
+- 첫 2개 스레드 블록에 `at java.lang.OutOfMemoryError: Java heap space` / `... GC overhead limit exceeded` 합성.
+- 앱 재기동 (cache clear) → `/analyze/jeus_admin.hprof.gz` 페이지 fetch.
+- 결과: `oom-banner` 1개 / `thread-row oom` 2개 / `oom-badge` 2개 / `oom-link` 2개 / Thymeleaf literal `${oom` 누수 0 / 로그 `[OOM] Detected OutOfMemoryError in 2 thread(s)`.
+- 배너 텍스트: `⚠ OutOfMemoryError 감지: 2개 스레드 (Java heap space) · http1-5  selector.thread for listener 'BASE'`.
+- .threads 원본 복원 → 앱 재기동 → 동일 페이지 fetch → OOM 표시 0건 확인. **사용자 데이터 무결성 보장**.
+
+**역호환:** OOM 미포함 dump (`heap-analyzer_20260521.hprof`, `wgdist_1_heapdump_20260326.hprof.gz`, `gbmbap1t_jeus_license.bin`) 페이지 200 OK + OOM 요소 0건. 기존 result.json 의 ThreadInfo 가 신규 필드 미보유여도 캐시 복원 시 `loadThreadStacksText` → `matchThreadStackTraces` → `detectOomInThreads` 자동 재계산.
+
+**미스코프 (의도):** PDF 리포트 OOM 별도 섹션 / LLM 컨텍스트 자동 주입 / 51 번째 이상 OOM 스레드 chip 표시 / 비-FQCN `OutOfMemoryError` 단독 키워드(오탐 위험).
+
+**변경 파일:** `model/ThreadInfo.java`, `service/HeapDumpAnalyzerService.java`, `controller/HeapDumpViewController.java`, `templates/analyze.html`, `static/js/analyze.js`, `static/css/analyze.css`
+
+---
+
+## [2026-05-29] Leak Suspects 분석 설명 — 키워드 chip 분리 출력 (UI 정돈)
+
+**배경:** 직전 변경(같은 날짜)에서 `LeakSuspectAdvisor` 의 explanation 본문 끝에 `"\n\n관련 키워드: A, B, C"` 라인을 합쳐 표시했으나, 본문 텍스트와 키워드 라인이 같은 단락/같은 스타일로 흐려져 시각적 정돈이 부족.
+
+**개선:**
+- `model/LeakSuspect.java` — UI 전용 `@JsonIgnore public String getExplanationBody()` 추가. `explanation` 문자열에서 `"\n\n관련 키워드:"` 또는 `"관련 키워드:"` 등장 지점 이전을 trim 해 반환. Jackson 무시이므로 result.json 직렬화/역직렬화에 영향 없음 (외부 텍스트 사용처 — PDF/LLM 컨텍스트 — 는 기존 `explanation` 그대로 사용해 정보 누락 없음).
+- `templates/analyze.html` — 분석 설명 박스 내부 구조 분리: 본문 `<p class="suspect-explanation-body" th:text="${s.explanationBody}">` + `s.keywords` 비어있지 않을 때 별도 `<div class="suspect-keywords">` (라벨 1 + `<span class="suspect-kw-chip">` 반복). 본문에서 키워드 라인 제거되어 중복 표시 사라짐.
+- `static/css/analyze.css` — `.suspect-explanation` 의 `white-space: pre-wrap` 제거 (키워드 라인이 본문에서 빠져 줄바꿈 의존 사라짐). 신규 `.suspect-explanation-body` (단락 margin 제거) / `.suspect-keywords` (점선 상단 구분선 + flex-wrap chip 정렬) / `.suspect-keywords-label` (uppercase 작은 라벨) / `.suspect-kw-chip` (mono 폰트 pill, `word-break:break-all` 로 긴 FQCN 줄바꿈) 추가. 캐시 키 `?v=2026-05-29a`.
+
+**역호환:** 기존 result.json 에 `keywords` 필드 없거나 빈 리스트인 경우 `th:if="${!#lists.isEmpty(s.keywords)}"` 가 false → chip 영역 미출력 + 본문만 정상. 검증: `wgdist_1_heapdump_20260326.hprof.gz` (keywords 미보유) chip 0 / body 1 / 200 OK.
+
+**검증 (신규 분석 케이스):**
+- `heap-analyzer_20260521.hprof` Suspect#1: chip 3개 (`com.heapdump.analyzer.service.HeapAnalysisResultCache` / `org.springframework.boot.loader.launch.LaunchedClassLoader` / `java.util.concurrent.ConcurrentHashMap$Node[]`). Suspect#2: chip 1개 (`int[]`). 본문 영역의 `"관련 키워드:"` 텍스트 누수 0.
+
+**변경 파일:** `model/LeakSuspect.java`, `templates/analyze.html`, `static/css/analyze.css`
+
+---
+
+## [2026-05-29] Leak Suspects MAT Keywords 추출 — 분석 설명에 자동 포함
+
+**배경:** MAT Leak Suspects 리포트의 각 Problem Suspect 섹션에는 `<p><strong>Keywords</strong></p><ul><li>FQCN</li>...</ul>` 형태로 의심 클래스/클래스로더/배열의 **정확한 FQCN 목록**이 포함되어 있음. 기존 파서는 이를 별도 추출하지 않고 `stripTags(rawSection)` 시 전체 텍스트에 묻혀 들어가, LLM 컨텍스트나 사용자 시각으로 핵심 식별자가 잘 보이지 않았음.
+
+**구현:**
+- `model/LeakSuspect.java` — `List<String> keywords` 필드 추가 (Lombok `@Data` 자동 getter/setter, 기본값 빈 리스트). `@JsonIgnoreProperties(ignoreUnknown=true)` 가 이미 있어 keywords 미보유 result.json 역호환 OK.
+- `parser/MatReportParser.java` — `KEYWORDS_BLOCK_PATTERN` (`<strong>Keywords</strong></p><ul>...</ul>` 추출) + `KEYWORD_LI_PATTERN` (`<li>...</li>` 추출) 추가. `parseSuspectsZip()` 의 problem 섹션 루프와 fallback 단일-suspect 경로 모두에서 `extractKeywords(rawHtml)` → `suspect.setKeywords(...)` → `LeakSuspectAdvisor.analyze(...)` → `appendKeywordsToExplanation(suspect)` 순서로 호출. Advisor 가 explanation 을 채운 뒤 그 끝에 `"\n\n관련 키워드: A, B, C"` 라인 한 줄 자연스럽게 합쳐짐 (이미 키워드 라인 있으면 중복 추가 안 함).
+- `static/css/analyze.css` — `.suspect-explanation` 에 `white-space: pre-wrap` 추가. 분석 설명 본문은 한 단락이지만 keywords 라인이 빈 줄을 사이에 두고 별도 단락으로 보이도록 줄바꿈 보존. 캐시 키 `?v=2026-05-29`.
+
+**미스코프 (의도적):**
+- 기존 result.json (이번 변경 이전 분석) 자동 보강은 미적용. `reparseSuspectsStacktrace()` 의 조건(스택트레이스 페이지 누락)에 keywords 누락도 OR 로 묶을 수 있으나 explanation 자체는 이미 디스크에 저장되어 있어 lazy 보강만으로는 일관성이 깨짐 (keywords 는 채워지는데 explanation 끝에는 안 들어감). 일관성 유지 위해 **기존 분석은 재분석해야 keywords 노출**.
+
+**검증:**
+- `LeakSuspect.class` 컴파일 산출물에 `keywords` 필드 + getter/setter 존재 확인.
+- `MatReportParser.class` 에 `KEYWORDS_BLOCK_PATTERN`, `KEYWORD_LI_PATTERN`, `extractKeywords`, `appendKeywordsToExplanation` 존재 확인.
+- 재분석: `jeus_admin.hprof.gz` (Suspect#1 keywords=`["byte[]"]`, Suspect#2=`["int[]"]`) / `heap-analyzer_20260521.hprof` (Suspect#1 keywords=클래스+클래스로더+컬렉션 노드 배열 3개, Suspect#2=`["int[]"]`).
+- explanation tail 에 `\n\n관련 키워드: ...` 정상 합쳐짐.
+- `/analyze/{filename}` 렌더 HTML 에 `"관련 키워드: com.heapdump.analyzer.service.HeapAnalysisResultCache, org.springframework.boot.loader.launch.LaunchedClassLoader, java.util.concurrent.ConcurrentHashMap$Node[]"` 그대로 출력 + CSS pre-wrap 으로 분석 설명 본문과 빈 줄로 시각 분리.
+
+**변경 파일:** `model/LeakSuspect.java`, `parser/MatReportParser.java`, `static/css/analyze.css`, `templates/analyze.html` (CSS 캐시 키)
+
+---
+
+## [2026-05-29] Dominator Tree Top 50 disclosure 클릭 무동작 버그 수정
+
+**증상:** 2026-05-28 도입한 Dominator Tree 행 chevron 클릭 시 Top 50 행의 inbound/outbound 참조 disclosure 가 펼쳐지지 않음. 51 번째 이후 행의 Component Detail 모달도 열리지 않음 (양쪽 모두 클릭 무반응).
+
+**원인:** `analyze.html` 의 `<tr class="dom-row" th:onclick="${s.index < 50} ? 'toggleDomDetail(this)' : 'showComponentDetail(...)'">` 가 Thymeleaf 3.1 restricted expression policy 에 의해 **OGNL 표현식이 평가되지 않고 리터럴 문자열 그대로 `onclick` 속성에 출력**됨 (CLAUDE.md 함정 #4). 브라우저는 `${s.index < 50} ? ...` 를 JS 로 실행하다 silent syntax error 로 실패 → 클릭 핸들러 전부 무동작. (`th:if` / `th:title` 등 비-이벤트 속성은 정상 평가되어 chevron 50 개 표시까지는 정상이라 증상이 발견 어려움.)
+
+**수정:** suspects/threads 행이 이미 채택한 plain `onclick="fn(this.dataset.x)"` 패턴으로 통일.
+- `analyze.html` — `th:onclick` 제거, `onclick="domRowClick(this)"` 고정
+- `analyze.js` — 신규 `domRowClick(row)` 디스패처 추가: `parseInt(row.dataset.idx) < 50` 이면 `toggleDomDetail(row)`, 아니면 `showComponentDetail(row.dataset['class'])` 로 분기
+- `th:title` 의 ternary 는 정상 평가되므로 유지 (Top 50 행은 "inbound/outbound 참조 펼치기", 그 외는 "클릭하여 상세 보기")
+
+**검증:** `/analyze/heap-analyzer_20260521.hprof` 재렌더 — dom-row 500 / dom-chevron 50 / domRowClick 500 / 리터럴 `${s.index` 누수 0.
+
+**변경 파일:** `templates/analyze.html`, `static/js/analyze.js`
+
+---
+
+## [2026-05-28] Dominator Tree disclosure — Top 50 incoming/outgoing 참조 lazy 조회
+
+**핵심 UX:** Dominator Tree 탭의 Top 50 객체 행에 `▶` chevron 추가. 클릭 시 행 하단에 **Incoming references (Path to GC Roots)** + **Outgoing references (Retained Set)** 2분할 disclosure 펼침. 평면 테이블만이던 기존 UX → 객체별 inbound/outbound 참조 그래프 즉시 확인 가능. (51 번째 행 이후는 chevron 없이 기존 동작 유지 — 컴포넌트 모달.)
+
+**MAT 쿼리 전략 — lazy on-demand REST endpoint:**
+- 신규 `GET /api/dominator-refs/{filename}?address=0xADDR` 엔드포인트
+- 클릭 시점 2 회 MAT CLI 호출: `path2gc 0xADDR` (incoming = GC root 까지의 경로) + `show_retained_set 0xADDR` (outgoing = 보유 객체 retained set)
+- MAT 인덱스 (`.index`) 재사용 → hprof 재파싱 없이 보통 5~7초/회
+- 압축된 `.hprof.gz` 만 있을 경우 `tmp/` 에 1회 압축 해제 후 캐시 (첫 클릭 ~15s, 이후 ~7s)
+
+**2-pass MAT batch 사전 추출 시도 → 폐기 (설계 노트):** 처음에는 분석 시점에 Top 50 inbound/outbound 를 사전 추출하려 했으나 MAT batch CLI 가 동일 invocation 내 다중 `org.eclipse.mat.api:query` report 를 동일 파일명 (`<base>_Query.zip`) 으로 덮어쓰는 제약 발견. 50 객체 × 2 방향 = 100 회 독립 MAT 호출이 필요 (각 5초 → 8 분 추가) → 비현실적. lazy on-demand 로 전환. 사용자는 실제로 펼친 행만 비용 부담 (~7s/회) → 더 나은 trade-off.
+
+**구현 파일:**
+- 신규 `model/DominatorRefEntry.java` — 단순 POJO (className, objectAddress, shallow, retained + Human getter)
+- `model/DominatorTreeEntry.java` — `incomingRefs`/`outgoingRefs` 필드 추가 (`@JsonInclude(NON_EMPTY)`, 추후 사전 추출 옵션을 위한 placeholder — 현재 lazy 모드에서는 미사용)
+- `parser/MatReportParser.java` — `parseRefZipPublic()` (path2gc / show_retained_set HTML 테이블 파싱), `extractFirstHtmlFromZip()` (페이지명 무관 첫 HTML 추출)
+- `service/HeapDumpAnalyzerService.java` — `runMatSingleQuery()` (단일 쿼리 헬퍼, ProcessBuilder + 데몬 reader thread), `resultDirectoryPublic()` (외부 노출), `getParser()` 활용
+- `controller/HeapReportApiController.java` — `/api/dominator-refs/{filename}` endpoint. hprof 위치 자동 해소 (dumpfiles → tmp 압축 해제 → symlink 우선, copy 폴백), 호출 전후 dominator_tree Query.zip 백업/복원 (다른 페이지 영향 없음)
+- `templates/analyze.html` — chevron 컬럼 추가, `s.index < 50` 조건부 렌더, 클래스명 셀 클릭은 기존 Component Detail 모달 유지
+- `static/js/analyze.js` — `toggleDomDetail` AJAX 버전 (단일 open, addr 별 클라이언트 캐시, loading spinner, 에러 상태)
+- `static/css/analyze.css` — `.dom-chevron` 회전 애니메이션, `.dom-refs-wrap` 2-column grid, `.dom-spinner` keyframe
+- `config/HeapDumpConfig.java` — `mat.dominator-refs.enabled` 플래그 추가 (현재 미사용, lazy 모드에서는 항상 endpoint 가용)
+- `application.properties` — 위 플래그 추가
+
+**미스코프 (의도적):**
+- Sort UI (MAT 가 retained 기준 사전 정렬)
+- 재귀적 다단계 펼침 (참조의 참조)
+- 51~500 entry chevron (운영 비용/UX 균형)
+- 클래스 단위 histogram (객체별 raw 주소 결정)
+
+## [2026-05-28] 재분석시 Detection 날짜 이동 방지 + 비밀번호 모달 외부 클릭 닫기 제거
+
+**Detection 날짜 보존:** 기존 SUCCESS 분석 기록을 재분석하면 `analysis_history.analyzed_at`이 `now()`로 덮어써져 Dashboard/History의 14일 Detection chart가 오늘 버킷으로 이동하는 문제 해결. `HeapDumpAnalyzerService.saveAnalysisToDb()` 에서 기존 엔티티가 SUCCESS 이고 `analyzedAt != null` 이면 최초 분석일 보존. 다른 필드(suspect_count, heap 사용량 등)는 최신 결과로 계속 갱신. ERROR → SUCCESS, NOT_ANALYZED → SUCCESS 전이는 기존대로 `now()` 갱신.
+
+**비밀번호 변경 모달 UX:** My Account 페이지(`account.html`)의 비밀번호 변경 모달에서 overlay 외부 클릭시 닫히던 동작 제거. 입력 중 실수로 모달이 닫혀 재입력을 강요당하는 문제 방지. 취소 버튼만으로 명시적 닫기. (`pwModal` overlay onclick 제거)
+
+**변경 파일:** `HeapDumpAnalyzerService.java` (saveAnalysisToDb 분기), `account.html` (pwModal onclick 제거)
+
+## [2026-05-27] 로그인 페이지 문구 변경 및 계정신청 모달 UX 개선
+
+로그인 폼·계정신청 모달의 "사용자명" 레이블을 "사용자명(사번)"으로 변경. 힌트·유효성 메시지·체크박스 문구도 일괄 반영. 모달 외부(overlay) 클릭 시 모달이 닫히지 않도록 변경. 모달 내 텍스트 드래그 시 mouseup이 overlay에서 발생하여 모달이 닫히던 문제도 동시 해결. Escape 키 닫기는 유지.
+
+**변경 파일:** `login.html` (레이블·힌트·메시지 문구 4곳 변경, overlay onclick 제거)
+
 ## [2026-05-25] Dominator Tree 탭 신설
 
 분석 페이지에 Dominator Tree 탭 추가. MAT CLI에 `org.eclipse.mat.api:query` (`-command=dominator_tree -groupBy NONE`) 4번째 리포트를 추가하여 최상위 500개 dominator 객체를 파싱, 네이티브 테이블로 렌더링. 검색 필터, 행 클릭 시 Component Detail 모달 연동. Raw Data 섹션에 MAT HTML iframe(Dominator Tree Raw) 패널도 추가.

@@ -364,6 +364,16 @@ public class AiChatController {
             String ragContext = ragService.fetchContextForLlm(lastUserMsg.get("content"));
             if (!ragContext.isEmpty()) systemPrompt += ragContext;
         }
+        // OOM 컨텍스트 주입 (세션에 바인딩된 분석에 OOM 스레드가 감지된 경우)
+        String sessionFilename = opt.get().getFilename();
+        if (sessionFilename != null && !sessionFilename.isEmpty()) {
+            String oomSection = analyzerService.buildOomPromptSection(sessionFilename);
+            if (!oomSection.isEmpty()) {
+                systemPrompt += "\n\n" + oomSection;
+                logger.info("[AI-Chat-Stream] OOM context injected for session {} ({}): {} char(s)",
+                    sessionId, sessionFilename, oomSection.length());
+            }
+        }
 
         final String finalSystemPrompt = systemPrompt;
         final String model = analyzerService.getLlmModel();

@@ -204,12 +204,148 @@ function filterHistogram() {
     });
 }
 
-// ── Dominator Tree Filter ────────────────────────────
+// ── Dominator Tree Filter + Disclosure (lazy on-demand) ───────────────
 function filterDomTree() {
     var q = document.getElementById('domTreeSearch').value.toLowerCase();
-    document.querySelectorAll('#domTreeTable tbody tr').forEach(function(r) {
+    _closeDomDetail();
+    document.querySelectorAll('#domTreeTable tbody tr.dom-row').forEach(function(r) {
         r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
     });
+}
+
+var _domDetailRow = null;
+var _domOpenAddr  = null;
+var _domCache     = {};   // addr → { incoming, outgoing }
+
+function _closeDomDetail() {
+    if (_domDetailRow && _domDetailRow.parentNode) {
+        var owner = _domDetailRow.previousElementSibling;
+        _domDetailRow.parentNode.removeChild(_domDetailRow);
+        if (owner) owner.classList.remove('dom-open');
+    }
+    _domDetailRow = null;
+    _domOpenAddr  = null;
+}
+
+function _renderDomRefsTable(refs, emptyMsg) {
+    if (!refs || refs.length === 0) {
+        return '<div class="dom-refs-empty">' + (emptyMsg || '참조 데이터 없음') + '</div>';
+    }
+    var rows = '';
+    for (var i = 0; i < refs.length; i++) {
+        var r = refs[i];
+        var cls  = _escapeHtml(r.className || '-');
+        var addr = _escapeHtml(r.objectAddress || '');
+        var sh   = _escapeHtml(r.shallowHeapHuman || '');
+        var rh   = _escapeHtml(r.retainedHeapHuman || '');
+        rows += '<tr>'
+              + '<td>' + cls + (addr ? ' <code>@ ' + addr + '</code>' : '') + '</td>'
+              + '<td class="dom-refs-num">' + sh + '</td>'
+              + '<td class="dom-refs-num">' + rh + '</td>'
+              + '</tr>';
+    }
+    return '<table class="dom-refs-tbl">'
+         + '<thead><tr><th>Class @ Address</th><th style="width:90px;text-align:right">Shallow</th><th style="width:100px;text-align:right">Retained</th></tr></thead>'
+         + '<tbody>' + rows + '</tbody>'
+         + '</table>';
+}
+
+function _escapeHtml(s) {
+    if (s == null) return '';
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function _buildDomDetailHtml(data, loading, err) {
+    if (loading) {
+        return '<div class="dom-refs-loading">'
+             + '<span class="dom-spinner"></span> '
+             + '인바운드/아웃바운드 참조 추출 중... (MAT 쿼리 ~5-10초)'
+             + '</div>';
+    }
+    if (err) {
+        return '<div class="dom-refs-error">' + _escapeHtml(err) + '</div>';
+    }
+    var inHtml  = _renderDomRefsTable(data ? data.incoming : null, '인바운드 참조 없음 (GC root 경로)');
+    var outHtml = _renderDomRefsTable(data ? data.outgoing : null, '아웃바운드 참조 없음 (retained set)');
+    return ''
+        + '<div class="dom-refs-wrap">'
+        +   '<div class="dom-refs-section">'
+        +     '<h4>&#8592; Incoming (Path to GC Roots — 이 객체를 살아있게 하는 경로)</h4>'
+        +     inHtml
+        +   '</div>'
+        +   '<div class="dom-refs-section">'
+        +     '<h4>&#8594; Outgoing (Retained Set — 이 객체가 살아있게 하는 객체)</h4>'
+        +     outHtml
+        +   '</div>'
+        + '</div>';
+}
+
+function domRowClick(row) {
+    if (!row || !row.dataset) return;
+    var idx = parseInt(row.dataset.idx, 10);
+    if (idx < 50) {
+        toggleDomDetail(row);
+    } else {
+        showComponentDetail(row.dataset['class']);
+    }
+}
+
+function toggleDomDetail(row) {
+    if (!row || !row.dataset) return;
+    var addr = row.dataset.address;
+    if (!addr) return;
+    if (_domOpenAddr === addr) { _closeDomDetail(); return; }
+    _closeDomDetail();
+
+    var detail = document.createElement('tr');
+    detail.className = 'dom-detail-row';
+    var td = document.createElement('td');
+    td.colSpan = 6;
+    detail.appendChild(td);
+    row.parentNode.insertBefore(detail, row.nextSibling);
+    row.classList.add('dom-open');
+    _domDetailRow = detail;
+    _domOpenAddr  = addr;
+
+    if (_domCache[addr]) {
+        td.innerHTML = _buildDomDetailHtml(_domCache[addr], false, null);
+        return;
+    }
+
+    td.innerHTML = _buildDomDetailHtml(null, true, null);
+    var url = '/api/dominator-refs/' + encodeURIComponent(FILENAME)
+            + '?address=' + encodeURIComponent(addr);
+    fetch(url, { credentials: 'same-origin' })
+        .then(function(r) {
+            return r.json().then(function(j) { return { ok: r.ok, body: j }; });
+        })
+        .then(function(res) {
+            if (_domOpenAddr !== addr) return;  // 이미 다른 행으로 이동
+            if (res.ok) {
+                _domCache[addr] = res.body;
+                td.innerHTML = _buildDomDetailHtml(res.body, false, null);
+            } else {
+                td.innerHTML = _buildDomDetailHtml(null, false, (res.body && res.body.error) || '요청 실패');
+            }
+        })
+        .catch(function(e) {
+            if (_domOpenAddr !== addr) return;
+            td.innerHTML = _buildDomDetailHtml(null, false, '네트워크 오류: ' + e.message);
+        });
+}
+
+// ── OOM 배너 → 행 스크롤 + flash ─────────────────────
+function scrollToOomThread(idx) {
+    var row = document.querySelector('tr.thread-row[data-idx="' + idx + '"]');
+    if (!row) return;
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    row.classList.add('oom-flash');
+    setTimeout(function() { row.classList.remove('oom-flash'); }, 1200);
 }
 
 // ── Thread Filter ─────────────────────────────────────
