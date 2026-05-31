@@ -101,6 +101,36 @@ public class HeapHistoryApiController {
         return ResponseEntity.ok(resp);
     }
 
+    /**
+     * JEUS Instance/Domain 수동 편집 — analysis_history.jeus_instance/jeus_domain 갱신.
+     * System Properties(jeus.server.name/jeus.domain.name) 자동 식별이 안 되거나 수동 업로드 덤프에서 사용.
+     * body 에 instance/domain 키가 있는 필드만 갱신(null=유지, ""=초기화). 인증 필요, CSRF 면제 경로.
+     */
+    @PostMapping("/api/history/{filename:.+}/jeus")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> updateJeusMeta(
+            @org.springframework.web.bind.annotation.PathVariable String filename,
+            @RequestBody Map<String, Object> body) {
+        String safe = FilenameValidator.validate(filename);
+        String instance = body.containsKey("instance") && body.get("instance") != null
+                ? body.get("instance").toString() : null;
+        String domain = body.containsKey("domain") && body.get("domain") != null
+                ? body.get("domain").toString() : null;
+        Map<String, String> saved = analyzerService.updateAnalysisJeus(safe, instance, domain);
+        Map<String, Object> resp = new HashMap<>();
+        if (saved == null) {
+            resp.put("success", false);
+            resp.put("error", "분석 이력 레코드를 찾을 수 없습니다: " + safe);
+            return ResponseEntity.status(404).body(resp);
+        }
+        logger.info("[JeusMeta] Updated for '{}': instance='{}' domain='{}'",
+                safe, saved.get("instance"), saved.get("domain"));
+        resp.put("success", true);
+        resp.put("instance", saved.get("instance"));
+        resp.put("domain", saved.get("domain"));
+        return ResponseEntity.ok(resp);
+    }
+
     @GetMapping("/api/history")
     @ResponseBody
     public ResponseEntity<List<Map<String, Object>>> getHistory() {

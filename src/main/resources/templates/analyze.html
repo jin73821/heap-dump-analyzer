@@ -563,6 +563,28 @@ function loadFullErrorLog() {
                 <span th:if="${middlewareVendor != null}" class="mw-badge-meta"
                       th:text="${middlewareCategory}">WAS</span>
             </div>
+            <!-- JEUS Instance 칩 (jeus.server.name 자동 식별 + 수동 편집) -->
+            <div class="host-chip jeus-chip" id="jeusChip-instance"
+                 title="JEUS Instance — System Properties(jeus.server.name) 자동 식별, 미식별 시 직접 입력 (연필 클릭)">
+                <span class="host-chip-icon">&#129513;</span>
+                <span class="host-chip-label">Instance</span>
+                <span class="host-chip-name" id="jeusInstanceName"
+                      th:classappend="${jeusInstance == null or jeusInstance.isEmpty()} ? ' host-chip-empty' : ''"
+                      th:text="${jeusInstance == null or jeusInstance.isEmpty()} ? '미지정' : ${jeusInstance}">server1</span>
+                <button type="button" class="host-chip-edit"
+                        onclick="startJeusEdit('instance')" title="Instance 편집">&#9998;</button>
+            </div>
+            <!-- JEUS Domain 칩 (jeus.domain.name 자동 식별 + 수동 편집) -->
+            <div class="host-chip jeus-chip" id="jeusChip-domain"
+                 title="JEUS Domain — System Properties(jeus.domain.name) 자동 식별, 미식별 시 직접 입력 (연필 클릭)">
+                <span class="host-chip-icon">&#127759;</span>
+                <span class="host-chip-label">Domain</span>
+                <span class="host-chip-name" id="jeusDomainName"
+                      th:classappend="${jeusDomain == null or jeusDomain.isEmpty()} ? ' host-chip-empty' : ''"
+                      th:text="${jeusDomain == null or jeusDomain.isEmpty()} ? '미지정' : ${jeusDomain}">domain1</span>
+                <button type="button" class="host-chip-edit"
+                        onclick="startJeusEdit('domain')" title="Domain 편집">&#9998;</button>
+            </div>
         </div>
 
         <!-- ▌ 상단 2단: 좌(KPI + Heap Composition) · 우(OOM / Leak 진단) ▌ -->
@@ -1359,12 +1381,14 @@ var OBJ_SIZES     = /*[[${topObjSizes}]]*/ [];
 var OBJ_COUNTS    = /*[[${topObjCounts}]]*/ [];
 var OBJ_PCTS      = /*[[${topObjPcts}]]*/ [];
 var THREAD_STACKS  = /*[[${threadStacks}]]*/ [];
+var JEUS_INSTANCE_AUTO = /*[[${jeusInstanceAuto}]]*/ '';
+var JEUS_DOMAIN_AUTO   = /*[[${jeusDomainAuto}]]*/ '';
 var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ true;
 /*]]>*/
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-06-01b"></script>
+<script src="/js/analyze.js?v=2026-06-01c"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

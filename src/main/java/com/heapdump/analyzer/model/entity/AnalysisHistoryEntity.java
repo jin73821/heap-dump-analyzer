@@ -65,6 +65,14 @@ public class AnalysisHistoryEntity {
     @Column(name = "server_name", length = 100)
     private String serverName;
 
+    // JEUS 인스턴스/도메인 수동 편집값 — System Properties(jeus.server.name/jeus.domain.name)
+    // 자동 식별이 안 되거나 수동 업로드 덤프에서 운영자가 직접 입력. 비어 있으면 자동값으로 폴백.
+    @Column(name = "jeus_instance", length = 100)
+    private String jeusInstance;
+
+    @Column(name = "jeus_domain", length = 100)
+    private String jeusDomain;
+
     @Column(name = "uploaded_by", length = 50)
     private String uploadedBy;
 

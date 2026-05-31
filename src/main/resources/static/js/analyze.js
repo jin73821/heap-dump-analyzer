@@ -3535,6 +3535,90 @@ function saveHostEdit(value, done) {
         });
 }
 
+// ── JEUS Instance/Domain 칩 인라인 편집 ───────────────────
+// jeus.server.name(Instance) / jeus.domain.name(Domain) 을 System Properties 에서 자동 식별.
+// 미식별이거나 수동 업로드 덤프는 운영자가 직접 입력(analysis_history.jeus_instance/jeus_domain 영속화).
+// 수동값이 비면 자동 식별값(JEUS_*_AUTO)으로 폴백 표시.
+function startJeusEdit(field) {
+    var chip = document.getElementById('jeusChip-' + field);
+    if (!chip || chip.querySelector('.host-chip-input')) return; // 이미 편집 중
+    var nameEl = document.getElementById(field === 'instance' ? 'jeusInstanceName' : 'jeusDomainName');
+    var editBtn = chip.querySelector('.host-chip-edit');
+    if (!nameEl || !editBtn) return;
+    var current = nameEl.classList.contains('host-chip-empty') ? '' : nameEl.textContent.trim();
+
+    nameEl.style.display = 'none';
+    editBtn.style.display = 'none';
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'host-chip-input';
+    input.value = current;
+    input.maxLength = 100;
+    input.placeholder = (field === 'instance' ? 'Instance' : 'Domain') + ' 입력';
+
+    var save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'host-chip-save';
+    save.textContent = '저장';
+
+    var cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'host-chip-cancel';
+    cancel.textContent = '취소';
+
+    function cleanup() {
+        input.remove(); save.remove(); cancel.remove();
+        nameEl.style.display = '';
+        editBtn.style.display = '';
+    }
+    cancel.onclick = cleanup;
+    save.onclick = function() { saveJeusEdit(field, input.value, cleanup); };
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); save.onclick(); }
+        else if (e.key === 'Escape') { cleanup(); }
+    });
+
+    chip.appendChild(input);
+    chip.appendChild(save);
+    chip.appendChild(cancel);
+    input.focus();
+    input.select();
+}
+
+function saveJeusEdit(field, value, done) {
+    var body = {};
+    body[field] = (value || '').trim();
+    Common.fetchJSON('/api/history/' + encodeURIComponent(FILENAME) + '/jeus',
+            { method: 'POST', body: JSON.stringify(body) })
+        .then(function(d) {
+            applyJeusChip('instance', d ? d.instance : '');
+            applyJeusChip('domain', d ? d.domain : '');
+            if (done) done();
+        })
+        .catch(function(e) {
+            alert('JEUS 정보 저장 실패: ' + (e && e.message ? e.message : e));
+            if (done) done();
+        });
+}
+
+// 수동값이 있으면 그 값, 없으면 자동 식별값(JEUS_*_AUTO), 둘 다 없으면 '미지정' 표시.
+function applyJeusChip(field, manual) {
+    var nameEl = document.getElementById(field === 'instance' ? 'jeusInstanceName' : 'jeusDomainName');
+    if (!nameEl) return;
+    var auto = field === 'instance'
+        ? (typeof JEUS_INSTANCE_AUTO !== 'undefined' ? JEUS_INSTANCE_AUTO : '')
+        : (typeof JEUS_DOMAIN_AUTO !== 'undefined' ? JEUS_DOMAIN_AUTO : '');
+    var eff = (manual && manual.length) ? manual : (auto || '');
+    if (eff) {
+        nameEl.textContent = eff;
+        nameEl.classList.remove('host-chip-empty');
+    } else {
+        nameEl.textContent = '미지정';
+        nameEl.classList.add('host-chip-empty');
+    }
+}
+
 // ── 초기화 실행 ─────────────────────────────────────────
 if (typeof FILENAME !== 'undefined') {
     initAiPanel();

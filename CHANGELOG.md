@@ -1,5 +1,17 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-01] analyze Overview — JEUS Instance/Domain 식별 칩 (자동 식별 + 수동 입력)
+
+**요청:** System Properties 에 `jeus.server.name`/`jeus.domain.name` 이 식별되면 Overview 상단 Middleware 배지 오른쪽에 각각 **Instance**/**Domain** 으로 표기. 식별되지 않으면 수동 입력 가능하게.
+
+- **`AnalysisHistoryEntity`:** `jeus_instance`/`jeus_domain` 컬럼 추가(varchar 100, ddl-auto=update 로 운영 DB 자동 생성 확인). 수동 편집값 영속화용 — 비면 자동 식별값으로 폴백.
+- **`HeapDumpAnalyzerService`:** `getAnalysisJeusInstance/Domain(filename)` 조회 + `updateAnalysisJeus(filename, instance, domain)` 추가(null=유지, ""=초기화, 100자 절단). `updateAnalysisServerName`(호스트명) 패턴 재사용.
+- **`HeapDumpViewController.analyzeResult`:** `jeus.server.name`/`jeus.domain.name` System Properties 에서 자동 식별값 추출 → 수동 편집값 우선, 없으면 자동값으로 폴백한 `jeusInstance`/`jeusDomain` + JS 폴백용 `jeusInstanceAuto`/`jeusDomainAuto` 모델 주입.
+- **`HeapHistoryApiController`:** `POST /api/history/{filename}/jeus` 추가(instance/domain 부분 갱신, 호스트명 엔드포인트와 동일 패턴). `[JeusMeta]` 감사 로깅.
+- **`analyze.html`:** Middleware 배지 오른쪽에 Host 칩과 동일 스타일의 **Instance**(🧩)/**Domain**(🌐) 칩 2개 추가(연필 클릭 인라인 편집). 항상 표시 — 식별 시 자동값, 미식별 시 "미지정" + 수동 입력. `JEUS_*_AUTO` 글로벌 추가, `analyze.js?v=2026-06-01c`.
+- **`analyze.js`:** `startJeusEdit(field)`/`saveJeusEdit`/`applyJeusChip` 추가(호스트명 칩 인라인 편집 일반화). 저장 후 수동값 없으면 자동 식별값으로 폴백 표시.
+- **검증:** JEUS 덤프(`heapdump_gmadomain_2.hprof`)에서 Instance=`gmadm_1`/Domain=`gmadmdomain` 자동 식별·렌더 확인. 수동 override 저장(부분 갱신 null-means-keep)·빈값 초기화→자동 폴백 동작 + DB 반영 확인 후 테스트값 정리. 빌드+기동 정상(13.5s).
+
 ## [2026-06-01] Target Servers CRUD 감사 로깅 보강
 
 **점검 결과:** `ServerController` 의 서버 추가/수정/삭제(`POST/PUT/DELETE /api/servers`)에 **감사 로깅이 전혀 없었음**(save/deleteById 후 바로 응답). LeakRule 룰관리는 `[LeakRule] action=... by={user}` 패턴으로 감사 로깅이 되어 있어, 동일 패턴으로 보강.

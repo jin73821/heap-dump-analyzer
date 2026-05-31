@@ -2411,6 +2411,62 @@ public class HeapDumpAnalyzerService {
         return normalized;
     }
 
+    /**
+     * JEUS 인스턴스(jeus.server.name) 수동 편집값 조회. 미설정/레코드 없으면 빈 문자열.
+     * 자동 식별값(System Properties)으로의 폴백은 호출자(컨트롤러)가 처리한다.
+     */
+    public String getAnalysisJeusInstance(String filename) {
+        try {
+            return analysisHistoryRepository.findByFilename(filename)
+                    .map(AnalysisHistoryEntity::getJeusInstance)
+                    .filter(s -> s != null && !s.isEmpty())
+                    .orElse("");
+        } catch (Exception e) {
+            logger.debug("[DB] getAnalysisJeusInstance failed for {}: {}", filename, e.getMessage());
+            return "";
+        }
+    }
+
+    /** JEUS 도메인(jeus.domain.name) 수동 편집값 조회. 미설정/레코드 없으면 빈 문자열. */
+    public String getAnalysisJeusDomain(String filename) {
+        try {
+            return analysisHistoryRepository.findByFilename(filename)
+                    .map(AnalysisHistoryEntity::getJeusDomain)
+                    .filter(s -> s != null && !s.isEmpty())
+                    .orElse("");
+        } catch (Exception e) {
+            logger.debug("[DB] getAnalysisJeusDomain failed for {}: {}", filename, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * JEUS 인스턴스/도메인 수동 편집 — null 인 필드는 기존값 유지, 빈 문자열이면 초기화(자동값 폴백).
+     * 컬럼 길이(100) 초과 시 절단. @return 저장 후 수동값 맵(instance/domain, 미설정이면 ""). 레코드 없으면 null.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public java.util.Map<String, String> updateAnalysisJeus(String filename, String instance, String domain) {
+        AnalysisHistoryEntity e = analysisHistoryRepository.findByFilename(filename).orElse(null);
+        if (e == null) return null;
+        if (instance != null) {
+            String n = instance.trim();
+            if (n.length() > 100) n = n.substring(0, 100);
+            e.setJeusInstance(n.isEmpty() ? null : n);
+        }
+        if (domain != null) {
+            String n = domain.trim();
+            if (n.length() > 100) n = n.substring(0, 100);
+            e.setJeusDomain(n.isEmpty() ? null : n);
+        }
+        analysisHistoryRepository.save(e);
+        java.util.Map<String, String> r = new java.util.LinkedHashMap<>();
+        r.put("instance", e.getJeusInstance() == null ? "" : e.getJeusInstance());
+        r.put("domain", e.getJeusDomain() == null ? "" : e.getJeusDomain());
+        logger.info("[DB] JEUS meta updated for {}: instance='{}' domain='{}'",
+                filename, r.get("instance"), r.get("domain"));
+        return r;
+    }
+
     public AnalysisHistoryRepository getAnalysisHistoryRepository() {
         return analysisHistoryRepository;
     }

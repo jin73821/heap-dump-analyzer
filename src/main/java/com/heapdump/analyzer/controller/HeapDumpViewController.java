@@ -476,6 +476,20 @@ public class HeapDumpViewController {
         // 덤프 출처 호스트명 — SSH 전송 시 자동 기록(server_name), 수동 업로드는 빈 값(편집 가능)
         model.addAttribute("hostname", analyzerService.getAnalysisServerName(filename));
 
+        // JEUS Instance/Domain — System Properties(jeus.server.name/jeus.domain.name) 자동 식별 + 수동 편집.
+        // 수동 편집값이 있으면 우선, 없으면 자동 식별값으로 폴백. 둘 다 없으면 빈 값(미지정, 편집 가능).
+        java.util.Map<String, String> sysProps = result.getSystemProperties();
+        String jeusInstanceAuto = sysProps != null && sysProps.get("jeus.server.name") != null
+                ? sysProps.get("jeus.server.name").trim() : "";
+        String jeusDomainAuto = sysProps != null && sysProps.get("jeus.domain.name") != null
+                ? sysProps.get("jeus.domain.name").trim() : "";
+        String jeusInstanceManual = analyzerService.getAnalysisJeusInstance(filename);
+        String jeusDomainManual = analyzerService.getAnalysisJeusDomain(filename);
+        model.addAttribute("jeusInstanceAuto", jeusInstanceAuto);
+        model.addAttribute("jeusDomainAuto", jeusDomainAuto);
+        model.addAttribute("jeusInstance", !jeusInstanceManual.isEmpty() ? jeusInstanceManual : jeusInstanceAuto);
+        model.addAttribute("jeusDomain", !jeusDomainManual.isEmpty() ? jeusDomainManual : jeusDomainAuto);
+
         model.addAttribute("hasOverviewZip", analyzerService.hasReportZip(filename, "overview"));
         model.addAttribute("hasTopComponentsZip", analyzerService.hasReportZip(filename, "top_components"));
         model.addAttribute("hasSuspectsZip", analyzerService.hasReportZip(filename, "suspects"));
