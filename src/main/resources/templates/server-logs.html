@@ -68,6 +68,13 @@
                          text-decoration: none; cursor: pointer; }
         .export-menu a:hover { background: #F3F4F6; }
 
+        /* Export 모달 버튼 기본 형태 — common.css .mbtn-* 는 색상만 제공하므로
+           padding/border/radius/font 는 페이지에서 지정 (cascade override 패턴) */
+        #exportModal .modal-box button {
+            font-size: 13px; padding: 8px 16px; border-radius: 7px; border: none;
+            cursor: pointer; font-weight: 600; font-family: inherit; line-height: 1.2;
+        }
+
         /* ── Table ────────────────────────────────────────── */
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
         .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -160,7 +167,13 @@
             .topbar-title { font-size: 15px; }
             .topbar-right { gap: 4px; }
             .topbar-right .topbar-btn { padding: 5px 8px; font-size: 11px; }
-            .kpi-grid { grid-template-columns: 1fr; }
+            /* Total/Success/Failed 를 한 줄(3등분)로 유지 — 콤팩트 세로 카드 */
+            .kpi-grid { grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+            .kpi-card { flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 10px; }
+            .kpi-icon { width: 26px; height: 26px; border-radius: 7px; }
+            .kpi-icon svg { width: 14px; height: 14px; }
+            .kpi-value { font-size: 17px; }
+            .kpi-label { font-size: 10px; letter-spacing: .3px; }
             .ltable .col-hide-sm { display: none; }
             .ltable { min-width: 720px; }
             /* 콤팩트 3행 툴바: (1) 검색 100% / (2) 상태·서버 50%씩 / (3) 행표시·Export 50%씩 */
@@ -349,6 +362,21 @@
         </div>
     </div>
     <div class="err-pop-body" id="errPopBody"></div>
+</div>
+
+<!-- Export 확인 모달 (common.css .modal-ov/.modal-box 재사용) -->
+<div class="modal-ov" id="exportModal" onclick="if(event.target===this)closeExportModal()">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:420px">
+        <div style="font-size:16px;font-weight:700;color:#111827;margin-bottom:10px" id="exportModalTtl">내보내기</div>
+        <div style="font-size:13px;color:#6B7280;line-height:1.6;margin-bottom:18px">
+            현재 검색·필터 조건의 전송 로그를 <strong id="exportFmtName">CSV</strong> 파일로 다운로드합니다.
+            <span style="display:block;margin-top:4px;color:#9CA3AF;font-size:12px">최대 50,000행까지 내보냅니다.</span>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button type="button" class="mbtn-cancel" onclick="closeExportModal()">취소</button>
+            <button type="button" class="mbtn-confirm" id="exportConfirmBtn" onclick="confirmExport()">다운로드</button>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -639,16 +667,58 @@ function toggleExportMenu(e) {
     document.getElementById('exportMenu').classList.toggle('open');
 }
 
+var _exportFormat = null;
+
+// Export 메뉴 클릭 → 즉시 다운로드 대신 확인 모달 표시
 function exportData(format) {
     document.getElementById('exportMenu').classList.remove('open');
+    _exportFormat = format;
+    document.getElementById('exportFmtName').textContent = format.toUpperCase();
+    document.getElementById('exportModalTtl').textContent = format.toUpperCase() + ' 내보내기';
+    var btn = document.getElementById('exportConfirmBtn');
+    btn.disabled = false;
+    btn.textContent = '다운로드';
+    document.getElementById('exportModal').classList.add('open');
+}
+
+function closeExportModal() {
+    document.getElementById('exportModal').classList.remove('open');
+}
+
+// blob 다운로드 — 페이지 네비게이션(=브라우저 탭 무한 스피너) 없이 저장.
+function confirmExport() {
+    if (!_exportFormat) return;
+    var format = _exportFormat;
+    var btn = document.getElementById('exportConfirmBtn');
+    btn.disabled = true;
+    btn.textContent = '다운로드 중…';
     var qs = buildQuery({ page: undefined, size: undefined, format: format });
     var url = '/api/servers/transfers/export?' + qs;
-    var a = document.createElement('a');
-    a.href = url;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    fetch(url, { credentials: 'same-origin' })
+        .then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            var cd = r.headers.get('Content-Disposition') || '';
+            var m = /filename\*?=(?:UTF-8'')?["']?([^"';]+)/i.exec(cd);
+            var fname = m ? decodeURIComponent(m[1]) : ('transfer-logs.' + format);
+            return r.blob().then(function(blob) { return { blob: blob, fname: fname }; });
+        })
+        .then(function(res) {
+            var objUrl = URL.createObjectURL(res.blob);
+            var a = document.createElement('a');
+            a.href = objUrl;
+            a.download = res.fname;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(function() { URL.revokeObjectURL(objUrl); }, 1000);
+            closeExportModal();
+        })
+        .catch(function(e) {
+            alert('내보내기 실패: ' + (e && e.message ? e.message : e));
+            btn.disabled = false;
+            btn.textContent = '다운로드';
+        });
 }
 
 // ── Helpers ───────────────────────────────────────────

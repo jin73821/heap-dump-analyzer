@@ -150,8 +150,13 @@
         @media (max-width: 900px) {
             .topbar { left: 0; }
             .container { padding-left: 20px; }
-            .table-toolbar { flex-direction: column; align-items: stretch; }
-            .page-size-wrap { justify-content: space-between; }
+            /* 검색은 한 줄 전체 / 상태·자동탐지·행표시는 한 줄에 3등분 배치 */
+            .table-toolbar { align-items: center; gap: 8px; }
+            .search-bar { flex: 1 1 100%; min-width: 0; }
+            .page-size-wrap { flex: 1 1 0; min-width: 0; gap: 5px; }
+            .page-size-label { font-size: 11px; }
+            .page-size-select { flex: 1 1 auto; min-width: 0;
+                                padding: 8px 22px 8px 8px; background-position: right 7px center; }
             .pagination-bar { flex-direction: column; align-items: stretch; }
             .pg-list { justify-content: center; }
             .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }

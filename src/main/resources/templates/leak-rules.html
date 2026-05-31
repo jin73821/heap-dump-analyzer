@@ -267,13 +267,20 @@
             .pager > div:first-child { text-align: center; }
             .pg-list { justify-content: center; flex-wrap: wrap; }
 
-            /* 모달: bottom sheet 스타일 */
+            /* 모달: bottom sheet 스타일 — 제목 상단 고정 / 버튼 하단 고정 / 본문만 스크롤.
+               dvh 로 모바일 브라우저 UI(주소창) 영역을 제외해 화면 초과 방지. */
             .modal-ov { padding: 0; align-items: flex-end; }
-            .modal-box { width: 100%; max-width: 100%; max-height: 92vh;
-                         padding: 18px 16px 20px; border-radius: 14px 14px 0 0; }
-            .modal-ttl { font-size: 15px; }
-            .modal-btns { gap: 8px; }
-            .modal-btns button { flex: 1 1 0; padding: 11px 10px; font-size: 13px; }
+            .modal-box { width: 100%; max-width: 100%;
+                         max-height: 92vh; max-height: 92dvh;
+                         padding: 0 16px; border-radius: 14px 14px 0 0;
+                         display: flex; flex-direction: column; }
+            .modal-box > .modal-ttl { position: sticky; top: 0; z-index: 2;
+                         background: #fff; margin: 0 -16px; padding: 15px 16px 10px;
+                         border-bottom: 1px solid #F3F4F6; font-size: 15px; }
+            .modal-box > .modal-btns { position: sticky; bottom: 0; z-index: 2;
+                         background: #fff; margin: 0 -16px; padding: 12px 16px;
+                         border-top: 1px solid #F3F4F6; gap: 8px; }
+            .modal-box > .modal-btns button { flex: 1 1 0; padding: 11px 10px; font-size: 13px; }
             .preview-block { padding: 10px; }
         }
     </style>

@@ -457,6 +457,25 @@ public class HeapDumpViewController {
             model.addAttribute("oomRecommendation", oomKind.recommendation());
         }
 
+        // 미들웨어(WAS) 벤더 추정 — 히스토그램 클래스 prefix 기반 (대표 1개)
+        com.heapdump.analyzer.util.MiddlewareDetector.Result mw =
+                com.heapdump.analyzer.util.MiddlewareDetector.detect(
+                        result.getHistogramEntries(), result.getThreadInfos(),
+                        result.getSystemProperties());
+        if (mw.detected()) {
+            model.addAttribute("middlewareVendor", mw.displayName());
+            model.addAttribute("middlewareCategory", mw.category());
+            model.addAttribute("middlewareVersion", mw.version); // null 가능 (버전 미추출)
+        }
+
+        // System Properties 탭 — 전체 프로퍼티 표(검색 가능) + 배지용 JDK 버전
+        model.addAttribute("systemProperties", result.getSystemProperties());
+        model.addAttribute("hasSystemProperties", result.hasSystemProperties());
+        model.addAttribute("jdkVersion", result.getJdkVersion()); // null 가능
+
+        // 덤프 출처 호스트명 — SSH 전송 시 자동 기록(server_name), 수동 업로드는 빈 값(편집 가능)
+        model.addAttribute("hostname", analyzerService.getAnalysisServerName(filename));
+
         model.addAttribute("hasOverviewZip", analyzerService.hasReportZip(filename, "overview"));
         model.addAttribute("hasTopComponentsZip", analyzerService.hasReportZip(filename, "top_components"));
         model.addAttribute("hasSuspectsZip", analyzerService.hasReportZip(filename, "suspects"));

@@ -394,6 +394,44 @@ function goToSuspects() {
     showPanel('suspects', navBtn);
 }
 
+// Overview AI 인사이트 요약 카드 → AI 인사이트 패널 전환
+function goToAiInsight() {
+    var navBtn = document.querySelector('.nav-item[data-panel="ai-insight"]');
+    showPanel('ai-insight', navBtn);
+}
+
+// Overview 의 AI 인사이트 요약 카드 갱신 (showAiResult/auto-load 에서 호출).
+// data 가 없거나 summary 가 비면 미생성 상태로 되돌린다.
+function renderOverviewInsight(data) {
+    var empty = document.getElementById('ovAiInsightEmpty');
+    var body  = document.getElementById('ovAiInsightBody');
+    var sumEl = document.getElementById('ovAiSummary');
+    var sevEl = document.getElementById('ovAiSeverity');
+    if (!empty || !body) return;
+
+    var summary = (data && data.summary != null) ? String(data.summary) : '';
+    if (summary.trim()) {
+        if (sumEl) sumEl.textContent = summary;
+        if (sevEl) {
+            var sev = data.severity;
+            if (sev) {
+                var cfg = (typeof _SEV_CONFIG !== 'undefined') ? (_SEV_CONFIG[sev] || _SEV_CONFIG.Unknown) : null;
+                sevEl.textContent = sev;
+                sevEl.style.display = '';
+                if (cfg) { sevEl.style.color = cfg.color; sevEl.style.background = cfg.bg; sevEl.style.borderColor = cfg.border; }
+            } else {
+                sevEl.style.display = 'none';
+            }
+        }
+        empty.style.display = 'none';
+        body.style.display = '';
+    } else {
+        empty.style.display = '';
+        body.style.display = 'none';
+        if (sevEl) sevEl.style.display = 'none';
+    }
+}
+
 // ── Thread Filter ─────────────────────────────────────
 function filterThreads() {
     var q = document.getElementById('threadSearch').value.toLowerCase();
@@ -2507,6 +2545,7 @@ function deleteAiInsight() {
             _aiSavedPath = null;
             setAiState('NotAnalyzed');
             updateAiBadges('none');
+            renderOverviewInsight(null); // Overview 요약 카드 미생성 상태로 복귀
             console.log('[AI-Insight] 인사이트 삭제 완료');
         } else {
             alert('삭제에 실패했습니다. 파일이 이미 없거나 서버 오류입니다.');
@@ -2581,7 +2620,8 @@ function showAiResult(result, isSaved) {
     }
     var atEl = document.getElementById('aiAnalysedAt');
     if (atEl) {
-        var ts = result.analysedAt || data.analysedAt;
+        // 신규 완료 응답에 analysedAt 이 없을 때(저장 실패 등) 현재 시각으로 폴백 — 빈 값 방지
+        var ts = result.analysedAt || data.analysedAt || Date.now();
         atEl.textContent = ts ? new Date(ts).toLocaleString('ko-KR', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}) + ' 분석' : '';
     }
     var latEl = document.getElementById('aiLatencyInfo');
@@ -2589,6 +2629,9 @@ function showAiResult(result, isSaved) {
         var ms = result.latencyMs || data.latencyMs;
         latEl.textContent = ms ? '응답: ' + (ms/1000).toFixed(1) + 's' : '';
     }
+
+    // Overview 의 AI 인사이트 요약 카드 동기화
+    renderOverviewInsight(data);
 
     // [1] 저장 표시
     var savedEl = document.getElementById('aiSavedIndicator');
@@ -2813,8 +2856,12 @@ function toggleAiChat() {
             buildChatContext();
             restoreChatHistory();
         }
+        // 모바일에서는 자동 포커스 생략 — 채팅 오픈만으로 가상 키보드가 뜨는 것을 방지.
+        // (데스크톱은 바로 입력 가능하도록 기존대로 포커스)
         var input = document.getElementById('aiChatInput');
-        if (input) setTimeout(function(){ input.focus(); }, 200);
+        if (input && !window.matchMedia('(max-width: 900px)').matches) {
+            setTimeout(function(){ input.focus(); }, 200);
+        }
     } else {
         panel.classList.remove('open');
     }
@@ -3416,6 +3463,77 @@ function toggleChatExpand() {
         });
     }, 500);
 })();
+
+// ── 호스트명 칩 인라인 편집 ───────────────────────────────
+// 덤프 출처 호스트명(analysis_history.server_name) 수동 편집.
+// SSH 전송 시 자동 기록되지만 수동 업로드는 비어 있어 운영자가 직접 입력.
+function startHostEdit() {
+    var chip = document.querySelector('.host-chip');
+    if (!chip || chip.querySelector('.host-chip-input')) return; // 이미 편집 중
+    var nameEl = document.getElementById('hostChipName');
+    var editBtn = document.getElementById('hostChipEdit');
+    if (!nameEl || !editBtn) return;
+    var current = nameEl.classList.contains('host-chip-empty') ? '' : nameEl.textContent.trim();
+
+    nameEl.style.display = 'none';
+    editBtn.style.display = 'none';
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'host-chip-input';
+    input.value = current;
+    input.maxLength = 100;
+    input.placeholder = '호스트명 입력';
+
+    var save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'host-chip-save';
+    save.textContent = '저장';
+
+    var cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'host-chip-cancel';
+    cancel.textContent = '취소';
+
+    function cleanup() {
+        input.remove(); save.remove(); cancel.remove();
+        nameEl.style.display = '';
+        editBtn.style.display = '';
+    }
+    cancel.onclick = cleanup;
+    save.onclick = function() { saveHostEdit(input.value, cleanup); };
+    input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); save.onclick(); }
+        else if (e.key === 'Escape') { cleanup(); }
+    });
+
+    chip.appendChild(input);
+    chip.appendChild(save);
+    chip.appendChild(cancel);
+    input.focus();
+    input.select();
+}
+
+function saveHostEdit(value, done) {
+    Common.fetchJSON('/api/history/' + encodeURIComponent(FILENAME) + '/hostname',
+            { method: 'POST', body: JSON.stringify({ hostname: (value || '').trim() }) })
+        .then(function(d) {
+            var nameEl = document.getElementById('hostChipName');
+            var hn = (d && d.hostname) ? d.hostname : '';
+            if (hn) {
+                nameEl.textContent = hn;
+                nameEl.classList.remove('host-chip-empty');
+            } else {
+                nameEl.textContent = '미지정';
+                nameEl.classList.add('host-chip-empty');
+            }
+            if (done) done();
+        })
+        .catch(function(e) {
+            alert('호스트명 저장 실패: ' + (e && e.message ? e.message : e));
+            if (done) done();
+        });
+}
 
 // ── 초기화 실행 ─────────────────────────────────────────
 if (typeof FILENAME !== 'undefined') {

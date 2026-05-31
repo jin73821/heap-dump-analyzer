@@ -59,8 +59,10 @@ public class AiInsightManager {
             if (insightData.get("latencyMs") instanceof Number) {
                 entity.setLatencyMs(((Number) insightData.get("latencyMs")).longValue());
             }
+            // 분석 시각을 입력 맵에도 스탬프 → 호출자(컨트롤러)가 응답에 실어 신규 완료 즉시 표시 가능
+            // (이전엔 복사본에만 찍혀 새 분석 후 새로고침 전까지 '분석 시각'이 빈 값이었음)
+            insightData.put("analysedAt", System.currentTimeMillis());
             Map<String, Object> toSave = new LinkedHashMap<>(insightData);
-            toSave.put("analysedAt", System.currentTimeMillis());
             entity.setInsightData(objectMapper.writeValueAsString(toSave));
             entity.setAnalysedAt(LocalDateTime.now());
             aiInsightRepository.save(entity);

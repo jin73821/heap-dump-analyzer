@@ -14,13 +14,15 @@ Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초). test 디렉토리 비어있음
-java -jar target/heap-analyzer-2.0.6.jar
+java -jar target/heap-analyzer-2.0.7.jar
 bash restart.sh                          # 운영(18080) 재기동
 ```
 
 **Maven 요구사항:** Maven 3.6.3+ (Boot 3.5 의 maven-clean-plugin 3.4.1 요구). 본 시스템 설정: Maven 3.9.9 (`/opt/apache-maven-3.9.9`, alternatives 수동 모드 + `/etc/profile.d/maven.sh` 로 `MAVEN_HOME` 설정). 신규 운영 환경 배포 시 동일 버전 설치 필수.
 
 **CRITICAL:** 모든 프론트엔드 리소스(CSS/HTML/JS)는 JAR 내부에 있음. **어떤 변경이든 `mvn clean package -DskipTests && bash restart.sh` 필수.** 빌드+기동 약 20~24초.
+
+**버전 변경 체크리스트:** `pom.xml <version>` 변경 시 산출물 JAR 명이 바뀌므로 **`restart.sh`/`run.sh`/`stop.sh` 의 `heap-analyzer-X.Y.Z.jar` grep 패턴 + UI 표기(`fragments/banner.html`·`index.html`·`progress.html`) 동시 갱신** 필수. ⚠️ 스크립트가 새 JAR 명으로만 프로세스를 grep 하므로, **첫 재기동 때 구버전 JAR 프로세스를 자동 종료하지 못해 포트 18080 충돌** 발생 → 구 프로세스 수동 `kill` 후 재기동(이후부터는 정상).
 
 **기동 검증:**
 ```bash
@@ -55,6 +57,8 @@ Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터는 DB(`a
 - `AuthController`(`/login`), `AdminController`(`/admin/users` 4-탭: 사용자/계정신청/접속이력/현재접속), `ServerController`(`/servers`, `/servers/{id}`, `/servers/logs`), `AiChatController`(`/ai-chat` 세션 기반), `LeakRuleAdminController`(`/admin/leak-rules` ADMIN CRUD), `ComparisonHistoryController`(`/comparison-history`)
 - `GlobalExceptionHandler` — `IllegalArgumentException` → JSON 400 (`/api/`/AJAX) or HTML 302 redirect (`?error=invalidFilename`)
 
+**감사 로깅 컨벤션:** 관리/변경 작업(룰 CRUD, 서버 CRUD 등)은 SLF4J 로 `[Domain] action=create|update|delete ... by={who(auth)}` 구조 로깅. `who(Authentication)` = `auth!=null ? auth.getName() : "unknown"` (각 컨트롤러 static 헬퍼). update 는 before→after diff + `fields=[변경키]`, delete 는 삭제 **전** 식별정보 캡처. `LeakRuleAdminController`(`[LeakRule]`) / `ServerController`(`[Server]`) 가 레퍼런스. **새 mutation 엔드포인트 추가 시 동일 패턴 적용.** (별도 DB 감사 테이블 아님 — 앱 로그 `logs/heapdump-analyzer.log`.)
+
 **DTOs (`model/dto/` 패키지, Phase 4B-2):** `AnalysisHistoryItem` / `DailyDetection` / `ServerSeries` / `DetectionSummaryItem` / `DetectionAggregate` / `DetectionDayFile` / `DetectionRecentItem` / `ClassDiff` / `HistogramDiff` / `SuspectDiff` / `KpiDiff` — 11 DTO. 이전엔 `HeapDumpController` inner static class 였음.
 
 **Services (Phase 4A 종합 추출, 2026-05-12):**
@@ -73,6 +77,8 @@ Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터는 DB(`a
 - `FormatUtils.formatBytes(long)` — 통일 포맷 (controller/service/model 모두 위임)
 - `HtmlSanitizer` — OWASP Java HTML Sanitizer wrapper
 - `AesEncryptor` — AES-256-CBC HEX
+- `MiddlewareDetector.detect(histogram, threads, sysProps)` — WAS/DB 벤더 추정 (sysprop 마커 가중치 100 권위적 확정 → 이름 best-effort). `matchCount` 는 대표 벤더 선택용 내부 점수(UI 미노출). analyze Overview 배지에 사용.
+- `OomDetector.classifyMessage(msg)` — OOM 메시지 → 한국어 라벨/원인/권장. analyze Overview 진단 카드 + AI 컨텍스트 주입에 사용.
 
 **Listener:** `AuthEventListener` — 로그인 이력 기록 (아래 함정 참조).
 
@@ -191,6 +197,14 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 
 16. **Hibernate 6 의 `@Lob String` default 변경** — Hibernate 5 는 `@Lob String` → `longtext` (MariaDB), Hibernate 6 는 동일 매핑을 **`tinytext(255)` 로 default 축소**. 기존 `longtext` 컬럼에 대해 `ALTER TABLE ... MODIFY ... tinytext` 시도 → 255 byte 초과 데이터 있으면 실패 WARN. **해결**: `@Lob` 제거 + `@Column(columnDefinition = "TEXT")` 명시. `leak_library_rule` / `leak_fallback_rule` 의 advice_tpl / explanation_tpl / pattern_regex 5 컬럼이 이미 적용됨. 신규 String 컬럼 추가 시 size 가 255 초과 가능하면 `columnDefinition` 또는 `length` 명시.
 
+17. **common.css `.mbtn-*` 는 색상 전용** — `.mbtn-cancel/.mbtn-confirm/.mbtn-save/...` 는 `background/color` 만 정의. 버튼 **형태**(`padding/border:none/border-radius/font-size/font-weight/cursor`)는 페이지가 제공해야 함(예: `.modal-btns button` 또는 `#myModal .modal-box button`). 형태 규칙 없이 `.mbtn-*` 만 붙이면 **브라우저 기본 버튼**으로 렌더됨. 새 모달 추가 시 형태 규칙 동반 필수.
+
+18. **모바일 미디어쿼리 `!important` 가 인라인 스타일 override** — 일부 페이지(`analyze.css` 등)는 `@media (max-width:...)` 에서 `!important` 로 인라인 스타일을 덮는다(예: 과거 `#aiSeverityBanner { flex-direction:column !important }`). 인라인 스타일을 바꿔도 화면이 안 변하면 **반드시 기존 미디어쿼리 `!important` 규칙부터 grep** 해서 함께 수정할 것. 인라인 변경만으로는 mobile 에서 무효.
+
+19. **JS 파일 다운로드는 blob 방식** — `<a href=exportUrl>` 직접 네비게이션은, 서버 응답 `Content-Disposition` 이 `attachment` 가 아니거나(예: `form-data`) 브라우저별 처리 차이로 **탭 로딩 스피너가 무한 회전**할 수 있음. `fetch(url){credentials:'same-origin'}` → `r.blob()` → `URL.createObjectURL` → `a.download` 클릭 → `revokeObjectURL` 패턴 사용(페이지 네비게이션 없음). 파일명은 `Content-Disposition` 헤더 파싱. `server-logs.html` `confirmExport()` 레퍼런스.
+
+20. **운영 MariaDB 검증은 읽기 전용** — `192.168.56.9/HEAPDB` 는 운영 데이터 보유. 기능 검증 시 UNIQUE 키(`ai_insights.filename`, `target_servers.name` 등) 대상 테스트 INSERT 에 **`ON DUPLICATE KEY UPDATE` 금지**(실데이터 덮어씀, binlog OFF·복구 어려움). 기존 데이터로 GET 검증하거나, 충돌 없는 새 키로 INSERT 후 그 행만 DELETE. 컬럼 조회 시 `2>/dev/null` 로 에러 숨기지 말 것(빈 테이블 오판).
+
 ## Key Design Decisions
 
 - **Two-tier cache:** In-memory `ConcurrentHashMap` ← disk `result.json` 복원. 누락 필드(componentDetailHtmlMap/histogramHtml/threadOverviewHtml)는 ZIP에서 lazy 재추출.
@@ -206,6 +220,8 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 - **2단계 SCP:** `runuser -l sscuser -c "scp ..."` → 임시 경로 → `Files.move()`로 root 권한 최종 이동. **전송됨 판정**: DB SUCCESS 로그 + 로컬 파일 실존(`.gz` 포함) 모두.
 - **SSH local user 빈 값 fallback:** `RemoteDumpService.setSshLocalUser(empty)` 가 `System.getProperty("user.name")` 으로 자동 채움. settings UI 의 빈 입력 = "현재 프로세스 계정으로 사용" 명시. POST `/api/servers/ssh-local-user` 응답에 채워진 값 그대로 반환.
 - **순번 칼럼은 DB id 기반:** `analysis_history.id`(IDENTITY). NOT_ANALYZED는 `-`.
+- **`analysis_history.server_name` 이중 용도:** SSH 전송 시 출처 서버명 자동 기록 + analyze Overview "출처 호스트명" 칩으로 **수동 편집 가능**(`POST /api/history/{filename}/hostname`, 수동 업로드 덤프용). history 목록 Server 컬럼·detection 서버별 집계와 동일 컬럼 공유.
+- **AI 인사이트 영속화:** `ai_insights.insight_data`(JSON mediumtext) 에 전체 맵 저장, `loadAiInsight()` 가 top-level 맵으로 반환(`summary`/`rootCause`/`recommendations`/`severity`/`analysedAt` 등). `saveAiInsight()` 가 `analysedAt` 을 입력 맵에 스탬프하므로 신규 분석 응답(`/api/llm/analyze`)도 즉시 시각 표시 가능. analyze Overview 의 Leak Suspects 하위 요약 카드 + 전용 AI 패널이 동일 데이터 사용.
 - **deleted 가시성:** `historyPage()`/`filesPage()`는 `Authentication`으로 ROLE_ADMIN 검사. 비관리자에게 `fileDeleted=true` 응답 제외(서버 측 보안). **대시보드 Analysis Files는 모든 계정에서 deleted 항상 제외**.
 - **AES 암호화:** `util/AesEncryptor.java` AES-256-CBC HEX. CLI: `bash heap_enc.sh "평문"`, `bash heap_dec.sh "암호문"`. DB password / RAG password / API key 모두 `ENC(...)` 형식.
 - **Leak Rule DB 마이그레이션 (Phase 4):** `leak_library_rules` (98 prefix-based: 66 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 2 보강 2026-05-31) + `leak_fallback_rules` (66 regex-based: 33 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 3) 테이블 + `LeakRuleAdminController` `/admin/leak-rules` ADMIN CRUD + `LeakSuspectAdvisor` 룰 엔진 + `LeakRuleSeeder` 부트스트랩. 코드 배포 없이 운영자가 추가/수정/우선순위 조정. `LeakRuleService.invalidate()` 로 캐시 즉시 갱신.

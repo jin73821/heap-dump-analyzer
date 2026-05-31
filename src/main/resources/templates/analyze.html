@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-05-31g">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-01e">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -197,6 +197,9 @@ function loadFullErrorLog() {
         <button type="button" class="nav-item" data-panel="thread-stacks" th:if="${hasThreadStacks}">
             <span class="nav-icon">&#128209;</span> Thread Stacks
         </button>
+        <button type="button" class="nav-item" data-panel="sysprops" th:if="${hasSystemProperties}">
+            <span class="nav-icon">&#9881;</span> System Properties
+        </button>
     </div>
 
     <div class="sidebar-section">
@@ -280,7 +283,7 @@ function loadFullErrorLog() {
                         <div style="font-size:17px;font-weight:700;color:#111827;line-height:1.2">AI 인사이트</div>
                         <div style="font-size:13px;color:#6B7280;margin-top:2px">LLM 기반 힙 덤프 분석 · 근본 원인 · 권장 조치</div>
                     </div>
-                    <span id="aiPanelBadge" style="font-size:12px;font-weight:700;padding:4px 12px;border-radius:12px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB;letter-spacing:.03em;margin-left:4px">미분석</span>
+                    <span id="aiPanelBadge" style="font-size:12px;font-weight:700;padding:4px 12px;border-radius:12px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB;letter-spacing:.03em;margin-left:4px;white-space:nowrap;flex-shrink:0">미분석</span>
                 </div>
                 <div id="aiHeaderActions" style="display:none;gap:8px;align-items:center;flex-wrap:wrap">
                     <span id="aiSavedIndicator" style="display:none;font-size:13px;color:#16A34A;font-weight:600;padding:5px 12px;background:#F0FDF4;border:1px solid #BBF7D0;border-radius:20px;cursor:pointer" onclick="showSavedPathInfo()" title="저장 경로 확인">&#10003; 저장됨</span>
@@ -302,9 +305,6 @@ function loadFullErrorLog() {
             <!-- ▌ 미분석 상태 ▌ -->
             <div id="aiStateNotAnalyzed">
                 <div style="border:2px dashed #C7D2FE;border-radius:14px;padding:52px 36px;text-align:center;background:linear-gradient(150deg,#EFF6FF 0%,#EEF2FF 50%,#F0F9FF 100%)">
-                    <div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-bottom:22px">
-                        <div style="width:64px;height:64px;border-radius:16px;background:linear-gradient(135deg,#3B82F6,#6366F1);display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;box-shadow:0 6px 20px rgba(99,102,241,.35)">&#129302;</div>
-                    </div>
                     <div style="font-size:20px;font-weight:800;color:#1E40AF;margin-bottom:10px;letter-spacing:-.01em">AI 분석이 아직 수행되지 않았습니다</div>
                     <div style="font-size:15px;color:#64748B;margin-bottom:30px;max-width:460px;margin-left:auto;margin-right:auto;line-height:1.7">
                         힙 덤프 분석 결과를 AI가 종합하여<br>
@@ -366,17 +366,16 @@ function loadFullErrorLog() {
 
             <!-- ▌ 완료 상태 (개선 디자인) ▌ -->
             <div id="aiStateResult" style="display:none">
-                <div id="aiSeverityBanner" style="border-radius:12px;padding:22px 26px;margin-bottom:18px;display:flex;align-items:center;gap:18px;box-shadow:0 2px 8px rgba(0,0,0,.06)">
-                    <div id="aiSeverityIcon" style="font-size:38px;flex-shrink:0;filter:drop-shadow(0 2px 4px rgba(0,0,0,.15))"></div>
-                    <div style="flex:1;min-width:0">
-                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                            <span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;opacity:.65">위험도</span>
-                            <span id="aiSeverity" style="font-size:24px;font-weight:800;letter-spacing:-.02em"></span>
-                        </div>
+                <div id="aiSeverityBanner" style="border-radius:12px;padding:18px 22px;margin-bottom:18px;display:flex;align-items:center;gap:14px;box-shadow:0 2px 8px rgba(0,0,0,.06)">
+                    <div id="aiSeverityIcon" style="font-size:34px;flex-shrink:0;filter:drop-shadow(0 2px 4px rgba(0,0,0,.15))"></div>
+                    <div id="aiSevGroup" style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+                        <span style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;opacity:.65">위험도</span>
+                        <span id="aiSeverity" style="font-size:24px;font-weight:800;letter-spacing:-.02em"></span>
                     </div>
-                    <div style="text-align:right;flex-shrink:0">
+                    <!-- 메타: 위험도 우측에 세로 3줄(시간/모델/응답). 줄바꿈 없이 항상 우측 유지 -->
+                    <div id="aiSevMeta" style="margin-left:auto;text-align:right;flex-shrink:0">
                         <div id="aiAnalysedAt" style="font-size:12px;opacity:.55;white-space:nowrap"></div>
-                        <div id="aiModelInfo" style="font-size:12px;opacity:.55;margin-top:3px;white-space:nowrap"></div>
+                        <div id="aiModelInfo" style="font-size:12px;opacity:.55;margin-top:2px;white-space:nowrap"></div>
                         <div id="aiLatencyInfo" style="font-size:12px;opacity:.45;margin-top:2px;white-space:nowrap"></div>
                     </div>
                 </div>
@@ -516,6 +515,56 @@ function loadFullErrorLog() {
     <!-- ▌ OVERVIEW PANEL ▌ -->
     <div id="panel-overview" class="panel active">
 
+        <!-- 미들웨어(WAS) 벤더 배지 + 덤프 출처 호스트명 칩 -->
+        <style>
+            .overview-badge-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+            .mw-badge{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;
+                border:1px solid var(--border-color,#e2e8f0);border-radius:20px;background:#f1f5f9;font-size:13px}
+            .mw-badge-icon{font-size:15px;line-height:1}
+            .mw-badge-label{color:var(--text-secondary,#64748b);font-weight:500}
+            .mw-badge-vendor{font-weight:700;color:var(--text-primary,#1e293b)}
+            .mw-badge-ver{padding:1px 7px;border-radius:10px;background:#e0e7ff;color:#4338ca;font-weight:600;font-size:12px}
+            .mw-badge-jdk{padding:1px 7px;border-radius:10px;background:#dcfce7;color:#166534;font-weight:600;font-size:12px}
+            .mw-badge-meta{color:var(--text-secondary,#94a3b8);font-size:11px}
+            /* 호스트명 칩 (편집 가능) */
+            .host-chip{display:inline-flex;align-items:center;gap:7px;padding:7px 12px;
+                border:1px solid var(--border-color,#e2e8f0);border-radius:20px;background:#f1f5f9;font-size:13px}
+            .host-chip-icon{font-size:15px;line-height:1}
+            .host-chip-label{color:var(--text-secondary,#64748b);font-weight:500}
+            .host-chip-name{font-weight:700;color:var(--text-primary,#1e293b)}
+            .host-chip-name.host-chip-empty{font-weight:500;color:var(--text-secondary,#94a3b8);font-style:italic}
+            .host-chip-edit{border:none;background:transparent;cursor:pointer;font-size:13px;color:#64748b;
+                padding:2px 5px;border-radius:6px;line-height:1}
+            .host-chip-edit:hover{background:#e2e8f0;color:#1e293b}
+            .host-chip-input{font-size:13px;padding:3px 7px;border:1px solid #cbd5e1;border-radius:8px;
+                width:150px;font-family:inherit}
+            .host-chip-save,.host-chip-cancel{border:none;cursor:pointer;font-size:12px;padding:4px 9px;
+                border-radius:8px;font-weight:600}
+            .host-chip-save{background:#4338ca;color:#fff}
+            .host-chip-cancel{background:#e2e8f0;color:#475569}
+        </style>
+        <div class="overview-badge-row">
+            <div class="host-chip" title="덤프 출처 호스트명 — SSH 전송 시 자동 기록, 수동 업로드는 직접 입력 (연필 클릭)">
+                <span class="host-chip-icon">&#127760;</span>
+                <span class="host-chip-label">Host</span>
+                <span class="host-chip-name" id="hostChipName"
+                      th:classappend="${hostname == null or hostname.isEmpty()} ? ' host-chip-empty' : ''"
+                      th:text="${hostname == null or hostname.isEmpty()} ? '미지정' : ${hostname}">guacmg1t</span>
+                <button type="button" class="host-chip-edit" id="hostChipEdit"
+                        onclick="startHostEdit()" title="호스트명 편집">&#9998;</button>
+            </div>
+            <div th:if="${middlewareVendor != null or jdkVersion != null}" class="mw-badge"
+                 title="System Properties · 스레드 스택 · 클래스로더 기반 추정">
+                <span class="mw-badge-icon">&#128421;</span>
+                <span class="mw-badge-label">Middleware</span>
+                <span class="mw-badge-vendor" th:text="${middlewareVendor != null ? middlewareVendor : '미식별'}">Apache Tomcat</span>
+                <span th:if="${middlewareVersion != null}" class="mw-badge-ver" th:text="${middlewareVersion}">9.0.x</span>
+                <span th:if="${jdkVersion != null}" class="mw-badge-jdk" th:text="'JDK ' + ${jdkVersion}">JDK 17</span>
+                <span th:if="${middlewareVendor != null}" class="mw-badge-meta"
+                      th:text="${middlewareCategory}">WAS</span>
+            </div>
+        </div>
+
         <!-- ▌ 상단 2단: 좌(KPI + Heap Composition) · 우(OOM / Leak 진단) ▌ -->
         <div class="overview-top">
 
@@ -592,6 +641,25 @@ function loadFullErrorLog() {
                     <div>
                         <div class="diag-ok-title">누수 의심 없음</div>
                         <div class="diag-ok-sub">뚜렷한 메모리 누수 패턴이 발견되지 않았습니다.</div>
+                    </div>
+                </div>
+
+                <!-- AI 인사이트 요약 카드 (Leak Suspects 하위) — analyze.js 가 저장된 인사이트 로드 시 채움 -->
+                <div class="card diag-card ai-insight-summary-card" id="ovAiInsightCard">
+                    <div class="diag-head">
+                        <span class="diag-head-icon">&#129302;</span>
+                        <span class="diag-head-title">AI 인사이트 요약</span>
+                        <span class="diag-head-count" id="ovAiSeverity" style="display:none">-</span>
+                    </div>
+                    <!-- 미생성 상태 -->
+                    <div id="ovAiInsightEmpty">
+                        <p class="ov-ai-empty-text">아직 AI 분석이 수행되지 않았습니다. LLM으로 누수 근본 원인과 권장 조치를 요약받을 수 있습니다.</p>
+                        <a class="leak-view-all" onclick="goToAiInsight()">AI 분석 하러가기 &rarr;</a>
+                    </div>
+                    <!-- 요약 본문 -->
+                    <div id="ovAiInsightBody" style="display:none">
+                        <p class="ov-ai-summary" id="ovAiSummary"></p>
+                        <a class="leak-view-all" onclick="goToAiInsight()">자세히 보기 &rarr;</a>
                     </div>
                 </div>
             </div>
@@ -926,6 +994,49 @@ function loadFullErrorLog() {
         </div>
     </div>
 
+    <!-- ▌ SYSTEM PROPERTIES PANEL ▌ -->
+    <div id="panel-sysprops" class="panel" th:if="${hasSystemProperties}">
+        <div class="card">
+            <div class="card-title"><span class="card-icon">&#9881;</span> System Properties</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                <p style="font-size:13px;color:var(--text-secondary);margin:0">
+                    JVM <code>System.getProperties()</code> —
+                    <strong th:text="${systemProperties != null ? #maps.size(systemProperties) : 0}">0</strong>개
+                    (MAT system_properties 추출)
+                </p>
+                <input type="text" class="table-search" id="sysPropSearch" placeholder="Search key / value..."
+                       oninput="filterSysProps()" style="width:260px">
+            </div>
+            <div style="max-height:600px;overflow:auto;border:1px solid var(--border);border-radius:8px">
+                <table class="data-table" id="sysPropTable">
+                    <thead>
+                        <tr>
+                            <th style="width:38%">Key</th>
+                            <th>Value</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr th:each="e : ${systemProperties}" th:data-key="${e.key}" th:data-val="${e.value}">
+                            <td><div class="class-name-cell" style="font-weight:600" th:text="${e.key}">key</div></td>
+                            <td><div style="font-family:var(--mono);font-size:12px;word-break:break-all" th:text="${e.value}">value</div></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <script th:inline="none">
+            function filterSysProps() {
+                var q = (document.getElementById('sysPropSearch').value || '').toLowerCase();
+                var rows = document.querySelectorAll('#sysPropTable tbody tr');
+                for (var i = 0; i < rows.length; i++) {
+                    var k = (rows[i].getAttribute('data-key') || '').toLowerCase();
+                    var v = (rows[i].getAttribute('data-val') || '').toLowerCase();
+                    rows[i].style.display = (!q || k.indexOf(q) >= 0 || v.indexOf(q) >= 0) ? '' : 'none';
+                }
+            }
+        </script>
+    </div>
+
     <!-- ▌ THREAD OVERVIEW PANEL ▌ -->
     <div id="panel-threads" class="panel" th:if="${hasThreadOverview}">
         <div class="card">
@@ -1253,7 +1364,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-05-31a"></script>
+<script src="/js/analyze.js?v=2026-06-01b"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

@@ -544,6 +544,17 @@
         .ai-step.done .ai-step-label { color:#10B981; }
         .ai-step-line { flex:1;height:2px;background:#E2E8F0;min-width:28px;max-width:56px;margin-top:17px;transition:background .4s ease; }
         .ai-step-line.done { background:linear-gradient(90deg,#10B981,#3B82F6); }
+        /* 모바일: 고정 min-width 합(≈388px)이 좁은 화면을 넘쳐 인디케이터가 레이아웃을 벗어나는 문제.
+           각 단계를 가용 폭에 맞춰 균등 축소(flex:1 1 0; min-width:0) + 라벨 줄바꿈 허용. */
+        @media (max-width:560px) {
+            #aiStepIndicator { gap:2px; }
+            .ai-step { min-width:0; flex:1 1 0; gap:5px; }
+            .ai-step-circle { width:30px;height:30px;font-size:13px; }
+            .ai-step-label { font-size:10px;white-space:normal;word-break:keep-all;overflow-wrap:anywhere;line-height:1.2; }
+            .ai-step-line { flex:0 0 10px;min-width:0;max-width:none;margin-top:14px; }
+            /* 위험도 배너(가로 유지·위험도 2줄 적층·메타 우측 폰트 축소)는
+               max-width:768px / 480px 블록에서 처리 */
+        }
         /* Navigation leave warning overlay */
         #aiLeaveWarning { display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;align-items:center;justify-content:center; }
         #aiLeaveWarning.show { display:flex; }
@@ -739,9 +750,19 @@
         .mobile-sidebar-header .ms-title { font-size:13px; font-weight:600; word-break:break-all; }
 
         @media (max-width:768px) {
-            #aiSeverityBanner { flex-direction:column !important; align-items:flex-start !important;
-                                gap:12px !important; padding:16px 18px !important; }
-            #aiSeverityBanner > div:last-child { text-align:left !important; }
+            /* 배너는 가로 유지 — 메타(시간/모델/응답)를 위험도 우측에 세로 3줄로 표시.
+               (이전엔 flex-direction:column 으로 메타가 위험도 하단에 좌측 정렬되던 문제) */
+            #aiSeverityBanner { gap:10px !important; padding:14px 14px !important; }
+            #aiSevMeta { text-align:right !important; }
+            /* 위험도 라벨/값을 2줄(위험도 / Critical)로 적층 → 가로 공간 확보 */
+            #aiSevGroup { flex-direction:column !important; align-items:flex-start !important; gap:0 !important; }
+            #aiSevGroup > span:first-child { font-size:11px !important; }
+            /* 메타 글자 축소 — 우측 3줄이 레이아웃을 벗어나지 않도록 */
+            #aiSevMeta > div { font-size:10px !important; }
+            /* AI 결과 본문(저장배너/요약/근본원인/권장조치/위험요소/JVM) 글자 약간 축소 */
+            #aiSavedPathBanner { font-size:13px !important; }
+            #aiSummary, #aiRootCause, #aiRecommendations, #aiRiskDesc, #aiJvmAdviceDesc {
+                font-size:13px !important; line-height:1.7 !important; }
             .app-header { left:0; }
             .sidebar {
                 position:fixed; top:var(--header-h); left:0; bottom:0; width:280px; z-index:50;
@@ -781,8 +802,9 @@
         }
         @media (max-width:480px) {
             #aiSeverityBanner { padding:14px !important; gap:10px !important; }
-            #aiSeverityBanner #aiSeverityIcon { font-size:28px !important; }
-            #aiSeverityBanner #aiSeverity { font-size:20px !important; }
+            #aiSeverityBanner #aiSeverityIcon { font-size:26px !important; }
+            #aiSeverityBanner #aiSeverity { font-size:19px !important; }
+            #aiSevMeta > div { font-size:9px !important; } /* 소형 폰: 메타 추가 축소 */
             #panel-ai-insight .card, #panel-ai-insight > div > div { padding:14px 12px !important; }
             .sidebar, .sidebar.mobile-open { width:calc(100vw - 56px); max-width:280px; }
             .kpi-bar { display:grid; grid-template-columns:repeat(3, 1fr); }
@@ -862,11 +884,12 @@
         /* ── Overview 상단 2단 (좌: 진단 · 우: KPI/Heap Composition) ── */
         .overview-top {
             display:grid; grid-template-columns:1fr 1fr; gap:14px;
-            margin-bottom:16px; align-items:stretch;
+            margin-bottom:16px; align-items:start;
         }
         .ov-col { display:flex; flex-direction:column; gap:14px; min-width:0; }
-        /* 진단 컬럼의 마지막 카드(Leak 요약/정상)는 아래 빈 공간을 채우도록 확장 */
-        .ov-diag > .card:last-child { flex:1 1 auto; }
+        /* 각 컬럼은 내용 높이에 맞춰 자연스럽게 크기 조절(align-items:start).
+           한쪽 컬럼(좌: Leak+AI 요약, 우: KPI+차트)이 더 길어도 짧은 쪽 카드 하단에
+           강제 stretch 로 인한 빈 공간이 생기지 않는다. */
         /* 컬럼 내부 카드/KPI 의 자체 하단여백 제거 — gap 이 간격을 담당 */
         .overview-top .kpi-bar, .overview-top .card { margin-bottom:0; }
         /* 좌측 KPI: 절반 폭이므로 2열 그리드(3행)로 전환 */
@@ -924,6 +947,17 @@
             color:#1d4ed8; cursor:pointer; text-decoration:none;
         }
         .leak-view-all:hover { text-decoration:underline; }
+
+        /* ── AI 인사이트 요약 카드 (Overview, Leak Suspects 하위) ── */
+        .ai-insight-summary-card { border-color:#ddd6fe; background:linear-gradient(180deg,#f5f3ff,#fff 60%); }
+        .ai-insight-summary-card .diag-head-icon { color:#7c3aed; }
+        .ai-insight-summary-card .diag-head-title { color:#5b21b6; }
+        .ai-insight-summary-card .diag-head-count { color:#5b21b6; background:#ede9fe; border-color:#ddd6fe; }
+        .ov-ai-empty-text { margin:0 0 4px; font-size:13px; line-height:1.55; color:#64748b; }
+        .ov-ai-summary {
+            margin:0; font-size:13px; line-height:1.6; color:#334155;
+            word-break:break-word; overflow-wrap:anywhere; white-space:pre-wrap;
+        }
 
         /* ── 정상 상태 카드 ── */
         .diag-ok { display:flex; align-items:center; gap:12px; border-color:#a7f3d0; background:var(--success-light); }

@@ -1,5 +1,135 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-01] Target Servers CRUD 감사 로깅 보강
+
+**점검 결과:** `ServerController` 의 서버 추가/수정/삭제(`POST/PUT/DELETE /api/servers`)에 **감사 로깅이 전혀 없었음**(save/deleteById 후 바로 응답). LeakRule 룰관리는 `[LeakRule] action=... by={user}` 패턴으로 감사 로깅이 되어 있어, 동일 패턴으로 보강.
+
+- **`ServerController`:** slf4j `logger` + `who(Authentication)` 헬퍼 추가. 세 엔드포인트에 `Authentication auth` 파라미터 추가.
+  - **create:** `[Server] action=create id=.. name=.. host=.. port=.. sshUser=.. autoDetect=.. by=..`
+  - **update:** 변경 전 값 캡처 → `action=update id=.. name='old'->'new' host/port/autoDetect/enabled before->after fields=[변경키] by=..`
+  - **delete:** 삭제 전 name/host 캡처(삭제 후 조회 불가) → `action=delete id=.. name=.. host=.. existed=.. by=..`
+  - 각 catch 에 `action=... FAILED ... error=..` warn 로깅 추가.
+- **검증:** 테스트 서버 생성→수정→삭제 후 로그에 create/update(diff)/delete 3건 + `by=admin` 기록 확인, 테스트 행 DB 정리 완료. 빌드+기동 정상(13.2s).
+
+## [2026-06-01] Transfer Logs Export 모달 — 취소/다운로드 버튼 스타일 깨짐 수정
+
+- **`server-logs.html`:** Export 확인 모달의 `.mbtn-cancel`/`.mbtn-confirm` 버튼이 브라우저 기본 버튼처럼 렌더되던 문제. common.css 의 `.mbtn-*` 는 **색상(background/color)만** 제공하고 padding/border/radius/font 등 형태는 페이지가 지정해야 하는데(cascade override 패턴), 직전 추가한 모달엔 형태 규칙이 없었음. `#exportModal .modal-box button` 에 `padding/border:none/border-radius/font-size/font-weight/cursor` 기본 형태 추가(leak-rules.html `.modal-btns button` 과 동일 패턴).
+- **검증:** 페이지에 규칙 반영 확인. 빌드+기동 정상(13.3s).
+
+## [2026-06-01] 모바일 — AI 결과 폰트 축소 + Transfer Logs KPI 한 줄 + Export 모달/스피너 수정
+
+- **AI 인사이트 결과 폰트 (`analyze.css?v=2026-06-01e`):** `≤768px` 에서 저장배너(`#aiSavedPathBanner` 14→13px) + 요약/근본원인/권장조치/위험요소/JVM 본문(`#aiSummary` 외 4개 15→13px, line-height 1.85→1.7) 약간 축소. 인라인 스타일이라 `!important` 로 오버라이드.
+- **Transfer Logs KPI 한 줄 (`server-logs.html`):** `≤640px` 에서 `.kpi-grid` 가 `1fr`(세로 3줄)이던 것 → `1fr 1fr 1fr`(한 줄 3등분) + 콤팩트 세로 카드(아이콘 26px·value 17px·label 10px).
+- **Transfer Logs Export 모달 + 무한 스피너 수정 (`server-logs.html`):** CSV/JSON 클릭 시 즉시 `<a href=url>` 네비게이션으로 다운로드 → 응답 `Content-Disposition: form-data`(non-attachment)라 브라우저 탭 스피너가 무한 회전하던 문제. (1) 클릭 시 확인 모달(common.css `.modal-ov`/`.modal-box` 재사용) 표시, (2) `confirmExport()` 가 `fetch`+`blob`+`URL.createObjectURL` 로 **페이지 네비게이션 없이** 저장(Content-Disposition 파일명 파싱, 버튼 '다운로드 중…' 상태). 스피너 무한 회전 원천 제거.
+- **검증:** 배포 CSS/페이지에 폰트·KPI·모달/JS 반영, export 엔드포인트 GET 200 + CSV + 파일명(`transfer-logs-…csv`) 확인. 빌드+기동 정상(13.4s).
+
+## [2026-06-01] 모바일 — Leak Rules 모달 화면초과 수정 + Target Servers 필터 한 줄 배치
+
+- **Leak Rules 모달 (`leak-rules.html`):** 새 라이브러리 룰/편집 모달(긴 폼)이 모바일 bottom-sheet 에서 화면을 넘고 하단 저장/취소 버튼 도달이 어렵던 문제. `≤640px` 모달을 flex 컬럼으로 전환 — `.modal-ttl` sticky top / `.modal-btns` sticky bottom(둘 다 `margin:0 -16px` 로 풀폭 + 자체 배경/구분선) / 본문만 스크롤. `max-height` 를 `92vh` → `92dvh`(모바일 주소창 영역 제외)로 변경해 화면 초과 방지.
+- **Target Servers 필터 (`servers.html`):** `≤900px` 에서 툴바가 `flex-direction:column` 이라 검색·상태·자동탐지·행표시가 4줄로 적층되던 것 → 검색은 `flex:1 1 100%`(한 줄 전체), 상태/자동탐지/행표시 `.page-size-wrap{flex:1 1 0;min-width:0}` 로 **한 줄 3등분**. 좁은 폭 대응 라벨 11px·select padding/화살표 위치 축소.
+- **검증:** 두 페이지 렌더에 sticky 모달(`92dvh`)·필터 3등분 규칙 반영 확인. 빌드+기동 정상(13.2s).
+
+## [2026-06-01] 모바일 AI 채팅 — 오픈 시 가상 키보드 자동 표시 방지
+
+- **`analyze.js?v=2026-06-01b`:** `toggleAiChat()` 오픈 시 200ms 후 `aiChatInput.focus()` 호출이 모바일에서 가상 키보드를 즉시 띄우던 문제. `!window.matchMedia('(max-width: 900px)').matches` 가드 추가 → 모바일은 자동 포커스 생략(사용자가 입력창 탭하면 그때 키보드), 데스크톱은 기존대로 즉시 포커스. (전송 완료 후 재포커스(3252)·호스트명 칩 편집 포커스(3509)는 사용자 능동 동작이라 유지.)
+- **검증:** 배포 JS 에 900px 가드 반영 확인. 빌드+기동 정상.
+
+## [2026-06-01] AI 인사이트 결과 모바일 — 위험도 2줄 적층 + 메타 글자 축소
+
+- **위험도 2줄 (`analyze.html` `#aiSevGroup`, `analyze.css?v=2026-06-01d`):** 위험도 그룹 div 에 id 부여 후 `@media (max-width:768px)` 에서 `flex-direction:column` 으로 "위험도"(11px) / "Critical" 2줄 적층. 가로 공간 확보.
+- **메타 글자 축소:** 우측 시간/모델/응답이 좁은 화면에서 레이아웃을 벗어나던 문제 → `≤768px` 10px, `≤480px` 9px(+아이콘 26·위험도 19px)로 단계 축소. 중복됐던 `≤560px` 메타 규칙 제거.
+- **검증:** 배포 CSS 에 `#aiSevGroup` column 적층·메타 10px/9px 반영, 페이지에 `aiSevGroup` id 확인. 빌드+기동 정상(13.1s).
+
+## [2026-06-01] AI 인사이트 결과 — 모바일 메타 우측 3줄 배치 + 신규 완료 시 분석시각 즉시 표시
+
+- **모바일 배너 레이아웃 (`analyze.css?v=2026-06-01c`, `analyze.html`):** 위험도 배너의 시간/모델/응답 메타를 위험도 **우측에 세로 3줄**로 표시. 근본 원인은 기존 `@media (max-width:768px)` 의 `#aiSeverityBanner { flex-direction:column !important }` + `> div:last-child { text-align:left !important }` 가 배너를 세로 적층하고 메타를 위험도 하단·좌측에 두던 것 — 이 강제 규칙 제거하고 가로 유지(`gap`/`padding` 만 축소) + `#aiSevMeta { text-align:right }` 로 변경. 배너 HTML 도 메타를 가로 wrap span → 세로 stack `<div>`(id `aiSevMeta`)로 되돌리고 `margin-left:auto` 우측 고정, `flex-wrap` 제거. 좁은 폭 대응으로 `≤768px` 아이콘 28·위험도 20px(기존 480 블록), `≤560px` 메타 10.5px 축소.
+- **신규 완료 시 분석시각 미표시 버그 (`AiInsightManager` / `HeapAiApiController` / `analyze.js?v=2026-06-01a`):** `/api/llm/analyze` 응답에 `analysedAt` 이 없어 분석 직후엔 "… 분석" 시각이 빈 값이고 새로고침(DB 로드) 후에만 표시되던 문제. `saveAiInsight` 가 분석시각을 복사본이 아닌 **입력 맵에 스탬프**하도록 변경 → 컨트롤러가 `result.put("analysedAt", …)` 로 응답에 포함. 추가로 `showAiResult` 에 `|| Date.now()` 폴백(저장 실패 등 누락 시 빈 값 방지).
+- **검증:** 배포 CSS 에 column 강제 제거·메타 우측정렬 반영, JS 폴백 반영 확인. 빌드+기동 정상(13.1s). (LLM 실호출 검증은 비용·데이터 보호 위해 생략, 서버 응답 경로는 코드 리뷰로 확인.)
+
+## [2026-06-01] AI 인사이트 분석중 화면 — 모바일 단계 인디케이터 오버플로 수정
+
+- **단계 인디케이터 (`analyze.css?v=2026-06-01a`):** '데이터 수집-프롬프트 구성-LLM 분석-결과 저장' 스텝퍼가 고정 `min-width:76px`×4 + 라인 `min-width:28px`×3 ≈ 388px 라 좁은 모바일에서 가로 오버플로(레이아웃 이탈). `@media (max-width:560px)` 추가: `.ai-step{min-width:0;flex:1 1 0}`(가용 폭 균등 축소) + 라벨 `white-space:normal;word-break:keep-all`(줄바꿈 허용) + circle 36→30px + line `flex:0 0 10px`. 어떤 모바일 폭에서도 컨테이너를 넘지 않음.
+- **검증:** 배포 CSS(캐시키 a)에 `flex:1 1 0`/라벨 줄바꿈 규칙 반영 확인. 빌드+기동 정상(13.1s).
+
+## [2026-06-01] AI 인사이트 패널 — 모바일 '완료' 뱃지 개행 수정 + 위험도 배너 메타 가로 배치
+
+- **'완료' 뱃지 개행 (`analyze.html`):** `#aiPanelBadge` 에 `white-space:nowrap;flex-shrink:0` 추가. 좁은 모바일 폭에서 패널 헤더 좌측 flex 그룹(아이콘+제목+뱃지)이 압축되며 "완/료" 가 글자 단위로 줄바꿈되던 문제 해결.
+- **위험도 배너 메타 (`analyze.html` `#aiSeverityBanner`):** 시간/모델/응답을 세로 누적 `<div>` 3개 → 위험도 우측 가로 배치 `<span>` flex 그룹(`margin-left:auto`, `flex-wrap:wrap`)으로 변경. 배너 자체도 `flex-wrap:wrap` 추가. 모바일에서 메타가 위험도 하단에 3줄로 쌓여 세로 공간을 크게 차지하던 문제를 1행(좁으면 1줄 줄바꿈)으로 축소. padding 22→18px, icon 38→34px 소폭 조정. (ID 불변 → analyze.js textContent 세팅 그대로 동작.)
+- **검증:** 렌더 페이지(oom-test.hprof)에서 뱃지 nowrap·메타 span/`margin-left:auto` 반영, 옛 세로 div 블록 제거 확인. 빌드+기동 정상(13.4s).
+
+## [2026-05-31] 분석화면 — AI 미분석 로고 제거 + Overview 컬럼 레이아웃 자연 정렬
+
+- **AI 인사이트 패널 (`analyze.html`):** `#aiStateNotAnalyzed` 본문 "AI 분석이 아직 수행되지 않았습니다" 상단의 🤖 로고 박스(64px gradient) 제거.
+- **Overview 레이아웃 (`analyze.css?v=2026-05-31i`):** `.overview-top` 의 `align-items:stretch` → `align-items:start`. 기존엔 두 컬럼을 강제로 같은 높이로 늘여(좌: OOM/Leak/AI요약, 우: KPI/Heap/Biggest Objects 파이), 한쪽이 길면 짧은 쪽 마지막 카드(예: Biggest Objects) 하단에 빈 공간이 생겼다. 특히 Leak Suspects 2건 + AI 요약 카드로 좌측이 길어진 oom-test.hprof 에서 우측 파이 카드 아래 공백 발생. `.chart-box canvas{max-height:260px}` + 파이 `maintainAspectRatio:true` 라 카드를 늘여도 내부 공백만 커지므로, stretch 자체를 제거해 각 컬럼·카드가 내용 높이에 맞춰 자연 정렬되도록 함. (불필요해진 `.ov-diag > .card:last-child{flex:1 1 auto}` 규칙 제거.)
+- **검증:** 로고 박스 잔존 0, 배포 CSS 에 `align-items:start` 반영 확인. 빌드+기동 정상(13.3s).
+
+## [2026-05-31] 분석화면 Overview — Leak Suspects 하위에 AI 인사이트 요약 카드
+
+**배경:** AI 인사이트는 별도 탭에만 있어 Overview 한눈 진단에서 누락. Overview 좌측 진단 컬럼(`ov-diag`)의 Leak Suspects 카드 하위에 AI 인사이트 **요약(summary)** + 위험도 칩을 노출.
+
+- **UI (`analyze.html`):** `ov-diag` 컬럼 끝에 `#ovAiInsightCard` 카드 추가. 두 상태: 미생성(`#ovAiInsightEmpty` — "AI 분석 하러가기 →") / 요약 본문(`#ovAiInsightBody` — `#ovAiSummary` + 위험도 칩 `#ovAiSeverity` + "자세히 보기 →"). 기본 미생성 상태, JS가 토글.
+- **CSS (`analyze.css?v=2026-05-31h`):** `.ai-insight-summary-card`(보라 테마) + `.ov-ai-summary`/`.ov-ai-empty-text`. 기존 `.diag-card`/`.leak-view-all` 재사용.
+- **JS (`analyze.js?v=2026-05-31c`):** `goToAiInsight()`(패널 전환) + `renderOverviewInsight(data)`(summary 채움, 위험도 칩 `_SEV_CONFIG` 색상 적용, summary 없으면 미생성 상태로 복귀). `showAiResult()` 끝 + 저장 인사이트 auto-load 경로에서 자동 호출, `deleteAiInsight()` 성공 시 `renderOverviewInsight(null)` 로 초기화.
+- **검증:** 실제 인사이트(oom-test.hprof) GET `found:true`/severity `Critical`/summary 반환 확인, analyze 페이지에 카드 요소(`ovAiInsightCard`/`ovAiSummary`/`ovAiSeverity`)·신규 JS 함수 포함 확인. 빌드+기동 정상(13.4s).
+- **⚠️ 데이터 손실 (검증 중 사고):** 테스트 INSERT 의 `ON DUPLICATE KEY UPDATE` 가 기존 `ai_insights` 의 `tomcat_heapdump.hprof` 인사이트(id 7)를 깨진 JSON 으로 덮어씀(문자열 내 미이스케이프 개행). 파일 백업 없어 복구 불가 → 깨진 행 삭제(미수행 상태로 복귀). 해당 덤프는 "AI 분석 시작" 으로 재생성 필요. **교훈: 운영 DB 의 UNIQUE 키 대상 테스트 INSERT 에 `ON DUPLICATE KEY UPDATE` 금지.**
+
+## [2026-05-31] 분석화면 Overview — 덤프 출처 호스트명 칩 + 수동 편집
+
+**배경:** SSH 원격 전송 덤프는 `analysis_history.server_name`(출처 서버)이 자동 기록되지만, 수동 업로드 덤프는 비어 있음. 분석화면 Overview에 호스트명 칩을 노출하고, 연필 아이콘으로 운영자가 직접 입력/수정할 수 있게 함.
+
+- **서비스 (`HeapDumpAnalyzerService`):** `getAnalysisServerName(filename)`(조회, 미식별 시 "") + `updateAnalysisServerName(filename, hostname)`(@Transactional, 빈 값→null 초기화, 100자 절단, 레코드 없으면 null) 추가.
+- **API (`HeapHistoryApiController`):** `POST /api/history/{filename}/hostname` — `{hostname}` 입력, `{success, hostname}` 반환. 레코드 없으면 404. `/api/**` 공통 정책(인증 필요 + CSRF 면제)이라 SecurityConfig 변경 불필요.
+- **ViewController (`HeapDumpViewController.analyzeResult`):** 모델에 `hostname` 추가.
+- **UI (`analyze.html` + `analyze.js?v=2026-05-31b`):** 미들웨어 배지 좌측에 `🌐 Host: {호스트명}` 칩(`.host-chip`) + 연필 버튼. 미지정 시 이탤릭 "미지정". 연필 클릭 → 인라인 input + 저장/취소(Enter 저장·Esc 취소) → `Common.fetchJSON` POST → 칩 즉시 갱신. 배지 2개를 `.overview-badge-row` flex로 묶음.
+- **검증:** 로그인 세션으로 설정(`guacmg1t`)→DB 반영 확인→빈값 초기화→없는 파일 404, analyze 결과 페이지 칩 렌더(`guacmg1t`) 확인. (`/api/history` 응답은 원래부터 serverName 미포함 — 본 변경 무관, 칩은 DB 직접 조회.) 빌드+기동 정상(13.5s). 테스트 데이터 원복.
+
+## [2026-05-31] 어플리케이션 버전 2.0.6 → 2.0.7
+
+- `pom.xml` `<version>` 2.0.6 → 2.0.7 (산출물 `heap-analyzer-2.0.7.jar`).
+- 기동 스크립트 JAR 파일명 참조 일괄 갱신: `restart.sh` / `run.sh` / `stop.sh`.
+- UI 버전 표기: `fragments/banner.html`(헤더), `index.html`(모바일 사이드바), `progress.html`(푸터). `CLAUDE.md` 빌드 예시도 갱신.
+- **주의:** 스크립트가 새 JAR명(2.0.7)으로 grep 하므로 첫 재기동 시 구버전(2.0.6) 프로세스를 자동 종료하지 못함 → 구 프로세스 수동 `kill` 후 재기동(포트 18080 점유 충돌 해소). 이후 재기동은 정상.
+- **검증:** 빌드 OK, `heap-analyzer-2.0.7.jar` 기동 정상(13.1s).
+
+## [2026-05-31] 미들웨어 배지 — "N회 매칭" 표기 제거
+
+**배경:** 분석화면 미들웨어 배지의 `WAS · 1447회 매칭` 에서 매칭 횟수는 `MiddlewareDetector` 의 내부 휴리스틱 점수(`matchCount`, 벤더 시그니처 누적 매칭수로 대표 벤더 1개 선택용)일 뿐 사용자에게는 의미 없는 디버깅 지표 → 혼란만 유발하여 노출 제거.
+
+- `templates/analyze.html` — 배지 meta span 을 `category + 'N회 매칭'` → `category` 단독으로 축소(WAS/DB 카테고리만 유지).
+- `controller/HeapDumpViewController.java` — `model.addAttribute("middlewareMatchCount", ...)` 제거. `MiddlewareDetector.Result.matchCount` 필드는 내부 선택 로직에 그대로 사용(모델 노출만 제거).
+- **검증:** 빌드+재기동 정상(14.0s).
+
+## [2026-05-31] System Properties 추출 + 미들웨어 버전/JDK 버전 확정
+
+**배경:** 미들웨어 벤더 배지(아래 항목)의 버전이 클래스/스택 이름만으로는 추출 불가했음. MAT `system_properties` 쿼리로 JVM `System.getProperties()` 를 가져와 JDK/WAS 버전을 확정하고 전용 탭으로 노출.
+
+**MAT 쿼리 (`service/HeapDumpAnalyzerService.java`):**
+- `enrichSystemProperties(result, dumpFile, resultDir)` — `runOomDetailQuery` 패턴 미러링(인덱스 복사 + 덤프 심볼릭 링크 격리 실행) + `runMatSingleQuery(..., "system_properties", 120)`. 실패해도 분석 전체 무영향(빈 맵). 분석 흐름의 OOM enrich 직후(dumpFile·인덱스 존재 구간)에서 호출.
+- `parseSystemPropertiesZip(zip)` — `_Query.zip`/index.html 파싱. **MAT 출력이 3열 `[Collection | Key | Value]` 트리 구조**임을 확인 → key=2번째·value=3번째 셀(2열 폴백 허용), 헤더/컬렉션 부모행/Total 제외. `LinkedHashMap` 순서 보존.
+- **신규 분석만** 적용(기존 result.json 은 빈 맵 — 재분석 시 채워짐).
+
+**모델 (`model/HeapAnalysisResult.java`):** `Map<String,String> systemProperties` 필드 + `hasSystemProperties()` + `getJdkVersion()`(java.runtime.version→java.version→java.vm.version). `cloneWithoutLog` 에 persist 1줄 추가.
+
+**감지기 (`util/MiddlewareDetector.java`):** `detect(entries, threads, sysProps)` 오버로드 추가. (1)벤더 고유 sysprop 마커(`catalina.home`/`weblogic.Name`/`jeus.home` 등) 존재 시 가중치 100으로 **권위적 확정**. (2)버전 해석: 직접 버전 프로퍼티 → **제품 토큰 anchor 경로 추출**(`tomcat[^0-9]{0,12}(\d+\.\d+...)` → `apache-tomcat-9.0.87` 에서 `9.0.87`) → 이름 best-effort 순.
+
+**UI (`templates/analyze.html`, `controller/HeapDumpViewController.java`):** 배지에 JDK 버전 칩(초록) 추가, 미식별이어도 JDK 만 있으면 배지 표시. Analysis 네비에 **System Properties 탭** + 검색 가능한 key/value 표 패널(`filterSysProps()` 인라인) 추가.
+
+- **검증:** tomcat_heapdump.hprof 재분석 → `[SysProp] Extracted 71` 로그, 배지 `Apache Tomcat · 9.0.87 · JDK 21+35-2513 · WAS · 364회 매칭`(버전 java.class.path 추출/ JDK java.runtime.version), System Properties 탭 71행 렌더 확인. 빌드+재기동 정상(13.5s).
+
+## [2026-05-31] 분석화면 Overview — 미들웨어(WAS) 벤더 자동 감지 배지
+
+**배경:** 덤프가 어떤 WAS(Tomcat/WebLogic/JEUS 등)에서 떴는지 한눈에 파악할 수 있도록 Analysis 페이지에 표시 요청. 신규 분석 없이 기존 결과(result.json)에도 소급 적용.
+
+**신규 (`util/MiddlewareDetector.java`):** `OomDetector` 스타일의 전용 유틸. `detect(List<HistogramEntry>, List<ThreadInfo>)` → 패키지 prefix 기반 8개 벤더(WebLogic `weblogic.` / JEUS `jeus.` / Tomcat `org.apache.catalina|coyote|tomcat.` / WebSphere `com.ibm.ws|websphere.` / Jetty `org.eclipse.jetty.` / JBoss·WildFly / Undertow / Resin) 매칭. 여러 벤더 동시 감지 시 **매칭 횟수 최다 1개**를 대표로 반환. 오탐 방지 `MIN_MATCH=3`.
+- **신호 출처(중요):** MAT 히스토그램 리포트는 retained 상위 ~25개만 담아 WAS 내부 클래스가 거의 안 잡힘. 따라서 **주 신호는 스레드 스택 트레이스 + 스레드 객체타입 + 컨텍스트 클래스로더**(WAS 요청 스레드는 프레임워크 프레임을 반드시 거침), 히스토그램은 보조 합산. (`LeakSuspectAdvisor` prefix 와 중복되나 그쪽은 advice 람다 강결합이라 재사용 부적합 → 전용 유틸 분리.)
+- **버전:** 모든 신호가 클래스/패키지 이름이라 버전 문자열 없음(Tomcat `ServerInfo`·WebLogic `weblogic.version` 등 객체 필드 값). `detectVersion()` 은 이름에 버전 토큰 박힌 드문 경우만 best-effort, 그 외 `null`. 신뢰도 높은 버전은 MAT system_properties 추출(후속) 필요.
+
+**수정 (`controller/HeapDumpViewController.java` `analyzeResult`):** 렌더 시점에 `MiddlewareDetector.detect(histogramEntries, threadInfos)` 호출 → 감지 시 `middlewareVendor`/`middlewareCategory`/`middlewareMatchCount`/`middlewareVersion` 모델 속성 추가. result 모델·result.json 영속화 변경 없음.
+
+**수정 (`templates/analyze.html`):** Overview 패널 상단에 `.mw-badge` 칩 추가 — `th:if="${middlewareVendor != null}"`. 벤더명 + (버전 있으면)버전 pill + `카테고리 · N회 매칭` 메타. KPI 6-카드 그리드 그대로 유지(배지를 위에 배치). 스코프 `<style>` 인라인.
+
+- **검증:** 빌드+재기동 정상(13.3s). 로그인 후 `/analyze/result/tomcat_heapdump` 200 → 배지 `Apache Tomcat / WAS · 164회 매칭` 렌더 확인(스택의 `org.apache.tomcat.` 130 + `org.apache.catalina.` 등 합산). 버전 null(미표시) 확인.
+
 ## [2026-05-31] Leak Rule 관리 — 감사 로깅 보강 + Import/Export 화살표 교정
 
 **배경:** Leak Suspect 룰 관리(`/admin/leak-rules`)에서 토글/편집/삭제/Export 동작이 로그에 전혀 남지 않음(Import만 로깅). 또 Export/Import 버튼 화살표가 서로 반대.

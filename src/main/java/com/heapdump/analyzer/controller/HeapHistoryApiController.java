@@ -75,6 +75,32 @@ public class HeapHistoryApiController {
         return ResponseEntity.ok(resp);
     }
 
+    /**
+     * 덤프 출처 호스트명 수동 편집 — analysis_history.server_name 갱신.
+     * SSH 전송 덤프는 자동 기록되지만 수동 업로드는 비어 있어 운영자가 직접 입력할 수 있게 한다.
+     * 빈 값이면 미지정으로 초기화. 인증 필요(/api/** 공통), CSRF 면제 경로.
+     */
+    @PostMapping("/api/history/{filename:.+}/hostname")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> updateHostname(
+            @org.springframework.web.bind.annotation.PathVariable String filename,
+            @RequestBody Map<String, Object> body) {
+        String safe = FilenameValidator.validate(filename);
+        Object hv = body.get("hostname");
+        String hostname = hv != null ? hv.toString() : "";
+        String saved = analyzerService.updateAnalysisServerName(safe, hostname);
+        Map<String, Object> resp = new HashMap<>();
+        if (saved == null) {
+            resp.put("success", false);
+            resp.put("error", "분석 이력 레코드를 찾을 수 없습니다: " + safe);
+            return ResponseEntity.status(404).body(resp);
+        }
+        logger.info("[Hostname] Updated for '{}': '{}'", safe, saved);
+        resp.put("success", true);
+        resp.put("hostname", saved);
+        return ResponseEntity.ok(resp);
+    }
+
     @GetMapping("/api/history")
     @ResponseBody
     public ResponseEntity<List<Map<String, Object>>> getHistory() {

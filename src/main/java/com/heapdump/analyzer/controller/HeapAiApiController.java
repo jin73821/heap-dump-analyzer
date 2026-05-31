@@ -186,6 +186,8 @@ public class HeapAiApiController {
                 analyzerService.saveAiInsight(filename, toStore);
                 result.put("saved", true);
                 result.put("savedTo", "database");
+                // saveAiInsight 가 toStore 에 스탬프한 분석 시각을 응답에 실어 신규 완료 즉시 표시
+                if (toStore.get("analysedAt") != null) result.put("analysedAt", toStore.get("analysedAt"));
                 logger.info("[AI-Insight][SAVE] 저장 완료 — file='{}', severity={}", filename, severity);
             } catch (Exception saveEx) {
                 logger.error("[AI-Insight][SAVE] 저장 실패 — file='{}', type={}, msg={}",

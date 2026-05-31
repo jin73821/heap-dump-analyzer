@@ -959,6 +959,93 @@ public class HeapDumpAnalyzerService {
     }
 
     /**
+     * MAT {@code system_properties} 쿼리를 격리된 임시 디렉토리에서 실행하고, 결과 zip 의
+     * index.html (key/value 2열 표)을 파싱해 {@code result.systemProperties} 에 채운다.
+     * 인덱스는 복사·덤프는 심볼릭 링크하여 원본 아티팩트를 건드리지 않는다(runOomDetailQuery 패턴).
+     * 실패해도 분석 전체에는 영향 없음(빈 맵 유지).
+     */
+    private void enrichSystemProperties(HeapAnalysisResult result, File dumpFile, File resultDir) {
+        File qdir = null;
+        try {
+            String dumpName = dumpFile.getName();
+            String base = stripExtension(dumpName);
+            qdir = new File(tmpDirectory(), "sysprop-" + base + "-" + System.nanoTime());
+            Files.createDirectories(qdir.toPath());
+
+            java.nio.file.Path linkDump = new File(qdir, dumpName).toPath();
+            Files.createSymbolicLink(linkDump, dumpFile.getAbsoluteFile().toPath());
+
+            File[] idx = resultDir.listFiles((d, n) ->
+                    n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
+            if (idx == null || idx.length == 0) {
+                logger.warn("[SysProp] No index files in {} — skipping system properties extraction", resultDir.getName());
+                deleteDirectoryRecursively(qdir);
+                return;
+            }
+            for (File f : idx) {
+                Files.copy(f.toPath(), new File(qdir, f.getName()).toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            runMatSingleQuery(linkDump.toString(), qdir, "system_properties", 120);
+
+            File zip = new File(qdir, base + "_Query.zip");
+            if (zip.exists()) {
+                java.util.Map<String, String> props = parseSystemPropertiesZip(zip);
+                if (!props.isEmpty()) {
+                    result.setSystemProperties(props);
+                    logger.info("[SysProp] Extracted {} system properties for {}", props.size(), result.getFilename());
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("[SysProp] System properties extraction failed for {}: {}",
+                    result != null ? result.getFilename() : "?", e.getMessage());
+        } finally {
+            if (qdir != null) { try { deleteDirectoryRecursively(qdir); } catch (Exception ignore) {} }
+        }
+    }
+
+    /** system_properties `_Query.zip` 의 index.html 2열 표를 (key → value) 맵으로 파싱. 입력 순서 보존. */
+    private java.util.Map<String, String> parseSystemPropertiesZip(File zip) {
+        java.util.Map<String, String> map = new java.util.LinkedHashMap<>();
+        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(zip)) {
+            java.util.zip.ZipEntry idx = null;
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+            while (en.hasMoreElements()) {
+                java.util.zip.ZipEntry e = en.nextElement();
+                if (e.getName().endsWith("index.html")) { idx = e; break; }
+            }
+            if (idx == null) return map;
+            String html;
+            try (java.io.InputStream is = zf.getInputStream(idx)) {
+                html = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            java.util.regex.Matcher rows = java.util.regex.Pattern
+                    .compile("<tr[^>]*>(.*?)</tr>", java.util.regex.Pattern.DOTALL).matcher(html);
+            java.util.regex.Pattern cellP = java.util.regex.Pattern
+                    .compile("<t[dh][^>]*>(.*?)</t[dh]>", java.util.regex.Pattern.DOTALL);
+            while (rows.find()) {
+                java.util.List<String> cells = new java.util.ArrayList<>();
+                java.util.regex.Matcher cm = cellP.matcher(rows.group(1));
+                while (cm.find()) {
+                    cells.add(cm.group(1).replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim());
+                }
+                // MAT system_properties 출력은 3열 [Collection | Key | Value] (트리). 2열 폴백도 허용.
+                String key, value;
+                if (cells.size() >= 3) { key = cells.get(1); value = cells.get(2); }
+                else if (cells.size() == 2) { key = cells.get(0); value = cells.get(1); }
+                else continue;
+                // 헤더("Key"/"Name")·푸터("Total:")·컬렉션 부모행 제외
+                if (key.isEmpty() || key.equalsIgnoreCase("Key") || key.equalsIgnoreCase("Name")
+                        || key.toLowerCase().startsWith("total")) continue;
+                map.put(key, value);
+            }
+        } catch (Exception e) {
+            logger.warn("[SysProp] Failed to parse system properties zip: {}", e.getMessage());
+        }
+        return map;
+    }
+
+    /**
      * MAT HTML 새니타이즈 — OWASP whitelist 기반.
      * 이전 버전에서 전체 HTML 문서가 저장된 경우 body 추출 후 정제.
      */
@@ -1915,6 +2002,10 @@ public class HeapDumpAnalyzerService {
                     enrichThrownOomMessage(result, dumpFile, resultDir);
                 }
 
+                // System Properties 추출 (JDK/OS/WAS 식별·버전). dumpFile(tmp)·인덱스 존재 구간.
+                sendProgress(emitter, AnalysisProgress.parsing(safe, 99, "System Properties 추출 중..."));
+                enrichSystemProperties(result, dumpFile, resultDir);
+
                 // Heap 데이터가 없으면 분석 실패로 처리
                 boolean hasHeapData = result.getTotalHeapSize() > 0 || result.getUsedHeapSize() > 0;
                 if (!hasHeapData) {
@@ -2287,6 +2378,39 @@ public class HeapDumpAnalyzerService {
         }
     }
 
+    /**
+     * analysis_history 의 server_name(= 덤프 출처 호스트명)을 조회한다.
+     * SSH 원격 전송 시 자동 기록되며, 수동 업로드는 null. 미식별/레코드 없으면 빈 문자열.
+     */
+    public String getAnalysisServerName(String filename) {
+        try {
+            return analysisHistoryRepository.findByFilename(filename)
+                    .map(AnalysisHistoryEntity::getServerName)
+                    .filter(s -> s != null && !s.isEmpty())
+                    .orElse("");
+        } catch (Exception e) {
+            logger.debug("[DB] getAnalysisServerName failed for {}: {}", filename, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * 호스트명(server_name) 수동 편집 — 주로 수동 업로드 덤프에 사용.
+     * 빈 값/null 이면 미지정(null)으로 초기화. server_name 컬럼 길이(100) 초과 시 절단.
+     * @return 저장 후 정규화된 호스트명(미지정이면 ""). 레코드 없으면 null.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public String updateAnalysisServerName(String filename, String hostname) {
+        AnalysisHistoryEntity e = analysisHistoryRepository.findByFilename(filename).orElse(null);
+        if (e == null) return null;
+        String normalized = (hostname == null) ? "" : hostname.trim();
+        if (normalized.length() > 100) normalized = normalized.substring(0, 100);
+        e.setServerName(normalized.isEmpty() ? null : normalized);
+        analysisHistoryRepository.save(e);
+        logger.info("[DB] Hostname updated for {}: '{}'", filename, normalized);
+        return normalized;
+    }
+
     public AnalysisHistoryRepository getAnalysisHistoryRepository() {
         return analysisHistoryRepository;
     }
@@ -2331,6 +2455,7 @@ public class HeapDumpAnalyzerService {
         c.setHistogramEntries(r.getHistogramEntries());
         c.setThreadInfos(r.getThreadInfos());
         c.setTotalHistogramClasses(r.getTotalHistogramClasses());
+        c.setSystemProperties(r.getSystemProperties());
         c.setOomDetailMessage(r.getOomDetailMessage());
         c.setOriginalFileSize(r.getOriginalFileSize());
         c.setComponentDetailParsedMap(r.getComponentDetailParsedMap());

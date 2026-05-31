@@ -7,6 +7,9 @@ import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.TargetServerRepository;
 import com.heapdump.analyzer.service.RemoteDumpService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -31,6 +34,11 @@ import java.util.stream.Collectors;
 
 @Controller
 public class ServerController {
+
+    private static final Logger logger = LoggerFactory.getLogger(ServerController.class);
+
+    /** 감사 로그용 사용자명 추출 (LeakRuleAdminController 와 동일 패턴). */
+    private static String who(Authentication auth) { return auth != null ? auth.getName() : "unknown"; }
 
     private final TargetServerRepository serverRepository;
     private final RemoteDumpService remoteDumpService;
@@ -93,7 +101,8 @@ public class ServerController {
 
     @PostMapping("/api/servers")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> createServer(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> createServer(@RequestBody Map<String, Object> body,
+                                                            Authentication auth) {
         Map<String, Object> result = new HashMap<>();
         try {
             TargetServer server = new TargetServer();
@@ -107,10 +116,15 @@ public class ServerController {
                     ? ((Number) body.get("scanIntervalSec")).intValue() : 300);
             server.setEnabled(true);
             serverRepository.save(server);
+            logger.info("[Server] action=create id={} name='{}' host='{}' port={} sshUser='{}' autoDetect={} by={}",
+                    server.getId(), server.getName(), server.getHost(), server.getPort(),
+                    server.getSshUser(), server.isAutoDetect(), who(auth));
             result.put("success", true);
             result.put("serverId", server.getId());
             return ResponseEntity.ok(result);
         } catch (Exception e) {
+            logger.warn("[Server] action=create FAILED name='{}' host='{}' by={} error={}",
+                    body.get("name"), body.get("host"), who(auth), e.getMessage());
             result.put("success", false);
             result.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(result);
@@ -120,23 +134,33 @@ public class ServerController {
     @PutMapping("/api/servers/{id}")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> updateServer(@PathVariable Long id,
-                                                            @RequestBody Map<String, Object> body) {
+                                                            @RequestBody Map<String, Object> body,
+                                                            Authentication auth) {
         Map<String, Object> result = new HashMap<>();
         try {
             TargetServer server = serverRepository.findById(id)
                     .orElseThrow(() -> new IllegalArgumentException("서버를 찾을 수 없습니다: " + id));
-            if (body.containsKey("name")) server.setName((String) body.get("name"));
-            if (body.containsKey("host")) server.setHost((String) body.get("host"));
-            if (body.containsKey("port")) server.setPort(((Number) body.get("port")).intValue());
-            if (body.containsKey("sshUser")) server.setSshUser((String) body.get("sshUser"));
-            if (body.containsKey("dumpPath")) server.setDumpPath((String) body.get("dumpPath"));
-            if (body.containsKey("autoDetect")) server.setAutoDetect(Boolean.TRUE.equals(body.get("autoDetect")));
-            if (body.containsKey("scanIntervalSec")) server.setScanIntervalSec(((Number) body.get("scanIntervalSec")).intValue());
-            if (body.containsKey("enabled")) server.setEnabled(Boolean.TRUE.equals(body.get("enabled")));
+            // 변경 전 값 — 감사 로그 diff 용
+            String oldName = server.getName(), oldHost = server.getHost();
+            int oldPort = server.getPort();
+            boolean oldAuto = server.isAutoDetect(), oldEnabled = server.isEnabled();
+            List<String> changed = new ArrayList<>();
+            if (body.containsKey("name")) { server.setName((String) body.get("name")); changed.add("name"); }
+            if (body.containsKey("host")) { server.setHost((String) body.get("host")); changed.add("host"); }
+            if (body.containsKey("port")) { server.setPort(((Number) body.get("port")).intValue()); changed.add("port"); }
+            if (body.containsKey("sshUser")) { server.setSshUser((String) body.get("sshUser")); changed.add("sshUser"); }
+            if (body.containsKey("dumpPath")) { server.setDumpPath((String) body.get("dumpPath")); changed.add("dumpPath"); }
+            if (body.containsKey("autoDetect")) { server.setAutoDetect(Boolean.TRUE.equals(body.get("autoDetect"))); changed.add("autoDetect"); }
+            if (body.containsKey("scanIntervalSec")) { server.setScanIntervalSec(((Number) body.get("scanIntervalSec")).intValue()); changed.add("scanIntervalSec"); }
+            if (body.containsKey("enabled")) { server.setEnabled(Boolean.TRUE.equals(body.get("enabled"))); changed.add("enabled"); }
             serverRepository.save(server);
+            logger.info("[Server] action=update id={} name='{}'->'{}' host='{}'->'{}' port={}->{} autoDetect={}->{} enabled={}->{} fields={} by={}",
+                    id, oldName, server.getName(), oldHost, server.getHost(), oldPort, server.getPort(),
+                    oldAuto, server.isAutoDetect(), oldEnabled, server.isEnabled(), changed, who(auth));
             result.put("success", true);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
+            logger.warn("[Server] action=update FAILED id={} by={} error={}", id, who(auth), e.getMessage());
             result.put("success", false);
             result.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(result);
@@ -145,13 +169,20 @@ public class ServerController {
 
     @DeleteMapping("/api/servers/{id}")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> deleteServer(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> deleteServer(@PathVariable Long id, Authentication auth) {
         Map<String, Object> result = new HashMap<>();
         try {
+            // 삭제 전 식별 정보 캡처 (감사 로그용 — 삭제 후엔 조회 불가)
+            TargetServer server = serverRepository.findById(id).orElse(null);
+            String name = server != null ? server.getName() : "?";
+            String host = server != null ? server.getHost() : "?";
             serverRepository.deleteById(id);
+            logger.info("[Server] action=delete id={} name='{}' host='{}' existed={} by={}",
+                    id, name, host, server != null, who(auth));
             result.put("success", true);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
+            logger.warn("[Server] action=delete FAILED id={} by={} error={}", id, who(auth), e.getMessage());
             result.put("success", false);
             result.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(result);

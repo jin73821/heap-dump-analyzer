@@ -73,6 +73,10 @@ public class HeapAnalysisResult {
     private List<ThreadInfo> threadInfos = new ArrayList<>();
     private int totalHistogramClasses;
 
+    // ── System Properties (MAT system_properties 쿼리에서 추출, key→value) ──
+    // 신규 분석분만 채워짐 (기존 result.json 은 빈 맵). JDK/OS/WAS 식별·버전 근거.
+    private Map<String, String> systemProperties = new LinkedHashMap<>();
+
     // ── Thread Stacks (.threads 파일) ──────────────────
     @JsonIgnore
     private String threadStacksText;
@@ -101,6 +105,22 @@ public class HeapAnalysisResult {
 
     public boolean hasLeakSuspects() {
         return leakSuspects != null && !leakSuspects.isEmpty();
+    }
+
+    @JsonIgnore
+    public boolean hasSystemProperties() {
+        return systemProperties != null && !systemProperties.isEmpty();
+    }
+
+    /** JDK/JVM 런타임 버전 (java.runtime.version → java.version → java.vm.version 순). 없으면 null. */
+    @JsonIgnore
+    public String getJdkVersion() {
+        if (systemProperties == null) return null;
+        for (String k : new String[]{"java.runtime.version", "java.version", "java.vm.version"}) {
+            String v = systemProperties.get(k);
+            if (v != null && !v.isBlank()) return v.trim();
+        }
+        return null;
     }
 
     // ── OOM 요약 (transient, threadInfos 파생) ─────────
