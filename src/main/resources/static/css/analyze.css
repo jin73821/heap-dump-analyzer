@@ -76,6 +76,10 @@
             margin-left:auto; background:var(--danger); color:#fff; font-size:10px; font-weight:700;
             padding:2px 7px; border-radius:10px; min-width:18px; text-align:center;
         }
+        .nav-item .nav-badge-oom {
+            margin-left:auto; background:var(--danger); color:#fff; font-size:9.5px; font-weight:700;
+            padding:2px 7px; border-radius:10px; text-align:center; white-space:nowrap;
+        }
 
         /* Sidebar stats */
         .sidebar-stats { display:flex; flex-direction:column; gap:6px; }
@@ -208,6 +212,21 @@
         .pct-bar-fill { height:100%; border-radius:9px; transition:width .8s ease; min-width:2px; }
         .pct-bar-text { font-size:11px; font-weight:700; font-family:var(--mono); color:var(--text); width:48px; text-align:right; }
 
+        /* ── Dominator Tree inline bar chart (retained/shallow heap) ── */
+        .data-table td.dom-bar-cell {
+            position:relative; text-align:right; vertical-align:middle;
+            font-family:var(--mono); font-size:12px; padding:6px 14px;
+        }
+        .dom-bar-fill {
+            position:absolute; left:0; top:50%; transform:translateY(-50%);
+            height:20px; width:0; border-radius:0 4px 4px 0;
+            z-index:0; transition:width .7s cubic-bezier(.22,.61,.36,1);
+        }
+        .dom-bar-shallow { background:linear-gradient(90deg,#dbeafe 0%,#bfdbfe 100%); }
+        .dom-bar-retained { background:linear-gradient(90deg,#bfdbfe 0%,#60a5fa 100%); }
+        .dom-bar-val { position:relative; z-index:1; color:var(--text); }
+        .data-table tbody tr[onclick]:hover td.dom-bar-cell .dom-bar-val { color:var(--primary); }
+
         /* ── Dominator Tree disclosure (Top 50 incoming/outgoing refs) ── */
         .dom-chevron {
             display:inline-block; font-size:10px; color:#9CA3AF; user-select:none;
@@ -292,17 +311,14 @@
         }
         .suspect-keywords {
             margin-top:10px; padding-top:10px; border-top:1px dashed #bfdbfe;
-            display:flex; flex-wrap:wrap; gap:6px; align-items:center;
         }
         .suspect-keywords-label {
-            font-size:11px; font-weight:700; color:#1e3a8a;
-            text-transform:uppercase; letter-spacing:.04em; margin-right:4px;
+            font-size:13px; font-weight:700; color:#1e3a8a;
+            margin-bottom:6px;
         }
-        .suspect-kw-chip {
-            display:inline-block; padding:3px 9px; border-radius:6px;
-            background:#dbeafe; color:#1e3a8a; border:1px solid #bfdbfe;
-            font-family:var(--mono); font-size:11.5px; line-height:1.5;
-            word-break:break-all;
+        .suspect-kw-line {
+            font-family:var(--mono); font-size:12.5px; line-height:1.7;
+            color:#1e3a8a; word-break:break-all;
         }
         .suspect-advice {
             background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px;
@@ -796,17 +812,18 @@
         .oom-banner {
             background: var(--danger-light); border:1px solid #fecaca; border-radius:8px;
             padding:12px 16px; margin-bottom:14px; color:#991b1b;
-            font-size:13px; line-height:1.7;
+            font-size:14px; line-height:1.7;
             display:flex; flex-wrap:wrap; align-items:center; gap:6px;
         }
+        .oom-banner-overview { margin-bottom:20px; }
         .oom-banner-icon { font-size:15px; color:var(--danger); }
-        .oom-banner-type { font-family:var(--mono); font-size:12px; color:#7f1d1d; }
+        .oom-banner-type { font-family:var(--mono); font-size:13px; color:#7f1d1d; }
         .oom-banner-sep { margin:0 4px; color:#fca5a5; }
-        .oom-banner-more { font-size:11.5px; color:#7f1d1d; }
+        .oom-banner-more { font-size:12.5px; color:#7f1d1d; }
         .oom-link {
             display:inline-block; padding:2px 8px;
             background:#fee2e2; border:1px solid #fecaca; border-radius:5px;
-            font-family:var(--mono); font-size:11.5px; color:#991b1b;
+            font-family:var(--mono); font-size:12.5px; color:#991b1b;
             cursor:pointer; text-decoration:none;
         }
         .oom-link:hover { background:#fecaca; }
@@ -819,6 +836,14 @@
             display:inline-block; color:var(--danger);
             font-size:13px; line-height:1;
         }
+        .stat-oom-yes { color:var(--danger) !important; }
+        .stat-oom-no { color:#16a34a !important; }
+        .oom-title-badge {
+            display:inline-block; margin-left:8px; vertical-align:middle;
+            padding:2px 9px; border-radius:6px;
+            background:var(--danger-light); border:1px solid #fecaca;
+            color:#991b1b; font-size:11.5px; font-weight:700; line-height:1.4;
+        }
         @keyframes oomFlash {
             0%, 100% { background: var(--danger-light); }
             50% { background:#fecaca; }
@@ -826,4 +851,85 @@
         .thread-row.oom-flash {
             animation: oomFlash .4s ease-in-out 3;
             outline:2px solid var(--danger); outline-offset:-2px;
+        }
+
+        /* ── Overview 상단 2단 (좌: 진단 · 우: KPI/Heap Composition) ── */
+        .overview-top {
+            display:grid; grid-template-columns:1fr 1fr; gap:14px;
+            margin-bottom:16px; align-items:stretch;
+        }
+        .ov-col { display:flex; flex-direction:column; gap:14px; min-width:0; }
+        /* 진단 컬럼의 마지막 카드(Leak 요약/정상)는 아래 빈 공간을 채우도록 확장 */
+        .ov-diag > .card:last-child { flex:1 1 auto; }
+        /* 컬럼 내부 카드/KPI 의 자체 하단여백 제거 — gap 이 간격을 담당 */
+        .overview-top .kpi-bar, .overview-top .card { margin-bottom:0; }
+        /* 좌측 KPI: 절반 폭이므로 2열 그리드(3행)로 전환 */
+        .overview-top .kpi-bar { display:grid; grid-template-columns:1fr 1fr; }
+        .overview-top .kpi-item { border-right:1px solid #f3f4f6; border-bottom:1px solid #f3f4f6; }
+        .overview-top .kpi-item:nth-child(2n) { border-right:none; }
+        .overview-top .kpi-item:nth-last-child(-n+2) { border-bottom:none; }
+
+        /* ── 진단 카드 공통 ── */
+        .diag-card { padding:14px 16px; }
+        .diag-danger { border-color:#fecaca; background:linear-gradient(180deg,var(--danger-light),#fff 60%); }
+        .diag-head { display:flex; align-items:center; gap:8px; margin-bottom:10px; }
+        .diag-head-icon { font-size:17px; color:var(--danger); }
+        .diag-head-title { font-size:15px; font-weight:800; color:#991b1b; }
+        .leak-summary-card .diag-head-icon { color:#2563eb; }
+        .leak-summary-card .diag-head-title { color:#1e40af; }
+        .diag-head-count {
+            margin-left:auto; font-size:11px; font-weight:700; color:#7f1d1d;
+            background:#fee2e2; border:1px solid #fecaca; border-radius:10px; padding:2px 9px;
+        }
+        .leak-summary-card .diag-head-count { color:#1e40af; background:#dbeafe; border-color:#bfdbfe; }
+        .diag-kind { display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+        .diag-kind-label { font-size:16px; font-weight:800; color:#7f1d1d; }
+        .diag-kind-raw { font-family:var(--mono); font-size:12px; color:#b91c1c; opacity:.8; }
+        .diag-row { display:flex; gap:8px; font-size:13.5px; line-height:1.55; margin-bottom:6px; color:#5b1212; }
+        .diag-row-key {
+            flex-shrink:0; width:34px; font-weight:700; color:#991b1b;
+            font-size:12px; padding-top:1px;
+        }
+        .diag-row-val { color:#3f1212; }
+        .diag-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; align-items:center; }
+        .diag-chips-more { font-size:11px; color:#7f1d1d; }
+
+        /* ── Leak Suspects 요약 (푸른 파스텔톤) ── */
+        .leak-summary-card { border-color:#bfdbfe; background:linear-gradient(180deg,#eff6ff,#fff 60%); }
+        .leak-summary-item { padding:8px 0; border-top:1px dashed #bfdbfe; }
+        .leak-summary-item:first-of-type { border-top:none; padding-top:0; }
+        .leak-summary-item-head { display:flex; align-items:center; gap:9px; margin-bottom:7px; }
+        .leak-summary-item-head .suspect-severity { width:24px; height:24px; font-size:12px; }
+        .leak-summary-title { font-weight:700; font-size:14px; color:var(--text); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .leak-summary-desc {
+            margin:0 0 7px 33px; font-size:13px; line-height:1.55; color:#334155;
+            word-break:break-word; overflow-wrap:anywhere;
+        }
+        .leak-kw-chips { display:flex; flex-wrap:wrap; gap:5px; padding-left:33px; }
+        .leak-kw-chip {
+            display:inline-block; padding:2px 8px; border-radius:5px;
+            background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af;
+            font-family:var(--mono); font-size:12px; line-height:1.5;
+            max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+        }
+        .leak-kw-more { font-size:12px; color:#1e40af; align-self:center; }
+        .leak-view-all {
+            display:inline-block; margin-top:10px; font-size:13.5px; font-weight:700;
+            color:#1d4ed8; cursor:pointer; text-decoration:none;
+        }
+        .leak-view-all:hover { text-decoration:underline; }
+
+        /* ── 정상 상태 카드 ── */
+        .diag-ok { display:flex; align-items:center; gap:12px; border-color:#a7f3d0; background:var(--success-light); }
+        .diag-ok-icon {
+            flex-shrink:0; width:30px; height:30px; border-radius:50%;
+            display:flex; align-items:center; justify-content:center;
+            background:#fff; color:var(--success); font-size:15px; font-weight:800;
+        }
+        .diag-ok-title { font-size:13.5px; font-weight:800; color:#065f46; }
+        .diag-ok-sub { font-size:11.5px; color:#047857; margin-top:2px; }
+
+        /* 모바일: 1단 세로, KPI 는 2열 유지 */
+        @media (max-width:900px) {
+            .overview-top { grid-template-columns:1fr; }
         }

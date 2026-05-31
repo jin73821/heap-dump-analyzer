@@ -96,6 +96,9 @@ public class MatReportParser {
             "(?i)\\bAll\\s+[\\d,]+\\s+objects?\\b.*");
     private static final Pattern ONLY_N_OBJECTS_PATTERN = Pattern.compile(
             "(?i)\\bOnly\\s+[\\d,]+\\s+objects?\\b.*");
+    // MAT 배열 내용 미리보기 제거: byte[262144] @ 0x... 뒤에 붙는 출력불가 바이트 점 나열.
+    // 클래스/객체명은 연속 점(..)을 포함하지 않으므로(패키지 구분자는 단일 점) 2개 이상 점부터 절단.
+    private static final Pattern ARRAY_CONTENT_PREVIEW_PATTERN = Pattern.compile("\\s*\\.{2,}.*$", Pattern.DOTALL);
 
     // ─── Component Detail 파싱용 패턴 ─────────────────────────────────────────────
 
@@ -1546,6 +1549,8 @@ public class MatReportParser {
         s = FIRST_N_OF_PATTERN.matcher(s).replaceAll("");
         s = ALL_N_OBJECTS_PATTERN.matcher(s).replaceAll("");
         s = ONLY_N_OBJECTS_PATTERN.matcher(s).replaceAll("");
+        // MAT 배열 내용 미리보기(점 나열) 제거
+        s = ARRAY_CONTENT_PREVIEW_PATTERN.matcher(s).replaceAll("");
         // 공백 정리
         s = WHITESPACE_PATTERN.matcher(s).replaceAll(" ").trim();
         return s;

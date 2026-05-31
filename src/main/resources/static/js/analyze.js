@@ -103,6 +103,11 @@ function showPanel(name, btn) {
         loadPdfReportPanel();
     }
 
+    // Dominator Tree 패널: 진입 시 인라인 바 차트 렌더 (transition 애니메이션 트리거)
+    if (name === 'dominator-tree') {
+        renderDomBars();
+    }
+
     // iframe lazy-load (Overview, Top Components, Suspects)
     var iframeMap = {
         'mat-overview': 'matOverviewIframe',
@@ -201,6 +206,31 @@ function filterHistogram() {
     var q = document.getElementById('histSearch').value.toLowerCase();
     document.querySelectorAll('#histogramTable tbody tr').forEach(function(r) {
         r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+    });
+}
+
+// ── Dominator Tree inline bar chart ───────────────────────────────────
+// 각 컬럼(shallow/retained)의 최대값을 100%로 잡아 막대 너비를 산정.
+// idempotent — 패널 진입 시마다 호출 가능.
+function renderDomBars() {
+    var fills = document.querySelectorAll('#domTreeTable .dom-bar-fill');
+    if (!fills.length) return;
+    var maxShallow = 0, maxRetained = 0;
+    fills.forEach(function(el) {
+        var v = parseFloat(el.getAttribute('data-val')) || 0;
+        if (el.classList.contains('dom-bar-retained')) {
+            if (v > maxRetained) maxRetained = v;
+        } else {
+            if (v > maxShallow) maxShallow = v;
+        }
+    });
+    fills.forEach(function(el) {
+        var v = parseFloat(el.getAttribute('data-val')) || 0;
+        var max = el.classList.contains('dom-bar-retained') ? maxRetained : maxShallow;
+        var pct = max > 0 ? (v / max) * 100 : 0;
+        // 0이 아닌 값은 최소 2% 보장 (시각적 가시성)
+        if (v > 0 && pct < 2) pct = 2;
+        el.style.width = pct + '%';
     });
 }
 
@@ -346,6 +376,22 @@ function scrollToOomThread(idx) {
     row.scrollIntoView({ block: 'center', behavior: 'smooth' });
     row.classList.add('oom-flash');
     setTimeout(function() { row.classList.remove('oom-flash'); }, 1200);
+}
+
+// Overview 배너 → Thread Overview 패널 전환 + 해당 행 스크롤
+function goToOomThread(idx) {
+    var navBtn = document.querySelector('.nav-item[data-panel="threads"]');
+    showPanel('threads', navBtn);
+    // 패널 활성화 후 layout 완료를 보장 (즉시 scrollIntoView 호출 시 비활성 패널 좌표 위험)
+    requestAnimationFrame(function() {
+        scrollToOomThread(idx);
+    });
+}
+
+// Overview Leak 요약 카드 "전체 보기" → Leak Suspects 패널 전환
+function goToSuspects() {
+    var navBtn = document.querySelector('.nav-item[data-panel="suspects"]');
+    showPanel('suspects', navBtn);
 }
 
 // ── Thread Filter ─────────────────────────────────────
@@ -2382,7 +2428,7 @@ function buildAnalysisPrompt(data) {
     }
     p.push('위 데이터를 기반으로 아래 JSON 형식으로만 응답하세요.');
     p.push('절대 마크다운 코드블록(```)을 사용하지 마세요. 순수 JSON만 반환하세요.');
-    var schema = '{"summary":"전체 요약(2-3문장)","rootCause":"근본 원인 분석(상세)","recommendations":"권장 조치(1. 2. 3. 번호 매기기)","severity":"Critical|High|Medium|Low 중 하나","severityDesc":"위험도 판단 근거"';
+    var schema = '{"summary":"전체 요약(2-3문장)","rootCause":"근본 원인 분석(상세)","recommendations":"최우선 조치 3개만 우선순위 순서로 (정확히 1. 2. 3. 형식, 4개 이상 금지)","severity":"Critical|High|Medium|Low 중 하나","severityDesc":"위험도 판단 근거"';
     if (data.jvmXms || data.jvmXmx) {
         schema += ',"jvmAdvice":"JVM 힙 설정 분석: 현재 설정 대비 사용량 평가, 힙 여유 공간 비율, Xmx 증설/축소 권고 및 권장 값"';
     }
@@ -2723,6 +2769,9 @@ function setNumberedList(el, text) {
     }
 
     if (numbered.length >= 2) {
+        // 권장 조치 정책: 최우선 조치 3개만 노출. LLM 이 4개 이상 반환했거나
+        // 기존 저장된 인사이트가 더 많은 항목을 가진 경우에도 첫 3개로 truncate.
+        if (numbered.length > 3) numbered = numbered.slice(0, 3);
         var html = '<ol style="margin:0;padding-left:22px;list-style:none;counter-reset:rec-counter">';
         for (i = 0; i < numbered.length; i++) {
             html += '<li style="margin-bottom:10px;padding-left:8px;position:relative">'

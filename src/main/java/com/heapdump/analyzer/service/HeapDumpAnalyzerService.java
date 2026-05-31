@@ -466,13 +466,25 @@ public class HeapDumpAnalyzerService {
             reparseOverviewMeta(r);
         }
 
-        // dominatorTreeEntries가 없으면 Query ZIP에서 재파싱
-        if (r.getDominatorTreeEntries() == null || r.getDominatorTreeEntries().isEmpty()) {
+        // dominatorTreeEntries가 없거나, 구버전 파서가 남긴 배열 내용 미리보기(점 나열)가
+        // className에 섞여 있으면 Query ZIP에서 재파싱 (현재 파서가 점 아티팩트 제거)
+        if (r.getDominatorTreeEntries() == null || r.getDominatorTreeEntries().isEmpty()
+                || hasDominatorNamePreviewArtifact(r.getDominatorTreeEntries())) {
             reparseDominatorTree(r);
         }
 
         // .threads 파일 로드
         loadThreadStacksText(r);
+    }
+
+    /** 구버전 파서가 className에 남긴 MAT 배열 내용 미리보기(연속 점) 잔존 여부 검사 */
+    private boolean hasDominatorNamePreviewArtifact(
+            java.util.List<com.heapdump.analyzer.model.DominatorTreeEntry> entries) {
+        for (com.heapdump.analyzer.model.DominatorTreeEntry e : entries) {
+            String name = e.getClassName();
+            if (name != null && name.contains("..")) return true;
+        }
+        return false;
     }
 
     private void reparseDominatorTree(HeapAnalysisResult r) {
@@ -685,31 +697,40 @@ public class HeapDumpAnalyzerService {
             }
         }
         logger.debug("Matched {} thread stack traces out of {} threads", matched, r.getThreadInfos().size());
-        detectOomInThreads(r.getThreadInfos());
+        detectOomInThreads(r);
     }
 
-    private static final java.util.regex.Pattern OOM_PATTERN =
-            java.util.regex.Pattern.compile("java\\.lang\\.OutOfMemoryError(?::\\s*([^\\r\\n]+))?");
-
     /**
-     * 각 ThreadInfo 의 stackTrace 에 java.lang.OutOfMemoryError 가 등장하면 oom=true 로 표시하고,
-     * 메시지(예: "Java heap space") 가 있으면 oomType 에 저장한다. 매번 idempotent.
+     * 각 ThreadInfo 의 stackTrace 에서 OutOfMemoryError 를 감지하여 oom=true 로 표시하고,
+     * OOM 종류를 oomType 에 저장한다. 매번 idempotent. 감지/분류는 {@link com.heapdump.analyzer.util.OomDetector} 에 위임.
+     *
+     * <p>우선순위: 힙에서 추출한 정확한 메시지({@code result.oomDetailMessage}, preallocated 배제됨)가 있으면
+     * 그 값을 OOM 스레드에 적용(정확), 없으면 스택 시그니처 기반 "(추정)" 값을 사용한다.
      */
-    private void detectOomInThreads(java.util.List<com.heapdump.analyzer.model.ThreadInfo> threads) {
+    private void detectOomInThreads(HeapAnalysisResult result) {
+        if (result == null) return;
+        java.util.List<com.heapdump.analyzer.model.ThreadInfo> threads = result.getThreadInfos();
         if (threads == null || threads.isEmpty()) return;
-        int oomCount = 0;
+        String exact = result.getOomDetailMessage();
+        boolean hasExact = exact != null && !exact.trim().isEmpty();
+        int oomCount = 0, inferredCount = 0;
         for (com.heapdump.analyzer.model.ThreadInfo ti : threads) {
-            String stack = ti.getStackTrace();
-            if (stack == null || stack.isEmpty()) {
-                ti.setOom(false);
-                ti.setOomType(null);
-                continue;
-            }
-            java.util.regex.Matcher m = OOM_PATTERN.matcher(stack);
-            if (m.find()) {
+            com.heapdump.analyzer.util.OomDetector.Result r =
+                    com.heapdump.analyzer.util.OomDetector.detect(ti.getStackTrace());
+            if (r.oom) {
                 ti.setOom(true);
-                String msg = m.group(1);
-                ti.setOomType(msg != null ? msg.trim() : null);
+                if (hasExact) {
+                    ti.setOomType(exact);            // 힙에서 추출한 정확한 종류
+                } else {
+                    ti.setOomType(r.displayType);    // 스택 시그니처 기반 추정 (또는 명시 메시지)
+                    if (r.inferred) inferredCount++;
+                }
+                oomCount++;
+            } else if (ti.isOom()) {
+                // 스택에 OutOfMemoryError.<init> 프레임은 없지만 enrich/영속화로 이미 OOM 으로 식별된 스레드
+                // (예: 네이티브 스레드 생성 실패 — Thread.start0 만 보이고 <init> 없음). 표시 유지.
+                String cur = ti.getOomType();
+                if (cur == null || cur.isEmpty()) ti.setOomType(hasExact ? exact : null);
                 oomCount++;
             } else {
                 ti.setOom(false);
@@ -717,8 +738,224 @@ public class HeapDumpAnalyzerService {
             }
         }
         if (oomCount > 0) {
-            logger.info("[OOM] Detected OutOfMemoryError in {} thread(s)", oomCount);
+            logger.info("[OOM] Detected OutOfMemoryError in {} thread(s) — {}",
+                    oomCount, hasExact ? ("exact type from heap: " + exact)
+                                       : (inferredCount + " subtype inferred from stack"));
         }
+    }
+
+    /**
+     * 실제 throw 된 OOM 의 정확한 종류를 힙에서 추출한다.
+     *
+     * <p>JVM 은 OOM 발생 시 추가 할당을 피하려 OutOfMemoryError 인스턴스들("Java heap space" /
+     * "GC overhead limit exceeded" / "Metaspace" / "Requested array size exceeds VM limit" 등)을
+     * <b>미리 만들어둔다(preallocated)</b>. 따라서 단순히 모든 OOM 인스턴스의 메시지를 읽으면 실제
+     * 발생한 OOM 을 알 수 없다(모든 종류가 항상 존재). 실제 throw 된 OOM 은 스레드 스택의 local 변수로
+     * 참조되므로, OQL 로 얻은 (OOM 인스턴스 주소 → detailMessage) 맵과 .threads 의 local objectId
+     * 집합의 <b>교집합</b>을 구해 정확한 메시지를 추출한다.
+     *
+     * <p>또한 스택에 {@code OutOfMemoryError.<init>} 프레임이 없어 {@link #detectOomInThreads} 가
+     * 놓치는 OOM 종류 — 대표적으로 <b>"unable to create new native thread"</b>(네이티브 메서드
+     * {@code Thread.start0} 에서 VM 이 직접 throw) — 도, OOM 인스턴스가 해당 스레드의 local 로
+     * 참조되므로 OOM-prone 프레임을 가진 스레드를 직접 oom=true 로 표시한다. ("Direct buffer memory" 는
+     * {@code Bits.reserveMemory} 의 Java {@code new OutOfMemoryError} 라 스택에 {@code <init>} 가
+     * 있어 이미 감지되지만, 동일 경로로 함께 보강한다.)
+     *
+     * @param result   OOM 가능성이 있는 결과 (threadStacksText 로드 완료 상태)
+     * @param dumpFile tmp 의 힙 덤프 파일
+     * @param resultDir .index/.threads 가 위치한 결과 디렉토리
+     */
+    /** 스레드 중 OOM-prone 프레임(네이티브 스레드 생성/다이렉트 버퍼)을 가진 것이 있는지 — enrich 실행 트리거. */
+    private boolean hasOomProneThread(HeapAnalysisResult result) {
+        if (result == null || result.getThreadInfos() == null) return false;
+        for (com.heapdump.analyzer.model.ThreadInfo ti : result.getThreadInfos()) {
+            if (com.heapdump.analyzer.util.OomDetector.hasOomProneFrames(ti.getStackTrace())) return true;
+        }
+        return false;
+    }
+
+    private void enrichThrownOomMessage(HeapAnalysisResult result, File dumpFile, File resultDir) {
+        try {
+            if (result == null) return;
+            String threadsText = result.getThreadStacksText();
+            if (threadsText == null || threadsText.isEmpty()) return;
+
+            // 1) 스레드별 local 주소 집합 (Thread 0x... 블록 단위) + 전역 합집합
+            java.util.Map<String, java.util.Set<Long>> threadLocals = parseThreadLocalsByThread(threadsText);
+            java.util.Set<Long> allLocals = new java.util.HashSet<>();
+            for (java.util.Set<Long> s : threadLocals.values()) allLocals.addAll(s);
+            if (allLocals.isEmpty()) return;
+
+            // 2) OQL 실행 — 격리된 임시 디렉토리(덤프 심볼릭 링크 + 인덱스 복사)에서 쿼리
+            File queryZip = runOomDetailQuery(dumpFile, resultDir);
+            if (queryZip == null || !queryZip.exists()) return;
+
+            // 3) (OOM 인스턴스 주소 → 메시지) 파싱 후 임시 디렉토리 정리
+            java.util.Map<Long, String> oomInstances = parseOomQueryZip(queryZip);
+            try { deleteDirectoryRecursively(queryZip.getParentFile()); } catch (Exception ignore) {}
+            if (oomInstances.isEmpty()) return;
+
+            // 4) 메시지 추출 — 스레드가 실제 참조하는(=throw 된) OOM 인스턴스만 카운트
+            //    (uncaughtException 핸들러가 보유한 것도 메시지 산정에는 포함)
+            java.util.Map<String, Integer> freq = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<Long, String> e : oomInstances.entrySet()) {
+                if (!allLocals.contains(e.getKey())) continue;
+                String msg = e.getValue();
+                if (msg == null || msg.isEmpty() || "null".equalsIgnoreCase(msg)) continue;
+                freq.merge(msg, 1, Integer::sum);
+            }
+            if (freq.isEmpty()) {
+                logger.info("[OOM] No thread-referenced OOM instance for {} — keeping inferred type", result.getFilename());
+                return;
+            }
+
+            // 5) 가장 빈번한 메시지를 대표값으로
+            String primary = null; int best = -1;
+            for (java.util.Map.Entry<String, Integer> e : freq.entrySet()) {
+                if (e.getValue() > best) { best = e.getValue(); primary = e.getKey(); }
+            }
+            result.setOomDetailMessage(primary);
+            logger.info("[OOM] Exact OOM type from heap for {}: '{}' (thrown candidates: {})",
+                    result.getFilename(), primary, freq.keySet());
+
+            // 6) 스택에 OutOfMemoryError.<init> 프레임이 없어 detect() 가 놓친 OOM 스레드 직접 표시:
+            //    OOM-prone 프레임(Thread.start0 / Bits.reserveMemory 등)을 가지고 + OOM 인스턴스를
+            //    local 로 참조하는 스레드만 oom=true (핸들러 스레드 과다표시 방지).
+            int flagged = 0;
+            if (result.getThreadInfos() != null) {
+                for (com.heapdump.analyzer.model.ThreadInfo ti : result.getThreadInfos()) {
+                    if (ti.isOom()) continue;  // detect() 가 이미 표시
+                    if (!com.heapdump.analyzer.util.OomDetector.hasOomProneFrames(ti.getStackTrace())) continue;
+                    String addr = ti.getAddress() != null ? ti.getAddress().toLowerCase() : null;
+                    java.util.Set<Long> locals = addr != null ? threadLocals.get(addr) : null;
+                    if (locals == null) continue;
+                    String refMsg = null;
+                    for (Long la : locals) {
+                        String m = oomInstances.get(la);
+                        if (m != null && !m.isEmpty() && !"null".equalsIgnoreCase(m)) { refMsg = m; break; }
+                    }
+                    if (refMsg != null) {
+                        ti.setOom(true);
+                        ti.setOomType(refMsg);
+                        flagged++;
+                    }
+                }
+            }
+            if (flagged > 0) {
+                logger.info("[OOM] Flagged {} additional OOM thread(s) via local-ref (no <init> frame, e.g. native thread)", flagged);
+            }
+
+            // 7) 스레드 oomType 재적용 (정확 메시지 반영, 6 에서 표시한 스레드는 유지)
+            detectOomInThreads(result);
+        } catch (Exception e) {
+            logger.warn("[OOM] Exact OOM message extraction failed for {}: {}",
+                    result != null ? result.getFilename() : "?", e.getMessage());
+        }
+    }
+
+    /**
+     * .threads 를 "Thread 0x..." 블록 단위로 나눠 각 스레드 주소(소문자 hex)별 local objectId 집합을 만든다.
+     * 반환 키는 ThreadInfo.getAddress() 와 매칭되는 "0x..." 형식.
+     */
+    private java.util.Map<String, java.util.Set<Long>> parseThreadLocalsByThread(String threadsText) {
+        java.util.Map<String, java.util.Set<Long>> map = new java.util.HashMap<>();
+        java.util.regex.Pattern localP = java.util.regex.Pattern.compile("objectId=0x([0-9a-fA-F]+)");
+        for (String block : threadsText.split("(?=Thread 0x)")) {
+            java.util.regex.Matcher hm = java.util.regex.Pattern.compile("Thread (0x[0-9a-fA-F]+)").matcher(block);
+            if (!hm.find()) continue;
+            String addr = hm.group(1).toLowerCase();
+            java.util.Set<Long> locals = new java.util.HashSet<>();
+            java.util.regex.Matcher lm = localP.matcher(block);
+            while (lm.find()) {
+                try { locals.add(Long.parseUnsignedLong(lm.group(1), 16)); } catch (NumberFormatException ignore) {}
+            }
+            if (!locals.isEmpty()) map.put(addr, locals);
+        }
+        return map;
+    }
+
+    /**
+     * OOM detailMessage 추출용 OQL 을 격리된 임시 디렉토리에서 실행하고 결과 `_Query.zip` 을 반환.
+     * 인덱스는 복사(작음), 덤프는 심볼릭 링크(큼)하여 원본 아티팩트를 건드리지 않는다.
+     */
+    private File runOomDetailQuery(File dumpFile, File resultDir) {
+        File qdir = null;
+        try {
+            String dumpName = dumpFile.getName();
+            String base = stripExtension(dumpName);
+            qdir = new File(tmpDirectory(), "oomq-" + base + "-" + System.nanoTime());
+            Files.createDirectories(qdir.toPath());
+
+            // 덤프: 심볼릭 링크 (104MB 복사 회피)
+            java.nio.file.Path linkDump = new File(qdir, dumpName).toPath();
+            Files.createSymbolicLink(linkDump, dumpFile.getAbsoluteFile().toPath());
+
+            // 인덱스/threads: 복사 (MAT 가 재기록해도 원본 보호)
+            File[] idx = resultDir.listFiles((d, n) ->
+                    n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
+            if (idx == null || idx.length == 0) {
+                logger.warn("[OOM] No index files in {} for OQL — skipping exact extraction", resultDir.getName());
+                deleteDirectoryRecursively(qdir);
+                return null;
+            }
+            for (File f : idx) {
+                Files.copy(f.toPath(), new File(qdir, f.getName()).toPath(), StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            String oql = "oql \"SELECT o.@objectAddress, toString(o.detailMessage) FROM java.lang.OutOfMemoryError o\"";
+            runMatSingleQuery(linkDump.toString(), qdir, oql, 120);
+
+            File zip = new File(qdir, base + "_Query.zip");
+            return zip.exists() ? zip : null;
+        } catch (Exception e) {
+            logger.warn("[OOM] OQL query run failed: {}", e.getMessage());
+            if (qdir != null) { try { deleteDirectoryRecursively(qdir); } catch (Exception ignore) {} }
+            return null;
+        }
+    }
+
+    /** OQL `_Query.zip` 의 index.html 표에서 (주소 → detailMessage) 맵을 파싱. */
+    private java.util.Map<Long, String> parseOomQueryZip(File zip) {
+        java.util.Map<Long, String> map = new java.util.LinkedHashMap<>();
+        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(zip)) {
+            java.util.zip.ZipEntry idx = null;
+            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
+            while (en.hasMoreElements()) {
+                java.util.zip.ZipEntry e = en.nextElement();
+                if (e.getName().endsWith("index.html")) { idx = e; break; }
+            }
+            if (idx == null) return map;
+            String html;
+            try (java.io.InputStream is = zf.getInputStream(idx)) {
+                html = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            java.util.regex.Matcher rows = java.util.regex.Pattern
+                    .compile("<tr[^>]*>(.*?)</tr>", java.util.regex.Pattern.DOTALL).matcher(html);
+            java.util.regex.Pattern cellP = java.util.regex.Pattern
+                    .compile("<t[dh][^>]*>(.*?)</t[dh]>", java.util.regex.Pattern.DOTALL);
+            java.util.regex.Pattern addrP = java.util.regex.Pattern.compile("^([0-9,]+)");
+            while (rows.find()) {
+                java.util.List<String> cells = new java.util.ArrayList<>();
+                java.util.regex.Matcher cm = cellP.matcher(rows.group(1));
+                while (cm.find()) {
+                    cells.add(cm.group(1).replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim());
+                }
+                if (cells.size() < 2) continue;
+                java.util.regex.Matcher am = addrP.matcher(cells.get(0));
+                if (!am.find()) continue;             // 헤더("o.@objectAddress")/푸터("Total:") 행 제외
+                String digits = am.group(1).replace(",", "");
+                if (digits.isEmpty()) continue;
+                long addr;
+                try { addr = Long.parseLong(digits); }
+                catch (NumberFormatException ex) {
+                    try { addr = Long.parseUnsignedLong(digits); } catch (Exception ex2) { continue; }
+                }
+                map.put(addr, cells.get(1));
+            }
+        } catch (Exception e) {
+            logger.warn("[OOM] Failed to parse OQL query zip: {}", e.getMessage());
+        }
+        return map;
     }
 
     /**
@@ -1669,6 +1906,15 @@ public class HeapDumpAnalyzerService {
                 result.setOriginalFileSize(originalFile.length());
                 result.setAnalysisTime(System.currentTimeMillis() - startTime);
 
+                // OOM 감지 시: 힙의 OutOfMemoryError 인스턴스에서 실제 throw 된 정확한 종류 추출
+                // (preallocated 템플릿 배제 — 스레드 local 참조와 교집합). dumpFile(tmp) 은 finally 전까지 존재.
+                // <init> 프레임이 없는 종류(네이티브 스레드 생성 실패 / 다이렉트 버퍼)도 잡기 위해
+                // OOM-prone 프레임이 있는 스레드가 있으면 함께 실행.
+                if (result.getOomThreadCount() > 0 || hasOomProneThread(result)) {
+                    sendProgress(emitter, AnalysisProgress.parsing(safe, 99, "OOM 종류 정밀 분석 중..."));
+                    enrichThrownOomMessage(result, dumpFile, resultDir);
+                }
+
                 // Heap 데이터가 없으면 분석 실패로 처리
                 boolean hasHeapData = result.getTotalHeapSize() > 0 || result.getUsedHeapSize() > 0;
                 if (!hasHeapData) {
@@ -2085,6 +2331,7 @@ public class HeapDumpAnalyzerService {
         c.setHistogramEntries(r.getHistogramEntries());
         c.setThreadInfos(r.getThreadInfos());
         c.setTotalHistogramClasses(r.getTotalHistogramClasses());
+        c.setOomDetailMessage(r.getOomDetailMessage());
         c.setOriginalFileSize(r.getOriginalFileSize());
         c.setComponentDetailParsedMap(r.getComponentDetailParsedMap());
         c.setDominatorTreeEntries(r.getDominatorTreeEntries());

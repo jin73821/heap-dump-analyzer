@@ -448,6 +448,14 @@ public class HeapDumpViewController {
         model.addAttribute("oomThreadSamples", oomSamples);
         model.addAttribute("oomThreadIndices", oomIndices);
         model.addAttribute("oomFirstType", oomFirstType);
+        // OOM 종류 → 한국어 라벨/원인/권장조치 (Overview 진단 카드용). oomFirstType 은 exact heap 메시지 또는 "표준메시지 (추정)" 형태 — classifyMessage 가 양쪽 모두 contains 매칭.
+        if (oomCount > 0) {
+            com.heapdump.analyzer.util.OomDetector.OomKind oomKind =
+                    com.heapdump.analyzer.util.OomDetector.classifyMessage(oomFirstType);
+            model.addAttribute("oomKindLabel", oomKind.koLabel());
+            model.addAttribute("oomCause", oomKind.cause());
+            model.addAttribute("oomRecommendation", oomKind.recommendation());
+        }
 
         model.addAttribute("hasOverviewZip", analyzerService.hasReportZip(filename, "overview"));
         model.addAttribute("hasTopComponentsZip", analyzerService.hasReportZip(filename, "top_components"));

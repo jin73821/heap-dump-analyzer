@@ -77,6 +77,11 @@ public class HeapAnalysisResult {
     @JsonIgnore
     private String threadStacksText;
 
+    // ── 실제 throw 된 OOM 의 정확한 detailMessage (힙의 OutOfMemoryError 객체에서 추출) ──
+    // 스레드 스택 locals 와 OOM 인스턴스 주소 교집합으로 preallocated 템플릿을 배제한 값.
+    // null 이면 미추출 — 이 경우 ThreadInfo.oomType 은 스택 시그니처 기반 "(추정)" 값 사용.
+    private String oomDetailMessage;
+
     // ── MAT 실행 로그 ────────────────────────────────
     private String matLog;
 

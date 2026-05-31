@@ -1,5 +1,239 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-31] PDF Report Preview — AI 인사이트 요약 잘림 개선
+
+**배경:** `oom-test.hprof` PDF Report Preview 에서 AI 인사이트 요약이 끝부분이 잘려 표시됨. 실제 요약은 245자인데 `SUMMARY_MAX_CHARS=220` 데이터 클립에 걸려 219자 + "…" 로 절단되던 것이 원인(시각적 `ai-box max-height:68mm` 가 아님 — 245자는 box 안에 충분히 들어감).
+**수정 (`service/PdfReportService.java`):** `SUMMARY_MAX_CHARS` 220→600, `RECOMMEND_MAX_CHARS` 560→700 으로 상향. 일반적 AI 요약/권장조치 전문을 수용하면서도 본문 분량(요약 600 + 권장 700 ≈ 최악 45mm < 68mm)이 단일 A4 페이지 `ai-box` 안에 들어가 페이지 오버플로 없음.
+- **검증:** 빌드+재기동 정상(13.1s). 로그인 후 `/analyze/oom-test.hprof/print-pdf` 생성 → `pdftotext` 추출 결과 요약 마지막 문장("…메모리를 소진시킨 것이 명확합니다.")까지 완전 표시, 권장 조치 1~3번 전문 표시, 푸터 "Page 1 / 1" 유지(단일 페이지 보존).
+
+## [2026-05-31] 분석화면 Overview — Leak Suspects 요약 설명 3줄 클램프 제거
+
+**배경:** `oom-test.hprof` Overview 에서 Suspect #2 분석 설명이 3줄까지만 표시되고 나머지가 잘리는 문제.
+**수정 (`static/css/analyze.css`):** `.leak-summary-desc` 의 `display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden` 제거 → 전체 텍스트 표시. `word-break:break-word; overflow-wrap:anywhere` 추가로 긴 클래스명/토큰 줄바꿈 보장. 카드는 `flex:1` 로 우측 컬럼 높이에 맞춰 확장되므로 길이 증가 수용.
+- 캐시 키 `?v=2026-05-31d`→`2026-05-31e`(css).
+- **검증:** `mvn clean package` + 재기동 정상(12.9s).
+
+## [2026-05-31] 분석화면 Overview — OOM/Leak Suspects 진단 카드 글자 크기 확대
+
+**수정 (`static/css/analyze.css`):** Overview 좌측 진단 컬럼(OOM·Leak Suspects)의 가독성 향상 위해 본문 폰트를 약 1~1.5px씩 상향.
+- **OOM 배너/링크:** `.oom-banner` 13→14px, `.oom-banner-type` 12→13px, `.oom-banner-more`/`.oom-link` 11.5→12.5px.
+- **진단 카드 공통:** `.diag-head-title` 14→15px, `.diag-head-icon` 16→17px, `.diag-kind-label` 15→16px, `.diag-kind-raw` 11→12px, `.diag-row` 12.5→13.5px, `.diag-row-key` 11→12px.
+- **Leak Suspects 요약:** `.leak-summary-title` 13→14px, `.leak-summary-desc` 12→13px, `.leak-kw-chip`/`.leak-kw-more` 11→12px, `.leak-view-all` 12.5→13.5px.
+- 캐시 키 `?v=2026-05-31c`→`2026-05-31d`(css).
+- **검증:** `mvn clean package` + 재기동 정상(13.3s).
+
+## [2026-05-31] 분석화면 Overview — 하단 배치 재조정 + Leak 요약 분석설명 추가
+
+**수정 (`templates/analyze.html` Overview 패널 + `static/css/analyze.css`):**
+- **하단 행 = [Memory Treemap(½)] [Top Memory Consumers(½)]:** `chart-row` 우측 셀을 Biggest Objects(Pie)→Top Memory Consumers(Bar)로 교체. 기존 전폭 Bar 블록 제거.
+- **Biggest Objects(Pie) 우측 컬럼 이동:** `ov-metrics`(KPI + Heap Composition) 하단에 Pie 차트박스 추가 → 우측 컬럼이 길어짐. canvas ID(`pieChart`) 불변이라 `initCharts()` 그대로 동작.
+- **Leak Suspects 세로 확장:** 우측 컬럼이 길어진 만큼, `align-items:stretch` + `.ov-diag > .card:last-child { flex:1 }` 로 좌측 Leak 카드가 하단 Treemap 행 직전까지 확장.
+- **Leak 요약에 분석 설명 추가:** `.leak-summary-desc`(`s.explanationBody`, 없으면 `s.description`) 3줄 클램프로 상위 2건 각각에 표시.
+- 캐시 키 `?v=2026-05-31b`→`2026-05-31c`(css).
+- **검증:** 재기동 정상. `jeus_admin_20260517.hprof` 200 — pieChart 가 `chart-row` 보다 앞(우측 컬럼 내부), 하단행 treemap→barChart 순, `leak-summary-desc` 실제 텍스트("byte[] 25,826개 인스턴스가 힙의 51.17%…") 렌더, 서빙 CSS 규칙 확인. Thymeleaf 오류 0.
+
+## [2026-05-31] 분석화면 Overview — 레이아웃 미세 조정 (좌우 컬럼 교체 · 차트 재배치 · Leak 톤 변경)
+
+**배경:** 상단 2단 재배치 후속 조정 요청. 진단(OOM/Leak)을 좌측으로, 지표(KPI/Heap)를 우측으로 옮기고, 하단 시각화 배치 변경 및 Leak 카드 색조·높이 조정.
+
+**수정 (`templates/analyze.html` Overview 패널 + `static/css/analyze.css`):**
+- **좌우 컬럼 교체:** `.overview-top` 첫 컬럼 = `ov-col ov-diag`(OOM + Leak 진단), 둘째 컬럼 = `ov-col ov-metrics`(KPI 2×3 + Heap Composition). 기존 `.ov-left/.ov-right` → 공용 `.ov-col` 로 통합.
+- **하단 시각화 재배치:** `chart-row` = [Memory Treemap(가로 절반)] + [Biggest Objects(Pie)]. **Top Memory Consumers(Bar)** 는 기존 Treemap 자리(전폭)로 이동. Treemap JS(`buildTreemap`)는 `container.offsetWidth` 동적 측정이라 절반 폭 자동 적응.
+- **Leak Suspects 푸른 파스텔톤:** `.leak-summary-card` 배경 `linear-gradient(#eff6ff→#fff)` + border `#bfdbfe`, 헤더/카운트/키워드 chip/전체보기 링크 모두 blue 계열(#1e40af/#dbeafe/#1d4ed8)로 통일(기존 amber 대체).
+- **Leak 카드 세로 확장:** `.overview-top { align-items:stretch }` + `.ov-diag > .card:last-child { flex:1 1 auto }` → 진단 컬럼의 마지막 카드(Leak 요약/정상)가 우측 컬럼 높이에 맞춰 빈 공간을 채움.
+- 캐시 키 `?v=2026-05-31a`→`2026-05-31b`(css).
+- **검증:** 재기동 정상. `oom-test.hprof`/`jeus_admin_20260517.hprof` 200 — `ov-diag` 가 `ov-metrics` 보다 먼저 렌더(진단 좌측), 하단 Treemap→Biggest Objects→Top Memory Consumers 순, 서빙 CSS 에 파란 파스텔·flex 확장 규칙 확인. Thymeleaf 오류 없음.
+
+## [2026-05-31] 분석화면 Overview — 상단 2단 재배치 + OOM/Leak 진단 카드
+
+**배경:** Overview 패널이 KPI → Heap Composition → Charts → Treemap 단일 세로 흐름이었고, OOM 은 한 줄 배너로 타입 문자열만, Leak Suspects 는 별도 패널에만 노출되어 "왜 OOM 이 났는지 / 어떤 누수가 의심되는지" 진단 정보가 한눈에 안 들어옴. 상단을 2단으로 재배치해 좌측에 지표, 우측에 진단을 모음.
+
+**수정:**
+- **`util/OomDetector.java`**: `OomKind` enum 각 상수에 `cause`(원인 1줄)·`recommendation`(권장조치 1줄) 한국어 필드 + `cause()`/`recommendation()` getter 추가(11종 + UNKNOWN). 생성자 4-인자로 확장.
+- **`controller/HeapDumpViewController.java`** (`analyzeResult`): 기존 `oomFirstType` 산출 뒤 `OomDetector.classifyMessage(oomFirstType)` 로 `OomKind` 역매핑 → 모델 속성 `oomKindLabel`/`oomCause`/`oomRecommendation` 추가(oomCount>0 시).
+- **`templates/analyze.html`** (Overview 패널): 기존 OOM 한 줄 배너 제거. `.overview-top` 2단 그리드 신설 — **좌(`.ov-left`)** = KPI 바(2×3) + Heap Composition 카드, **우(`.ov-right`)** = OOM 진단 카드(종류 라벨·원문·원인·권장조치·스레드 chip, `goToOomThread` 재사용) + Leak Suspects 요약 카드(상위 2건 심각도 배지 + 키워드 chip 상위 6개 + "전체 보기 →" `goToSuspects`). OOM/Leak 미감지 시 각각 초록 정상 상태 카드. Charts/Treemap 은 2단 아래 전폭 유지. 캐시 키 `?v=2026-05-30d`→`2026-05-31a`(css), `?v=2026-05-30a`→`2026-05-31a`(js).
+- **`static/css/analyze.css`**: `.overview-top`(grid 1fr 1fr) / `.ov-left`·`.ov-right`(flex column) / 좌측 `.kpi-bar` 2열 그리드화 + 경계선 보정 / `.diag-card`·`.diag-danger`·`.diag-head*`·`.diag-kind*`·`.diag-row*`·`.diag-chips*` / `.leak-summary-card`·`.leak-summary-item*`·`.leak-kw-chip`·`.leak-view-all` / `.diag-ok*`(정상 상태) 신설. `@media(max-width:900px)` 1단 세로 전환(KPI 2열 유지).
+- **`static/js/analyze.js`**: `goToSuspects()` 추가 — Leak 요약 "전체 보기" → `showPanel('suspects', navBtn)`.
+- **검증:** 빌드(jar) + 재기동 12.6s 정상. 로그인 후 `oom-test.hprof`(OOM=Java heap space) 페이지 200 — OOM 진단 카드(diag-danger·종류 라벨·원문·원인·권장 2 row·스레드 chip) 정상. `jeus_admin_20260517.hprof`(OOM 없음·Leak 있음) — OOM 정상 상태 카드 + Leak 요약 카드 정상. Thymeleaf/SpEL 오류 없음.
+
+## [2026-05-30] Dominator Tree — 클래스명에 섞인 MAT 배열 내용 미리보기(점 나열) 제거
+
+**배경:** Dominator Tree 에서 `byte[262144] ........................` 처럼 클래스/객체명 뒤에 점이 수백 개 표시되는 현상 신고. 원인 점검 결과 MAT(Eclipse MAT) 원본 HTML(`*_Query.zip` 의 `index.html`)이 배열 객체를 `byte[262144] @ 0x... <내용 미리보기>` 형태로 렌더링하며, 출력 불가 바이트(256KB 배열을 채운 0x00 등)를 `.` 로 표기한 것. 파서가 `@ 0x...` 주소만 제거하고 그 뒤 내용 미리보기는 그대로 `className` 에 저장 → `result.json` 에 점 포함 문자열 영속화. 데이터 정합성(수치/주소)은 정상, 표시만 비정상.
+
+**수정:**
+- **`parser/MatReportParser.java`**: `ARRAY_CONTENT_PREVIEW_PATTERN`(`\s*\.{2,}.*$`, DOTALL) 신설 + `extractCleanClassName()` 에 적용. 클래스/객체명은 연속 점(`..`)을 포함하지 않으므로(패키지 구분자는 단일 점) 2개 이상 점부터 절단 → `byte[262144] ....` → `byte[262144]`.
+- **`service/HeapDumpAnalyzerService.java`**: `hasDominatorNamePreviewArtifact()` 추가 + restore 경로의 dominator 재파싱 조건 보강. 기존 `result.json` 의 className 에 `..` 잔존 시(구버전 파서 산출물) Query ZIP 에서 자동 재파싱 → 기존 분석도 재실행 없이 자가 치유.
+
+## [2026-05-30] Dominator Tree — Shallow/Retained Heap 인라인 바 차트
+
+**배경:** Eclipse MAT 의 Dominator Tree 뷰처럼 메모리 사용량을 막대로 시각화하는 요청. 숫자만으로는 상위 객체 간 비중 차이가 직관적으로 보이지 않음.
+
+**수정:**
+- **`templates/analyze.html`** (Dominator Tree 패널 테이블): Shallow Heap / Retained Heap `<td>` 를 `dom-bar-cell` 구조로 변경. 셀 내부에 `dom-bar-fill`(막대, `data-val` 에 raw 바이트) + `dom-bar-val`(숫자 텍스트, 우측 정렬) 중첩. 막대는 텍스트 뒤(z-index 0)에 배치.
+- **`static/css/analyze.css`**: `.dom-bar-cell`(position:relative) / `.dom-bar-fill`(absolute, width transition) / `.dom-bar-shallow`(연한 블루 그라데이션) / `.dom-bar-retained`(진한 블루 그라데이션) / `.dom-bar-val`(z-index 1) 신설. hover 시 텍스트 primary 색. 캐시 키 `?v=2026-05-30c` → `?v=2026-05-30d`.
+- **`static/js/analyze.js`**: `renderDomBars()` 추가 — shallow/retained 각 컬럼의 최댓값을 100%로 잡아 막대 너비(%) 산정(0이 아닌 값은 최소 2% 가시성 보장). `showPanel('dominator-tree')` 진입 시 호출(idempotent) → width transition 애니메이션 트리거. 캐시 키 `?v=2026-05-29d` → `?v=2026-05-30a`.
+
+## [2026-05-30] 분석 사이드바 — Dominator Tree 뱃지 제거 + Thread Overview OOM 뱃지 추가
+
+**수정 (`templates/analyze.html` 좌측 Actions 네비게이션):**
+- **Dominator Tree** nav-item 의 항목 수 뱃지(`nav-badge`, `dominatorTreeEntries` 크기) 제거.
+- **Thread Overview** nav-item 에 `oomThreadCount > 0` 일 때 `⚠ OOM` 뱃지(`nav-badge-oom`) 추가 — `title` 에 OOM 타입(`oomFirstType`) 노출. (Overview 패널 KPI 영역 OOM 배지/배너와 동일 데이터.)
+- **`static/css/analyze.css`**: `.nav-item .nav-badge-oom` 스타일 신설(danger 배경, nowrap). 캐시 키 `?v=2026-05-30b` → `?v=2026-05-30c`.
+
+## [2026-05-30] OOM 감지 보강 — Direct buffer memory / unable to create new native thread
+
+**배경:** 두 종류는 동작이 다름:
+- **Direct buffer memory** — `java.nio.Bits.reserveMemory()` 에서 Java `new OutOfMemoryError("Direct buffer memory")` 로 throw → 스택에 `OutOfMemoryError.<init>` 프레임 존재 → 기존 `detect()` 가 이미 감지(+OQL 정확값).
+- **unable to create new native thread** — `java.lang.Thread.start0()` (네이티브 메서드)에서 **VM 이 직접 throw** → 스택에 `OutOfMemoryError.<init>` 프레임이 **없음** → 기존 `detect()` 가 **놓침**. 또한 이 두 메시지는 preallocated 가 아니라 throw 시점에 동적 생성되어, 힙에 존재하면 곧 실제 발생을 의미.
+
+**수정:**
+- **`util/OomDetector.java`**: `hasOomProneFrames(stack)` 추가 — 네이티브 스레드 생성(`Thread.start0`/`Thread.start(`/`ThreadPoolExecutor.addWorker`) 또는 다이렉트 버퍼(`Bits.reserveMemory`/`DirectByteBuffer.<init>`/`getTemporaryDirectBuffer`) 프레임 존재 여부. (`<init>` 없는 OOM 의 사전 필터.)
+- **`service/HeapDumpAnalyzerService.java`**:
+  - 분석 플로우 트리거 확장: `oomThreadCount > 0` **또는** `hasOomProneThread(result)` 일 때 `enrichThrownOomMessage` 실행 → `<init>` 프레임 없는 종류도 OQL 검증 대상.
+  - `enrichThrownOomMessage`: 스레드별 local 파싱(`parseThreadLocalsByThread`)으로 변경. 메시지 추출은 전역 합집합(uncaughtException 핸들러 보유분 포함), **스레드 플래깅은 OOM-prone 프레임 + OOM 인스턴스 local 참조** 동시 충족 시에만 oom=true 설정 → native thread 스레드를 잡으면서 핸들러 스레드 과다표시 방지.
+  - `detectOomInThreads`: 스택에 `<init>` 가 없어도 이미 oom=true 인 스레드(enrich/영속화 출처)는 표시 유지(leave-as-is) → 재실행/디스크 복원 시 native thread OOM 표시 보존.
+- **검증:** OomDetector 단위테스트(native-thread: detect=false·prone=true / direct-buffer: detect=true·prone=true / 분류 정확). oom-test(heap space) 재분석 회귀 없음 — OOM 스레드 1개 유지, 핸들러 과다표시 없음, `oomDetailMessage="Java heap space"` 영속.
+
+## [2026-05-30] OOM 종류 정밀 추출 — 힙의 OutOfMemoryError detailMessage 기반 (GC overhead 등 정확 식별)
+
+**배경:** 직전 작업(스택 시그니처 기반 "(추정)")으로는 `GC overhead limit exceeded` vs `Java heap space` 를 구분 불가 (둘 다 힙 고갈, throw 시점 스택 동일). 정확히 알 수 있는 유일한 출처는 힙 안의 OutOfMemoryError 객체의 `detailMessage` 필드. 사용자 요청으로 MAT OQL 추출 방식 도입.
+
+**핵심 난제 — preallocated 인스턴스:** JVM 은 OOM 발생 시 추가 할당을 피하려 OutOfMemoryError 인스턴스들을 **미리 만들어둔다**. 실제 힙 덤프를 OQL 로 조회하면 `Java heap space` / `GC overhead limit exceeded` / `Metaspace` / `Compressed class space` / `Requested array size exceeds VM limit` / `C heap space` 등 **12종이 항상 존재** (실제 발생 여부 무관). 따라서 단순 인스턴스 메시지 읽기는 무의미.
+
+**해결 — 스레드 local 참조 교집합:** 실제 throw 된 OOM 은 스레드 스택의 local 변수로 참조됨(특히 `ThreadGroup.uncaughtException` 처리 스레드). OQL 로 얻은 `(OOM 인스턴스 주소 → detailMessage)` 맵과 `.threads` 의 `objectId=0x...` local 주소 집합의 **교집합**을 구해 preallocated 템플릿을 배제하고 실제 메시지만 추출. (oom-test 검증: 12개 중 thread-referenced 2개 → 둘 다 `Java heap space` → GC overhead 오탐 방지 확인.)
+
+**구현:**
+- **`model/HeapAnalysisResult.java`**: `oomDetailMessage` 필드 신설 (result.json 영속). null 이면 미추출 → `(추정)` 폴백.
+- **`service/HeapDumpAnalyzerService.java`**:
+  - `detectOomInThreads(result)` 로 시그니처 변경 — `oomDetailMessage` 존재 시 OOM 스레드 `oomType` 에 정확값(추정 마커 없음) 적용, 없으면 `OomDetector` 추정값.
+  - `enrichThrownOomMessage()` 신설 — OOM 감지 시에만 실행. 격리된 임시 디렉토리에 덤프 심볼릭 링크 + 인덱스 복사 → `runMatSingleQuery` 로 OQL(`SELECT o.@objectAddress, toString(o.detailMessage) FROM java.lang.OutOfMemoryError o`) 실행 → `_Query.zip` 의 HTML 표 파싱 → 스레드 local 주소와 교집합 → 최빈 메시지를 `oomDetailMessage` 에 저장 후 `detectOomInThreads` 재적용. (기존 `_Query.zip`/인덱스 비파괴.)
+  - 헬퍼 `parseThreadLocalAddresses` / `runOomDetailQuery` / `parseOomQueryZip` 추가.
+  - 분석 플로우(buildResult 직후)에 `oomThreadCount > 0` 조건부 호출 + "OOM 종류 정밀 분석 중..." SSE 진행 단계.
+  - `cloneWithoutLog` 에 `oomDetailMessage` 복사 추가 (영속화 누락 수정).
+- 인덱스 재사용으로 추가 MAT 호출 ~2-5초, **OOM 감지 시에만** 발생. 임시 디렉토리는 추출 후 자동 삭제.
+- **검증:** oom-test 실제 재분석 → 로그 `Exact OOM type from heap: 'Java heap space'` + result.json `oomDetailMessage: "Java heap space"` 영속 + 스레드 `oomType` 정확값(추정 마커 제거) 확인.
+
+## [2026-05-30] OOM 감지 로직 고도화 — 종류 추정(subtype inference) + 전용 유틸 분리
+
+**배경:** 기존 OOM 감지는 `HeapDumpAnalyzerService.detectOomInThreads` 의 단일 정규식(`java.lang.OutOfMemoryError(?::\s*(메시지))?`)으로 스레드 스택에서 OOM 등장 여부만 판정. **핵심 한계:** 실제 MAT 스레드 덤프는 OOM 을 `at java.lang.OutOfMemoryError.<init>()` **프레임 형태로만** 표기하고 "Java heap space" 같은 메시지를 포함하지 않아, 대부분의 실제 케이스에서 `oomType` 이 null → OOM 종류(힙/메타스페이스/네이티브 스레드/다이렉트 버퍼 등)를 구분 못 함.
+
+**신규 `util/OomDetector.java`:**
+- `OomKind` enum — JVM 표준 메시지 + 한국어 라벨 12종 (HEAP_SPACE / GC_OVERHEAD / METASPACE / COMPRESSED_CLASS_SPACE / PERMGEN / DIRECT_BUFFER / NATIVE_THREAD / ARRAY_SIZE / OUT_OF_SWAP / NATIVE_MEMORY / KILL_PROCESS / UNKNOWN).
+- `detect(stack)` 3단계 판정:
+  1. **명시적 메시지** 존재 시 원문 신뢰 (`inferred=false`). `classifyMessage()` 로 종류 분류 — GC overhead / Metaspace / Compressed class / PermGen / Direct buffer / native thread / array size / swap / kill process / native memory / heap space 부분일치.
+  2. 메시지 부재 시 **스택 프레임 시그니처로 추정** (`inferred=true`):
+     - `Thread.start0`/`Thread.start(`/`ThreadPoolExecutor.addWorker` → 네이티브 스레드 생성 실패
+     - `Bits.reserveMemory`/`DirectByteBuffer.<init>`/`getTemporaryDirectBuffer` → 다이렉트 버퍼 메모리 부족
+     - `ClassLoader.defineClass`/`defineClass1·2`/`Proxy`/`instrument`/`reflect` → 메타스페이스 부족
+  3. 특이 시그니처 없으면 실무상 절대다수인 **`Java heap space` 로 추정** — 모든 경우 `(추정)` 마커로 불확실성 명시.
+- `HeapDumpAnalyzerService.detectOomInThreads` 는 이 유틸에 위임하도록 리팩토링 (정규식/분기 제거). 추정 건수도 로그에 기록.
+
+**적용 범위:** `loadThreadStacksText → matchThreadStackTraces → detectOomInThreads` 는 result.json 디스크 복원 경로(라인 2137)에서도 호출되므로 **기존 분석 결과도 재분석 없이 다음 조회 시 새 종류 라벨 자동 적용** (앱 재시작으로 인메모리 캐시 초기화됨).
+
+**효과:** Heap Statistics OOM 행 / Thread Overview OOM 배지·배너 / LLM 컨텍스트(`getOomContextSummary`) 모두 `oomType` 을 공유하므로, 종래 "감지됨(종류 불명)" 이던 케이스가 "Java heap space (추정)" / "네이티브 스레드 생성 실패 (추정)" 등 구체적 종류로 표시됨.
+
+## [2026-05-30] Heap Statistics Objects 중복 제거 + OOM 상태/배지 표기
+
+**배경:** 분석 페이지 좌측 사이드바 Heap Statistics 에 `Objects` 항목이 두 번 중복 표시됨. 또한 OOM 감지 여부를 사이드바와 Thread Overview 제목에서 한눈에 알기 어려웠음.
+
+**수정:**
+- **`templates/analyze.html`** Heap Statistics (라인 148-151): 중복된 두 번째 `Objects` 행 제거 → 그 자리에 `OOM` 상태 행 추가. `oomThreadCount > 0` 이면 OOM 타입(`oomFirstType`, 없으면 "감지됨")을 빨강으로, 0 이면 "없음"을 초록으로 표시. `title` 에 감지 스레드 수 노출. (모델 속성 `oomThreadCount`/`oomFirstType` 는 `HeapDumpViewController` 가 기존에 노출하던 값 재사용.)
+- **`templates/analyze.html`** Thread Overview 카드 제목 (라인 857): `oomThreadCount > 0` 일 때 `⚠ OOM` 배지(`oom-title-badge`) 추가 — 기존 OOM 배너/스레드 행 하이라이트와 별개로 제목에서 즉시 식별. `title` 에 OOM 타입 노출.
+- **`static/css/analyze.css`**: `.stat-oom-yes`(danger)/`.stat-oom-no`(green) + `.oom-title-badge`(danger-light 배경 칩) 스타일 신설.
+- `analyze.css` 캐시 키 `?v=2026-05-30a` → `?v=2026-05-30b`.
+
+## [2026-05-30] Leak Suspects 관련 키워드 — 원본 MAT 리포트의 Keywords 표기로 변경
+
+**배경:** 분석 페이지 Leak Suspects 의 키워드가 "관련 키워드" 라벨 + 파란색 칩(chip) 가로 나열 형식으로 표시되어 원본 MAT Leak Suspects Report 의 `Keywords` 섹션(제목 + 한 줄에 하나씩 세로 목록)과 형식이 달랐음.
+
+**수정:**
+- **`templates/analyze.html`** (라인 708-711): 라벨 텍스트 `관련 키워드` → `Keywords`, 키워드를 칩 `<span class="suspect-kw-chip">` 가로 나열 → `<div class="suspect-kw-line">` 세로 목록(한 줄에 하나)으로 변경.
+- **`static/css/analyze.css`** `.suspect-keywords` 의 flex/wrap/chip 스타일 제거 → 블록 레이아웃. `.suspect-keywords-label` 은 일반 제목(13px), `.suspect-kw-chip` → `.suspect-kw-line` (monospace, 칩 배경 제거, 한 줄씩) 으로 교체.
+- `analyze.css` 캐시 키 `?v=2026-05-29c` → `?v=2026-05-30a`.
+
+## [2026-05-30] 분석 중 화면 이탈 경고 팝업 취소 시 로딩 스피너 무한 회전 버그 수정
+
+**증상:** 분석 진행 중 화면(`/progress/{filename}`)에서 배너 등 다른 버튼/링크로 이탈을 시도하면 `beforeunload` 이탈 경고 팝업이 표시됨. 이 팝업을 **취소(머무르기)** 로 닫으면 페이지가 그대로 남는데, 화면 중앙 "페이지 로딩 중..." 스피너가 사라지지 않고 무한히 회전.
+
+**원인 (이벤트 순서):**
+1. 배너의 전역 네비게이션 핸들러 `handlePageNavClick`(`fragments/banner.html`)가 링크 클릭 시 `schedulePageLoading()` 으로 100ms 후 스피너 표시 타이머 예약.
+2. 브라우저가 네비게이션 개시 → `beforeunload` 발화 → `progress.html` 핸들러가 `preventDefault()` → 경고 팝업 표시.
+3. 사용자가 **취소** → 네비게이션 중단, 페이지 잔류.
+4. 예약된 100ms 타이머가 발화 → 스피너 표시. 페이지가 언로드되지 않았으므로 **스피너를 숨기는 코드가 영영 실행되지 않음** → 무한 회전.
+
+**수정 (`fragments/banner.html` — 공통 배너 init IIFE):**
+- `beforeunload` 팝업을 취소하면 창이 포커스를 되찾으므로(=같은 페이지 잔류) 이를 스피너 제거 신호로 사용:
+  ```javascript
+  window.addEventListener('focus', hidePageLoading);
+  window.addEventListener('visibilitychange', function() {
+      if (!document.hidden) hidePageLoading();
+  });
+  ```
+- 공통 배너 fragment 에 적용되어 동일한 이탈 경고를 가진 `compare.html`(AI 분석 진행 중 이탈 방어) 및 향후 추가될 모든 페이지에 자동 적용.
+- 실제 네비게이션이 일어나는 정상 케이스에서는 페이지가 교체되며 새 배너가 로드되므로 영향 없음.
+
+## [2026-05-29] AI 인사이트 권장 조치 — 최우선 3개로 정책 통일
+
+**배경:** 분석 페이지 AI 인사이트의 "권장 조치" 영역이 LLM 응답을 자유 형식으로 받아 표시 (`recommendations` 필드, 단순 텍스트 `"1. ... 2. ... 3. ... 4. ..."`). LLM 이 4-6개 항목을 반환하는 경우가 잦고 우선순위가 모호해 사용자가 무엇부터 시도해야 할지 판단하기 어려움. **항목 수를 3개로 제한 + 최우선 조치 우선순위 강제** 정책 도입.
+
+**3중 가드 구현 (서버 + 클라이언트):**
+- **`service/LlmConfigService.java`** 분석용 system prompt (라인 491-497) 변경:
+  추가 문구 — `"권장 조치(recommendations)는 효과/시급성 기준으로 가장 우선순위가 높은 최우선 조치 3개만 1. 2. 3. 순서로 제시하세요 (4개 이상 금지). OutOfMemoryError 가 감지된 경우 해당 OOM 종류에 직결되는 조치를 1순위로 두세요."`
+  → LLM 호출 단계에서 1차 제어. OOM 우선순위 가이드 추가 (직전 OOM-LLM 컨텍스트 주입 작업과 연계).
+- **`static/js/analyze.js`** `buildAnalysisPrompt` 의 JSON schema (라인 2395) 변경:
+  기존: `"recommendations":"권장 조치(1. 2. 3. 번호 매기기)"` →
+  변경: `"recommendations":"최우선 조치 3개만 우선순위 순서로 (정확히 1. 2. 3. 형식, 4개 이상 금지)"`
+  → user prompt 의 응답 schema 명세에서 2차 제어.
+- **`static/js/analyze.js`** `setNumberedList` (라인 2735 부근) 클라이언트 안전망:
+  ```
+  if (numbered.length > 3) numbered = numbered.slice(0, 3);
+  ```
+  → LLM 이 지시를 어기고 4개+ 반환했거나, 기존 저장된 인사이트(`AiInsightManager` 가 DB 에 영속화한 JSON) 가 이미 4-6개 항목을 가지고 있는 경우에도 UI 는 항상 첫 3개만 표시. **기존 인사이트도 일관 적용** — 별도 DB 마이그레이션 불필요.
+
+**캐시 키:** JS 변경이므로 `analyze.js?v=2026-05-29c` → `?v=2026-05-29d`. CSS 미변경.
+
+**부수 효과 — 비교 분석 (`/api/llm/compare/analyze`):** `LlmConfigService.callLlmAnalysis(prompt)` 공유 system prompt 사용 → 동일 정책 자동 적용 (호출자가 동일 schema directive 를 prompt 에 포함하는 경우). 별도 변경 없음.
+
+**검증:**
+- 컴파일 산출물: `javap -v LlmConfigService.class` constant pool 에 신규 system prompt 텍스트 (`"최우선 조치 3개만"`, `"4개 이상 금지"`, `"OutOfMemoryError 가 감지된 경우 해당 OOM 종류에 직결되는 조치를 1순위로"`) 정확히 포함 확인.
+- 클라이언트 fetch: `curl http://localhost:18080/js/analyze.js?v=2026-05-29d` → 신규 schema 문자열 + truncate 코드 (`slice(0, 3)`) 모두 포함 확인 (grep count 2 = 주석 + 코드 라인).
+- 페이지 렌더: `analyze.html` cache key `?v=2026-05-29d` 정상 적용. 200 OK.
+
+**미스코프 (의도):** 저장된 인사이트의 DB 영속 데이터 자체는 변경 안 함 (클라이언트 truncate 로 일관 표시 충족). 비교 분석의 user prompt schema 도 별도 변경 안 함 (system prompt 으로 충분).
+
+**변경 파일:** `service/LlmConfigService.java`, `static/js/analyze.js`, `templates/analyze.html` (JS 캐시 키)
+
+---
+
+## [2026-05-29] Overview 패널에 OOM 감지 배너 추가 + Thread 패널 점프
+
+**배경:** 직전 작업으로 Thread Overview 탭 (panel-threads) 에 OOM 배너/행 강조가 추가되었지만 분석 페이지 첫 진입 시 default 활성 패널은 `panel-overview` (KPI Bar + 차트). 사용자가 OOM 여부를 확인하려면 좌측 사이드바의 Thread Overview nav-item 을 직접 클릭해야 했음. 분석 진입 즉시 OOM 인지를 위해 Overview 패널에도 표시.
+
+**구현 (UI 만 — 백엔드/모델/컨트롤러 무변경):**
+- `templates/analyze.html` `panel-overview` (라인 513) KPI Bar 직전에 신규 배너 블록 삽입. Thread Overview 배너 (라인 841-852) 의 마크업을 그대로 복제하되 wrapper 에 `oom-banner-overview` 추가 클래스, chip `<a>` 의 `onclick` 만 `scrollToOomThread` → `goToOomThread` 로 차별화. `th:if="${oomThreadCount > 0}"` 가드로 OOM 미감지 시 DOM 자체 미생성.
+- `static/js/analyze.js` 신규 헬퍼 `goToOomThread(idx)` (라인 ~349 — `scrollToOomThread` 직후). 내부: `showPanel('threads', navBtn)` 으로 패널 전환 + 사이드바 Threads 활성화 → `requestAnimationFrame` 후 `scrollToOomThread(idx)` 호출 (panel 활성화 직후 layout 완료 보장 — 즉시 scrollIntoView 시 비활성 패널 좌표로 계산되어 오작동 위험).
+- `static/css/analyze.css` 1줄: `.oom-banner-overview { margin-bottom:20px; }` (기존 `.oom-banner` 블록 직후, 라인 ~802). KPI Bar 와의 간격 확보. base 색상/아이콘/내부 spacing 은 `.oom-banner` 그대로 cascade.
+- CSS/JS 캐시 키 `?v=2026-05-29c` 일괄 갱신 (CSS+JS 모두 변경).
+
+**미채택 옵션 (의도):**
+- KPI 카드 7번째 추가 — KPI 격자에 갇혀 OOM 치명성 약화 + 7칸 격자가 768px 미만에서 줄바꿈 균형 깨짐 + 카운트만 노출 (이름/타입 전달 불가).
+- 사이드바 nav badge — Threads nav-item 이 `th:if="${hasThreadOverview}"` 가드라 OOM dump 외 의미 없음 + 상단 배너가 이미 카운트/이름/타입 모두 노출 (정보 중복) + CLAUDE.md 함정 #8 (사이드바 DOM 복제) 회피.
+
+**검증 (`oom-test.hprof`, oomThreadCount=1, sample=oom-worker-2):**
+- Overview 페이지: `oom-banner-overview` 1건, `goToOomThread` onclick 1건, `scrollToOomThread` onclick 1건 (Thread Overview), `thread-row oom` 1건, `oom-badge` 1건, Thymeleaf literal `${oom` 누수 0건.
+- Overview 배너 텍스트: `⚠ OutOfMemoryError 감지: 1 개 스레드 · oom-worker-2`.
+- OOM 미감지 dump (`gbmbap1t_jeus_license.bin`/`wgdist_1_heapdump_20260326.hprof.gz`/`heap-analyzer_20260521.hprof`) 페이지 200 OK + `oom-banner`/`oom-banner-overview` 0건 — 빈 OOM 가드 정상.
+- 캐시 키 적용 확인: CSS `oom-banner-overview` 1건, JS `function goToOomThread` 1건.
+- 직전 작업 회귀 없음: Thread Overview 배너/행 강조/LLM 주입 모두 정상 유지.
+
+**클릭 동선:**
+- Overview 진입 → 즉시 빨간 배너 표시 → chip 클릭 → Thread Overview 패널 전환 + 사이드바 active 토글 + 해당 행으로 부드러운 스크롤 + 1.2s flash pulse.
+- Thread Overview 패널 안의 동일 chip 도 정상 동작 (이미 활성 패널이므로 `scrollToOomThread` 직접 호출).
+
+**변경 파일:** `templates/analyze.html`, `static/js/analyze.js`, `static/css/analyze.css`
+
+---
+
 ## [2026-05-29] OOM 감지 → AI 인사이트/채팅 LLM 컨텍스트 자동 주입
 
 **배경:** 직전 변경으로 `ThreadInfo.oom`/`oomType` 로 OOM 스레드를 감지·표시했지만 LLM 호출 (분석 인사이트, 분석 페이지 채팅) prompt 에는 OOM 정보가 들어가지 않아 진단 품질에 한계. heap vs metaspace OOM 처방이 다르고 OOM 을 던진 스레드 컨텍스트가 누수 원인 추론의 핵심 단서이므로 자동 주입 필요.

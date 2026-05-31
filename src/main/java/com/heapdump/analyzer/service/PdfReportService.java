@@ -37,8 +37,8 @@ public class PdfReportService {
 
     private static final int TOP_MEMORY_LIMIT = 5;
     private static final int SUSPECT_LIMIT = 3;
-    private static final int SUMMARY_MAX_CHARS = 220;
-    private static final int RECOMMEND_MAX_CHARS = 560;
+    private static final int SUMMARY_MAX_CHARS = 600;
+    private static final int RECOMMEND_MAX_CHARS = 700;
 
     private final TemplateEngine templateEngine;
     private final AiInsightRepository aiInsightRepository;

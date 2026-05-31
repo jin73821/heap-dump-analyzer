@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-05-29b">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-05-31e">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -146,8 +146,11 @@ function loadFullErrorLog() {
                 <span class="stat-val" th:text="${result.formattedTotalClasses}">-</span>
             </div>
             <div class="sidebar-stat">
-                <span class="stat-key">Objects</span>
-                <span class="stat-val" th:text="${result.formattedTotalObjects}">-</span>
+                <span class="stat-key">OOM</span>
+                <span th:if="${oomThreadCount > 0}" class="stat-val stat-oom-yes"
+                      th:text="${oomFirstType != null ? oomFirstType : '감지됨'}"
+                      th:title="${'OutOfMemoryError 감지: ' + oomThreadCount + '개 스레드'}">감지됨</span>
+                <span th:if="${oomThreadCount == 0}" class="stat-val stat-oom-no">없음</span>
             </div>
         </div>
     </div>
@@ -182,13 +185,14 @@ function loadFullErrorLog() {
         <div class="sidebar-section-title">Actions</div>
         <button type="button" class="nav-item" data-panel="dominator-tree" th:if="${hasDominatorTree}">
             <span class="nav-icon">&#127795;</span> Dominator Tree
-            <span class="nav-badge" th:text="${result.dominatorTreeEntries != null ? #lists.size(result.dominatorTreeEntries) : 0}"></span>
         </button>
         <button type="button" class="nav-item" data-panel="histogram" th:if="${hasHistogram}">
             <span class="nav-icon">&#9776;</span> Histogram
         </button>
         <button type="button" class="nav-item" data-panel="threads" th:if="${hasThreadOverview}">
             <span class="nav-icon">&#128279;</span> Thread Overview
+            <span th:if="${oomThreadCount > 0}" class="nav-badge-oom"
+                  th:title="${oomFirstType != null ? 'OutOfMemoryError: ' + oomFirstType : 'OutOfMemoryError detected'}">&#9888; OOM</span>
         </button>
         <button type="button" class="nav-item" data-panel="thread-stacks" th:if="${hasThreadStacks}">
             <span class="nav-icon">&#128209;</span> Thread Stacks
@@ -512,82 +516,166 @@ function loadFullErrorLog() {
     <!-- ▌ OVERVIEW PANEL ▌ -->
     <div id="panel-overview" class="panel active">
 
-        <!-- KPI Bar -->
-        <div class="kpi-bar">
-            <div class="kpi-item">
-                <div class="kpi-icon kpi-icon-blue">&#128202;</div>
-                <div class="kpi-info">
-                    <div class="kpi-value" th:text="${result.formattedTotalHeapSize}">-</div>
-                    <div class="kpi-label">Total Heap</div>
+        <!-- ▌ 상단 2단: 좌(KPI + Heap Composition) · 우(OOM / Leak 진단) ▌ -->
+        <div class="overview-top">
+
+            <!-- 좌측 컬럼: 진단 (OOM / Leak) -->
+            <div class="ov-col ov-diag">
+
+                <!-- OOM 진단 카드 -->
+                <div th:if="${oomThreadCount > 0}" class="card diag-card diag-danger">
+                    <div class="diag-head">
+                        <span class="diag-head-icon">&#9888;</span>
+                        <span class="diag-head-title">OutOfMemoryError 감지</span>
+                        <span class="diag-head-count" th:text="${oomThreadCount} + '개 스레드'">0개 스레드</span>
+                    </div>
+                    <div class="diag-kind">
+                        <span class="diag-kind-label" th:text="${oomKindLabel}">힙 공간 부족</span>
+                        <span th:if="${oomFirstType != null}" class="diag-kind-raw" th:text="${oomFirstType}">Java heap space</span>
+                    </div>
+                    <div class="diag-row" th:if="${oomCause != null}">
+                        <span class="diag-row-key">원인</span>
+                        <span class="diag-row-val" th:text="${oomCause}">-</span>
+                    </div>
+                    <div class="diag-row" th:if="${oomRecommendation != null}">
+                        <span class="diag-row-key">권장</span>
+                        <span class="diag-row-val" th:text="${oomRecommendation}">-</span>
+                    </div>
+                    <div class="diag-chips">
+                        <a th:each="name,it : ${oomThreadSamples}" class="oom-link"
+                           th:data-idx="${oomThreadIndices[it.index]}"
+                           onclick="goToOomThread(this.dataset.idx)"
+                           th:text="${name}">thread-name</a>
+                        <span th:if="${oomThreadCount > 3}" class="diag-chips-more"
+                              th:text="'+' + ${oomThreadCount - 3} + ' more'">+ N more</span>
+                    </div>
+                </div>
+
+                <!-- OOM 미감지 정상 상태 -->
+                <div th:if="${oomThreadCount == 0}" class="card diag-card diag-ok">
+                    <span class="diag-ok-icon">&#10004;</span>
+                    <div>
+                        <div class="diag-ok-title">OutOfMemoryError 미감지</div>
+                        <div class="diag-ok-sub">스레드 스택에서 OOM 흔적이 발견되지 않았습니다.</div>
+                    </div>
+                </div>
+
+                <!-- Leak Suspects 요약 카드 -->
+                <div th:if="${result.hasLeakSuspects()}" class="card diag-card leak-summary-card">
+                    <div class="diag-head">
+                        <span class="diag-head-icon">&#128269;</span>
+                        <span class="diag-head-title">Leak Suspects</span>
+                        <span class="diag-head-count" th:text="${#lists.size(result.leakSuspects)} + '건'">0건</span>
+                    </div>
+                    <div th:each="s,iter : ${result.leakSuspects}" th:if="${iter.index < 2}" class="leak-summary-item">
+                        <div class="leak-summary-item-head">
+                            <span class="suspect-severity"
+                                  th:classappend="${s.severity != null ? (s.severity == 'critical' ? 'severity-critical' : (s.severity == 'high' ? 'severity-high' : (s.severity == 'medium' ? 'severity-medium' : 'severity-low'))) : (iter.index < 1 ? 'severity-high' : 'severity-medium')}"
+                                  th:text="${iter.count}">1</span>
+                            <span class="leak-summary-title" th:text="${s.title}">Suspect #1</span>
+                        </div>
+                        <p class="leak-summary-desc"
+                           th:if="${s.explanationBody != null or s.description != null}"
+                           th:text="${s.explanationBody != null ? s.explanationBody : s.description}">분석 설명</p>
+                        <div th:if="${s.keywords != null and !#lists.isEmpty(s.keywords)}" class="leak-kw-chips">
+                            <span th:each="kw,kwStat : ${s.keywords}" th:if="${kwStat.index < 6}" class="leak-kw-chip" th:text="${kw}">keyword</span>
+                            <span th:if="${#lists.size(s.keywords) > 6}" class="leak-kw-more"
+                                  th:text="'+' + (${#lists.size(s.keywords)} - 6)">+N</span>
+                        </div>
+                    </div>
+                    <a class="leak-view-all" onclick="goToSuspects()">전체 보기 &rarr;</a>
+                </div>
+
+                <!-- 누수 의심 없음 정상 상태 -->
+                <div th:if="${!result.hasLeakSuspects()}" class="card diag-card diag-ok">
+                    <span class="diag-ok-icon">&#10004;</span>
+                    <div>
+                        <div class="diag-ok-title">누수 의심 없음</div>
+                        <div class="diag-ok-sub">뚜렷한 메모리 누수 패턴이 발견되지 않았습니다.</div>
+                    </div>
                 </div>
             </div>
-            <div class="kpi-item">
-                <div class="kpi-icon kpi-icon-orange">&#128203;</div>
-                <div class="kpi-info">
-                    <div class="kpi-value" th:text="${result.formattedTotalObjects}">-</div>
-                    <div class="kpi-label">Objects</div>
+
+            <!-- 우측 컬럼: KPI + Heap Composition -->
+            <div class="ov-col ov-metrics">
+                <!-- KPI Bar (2열 그리드) -->
+                <div class="kpi-bar">
+                    <div class="kpi-item">
+                        <div class="kpi-icon kpi-icon-blue">&#128202;</div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" th:text="${result.formattedTotalHeapSize}">-</div>
+                            <div class="kpi-label">Total Heap</div>
+                        </div>
+                    </div>
+                    <div class="kpi-item">
+                        <div class="kpi-icon kpi-icon-orange">&#128203;</div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" th:text="${result.formattedTotalObjects}">-</div>
+                            <div class="kpi-label">Objects</div>
+                        </div>
+                    </div>
+                    <div class="kpi-item">
+                        <div class="kpi-icon kpi-icon-green">&#128230;</div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" th:text="${result.formattedClassLoaderCount}">-</div>
+                            <div class="kpi-label">Class Loaders</div>
+                        </div>
+                    </div>
+                    <div class="kpi-item">
+                        <div class="kpi-icon kpi-icon-purple">&#128279;</div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" th:text="${result.formattedGcRootCount}">-</div>
+                            <div class="kpi-label">GC Roots</div>
+                        </div>
+                    </div>
+                    <div class="kpi-item">
+                        <div class="kpi-icon kpi-icon-cyan">&#9881;</div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" th:text="${result.formattedTotalClasses}">-</div>
+                            <div class="kpi-label">Classes</div>
+                        </div>
+                    </div>
+                    <div class="kpi-item">
+                        <div class="kpi-icon kpi-icon-red">&#9888;</div>
+                        <div class="kpi-info">
+                            <div class="kpi-value" th:text="${result.hasLeakSuspects() ? #lists.size(result.leakSuspects) : 0}">0</div>
+                            <div class="kpi-label">Suspects</div>
+                        </div>
+                    </div>
                 </div>
-            </div>
-            <div class="kpi-item">
-                <div class="kpi-icon kpi-icon-green">&#128230;</div>
-                <div class="kpi-info">
-                    <div class="kpi-value" th:text="${result.formattedClassLoaderCount}">-</div>
-                    <div class="kpi-label">Class Loaders</div>
+
+                <!-- Heap Usage Stacked Bar (Top Objects breakdown) -->
+                <div class="card" th:if="${hasHeapData}">
+                    <div class="card-title"><span class="card-icon">&#128202;</span> Heap Composition by Top Consumers</div>
+                    <div class="stacked-bar-container" id="stackedBar"></div>
+                    <div class="stacked-legend" id="stackedLegend"></div>
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-top:4px">
+                        <span>Top Consumers: <strong th:text="${result.formattedUsedHeapSize}">-</strong></span>
+                        <span>Others: <strong th:text="${result.formattedFreeHeapSize}">-</strong></span>
+                        <span>Total: <strong th:text="${result.formattedTotalHeapSize}">-</strong></span>
+                    </div>
                 </div>
-            </div>
-            <div class="kpi-item">
-                <div class="kpi-icon kpi-icon-purple">&#128279;</div>
-                <div class="kpi-info">
-                    <div class="kpi-value" th:text="${result.formattedGcRootCount}">-</div>
-                    <div class="kpi-label">GC Roots</div>
-                </div>
-            </div>
-            <div class="kpi-item">
-                <div class="kpi-icon kpi-icon-cyan">&#9881;</div>
-                <div class="kpi-info">
-                    <div class="kpi-value" th:text="${result.formattedTotalClasses}">-</div>
-                    <div class="kpi-label">Classes</div>
-                </div>
-            </div>
-            <div class="kpi-item">
-                <div class="kpi-icon kpi-icon-red">&#9888;</div>
-                <div class="kpi-info">
-                    <div class="kpi-value" th:text="${result.hasLeakSuspects() ? #lists.size(result.leakSuspects) : 0}">0</div>
-                    <div class="kpi-label">Suspects</div>
+
+                <!-- Pie: Biggest Objects (KPI/Heap Composition 아래로 이동) -->
+                <div th:if="${hasHeapData}" class="chart-box">
+                    <div class="chart-box-title">Biggest Objects by Retained Size</div>
+                    <canvas id="pieChart"></canvas>
                 </div>
             </div>
         </div>
 
-        <!-- Heap Usage Stacked Bar (Top Objects breakdown) -->
-        <div class="card" th:if="${hasHeapData}">
-            <div class="card-title"><span class="card-icon">&#128202;</span> Heap Composition by Top Consumers</div>
-            <div class="stacked-bar-container" id="stackedBar"></div>
-            <div class="stacked-legend" id="stackedLegend"></div>
-            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-top:4px">
-                <span>Top Consumers: <strong th:text="${result.formattedUsedHeapSize}">-</strong></span>
-                <span>Others: <strong th:text="${result.formattedFreeHeapSize}">-</strong></span>
-                <span>Total: <strong th:text="${result.formattedTotalHeapSize}">-</strong></span>
+        <!-- 하단 2단: 좌(Memory Treemap, 가로 절반) · 우(Top Memory Consumers, 가로 절반) -->
+        <div th:if="${hasHeapData}" class="chart-row" style="margin-bottom:16px">
+            <!-- Treemap (가로 절반) -->
+            <div th:if="${!#lists.isEmpty(result.topMemoryObjects)}" class="card" style="margin-bottom:0">
+                <div class="card-title"><span class="card-icon">&#9638;</span> Memory Treemap</div>
+                <div class="treemap-container" id="treemap" style="height:160px;"></div>
             </div>
-        </div>
-
-        <!-- Charts -->
-        <div th:if="${hasHeapData}" class="chart-row">
-            <!-- Pie: Top Objects Distribution (MAT style) -->
-            <div class="chart-box">
-                <div class="chart-box-title">Biggest Objects by Retained Size</div>
-                <canvas id="pieChart"></canvas>
-            </div>
-            <!-- Bar: Top Objects -->
+            <!-- Bar: Top Memory Consumers (가로 절반) -->
             <div class="chart-box">
                 <div class="chart-box-title">Top Memory Consumers (Retained Heap)</div>
                 <canvas id="barChart"></canvas>
             </div>
-        </div>
-
-        <!-- Treemap -->
-        <div th:if="${hasHeapData and !#lists.isEmpty(result.topMemoryObjects)}" class="card">
-            <div class="card-title"><span class="card-icon">&#9638;</span> Memory Treemap</div>
-            <div class="treemap-container" id="treemap" style="height:160px;"></div>
         </div>
         <div class="treemap-tooltip" id="treemapTooltip"></div>
 
@@ -692,8 +780,8 @@ function loadFullErrorLog() {
                                 <div class="suspect-explanation-title">&#128269; 분석 설명</div>
                                 <p class="suspect-explanation-body" th:text="${s.explanationBody}"></p>
                                 <div th:if="${s.keywords != null and !#lists.isEmpty(s.keywords)}" class="suspect-keywords">
-                                    <span class="suspect-keywords-label">관련 키워드</span>
-                                    <span th:each="kw : ${s.keywords}" class="suspect-kw-chip" th:text="${kw}"></span>
+                                    <div class="suspect-keywords-label">Keywords</div>
+                                    <div th:each="kw : ${s.keywords}" class="suspect-kw-line" th:text="${kw}"></div>
                                 </div>
                             </div>
                             <div th:if="${s.advice != null}" class="suspect-advice">
@@ -780,12 +868,16 @@ function loadFullErrorLog() {
                                      onclick="event.stopPropagation();showComponentDetail(this.parentNode.parentNode.dataset['class'])"
                                      style="cursor:pointer">-</div>
                             </td>
-                            <td style="text-align:right;font-family:var(--mono);font-size:12px"
-                                th:title="${#numbers.formatInteger(d.shallowHeap, 1, 'COMMA') + ' bytes'}"
-                                th:text="${d.shallowHeapHuman}">0</td>
-                            <td style="text-align:right;font-family:var(--mono);font-size:12px"
-                                th:title="${#numbers.formatInteger(d.retainedHeap, 1, 'COMMA') + ' bytes'}"
-                                th:text="${d.retainedHeapHuman}">0</td>
+                            <td class="dom-bar-cell"
+                                th:title="${#numbers.formatInteger(d.shallowHeap, 1, 'COMMA') + ' bytes'}">
+                                <span class="dom-bar-fill dom-bar-shallow" th:data-val="${d.shallowHeap}"></span>
+                                <span class="dom-bar-val" th:text="${d.shallowHeapHuman}">0</span>
+                            </td>
+                            <td class="dom-bar-cell"
+                                th:title="${#numbers.formatInteger(d.retainedHeap, 1, 'COMMA') + ' bytes'}">
+                                <span class="dom-bar-fill dom-bar-retained" th:data-val="${d.retainedHeap}"></span>
+                                <span class="dom-bar-val" th:text="${d.retainedHeapHuman}">0</span>
+                            </td>
                             <td style="text-align:right;font-family:var(--mono);font-size:12px"
                                 th:text="${#numbers.formatDecimal(d.percentOfHeap, 1, 2) + '%'}">0%</td>
                         </tr>
@@ -837,7 +929,10 @@ function loadFullErrorLog() {
     <!-- ▌ THREAD OVERVIEW PANEL ▌ -->
     <div id="panel-threads" class="panel" th:if="${hasThreadOverview}">
         <div class="card">
-            <div class="card-title"><span class="card-icon">&#128279;</span> Thread Overview</div>
+            <div class="card-title"><span class="card-icon">&#128279;</span> Thread Overview
+                <span th:if="${oomThreadCount > 0}" class="oom-title-badge"
+                      th:title="${oomFirstType != null ? 'OutOfMemoryError: ' + oomFirstType : 'OutOfMemoryError detected'}">&#9888; OOM</span>
+            </div>
             <div th:if="${oomThreadCount > 0}" class="oom-banner">
                 <span class="oom-banner-icon">&#9888;</span>
                 <span><strong>OutOfMemoryError</strong> 감지: <strong th:text="${oomThreadCount}">0</strong>개 스레드</span>
@@ -1158,7 +1253,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-05-29b"></script>
+<script src="/js/analyze.js?v=2026-05-31a"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

@@ -482,6 +482,14 @@ var _GB_INTERVAL = 60000; // 1분
         if (e.persisted) hidePageLoading();
     });
 
+    // 이탈 경고 팝업(beforeunload)을 '취소/머무르기'로 닫으면 네비게이션이 일어나지 않는데
+    // 그 사이 schedulePageLoading 타이머가 스피너를 띄워 무한 회전으로 남는다.
+    // 팝업 취소 시 창이 포커스를 되찾으므로(=같은 페이지에 잔류) 스피너를 제거한다.
+    window.addEventListener('focus', hidePageLoading);
+    window.addEventListener('visibilitychange', function() {
+        if (!document.hidden) hidePageLoading();
+    });
+
     // 로드 완료 후 transition 복원
     requestAnimationFrame(function() {
         requestAnimationFrame(function() {
