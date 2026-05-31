@@ -89,6 +89,12 @@
         }
         .sidebar-stat .stat-key { color:var(--text-secondary); }
         .sidebar-stat .stat-val { font-weight:700; color:var(--text); font-family:var(--mono); font-size:12px; }
+        /* OOM 감지 시 Heap Statistics 의 OOM 행 배경 붉은색 강조 */
+        .sidebar-stat.sidebar-stat-oom {
+            background:var(--danger-light); border:1px solid #fecaca; border-radius:6px;
+            padding:6px 8px; margin:2px -8px;
+        }
+        .sidebar-stat.sidebar-stat-oom .stat-key { color:#991b1b; font-weight:700; }
 
         .main-content {
             margin-left:calc(var(--sidebar-w) + var(--banner-w, 220px)); margin-top:var(--header-h); padding:16px 20px; min-height:calc(100vh - var(--header-h));

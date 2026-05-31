@@ -658,5 +658,325 @@
     "adviceTpl": "<ol><li>ManagedChannel을 사용 후 반드시 shutdown() → awaitTermination()을 호출하세요.</li><li>스트리밍 RPC에서 onCompleted()/cancel()이 적절히 호출되는지 확인하세요.</li><li>maxInboundMessageSize 설정으로 대용량 메시지로 인한 메모리 폭증을 방지하세요.</li></ol>",
     "enabled": true,
     "priority": 1066
+  },
+  {
+    "prefix": "weblogic.jdbc.",
+    "libraryName": "Oracle WebLogic JDBC",
+    "category": "커넥션 풀 누수",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic의 JDBC 데이터소스 객체 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. {#if hasAccumulator}대부분의 메모리가 {accumulatorSimple}에 축적되어 있어, {/if}커넥션 풀의 물리 커넥션 또는 PreparedStatement 캐시가 반환·정리되지 않고 누적되는 것으로 보입니다.",
+    "adviceTpl": "<ol><li>데이터소스의 Statement Cache Size를 점검하세요. 캐시된 PreparedStatement가 과도하면 0 또는 적정값으로 낮추세요.</li><li>Connection Leak Profiling(Inactive Connection Timeout, Connection Reserve Timeout)을 활성화해 미반환 커넥션을 추적하세요.</li><li>애플리케이션 코드에서 Connection/Statement/ResultSet을 finally 블록에서 반드시 close() 하는지 확인하세요.</li><li>Maximum Capacity 대비 실제 사용량을 모니터링하고 풀 크기를 트래픽에 맞게 조정하세요.</li></ol>",
+    "enabled": true,
+    "priority": 901
+  },
+  {
+    "prefix": "weblogic.servlet.",
+    "libraryName": "Oracle WebLogic Servlet",
+    "category": "WAS 세션/요청 누적",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic 서블릿 컨테이너의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. HTTP 세션 또는 요청 처리 객체가 만료·정리되지 않고 메모리에 남아 있습니다.",
+    "adviceTpl": "<ol><li>weblogic.xml 또는 web.xml의 session-timeout을 점검하고 과도하게 길면 줄이세요.</li><li>HttpSession에 대용량 객체(컬렉션/캐시)를 저장하지 않는지 확인하세요.</li><li>세션 복제(in-memory replication) 사용 시 직렬화 대상 크기를 최소화하세요.</li><li>비정상적으로 많은 동시 세션이 생성되는지(봇/크롤러) 접근 로그를 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 902
+  },
+  {
+    "prefix": "weblogic.ejb.",
+    "libraryName": "Oracle WebLogic EJB",
+    "category": "EJB 풀/캐시 누적",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic EJB 컨테이너의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. Stateful Session Bean 캐시 또는 Entity Bean 풀이 적절히 패시베이션·해제되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>Stateful Session Bean의 idle-timeout-seconds와 max-beans-in-cache 설정을 점검하세요.</li><li>클라이언트가 사용 종료된 EJB 참조를 remove() 하는지 확인하세요.</li><li>Entity Bean 풀(max-beans-in-free-pool) 크기가 과도하지 않은지 검토하세요.</li><li>패시베이션 디렉터리 I/O 병목으로 캐시가 비워지지 않는지 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 903
+  },
+  {
+    "prefix": "weblogic.jms.",
+    "libraryName": "Oracle WebLogic JMS",
+    "category": "JMS 메시지 누적",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic JMS의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 소비되지 않은 메시지가 큐/토픽에 적체되거나 JMS 커넥션·세션이 닫히지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>대상 큐/토픽의 Messages Current가 비정상적으로 증가하는지 모니터링하고 소비자(consumer)의 처리 속도를 점검하세요.</li><li>JMS Connection/Session/Producer/Consumer를 사용 후 close() 하는지 확인하세요.</li><li>메시지 페이징(Paging) 및 Quota(메시지/바이트 한도)를 설정해 무제한 적체를 방지하세요.</li><li>Redelivery Limit과 Error Destination을 구성해 처리 실패 메시지가 무한 적재되지 않게 하세요.</li></ol>",
+    "enabled": true,
+    "priority": 904
+  },
+  {
+    "prefix": "weblogic.work.",
+    "libraryName": "Oracle WebLogic Work Manager",
+    "category": "스레드 풀 누적",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic Work Manager의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. Self-Tuning 스레드 풀에 대기 작업(work request)이 적체되거나 작업 객체가 회수되지 않고 있습니다.",
+    "adviceTpl": "<ol><li>Work Manager의 Max Threads Constraint와 Capacity Constraint를 설정해 과도한 작업 적체를 제한하세요.</li><li>장시간 실행되거나 블로킹되는 요청(외부 호출/락 대기)이 스레드를 점유하는지 스레드 덤프로 확인하세요.</li><li>Stuck Thread Max Time을 점검하고 스레드 고갈 원인을 분석하세요.</li><li>비동기 작업 제출 시 백프레셔(backpressure) 없이 무제한 큐잉되지 않는지 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 905
+  },
+  {
+    "prefix": "weblogic.kernel.",
+    "libraryName": "Oracle WebLogic Kernel",
+    "category": "WAS 내부 객체 누적",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic 커널의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. ExecuteThread/스케줄러 등 커널 레벨 객체나 그에 매달린 작업 컨텍스트가 정리되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>스레드 덤프를 채취해 ExecuteThread가 어떤 작업에 묶여 있는지 분석하세요.</li><li>ThreadLocal에 대용량 객체를 저장 후 remove() 하지 않는 코드가 있는지 점검하세요.</li><li>커널이 관리하는 타이머/스케줄 작업이 취소되지 않고 누적되는지 확인하세요.</li><li>WebLogic 패치 수준을 확인하고 알려진 커널 메모리 이슈를 점검하세요.</li></ol>",
+    "enabled": true,
+    "priority": 906
+  },
+  {
+    "prefix": "weblogic.rjvm.",
+    "libraryName": "Oracle WebLogic RJVM",
+    "category": "RMI/원격 참조 누수",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic RJVM(원격 JVM) 계층의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. T3/RMI 원격 참조나 분산 GC 대상 객체가 해제되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>원격 객체(stub) 참조를 명시적으로 해제하고 더 이상 사용하지 않는 RMI export를 unexport 하세요.</li><li>분산 가비지 컬렉션(DGC) 임대(lease) 주기와 미정리 원격 참조를 점검하세요.</li><li>서버 간 T3 커넥션 수와 RJVM 테이블 크기를 모니터링하세요.</li><li>클라이언트가 InitialContext를 반복 생성 후 close() 하지 않는지 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 907
+  },
+  {
+    "prefix": "weblogic.cluster.",
+    "libraryName": "Oracle WebLogic Cluster",
+    "category": "세션 복제 누적",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic 클러스터의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 클러스터 세션 복제 데이터 또는 ROID(복제 객체 ID) 테이블이 정리되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>세션 복제(replicated) 사용 시 세션에 저장하는 데이터 크기를 최소화하세요.</li><li>세션 만료/무효화가 클러스터 전 노드에 정상 전파되는지 확인하세요.</li><li>복제 대상 세션 수와 secondary 노드의 메모리 사용량을 모니터링하세요.</li><li>불필요한 복제를 줄이기 위해 비핵심 데이터는 transient로 선언하세요.</li></ol>",
+    "enabled": true,
+    "priority": 908
+  },
+  {
+    "prefix": "weblogic.security.",
+    "libraryName": "Oracle WebLogic Security",
+    "category": "보안 컨텍스트 누적",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic 보안 서브시스템의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 인증된 Subject/Principal 또는 보안 컨텍스트 캐시가 해제되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>로그인 세션/Subject가 사용 종료 후 정리되는지, runAs 컨텍스트가 누적되지 않는지 점검하세요.</li><li>인증 캐시(authentication cache) 크기와 TTL 설정을 검토하세요.</li><li>LDAP/외부 IdP 연동 시 조회 결과 캐시가 무제한 증가하지 않는지 확인하세요.</li><li>대량의 단발성 로그인(API 호출마다 신규 인증)이 발생하는지 모니터링하세요.</li></ol>",
+    "enabled": true,
+    "priority": 909
+  },
+  {
+    "prefix": "weblogic.transaction.",
+    "libraryName": "Oracle WebLogic JTA",
+    "category": "트랜잭션 누적",
+    "severityHint": null,
+    "explanationTpl": "Oracle WebLogic JTA 트랜잭션 매니저의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 커밋·롤백되지 않은 장기 미결(in-flight) 트랜잭션이나 XA 리소스 컨텍스트가 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>Transaction Timeout 설정을 점검하고 장기 미결 트랜잭션을 모니터링하세요.</li><li>XA 리소스(2PC) 참여 DB/JMS의 응답 지연이나 휴리스틱 장애를 확인하세요.</li><li>애플리케이션이 트랜잭션을 시작 후 commit/rollback 없이 방치하지 않는지 점검하세요.</li><li>트랜잭션 로그(TLOG) 적체와 복구(recovery) 상태를 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 910
+  },
+  {
+    "prefix": "org.apache.catalina.session.",
+    "libraryName": "Apache Tomcat Session",
+    "category": "WAS 세션 누적",
+    "severityHint": null,
+    "explanationTpl": "Apache Tomcat 세션 매니저의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. {#if hasAccumulator}대부분의 메모리가 {accumulatorSimple}에 축적되어 있으며, {/if}만료되지 않은 HttpSession과 그 attribute가 메모리에 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>web.xml의 session-timeout(또는 Manager의 maxInactiveInterval)을 점검하고 과도하면 줄이세요.</li><li>StandardManager의 maxActiveSessions를 설정해 동시 세션 수 상한을 두세요.</li><li>HttpSession attribute에 대용량 컬렉션/캐시를 저장하지 않는지 확인하세요.</li><li>PersistentManager 사용 시 세션 스왑아웃(maxIdleSwap)이 동작하는지 검증하세요.</li></ol>",
+    "enabled": true,
+    "priority": 911
+  },
+  {
+    "prefix": "org.apache.catalina.loader.",
+    "libraryName": "Apache Tomcat ClassLoader",
+    "category": "ClassLoader 누수",
+    "severityHint": null,
+    "explanationTpl": "Apache Tomcat의 WebappClassLoader 계열 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 웹 애플리케이션 재배포(redeploy) 시 이전 ClassLoader가 GC되지 않아 로드된 클래스/static 필드가 메모리에 잔존하는 전형적 누수입니다.",
+    "adviceTpl": "<ol><li>재배포 시 ThreadLocal, JDBC 드라이버(DriverManager), 로깅 프레임워크가 ClassLoader 참조를 잡고 있지 않은지 점검하세요.</li><li>애플리케이션이 시작한 스레드/타이머/스케줄러를 contextDestroyed에서 모두 정지하세요.</li><li>가능하면 운영 환경에서는 hot redeploy 대신 인스턴스 재시작을 권장합니다.</li><li>Tomcat의 JreMemoryLeakPreventionListener와 ThreadLocalLeakPreventionListener를 활성화하세요.</li></ol>",
+    "enabled": true,
+    "priority": 912
+  },
+  {
+    "prefix": "org.apache.catalina.core.",
+    "libraryName": "Apache Tomcat Core",
+    "category": "WAS 내부 객체 누적",
+    "severityHint": null,
+    "explanationTpl": "Apache Tomcat 코어 컨테이너의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. StandardContext/StandardWrapper 등 컨테이너 내부 구조나 애플리케이션 컨텍스트가 정리되지 않고 있습니다.",
+    "adviceTpl": "<ol><li>다수의 웹 애플리케이션 컨텍스트가 배포·언배포를 반복하며 누적되지 않는지 확인하세요.</li><li>ServletContext attribute에 대용량 데이터를 보관하지 않는지 점검하세요.</li><li>ApplicationContext/Filter/Listener가 destroy 시점에 리소스를 해제하는지 확인하세요.</li><li>Tomcat 버전의 알려진 메모리 이슈를 점검하고 최신 패치를 적용하세요.</li></ol>",
+    "enabled": true,
+    "priority": 913
+  },
+  {
+    "prefix": "org.apache.coyote.",
+    "libraryName": "Apache Tomcat Coyote",
+    "category": "커넥터/요청 버퍼 누적",
+    "severityHint": null,
+    "explanationTpl": "Apache Tomcat Coyote 커넥터의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 요청/응답 처리 버퍼(Processor, RequestInfo)나 Keep-Alive 커넥션 객체가 회수되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>maxConnections, maxKeepAliveRequests, keepAliveTimeout 설정을 트래픽에 맞게 조정하세요.</li><li>maxHttpHeaderSize 등 버퍼 크기가 과도하게 크지 않은지 확인하세요.</li><li>응답 스트림을 닫지 않거나 대용량 응답을 버퍼링하는 코드가 없는지 점검하세요.</li><li>느린 클라이언트(slowloris)로 커넥션이 장기 점유되지 않는지 모니터링하세요.</li></ol>",
+    "enabled": true,
+    "priority": 914
+  },
+  {
+    "prefix": "org.apache.tomcat.util.net.",
+    "libraryName": "Apache Tomcat NIO",
+    "category": "커넥터 소켓 누적",
+    "severityHint": null,
+    "explanationTpl": "Apache Tomcat NIO 커넥터의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. NioEndpoint의 SocketProcessor/PollerEvent나 소켓 채널 래퍼가 정리되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>Connector의 maxConnections와 acceptCount를 점검하고 비정상적 커넥션 급증이 없는지 확인하세요.</li><li>connectionTimeout/keepAliveTimeout을 적정값으로 설정해 유휴 소켓을 회수하세요.</li><li>SocketProcessor가 장기 블로킹되는지(백엔드 지연) 스레드 덤프로 분석하세요.</li><li>OS 레벨 소켓/파일 디스크립터 한도와 TIME_WAIT 누적도 함께 점검하세요.</li></ol>",
+    "enabled": true,
+    "priority": 915
+  },
+  {
+    "prefix": "jeus.servlet.",
+    "libraryName": "JEUS Servlet",
+    "category": "WAS 세션/요청 누적",
+    "severityHint": null,
+    "explanationTpl": "JEUS 웹 엔진(서블릿 컨테이너)의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. {#if streamClass}HTTP 요청/응답 스트림이 처리 완료 후 해제되지 않고 누적되고 있습니다.{#else}만료되지 않은 HttpSession이나 요청 처리 객체가 메모리에 누적되고 있습니다.{/if}",
+    "adviceTpl": "<ol><li>web.xml/jeus-web-dd.xml의 session-timeout을 점검하고 과도하면 줄이세요.</li><li>HttpSession에 대용량 객체(컬렉션/캐시)를 저장하지 않는지 확인하세요.</li><li>요청 처리 코드에서 InputStream/OutputStream을 try-with-resources로 닫는지 확인하세요.</li><li>웹 엔진의 thread-pool(min/max)과 요청 타임아웃 설정을 검토하세요.</li></ol>",
+    "enabled": true,
+    "priority": 920
+  },
+  {
+    "prefix": "jeus.ejb.",
+    "libraryName": "JEUS EJB",
+    "category": "EJB 풀/캐시 누적",
+    "severityHint": null,
+    "explanationTpl": "JEUS EJB 컨테이너의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. Stateful Session Bean 캐시 또는 Bean 풀이 패시베이션·해제되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>jeus-ejb-dd.xml의 Stateful Bean idle-timeout과 캐시(max) 크기를 점검하세요.</li><li>클라이언트가 사용 종료된 EJB 참조를 remove() 하는지 확인하세요.</li><li>Bean 풀(pool min/max) 크기가 과도하지 않은지 검토하세요.</li><li>패시베이션 디렉터리 I/O 병목으로 캐시가 비워지지 않는지 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 921
+  },
+  {
+    "prefix": "jeus.jdbc.",
+    "libraryName": "JEUS JDBC",
+    "category": "커넥션 풀 누수",
+    "severityHint": null,
+    "explanationTpl": "JEUS JDBC 커넥션 풀의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. {#if hasAccumulator}대부분의 메모리가 {accumulatorSimple}에 축적되어 있어, {/if}물리 커넥션이나 PreparedStatement 캐시가 반환·정리되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>데이터소스의 stmt-caching-size(구문 캐시)가 과도하면 낮추세요.</li><li>connection-pool의 max/min, max-use-count, destroy-policy를 점검하세요.</li><li>check-query/delegation-datasource로 유효성 검사 및 미반환 커넥션 회수(use-sql-trace)를 활성화하세요.</li><li>애플리케이션이 Connection/Statement/ResultSet을 finally에서 close() 하는지 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 922
+  },
+  {
+    "prefix": "jeus.transaction.",
+    "libraryName": "JEUS JTA",
+    "category": "트랜잭션 누적",
+    "severityHint": null,
+    "explanationTpl": "JEUS JTA 트랜잭션 매니저의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 커밋·롤백되지 않은 장기 미결 트랜잭션이나 XA 리소스 컨텍스트가 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>트랜잭션 타임아웃(active-timeout)을 점검하고 장기 미결 트랜잭션을 모니터링하세요.</li><li>XA 2PC 참여 리소스(DB/JMS)의 응답 지연이나 휴리스틱 장애를 확인하세요.</li><li>애플리케이션이 begin 후 commit/rollback 없이 트랜잭션을 방치하지 않는지 점검하세요.</li><li>트랜잭션 복구(recovery) 로그 적체 상태를 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 923
+  },
+  {
+    "prefix": "jeus.jms.",
+    "libraryName": "JEUS JMS",
+    "category": "JMS 메시지 누적",
+    "severityHint": null,
+    "explanationTpl": "JEUS JMS의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 소비되지 않은 메시지가 목적지에 적체되거나 JMS 커넥션·세션이 닫히지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>큐/토픽의 미소비 메시지 수 증가 추이와 소비자 처리 속도를 점검하세요.</li><li>JMS Connection/Session/Consumer를 사용 후 close() 하세요.</li><li>목적지 메시지 한도(quota)와 영속 저장소(persistent store) 설정을 검토하세요.</li><li>Redelivery 한도와 Dead Message Queue를 구성해 무한 적재를 방지하세요.</li></ol>",
+    "enabled": true,
+    "priority": 924
+  },
+  {
+    "prefix": "jeus.connector.",
+    "libraryName": "JEUS Connector",
+    "category": "커넥션 풀 누수",
+    "severityHint": null,
+    "explanationTpl": "JEUS JCA 커넥터(리소스 어댑터)의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 커넥션 풀의 물리 커넥션이나 ManagedConnection이 반환되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>커넥터 connection-pool의 max/min과 미반환 커넥션 회수 정책을 점검하세요.</li><li>애플리케이션이 Connection을 사용 후 close()(풀 반환) 하는지 확인하세요.</li><li>리소스 어댑터의 알려진 누수 패치/버전을 확인하세요.</li><li>풀 사용량을 모니터링하고 트래픽에 맞게 크기를 조정하세요.</li></ol>",
+    "enabled": true,
+    "priority": 925
+  },
+  {
+    "prefix": "jeus.deploy.",
+    "libraryName": "JEUS Deploy",
+    "category": "ClassLoader 누수",
+    "severityHint": null,
+    "explanationTpl": "JEUS 배포 모듈/애플리케이션 ClassLoader 계열 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 애플리케이션 재배포(redeploy) 시 이전 ClassLoader가 GC되지 않아 클래스/static 필드가 잔존하는 누수입니다.",
+    "adviceTpl": "<ol><li>재배포 시 ThreadLocal, JDBC 드라이버, 로깅 프레임워크가 ClassLoader 참조를 잡고 있지 않은지 점검하세요.</li><li>애플리케이션이 시작한 스레드/타이머/스케줄러를 contextDestroyed에서 모두 정지하세요.</li><li>운영 환경에서는 hot redeploy 대신 인스턴스(컨테이너) 재시작을 권장합니다.</li><li>graceful-redeploy/reload 설정과 이전 모듈 정리 동작을 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 926
+  },
+  {
+    "prefix": "jeus.security.",
+    "libraryName": "JEUS Security",
+    "category": "보안 컨텍스트 누적",
+    "severityHint": null,
+    "explanationTpl": "JEUS 보안 서브시스템의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 인증 Subject/Principal 또는 보안 컨텍스트 캐시가 해제되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>로그인 세션/Subject가 사용 종료 후 정리되는지, runAs 컨텍스트가 누적되지 않는지 점검하세요.</li><li>인증/인가 캐시 크기와 TTL 설정을 검토하세요.</li><li>LDAP 등 외부 연동 조회 결과 캐시가 무제한 증가하지 않는지 확인하세요.</li><li>API 호출마다 신규 인증이 발생하는지(단발성 로그인 폭증) 모니터링하세요.</li></ol>",
+    "enabled": true,
+    "priority": 927
+  },
+  {
+    "prefix": "jeus.server.",
+    "libraryName": "JEUS Server",
+    "category": "스레드 풀/내부 객체 누적",
+    "severityHint": null,
+    "explanationTpl": "JEUS 서버 코어의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 워커 스레드 풀에 작업이 적체되거나 서버 내부 관리 객체가 회수되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>스레드 덤프로 워커 스레드가 어떤 작업에 묶여 있는지(외부 호출/락 대기) 분석하세요.</li><li>스레드 풀(min/max)과 작업 큐 크기 설정을 점검하세요.</li><li>ThreadLocal에 대용량 객체를 저장 후 remove() 하지 않는 코드가 있는지 확인하세요.</li><li>JEUS 패치 수준을 확인하고 알려진 서버 코어 메모리 이슈를 점검하세요.</li></ol>",
+    "enabled": true,
+    "priority": 928
+  },
+  {
+    "prefix": "jeus.management.",
+    "libraryName": "JEUS Management",
+    "category": "WAS 내부 객체 누적",
+    "severityHint": null,
+    "explanationTpl": "JEUS 관리(JMX) 서브시스템의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 모니터링 통계/MBean 또는 관리 이벤트 데이터가 정리되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>모니터링/통계 수집 주기와 보관 항목을 줄이세요.</li><li>등록된 MBean 수와 누적 관리 이벤트(알림 리스너)를 점검하세요.</li><li>외부 모니터링 도구가 JMX를 과도하게 폴링하지 않는지 확인하세요.</li><li>불필요한 상세 통계(서비스 모니터링)를 비활성화하세요.</li></ol>",
+    "enabled": true,
+    "priority": 929
+  },
+  {
+    "prefix": "oracle.jdbc.driver.",
+    "libraryName": "Oracle JDBC Driver",
+    "category": "커서/Statement 누수",
+    "severityHint": null,
+    "explanationTpl": "Oracle JDBC 드라이버의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. {#if hasAccumulator}대부분의 메모리가 {accumulatorSimple}에 축적되어 있어, {/if}OracleStatement/OraclePreparedStatement 등 미닫힌 커서나 implicit statement 캐시가 누적되는 것으로 보입니다.",
+    "adviceTpl": "<ol><li>Statement/PreparedStatement/ResultSet을 try-with-resources 또는 finally에서 반드시 close() 하세요. (ORA-01000: maximum open cursors 동반 가능)</li><li>Implicit Statement Cache(oracle.jdbc.implicitStatementCacheSize) 크기가 과도하면 낮추세요.</li><li>defineColumnType/대용량 fetch 버퍼(defaultRowPrefetch)가 큰지 점검하세요.</li><li>동일 Connection에서 Statement를 재생성 후 닫지 않고 반복하는 코드가 없는지 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 930
+  },
+  {
+    "prefix": "oracle.jdbc.pool.",
+    "libraryName": "Oracle JDBC Pool",
+    "category": "커넥션 풀 누수",
+    "severityHint": null,
+    "explanationTpl": "Oracle JDBC 커넥션 풀(OracleDataSource/OracleConnectionPoolDataSource)의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 물리 커넥션이 반환·해제되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>커넥션 풀의 최대 크기와 미반환 커넥션 회수(abandoned timeout) 설정을 점검하세요.</li><li>애플리케이션이 Connection을 사용 후 close()(풀 반환) 하는지 확인하세요.</li><li>가능하면 OracleDataSource 자체 풀 대신 검증된 풀(UCP/HikariCP)을 사용하세요.</li><li>풀 사용량을 모니터링하고 트래픽에 맞게 크기를 조정하세요.</li></ol>",
+    "enabled": true,
+    "priority": 931
+  },
+  {
+    "prefix": "oracle.ucp.",
+    "libraryName": "Oracle UCP",
+    "category": "커넥션 풀 누수",
+    "severityHint": null,
+    "explanationTpl": "Oracle Universal Connection Pool(UCP)의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 풀의 물리 커넥션 또는 커넥션 래퍼가 반환되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>UCP의 maxPoolSize와 inactiveConnectionTimeout/abandonedConnectionTimeout을 점검하세요.</li><li>borrow 한 커넥션을 반드시 close()(풀 반환) 하는지 확인하세요.</li><li>validateConnectionOnBorrow와 maxConnectionReuseCount/Time 설정을 검토하세요.</li><li>UCP 통계(getStatistics)로 borrowed/available 추이를 모니터링하세요.</li></ol>",
+    "enabled": true,
+    "priority": 932
+  },
+  {
+    "prefix": "oracle.sql.",
+    "libraryName": "Oracle SQL Types",
+    "category": "Temporary LOB 누수",
+    "severityHint": null,
+    "explanationTpl": "Oracle SQL 타입 객체(주로 임시 CLOB/BLOB)의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 생성된 Temporary LOB가 free 되지 않아 드라이버 측 버퍼와 함께 메모리에 누적되는 전형적 패턴입니다.",
+    "adviceTpl": "<ol><li>Temporary LOB(CLOB/BLOB) 사용 후 반드시 freeTemporary()/free()를 호출하세요. (close 만으로는 해제되지 않음)</li><li>ARRAY/STRUCT 등 대형 SQL 타입을 장시간 참조 보관하지 않는지 점검하세요.</li><li>BLOB/CLOB 스트림(getBinaryStream/getCharacterStream)을 닫는지 확인하세요.</li><li>LOB 프리페치/버퍼 크기 설정과 트랜잭션 경계 내 LOB 수명을 검토하세요.</li></ol>",
+    "enabled": true,
+    "priority": 933
+  },
+  {
+    "prefix": "oracle.net.",
+    "libraryName": "Oracle Net (SQL*Net)",
+    "category": "DB 네트워크 버퍼 누적",
+    "severityHint": null,
+    "explanationTpl": "Oracle Net(SQL*Net) 계층의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. 네트워크 세션/전송 버퍼나 미정리 커넥션 컨텍스트가 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>미반환 커넥션이 SQL*Net 세션을 점유하지 않는지(커넥션 누수) 함께 점검하세요.</li><li>SDU/송수신 버퍼 크기와 oracle.net.* 설정이 과도하지 않은지 확인하세요.</li><li>방화벽/타임아웃으로 끊긴 dead connection 정리(검증 쿼리)를 설정하세요.</li><li>커넥션 수와 소켓 사용량을 모니터링하세요.</li></ol>",
+    "enabled": true,
+    "priority": 934
+  },
+  {
+    "prefix": "com.tmax.tibero.jdbc.driver.",
+    "libraryName": "Tibero JDBC Driver",
+    "category": "커서/Statement 누수",
+    "severityHint": null,
+    "explanationTpl": "Tibero JDBC 드라이버의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. {#if hasAccumulator}대부분의 메모리가 {accumulatorSimple}에 축적되어 있어, {/if}TbStatement/TbPreparedStatement 등 미닫힌 커서나 fetch 버퍼가 누적되는 것으로 보입니다.",
+    "adviceTpl": "<ol><li>Statement/PreparedStatement/ResultSet을 try-with-resources 또는 finally에서 반드시 close() 하세요.</li><li>statement 캐시 크기와 fetch row 수(prefetch) 설정이 과도하지 않은지 점검하세요.</li><li>동일 Connection에서 Statement를 닫지 않고 반복 생성하는 코드가 없는지 확인하세요.</li><li>Tibero JDBC 드라이버 버전의 알려진 누수 패치를 확인하세요.</li></ol>",
+    "enabled": true,
+    "priority": 935
+  },
+  {
+    "prefix": "com.tmax.tibero.jdbc.",
+    "libraryName": "Tibero JDBC",
+    "category": "DB 드라이버 리소스 누수",
+    "severityHint": null,
+    "explanationTpl": "Tibero JDBC의 {simpleClassName} {instanceCount|instances}가 힙의 {percentage}% ({bytes|bytes})를 점유하고 있습니다. TbConnection/TbResultSet/TbClob 등 드라이버 리소스가 해제되지 않고 누적되고 있습니다.",
+    "adviceTpl": "<ol><li>Connection/Statement/ResultSet 및 TbClob/TbBlob(LOB)을 사용 후 반드시 close()/free() 하세요.</li><li>커넥션 풀 사용 시 borrow 한 커넥션을 풀에 반환하는지 확인하세요.</li><li>대용량 fetch/LOB 버퍼가 트랜잭션 동안 누적되지 않는지 점검하세요.</li><li>Tibero JDBC 드라이버 버전과 권장 설정을 검토하세요.</li></ol>",
+    "enabled": true,
+    "priority": 936
   }
 ]

@@ -1,5 +1,72 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-05-31] Leak Rule 관리 — 감사 로깅 보강 + Import/Export 화살표 교정
+
+**배경:** Leak Suspect 룰 관리(`/admin/leak-rules`)에서 토글/편집/삭제/Export 동작이 로그에 전혀 남지 않음(Import만 로깅). 또 Export/Import 버튼 화살표가 서로 반대.
+
+**수정 (`controller/LeakRuleAdminController.java`):** 모든 mutation 에 `Authentication auth` 주입 + INFO 감사 로그 추가. 통일 포맷 `[LeakRule] action=<action> kind=<library|fallback> ... by=<user>`.
+- **toggle vs update 구분:** PUT update 엔드포인트가 토글(enabled만 변경)과 편집(그 외 필드 변경)을 모두 처리하므로, 기존값(`cur`)과 요청값(`body`)을 비교해 enabled만 바뀌면 `action=toggle enabled=old->new`, 그 외엔 `action=update priority=.. enabled=..` 로 로깅.
+- **create:** `action=create ... id=.. prefix/name=.. priority=.. enabled=..`. **delete:** 삭제 전 엔티티 조회해 `action=delete id=.. prefix/name=..`(식별자 보존). **export:** `action=export count=..`. **import:** 기존 `[LeakRuleImport]` → 통일 포맷 `action=import mode=.. deleted=.. inserted=..`.
+- 헬퍼 `who(auth)`/`eq(a,b)`(null-safe) 추가.
+
+**수정 (`templates/leak-rules.html`):** Export 버튼 화살표 `⬇`→`⬆`(위), Import 버튼 `⬆`→`⬇`(아래). 라이브러리·Fallback 양쪽 4개 버튼 모두 교정. (Export 모달 내 "다운로드" 버튼은 다운로드 의미라 `⬇` 유지.)
+
+- **검증:** 빌드+재기동 정상(15.9s). 로그인 후 API 로 toggle/update/create/delete/export/import 전 동작 수행 → 로그에 `[LeakRule] action=toggle|update|create|delete|export|import ... by=admin` 9줄 정상 출력 확인(toggle↔update 구분 정확). 페이지 렌더 결과 Export=`⬆`/Import=`⬇` 확인. 테스트 룰 정리 + DB 상태 원복(lib 98/fb 66) 확인.
+
+## [2026-05-31] 분석화면 OOM 강조 위치 변경 — Thread Overview 라인 롤백 → Heap Statistics OOM 행으로 이동
+
+**수정 (`templates/analyze.html` + `static/css/analyze.css`):**
+- **롤백:** 직전 작업(좌측 네비 Thread Overview 라인 `nav-item-oom` 붉은 배경)을 되돌림. `analyze.html` 의 `th:classappend="... nav-item-oom ..."` 제거, `analyze.css` 의 `.nav-item.nav-item-oom`(+hover/active) 3개 규칙 삭제.
+- **신규:** OOM 감지(`oomThreadCount > 0`) 시 **Heap Statistics 섹션의 OOM 행** 배경을 붉은색으로 강조. `sidebar-stat` 행에 `th:classappend="${oomThreadCount > 0 ? 'sidebar-stat-oom' : ''}"` 추가 + `.sidebar-stat.sidebar-stat-oom { background:var(--danger-light); border:1px solid #fecaca; border-radius:6px; padding:6px 8px; margin:2px -8px }` (stat-key 다크레드). 기존 `stat-oom-yes`(값 텍스트 red)와 결합.
+- 클래스 기반이라 모바일 배너 사이드바 클론에도 자동 적용.
+- 캐시 키 `?v=2026-05-31f`→`2026-05-31g`(css).
+- **검증:** 빌드+재기동 정상(13.2s). `/analyze/result/oom-test.hprof` 200 — Threads 버튼 `class="nav-item"`(nav-item-oom 0건), OOM 행 `class="sidebar-stat sidebar-stat-oom"` 렌더, 서빙 CSS 에서 `nav-item-oom` 0건·`sidebar-stat-oom` 규칙 포함 확인.
+
+## [2026-05-31] 분석화면 좌측 네비 — OOM 감지 시 Thread Overview 라인 배경 붉은색 강조
+
+**수정 (`templates/analyze.html` + `static/css/analyze.css`):** OOM 감지 시 좌측 사이드바의 OOM 라인(Thread Overview nav-item, 기존 `⚠ OOM` 배지가 붙는 항목)을 한눈에 띄게 배경 강조.
+- `analyze.html`: Thread Overview 버튼에 `th:classappend="${oomThreadCount > 0 ? 'nav-item-oom' : ''}"` 추가(기존 `nav-badge-oom` 배지 조건과 동일).
+- `analyze.css`: `.nav-item.nav-item-oom { background:var(--danger-light); color:#991b1b; box-shadow:inset 3px 0 0 var(--danger) }` + hover(`#fee2e2`)/active(`#fecaca`) 변형. 좌측 3px 붉은 액센트 바 동반.
+- 클래스 기반이라 모바일 배너 클론(`registerBannerAnalysisTab`, pitfall #8)에도 JS 없이 자동 적용.
+- 캐시 키 `?v=2026-05-31e`→`2026-05-31f`(css).
+- **검증:** 빌드+재기동 정상(15.4s). 로그인 후 `/analyze/result/oom-test.hprof` 200 — Thread Overview 버튼이 `class="nav-item nav-item-oom"` 렌더, `nav-badge-oom` 배지 동반, 서빙 CSS(`?v=...f`)에 `.nav-item-oom` 규칙 포함 확인.
+
+## [2026-05-31] Leak Suspect 룰 고도화 — Oracle/Tibero DB 드라이버 룰 보강 (library 91→98, fallback 58→66)
+
+**배경:** Oracle/Tibero JDBC 드라이버 측 누수(미닫힌 커서, 임시 LOB 미해제, 커넥션 풀 미반환) 진단 정밀화 요청. 기존엔 generic `oracle.jdbc.`(pri 1042) / `com.tmax.tibero.`(1044) catch-all 만 존재, Oracle/Tibero 전용 fallback 0건.
+
+**추가 (`resources/leak-rules/library-rules.json` + `fallback-rules.json` + 운영 DB INSERT):**
+- **Library(prefix) +7:** Oracle 5 — `oracle.jdbc.driver.`(커서/Statement) · `oracle.jdbc.pool.`(커넥션 풀) · `oracle.ucp.`(Universal Connection Pool) · `oracle.sql.`(Temporary LOB) · `oracle.net.`(SQL*Net 버퍼), pri 930~934. Tibero 2 — `com.tmax.tibero.jdbc.driver.`(커서/Statement) · `com.tmax.tibero.jdbc.`(드라이버 리소스), pri 935~936. 모두 generic(`oracle.jdbc.` 1042 / `com.tmax.tibero.` 1044)보다 낮은 priority → 구체 prefix 우선 매칭.
+- **Fallback(regex) +8:** Oracle 5 — 커서/Statement(ORA-01000 포함) · Temporary LOB · UCP 풀 · 물리 커넥션(T4CConnection) · SQL*Net 버퍼, pri 4930~4934. Tibero 3 — 커서/Statement(TbStatement) · LOB(TbClob/TbBlob) · 커넥션 풀(TbConnection), pri 4935~4937. 기존 generic Statement 룰(5018)보다 먼저 평가되어 DB 특화 설명/조치 제공. WAS 룰(4900~4929)과 키워드 상호배타.
+- 비고: Tibero 는 JDBC 패키지 구조가 단순해 library 2건으로 두고 세부 유형(LOB/커서/풀)은 fallback regex(클래스명 키워드 기반)로 보강.
+
+**적용 방식:** JSON 추가 + 운영 DB(`192.168.56.9/HEAPDB`)에 `INSERT ... WHERE NOT EXISTS`(prefix/name idempotent) 직접 보강.
+- **검증:** 빌드+재기동 정상(14.0s), seeder 98/66 "already present" 스킵. DB 정규식 단일 백슬래시 검증(`'oracle.sql.CLOB' REGEXP=1`, `'oracleXsqlXCLOB'=0`, `'...TbStatement'=1`). 라이브 `/api/admin/leak-rules/{library,fallback}` 가 98/66 반환, Oracle 5·Tibero 2(library)·Oracle 5·Tibero 3(fallback) priority·우선순위 노출 확인(`oracle.jdbc.driver.`930<`oracle.jdbc.`1042).
+
+## [2026-05-31] Leak Suspect 룰 고도화 — JEUS 룰 보강 (library 81→91, fallback 48→58)
+
+**배경:** 운영 환경 주력 WAS 인 JEUS(TmaxSoft) 누수 진단 정밀화 요청. 기존엔 generic `jeus.`(pri 1003, 서블릿 스트림 중심) 1건 + `com.tmax.`(1045)만 존재, JEUS fallback 룰 0건.
+
+**추가 (`resources/leak-rules/library-rules.json` + `fallback-rules.json` + 운영 DB INSERT):**
+- **Library(prefix) +10 (pri 920~929):** `jeus.servlet.`(세션/요청) · `jeus.ejb.` · `jeus.jdbc.`(커넥션 풀) · `jeus.transaction.`(JTA) · `jeus.jms.` · `jeus.connector.`(JCA) · `jeus.deploy.`(ClassLoader 재배포) · `jeus.security.` · `jeus.server.`(워커 스레드) · `jeus.management.`(JMX). 모두 generic `jeus.`(1003)보다 낮은 priority → 구체 prefix 우선 매칭.
+- **Fallback(regex) +10 (pri 4920~4929):** 웹 세션 · 요청/응답 스트림 · EJB · JDBC 풀 · JTA · JMS · JCA 커넥터 · 클래스로더(재배포) · 보안 컨텍스트 · 워커 스레드. 기존 generic fallback(≥5001) 및 WebLogic/Tomcat(4900~4914)과 키워드 상호배타, JEUS 텍스트에 특화 설명/조치 제공.
+- explanationTpl 은 `{#if streamClass}`/`{#if hasAccumulator}` 등 컨텍스트 플래그 활용. severityHint=null(점유율 기반 자동).
+
+**적용 방식:** 기존 시드(91/58 도달 전 81/48) 상태라 JSON 추가 + 운영 DB(`192.168.56.9/HEAPDB`)에 `INSERT ... WHERE NOT EXISTS`(prefix/name idempotent) 직접 보강.
+- **검증:** 빌드+재기동 정상(14.2s), seeder 91/58 "already present" 스킵. DB 정규식 단일 백슬래시 검증(`'jeus.jdbc.Pool' REGEXP=1`, `'jeusXjdbc'=0`). 로그인 후 `/api/admin/leak-rules/{library,fallback}` 가 91/58 반환, JEUS 신규 10/10 priority·category 노출 확인.
+
+## [2026-05-31] Leak Suspect 룰 고도화 — WebLogic/Tomcat 룰 보강 (library 66→81, fallback 33→48)
+
+**배경:** WAS(WebLogic/Tomcat) 환경 누수 진단 정밀도 향상 요청. 기존엔 generic `weblogic.`(pri 1023) / `org.apache.catalina.`(1004) / `org.apache.tomcat.`(1005) prefix 룰만 존재.
+
+**추가 (`resources/leak-rules/library-rules.json` + `fallback-rules.json` + 운영 DB INSERT):**
+- **Library(prefix) +15:** WebLogic 10 (`weblogic.jdbc.`/`servlet.`/`ejb.`/`jms.`/`work.`/`kernel.`/`rjvm.`/`cluster.`/`security.`/`transaction.`, pri 901~910), Tomcat 5 (`org.apache.catalina.session.`/`loader.`/`core.`/`org.apache.coyote.`/`org.apache.tomcat.util.net.`, pri 911~915). 모두 generic 룰(≥1004)보다 낮은 priority → 구체 prefix가 먼저 매칭.
+- **Fallback(regex) +15:** WebLogic 10 (JDBC풀/세션/EJB/JMS/Work Manager/Stuck Thread/RJVM/세션복제/보안/WLDF, pri 4900~4909), Tomcat 5 (세션매니저/WebappClassLoader/Coyote/NIO Poller/JDBC Pool, pri 4910~4914). 기존 generic fallback(≥5001)보다 먼저 평가되어 WAS 특화 설명·조치 제공.
+- 각 룰 explanationTpl/adviceTpl 는 템플릿 엔진 placeholder(`{simpleClassName}`/`{instanceCount|instances}`/`{percentage}`/`{bytes|bytes}`/`{#if hasAccumulator}`) 활용, severityHint=null(점유율 기반 자동).
+
+**적용 방식:** seeder 는 테이블 비었을 때만 시드하므로(이미 66/33 시드됨) JSON 추가 + 운영 DB(`192.168.56.9/HEAPDB`)에 `INSERT ... WHERE NOT EXISTS`(prefix/name 기준 idempotent)로 직접 보강. 신규 환경(빈 DB)은 JSON 시드로 동일 결과.
+- **검증:** 빌드+재기동 정상(13.5s), seeder 81/48 "already present" 스킵 확인. DB 정규식 단일 백슬래시 저장 검증(`'weblogic.jdbc.Foo' REGEXP=1`, `'weblogicXjdbc'=0`). 로그인 후 `/api/admin/leak-rules/{library,fallback}` API 가 81/48 반환, 신규 WebLogic 10·Tomcat 5 각각 노출 확인.
+
 ## [2026-05-31] PDF Report Preview — AI 인사이트 요약 잘림 개선
 
 **배경:** `oom-test.hprof` PDF Report Preview 에서 AI 인사이트 요약이 끝부분이 잘려 표시됨. 실제 요약은 245자인데 `SUMMARY_MAX_CHARS=220` 데이터 클립에 걸려 219자 + "…" 로 절단되던 것이 원인(시각적 `ai-box max-height:68mm` 가 아님 — 245자는 box 안에 충분히 들어감).

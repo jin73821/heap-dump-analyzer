@@ -73,24 +73,37 @@ public class LeakRuleAdminController {
 
     @PostMapping("/api/admin/leak-rules/library")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> createLibrary(@RequestBody LeakLibraryRule body) {
+    public ResponseEntity<Map<String, Object>> createLibrary(@RequestBody LeakLibraryRule body, Authentication auth) {
         Map<String, Object> err = validateLibrary(body);
         if (err != null) return ResponseEntity.badRequest().body(err);
         body.setId(null);
         LeakLibraryRule saved = libraryRepo.save(body);
         ruleService.invalidate();
+        logger.info("[LeakRule] action=create kind=library id={} prefix='{}' priority={} enabled={} by={}",
+                saved.getId(), saved.getPrefix(), saved.getPriority(), saved.isEnabled(), who(auth));
         return ok(java.util.Collections.singletonMap("id", (Object) saved.getId()));
     }
 
     @PutMapping("/api/admin/leak-rules/library/{id}")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> updateLibrary(@PathVariable Long id,
-                                                             @RequestBody LeakLibraryRule body) {
+                                                             @RequestBody LeakLibraryRule body,
+                                                             Authentication auth) {
         Optional<LeakLibraryRule> opt = libraryRepo.findById(id);
         if (!opt.isPresent()) return notFound("library 룰");
         Map<String, Object> err = validateLibrary(body);
         if (err != null) return ResponseEntity.badRequest().body(err);
         LeakLibraryRule cur = opt.get();
+        boolean enabledChanged = cur.isEnabled() != body.isEnabled();
+        boolean onlyEnabledChanged = enabledChanged
+                && eq(cur.getPrefix(), body.getPrefix())
+                && eq(cur.getLibraryName(), body.getLibraryName())
+                && eq(cur.getCategory(), body.getCategory())
+                && eq(cur.getSeverityHint(), body.getSeverityHint())
+                && eq(cur.getExplanationTpl(), body.getExplanationTpl())
+                && eq(cur.getAdviceTpl(), body.getAdviceTpl())
+                && cur.getPriority() == body.getPriority();
+        boolean oldEnabled = cur.isEnabled();
         cur.setPrefix(body.getPrefix());
         cur.setLibraryName(body.getLibraryName());
         cur.setCategory(body.getCategory());
@@ -101,15 +114,25 @@ public class LeakRuleAdminController {
         cur.setPriority(body.getPriority());
         libraryRepo.save(cur);
         ruleService.invalidate();
+        if (onlyEnabledChanged) {
+            logger.info("[LeakRule] action=toggle kind=library id={} prefix='{}' enabled={}->{} by={}",
+                    id, cur.getPrefix(), oldEnabled, cur.isEnabled(), who(auth));
+        } else {
+            logger.info("[LeakRule] action=update kind=library id={} prefix='{}' priority={} enabled={} by={}",
+                    id, cur.getPrefix(), cur.getPriority(), cur.isEnabled(), who(auth));
+        }
         return ok(null);
     }
 
     @DeleteMapping("/api/admin/leak-rules/library/{id}")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> deleteLibrary(@PathVariable Long id) {
-        if (!libraryRepo.existsById(id)) return notFound("library 룰");
+    public ResponseEntity<Map<String, Object>> deleteLibrary(@PathVariable Long id, Authentication auth) {
+        Optional<LeakLibraryRule> opt = libraryRepo.findById(id);
+        if (!opt.isPresent()) return notFound("library 룰");
+        String prefix = opt.get().getPrefix();
         libraryRepo.deleteById(id);
         ruleService.invalidate();
+        logger.info("[LeakRule] action=delete kind=library id={} prefix='{}' by={}", id, prefix, who(auth));
         return ok(null);
     }
 
@@ -122,24 +145,37 @@ public class LeakRuleAdminController {
 
     @PostMapping("/api/admin/leak-rules/fallback")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> createFallback(@RequestBody LeakFallbackRule body) {
+    public ResponseEntity<Map<String, Object>> createFallback(@RequestBody LeakFallbackRule body, Authentication auth) {
         Map<String, Object> err = validateFallback(body);
         if (err != null) return ResponseEntity.badRequest().body(err);
         body.setId(null);
         LeakFallbackRule saved = fallbackRepo.save(body);
         ruleService.invalidate();
+        logger.info("[LeakRule] action=create kind=fallback id={} name='{}' priority={} enabled={} by={}",
+                saved.getId(), saved.getName(), saved.getPriority(), saved.isEnabled(), who(auth));
         return ok(java.util.Collections.singletonMap("id", (Object) saved.getId()));
     }
 
     @PutMapping("/api/admin/leak-rules/fallback/{id}")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> updateFallback(@PathVariable Long id,
-                                                              @RequestBody LeakFallbackRule body) {
+                                                              @RequestBody LeakFallbackRule body,
+                                                              Authentication auth) {
         Optional<LeakFallbackRule> opt = fallbackRepo.findById(id);
         if (!opt.isPresent()) return notFound("fallback 룰");
         Map<String, Object> err = validateFallback(body);
         if (err != null) return ResponseEntity.badRequest().body(err);
         LeakFallbackRule cur = opt.get();
+        boolean enabledChanged = cur.isEnabled() != body.isEnabled();
+        boolean onlyEnabledChanged = enabledChanged
+                && eq(cur.getName(), body.getName())
+                && eq(cur.getCategory(), body.getCategory())
+                && eq(cur.getPatternRegex(), body.getPatternRegex())
+                && eq(cur.getExplanationTpl(), body.getExplanationTpl())
+                && eq(cur.getAdviceTpl(), body.getAdviceTpl())
+                && eq(cur.getSeverityHint(), body.getSeverityHint())
+                && cur.getPriority() == body.getPriority();
+        boolean oldEnabled = cur.isEnabled();
         cur.setName(body.getName());
         cur.setCategory(body.getCategory());
         cur.setPatternRegex(body.getPatternRegex());
@@ -150,15 +186,25 @@ public class LeakRuleAdminController {
         cur.setPriority(body.getPriority());
         fallbackRepo.save(cur);
         ruleService.invalidate();
+        if (onlyEnabledChanged) {
+            logger.info("[LeakRule] action=toggle kind=fallback id={} name='{}' enabled={}->{} by={}",
+                    id, cur.getName(), oldEnabled, cur.isEnabled(), who(auth));
+        } else {
+            logger.info("[LeakRule] action=update kind=fallback id={} name='{}' priority={} enabled={} by={}",
+                    id, cur.getName(), cur.getPriority(), cur.isEnabled(), who(auth));
+        }
         return ok(null);
     }
 
     @DeleteMapping("/api/admin/leak-rules/fallback/{id}")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> deleteFallback(@PathVariable Long id) {
-        if (!fallbackRepo.existsById(id)) return notFound("fallback 룰");
+    public ResponseEntity<Map<String, Object>> deleteFallback(@PathVariable Long id, Authentication auth) {
+        Optional<LeakFallbackRule> opt = fallbackRepo.findById(id);
+        if (!opt.isPresent()) return notFound("fallback 룰");
+        String name = opt.get().getName();
         fallbackRepo.deleteById(id);
         ruleService.invalidate();
+        logger.info("[LeakRule] action=delete kind=fallback id={} name='{}' by={}", id, name, who(auth));
         return ok(null);
     }
 
@@ -167,14 +213,16 @@ public class LeakRuleAdminController {
     private static final DateTimeFormatter FILENAME_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
     @GetMapping("/api/admin/leak-rules/library/export")
-    public ResponseEntity<Map<String, Object>> exportLibrary() {
+    public ResponseEntity<Map<String, Object>> exportLibrary(Authentication auth) {
         List<LeakLibraryRule> rows = libraryRepo.findAllByOrderByPriorityAscIdAsc();
+        logger.info("[LeakRule] action=export kind=library count={} by={}", rows.size(), who(auth));
         return exportEnvelope(rows, "library", "leak-library-rules");
     }
 
     @GetMapping("/api/admin/leak-rules/fallback/export")
-    public ResponseEntity<Map<String, Object>> exportFallback() {
+    public ResponseEntity<Map<String, Object>> exportFallback(Authentication auth) {
         List<LeakFallbackRule> rows = fallbackRepo.findAllByOrderByPriorityAscIdAsc();
+        logger.info("[LeakRule] action=export kind=fallback count={} by={}", rows.size(), who(auth));
         return exportEnvelope(rows, "fallback", "leak-fallback-rules");
     }
 
@@ -232,9 +280,8 @@ public class LeakRuleAdminController {
         // 5) 캐시 무효화
         ruleService.invalidate();
 
-        String who = (auth != null ? auth.getName() : "unknown");
-        logger.info("[LeakRuleImport] kind=library mode={} by={} deleted={} inserted={}",
-                mode, who, deleted, req.rules.size());
+        logger.info("[LeakRule] action=import kind=library mode={} deleted={} inserted={} by={}",
+                mode, deleted, req.rules.size(), who(auth));
         return importSuccess(mode, deleted, req.rules.size());
     }
 
@@ -270,9 +317,8 @@ public class LeakRuleAdminController {
         fallbackRepo.saveAll(req.rules);
         ruleService.invalidate();
 
-        String who = (auth != null ? auth.getName() : "unknown");
-        logger.info("[LeakRuleImport] kind=fallback mode={} by={} deleted={} inserted={}",
-                mode, who, deleted, req.rules.size());
+        logger.info("[LeakRule] action=import kind=fallback mode={} deleted={} inserted={} by={}",
+                mode, deleted, req.rules.size(), who(auth));
         return importSuccess(mode, deleted, req.rules.size());
     }
 
@@ -381,6 +427,10 @@ public class LeakRuleAdminController {
     }
     private static boolean isBlank(String s) { return s == null || s.trim().isEmpty(); }
     private static String orDefault(String s, String def) { return (s == null || s.isEmpty()) ? def : s; }
+
+    // ─── 감사 로깅 헬퍼 ──────────────────────────────────────────────
+    private static String who(Authentication auth) { return auth != null ? auth.getName() : "unknown"; }
+    private static boolean eq(Object a, Object b) { return a == null ? b == null : a.equals(b); }
 
     private static ResponseEntity<Map<String, Object>> ok(Map<String, Object> extra) {
         Map<String, Object> r = new HashMap<>();

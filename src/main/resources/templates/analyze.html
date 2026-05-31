@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-05-31e">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-05-31g">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -145,7 +145,7 @@ function loadFullErrorLog() {
                 <span class="stat-key">Classes</span>
                 <span class="stat-val" th:text="${result.formattedTotalClasses}">-</span>
             </div>
-            <div class="sidebar-stat">
+            <div class="sidebar-stat" th:classappend="${oomThreadCount > 0 ? 'sidebar-stat-oom' : ''}">
                 <span class="stat-key">OOM</span>
                 <span th:if="${oomThreadCount > 0}" class="stat-val stat-oom-yes"
                       th:text="${oomFirstType != null ? oomFirstType : '감지됨'}"
