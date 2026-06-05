@@ -23,15 +23,41 @@
         .topbar-title { font-size: 15px; font-weight: 700; white-space: nowrap;
                         overflow: hidden; text-overflow: ellipsis; }
         .topbar-right { flex-shrink: 0; }
+        .topbar-btn { font-size: 12px; padding: 5px 12px; border: 1px solid #E5E7EB;
+                      border-radius: 6px; background: transparent; color: #6B7280;
+                      cursor: pointer; text-decoration: none; }
+        .topbar-btn:hover { background: #F9FAFB; }
         .container { max-width: 1480px; margin: 0 auto; padding: 24px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
         .page-hdr { display: flex; align-items: center; justify-content: space-between;
                     margin-bottom: 18px; flex-wrap: wrap; gap: 10px; }
         .page-ttl { font-size: 18px; font-weight: 700; }
+        .page-hdr-right { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
         .page-stats { display: flex; gap: 16px; }
         .page-stat { font-size: 12px; color: #6B7280; }
         .page-stat strong { color: #1F2937; }
+
+        /* ── 룰 일괄 설정 모달 ── */
+        .bulk-scope { margin-bottom: 14px; }
+        .bulk-scope-tit { font-size: 12px; font-weight: 700; color: #374151; margin-bottom: 8px; }
+        .bulk-scope label { display: inline-flex; align-items: center; gap: 5px; margin-right: 14px;
+                            font-size: 13px; color: #374151; cursor: pointer; }
+        .bulk-scope input[type=radio] { accent-color: #2563EB; cursor: pointer; }
+        .bulk-actions { display: flex; flex-direction: column; gap: 8px; }
+        .bulk-btn { display: block; width: 100%; text-align: left; padding: 11px 14px;
+                    background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px;
+                    font-size: 13px; font-weight: 600; color: #374151; cursor: pointer; }
+        .bulk-btn:hover { background: #F3F4F6; border-color: #D1D5DB; }
+        .bulk-btn .bulk-btn-sub { display: block; font-size: 11px; font-weight: 400;
+                                  color: #9CA3AF; margin-top: 2px; }
+        .bulk-btn.danger { border-color: #FECACA; background: #FEF2F2; color: #B91C1C; }
+        .bulk-btn.danger:hover { background: #FEE2E2; border-color: #FCA5A5; }
+        .bulk-btn.danger .bulk-btn-sub { color: #EF4444; }
+        .bulk-del-input { width: 100%; padding: 9px 12px; border: 1px solid #E5E7EB;
+                          border-radius: 7px; font-size: 13px; outline: none; margin-bottom: 4px; }
+        .bulk-del-input:focus { border-color: #FCA5A5; box-shadow: 0 0 0 3px rgba(239,68,68,.1); }
+        .modal-btns button:disabled { opacity: .45; cursor: not-allowed; }
 
         .tabs { display: inline-flex; gap: 4px; padding: 4px;
                 background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
@@ -133,10 +159,12 @@
 
         /* ── 편집 모달 ────────────────────────────────────────── */
         .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
-                    background: rgba(0,0,0,.45); align-items: center; justify-content: center; padding: 20px; }
+                    background: rgba(0,0,0,.45); align-items: center; justify-content: center; padding: 20px;
+                    overscroll-behavior: contain; }
         .modal-ov.open { display: flex; }
         .modal-box { background: #fff; border-radius: 12px; padding: 24px;
                      width: 100%; max-width: 760px; max-height: 92vh; overflow-y: auto;
+                     overscroll-behavior: contain; /* 내부 스크롤 경계에서 배경 전파 차단 */
                      box-shadow: 0 20px 60px rgba(0,0,0,.2); animation: modalIn .2s ease; }
         @keyframes modalIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
         .modal-ttl { font-size: 16px; font-weight: 700; margin-bottom: 12px; color: #111827; }
@@ -194,6 +222,7 @@
         @media (max-width: 640px) {
             .container { padding: 16px 14px 32px; }
             .topbar { padding: 0 14px; }
+            .topbar-btn { padding: 5px 8px; }
             .page-hdr { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
             .page-stats { gap: 12px; flex-wrap: wrap; }
             .tabs { display: flex; margin-bottom: 14px; gap: 4px; width: 100%; }
@@ -302,15 +331,20 @@
         <div class="topbar-logo"><svg viewBox="0 0 24 24"><path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5z"/></svg></div>
         <div class="topbar-title">Leak Rules</div>
     </div>
-    <div class="topbar-right"></div>
+    <div class="topbar-right">
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+    </div>
 </div>
 
 <div class="container">
     <div class="page-hdr">
         <div class="page-ttl">Leak Suspect 룰 관리</div>
-        <div class="page-stats">
-            <div class="page-stat">라이브러리 룰: <strong id="libCountChip" th:text="${libraryCount}">0</strong></div>
-            <div class="page-stat">Fallback 룰: <strong id="fbCountChip" th:text="${fallbackCount}">0</strong></div>
+        <div class="page-hdr-right">
+            <div class="page-stats">
+                <div class="page-stat">라이브러리 룰: <strong id="libCountChip" th:text="${libraryCount}">0</strong></div>
+                <div class="page-stat">Fallback 룰: <strong id="fbCountChip" th:text="${fallbackCount}">0</strong></div>
+            </div>
+            <button type="button" class="btn-secondary" onclick="openBulkSettings()" title="룰 일괄 설정 (전체 사용설정/사용해제/삭제)">&#9881; 설정</button>
         </div>
     </div>
 
@@ -502,6 +536,58 @@
     </div>
 </div>
 
+<!-- 룰 일괄 설정 모달 -->
+<div class="modal-ov" id="bulkModal" onclick="if(event.target===this)closeBulkSettings()">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:440px">
+        <div class="modal-ttl">&#9881; 룰 일괄 설정</div>
+        <div class="bulk-scope">
+            <div class="bulk-scope-tit">대상 범위</div>
+            <label><input type="radio" name="bulkTarget" value="library" checked> 라이브러리 룰 (<span id="bulkLibCnt">0</span>건)</label>
+            <label><input type="radio" name="bulkTarget" value="fallback"> Fallback 룰 (<span id="bulkFbCnt">0</span>건)</label>
+            <label><input type="radio" name="bulkTarget" value="all"> 전체 (<span id="bulkAllCnt">0</span>건)</label>
+        </div>
+        <div class="bulk-actions">
+            <button type="button" class="bulk-btn" onclick="openBulkEnabled(true)">&#10004; 전체 사용설정
+                <span class="bulk-btn-sub">대상 룰을 모두 사용(enabled) 상태로 변경합니다.</span></button>
+            <button type="button" class="bulk-btn" onclick="openBulkEnabled(false)">&#8856; 전체 사용해제
+                <span class="bulk-btn-sub">대상 룰을 모두 사용해제 — Leak Suspect 분석에 적용되지 않습니다.</span></button>
+            <button type="button" class="bulk-btn danger" onclick="openBulkDelete()">&#128465; 전체 삭제
+                <span class="bulk-btn-sub">대상 룰을 영구 삭제합니다 (복구 불가).</span></button>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeBulkSettings()">닫기</button>
+        </div>
+    </div>
+</div>
+
+<!-- 일괄 사용설정/사용해제 경고 모달 -->
+<div class="modal-ov" id="bulkConfirmModal" onclick="if(event.target===this)closeBulkConfirm()">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:420px">
+        <div class="modal-ttl" id="bulkConfirmTtl">전체 사용설정</div>
+        <div class="modal-msg" id="bulkConfirmTarget" style="font-size:12px;background:#F3F4F6;padding:8px 10px;border-radius:6px">—</div>
+        <div class="modal-warn" id="bulkConfirmWarn">⚠ 대상 룰의 사용 여부가 일괄 변경됩니다.</div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeBulkConfirm()">취소</button>
+            <button class="mbtn-confirm" id="bulkConfirmBtn" onclick="submitBulkEnabled()">확인</button>
+        </div>
+    </div>
+</div>
+
+<!-- 일괄 전체 삭제 경고 모달 (확인 문구 입력) -->
+<div class="modal-ov" id="bulkDeleteModal" onclick="if(event.target===this)closeBulkDelete()">
+    <div class="modal-box" role="dialog" aria-modal="true" style="max-width:440px">
+        <div class="modal-ttl">전체 삭제</div>
+        <div class="modal-msg" id="bulkDelTarget" style="font-size:12px;background:#F3F4F6;padding:8px 10px;border-radius:6px">—</div>
+        <div class="modal-warn">⚠ 삭제 후에는 복구할 수 없습니다. 기본 시드 룰은 해당 테이블이 빈 상태로 재기동할 때만 다시 생성되며, 직접 추가/수정한 룰은 복원되지 않습니다. 필요 시 먼저 Export 로 백업하세요.</div>
+        <div class="modal-msg">계속하려면 아래에 <strong>전체 삭제</strong> 를 입력하세요.</div>
+        <input type="text" class="bulk-del-input" id="bulkDelInput" placeholder="전체 삭제" autocomplete="off" oninput="onBulkDelInput()">
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeBulkDelete()">취소</button>
+            <button class="mbtn-del" id="bulkDelBtn" onclick="submitBulkDelete()" disabled>삭제</button>
+        </div>
+    </div>
+</div>
+
 <!-- Export 모달 -->
 <div class="modal-ov" id="exportModal" onclick="if(event.target===this)closeExport()">
     <div class="modal-box" role="dialog" aria-modal="true" style="max-width:480px">
@@ -533,6 +619,16 @@
             <input type="file" id="impFile" accept=".json,application/json" onchange="onImportFileChosen()"
                    style="width:100%;padding:6px;font-size:12px;border:1px solid #D1D5DB;border-radius:6px;background:#fff;box-sizing:border-box">
             <div id="impFileInfo" style="margin-top:6px;font-size:12px;color:#6B7280">— 파일을 선택하세요 —</div>
+            <!-- 중복 키 미리보기 (파일 선택 시 현재 탭 룰과 비교, 서버가 최종 판정) -->
+            <div id="impDupBox" style="display:none;margin-top:6px">
+                <details style="font-size:12px">
+                    <summary style="cursor:pointer;color:#B45309">중복 키 목록 보기 (<span id="impDupCount">0</span>건)</summary>
+                    <div id="impDupList" style="margin-top:6px;max-height:160px;overflow:auto;
+                         font-family:'Consolas','Monaco',monospace;font-size:11px;color:#6B7280;
+                         background:#FFFBEB;border:1px solid #FDE68A;border-radius:6px;padding:8px;
+                         word-break:break-all"></div>
+                </details>
+            </div>
         </div>
 
         <div class="form-row">
@@ -545,6 +641,24 @@
                 <input type="radio" name="impMode" value="replace" onchange="onImportModeChange()" style="margin-right:6px">
                 <strong>전체 교체 (Replace)</strong> — 기존 룰을 모두 삭제하고 파일의 룰로 대체합니다.
             </label>
+        </div>
+
+        <!-- 중복 처리 (append 모드 + 중복 감지 시에만 표시) -->
+        <div class="form-row" id="impDupModeRow" style="display:none">
+            <label>중복 처리 방식 *</label>
+            <label style="display:block;margin:6px 0;font-weight:normal;text-transform:none;letter-spacing:0;color:#1F2937;font-size:13px;cursor:pointer">
+                <input type="radio" name="impDup" value="skip" checked style="margin-right:6px">
+                <strong>건너뛰기 (Skip)</strong> — 기존과 같은 키의 파일 룰은 가져오지 않습니다. (기본)
+            </label>
+            <label style="display:block;margin:6px 0;font-weight:normal;text-transform:none;letter-spacing:0;color:#1F2937;font-size:13px;cursor:pointer">
+                <input type="radio" name="impDup" value="overwrite" style="margin-right:6px">
+                <strong>덮어쓰기 (Overwrite)</strong> — 기존 룰을 파일 값으로 갱신합니다 (id/생성시각 유지).
+            </label>
+            <label style="display:block;margin:6px 0;font-weight:normal;text-transform:none;letter-spacing:0;color:#1F2937;font-size:13px;cursor:pointer">
+                <input type="radio" name="impDup" value="append" style="margin-right:6px">
+                <strong>모두 추가 (Append)</strong> — 중복을 무시하고 전부 새 룰로 추가합니다.
+            </label>
+            <div id="impDupHint" style="margin-top:4px;font-size:11px;color:#92400E"></div>
         </div>
 
         <div class="modal-warn" id="impReplaceWarn" style="display:none">
@@ -569,6 +683,34 @@ function authHeaders(extra) {
 }
 // escHtml → Common.escHtml (common.js). Common 은 추가로 `'` 도 escape.
 var escHtml = Common.escHtml;
+
+// ── 모달 open/close + 배경 스크롤 잠금 ──────────────────────────
+// 모달 열림 중 body 를 position:fixed 로 고정 (iOS 포함, overflow:hidden 보다 확실).
+// 모달 중첩(설정 → 경고) 지원: 첫 open 때 잠그고 마지막 close 때 해제 + 스크롤 위치 복원.
+var _scrollLockY = 0;
+function ovOpen(id) {
+    var anyOpenBefore = !!document.querySelector('.modal-ov.open');
+    document.getElementById(id).classList.add('open');
+    if (!anyOpenBefore) {
+        _scrollLockY = window.pageYOffset || document.documentElement.scrollTop || 0;
+        document.body.style.position = 'fixed';
+        document.body.style.top = (-_scrollLockY) + 'px';
+        document.body.style.left = '0';
+        document.body.style.right = '0';
+        document.body.style.width = '100%';
+    }
+}
+function ovClose(id) {
+    document.getElementById(id).classList.remove('open');
+    if (!document.querySelector('.modal-ov.open')) {
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.left = '';
+        document.body.style.right = '';
+        document.body.style.width = '';
+        window.scrollTo(0, _scrollLockY);
+    }
+}
 function sevChip(s) {
     if (!s) return '<span class="sev-chip sev-auto">자동</span>';
     return '<span class="sev-chip sev-' + escHtml(s) + '">' + escHtml(s) + '</span>';
@@ -793,9 +935,9 @@ function setEditMode(kind, id, r) {
     document.getElementById('editAdvice').value = r.adviceTpl || '';
     document.getElementById('editEnabled').checked = !!r.enabled;
     document.getElementById('pvOut').innerHTML = '— 미리보기 실행 버튼을 클릭하세요 —';
-    document.getElementById('editModal').classList.add('open');
+    ovOpen('editModal');
 }
-function closeEdit() { document.getElementById('editModal').classList.remove('open'); }
+function closeEdit() { ovClose('editModal'); }
 function submitEdit() {
     var kind = document.getElementById('editKind').value;
     var id = document.getElementById('editId').value;
@@ -847,9 +989,9 @@ function openDelete(kind, id, name) {
     document.getElementById('delTarget').textContent = (kind === 'library' ? '라이브러리' : 'Fallback') + ' · ' + name + ' (#' + id + ')';
     var btn = document.getElementById('delConfirmBtn');
     btn.disabled = false; btn.textContent = '삭제';
-    document.getElementById('deleteModal').classList.add('open');
+    ovOpen('deleteModal');
 }
-function closeDelete() { _pendingDelete = null; document.getElementById('deleteModal').classList.remove('open'); }
+function closeDelete() { _pendingDelete = null; ovClose('deleteModal'); }
 function submitDelete() {
     if (!_pendingDelete) return;
     var p = _pendingDelete;
@@ -892,10 +1034,10 @@ function openExport(kind) {
     var btn = document.getElementById('expConfirmBtn');
     btn.disabled = (count === 0);
     btn.textContent = (count === 0 ? '내보낼 룰 없음' : '⬇ 다운로드');
-    document.getElementById('exportModal').classList.add('open');
+    ovOpen('exportModal');
 }
 function closeExport() {
-    document.getElementById('exportModal').classList.remove('open');
+    ovClose('exportModal');
     _exportKind = null;
 }
 function confirmExport() {
@@ -906,38 +1048,65 @@ function confirmExport() {
     closeExport();
 }
 
-var _importKind = null;   // 'library' | 'fallback'
-var _importRules = null;  // 파싱된 rules 배열
+var _importKind = null;     // 'library' | 'fallback'
+var _importRules = null;    // 파싱된 rules 배열
+var _importDupKeys = null;  // 기존 룰과 충돌하는 파일 키 목록 (클라이언트 미리보기용)
+
+// 중복 판정 자연 키: 라이브러리=prefix, Fallback=patternRegex (trim, case-sensitive)
+function _impKeyOf(rule, kind) {
+    var k = (kind === 'library') ? rule.prefix : rule.patternRegex;
+    return (k == null ? '' : String(k).trim());
+}
+function _impExistingKeys(kind) {
+    var src = (kind === 'library') ? _libRules : _fbRules;
+    var set = Object.create(null);
+    src.forEach(function(r){ var k = _impKeyOf(r, kind); if (k) set[k] = true; });
+    return set;
+}
 
 function openImport(kind) {
     _importKind = kind;
     _importRules = null;
+    _importDupKeys = null;
     document.getElementById('impTitle').textContent =
         (kind === 'library' ? '라이브러리' : 'Fallback') + ' 룰 가져오기';
     document.getElementById('impFile').value = '';
     document.getElementById('impFileInfo').textContent = '— 파일을 선택하세요 —';
     document.getElementById('impFileInfo').style.color = '#6B7280';
+    document.getElementById('impDupBox').style.display = 'none';
     document.querySelector('input[name=impMode][value=append]').checked = true;
+    document.querySelector('input[name=impDup][value=skip]').checked = true;
     document.getElementById('impSubmitBtn').disabled = true;
     document.getElementById('impSubmitBtn').textContent = '가져오기';
     var cur = (kind === 'library' ? _libRules.length : _fbRules.length);
     document.getElementById('impCurCount').textContent = cur;
     onImportModeChange();
-    document.getElementById('importModal').classList.add('open');
+    ovOpen('importModal');
 }
 function closeImport() {
-    document.getElementById('importModal').classList.remove('open');
-    _importKind = null; _importRules = null;
+    ovClose('importModal');
+    _importKind = null; _importRules = null; _importDupKeys = null;
 }
 function onImportModeChange() {
     var mode = document.querySelector('input[name=impMode]:checked').value;
     document.getElementById('impReplaceWarn').style.display = (mode === 'replace' ? '' : 'none');
+    // 중복 처리 영역: append 모드 + 중복 감지 시에만 노출 (replace 는 전체 교체라 무의미)
+    var dupCnt = (_importDupKeys ? _importDupKeys.length : 0);
+    var show = (mode === 'append' && _importRules && dupCnt > 0);
+    document.getElementById('impDupModeRow').style.display = show ? '' : 'none';
+    if (show) {
+        document.getElementById('impDupHint').textContent =
+            '중복 ' + dupCnt + '건 감지됨 (현재 화면 기준 미리보기 — 서버가 DB 현재 상태로 최종 판정합니다).';
+    }
 }
 function onImportFileChosen() {
     var f = document.getElementById('impFile').files[0];
     var info = document.getElementById('impFileInfo');
     var btn = document.getElementById('impSubmitBtn');
     _importRules = null;
+    _importDupKeys = null;
+    document.getElementById('impDupBox').style.display = 'none';
+    onImportModeChange();
     btn.disabled = true;
     if (!f) { info.textContent = '— 파일을 선택하세요 —'; info.style.color = '#6B7280'; return; }
     if (f.size > 10 * 1024 * 1024) {
@@ -960,11 +1129,35 @@ function onImportFileChosen() {
                 return;
             }
             _importRules = rules;
+            // 중복 미리보기: 현재 탭 룰(_libRules/_fbRules)과 자연 키 비교 (안내용 — 서버가 최종 판정)
+            var existing = _impExistingKeys(_importKind);
+            var dupKeys = [], seen = Object.create(null);
+            var newCnt = 0, dupCnt = 0;
+            rules.forEach(function(r){
+                var k = _impKeyOf(r, _importKind);
+                if (k && existing[k]) {
+                    dupCnt++;
+                    if (!seen[k]) { seen[k] = 1; dupKeys.push(k); }
+                } else {
+                    newCnt++;
+                }
+            });
+            _importDupKeys = dupKeys;
             var extra = (!Array.isArray(parsed) && parsed.exportedAt)
                 ? ' · 내보낸 시각: ' + escHtml(parsed.exportedAt) : '';
-            info.innerHTML = '✅ ' + rules.length + '건 인식됨' + extra;
-            info.style.color = '#065F46';
+            info.innerHTML = '✅ ' + rules.length + '건 인식 — 신규 ' + newCnt + '건 · 중복 ' + dupCnt + '건' + extra;
+            info.style.color = (dupCnt > 0 ? '#92400E' : '#065F46');
+            var dupBox = document.getElementById('impDupBox');
+            if (dupCnt > 0) {
+                document.getElementById('impDupCount').textContent = dupKeys.length;
+                document.getElementById('impDupList').innerHTML =
+                    dupKeys.map(function(k){ return escHtml(k); }).join('<br>');
+                dupBox.style.display = '';
+            } else {
+                dupBox.style.display = 'none';
+            }
             btn.disabled = false;
+            onImportModeChange(); // 중복 처리 영역 표시 재평가
         } catch (err) {
             info.innerHTML = '⚠ JSON 파싱 실패: ' + escHtml(err.message);
             info.style.color = '#DC2626';
@@ -989,19 +1182,26 @@ function submitImport() {
         var cur = (kind === 'library' ? _libRules.length : _fbRules.length);
         if (!confirm('전체 교체: 현재 ' + cur + '건 삭제 → ' + _importRules.length + '건 삽입. 계속할까요?')) return;
     }
+    // 중복 처리 정책: append 모드일 때만 radio 값 사용 (replace 는 서버에서 무시)
+    var dupSel = document.querySelector('input[name=impDup]:checked');
+    var onDup = (mode === 'append' && dupSel) ? dupSel.value : 'append';
     var btn = document.getElementById('impSubmitBtn');
     btn.disabled = true; btn.textContent = '가져오는 중...';
     fetch('/api/admin/leak-rules/' + kind + '/import', {
         method: 'POST',
         headers: authHeaders({'Content-Type':'application/json'}),
-        body: JSON.stringify({ mode: mode, type: kind, rules: _importRules })
+        body: JSON.stringify({ mode: mode, onDuplicate: onDup, type: kind, rules: _importRules })
     }).then(function(r){ return r.json().then(function(d){ return {ok: r.ok, status: r.status, data: d}; }); })
       .then(function(res){
         btn.disabled = false; btn.textContent = '가져오기';
         if (res.ok && res.data && res.data.success) {
-            var msg = '가져오기 완료\n· 모드: ' + (res.data.mode === 'replace' ? '전체 교체' : '추가')
-                    + (res.data.deleted > 0 ? '\n· 삭제: ' + res.data.deleted + '건' : '')
-                    + '\n· 추가: ' + res.data.inserted + '건';
+            var d = res.data;
+            var dupLabel = ({skip:'건너뛰기', overwrite:'덮어쓰기', append:'모두 추가'})[d.onDuplicate] || d.onDuplicate;
+            var msg = '가져오기 완료\n· 모드: ' + (d.mode === 'replace' ? '전체 교체' : '추가 (' + dupLabel + ')')
+                    + (d.deleted > 0 ? '\n· 삭제: ' + d.deleted + '건' : '')
+                    + '\n· 추가: ' + (d.inserted || 0) + '건'
+                    + (d.updated > 0 ? '\n· 갱신: ' + d.updated + '건' : '')
+                    + (d.skipped > 0 ? '\n· 건너뜀: ' + d.skipped + '건' : '');
             alert(msg);
             closeImport();
             (kind === 'library' ? loadLibrary : loadFallback)();
@@ -1044,6 +1244,100 @@ function runPreview() {
         document.getElementById('pvOut').innerHTML = out;
     }).catch(function(e){
         document.getElementById('pvOut').innerHTML = '<span style="color:#DC2626">미리보기 실패: ' + escHtml(e.message) + '</span>';
+    });
+}
+
+// ── 룰 일괄 설정 (설정 모달: 전체 사용설정/사용해제/삭제) ───────────
+function bulkTarget() {
+    var sel = document.querySelector('input[name="bulkTarget"]:checked');
+    return sel ? sel.value : 'library';
+}
+function bulkTargetLabel(t) {
+    if (t === 'library') return '라이브러리 룰 ' + _libRules.length + '건';
+    if (t === 'fallback') return 'Fallback 룰 ' + _fbRules.length + '건';
+    return '전체 (라이브러리 ' + _libRules.length + '건 + Fallback ' + _fbRules.length + '건)';
+}
+function openBulkSettings() {
+    document.getElementById('bulkLibCnt').textContent = _libRules.length;
+    document.getElementById('bulkFbCnt').textContent = _fbRules.length;
+    document.getElementById('bulkAllCnt').textContent = _libRules.length + _fbRules.length;
+    ovOpen('bulkModal');
+}
+function closeBulkSettings() { ovClose('bulkModal'); }
+
+var _bulkEnabled = null; // 확인 모달에서 실행할 enabled 값
+function openBulkEnabled(enabled) {
+    _bulkEnabled = enabled;
+    document.getElementById('bulkConfirmTtl').textContent = enabled ? '전체 사용설정' : '전체 사용해제';
+    document.getElementById('bulkConfirmTarget').textContent = '대상: ' + bulkTargetLabel(bulkTarget());
+    document.getElementById('bulkConfirmWarn').textContent = enabled
+        ? '⚠ 대상 룰이 모두 사용(enabled) 상태로 변경되어 Leak Suspect 분석에 즉시 적용됩니다.'
+        : '⚠ 대상 룰이 모두 사용해제되어 Leak Suspect 분석에 적용되지 않습니다. 분석 품질이 저하될 수 있습니다.';
+    var btn = document.getElementById('bulkConfirmBtn');
+    btn.disabled = false; btn.textContent = '확인';
+    ovOpen('bulkConfirmModal');
+}
+function closeBulkConfirm() { _bulkEnabled = null; ovClose('bulkConfirmModal'); }
+function submitBulkEnabled() {
+    if (_bulkEnabled === null) return;
+    var btn = document.getElementById('bulkConfirmBtn');
+    btn.disabled = true; btn.textContent = '적용 중...';
+    fetch('/api/admin/leak-rules/bulk-enabled', {
+        method: 'POST',
+        headers: authHeaders({'Content-Type': 'application/json'}),
+        body: JSON.stringify({ target: bulkTarget(), enabled: _bulkEnabled })
+    }).then(function(r){ return r.json().then(function(d){ return {ok: r.ok, data: d, status: r.status}; }); })
+      .then(function(res){
+        if (res.ok && res.data && res.data.success) {
+            var label = (_bulkEnabled ? '사용설정' : '사용해제');
+            closeBulkConfirm();
+            loadLibrary(); loadFallback();
+            alert(label + ' 완료 — 변경: 라이브러리 ' + (res.data.libraryChanged || 0) + '건, Fallback ' + (res.data.fallbackChanged || 0) + '건');
+        } else {
+            btn.disabled = false; btn.textContent = '확인';
+            alert((res.data && res.data.error) || '일괄 변경 실패 (HTTP ' + res.status + ')');
+        }
+    }).catch(function(e){
+        btn.disabled = false; btn.textContent = '확인';
+        alert('일괄 변경 실패: ' + e.message);
+    });
+}
+
+function openBulkDelete() {
+    document.getElementById('bulkDelTarget').textContent = '대상: ' + bulkTargetLabel(bulkTarget());
+    var input = document.getElementById('bulkDelInput');
+    input.value = '';
+    var btn = document.getElementById('bulkDelBtn');
+    btn.disabled = true; btn.textContent = '삭제';
+    ovOpen('bulkDeleteModal');
+    input.focus();
+}
+function closeBulkDelete() { ovClose('bulkDeleteModal'); }
+function onBulkDelInput() {
+    document.getElementById('bulkDelBtn').disabled =
+        document.getElementById('bulkDelInput').value.trim() !== '전체 삭제';
+}
+function submitBulkDelete() {
+    if (document.getElementById('bulkDelInput').value.trim() !== '전체 삭제') return;
+    var btn = document.getElementById('bulkDelBtn');
+    btn.disabled = true; btn.textContent = '삭제 중...';
+    fetch('/api/admin/leak-rules/bulk-delete', {
+        method: 'POST',
+        headers: authHeaders({'Content-Type': 'application/json'}),
+        body: JSON.stringify({ target: bulkTarget() })
+    }).then(function(r){ return r.json().then(function(d){ return {ok: r.ok, data: d, status: r.status}; }); })
+      .then(function(res){
+        if (res.ok && res.data && res.data.success) {
+            closeBulkDelete(); closeBulkSettings();
+            loadLibrary(); loadFallback();
+            alert('전체 삭제 완료 — 라이브러리 ' + (res.data.libraryDeleted || 0) + '건, Fallback ' + (res.data.fallbackDeleted || 0) + '건 삭제');
+        } else {
+            btn.textContent = '삭제'; onBulkDelInput();
+            alert((res.data && res.data.error) || '전체 삭제 실패 (HTTP ' + res.status + ')');
+        }
+    }).catch(function(e){
+        btn.textContent = '삭제'; onBulkDelInput();
+        alert('전체 삭제 실패: ' + e.message);
     });
 }
 

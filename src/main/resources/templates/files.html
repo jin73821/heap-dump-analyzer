@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-05-24a">
+    <link rel="stylesheet" href="/css/common.css?v=2026-06-05">
     <title>Analysis Files — Heap Dump Analyzer</title>
     <style>
         .container { max-width: 1600px; margin: 0 auto; padding: 68px 20px 40px;
@@ -217,18 +217,25 @@
             .page-hdr { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
             .page-stats { gap: 10px; flex-wrap: wrap; }
 
-            /* (b) 툴바: 검색 풀폭 / select 3등분 / 토글류 균등 */
+            /* (b) 툴바: 컨트롤 높이 통일 — 검색 풀폭(컴팩트) / select 3등분 / 선택·deleted·행표시 3등분 */
             .table-toolbar { gap: 8px; }
             .table-toolbar .search-bar {
-                flex: 1 1 100%; min-width: 0; padding: 11px 13px; font-size: 14px;
+                flex: 1 1 100%; min-width: 0; padding: 9px 12px; font-size: 13px;
             }
             .table-toolbar .filter-sel {
                 flex: 1 1 calc(33.333% - 6px); min-width: 0;
                 padding: 9px 24px 9px 10px; font-size: 12px;
             }
-            .table-toolbar .select-toggle-btn { flex: 1 1 auto; justify-content: center; padding: 9px 12px; }
-            .table-toolbar .deleted-toggle    { flex: 1 1 auto; justify-content: center; padding: 9px 10px; font-size: 12px; }
-            .table-toolbar .page-size-wrap    { flex: 1 1 auto; justify-content: flex-end; }
+            .table-toolbar .select-toggle-btn,
+            .table-toolbar .deleted-toggle {
+                flex: 1 1 calc(33.333% - 6px); min-width: 0;
+                justify-content: center; padding: 9px 8px; font-size: 12px;
+            }
+            .table-toolbar .page-size-wrap { flex: 1 1 calc(33.333% - 6px); min-width: 0; }
+            .table-toolbar .page-size-select {
+                width: 100%; min-width: 0; padding: 9px 24px 9px 10px;
+                font-size: 12px; text-align: center; text-align-last: center;
+            }
             .page-size-label { display: none; }
 
             /* (c) panel 평탄화 — 카드들이 컨테이너 외부에 직접 노출 */

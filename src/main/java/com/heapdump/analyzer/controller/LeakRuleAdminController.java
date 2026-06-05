@@ -9,6 +9,7 @@ import com.heapdump.analyzer.util.LeakRuleContext;
 import com.heapdump.analyzer.util.LeakRuleTemplate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -33,6 +34,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.BiConsumer;
+import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -208,6 +212,71 @@ public class LeakRuleAdminController {
         return ok(null);
     }
 
+    // ─── 일괄 작업 (설정 모달: 전체 사용설정/사용해제/삭제) ─────────────
+    @PostMapping("/api/admin/leak-rules/bulk-enabled")
+    @ResponseBody
+    @Transactional
+    public ResponseEntity<Map<String, Object>> bulkEnabled(@RequestBody BulkRequest req, Authentication auth) {
+        String target = normalizeTarget(req == null ? null : req.target);
+        if (target == null) return ResponseEntity.badRequest().body(errMap("target 은 library / fallback / all 중 하나여야 합니다."));
+        if (req.enabled == null) return ResponseEntity.badRequest().body(errMap("enabled 는 필수입니다."));
+        boolean enabled = req.enabled;
+        long libChanged = 0, fbChanged = 0;
+        if ("library".equals(target) || "all".equals(target)) {
+            List<LeakLibraryRule> rows = libraryRepo.findAll();
+            for (LeakLibraryRule r : rows) if (r.isEnabled() != enabled) { r.setEnabled(enabled); libChanged++; }
+            libraryRepo.saveAll(rows);
+        }
+        if ("fallback".equals(target) || "all".equals(target)) {
+            List<LeakFallbackRule> rows = fallbackRepo.findAll();
+            for (LeakFallbackRule r : rows) if (r.isEnabled() != enabled) { r.setEnabled(enabled); fbChanged++; }
+            fallbackRepo.saveAll(rows);
+        }
+        ruleService.invalidate();
+        logger.info("[LeakRule] action=bulk-enabled target={} enabled={} libraryChanged={} fallbackChanged={} by={}",
+                target, enabled, libChanged, fbChanged, who(auth));
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("libraryChanged", libChanged);
+        extra.put("fallbackChanged", fbChanged);
+        return ok(extra);
+    }
+
+    @PostMapping("/api/admin/leak-rules/bulk-delete")
+    @ResponseBody
+    @Transactional
+    public ResponseEntity<Map<String, Object>> bulkDelete(@RequestBody BulkRequest req, Authentication auth) {
+        String target = normalizeTarget(req == null ? null : req.target);
+        if (target == null) return ResponseEntity.badRequest().body(errMap("target 은 library / fallback / all 중 하나여야 합니다."));
+        // 삭제 전 식별 정보(건수) 캡처 — 감사 로깅 컨벤션
+        long libDeleted = 0, fbDeleted = 0;
+        if ("library".equals(target) || "all".equals(target)) {
+            libDeleted = libraryRepo.count();
+            libraryRepo.deleteAllInBatch();
+        }
+        if ("fallback".equals(target) || "all".equals(target)) {
+            fbDeleted = fallbackRepo.count();
+            fallbackRepo.deleteAllInBatch();
+        }
+        ruleService.invalidate();
+        logger.info("[LeakRule] action=bulk-delete target={} libraryDeleted={} fallbackDeleted={} by={}",
+                target, libDeleted, fbDeleted, who(auth));
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("libraryDeleted", libDeleted);
+        extra.put("fallbackDeleted", fbDeleted);
+        return ok(extra);
+    }
+
+    public static class BulkRequest {
+        public String target;   // "library" | "fallback" | "all"
+        public Boolean enabled; // bulk-enabled 전용
+    }
+
+    private static String normalizeTarget(String t) {
+        if (t == null) return null;
+        t = t.trim().toLowerCase();
+        return ("library".equals(t) || "fallback".equals(t) || "all".equals(t)) ? t : null;
+    }
+
     // ─── Export / Import (라이브러리, Fallback) ────────────────────────
     private static final int IMPORT_MAX_ROWS = 10000;
     private static final DateTimeFormatter FILENAME_TS = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
@@ -251,8 +320,9 @@ public class LeakRuleAdminController {
         ResponseEntity<Map<String, Object>> reqErr = validateImportRequest(req, "library");
         if (reqErr != null) return reqErr;
         String mode = (req.mode == null ? "append" : req.mode.toLowerCase());
+        String dup = (req.onDuplicate == null ? "append" : req.onDuplicate.toLowerCase());
 
-        // 2) 전건 사전 validation
+        // 2) 전건 사전 validation (skip 대상 포함 — 부분 적용 혼란 방지)
         List<Map<String, Object>> errors = new ArrayList<>();
         for (int i = 0; i < req.rules.size(); i++) {
             Map<String, Object> err = validateLibrary(req.rules.get(i));
@@ -265,24 +335,16 @@ public class LeakRuleAdminController {
         }
         if (!errors.isEmpty()) return importValidationErrors(errors);
 
-        // 3) replace 모드: 사전 truncate
-        long deleted = 0;
-        if ("replace".equals(mode)) {
-            deleted = libraryRepo.count();
-            libraryRepo.deleteAllInBatch();
-            libraryRepo.flush();
-        }
+        // 3) 적용 (자연 키 = prefix, trim/case-sensitive)
+        ImportOutcome out = applyImport(mode, dup, req.rules, libraryRepo,
+                r -> r.getPrefix() == null ? "" : r.getPrefix().trim(),
+                LeakRuleAdminController::copyLibraryBusinessFields,
+                r -> r.setId(null), "library");
 
-        // 4) id null 강제 → JPA 가 새 IDENTITY 발급, @PrePersist 가 timestamp 부여
-        for (LeakLibraryRule r : req.rules) r.setId(null);
-        libraryRepo.saveAll(req.rules);
-
-        // 5) 캐시 무효화
         ruleService.invalidate();
-
-        logger.info("[LeakRule] action=import kind=library mode={} deleted={} inserted={} by={}",
-                mode, deleted, req.rules.size(), who(auth));
-        return importSuccess(mode, deleted, req.rules.size());
+        logger.info("[LeakRule] action=import kind=library mode={} onDuplicate={} deleted={} inserted={} updated={} skipped={} intraDup={} by={}",
+                mode, dup, out.deleted, out.inserted, out.updated, out.skipped, out.intraDup, who(auth));
+        return importSuccess(mode, dup, out);
     }
 
     @PostMapping("/api/admin/leak-rules/fallback/import")
@@ -293,6 +355,7 @@ public class LeakRuleAdminController {
         ResponseEntity<Map<String, Object>> reqErr = validateImportRequest(req, "fallback");
         if (reqErr != null) return reqErr;
         String mode = (req.mode == null ? "append" : req.mode.toLowerCase());
+        String dup = (req.onDuplicate == null ? "append" : req.onDuplicate.toLowerCase());
 
         List<Map<String, Object>> errors = new ArrayList<>();
         for (int i = 0; i < req.rules.size(); i++) {
@@ -306,20 +369,118 @@ public class LeakRuleAdminController {
         }
         if (!errors.isEmpty()) return importValidationErrors(errors);
 
-        long deleted = 0;
-        if ("replace".equals(mode)) {
-            deleted = fallbackRepo.count();
-            fallbackRepo.deleteAllInBatch();
-            fallbackRepo.flush();
+        // 적용 (자연 키 = patternRegex, trim/case-sensitive)
+        ImportOutcome out = applyImport(mode, dup, req.rules, fallbackRepo,
+                r -> r.getPatternRegex() == null ? "" : r.getPatternRegex().trim(),
+                LeakRuleAdminController::copyFallbackBusinessFields,
+                r -> r.setId(null), "fallback");
+
+        ruleService.invalidate();
+        logger.info("[LeakRule] action=import kind=fallback mode={} onDuplicate={} deleted={} inserted={} updated={} skipped={} intraDup={} by={}",
+                mode, dup, out.deleted, out.inserted, out.updated, out.skipped, out.intraDup, who(auth));
+        return importSuccess(mode, dup, out);
+    }
+
+    /** import 적용 결과 집계 */
+    private static class ImportOutcome {
+        long deleted; int inserted; int updated; int skipped; int intraDup;
+    }
+
+    /**
+     * import 공통 적용 로직 (library/fallback 대칭).
+     * - replace: 전체 삭제 후 전건 insert (onDuplicate 무시)
+     * - append + append: 현행 동작 — 중복 무시 전건 insert
+     * - append + skip|overwrite: 파일 내부 중복 last-wins 정리(intraDup) 후,
+     *   DB 현재 상태 기준 자연 키 매칭 — 미존재 insert / skip 건너뜀 / overwrite 첫 매칭 행만 갱신.
+     */
+    private <T> ImportOutcome applyImport(String mode, String dup, List<T> rules,
+                                          JpaRepository<T, Long> repo,
+                                          Function<T, String> keyFn,
+                                          BiConsumer<T, T> copyFn,
+                                          Consumer<T> idNuller,
+                                          String kind) {
+        ImportOutcome out = new ImportOutcome();
+        boolean dedupe = "append".equals(mode) && ("skip".equals(dup) || "overwrite".equals(dup));
+
+        // 파일 내부 중복: skip/overwrite 일 때만 last-wins 로 정리 (LinkedHashMap — 순서 보존 + 마지막 값 우선)
+        List<T> effective = rules;
+        if (dedupe) {
+            LinkedHashMap<String, T> fileMap = new LinkedHashMap<>();
+            for (T r : rules) fileMap.put(keyFn.apply(r), r);
+            out.intraDup = rules.size() - fileMap.size();
+            effective = new ArrayList<>(fileMap.values());
         }
 
-        for (LeakFallbackRule r : req.rules) r.setId(null);
-        fallbackRepo.saveAll(req.rules);
-        ruleService.invalidate();
+        if ("replace".equals(mode)) {
+            out.deleted = repo.count();
+            repo.deleteAllInBatch();
+            repo.flush();
+            for (T r : effective) idNuller.accept(r);
+            repo.saveAll(effective);
+            out.inserted = effective.size();
+            return out;
+        }
 
-        logger.info("[LeakRule] action=import kind=fallback mode={} deleted={} inserted={} by={}",
-                mode, deleted, req.rules.size(), who(auth));
-        return importSuccess(mode, deleted, req.rules.size());
+        if (!dedupe) { // append + append(모두 추가) — 현행 동작 유지 (하위호환)
+            for (T r : effective) idNuller.accept(r);
+            repo.saveAll(effective);
+            out.inserted = effective.size();
+            return out;
+        }
+
+        // append + skip|overwrite — 서버가 DB 현재 상태 기준 권위적 판정
+        Map<String, List<T>> existingByKey = new HashMap<>();
+        for (T cur : repo.findAll()) {
+            existingByKey.computeIfAbsent(keyFn.apply(cur), k -> new ArrayList<>()).add(cur);
+        }
+        List<T> toInsert = new ArrayList<>();
+        List<T> toUpdate = new ArrayList<>();
+        for (T r : effective) {
+            String key = keyFn.apply(r);
+            List<T> hits = existingByKey.get(key);
+            if (hits == null || hits.isEmpty()) {
+                idNuller.accept(r);
+                toInsert.add(r);
+            } else if ("skip".equals(dup)) {
+                out.skipped++;
+            } else { // overwrite — 첫 매칭 행만 갱신 (기존 데이터 자체가 중복이면 파괴적 동작 회피)
+                T cur = hits.get(0);
+                copyFn.accept(cur, r); // id/createdAt 유지, @PreUpdate 가 updatedAt 갱신
+                toUpdate.add(cur);
+                if (hits.size() > 1) {
+                    logger.warn("[LeakRule] import overwrite kind={} key='{}' matched {} existing rows; only first updated",
+                            kind, key, hits.size());
+                }
+            }
+        }
+        repo.saveAll(toInsert);
+        repo.saveAll(toUpdate);
+        out.inserted = toInsert.size();
+        out.updated = toUpdate.size();
+        return out;
+    }
+
+    /** overwrite 시 기존 행에 파일 값 복사 — id/createdAt 유지 */
+    private static void copyLibraryBusinessFields(LeakLibraryRule cur, LeakLibraryRule src) {
+        cur.setPrefix(src.getPrefix());
+        cur.setLibraryName(src.getLibraryName());
+        cur.setCategory(src.getCategory());
+        cur.setSeverityHint(src.getSeverityHint());
+        cur.setExplanationTpl(src.getExplanationTpl());
+        cur.setAdviceTpl(src.getAdviceTpl());
+        cur.setEnabled(src.isEnabled());
+        cur.setPriority(src.getPriority());
+    }
+
+    private static void copyFallbackBusinessFields(LeakFallbackRule cur, LeakFallbackRule src) {
+        cur.setName(src.getName());
+        cur.setCategory(src.getCategory());
+        cur.setPatternRegex(src.getPatternRegex());
+        cur.setExplanationTpl(src.getExplanationTpl());
+        cur.setAdviceTpl(src.getAdviceTpl());
+        cur.setSeverityHint(src.getSeverityHint());
+        cur.setEnabled(src.isEnabled());
+        cur.setPriority(src.getPriority());
     }
 
     /** Import 요청 공통 검증: rules 존재, mode 형식, type wrapper 매칭, 사이즈 상한. */
@@ -330,6 +491,10 @@ public class LeakRuleAdminController {
         String mode = (req.mode == null ? "append" : req.mode.toLowerCase());
         if (!"replace".equals(mode) && !"append".equals(mode)) {
             return ResponseEntity.badRequest().body(errMap("mode 는 'replace' 또는 'append' 여야 합니다."));
+        }
+        String dup = (req.onDuplicate == null ? "append" : req.onDuplicate.toLowerCase());
+        if (!"skip".equals(dup) && !"overwrite".equals(dup) && !"append".equals(dup)) {
+            return ResponseEntity.badRequest().body(errMap("onDuplicate 는 'skip' / 'overwrite' / 'append' 중 하나여야 합니다."));
         }
         if (req.type != null && !expectedType.equals(req.type)) {
             return ResponseEntity.badRequest().body(errMap(
@@ -350,12 +515,15 @@ public class LeakRuleAdminController {
         return ResponseEntity.badRequest().body(body);
     }
 
-    private static ResponseEntity<Map<String, Object>> importSuccess(String mode, long deleted, int inserted) {
+    private static ResponseEntity<Map<String, Object>> importSuccess(String mode, String onDuplicate, ImportOutcome out) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("success", true);
         body.put("mode", mode);
-        body.put("deleted", deleted);
-        body.put("inserted", inserted);
+        body.put("onDuplicate", onDuplicate);
+        body.put("deleted", out.deleted);    // 하위호환 필드 유지
+        body.put("inserted", out.inserted);  // 하위호환 필드 유지
+        body.put("updated", out.updated);
+        body.put("skipped", out.skipped);
         return ResponseEntity.ok(body);
     }
 
@@ -457,10 +625,11 @@ public class LeakRuleAdminController {
      * bare array 호환을 위해 클라이언트가 {mode, rules:[...]} 로 감싸서 전송.
      */
     public static class ImportRequest<T> {
-        public String mode;     // "replace" | "append" (대소문자 무시). null 이면 append.
-        public String type;     // 선택. wrapper 일 때만 검증.
-        public Integer version; // 선택. 현재 미사용 (스키마 진화 대비).
-        public List<T> rules;   // 필수.
+        public String mode;        // "replace" | "append" (대소문자 무시). null 이면 append.
+        public String onDuplicate; // "skip" | "overwrite" | "append" (대소문자 무시). null 이면 append. replace 모드에선 무시.
+        public String type;        // 선택. wrapper 일 때만 검증.
+        public Integer version;    // 선택. 현재 미사용 (스키마 진화 대비).
+        public List<T> rules;      // 필수.
     }
 
     // ─── Preview payload ─────────────────────────────────────────────

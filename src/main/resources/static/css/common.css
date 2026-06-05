@@ -246,5 +246,6 @@ body {
     .calendar-conts { width: 100%; }
     .calendar-input { flex: 1 1 0; min-width: 0; }
     .cal-text { width: 100%; }
-    .calendar-wrap { width: 260px; }
+    /* .calendar-wrap 폭 축소 금지: 테이블 최소 폭(버튼 32px×7 + td padding = 252px + wrap padding 24 + border 2 = 278px)
+       미만으로 줄이면 토요일 열이 우측으로 넘친다. 위치는 calendar.js clampToViewport 가 보정 (280px, ≥320px 뷰포트 안전). */
 }

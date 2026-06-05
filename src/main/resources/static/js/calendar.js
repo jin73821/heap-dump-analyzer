@@ -64,10 +64,23 @@
         _state[side].viewMonth = current.getMonth();
         renderCalendar(side);
         area.classList.add('open');
+        clampToViewport(area);
+    }
+    // 팝업이 뷰포트 우측을 벗어나면 좌측으로 이동 보정 (모바일 종료일 달력 등).
+    // 우측 8px 여유 확보, 좌측은 최소 4px 까지만 이동 — 초소형 화면에서도 양쪽 잘림 최소화.
+    function clampToViewport(area) {
+        area.style.left = '0px';
+        var rect = area.getBoundingClientRect();
+        var vw = document.documentElement.clientWidth;
+        var overflowR = rect.right - (vw - 8);
+        if (overflowR > 0) {
+            var shift = Math.min(overflowR, rect.left - 4);
+            if (shift > 0) area.style.left = (-shift) + 'px';
+        }
     }
     function closeCalendar(side) {
         var area = areaEl(side);
-        if (area) area.classList.remove('open');
+        if (area) { area.classList.remove('open'); area.style.left = ''; }
     }
     function closeAll() { closeCalendar('start'); closeCalendar('end'); }
 

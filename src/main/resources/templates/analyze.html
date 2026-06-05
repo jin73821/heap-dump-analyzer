@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-05a">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-05b">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -681,6 +681,14 @@ function loadFullErrorLog() {
                     <!-- 요약 본문 -->
                     <div id="ovAiInsightBody" style="display:none">
                         <p class="ov-ai-summary" id="ovAiSummary"></p>
+                        <div class="ov-ai-row" id="ovAiRootCauseRow" style="display:none">
+                            <span class="ov-ai-row-key">원인</span>
+                            <span class="ov-ai-row-val" id="ovAiRootCause"></span>
+                        </div>
+                        <div class="ov-ai-row" id="ovAiRecoRow" style="display:none">
+                            <span class="ov-ai-row-key">권장</span>
+                            <span class="ov-ai-row-val" id="ovAiReco"></span>
+                        </div>
                         <a class="leak-view-all" onclick="goToAiInsight()">자세히 보기 &rarr;</a>
                     </div>
                 </div>
@@ -1388,7 +1396,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-06-01c"></script>
+<script src="/js/analyze.js?v=2026-06-05b"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

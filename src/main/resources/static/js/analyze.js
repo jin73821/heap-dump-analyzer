@@ -400,6 +400,19 @@ function goToAiInsight() {
     showPanel('ai-insight', navBtn);
 }
 
+// recommendations 문자열에서 첫 항목만 추출 (번호 "1. .. 2. .." / 줄바꿈 / 단일 문장 모두 처리).
+// 번호 정규식은 setNumberedList 와 동일 패턴 유지.
+function firstRecommendation(text) {
+    if (!text || !String(text).trim()) return '';
+    var normalized = String(text).replace(/(\d+)\s*[.)]\s*/g, '\n$1. ').trim();
+    var lines = normalized.split('\n').map(function(l) { return l.trim(); }).filter(function(l) { return l.length; });
+    for (var i = 0; i < lines.length; i++) {
+        var m = lines[i].match(/^\d+\.\s*(.*)/);
+        if (m) return m[1].trim();
+    }
+    return lines[0] || String(text).trim();
+}
+
 // Overview 의 AI 인사이트 요약 카드 갱신 (showAiResult/auto-load 에서 호출).
 // data 가 없거나 summary 가 비면 미생성 상태로 되돌린다.
 function renderOverviewInsight(data) {
@@ -407,11 +420,26 @@ function renderOverviewInsight(data) {
     var body  = document.getElementById('ovAiInsightBody');
     var sumEl = document.getElementById('ovAiSummary');
     var sevEl = document.getElementById('ovAiSeverity');
+    var rcRow  = document.getElementById('ovAiRootCauseRow');
+    var rcVal  = document.getElementById('ovAiRootCause');
+    var rcoRow = document.getElementById('ovAiRecoRow');
+    var rcoVal = document.getElementById('ovAiReco');
     if (!empty || !body) return;
 
     var summary = (data && data.summary != null) ? String(data.summary) : '';
     if (summary.trim()) {
         if (sumEl) sumEl.textContent = summary;
+        // 보강 행: 근본 원인 + 첫 번째 권장 조치 (없으면 행 숨김)
+        var rc = (data && data.rootCause != null) ? String(data.rootCause).trim() : '';
+        if (rcRow && rcVal) {
+            if (rc) { rcVal.textContent = rc; rcRow.style.display = ''; }
+            else rcRow.style.display = 'none';
+        }
+        var reco = firstRecommendation(data && data.recommendations);
+        if (rcoRow && rcoVal) {
+            if (reco) { rcoVal.textContent = reco; rcoRow.style.display = ''; }
+            else rcoRow.style.display = 'none';
+        }
         if (sevEl) {
             var sev = data.severity;
             if (sev) {
@@ -429,6 +457,8 @@ function renderOverviewInsight(data) {
         empty.style.display = '';
         body.style.display = 'none';
         if (sevEl) sevEl.style.display = 'none';
+        if (rcRow)  rcRow.style.display  = 'none';
+        if (rcoRow) rcoRow.style.display = 'none';
     }
 }
 

@@ -1,5 +1,58 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-05] Leak Rules — Import 고도화: 중복 검사/처리 (skip/overwrite/append)
+
+**요청:** import 시 새 데이터와 기존 데이터를 비교해 중복 검사 후 가져오기. 중복 자연 키 = 라이브러리 `prefix` / Fallback `patternRegex` (trim, case-sensitive). 처리 방식은 모달에서 선택.
+
+- **`LeakRuleAdminController`:** `ImportRequest.onDuplicate`("skip"|"overwrite"|"append", null=append 하위호환, replace 모드에선 무시) + `validateImportRequest` 형식 검증. 제네릭 `applyImport(mode, dup, rules, repo, keyFn, copyFn, idNuller, kind)` 로 library/fallback 공통화 — ① skip/overwrite 시 파일 내부 중복 last-wins 정리(`intraDup` 로깅) ② `findAll()` 키 그룹맵으로 DB 현재 상태 기준 권위적 판정: 미존재 insert / skip 건너뜀 / overwrite 첫 매칭 행만 `copy*BusinessFields`(id/createdAt 유지, @PreUpdate 가 updatedAt 갱신), 기존 데이터 자체가 키 중복이면 첫 행만 갱신 + warn 로그. 전건 validation 현행 유지. 응답 `importSuccess` 확장(`onDuplicate/updated/skipped` 추가, `deleted/inserted` 하위호환 유지). 감사 로깅 `action=import ... onDuplicate=... inserted=... updated=... skipped=... intraDup=...`. 신규 엔드포인트 없음 → SecurityConfig 무변경.
+- **`leak-rules.html`:** 파일 선택 시 즉시 클라이언트 미리보기 — "✅ N건 인식 — 신규 X건 · 중복 Y건"(중복 시 호박색) + 중복 키 목록 `<details>` 토글(`#impDupBox`, monospace 스크롤 박스). append 모드 + 중복>0 일 때만 중복 처리 radio(`#impDupModeRow`: 건너뛰기 기본/덮어쓰기/모두 추가) 노출, hint 에 "서버가 DB 현재 상태로 최종 판정" 명시. `submitImport` 가 `onDuplicate` 전송 + 완료 alert 에 추가/갱신/건너뜀 건수 표시. `_impKeyOf`/`_impExistingKeys` 헬퍼 (`_libRules`/`_fbRules` 재사용).
+- **검증:** `zz.test.dup.` 테스트 룰로 skip(inserted=0/skipped=1, DB 무변화) → overwrite(updated=1, id/createdAt 유지) → append(중복 2행) → 2행 상태 overwrite 시 "matched 2 rows; only first updated" warn → intra-file 중복 last-wins(intraDup=1) 모두 API 검증 후 테스트 행 전부 삭제(운영 룰 무변경). onDuplicate 형식 오류 400.
+
+## [2026-06-05] Leak Rules — 모달 열림 중 배경 스크롤 잠금
+
+**보고:** 룰 추가 모달에서 스크롤 시 뒷배경 페이지가 함께 움직임 (`.modal-box` 내부 스크롤이 경계에서 body 로 전파).
+
+- **`leak-rules.html`:** `ovOpen(id)/ovClose(id)` 헬퍼 추가 — 첫 모달 open 시 body 를 `position:fixed; top:-scrollY` 로 고정(iOS 포함 `overflow:hidden` 보다 확실), 마지막 close 시 해제 + `scrollTo` 로 위치 복원. 모달 중첩(설정→경고) 지원. 7개 모달 open/close 14개 호출 지점 일괄 치환. CSS `.modal-ov`/`.modal-box` 에 `overscroll-behavior:contain` 보강(내부 스크롤 경계 전파 차단).
+
+## [2026-06-05] Leak Rules — 룰 일괄 설정 모달 (전체 사용설정/사용해제/삭제)
+
+**요청:** 룰 관리 페이지에 설정 버튼 + 모달. 전체 사용해제/사용설정(경고 표시), 전체 삭제(경고 표시). 적용 범위는 모달에서 선택(라이브러리/Fallback/전체), 전체 삭제는 확인 문구("전체 삭제") 입력 방식.
+
+- **`LeakRuleAdminController`:** `POST /api/admin/leak-rules/bulk-enabled` (`{target, enabled}` — 대상 룰 enabled 일괄 변경, 변경 건수 반환) + `POST /api/admin/leak-rules/bulk-delete` (`{target}` — `deleteAllInBatch`, 삭제 전 건수 캡처) 추가. target=library/fallback/all 검증(`normalizeTarget`), `@Transactional`, `ruleService.invalidate()`, 감사 로깅 `[LeakRule] action=bulk-enabled|bulk-delete target=... by=...` 컨벤션 준수. `/api/admin/**` 패턴이라 SecurityConfig 변경 불필요(ADMIN+CSRF 자동 적용).
+- **`leak-rules.html`:** page-hdr 우측에 `⚙ 설정` 버튼(`.page-hdr-right` 래퍼). 모달 3개 추가 — ① `#bulkModal` 설정(대상 라디오: 라이브러리 N건/Fallback N건/전체 N건 + 액션 3버튼 `.bulk-btn`, 삭제는 danger 톤) ② `#bulkConfirmModal` 사용설정/해제 경고(대상·건수 + 영향 경고문) ③ `#bulkDeleteModal` 삭제 경고(복구 불가 + Export 백업 안내 + **"전체 삭제" 문구 입력 시에만 삭제 버튼 활성화**). 완료 시 양 탭 리로드 + 변경/삭제 건수 alert. 기존 fetch+authHeaders/모달 패턴 동일 적용.
+
+## [2026-06-05] Leak Rules — topbar Dashboard 버튼 추가
+
+- **`leak-rules.html`:** 비어있던 `.topbar-right` 에 `← Dashboard` 링크 추가 (admin/users.html 과 동일 패턴). leak-rules 는 common.css 미로드 페이지라 `.topbar-btn` 인라인 스타일 + ≤640px 컴팩트 패딩(5px 8px) 동반 추가.
+
+## [2026-06-05] KRDS 캘린더 — 모바일 토요일 열 우측 넘침 수정 (calendar-wrap 260px 축소 규칙 제거)
+
+**보고:** (뷰포트 클램프 적용 후에도) 시작일/종료일 달력 모두 토요일 우측 여백이 좁고, 토요일 날짜 선택 시 파란 박스가 달력 레이아웃을 살짝 벗어남. 헤드리스 Chrome 실측으로 원인 확정: `common.css` 모바일(≤640px) 블록의 `.calendar-wrap { width:260px }` 가 테이블 최소 폭(버튼 32px×7 + td padding 4px×7 = 252px + wrap padding 24 + border 2 = **278px**)보다 작아 테이블이 우측으로 **18px 오버플로**.
+
+- **`common.css`(`?v=2026-06-05`, 14개 템플릿 일괄 갱신):** 모바일 `.calendar-wrap { width:260px }` 제거 → 기본 280px 사용(토요일 우측 여백 12px 복원, 32px 터치 타깃 유지). 재발 방지 주석 추가 — 280px 미만 축소 금지, 위치는 `calendar.js clampToViewport` 가 보정(≥320px 뷰포트 안전).
+
+## [2026-06-05] KRDS 캘린더 — 모바일 뷰포트 우측 이탈 보정
+
+**보고:** 모바일 Files 기간선택에서 시작일 달력은 토요일 열 우측 여백이 너무 좁고(뷰포트 우측 클리핑), 종료일 달력은 입력칸 위치가 오른쪽이라 팝업(`position:absolute; left:0`, 폭 ~306px)이 화면 오른쪽을 벗어남. `openCalendar()` 가 `.open` 토글만 하고 위치 보정이 없던 것이 원인.
+
+- **`calendar.js`(`?v=2026-06-05`, banner.html 전역 로드라 캘린더 쓰는 모든 페이지 공통 수혜):** `clampToViewport(area)` 헬퍼 추가 — open 직후 `getBoundingClientRect()` 로 팝업 우측이 `clientWidth - 8px` 를 넘으면 초과분만큼 `style.left` 음수 이동(좌측은 최소 4px 까지만 — 초소형 화면 양쪽 잘림 최소화). `closeCalendar()` 에서 `style.left` 초기화(데스크톱 기본 위치 복원). 320px 뷰포트까지 팝업(306px) 무잘림.
+- **`fragments/banner.html`:** `calendar.js?v=2026-05-17` → `?v=2026-06-05`.
+
+## [2026-06-05] Files — 모바일 툴바 레이아웃 재정비 (검색칸 과대 + 토글류 불균형)
+
+**보고:** Analysis Files 모바일 화면에서 검색 칸이 다른 컨트롤 대비 과하게 큼(padding 11px/font 14px) + 선택/deleted 표시/행갯수 버튼이 `flex:auto` 라 폭 불균형.
+
+- **`files.html`(≤640px 인라인 미디어쿼리, 인라인 CSS 라 캐시 키 불필요):** 전 컨트롤 높이 통일(padding 9px) — 검색은 풀폭 유지하되 컴팩트(9px 12px/13px), 서버·기간·상태 select 3등분(기존 유지), 선택·deleted 표시·행표시를 동일 패턴 `flex:1 1 calc(33.333% - 6px)` 3등분 균등 배치(비관리자는 deleted 토글 부재 → 선택/행표시 50:50 자동 분배). `page-size-select` 는 wrap 폭 100% + 가운데 정렬(`text-align-last`).
+
+## [2026-06-05] analyze Overview — 좌우 컬럼 높이 균형 + AI 인사이트 요약 카드 보강
+
+**보고:** Overview 상단 진단 카드(OOM 감지 / Leak Suspects / AI 인사이트 요약)가 내용 양에 따라 좌측 컬럼이 비어 보임 — `wgdist_1_heapdump_20260326.hprof`(OOM 미감지 + Suspect 1건 + 짧은 AI 요약 → 좌측 하단 ~200px 공백) vs `jeus_server1.hprof`(Suspect 2건 → 균형). 원인: `.overview-top { align-items:start }` 라 좌측 카드가 내용 높이만큼만 차지, 우측(KPI+차트 ~650px)과 불균형.
+
+- **`analyze.css`(`?v=2026-06-05b`):** `.overview-top` align-items start→**stretch**. 좌측 진단 카드 flex-grow 차등(`diag-ok` 1 / `diag-danger` 2 / leak·AI 카드 3)으로 우측 높이에 비례 확장 — 정상 카드는 기존 가로 flex+`align-items:center` 라 확장분이 세로 중앙 패딩으로 분산. leak/AI 카드는 세로 flex 전환 + "전체 보기/자세히 보기" 링크 `margin-top:auto` 하단 고정(`#ovAiInsightBody`/`#ovAiInsightEmpty` 래퍼도 세로 flex). 역전(좌>우) 케이스 대칭 처리: 우측 `.chart-box` flex-grow:1 + canvas 세로 중앙, chart-box 부재 시 `.card:last-child` 폴백. AI 카드용 보라톤 `.ov-ai-row/.ov-ai-row-key/.ov-ai-row-val`(line-clamp 2줄) 추가.
+- **`analyze.html`:** AI 인사이트 요약 카드 `#ovAiInsightBody` 에 원인(`#ovAiRootCauseRow`)·권장(`#ovAiRecoRow`) 행 추가. `analyze.js?v=2026-06-05b`.
+- **`analyze.js`:** `renderOverviewInsight()` 가 `rootCause` + 첫 번째 `recommendations` 항목을 채움(없으면 행 숨김, 미생성 복귀 시에도 숨김). `firstRecommendation()` 헬퍼 신설 — `setNumberedList` 와 동일한 번호 정규식(`/(\d+)\s*[.)]\s*/g`)으로 "1. xxx 2. yyy" 문자열에서 첫 항목 추출, 번호 없으면 첫 줄 폴백. `textContent` 사용(XSS 안전).
+- **검증:** wgdist(비어 보이던 케이스)·jeus_server1(꽉 찬 케이스) 두 페이지에서 좌우 컬럼 높이 균형 + AI 카드 원인/권장 노출 확인. ≤900px 1열 전환 영향 없음(grow 는 단일 컬럼에서 무해, 해당 카드 대상 `!important` 미디어쿼리 없음). 빌드+기동 정상.
+
 ## [2026-06-05] Leak Suspects — Suspect 설명 잘림 + Keyword 미표시 수정
 
 **보고:** `jeus_server1.hprof` 분석에서 Suspect #1 설명이 잘려 표시되고 Keyword 가 보이지 않음. 실제 `result.json` + MAT ZIP 검증으로 두 근본 원인 확정: (1) description 500자 하드캡, (2) `result.json` 이 keyword 추출 기능 도입(2026-05) 이전 산출물이라 `keywords: null`.
