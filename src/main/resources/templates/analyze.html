@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-01e">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-05a">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -869,10 +869,10 @@ function loadFullErrorLog() {
                             <div th:if="${s.explanation != null}" class="suspect-explanation">
                                 <div class="suspect-explanation-title">&#128269; 분석 설명</div>
                                 <p class="suspect-explanation-body" th:text="${s.explanationBody}"></p>
-                                <div th:if="${s.keywords != null and !#lists.isEmpty(s.keywords)}" class="suspect-keywords">
-                                    <div class="suspect-keywords-label">Keywords</div>
-                                    <div th:each="kw : ${s.keywords}" class="suspect-kw-line" th:text="${kw}"></div>
-                                </div>
+                            </div>
+                            <div th:if="${s.keywords != null and !#lists.isEmpty(s.keywords)}" class="suspect-keywords">
+                                <div class="suspect-keywords-label">Keywords</div>
+                                <div th:each="kw : ${s.keywords}" class="suspect-kw-line" th:text="${kw}"></div>
                             </div>
                             <div th:if="${s.advice != null}" class="suspect-advice">
                                 <div class="suspect-advice-title">&#9889; 권장 조치</div>

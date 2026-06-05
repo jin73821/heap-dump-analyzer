@@ -1,5 +1,14 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-05] Leak Suspects — Suspect 설명 잘림 + Keyword 미표시 수정
+
+**보고:** `jeus_server1.hprof` 분석에서 Suspect #1 설명이 잘려 표시되고 Keyword 가 보이지 않음. 실제 `result.json` + MAT ZIP 검증으로 두 근본 원인 확정: (1) description 500자 하드캡, (2) `result.json` 이 keyword 추출 기능 도입(2026-05) 이전 산출물이라 `keywords: null`.
+
+- **`MatReportParser`:** `parseSuspectsZip()` description 캡 500→**2000**자 상향(fallback 경로 1000→2000). MAT 본문 끝에 평탄화되어 섞이는 꼬리(`Keywords` FQCN 목록 — chip 으로 별도 표시되므로 본문 중복 제거 / `Details »`(`&raquo;`/`&#187;` 엔티티 포함) / `Table Of Contents` / `Created by Eclipse`)를 잘라내는 `SUSPECT_FOOTER_PATTERN` + `trimSuspectFooter()` 헬퍼 추가, substring 이전 적용. (`Keywords` 가 산문에 등장하지 않음을 실데이터로 확인.)
+- **`HeapDumpAnalyzerService`:** `sanitizeCachedHtml()` 에 `reparseSuspectsMeta()` 추가(기존 `reparseSuspectsStacktrace()` 패턴). 구버전 result.json(= suspect 하나라도 `keywords` 비어있음) 캐시 복원 시 `_Leak_Suspects.zip` 에서 keyword 백필 + (현재 파서 기준) description 교체. **재분석 없이** 다음 로드에 자동 복구(인메모리 캐시만 갱신). 기동 시 jeus_server1 등 구버전 결과 다수 백필 로그 확인.
+- **`analyze.html` (상세 패널):** `suspect-keywords` 블록이 `th:if="${s.explanation != null}"` 컨테이너 안에 중첩되어 룰 미매칭(explanation=null) suspect 의 키워드가 안 보이던 잠재 버그 수정 — 컨테이너 밖 형제 요소로 이동. `analyze.css` `.suspect-keywords` 를 독립 박스 스타일로(`?v=2026-06-05a`).
+- **검증:** `/analyze/result/jeus_server1.hprof` 렌더 확인 — Suspect #1 설명 1186자(푸터/키워드 덤프 제거, 잘림 없음)·#2 97자 깔끔, Keywords 요약 카드 9칩 + 상세 패널 2블록 7라인 정상. 빌드+기동 정상(12.8s).
+
 ## [2026-06-01] analyze Overview — JEUS Instance/Domain 식별 칩 (자동 식별 + 수동 입력)
 
 **요청:** System Properties 에 `jeus.server.name`/`jeus.domain.name` 이 식별되면 Overview 상단 Middleware 배지 오른쪽에 각각 **Instance**/**Domain** 으로 표기. 식별되지 않으면 수동 입력 가능하게.

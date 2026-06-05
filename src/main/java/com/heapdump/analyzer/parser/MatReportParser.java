@@ -87,6 +87,11 @@ public class MatReportParser {
     private static final Pattern KEYWORD_LI_PATTERN = Pattern.compile(
             "<li[^>]*>(.*?)</li>",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
+    // suspect description \uB05D\uC5D0 \uC11E\uC774\uB294 MAT \uB9AC\uD3EC\uD2B8 \uAF2C\uB9AC \uC81C\uAC70. "Keywords"(FQCN \uBAA9\uB85D\uC740 chip \uC73C\uB85C \uBCC4\uB3C4 \uD45C\uC2DC \u2192 \uBCF8\uBB38 \uC911\uBCF5 \uC81C\uAC70)
+    // \uBC0F "Details \u00BB" / "Table Of Contents" / "Created by Eclipse ..." \uD478\uD130\uB97C \uBCF8\uBB38\uC5D0\uC11C \uC798\uB77C\uB0B8\uB2E4.
+    private static final Pattern SUSPECT_FOOTER_PATTERN = Pattern.compile(
+            "(?i)\\s*(?:Keywords\\b|Details\\s*(?:\u00BB|&raquo;|&#187;)|Table\\s+Of\\s+Contents|Created\\s+by\\s+Eclipse).*$",
+            Pattern.DOTALL);
     private static final Pattern ARROW_CHAR_PATTERN = Pattern.compile("[\u00BB\u203A\u2039\u00AB]");
     private static final Pattern ARROW_SPACE_PATTERN = Pattern.compile("\u00BB\\s*");
     private static final Pattern ONLY_OBJECT_PATTERN = Pattern.compile("(?i)\\bOnly\\s+object\\b.*");
@@ -1007,9 +1012,9 @@ public class MatReportParser {
         int idx = 1;
         while (pm.find() && suspects.size() < 5) {
             String rawSection = pm.group(1);
-            String section = stripTags(rawSection);
+            String section = trimSuspectFooter(stripTags(rawSection));
             if (section.length() > 30) {
-                LeakSuspect suspect = new LeakSuspect("Suspect #" + idx, section.substring(0, Math.min(section.length(), 500)));
+                LeakSuspect suspect = new LeakSuspect("Suspect #" + idx, section.substring(0, Math.min(section.length(), 2000)));
                 List<String> kws = extractKeywords(rawSection);
                 suspect.setKeywords(kws);
                 LeakSuspectAdvisor.analyze(suspect, section);
@@ -1029,9 +1034,9 @@ public class MatReportParser {
 
         // 섹션 파싱 실패 시 전체 HTML에서 의심 패턴 추출
         if (suspects.isEmpty()) {
-            String plain = stripTags(html);
+            String plain = trimSuspectFooter(stripTags(html));
             if (plain.length() > 100) {
-                LeakSuspect suspect = new LeakSuspect("Leak Analysis", plain.substring(0, Math.min(plain.length(), 1000)));
+                LeakSuspect suspect = new LeakSuspect("Leak Analysis", plain.substring(0, Math.min(plain.length(), 2000)));
                 List<String> kws = extractKeywords(html);
                 suspect.setKeywords(kws);
                 LeakSuspectAdvisor.analyze(suspect, plain);
@@ -1528,6 +1533,12 @@ public class MatReportParser {
     private String stripTags(String s) {
         if (s == null) return "";
         return WHITESPACE_PATTERN.matcher(TAG_PATTERN.matcher(s).replaceAll(" ")).replaceAll(" ").trim();
+    }
+
+    /** suspect description 끝에 섞이는 MAT 리포트 푸터/꼬리("Details »"/"Table Of Contents"/"Created by Eclipse ...") 제거. */
+    private String trimSuspectFooter(String s) {
+        if (s == null) return "";
+        return SUSPECT_FOOTER_PATTERN.matcher(s).replaceFirst("").trim();
     }
 
     /** 숫자 외 문자 제거 (사전 컴파일 패턴 사용) */

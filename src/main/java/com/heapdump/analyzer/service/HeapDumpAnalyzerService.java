@@ -461,6 +461,9 @@ public class HeapDumpAnalyzerService {
         // suspects stacktrace 페이지 경로 재파싱 (기존 result.json에 없는 경우)
         reparseSuspectsStacktrace(r);
 
+        // keyword 기능 도입 이전 result.json 은 keywords 가 null → ZIP 에서 재추출 + 잘린 description 복구
+        reparseSuspectsMeta(r);
+
         // classLoaderCount/gcRootCount가 0이면 Overview ZIP에서 재파싱
         if (r.getClassLoaderCount() == 0 && r.getGcRootCount() == 0) {
             reparseOverviewMeta(r);
@@ -605,6 +608,48 @@ public class HeapDumpAnalyzerService {
             }
         } catch (Exception e) {
             logger.debug("Could not re-extract suspects stacktrace for {}: {}", r.getFilename(), e.getMessage());
+        }
+    }
+
+    /**
+     * keyword 추출 기능 도입(2026-05) 이전에 생성된 result.json 은 leakSuspects[].keywords 가 null 이고
+     * description 이 구버전 500자 캡으로 잘려 있다. 해당 결과를 캐시 복원 시 _Leak_Suspects.zip 에서 재추출하여
+     * keywords 백필 + (재추출 description 이 더 길면) description 교체. 인메모리 캐시만 갱신(reparse* 패턴 동일).
+     */
+    private void reparseSuspectsMeta(HeapAnalysisResult r) {
+        if (r.getLeakSuspects() == null || r.getLeakSuspects().isEmpty()) return;
+        boolean anyMissingKeywords = r.getLeakSuspects().stream()
+                .anyMatch(s -> s.getKeywords() == null || s.getKeywords().isEmpty());
+        if (!anyMissingKeywords) return;
+        if (r.getFilename() == null) return;
+        String baseName = stripExtension(r.getFilename());
+        File resultDir = resultDirectory(r.getFilename());
+        if (!resultDir.exists()) return;
+        try {
+            MatParseResult tmp = new MatParseResult();
+            parser.reparseSuspects(resultDir.getAbsolutePath(), baseName, tmp);
+            if (tmp.getLeakSuspects() != null && tmp.getLeakSuspects().size() == r.getLeakSuspects().size()) {
+                int backfilled = 0;
+                for (int i = 0; i < r.getLeakSuspects().size(); i++) {
+                    LeakSuspect orig = r.getLeakSuspects().get(i);
+                    LeakSuspect fresh = tmp.getLeakSuspects().get(i);
+                    if ((orig.getKeywords() == null || orig.getKeywords().isEmpty())
+                            && fresh.getKeywords() != null && !fresh.getKeywords().isEmpty()) {
+                        orig.setKeywords(fresh.getKeywords());
+                        backfilled++;
+                    }
+                    // 구버전 description(500자 잘림 또는 푸터 혼입)을 현재 파서의 정규 재추출 본문으로 교체.
+                    // 백필 자체가 keyword 누락(구버전) 조건에서만 동작하므로 fresh 가 권위 있는 값.
+                    if (fresh.getDescription() != null && !fresh.getDescription().isEmpty()) {
+                        orig.setDescription(fresh.getDescription());
+                    }
+                }
+                if (backfilled > 0) {
+                    logger.info("Backfilled keywords for {} suspect(s) of {}", backfilled, r.getFilename());
+                }
+            }
+        } catch (Exception e) {
+            logger.debug("Could not backfill suspects meta for {}: {}", r.getFilename(), e.getMessage());
         }
     }
 
