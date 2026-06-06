@@ -86,6 +86,32 @@
         .ftr .r { display: table-cell; text-align: right; }
 
         /* ────────────────────────────────────────────────────────────
+           Screen-only 데스크톱 문서 뷰 규칙 (≥901px).
+           OpenHTMLtoPDF는 기본 print 미디어를 사용하므로 PDF 렌더에 영향 없음.
+           "HTML로 보기" 데스크톱 미리보기에서 라이트 그레이 뷰포트 위에
+           A4 실물 크기(210×297mm) 흰 종이 시트를 가운데 정렬해 문서 느낌 부여.
+           ──────────────────────────────────────────────────────────── */
+        @media screen and (min-width: 901px) {
+            html, body { background: #F3F4F6; }
+            body { padding: 32px 16px; }
+            .report {
+                /* 210mm 폭 + 12mm 내부 여백(@page margin 재현) → 콘텐츠 폭 186mm 유지(border-box) */
+                width: 210mm; max-width: 100%;
+                min-height: 297mm; height: auto; overflow: visible;
+                padding: 12mm;
+                margin: 0 auto;                       /* 가운데 정렬 */
+                background: #fff;
+                border: 1px solid #E5E7EB;
+                border-radius: 2px;
+                box-shadow: 0 2px 8px rgba(0,0,0,.10), 0 8px 24px rgba(0,0,0,.08);
+            }
+            /* footer: absolute 오프셋은 padding box 기준 → 12mm 내부 여백 안쪽으로 보정.
+               base 가 display:table 이라 width:auto 는 shrink-to-fit 으로 동작(right 무시)
+               → calc 로 콘텐츠 폭(186mm)을 명시 */
+            .ftr { left: 12mm; bottom: 12mm; width: calc(100% - 24mm); }
+        }
+
+        /* ────────────────────────────────────────────────────────────
            Screen-only 모바일 가독성 규칙 (≤900px).
            OpenHTMLtoPDF는 기본 print 미디어를 사용하므로 PDF 렌더에 영향 없음.
            모바일 미리보기(/print-html iframe)에서만 적용.

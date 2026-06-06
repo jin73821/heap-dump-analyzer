@@ -28,7 +28,18 @@ body.banner-collapsed { --banner-w: 44px; }
     font-size: 14px; line-height: 1.5;
     display: flex; flex-direction: column;
     transition: width .25s cubic-bezier(.4,0,.2,1);
+    overscroll-behavior: contain;
 }
+/* 창 높이 < 내용 높이 시: flex 압축으로 진행바 등이 찌그러지지 않고 배너 자체가 스크롤되도록 고정.
+   (모바일 .gb-tab-content { flex:1 } 이 뒤에서 shorthand 로 shrink 를 복원하므로 데스크탑에만 유효) */
+.gb-header, .gb-body, .gb-collapsed-icons, .gb-toggle { flex-shrink: 0; }
+/* Win11 Chrome/Edge 의 overlay(fluent) 스크롤바는 상호작용 전까지 렌더되지 않아
+   창 축소 시 "스크롤 불가"로 보임 → 커스텀 스크롤바 지정으로 overflow 시 항상 표시 강제 */
+.g-banner, .gb-tab-content { scrollbar-width: thin; scrollbar-color: #C4C9D0 transparent; }
+.g-banner::-webkit-scrollbar, .gb-tab-content::-webkit-scrollbar { width: 6px; }
+.g-banner::-webkit-scrollbar-track, .gb-tab-content::-webkit-scrollbar-track { background: transparent; }
+.g-banner::-webkit-scrollbar-thumb, .gb-tab-content::-webkit-scrollbar-thumb { background: #C4C9D0; border-radius: 3px; }
+.g-banner::-webkit-scrollbar-thumb:hover, .gb-tab-content::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
 
 /* ── Banner header (52px, aligned with page topbar) ── */
 .gb-header {
@@ -265,7 +276,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         </div>
         <div class="gb-header-text">
             <div class="gb-header-title">Heap Dump Analyzer</div>
-            <div class="gb-header-sub">v2.0.7 · MAT CLI</div>
+            <div class="gb-header-sub">v2.0.8 · MAT CLI</div>
         </div>
     </a>
 

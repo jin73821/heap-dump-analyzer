@@ -1,5 +1,43 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-06] PDF Report — "HTML로 보기" 모드 확대/축소 컨트롤 추가
+
+**요청:** HTML 미리보기 모드에서 확대·축소 버튼 제공.
+
+- **`analyze.js`(`?v=2026-06-06b`):** `_pdfHtmlZoom`(50~200%, 10% 스텝) + `adjustPdfHtmlZoom(delta)`/`resetPdfHtmlZoom()`/`applyPdfHtmlZoom()` 추가. same-origin iframe 내부 `.report` 시트에 **CSS `zoom`** 적용 — `transform:scale` 과 달리 문서 흐름이 리플로우되어 중앙 정렬·스크롤 높이 유지. `setPdfPreviewMode()` 가 HTML 모드에서만 `#pdfZoomCtrl` 표시(PDF 모드는 뷰어 자체 줌 사용), iframe `load` 시 현재 배율 재적용 → PDF↔HTML 재토글에도 배율 유지.
+- **`analyze.html`:** 패널 헤더에 줌 컨트롤(`#pdfZoomCtrl`: − / 배율 표시(클릭 시 100% 재설정) / +) 추가 — 색상·형태 인라인 제공(함정 #17). `analyze.js ?v=2026-06-06b` 캐시 무효화.
+- **검증(헤드리스 Chrome):** PDF 모드 컨트롤 숨김 / HTML 100%→130%(종이 794→1032px 정비례)→하한 50% 클램프→리셋 100% / 70% 상태로 PDF→HTML 재토글 시 배율 유지 — 전부 실측 통과, 130%·50% 스크린샷 중앙 정렬 유지 확인.
+
+## [2026-06-06] print-html 데스크톱 디자인 개편 — A4 종이 시트 중앙 정렬 + 문서 느낌
+
+**요청:** "HTML로 보기" 미리보기에서 리포트를 레이아웃 가운데 정렬 + 한 번 더 감싸는 레이아웃으로 문서 느낌 부여. 기존 데스크톱 print-html 은 screen 규칙이 모바일(≤900px)뿐이라 흰 배경 좌측 정렬로 밋밋하게 렌더.
+
+- **`analyze-print.html`:** `@media screen and (min-width: 901px)` 블록 신설 — 라이트 그레이(#F3F4F6) 뷰포트 배경 위에 **A4 실물 크기(210×297mm) 흰 종이 시트**를 `margin:0 auto` 가운데 정렬 + 그림자/테두리. `padding:12mm` 으로 PDF `@page` 마진 재현(border-box 라 콘텐츠 폭 186mm 무변경), `min-height:297mm; height:auto; overflow:visible` 로 화면 렌더 시 내용 잘림 방지. `.ftr` 는 base `width:100%`(right 무시) + `display:table`(width:auto 시 shrink-to-fit) 함정 둘 다 회피하려 `left:12mm; width:calc(100% - 24mm)` 로 내부 여백 안쪽 고정. OpenHTMLtoPDF 는 print 미디어만 사용 → **PDF 산출물 무영향** (pdftotext diff 로 생성 시각 1줄 외 동일 실측). HTML 구조 무변경, 모바일 블록 무변경.
+- **검증(헤드리스 Chrome 1920×1080):** 종이 794×1123px(=210×297mm 정확) + 좌우 여백 563px 균등(중앙 정렬) + footer 내부 여백 46px(≈12mm) 3변 균등 + 그림자 렌더. 모바일 390px 은 기존 흰 배경/풀폭/그림자 없음 그대로. analyze 페이지 iframe 경유 "HTML로 보기" 토글 경로 스크린샷 확인.
+
+## [2026-06-06] PDF Report — 브라우저 PDF 뷰어 비활성 시 HTML 미리보기 자동 폴백 + 수동 토글
+
+**요청:** PDF Report 패널에서 브라우저가 설정(Chrome "PDF를 열지 않고 다운로드", 기업 정책, 뷰어 미내장 등)에 의해 PDF를 로드할 수 없을 때의 대안 제공. 기존 폴백은 4초 후 "다운로드 버튼 사용" 텍스트 안내뿐.
+
+- **`analyze.js`(`?v=2026-06-06a`):** `loadPdfReportPanel()` 재작성 — `setPdfPreviewMode(mode, isAutoFallback)` + `togglePdfPreview()` 도입. ① **사전 감지**: `navigator.pdfViewerEnabled === false`(Chrome 94+/FF 99+/Safari 16.4+ 표준, Chrome "다운로드 대신 열기" 설정 시 false) 또는 구형 브라우저 `mimeTypes['application/pdf']` 부재 → PDF 시도 자체를 생략하고 모바일용으로 기존재하는 `/print-html`(동일 내용 HTML 렌더, 백엔드 무변경)을 즉시 로드 + 안내 배너 — 의도치 않은 자동 다운로드까지 방지 ② **사후 감지**: PDF 모드 4초 내 `load` 미발생 시 텍스트 안내 대신 **HTML 모드 자동 전환** + 배너 (재시도 시 타임아웃 재무장) ③ HTML 모드조차 load 실패하는 극단 케이스는 기존 `#pdfReportFallback` 오버레이 최후 폴백 유지 ④ 모바일(≤900px)은 현행(HTML, 배너 없음) 유지.
+- **`analyze.html`:** PDF Report 패널 헤더에 **PDF↔HTML 수동 전환 토글 버튼**(`#pdfPreviewToggleBtn`, 라벨 'HTML로 보기'/'PDF로 보기' 자동 갱신, secondary 톤 — 정상 환경에서도 사용 가능) + 닫기 가능한 호박색 안내 배너(`#pdfReportNotice`) 추가. `analyze.js ?v=2026-06-06a` 캐시 무효화.
+- **검증(헤드리스 Chrome):** ① 정상 데스크톱 — `print-pdf?mode=inline` 로드 + 토글 양방향 전환 정상 ② `pdfViewerEnabled=false` 주입 — PDF 시도 없이 즉시 `print-html` + 배너 표시 ③ 모바일 390px — 현행 HTML + 배너 미표시 ④ 데스크톱 폭 print-html 레이아웃 스크린샷 깨짐 없음.
+
+## [2026-06-06] 버전 2.0.7 → 2.0.8 업데이트
+
+- **`pom.xml`:** `<version>` 2.0.7 → 2.0.8.
+- **`restart.sh` / `run.sh` / `stop.sh`:** JAR 경로 + 프로세스 grep 패턴 `heap-analyzer-2.0.8.jar` 갱신.
+- **`fragments/banner.html` / `index.html` / `progress.html`:** UI 버전 표기 v2.0.8 갱신.
+- **배포:** 구버전(2.0.7) 프로세스 수동 kill 후 재기동 — 신규 grep 패턴이 구 JAR 미감지하는 포트 충돌 함정 회피. 기동 검증 OK (13.6s).
+
+## [2026-06-06] 좌측 Navigation 배너 — 창 축소 시 스크롤바 미표시 수정 (전 페이지 공통)
+
+**보고:** 1920×1080 에서 분석결과 화면 진입 후 브라우저 크기를 줄이면 좌측 Navigation 배너에 스크롤이 생기지 않아 하단 메뉴(Settings/Logout)에 접근 불가. 헤드리스 Chrome 실측으로 원인 확정: `.g-banner` 의 `overflow-y:auto` 는 동작하나 ① Win11 Chrome/Edge 의 overlay(fluent) 스크롤바가 상호작용 전까지 렌더되지 않아 "스크롤 불가"로 인지되고 ② flex column 압축으로 내부 `overflow:hidden` 요소(Disk/JVM 진행바 등)가 스크롤 전에 먼저 찌그러짐(실측 743px→717px) ③ 배너 스크롤이 바닥에 닿으면 뒷페이지로 휠 체이닝(실측 main 720px 이동).
+
+- **`fragments/banner.html`(전 페이지 공통 수혜):** ① `.g-banner`/`.gb-tab-content` 에 커스텀 스크롤바 명시(`scrollbar-width:thin; scrollbar-color` + `::-webkit-scrollbar` 6px — CSS 스크롤바 스타일 지정 시 Chromium 이 overlay 모드를 해제하고 overflow 시 항상 표시) ② `.gb-header/.gb-body/.gb-collapsed-icons/.gb-toggle { flex-shrink:0 }` — 내용 찌그러짐 방지, overflow 를 배너 스크롤로 일원화(모바일은 후행 `.gb-tab-content { flex:1 }` shorthand 가 shrink 복원 → 드로어 내부 스크롤 현행 유지) ③ `.g-banner { overscroll-behavior:contain }` — 페이지 휠 체이닝 차단.
+- **`analyze.css`(`?v=2026-06-06`):** analyze 자체 `.sidebar`(섹션 네비게이션)에도 동일 패턴(thin 스크롤바 + `overscroll-behavior:contain`) 적용 — 같은 증상 동반 해소.
+- **검증(헤드리스 Chrome, 1920×1080 → 1100×480/800×420 축소):** 배너 스크롤바 표시(scrollbar 폭 0→10px) + 휠 스크롤 정상 + 체이닝 차단(main 720→0) + 모바일 드로어 스크롤 정상 + 1920×1080 레이아웃 무변화(overflow 없을 땐 스크롤바 미표시). ※ 검증 시 puppeteer 기본 `--hide-scrollbars` 플래그가 스크롤바를 숨기므로 `ignoreDefaultArgs` 필요.
+
 ## [2026-06-05] Leak Rules — Import 고도화: 중복 검사/처리 (skip/overwrite/append)
 
 **요청:** import 시 새 데이터와 기존 데이터를 비교해 중복 검사 후 가져오기. 중복 자연 키 = 라이브러리 `prefix` / Fallback `patternRegex` (trim, case-sensitive). 처리 방식은 모달에서 선택.

@@ -58,7 +58,14 @@
             transition: left .25s cubic-bezier(.4,0,.2,1);
             background:var(--surface); border-right:1px solid var(--border);
             overflow-y:auto; z-index:50; padding:16px 0;
+            overscroll-behavior:contain;
+            /* overlay 스크롤바 환경에서도 overflow 시 항상 표시 (banner.html 과 동일 패턴) */
+            scrollbar-width:thin; scrollbar-color:#C4C9D0 transparent;
         }
+        .sidebar::-webkit-scrollbar { width:6px; }
+        .sidebar::-webkit-scrollbar-track { background:transparent; }
+        .sidebar::-webkit-scrollbar-thumb { background:#C4C9D0; border-radius:3px; }
+        .sidebar::-webkit-scrollbar-thumb:hover { background:#9CA3AF; }
         .sidebar-section { padding:0 16px; margin-bottom:20px; }
         .sidebar-section-title {
             font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em;

@@ -37,10 +37,87 @@ document.addEventListener('click', function(e) {
 })();
 
 // ── PDF Report panel lazy-load ────────────────────────
-// 첫 진입 시 viewport 폭에 따라 iframe src를 결정:
-//   데스크톱(>900px) → /print-pdf?mode=inline (브라우저 PDF 인라인 뷰어)
-//   모바일(≤900px)   → /print-html             (HTML 렌더, PDF 인라인 미지원 회피)
-// 다운로드 버튼의 download 속성도 같은 시점에 baseName 기반으로 설정.
+// 첫 진입 시 미리보기 모드('pdf' | 'html')를 결정해 iframe src 설정:
+//   모바일(≤900px)                    → 'html' (/print-html — PDF 인라인 미지원 회피)
+//   navigator.pdfViewerEnabled=false  → 'html' + 안내 배너 (Chrome "PDF 다운로드" 설정 등.
+//                                        PDF 시도 자체를 생략해 의도치 않은 자동 다운로드 방지)
+//   구형 브라우저 + mimeTypes에 pdf 無 → 'html' + 안내 배너
+//   그 외                             → 'pdf' (/print-pdf?mode=inline) + 4초 사후 감지:
+//                                        load 미발생 시 'html' 자동 전환 + 안내 배너
+// 토글 버튼으로 PDF↔HTML 수동 전환 가능. 다운로드 버튼 download 속성도 첫 진입 시 설정.
+var _pdfPreviewMode = null;   // 'pdf' | 'html'
+var _pdfLoadTimer = null;
+var _pdfHtmlZoom = 100;       // HTML 미리보기 줌 % (50~200)
+
+// HTML 모드 전용 확대/축소 — same-origin iframe 내부 .report 시트에 CSS zoom 적용
+// (transform: scale 과 달리 문서 흐름이 함께 리플로우되어 중앙 정렬·높이가 유지됨)
+function applyPdfHtmlZoom() {
+    var label = document.getElementById('pdfZoomLabel');
+    if (label) label.textContent = _pdfHtmlZoom + '%';
+    var iframe = document.getElementById('pdfReportIframe');
+    try {
+        var rep = iframe && iframe.contentDocument &&
+                  iframe.contentDocument.querySelector('.report');
+        if (rep) rep.style.zoom = (_pdfHtmlZoom / 100);
+    } catch (e) { /* iframe 미로드 등 — 다음 load 시 재적용 */ }
+}
+function adjustPdfHtmlZoom(delta) {
+    _pdfHtmlZoom = Math.min(200, Math.max(50, _pdfHtmlZoom + delta));
+    applyPdfHtmlZoom();
+}
+function resetPdfHtmlZoom() {
+    _pdfHtmlZoom = 100;
+    applyPdfHtmlZoom();
+}
+
+function setPdfPreviewMode(mode, isAutoFallback) {
+    var iframe = document.getElementById('pdfReportIframe');
+    var toggle = document.getElementById('pdfPreviewToggleBtn');
+    var notice = document.getElementById('pdfReportNotice');
+    var fb     = document.getElementById('pdfReportFallback');
+    var zoom   = document.getElementById('pdfZoomCtrl');
+    if (!iframe || typeof FILENAME === 'undefined' || !FILENAME) return;
+
+    if (_pdfLoadTimer) { clearTimeout(_pdfLoadTimer); _pdfLoadTimer = null; }
+    _pdfPreviewMode = mode;
+    if (fb) fb.style.display = 'none';
+
+    iframe.src = '/analyze/' + encodeURIComponent(FILENAME) +
+                 (mode === 'pdf' ? '/print-pdf?mode=inline' : '/print-html');
+
+    if (toggle) {
+        toggle.style.display = 'inline-flex';
+        toggle.querySelector('span').textContent = (mode === 'pdf' ? 'HTML로 보기' : 'PDF로 보기');
+    }
+    if (zoom) zoom.style.display = (mode === 'html' ? 'flex' : 'none');   // PDF 모드는 뷰어 자체 줌 사용
+    if (notice) notice.style.display = (isAutoFallback ? 'flex' : 'none');
+
+    if (mode === 'pdf') {
+        // PDF 인라인은 일부 브라우저에서 load 이벤트가 발생 안 함 → 4초 내 미발생 시 HTML 자동 전환.
+        var loaded = false;
+        var onLoad = function() { loaded = true; iframe.removeEventListener('load', onLoad); };
+        iframe.addEventListener('load', onLoad);
+        _pdfLoadTimer = setTimeout(function() {
+            _pdfLoadTimer = null;
+            if (!loaded && _pdfPreviewMode === 'pdf') setPdfPreviewMode('html', true);
+        }, 4000);
+    } else {
+        // HTML 모드조차 load 미발생하는 극단 케이스 → 기존 텍스트 오버레이 최후 폴백.
+        var htmlLoaded = false;
+        var onHtmlLoad = function() {
+            htmlLoaded = true;
+            iframe.removeEventListener('load', onHtmlLoad);
+            applyPdfHtmlZoom();   // 재로드 시 현재 줌 배율 재적용
+        };
+        iframe.addEventListener('load', onHtmlLoad);
+        setTimeout(function() { if (!htmlLoaded && fb) fb.style.display = 'flex'; }, 4000);
+    }
+}
+
+function togglePdfPreview() {
+    setPdfPreviewMode(_pdfPreviewMode === 'pdf' ? 'html' : 'pdf', false);
+}
+
 function loadPdfReportPanel() {
     var iframe = document.getElementById('pdfReportIframe');
     var btn    = document.getElementById('pdfReportDownloadBtn');
@@ -53,16 +130,15 @@ function loadPdfReportPanel() {
     if (iframe.getAttribute('src')) return;   // 이미 로드됨
 
     var isMobile = window.matchMedia('(max-width: 900px)').matches;
-    var fb = document.getElementById('pdfReportFallback');
-    iframe.src = '/analyze/' + encodeURIComponent(FILENAME) +
-                 (isMobile ? '/print-html' : '/print-pdf?mode=inline');
-
-    if (!isMobile) {
-        // PDF 인라인은 일부 브라우저에서 load 이벤트가 발생 안 할 수 있음 → 4초 후 fallback.
-        var loaded = false;
-        iframe.addEventListener('load', function() { loaded = true; });
-        setTimeout(function() { if (!loaded && fb) fb.style.display = 'flex'; }, 4000);
+    if (isMobile) {
+        setPdfPreviewMode('html', false);       // 현행 유지 (설정 문제 아님 → 배너 없음)
+        return;
     }
+    // 사전 감지: 브라우저가 PDF 인라인 뷰어를 제공하지 않음 (설정/정책/미내장)
+    var viewerOff = (navigator.pdfViewerEnabled === false) ||
+                    (navigator.pdfViewerEnabled === undefined &&
+                     navigator.mimeTypes && !navigator.mimeTypes['application/pdf']);
+    setPdfPreviewMode(viewerOff ? 'html' : 'pdf', viewerOff);
 }
 
 // ── Panel Navigation ──────────────────────────────────

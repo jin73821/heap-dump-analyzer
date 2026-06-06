@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-05b">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-06">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -1224,12 +1224,34 @@ function loadFullErrorLog() {
         <div class="card" style="padding:0;overflow:hidden">
             <div class="card-title" style="padding:14px 20px;margin:0;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--border)">
                 <div><span class="card-icon">&#128196;</span> PDF Report Preview</div>
+                <div style="display:flex;align-items:center;gap:8px">
+                <div id="pdfZoomCtrl" style="display:none;align-items:center;gap:2px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:6px;padding:2px">
+                    <button type="button" onclick="adjustPdfHtmlZoom(-10)" title="축소"
+                            style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#fff;color:#374151;font-size:15px;font-weight:700;border:1px solid #E5E7EB;border-radius:4px;cursor:pointer;line-height:1">&minus;</button>
+                    <button type="button" id="pdfZoomLabel" onclick="resetPdfHtmlZoom()" title="100%로 재설정"
+                            style="min-width:46px;height:26px;background:none;color:#374151;font-size:11.5px;font-weight:600;border:none;cursor:pointer;font-variant-numeric:tabular-nums">100%</button>
+                    <button type="button" onclick="adjustPdfHtmlZoom(10)" title="확대"
+                            style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;background:#fff;color:#374151;font-size:15px;font-weight:700;border:1px solid #E5E7EB;border-radius:4px;cursor:pointer;line-height:1">+</button>
+                </div>
+                <button id="pdfPreviewToggleBtn" type="button" onclick="togglePdfPreview()"
+                        style="display:none;align-items:center;gap:6px;padding:8px 14px;background:#374151;color:#fff;font-size:12px;font-weight:600;border:none;border-radius:6px;cursor:pointer;transition:background .15s">
+                    <svg viewBox="0 0 24 24" fill="currentColor" style="width:13px;height:13px"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+                    <span>HTML로 보기</span>
+                </button>
                 <a id="pdfReportDownloadBtn" class="pdf-dl-btn"
                    th:href="@{'/analyze/' + ${filename} + '/print-pdf'(mode='download')}"
                    style="display:inline-flex;align-items:center;gap:6px;padding:8px 14px;background:#2563EB;color:#fff;font-size:12px;font-weight:600;border-radius:6px;text-decoration:none;transition:background .15s">
                     <svg viewBox="0 0 24 24" fill="currentColor" style="width:13px;height:13px"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
                     <span>PDF 다운로드</span>
                 </a>
+                </div>
+            </div>
+            <div id="pdfReportNotice"
+                 style="display:none;align-items:flex-start;gap:8px;padding:10px 20px;background:#FEF3C7;color:#92400E;font-size:12px;line-height:1.5;border-bottom:1px solid #FDE68A">
+                <span style="flex-shrink:0">&#9888;&#65039;</span>
+                <span style="flex:1 1 auto;min-width:0">브라우저 설정으로 PDF 미리보기를 사용할 수 없어 <strong>HTML 미리보기</strong>로 표시합니다. PDF 파일은 <strong>PDF 다운로드</strong> 버튼을 이용해 주세요.</span>
+                <button type="button" onclick="this.parentElement.style.display='none'"
+                        style="flex-shrink:0;background:none;border:none;color:#92400E;font-size:14px;cursor:pointer;padding:0;line-height:1">&times;</button>
             </div>
             <div style="position:relative;background:#525659">
                 <iframe id="pdfReportIframe"
@@ -1396,7 +1418,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-06-05b"></script>
+<script src="/js/analyze.js?v=2026-06-06b"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
