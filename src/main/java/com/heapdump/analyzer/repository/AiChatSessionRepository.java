@@ -2,6 +2,10 @@ package com.heapdump.analyzer.repository;
 
 import com.heapdump.analyzer.model.entity.AiChatSession;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -20,6 +24,11 @@ public interface AiChatSessionRepository extends JpaRepository<AiChatSession, Lo
 
     List<AiChatSession> findByFilenameOrderByUpdatedAtDesc(String filename);
     // (username 만 ADMIN 필터링은 기존 findByUsernameOrderByUpdatedAtDesc 재사용)
+
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM AiChatSession s WHERE s.filename = :filename")
+    void deleteByFilename(@Param("filename") String filename);
 
     // 모든 채팅 작성자 username 의 distinct 목록 (admin 사용자 셀렉트 옵션용)
     @org.springframework.data.jpa.repository.Query(

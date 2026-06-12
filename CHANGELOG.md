@@ -1,5 +1,48 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-12] AI Chat — 분석 이력 삭제 모달에 "AI Chat 기록도 함께 삭제" 옵션 추가
+
+**내용:** 분석 이력(History 페이지) 단건/일괄 삭제 모달에 "AI Chat 기록도 함께 삭제" 체크박스를 추가. 체크 시 해당 파일에 연결된 `ai_chat_sessions` 및 `ai_chat_messages` 행을 함께 삭제. 미체크 시 AI 채팅 데이터는 보존 (기존 동작 유지).
+
+- **`history.html`** — 단건 삭제 모달(`#deleteModal`)과 일괄 삭제 모달(`#bulkDeleteModal`) 양쪽에 `#deleteAiChatChk` / `#bulkDelAiChatChk` 체크박스 추가. `openDeleteModal()` 호출 시 체크박스 초기화. `submitDelete()`·`submitBulkDelete()`에서 체크 상태를 요청 파라미터에 반영.
+- **`HeapDumpViewController.deleteHistory()`** — `deleteAiChat` `@RequestParam` 추가 (기본값 false).
+- **`HeapHistoryApiController.bulkDeleteHistory()`** — JSON body에서 `deleteAiChat` 파싱, 서비스에 전달.
+- **`HeapDumpAnalyzerService.deleteHistory()`** — 시그니처에 `boolean deleteAiChat` 추가, `if (deleteAiChat)` 조건부로 AI 채팅 데이터 삭제.
+
+**대상 파일:**
+- `src/main/resources/templates/history.html`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapHistoryApiController.java`
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+
+---
+
+## [2026-06-12] AI Chat — 분석 이력 삭제 시 ai_chat_messages/sessions 연동 삭제
+
+**문제:** 분석 이력(History/Files 페이지 삭제)을 삭제할 때 `deleteHistory()`가 `analysis_history`·`ai_insights`는 지우지만 `ai_chat_sessions`·`ai_chat_messages`는 삭제하지 않아 고아(orphan) 데이터가 잔존할 수 있었음.
+
+- **`AiChatMessageRepository`** — `deleteBySessionId`에 `@Transactional` 명시, filename 기준 JPQL DELETE 메서드 `deleteByFilename` 추가 (서브쿼리로 session → message 연쇄 삭제).
+- **`AiChatSessionRepository`** — JPQL `@Modifying` DELETE 메서드 `deleteByFilename` 추가.
+- **`HeapDumpAnalyzerService.deleteHistory()`** — `aiChatMessageRepository.deleteByFilename(safe)` → `aiChatSessionRepository.deleteByFilename(safe)` 순 정리 로직 추가 (메시지 먼저, 세션 나중). 두 리포지토리를 생성자 주입에 추가.
+
+**대상 파일:**
+- `src/main/java/com/heapdump/analyzer/repository/AiChatMessageRepository.java`
+- `src/main/java/com/heapdump/analyzer/repository/AiChatSessionRepository.java`
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+
+---
+
+## [2026-06-12] System Properties — WebLogic 포함 전 벤더 추출 안정화
+
+**문제:** WebLogic 덤프 분석 시 System Properties 탭이 표시되지 않음. MAT `system_properties` 단독 쿼리가 WebLogic JDK 환경(Oracle JDK)에서 `java.lang.System.props` 필드를 못 찾거나 결과를 반환하지 않는 케이스 존재.
+
+**원인 분석:** 기존 구현은 격리된 임시 디렉터리에서 MAT `system_properties` 쿼리를 실행해 결과 zip을 파싱하는 단일 경로였음. MAT 1.16의 `SystemPropertiesQuery`는 `java.lang.System.props` → `systemProperties` 필드를 순서대로 탐색하며 둘 다 null이면 결과를 반환하지 않음. System_Overview.zip에는 이미 `System_Properties*.html`(2열: Key/Value)이 항상 포함되어 있었으나 활용하지 않고 있었음.
+
+- **`MatReportParser.parseSystemProperties(heapDumpDir, base)` 신규 추가:** System_Overview.zip 내 `System_Properties*.html`(패턴 `system_prop`) 페이지를 파싱해 (key→value) LinkedHashMap 반환. 메인 MAT 분석 시 Overview는 항상 생성되므로 WebLogic·JEUS·Tomcat·WildFly 등 모든 벤더에 안정적.
+- **`HeapDumpAnalyzerService.enrichSystemProperties()` 재설계:** 1차(주) — `parser.parseSystemProperties()`로 Overview zip 파싱. 성공 시 즉시 반환. 2차(폴백) — 기존 MAT `system_properties` 단독 쿼리(Overview에 프로퍼티 섹션이 없는 엣지 케이스 대비).
+- **MAT query 폴백 강화:** zip 파일명 정확 매칭 실패 시 qdir 내 `*_Query.zip` 재탐색 + zip 미생성·빈 결과 시 MAT 출력 500자 WARN 로그 (사내 서버 진단 용이).
+- **`parseSystemPropertiesZip` 주석·필터 개선:** 실제 포맷 반영(트리 아닌 플랫 3열), `"Collection"` 헤더 필터 추가.
+
 ## [2026-06-06] PDF Report — "HTML로 보기" 모드 확대/축소 컨트롤 추가
 
 **요청:** HTML 미리보기 모드에서 확대·축소 버튼 제공.

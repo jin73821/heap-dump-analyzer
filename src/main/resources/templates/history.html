@@ -634,6 +634,11 @@
             힙덤프 파일도 함께 삭제
         </label>
         <div class="modal-chk-desc" id="deleteHeapDumpDesc">원본 힙덤프 파일(.hprof)을 함께 삭제합니다.</div>
+        <label class="modal-chk">
+            <input type="checkbox" id="deleteAiChatChk">
+            AI Chat 기록도 함께 삭제
+        </label>
+        <div class="modal-chk-desc">이 파일에 연결된 AI 채팅 세션 및 메시지를 삭제합니다.</div>
         <div class="modal-warn">⚠ 이 작업은 되돌릴 수 없습니다.</div>
         <div class="modal-btns">
             <button class="mbtn-cancel" onclick="closeDeleteModal()">취소</button>
@@ -661,6 +666,11 @@
             힙덤프 파일도 함께 삭제
         </label>
         <div class="modal-chk-desc">원본 힙덤프 파일(.hprof)도 함께 삭제합니다. (이미 삭제된 파일은 건너뜀)</div>
+        <label class="modal-chk">
+            <input type="checkbox" id="bulkDelAiChatChk">
+            AI Chat 기록도 함께 삭제
+        </label>
+        <div class="modal-chk-desc">선택한 파일에 연결된 AI 채팅 세션 및 메시지를 삭제합니다.</div>
         <div class="modal-warn">⚠ 이 작업은 되돌릴 수 없습니다.</div>
         <div class="modal-btns">
             <button class="mbtn-cancel" onclick="closeBulkDeleteModal()">취소</button>
@@ -734,6 +744,7 @@ function openDeleteModal(filename, fileDeleted) {
         chkDesc.style.display = '';
         chk.checked = false;
     }
+    document.getElementById('deleteAiChatChk').checked = false;
     document.getElementById('deleteModal').classList.add('open');
 }
 function submitDelete() {
@@ -741,11 +752,15 @@ function submitDelete() {
     var f = document.createElement('form');
     f.method = 'POST'; f.action = '/history/delete/' + encodeURIComponent(_delFilename); f.style.display = 'none';
     Common.appendCsrfToForm(f);
-    var chk = document.getElementById('deleteHeapDumpChk');
-    if (chk.checked) {
-        var input = document.createElement('input');
-        input.type = 'hidden'; input.name = 'deleteHeapDump'; input.value = 'true';
-        f.appendChild(input);
+    if (document.getElementById('deleteHeapDumpChk').checked) {
+        var i1 = document.createElement('input');
+        i1.type = 'hidden'; i1.name = 'deleteHeapDump'; i1.value = 'true';
+        f.appendChild(i1);
+    }
+    if (document.getElementById('deleteAiChatChk').checked) {
+        var i2 = document.createElement('input');
+        i2.type = 'hidden'; i2.name = 'deleteAiChat'; i2.value = 'true';
+        f.appendChild(i2);
     }
     document.body.appendChild(f); f.submit();
 }
@@ -835,6 +850,7 @@ function openBulkDeleteModal() {
     if (sel.length === 0) return;
     document.getElementById('bulkDelCount').textContent = sel.length;
     document.getElementById('bulkDelHeapDumpChk').checked = false;
+    document.getElementById('bulkDelAiChatChk').checked = false;
     document.getElementById('bulkDeleteModal').classList.add('open');
 }
 function closeBulkDeleteModal() { document.getElementById('bulkDeleteModal').classList.remove('open'); }
@@ -843,6 +859,7 @@ function submitBulkDelete() {
     var sel = getSelectedFilenames();
     if (sel.length === 0) return;
     var deleteHeapDump = document.getElementById('bulkDelHeapDumpChk').checked;
+    var deleteAiChat   = document.getElementById('bulkDelAiChatChk').checked;
     var btn = document.getElementById('bulkDelConfirmBtn');
     btn.disabled = true; btn.textContent = '삭제 중...';
     var headers = { 'Content-Type': 'application/json' };
@@ -850,7 +867,7 @@ function submitBulkDelete() {
     if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;
     fetch('/api/history/bulk-delete', {
         method: 'POST', headers: headers,
-        body: JSON.stringify({ filenames: sel, deleteHeapDump: deleteHeapDump })
+        body: JSON.stringify({ filenames: sel, deleteHeapDump: deleteHeapDump, deleteAiChat: deleteAiChat })
     }).then(function(r) { return r.json(); }).then(function(d) {
         closeBulkDeleteModal();
         if (d.failed > 0) alert('삭제 완료: ' + d.success + '건, 실패: ' + d.failed + '건\n' + (d.errors || []).join('\n'));

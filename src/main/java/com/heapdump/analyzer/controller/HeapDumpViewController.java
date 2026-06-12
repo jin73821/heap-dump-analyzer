@@ -253,12 +253,13 @@ public class HeapDumpViewController {
     @PostMapping("/history/delete/{filename:.+}")
     public String deleteHistory(@PathVariable String filename,
                                 @RequestParam(value = "deleteHeapDump", defaultValue = "false") boolean deleteHeapDump,
+                                @RequestParam(value = "deleteAiChat", defaultValue = "false") boolean deleteAiChat,
                                 @RequestHeader(value = "Referer", required = false) String referer,
                                 RedirectAttributes redirectAttributes) {
         filename = FilenameValidator.validate(filename);
-        logger.info("[DeleteHistory] Request received: filename={}, deleteHeapDump={}", filename, deleteHeapDump);
+        logger.info("[DeleteHistory] Request received: filename={}, deleteHeapDump={}, deleteAiChat={}", filename, deleteHeapDump, deleteAiChat);
         try {
-            analyzerService.deleteHistory(filename, deleteHeapDump);
+            analyzerService.deleteHistory(filename, deleteHeapDump, deleteAiChat);
             logger.info("[DeleteHistory] Success: {}", filename);
             redirectAttributes.addFlashAttribute("success", "히스토리 삭제 완료: " + filename);
         } catch (IOException e) {

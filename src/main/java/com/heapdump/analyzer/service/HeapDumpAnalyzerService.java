@@ -8,6 +8,8 @@ import com.heapdump.analyzer.model.entity.AnalysisHistoryEntity;
 import com.heapdump.analyzer.parser.MatReportParser;
 import com.heapdump.analyzer.model.entity.DumpTransferLog;
 import com.heapdump.analyzer.model.entity.TargetServer;
+import com.heapdump.analyzer.repository.AiChatMessageRepository;
+import com.heapdump.analyzer.repository.AiChatSessionRepository;
 import com.heapdump.analyzer.repository.AiInsightRepository;
 import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.repository.DumpTransferLogRepository;
@@ -55,6 +57,8 @@ public class HeapDumpAnalyzerService {
     private final MatReportParser parser;
     private final AnalysisHistoryRepository analysisHistoryRepository;
     private final AiInsightRepository aiInsightRepository;
+    private final AiChatSessionRepository aiChatSessionRepository;
+    private final AiChatMessageRepository aiChatMessageRepository;
     private final DumpTransferLogRepository transferLogRepository;
     private final TargetServerRepository targetServerRepository;
     private final HeapAnalysisResultCache resultCache;
@@ -98,6 +102,8 @@ public class HeapDumpAnalyzerService {
     public HeapDumpAnalyzerService(HeapDumpConfig config, MatReportParser parser,
                                    AnalysisHistoryRepository analysisHistoryRepository,
                                    AiInsightRepository aiInsightRepository,
+                                   AiChatSessionRepository aiChatSessionRepository,
+                                   AiChatMessageRepository aiChatMessageRepository,
                                    DumpTransferLogRepository transferLogRepository,
                                    TargetServerRepository targetServerRepository,
                                    HeapAnalysisResultCache resultCache,
@@ -110,6 +116,8 @@ public class HeapDumpAnalyzerService {
         this.parser  = parser;
         this.analysisHistoryRepository = analysisHistoryRepository;
         this.aiInsightRepository = aiInsightRepository;
+        this.aiChatSessionRepository = aiChatSessionRepository;
+        this.aiChatMessageRepository = aiChatMessageRepository;
         this.transferLogRepository = transferLogRepository;
         this.targetServerRepository = targetServerRepository;
         this.resultCache = resultCache;
@@ -1004,16 +1012,39 @@ public class HeapDumpAnalyzerService {
     }
 
     /**
-     * MAT {@code system_properties} 쿼리를 격리된 임시 디렉토리에서 실행하고, 결과 zip 의
-     * index.html (key/value 2열 표)을 파싱해 {@code result.systemProperties} 에 채운다.
-     * 인덱스는 복사·덤프는 심볼릭 링크하여 원본 아티팩트를 건드리지 않는다(runOomDetailQuery 패턴).
-     * 실패해도 분석 전체에는 영향 없음(빈 맵 유지).
+     * System Properties 추출. 두 단계로 시도한다.
+     *
+     * <p>1차(주): System_Overview.zip 의 {@code System_Properties*.html} 파싱.
+     *    Overview 리포트는 메인 MAT 분석에서 항상 생성되며 WebLogic·JEUS·Tomcat 등
+     *    모든 벤더에서 안정적으로 동작한다.
+     *
+     * <p>2차(폴백): MAT {@code system_properties} 단독 쿼리. Overview 파싱이 실패하거나
+     *    System_Properties 섹션이 없을 때만 실행한다.
+     *
+     * <p>실패해도 분석 전체에는 영향 없음 (빈 맵 유지).
      */
     private void enrichSystemProperties(HeapAnalysisResult result, File dumpFile, File resultDir) {
+        String base = stripExtension(dumpFile.getName());
+
+        // ── 1차: System_Overview.zip 내 System_Properties 페이지 파싱 ────────────────
+        try {
+            java.util.Map<String, String> props = parser.parseSystemProperties(
+                    resultDir.getAbsolutePath(), base);
+            if (!props.isEmpty()) {
+                result.setSystemProperties(props);
+                logger.info("[SysProp] Extracted {} system properties from overview ZIP for {}",
+                        props.size(), result.getFilename());
+                return;
+            }
+            logger.debug("[SysProp] Overview ZIP has no system_properties page for {}", result.getFilename());
+        } catch (Exception e) {
+            logger.debug("[SysProp] Overview parsing failed for {}: {}", result.getFilename(), e.getMessage());
+        }
+
+        // ── 2차 폴백: MAT system_properties 단독 쿼리 ────────────────────────────────
         File qdir = null;
         try {
             String dumpName = dumpFile.getName();
-            String base = stripExtension(dumpName);
             qdir = new File(tmpDirectory(), "sysprop-" + base + "-" + System.nanoTime());
             Files.createDirectories(qdir.toPath());
 
@@ -1023,7 +1054,7 @@ public class HeapDumpAnalyzerService {
             File[] idx = resultDir.listFiles((d, n) ->
                     n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
             if (idx == null || idx.length == 0) {
-                logger.warn("[SysProp] No index files in {} — skipping system properties extraction", resultDir.getName());
+                logger.warn("[SysProp] No index files in {} — skipping MAT query fallback", resultDir.getName());
                 deleteDirectoryRecursively(qdir);
                 return;
             }
@@ -1031,14 +1062,31 @@ public class HeapDumpAnalyzerService {
                 Files.copy(f.toPath(), new File(qdir, f.getName()).toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
 
-            runMatSingleQuery(linkDump.toString(), qdir, "system_properties", 120);
+            String matOut = runMatSingleQuery(linkDump.toString(), qdir, "system_properties", 120);
 
+            // zip 이름: 정확한 이름 → qdir 내 *_Query.zip 폴백
             File zip = new File(qdir, base + "_Query.zip");
+            if (!zip.exists()) {
+                File[] candidates = qdir.listFiles((d, n) -> n.endsWith("_Query.zip"));
+                if (candidates != null && candidates.length > 0) {
+                    zip = candidates[0];
+                    logger.debug("[SysProp] Zip found via fallback search: {}", zip.getName());
+                } else {
+                    logger.warn("[SysProp] Query zip not found for {} — MAT output: {}",
+                            result.getFilename(),
+                            matOut.substring(0, Math.min(500, matOut.length())).trim());
+                }
+            }
             if (zip.exists()) {
                 java.util.Map<String, String> props = parseSystemPropertiesZip(zip);
                 if (!props.isEmpty()) {
                     result.setSystemProperties(props);
-                    logger.info("[SysProp] Extracted {} system properties for {}", props.size(), result.getFilename());
+                    logger.info("[SysProp] Extracted {} system properties via MAT query for {}",
+                            props.size(), result.getFilename());
+                } else {
+                    logger.warn("[SysProp] MAT query zip parsed but empty for {} — MAT output: {}",
+                            result.getFilename(),
+                            matOut.substring(0, Math.min(500, matOut.length())).trim());
                 }
             }
         } catch (Exception e) {
@@ -1074,13 +1122,17 @@ public class HeapDumpAnalyzerService {
                 while (cm.find()) {
                     cells.add(cm.group(1).replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim());
                 }
-                // MAT system_properties 출력은 3열 [Collection | Key | Value] (트리). 2열 폴백도 허용.
+                // MAT system_properties 출력: 3열 [Collection | Key | Value] 플랫 테이블.
+                // 헤더행: [Collection, Key, Value], 데이터행: [java.util.Properties@0x..., key, value],
+                // 푸터행: [Total: N entries, "", ""]
+                // 2열 폴백도 허용 (MAT 버전에 따라 가능).
                 String key, value;
                 if (cells.size() >= 3) { key = cells.get(1); value = cells.get(2); }
                 else if (cells.size() == 2) { key = cells.get(0); value = cells.get(1); }
                 else continue;
-                // 헤더("Key"/"Name")·푸터("Total:")·컬렉션 부모행 제외
+                // 헤더("Key"/"Collection")·푸터("Total:")·빈 키 제외
                 if (key.isEmpty() || key.equalsIgnoreCase("Key") || key.equalsIgnoreCase("Name")
+                        || key.equalsIgnoreCase("Collection")
                         || key.toLowerCase().startsWith("total")) continue;
                 map.put(key, value);
             }
@@ -1762,7 +1814,7 @@ public class HeapDumpAnalyzerService {
      * @param deleteHeapDump true이면 힙덤프 파일도 함께 삭제
      */
     @Transactional
-    public void deleteHistory(String filename, boolean deleteHeapDump) throws IOException {
+    public void deleteHistory(String filename, boolean deleteHeapDump, boolean deleteAiChat) throws IOException {
         String safe = new File(filename).getName();
         logger.info("[DeleteHistory] Started: filename={}, deleteHeapDump={}", safe, deleteHeapDump);
 
@@ -1828,6 +1880,15 @@ public class HeapDumpAnalyzerService {
             logger.info("[DeleteHistory] DB ai_insights record deleted: {}", safe);
         } catch (Exception e) {
             logger.warn("[DeleteHistory] Failed to delete DB ai_insights for '{}': {}", safe, e.getMessage());
+        }
+        if (deleteAiChat) {
+            try {
+                aiChatMessageRepository.deleteByFilename(safe);
+                aiChatSessionRepository.deleteByFilename(safe);
+                logger.info("[DeleteHistory] DB ai_chat_messages/sessions deleted: {}", safe);
+            } catch (Exception e) {
+                logger.warn("[DeleteHistory] Failed to delete AI chat data for '{}': {}", safe, e.getMessage());
+            }
         }
 
         logger.info("[DeleteHistory] Completed: filename='{}', heapDumpDeleted={}", safe, deleteHeapDump);

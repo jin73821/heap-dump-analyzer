@@ -54,12 +54,13 @@ public class HeapHistoryApiController {
         @SuppressWarnings("unchecked")
         List<String> filenames = (List<String>) body.getOrDefault("filenames", Collections.emptyList());
         boolean deleteHeapDump = Boolean.TRUE.equals(body.get("deleteHeapDump"));
+        boolean deleteAiChat   = Boolean.TRUE.equals(body.get("deleteAiChat"));
         int success = 0, failed = 0;
         List<String> errors = new ArrayList<>();
         for (String raw : filenames) {
             try {
                 String safe = FilenameValidator.validate(raw);
-                analyzerService.deleteHistory(safe, deleteHeapDump);
+                analyzerService.deleteHistory(safe, deleteHeapDump, deleteAiChat);
                 success++;
             } catch (Exception e) {
                 failed++;
@@ -67,7 +68,7 @@ public class HeapHistoryApiController {
                 logger.warn("[BulkDeleteHistory] Failed for '{}': {}", raw, e.getMessage());
             }
         }
-        logger.info("[BulkDeleteHistory] success={}, failed={}, deleteHeapDump={}", success, failed, deleteHeapDump);
+        logger.info("[BulkDeleteHistory] success={}, failed={}, deleteHeapDump={}, deleteAiChat={}", success, failed, deleteHeapDump, deleteAiChat);
         Map<String, Object> resp = new HashMap<>();
         resp.put("success", success);
         resp.put("failed", failed);
