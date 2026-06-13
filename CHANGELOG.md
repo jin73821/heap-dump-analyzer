@@ -1,5 +1,77 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-13] Observer 모드 — "이미 분석 중" 화면 실시간 진행 상황 표시
+
+**기능:** `ALREADY_ANALYZING` 상태 수신 시 진행 카드(타임라인·진행바)와 MAT CLI 로그 카드를 실시간으로 채워 Observer UX 개선.
+
+**구현:**
+- **`HeapDumpAnalyzerService`**: `lastProgressCache`(ConcurrentHashMap<파일명, AnalysisProgress>) + `logCache`(ConcurrentHashMap<파일명, ConcurrentLinkedDeque<String>>, 최대 500줄) 추가. `sendProgress()` 내 캐시 업데이트 — ALREADY_ANALYZING 제외. 세마포어 획득 직후 `logCache` 리셋(새 분석 시작). `getLastProgress()` / `getRecentLogs()` 공개 getter 추가.
+- **`HeapAnalysisApiController`**: `GET /api/analyze/live-snapshot/{filename}` — `{ inProgress, progress, logLines }` 반환.
+- **`progress.html`**:
+  - `.observer-badge` ("👁 관찰 중") + `.log-live-chip` ("LIVE") CSS/HTML 추가.
+  - `_applyObserverSteps()` 헬퍼 함수 (SSE 핸들러의 percent/reportPhase 기반 setStep 로직 추출).
+  - `startAlreadyPolling()` 교체: 2초 주기 `/api/analyze/live-snapshot` 폴링 → `setProgress()` + `_applyObserverSteps()` + `appendLog()`로 실시간 갱신. 로그 커서(`_observerLogCursor`)로 중복 방지. 완료 시 `showComplete()` 호출.
+
+**대상 파일:**
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapAnalysisApiController.java`
+- `src/main/resources/templates/progress.html`
+
+---
+
+## [2026-06-13] 동일 파일 중복 분석 방지 (ALREADY_ANALYZING)
+
+**기능:** 파일 A가 이미 분석 중일 때 다른 사용자가 동일한 파일 A 분석을 요청하면, 대기열에 넣지 않고 즉시 "이미 분석 중" 상태를 반환. 분석 완료 시 자동으로 결과 페이지로 이동.
+
+**구현:**
+- **`AnalysisProgress.Status`**: `ALREADY_ANALYZING` enum 값 추가 + `alreadyAnalyzing(filename)` 팩토리 메서드.
+- **`HeapDumpAnalyzerService.analyzeWithProgress()`**: `activeTasks.get(safe)` 가 not-done Future 이면 `queueSize` 증가 없이 ALREADY_ANALYZING SSE 이벤트를 즉시 전송하고 `null` 반환 (기존 태스크 취소 방지).
+- **`HeapDumpAnalyzerService.isInProgress()`**: public 메서드 추가 — 폴링 엔드포인트용.
+- **`HeapAnalysisApiController`**: `GET /api/analyze/in-progress/{filename}` 추가 — `{ inProgress: bool, currentAnalysis: string }` 반환.
+- **`progress.html`**:
+  - `.already-banner` CSS + HTML 추가 (teal 그라디언트, queue-banner 동일 스타일).
+  - SSE 핸들러에서 `ALREADY_ANALYZING` 수신 시 evtSource 즉시 닫기, 배너 표시, 취소 버튼 숨김, 페이지 타이틀 변경.
+  - `startAlreadyPolling()`: 4초마다 `/api/analyze/in-progress/{filename}` 폴링 → `inProgress: false` 수신 시 `showComplete()` 호출.
+
+**대상 파일:**
+- `src/main/java/com/heapdump/analyzer/model/AnalysisProgress.java`
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapAnalysisApiController.java`
+- `src/main/resources/templates/progress.html`
+
+---
+
+## [2026-06-13] AI Chat 스트리밍 렌더링 성능 개선 (rAF 스로틀 + 스마트 스크롤)
+
+**문제:** AI 응답이 길어질수록 스트리밍 중 렉이 심화됨. SSE `chunk` 이벤트가 초당 수십~수백 회 발생할 때마다 `renderChatMarkdown(fullText)` (누적 전체 텍스트 정규식 처리) → `bubble.innerHTML` 전체 교체 → `scrollTop = scrollHeight` 강제 레이아웃 재계산이 반복되어 응답 후반부로 갈수록 지수적으로 무거워졌음.
+
+**개선:**
+- **`requestAnimationFrame` 스로틀**: 청크가 아무리 빠르게 도착해도 프레임당 최대 1회만 DOM 갱신. 새 청크가 올 때 이미 rAF가 예약돼 있으면 텍스트만 덮어쓰고 DOM 조작은 건너뜀.
+- **스마트 자동 스크롤** (`_smartScrollChat` / `_chatSmartScroll`): `scrollHeight − scrollTop − clientHeight < 120px` 조건이 참일 때만 스크롤. 사용자가 위로 스크롤해 이전 내용을 읽는 중이면 강제 이동하지 않음.
+- **`finishStream` / `finish` 최종 렌더**: 스트림 종료 시 미처리 rAF를 `cancelAnimationFrame`으로 취소하고 커서 없는 최종 마크다운 렌더를 직접 수행 (중복 갱신 방지).
+- 같은 패턴을 **`ai-chat.html`** 인라인 스트리밍 코드에도 동일하게 적용.
+
+**대상 파일:**
+- `src/main/resources/static/js/analyze.js`
+- `src/main/resources/templates/ai-chat.html`
+
+---
+
+## [2026-06-13] 분석 페이지 섹션별 로딩 스피너 추가
+
+**개선:** 페이지 로딩 완료 후 트리맵·차트·AI 인사이트 요약 카드 등 세부 섹션이 렌더링/데이터 로딩 중일 때 스피너를 표시.
+- **트리맵·Stacked Bar**: HTML에 `sec-loader-center` 스피너 삽입 → `buildTreemap()` / `buildStackedBar()` 가 `container.innerHTML = ''` 시 자동 제거.
+- **파이 차트·바 차트**: `chart-loader-overlay` 오버레이를 canvas 위에 배치 → `new Chart()` 직후 JS에서 `display:none`.
+- **`initCharts()` IIFE**: `requestAnimationFrame`으로 감싸 브라우저가 스피너를 먼저 페인트한 뒤 차트 초기화.
+- **AI 인사이트 요약 카드** (`#ovAiInsightCard`): `ovAiInsightLoading` 스피너를 기본 표시, Empty 상태는 숨김. `initAiPanel()` fetch 완료 후 로딩 스피너를 숨기고 실제 상태로 전환.
+
+**대상 파일:**
+- `src/main/resources/static/css/analyze.css`
+- `src/main/resources/templates/analyze.html`
+- `src/main/resources/static/js/analyze.js`
+
+---
+
 ## [2026-06-12] AI Chat — 분석 이력 삭제 모달에 "AI Chat 기록도 함께 삭제" 옵션 추가
 
 **내용:** 분석 이력(History 페이지) 단건/일괄 삭제 모달에 "AI Chat 기록도 함께 삭제" 체크박스를 추가. 체크 시 해당 파일에 연결된 `ai_chat_sessions` 및 `ai_chat_messages` 행을 함께 삭제. 미체크 시 AI 채팅 데이터는 보존 (기존 동작 유지).

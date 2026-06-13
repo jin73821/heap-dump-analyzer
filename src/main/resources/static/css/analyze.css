@@ -1005,3 +1005,23 @@
         @media (max-width:900px) {
             .overview-top { grid-template-columns:1fr; }
         }
+
+        /* ── 섹션 레벨 로딩 스피너 ────────────────────────── */
+        @keyframes sec-spin { to { transform:rotate(360deg); } }
+        .sec-spinner {
+            display:inline-block; width:20px; height:20px; flex-shrink:0;
+            border:2.5px solid #E2E8F0; border-top-color:#6366F1;
+            border-radius:50%; animation:sec-spin 0.7s linear infinite;
+        }
+        .sec-spinner-sm { width:14px; height:14px; border-width:2px; }
+        .sec-loader-center {
+            display:flex; align-items:center; justify-content:center; gap:8px;
+            color:#94A3B8; font-size:12px;
+        }
+        /* 차트 영역 오버레이 로더 */
+        .chart-loader-wrap { position:relative; }
+        .chart-loader-overlay {
+            position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+            background:rgba(255,255,255,.9); z-index:2; border-radius:6px;
+            transition:opacity .2s;
+        }

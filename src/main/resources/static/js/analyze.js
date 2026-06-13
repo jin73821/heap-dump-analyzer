@@ -492,6 +492,8 @@ function firstRecommendation(text) {
 // Overview 의 AI 인사이트 요약 카드 갱신 (showAiResult/auto-load 에서 호출).
 // data 가 없거나 summary 가 비면 미생성 상태로 되돌린다.
 function renderOverviewInsight(data) {
+    var loading = document.getElementById('ovAiInsightLoading');
+    if (loading) loading.style.display = 'none';
     var empty = document.getElementById('ovAiInsightEmpty');
     var body  = document.getElementById('ovAiInsightBody');
     var sumEl = document.getElementById('ovAiSummary');
@@ -1753,6 +1755,9 @@ function doExportCSV() {
 (function initCharts() {
     if (typeof TOTAL_BYTES === 'undefined' || (USED_BYTES === 0 && FREE_BYTES === 0 && OBJ_NAMES.length === 0)) return;
 
+    // 브라우저가 로딩 스피너를 먼저 페인트한 뒤 차트를 렌더링하도록 한 프레임 양보
+    requestAnimationFrame(function() {
+
     // ── Stacked Bar (Top Objects breakdown) ──
     buildStackedBar();
 
@@ -1810,6 +1815,8 @@ function doExportCSV() {
                 animation: { duration:800, easing:'easeInOutQuart' }
             }
         });
+        var pieLoader = document.getElementById('pieChartLoader');
+        if (pieLoader) pieLoader.style.display = 'none';
     }
 
     // ── Bar Chart (Horizontal) ──
@@ -1859,10 +1866,14 @@ function doExportCSV() {
                 animation:{duration:900,easing:'easeInOutQuart'}
             }
         });
+        var barLoader = document.getElementById('barChartLoader');
+        if (barLoader) barLoader.style.display = 'none';
     }
 
     // ── Treemap ──
     buildTreemap();
+
+    }); // end requestAnimationFrame
 })();
 
 // ── Treemap Builder ───────────────────────────────────
@@ -2303,18 +2314,33 @@ function initAiPanel() {
     }).catch(function(){});
 
     // [1] 저장된 AI 인사이트 자동 로드
+    var _ovLoading = document.getElementById('ovAiInsightLoading');
+    var _ovEmpty   = document.getElementById('ovAiInsightEmpty');
+
+    function _hideOvLoading() {
+        if (_ovLoading) _ovLoading.style.display = 'none';
+    }
+
     if (typeof FILENAME !== 'undefined' && FILENAME) {
         fetch('/api/llm/insight/' + encodeURIComponent(FILENAME))
         .then(function(r){ return r.json(); })
         .then(function(d) {
+            _hideOvLoading();
             if (d.found) {
                 console.log('[AI-Insight] 저장된 인사이트 로드 성공 — severity=' + d.severity);
                 if (d.savedTo || d.savedPath) _aiSavedPath = d.savedTo || d.savedPath;
                 showAiResult(d, true);
+            } else {
+                if (_ovEmpty) _ovEmpty.style.display = '';
             }
         }).catch(function(e){
+            _hideOvLoading();
+            if (_ovEmpty) _ovEmpty.style.display = '';
             console.warn('[AI-Insight] 저장된 인사이트 로드 실패:', e.message);
         });
+    } else {
+        _hideOvLoading();
+        if (_ovEmpty) _ovEmpty.style.display = '';
     }
 }
 
@@ -2953,6 +2979,11 @@ var _aiChatExpanded = false;
 var _aiChatSessionId = null;
 var _aiChatRestoreAttempted = false;
 
+// 스트리밍 렌더링 스로틀 — rAF 로 프레임당 최대 1회 DOM 갱신
+var _streamRafId = null;
+var _streamBubbleRef = null;
+var _streamPendingText = '';
+
 function toggleAiChat() {
     var panel = document.getElementById('aiChatPanel');
     _aiChatOpen = !_aiChatOpen;
@@ -3346,9 +3377,14 @@ function doStreamRequest(typing) {
         }
 
         function finishStream() {
+            // 스로틀 rAF 취소 — 여기서 직접 최종 렌더 담당
+            if (_streamRafId) { cancelAnimationFrame(_streamRafId); _streamRafId = null; }
+            _streamBubbleRef = null;
             if (fullText && streamBubble) {
                 // 최종 마크다운 렌더링 (커서 제거)
                 streamBubble.innerHTML = renderChatMarkdown(fullText);
+                var fc = getChatContainer();
+                if (fc) fc.scrollTop = fc.scrollHeight;
                 _aiChatMessages.push({ role: 'assistant', content: fullText });
             } else if (!fullText && streamBubble) {
                 removeStreamBubble(streamBubble);
@@ -3396,11 +3432,27 @@ function createStreamBubble() {
     return div;
 }
 
+// rAF 스로틀: 청크가 아무리 빠르게 와도 프레임당 최대 1회만 DOM 갱신
 function updateStreamBubble(bubble, text) {
     if (!bubble) return;
-    bubble.innerHTML = renderChatMarkdown(text) + '<span class="ai-chat-cursor">&#9612;</span>';
-    var container = getChatContainer();
-    container.scrollTop = container.scrollHeight;
+    _streamBubbleRef = bubble;
+    _streamPendingText = text;
+    if (_streamRafId) return;   // 이미 이번 프레임에 갱신 예약됨
+    _streamRafId = requestAnimationFrame(function() {
+        _streamRafId = null;
+        if (!_streamBubbleRef) return;
+        _streamBubbleRef.innerHTML = renderChatMarkdown(_streamPendingText) + '<span class="ai-chat-cursor">&#9612;</span>';
+        _smartScrollChat();
+    });
+}
+
+// 사용자가 위로 스크롤 중일 때 강제 이동 방지 (120px 여유)
+function _smartScrollChat() {
+    var c = getChatContainer();
+    if (!c) return;
+    if (c.scrollHeight - c.scrollTop - c.clientHeight < 120) {
+        c.scrollTop = c.scrollHeight;
+    }
 }
 
 function removeStreamBubble(bubble) {

@@ -1,6 +1,7 @@
 package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.config.HeapDumpConfig;
+import com.heapdump.analyzer.model.AnalysisProgress;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.util.FilenameValidator;
 import org.slf4j.Logger;
@@ -16,6 +17,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Future;
 
@@ -75,6 +77,29 @@ public class HeapAnalysisApiController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("queueSize", analyzerService.getQueueSize());
         resp.put("currentAnalysis", analyzerService.getCurrentAnalysisFilename());
+        return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/api/analyze/in-progress/{filename:.+}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> checkInProgress(@PathVariable String filename) {
+        String safe = FilenameValidator.validate(filename);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("inProgress", analyzerService.isInProgress(safe));
+        resp.put("currentAnalysis", analyzerService.getCurrentAnalysisFilename());
+        return ResponseEntity.ok(resp);
+    }
+
+    @GetMapping("/api/analyze/live-snapshot/{filename:.+}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getLiveSnapshot(@PathVariable String filename) {
+        String safe = FilenameValidator.validate(filename);
+        AnalysisProgress progress = analyzerService.getLastProgress(safe);
+        List<String> logLines = analyzerService.getRecentLogs(safe);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("inProgress", analyzerService.isInProgress(safe));
+        resp.put("progress", progress);
+        resp.put("logLines", logLines);
         return ResponseEntity.ok(resp);
     }
 }

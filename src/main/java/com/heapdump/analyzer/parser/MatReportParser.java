@@ -1582,4 +1582,43 @@ public class MatReportParser {
             .replace("&#171;",   "\u00AB");
     }
 
+    /**
+     * System_Overview.zip \uB0B4 System_Properties*.html (2\uC5F4: Key / Value) \uC744 \uD30C\uC2F1\uD574 \uBC18\uD658.
+     * MAT system_properties \uB2E8\uB3C5 \uCFFC\uB9AC\uC640 \uB2EC\uB9AC Overview \uB9AC\uD3EC\uD2B8\uB294 \uD56D\uC0C1 \uC0DD\uC131\uB418\uBBC0\uB85C
+     * WebLogic\u00B7JEUS\u00B7Tomcat \uB4F1 \uBAA8\uB4E0 \uBCA4\uB354\uC5D0\uC11C \uC548\uC815\uC801\uC73C\uB85C \uB3D9\uC791\uD55C\uB2E4.
+     *
+     * @param heapDumpDir resultDir \uACBD\uB85C (Overview zip \uAC80\uC0C9 \uAE30\uC900)
+     * @param base        \uB364\uD504 \uAE30\uBCF8\uBA85 (\uD655\uC7A5\uC790 \uC81C\uC678)
+     * @return key\u2192value LinkedHashMap (\uC785\uB825 \uC21C\uC11C \uBCF4\uC874). zip \uC5C6\uAC70\uB098 \uD30C\uC2F1 \uC2E4\uD328 \uC2DC \uBE48 \uB9F5.
+     */
+    public Map<String, String> parseSystemProperties(String heapDumpDir, String base) {
+        Map<String, String> map = new LinkedHashMap<>();
+        try {
+            File overviewZip = findZip(heapDumpDir, base, "overview");
+            if (overviewZip == null) return map;
+
+            String html = extractNamedPageFromZip(overviewZip, "system_prop");
+            if (html == null || html.isEmpty()) return map;
+
+            Matcher rows = Pattern.compile("<tr[^>]*>(.*?)</tr>", Pattern.DOTALL).matcher(html);
+            Pattern cellP = Pattern.compile("<t[dh][^>]*>(.*?)</t[dh]>", Pattern.DOTALL);
+            while (rows.find()) {
+                List<String> cells = new ArrayList<>();
+                Matcher cm = cellP.matcher(rows.group(1));
+                while (cm.find()) {
+                    cells.add(cm.group(1).replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim());
+                }
+                if (cells.size() < 2) continue;
+                String key = cells.get(0);
+                String value = cells.get(1);
+                if (key.isEmpty() || key.equalsIgnoreCase("Key") || key.equalsIgnoreCase("Name")
+                        || key.toLowerCase().startsWith("total")) continue;
+                map.put(key, value);
+            }
+        } catch (Exception e) {
+            logger.warn("[Parser] parseSystemProperties failed for {}: {}", base, e.getMessage());
+        }
+        return map;
+    }
+
 }

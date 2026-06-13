@@ -81,6 +81,13 @@ public class HeapDumpAnalyzerService {
     // 활성 분석 태스크 추적 (명시적 취소 API용)
     private final ConcurrentHashMap<String, java.util.concurrent.Future<?>> activeTasks = new ConcurrentHashMap<>();
 
+    // ── Observer 모드: 진행 상황 스냅샷 캐시 (파일명 → 최신 AnalysisProgress) ──
+    private final ConcurrentHashMap<String, AnalysisProgress> lastProgressCache = new ConcurrentHashMap<>();
+    // ── Observer 모드: MAT 로그 캐시 (파일명 → 최근 500줄, ConcurrentLinkedDeque는 스레드 안전) ──
+    private final ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedDeque<String>> logCache
+            = new ConcurrentHashMap<>();
+    private static final int LOG_CACHE_MAX = 500;
+
     // 런타임 설정 (application.properties 초기값 → settings.json으로 영속화)
     private static final String SETTINGS_FILE = "settings.json";
     private volatile boolean keepUnreachableObjects;
@@ -1969,8 +1976,39 @@ public class HeapDumpAnalyzerService {
         return false;
     }
 
+    public boolean isInProgress(String filename) {
+        String safe = new File(filename).getName();
+        Future<?> task = activeTasks.get(safe);
+        return task != null && !task.isDone();
+    }
+
+    public AnalysisProgress getLastProgress(String filename) {
+        return lastProgressCache.get(new File(filename).getName());
+    }
+
+    public java.util.List<String> getRecentLogs(String filename) {
+        java.util.concurrent.ConcurrentLinkedDeque<String> deque =
+                logCache.get(new File(filename).getName());
+        return deque == null ? java.util.Collections.emptyList() : new java.util.ArrayList<>(deque);
+    }
+
     public Future<?> analyzeWithProgress(String filename, SseEmitter emitter) {
         final String safe = new File(filename).getName();
+
+        // 동일 파일 중복 분석 방지: 이미 실행 중인 태스크가 있으면 즉시 ALREADY_ANALYZING 전송 후 종료
+        Future<?> existingTask = activeTasks.get(safe);
+        if (existingTask != null && !existingTask.isDone()) {
+            logger.info("[Analysis] Duplicate blocked: {} is already in progress", safe);
+            try {
+                emitter.send(SseEmitter.event().name("progress")
+                        .data(objectMapper.writeValueAsString(AnalysisProgress.alreadyAnalyzing(safe))));
+                emitter.complete();
+            } catch (Exception e) {
+                try { emitter.completeWithError(e); } catch (Exception ignored) {}
+            }
+            return null;  // cancelTask 클로저의 null 체크로 기존 태스크 취소 방지
+        }
+
         queueSize.incrementAndGet();
         Future<?> future = executor.submit(() -> {
             long startTime = System.currentTimeMillis();
@@ -1999,6 +2037,8 @@ public class HeapDumpAnalyzerService {
                 }
                 semaphoreAcquired = true;
                 currentAnalysisFilename = safe;
+                // Observer 로그 캐시 리셋 (새 분석 시작 시 이전 로그 제거)
+                logCache.put(safe, new java.util.concurrent.ConcurrentLinkedDeque<>());
 
                 sendProgress(emitter, AnalysisProgress.step(safe, 3, "힙 덤프 파일 확인 중..."));
 
@@ -2715,6 +2755,20 @@ public class HeapDumpAnalyzerService {
      */
     private void sendProgress(SseEmitter emitter, AnalysisProgress progress) {
         if (Thread.currentThread().isInterrupted()) return;
+
+        // ── Observer 캐시 업데이트 (ALREADY_ANALYZING은 실제 진행 상황이 아니므로 제외) ──
+        if (progress.getStatus() != AnalysisProgress.Status.ALREADY_ANALYZING
+                && progress.getFilename() != null) {
+            lastProgressCache.put(progress.getFilename(), progress);
+            if (progress.getLogLine() != null) {
+                java.util.concurrent.ConcurrentLinkedDeque<String> deque =
+                        logCache.computeIfAbsent(progress.getFilename(),
+                                k -> new java.util.concurrent.ConcurrentLinkedDeque<>());
+                deque.addLast(progress.getLogLine());
+                while (deque.size() > LOG_CACHE_MAX) deque.pollFirst();
+            }
+        }
+
         try {
             emitter.send(SseEmitter.event().name("progress")
                     .data(objectMapper.writeValueAsString(progress)));

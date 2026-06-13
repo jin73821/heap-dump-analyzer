@@ -352,6 +352,9 @@
         .queue-stat-info { flex: 1; min-width: 0; }
         .queue-stat-label { font-size: 10px; color: #9CA3AF; text-transform: uppercase;
                             letter-spacing: .04em; }
+        .queue-file-link { color: inherit; text-decoration: underline;
+                           text-decoration-style: dashed; text-underline-offset: 2px; cursor: pointer; }
+        .queue-file-link:hover { color: #1D4ED8; text-decoration-style: solid; }
         .queue-stat-val { font-size: 14px; font-weight: 700; color: #1F2937;
                           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .queue-stat-val.running { color: #2563EB; }
@@ -1195,7 +1198,7 @@ function renderQueuePanel(d) {
             '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>' +
             '<div class="queue-stat-info">' +
             '<div class="queue-stat-label">ANALYZING</div>' +
-            '<div class="queue-stat-val running">' + escHtml(current) + '</div>' +
+            '<div class="queue-stat-val running"><a class="queue-file-link" href="/analyze/' + encodeURIComponent(current) + '">' + escHtml(current) + '</a></div>' +
             '</div></div>';
     }
     // 대기 중

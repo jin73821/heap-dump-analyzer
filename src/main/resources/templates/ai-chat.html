@@ -285,6 +285,17 @@ var _sending = false;
 var _model = '';
 var _renamePending = null;
 
+// 스트리밍 rAF 스로틀
+var _chatRafId = null;
+var _chatBubbleRef = null;
+var _chatPendingText = '';
+
+function _chatSmartScroll(container) {
+    if (container.scrollHeight - container.scrollTop - container.clientHeight < 120) {
+        container.scrollTop = container.scrollHeight;
+    }
+}
+
 // ── 권한/현재 사용자 (서버 모델 attr 에서 추출) ───────
 var _layoutEl = document.querySelector('.chat-layout');
 var IS_ADMIN     = _layoutEl ? _layoutEl.getAttribute('data-is-admin') === 'true' : false;
@@ -746,8 +757,16 @@ function sendMessage() {
                             if (currentEvent === 'start' && d.model) _model = d.model;
                             else if (currentEvent === 'chunk' && d.text) {
                                 fullText += d.text;
-                                bubble.innerHTML = mdRender(fullText) + '<span class="chat-cursor">&#9612;</span>';
-                                container.scrollTop = container.scrollHeight;
+                                _chatBubbleRef = bubble;
+                                _chatPendingText = fullText;
+                                if (!_chatRafId) {
+                                    _chatRafId = requestAnimationFrame(function() {
+                                        _chatRafId = null;
+                                        if (!_chatBubbleRef) return;
+                                        _chatBubbleRef.innerHTML = mdRender(_chatPendingText) + '<span class="chat-cursor">&#9612;</span>';
+                                        _chatSmartScroll(container);
+                                    });
+                                }
                             } else if (currentEvent === 'error') {
                                 var err = document.createElement('div');
                                 err.className = 'chat-msg chat-msg-error';
@@ -766,8 +785,12 @@ function sendMessage() {
         function parseBuf(b) { b.split('\n').forEach(function(l) { /* handled inline */ }); }
 
         function finish() {
+            // 미처리 rAF 취소 — 최종 렌더를 여기서 직접 수행
+            if (_chatRafId) { cancelAnimationFrame(_chatRafId); _chatRafId = null; }
+            _chatBubbleRef = null;
             if (fullText) {
                 bubble.innerHTML = mdRender(fullText);
+                container.scrollTop = container.scrollHeight;
                 _messages.push({ role: 'assistant', content: fullText });
                 var timeDiv = document.createElement('div');
                 timeDiv.className = 'chat-msg-time';

@@ -12,11 +12,12 @@ import lombok.NoArgsConstructor;
 public class AnalysisProgress {
 
     public enum Status {
-        QUEUED,      // 대기 중
-        RUNNING,     // 분석 중
-        PARSING,     // ZIP 파싱 중
-        COMPLETED,   // 완료
-        ERROR        // 오류
+        QUEUED,             // 대기 중
+        RUNNING,            // 분석 중
+        PARSING,            // ZIP 파싱 중
+        COMPLETED,          // 완료
+        ERROR,              // 오류
+        ALREADY_ANALYZING   // 동일 파일 이미 분석 중 (중복 요청)
     }
 
     /** 파일명 */
@@ -120,6 +121,15 @@ public class AnalysisProgress {
         p.percent        = 8;
         p.message        = "경고 확인 중...";
         p.warningMessage = warningMessage;
+        return p;
+    }
+
+    public static AnalysisProgress alreadyAnalyzing(String filename) {
+        AnalysisProgress p = new AnalysisProgress();
+        p.filename = filename;
+        p.status   = Status.ALREADY_ANALYZING;
+        p.percent  = 0;
+        p.message  = "동일한 파일이 이미 분석 중입니다.";
         return p;
     }
 

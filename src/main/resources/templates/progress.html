@@ -104,6 +104,50 @@
         }
         .queue-banner.visible .queue-icon { animation: queuePulse 2s infinite; }
 
+        /* ── 이미 분석 중 배너 ─────────────────────────── */
+        .already-banner {
+            background: linear-gradient(135deg, #0891B2, #38BDF8);
+            border-radius: 14px; padding: 24px 28px;
+            color: #fff; display: none; margin-bottom: 20px;
+            align-items: center; gap: 18px;
+            animation: fadeIn .5s ease;
+        }
+        .already-banner.visible { display: flex; }
+        .already-banner.visible .already-icon { animation: queuePulse 2s infinite; }
+        .already-icon { font-size: 36px; flex-shrink: 0; }
+        .already-content { flex: 1; }
+        .already-content h3 { font-size: 17px; font-weight: 700; margin-bottom: 4px; }
+        .already-content p { font-size: 13px; opacity: .85; margin-bottom: 10px; }
+        .already-info {
+            background: rgba(255,255,255,.15); border-radius: 10px; padding: 10px 14px;
+        }
+        .already-info-row {
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 13px; padding: 3px 0;
+        }
+        .already-file-val {
+            font-weight: 700; max-width: min(200px,45vw);
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .already-poll-msg { font-size: 12px; opacity: .75; margin-top: 10px; }
+
+        /* ── Observer 모드 뱃지 / LIVE 칩 ─────────────────── */
+        .observer-badge {
+            display: none; align-items: center; gap: 4px;
+            background: #EFF6FF; color: #1D4ED8;
+            border: 1px solid #BFDBFE; border-radius: 20px;
+            padding: 3px 10px; font-size: 11px; font-weight: 600;
+            white-space: nowrap;
+            animation: queuePulse 2s infinite;
+        }
+        .observer-badge.visible { display: inline-flex; }
+        .log-live-chip {
+            display: none; background: #DCFCE7; color: #15803D;
+            border-radius: 10px; padding: 2px 8px;
+            font-size: 10px; font-weight: 700; letter-spacing: .3px;
+        }
+        .log-live-chip.visible { display: inline-block; }
+
         /* ── 힙 메모리 경고 모달 ─────────────────────────── */
         .heap-warn-ov {
             display: none; position: fixed; inset: 0; z-index: 300;
@@ -545,6 +589,22 @@
         </div>
     </div>
 
+    <!-- 이미 분석 중 배너 (숨김) -->
+    <div class="already-banner" id="alreadyBanner">
+        <div class="already-icon">&#9881;</div>
+        <div class="already-content">
+            <h3>이미 분석이 진행 중입니다</h3>
+            <p>다른 사용자가 동일한 파일을 분석 중입니다. 완료되면 자동으로 결과 페이지로 이동합니다.</p>
+            <div class="already-info">
+                <div class="already-info-row">
+                    <span style="opacity:.8">분석 파일</span>
+                    <span class="already-file-val" id="alreadyFilename">-</span>
+                </div>
+            </div>
+            <div class="already-poll-msg" id="alreadyPollMsg">완료 대기 중...</div>
+        </div>
+    </div>
+
     <!-- 에러 배너 (숨김) -->
     <div class="error-banner" id="errorBanner">
         <div class="error-header">
@@ -583,7 +643,10 @@
         <!-- 진행바 -->
         <div class="progress-card-header">
             <div class="progress-info">
-                <span class="progress-label" id="statusLabel">분석 준비 중...</span>
+                <div style="display:flex;align-items:center;gap:8px;min-width:0">
+                    <span class="progress-label" id="statusLabel">분석 준비 중...</span>
+                    <span class="observer-badge" id="observerBadge">&#128065; 관찰 중</span>
+                </div>
                 <span class="progress-pct" id="pctText">0%</span>
             </div>
             <div class="progress-track">
@@ -697,6 +760,7 @@
             <div class="log-left">
                 <span class="log-title">MAT CLI 로그</span>
                 <span class="log-count" id="logCount">0 lines</span>
+                <span class="log-live-chip" id="logLiveChip">LIVE</span>
             </div>
             <button class="log-toggle" onclick="toggleLog()">&#9660; 펼치기</button>
         </div>
@@ -850,6 +914,111 @@
     // ── 취소 기능 ──────────────────────────────────────────
     let evtSourceRef = null;
     let _isQueued = false;
+    let _alreadyPollTimer = null;
+    var _observerLogCursor = 0;
+
+    // SSE 핸들러의 step 갱신 로직과 동일하게 유지 — Observer 폴링에서 재사용
+    function _applyObserverSteps(percent, status, reportPhase) {
+        if (percent >= 5) setStep('file', 'done', '파일 확인 완료');
+        else              setStep('file', 'active');
+
+        if (percent >= 15 && percent < 40 && !reportPhase) {
+            setStep('mat', 'active');
+            showSubProgressTracks();
+        }
+        if (percent >= 82 && status === 'RUNNING') {
+            setStep('mat',      'done', 'MAT CLI 실행 완료');
+            setStep('overview', 'done', 'Overview 리포트 완료');
+            setStep('topcomp',  'done', 'Top Components 리포트 완료');
+            setStep('suspects', 'done', 'Leak Suspects 리포트 완료');
+            completeSubProgress('overview');
+            completeSubProgress('topcomp');
+            completeSubProgress('suspects');
+        }
+        if (reportPhase) {
+            var phaseMap = {
+                overview:       { step: 'overview', label: 'Overview 리포트',       min: 40, max: 55 },
+                top_components: { step: 'topcomp',  label: 'Top Components 리포트', min: 55, max: 68 },
+                suspects:       { step: 'suspects', label: 'Leak Suspects 리포트',  min: 68, max: 80 }
+            };
+            var pi = phaseMap[reportPhase];
+            if (pi) {
+                if (_lastReportPhase === 'init' || !_lastReportPhase) {
+                    setStep('mat', 'done', '힙 덤프 파싱 완료');
+                }
+                if (_lastReportPhase && _lastReportPhase !== reportPhase && phaseMap[_lastReportPhase]) {
+                    var prev = phaseMap[_lastReportPhase];
+                    setStep(prev.step, 'done', prev.label + ' 완료');
+                    completeSubProgress(prev.step);
+                }
+                setStep(pi.step, 'active', pi.label + ' 생성 중...');
+                setSubProgress(pi.step, percent, pi.min, pi.max);
+                _lastReportPhase = reportPhase;
+            } else if (reportPhase === 'init') {
+                setStep('mat', 'active');
+                showSubProgressTracks();
+                _lastReportPhase = 'init';
+            }
+        }
+        if (status === 'PARSING') {
+            setStep('mat',      'done', 'MAT CLI 실행 완료');
+            setStep('overview', 'done', 'Overview 리포트 완료');
+            setStep('topcomp',  'done', 'Top Components 리포트 완료');
+            setStep('suspects', 'done', 'Leak Suspects 리포트 완료');
+            completeSubProgress('overview');
+            completeSubProgress('topcomp');
+            completeSubProgress('suspects');
+            setStep('parse', 'active');
+        }
+        if (status === 'COMPLETED') {
+            setStep('file', 'done'); setStep('mat', 'done');
+            setStep('overview', 'done'); setStep('topcomp', 'done'); setStep('suspects', 'done');
+            setStep('parse', 'done', '파싱 완료');
+            setStep('done', 'active');
+            completeSubProgress('overview'); completeSubProgress('topcomp'); completeSubProgress('suspects');
+        }
+    }
+
+    function startAlreadyPolling() {
+        document.getElementById('observerBadge').classList.add('visible');
+        document.getElementById('logLiveChip').classList.add('visible');
+
+        _alreadyPollTimer = setInterval(function() {
+            fetch('/api/analyze/live-snapshot/' + encodeURIComponent(FILENAME))
+                .then(function(r) { return r.json(); })
+                .then(function(d) {
+                    // ── 진행 상황 갱신 ──────────────────────────────
+                    if (d.progress) {
+                        var p = d.progress;
+                        var st = p.status || 'RUNNING';
+                        if (!analysisStartTime && (st === 'RUNNING' || st === 'PARSING')) {
+                            startElapsedTimer();
+                        }
+                        var stateStr = st === 'COMPLETED' ? 'done' : st === 'ERROR' ? 'error' : 'running';
+                        setProgress(p.percent || 0, p.message || '', stateStr, p.message || '');
+                        _applyObserverSteps(p.percent || 0, st, p.reportPhase || null);
+                        var pm = document.getElementById('alreadyPollMsg');
+                        if (pm) pm.textContent = (p.percent || 0) + '% 진행 중...';
+                    }
+                    // ── 로그 커서 방식: 새 줄만 appendLog() ────────
+                    if (d.logLines && d.logLines.length > _observerLogCursor) {
+                        var newLines = d.logLines.slice(_observerLogCursor);
+                        _observerLogCursor = d.logLines.length;
+                        newLines.forEach(function(line) { appendLog(line); });
+                    }
+                    // ── 완료 감지 ───────────────────────────────────
+                    if (!d.inProgress) {
+                        clearInterval(_alreadyPollTimer);
+                        _alreadyPollTimer = null;
+                        document.getElementById('logLiveChip').classList.remove('visible');
+                        var pm2 = document.getElementById('alreadyPollMsg');
+                        if (pm2) pm2.textContent = '분석 완료! 결과 페이지로 이동합니다...';
+                        showComplete(RESULT_URL);
+                    }
+                })
+                .catch(function() {});  // 네트워크 오류 시 다음 폴링에서 재시도
+        }, 2000);
+    }
 
     function cancelAnalysis() {
         if (_isQueued) {
@@ -1104,6 +1273,18 @@
         evtSource.addEventListener('progress', function (e) {
             const data = JSON.parse(e.data);
             const { status, percent, message, logLine, errorMessage, resultUrl, queuePosition: qPos, currentAnalysis } = data;
+
+            // ── ALREADY_ANALYZING: 동일 파일 이미 분석 중 ──
+            if (status === 'ALREADY_ANALYZING') {
+                evtSource.close();
+                disableLeaveWarning();
+                document.getElementById('alreadyBanner').classList.add('visible');
+                document.getElementById('alreadyFilename').textContent = data.filename || FILENAME;
+                document.getElementById('cancelBtn').style.display = 'none';
+                document.title = '⚙ 분석 중 (대기) - Heap Dump Analyzer';
+                startAlreadyPolling();
+                return;
+            }
 
             // ── QUEUED 상태: 큐 대기 배너 표시 ──
             if (status === 'QUEUED') {

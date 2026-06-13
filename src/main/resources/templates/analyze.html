@@ -673,8 +673,13 @@ function loadFullErrorLog() {
                         <span class="diag-head-title">AI 인사이트 요약</span>
                         <span class="diag-head-count" id="ovAiSeverity" style="display:none">-</span>
                     </div>
-                    <!-- 미생성 상태 -->
-                    <div id="ovAiInsightEmpty">
+                    <!-- 로딩 중 상태 (fetch 완료 전 표시) -->
+                    <div id="ovAiInsightLoading" class="sec-loader-center" style="padding:14px 0;gap:6px">
+                        <span class="sec-spinner sec-spinner-sm"></span>
+                        <span>AI 인사이트 로딩 중...</span>
+                    </div>
+                    <!-- 미생성 상태 (기본 숨김 — fetch 완료 후 표시) -->
+                    <div id="ovAiInsightEmpty" style="display:none">
                         <p class="ov-ai-empty-text">아직 AI 분석이 수행되지 않았습니다. LLM으로 누수 근본 원인과 권장 조치를 요약받을 수 있습니다.</p>
                         <a class="leak-view-all" onclick="goToAiInsight()">AI 분석 하러가기 &rarr;</a>
                     </div>
@@ -745,7 +750,11 @@ function loadFullErrorLog() {
                 <!-- Heap Usage Stacked Bar (Top Objects breakdown) -->
                 <div class="card" th:if="${hasHeapData}">
                     <div class="card-title"><span class="card-icon">&#128202;</span> Heap Composition by Top Consumers</div>
-                    <div class="stacked-bar-container" id="stackedBar"></div>
+                    <div class="stacked-bar-container" id="stackedBar">
+                    <div class="sec-loader-center" style="min-height:36px">
+                        <span class="sec-spinner sec-spinner-sm"></span>
+                    </div>
+                </div>
                     <div class="stacked-legend" id="stackedLegend"></div>
                     <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-top:4px">
                         <span>Top Consumers: <strong th:text="${result.formattedUsedHeapSize}">-</strong></span>
@@ -757,7 +766,10 @@ function loadFullErrorLog() {
                 <!-- Pie: Biggest Objects (KPI/Heap Composition 아래로 이동) -->
                 <div th:if="${hasHeapData}" class="chart-box">
                     <div class="chart-box-title">Biggest Objects by Retained Size</div>
-                    <canvas id="pieChart"></canvas>
+                    <div class="chart-loader-wrap">
+                        <div id="pieChartLoader" class="chart-loader-overlay"><span class="sec-spinner"></span></div>
+                        <canvas id="pieChart"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
@@ -767,12 +779,20 @@ function loadFullErrorLog() {
             <!-- Treemap (가로 절반) -->
             <div th:if="${!#lists.isEmpty(result.topMemoryObjects)}" class="card" style="margin-bottom:0">
                 <div class="card-title"><span class="card-icon">&#9638;</span> Memory Treemap</div>
-                <div class="treemap-container" id="treemap" style="height:160px;"></div>
+                <div class="treemap-container" id="treemap" style="height:160px;">
+                    <div class="sec-loader-center" style="height:100%">
+                        <span class="sec-spinner"></span>
+                        <span>렌더링 중...</span>
+                    </div>
+                </div>
             </div>
             <!-- Bar: Top Memory Consumers (가로 절반) -->
             <div class="chart-box">
                 <div class="chart-box-title">Top Memory Consumers (Retained Heap)</div>
-                <canvas id="barChart"></canvas>
+                <div class="chart-loader-wrap">
+                    <div id="barChartLoader" class="chart-loader-overlay"><span class="sec-spinner"></span></div>
+                    <canvas id="barChart"></canvas>
+                </div>
             </div>
         </div>
         <div class="treemap-tooltip" id="treemapTooltip"></div>
