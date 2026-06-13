@@ -1,5 +1,100 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-14] 버전 2.0.8 → 2.1.0 업데이트
+
+- `pom.xml` — `<version>2.1.0</version>`
+- `restart.sh` / `run.sh` / `stop.sh` — JAR 경로 `heap-analyzer-2.1.0.jar`
+- `fragments/banner.html` — `v2.1.0 · MAT CLI`
+- `templates/index.html` — `v2.1.0 · MAT CLI Edition`
+- `templates/progress.html` — `v2.1.0`
+
+---
+
+## [2026-06-14] 심각도 색상 최종 조정 (High→노랑, Medium→초록)
+
+**최종 확정 팔레트:**
+| 단계 | 색상 |
+|------|------|
+| Critical | 빨강 `#DC2626` |
+| High     | 노랑 `#CA8A04` |
+| Medium   | 초록 `#16A34A` |
+| Low      | 파랑 `#2563EB` |
+
+**적용 파일:** `templates/history.html`, `static/js/analyze.js`, `templates/analyze-print.html`
+
+---
+
+## [2026-06-13] 심각도 색상 CVD(적녹색약) 접근성 개선
+
+**목적:** Low를 녹색에서 파란색으로 교체. High→노랑, Medium→초록은 위 후속 조정에서 확정.
+
+---
+
+## [2026-06-13] UI 개선 4건
+
+**1. Dump Time 글자 크기 조정**
+- `static/css/analyze.css` — `.stat-dumptime`의 `font-size:11px !important` 제거. 부모 `.stat-val`의 `12px`를 그대로 상속.
+
+**2. Compare 모바일 돌아가기 버튼 크기 축소**
+- `templates/compare.html` — `@media (max-width: 600px)` 내 `.back-btn { min-height:44px; display:inline-flex; align-items:center }` → `{ font-size:12px; padding:5px 10px }` 로 교체. 모바일에서 버튼이 과도하게 커지던 현상 해소.
+
+**3. 대시보드 다운로드 모달 한글화**
+- `templates/index.html` — 제목 "Download File" → "파일 다운로드", 설명/레이블(Filename, File Size, Cancel, Download) 전부 한글로 변환.
+
+**4. 다운로드 모달 — 원본/GZ 용량 동시 표시 (Dashboard · Files · Analysis)**
+- 압축 파일 다운로드 시 "원본 크기"와 "GZ 크기" 두 행 표시. 비압축 파일은 기존대로 "파일 크기" 한 행만 표시.
+- `model/HeapDumpFile.java` — `getFormattedOriginalSize()` / `getFormattedCompressedSize()` 메서드 이미 존재, 활용.
+- `model/HeapAnalysisResult.java` — `getFormattedOriginalFileSize()` 메서드 추가.
+- `templates/index.html` — 다운로드 버튼에 `data-orig`, `data-gz` 속성 추가. `showDownloadModal(filename, size, origSize, gzSize)` 함수 확장. 모달 HTML에 원본/GZ 행(기본 hidden) 추가.
+- `templates/files.html` — 동일 패턴 적용 (버튼 속성 + JS + 모달 HTML).
+- `templates/analyze.html` — `result.originalFileSize > result.fileSize`(압축) 조건으로 "원본 크기" / "GZ 크기" 분기 표시.
+
+---
+
+## [2026-06-13] Analysis 페이지 Heap Statistics — Dump Time 표시
+
+**목적:** Analysis 페이지 Heap Statistics 섹션에 힙 덤프가 JVM에서 최초 생성된 시각(분석/업로드 시각 아님)을 표시.
+
+**파싱 소스:** MAT System Overview ZIP (`index.html`)의 `<td>Date</td>` + `<td>Time</td>` TD 쌍.  
+예) `"2026. 5. 29."` + `"오후 6시 18분 53초 GMT+9"` → `"2026-05-29 18:18:53"` (오전/오후 24h 변환).
+
+**백엔드:**
+- **`model/MatParseResult.java`**: `dumpDate` / `dumpTime` String 필드 추가.
+- **`parser/MatReportParser.java`**: `parseOverviewZip()` KV 루프에 `date`/`time` 키 처리 추가. `reparseOverviewMeta()` 에도 동일 파싱 추가 (기존 result.json 소급 적용용).
+- **`model/HeapAnalysisResult.java`**: `dumpCreationTime` String 필드 추가 (result.json 영속, 없으면 null).
+- **`service/HeapDumpAnalyzerService.java`**: `buildAnalysisResult()`에서 `parseDumpCreationTime(date, time)` static 헬퍼 호출하여 매핑. 한국어 로케일 `오전/오후` 파싱 → 24h `HH:mm:ss` + `yyyy-MM-dd` 조합. 기존 result.json 로드 시 `dumpCreationTime == null` 조건으로 `reparseOverviewMeta()` 소급 실행.
+
+**프런트엔드:**
+- **`templates/analyze.html`**: Heap Statistics 최상단에 `Dump Time` 행 추가 (`th:if="${result.dumpCreationTime != null}"`).
+- **`static/css/analyze.css`**: `.stat-dumptime` — `font-size:11px`, `color:var(--text-secondary)`. 기존 stat 항목과 시각적 구분.
+
+---
+
+## [2026-06-13] 비활성화 계정 로그인 처리 개선
+
+**목적:** 비활성화된 계정 접속 시도 시 웹 페이지에 전용 안내 메시지 표시 + 접속 이력에 "비활성화된 계정" 사유 기록.
+
+**백엔드:**
+- **`service/CustomUserDetailsService.java`**: `!user.isEnabled()` 시 직접 throw하던 로직 제거. `UserDetails` 생성 시 `enabled` 필드를 그대로 반환 → Spring Security 내장 `preAuthenticationChecks`가 `DisabledException`을 정상 발생시켜 `AbstractAuthenticationFailureEvent`로 전파.
+- **`config/SecurityConfig.java`**: `.failureUrl("/login?error=true")` 대신 커스텀 `failureHandler` 사용. `DisabledException` → `/login?error=disabled`, 그 외 → `/login?error=true` 분기 리다이렉트.
+- **`controller/AuthController.java`**: `error=disabled` 파라미터 처리 추가 → `disabledMessage` 모델 어트리뷰트 설정.
+- **`listener/AuthEventListener.java`**: `onFailure()`에서 예외가 `DisabledException`이면 `failure_reason`을 `"비활성화된 계정"`으로 기록.
+
+**프런트엔드 (`templates/login.html`):**
+- `.msg-disabled` CSS 스타일 추가 (주황 계열: `#FFF7ED` / `#FED7AA` / `#C2410C`). 일반 오류(빨강)·로그아웃(파랑)과 시각적으로 구분.
+- `th:if="${disabledMessage}"` div 추가 → "비활성화된 계정입니다. 관리자에게 문의하세요." 표시.
+- `history.replaceState` 스크립트는 기존 `indexOf('error') >= 0` 조건으로 `?error=disabled`도 자동 처리 (F5 시 메시지 잔존 방지).
+
+---
+
+## [2026-06-13] Settings Max upload size 소수점 제거
+
+**대상 파일:**
+- **`util/FormatUtils.java`**: GB 포맷에서 후행 소수점·0 제거. `String.format("%.2f", gb).replaceAll("\\.?0+$", "")` 적용 — "10.00 GB" → "10 GB", "2.50 GB" → "2.5 GB".
+- **`templates/settings.html`** (`formatBytesJS`): JS GB 포맷 동일 처리. `.toFixed(2).replace(/\.?0+$/, '')` 적용. Settings 페이지에서 10 GB 이상 선택 시 "10.00GB" 개행 현상 해소.
+
+---
+
 ## [2026-06-13] Comparison 에러 처리 보강
 
 **백엔드:**

@@ -129,6 +129,10 @@ function loadFullErrorLog() {
     <div class="sidebar-section">
         <div class="sidebar-section-title">Heap Statistics</div>
         <div class="sidebar-stats">
+            <div class="sidebar-stat" th:if="${result.dumpCreationTime != null}">
+                <span class="stat-key">Dump Time</span>
+                <span class="stat-val stat-dumptime" th:text="${result.dumpCreationTime}">-</span>
+            </div>
             <div class="sidebar-stat">
                 <span class="stat-key">Total Heap</span>
                 <span class="stat-val" th:text="${result.formattedTotalHeapSize}">-</span>
@@ -1380,7 +1384,9 @@ function loadFullErrorLog() {
             힙 덤프 파일을 사용자 기기로 다운로드합니다.
             <div class="modal-filename" th:text="${result.filename}">-</div>
             <div class="modal-info">
-                <div>파일 크기: <span th:text="${result.formattedFileSize}">-</span></div>
+                <div th:if="${result.originalFileSize > result.fileSize}">원본 크기: <span th:text="${result.formattedOriginalFileSize}">-</span></div>
+                <div th:if="${result.originalFileSize > result.fileSize}">GZ 크기: <span th:text="${result.formattedFileSize}">-</span></div>
+                <div th:if="${result.originalFileSize <= result.fileSize}">파일 크기: <span th:text="${result.formattedFileSize}">-</span></div>
                 <div>형식: <span th:text="${result.format}">-</span></div>
             </div>
         </div>

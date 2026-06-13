@@ -4,6 +4,7 @@ import com.heapdump.analyzer.service.CustomUserDetailsService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -61,7 +62,12 @@ public class SecurityConfig {
             .formLogin(form -> form
                 .loginPage("/login")
                 .defaultSuccessUrl("/", true)
-                .failureUrl("/login?error=true")
+                .failureHandler((req, res, ex) -> {
+                    String url = (ex instanceof DisabledException)
+                        ? "/login?error=disabled"
+                        : "/login?error=true";
+                    res.sendRedirect(url);
+                })
                 .permitAll()
             )
             .logout(logout -> logout

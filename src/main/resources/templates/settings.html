@@ -857,7 +857,7 @@ function formatBytesJS(b) {
     if (b < 1024) return b + ' B';
     if (b < 1048576) return (b / 1024).toFixed(0) + ' KB';
     if (b < 1073741824) return (b / 1048576).toFixed(0) + ' MB';
-    return (b / 1073741824).toFixed(2) + ' GB';
+    return (b / 1073741824).toFixed(2).replace(/\.?0+$/, '') + ' GB';
 }
 
 // ── Data loading ───────────────────────────────────────

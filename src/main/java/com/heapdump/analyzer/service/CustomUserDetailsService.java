@@ -24,14 +24,10 @@ public class CustomUserDetailsService implements UserDetailsService {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("사용자를 찾을 수 없습니다: " + username));
 
-        if (!user.isEnabled()) {
-            throw new UsernameNotFoundException("비활성화된 계정입니다: " + username);
-        }
-
         return new org.springframework.security.core.userdetails.User(
                 user.getUsername(),
                 user.getPassword(),
-                user.isEnabled(),
+                user.isEnabled(),          // enabled=false → Spring Security가 DisabledException 발생
                 true, true, true,
                 Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()))
         );

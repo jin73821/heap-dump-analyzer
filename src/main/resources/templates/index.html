@@ -594,7 +594,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.0.8 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.1.0 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -667,7 +667,9 @@
                     </a>
                     <a href="#" class="fb dl-btn" title="Download"
                        th:data-name="${file.name}" th:data-size="${file.formattedSize}"
-                       onclick="showDownloadModal(this.dataset.name,this.dataset.size);return false;">
+                       th:data-orig="${file.compressed ? file.formattedOriginalSize : ''}"
+                       th:data-gz="${file.compressed ? file.formattedCompressedSize : ''}"
+                       onclick="showDownloadModal(this.dataset.name,this.dataset.size,this.dataset.orig,this.dataset.gz);return false;">
                         <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
                     </a>
                     <a href="#" class="fb d" title="Delete"
@@ -897,23 +899,31 @@
 <div class="modal-ov" id="downloadModal" onclick="if(event.target===this)closeDownloadModal()">
     <div class="modal">
         <div class="modal-ttl">
-            Download File
+            파일 다운로드
             <button class="modal-close" onclick="closeDownloadModal()">&#215;</button>
         </div>
-        <div class="modal-desc">Heap dump file will be downloaded to your device.</div>
+        <div class="modal-desc">힙 덤프 파일을 기기로 다운로드합니다.</div>
         <div style="background:#f9fafb;border-radius:8px;padding:12px 16px;margin-bottom:14px">
             <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px">
-                <span style="color:#6b7280">Filename</span>
+                <span style="color:#6b7280">파일명</span>
                 <span id="dlModalFilename" style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">-</span>
             </div>
-            <div style="display:flex;justify-content:space-between;font-size:12px">
-                <span style="color:#6b7280">File Size</span>
+            <div id="dlModalSizeRow" style="display:flex;justify-content:space-between;font-size:12px">
+                <span style="color:#6b7280">파일 크기</span>
                 <span id="dlModalSize" style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px">-</span>
+            </div>
+            <div id="dlModalOrigRow" style="display:none;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                <span style="color:#6b7280">원본 크기</span>
+                <span id="dlModalOrigSize" style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px">-</span>
+            </div>
+            <div id="dlModalGzRow" style="display:none;justify-content:space-between;font-size:12px">
+                <span style="color:#6b7280">GZ 크기</span>
+                <span id="dlModalGzSize" style="font-weight:700;font-family:'JetBrains Mono',monospace;font-size:12px">-</span>
             </div>
         </div>
         <div class="modal-footer">
-            <button class="btn-s" onclick="closeDownloadModal()">Cancel</button>
-            <button class="btn-p" id="dlModalBtn" onclick="doDownload()">Download</button>
+            <button class="btn-s" onclick="closeDownloadModal()">취소</button>
+            <button class="btn-p" id="dlModalBtn" onclick="doDownload()">다운로드</button>
         </div>
     </div>
 </div>
@@ -1134,10 +1144,19 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 var _dlFilename = '';
-function showDownloadModal(filename, size) {
+function showDownloadModal(filename, size, origSize, gzSize) {
     _dlFilename = filename;
     document.getElementById('dlModalFilename').textContent = filename;
-    document.getElementById('dlModalSize').textContent = size;
+    var hasGz = origSize && origSize.length > 0 && gzSize && gzSize.length > 0;
+    document.getElementById('dlModalSizeRow').style.display = hasGz ? 'none' : 'flex';
+    document.getElementById('dlModalOrigRow').style.display = hasGz ? 'flex' : 'none';
+    document.getElementById('dlModalGzRow').style.display = hasGz ? 'flex' : 'none';
+    if (hasGz) {
+        document.getElementById('dlModalOrigSize').textContent = origSize;
+        document.getElementById('dlModalGzSize').textContent = gzSize;
+    } else {
+        document.getElementById('dlModalSize').textContent = size;
+    }
     document.getElementById('downloadModal').classList.add('open');
 }
 function closeDownloadModal() {

@@ -31,6 +31,8 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -485,8 +487,8 @@ public class HeapDumpAnalyzerService {
         // keyword 기능 도입 이전 result.json 은 keywords 가 null → ZIP 에서 재추출 + 잘린 description 복구
         reparseSuspectsMeta(r);
 
-        // classLoaderCount/gcRootCount가 0이면 Overview ZIP에서 재파싱
-        if (r.getClassLoaderCount() == 0 && r.getGcRootCount() == 0) {
+        // classLoaderCount/gcRootCount가 0이거나 dumpCreationTime이 없으면 Overview ZIP에서 재파싱
+        if (r.getClassLoaderCount() == 0 && r.getGcRootCount() == 0 || r.getDumpCreationTime() == null) {
             reparseOverviewMeta(r);
         }
 
@@ -684,6 +686,9 @@ public class HeapDumpAnalyzerService {
             parser.reparseOverviewMeta(resultDir.getAbsolutePath(), baseName, tmp);
             if (tmp.getClassLoaderCount() > 0) r.setClassLoaderCount(tmp.getClassLoaderCount());
             if (tmp.getGcRootCount() > 0) r.setGcRootCount(tmp.getGcRootCount());
+            if (r.getDumpCreationTime() == null && (tmp.getDumpDate() != null || tmp.getDumpTime() != null)) {
+                r.setDumpCreationTime(parseDumpCreationTime(tmp.getDumpDate(), tmp.getDumpTime()));
+            }
         } catch (Exception e) {
             logger.debug("Could not re-extract overview meta for {}: {}", r.getFilename(), e.getMessage());
         }
@@ -2749,6 +2754,7 @@ public class HeapDumpAnalyzerService {
         r.setTotalObjects(parsed.getTotalObjects());
         r.setClassLoaderCount(parsed.getClassLoaderCount());
         r.setGcRootCount(parsed.getGcRootCount());
+        r.setDumpCreationTime(parseDumpCreationTime(parsed.getDumpDate(), parsed.getDumpTime()));
         r.setOverviewHtml(parsed.getOverviewHtml());
         r.setTopComponentsHtml(parsed.getTopComponentsHtml());
         r.setSuspectsHtml(parsed.getSuspectsHtml());
@@ -2768,6 +2774,49 @@ public class HeapDumpAnalyzerService {
     }
 
     // ── 경로 / 유틸리티 ──────────────────────────────────────────
+
+    /**
+     * MAT System Overview 의 Date("2026. 5. 29.")와 Time("오후 6시 18분 53초 GMT+9")을
+     * "2026-05-29 18:18:53" 형태로 조합한다. 파싱 실패 시 원본 문자열을 그대로 이어 붙인다.
+     */
+    private static String parseDumpCreationTime(String date, String time) {
+        if (date == null && time == null) return null;
+
+        String parsedDate = null;
+        if (date != null) {
+            try {
+                // "2026. 5. 29." → ["2026", "5", "29"]
+                String[] parts = date.replaceAll("\\.$", "").split("\\.\\s*");
+                if (parts.length == 3) {
+                    int y = Integer.parseInt(parts[0].trim());
+                    int m = Integer.parseInt(parts[1].trim());
+                    int d = Integer.parseInt(parts[2].trim());
+                    parsedDate = String.format("%04d-%02d-%02d", y, m, d);
+                }
+            } catch (Exception e) { /* fall through */ }
+            if (parsedDate == null) parsedDate = date.trim();
+        }
+
+        String parsedTime = null;
+        if (time != null) {
+            try {
+                boolean pm = time.contains("오후");
+                Matcher m = Pattern.compile("(\\d+)시\\s*(\\d+)분\\s*(\\d+)초").matcher(time);
+                if (m.find()) {
+                    int h   = Integer.parseInt(m.group(1));
+                    int min = Integer.parseInt(m.group(2));
+                    int sec = Integer.parseInt(m.group(3));
+                    if (pm && h != 12) h += 12;
+                    else if (!pm && h == 12) h = 0;
+                    parsedTime = String.format("%02d:%02d:%02d", h, min, sec);
+                }
+            } catch (Exception e) { /* fall through */ }
+            if (parsedTime == null) parsedTime = time.trim();
+        }
+
+        if (parsedDate != null && parsedTime != null) return parsedDate + " " + parsedTime;
+        return parsedDate != null ? parsedDate : parsedTime;
+    }
 
     public File resultDirectoryPublic(String filename) {
         return fileMgmt.resultDirectory(filename);

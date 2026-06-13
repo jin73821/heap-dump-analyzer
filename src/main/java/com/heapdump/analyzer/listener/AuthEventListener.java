@@ -5,6 +5,7 @@ import com.heapdump.analyzer.repository.LoginHistoryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.event.AbstractAuthenticationFailureEvent;
 import org.springframework.security.authentication.event.InteractiveAuthenticationSuccessEvent;
 import org.springframework.security.core.Authentication;
@@ -66,7 +67,13 @@ public class AuthEventListener {
             h.setUsername(truncate(username, 100));
             h.setLoginAt(LocalDateTime.now());
             h.setStatus(LoginHistory.Status.FAILURE);
-            String reason = event.getException() != null ? event.getException().getMessage() : event.getClass().getSimpleName();
+            Exception ex = event.getException();
+            String reason;
+            if (ex instanceof DisabledException) {
+                reason = "비활성화된 계정";
+            } else {
+                reason = ex != null ? ex.getMessage() : event.getClass().getSimpleName();
+            }
             h.setFailureReason(truncate(reason, 200));
             if (req != null) {
                 h.setIp(truncate(extractIp(req), 64));

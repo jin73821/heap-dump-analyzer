@@ -24,6 +24,10 @@ public class MatParseResult {
     private int  classLoaderCount;
     private long gcRootCount;
 
+    // ── 힙 덤프 생성 시각 (MAT System Overview 에서 추출) ──
+    private String dumpDate;   // e.g. "2026. 5. 29."
+    private String dumpTime;   // e.g. "오후 6시 18분 53초 GMT+9"
+
     // ── 상위 메모리 객체 (Top Components) ────────────
     private List<MemoryObject> topMemoryObjects = new ArrayList<>();
 

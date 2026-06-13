@@ -2693,9 +2693,9 @@ function _sevSvg(fill, strokeAttr) {
 }
 var _SEV_CONFIG = {
     Critical: { bg:'linear-gradient(135deg,#FEF2F2,#FFE4E4)', border:'#FECACA', color:'#DC2626', icon: _sevSvg('#DC2626'), textColor:'#7F1D1D' },
-    High:     { bg:'linear-gradient(135deg,#FFF7ED,#FFEDD5)', border:'#FED7AA', color:'#EA580C', icon: _sevSvg('#F97316'), textColor:'#7C2D12' },
-    Medium:   { bg:'linear-gradient(135deg,#FFFBEB,#FEF3C7)', border:'#FDE68A', color:'#D97706', icon: _sevSvg('#EAB308'), textColor:'#78350F' },
-    Low:      { bg:'linear-gradient(135deg,#F0FDF4,#DCFCE7)', border:'#86EFAC', color:'#16A34A', icon: _sevSvg('#22C55E'), textColor:'#14532D' },
+    High:     { bg:'linear-gradient(135deg,#FEFCE8,#FEF9C3)', border:'#FDE047', color:'#CA8A04', icon: _sevSvg('#EAB308'), textColor:'#713F12' },
+    Medium:   { bg:'linear-gradient(135deg,#F0FDF4,#DCFCE7)', border:'#86EFAC', color:'#16A34A', icon: _sevSvg('#22C55E'), textColor:'#14532D' },
+    Low:      { bg:'linear-gradient(135deg,#EFF6FF,#DBEAFE)', border:'#93C5FD', color:'#2563EB', icon: _sevSvg('#3B82F6'), textColor:'#1E3A5F' },
     Unknown:  { bg:'linear-gradient(135deg,#F9FAFB,#F3F4F6)', border:'#E5E7EB', color:'#6B7280', icon: _sevSvg('#F3F4F6', ' stroke="#9CA3AF" stroke-width="1"'), textColor:'#374151' }
 };
 

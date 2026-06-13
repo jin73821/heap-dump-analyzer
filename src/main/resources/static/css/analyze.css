@@ -96,6 +96,7 @@
         }
         .sidebar-stat .stat-key { color:var(--text-secondary); }
         .sidebar-stat .stat-val { font-weight:700; color:var(--text); font-family:var(--mono); font-size:12px; }
+        .stat-dumptime { color:var(--text-secondary) !important; font-weight:600 !important; }
         /* OOM 감지 시 Heap Statistics 의 OOM 행 배경 붉은색 강조 */
         .sidebar-stat.sidebar-stat-oom {
             background:var(--danger-light); border:1px solid #fecaca; border-radius:6px;

@@ -1,26 +1,26 @@
-#ps -ef | grep heap-analyzer-2.0.8.jar | grep -v grep | awk '{print "kill -15 " $2}' | sh;
-#nohup java -jar /opt/genspark/webapp_dump/target/heap-analyzer-2.0.8.jar --server.port=18080 &
+#ps -ef | grep heap-analyzer-2.1.0.jar | grep -v grep | awk '{print "kill -15 " $2}' | sh;
+#nohup java -jar /opt/genspark/webapp_dump/target/heap-analyzer-2.1.0.jar --server.port=18080 &
 
-JAR=/opt/genspark/webapp_dump/target/heap-analyzer-2.0.8.jar
+JAR=/opt/genspark/webapp_dump/target/heap-analyzer-2.1.0.jar
 LOG_DIR=/opt/genspark/webapp_dump/logs
 NOHUP_LOG="$LOG_DIR/nohup.out"
 
 # 기존 프로세스 종료 — SIGTERM 후 완전 종료까지 wait
 # (안 기다리고 새로 띄우면, 이전 프로세스의 fd 가 살아 있어 nohup.out 끝쪽에
 #  종료 로그를 뒤늦게 기록 → tail 이 부팅 로그 대신 종료 로그만 보여주는 현상 발생)
-RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.0.8.jar | grep -v grep | awk '{print $2}')
+RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.1.0.jar | grep -v grep | awk '{print $2}')
 if [ -n "$RUNNING_PIDS" ]; then
     echo "[restart] SIGTERM 전송: PID=$RUNNING_PIDS — 종료 대기 중..."
     kill -15 $RUNNING_PIDS 2>/dev/null
     for i in $(seq 1 20); do
         sleep 1
-        REMAINING=$(ps -ef | grep heap-analyzer-2.0.8.jar | grep -v grep | awk '{print $2}')
+        REMAINING=$(ps -ef | grep heap-analyzer-2.1.0.jar | grep -v grep | awk '{print $2}')
         if [ -z "$REMAINING" ]; then
             echo "[restart] 이전 프로세스 종료 완료 (${i}s)"
             break
         fi
     done
-    REMAINING=$(ps -ef | grep heap-analyzer-2.0.8.jar | grep -v grep | awk '{print $2}')
+    REMAINING=$(ps -ef | grep heap-analyzer-2.1.0.jar | grep -v grep | awk '{print $2}')
     if [ -n "$REMAINING" ]; then
         echo "[restart] 20초 내 종료 실패: PID=$REMAINING — 기동 중단"
         echo "[restart] 강제 종료 후 다시 시도하세요: kill -9 $REMAINING"

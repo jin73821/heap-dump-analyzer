@@ -256,6 +256,10 @@ public class MatReportParser {
                 result.setClassLoaderCount((int) parseLong(digitsOnly(val)));
             } else if (key.contains("gc roots")) {
                 result.setGcRootCount(parseLong(digitsOnly(val)));
+            } else if (key.equals("date")) {
+                result.setDumpDate(val);
+            } else if (key.equals("time")) {
+                result.setDumpTime(val);
             }
         }
     }
@@ -410,6 +414,13 @@ public class MatReportParser {
             // "Number of GC roots"
             else if (keyL.contains("gc roots")) {
                 result.setGcRootCount(parseLong(digitsOnly(val)));
+            }
+            // "Date" / "Time" — 힙 덤프 생성 시각
+            else if (keyL.equals("date")) {
+                result.setDumpDate(val);
+            }
+            else if (keyL.equals("time")) {
+                result.setDumpTime(val);
             }
         }
 

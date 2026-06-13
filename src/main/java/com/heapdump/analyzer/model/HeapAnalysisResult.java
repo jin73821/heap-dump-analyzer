@@ -50,6 +50,9 @@ public class HeapAnalysisResult {
     private AnalysisStatus analysisStatus;
     private String errorMessage;
 
+    // ── 힙 덤프 생성 시각 (MAT System Overview 파싱값, e.g. "2026-05-29 18:18:53") ──
+    private String dumpCreationTime;
+
     // ── MAT 원본 HTML (상세 탭용) ─────────────────────
     private String overviewHtml;
     private String topComponentsHtml;
@@ -93,7 +96,8 @@ public class HeapAnalysisResult {
     public enum AnalysisStatus { SUCCESS, ERROR, RUNNING }
 
     // ── 포맷 헬퍼 ────────────────────────────────────
-    public String getFormattedFileSize()        { return formatBytes(fileSize); }
+    public String getFormattedFileSize()          { return formatBytes(fileSize); }
+    public String getFormattedOriginalFileSize()  { return formatBytes(originalFileSize); }
     public String getFormattedTotalHeapSize()   { return formatBytes(totalHeapSize); }
     public String getFormattedUsedHeapSize()    { return formatBytes(usedHeapSize); }
     public String getFormattedFreeHeapSize()    { return formatBytes(freeHeapSize); }

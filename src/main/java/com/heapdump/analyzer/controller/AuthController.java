@@ -12,7 +12,9 @@ public class AuthController {
     public String loginPage(@RequestParam(value = "error", required = false) String error,
                             @RequestParam(value = "logout", required = false) String logout,
                             Model model) {
-        if (error != null) {
+        if ("disabled".equals(error)) {
+            model.addAttribute("disabledMessage", "비활성화된 계정입니다. 관리자에게 문의하세요.");
+        } else if (error != null) {
             model.addAttribute("errorMessage", "아이디 또는 비밀번호가 올바르지 않습니다.");
         }
         if (logout != null) {
