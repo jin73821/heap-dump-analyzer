@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.time.Duration;
 
 /**
  * 시스템/설정/DB/MAT/디스크 관련 API (Phase 4B-2).
@@ -44,15 +45,18 @@ public class HeapSystemApiController {
     private final HeapDumpConfig config;
     private final DataSourceProperties dataSourceProperties;
     private final DataSource dataSource;
+    private final org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo;
 
     public HeapSystemApiController(HeapDumpAnalyzerService analyzerService,
                                    HeapDumpConfig config,
                                    DataSourceProperties dataSourceProperties,
-                                   DataSource dataSource) {
+                                   DataSource dataSource,
+                                   org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo) {
         this.analyzerService = analyzerService;
         this.config = config;
         this.dataSourceProperties = dataSourceProperties;
         this.dataSource = dataSource;
+        this.jdbcSessionRepo = jdbcSessionRepo;
     }
 
     @PostMapping("/api/settings/unreachable")
@@ -335,6 +339,44 @@ public class HeapSystemApiController {
         return ResponseEntity.ok(resp);
     }
 
+    @PostMapping("/api/settings/session-timeout")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setSessionTimeout(@RequestParam int hours) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        try {
+            analyzerService.setSessionTimeoutHours(hours);
+            // 런타임 즉시 반영: 이후 생성되는 신규 세션에 적용
+            jdbcSessionRepo.setDefaultMaxInactiveInterval(Duration.ofHours(hours));
+        } catch (IllegalArgumentException e) {
+            resp.put("success", false);
+            resp.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(resp);
+        }
+        resp.put("success", true);
+        resp.put("sessionTimeoutHours", hours);
+        resp.put("message", "세션 타임아웃이 " + hours + "시간으로 변경되었습니다. 기존 세션에는 다음 갱신 시 적용됩니다.");
+        logger.info("[Settings] Session timeout changed to {}h", hours);
+        return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/api/settings/dashboard-detect-days")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setDashboardDetectDays(@RequestParam int days) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        try {
+            analyzerService.setDashboardDetectDays(days);
+        } catch (IllegalArgumentException e) {
+            resp.put("success", false);
+            resp.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(resp);
+        }
+        resp.put("success", true);
+        resp.put("dashboardDetectDays", days);
+        resp.put("message", "대시보드 탐지 기간이 " + days + "일로 변경되었습니다.");
+        logger.info("[Settings] Dashboard detect days changed to {}", days);
+        return ResponseEntity.ok(resp);
+    }
+
     @GetMapping("/api/settings")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getSettings() {
@@ -343,6 +385,8 @@ public class HeapSystemApiController {
         settings.put("heapDumpDirectory",      analyzerService.getHeapDumpDirectory());
         settings.put("cachedResults",          analyzerService.getCachedResultCount());
         settings.put("allowAllExtensions",     analyzerService.isAllowAllExtensions());
+        settings.put("sessionTimeoutHours",    analyzerService.getSessionTimeoutHours());
+        settings.put("dashboardDetectDays",    analyzerService.getDashboardDetectDays());
 
         long maxUploadBytes = analyzerService.getMaxUploadSizeBytes();
         settings.put("maxUploadSizeBytes",     maxUploadBytes);

@@ -360,6 +360,39 @@
                         <button class="heap-btn-apply" style="padding:5px 12px;font-size:12px" onclick="openMaxUploadModal()">Apply</button>
                     </div>
                 </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Session timeout</div>
+                        <div class="setting-desc">로그인 세션 만료 시간. 변경 즉시 신규 세션에 적용됩니다. (1 ~ 6시간)</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <select id="sessionTimeoutSelect" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:100px"
+                                onchange="saveSessionTimeout(this.value)">
+                            <option value="1">1시간</option>
+                            <option value="2">2시간</option>
+                            <option value="3">3시간</option>
+                            <option value="4">4시간</option>
+                            <option value="5">5시간</option>
+                            <option value="6">6시간</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">Dashboard Detections 기간</div>
+                        <div class="setting-desc">대시보드 Detections 섹션의 표시 기간. 변경 즉시 적용됩니다.</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <select id="dashboardDetectDaysSelect" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:100px"
+                                onchange="saveDashboardDetectDays(this.value)">
+                            <option value="7">7일</option>
+                            <option value="14">14일</option>
+                            <option value="30">30일</option>
+                            <option value="60">60일</option>
+                            <option value="90">90일</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -867,6 +900,18 @@ function loadAllData(showToast) {
         var togExt = document.getElementById('togAllowAllExt');
         if (togExt) togExt.checked = !!d.allowAllExtensions;
 
+        // Session timeout
+        var stSel = document.getElementById('sessionTimeoutSelect');
+        if (stSel && d.sessionTimeoutHours != null) {
+            selectOption('sessionTimeoutSelect', String(d.sessionTimeoutHours));
+        }
+
+        // Dashboard detect days
+        var ddSel = document.getElementById('dashboardDetectDaysSelect');
+        if (ddSel && d.dashboardDetectDays != null) {
+            selectOption('dashboardDetectDaysSelect', String(d.dashboardDetectDays));
+        }
+
         // Max upload size
         if (d.maxUploadSizeGb != null) {
             var curEl = document.getElementById('sMaxUploadCurrent');
@@ -1272,6 +1317,18 @@ function saveScanInterval(val) {
         if (d.success) toast('스캔 주기 변경: ' + d.intervalSec + '초', 'success');
         else toast(d.message || '변경 실패', 'error');
     }).catch(function(e){ toast('요청 실패: ' + e.message, 'error'); });
+}
+
+function saveSessionTimeout(hours) {
+    Common.fetchJSON('/api/settings/session-timeout?hours=' + hours, {method: 'POST'})
+        .then(function(d) { toast(d.message || '세션 타임아웃 변경 완료', 'success'); })
+        .catch(function(e) { toast('변경 실패: ' + e.message, 'error'); });
+}
+
+function saveDashboardDetectDays(days) {
+    Common.fetchJSON('/api/settings/dashboard-detect-days?days=' + days, {method: 'POST'})
+        .then(function(d) { toast(d.message || '대시보드 탐지 기간 변경 완료', 'success'); })
+        .catch(function(e) { toast('변경 실패: ' + e.message, 'error'); });
 }
 
 // ── Database ───────────────────────────────────────────

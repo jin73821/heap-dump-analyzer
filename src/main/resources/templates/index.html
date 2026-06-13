@@ -798,15 +798,15 @@
             <!-- Detections (Daily) -->
             <div class="panel">
                 <div class="panel-hdr">
-                    <span class="panel-ttl">Detections &middot; 최근 14일 &middot; 서버별</span>
+                    <span class="panel-ttl">Detections &middot; 최근 <span th:text="${dashboardDetectDays}">14</span>일 &middot; 서버별</span>
                     <a th:href="@{/history}" class="more-link">View history →</a>
                 </div>
                 <div th:if="${kpiTotal14d > 0}">
                     <div class="det-kpi">
                         <div class="det-kpi-card">
-                            <div class="det-kpi-lbl">14d Total</div>
+                            <div class="det-kpi-lbl" th:text="${dashboardDetectDays} + 'd Total'">14d Total</div>
                             <div class="det-kpi-val" th:text="${kpiTotal14d}">0</div>
-                            <div class="det-kpi-sub">의심 누적 건수</div>
+                            <div class="det-kpi-sub">탐지 파일 건수</div>
                         </div>
                         <div class="det-kpi-card">
                             <div class="det-kpi-lbl">7d vs Prev</div>
@@ -827,12 +827,13 @@
                     <div class="det-breakdown" id="dailyBreakdown" style="display:none">
                         <div class="det-breakdown-hdr">
                             <span class="det-breakdown-ttl">Top Servers</span>
-                            <span class="det-breakdown-sub">최근 14일 점유율</span>
+                            <span class="det-breakdown-sub" th:text="'최근 ' + ${dashboardDetectDays} + '일 점유율'">최근 14일 점유율</span>
                         </div>
                         <div class="det-breakdown-list" id="dailyBreakdownList"></div>
                     </div>
                 </div>
-                <div th:unless="${kpiTotal14d > 0}" class="det-empty-chart">
+                <div th:unless="${kpiTotal14d > 0}" class="det-empty-chart"
+                     th:text="'최근 ' + ${dashboardDetectDays} + '일간 탐지된 의심 항목이 없습니다.'">
                     최근 14일간 탐지된 의심 항목이 없습니다.
                 </div>
             </div>
@@ -948,11 +949,12 @@
 
 <script th:inline="javascript">
 /*<![CDATA[*/
-var DAILY_DETECT   = /*[[${dailyDetections}]]*/ [];
-var SERVER_SERIES  = /*[[${serverSeries}]]*/ [];
-var MAX_UPLOAD_BYTES = /*[[${maxUploadSizeBytes}]]*/ 5368709120;
-var MAX_UPLOAD_GB    = /*[[${maxUploadSizeGb}]]*/ 5;
-var ALLOW_ALL_EXT    = /*[[${allowAllExtensions}]]*/ false;
+var DAILY_DETECT        = /*[[${dailyDetections}]]*/ [];
+var SERVER_SERIES       = /*[[${serverSeries}]]*/ [];
+var MAX_UPLOAD_BYTES    = /*[[${maxUploadSizeBytes}]]*/ 5368709120;
+var MAX_UPLOAD_GB       = /*[[${maxUploadSizeGb}]]*/ 5;
+var ALLOW_ALL_EXT       = /*[[${allowAllExtensions}]]*/ false;
+var DASHBOARD_DETECT_DAYS = /*[[${dashboardDetectDays}]]*/ 14;
 /*]]>*/
 </script>
 <script src="/js/upload-queue.js?v=2026-05-23a"></script>

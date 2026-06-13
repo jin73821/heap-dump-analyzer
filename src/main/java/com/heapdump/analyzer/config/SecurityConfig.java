@@ -35,7 +35,7 @@ public class SecurityConfig {
                 .requestMatchers("/admin/**", "/api/admin/**").hasRole("ADMIN")
 
                 // ── Settings 변경 API: ADMIN 전용 (USER 는 GET 으로 조회만 가능) ──
-                // 일반 General 설정 (compress / unreachable / DB 설정)
+                // 일반 General 설정 (compress / unreachable / DB 설정 / session timeout / dashboard days)
                 .requestMatchers(HttpMethod.POST, "/api/settings/**").hasRole("ADMIN")
                 // LLM 설정 mutation (분석/채팅/인사이트 액션과 분리)
                 .requestMatchers(HttpMethod.POST,

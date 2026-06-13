@@ -1,5 +1,93 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-13] Comparison 에러 처리 보강
+
+**백엔드:**
+- **`HeapDumpViewController.compareDumps()`**: diff 빌더 4종(buildClassDiffs/buildHistogramDiffs/buildSuspectDiffs/buildKpiDiff) 호출부에 try-catch 추가. 예외 발생 시 `logger.error()` 기록 + `model.addAttribute("error", ...)` → compare.html 에러 박스 표시. 기존에는 예외 시 HTTP 500이 반환되고 사용자에게 피드백 없었음.
+- **`HeapHistoryApiController.compareData()`**: 동일 4종 빌더 호출부에 try-catch 추가. 예외 발생 시 `logger.error()` 기록 + `{ success: false, error: "..." }` JSON으로 HTTP 500 응답. 프런트엔드 `.catch()` 경로가 명확한 에러 메시지를 받아 모달에 표시 가능.
+
+**프런트엔드 (`compare.html`):**
+- **LLM 분석 fetch**: `/api/llm/compare/analyze` 응답에 HTTP 상태 체크 추가 (`if (!r.ok) throw new Error('HTTP ' + r.status)`). 기존에는 서버 500 응답을 `.json()` 파싱 시도 후 `.catch()`로만 처리.
+- **AI 인사이트 조회 fetch** (`cmpAiLoadSaved`): `/api/llm/compare/insight` 응답에 HTTP 상태 체크 추가.
+- **AI 인사이트 삭제**: `alert()` 대신 `cmpAiSummarySet('error', { message: ... })`로 인라인 표시. 기존 `window.alert()` 제거.
+
+**대상 파일:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapHistoryApiController.java`
+- `src/main/resources/templates/compare.html`
+
+---
+
+## [2026-06-13] Comparison 파일 선택 UI 고도화 (모달 기반 파일 피커)
+
+**배경:** `/compare` 페이지에서 분석 완료 파일이 많아지면 `<select>` 드롭다운으로 파일을 찾기 불편. 서버명 표시 누락(API에 `serverName` 미포함) 문제도 함께 수정.
+
+**개선 내용:**
+- **모달 기반 파일 선택기**: Before/After 카드의 `<select>` 드롭다운 → "📁 파일을 선택하세요…" 버튼으로 교체. 클릭 시 Before/After 공용 파일 선택 모달이 열림.
+- **모달 기능**: 파일명 실시간 검색, 서버 필터 드롭다운(serverName별), 정렬(최신순/오래된순/Heap 큰순/파일명순), 파일 목록 테이블(파일명/서버/날짜/Heap/의심건수).
+- **반대쪽 선택 표시**: After에서 이미 선택한 파일은 Before 모달에서 회색 배지 "[After에서 선택]"으로 표시 + 클릭 불가.
+- **메타 정보 추가**: 카드에 HEAP/DATE/SERVER 외 **SUSPECT(의심건수)** 항목 추가. 선택 즉시 갱신.
+- **"변경" 버튼**: 파일 선택 완료 후 카드 헤드에 변경 버튼 표시.
+- **API 수정**: `/api/history` 응답에 `serverName` 및 `heapUsedBytes`(Heap 크기순 정렬용) 필드 추가. 기존 `serverName`이 응답에 누락되어 SERVER 필드가 항상 `—`였던 버그 수정.
+
+**대상 파일:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapHistoryApiController.java` — `/api/history` 응답 필드 추가
+- `src/main/resources/templates/compare.html` — Picker CSS/HTML/JS 전체 교체 + 모달 추가
+
+---
+
+## [2026-06-13] 세션 타임아웃 설정 + 대시보드 Detections 기간 설정 추가
+
+**기능 1 — Session Timeout 설정 (1~6시간):**
+- **점검**: `server.servlet.session.timeout=60m` + `spring.session.jdbc.cleanup-cron=0 */10 * * * *` 기존 설정은 올바르게 구성됨. 다만 런타임 변경 시 `JdbcIndexedSessionRepository.setDefaultMaxInactiveInterval()` 병행 호출 필요 — 이번에 추가.
+- **`HeapDumpAnalyzerService`**: `volatile int sessionTimeoutHours = 1` 필드 + getter/setter. `loadPersistedSettings()` / `persistSettings()` / `syncApplicationProperties()` 에 `sessionTimeoutHours` / `server.servlet.session.timeout` 동기화 추가.
+- **`HeapSystemApiController`**: `JdbcIndexedSessionRepository` 생성자 주입. `POST /api/settings/session-timeout?hours=N` — 서비스 setter + 세션 저장소 즉시 갱신.
+- **`settings.html`**: "Session timeout" 드롭다운 (1~6시간) 추가. 선택 즉시 저장.
+
+**기능 2 — 대시보드 Detections 기간 설정 (7/14/30/60/90일):**
+- **`HeapDumpAnalyzerService`**: `volatile int dashboardDetectDays = 14` 필드 + getter/setter. `persistSettings()` / `loadPersistedSettings()` 에 `dashboardDetectDays` 키 추가.
+- **`HeapSystemApiController`**: `POST /api/settings/dashboard-detect-days?days=N` 엔드포인트 추가.
+- **`HeapDumpViewController`**: `aggregateDetections(history, 14, 12)` → `aggregateDetections(history, dashDays, 12)`. `dashboardDetectDays` 모델 전달.
+- **`index.html`**: 패널 제목 / KPI 라벨 / 점유율 문구 / 빈 차트 문구 동적 기간 표시. `DASHBOARD_DETECT_DAYS` JS 변수 주입.
+- **`settings.html`**: "Dashboard Detections 기간" 드롭다운 (7/14/30/60/90일) 추가. 선택 즉시 저장.
+
+**영속화:** `settings.json` + `application.properties` 모두 동기화. 재시작 후 복원.
+
+**대상 파일:**
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapSystemApiController.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/resources/templates/settings.html`
+- `src/main/resources/templates/index.html`
+
+---
+
+## [2026-06-13] 최근 탐지 결과 / TOP SERVERS 중복 표시 버그 수정
+
+**버그:** `/history` 페이지에서 Suspect가 2개인 파일 2개를 분석하면, "최근 탐지 결과"에 파일당 2줄씩 4건이 표시되고 "TOP SERVERS" 카운트도 suspects 수(4)로 집계되는 문제.
+
+**원인:** `HeapHistoryAggregator.aggregateDetections()`에서 `DetectionRecentItem`을 `LeakSuspect` 반복문 **안에서** 생성해 파일 1개당 suspects 수만큼 행을 만들었음. 서버/일별 카운터도 suspects 합계로 누적.
+
+**수정:**
+- **`HeapHistoryAggregator.aggregateDetections()`**: `DetectionRecentItem` 생성을 LeakSuspect 루프 밖으로 이동 — 파일 1개당 1건 생성, 최대 severity suspect 대표 표시. 카운터(`dailyTotals`/`dailyServerBuckets`/`serverTotals`) 모두 `+1` 파일 단위로 변경. `dailySeverityBuckets`도 파일 최대 severity 기준으로 변경.
+- **`DetectionRecentItem`**: `suspectCount` 필드 추가 — 파일 내 총 suspects 수를 배지로 표시.
+- **`history.html`**: "의심 누적 건수" → "탐지 파일 건수". suspects > 1인 경우 "의심 N건" 배지 표시(Thymeleaf + JS).
+- **`index.html`**: 대시보드 14d Total KPI 라벨 동일하게 변경.
+
+**결과:**
+- "최근 탐지 결과": 파일 1건당 1행 (suspects 2개 이상이면 "의심 N건" 배지)
+- "TOP SERVERS": 파일 수 기준 집계 (suspects 수 아님)
+- 차트 클릭 드릴다운: 기존 동작 유지 (파일 단위, 변경 없음)
+- 대시보드 "총 N suspects": 유지 (변경 없음)
+
+**대상 파일:**
+- `src/main/java/com/heapdump/analyzer/service/HeapHistoryAggregator.java`
+- `src/main/java/com/heapdump/analyzer/model/dto/DetectionRecentItem.java`
+- `src/main/resources/templates/history.html`
+- `src/main/resources/templates/index.html`
+
+---
+
 ## [2026-06-13] Observer 모드 — "이미 분석 중" 화면 실시간 진행 상황 표시
 
 **기능:** `ALREADY_ANALYZING` 상태 수신 시 진행 카드(타임라인·진행바)와 MAT CLI 로그 카드를 실시간으로 채워 Observer UX 개선.

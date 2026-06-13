@@ -146,10 +146,12 @@ public class HeapHistoryApiController {
             item.put("lastModified",  h.getLastModified());
             item.put("status",        h.getStatus());
             item.put("fileDeleted",   h.isFileDeleted());
+            item.put("serverName",    h.getServerName());
             if (!"NOT_ANALYZED".equals(h.getStatus())) {
-                item.put("suspectCount",  h.getSuspectCount());
-                item.put("analysisTime",  h.getAnalysisTime());
-                item.put("heapUsed",      h.getHeapUsed());
+                item.put("suspectCount",   h.getSuspectCount());
+                item.put("analysisTime",   h.getAnalysisTime());
+                item.put("heapUsed",       h.getHeapUsed());
+                item.put("heapUsedBytes",  h.getHeapUsedBytes());
             }
             history.add(item);
         }
@@ -331,10 +333,17 @@ public class HeapHistoryApiController {
         resp.put("success", true);
         resp.put("base",   baseMeta);
         resp.put("target", targetMeta);
-        resp.put("kpi",            aggregator.buildKpiDiff(baseResult, targetResult));
-        resp.put("classDiffs",     aggregator.buildClassDiffs(baseResult, targetResult, 50));
-        resp.put("histogramDiffs", aggregator.buildHistogramDiffs(baseResult, targetResult, 30));
-        resp.put("suspectDiffs",   aggregator.buildSuspectDiffs(baseResult, targetResult));
+        try {
+            resp.put("kpi",            aggregator.buildKpiDiff(baseResult, targetResult));
+            resp.put("classDiffs",     aggregator.buildClassDiffs(baseResult, targetResult, 50));
+            resp.put("histogramDiffs", aggregator.buildHistogramDiffs(baseResult, targetResult, 30));
+            resp.put("suspectDiffs",   aggregator.buildSuspectDiffs(baseResult, targetResult));
+        } catch (Exception ex) {
+            logger.error("[CompareData] 비교 데이터 구성 실패 base={} target={}: {}", base, target, ex.getMessage(), ex);
+            resp.put("success", false);
+            resp.put("error", "비교 데이터 구성 중 오류가 발생했습니다: " + ex.getMessage());
+            return ResponseEntity.status(500).body(resp);
+        }
         return ResponseEntity.ok(resp);
     }
 }

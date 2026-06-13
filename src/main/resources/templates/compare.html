@@ -488,6 +488,55 @@
         }
         .cmp-picker-actions button:hover { filter: brightness(.97); }
         .cmp-picker-actions button:disabled { opacity:.5; cursor:not-allowed; box-shadow:none; }
+
+        /* ── 파일 선택 모달 ───────────────────────────── */
+        .fp-modal { width:780px; max-width:96vw; max-height:85vh;
+                    display:flex; flex-direction:column; padding:0; overflow:hidden; }
+        .fp-modal-head { display:flex; justify-content:space-between; align-items:center;
+                         padding:16px 20px; border-bottom:1px solid #E5E7EB; flex-shrink:0; }
+        .fp-modal-head > span { font-size:15px; font-weight:700; }
+        .fp-close-btn  { background:none; border:none; font-size:18px; cursor:pointer; color:#6B7280; padding:0 4px; }
+        .fp-search-bar { display:flex; gap:8px; padding:12px 20px; flex-shrink:0;
+                         border-bottom:1px solid #F3F4F6; flex-wrap:wrap; }
+        .fp-search-bar input[type="text"] {
+            flex:1; min-width:160px; padding:7px 10px;
+            border:1px solid #D1D5DB; border-radius:8px; font-size:13px; outline:none; }
+        .fp-search-bar input:focus, .fp-search-bar select:focus { border-color:#3B82F6; }
+        .fp-search-bar select { padding:7px 10px; border:1px solid #D1D5DB;
+            border-radius:8px; font-size:13px; background:#fff; outline:none; }
+        .fp-count      { padding:6px 20px 2px; font-size:12px; color:#6B7280; flex-shrink:0; }
+        .fp-table-wrap { overflow-y:auto; flex:1; }
+        .fp-table      { width:100%; border-collapse:collapse; font-size:12px; }
+        .fp-table th   { position:sticky; top:0; background:#F9FAFB; padding:8px 12px;
+                         font-size:11px; font-weight:600; color:#6B7280;
+                         border-bottom:1px solid #E5E7EB; white-space:nowrap; }
+        .fp-table td   { padding:9px 12px; border-bottom:1px solid #F9FAFB; vertical-align:middle; }
+        .fp-row        { cursor:pointer; }
+        .fp-row:hover  { background:#EFF6FF; }
+        .fp-row.fp-selected { background:#DBEAFE; font-weight:600; }
+        .fp-row.fp-used     { opacity:.5; cursor:not-allowed; background:#F9FAFB; }
+        .fp-used-badge { font-size:10px; background:#FEF3C7; border:1px solid #FCD34D;
+                         color:#92400E; padding:2px 6px; border-radius:6px; margin-left:6px;
+                         vertical-align:middle; white-space:nowrap; }
+        .fp-modal-foot { padding:12px 20px; border-top:1px solid #F3F4F6; flex-shrink:0;
+                         display:flex; justify-content:flex-end; }
+        .fp-modal-foot button {
+            padding:8px 18px; border-radius:8px; cursor:pointer;
+            font-size:13px; font-weight:700; border:1px solid #E5E7EB; background:#fff; }
+        .fp-modal-foot button:hover { background:#F3F4F6; }
+        /* 카드 내 파일 선택 버튼 */
+        .cmp-pick-btn { width:100%; padding:12px 14px; border:1.5px dashed #CBD5E1;
+            border-radius:12px; background:#FAFAFA; font-size:13px; color:#64748B;
+            cursor:pointer; text-align:left;
+            transition:border-color .15s, background .15s;
+            word-break:break-all; line-height:1.4; }
+        .cmp-pick-btn:hover    { border-color:#3B82F6; background:#EFF6FF; color:#1D4ED8; }
+        .cmp-pick-btn.has-value { border-style:solid; border-color:#93C5FD; background:#fff;
+                                   color:#0F172A; font-weight:600; }
+        .cmp-change-btn { font-size:11px; padding:4px 10px; border:1px solid #E2E8F0;
+            border-radius:8px; background:#fff; color:#6B7280; cursor:pointer; white-space:nowrap; }
+        .cmp-change-btn:hover { border-color:#3B82F6; color:#2563EB; }
+
         @media (max-width: 1024px) {
             .cmp-result-summary, .cmp-picker-layout { grid-template-columns: 1fr; }
             .kpi-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1037,29 +1086,39 @@
                     <div class="cmp-picker-card" data-role="base">
                         <div class="cmp-picker-card-head">
                             <div class="cmp-picker-card-label">기준 데이터 · Before</div>
-                            <span class="cmp-picker-badge" data-badge>미선택</span>
+                            <div style="display:flex;gap:6px;align-items:center">
+                                <button class="cmp-change-btn" style="display:none"
+                                        onclick="openFilePicker('base')">변경</button>
+                                <span class="cmp-picker-badge" data-badge>미선택</span>
+                            </div>
                         </div>
-                        <select id="cmpBase" class="cmp-picker-select" onchange="updatePickerMeta(this)">
-                            <option value="">파일을 선택하세요…</option>
-                        </select>
+                        <button class="cmp-pick-btn" id="cmpBaseBtn"
+                                onclick="openFilePicker('base')">📁 파일을 선택하세요…</button>
+                        <input type="hidden" id="cmpBase" value="">
                         <div class="cmp-picker-meta">
-                            <div class="meta-row"><span class="icn">HEAP</span><span data-meta="heap" class="empty">—</span></div>
-                            <div class="meta-row"><span class="icn">DATE</span><span data-meta="date" class="empty">—</span></div>
-                            <div class="meta-row"><span class="icn">SERVER</span><span data-meta="server" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">HEAP</span><span id="cmpBaseMeta-heap" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">DATE</span><span id="cmpBaseMeta-date" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">SERVER</span><span id="cmpBaseMeta-server" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">SUSPECT</span><span id="cmpBaseMeta-suspect" class="empty">—</span></div>
                         </div>
                     </div>
                     <div class="cmp-picker-card" data-role="target">
                         <div class="cmp-picker-card-head">
                             <div class="cmp-picker-card-label">비교 데이터 · After</div>
-                            <span class="cmp-picker-badge" data-badge>미선택</span>
+                            <div style="display:flex;gap:6px;align-items:center">
+                                <button class="cmp-change-btn" style="display:none"
+                                        onclick="openFilePicker('target')">변경</button>
+                                <span class="cmp-picker-badge" data-badge>미선택</span>
+                            </div>
                         </div>
-                        <select id="cmpTarget" class="cmp-picker-select" onchange="updatePickerMeta(this)">
-                            <option value="">파일을 선택하세요…</option>
-                        </select>
+                        <button class="cmp-pick-btn" id="cmpTargetBtn"
+                                onclick="openFilePicker('target')">📁 파일을 선택하세요…</button>
+                        <input type="hidden" id="cmpTarget" value="">
                         <div class="cmp-picker-meta">
-                            <div class="meta-row"><span class="icn">HEAP</span><span data-meta="heap" class="empty">—</span></div>
-                            <div class="meta-row"><span class="icn">DATE</span><span data-meta="date" class="empty">—</span></div>
-                            <div class="meta-row"><span class="icn">SERVER</span><span data-meta="server" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">HEAP</span><span id="cmpTargetMeta-heap" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">DATE</span><span id="cmpTargetMeta-date" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">SERVER</span><span id="cmpTargetMeta-server" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">SUSPECT</span><span id="cmpTargetMeta-suspect" class="empty">—</span></div>
                         </div>
                     </div>
                 </div>
@@ -1090,61 +1149,191 @@
         </div>
     </div>
 
+    <!-- 파일 선택 모달 (Base/Target 공용) -->
+    <div id="fpModalOv" class="modal-ov"
+         onclick="if(event.target===this)closeFpModal()">
+        <div class="modal-box fp-modal">
+            <div class="fp-modal-head">
+                <span id="fpModalTitle">파일 선택</span>
+                <button class="fp-close-btn" onclick="closeFpModal()">✕</button>
+            </div>
+            <div class="fp-search-bar">
+                <input type="text" id="fpSearch" placeholder="파일명 검색…"
+                       oninput="applyPickerFilters()">
+                <select id="fpServerFilter" onchange="applyPickerFilters()">
+                    <option value="">서버: 전체</option>
+                </select>
+                <select id="fpSort" onchange="applyPickerFilters()">
+                    <option value="date-desc">최신순</option>
+                    <option value="date-asc">오래된순</option>
+                    <option value="heap-desc">Heap 큰순</option>
+                    <option value="name-asc">파일명순</option>
+                </select>
+            </div>
+            <div id="fpCount" class="fp-count"></div>
+            <div class="fp-table-wrap">
+                <table class="fp-table">
+                    <thead><tr>
+                        <th>파일명</th><th>서버</th><th>날짜</th>
+                        <th>Heap</th><th>의심</th>
+                    </tr></thead>
+                    <tbody id="fpTbody"></tbody>
+                </table>
+            </div>
+            <div class="fp-modal-foot">
+                <button onclick="closeFpModal()">취소</button>
+            </div>
+        </div>
+    </div>
+
     <script th:if="${baseResult == null and error == null}">
-    (function() {
+    var _fpFiles = [];
+    var _fpRole  = null;
+
+    (function initPicker() {
         fetch('/api/history').then(function(r) { return r.json(); }).then(function(items) {
-            var analyzed = (items || []).filter(function(it) { return it.status === 'SUCCESS' && it.fileDeleted !== true; });
+            _fpFiles = (items || []).filter(function(it) {
+                return it.status === 'SUCCESS' && it.fileDeleted !== true;
+            });
+            _fpFiles.sort(function(a, b) { return (b.lastModified || 0) - (a.lastModified || 0); });
+
             var loading = document.getElementById('cmpPickerLoading');
-            var empty = document.getElementById('cmpPickerEmpty');
-            var form = document.getElementById('cmpPickerForm');
+            var empty   = document.getElementById('cmpPickerEmpty');
+            var form    = document.getElementById('cmpPickerForm');
             loading.style.display = 'none';
-            if (analyzed.length < 2) { empty.style.display = ''; return; }
+            if (_fpFiles.length < 2) { empty.style.display = ''; return; }
             form.style.display = '';
-            var base = document.getElementById('cmpBase');
-            var tgt  = document.getElementById('cmpTarget');
-            analyzed.forEach(function(it) {
-                var dateStr = it.lastModified
-                    ? new Date(it.lastModified).toISOString().substring(0,16).replace('T', ' ')
-                    : '';
-                [base, tgt].forEach(function(sel) {
-                    var o = document.createElement('option');
-                    o.value = it.filename;
-                    o.textContent = it.filename;
-                    o.dataset.heap   = it.heapUsed || it.formattedUsedHeapSize || '';
-                    o.dataset.date   = dateStr;
-                    o.dataset.server = it.serverName || '';
-                    sel.appendChild(o);
-                });
+
+            var servers = [];
+            _fpFiles.forEach(function(f) {
+                if (f.serverName && servers.indexOf(f.serverName) < 0) servers.push(f.serverName);
+            });
+            servers.sort();
+            var sel = document.getElementById('fpServerFilter');
+            servers.forEach(function(s) {
+                var o = document.createElement('option');
+                o.value = s; o.textContent = s; sel.appendChild(o);
             });
         }).catch(function() {
             document.getElementById('cmpPickerLoading').style.display = 'none';
-            document.getElementById('cmpPickerEmpty').style.display = '';
-            document.getElementById('cmpPickerEmpty').textContent = '파일 목록을 불러오지 못했습니다.';
+            var empty = document.getElementById('cmpPickerEmpty');
+            empty.style.display = '';
+            empty.textContent = '파일 목록을 불러오지 못했습니다.';
         });
     })();
 
-    function updatePickerMeta(sel) {
-        var card = sel.closest('.cmp-picker-card');
-        if (!card) return;
-        var opt = sel.options[sel.selectedIndex];
-        var fields = ['heap', 'date', 'server'];
-        var hasValue = !!sel.value && opt;
-        fields.forEach(function(key) {
-            var span = card.querySelector('[data-meta="' + key + '"]');
-            if (!span) return;
-            var val = hasValue ? (opt.dataset[key] || '') : '';
-            if (val) {
-                span.textContent = val;
-                span.classList.remove('empty');
-            } else {
-                span.textContent = '—';
-                span.classList.add('empty');
-            }
+    function openFilePicker(role) {
+        _fpRole = role;
+        document.getElementById('fpModalTitle').textContent =
+            role === 'base' ? '기준 파일 선택 (Before)' : '비교 파일 선택 (After)';
+        document.getElementById('fpSearch').value = '';
+        document.getElementById('fpServerFilter').value = '';
+        document.getElementById('fpSort').value = 'date-desc';
+        applyPickerFilters();
+        document.getElementById('fpModalOv').classList.add('open');
+        setTimeout(function() { document.getElementById('fpSearch').focus(); }, 80);
+    }
+
+    function closeFpModal() {
+        document.getElementById('fpModalOv').classList.remove('open');
+        _fpRole = null;
+    }
+
+    function applyPickerFilters() {
+        var q    = (document.getElementById('fpSearch').value || '').toLowerCase();
+        var srv  = document.getElementById('fpServerFilter').value;
+        var sort = document.getElementById('fpSort').value;
+        var files = _fpFiles.filter(function(f) {
+            if (q   && f.filename.toLowerCase().indexOf(q) < 0) return false;
+            if (srv && (f.serverName || '') !== srv)              return false;
+            return true;
         });
-        card.classList.toggle('selected', hasValue);
-        var badge = card.querySelector('[data-badge]');
-        if (badge) badge.textContent = hasValue ? '선택 완료' : '미선택';
+        if      (sort === 'date-asc')  files.sort(function(a,b) { return (a.lastModified||0)-(b.lastModified||0); });
+        else if (sort === 'heap-desc') files.sort(function(a,b) { return (b.heapUsedBytes||0)-(a.heapUsedBytes||0); });
+        else if (sort === 'name-asc')  files.sort(function(a,b) { return a.filename.localeCompare(b.filename,'ko'); });
+        else                           files.sort(function(a,b) { return (b.lastModified||0)-(a.lastModified||0); });
+        document.getElementById('fpCount').textContent =
+            '총 ' + _fpFiles.length + '개 · 표시: ' + files.length + '개';
+        renderPickerTable(files);
+    }
+
+    function renderPickerTable(files) {
+        var otherRole  = _fpRole === 'base' ? 'target' : 'base';
+        var currentSel = document.getElementById('cmp' + fpCap(_fpRole)).value;
+        var otherSel   = document.getElementById('cmp' + fpCap(otherRole)).value;
+        var tbody = document.getElementById('fpTbody');
+        tbody.innerHTML = '';
+        if (files.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#9CA3AF;padding:24px">검색 결과가 없습니다.</td></tr>';
+            return;
+        }
+        files.forEach(function(f) {
+            var isSel  = f.filename === currentSel;
+            var isUsed = f.filename === otherSel;
+            var dateStr = f.lastModified
+                ? new Date(f.lastModified).toISOString().substring(0,16).replace('T', ' ')
+                : '—';
+            var usedLabel = isUsed
+                ? '<span class="fp-used-badge">' + (otherRole === 'base' ? 'Before' : 'After') + '에서 선택</span>'
+                : '';
+            var tr = document.createElement('tr');
+            tr.className = 'fp-row' + (isSel ? ' fp-selected' : '') + (isUsed ? ' fp-used' : '');
+            tr.innerHTML =
+                '<td>' + fpEsc(f.filename) + usedLabel + '</td>' +
+                '<td>' + fpEsc(f.serverName || '—') + '</td>' +
+                '<td style="white-space:nowrap">' + dateStr + '</td>' +
+                '<td>' + fpEsc(f.heapUsed || '—') + '</td>' +
+                '<td style="text-align:right">' + (f.suspectCount != null ? f.suspectCount : '—') + '</td>';
+            if (!isUsed) {
+                (function(file) { tr.onclick = function() { pickFile(file); }; })(f);
+            }
+            tbody.appendChild(tr);
+        });
+    }
+
+    function pickFile(f) {
+        var role = _fpRole;
+        var dateStr = f.lastModified
+            ? new Date(f.lastModified).toISOString().substring(0,16).replace('T', ' ')
+            : '';
+        closeFpModal();
+        applyCardSelection(role, f.filename, f.heapUsed || '', dateStr,
+                           f.serverName || '', f.suspectCount);
+    }
+
+    function applyCardSelection(role, filename, heap, date, server, suspects) {
+        document.getElementById('cmp' + fpCap(role)).value = filename;
+
+        var btn = document.getElementById('cmp' + fpCap(role) + 'Btn');
+        if (btn) {
+            btn.textContent = filename || '📁 파일을 선택하세요…';
+            btn.classList.toggle('has-value', !!filename);
+        }
+        var card = btn ? btn.closest('.cmp-picker-card') : null;
+        if (card) {
+            var badge     = card.querySelector('[data-badge]');
+            var changeBtn = card.querySelector('.cmp-change-btn');
+            if (badge)     badge.textContent = filename ? '선택 완료' : '미선택';
+            if (changeBtn) changeBtn.style.display = filename ? '' : 'none';
+            card.classList.toggle('selected', !!filename);
+        }
+        setPickerMeta(role, 'heap',    heap    || '—');
+        setPickerMeta(role, 'date',    date    || '—');
+        setPickerMeta(role, 'server',  server  || '—');
+        setPickerMeta(role, 'suspect', suspects != null ? suspects + '건' : '—');
         updatePickerReadyState();
+    }
+
+    function setPickerMeta(role, key, val) {
+        var span = document.getElementById('cmp' + fpCap(role) + 'Meta-' + key);
+        if (!span) return;
+        span.textContent = val;
+        span.classList.toggle('empty', val === '—');
+    }
+
+    function fpCap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+    function fpEsc(s) {
+        return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
     }
 
     function updatePickerReadyState() {
@@ -1154,12 +1343,12 @@
         var runBtn = document.getElementById('cmpRunBtn');
         if (runBtn) runBtn.disabled = !ready;
 
-        var baseStep = document.getElementById('cmpStepBase');
+        var baseStep   = document.getElementById('cmpStepBase');
         var targetStep = document.getElementById('cmpStepTarget');
-        var readyStep = document.getElementById('cmpStepReady');
-        if (baseStep) baseStep.classList.toggle('done', !!b);
+        var readyStep  = document.getElementById('cmpStepReady');
+        if (baseStep)   baseStep.classList.toggle('done', !!b);
         if (targetStep) targetStep.classList.toggle('done', !!t);
-        if (readyStep) readyStep.classList.toggle('done', ready);
+        if (readyStep)  readyStep.classList.toggle('done', ready);
 
         resetPickerHint();
     }
@@ -1178,6 +1367,7 @@
             hint.textContent = '서로 다른 파일 2개를 선택하면 비교를 실행할 수 있습니다.';
         }
     }
+
     function showPickerError(msg) {
         var hint = document.getElementById('cmpPickerHint');
         if (!hint) return;
@@ -1508,7 +1698,10 @@
     function cmpAiLoadSaved() {
         var url = '/api/llm/compare/insight?base=' + encodeURIComponent(CMP_BASE)
                 + '&target=' + encodeURIComponent(CMP_TARGET);
-        fetch(url).then(function(r){ return r.json(); }).then(function(d) {
+        fetch(url).then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        }).then(function(d) {
             if (d && d.found) {
                 cmpAiShowResult(d, true);
                 var sev = ((d.data && d.data.severity) || d.severity || '').toString().toUpperCase();
@@ -1640,7 +1833,10 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ base: CMP_BASE, target: CMP_TARGET, prompt: prompt, save: true })
             });
-        }).then(function(r) { return r.json(); }).then(function(result) {
+        }).then(function(r) {
+            if (!r.ok) throw new Error('LLM 분석 요청 실패 (HTTP ' + r.status + ')');
+            return r.json();
+        }).then(function(result) {
             cmpAiSetStep(4);
             cmpAiStopTimer();
             _cmpAiInFlight = false;
@@ -1742,7 +1938,10 @@
         var url = '/api/llm/compare/insight?base=' + encodeURIComponent(CMP_BASE)
                 + '&target=' + encodeURIComponent(CMP_TARGET);
         fetch(url, { method: 'DELETE' })
-            .then(function(r){ return r.json(); })
+            .then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
             .then(function(d) {
                 if (d && d.success) {
                     document.getElementById('cmpAiResult').innerHTML = '';
@@ -1751,9 +1950,11 @@
                     document.getElementById('cmpAiSavedChip').style.display = 'none';
                     cmpAiSummarySet(_cmpAiLlmEnabled ? 'empty' : 'disabled');
                 } else {
-                    alert('삭제 실패');
+                    cmpAiSummarySet('error', { message: '인사이트 삭제 실패' });
                 }
-            }).catch(function(e){ alert('삭제 실패: ' + e.message); });
+            }).catch(function(e) {
+                cmpAiSummarySet('error', { message: '인사이트 삭제 실패: ' + e.message });
+            });
     }
 
     // 초기 진입: Result Summary AI 요약과 AI 탭의 저장된 결과를 즉시 로드

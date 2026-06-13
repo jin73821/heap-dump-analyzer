@@ -99,7 +99,8 @@ public class HeapDumpViewController {
                 .collect(Collectors.toSet());
         model.addAttribute("errorFiles", errorFiles);
 
-        DetectionAggregate agg = aggregator.aggregateDetections(history, 14, 12);
+        int dashDays = analyzerService.getDashboardDetectDays();
+        DetectionAggregate agg = aggregator.aggregateDetections(history, dashDays, 12);
         model.addAttribute("criticalCount", agg.getCriticalCount());
         model.addAttribute("highCount", agg.getHighCount());
         model.addAttribute("mediumCount", agg.getMediumCount());
@@ -110,6 +111,7 @@ public class HeapDumpViewController {
 
         model.addAttribute("dailyDetections", agg.getDailyDetections());
         model.addAttribute("serverSeries", agg.getServerSeries());
+        model.addAttribute("dashboardDetectDays", dashDays);
         model.addAttribute("kpiTotal14d", agg.getTotal());
         model.addAttribute("kpiLast7d", agg.getLast7d());
         model.addAttribute("kpiPrev7d", agg.getPrev7d());
@@ -588,10 +590,20 @@ public class HeapDumpViewController {
         model.addAttribute("targetFile", target);
 
         // ── Compare 빌더 4종 호출 ────────────────────────────────────────
-        List<ClassDiff>     classDiffs     = aggregator.buildClassDiffs(baseResult, targetResult, 50);
-        List<HistogramDiff> histogramDiffs = aggregator.buildHistogramDiffs(baseResult, targetResult, 30);
-        List<SuspectDiff>   suspectDiffs   = aggregator.buildSuspectDiffs(baseResult, targetResult);
-        KpiDiff             kpi            = aggregator.buildKpiDiff(baseResult, targetResult);
+        List<ClassDiff>     classDiffs;
+        List<HistogramDiff> histogramDiffs;
+        List<SuspectDiff>   suspectDiffs;
+        KpiDiff             kpi;
+        try {
+            classDiffs     = aggregator.buildClassDiffs(baseResult, targetResult, 50);
+            histogramDiffs = aggregator.buildHistogramDiffs(baseResult, targetResult, 30);
+            suspectDiffs   = aggregator.buildSuspectDiffs(baseResult, targetResult);
+            kpi            = aggregator.buildKpiDiff(baseResult, targetResult);
+        } catch (Exception ex) {
+            logger.error("[Compare] 비교 데이터 구성 실패 base={} target={}: {}", base, target, ex.getMessage(), ex);
+            model.addAttribute("error", "비교 데이터 구성 중 오류가 발생했습니다: " + ex.getMessage());
+            return "compare";
+        }
 
         model.addAttribute("kpi", kpi);
         model.addAttribute("classDiffs", classDiffs);

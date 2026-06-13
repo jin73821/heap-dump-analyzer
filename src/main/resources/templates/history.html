@@ -223,6 +223,7 @@
         }
         .det-recent-server.local { background: #F3F4F6; color: #6B7280; }
         .det-recent-date { font-size: 12px; color: #9CA3AF; margin-left: auto; }
+        .det-recent-susp { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: #F3F4F6; color: #6B7280; font-weight: 600; }
         .det-recent-title {
             font-size: 14px; color: #1F2937; font-weight: 500;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -412,7 +413,7 @@
             <div class="det-kpi-card">
                 <div class="det-kpi-lbl" id="detKpiTotalLbl">14d Total</div>
                 <div class="det-kpi-val" id="detKpiTotal" th:text="${detectKpiTotal}">0</div>
-                <div class="det-kpi-sub">의심 누적 건수</div>
+                <div class="det-kpi-sub">탐지 파일 건수</div>
             </div>
             <div class="det-kpi-card">
                 <div class="det-kpi-lbl">7d vs Prev</div>
@@ -462,6 +463,8 @@
                               th:text="${r.serverName}">prod-1</span>
                         <span th:unless="${r.serverName != null}"
                               class="det-recent-server local">Local</span>
+                        <span th:if="${r.suspectCount > 1}" class="det-recent-susp"
+                              th:text="'의심 ' + ${r.suspectCount} + '건'">의심 2건</span>
                         <span class="det-recent-date" th:text="${r.dateLabel}">2026-05-07</span>
                     </div>
                     <div class="det-recent-title" th:text="${r.title}"
@@ -1340,6 +1343,9 @@ initRows();
             var serverHtml = r.serverName
                 ? '<span class="det-recent-server">' + escapeHtml(r.serverName) + '</span>'
                 : '<span class="det-recent-server local">Local</span>';
+            var suspBadge = (r.suspectCount > 1)
+                ? '<span class="det-recent-susp">의심 ' + r.suspectCount + '건</span>'
+                : '';
             return '<div class="det-recent-row' + deletedCls + '"' +
                    ' data-filename="' + escapeHtml(r.filename) + '"' +
                    ' data-deleted="' + (r.fileDeleted ? 'true' : 'false') + '"' +
@@ -1347,6 +1353,7 @@ initRows();
                    '<div class="det-recent-top">' +
                      '<span class="det-recent-sev dds-' + sev + '">' + escapeHtml(sev.toUpperCase()) + '</span>' +
                      serverHtml +
+                     suspBadge +
                      '<span class="det-recent-date">' + escapeHtml(r.dateLabel || '') + '</span>' +
                    '</div>' +
                    '<div class="det-recent-title" title="' + escapeHtml(r.title || '') + '">' +

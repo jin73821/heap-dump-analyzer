@@ -10,6 +10,7 @@ public class DetectionRecentItem {
     private long    analyzedAtEpoch;
     private String  dateLabel;
     private boolean fileDeleted;
+    private int     suspectCount;
 
     public String  getFilename()        { return filename; }
     public void    setFilename(String v) { filename = v; }
@@ -29,4 +30,6 @@ public class DetectionRecentItem {
     public void    setDateLabel(String v) { dateLabel = v; }
     public boolean isFileDeleted()      { return fileDeleted; }
     public void    setFileDeleted(boolean v) { fileDeleted = v; }
+    public int     getSuspectCount()    { return suspectCount; }
+    public void    setSuspectCount(int v)   { suspectCount = v; }
 }

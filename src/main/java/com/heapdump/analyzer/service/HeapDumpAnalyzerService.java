@@ -102,6 +102,12 @@ public class HeapDumpAnalyzerService {
     // 확장자 화이트리스트(.hprof/.bin/.dump + .gz) 우회 — 기본 false (검증 유지)
     private volatile boolean allowAllExtensions = false;
 
+    // 세션 타임아웃 (시간 단위, 1~6h). 기본 1h (60m → application.properties 초기값)
+    private volatile int sessionTimeoutHours = 1;
+
+    // 대시보드 Detections 표시 기간 (일 단위). 기본 14일
+    private volatile int dashboardDetectDays = 14;
+
     // LLM 런타임 설정은 LlmConfigService 로 이동 (Phase 7-2)
     // RAG 런타임 설정은 RagConfigService 로 이동 (Phase 7-3)
     // DEFAULT_CHAT_SYSTEM_PROMPT 는 LlmConfigService 내부 상수 (Phase 7-2)
@@ -1222,6 +1228,22 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
+    public int  getSessionTimeoutHours()          { return sessionTimeoutHours; }
+    public void setSessionTimeoutHours(int hours) {
+        if (hours < 1 || hours > 6) throw new IllegalArgumentException("세션 타임아웃은 1~6시간 사이여야 합니다.");
+        this.sessionTimeoutHours = hours;
+        logger.info("session_timeout_hours set to {}", hours);
+        persistSettings();
+    }
+
+    public int  getDashboardDetectDays()          { return dashboardDetectDays; }
+    public void setDashboardDetectDays(int days) {
+        if (days < 7 || days > 90) throw new IllegalArgumentException("대시보드 탐지 기간은 7~90일 사이여야 합니다.");
+        this.dashboardDetectDays = days;
+        logger.info("dashboard_detect_days set to {}", days);
+        persistSettings();
+    }
+
     public long getMaxUploadSizeBytes()           { return maxUploadSizeBytes; }
     public void setMaxUploadSizeBytes(long bytes) {
         if (bytes <= 0) {
@@ -1334,6 +1356,27 @@ public class HeapDumpAnalyzerService {
                 }
             }
 
+            if (saved.containsKey("sessionTimeoutHours")) {
+                Object val = saved.get("sessionTimeoutHours");
+                int h = (val instanceof Number) ? ((Number) val).intValue() : 1;
+                if (h >= 1 && h <= 6) {
+                    this.sessionTimeoutHours = h;
+                    logger.info("[Settings] Restored sessionTimeoutHours={}", h);
+                }
+            }
+
+            if (saved.containsKey("dashboardDetectDays")) {
+                Object val = saved.get("dashboardDetectDays");
+                int d = (val instanceof Number) ? ((Number) val).intValue() : 14;
+                int[] allowed = {7, 14, 30, 60, 90};
+                boolean valid = false;
+                for (int a : allowed) if (a == d) { valid = true; break; }
+                if (valid) {
+                    this.dashboardDetectDays = d;
+                    logger.info("[Settings] Restored dashboardDetectDays={}", d);
+                }
+            }
+
             // LLM/RAG 설정 복원 — 각 ConfigService 에 위임
             llmConfig.applyFromSettings(saved);
             ragConfig.applyFromSettings(saved);
@@ -1383,6 +1426,8 @@ public class HeapDumpAnalyzerService {
             settings.put("dominatorRefsEnabled", dominatorRefsEnabled);
             settings.put("maxUploadSizeBytes", maxUploadSizeBytes);
             settings.put("allowAllExtensions", allowAllExtensions);
+            settings.put("sessionTimeoutHours", sessionTimeoutHours);
+            settings.put("dashboardDetectDays", dashboardDetectDays);
             // LLM/RAG 설정 — 각 ConfigService 에 위임
             llmConfig.collectSettings(settings);
             ragConfig.collectSettings(settings);
@@ -1416,6 +1461,7 @@ public class HeapDumpAnalyzerService {
             String multipartSize = formatBytesAsSpringSize(maxUploadSizeBytes);
             updates.put("spring.servlet.multipart.max-file-size", multipartSize);
             updates.put("spring.servlet.multipart.max-request-size", multipartSize);
+            updates.put("server.servlet.session.timeout", sessionTimeoutHours + "h");
             // LLM/RAG 설정 — 각 ConfigService 에 위임
             llmConfig.collectApplicationProperties(updates);
             ragConfig.collectApplicationProperties(updates);

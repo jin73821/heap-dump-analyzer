@@ -394,6 +394,8 @@ public class HeapHistoryAggregator {
             String analysisNameCached = null;
 
             int fc = 0, fh = 0, fm = 0, fl = 0;
+            String maxSev = null;
+            String maxSevTitle = null;
             for (LeakSuspect s : r.getLeakSuspects()) {
                 String sev = s.getSeverity() != null ? s.getSeverity().toLowerCase() : "medium";
                 switch (sev) {
@@ -402,26 +404,31 @@ public class HeapHistoryAggregator {
                     case "low":      fl++; lowCount++; break;
                     default:         fm++; mediumCount++; break;
                 }
-                if (inPeriod) {
-                    if (analysisNameCached == null) {
-                        analysisNameCached = buildAnalysisName(h.getFilename(), h.getServerName(), h.getAnalyzedAtEpoch());
-                    }
-                    DetectionRecentItem ri = new DetectionRecentItem();
-                    ri.setFilename(h.getFilename());
-                    ri.setAnalysisName(analysisNameCached);
-                    ri.setServerName(h.getServerName());
-                    ri.setSeverity(sev);
+                if (maxSev == null || severityWeight(sev) > severityWeight(maxSev)) {
+                    maxSev = sev;
                     String t = s.getTitle();
                     if (t == null || t.isEmpty()) {
                         t = (s.getCategory() != null && !s.getCategory().isEmpty()) ? s.getCategory() : "Suspect";
                     }
-                    ri.setTitle(t);
-                    ri.setCategory(s.getCategory());
-                    ri.setAnalyzedAtEpoch(h.getAnalyzedAtEpoch());
-                    ri.setDateLabel(dateLabelForRecent);
-                    ri.setFileDeleted(h.isFileDeleted());
-                    recent.add(ri);
+                    maxSevTitle = t;
                 }
+            }
+            // 파일 단위로 최근 탐지 결과 1건 생성 (최대 severity 대표 표시)
+            if (inPeriod && maxSev != null) {
+                if (analysisNameCached == null) {
+                    analysisNameCached = buildAnalysisName(h.getFilename(), h.getServerName(), h.getAnalyzedAtEpoch());
+                }
+                DetectionRecentItem ri = new DetectionRecentItem();
+                ri.setFilename(h.getFilename());
+                ri.setAnalysisName(analysisNameCached);
+                ri.setServerName(h.getServerName());
+                ri.setSeverity(maxSev);
+                ri.setTitle(maxSevTitle);
+                ri.setSuspectCount(fc + fh + fm + fl);
+                ri.setAnalyzedAtEpoch(h.getAnalyzedAtEpoch());
+                ri.setDateLabel(dateLabelForRecent);
+                ri.setFileDeleted(h.isFileDeleted());
+                recent.add(ri);
             }
             DetectionSummaryItem di = new DetectionSummaryItem();
             di.setFilename(h.getFilename());
@@ -434,15 +441,19 @@ public class HeapHistoryAggregator {
             detectionItems.add(di);
 
             if (inPeriod) {
-                int suspectsForFile = fc + fh + fm + fl;
                 String sname = h.getServerName();
                 if (sname == null || sname.trim().isEmpty()) sname = UNKNOWN_SERVER;
+                // 파일 단위 집계 (+1 per file, Suspect 수 아님)
                 dailyServerBuckets.computeIfAbsent(day, k -> new HashMap<>())
-                                  .merge(sname, suspectsForFile, Integer::sum);
-                dailyTotals.merge(day, suspectsForFile, Integer::sum);
-                serverTotals.merge(sname, suspectsForFile, Integer::sum);
+                                  .merge(sname, 1, Integer::sum);
+                dailyTotals.merge(day, 1, Integer::sum);
+                serverTotals.merge(sname, 1, Integer::sum);
+                // 심각도 차트도 파일 최대 severity 기준 (1파일 = 1버킷)
                 int[] sb = dailySeverityBuckets.computeIfAbsent(day, k -> new int[4]);
-                sb[0] += fc; sb[1] += fh; sb[2] += fm; sb[3] += fl;
+                if      (fc > 0) sb[0]++;
+                else if (fh > 0) sb[1]++;
+                else if (fm > 0) sb[2]++;
+                else if (fl > 0) sb[3]++;
             }
         }
 
