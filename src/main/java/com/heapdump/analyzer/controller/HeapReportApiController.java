@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.ByteArrayOutputStream;
@@ -29,10 +30,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -45,6 +51,16 @@ public class HeapReportApiController {
     private static final Logger logger = LoggerFactory.getLogger(HeapReportApiController.class);
 
     private static final Set<String> ALLOWED_REPORT_TYPES = Set.of("overview", "top_components", "suspects", "dominator_tree");
+
+    // Dominator Refs SSE: LRU 캐시(최대 200 항목) + 파일별 동시 MAT 쿼리 제한(최대 2)
+    private static final Map<String, Map<String, Object>> DOM_REF_CACHE =
+            Collections.synchronizedMap(new LinkedHashMap<String, Map<String, Object>>(201, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Map<String, Object>> eldest) {
+                    return size() > 200;
+                }
+            });
+    private static final ConcurrentHashMap<String, Semaphore> DOM_SEMAPHORES = new ConcurrentHashMap<>();
 
     private final HeapDumpAnalyzerService analyzerService;
     private final PdfReportService pdfReportService;
@@ -349,68 +365,123 @@ public class HeapReportApiController {
                         + "style=\"opacity:0.4;cursor:not-allowed\"");
     }
 
-    // ── Dominator Tree 행 클릭 시점 lazy on-demand 참조 추출 ──────────────────
-    // path2gc  (incoming = GC root까지의 경로) + show_retained_set (outgoing = 보유 객체)
-    // 각 요청별 격리 temp 디렉토리 사용 → 동시 클릭 시 Query.zip 충돌 없음.
-    @GetMapping(value = "/api/dominator-refs/{filename:.+}", produces = MediaType.APPLICATION_JSON_VALUE)
+    // ── Dominator Tree 행 클릭 시점 lazy on-demand 참조 추출 (SSE 스트리밍) ─────
+    // path2gc (incoming) → SSE "incoming" 이벤트 전송 → show_retained_set (outgoing)
+    // → SSE "outgoing" 이벤트 전송 → SSE "done" 이벤트 → 연결 종료.
+    // 클라이언트 disconnect 즉시 abort 가능; 동시 요청은 파일별 Semaphore(2) 제한.
+    @GetMapping(value = "/api/dominator-refs/{filename:.+}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> dominatorRefs(@PathVariable String filename,
-                                                              @RequestParam("address") String address) {
-        Map<String, Object> resp = new HashMap<>();
+    public SseEmitter dominatorRefsSse(@PathVariable String filename,
+                                        @RequestParam("address") String address) {
+        SseEmitter emitter = new SseEmitter(200_000L); // 90s×2 + 여유
+
+        // 사전 검증 (동기)
+        final String safe;
         try {
-            String safe = FilenameValidator.validate(filename);
-            if (address == null || !address.matches("0x[0-9a-fA-F]+")) {
-                resp.put("error", "유효하지 않은 객체 주소");
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(resp);
-            }
-            HeapAnalysisResult cached = analyzerService.getCachedResult(safe);
-            if (cached == null) {
-                resp.put("error", "분석 결과 캐시 없음 — 재분석 필요");
-                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(resp);
-            }
+            safe = FilenameValidator.validate(filename);
+        } catch (IllegalArgumentException e) {
+            sendDomRefError(emitter, e.getMessage());
+            return emitter;
+        }
+        if (address == null || !address.matches("0x[0-9a-fA-F]+")) {
+            sendDomRefError(emitter, "유효하지 않은 객체 주소");
+            return emitter;
+        }
 
-            String base = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
-            File resultDir = analyzerService.resultDirectoryPublic(safe);
-            if (!resultDir.exists()) {
-                resp.put("error", "결과 디렉토리 없음");
-                return ResponseEntity.status(HttpStatus.NOT_FOUND).body(resp);
-            }
+        final String addrHex   = address.substring(2);
+        final String cacheKey  = safe + ":" + address;
+        final String addrFinal = address;
 
-            // sourceHprof 탐색: dumpfiles > tmp > .gz 압축해제
-            String addrHex = address.substring(2);
-            String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
-            File originalHprof = new File(dumpfiles, safe);
-            File tmpHprof = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
-                                      base + ".hprof");
-            File sourceHprof = null;
-            if (originalHprof.exists()) {
-                sourceHprof = originalHprof;
-            } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
-                sourceHprof = tmpHprof;
-            } else {
-                File gzFile = new File(dumpfiles, safe + ".gz");
-                if (gzFile.exists()) {
-                    if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
-                    logger.info("[Dominator Refs] Decompressing {} → {} (1-time)",
-                            gzFile.getName(), tmpHprof.getName());
-                    try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
-                            java.nio.file.Files.newInputStream(gzFile.toPath()));
-                         java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
-                        byte[] buf = new byte[64 * 1024];
-                        int n;
-                        while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
-                    }
-                    sourceHprof = tmpHprof;
-                } else {
-                    resp.put("error", "원본 hprof 파일을 찾을 수 없습니다");
-                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(resp);
+        // 클린업 리소스 추적 (onTimeout/onError 와 finally 블록 중 1회만 실행)
+        AtomicBoolean cleaned    = new AtomicBoolean(false);
+        AtomicReference<Semaphore> semRef    = new AtomicReference<>();
+        AtomicReference<File>      workDirRef = new AtomicReference<>();
+
+        Runnable cleanup = () -> {
+            if (cleaned.compareAndSet(false, true)) {
+                Semaphore s = semRef.get();
+                if (s != null) s.release();
+                File dir = workDirRef.get();
+                if (dir != null) {
+                    try { analyzerService.deleteDirectoryPublic(dir); } catch (Exception ignore) {}
                 }
             }
+        };
+        emitter.onTimeout(cleanup);
+        emitter.onError(e -> cleanup.run());
 
-            // 요청별 격리 temp 디렉토리 — Query.zip 충돌 완전 차단
-            File refWorkDir = new File(resultDir, ".dom_ref_" + addrHex + "_" + System.currentTimeMillis());
-            refWorkDir.mkdirs();
+        Thread t = new Thread(() -> {
             try {
+                // 캐시 HIT → 즉시 반환
+                Map<String, Object> hit = DOM_REF_CACHE.get(cacheKey);
+                if (hit != null) {
+                    emitter.send(SseEmitter.event().name("incoming")
+                            .data(hit.get("incoming"), MediaType.APPLICATION_JSON));
+                    emitter.send(SseEmitter.event().name("outgoing")
+                            .data(hit.get("outgoing"), MediaType.APPLICATION_JSON));
+                    emitter.send(SseEmitter.event().name("done").data("{}"));
+                    emitter.complete();
+                    logger.info("[Dominator Refs SSE] cache-hit {} for {}", addrFinal, safe);
+                    return;
+                }
+
+                // 분석 결과 캐시 + 결과 디렉토리 확인
+                HeapAnalysisResult cachedResult = analyzerService.getCachedResult(safe);
+                if (cachedResult == null) {
+                    sendDomRefError(emitter, "분석 결과 캐시 없음 — 재분석 필요");
+                    return;
+                }
+                File resultDir = analyzerService.resultDirectoryPublic(safe);
+                if (!resultDir.exists()) {
+                    sendDomRefError(emitter, "결과 디렉토리 없음");
+                    return;
+                }
+
+                // 파일별 동시 MAT 쿼리 Semaphore (최대 2)
+                Semaphore sem = DOM_SEMAPHORES.computeIfAbsent(safe, k -> new Semaphore(2));
+                if (!sem.tryAcquire(10, TimeUnit.SECONDS)) {
+                    sendDomRefError(emitter, "서버가 바쁩니다 — 잠시 후 재시도하세요");
+                    return;
+                }
+                semRef.set(sem);
+
+                // sourceHprof 탐색: dumpfiles > tmp > .gz 압축해제
+                String base      = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
+                String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
+                File originalHprof = new File(dumpfiles, safe);
+                File tmpHprof      = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
+                                               base + ".hprof");
+                File sourceHprof   = null;
+                if (originalHprof.exists()) {
+                    sourceHprof = originalHprof;
+                } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
+                    sourceHprof = tmpHprof;
+                } else {
+                    File gzFile = new File(dumpfiles, safe + ".gz");
+                    if (gzFile.exists()) {
+                        if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
+                        logger.info("[Dominator Refs SSE] Decompressing {} → {} (1-time)",
+                                gzFile.getName(), tmpHprof.getName());
+                        try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
+                                java.nio.file.Files.newInputStream(gzFile.toPath()));
+                             java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
+                            byte[] buf = new byte[64 * 1024];
+                            int n;
+                            while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
+                        }
+                        sourceHprof = tmpHprof;
+                    } else {
+                        sendDomRefError(emitter, "원본 hprof 파일을 찾을 수 없습니다");
+                        return;
+                    }
+                }
+
+                // 요청별 격리 temp 디렉토리
+                File refWorkDir = new File(resultDir,
+                        ".dom_ref_" + addrHex + "_" + System.currentTimeMillis());
+                refWorkDir.mkdirs();
+                workDirRef.set(refWorkDir);
+
                 // index/threads 파일 복사
                 File[] idxFiles = resultDir.listFiles((d, n) ->
                         n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
@@ -427,46 +498,69 @@ public class HeapReportApiController {
                 try {
                     java.nio.file.Files.createSymbolicLink(workHprof.toPath(), sourceHprof.toPath());
                 } catch (IOException linkErr) {
-                    logger.warn("[Dominator Refs] symlink 실패, copy 폴백: {}", linkErr.getMessage());
+                    logger.warn("[Dominator Refs SSE] symlink 실패, copy 폴백: {}", linkErr.getMessage());
                     java.nio.file.Files.copy(sourceHprof.toPath(), workHprof.toPath());
                 }
 
-                long timeout = 90L;
                 File queryZip = new File(refWorkDir, base + "_Query.zip");
 
-                // 1) Incoming: path to GC roots — 컬럼: Object+addr | Ref.Field | Shallow | Retained
+                // 1) Incoming: path to GC roots
                 analyzerService.runMatSingleQuery(workHprof.getAbsolutePath(), refWorkDir,
-                        "path2gc " + address, timeout);
+                        "path2gc " + addrFinal, 90L);
                 List<com.heapdump.analyzer.model.DominatorRefEntry> incoming = queryZip.exists()
                         ? analyzerService.getParser().parseRefZipPath2gc(queryZip, 50)
                         : Collections.emptyList();
                 if (queryZip.exists()) queryZip.delete();
 
-                // 2) Outgoing: retained set — 컬럼: Class Name | #Objects | Shallow | Retained
+                // incoming 먼저 전송 (클라이언트가 즉시 렌더)
+                emitter.send(SseEmitter.event().name("incoming")
+                        .data(incoming, MediaType.APPLICATION_JSON));
+
+                // 2) Outgoing: retained set
                 analyzerService.runMatSingleQuery(workHprof.getAbsolutePath(), refWorkDir,
-                        "show_retained_set " + address, timeout);
+                        "show_retained_set " + addrFinal, 90L);
                 List<com.heapdump.analyzer.model.DominatorRefEntry> outgoing = queryZip.exists()
                         ? analyzerService.getParser().parseRefZipRetained(queryZip, 50)
                         : Collections.emptyList();
 
-                resp.put("address", address);
-                resp.put("incoming", incoming);
-                resp.put("outgoing", outgoing);
-                logger.info("[Dominator Refs] {} incoming={}, outgoing={} for {}",
-                        address, incoming.size(), outgoing.size(), safe);
-                return ResponseEntity.ok(resp);
-            } finally {
-                try { analyzerService.deleteDirectoryPublic(refWorkDir); }
+                emitter.send(SseEmitter.event().name("outgoing")
+                        .data(outgoing, MediaType.APPLICATION_JSON));
+
+                // 캐시에 저장
+                Map<String, Object> result = new HashMap<>();
+                result.put("incoming", incoming);
+                result.put("outgoing", outgoing);
+                DOM_REF_CACHE.put(cacheKey, result);
+
+                emitter.send(SseEmitter.event().name("done").data("{}"));
+                emitter.complete();
+                logger.info("[Dominator Refs SSE] {} incoming={}, outgoing={} for {}",
+                        addrFinal, incoming.size(), outgoing.size(), safe);
+
+            } catch (IllegalStateException ise) {
+                // 클라이언트 disconnect (정상)
+                logger.debug("[Dominator Refs SSE] client disconnected ({}): {}", addrFinal, ise.getMessage());
+            } catch (Exception e) {
+                logger.error("[Dominator Refs SSE] 추출 실패 (filename={}, addr={}): {}",
+                        filename, addrFinal, e.getMessage(), e);
+                try { sendDomRefError(emitter, "참조 추출 실패: " + e.getMessage()); }
                 catch (Exception ignore) {}
+            } finally {
+                cleanup.run();
             }
-        } catch (IllegalArgumentException e) {
-            resp.put("error", e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(resp);
-        } catch (Exception e) {
-            logger.error("[Dominator Refs] 추출 실패 (filename={}, addr={}): {}",
-                    filename, address, e.getMessage(), e);
-            resp.put("error", "참조 추출 실패: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(resp);
-        }
+        });
+        t.setDaemon(true);
+        t.setName("dom-refs-" + addrHex);
+        t.start();
+
+        return emitter;
+    }
+
+    private static void sendDomRefError(SseEmitter emitter, String msg) {
+        try {
+            emitter.send(SseEmitter.event().name("refs-error")
+                    .data(Map.of("error", msg), MediaType.APPLICATION_JSON));
+            emitter.complete();
+        } catch (Exception ignore) {}
     }
 }

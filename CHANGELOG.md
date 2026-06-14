@@ -1,5 +1,24 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-15] Dominator Tree 인바운드/아웃바운드 참조 SSE 스트리밍 + LRU 캐시 개편
+
+**대상:** `controller/HeapReportApiController.java`, `static/js/analyze.js`
+
+### 핵심 변경
+- **SSE 스트리밍 전환** (`GET /api/dominator-refs/{filename}`): 기존 단일 JSON 블로킹 응답(`ResponseEntity<Map>`) → `SseEmitter` (TEXT_EVENT_STREAM). MAT `path2gc` 완료 즉시 `incoming` 이벤트 전송, `show_retained_set` 완료 후 `outgoing` 이벤트 전송 → 브라우저가 약 2–3초 간격으로 단계적으로 렌더링.
+- **서버 측 LRU 캐시** (`DOM_REF_CACHE`, max 200): 동일 주소 재클릭 시 MAT 재실행 없이 캐시 결과를 즉시 두 이벤트로 반환.
+- **동시 요청 제한** (`DOM_SEMAPHORES`, `Semaphore(2)` per filename): 같은 덤프 파일에 동시 MAT 쿼리를 최대 2개로 제한. 10초 내 획득 실패 시 `refs-error` 이벤트.
+- **클린업 보장** (`AtomicBoolean cleaned`): 클라이언트 disconnect (`onTimeout`/`onError`) 와 daemon thread `finally` 블록 중 정확히 1회만 Semaphore 해제 + workDir 삭제.
+
+### Frontend 변경 (analyze.js)
+- **`_domAbortCtrl`** (AbortController): 다른 행 클릭 시 진행 중인 fetch 즉시 abort → 이전 요청 결과가 현재 열린 행에 표시되는 현상 차단.
+- **`_closeDomDetail()`**: abort 로직 추가.
+- **`_buildDomDetailLoadingHtml()`** 신규: incoming/outgoing 섹션을 `.dom-incoming-body` / `.dom-outgoing-body` 로 독립 구분 → SSE 이벤트별 개별 업데이트.
+- **`toggleDomDetail()`**: `fetch` → `fetch + ReadableStream SSE 파서`로 교체. `incoming` 이벤트 도착 시 incoming 테이블 즉시 렌더, `outgoing` 이벤트 도착 시 outgoing 테이블 렌더. `AbortError` 는 정상 취소로 처리.
+- **에러 이벤트**: 서버 측 오류는 `refs-error` 이름 SSE 이벤트로 전달 (`error` 네이밍은 EventSource 내장 오류와 충돌 방지).
+
+---
+
 ## [2026-06-14] 지역변수 포함 스택트레이스 모달 파서 & 렌더링 고도화
 
 **대상:** `static/js/analyze.js`, `static/css/analyze.css`, `templates/analyze.html`

@@ -830,8 +830,10 @@ function filterDomTree() {
 var _domDetailRow = null;
 var _domOpenAddr  = null;
 var _domCache     = {};   // addr → { incoming, outgoing }
+var _domAbortCtrl = null; // 진행 중인 SSE fetch AbortController
 
 function _closeDomDetail() {
+    if (_domAbortCtrl) { _domAbortCtrl.abort(); _domAbortCtrl = null; }
     if (_domDetailRow && _domDetailRow.parentNode) {
         var owner = _domDetailRow.previousElementSibling;
         _domDetailRow.parentNode.removeChild(_domDetailRow);
@@ -876,18 +878,15 @@ function _escapeHtml(s) {
 
 function _buildDomDetailHtml(data, loading, err) {
     if (loading) {
-        return '<div class="dom-refs-loading">'
-             + '<span class="dom-spinner"></span> '
-             + '인바운드/아웃바운드 참조 추출 중... (MAT 쿼리 ~5-10초)'
-             + '</div>';
+        // 레거시 경로 — 실제로는 _buildDomDetailLoadingHtml() 로 대체됨
+        return _buildDomDetailLoadingHtml();
     }
     if (err) {
         return '<div class="dom-refs-error">' + _escapeHtml(err) + '</div>';
     }
     var inHtml  = _renderDomRefsTable(data ? data.incoming : null, '인바운드 참조 없음 (GC root 경로)');
     var outHtml = _renderDomRefsTable(data ? data.outgoing : null, '아웃바운드 참조 없음 (retained set)');
-    return ''
-        + '<div class="dom-refs-wrap">'
+    return '<div class="dom-refs-wrap">'
         +   '<div class="dom-refs-section">'
         +     '<h4>&#8592; Incoming — GC Root 참조 경로 (이 객체가 살아있는 이유)</h4>'
         +     inHtml
@@ -896,6 +895,20 @@ function _buildDomDetailHtml(data, loading, err) {
         +     '<h4>&#8594; Outgoing — Retained Set (클래스별 집계, 이 객체가 보유하는 객체)</h4>'
         +     outHtml
         +   '</div>'
+        + '</div>';
+}
+
+// SSE 점진적 로딩용 — incoming/outgoing 섹션을 독립적으로 업데이트 가능한 구조
+function _buildDomDetailLoadingHtml() {
+    return '<div class="dom-refs-wrap">'
+        + '<div class="dom-refs-section">'
+        +   '<h4>&#8592; Incoming — GC Root 참조 경로 (이 객체가 살아있는 이유)</h4>'
+        +   '<div class="dom-incoming-body"><span class="dom-spinner"></span> path2gc 쿼리 실행 중...</div>'
+        + '</div>'
+        + '<div class="dom-refs-section">'
+        +   '<h4>&#8594; Outgoing — Retained Set (클래스별 집계, 이 객체가 보유하는 객체)</h4>'
+        +   '<div class="dom-outgoing-body"><span class="dom-spinner"></span> incoming 완료 후 시작...</div>'
+        + '</div>'
         + '</div>';
 }
 
@@ -914,7 +927,7 @@ function toggleDomDetail(row) {
     var addr = row.dataset.address;
     if (!addr) return;
     if (_domOpenAddr === addr) { _closeDomDetail(); return; }
-    _closeDomDetail();
+    _closeDomDetail();  // 이전 SSE fetch도 abort됨
 
     var detail = document.createElement('tr');
     detail.className = 'dom-detail-row';
@@ -926,30 +939,94 @@ function toggleDomDetail(row) {
     _domDetailRow = detail;
     _domOpenAddr  = addr;
 
+    // 캐시 HIT → 즉시 렌더
     if (_domCache[addr]) {
         td.innerHTML = _buildDomDetailHtml(_domCache[addr], false, null);
         return;
     }
 
-    td.innerHTML = _buildDomDetailHtml(null, true, null);
+    // SSE 점진적 로딩: incoming 테이블을 먼저 보여주고 outgoing은 추후 업데이트
+    td.innerHTML = _buildDomDetailLoadingHtml();
+
     var url = '/api/dominator-refs/' + encodeURIComponent(FILENAME)
             + '?address=' + encodeURIComponent(addr);
-    fetch(url, { credentials: 'same-origin' })
-        .then(function(r) {
-            return r.json().then(function(j) { return { ok: r.ok, body: j }; });
-        })
-        .then(function(res) {
-            if (_domOpenAddr !== addr) return;  // 이미 다른 행으로 이동
-            if (res.ok) {
-                _domCache[addr] = res.body;
-                td.innerHTML = _buildDomDetailHtml(res.body, false, null);
-            } else {
-                td.innerHTML = _buildDomDetailHtml(null, false, (res.body && res.body.error) || '요청 실패');
+
+    var ctrl = new AbortController();
+    _domAbortCtrl = ctrl;
+
+    var accumulated = {};
+    var sseBuffer = '';
+    var sseCurrentEvent = '';
+
+    function processSseLine(line) {
+        if (line.indexOf('event:') === 0) {
+            sseCurrentEvent = line.substring(6).trim();
+        } else if (line.indexOf('data:') === 0) {
+            var data = line.substring(5).trim();
+            handleSseEvent(sseCurrentEvent, data);
+            sseCurrentEvent = '';
+        }
+    }
+
+    function handleSseEvent(event, data) {
+        if (_domOpenAddr !== addr) return;
+        try {
+            var parsed = JSON.parse(data);
+            if (event === 'incoming') {
+                accumulated.incoming = parsed;
+                var inEl = td.querySelector('.dom-incoming-body');
+                if (inEl) inEl.innerHTML = _renderDomRefsTable(parsed, '인바운드 참조 없음 (GC root 경로)');
+                var outEl = td.querySelector('.dom-outgoing-body');
+                if (outEl) outEl.innerHTML = '<span class="dom-spinner"></span> show_retained_set 쿼리 실행 중...';
+            } else if (event === 'outgoing') {
+                accumulated.outgoing = parsed;
+                var outEl2 = td.querySelector('.dom-outgoing-body');
+                if (outEl2) outEl2.innerHTML = _renderDomRefsTable(parsed, '아웃바운드 참조 없음 (retained set)');
+            } else if (event === 'done') {
+                _domCache[addr] = accumulated;
+                if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
+            } else if (event === 'refs-error') {
+                var errMsg = parsed.error || '참조 추출 실패';
+                var outErrEl = td.querySelector('.dom-outgoing-body');
+                if (outErrEl) outErrEl.innerHTML = '<div class="dom-refs-error">' + _escapeHtml(errMsg) + '</div>';
+                var inErrEl = td.querySelector('.dom-incoming-body');
+                if (inErrEl && !accumulated.incoming) inErrEl.innerHTML = '';
+                if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
             }
+        } catch (x) {}
+    }
+
+    fetch(url, { credentials: 'same-origin', signal: ctrl.signal })
+        .then(function(response) {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            var reader = response.body.getReader();
+            var decoder = new TextDecoder();
+
+            function pump() {
+                return reader.read().then(function(result) {
+                    if (result.done) {
+                        if (sseBuffer.trim()) {
+                            sseBuffer.split('\n').forEach(function(l) { processSseLine(l); });
+                        }
+                        return;
+                    }
+                    sseBuffer += decoder.decode(result.value, { stream: true });
+                    var lines = sseBuffer.split('\n');
+                    sseBuffer = lines.pop();
+                    lines.forEach(function(l) { processSseLine(l); });
+                    return pump();
+                });
+            }
+            return pump();
         })
         .catch(function(e) {
+            if (e.name === 'AbortError') return;  // 사용자가 다른 행 클릭 → 정상 취소
             if (_domOpenAddr !== addr) return;
-            td.innerHTML = _buildDomDetailHtml(null, false, '네트워크 오류: ' + e.message);
+            var outEl = td.querySelector('.dom-outgoing-body');
+            if (outEl) outEl.innerHTML = '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
+            var inEl = td.querySelector('.dom-incoming-body');
+            if (inEl && !accumulated.incoming) inEl.innerHTML = '';
+            if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
         });
 }
 
