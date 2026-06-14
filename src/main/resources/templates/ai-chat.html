@@ -127,12 +127,12 @@
         .chat-messages::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
         .chat-input-area {
             padding: 16px 24px; border-top: 1px solid #E5E7EB; background: #fff;
-            display: flex; gap: 10px; align-items: flex-end;
+            display: flex; gap: 10px; align-items: center;
             max-width: 800px; width: 100%; margin: 0 auto; box-sizing: border-box;
         }
         .chat-textarea {
             flex: 1; resize: none; border: 1px solid #D1D5DB; border-radius: 12px;
-            padding: 12px 16px; font-size: 14px; line-height: 1.5; max-height: 120px;
+            padding: 9px 16px; font-size: 14px; line-height: 1.5; max-height: 120px;
             overflow-y: auto; font-family: 'Segoe UI', sans-serif; outline: none;
             transition: border-color .2s;
         }
@@ -191,6 +191,33 @@
 
         /* ── Responsive ─────────────────────────────── */
         @media (min-width: 1024px) { .topbar-title { font-size: 18px; } }
+
+        /* ── File Attach ─────────────────────────────── */
+        .chat-attach-btn {
+            width: 40px; height: 40px; border-radius: 50%; border: 1px solid #D1D5DB;
+            background: #fff; cursor: pointer; display: flex; align-items: center;
+            justify-content: center; flex-shrink: 0; color: #6B7280; transition: background .15s;
+        }
+        .chat-attach-btn:hover { background: #F3F4F6; }
+        .chat-attach-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+        .chat-attach-btn.has-files { border-color: #3B82F6; color: #3B82F6; background: #EFF6FF; }
+        .attach-preview-bar {
+            display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+            padding: 8px 24px; border-top: 1px solid #F3F4F6; background: #fff;
+            max-width: 800px; width: 100%; margin: 0 auto; box-sizing: border-box;
+        }
+        .attach-preview-item {
+            position: relative; width: 52px; height: 52px; border-radius: 8px;
+            border: 1px solid #E5E7EB; overflow: hidden; flex-shrink: 0;
+        }
+        .attach-preview-item img { width: 100%; height: 100%; object-fit: cover; }
+        .attach-preview-remove {
+            position: absolute; top: 2px; right: 2px; width: 16px; height: 16px;
+            border-radius: 50%; background: rgba(0,0,0,.5); color: #fff; border: none;
+            font-size: 10px; cursor: pointer; display: flex; align-items: center;
+            justify-content: center; line-height: 1;
+        }
+        .chat-msg-image { max-width: 200px; max-height: 150px; border-radius: 8px; margin-top: 6px; display: block; }
         @media (max-width: 900px) {
             .topbar { left: 0; }
             .chat-layout { left: 0; }
@@ -267,7 +294,14 @@
             <div style="font-size:13px">좌측에서 채팅을 선택하거나 새 채팅을 시작하세요.</div>
         </div>
         <div class="chat-messages" id="chatMessages" style="display:none"></div>
+        <div class="attach-preview-bar" id="chatAttachBar" style="display:none"></div>
         <div class="chat-input-area" id="chatInputArea" style="display:none">
+            <input type="file" class="chat-file-input" accept="image/jpeg,image/png,image/gif,image/webp" multiple
+                   style="display:none" onchange="onChatFileSelect(this)">
+            <button type="button" class="chat-attach-btn" title="이미지 첨부"
+                    onclick="this.closest('.chat-input-area').querySelector('.chat-file-input').click()">
+                <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            </button>
             <textarea class="chat-textarea" id="chatInput" rows="1" placeholder="질문을 입력하세요..."
                       onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
             <button class="chat-send-btn" id="chatSendBtn" onclick="sendMessage()">
@@ -284,6 +318,7 @@ var _messages = [];
 var _sending = false;
 var _model = '';
 var _renamePending = null;
+var _attachedFiles = [];
 
 // 스트리밍 rAF 스로틀
 var _chatRafId = null;
@@ -634,7 +669,7 @@ function loadMessages(sessionId) {
     });
 }
 
-function appendMsg(role, content, createdAt) {
+function appendMsg(role, content, createdAt, attachments) {
     var container = document.getElementById('chatMessages');
     var wrapper = document.createElement('div');
     wrapper.style.cssText = 'display:flex;flex-direction:column;' + (role === 'user' ? 'align-items:flex-end' : 'align-items:flex-start');
@@ -644,6 +679,16 @@ function appendMsg(role, content, createdAt) {
         div.innerHTML = mdRender(content);
     } else {
         div.textContent = content;
+        // 이미지 첨부 미리보기 (user 메시지)
+        if (attachments && attachments.length) {
+            attachments.forEach(function(att) {
+                var img = document.createElement('img');
+                img.className = 'chat-msg-image';
+                img.src = 'data:' + att.mediaType + ';base64,' + att.data;
+                img.alt = att.name || '첨부 이미지';
+                div.appendChild(img);
+            });
+        }
     }
     wrapper.appendChild(div);
     var timeStr = extractTime(createdAt);
@@ -654,6 +699,78 @@ function appendMsg(role, content, createdAt) {
         wrapper.appendChild(timeDiv);
     }
     container.appendChild(wrapper);
+}
+
+// ── File Attach Functions ────────────────────────────
+function onChatFileSelect(input) {
+    var files = Array.prototype.slice.call(input.files || []);
+    var MAX_SIZE = 5 * 1024 * 1024;
+    var ALLOWED = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    files.forEach(function(file) {
+        if (ALLOWED.indexOf(file.type) < 0) {
+            appendChatError('지원하지 않는 파일 형식입니다: ' + file.name + ' (JPEG/PNG/GIF/WEBP만 가능)');
+            return;
+        }
+        if (file.size > MAX_SIZE) {
+            appendChatError('파일 크기 초과: ' + file.name + ' (최대 5MB)');
+            return;
+        }
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            var dataUrl = e.target.result;
+            var base64 = dataUrl.split(',')[1];
+            _attachedFiles.push({ name: file.name, mediaType: file.type, data: base64, size: file.size });
+            renderAttachBar();
+        };
+        reader.readAsDataURL(file);
+    });
+    input.value = '';
+}
+
+function renderAttachBar() {
+    document.querySelectorAll('.attach-preview-bar').forEach(function(bar) {
+        if (_attachedFiles.length === 0) {
+            bar.style.display = 'none';
+            bar.innerHTML = '';
+        } else {
+            bar.style.display = 'flex';
+            bar.innerHTML = '';
+            _attachedFiles.forEach(function(att, idx) {
+                var item = document.createElement('div');
+                item.className = 'attach-preview-item';
+                var img = document.createElement('img');
+                img.src = 'data:' + att.mediaType + ';base64,' + att.data;
+                img.alt = att.name;
+                var btn = document.createElement('button');
+                btn.className = 'attach-preview-remove';
+                btn.innerHTML = '&#10005;';
+                btn.title = '제거';
+                btn.onclick = function() { removeAttachment(idx); };
+                item.appendChild(img);
+                item.appendChild(btn);
+                bar.appendChild(item);
+            });
+        }
+    });
+    document.querySelectorAll('.chat-attach-btn').forEach(function(btn) {
+        if (_attachedFiles.length > 0) btn.classList.add('has-files');
+        else btn.classList.remove('has-files');
+    });
+}
+
+function removeAttachment(idx) {
+    _attachedFiles.splice(idx, 1);
+    renderAttachBar();
+}
+
+function appendChatError(msg) {
+    var container = document.getElementById('chatMessages');
+    if (!container) return;
+    var err = document.createElement('div');
+    err.className = 'chat-msg chat-msg-error';
+    err.textContent = msg;
+    container.appendChild(err);
+    container.scrollTop = container.scrollHeight;
 }
 
 function appendDateSep(dateStr) {
@@ -697,8 +814,12 @@ function sendMessage() {
     var dateSeps = document.getElementById('chatMessages').querySelectorAll('.chat-date-label');
     var lastDateText = dateSeps.length ? dateSeps[dateSeps.length - 1].textContent : '';
     if (todayDate && todayDate !== lastDateText) appendDateSep(todayDate);
+    var currentAttachments = _attachedFiles.slice();
+    _attachedFiles = [];
+    renderAttachBar();
+
     _messages.push({ role: 'user', content: text });
-    appendMsg('user', text, now);
+    appendMsg('user', text, now, currentAttachments);
     input.value = '';
     input.style.height = 'auto';
 
@@ -726,7 +847,7 @@ function sendMessage() {
     fetch('/api/ai-chat/sessions/' + _activeSessionId + '/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: _messages, context: '', filename: '' })
+        body: JSON.stringify({ messages: _messages, context: '', filename: '', attachments: currentAttachments })
     })
     .then(function(response) {
         checkAuth(response);
@@ -768,9 +889,17 @@ function sendMessage() {
                                     });
                                 }
                             } else if (currentEvent === 'error') {
+                                var errMsg = d.error || 'Error';
+                                var friendlyMap = {
+                                    'FILE_ATTACH_DISABLED': '파일 첨부 기능이 비활성화되어 있습니다. LLM 설정에서 활성화해 주세요.',
+                                    'FILE_ATTACH_UNSUPPORTED': '현재 LLM provider가 파일 첨부(Vision)를 지원하지 않습니다.',
+                                    'FILE_TYPE_INVALID': '이미지 파일(JPEG/PNG/GIF/WEBP)만 첨부 가능합니다.',
+                                    'FILE_TOO_LARGE': '파일 크기는 5MB 이하여야 합니다.'
+                                };
+                                if (d.errorCode && friendlyMap[d.errorCode]) errMsg = friendlyMap[d.errorCode];
                                 var err = document.createElement('div');
                                 err.className = 'chat-msg chat-msg-error';
-                                err.textContent = (d.errorCode ? '[' + d.errorCode + '] ' : '') + (d.error || 'Error');
+                                err.textContent = errMsg;
                                 container.appendChild(err);
                                 _messages.pop();
                             }

@@ -321,6 +321,10 @@ public class AiChatController {
 
         List<Map<String, String>> messages = (List<Map<String, String>>) body.get("messages");
         String context = body.get("context") != null ? String.valueOf(body.get("context")) : "";
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> attachments = body.containsKey("attachments")
+            ? (List<Map<String, Object>>) body.get("attachments")
+            : Collections.emptyList();
 
         if (messages == null || messages.isEmpty()) {
             try {
@@ -331,6 +335,51 @@ public class AiChatController {
             return emitter;
         }
 
+        // 파일 첨부 지원 여부 검증
+        if (!attachments.isEmpty()) {
+            if (!analyzerService.isLlmFileAttachEnabled()) {
+                logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_ATTACH_DISABLED, sessionId={}", sessionId);
+                try {
+                    emitter.send(SseEmitter.event().name("error")
+                        .data("{\"errorCode\":\"FILE_ATTACH_DISABLED\",\"error\":\"파일 첨부 기능이 비활성화 상태입니다. LLM 설정에서 활성화하세요.\"}"));
+                    emitter.complete();
+                } catch (Exception ignored) {}
+                return emitter;
+            }
+            if (!analyzerService.isFileAttachCapable()) {
+                logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_ATTACH_UNSUPPORTED, sessionId={}, provider={}", sessionId, analyzerService.getLlmProvider());
+                try {
+                    emitter.send(SseEmitter.event().name("error")
+                        .data("{\"errorCode\":\"FILE_ATTACH_UNSUPPORTED\",\"error\":\"현재 LLM provider가 파일 첨부를 지원하지 않습니다.\"}"));
+                    emitter.complete();
+                } catch (Exception ignored) {}
+                return emitter;
+            }
+            for (Map<String, Object> att : attachments) {
+                String mediaType = (String) att.get("mediaType");
+                if (mediaType == null || !mediaType.startsWith("image/")) {
+                    logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_TYPE_INVALID, sessionId={}, mediaType={}", sessionId, mediaType);
+                    try {
+                        emitter.send(SseEmitter.event().name("error")
+                            .data("{\"errorCode\":\"FILE_TYPE_INVALID\",\"error\":\"이미지 파일(JPEG/PNG/GIF/WEBP)만 첨부 가능합니다.\"}"));
+                        emitter.complete();
+                    } catch (Exception ignored) {}
+                    return emitter;
+                }
+                Number size = (Number) att.get("size");
+                if (size != null && size.longValue() > 5L * 1024 * 1024) {
+                    logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_TOO_LARGE, sessionId={}, size={}", sessionId, size.longValue());
+                    try {
+                        emitter.send(SseEmitter.event().name("error")
+                            .data("{\"errorCode\":\"FILE_TOO_LARGE\",\"error\":\"파일 크기는 5MB 이하여야 합니다.\"}"));
+                        emitter.complete();
+                    } catch (Exception ignored) {}
+                    return emitter;
+                }
+            }
+            logger.info("[AI-Chat-Attach] 첨부 파일 {}개 검증 완료 — sessionId={}, provider={}", attachments.size(), sessionId, analyzerService.getLlmProvider());
+        }
+
         // 마지막 user 메시지 DB 저장
         Map<String, String> lastUserMsg = messages.get(messages.size() - 1);
         if ("user".equals(lastUserMsg.get("role"))) {
@@ -338,7 +387,13 @@ public class AiChatController {
                 AiChatMessage userMsg = new AiChatMessage();
                 userMsg.setSessionId(sessionId);
                 userMsg.setRole("user");
-                userMsg.setContent(lastUserMsg.get("content"));
+                // base64 미저장 — 첨부 파일명만 텍스트로 기록
+                StringBuilder contentBuilder = new StringBuilder(lastUserMsg.get("content") != null ? lastUserMsg.get("content") : "");
+                for (Map<String, Object> att : attachments) {
+                    String name = (String) att.get("name");
+                    if (name != null) contentBuilder.append(" [이미지 첨부: ").append(name).append("]");
+                }
+                userMsg.setContent(contentBuilder.toString());
                 AiChatMessage savedUser = messageRepo.save(userMsg);
                 logger.info("[AI-Chat-Stream] User 메시지 저장 완료 — sessionId={}, msgId={}", sessionId, savedUser.getId());
 
@@ -378,6 +433,7 @@ public class AiChatController {
         final String finalSystemPrompt = systemPrompt;
         final String model = analyzerService.getLlmModel();
         final Long sid = sessionId;
+        final List<Map<String, Object>> finalAttachments = attachments;
 
         new Thread(() -> {
             try {
@@ -386,7 +442,7 @@ public class AiChatController {
 
                 StringBuilder fullText = new StringBuilder();
 
-                analyzerService.callLlmChatStream(messages, finalSystemPrompt,
+                analyzerService.callLlmChatStream(messages, finalSystemPrompt, finalAttachments,
                     chunk -> {
                         try {
                             fullText.append(chunk);

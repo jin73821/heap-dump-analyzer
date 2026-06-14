@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/common.css?v=2026-06-05">
+    <script src="/js/calendar.js?v=2026-06-14"></script>
     <title>User Management — Heap Dump Analyzer</title>
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
@@ -209,6 +210,36 @@
             <button class="btn-primary" onclick="openCreateModal()">+ 사용자 추가</button>
         </div>
 
+        <div class="lh-toolbar">
+            <input class="lh-search" id="userSearch" placeholder="사용자명 또는 이름 검색" oninput="onUserSearchInput()">
+            <select class="lh-select" id="userStatus" onchange="filterAndRenderUsers()">
+                <option value="">전체 상태</option>
+                <option value="active">활성</option>
+                <option value="disabled">비활성</option>
+            </select>
+            <span style="width:1px;height:20px;background:#E5E7EB;flex-shrink:0;align-self:center"></span>
+            <span style="font-size:12px;color:#6B7280;flex-shrink:0;white-space:nowrap">생성일</span>
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="userDateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-start"></div>
+            </div>
+            <span class="calendar-input-sep">~</span>
+            <div class="calendar-input">
+                <input type="text" class="cal-text" id="userDateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
+                    <span class="sr-only">달력 열기</span>
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                </button>
+                <div class="krds-calendar-area" id="calArea-end"></div>
+            </div>
+            <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()">지우기</button>
+            <button class="lh-btn" onclick="resetUserFilters()">초기화</button>
+        </div>
+
         <div class="panel">
           <div class="table-scroll">
             <table class="utable">
@@ -255,6 +286,7 @@
                 </tbody>
             </table>
           </div>
+            <div class="lh-summary" id="userCount"></div>
         </div>
     </div>
 
@@ -732,13 +764,72 @@ function switchTab(name) {
 }
 
 // ── 사용자 목록 ────────────────────────────────────────────
-// 초기 페이지 렌더는 Thymeleaf th:each 로 처리되며, 탭 재진입 시에는 JSON API 로 재렌더한다.
+var _allUsers = [];
+var _userSearchTimer = null;
+
+function onUserSearchInput() {
+    if (_userSearchTimer) clearTimeout(_userSearchTimer);
+    _userSearchTimer = setTimeout(filterAndRenderUsers, 200);
+}
+
+function isoDate(d) {
+    return d.getFullYear() + '-'
+        + String(d.getMonth() + 1).padStart(2, '0') + '-'
+        + String(d.getDate()).padStart(2, '0');
+}
+
+function filterAndRenderUsers() {
+    var q      = (document.getElementById('userSearch').value || '').trim().toLowerCase();
+    var status = document.getElementById('userStatus').value;
+    var range  = Calendar.getRange();
+    var dateFrom = range.start ? isoDate(range.start) : '';
+    var dateTo   = range.end   ? isoDate(range.end)   : '';
+
+    var filtered = _allUsers.filter(function(u) {
+        if (q && u.username.toLowerCase().indexOf(q) < 0 && (u.displayName || '').toLowerCase().indexOf(q) < 0) return false;
+        if (status === 'active'   && !u.enabled) return false;
+        if (status === 'disabled' &&  u.enabled) return false;
+        if (dateFrom || dateTo) {
+            var d = (u.createdAt || '').substring(0, 10);
+            if (dateFrom && d < dateFrom) return false;
+            if (dateTo   && d > dateTo)   return false;
+        }
+        return true;
+    });
+
+    var body = document.querySelector('#panel-users tbody');
+    if (filtered.length === 0) {
+        body.innerHTML = '<tr><td colspan="7" class="lh-empty">'
+            + (_allUsers.length === 0 ? '등록된 사용자가 없습니다.' : '조건에 맞는 사용자가 없습니다.')
+            + '</td></tr>';
+    } else {
+        renderUsers(filtered);
+    }
+
+    var el = document.getElementById('userCount');
+    if (el) {
+        el.textContent = filtered.length === _allUsers.length
+            ? '총 ' + _allUsers.length + '명'
+            : filtered.length + ' / ' + _allUsers.length + '명 표시';
+    }
+}
+
+function resetUserFilters() {
+    document.getElementById('userSearch').value = '';
+    document.getElementById('userStatus').value = '';
+    Calendar.clear();
+}
+
 function loadUsers() {
     var body = document.querySelector('#panel-users tbody');
     if (!body) return;
     Common.fetchJSON('/api/admin/users')
-        .then(function(list) { renderUsers(list); })
+        .then(function(list) {
+            _allUsers = list || [];
+            filterAndRenderUsers();
+        })
         .catch(function(e) {
+            _allUsers = [];
             body.innerHTML = '<tr><td colspan="7" class="lh-empty">불러오기 실패: ' + escHtml(e.message) + '</td></tr>';
         });
 }
@@ -985,8 +1076,19 @@ function refreshPendingCount() {
         .catch(function() {});
 }
 
-// 페이지 로드 시 펜딩 배지 갱신
-document.addEventListener('DOMContentLoaded', refreshPendingCount);
+// 페이지 로드 시 펜딩 배지 + 캘린더 + 사용자 목록 초기 로드
+document.addEventListener('DOMContentLoaded', function() {
+    refreshPendingCount();
+    Calendar.attach({
+        startInputId: 'userDateStart',
+        endInputId:   'userDateEnd',
+        startAreaId:  'calArea-start',
+        endAreaId:    'calArea-end',
+        storageKey:   'users',
+        onChange:     function() { filterAndRenderUsers(); }
+    });
+    loadUsers();
+});
 
 // ── 접속 이력 ───────────────────────────────────────────────
 var _lhPage = 0;

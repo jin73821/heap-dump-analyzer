@@ -45,7 +45,8 @@ public class SecurityConfig {
                     "/api/llm/apikey",
                     "/api/llm/test-connection",
                     "/api/llm/chat-prompt",
-                    "/api/llm/chat-restore-mode"
+                    "/api/llm/chat-restore-mode",
+                    "/api/llm/file-attach"
                 ).hasRole("ADMIN")
                 // RAG 설정 mutation 은 위 /api/settings/** 패턴에 이미 포함됨
                 // 서버 스캔 주기 / SSH local user 변경 (Servers Settings 영역)
@@ -91,7 +92,8 @@ public class SecurityConfig {
                         || uri.equals("/api/llm/apikey")
                         || uri.equals("/api/llm/test-connection")
                         || uri.equals("/api/llm/chat-prompt")
-                        || uri.equals("/api/llm/chat-restore-mode")) return false;
+                        || uri.equals("/api/llm/chat-restore-mode")
+                        || uri.equals("/api/llm/file-attach")) return false;
                     if (uri.equals("/api/servers/scan-interval")
                         || uri.equals("/api/servers/ssh-local-user")) return false;
                     // 3) 본인 자기서비스 — CSRF 보호 유지 (비밀번호/메모 변경은 민감)

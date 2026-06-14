@@ -1718,6 +1718,23 @@ public class HeapDumpAnalyzerService {
         llmConfig.callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError);
     }
 
+    public void callLlmChatStream(List<Map<String, String>> messages, String systemPrompt,
+                                   List<Map<String, Object>> attachments,
+                                   java.util.function.Consumer<String> onChunk,
+                                   java.util.function.BiConsumer<String, Long> onDone,
+                                   java.util.function.BiConsumer<String, String> onError) {
+        llmConfig.callLlmChatStream(messages, systemPrompt, attachments, onChunk, onDone, onError);
+    }
+
+    public boolean isLlmFileAttachEnabled() { return llmConfig.isLlmFileAttachEnabled(); }
+
+    public void setLlmFileAttachEnabled(boolean v) {
+        llmConfig.setLlmFileAttachEnabled(v);
+        persistSettings();
+    }
+
+    public boolean isFileAttachCapable() { return llmConfig.isFileAttachCapable(); }
+
     /**
      * LLM 호출 시 prompt 에 합칠 OOM 컨텍스트 블록을 반환.
      * cached HeapAnalysisResult 의 ThreadInfo 목록에서 oom=true 인 스레드를 집계한다.

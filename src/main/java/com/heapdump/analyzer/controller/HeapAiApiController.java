@@ -93,6 +93,8 @@ public class HeapAiApiController {
         resp.put("apiUrl", apiUrl);
         resp.put("model", model);
         resp.put("sslVerify", analyzerService.isLlmSslVerify());
+        resp.put("fileAttachEnabled", analyzerService.isLlmFileAttachEnabled());
+        resp.put("fileAttachCapable", analyzerService.isFileAttachCapable());
         return ResponseEntity.ok(resp);
     }
 
@@ -585,6 +587,18 @@ public class HeapAiApiController {
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
         res.put("includeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/api/llm/file-attach")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setFileAttachEnabled(@RequestParam boolean enabled) {
+        analyzerService.setLlmFileAttachEnabled(enabled);
+        logger.info("[LLM-Config] fileAttachEnabled={}, provider={}", enabled, analyzerService.getLlmProvider());
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", true);
+        res.put("fileAttachEnabled", analyzerService.isLlmFileAttachEnabled());
+        res.put("fileAttachCapable", analyzerService.isFileAttachCapable());
         return ResponseEntity.ok(res);
     }
 

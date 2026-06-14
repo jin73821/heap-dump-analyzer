@@ -1,5 +1,41 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-14] 버전 2.1.0 → 2.1.1 업데이트
+
+**대상:** `pom.xml`, `restart.sh`, `run.sh`, `stop.sh`, `templates/fragments/banner.html`, `templates/index.html`, `templates/progress.html`
+
+- 전체 7개 파일의 버전 표기를 `2.1.0` → `2.1.1`로 일괄 변경.
+
+---
+
+## [2026-06-14] AI Chat 입력 영역 레이아웃 수정
+
+**대상:** `templates/ai-chat.html`
+
+1. **chat-input-area**: `align-items: flex-end` → `align-items: center` 변경 — 단일 줄 입력 시 첨부 버튼·textarea·전송 버튼 수직 중앙 정렬.
+2. **chat-attach-btn**: `width/height 36px` → `40px` — 전송 버튼(40px)과 크기 통일.
+3. **chat-textarea**: `padding: 12px 16px` → `9px 16px` — 자연 높이를 버튼 높이(40px)에 근접하게 조정.
+
+---
+
+## [2026-06-14] AI Chat 파일 첨부(Vision) 기능 추가
+
+**대상:** `service/LlmConfigService.java`, `service/HeapDumpAnalyzerService.java`, `config/SecurityConfig.java`, `controller/HeapAiApiController.java`, `controller/HeapSystemApiController.java`, `controller/AiChatController.java`, `templates/llm-settings.html`, `templates/ai-chat.html`, `templates/analyze.html`, `static/js/analyze.js`, `static/css/analyze.css`, `resources/application.properties`
+
+1. **LlmConfigService**: `llmFileAttachEnabled` volatile 필드 추가. `VISION_SUPPORTED_PROVIDERS` 상수(claude/gpt). `isFileAttachCapable()` — 토글 ON + (지원 provider 또는 genspark/custom) 조건. `callLlmChatStream(messages, systemPrompt, attachments, ...)` overload 추가. `buildMsgListWithAttachments()` — Claude는 `image.source.base64`, OpenAI 호환은 `image_url.url=data:...;base64,...` 형식 변환. 영속화(`applyFromSettings`/`collectSettings`/`collectApplicationProperties`) 추가.
+2. **HeapDumpAnalyzerService**: `isLlmFileAttachEnabled()` / `setLlmFileAttachEnabled()` / `isFileAttachCapable()` / `callLlmChatStream(with attachments)` facade 추가.
+3. **SecurityConfig**: `/api/llm/file-attach` 를 `authorizeHttpRequests` ADMIN POST 목록 + CSRF 보호 목록 양쪽에 추가.
+4. **HeapAiApiController**: `POST /api/llm/file-attach?enabled=` 신규 엔드포인트 추가. `/api/llm/config` 응답에 `fileAttachEnabled`/`fileAttachCapable` 추가.
+5. **HeapSystemApiController**: `GET /api/settings` 응답 `llm` 맵에 `fileAttachEnabled`/`fileAttachCapable` 추가.
+6. **AiChatController.streamChat()**: body에서 `attachments` 파싱 → `FILE_ATTACH_DISABLED` / `FILE_ATTACH_UNSUPPORTED` / `FILE_TYPE_INVALID` / `FILE_TOO_LARGE` SSE error 검증. DB 저장 content에 `[이미지 첨부: name.jpg]` 텍스트만 기록(base64 미저장). `callLlmChatStream` attachments overload 호출.
+7. **llm-settings.html**: "File Attachment (Vision)" 설정 카드 추가. provider 지원 배지(Claude/GPT 녹색, Genspark/Custom 노란색). `toggleFileAttach()` JS 함수 추가. `loadLlmSettings()`에서 `togFileAttach` 초기화.
+8. **ai-chat.html**: 📎 첨부 버튼, 미리보기 바(`attach-preview-bar`) 추가. `_attachedFiles` 전역 변수. `onChatFileSelect()` / `renderAttachBar()` / `removeAttachment()` 함수. `sendMessage()` 에서 첨부 파일 복사 후 초기화 → LLM 전송. user 메시지 버블에 이미지 썸네일 렌더링. 에러코드별 한국어 메시지 처리.
+9. **analyze.html + analyze.js**: 플로팅 FAB 채팅 패널에 동일 기능 추가. `_aiChatAttachments` 전역 변수. `onAnalyzeChatFileSelect()` / `renderAnalyzeAttachBar()` / `removeAiAttachment()` / `renderChatMessage(with attachments)`. `doStreamRequest(typing, attachments)` 파라미터 추가.
+10. **application.properties**: `llm.file-attach.enabled=false` 추가(기본 비활성).
+11. **analyze.css**: `.chat-attach-btn` / `.attach-preview-item` / `.attach-preview-remove` / `.chat-msg-image` CSS 추가.
+
+---
+
 ## [2026-06-14] Target Servers 모바일 UX 추가 수정 2건
 
 **대상:** `templates/servers.html`

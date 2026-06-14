@@ -471,6 +471,8 @@ public class HeapSystemApiController {
         llm.put("chatSystemPrompt", analyzerService.getLlmChatSystemPrompt());
         llm.put("chatRestoreIncludeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
         llm.put("sslVerify", analyzerService.isLlmSslVerify());
+        llm.put("fileAttachEnabled", analyzerService.isLlmFileAttachEnabled());
+        llm.put("fileAttachCapable", analyzerService.isFileAttachCapable());
         settings.put("llm", llm);
 
         // Database 정보

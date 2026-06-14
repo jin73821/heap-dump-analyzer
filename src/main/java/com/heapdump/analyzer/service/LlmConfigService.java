@@ -65,6 +65,10 @@ public class LlmConfigService {
     private volatile String  llmChatSystemPrompt;
     private volatile boolean llmChatRestoreIncludeHistory = true;
     private volatile boolean llmSslVerify = true;
+    private volatile boolean llmFileAttachEnabled = false;
+
+    /** Vision API를 기본 지원하는 provider 목록 */
+    public static final List<String> VISION_SUPPORTED_PROVIDERS = Arrays.asList("claude", "gpt");
 
     public LlmConfigService(HeapDumpConfig config) {
         this.config = config;
@@ -156,6 +160,19 @@ public class LlmConfigService {
         logger.info("[LLM] SSL verify: {}", sslVerify);
     }
 
+    public boolean isLlmFileAttachEnabled() { return llmFileAttachEnabled; }
+
+    public void setLlmFileAttachEnabled(boolean v) {
+        this.llmFileAttachEnabled = v;
+        logger.info("[LLM] File attach enabled: {}", v);
+    }
+
+    public boolean isFileAttachCapable() {
+        if (!llmFileAttachEnabled) return false;
+        return VISION_SUPPORTED_PROVIDERS.contains(llmProvider)
+            || "genspark".equals(llmProvider) || "custom".equals(llmProvider);
+    }
+
     public String getDefaultApiUrl(String provider) {
         switch (provider) {
             case "claude":   return "https://api.anthropic.com/v1/messages";
@@ -209,6 +226,9 @@ public class LlmConfigService {
         if (saved.containsKey("llmSslVerify")) {
             this.llmSslVerify = Boolean.parseBoolean(String.valueOf(saved.get("llmSslVerify")));
         }
+        if (saved.containsKey("llmFileAttachEnabled")) {
+            this.llmFileAttachEnabled = Boolean.TRUE.equals(saved.get("llmFileAttachEnabled"));
+        }
     }
 
     /** settings.json 저장 시 LLM 키들을 map 에 채워준다. */
@@ -225,6 +245,7 @@ public class LlmConfigService {
         settings.put("llmChatSystemPrompt", llmChatSystemPrompt);
         settings.put("llmChatRestoreIncludeHistory", llmChatRestoreIncludeHistory);
         settings.put("llmSslVerify", llmSslVerify);
+        settings.put("llmFileAttachEnabled", llmFileAttachEnabled);
     }
 
     /** application.properties 동기화 시 LLM 키들을 map 에 채워준다. */
@@ -240,6 +261,7 @@ public class LlmConfigService {
         updates.put("llm.timeout.read-seconds", String.valueOf(llmTimeoutReadSeconds));
         updates.put("llm.chat.restore-include-history", String.valueOf(llmChatRestoreIncludeHistory));
         updates.put("llm.ssl.verify", String.valueOf(llmSslVerify));
+        updates.put("llm.file-attach.enabled", String.valueOf(llmFileAttachEnabled));
     }
 
     // ── SSL 토글 헬퍼 ─────────────────────────────────────────────
@@ -974,6 +996,215 @@ public class LlmConfigService {
                 llmApiUrl, e.getClass().getSimpleName(), e.getMessage(), e);
             onError.accept("INTERNAL_ERROR", "[" + e.getClass().getSimpleName() + "] " + e.getMessage());
         }
+    }
+
+    // ── Vision(파일 첨부) overload ────────────────────────────────
+
+    /**
+     * attachments 포함 스트리밍 채팅.
+     * attachments가 비어 있으면 기존 overload로 위임한다.
+     */
+    public void callLlmChatStream(List<Map<String, String>> messages, String systemPrompt,
+                                   List<Map<String, Object>> attachments,
+                                   java.util.function.Consumer<String> onChunk,
+                                   java.util.function.BiConsumer<String, Long> onDone,
+                                   java.util.function.BiConsumer<String, String> onError) {
+        if (attachments == null || attachments.isEmpty()) {
+            callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError);
+            return;
+        }
+
+        if (!llmEnabled) { onError.accept("LLM_DISABLED", "AI 분석 기능이 비활성화 상태입니다."); return; }
+        if (llmApiKey == null || llmApiKey.trim().isEmpty()) { onError.accept("NO_API_KEY", "API 키가 설정되지 않았습니다."); return; }
+        if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) { onError.accept("NO_API_URL", "API URL이 설정되지 않았습니다."); return; }
+
+        long startTime = System.currentTimeMillis();
+        int approxAttachBytes = attachments.stream()
+            .mapToInt(a -> { String d = (String) a.get("data"); return d != null ? d.length() : 0; }).sum();
+        logger.info("[AI-Chat-Stream] 스트리밍 요청 시작(Vision) — provider={}, model={}, messageCount={}, attachmentCount={}, approxAttachBytes={}",
+            llmProvider, llmModel, messages.size(), attachments.size(), approxAttachBytes);
+
+        try {
+            boolean isReasoningModel = llmModel != null && (
+                llmModel.startsWith("gpt-5") || llmModel.startsWith("o1") || llmModel.startsWith("o3")
+            );
+            int effectiveMaxOutputTokens = isReasoningModel
+                ? Math.max(llmMaxOutputTokens, 8000)
+                : Math.max(llmMaxOutputTokens, 2000);
+
+            java.net.URL url = new java.net.URL(normalizeChatCompletionsUrl(llmApiUrl));
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) url.openConnection();
+            if (!llmSslVerify && conn instanceof javax.net.ssl.HttpsURLConnection) {
+                disableSslVerification((javax.net.ssl.HttpsURLConnection) conn);
+            }
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(llmTimeoutConnectSeconds * 1000);
+            conn.setReadTimeout(llmTimeoutReadSeconds * 1000);
+            conn.setRequestProperty("Content-Type", "application/json");
+
+            List<Map<String, Object>> msgList = buildMsgListWithAttachments(messages, attachments);
+
+            String body;
+            boolean isClaude = "claude".equals(llmProvider);
+            if (isClaude) {
+                conn.setRequestProperty("x-api-key", llmApiKey);
+                conn.setRequestProperty("anthropic-version", "2023-06-01");
+                Map<String, Object> reqBody = new LinkedHashMap<>();
+                reqBody.put("model", llmModel);
+                reqBody.put("max_tokens", effectiveMaxOutputTokens);
+                reqBody.put("stream", true);
+                reqBody.put("system", systemPrompt);
+                reqBody.put("messages", msgList);
+                body = objectMapper.writeValueAsString(reqBody);
+            } else {
+                conn.setRequestProperty("Authorization", "Bearer " + llmApiKey);
+                List<Map<String, Object>> allMessages = new ArrayList<>();
+                Map<String, Object> sysMsg = new LinkedHashMap<>();
+                sysMsg.put("role", "system");
+                sysMsg.put("content", systemPrompt);
+                allMessages.add(sysMsg);
+                allMessages.addAll(msgList);
+                Map<String, Object> reqBody = new LinkedHashMap<>();
+                reqBody.put("model", llmModel);
+                reqBody.put("max_tokens", effectiveMaxOutputTokens);
+                reqBody.put("stream", true);
+                reqBody.put("messages", allMessages);
+                body = objectMapper.writeValueAsString(reqBody);
+            }
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+
+            int code = conn.getResponseCode();
+            if (code >= 200 && code < 300) {
+                StringBuilder fullText = new StringBuilder();
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        if (!line.startsWith("data: ")) continue;
+                        String data = line.substring(6).trim();
+                        if ("[DONE]".equals(data)) break;
+                        try {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> chunk = objectMapper.readValue(data, Map.class);
+                            String text = null;
+                            if (isClaude) {
+                                String type = String.valueOf(chunk.get("type"));
+                                if ("content_block_delta".equals(type)) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> delta = (Map<String, Object>) chunk.get("delta");
+                                    if (delta != null) text = (String) delta.get("text");
+                                }
+                            } else {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> choices = (List<Map<String, Object>>) chunk.get("choices");
+                                if (choices != null && !choices.isEmpty()) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
+                                    if (delta != null) text = (String) delta.get("content");
+                                }
+                            }
+                            if (text != null && !text.isEmpty()) {
+                                fullText.append(text);
+                                onChunk.accept(text);
+                            }
+                        } catch (Exception parseErr) { /* 청크 파싱 오류 무시 */ }
+                    }
+                }
+                long elapsed = System.currentTimeMillis() - startTime;
+                logger.info("[AI-Chat-Stream] 스트리밍 완료(Vision) — model={}, latency={}ms, textLen={}",
+                    llmModel, elapsed, fullText.length());
+                onDone.accept(fullText.toString(), elapsed);
+            } else {
+                StringBuilder errSb = new StringBuilder();
+                InputStream errStream = conn.getErrorStream();
+                if (errStream != null) {
+                    try (BufferedReader br = new BufferedReader(
+                            new InputStreamReader(errStream, java.nio.charset.StandardCharsets.UTF_8))) {
+                        String l; while ((l = br.readLine()) != null) errSb.append(l);
+                    }
+                }
+                String errBody = errSb.toString();
+                long elapsed = System.currentTimeMillis() - startTime;
+                String errorCode = classifyHttpError(code, errBody);
+                logger.error("[AI-Chat-Stream] HTTP 오류(Vision) — provider={}, status={}, errorCode={}, elapsed={}ms, body={}",
+                    llmProvider, code, errorCode, elapsed, errBody);
+                onError.accept(errorCode, buildHttpErrorMessage(code, errBody));
+            }
+            conn.disconnect();
+        } catch (java.net.SocketTimeoutException e) {
+            long elapsed = System.currentTimeMillis() - startTime;
+            onError.accept("TIMEOUT", "LLM 응답 대기 시간이 초과되었습니다 (" + elapsed / 1000 + "초).");
+        } catch (java.net.ConnectException e) {
+            onError.accept("CONNECT_FAILED", "LLM 서버에 연결할 수 없습니다: " + e.getMessage());
+        } catch (java.net.UnknownHostException e) {
+            onError.accept("UNKNOWN_HOST", "API URL의 호스트를 찾을 수 없습니다: " + e.getMessage());
+        } catch (javax.net.ssl.SSLException e) {
+            onError.accept("SSL_ERROR", "SSL 핸드셰이크 실패: " + e.getMessage()
+                + " (사내 사설 CA 라면 'SSL 검증' OFF 또는 truststore 설정 필요)");
+        } catch (Exception e) {
+            logger.error("[AI-Chat-Stream] 예외(Vision) — type={}, msg={}", e.getClass().getSimpleName(), e.getMessage(), e);
+            onError.accept("INTERNAL_ERROR", "[" + e.getClass().getSimpleName() + "] " + e.getMessage());
+        }
+    }
+
+    /**
+     * 마지막 user 메시지에 attachments를 provider별 Vision 형식으로 주입한다.
+     * 나머지 메시지는 기존 {role, content:String} 형식 유지.
+     */
+    private List<Map<String, Object>> buildMsgListWithAttachments(
+            List<Map<String, String>> messages, List<Map<String, Object>> attachments) {
+        boolean isClaude = "claude".equals(llmProvider);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (int i = 0; i < messages.size(); i++) {
+            Map<String, String> m = messages.get(i);
+            boolean isLastUser = i == messages.size() - 1 && "user".equals(m.get("role"));
+            if (isLastUser && !attachments.isEmpty()) {
+                // Vision content array
+                List<Map<String, Object>> contentParts = new ArrayList<>();
+                // text part
+                Map<String, Object> textPart = new LinkedHashMap<>();
+                textPart.put("type", "text");
+                textPart.put("text", m.get("content") != null ? m.get("content") : "");
+                contentParts.add(textPart);
+                // image parts
+                for (Map<String, Object> att : attachments) {
+                    String mediaType = (String) att.get("mediaType");
+                    String data = (String) att.get("data");
+                    if (mediaType == null || data == null) continue;
+                    if (isClaude) {
+                        Map<String, Object> imgPart = new LinkedHashMap<>();
+                        imgPart.put("type", "image");
+                        Map<String, Object> source = new LinkedHashMap<>();
+                        source.put("type", "base64");
+                        source.put("media_type", mediaType);
+                        source.put("data", data);
+                        imgPart.put("source", source);
+                        contentParts.add(imgPart);
+                    } else {
+                        Map<String, Object> imgPart = new LinkedHashMap<>();
+                        imgPart.put("type", "image_url");
+                        Map<String, Object> imageUrl = new LinkedHashMap<>();
+                        imageUrl.put("url", "data:" + mediaType + ";base64," + data);
+                        imgPart.put("image_url", imageUrl);
+                        contentParts.add(imgPart);
+                    }
+                }
+                Map<String, Object> msg = new LinkedHashMap<>();
+                msg.put("role", "user");
+                msg.put("content", contentParts);
+                result.add(msg);
+            } else {
+                Map<String, Object> msg = new LinkedHashMap<>();
+                msg.put("role", m.get("role"));
+                msg.put("content", m.get("content"));
+                result.add(msg);
+            }
+        }
+        return result;
     }
 
     // ── HTTP 오류 처리 헬퍼 ───────────────────────────────────────

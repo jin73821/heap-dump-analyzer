@@ -2182,14 +2182,46 @@ function loadMoreLog() {
 function loadAllLog() {
     if (logLoading) return;
     if (!confirm('Load entire log (' + Math.round(LOG_TOTAL_LEN/1024) + ' KB)?')) return;
-    logLoading = true; _getLogEls(); _chunkAll();
-}
-function _chunkAll() {
-    if (logOffset >= LOG_TOTAL_LEN) { logLoading = false; _getLogEls(); _lst.textContent = 'Fully loaded'; _blm.disabled = true; _bla.disabled = true; return; }
-    fetch('/analyze/log/' + encodeURIComponent(FILENAME) + '?offset=' + logOffset + '&limit=' + LOG_CHUNK)
+    logLoading = true;
+    _getLogEls();
+    _bla.disabled = true;
+    _blm.disabled = true;
+    _lst.textContent = 'Fetching...';
+
+    var remaining = LOG_TOTAL_LEN - logOffset;
+    fetch('/analyze/log/' + encodeURIComponent(FILENAME) + '?offset=' + logOffset + '&limit=' + remaining)
         .then(function(r) { return r.text(); })
-        .then(function(t) { _lc.appendChild(document.createTextNode(t)); logOffset += t.length; _getLogEls(); _lst.textContent = Math.round(logOffset/1024)+'/'+Math.round(LOG_TOTAL_LEN/1024)+' KB'; setTimeout(_chunkAll, 0); })
-        .catch(function(e) { _lst.textContent = 'Failed: ' + e.message; logLoading = false; });
+        .then(function(fullText) {
+            // 네트워크 수신 완료 → rAF로 50KB씩 DOM에 분산 반영하여 브라우저 hang 방지
+            var RENDER_CHUNK = 50000;
+            var pos = 0;
+            var totalLen = fullText.length;
+
+            function renderNext() {
+                if (pos >= totalLen) {
+                    logOffset += totalLen;
+                    logLoading = false;
+                    _lst.textContent = 'Fully loaded — ' + Math.round(logOffset / 1024) + ' KB';
+                    _blm.disabled = true;
+                    _bla.disabled = true;
+                    return;
+                }
+                _lc.appendChild(document.createTextNode(fullText.slice(pos, pos + RENDER_CHUNK)));
+                pos += RENDER_CHUNK;
+                _lst.textContent = 'Rendering… ' + Math.round((logOffset + pos) / 1024)
+                    + ' / ' + Math.round(LOG_TOTAL_LEN / 1024) + ' KB';
+                requestAnimationFrame(renderNext);
+            }
+
+            _lst.textContent = 'Rendering…';
+            requestAnimationFrame(renderNext);
+        })
+        .catch(function(e) {
+            _lst.textContent = 'Failed: ' + e.message;
+            logLoading = false;
+            _bla.disabled = false;
+            _blm.disabled = false;
+        });
 }
 
 function _updateLogStatus(loaded, total, hasMore) {
@@ -3225,15 +3257,80 @@ function _parseChatDateTime(dt) {
     } catch (e) { return null; }
 }
 
+var _aiChatAttachments = [];
+
+function onAnalyzeChatFileSelect(input) {
+    var files = Array.prototype.slice.call(input.files || []);
+    var MAX_SIZE = 5 * 1024 * 1024;
+    var ALLOWED = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    files.forEach(function(file) {
+        if (ALLOWED.indexOf(file.type) < 0) {
+            renderChatError('지원하지 않는 파일 형식: ' + file.name + ' (JPEG/PNG/GIF/WEBP만 가능)');
+            return;
+        }
+        if (file.size > MAX_SIZE) {
+            renderChatError('파일 크기 초과: ' + file.name + ' (최대 5MB)');
+            return;
+        }
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            var base64 = e.target.result.split(',')[1];
+            _aiChatAttachments.push({ name: file.name, mediaType: file.type, data: base64, size: file.size });
+            renderAnalyzeAttachBar();
+        };
+        reader.readAsDataURL(file);
+    });
+    input.value = '';
+}
+
+function renderAnalyzeAttachBar() {
+    var bar = document.getElementById('aiChatAttachBar');
+    var btn = document.getElementById('aiChatAttachBtn');
+    if (!bar) return;
+    if (_aiChatAttachments.length === 0) {
+        bar.style.display = 'none';
+        bar.innerHTML = '';
+        if (btn) btn.classList.remove('has-files');
+    } else {
+        bar.style.display = 'flex';
+        bar.innerHTML = '';
+        _aiChatAttachments.forEach(function(att, idx) {
+            var item = document.createElement('div');
+            item.className = 'attach-preview-item';
+            var img = document.createElement('img');
+            img.src = 'data:' + att.mediaType + ';base64,' + att.data;
+            img.alt = att.name;
+            var removeBtn = document.createElement('button');
+            removeBtn.className = 'attach-preview-remove';
+            removeBtn.innerHTML = '&#10005;';
+            removeBtn.title = '제거';
+            removeBtn.onclick = (function(i) { return function() { removeAiAttachment(i); }; })(idx);
+            item.appendChild(img);
+            item.appendChild(removeBtn);
+            bar.appendChild(item);
+        });
+        if (btn) btn.classList.add('has-files');
+    }
+}
+
+function removeAiAttachment(idx) {
+    _aiChatAttachments.splice(idx, 1);
+    renderAnalyzeAttachBar();
+}
+
 function sendChatMessage() {
     if (_aiChatSending) return;
     var input = getChatInput();
     var text = input.value.trim();
     if (!text) return;
 
+    var currentAttachments = _aiChatAttachments.slice();
+    _aiChatAttachments = [];
+    renderAnalyzeAttachBar();
+
     // user 메시지 추가
     _aiChatMessages.push({ role: 'user', content: text });
-    renderChatMessage('user', text);
+    renderChatMessage('user', text, currentAttachments);
     input.value = '';
     input.style.height = 'auto';
 
@@ -3247,7 +3344,7 @@ function sendChatMessage() {
 
     // 세션 자동 생성 후 스트리밍 시작
     ensureChatSession().then(function() {
-        doStreamRequest(typing);
+        doStreamRequest(typing, currentAttachments);
     }).catch(function(e) {
         hideChatTyping(typing);
         renderChatError('세션 생성 실패: ' + e.message);
@@ -3286,7 +3383,7 @@ function ensureChatSession() {
     });
 }
 
-function doStreamRequest(typing) {
+function doStreamRequest(typing, attachments) {
     // 스트리밍 assistant 메시지 버블 미리 생성
     var streamBubble = createStreamBubble();
     var fullText = '';
@@ -3300,7 +3397,8 @@ function doStreamRequest(typing) {
         body: JSON.stringify({
             messages: _aiChatMessages,
             context: _aiChatContextBuilt || '',
-            filename: typeof FILENAME !== 'undefined' ? FILENAME : ''
+            filename: typeof FILENAME !== 'undefined' ? FILENAME : '',
+            attachments: attachments || []
         })
     })
     .then(function(response) {
@@ -3367,7 +3465,14 @@ function doStreamRequest(typing) {
                 } else if (event === 'error') {
                     removeStreamBubble(streamBubble);
                     streamBubble = null;
-                    var errMsg = (parsed.errorCode ? '[' + parsed.errorCode + '] ' : '') + (parsed.error || 'Unknown error');
+                    var errMsg = parsed.error || 'Unknown error';
+                    var analyzeErrMap = {
+                        'FILE_ATTACH_DISABLED': '파일 첨부 기능이 비활성화되어 있습니다. LLM 설정에서 활성화해 주세요.',
+                        'FILE_ATTACH_UNSUPPORTED': '현재 LLM provider가 파일 첨부(Vision)를 지원하지 않습니다.',
+                        'FILE_TYPE_INVALID': '이미지 파일(JPEG/PNG/GIF/WEBP)만 첨부 가능합니다.',
+                        'FILE_TOO_LARGE': '파일 크기는 5MB 이하여야 합니다.'
+                    };
+                    if (parsed.errorCode && analyzeErrMap[parsed.errorCode]) errMsg = analyzeErrMap[parsed.errorCode];
                     renderChatError(errMsg);
                     _aiChatMessages.pop();
                 }
@@ -3470,7 +3575,7 @@ function trimChatMessages() {
     }
 }
 
-function renderChatMessage(role, content) {
+function renderChatMessage(role, content, attachments) {
     var container = getChatContainer();
     var wrapper = document.createElement('div');
     wrapper.style.cssText = 'display:flex;flex-direction:column;' + (role === 'user' ? 'align-items:flex-end' : 'align-items:flex-start');
@@ -3482,6 +3587,15 @@ function renderChatMessage(role, content) {
         div.innerHTML = renderChatMarkdown(content);
     } else {
         div.textContent = content;
+        if (attachments && attachments.length) {
+            attachments.forEach(function(att) {
+                var img = document.createElement('img');
+                img.className = 'chat-msg-image';
+                img.src = 'data:' + att.mediaType + ';base64,' + att.data;
+                img.alt = att.name || '첨부 이미지';
+                div.appendChild(img);
+            });
+        }
     }
 
     var timeDiv = document.createElement('div');

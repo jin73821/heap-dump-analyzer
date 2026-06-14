@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-06">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-14">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -1444,7 +1444,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-06-06b"></script>
+<script src="/js/analyze.js?v=2026-06-14"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -1462,7 +1462,12 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
         <button class="ai-chat-header-btn" onclick="toggleAiChat()" title="닫기" style="font-size:16px;font-weight:700">&times;</button>
     </div>
     <div class="ai-chat-messages" id="aiChatMessages"></div>
+    <div class="attach-preview-bar" id="aiChatAttachBar" style="display:none;padding:6px 12px;border-top:1px solid #F3F4F6;background:#fff"></div>
     <div class="ai-chat-input-area">
+        <input type="file" id="aiChatFileInput" accept="image/jpeg,image/png,image/gif,image/webp" multiple style="display:none" onchange="onAnalyzeChatFileSelect(this)">
+        <button type="button" id="aiChatAttachBtn" class="chat-attach-btn" title="이미지 첨부" style="width:32px;height:32px" onclick="document.getElementById('aiChatFileInput').click()">
+            <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
         <textarea class="ai-chat-input" id="aiChatInput" rows="1" placeholder="질문을 입력하세요..." onkeydown="handleChatKeyDown(event)"></textarea>
         <button class="ai-chat-send-btn" id="aiChatSendBtn" onclick="sendChatMessage()" title="전송">
             <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>

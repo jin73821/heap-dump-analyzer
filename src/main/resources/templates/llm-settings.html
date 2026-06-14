@@ -298,6 +298,32 @@
         </div>
     </div>
 
+    <!-- File Attachment (Vision) -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+            File Attachment (Vision)
+        </div>
+        <div class="setting-row" style="border-bottom:none">
+            <div>
+                <div class="setting-label">파일 첨부 기능 활성화</div>
+                <div class="setting-desc">
+                    이미지(JPEG/PNG/GIF/WEBP, 최대 5MB)를 채팅에 첨부하여 LLM에 전달합니다.<br>
+                    기본 지원:
+                    <span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:#DCFCE7;color:#166534;margin:0 2px">Claude</span>
+                    <span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:#DCFCE7;color:#166534;margin:0 2px">GPT-4o/4V</span>
+                    | 조건부:
+                    <span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:#FEF3C7;color:#92400E;margin:0 2px">Genspark</span>
+                    <span style="display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:#FEF3C7;color:#92400E;margin:0 2px">Custom</span>
+                </div>
+            </div>
+            <div>
+                <input type="checkbox" class="tog" id="togFileAttach" onchange="toggleFileAttach(this)">
+                <label class="tog-track" for="togFileAttach"></label>
+            </div>
+        </div>
+    </div>
+
     <!-- Save & Test -->
     <div class="card">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -417,6 +443,9 @@ function loadLlmSettings() {
             togRestore.checked = !!llm.chatRestoreIncludeHistory;
             updateChatRestoreDesc(togRestore.checked);
         }
+
+        var togFileAttach = document.getElementById('togFileAttach');
+        if (togFileAttach) togFileAttach.checked = !!llm.fileAttachEnabled;
     }).catch(function(e) { toast('Failed to load settings: ' + e.message, 'error'); });
 }
 
@@ -595,6 +624,20 @@ function toggleChatRestoreMode(el) {
     .catch(function(e){
         el.checked = !newVal;
         updateChatRestoreDesc(el.checked);
+        toast('Save failed: ' + e.message, 'error');
+    });
+}
+
+// ── File Attach Toggle ─────────────────────────────────
+function toggleFileAttach(el) {
+    var newVal = el.checked;
+    Common.fetchJSON('/api/llm/file-attach?enabled=' + newVal, {method: 'POST'})
+    .then(function(d){
+        toast('파일 첨부 기능: ' + (d.fileAttachEnabled ? 'ON' : 'OFF')
+            + (d.fileAttachCapable ? '' : ' (현재 provider는 Vision 지원 불확실)'), 'success');
+    })
+    .catch(function(e){
+        el.checked = !newVal;
         toast('Save failed: ' + e.message, 'error');
     });
 }
