@@ -971,9 +971,10 @@ function loadFullErrorLog() {
                 <div class="stm-empty">로딩 중...</div>
             </div>
             <!-- 상태바 -->
-            <div id="stmStatusBar" style="display:none;flex-shrink:0;margin-top:8px;font-size:11px;color:#6B7280;display:flex;gap:12px">
+            <div id="stmStatusBar" style="display:none;flex-shrink:0;margin-top:8px;font-size:11px;color:#6B7280;display:flex;gap:12px;flex-wrap:wrap">
                 <span id="stmFrameCount"></span>
                 <span id="stmUserCount"></span>
+                <span id="stmLocalVarCount" style="color:#f59e0b;display:none"></span>
                 <span id="stmFilterCount" style="color:#6366F1"></span>
             </div>
             <!-- 프레임 상세 바 -->

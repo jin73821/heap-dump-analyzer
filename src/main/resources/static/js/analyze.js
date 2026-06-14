@@ -330,40 +330,146 @@ function openStacktraceModal(url, title, meta) {
 }
 
 function _parseMatStacktraceHtml(html) {
+    if (!html) return [];
+    // 테이블 포맷(지역변수 포함 페이지) vs <pre> 포맷(일반 스택트레이스) 자동 감지
+    if (html.indexOf('<table') >= 0 && html.indexOf('class="result"') >= 0) {
+        return _parseLocalVarsTableHtml(html);
+    }
+    return _parsePreStacktraceHtml(html);
+}
+
+// <pre> 기반 스택트레이스 파싱 (pages/25.html 형식)
+function _parsePreStacktraceHtml(html) {
     var frames = [];
     try {
         var parser = new DOMParser();
         var doc = parser.parseFromString(html, 'text/html');
-        // 스크립트/스타일 제거
         doc.querySelectorAll('script,style,link').forEach(function(el) { el.remove(); });
-        var text = doc.body ? doc.body.textContent : '';
+        // <pre> 요소에서 직접 추출해 스레드명 정확히 획득
+        var preEl = doc.querySelector('pre');
+        var text = preEl ? preEl.textContent : (doc.body ? doc.body.textContent : '');
         var lines = text.split('\n');
-        var i = 0;
-        while (i < lines.length) {
+        var headerPushed = false;
+        for (var i = 0; i < lines.length; i++) {
             var line = lines[i].trim();
-            if (!line) { i++; continue; }
-            // 스택 프레임: "at " 로 시작
+            if (!line) continue;
             if (line.match(/^\s*at\s+[\w$.]/)) {
                 var frameLine = line.replace(/^\s*/, '');
-                var type = _classifyFrame(frameLine);
-                frames.push({ raw: frameLine, type: type, isLocal: false });
-                i++;
-                // 지역 변수 라인: 바로 다음에 "|" 또는 "-" 로 시작하는 라인들
-                while (i < lines.length) {
-                    var next = lines[i].trim();
-                    if (next.match(/^[|\-\s]/) && !next.match(/^\s*at\s+/)) {
-                        if (next.length > 0) frames.push({ raw: next, type: 'local', isLocal: true });
-                        i++;
-                    } else break;
-                }
-            } else {
-                i++;
+                frames.push({ raw: frameLine, type: _classifyFrame(frameLine), isLocal: false });
+            } else if (!headerPushed && frames.length === 0) {
+                // 첫 번째 "at " 이전의 비어있지 않은 첫 줄 = 스레드명
+                frames.push({ type: 'thread', name: line, isLocal: false });
+                headerPushed = true;
             }
         }
     } catch(e) {
         return [];
     }
     return frames;
+}
+
+// <table class="result"> 기반 파싱 (pages/26.html 형식 — 지역변수 포함)
+function _parseLocalVarsTableHtml(html) {
+    var frames = [];
+    try {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(html, 'text/html');
+        doc.querySelectorAll('script,style,link,img').forEach(function(el) { el.remove(); });
+
+        var table = doc.querySelector('table.result');
+        if (!table) return [];
+
+        // thead에서 컬럼 인덱스 자동 감지
+        var heapColIdx = 4, nameColIdx = 1, stateColIdx = 8, daemonColIdx = 6, loaderColIdx = 5;
+        table.querySelectorAll('thead th').forEach(function(th, idx) {
+            var txt = th.textContent.trim().toLowerCase();
+            if (txt.indexOf('max') >= 0 && txt.indexOf('local') >= 0) heapColIdx = idx;
+            else if (txt === 'name') nameColIdx = idx;
+            else if (txt === 'state' && txt.indexOf('value') < 0) stateColIdx = idx;
+            else if (txt.indexOf('daemon') >= 0) daemonColIdx = idx;
+            else if (txt.indexOf('context') >= 0 && txt.indexOf('loader') >= 0) loaderColIdx = idx;
+        });
+
+        var isFirstRow = true;
+        table.querySelectorAll('tbody tr').forEach(function(tr) {
+            var isSelected = tr.classList.contains('selected');
+            if (tr.classList.contains('totals')) return;
+
+            var tds = tr.querySelectorAll('td');
+            if (!tds.length) return;
+
+            var col0 = tds[0];
+            // td 전체 텍스트 (entity 디코딩 포함) — "Java Local" 감지용
+            var fullTdText = col0.textContent.trim();
+            // 첫 번째 <a> 링크 텍스트 — 스택 프레임 텍스트가 더 정확
+            var firstLink = col0.querySelector('a');
+            var linkText = firstLink ? firstLink.textContent.trim() : '';
+            // 링크 텍스트 우선, 없으면 td 전체 텍스트 사용
+            var col0Text = (linkText || fullTdText)
+                .replace(/\s*[»\xBB]\s*$/, '')  // trailing »
+                .replace(/\s{2,}/g, ' ').trim();
+
+            function cell(idx) { return tds[idx] ? tds[idx].textContent.trim() : ''; }
+
+            // 첫 번째 selected 행 = 스레드 헤더 (at 으로 시작하지 않음)
+            if (isFirstRow && isSelected && !col0Text.match(/^at\s+/)) {
+                isFirstRow = false;
+                frames.push({
+                    type: 'thread',
+                    name: cell(nameColIdx),
+                    state: cell(stateColIdx),
+                    isDaemon: cell(daemonColIdx),
+                    contextLoader: cell(loaderColIdx),
+                    isLocal: false
+                });
+                return;
+            }
+            isFirstRow = false;
+
+            // 스택 프레임: "at " 로 시작
+            if (col0Text.match(/^at\s+[\w$.]/)) {
+                var localHeapStr = cell(heapColIdx);
+                var localHeap = localHeapStr ? (parseInt(localHeapStr.replace(/[,\s]/g, '')) || 0) : 0;
+                frames.push({
+                    raw: col0Text,
+                    type: _classifyFrame(col0Text),
+                    isLocal: false,
+                    localHeap: localHeap,
+                    localHeapStr: localHeapStr,
+                    isSignificant: isSelected
+                });
+                return;
+            }
+
+            // 지역 변수 행: td 전체 텍스트에 "<Java Local>" 포함 (DOMParser가 entity 디코딩)
+            // 또는 "|+" 계열 접두사 (MAT 트리 들여쓰기)
+            if (fullTdText.indexOf('Java Local') >= 0 || fullTdText.match(/^\|[+|]/)) {
+                // 표시용 raw: "<Java Local> ..." 형태로 정리
+                var localRaw = fullTdText
+                    .replace(/^[|+\s]+/, '')  // "|+", "|\", leading whitespace 제거
+                    .replace(/\s*[»\xBB]\s*$/, '')
+                    .replace(/\s{2,}/g, ' ').trim();
+                frames.push({
+                    raw: localRaw,
+                    type: 'local',
+                    isLocal: true,
+                    isSignificant: isSelected
+                });
+            }
+        });
+    } catch(e) {
+        return [];
+    }
+    return frames;
+}
+
+// 바이트 수 → 사람이 읽기 쉬운 포맷
+function _fmtHeapBytes(bytes) {
+    if (!bytes || bytes <= 0) return '';
+    if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+    if (bytes >= 1048576)    return (bytes / 1048576).toFixed(1) + ' MB';
+    if (bytes >= 1024)       return (bytes / 1024).toFixed(1) + ' KB';
+    return bytes + ' B';
 }
 
 function _classifyFrame(frameLine) {
@@ -377,31 +483,87 @@ function _classifyFrame(frameLine) {
     return 'user';
 }
 
+function _buildThreadHeader(info) {
+    var wrap = document.createElement('div');
+    wrap.className = 'stm-thread-header';
+
+    var nameDiv = document.createElement('div');
+    nameDiv.className = 'stm-thread-name';
+    nameDiv.textContent = info.name || 'Thread';
+    wrap.appendChild(nameDiv);
+
+    if (info.state || info.isDaemon) {
+        var metaDiv = document.createElement('div');
+        metaDiv.className = 'stm-thread-meta';
+        if (info.state) {
+            var stEl = document.createElement('span');
+            stEl.className = 'stm-thread-state';
+            stEl.textContent = 'State: ' + info.state;
+            metaDiv.appendChild(stEl);
+        }
+        if (info.isDaemon) {
+            var dmEl = document.createElement('span');
+            dmEl.className = 'stm-thread-meta-item';
+            dmEl.textContent = 'Daemon: ' + info.isDaemon;
+            metaDiv.appendChild(dmEl);
+        }
+        wrap.appendChild(metaDiv);
+    }
+
+    if (info.contextLoader) {
+        var loaderDiv = document.createElement('div');
+        loaderDiv.className = 'stm-thread-loader';
+        loaderDiv.textContent = 'Context ClassLoader: ' + info.contextLoader;
+        wrap.appendChild(loaderDiv);
+    }
+    return wrap;
+}
+
 function _renderStacktraceFrames(frames, container, isLocalVars) {
+    // 스레드 헤더 (첫 번째 프레임이 type:'thread'인 경우)
+    var startIdx = 0;
+    if (frames.length > 0 && frames[0].type === 'thread') {
+        container.appendChild(_buildThreadHeader(frames[0]));
+        startIdx = 1;
+    }
+
     var frameCount = 0;
-    for (var i = 0; i < frames.length; i++) {
+    for (var i = startIdx; i < frames.length; i++) {
         var f = frames[i];
         var div = document.createElement('div');
         if (f.isLocal) {
-            div.className = 'stm-frame stm-local';
+            div.className = 'stm-frame stm-local' + (f.isSignificant ? ' stm-local-sig' : '');
             var codeSpan = document.createElement('span');
             codeSpan.className = 'stm-frame-code';
             codeSpan.textContent = f.raw;
             div.appendChild(codeSpan);
         } else {
             frameCount++;
-            div.className = 'stm-frame ' + f.type;
+            div.className = 'stm-frame ' + f.type + (f.isSignificant ? ' stm-significant' : '');
             div.dataset.frameIdx = frameCount;
+            div.dataset.frameRaw = f.raw;
+            div.dataset.frameType = f.type;
+
             var numSpan = document.createElement('span');
             numSpan.className = 'stm-frame-num';
             numSpan.textContent = frameCount;
+
             var codeSpan = document.createElement('span');
             codeSpan.className = 'stm-frame-code';
             codeSpan.textContent = f.raw;
+
             div.appendChild(numSpan);
             div.appendChild(codeSpan);
-            div.dataset.frameRaw = f.raw;
-            div.dataset.frameType = f.type;
+
+            // 지역변수 보유량 배지 (localHeap > 0인 경우)
+            if (f.localHeap > 0) {
+                var heapBadge = document.createElement('span');
+                heapBadge.className = 'stm-local-heap' + (f.isSignificant ? ' stm-local-heap-sig' : '');
+                heapBadge.title = f.localHeapStr + ' bytes (지역변수 최대 보유량)';
+                heapBadge.textContent = _fmtHeapBytes(f.localHeap);
+                div.appendChild(heapBadge);
+            }
+
             div.addEventListener('click', function() { _stmSelectFrame(this); });
         }
         container.appendChild(div);
@@ -526,6 +688,9 @@ function toggleJdkFrames() {
 
 function copyStacktrace() {
     var lines = [];
+    // 스레드 헤더(이름)가 있으면 맨 앞에 포함
+    var threadNameEl = document.querySelector('#stacktraceModalBody .stm-thread-header .stm-thread-name');
+    if (threadNameEl) lines.push(threadNameEl.textContent);
     document.querySelectorAll('#stacktraceModalBody .stm-frame').forEach(function(el) {
         var codeEl = el.querySelector('.stm-frame-code');
         if (codeEl) lines.push(codeEl.textContent);
@@ -543,14 +708,30 @@ function copyStacktrace() {
 }
 
 function _stmUpdateStatus(frames, filteredCount) {
-    var total = 0, user = 0;
-    frames.forEach(function(f) { if (!f.isLocal) { total++; if (f.type === 'user') user++; } });
-    var countEl = document.getElementById('stmFrameCount');
-    var userEl  = document.getElementById('stmUserCount');
-    var filtEl  = document.getElementById('stmFilterCount');
+    var total = 0, user = 0, localVarFrames = 0;
+    frames.forEach(function(f) {
+        if (f.type === 'thread') return;
+        if (!f.isLocal) {
+            total++;
+            if (f.type === 'user') user++;
+            if (f.localHeap > 0) localVarFrames++;
+        }
+    });
+    var countEl  = document.getElementById('stmFrameCount');
+    var userEl   = document.getElementById('stmUserCount');
+    var filtEl   = document.getElementById('stmFilterCount');
+    var localEl  = document.getElementById('stmLocalVarCount');
     if (countEl) countEl.textContent = '총 ' + total + ' 프레임';
     if (userEl)  userEl.textContent  = '사용자 코드 ' + user + ' 프레임';
     if (filtEl)  filtEl.textContent  = (filteredCount !== null && filteredCount !== undefined) ? ('검색 일치 ' + filteredCount + ' 프레임') : '';
+    if (localEl) {
+        if (localVarFrames > 0) {
+            localEl.textContent = '지역변수 보유 ' + localVarFrames + ' 프레임';
+            localEl.style.display = '';
+        } else {
+            localEl.style.display = 'none';
+        }
+    }
 }
 
 function stmFilterByType(legendEl) {

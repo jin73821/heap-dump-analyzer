@@ -532,6 +532,14 @@
 
         /* ── Stacktrace Modal Enhanced ───────────── */
         .stm-frames { background:#0f172a; border-radius:8px; padding:14px 16px; overflow:auto; flex:1; min-height:0; }
+        /* 스레드 헤더 패널 */
+        .stm-thread-header { background:#1a2540; border-radius:8px; padding:10px 14px; margin-bottom:10px; border-left:3px solid #818cf8; }
+        .stm-thread-name { font-family:var(--mono); font-size:12px; font-weight:700; color:#c7d2fe; margin-bottom:4px; word-break:break-all; }
+        .stm-thread-meta { display:flex; gap:14px; flex-wrap:wrap; font-size:11px; }
+        .stm-thread-state { font-family:var(--mono); color:#fde68a; }
+        .stm-thread-meta-item { font-family:var(--mono); color:#94a3b8; }
+        .stm-thread-loader { font-family:var(--mono); font-size:10px; color:#475569; margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        /* 스택 프레임 */
         .stm-frame { display:flex; gap:10px; padding:1px 0; font-family:var(--mono); font-size:12px; line-height:1.7; }
         .stm-frame-num { color:#374151; min-width:28px; text-align:right; user-select:none; flex-shrink:0; }
         .stm-frame-code { white-space:pre-wrap; word-break:break-all; flex:1; }
@@ -547,6 +555,17 @@
         .stm-frame.stm-selected.spring .stm-frame-code { color:#93c5fd; }
         .stm-frame.stm-selected.jdk    .stm-frame-code { color:#6b7280; }
         .stm-frame.stm-selected.oom    .stm-frame-code { color:#fca5a5; }
+        /* 중요 프레임 (MAT selected 행 = 누수 관련 프레임) */
+        .stm-frame.stm-significant { background:rgba(245,158,11,0.07); border-radius:4px; border-left:2px solid #f59e0b; padding-left:4px; }
+        .stm-frame.stm-significant .stm-frame-num { color:#f59e0b; }
+        .stm-frame.stm-significant.user   .stm-frame-code { color:#fcd34d; font-weight:700; }
+        .stm-frame.stm-significant.jdk    .stm-frame-code { color:#ca8a04; }
+        .stm-frame.stm-significant.spring .stm-frame-code { color:#fbbf24; }
+        /* 중요 지역 변수 */
+        .stm-frame.stm-local.stm-local-sig .stm-frame-code { color:#fbbf24; font-weight:600; }
+        /* 지역변수 보유량 배지 */
+        .stm-local-heap { flex-shrink:0; font-family:var(--mono); font-size:10px; padding:1px 7px; border-radius:4px; background:rgba(71,85,105,0.4); color:#94a3b8; white-space:nowrap; align-self:center; cursor:default; }
+        .stm-local-heap.stm-local-heap-sig { background:rgba(245,158,11,0.25); color:#fbbf24; font-weight:700; }
         #stmFrameDetail { display:none; flex-shrink:0; margin-top:8px; padding:8px 12px; background:#1e293b; border:1px solid #334155; border-radius:8px; align-items:center; gap:10px; flex-wrap:wrap; font-size:11px; color:#cbd5e1; }
         #stmFrameDetail.visible { display:flex; }
         .stm-detail-text { flex:1; min-width:0; font-family:var(--mono); font-size:11px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#e2e8f0; }

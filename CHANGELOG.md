@@ -1,5 +1,27 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-14] 지역변수 포함 스택트레이스 모달 파서 & 렌더링 고도화
+
+**대상:** `static/js/analyze.js`, `static/css/analyze.css`, `templates/analyze.html`
+
+### 핵심 변경
+- **MAT 포맷 자동 감지**: `_parseMatStacktraceHtml()` 이 `<table class="result">` 여부로 두 포맷을 자동 분기.
+  - `<pre>` 포맷 (`pages/25.html` — 일반 스택트레이스): `_parsePreStacktraceHtml()` — `<pre>` 요소 직접 파싱, 첫 줄에서 스레드명 추출.
+  - `<table>` 포맷 (`pages/26.html` — 지역변수 포함): `_parseLocalVarsTableHtml()` — thead로 컬럼 인덱스 자동 감지, 스레드 헤더/스택 프레임/지역변수 객체 3종 행 구분.
+- **`<Java Local>` 감지 로직**: `firstLink.textContent` 에서는 접두사가 소실되므로 `td.textContent`(entity 디코딩 포함) 의 `fullTdText` 로 감지 + `fullTdText.replace(/^[|+\s]+/)` 로 MAT 트리 접두사 제거.
+- **신규 헬퍼 함수**: `_buildThreadHeader()`, `_fmtHeapBytes()`.
+
+### 렌더링 개선
+- **스레드 헤더 패널** (`.stm-thread-header`): 스레드명·State·Is Daemon·Context ClassLoader 표시. 좌측 `#818cf8` 보더로 구분.
+- **지역변수 보유량 배지** (`.stm-local-heap`): 각 프레임 우측에 `_fmtHeapBytes()` 포맷 배지 표시 (`localHeap > 0` 인 경우만).
+- **중요 프레임 하이라이트** (`.stm-significant`): MAT `class="selected"` 프레임을 주황색(`#f59e0b`) 좌측 보더 + 배경으로 강조. 사용자 코드는 `#fcd34d` 굵은 글씨.
+- **중요 지역변수** (`.stm-local-sig`): MAT `class="selected"` 지역변수 행을 `#fbbf24` 굵은 글씨로 구분.
+- **상태바 신규 항목** (`#stmLocalVarCount`): 지역변수 보유 프레임 수 표시 (주황색, 없으면 숨김).
+- **복사 개선**: `copyStacktrace()` 가 스레드명을 첫 줄에 포함.
+- **CSS 추가**: `stm-thread-header` / `stm-thread-name` / `stm-thread-meta` / `stm-thread-state` / `stm-thread-loader` / `stm-significant` / `stm-local-sig` / `stm-local-heap` / `stm-local-heap-sig` 9개 클래스.
+
+---
+
 ## [2026-06-14] 스택트레이스 모달 범례 클릭 타입 필터 기능 추가
 
 **대상:** `templates/analyze.html`, `static/js/analyze.js`, `static/css/analyze.css`
