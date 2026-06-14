@@ -26,10 +26,13 @@ import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import jakarta.persistence.criteria.Predicate;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Controller
@@ -678,6 +681,70 @@ public class ServerController {
             result.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(result);
         }
+    }
+
+    // ── Local public key ─────────────────────────────────
+
+    @GetMapping("/api/servers/local-pubkey")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getLocalPubkey() {
+        Map<String, Object> result = new HashMap<>();
+        // 앱을 기동한 OS 계정의 퍼블릭키를 반환 (Settings의 SSH 로컬 유저와는 무관)
+        String localUser = System.getProperty("user.name", "");
+        result.put("localUser", localUser);
+
+        // shell injection 방지: 알파벳/숫자/하이픈/밑줄만 허용
+        if (!localUser.matches("^[a-zA-Z0-9_-]+$")) {
+            logger.warn("[LocalPubkey] 유효하지 않은 사용자명 (user.name='{}')", localUser);
+            result.put("found", false);
+            result.put("message", "유효하지 않은 사용자명입니다.");
+            return ResponseEntity.ok(result);
+        }
+
+        String[] keyFiles = {"id_ed25519.pub", "id_rsa.pub", "id_ecdsa.pub", "id_dsa.pub"};
+        try {
+            // 홈 디렉토리 확인 — shell tilde expansion 활용
+            ProcessBuilder pb = new ProcessBuilder("bash", "-c", "echo ~" + localUser);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String homeDir = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            boolean exited = p.waitFor(5, TimeUnit.SECONDS);
+            if (!exited) {
+                p.destroy();
+                logger.warn("[LocalPubkey] 홈 디렉토리 확인 타임아웃 (user='{}')", localUser);
+                result.put("found", false);
+                result.put("message", "홈 디렉토리 확인 중 타임아웃이 발생했습니다.");
+                return ResponseEntity.ok(result);
+            }
+
+            if (homeDir.isEmpty() || homeDir.startsWith("~")) {
+                logger.warn("[LocalPubkey] 홈 디렉토리 확인 실패 (user='{}', output='{}')", localUser, homeDir);
+                result.put("found", false);
+                result.put("message", "홈 디렉토리를 확인할 수 없습니다: " + localUser);
+                return ResponseEntity.ok(result);
+            }
+
+            for (String keyFile : keyFiles) {
+                java.io.File f = new java.io.File(homeDir + "/.ssh/" + keyFile);
+                if (f.exists() && f.isFile() && f.canRead()) {
+                    String pubkey = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).trim();
+                    logger.debug("[LocalPubkey] 퍼블릭키 조회 성공 (user='{}', file='{}')", localUser, f.getAbsolutePath());
+                    result.put("found", true);
+                    result.put("pubkey", pubkey);
+                    result.put("keyFile", f.getAbsolutePath());
+                    return ResponseEntity.ok(result);
+                }
+            }
+            logger.warn("[LocalPubkey] 퍼블릭키 파일 없음 (user='{}', sshDir='{}/.ssh/')", localUser, homeDir);
+            result.put("found", false);
+            result.put("message", homeDir + "/.ssh/ 에서 퍼블릭키 파일을 찾을 수 없습니다.");
+        } catch (Exception e) {
+            String errMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            logger.warn("[LocalPubkey] 퍼블릭키 조회 중 예외 발생 (user='{}'): {}", localUser, errMsg, e);
+            result.put("found", false);
+            result.put("message", "퍼블릭키 조회 실패: " + errMsg);
+        }
+        return ResponseEntity.ok(result);
     }
 
     // ── Auto-scan errors ─────────────────────────────────

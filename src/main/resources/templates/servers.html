@@ -30,6 +30,9 @@
         .btn-primary { padding: 8px 16px; border: none; border-radius: 8px; background: #2563EB;
                        color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
         .btn-primary:hover { background: #1D4ED8; }
+        .btn-pubkey { padding: 8px 16px; border: 1px solid #D1D5DB; border-radius: 8px;
+                      background: #fff; color: #374151; font-size: 13px; font-weight: 500; cursor: pointer; }
+        .btn-pubkey:hover { background: #F9FAFB; border-color: #9CA3AF; }
 
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
         /* .stable base/thead/td 색상·hover 는 common.css 에서 제공. padding/font-size + 페이지 고유 td a:hover 만 인라인 */
@@ -38,9 +41,11 @@
         .stable td a:hover { text-decoration: underline; }
         .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
         .badge-on { background: #D1FAE5; color: #065F46; }
-        .badge-fail { background: #FEE2E2; color: #991B1B; }
+        .badge-fail { background: #DC2626; color: #fff; cursor: default; }
         .badge-off { background: #F3F4F6; color: #6B7280; }
         .badge-auto { background: #DBEAFE; color: #1E40AF; }
+        tr[data-status="FAIL"] { background: #FFF5F5 !important; }
+        tr[data-status="FAIL"] > td:first-child { border-left: 3px solid #DC2626; padding-left: 13px; }
         .empty-msg { text-align: center; padding: 32px; color: #9CA3AF; font-size: 14px; }
         .no-match { display: none; text-align: center; padding: 32px; color: #9CA3AF; font-size: 14px; }
 
@@ -138,9 +143,10 @@
         .modal-btns button { padding: 8px 18px; border-radius: 7px; font-size: 13px; border: none;
                              cursor: pointer; font-weight: 500; }
         /* .mbtn-cancel / .mbtn-save / .mbtn-del 색상은 common.css 에서 제공 */
+        .modal-box.modal-wide { max-width: 560px; }
 
         /* Toast */
-        .toast { position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+        .toast { position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
                  padding: 10px 24px; border-radius: 8px; font-size: 13px; font-weight: 500;
                  z-index: 300; opacity: 0; transition: opacity .3s; pointer-events: none; }
         .toast.show { opacity: 1; }
@@ -166,26 +172,84 @@
             .topbar-title { font-size: 15px; }
             .topbar-right { gap: 4px; }
             .topbar-right .topbar-btn { padding: 5px 8px; font-size: 11px; }
-            /* 우선순위 낮은 컬럼 숨김 (SSH 계정/덤프 경로/자동탐지) */
-            .stable .col-hide-sm { display: none; }
-            .stable th, .stable td { padding: 10px 10px; }
-            .stable { font-size: 12px; }
-            /* 작업 버튼 정확한 2×2 그리드 (스캔·테스트 / 수정·삭제) */
-            .actions-cell {
-                display: grid;
-                grid-template-columns: 1fr 1fr;
-                gap: 4px;
-                min-width: 110px;
-            }
-            .actions-cell .action-btn {
-                padding: 6px 6px; font-size: 11px; margin: 0;
-                width: 100%; text-align: center; line-height: 1.2;
-            }
-            .actions-cell .action-btn + .action-btn { margin-left: 0; }
             .page-hdr { gap: 6px; }
             .page-ttl { font-size: 16px; }
             .btn-primary { padding: 7px 14px; font-size: 12px; }
+            .btn-pubkey  { padding: 7px 14px; font-size: 12px; }
             .badge { font-size: 10px; padding: 2px 7px; }
+            /* toolbar: 라벨 숨김 + select 중앙 정렬 */
+            .page-size-label { display: none; }
+            .page-size-select { text-align: center; text-align-last: center; font-size: 12px; }
+            /* 모달 바텀시트 */
+            .modal-ov { align-items: flex-end; }
+            .modal-box {
+                width: 100%; max-width: 100% !important;
+                border-radius: 14px 14px 0 0;
+                max-height: 92vh; overflow-y: auto;
+                padding-bottom: calc(24px + env(safe-area-inset-bottom));
+            }
+            @keyframes modalIn {
+                from { opacity: 0; transform: translateY(60px); }
+                to   { opacity: 1; transform: translateY(0); }
+            }
+            .modal-btns { gap: 8px; }
+            .modal-btns button { flex: 1 1 0; padding: 11px 10px; }
+            /* 스캔 패널 모바일 처리 */
+            .scan-file { flex-wrap: wrap; }
+            .scan-title { flex-wrap: wrap; gap: 8px; }
+            .transfer-progress { min-width: 0; flex: 1 1 100%; }
+            .transfer-bar { flex: 1; width: auto; min-width: 60px; }
+            /* 패널 평탄화 (카드 레이아웃용) */
+            .panel { background: transparent; border: none; border-radius: 0; overflow: visible; box-shadow: none; }
+            /* 테이블 카드 변환 */
+            .stable { display: block; min-width: 0; }
+            .stable thead { display: none; }
+            .stable tbody { display: block; }
+            .stable tr {
+                display: block; background: #fff;
+                border: 1px solid #E5E7EB; border-radius: 10px;
+                padding: 10px 14px; margin-bottom: 10px;
+                box-shadow: 0 1px 2px rgba(0,0,0,.04); position: relative;
+            }
+            .stable tr:hover { background: #fff; }
+            .stable tr[data-status="FAIL"] { border-left: 3px solid #DC2626; background: #FFF5F5 !important; }
+            .stable tr[data-status="FAIL"] > td:first-child { border-left: none; padding-left: 0; }
+            .stable td {
+                display: flex; align-items: flex-start; justify-content: space-between;
+                gap: 12px; padding: 7px 0; border-bottom: 1px dashed #F3F4F6;
+                width: auto !important; white-space: normal !important;
+                text-align: right; font-size: 13px;
+            }
+            .stable td:last-child { border-bottom: none; }
+            .stable td::before {
+                content: attr(data-label); font-size: 10px; font-weight: 700;
+                color: #9CA3AF; text-transform: uppercase; letter-spacing: .04em;
+                flex-shrink: 0; min-width: 60px; text-align: left; white-space: nowrap;
+            }
+            .stable .col-name { padding: 4px 0 10px; border-bottom: 1px solid #E5E7EB; font-size: 14px; font-weight: 700; }
+            .stable .col-name::before { display: none; }
+            .stable .col-name a { font-size: 14px; font-weight: 700; }
+            .stable .col-hide-sm { display: flex; }
+            .stable .actions-cell {
+                display: grid !important; grid-template-columns: 1fr 1fr 1fr 1fr;
+                gap: 6px; padding-top: 8px;
+            }
+            .stable .actions-cell::before { display: none; }
+            .stable .actions-cell .action-btn {
+                margin: 0; padding: 7px 4px; font-size: 12px;
+                text-align: center; width: 100%;
+            }
+            .stable .actions-cell .action-btn + .action-btn { margin-left: 0; }
+            /* 덤프 경로: td 인라인 max-width:240px 무력화 + 값 우측 정렬 */
+            .stable td[data-label="덤프 경로"] {
+                max-width: none !important;
+            }
+            .stable td[data-label="덤프 경로"] > span {
+                display: flex !important;
+                flex: 1 !important; min-width: 0 !important;
+                max-width: none !important; justify-content: flex-end !important;
+                overflow: hidden !important;
+            }
         }
         @media (min-width: 1024px) {
             .stable { font-size: 15px; }
@@ -217,7 +281,10 @@
 <div class="container">
     <div class="page-hdr">
         <div class="page-ttl">Target Servers</div>
-        <button class="btn-primary" onclick="openCreateModal()">+ 서버 추가</button>
+        <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn-pubkey" onclick="openPubkeyModal()">🔑 로컬 퍼블릭키</button>
+            <button class="btn-primary" onclick="openCreateModal()">+ 서버 추가</button>
+        </div>
     </div>
 
     <div th:if="${#lists.isEmpty(servers)}" class="panel">
@@ -280,27 +347,29 @@
                         th:data-autodetect="${s.autoDetect}"
                         th:data-enabled="${s.enabled}"
                         th:attr="data-status=${!s.enabled ? 'DISABLED' : (s.connStatus == null ? 'UNKNOWN' : s.connStatus)}">
-                        <td style="font-weight:600">
+                        <td class="col-name" data-label="이름" style="font-weight:600">
                             <a th:href="@{'/servers/' + ${s.id}}" th:text="${s.name}"
                                style="color:#2563EB;text-decoration:none">server1</a>
                         </td>
-                        <td th:text="${s.host + ':' + s.port}">192.168.1.1:22</td>
-                        <td class="col-hide-sm" th:text="${s.sshUser}">sscuser</td>
-                        <td class="col-hide-sm" style="font-size:12px;color:#6B7280;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-                            th:title="${s.dumpPath}"
+                        <td data-label="호스트" th:text="${s.host + ':' + s.port}">192.168.1.1:22</td>
+                        <td class="col-hide-sm" data-label="SSH 계정" th:text="${s.sshUser}">sscuser</td>
+                        <td class="col-hide-sm krds-tooltip tooltip-vertical" data-label="덤프 경로" style="font-size:12px;color:#6B7280;max-width:240px;"
+                            th:title="${s.dumpPath}" th:attr="data-tooltip=${s.dumpPath}"
                             th:with="paths=${s.dumpPaths}">
-                            <span th:text="${#lists.isEmpty(paths) ? '-' : paths[0]}">/opt/dumps</span>
-                            <span th:if="${#lists.size(paths) > 1}" style="color:#9CA3AF;margin-left:4px"
-                                  th:text="'+' + (${#lists.size(paths)} - 1)">+1</span>
+                            <span style="display:inline-flex;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%">
+                                <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" th:text="${#lists.isEmpty(paths) ? '-' : paths[0]}">/opt/dumps</span>
+                                <span th:if="${#lists.size(paths) > 1}" style="color:#9CA3AF;white-space:nowrap;flex-shrink:0"
+                                      th:text="'+' + (${#lists.size(paths)} - 1)">+1</span>
+                            </span>
                         </td>
-                        <td>
+                        <td data-label="상태">
                             <span th:unless="${s.enabled}" class="badge badge-off">비활성</span>
                             <span th:if="${s.enabled and s.connStatus == 'OK'}" class="badge badge-on">정상</span>
-                            <span th:if="${s.enabled and s.connStatus == 'FAIL'}" class="badge badge-fail"
-                                  th:title="${s.lastError}">실패</span>
+                            <span th:if="${s.enabled and s.connStatus == 'FAIL'}" class="badge badge-fail krds-tooltip tooltip-vertical"
+                                  th:attr="data-tooltip=${s.lastError}">⚠ 실패</span>
                             <span th:if="${s.enabled and (s.connStatus == null or s.connStatus == 'UNKNOWN')}" class="badge badge-off">미확인</span>
                         </td>
-                        <td class="col-hide-sm">
+                        <td class="col-hide-sm" data-label="자동탐지">
                             <span class="badge badge-auto" th:if="${s.autoDetect}">ON</span>
                             <span class="badge badge-off" th:unless="${s.autoDetect}">OFF</span>
                         </td>
@@ -411,8 +480,25 @@
     </div>
 </div>
 
+<!-- Pubkey Modal -->
+<div class="modal-ov" id="pubkeyModal">
+    <div class="modal-box modal-wide">
+        <div class="modal-ttl">로컬 서버 SSH 퍼블릭키</div>
+        <div id="pkMeta" style="font-size:12px;color:#6B7280;margin-bottom:10px"></div>
+        <div id="pkBody">
+            <div style="color:#9CA3AF;font-size:13px;text-align:center;padding:20px 0">조회 중...</div>
+        </div>
+        <div class="modal-btns" style="margin-top:14px">
+            <button class="mbtn-cancel" onclick="closeModal('pubkeyModal')">닫기</button>
+        </div>
+    </div>
+</div>
+
 <script>
-function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function closeModal(id) {
+    document.getElementById(id).classList.remove('open');
+    document.body.style.overflow = '';
+}
 
 function showToast(msg, type) {
     var t = document.getElementById('toast');
@@ -490,6 +576,7 @@ function openCreateModal() {
     document.getElementById('smSshUser').value = 'sscuser';
     setDumpPaths([]);
     document.getElementById('smAutoDetect').checked = false;
+    document.body.style.overflow = 'hidden';
     document.getElementById('serverModal').classList.add('open');
 }
 
@@ -504,6 +591,7 @@ function openEditModal(ds) {
     var paths = (ds.dumppath || '').split(/\r?\n/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
     setDumpPaths(paths);
     document.getElementById('smAutoDetect').checked = ds.autodetect === 'true';
+    document.body.style.overflow = 'hidden';
     document.getElementById('serverModal').classList.add('open');
 }
 
@@ -539,6 +627,7 @@ function submitServer() {
 function openDeleteModal(id, name) {
     document.getElementById('dmId').value = id;
     document.getElementById('dmName').textContent = name;
+    document.body.style.overflow = 'hidden';
     document.getElementById('deleteModal').classList.add('open');
 }
 
@@ -573,9 +662,18 @@ function testConn(id) {
 var _scanServerId = null;
 function scanServer(id, name) {
     _scanServerId = id;
+    var scanPanel = document.getElementById('scanPanel');
+    // 모바일(640px 이하): 해당 서버 카드(tr) 다음으로 스캔 패널 이동
+    if (window.innerWidth <= 640) {
+        var row = document.querySelector('tr[data-id="' + id + '"]');
+        if (row && row.parentNode && row.nextSibling !== scanPanel) {
+            row.parentNode.insertBefore(scanPanel, row.nextSibling);
+        }
+    }
     document.getElementById('scanServerName').textContent = name;
     document.getElementById('scanResults').innerHTML = '<div style="padding:12px;color:#6B7280;text-align:center">스캔 중...</div>';
-    document.getElementById('scanPanel').classList.add('open');
+    scanPanel.classList.add('open');
+    setTimeout(function() { scanPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 80);
 
     fetch('/api/servers/' + id + '/scan', { method: 'POST' })
     .then(function(r) { return r.json(); })
@@ -807,12 +905,61 @@ function updateStatusBadge(serverId, status, errMsg) {
     if (status === 'OK') {
         td.innerHTML = '<span class="badge badge-on">정상</span>';
     } else if (status === 'FAIL') {
-        var span = document.createElement('span');
-        span.className = 'badge badge-fail';
-        span.textContent = '실패';
-        if (errMsg) span.title = errMsg;
-        td.innerHTML = '';
-        td.appendChild(span);
+        var safeMsg = errMsg ? errMsg.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : '';
+        td.innerHTML = '<span class="badge badge-fail krds-tooltip tooltip-vertical"' + (safeMsg ? ' data-tooltip="' + safeMsg + '"' : '') + '>⚠ 실패</span>';
+    }
+}
+
+function openPubkeyModal() {
+    var meta = document.getElementById('pkMeta');
+    var body = document.getElementById('pkBody');
+    meta.textContent = '';
+    body.innerHTML = '<div style="color:#9CA3AF;font-size:13px;text-align:center;padding:20px 0">조회 중...</div>';
+    document.body.style.overflow = 'hidden';
+    document.getElementById('pubkeyModal').classList.add('open');
+
+    fetch('/api/servers/local-pubkey')
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            meta.textContent = d.localUser ? '실행 계정: ' + d.localUser : '';
+            if (d.found) {
+                var keyFileInfo = d.keyFile ? '<div style="font-size:11px;color:#9CA3AF;margin-bottom:8px;font-family:monospace">' + escHtml(d.keyFile) + '</div>' : '';
+                var taId = 'pkPubkeyText';
+                var btnId = 'pkCopyBtn';
+                body.innerHTML = keyFileInfo
+                    + '<div style="display:flex;gap:6px;align-items:flex-start">'
+                    + '<textarea id="' + taId + '" readonly'
+                    + ' style="flex:1;font-family:monospace;font-size:11px;line-height:1.6;'
+                    + 'padding:10px;border:1px solid #E5E7EB;border-radius:6px;'
+                    + 'background:#F9FAFB;resize:none;height:80px;outline:none;color:#374151;word-break:break-all">'
+                    + escHtml(d.pubkey) + '</textarea>'
+                    + '<button id="' + btnId + '" class="action-btn" style="flex-shrink:0;font-size:12px;padding:5px 12px" onclick="copyPubkey()">복사</button>'
+                    + '</div>';
+            } else {
+                body.innerHTML = '<div style="color:#EF4444;font-size:13px;padding:8px 0">'
+                    + escHtml(d.message || '퍼블릭키를 찾을 수 없습니다.') + '</div>';
+            }
+        })
+        .catch(function() {
+            document.getElementById('pkBody').innerHTML =
+                '<div style="color:#EF4444;font-size:13px;padding:8px 0">퍼블릭키 조회 요청 실패</div>';
+        });
+}
+
+function copyPubkey() {
+    var ta = document.getElementById('pkPubkeyText');
+    if (!ta || !ta.value) return;
+    var btn = document.getElementById('pkCopyBtn');
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(ta.value).then(function() {
+            btn.textContent = '복사됨!';
+            setTimeout(function() { btn.textContent = '복사'; }, 1500);
+        });
+    } else {
+        ta.select();
+        document.execCommand('copy');
+        btn.textContent = '복사됨!';
+        setTimeout(function() { btn.textContent = '복사'; }, 1500);
     }
 }
 
@@ -1011,6 +1158,88 @@ function renderPagination(total, totalPages, start, end) {
 }
 
 initRows();
+
+// ── 플로팅 툴팁 ([data-tooltip] 속성 공통) ──────────────────────
+(function() {
+    var tip = document.createElement('div');
+    tip.style.cssText = 'display:none;position:fixed;z-index:9999;background:#1F2937;color:#fff;' +
+        'font-size:12px;line-height:1.5;padding:7px 11px;border-radius:6px;max-width:360px;' +
+        'word-break:break-word;white-space:pre-wrap;box-shadow:0 3px 10px rgba(0,0,0,.25);pointer-events:none;' +
+        'box-sizing:border-box';
+    document.body.appendChild(tip);
+
+    var _activeTipEl = null;
+
+    function hideTip() {
+        tip.style.display = 'none';
+        _activeTipEl = null;
+    }
+    function showTipFor(el) {
+        _activeTipEl = el;
+        tip.textContent = el.getAttribute('data-tooltip');
+        tip.style.maxWidth = Math.min(360, window.innerWidth - 16) + 'px';
+        tip.style.display = 'block';
+    }
+
+    function pos(e) {
+        var x = e.clientX + 14, y = e.clientY - 40;
+        if (x + tip.offsetWidth  > window.innerWidth  - 8) x = e.clientX - tip.offsetWidth  - 14;
+        if (y < 8)                                          y = e.clientY + 18;
+        if (y + tip.offsetHeight > window.innerHeight - 8) y = e.clientY - tip.offsetHeight - 14;
+        tip.style.left = x + 'px';
+        tip.style.top  = y + 'px';
+    }
+
+    // ── 마우스 (데스크톱) ──
+    document.addEventListener('mouseover', function(e) {
+        var el = e.target.closest ? e.target.closest('[data-tooltip]') : null;
+        if (!el || !el.getAttribute('data-tooltip')) { hideTip(); return; }
+        showTipFor(el);
+        pos(e);
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (tip.style.display === 'none') return;
+        pos(e);
+    });
+    document.addEventListener('mouseout', function(e) {
+        var el = e.target.closest ? e.target.closest('[data-tooltip]') : null;
+        if (el && el.contains(e.relatedTarget)) return;
+        hideTip();
+    });
+
+    // ── 터치 (모바일) ──
+    // pointer-events:none 인 tip 위를 터치하면 아래 요소(배지)로 이벤트가 전파됨.
+    // _activeTipEl 을 추적해 같은 요소 재터치 시 dismiss, 외부 터치 시 즉시 dismiss.
+    document.addEventListener('touchstart', function(e) {
+        var el = e.target.closest ? e.target.closest('[data-tooltip]') : null;
+        if (!el || !el.getAttribute('data-tooltip')) { hideTip(); return; }
+        // 현재 표시 중인 같은 요소 터치 → 토글 닫기
+        if (el === _activeTipEl && tip.style.display === 'block') { hideTip(); return; }
+        showTipFor(el);
+        requestAnimationFrame(function() {
+            var rect = el.getBoundingClientRect();
+            var winW = window.innerWidth;
+            var winH = window.innerHeight;
+            /* 모바일: 220px 로 좁혀 3줄+ 줄바꿈 유도 → 화면 이탈 방지 */
+            tip.style.right = 'auto';
+            tip.style.maxWidth = (winW <= 640 ? Math.min(220, winW - 16) : Math.min(360, winW - 16)) + 'px';
+            var tw = tip.offsetWidth, tipH = tip.offsetHeight;
+            var x = rect.left;
+            if (x + tw > winW - 8) x = winW - tw - 8;
+            if (x < 8) x = 8;
+            var y = rect.bottom + 8;
+            if (y + tipH > winH - 8) y = rect.top - tipH - 8;
+            if (y < 8) y = 8;
+            tip.style.left = x + 'px';
+            tip.style.top  = y + 'px';
+        });
+    }, { passive: true });
+
+    // 스크롤 시 팝오버 즉시 닫기
+    document.addEventListener('touchmove', function() {
+        if (tip.style.display === 'block') hideTip();
+    }, { passive: true });
+})();
 </script>
 
 </body>

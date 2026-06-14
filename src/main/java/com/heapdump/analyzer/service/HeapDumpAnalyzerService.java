@@ -228,6 +228,9 @@ public class HeapDumpAnalyzerService {
         // 기존 결과를 DB로 마이그레이션 (한 번만 실행)
         migrateExistingResultsToDb();
 
+        // dump_creation_time이 DB에 없는 기존 레코드를 캐시에서 백필
+        backfillDumpCreationTimeToDb();
+
         // 기존 history 레코드 중 서버 정보가 누락된 항목 보정
         fixMissingServerInfoInHistory();
     }
@@ -247,6 +250,27 @@ public class HeapDumpAnalyzerService {
         }
         // AI 인사이트 파일 → DB 마이그레이션
         migrateAiInsightsToDb();
+    }
+
+    private void backfillDumpCreationTimeToDb() {
+        int filled = 0;
+        try {
+            List<AnalysisHistoryEntity> allHistory = analysisHistoryRepository.findAll();
+            for (AnalysisHistoryEntity entity : allHistory) {
+                if (entity.getDumpCreationTime() != null) continue;
+                if (!"SUCCESS".equals(entity.getStatus())) continue;
+                HeapAnalysisResult cached = resultCache.get(entity.getFilename());
+                if (cached == null || cached.getDumpCreationTime() == null) continue;
+                entity.setDumpCreationTime(cached.getDumpCreationTime());
+                analysisHistoryRepository.save(entity);
+                filled++;
+            }
+        } catch (Exception e) {
+            logger.warn("[DB Backfill] dump_creation_time 백필 중 오류: {}", e.getMessage());
+        }
+        if (filled > 0) {
+            logger.info("[DB Backfill] dump_creation_time {} 건 백필 완료", filled);
+        }
     }
 
     private void fixMissingServerInfoInHistory() {
@@ -2242,7 +2266,11 @@ public class HeapDumpAnalyzerService {
                     logger.info("[Analysis] Interrupted during processing: {}", safe);
                 } else {
                     logger.error("[Analysis] Failed for {}", safe, e);
-                    sendProgress(emitter, AnalysisProgress.error(safe, e.getMessage()));
+                    // e.getMessage()가 null인 예외(NPE, StackOverflowError 등)는 클래스명으로 대체
+                    String errMsg = (e.getMessage() != null && !e.getMessage().isEmpty())
+                            ? e.getMessage()
+                            : e.getClass().getSimpleName() + " (no message)";
+                    sendProgress(emitter, AnalysisProgress.error(safe, errMsg));
 
                     // 분석 실패 결과를 resultCache + 디스크에 저장 (파일 삭제 전까지 유지)
                     try {
@@ -2256,7 +2284,7 @@ public class HeapDumpAnalyzerService {
                         errorResult.setLastModified(finalFile.exists() ? finalFile.lastModified() : System.currentTimeMillis());
                         errorResult.setFormat(getExtension(safe).toUpperCase());
                         errorResult.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
-                        errorResult.setErrorMessage(e.getMessage());
+                        errorResult.setErrorMessage(errMsg);
                         errorResult.setAnalysisTime(System.currentTimeMillis() - startTime);
 
                         // MAT CLI 로그가 있으면 에러 결과에도 포함
@@ -2267,7 +2295,8 @@ public class HeapDumpAnalyzerService {
                                 errorResult.setMatLog(new String(Files.readAllBytes(matLogFile.toPath()),
                                         java.nio.charset.StandardCharsets.UTF_8));
                             } catch (Exception logEx) {
-                                logger.warn("[Analysis] Failed to read mat.log for error result: {}", logEx.getMessage());
+                                logger.warn("[Analysis] Failed to read mat.log for error result: {}",
+                                        logEx.getMessage() != null ? logEx.getMessage() : logEx.getClass().getSimpleName());
                             }
                         }
                         Files.createDirectories(errorResultDir.toPath());
@@ -2277,7 +2306,8 @@ public class HeapDumpAnalyzerService {
                         analysisSuccess = true; // tmp 파일 삭제 방지 (이미 이동 완료)
                         logger.info("[Analysis] Error result saved for: {}", safe);
                     } catch (Exception saveEx) {
-                        logger.warn("[Analysis] Failed to save error result for {}: {}", safe, saveEx.getMessage());
+                        String saveErrMsg = saveEx.getMessage() != null ? saveEx.getMessage() : saveEx.getClass().getSimpleName();
+                        logger.warn("[Analysis] Failed to save error result for {}: {}", safe, saveErrMsg);
                     }
                 }
             } finally {
@@ -2541,6 +2571,7 @@ public class HeapDumpAnalyzerService {
             entity.setCompressed(false);
             entity.setFileDeleted(false);
             entity.setErrorMessage(result.getErrorMessage());
+            if (result.getDumpCreationTime() != null) entity.setDumpCreationTime(result.getDumpCreationTime());
             if (serverId != null) entity.setServerId(serverId);
             if (serverName != null) entity.setServerName(serverName);
             if (uploadedBy != null) entity.setUploadedBy(uploadedBy);

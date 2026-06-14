@@ -59,6 +59,9 @@ public class AnalysisHistoryEntity {
     @Column(name = "error_message", length = 2000)
     private String errorMessage;
 
+    @Column(name = "dump_creation_time", length = 50)
+    private String dumpCreationTime;
+
     @Column(name = "server_id")
     private Long serverId;
 

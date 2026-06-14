@@ -141,12 +141,13 @@ public class HeapHistoryApiController {
 
         for (AnalysisHistoryItem h : items) {
             Map<String, Object> item = new LinkedHashMap<>();
-            item.put("filename",      h.getFilename());
-            item.put("formattedSize", h.getFormattedSize());
-            item.put("lastModified",  h.getLastModified());
-            item.put("status",        h.getStatus());
-            item.put("fileDeleted",   h.isFileDeleted());
-            item.put("serverName",    h.getServerName());
+            item.put("filename",         h.getFilename());
+            item.put("formattedSize",    h.getFormattedSize());
+            item.put("lastModified",     h.getLastModified());
+            item.put("status",           h.getStatus());
+            item.put("fileDeleted",      h.isFileDeleted());
+            item.put("serverName",       h.getServerName());
+            item.put("dumpCreationTime", h.getDumpCreationTime());
             if (!"NOT_ANALYZED".equals(h.getStatus())) {
                 item.put("suspectCount",   h.getSuspectCount());
                 item.put("analysisTime",   h.getAnalysisTime());

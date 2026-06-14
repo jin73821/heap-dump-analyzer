@@ -1097,7 +1097,8 @@
                         <input type="hidden" id="cmpBase" value="">
                         <div class="cmp-picker-meta">
                             <div class="meta-row"><span class="icn">HEAP</span><span id="cmpBaseMeta-heap" class="empty">—</span></div>
-                            <div class="meta-row"><span class="icn">DATE</span><span id="cmpBaseMeta-date" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">분석일</span><span id="cmpBaseMeta-date" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">덤프일</span><span id="cmpBaseMeta-heapdate" class="empty">—</span></div>
                             <div class="meta-row"><span class="icn">SERVER</span><span id="cmpBaseMeta-server" class="empty">—</span></div>
                             <div class="meta-row"><span class="icn">SUSPECT</span><span id="cmpBaseMeta-suspect" class="empty">—</span></div>
                         </div>
@@ -1116,11 +1117,17 @@
                         <input type="hidden" id="cmpTarget" value="">
                         <div class="cmp-picker-meta">
                             <div class="meta-row"><span class="icn">HEAP</span><span id="cmpTargetMeta-heap" class="empty">—</span></div>
-                            <div class="meta-row"><span class="icn">DATE</span><span id="cmpTargetMeta-date" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">분석일</span><span id="cmpTargetMeta-date" class="empty">—</span></div>
+                            <div class="meta-row"><span class="icn">덤프일</span><span id="cmpTargetMeta-heapdate" class="empty">—</span></div>
                             <div class="meta-row"><span class="icn">SERVER</span><span id="cmpTargetMeta-server" class="empty">—</span></div>
                             <div class="meta-row"><span class="icn">SUSPECT</span><span id="cmpTargetMeta-suspect" class="empty">—</span></div>
                         </div>
                     </div>
+                </div>
+                <div id="cmpDateWarnBox" style="display:none;margin-top:10px;padding:10px 14px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;font-size:13px;color:#92400E">
+                    <strong>⚠ 날짜 순서 역전 주의</strong>
+                    <div style="margin-top:4px">Before(기준 데이터)의 힙덤프 생성 시각이 After(비교 데이터)보다 최신입니다. 비교 방향을 확인해주세요.</div>
+                    <div id="cmpDateWarnDetail" style="margin-top:6px;font-size:12px;color:#78350F"></div>
                 </div>
                 <div id="cmpPickerHint" class="cmp-picker-hint">서로 다른 파일 2개를 선택하면 비교를 실행할 수 있습니다.</div>
                 <div class="cmp-picker-actions">
@@ -1158,7 +1165,7 @@
                 <button class="fp-close-btn" onclick="closeFpModal()">✕</button>
             </div>
             <div class="fp-search-bar">
-                <input type="text" id="fpSearch" placeholder="파일명 검색…"
+                <input type="text" id="fpSearch" placeholder="파일명 또는 서버명 검색…"
                        oninput="applyPickerFilters()">
                 <select id="fpServerFilter" onchange="applyPickerFilters()">
                     <option value="">서버: 전체</option>
@@ -1182,6 +1189,20 @@
             </div>
             <div class="fp-modal-foot">
                 <button onclick="closeFpModal()">취소</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 날짜 역전 경고 모달 -->
+    <div id="cmpDateOrderModal" class="modal-ov" onclick="if(event.target===this)closeDateOrderModal()">
+        <div class="modal-box" style="max-width:460px">
+            <div class="modal-ttl" style="color:#B45309">⚠ 날짜 순서 역전 경고</div>
+            <p style="margin:10px 0 6px;font-size:14px;color:#374151">Before(기준 데이터)의 힙덤프 생성 시각이 After(비교 데이터)보다 최신입니다.</p>
+            <div id="cmpDateOrderDetail" style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:8px 12px;font-size:12px;color:#78350F;margin-bottom:14px"></div>
+            <p style="font-size:13px;color:#6B7280;margin-bottom:14px">비교 방향이 올바른지 확인 후 계속 실행하거나, 취소하여 선택을 수정하세요.</p>
+            <div class="modal-btns">
+                <button class="mbtn-cancel" onclick="closeDateOrderModal()" style="padding:7px 16px;border:1px solid #D1D5DB;border-radius:5px;font-size:13px;cursor:pointer">취소</button>
+                <button class="mbtn-confirm" onclick="doRunCompare()" style="padding:7px 16px;border:none;border-radius:5px;font-size:13px;cursor:pointer">그래도 실행</button>
             </div>
         </div>
     </div>
@@ -1244,7 +1265,8 @@
         var srv  = document.getElementById('fpServerFilter').value;
         var sort = document.getElementById('fpSort').value;
         var files = _fpFiles.filter(function(f) {
-            if (q   && f.filename.toLowerCase().indexOf(q) < 0) return false;
+            if (q   && f.filename.toLowerCase().indexOf(q) < 0
+                    && (f.serverName || '').toLowerCase().indexOf(q) < 0) return false;
             if (srv && (f.serverName || '') !== srv)              return false;
             return true;
         });
@@ -1291,6 +1313,9 @@
         });
     }
 
+    var _baseHeapDate   = null;
+    var _targetHeapDate = null;
+
     function pickFile(f) {
         var role = _fpRole;
         var dateStr = f.lastModified
@@ -1298,11 +1323,14 @@
             : '';
         closeFpModal();
         applyCardSelection(role, f.filename, f.heapUsed || '', dateStr,
-                           f.serverName || '', f.suspectCount);
+                           f.serverName || '', f.suspectCount, f.dumpCreationTime || null);
     }
 
-    function applyCardSelection(role, filename, heap, date, server, suspects) {
+    function applyCardSelection(role, filename, heap, date, server, suspects, heapDate) {
         document.getElementById('cmp' + fpCap(role)).value = filename;
+
+        if (role === 'base')   _baseHeapDate   = heapDate || null;
+        if (role === 'target') _targetHeapDate = heapDate || null;
 
         var btn = document.getElementById('cmp' + fpCap(role) + 'Btn');
         if (btn) {
@@ -1317,10 +1345,11 @@
             if (changeBtn) changeBtn.style.display = filename ? '' : 'none';
             card.classList.toggle('selected', !!filename);
         }
-        setPickerMeta(role, 'heap',    heap    || '—');
-        setPickerMeta(role, 'date',    date    || '—');
-        setPickerMeta(role, 'server',  server  || '—');
-        setPickerMeta(role, 'suspect', suspects != null ? suspects + '건' : '—');
+        setPickerMeta(role, 'heap',     heap    || '—');
+        setPickerMeta(role, 'date',     date    || '—');
+        setPickerMeta(role, 'heapdate', heapDate || '—');
+        setPickerMeta(role, 'server',   server  || '—');
+        setPickerMeta(role, 'suspect',  suspects != null ? suspects + '건' : '—');
         updatePickerReadyState();
     }
 
@@ -1334,6 +1363,11 @@
     function fpCap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
     function fpEsc(s) {
         return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function parseDumpDate(s) {
+        if (!s) return null;
+        return new Date(s.replace(' ', 'T'));
     }
 
     function updatePickerReadyState() {
@@ -1351,6 +1385,21 @@
         if (readyStep)  readyStep.classList.toggle('done', ready);
 
         resetPickerHint();
+        updateDateWarnBox();
+    }
+
+    function updateDateWarnBox() {
+        var warnBox = document.getElementById('cmpDateWarnBox');
+        var detail  = document.getElementById('cmpDateWarnDetail');
+        if (!warnBox) return;
+        var bd = parseDumpDate(_baseHeapDate);
+        var td = parseDumpDate(_targetHeapDate);
+        if (bd && td && bd > td) {
+            detail.textContent = 'Before 덤프일: ' + _baseHeapDate + '  /  After 덤프일: ' + _targetHeapDate;
+            warnBox.style.display = '';
+        } else {
+            warnBox.style.display = 'none';
+        }
     }
 
     function resetPickerHint() {
@@ -1380,7 +1429,32 @@
         var t = document.getElementById('cmpTarget').value;
         if (!b || !t) { showPickerError('두 파일을 모두 선택해주세요.'); return; }
         if (b === t)  { showPickerError('서로 다른 파일 두 개를 선택해주세요.'); return; }
+        var bd = parseDumpDate(_baseHeapDate);
+        var td = parseDumpDate(_targetHeapDate);
+        if (bd && td && bd > td) {
+            var detail = document.getElementById('cmpDateOrderDetail');
+            if (detail) {
+                detail.innerHTML =
+                    'Before 덤프일: <strong>' + _baseHeapDate + '</strong><br>' +
+                    'After 덤프일: <strong>' + _targetHeapDate + '</strong>';
+            }
+            var modal = document.getElementById('cmpDateOrderModal');
+            if (modal) modal.classList.add('open');
+            return;
+        }
+        doRunCompare();
+    }
+
+    function doRunCompare() {
+        closeDateOrderModal();
+        var b = document.getElementById('cmpBase').value;
+        var t = document.getElementById('cmpTarget').value;
         location.href = '/compare?base=' + encodeURIComponent(b) + '&target=' + encodeURIComponent(t);
+    }
+
+    function closeDateOrderModal() {
+        var modal = document.getElementById('cmpDateOrderModal');
+        if (modal) modal.classList.remove('open');
     }
     </script>
 

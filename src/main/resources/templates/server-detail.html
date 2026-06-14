@@ -9,7 +9,8 @@
     <link rel="stylesheet" href="/css/common.css?v=2026-06-05">
     <title th:text="${server.name + ' — Heap Dump Analyzer'}">Server Detail</title>
     <style>
-        .topbar-status { margin-left: 4px; }
+        .topbar-status { margin-left: 4px; flex-shrink: 0; }
+        .topbar-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
         .container { max-width: 1280px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
@@ -45,7 +46,7 @@
         .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600;
                  display: inline-block; }
         .badge-on { background: #D1FAE5; color: #065F46; }
-        .badge-fail { background: #FEE2E2; color: #991B1B; }
+        .badge-fail { background: #DC2626; color: #fff; cursor: default; }
         .badge-off { background: #F3F4F6; color: #6B7280; }
         .badge-auto { background: #DBEAFE; color: #1E40AF; }
         .badge-success { background: #D1FAE5; color: #065F46; }
@@ -81,7 +82,7 @@
         .empty-msg { text-align: center; padding: 28px; color: #9CA3AF; font-size: 13px; }
 
         /* Toast */
-        .toast { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 300;
+        .toast { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 300;
                  padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 500;
                  box-shadow: 0 4px 16px rgba(0,0,0,.12); opacity: 0; transition: opacity .3s; pointer-events: none; }
         .toast.show { opacity: 1; pointer-events: auto; }
@@ -102,9 +103,53 @@
             .info-grid { grid-template-columns: 1fr; gap: 12px; }
         }
         @media (max-width: 640px) {
-            .dtable .col-hide-sm { display: none; }
-            .panel { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-            .dtable { min-width: 550px; }
+            .topbar-status .badge { font-size: 10px; padding: 2px 6px; }
+            /* info-actions: 버튼 2열 배치 */
+            .info-actions { flex-wrap: wrap; gap: 8px; }
+            .info-actions .action-btn { flex: 1 1 calc(50% - 4px); text-align: center; padding: 9px 8px; }
+            /* 패널 평탄화 (카드 레이아웃용) */
+            .panel { background: transparent; border: none; border-radius: 0; overflow: visible; }
+            /* 테이블 카드 변환 */
+            .dtable { display: block; min-width: 0; }
+            .dtable thead { display: none; }
+            .dtable tbody { display: block; }
+            .dtable tr {
+                display: block; background: #fff;
+                border: 1px solid #E5E7EB; border-radius: 10px;
+                padding: 10px 14px; margin-bottom: 10px;
+                box-shadow: 0 1px 2px rgba(0,0,0,.04);
+            }
+            .dtable tr:hover { background: #fff; }
+            .dtable td {
+                display: flex; align-items: flex-start; justify-content: space-between;
+                gap: 12px; padding: 7px 0; border-bottom: 1px dashed #F3F4F6;
+                width: auto !important; white-space: normal !important;
+                text-align: right; font-size: 13px;
+            }
+            .dtable td:last-child { border-bottom: none; }
+            .dtable td::before {
+                content: attr(data-label); font-size: 10px; font-weight: 700;
+                color: #9CA3AF; text-transform: uppercase; letter-spacing: .04em;
+                flex-shrink: 0; min-width: 56px; text-align: left; white-space: nowrap;
+            }
+            .dtable .col-card-hdr { padding: 4px 0 8px; border-bottom: 1px solid #E5E7EB; }
+            .dtable .col-card-hdr::before { display: none; }
+            .dtable .col-hide-sm { display: flex; }
+            .dtable .td-err { max-width: none; white-space: normal; }
+            /* td-status 카드 모드: 점 대신 배지 표시에 맞게 정렬 */
+            .dtable .td-status { width: auto; text-align: right; }
+            /* Edit 모달 바텀시트 */
+            .modal-ov { align-items: flex-end !important; }
+            .modal-ov > div {
+                width: 100% !important; max-width: 100% !important;
+                border-radius: 14px 14px 0 0 !important;
+                max-height: 92vh; overflow-y: auto;
+                padding-bottom: calc(20px + env(safe-area-inset-bottom));
+            }
+            @keyframes modalIn {
+                from { opacity: 0; transform: translateY(60px); }
+                to   { opacity: 1; transform: translateY(0); }
+            }
         }
     </style>
 </head>
@@ -119,7 +164,8 @@
         <span class="topbar-status">
             <span th:unless="${server.enabled}" class="badge badge-off">비활성</span>
             <span th:if="${server.enabled and server.connStatus == 'OK'}" class="badge badge-on">정상</span>
-            <span th:if="${server.enabled and server.connStatus == 'FAIL'}" class="badge badge-fail">실패</span>
+            <span th:if="${server.enabled and server.connStatus == 'FAIL'}" class="badge badge-fail krds-tooltip tooltip-vertical"
+                  th:attr="data-tooltip=${server.lastError}">⚠ 실패</span>
             <span th:if="${server.enabled and (server.connStatus == null or server.connStatus == 'UNKNOWN')}" class="badge badge-off">미확인</span>
         </span>
     </div>
@@ -215,22 +261,22 @@
             </thead>
             <tbody>
                 <tr th:each="h : ${histories}">
-                    <td class="td-status">
+                    <td class="td-status col-card-hdr" data-label="상태">
                         <span class="hdot hd-ok" th:if="${h.status == 'SUCCESS'}"></span>
                         <span class="hdot hd-err" th:if="${h.status == 'ERROR'}"></span>
                     </td>
-                    <td>
+                    <td data-label="파일명">
                         <a th:if="${h.status == 'SUCCESS'}"
                            th:href="@{/analyze/result/{f}(f=${h.filename})}"
                            class="fname-link" th:text="${h.filename}">dump.hprof</a>
                         <span th:if="${h.status == 'ERROR'}"
                               class="fname-err" th:text="${h.filename}">dump.hprof</span>
                     </td>
-                    <td class="td-meta" th:text="${h.fileSize != null ? h.fileSize > 1048576 ? #numbers.formatDecimal(h.fileSize / 1048576.0, 1, 1) + ' MB' : #numbers.formatDecimal(h.fileSize / 1024.0, 1, 1) + ' KB' : '-'}">-</td>
-                    <td class="td-meta col-hide-sm" th:text="${h.usedHeapSize != null and h.totalHeapSize != null ? #numbers.formatDecimal(h.usedHeapSize / 1048576.0, 1, 1) + ' / ' + #numbers.formatDecimal(h.totalHeapSize / 1048576.0, 1, 1) + ' MB' : '-'}">-</td>
-                    <td class="td-meta col-hide-sm" th:text="${h.suspectCount != null ? h.suspectCount : 0}">0</td>
-                    <td class="td-meta" th:text="${h.analysisTimeMs != null ? h.analysisTimeMs > 60000 ? #numbers.formatDecimal(h.analysisTimeMs / 60000.0, 1, 1) + 'm' : #numbers.formatDecimal(h.analysisTimeMs / 1000.0, 1, 1) + 's' : '-'}">-</td>
-                    <td class="td-meta" th:text="${h.analyzedAt != null ? #temporals.format(h.analyzedAt, 'MM-dd HH:mm') : '-'}">-</td>
+                    <td class="td-meta" data-label="크기" th:text="${h.fileSize != null ? h.fileSize > 1048576 ? #numbers.formatDecimal(h.fileSize / 1048576.0, 1, 1) + ' MB' : #numbers.formatDecimal(h.fileSize / 1024.0, 1, 1) + ' KB' : '-'}">-</td>
+                    <td class="td-meta col-hide-sm" data-label="Heap 사용" th:text="${h.usedHeapSize != null and h.totalHeapSize != null ? #numbers.formatDecimal(h.usedHeapSize / 1048576.0, 1, 1) + ' / ' + #numbers.formatDecimal(h.totalHeapSize / 1048576.0, 1, 1) + ' MB' : '-'}">-</td>
+                    <td class="td-meta col-hide-sm" data-label="Suspects" th:text="${h.suspectCount != null ? h.suspectCount : 0}">0</td>
+                    <td class="td-meta" data-label="분석 시간" th:text="${h.analysisTimeMs != null ? h.analysisTimeMs > 60000 ? #numbers.formatDecimal(h.analysisTimeMs / 60000.0, 1, 1) + 'm' : #numbers.formatDecimal(h.analysisTimeMs / 1000.0, 1, 1) + 's' : '-'}">-</td>
+                    <td class="td-meta" data-label="분석일" th:text="${h.analyzedAt != null ? #temporals.format(h.analyzedAt, 'MM-dd HH:mm') : '-'}">-</td>
                 </tr>
             </tbody>
         </table>
@@ -261,17 +307,17 @@
             </thead>
             <tbody>
                 <tr th:each="log : ${transferLogs}">
-                    <td>
+                    <td class="col-card-hdr" data-label="상태">
                         <span th:if="${log.transferStatus == 'SUCCESS'}" class="badge badge-success">SUCCESS</span>
                         <span th:if="${log.transferStatus == 'FAILED'}" class="badge badge-failed">FAILED</span>
                         <span th:if="${log.transferStatus == 'IN_PROGRESS'}" class="badge badge-progress">RUNNING</span>
                     </td>
-                    <td style="font-weight:500" th:text="${log.filename}">dump.hprof</td>
-                    <td class="td-path col-hide-sm" th:text="${log.remotePath}" th:title="${log.remotePath}">-</td>
-                    <td class="td-mono" th:text="${log.fileSize != null ? log.fileSize > 1048576 ? #numbers.formatDecimal(log.fileSize / 1048576.0, 1, 1) + ' MB' : #numbers.formatDecimal(log.fileSize / 1024.0, 1, 1) + ' KB' : '-'}">-</td>
-                    <td class="td-mono" th:text="${log.startedAt != null ? #temporals.format(log.startedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
-                    <td class="td-mono col-hide-sm" th:text="${log.completedAt != null ? #temporals.format(log.completedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
-                    <td>
+                    <td data-label="파일명" style="font-weight:500" th:text="${log.filename}">dump.hprof</td>
+                    <td class="td-path col-hide-sm" data-label="원격 경로" th:text="${log.remotePath}" th:title="${log.remotePath}">-</td>
+                    <td class="td-mono" data-label="크기" th:text="${log.fileSize != null ? log.fileSize > 1048576 ? #numbers.formatDecimal(log.fileSize / 1048576.0, 1, 1) + ' MB' : #numbers.formatDecimal(log.fileSize / 1024.0, 1, 1) + ' KB' : '-'}">-</td>
+                    <td class="td-mono" data-label="시작" th:text="${log.startedAt != null ? #temporals.format(log.startedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
+                    <td class="td-mono col-hide-sm" data-label="완료" th:text="${log.completedAt != null ? #temporals.format(log.completedAt, 'MM-dd HH:mm:ss') : '-'}">-</td>
+                    <td data-label="에러">
                         <span th:if="${log.errorMessage != null}" class="td-err" th:text="${log.errorMessage}" th:title="${log.errorMessage}"></span>
                         <span th:unless="${log.errorMessage != null}" style="color:#9CA3AF">-</span>
                     </td>
@@ -328,7 +374,7 @@
     </div>
 </div>
 <style>
-.modal-ov.open { display: flex !important; }
+.modal-ov.open { display: flex !important; align-items: center; }
 @keyframes modalIn { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
 .modal-input:focus { border-color:#93C5FD; box-shadow:0 0 0 3px rgba(37,99,235,.1); }
 </style>
@@ -446,9 +492,13 @@ function openEditModal(ds) {
     var paths = (ds.dumppath || '').split(/\r?\n/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
     setDumpPaths(paths);
     document.getElementById('smAutoDetect').checked = ds.autodetect === 'true';
+    document.body.style.overflow = 'hidden';
     document.getElementById('serverModal').classList.add('open');
 }
-function closeEditModal() { document.getElementById('serverModal').classList.remove('open'); }
+function closeEditModal() {
+    document.getElementById('serverModal').classList.remove('open');
+    document.body.style.overflow = '';
+}
 function submitServer() {
     var paths = collectDumpPaths();
     var data = {
@@ -477,6 +527,61 @@ function submitServer() {
     }).catch(function() { showToast('요청 실패', false); });
     closeEditModal();
 }
+
+// ── 플로팅 툴팁 ([data-tip] 속성 공통) ──────────────────────
+(function() {
+    var tip = document.createElement('div');
+    tip.style.cssText = 'display:none;position:fixed;z-index:9999;background:#1F2937;color:#fff;' +
+        'font-size:12px;line-height:1.5;padding:7px 11px;border-radius:6px;max-width:360px;' +
+        'word-break:break-word;white-space:pre-wrap;box-shadow:0 3px 10px rgba(0,0,0,.25);pointer-events:none';
+    document.body.appendChild(tip);
+    function pos(e) {
+        var x = e.clientX + 14, y = e.clientY - 40;
+        if (x + tip.offsetWidth  > window.innerWidth  - 8) x = e.clientX - tip.offsetWidth  - 14;
+        if (y < 8)                                          y = e.clientY + 18;
+        if (y + tip.offsetHeight > window.innerHeight - 8) y = e.clientY - tip.offsetHeight - 14;
+        tip.style.left = x + 'px';
+        tip.style.top  = y + 'px';
+    }
+    document.addEventListener('mouseover', function(e) {
+        var el = e.target.closest ? e.target.closest('[data-tooltip]') : null;
+        if (!el || !el.getAttribute('data-tooltip')) { tip.style.display = 'none'; return; }
+        tip.textContent = el.getAttribute('data-tooltip');
+        tip.style.display = 'block';
+        pos(e);
+    });
+    document.addEventListener('mousemove', function(e) {
+        if (tip.style.display === 'none') return;
+        pos(e);
+    });
+    document.addEventListener('mouseout', function(e) {
+        var el = e.target.closest ? e.target.closest('[data-tooltip]') : null;
+        if (el && el.contains(e.relatedTarget)) return;
+        tip.style.display = 'none';
+    });
+    document.addEventListener('touchstart', function(e) {
+        var el = e.target.closest ? e.target.closest('[data-tooltip]') : null;
+        if (!el || !el.getAttribute('data-tooltip')) { tip.style.display = 'none'; return; }
+        tip.textContent = el.getAttribute('data-tooltip');
+        tip.style.maxWidth = Math.min(360, window.innerWidth - 16) + 'px';
+        tip.style.display = 'block';
+        requestAnimationFrame(function() {
+            var rect = el.getBoundingClientRect();
+            var tw = tip.offsetWidth, tipH = tip.offsetHeight;
+            var x = rect.left;
+            if (x + tw > window.innerWidth - 8) x = window.innerWidth - tw - 8;
+            if (x < 8) x = 8;
+            var y = rect.bottom + 8;
+            if (y + tipH > window.innerHeight - 8) y = rect.top - tipH - 8;
+            if (y < 8) y = 8;
+            tip.style.left = x + 'px';
+            tip.style.top  = y + 'px';
+        });
+    }, { passive: true });
+    document.addEventListener('touchend', function() {
+        setTimeout(function() { tip.style.display = 'none'; }, 1800);
+    }, { passive: true });
+})();
 </script>
 
 </body>

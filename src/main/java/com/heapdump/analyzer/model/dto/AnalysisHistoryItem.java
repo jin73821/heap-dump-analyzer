@@ -24,6 +24,7 @@ public class AnalysisHistoryItem {
     private boolean hasAiInsight;
     private String  aiInsightSeverity;
     private long    analyzedAtEpoch;
+    private String  dumpCreationTime;
 
     public Long    getId()            { return id; }
     public void    setId(Long v)              { id = v; }
@@ -71,4 +72,6 @@ public class AnalysisHistoryItem {
     public void    setAiInsightSeverity(String v) { aiInsightSeverity = v; }
     public long    getAnalyzedAtEpoch() { return analyzedAtEpoch; }
     public void    setAnalyzedAtEpoch(long v) { analyzedAtEpoch = v; }
+    public String  getDumpCreationTime() { return dumpCreationTime; }
+    public void    setDumpCreationTime(String v) { dumpCreationTime = v; }
 }

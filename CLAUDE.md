@@ -14,7 +14,7 @@ Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초). test 디렉토리 비어있음
-java -jar target/heap-analyzer-2.0.7.jar
+java -jar target/heap-analyzer-2.1.0.jar   # 버전은 pom.xml <version>과 항상 일치
 bash restart.sh                          # 운영(18080) 재기동
 ```
 
@@ -205,6 +205,14 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 
 20. **운영 MariaDB 검증은 읽기 전용** — `192.168.56.9/HEAPDB` 는 운영 데이터 보유. 기능 검증 시 UNIQUE 키(`ai_insights.filename`, `target_servers.name` 등) 대상 테스트 INSERT 에 **`ON DUPLICATE KEY UPDATE` 금지**(실데이터 덮어씀, binlog OFF·복구 어려움). 기존 데이터로 GET 검증하거나, 충돌 없는 새 키로 INSERT 후 그 행만 DELETE. 컬럼 조회 시 `2>/dev/null` 로 에러 숨기지 말 것(빈 테이블 오판).
 
+21. **`DisabledException`을 `loadUserByUsername()`에서 직접 throw 금지** — `DaoAuthenticationProvider.retrieveUser()`가 `UserDetailsService`의 모든 예외를 `catch (Exception ex)`로 잡아 `InternalAuthenticationServiceException`으로 wrapping함. 결과적으로 `SecurityConfig`의 failureHandler에서 `ex instanceof DisabledException`이 절대 true가 되지 않아 `/login?error=disabled` 로 분기되지 않음. **올바른 방법**: `enabled=false`인 `UserDetails`를 반환 → Spring Security의 `DefaultPreAuthenticationChecks.check()`가 `retrieveUser()` 반환 후 `DisabledException`을 throw (wrapping되지 않음).
+
+22. **심각도 색상은 4곳 동시 수정** — Critical/High/Medium/Low 색상이 분산되어 있어 하나라도 누락 시 불일치 발생. 수정 대상:
+    - `templates/history.html` 인라인 CSS `.dds-critical/.dds-high/.dds-medium/.dds-low` (배지)
+    - `templates/history.html` JS `SEVERITY_COLORS` 객체 (차트 색상)
+    - `static/js/analyze.js` `_SEV_CONFIG` 객체 (AI 인사이트 배너·아이콘)
+    - `templates/analyze-print.html` `.sev-*` border + `.ai-sev.*` 배경 (인쇄본)
+
 ## Key Design Decisions
 
 - **Two-tier cache:** In-memory `ConcurrentHashMap` ← disk `result.json` 복원. 누락 필드(componentDetailHtmlMap/histogramHtml/threadOverviewHtml)는 ZIP에서 lazy 재추출.
@@ -224,6 +232,7 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 - **AI 인사이트 영속화:** `ai_insights.insight_data`(JSON mediumtext) 에 전체 맵 저장, `loadAiInsight()` 가 top-level 맵으로 반환(`summary`/`rootCause`/`recommendations`/`severity`/`analysedAt` 등). `saveAiInsight()` 가 `analysedAt` 을 입력 맵에 스탬프하므로 신규 분석 응답(`/api/llm/analyze`)도 즉시 시각 표시 가능. analyze Overview 의 Leak Suspects 하위 요약 카드 + 전용 AI 패널이 동일 데이터 사용.
 - **deleted 가시성:** `historyPage()`/`filesPage()`는 `Authentication`으로 ROLE_ADMIN 검사. 비관리자에게 `fileDeleted=true` 응답 제외(서버 측 보안). **대시보드 Analysis Files는 모든 계정에서 deleted 항상 제외**.
 - **AES 암호화:** `util/AesEncryptor.java` AES-256-CBC HEX. CLI: `bash heap_enc.sh "평문"`, `bash heap_dec.sh "암호문"`. DB password / RAG password / API key 모두 `ENC(...)` 형식.
+- **Dump Creation Time 파싱:** `HeapAnalysisResult.dumpCreationTime` 필드 — MAT System Overview ZIP `index.html`의 `<td>Date</td>`/`<td>Time</td>` TD 쌍을 파싱. MAT는 JVM 로케일(한국어)로 출력하므로 `"2026. 5. 29."` + `"오후 6시 18분 53초 GMT+9"` 형태. `HeapDumpAnalyzerService.parseDumpCreationTime()` 이 오전/오후 24h 변환 후 `"2026-05-29 18:18:53"` 반환. 기존 result.json에 필드 없을 경우 `reparseOverviewMeta()` 가 `dumpCreationTime == null` 조건으로 재파싱 (classLoader/gcRoot 0 조건과 OR).
 - **Leak Rule DB 마이그레이션 (Phase 4):** `leak_library_rules` (98 prefix-based: 66 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 2 보강 2026-05-31) + `leak_fallback_rules` (66 regex-based: 33 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 3) 테이블 + `LeakRuleAdminController` `/admin/leak-rules` ADMIN CRUD + `LeakSuspectAdvisor` 룰 엔진 + `LeakRuleSeeder` 부트스트랩. 코드 배포 없이 운영자가 추가/수정/우선순위 조정. `LeakRuleService.invalidate()` 로 캐시 즉시 갱신.
 
 ## Changelog

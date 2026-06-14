@@ -1,5 +1,238 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-14] Target Servers 모바일 UX 추가 수정 2건
+
+**대상:** `templates/servers.html`
+
+1. **덤프 경로 우측 정렬 재수정**: `td[data-label="덤프 경로"] > span` 에 `display:flex !important` 추가 — 기존에 `justify-content:flex-end`만 있었으나 `inline-flex`라 너비를 채우지 못해 값이 가운데로 보이는 버그 → `display:flex`로 교체하여 flex 아이템 전체 너비 확보 후 우측 정렬
+2. **팝오버 뷰포트 이탈 수정**: 터치 툴팁 rAF 내에서 `max-width`를 `window.innerWidth - 16` 으로 재설정 후 `offsetWidth` 측정 → x 확정 후에도 우측이 넘치는 경우 `maxWidth = winW - x - 8` 로 재클램핑 → 팝오버가 모바일 화면 왼쪽으로 삐져나가는 버그 수정
+
+---
+
+## [2026-06-14] Target Servers 모바일 UX 3건 수정
+
+**대상:** `templates/servers.html`
+
+1. **퍼블릭키 버튼 높이 통일**: `@media (max-width: 640px)` 에 `.btn-pubkey { padding: 7px 14px; font-size: 12px }` 추가 → "서버 추가" 버튼과 높이 일치
+2. **덤프 경로 우측 정렬**: 640px 미디어쿼리에서 `td[data-label="덤프 경로"] > span` 에 `flex:1; min-width:0; max-width:none; justify-content:flex-end` 적용 → 가운데 정렬 버그 수정
+3. **상태 배너 팝오버 외부 터치 즉시 닫기**: 툴팁 IIFE 리팩터
+   - `_activeTipEl` 변수 추가 — 현재 팝오버 기준 요소 추적
+   - `touchstart` 핸들러: 같은 요소 재터치 시 토글 닫기, 외부 터치 시 즉시 닫기
+   - `touchend` 1800ms 자동 닫힘 제거 (기존 동작: 딜레이 중 외부 터치해도 안 닫힘)
+   - `touchmove` 핸들러 신규 추가 — 스크롤 시 팝오버 즉시 닫기
+
+---
+
+## [2026-06-14] Target Servers — KRDS 툴팁 패턴 적용
+
+**대상:** `templates/servers.html` / `templates/server-detail.html`
+
+KRDS(Korea Design System) 툴팁 컨벤션으로 통일:
+- `data-tip` attribute → `data-tooltip` (KRDS 표준)
+- 툴팁 대상 요소에 `krds-tooltip tooltip-vertical` 클래스 추가
+- 적용 대상: ⚠ 실패 배지, 덤프 경로 td (servers.html) / ⚠ 실패 배지 (server-detail.html)
+- `updateStatusBadge()` JS도 동일하게 변경 — 동적 생성 배지도 KRDS 패턴 유지
+- 툴팁 IIFE: `[data-tip]` → `[data-tooltip]` 셀렉터 업데이트 (mouseover/mouseout/touchstart 모두)
+- 내부 구현(position:fixed 플로팅)은 부모 overflow 영향을 받지 않아 유지
+
+---
+
+## [2026-06-14] Target Servers 모바일 UX 버그 수정
+
+**대상:** `templates/servers.html` / `templates/server-detail.html`
+
+1. **모달 배경 스크롤 방지**: 모달 open 시 `document.body.style.overflow = 'hidden'`, close 시 복구
+   - servers.html: `openCreateModal` / `openEditModal` / `openDeleteModal` / `openPubkeyModal` / `closeModal`
+   - server-detail.html: `openEditModal` / `closeEditModal`
+
+2. **덤프 경로 우측 정렬 수정**: td 내 두 `<span>` 요소를 wrapper `<span>`으로 묶어 단일 flex 아이템으로 처리 → `justify-content:space-between`이 올바르게 좌(라벨):우(값) 정렬
+
+3. **덤프 경로 터치 툴팁**: 덤프 경로 td에 `data-tip` attribute 추가 (기존 `th:title`과 동일 값) — 모바일 터치 시 전체 경로 팝업
+
+4. **실패 배너 툴팁 화면 초과 수정**: touchstart 핸들러에서 `tip.style.maxWidth = min(360, innerWidth-16)px` 동적 설정 + x 좌표 클램핑 개선 (우측/좌측 경계 각각 보정)
+
+5. **스캔 결과 카드 하단 표시**: `scanServer()` 함수에서 `window.innerWidth <= 640` 시 `#scanPanel` DOM을 해당 서버 tr 다음 위치로 이동 (`insertBefore`) → 스캔 결과가 해당 카드 바로 아래 표시. 데스크탑은 기존 컨테이너 하단 위치 유지.
+
+---
+
+## [2026-06-14] Target Servers — 모바일 전면 개편
+
+**대상:** `templates/servers.html` / `templates/server-detail.html`
+
+### servers.html
+- `@media (max-width:640px)` 블록 전면 교체 — 테이블 → 카드 변환
+  - `.stable thead` 숨김, `tr` → 독립 카드 (border-radius:10px, box-shadow)
+  - `td` → `flex` 라벨:값 레이아웃 (::before에 `data-label` 렌더)
+  - `.col-name` (이름 컬럼): 카드 헤더 역할, font-weight:700, 하단 구분선
+  - `.col-hide-sm` (SSH계정/덤프경로/자동탐지): 카드 모드에서 모두 표시
+  - `.actions-cell`: 4버튼 1열 grid (1fr × 4)
+  - FAIL 카드: `border-left:3px solid #DC2626` + 배경 `#FFF5F5`
+- Toolbar: `@media (max-width:640px)`에서 라벨 숨김 + select 중앙 정렬
+- 모달 → 바텀시트: `.modal-ov { align-items:flex-end }` + `.modal-box { border-radius:14px 14px 0 0, max-height:92vh }` + 버튼 풀폭
+- `.modal-box.modal-wide { max-width:560px }` 클래스 추가 (pubkeyModal)
+- Scan Panel: `flex-wrap:wrap` + `transfer-progress` overflow 수정
+- 툴팁 IIFE: `touchstart` 이벤트 추가 (1.8초 후 자동 숨김) — 모바일 FAIL 에러 접근 지원
+- Toast `top: 60px` → `56px`
+
+### server-detail.html
+- `@media (max-width:640px)` 블록 전면 교체 — 분석이력/전송이력 테이블 → 카드 변환
+  - `.dtable thead` 숨김, `tr` → 독립 카드
+  - `td` → `flex` 라벨:값 (::before에 `data-label` 렌더)
+  - `.col-card-hdr` (상태 컬럼): 카드 헤더, 구분선 하단
+  - `.col-hide-sm` 카드 모드에서 표시
+  - `.td-err { max-width:none; white-space:normal }` — 에러 전문 노출
+- `info-actions` 버튼: `flex-wrap:wrap` + 2열 배치 (`flex:1 1 calc(50% - 4px)`)
+- Edit 모달 → 바텀시트: `align-items:flex-end !important` + inner div `border-radius:14px 14px 0 0 !important`
+- `.topbar-status { flex-shrink:0 }` — 긴 서버명에도 배지 항상 표시
+- `.topbar-title { white-space:nowrap; overflow:hidden; text-overflow:ellipsis }` — 긴 이름 말줄임
+- 툴팁 IIFE: `touchstart` 이벤트 추가
+- Toast `top: 64px` → `56px`
+
+---
+
+## [2026-06-14] Target Servers — 실패 상태 툴팁 개선
+
+**대상:** `templates/servers.html` / `templates/server-detail.html`
+
+- 펄스 애니메이션(`failPulse`) 제거
+- `.fail-err` 인라인 에러 텍스트 제거
+- `title` attribute 대신 `data-tip` attribute + 플로팅 JS 툴팁으로 변경
+  - 마우스 위치 따라다니는 플로팅 div (position:fixed, z-index:9999)
+  - 화면 경계 자동 보정 (우측/하단 넘침 방지)
+  - 에러 전문 표시 (max-width:360px, word-break:break-word)
+- `updateStatusBadge()` JS: `title` → `data-tip` 업데이트 → 테스트/스캔 시 툴팁 내용 즉시 반영
+
+---
+
+## [2026-06-14] Target Servers — 실패 상태 시각적 강조
+
+**대상:** `templates/servers.html` / `templates/server-detail.html`
+
+| 항목 | 변경 전 | 변경 후 |
+|------|---------|---------|
+| `.badge-fail` 배경 | 연한 빨간 `#FEE2E2` | 진한 빨간 `#DC2626` (흰 텍스트) |
+| 배지 텍스트 | `실패` | `⚠ 실패` |
+| 배지 효과 | 없음 | 펄스 애니메이션 (`failPulse` 2.5s) |
+| 행 배경 (목록) | 기본 흰색 | `tr[data-status="FAIL"]` → 연한 빨간 `#FFF5F5` |
+| 행 좌측 테두리 (목록) | 없음 | 3px solid `#DC2626` |
+| 에러 메시지 표시 | tooltip(hover)만 | 배지 아래 `.fail-err` 텍스트로 최대 50자 인라인 표시 |
+| `updateStatusBadge()` JS | 기존 패턴 유지 | ⚠ 아이콘 + 에러 메시지 인라인으로 동기화 |
+
+---
+
+## [2026-06-14] Comparison 파일 피커 — 서버명 검색 지원
+
+**대상:** `templates/compare.html`
+
+- 검색 입력창 placeholder `"파일명 검색…"` → `"파일명 또는 서버명 검색…"` 변경
+- `applyPickerFilters()`: 파일명 불일치 시 서버명(`f.serverName`)도 함께 검사 (OR 조건)
+
+---
+
+## [2026-06-14] Comparison 피커 — /api/history 응답에 dumpCreationTime 누락 수정
+
+**대상:** `HeapHistoryApiController.java` `getHistory()`
+
+`getHistory()`가 `AnalysisHistoryItem`을 `Map`으로 수동 변환 시 `dumpCreationTime` 필드를 포함하지 않아 비교 페이지 피커에서 덤프일이 `—`로 표시되는 문제.
+
+- `item.put("dumpCreationTime", h.getDumpCreationTime())` 한 줄 추가
+
+---
+
+## [2026-06-14] Comparison 피커 — 기존 분석 기록 dump_creation_time 백필
+
+**대상:** `HeapDumpAnalyzerService.java`
+
+기존 분석 기록들이 `dump_creation_time`이 DB에 NULL로 남아 비교 페이지 피커에서 덤프일이 표시되지 않는 문제 해결.
+
+- `backfillDumpCreationTimeToDb()` 메서드 추가
+- `@PostConstruct restoreResultsFromDisk()` 마지막 단계로 실행
+- `sanitizeCachedHtml()` → `reparseOverviewMeta()` 경로로 캐시에 이미 채워진 `dumpCreationTime`을 DB에 UPDATE
+- DB `dump_creation_time IS NULL AND status = 'SUCCESS'` 레코드 대상으로 한 번만 실행 (이후 신규 분석은 `saveAnalysisToDb()`에서 자동 저장)
+- 앱 기동 시 자동 실행, 로그: `[DB Backfill] dump_creation_time N 건 백필 완료`
+
+---
+
+## [2026-06-14] Comparison 피커 — 힙덤프 생성 시각(Heap Date) 표시 + 날짜 역전 경고
+
+**대상:** `AnalysisHistoryEntity.java` / `HeapDumpAnalyzerService.java` / `AnalysisHistoryItem.java` / `HeapHistoryAggregator.java` / `compare.html` + DB DDL
+
+**변경 내용:**
+
+1. **DB**: `analysis_history` 테이블에 `dump_creation_time VARCHAR(50) NULL` 컬럼 추가
+2. **`AnalysisHistoryEntity`**: `dumpCreationTime` 필드 + `@Column(name="dump_creation_time", length=50)` 추가
+3. **`HeapDumpAnalyzerService.saveAnalysisToDb()`**: `result.getDumpCreationTime() != null` 조건으로 엔티티에 저장
+4. **`AnalysisHistoryItem`**: `dumpCreationTime` 필드 + getter/setter 추가
+5. **`HeapHistoryAggregator.buildHistory()`**: `item.setDumpCreationTime(e.getDumpCreationTime())` 매핑 추가
+6. **`compare.html`**:
+   - 피커 카드 메타 행에 `덤프일` 행 추가 (ID: `cmpBaseMeta-heapdate`, `cmpTargetMeta-heapdate`)
+   - 기존 `DATE` → `분석일` (분석 완료 시각), 신규 `덤프일` = 힙덤프 생성 시각
+   - `pickFile()`: `dumpCreationTime` 파라미터 전달
+   - `applyCardSelection()`: `heapDate` 파라미터 수신 + `_baseHeapDate`/`_targetHeapDate` 전역 변수 갱신
+   - `parseDumpDate()` 헬퍼: `"YYYY-MM-DD HH:mm:ss"` → `Date` 변환
+   - `updateDateWarnBox()`: Before 덤프일 > After 덤프일 시 피커 아래 노란 경고 박스 표시
+   - `runCompare()`: 날짜 역전 감지 시 확인 모달 표시, `doRunCompare()`로 실행 분리
+   - 날짜 역전 경고 모달(`cmpDateOrderModal`): 취소 / 그래도 실행 버튼
+
+---
+
+## [2026-06-14] 로컬 퍼블릭키 조회 예외 처리 및 로깅 보강
+
+**대상:** `ServerController.java` `getLocalPubkey()`
+
+| # | 문제 | 수정 |
+|---|------|------|
+| 1 | `catch` 블록에 로그 없음 + `e.getMessage()` null 가능 | `logger.warn("[LocalPubkey] …", localUser, errMsg, e)` + null guard |
+| 2 | `ProcessBuilder.waitFor` 타임아웃 시 프로세스 누수 | 반환값 확인 → `false` 이면 `p.destroy()` + warn 로그 후 즉시 반환 |
+| 3 | 유효하지 않은 `user.name` 분기에 로그 없음 | `logger.warn` 추가 |
+| 4 | 홈 디렉토리 확인 실패 분기에 로그 없음 | `logger.warn` (실제 output 값 포함) 추가 |
+| 5 | 키 파일 미발견 분기에 로그 없음 | `logger.warn` (탐색한 sshDir 포함) 추가 |
+| 6 | 성공 분기에 로그 없음 | `logger.debug` (user + keyFile 경로) 추가 |
+
+모든 로그 prefix: `[LocalPubkey]`
+
+---
+
+## [2026-06-14] Analysis Queue 예외 표시 및 로깅 보강
+
+**검토에서 발견된 3개 문제 수정:**
+
+**[높음] `index.html` — Queue 패널 fetch 오류 무음 처리 수정**
+- `_queueFetchErrors` 카운터 + `_QUEUE_MAX_ERRORS = 3` 추가
+- `refreshQueueStatus` / `startQueuePolling` 내 `.catch(function(){})` → `!r.ok` 포함 오류 감지로 교체
+- 연속 3회 실패 시: `renderQueueFetchError()` 호출 → 패널에 빨간 ⚠ + "큐 상태를 확인할 수 없습니다" 표시 + 폴링 중지
+- `console.warn('[Queue] …')` 로 브라우저 콘솔 기록
+- 수동 새로고침 버튼 클릭 시 카운터 리셋 (재시도 기회)
+
+**[중간] `HeapDumpAnalyzerService.java` — `e.getMessage()` null 전파 방지**
+- `catch (Exception e)` 블록에서 null 메시지를 `e.getClass().getSimpleName() + " (no message)"` 로 대체
+- `sendProgress(AnalysisProgress.error(…))` 및 `errorResult.setErrorMessage(…)` 양쪽에 적용
+- `logEx.getMessage()` / `saveEx.getMessage()` null guard 동일 패턴 적용
+
+**[중간] `progress.html` — SSE 연결 끊김 후 HEAD 요청 실패 시 사용자 안내 추가**
+- `evtSource.onerror` 내 HEAD `.catch(() => {})` → 에러 배너 표시 + `console.warn` 로 교체
+- 메시지: "SSE 연결이 끊겼습니다. 분석이 서버에서 계속 실행 중일 수 있습니다. 잠시 후 새로고침하거나 재분석 버튼을 눌러주세요."
+
+---
+
+## [2026-06-14] 서버 등록 화면 — 로컬 퍼블릭키 조회 버튼 추가
+
+**목적:** SSH 연결 설정 시, 원격 서버 `authorized_keys`에 등록해야 할 로컬 계정 퍼블릭키를 UI에서 바로 확인·복사.
+
+**구현:**
+- `ServerController.java` — `GET /api/servers/local-pubkey` 추가
+  - **앱 기동 OS 계정** 기준(`System.getProperty("user.name")`) — root 환경은 root, gbhda 환경은 gbhda 자동 반영
+  - `bash -c "echo ~{user}"` 로 홈 디렉토리 확인 (shell injection 방지: `^[a-zA-Z0-9_-]+$` 검증)
+  - 탐색 순서: `id_ed25519.pub` → `id_rsa.pub` → `id_ecdsa.pub` → `id_dsa.pub`
+  - 응답: `{found, localUser, pubkey, keyFile}` or `{found:false, message}`
+- `templates/servers.html`
+  - 서버 추가/수정 모달 내부 퍼블릭키 UI 제거
+  - page-hdr "서버 추가" 버튼 왼쪽에 "🔑 로컬 퍼블릭키" 버튼 추가
+  - 클릭 시 전용 모달 오픈 → 실행 계정명·파일 경로·퍼블릭키 텍스트 + "복사" 버튼 표시
+  - "복사": `navigator.clipboard` 우선, 폴백 `execCommand('copy')`
+
+---
+
 ## [2026-06-14] 버전 2.0.8 → 2.1.0 업데이트
 
 - `pom.xml` — `<version>2.1.0</version>`

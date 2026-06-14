@@ -1172,15 +1172,49 @@ function doDownload() {
 /* ── Queue Status ──────────────────────────── */
 var _queuePollTimer = null;
 var _queueActive = false;
+var _queueFetchErrors = 0;
+var _QUEUE_MAX_ERRORS = 3;
 
 function refreshQueueStatus() {
     var btn = document.getElementById('queueRefreshBtn');
     btn.classList.add('spinning');
     setTimeout(function() { btn.classList.remove('spinning'); }, 600);
+    // 수동 새로고침 시 에러 카운터 리셋 — 이전 실패 이후 상태 재확인 기회 부여
+    _queueFetchErrors = 0;
 
-    fetch('/api/queue/status').then(function(r) { return r.json(); }).then(function(d) {
-        renderQueuePanel(d);
-    }).catch(function() {});
+    fetch('/api/queue/status')
+        .then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        })
+        .then(function(d) {
+            _queueFetchErrors = 0;
+            renderQueuePanel(d);
+        })
+        .catch(function(e) {
+            _queueFetchErrors++;
+            console.warn('[Queue] 상태 조회 실패 (' + _queueFetchErrors + '/' + _QUEUE_MAX_ERRORS + '):', e.message || e);
+            if (_queueFetchErrors >= _QUEUE_MAX_ERRORS) {
+                renderQueueFetchError();
+                stopQueuePolling();
+            }
+        });
+}
+
+function renderQueueFetchError() {
+    var panel = document.getElementById('queuePanel');
+    var body = document.getElementById('queueBody');
+    var dot = document.getElementById('queueDot');
+    var updated = document.getElementById('queueUpdated');
+    panel.classList.add('visible');
+    dot.style.background = '#EF4444';
+    dot.style.animation = 'none';
+    body.innerHTML = '<div class="queue-idle">' +
+        '<div class="queue-idle-icon" style="font-size:16px;color:#EF4444">&#9888;</div>' +
+        '<div class="queue-idle-text" style="color:#DC2626">큐 상태를 확인할 수 없습니다</div></div>';
+    var now = new Date();
+    updated.textContent = '조회 실패 ' + String(now.getHours()).padStart(2,'0') + ':' +
+        String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
 }
 
 function renderQueuePanel(d) {
@@ -1251,9 +1285,23 @@ function startQueuePolling() {
     if (_queuePollTimer) return;
     _queueActive = true;
     _queuePollTimer = setInterval(function() {
-        fetch('/api/queue/status').then(function(r) { return r.json(); }).then(function(d) {
-            renderQueuePanel(d);
-        }).catch(function() {});
+        fetch('/api/queue/status')
+            .then(function(r) {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(function(d) {
+                _queueFetchErrors = 0;
+                renderQueuePanel(d);
+            })
+            .catch(function(e) {
+                _queueFetchErrors++;
+                console.warn('[Queue] 폴링 실패 (' + _queueFetchErrors + '/' + _QUEUE_MAX_ERRORS + '):', e.message || e);
+                if (_queueFetchErrors >= _QUEUE_MAX_ERRORS) {
+                    renderQueueFetchError();
+                    stopQueuePolling();
+                }
+            });
     }, 5000);
 }
 
