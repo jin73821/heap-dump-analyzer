@@ -2870,6 +2870,11 @@ public class HeapDumpAnalyzerService {
         return fileMgmt.resultDirectory(filename);
     }
 
+    /** 컨트롤러에서 임시 디렉토리 정리 시 사용 (내부 deleteDirectoryRecursively 위임). */
+    public void deleteDirectoryPublic(File dir) {
+        deleteDirectoryRecursively(dir);
+    }
+
     private File resultDirectory(String filename) {
         return fileMgmt.resultDirectory(filename);
     }

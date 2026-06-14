@@ -351,7 +351,7 @@ public class HeapReportApiController {
 
     // ── Dominator Tree 행 클릭 시점 lazy on-demand 참조 추출 ──────────────────
     // path2gc  (incoming = GC root까지의 경로) + show_retained_set (outgoing = 보유 객체)
-    // 두 MAT 쿼리를 순차 실행. 인덱스(.index) 재사용으로 보통 4~8초.
+    // 각 요청별 격리 temp 디렉토리 사용 → 동시 클릭 시 Query.zip 충돌 없음.
     @GetMapping(value = "/api/dominator-refs/{filename:.+}", produces = MediaType.APPLICATION_JSON_VALUE)
     @ResponseBody
     public ResponseEntity<Map<String, Object>> dominatorRefs(@PathVariable String filename,
@@ -376,94 +376,88 @@ public class HeapReportApiController {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).body(resp);
             }
 
-            // 원본 hprof를 resultDir에 (심볼릭 링크로) 두어 MAT가 .index 파일과 같이 발견하도록 함.
-            // 압축된 .gz 만 있는 경우 tmp/ 에 1회 압축 해제 후 캐시.
-            File hprofInResultDir = new File(resultDir, base + ".hprof");
-            boolean createdLink = false;
-            if (!hprofInResultDir.exists()) {
-                String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
-                File originalHprof = new File(dumpfiles, safe);
-                File tmpHprof = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
-                                          base + ".hprof");
-                File sourceHprof = null;
-                if (originalHprof.exists()) {
-                    sourceHprof = originalHprof;
-                } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
+            // sourceHprof 탐색: dumpfiles > tmp > .gz 압축해제
+            String addrHex = address.substring(2);
+            String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
+            File originalHprof = new File(dumpfiles, safe);
+            File tmpHprof = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
+                                      base + ".hprof");
+            File sourceHprof = null;
+            if (originalHprof.exists()) {
+                sourceHprof = originalHprof;
+            } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
+                sourceHprof = tmpHprof;
+            } else {
+                File gzFile = new File(dumpfiles, safe + ".gz");
+                if (gzFile.exists()) {
+                    if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
+                    logger.info("[Dominator Refs] Decompressing {} → {} (1-time)",
+                            gzFile.getName(), tmpHprof.getName());
+                    try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
+                            java.nio.file.Files.newInputStream(gzFile.toPath()));
+                         java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
+                        byte[] buf = new byte[64 * 1024];
+                        int n;
+                        while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
+                    }
                     sourceHprof = tmpHprof;
                 } else {
-                    File gzFile = new File(dumpfiles, safe + ".gz");
-                    if (gzFile.exists()) {
-                        // tmp/ 로 압축 해제 (1회, 이후 재사용)
-                        if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
-                        logger.info("[Dominator Refs] Decompressing {} → {} (1-time)",
-                                gzFile.getName(), tmpHprof.getName());
-                        try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
-                                java.nio.file.Files.newInputStream(gzFile.toPath()));
-                             java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
-                            byte[] buf = new byte[64 * 1024];
-                            int n;
-                            while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
-                        }
-                        sourceHprof = tmpHprof;
-                    } else {
-                        resp.put("error", "원본 hprof 파일을 찾을 수 없습니다");
-                        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(resp);
-                    }
-                }
-                try {
-                    java.nio.file.Files.createSymbolicLink(hprofInResultDir.toPath(), sourceHprof.toPath());
-                    createdLink = true;
-                } catch (IOException linkErr) {
-                    logger.warn("[Dominator Refs] symlink 실패, copy 로 폴백: {}", linkErr.getMessage());
-                    java.nio.file.Files.copy(sourceHprof.toPath(), hprofInResultDir.toPath());
-                    createdLink = true;
+                    resp.put("error", "원본 hprof 파일을 찾을 수 없습니다");
+                    return ResponseEntity.status(HttpStatus.NOT_FOUND).body(resp);
                 }
             }
 
+            // 요청별 격리 temp 디렉토리 — Query.zip 충돌 완전 차단
+            File refWorkDir = new File(resultDir, ".dom_ref_" + addrHex + "_" + System.currentTimeMillis());
+            refWorkDir.mkdirs();
             try {
-                long timeout = 90L;
-                File queryZip = new File(resultDir, base + "_Query.zip");
-                // 기존 dominator_tree Query.zip 백업 (재분석 없이 가능)
-                File backupZip = null;
-                if (queryZip.exists()) {
-                    backupZip = new File(resultDir, base + "_Query.dt.bak");
-                    java.nio.file.Files.move(queryZip.toPath(), backupZip.toPath(),
-                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                }
-                try {
-                    // 1) Incoming: path to GC roots
-                    analyzerService.runMatSingleQuery(hprofInResultDir.getAbsolutePath(), resultDir,
-                            "path2gc " + address, timeout);
-                    List<com.heapdump.analyzer.model.DominatorRefEntry> incoming =
-                            queryZip.exists() ? analyzerService.getParser().parseRefZipPublic(queryZip, 50)
-                                              : Collections.emptyList();
-
-                    // 2) Outgoing: retained set
-                    if (queryZip.exists()) queryZip.delete();
-                    analyzerService.runMatSingleQuery(hprofInResultDir.getAbsolutePath(), resultDir,
-                            "show_retained_set " + address, timeout);
-                    List<com.heapdump.analyzer.model.DominatorRefEntry> outgoing =
-                            queryZip.exists() ? analyzerService.getParser().parseRefZipPublic(queryZip, 50)
-                                              : Collections.emptyList();
-
-                    if (queryZip.exists()) queryZip.delete();
-                    resp.put("address", address);
-                    resp.put("incoming", incoming);
-                    resp.put("outgoing", outgoing);
-                    return ResponseEntity.ok(resp);
-                } finally {
-                    // dominator_tree 원본 ZIP 복원
-                    if (backupZip != null && backupZip.exists()) {
-                        if (queryZip.exists()) queryZip.delete();
-                        java.nio.file.Files.move(backupZip.toPath(), queryZip.toPath(),
+                // index/threads 파일 복사
+                File[] idxFiles = resultDir.listFiles((d, n) ->
+                        n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
+                if (idxFiles != null) {
+                    for (File f : idxFiles) {
+                        java.nio.file.Files.copy(f.toPath(),
+                                new File(refWorkDir, f.getName()).toPath(),
                                 java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                     }
                 }
-            } finally {
-                if (createdLink && hprofInResultDir.exists()) {
-                    try { java.nio.file.Files.delete(hprofInResultDir.toPath()); }
-                    catch (IOException ignore) {}
+
+                // hprof 심볼릭 링크 (실패 시 copy 폴백)
+                File workHprof = new File(refWorkDir, base + ".hprof");
+                try {
+                    java.nio.file.Files.createSymbolicLink(workHprof.toPath(), sourceHprof.toPath());
+                } catch (IOException linkErr) {
+                    logger.warn("[Dominator Refs] symlink 실패, copy 폴백: {}", linkErr.getMessage());
+                    java.nio.file.Files.copy(sourceHprof.toPath(), workHprof.toPath());
                 }
+
+                long timeout = 90L;
+                File queryZip = new File(refWorkDir, base + "_Query.zip");
+
+                // 1) Incoming: path to GC roots — 컬럼: Object+addr | Ref.Field | Shallow | Retained
+                analyzerService.runMatSingleQuery(workHprof.getAbsolutePath(), refWorkDir,
+                        "path2gc " + address, timeout);
+                List<com.heapdump.analyzer.model.DominatorRefEntry> incoming = queryZip.exists()
+                        ? analyzerService.getParser().parseRefZipPath2gc(queryZip, 50)
+                        : Collections.emptyList();
+                if (queryZip.exists()) queryZip.delete();
+
+                // 2) Outgoing: retained set — 컬럼: Class Name | #Objects | Shallow | Retained
+                analyzerService.runMatSingleQuery(workHprof.getAbsolutePath(), refWorkDir,
+                        "show_retained_set " + address, timeout);
+                List<com.heapdump.analyzer.model.DominatorRefEntry> outgoing = queryZip.exists()
+                        ? analyzerService.getParser().parseRefZipRetained(queryZip, 50)
+                        : Collections.emptyList();
+
+                resp.put("address", address);
+                resp.put("incoming", incoming);
+                resp.put("outgoing", outgoing);
+                logger.info("[Dominator Refs] {} incoming={}, outgoing={} for {}",
+                        address, incoming.size(), outgoing.size(), safe);
+                return ResponseEntity.ok(resp);
+            } finally {
+                try { analyzerService.deleteDirectoryPublic(refWorkDir); }
+                catch (Exception ignore) {}
             }
         } catch (IllegalArgumentException e) {
             resp.put("error", e.getMessage());
