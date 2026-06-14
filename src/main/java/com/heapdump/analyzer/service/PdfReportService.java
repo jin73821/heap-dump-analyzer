@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.LeakSuspect;
 import com.heapdump.analyzer.model.MemoryObject;
+import com.heapdump.analyzer.util.OomDetector;
 import com.heapdump.analyzer.model.entity.AiInsightEntity;
 import com.heapdump.analyzer.repository.AiInsightRepository;
 import com.openhtmltopdf.outputdevice.helper.BaseRendererBuilder;
@@ -96,6 +97,20 @@ public class PdfReportService {
                 new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
         m.put("suspectCount",
                 result.hasLeakSuspects() ? result.getLeakSuspects().size() : 0);
+
+        // OOM 진단 데이터
+        int oomCount = result.getOomThreadCount();
+        m.put("oomThreadCount", oomCount);
+        if (oomCount > 0) {
+            String firstType = result.getOomFirstType();
+            m.put("oomFirstType", firstType);
+            OomDetector.OomKind kind = OomDetector.classifyMessage(firstType);
+            m.put("oomKindLabel", kind.koLabel());
+            m.put("oomCause", clip(kind.cause(), 280));
+            m.put("oomRecommendation", clip(kind.recommendation(), 280));
+            m.put("oomThreadSamples", result.getOomThreadNames(3));
+        }
+
         return m;
     }
 

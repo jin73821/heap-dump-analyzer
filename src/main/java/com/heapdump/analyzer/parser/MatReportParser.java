@@ -1283,20 +1283,36 @@ public class MatReportParser {
     // ─── Dominator Tree Inbound/Outbound 참조 파싱 ─────────────────────────────
 
     /**
-     * MAT inbounds/outbounds 쿼리 ZIP HTML에서 참조 객체 목록을 추출합니다.
-     * dominator_tree와 동일한 4-컬럼 구조 (className+addr / shallow / retained / pct) 사용.
+     * path2gc 쿼리 ZIP 파싱.
+     * MAT 출력 컬럼 구조: [Object+addr | Ref.Field | Shallow Heap | Retained Heap]
+     * cells[0]=class+addr, cells[2]=shallow, cells[3]=retained.
      */
-    public List<DominatorRefEntry> parseRefZipPublic(File zip, int cap) {
-        return parseRefZip(zip, cap);
+    public List<DominatorRefEntry> parseRefZipPath2gc(File zip, int cap) {
+        return parseRefZipImpl(zip, cap, 0, 2, 3);
     }
 
-    private List<DominatorRefEntry> parseRefZip(File zip, int cap) {
+    /**
+     * show_retained_set 쿼리 ZIP 파싱.
+     * MAT 출력 컬럼 구조: [Class Name | # Objects | Shallow Heap | Retained Heap]
+     * cells[0]=class(no addr), cells[2]=shallow, cells[3]=retained.
+     */
+    public List<DominatorRefEntry> parseRefZipRetained(File zip, int cap) {
+        return parseRefZipImpl(zip, cap, 0, 2, 3);
+    }
+
+    /**
+     * 범용 참조 ZIP 파싱 — classCol/shallowCol/retainedCol 인덱스를 외부에서 지정.
+     */
+    private List<DominatorRefEntry> parseRefZipImpl(File zip, int cap,
+                                                    int classCol, int shallowCol, int retainedCol) {
         List<DominatorRefEntry> refs = new ArrayList<>();
         String html = extractFirstHtmlFromZip(zip);
         if (html == null || html.isEmpty()) {
             logger.warn("[Parser] No HTML extracted from ref ZIP: {}", zip.getName());
             return refs;
         }
+
+        int needed = Math.max(classCol, Math.max(shallowCol, retainedCol)) + 1;
 
         Matcher rowM = TR_PATTERN.matcher(html);
         while (rowM.find()) {
@@ -1307,34 +1323,42 @@ public class MatReportParser {
             List<String> cells = new ArrayList<>();
             Matcher cellM = TD_PATTERN.matcher(row);
             while (cellM.find()) cells.add(cellM.group(1));
-            if (cells.size() < 3) continue;
+            if (cells.size() < needed) continue;
 
-            String firstCellText = stripTags(cells.get(0)).trim();
+            String firstCellText = stripTags(cells.get(classCol)).trim();
             if (firstCellText.startsWith("Total:")) continue;
 
             String objectAddress = null;
-            Matcher addrM = DOM_TREE_ADDR_PATTERN.matcher(cells.get(0));
+            Matcher addrM = DOM_TREE_ADDR_PATTERN.matcher(cells.get(classCol));
             if (addrM.find()) objectAddress = addrM.group(1);
 
-            String rawName = stripTags(cells.get(0));
+            String rawName = stripTags(cells.get(classCol));
             String className = extractCleanClassName(rawName);
             if (className.startsWith("class ")) className = className.substring(6).trim();
             className = className.replace("System Class", "").trim();
             if (className.isEmpty()) continue;
 
-            long shallowHeap = 0L, retainedHeap = 0L;
-            if (cells.size() >= 2) {
-                String s = stripTags(cells.get(1)).trim();
-                shallowHeap = parseLong(COMMA_SPACE_PATTERN.matcher(s).replaceAll(""));
-            }
-            if (cells.size() >= 3) {
-                String s = stripTags(cells.get(2)).trim();
-                retainedHeap = parseLong(COMMA_SPACE_PATTERN.matcher(s).replaceAll(""));
-            }
+            long shallowHeap = parseLong(COMMA_SPACE_PATTERN.matcher(
+                    stripTags(cells.get(shallowCol)).trim()).replaceAll(""));
+            long retainedHeap = parseLong(COMMA_SPACE_PATTERN.matcher(
+                    stripTags(cells.get(retainedCol)).trim()).replaceAll(""));
 
             refs.add(new DominatorRefEntry(className, objectAddress, shallowHeap, retainedHeap));
         }
+        logger.debug("[Parser] parseRefZipImpl: {} entries from {} (cols {}/{}/{})",
+                refs.size(), zip.getName(), classCol, shallowCol, retainedCol);
         return refs;
+    }
+
+    /**
+     * 기존 호환용 퍼블릭 래퍼 — 컬럼 0=class+addr, 1=shallow, 2=retained (OOM 쿼리 등 범용).
+     */
+    public List<DominatorRefEntry> parseRefZipPublic(File zip, int cap) {
+        return parseRefZipImpl(zip, cap, 0, 1, 2);
+    }
+
+    private List<DominatorRefEntry> parseRefZip(File zip, int cap) {
+        return parseRefZipImpl(zip, cap, 0, 1, 2);
     }
 
     /**

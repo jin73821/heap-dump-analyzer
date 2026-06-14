@@ -708,11 +708,11 @@ function _buildDomDetailHtml(data, loading, err) {
     return ''
         + '<div class="dom-refs-wrap">'
         +   '<div class="dom-refs-section">'
-        +     '<h4>&#8592; Incoming (Path to GC Roots — 이 객체를 살아있게 하는 경로)</h4>'
+        +     '<h4>&#8592; Incoming — GC Root 참조 경로 (이 객체가 살아있는 이유)</h4>'
         +     inHtml
         +   '</div>'
         +   '<div class="dom-refs-section">'
-        +     '<h4>&#8594; Outgoing (Retained Set — 이 객체가 살아있게 하는 객체)</h4>'
+        +     '<h4>&#8594; Outgoing — Retained Set (클래스별 집계, 이 객체가 보유하는 객체)</h4>'
         +     outHtml
         +   '</div>'
         + '</div>';
@@ -920,8 +920,26 @@ function toggleThreadDetail(row) {
     var stack = (typeof THREAD_STACKS !== 'undefined' && THREAD_STACKS[idx]) ? THREAD_STACKS[idx] : '';
     var td = _threadDetailRow.firstChild;
     if (stack) {
-        td.innerHTML = '<div style="background:#0f172a;padding:14px 18px;font-family:var(--mono);font-size:12px;line-height:1.7;color:#a7f3d0;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;cursor:text;user-select:text"></div>';
-        td.firstChild.textContent = stack;
+        var lines = stack.split('\n');
+        var oomLineCount = 0;
+        var frameHtml = '';
+        for (var li = 0; li < lines.length; li++) {
+            var esc = Common.escHtml(lines[li]);
+            if (lines[li].indexOf('OutOfMemoryError') >= 0) {
+                frameHtml += '<span class="stack-oom-line">' + esc + '</span>\n';
+                oomLineCount++;
+            } else {
+                frameHtml += esc + '\n';
+            }
+        }
+        var oomBanner = oomLineCount > 0
+            ? '<div class="stack-oom-banner">&#9888; OOM 프레임 ' + oomLineCount + '개 감지 — 붉은 라인이 OutOfMemoryError 발생 지점입니다</div>'
+            : '';
+        td.innerHTML = '<div>'
+            + oomBanner
+            + '<div style="background:#0f172a;padding:14px 18px;font-family:var(--mono);font-size:12px;line-height:1.7;color:#a7f3d0;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;cursor:text;user-select:text">'
+            + frameHtml
+            + '</div></div>';
     } else {
         td.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-secondary);font-size:13px;cursor:default">No stack trace available for this thread.</div>';
     }

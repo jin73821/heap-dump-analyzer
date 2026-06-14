@@ -952,6 +952,23 @@
             outline:2px solid var(--danger); outline-offset:-2px;
         }
 
+        /* ── Thread 상세 스택 OOM 프레임 강조 ─────────────────── */
+        .stack-oom-banner {
+            background:rgba(220,38,38,.15); color:#fca5a5;
+            font-size:11px; padding:5px 14px;
+            border-bottom:1px solid rgba(220,38,38,.25);
+            font-weight:700; font-family:var(--mono);
+            display:flex; align-items:center; gap:6px;
+        }
+        .stack-oom-line {
+            display:block;
+            background:rgba(220,38,38,.22);
+            color:#fca5a5;
+            border-left:3px solid #ef4444;
+            padding-left:6px;
+            font-weight:600;
+        }
+
         /* ── Overview 상단 2단 (좌: 진단 · 우: KPI/Heap Composition) ── */
         .overview-top {
             display:grid; grid-template-columns:1fr 1fr; gap:14px;
