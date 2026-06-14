@@ -1,5 +1,31 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-14] 스택트레이스 모달 범례 클릭 타입 필터 기능 추가
+
+**대상:** `templates/analyze.html`, `static/js/analyze.js`, `static/css/analyze.css`
+
+- 범례 항목(사용자 코드/프레임워크/JDK 내부/OOM/예외/지역변수) 클릭 시 해당 타입 프레임만 강조하고 나머지를 흐리게(opacity 0.18) 처리.
+- 같은 항목 재클릭 시 필터 해제.
+- 활성 범례 항목에 배경색 + 현재 색상 테두리 표시.
+- 모달 열기/닫기 시 필터 자동 초기화.
+- `_stmLegendActive` 변수, `stmFilterByType()`, `_stmClearLegendFilter()` 함수 추가.
+
+---
+
+## [2026-06-14] 스택트레이스 모달 범례 색상 가독성 개선
+
+**대상:** `templates/analyze.html`
+
+- `#stmLegend` 범례 5개 항목의 텍스트 색상을 어두운 배경 전용 파스텔 → 밝은 배경에서도 명확히 보이는 진한 색상으로 교체.
+  - 사용자 코드: `#a7f3d0` → `#047857` (진한 에메랄드)
+  - 프레임워크: `#93c5fd` → `#1d4ed8` (진한 블루)
+  - JDK 내부: `#6b7280` → `#374151` (진한 그레이)
+  - OOM/예외: `#fca5a5` → `#dc2626` (진한 레드)
+  - 지역변수: `#fde68a` → `#b45309` (진한 앰버)
+- `font-weight:600` 추가로 가독성 향상.
+
+---
+
 ## [2026-06-14] 버전 2.1.0 → 2.1.1 업데이트
 
 **대상:** `pom.xml`, `restart.sh`, `run.sh`, `stop.sh`, `templates/fragments/banner.html`, `templates/index.html`, `templates/progress.html`

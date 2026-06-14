@@ -245,6 +245,8 @@ function toggleSuspect(header) {
 
 var _stmJdkCollapsed = false;
 var _stmCurrentFrames = [];
+var _stmSelectedEl = null;
+var _stmLegendActive = null;
 
 function openStacktraceModal(url, title, meta) {
     var modal = document.getElementById('stacktraceModal');
@@ -289,6 +291,9 @@ function openStacktraceModal(url, title, meta) {
 
     bodyEl.innerHTML = '<div class="stm-empty">로딩 중...</div>';
     _stmCurrentFrames = [];
+    _stmSelectedEl = null;
+    _stmHideFrameDetail();
+    _stmClearLegendFilter();
 
     modal.classList.add('open');
 
@@ -395,9 +400,82 @@ function _renderStacktraceFrames(frames, container, isLocalVars) {
             codeSpan.textContent = f.raw;
             div.appendChild(numSpan);
             div.appendChild(codeSpan);
+            div.dataset.frameRaw = f.raw;
+            div.dataset.frameType = f.type;
+            div.addEventListener('click', function() { _stmSelectFrame(this); });
         }
         container.appendChild(div);
     }
+}
+
+function _parseFrameDetail(rawText) {
+    var r = { pkg:'', className:'', method:'', file:'', line:'', full:rawText };
+    var m = rawText.match(/^at\s+([\w$.]+)\.([\w$<>]+)\(([^)]*)\)$/);
+    if (!m) return r;
+    var lastDot = m[1].lastIndexOf('.');
+    r.className = lastDot >= 0 ? m[1].substring(lastDot + 1) : m[1];
+    r.pkg = lastDot >= 0 ? m[1].substring(0, lastDot) : '';
+    r.method = m[2];
+    var fl = m[3].match(/^(.+):(\d+)$/);
+    if (fl) { r.file = fl[1]; r.line = fl[2]; }
+    else { r.file = m[3]; }
+    return r;
+}
+
+function _stmSelectFrame(frameEl) {
+    if (_stmSelectedEl === frameEl) {
+        frameEl.classList.remove('stm-selected');
+        _stmSelectedEl = null;
+        _stmHideFrameDetail();
+        return;
+    }
+    if (_stmSelectedEl) _stmSelectedEl.classList.remove('stm-selected');
+    frameEl.classList.add('stm-selected');
+    _stmSelectedEl = frameEl;
+    var raw = frameEl.dataset.frameRaw || (frameEl.querySelector('.stm-frame-code') || {}).textContent || '';
+    var parsed = _parseFrameDetail(raw);
+    _stmUpdateFrameDetail(parsed, frameEl.dataset.frameType || '');
+}
+
+function _stmUpdateFrameDetail(parsed, frameType) {
+    var detailEl = document.getElementById('stmFrameDetail');
+    var badgeEl  = document.getElementById('stmDetailBadge');
+    var textEl   = document.getElementById('stmDetailText');
+    if (!detailEl) return;
+    var labels  = { user:'User Code', jdk:'JDK', spring:'Framework', oom:'Exception' };
+    var classes = { user:'badge-user', jdk:'badge-jdk', spring:'badge-spring', oom:'badge-oom' };
+    if (badgeEl) {
+        badgeEl.textContent = labels[frameType] || frameType.toUpperCase();
+        badgeEl.className   = 'stm-detail-badge ' + (classes[frameType] || 'badge-jdk');
+    }
+    if (textEl) {
+        var parts = [];
+        if (parsed.pkg)       parts.push(parsed.pkg);
+        if (parsed.className) parts.push(parsed.className);
+        if (parsed.method)    parts.push(parsed.method);
+        var loc = parsed.file + (parsed.line ? ':' + parsed.line : '');
+        textEl.textContent = parts.join(' » ') + (loc ? ' · ' + loc : '');
+        textEl.title = parsed.full;
+    }
+    detailEl.classList.add('visible');
+}
+
+function _stmHideFrameDetail() {
+    var el = document.getElementById('stmFrameDetail');
+    if (el) el.classList.remove('visible');
+}
+
+function _stmCopyFrame() {
+    if (!_stmSelectedEl) return;
+    var raw = _stmSelectedEl.dataset.frameRaw
+        || (_stmSelectedEl.querySelector('.stm-frame-code') || {}).textContent || '';
+    if (!raw) return;
+    var btn = document.getElementById('stmDetailCopyBtn');
+    function ok()   { if (btn) { btn.textContent='복사됨 ✓'; setTimeout(function(){ btn.textContent='📋 이 프레임 복사'; }, 1800); } }
+    function fail() { if (btn) { btn.textContent='실패';     setTimeout(function(){ btn.textContent='📋 이 프레임 복사'; }, 1800); } }
+    if (navigator.clipboard && navigator.clipboard.writeText)
+        navigator.clipboard.writeText(raw).then(ok).catch(function(){ fallbackCopy(raw) ? ok() : fail(); });
+    else fallbackCopy(raw) ? ok() : fail();
 }
 
 function filterStacktraceFrames() {
@@ -475,9 +553,45 @@ function _stmUpdateStatus(frames, filteredCount) {
     if (filtEl)  filtEl.textContent  = (filteredCount !== null && filteredCount !== undefined) ? ('검색 일치 ' + filteredCount + ' 프레임') : '';
 }
 
+function stmFilterByType(legendEl) {
+    var type = legendEl.dataset.frameType;
+    var legendItems = document.querySelectorAll('#stmLegend span[data-frame-type]');
+    var frames = document.querySelectorAll('#stacktraceModalBody .stm-frame');
+
+    if (_stmLegendActive === type) {
+        _stmLegendActive = null;
+        legendItems.forEach(function(el) { el.classList.remove('stm-legend-active'); });
+        frames.forEach(function(el) { el.classList.remove('stm-type-dimmed'); });
+        return;
+    }
+
+    _stmLegendActive = type;
+    legendItems.forEach(function(el) {
+        el.classList.toggle('stm-legend-active', el.dataset.frameType === type);
+    });
+    frames.forEach(function(el) {
+        var isLocal = el.classList.contains('stm-local');
+        var match = type === 'local' ? isLocal : (!isLocal && el.dataset.frameType === type);
+        el.classList.toggle('stm-type-dimmed', !match);
+    });
+}
+
+function _stmClearLegendFilter() {
+    _stmLegendActive = null;
+    document.querySelectorAll('#stmLegend span[data-frame-type]').forEach(function(el) {
+        el.classList.remove('stm-legend-active');
+    });
+    document.querySelectorAll('#stacktraceModalBody .stm-frame').forEach(function(el) {
+        el.classList.remove('stm-type-dimmed');
+    });
+}
+
 function closeStacktraceModal() {
     var modal = document.getElementById('stacktraceModal');
     if (modal) modal.classList.remove('open');
+    if (_stmSelectedEl) { _stmSelectedEl.classList.remove('stm-selected'); _stmSelectedEl = null; }
+    _stmHideFrameDetail();
+    _stmClearLegendFilter();
 }
 
 // ── Table Filter ──────────────────────────────────────
