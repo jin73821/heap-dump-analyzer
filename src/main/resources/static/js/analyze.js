@@ -241,25 +241,238 @@ function toggleSuspect(header) {
     item.classList.toggle('open');
 }
 
-function openStacktraceModal(url, title) {
+// ── Stacktrace Modal ─────────────────────────────────
+
+var _stmJdkCollapsed = false;
+var _stmCurrentFrames = [];
+
+function openStacktraceModal(url, title, meta) {
     var modal = document.getElementById('stacktraceModal');
     var titleEl = document.getElementById('stacktraceModalTitle');
     var bodyEl = document.getElementById('stacktraceModalBody');
     if (!modal || !bodyEl) return;
-    titleEl.textContent = title || 'Thread Stack';
-    bodyEl.innerHTML = '<div style="text-align:center;color:#9CA3AF;padding:40px 0">로딩 중...</div>';
+
+    meta = meta || {};
+
+    // 헤더 업데이트
+    titleEl.textContent = title || '스택트레이스';
+    var labelEl = document.getElementById('stmSuspectLabel');
+    if (labelEl) labelEl.textContent = meta.suspectTitle || '';
+
+    var badge = document.getElementById('stmSeverityBadge');
+    if (badge) {
+        var sev = meta.severity || '';
+        if (sev) {
+            var sevLabel = {critical:'위험',high:'높음',medium:'보통',low:'낮음'}[sev] || sev;
+            badge.textContent = sevLabel;
+            badge.className = 'stm-severity-badge stm-badge-' + sev;
+            badge.style.display = '';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
+    // 툴바 초기화
+    var searchEl = document.getElementById('stmSearch');
+    if (searchEl) searchEl.value = '';
+    _stmJdkCollapsed = false;
+    var jdkBtn = document.getElementById('stmJdkToggle');
+    if (jdkBtn) jdkBtn.textContent = 'JDK 접기';
+
+    // 범례 숨김 (로딩 중)
+    var legend = document.getElementById('stmLegend');
+    if (legend) legend.style.display = 'none';
+
+    // 상태바 숨김
+    var statusBar = document.getElementById('stmStatusBar');
+    if (statusBar) statusBar.style.display = 'none';
+
+    bodyEl.innerHTML = '<div class="stm-empty">로딩 중...</div>';
+    _stmCurrentFrames = [];
+
     modal.classList.add('open');
+
     fetch(url)
         .then(function(r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
             return r.text();
         })
         .then(function(html) {
-            bodyEl.innerHTML = html;
+            var frames = _parseMatStacktraceHtml(html);
+            if (frames.length > 0) {
+                _stmCurrentFrames = frames;
+                var container = document.createElement('div');
+                container.className = 'stm-frames';
+                _renderStacktraceFrames(frames, container, meta.isLocalVars);
+                bodyEl.innerHTML = '';
+                bodyEl.appendChild(container);
+
+                if (legend) legend.style.display = 'flex';
+                _stmUpdateStatus(frames, null);
+                if (statusBar) statusBar.style.display = 'flex';
+            } else {
+                // 폴백: MAT HTML 그대로 표시
+                var wrap = document.createElement('div');
+                wrap.className = 'stm-fallback';
+                wrap.innerHTML = html;
+                bodyEl.innerHTML = '';
+                bodyEl.appendChild(wrap);
+            }
         })
         .catch(function(e) {
-            bodyEl.innerHTML = '<div style="text-align:center;color:#EF4444;padding:40px 0">로드 실패: ' + Common.escHtml(e.message) + '</div>';
+            bodyEl.innerHTML = '<div class="stm-empty" style="color:#fca5a5">로드 실패: ' + Common.escHtml(e.message) + '</div>';
         });
+}
+
+function _parseMatStacktraceHtml(html) {
+    var frames = [];
+    try {
+        var parser = new DOMParser();
+        var doc = parser.parseFromString(html, 'text/html');
+        // 스크립트/스타일 제거
+        doc.querySelectorAll('script,style,link').forEach(function(el) { el.remove(); });
+        var text = doc.body ? doc.body.textContent : '';
+        var lines = text.split('\n');
+        var i = 0;
+        while (i < lines.length) {
+            var line = lines[i].trim();
+            if (!line) { i++; continue; }
+            // 스택 프레임: "at " 로 시작
+            if (line.match(/^\s*at\s+[\w$.]/)) {
+                var frameLine = line.replace(/^\s*/, '');
+                var type = _classifyFrame(frameLine);
+                frames.push({ raw: frameLine, type: type, isLocal: false });
+                i++;
+                // 지역 변수 라인: 바로 다음에 "|" 또는 "-" 로 시작하는 라인들
+                while (i < lines.length) {
+                    var next = lines[i].trim();
+                    if (next.match(/^[|\-\s]/) && !next.match(/^\s*at\s+/)) {
+                        if (next.length > 0) frames.push({ raw: next, type: 'local', isLocal: true });
+                        i++;
+                    } else break;
+                }
+            } else {
+                i++;
+            }
+        }
+    } catch(e) {
+        return [];
+    }
+    return frames;
+}
+
+function _classifyFrame(frameLine) {
+    if (frameLine.indexOf('OutOfMemoryError') >= 0 || frameLine.indexOf('NullPointerException') >= 0) return 'oom';
+    // 패키지 추출 (at pkg.Class... 에서 pkg 부분)
+    var m = frameLine.match(/^at\s+([\w$.]+)\./);
+    if (!m) return 'user';
+    var pkg = m[1].toLowerCase();
+    if (pkg.match(/^(java\.|javax\.|jdk\.|sun\.|com\.sun\.|java\.lang\.|java\.util\.|java\.io\.|java\.net\.|java\.nio\.)/)) return 'jdk';
+    if (pkg.match(/^(org\.springframework\.|org\.apache\.|com\.fasterxml\.|io\.netty\.|org\.hibernate\.|jakarta\.|javax\.servlet\.)/)) return 'spring';
+    return 'user';
+}
+
+function _renderStacktraceFrames(frames, container, isLocalVars) {
+    var frameCount = 0;
+    for (var i = 0; i < frames.length; i++) {
+        var f = frames[i];
+        var div = document.createElement('div');
+        if (f.isLocal) {
+            div.className = 'stm-frame stm-local';
+            var codeSpan = document.createElement('span');
+            codeSpan.className = 'stm-frame-code';
+            codeSpan.textContent = f.raw;
+            div.appendChild(codeSpan);
+        } else {
+            frameCount++;
+            div.className = 'stm-frame ' + f.type;
+            div.dataset.frameIdx = frameCount;
+            var numSpan = document.createElement('span');
+            numSpan.className = 'stm-frame-num';
+            numSpan.textContent = frameCount;
+            var codeSpan = document.createElement('span');
+            codeSpan.className = 'stm-frame-code';
+            codeSpan.textContent = f.raw;
+            div.appendChild(numSpan);
+            div.appendChild(codeSpan);
+        }
+        container.appendChild(div);
+    }
+}
+
+function filterStacktraceFrames() {
+    var q = (document.getElementById('stmSearch').value || '').trim().toLowerCase();
+    var frames = document.querySelectorAll('#stacktraceModalBody .stm-frame');
+    var matchCount = 0;
+    frames.forEach(function(el) {
+        // 지역변수 라인은 검색 대상에서 제외(부모 프레임 hidden 여부에 따름)
+        if (el.classList.contains('stm-local')) return;
+        var text = el.textContent.toLowerCase();
+        var match = !q || text.indexOf(q) >= 0;
+        if (match) {
+            el.classList.remove('stm-hidden');
+            matchCount++;
+            // 하이라이트
+            var codeEl = el.querySelector('.stm-frame-code');
+            if (codeEl) {
+                var raw = codeEl.textContent;
+                if (q) {
+                    var idx = raw.toLowerCase().indexOf(q);
+                    if (idx >= 0) {
+                        codeEl.innerHTML = Common.escHtml(raw.substring(0, idx))
+                            + '<mark class="stm-highlight">' + Common.escHtml(raw.substring(idx, idx + q.length)) + '</mark>'
+                            + Common.escHtml(raw.substring(idx + q.length));
+                    } else {
+                        codeEl.textContent = raw;
+                    }
+                } else {
+                    codeEl.textContent = raw;
+                }
+            }
+        } else {
+            el.classList.add('stm-hidden');
+        }
+    });
+    _stmUpdateStatus(_stmCurrentFrames, q ? matchCount : null);
+}
+
+function toggleJdkFrames() {
+    _stmJdkCollapsed = !_stmJdkCollapsed;
+    document.querySelectorAll('#stacktraceModalBody .stm-frame.jdk').forEach(function(el) {
+        if (_stmJdkCollapsed) el.classList.add('stm-hidden');
+        else el.classList.remove('stm-hidden');
+    });
+    var btn = document.getElementById('stmJdkToggle');
+    if (btn) btn.textContent = _stmJdkCollapsed ? 'JDK 펼치기' : 'JDK 접기';
+}
+
+function copyStacktrace() {
+    var lines = [];
+    document.querySelectorAll('#stacktraceModalBody .stm-frame').forEach(function(el) {
+        var codeEl = el.querySelector('.stm-frame-code');
+        if (codeEl) lines.push(codeEl.textContent);
+    });
+    var text = lines.join('\n');
+    if (!text) return;
+    var btn = document.getElementById('stmCopyBtn');
+    function onSuccess() { if (btn) { btn.textContent = '복사됨 ✓'; setTimeout(function() { btn.textContent = '📋 복사'; }, 1800); } }
+    function onFail()    { if (btn) { btn.textContent = '실패'; setTimeout(function() { btn.textContent = '📋 복사'; }, 1800); } }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(onSuccess).catch(function() { fallbackCopy(text) ? onSuccess() : onFail(); });
+    } else {
+        fallbackCopy(text) ? onSuccess() : onFail();
+    }
+}
+
+function _stmUpdateStatus(frames, filteredCount) {
+    var total = 0, user = 0;
+    frames.forEach(function(f) { if (!f.isLocal) { total++; if (f.type === 'user') user++; } });
+    var countEl = document.getElementById('stmFrameCount');
+    var userEl  = document.getElementById('stmUserCount');
+    var filtEl  = document.getElementById('stmFilterCount');
+    if (countEl) countEl.textContent = '총 ' + total + ' 프레임';
+    if (userEl)  userEl.textContent  = '사용자 코드 ' + user + ' 프레임';
+    if (filtEl)  filtEl.textContent  = (filteredCount !== null && filteredCount !== undefined) ? ('검색 일치 ' + filteredCount + ' 프레임') : '';
 }
 
 function closeStacktraceModal() {
@@ -3895,3 +4108,13 @@ function applyJeusChip(field, manual) {
 if (typeof FILENAME !== 'undefined') {
     initAiPanel();
 }
+
+// ESC 키로 스택트레이스 모달 닫기
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        var modal = document.getElementById('stacktraceModal');
+        if (modal && modal.classList.contains('open')) {
+            closeStacktraceModal();
+        }
+    }
+});
