@@ -278,6 +278,51 @@
         @media (max-width: 900px) {
             .dom-refs-wrap { grid-template-columns:1fr; }
         }
+        /* ── ClassLoader 배지 & 로드 클래스 섹션 ── */
+        .cl-badge {
+            display:inline-block; font-size:9px; font-weight:700;
+            color:#fff; background:#7c3aed; border-radius:3px;
+            padding:1px 4px; margin-right:5px; vertical-align:middle;
+            user-select:none; cursor:default; letter-spacing:.3px;
+        }
+        .dom-cl-section { grid-column:1 / -1; }
+        .dom-cl-load-btn {
+            background:#7c3aed; color:#fff; border:none; border-radius:6px;
+            padding:6px 14px; font-size:12px; font-weight:600; cursor:pointer;
+            transition:background .15s;
+        }
+        .dom-cl-load-btn:hover { background:#6d28d9; }
+        .dom-cl-load-btn:disabled { background:#a78bfa; cursor:not-allowed; }
+        /* 클릭 가능한 클래스 행 */
+        .cl-class-row { cursor:pointer; }
+        .cl-class-row:hover td { background:#F3F0FF; }
+        .cl-name-cell { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:320px; }
+        .cl-chev {
+            font-size:9px; color:#7c3aed; margin-right:4px;
+            display:inline-block; transition:transform .15s;
+        }
+        .cl-class-row.expanded .cl-chev { transform:rotate(90deg); }
+        /* 인스턴스 서브 행 */
+        .cl-inst-row > td {
+            background:#FAF8FF; padding:8px 12px 10px;
+            border-bottom:1px solid #E9D5FF;
+        }
+        .cl-inst-tbl { margin-left:18px; width:calc(100% - 18px); }
+        .cl-inst-addr { font-family:monospace; font-size:11px; color:#4B5563; }
+        .cl-inst-count { font-size:11px; color:#6B7280; margin-bottom:6px; }
+        /* 정렬 가능한 헤더 */
+        .cl-sort-th { white-space:nowrap; }
+        .cl-sort-th:hover { background:#E9D5FF !important; }
+        .cl-sort-active { color:#6D28D9; }
+        .cl-sort-icon { font-size:9px; margin-left:2px; }
+        /* 추가 조회 버튼 */
+        .cl-more-wrap { text-align:center; margin-top:6px; }
+        .cl-more-btn {
+            display:inline-block; padding:5px 18px; font-size:12px;
+            background:#F3F0FF; color:#6D28D9; border:1px solid #C4B5FD;
+            border-radius:6px; cursor:pointer; transition:background .15s;
+        }
+        .cl-more-btn:hover { background:#EDE9FE; }
 
         /* ── Leak Suspects ────────────────────────── */
         .suspect-list { display:flex; flex-direction:column; gap:14px; }

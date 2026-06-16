@@ -563,4 +563,389 @@ public class HeapReportApiController {
             emitter.complete();
         } catch (Exception ignore) {}
     }
+
+    // ─── ClassLoader 로드 클래스 목록 SSE ─────────────────────────────────────────
+    // 2단계 접근: ① classloaderexplorerquery로 MAT 내부 classLoaderId(정수) 추출
+    //            ② OQL "SELECT * FROM java.lang.Class c WHERE c implements IClass and c.@classLoaderId = <id>"
+    // @classLoaderAddress 는 InstanceImpl에 없고 ClassImpl 전용. HEX 리터럴도 OQL 문법 오류.
+    // 결과를 SSE "classes" 이벤트로 스트리밍. DOM_REF_CACHE(키 suffix ":cl:")·DOM_SEMAPHORES 재사용.
+    @GetMapping(value = "/api/classloader-classes/{filename:.+}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @ResponseBody
+    public SseEmitter classLoaderClassesSse(@PathVariable String filename,
+                                             @RequestParam("address") String address) {
+        SseEmitter emitter = new SseEmitter(120_000L);
+
+        final String safe;
+        try {
+            safe = FilenameValidator.validate(filename);
+        } catch (IllegalArgumentException e) {
+            sendClError(emitter, e.getMessage());
+            return emitter;
+        }
+        if (address == null || !address.matches("0x[0-9a-fA-F]+")) {
+            sendClError(emitter, "유효하지 않은 객체 주소");
+            return emitter;
+        }
+
+        final String addrHex   = address.substring(2);
+        final String cacheKey  = safe + ":cl:" + address;
+        final String addrFinal = address;
+
+        AtomicBoolean cleaned     = new AtomicBoolean(false);
+        AtomicReference<Semaphore> semRef     = new AtomicReference<>();
+        AtomicReference<File>      workDirRef = new AtomicReference<>();
+
+        Runnable cleanup = () -> {
+            if (cleaned.compareAndSet(false, true)) {
+                Semaphore s = semRef.get();
+                if (s != null) s.release();
+                File dir = workDirRef.get();
+                if (dir != null) {
+                    try { analyzerService.deleteDirectoryPublic(dir); } catch (Exception ignore) {}
+                }
+            }
+        };
+        emitter.onTimeout(cleanup);
+        emitter.onError(e -> cleanup.run());
+
+        Thread t = new Thread(() -> {
+            try {
+                // 캐시 HIT → 즉시 반환
+                Map<String, Object> hit = DOM_REF_CACHE.get(cacheKey);
+                if (hit != null) {
+                    Map<String, Object> hitPayload = new java.util.LinkedHashMap<>();
+                    hitPayload.put("classes", hit.get("classes"));
+                    hitPayload.put("total", hit.get("total"));
+                    emitter.send(SseEmitter.event().name("classes")
+                            .data(hitPayload, MediaType.APPLICATION_JSON));
+                    emitter.send(SseEmitter.event().name("done").data("{}"));
+                    emitter.complete();
+                    logger.info("[ClassLoader Classes SSE] cache-hit {} for {}", addrFinal, safe);
+                    return;
+                }
+
+                HeapAnalysisResult cachedResult = analyzerService.getCachedResult(safe);
+                if (cachedResult == null) {
+                    sendClError(emitter, "분석 결과 캐시 없음 — 재분석 필요");
+                    return;
+                }
+                File resultDir = analyzerService.resultDirectoryPublic(safe);
+                if (!resultDir.exists()) {
+                    sendClError(emitter, "결과 디렉토리 없음");
+                    return;
+                }
+
+                Semaphore sem = DOM_SEMAPHORES.computeIfAbsent(safe, k -> new Semaphore(2));
+                if (!sem.tryAcquire(10, TimeUnit.SECONDS)) {
+                    sendClError(emitter, "서버가 바쁩니다 — 잠시 후 재시도하세요");
+                    return;
+                }
+                semRef.set(sem);
+
+                // sourceHprof 탐색: dumpfiles > tmp > .gz 압축해제
+                String base      = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
+                String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
+                File originalHprof = new File(dumpfiles, safe);
+                File tmpHprof      = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
+                                               base + ".hprof");
+                File sourceHprof   = null;
+                if (originalHprof.exists()) {
+                    sourceHprof = originalHprof;
+                } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
+                    sourceHprof = tmpHprof;
+                } else {
+                    File gzFile = new File(dumpfiles, safe + ".gz");
+                    if (gzFile.exists()) {
+                        if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
+                        logger.info("[ClassLoader Classes SSE] Decompressing {} → {}", gzFile.getName(), tmpHprof.getName());
+                        try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
+                                java.nio.file.Files.newInputStream(gzFile.toPath()));
+                             java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
+                            byte[] buf = new byte[64 * 1024];
+                            int n;
+                            while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
+                        }
+                        sourceHprof = tmpHprof;
+                    } else {
+                        sendClError(emitter, "원본 hprof 파일을 찾을 수 없습니다");
+                        return;
+                    }
+                }
+
+                File refWorkDir = new File(resultDir, ".cl_ref_" + addrHex + "_" + System.currentTimeMillis());
+                refWorkDir.mkdirs();
+                workDirRef.set(refWorkDir);
+
+                // index/threads 파일 복사
+                File[] idxFiles = resultDir.listFiles((d, n) ->
+                        n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
+                if (idxFiles != null) {
+                    for (File f : idxFiles) {
+                        java.nio.file.Files.copy(f.toPath(),
+                                new File(refWorkDir, f.getName()).toPath(),
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+
+                // hprof 심볼릭 링크 (실패 시 copy 폴백)
+                File workHprof = new File(refWorkDir, base + ".hprof");
+                try {
+                    java.nio.file.Files.createSymbolicLink(workHprof.toPath(), sourceHprof.toPath());
+                } catch (IOException linkErr) {
+                    logger.warn("[ClassLoader Classes SSE] symlink 실패, copy 폴백: {}", linkErr.getMessage());
+                    java.nio.file.Files.copy(sourceHprof.toPath(), workHprof.toPath());
+                }
+
+                // Step 1: classloaderexplorerquery HTML에서 target address에 해당하는 classLoaderId 추출.
+                // extractClassLoaderIdNearAddress 가 addrHex를 포함하는 TR에서만 classLoaderId를
+                // 읽으므로 부모 ClassLoader의 ID가 먼저 등장하는 문제를 회피한다.
+                // (기존 m.find() 방식은 부모 ClassLoader의 classLoaderId를 잘못 추출하여 500개 반환 버그 유발)
+                String clExplorerCmd = "org.eclipse.mat.inspections.classloaderexplorerquery " + addrFinal;
+                analyzerService.runMatSingleQuery(workHprof.getAbsolutePath(), refWorkDir, clExplorerCmd, 30L);
+                File explorerZip = new File(refWorkDir, base + "_Query.zip");
+                long classLoaderId = analyzerService.getParser().extractClassLoaderIdNearAddress(explorerZip, addrHex);
+
+                List<com.heapdump.analyzer.model.LoadedClassEntry> classes;
+                long totalCount = -1;
+                if (classLoaderId < 0) {
+                    classes = Collections.emptyList();
+                    logger.warn("[ClassLoader Classes SSE] classLoaderId 추출 실패 (addr={}, file={})", addrFinal, safe);
+                } else {
+                    // Step 2: classLoaderId로 해당 ClassLoader가 정의한 Java 클래스 목록 OQL 조회.
+                    // SELECT * 사용 시 MAT가 Class Name/Shallow Heap/Retained Heap 3컬럼 테이블 생성.
+                    // (SELECT c 는 컬럼이 1개뿐이라 parseClassLoaderClassesZip 파싱 실패)
+                    String oql = "oql \"SELECT * FROM java.lang.Class c WHERE c implements"
+                            + " org.eclipse.mat.snapshot.model.IClass and c.@classLoaderId = " + classLoaderId + "\"";
+                    if (explorerZip.exists()) explorerZip.delete();
+                    File queryZip = new File(refWorkDir, base + "_Query.zip");
+                    analyzerService.runMatSingleQuery(workHprof.getAbsolutePath(), refWorkDir, oql, 90L);
+                    if (queryZip.exists()) {
+                        totalCount = analyzerService.getParser().extractTotalEntryCount(queryZip);
+                        classes = analyzerService.getParser().parseClassLoaderClassesZip(queryZip, 500);
+                    } else {
+                        classes = Collections.emptyList();
+                        logger.warn("[ClassLoader Classes SSE] OQL 결과 ZIP 없음 (addr={}, file={})", addrFinal, safe);
+                    }
+                }
+
+                Map<String, Object> payload = new java.util.LinkedHashMap<>();
+                payload.put("classes", classes);
+                payload.put("total", totalCount);
+                emitter.send(SseEmitter.event().name("classes")
+                        .data(payload, MediaType.APPLICATION_JSON));
+
+                Map<String, Object> cacheVal = new HashMap<>();
+                cacheVal.put("classes", classes);
+                cacheVal.put("total", totalCount);
+                DOM_REF_CACHE.put(cacheKey, cacheVal);
+
+                emitter.send(SseEmitter.event().name("done").data("{}"));
+                emitter.complete();
+                logger.info("[ClassLoader Classes SSE] {} classLoaderId={} classes={} total={} for {}", addrFinal, classLoaderId, classes.size(), totalCount, safe);
+
+            } catch (IllegalStateException ise) {
+                logger.debug("[ClassLoader Classes SSE] client disconnected ({}): {}", addrFinal, ise.getMessage());
+            } catch (Exception e) {
+                logger.error("[ClassLoader Classes SSE] 실패 (filename={}, addr={}): {}",
+                        filename, addrFinal, e.getMessage(), e);
+                try { sendClError(emitter, "클래스 목록 조회 실패: " + e.getMessage()); }
+                catch (Exception ignore) {}
+            } finally {
+                cleanup.run();
+            }
+        });
+        t.setDaemon(true);
+        t.setName("cl-classes-" + addrHex);
+        t.start();
+
+        return emitter;
+    }
+
+    private static void sendClError(SseEmitter emitter, String msg) {
+        try {
+            emitter.send(SseEmitter.event().name("cl-error")
+                    .data(Map.of("error", msg), MediaType.APPLICATION_JSON));
+            emitter.complete();
+        } catch (Exception ignore) {}
+    }
+
+    // ─── 클래스 인스턴스 조회 SSE ─────────────────────────────────────────────
+    // OQL "SELECT * FROM {className}" 실행 → 인스턴스 목록 반환
+    // DOM_REF_CACHE(키 suffix ":inst:") · DOM_SEMAPHORES 재사용
+    @GetMapping(value = "/api/class-instances/{filename:.+}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @ResponseBody
+    public SseEmitter classInstancesSse(@PathVariable String filename,
+                                         @RequestParam("className") String className) {
+        SseEmitter emitter = new SseEmitter(120_000L);
+
+        final String safe;
+        try {
+            safe = FilenameValidator.validate(filename);
+        } catch (IllegalArgumentException e) {
+            sendInstError(emitter, e.getMessage());
+            return emitter;
+        }
+        if (className == null || className.isBlank() || className.length() > 512
+                || !className.matches("[\\w.$\\[\\]]+")) {
+            sendInstError(emitter, "유효하지 않은 클래스명");
+            return emitter;
+        }
+
+        final String classNameFinal = className;
+        final String cacheKey       = safe + ":inst:" + className;
+
+        AtomicBoolean cleaned     = new AtomicBoolean(false);
+        AtomicReference<Semaphore> semRef     = new AtomicReference<>();
+        AtomicReference<File>      workDirRef = new AtomicReference<>();
+
+        Runnable cleanup = () -> {
+            if (cleaned.compareAndSet(false, true)) {
+                Semaphore s = semRef.get();
+                if (s != null) s.release();
+                File dir = workDirRef.get();
+                if (dir != null) {
+                    try { analyzerService.deleteDirectoryPublic(dir); } catch (Exception ignore) {}
+                }
+            }
+        };
+        emitter.onTimeout(cleanup);
+        emitter.onError(e -> cleanup.run());
+
+        String shortName = className.contains(".")
+                ? className.substring(className.lastIndexOf('.') + 1) : className;
+        Thread t = new Thread(() -> {
+            try {
+                // 캐시 HIT → 즉시 반환
+                Map<String, Object> hit = DOM_REF_CACHE.get(cacheKey);
+                if (hit != null) {
+                    emitter.send(SseEmitter.event().name("instances")
+                            .data(hit.get("instances"), MediaType.APPLICATION_JSON));
+                    emitter.send(SseEmitter.event().name("done").data("{}"));
+                    emitter.complete();
+                    logger.info("[ClassInst SSE] cache-hit {} for {}", classNameFinal, safe);
+                    return;
+                }
+
+                HeapAnalysisResult cachedResult = analyzerService.getCachedResult(safe);
+                if (cachedResult == null) {
+                    sendInstError(emitter, "분석 결과 캐시 없음 — 재분석 필요");
+                    return;
+                }
+                File resultDir = analyzerService.resultDirectoryPublic(safe);
+                if (!resultDir.exists()) {
+                    sendInstError(emitter, "결과 디렉토리 없음");
+                    return;
+                }
+
+                Semaphore sem = DOM_SEMAPHORES.computeIfAbsent(safe, k -> new Semaphore(2));
+                if (!sem.tryAcquire(10, TimeUnit.SECONDS)) {
+                    sendInstError(emitter, "서버가 바쁩니다 — 잠시 후 재시도하세요");
+                    return;
+                }
+                semRef.set(sem);
+
+                // sourceHprof 탐색
+                String base      = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
+                String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
+                File originalHprof = new File(dumpfiles, safe);
+                File tmpHprof      = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
+                                               base + ".hprof");
+                File sourceHprof = null;
+                if (originalHprof.exists()) {
+                    sourceHprof = originalHprof;
+                } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
+                    sourceHprof = tmpHprof;
+                } else {
+                    File gzFile = new File(dumpfiles, safe + ".gz");
+                    if (gzFile.exists()) {
+                        if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
+                        logger.info("[ClassInst SSE] Decompressing {} → {}", gzFile.getName(), tmpHprof.getName());
+                        try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
+                                java.nio.file.Files.newInputStream(gzFile.toPath()));
+                             java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
+                            byte[] buf = new byte[64 * 1024];
+                            int n;
+                            while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
+                        }
+                        sourceHprof = tmpHprof;
+                    } else {
+                        sendInstError(emitter, "원본 hprof 파일을 찾을 수 없습니다");
+                        return;
+                    }
+                }
+
+                File refWorkDir = new File(resultDir, ".cl_inst_"
+                        + shortName.replaceAll("[^a-zA-Z0-9]", "_") + "_" + System.currentTimeMillis());
+                refWorkDir.mkdirs();
+                workDirRef.set(refWorkDir);
+
+                // index/threads 파일 복사
+                File[] idxFiles = resultDir.listFiles((d, n) ->
+                        n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
+                if (idxFiles != null) {
+                    for (File f : idxFiles) {
+                        java.nio.file.Files.copy(f.toPath(),
+                                new File(refWorkDir, f.getName()).toPath(),
+                                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    }
+                }
+
+                // hprof 심볼릭 링크 (실패 시 copy 폴백)
+                File workHprof = new File(refWorkDir, base + ".hprof");
+                try {
+                    java.nio.file.Files.createSymbolicLink(workHprof.toPath(), sourceHprof.toPath());
+                } catch (IOException linkErr) {
+                    logger.warn("[ClassInst SSE] symlink 실패, copy 폴백: {}", linkErr.getMessage());
+                    java.nio.file.Files.copy(sourceHprof.toPath(), workHprof.toPath());
+                }
+
+                // OQL: SELECT * FROM {className}
+                String oql = "oql \"SELECT * FROM " + classNameFinal + "\"";
+                analyzerService.runMatSingleQuery(workHprof.getAbsolutePath(), refWorkDir, oql, 90L);
+                File queryZip = new File(refWorkDir, base + "_Query.zip");
+
+                List<com.heapdump.analyzer.model.LoadedClassEntry> instances;
+                if (queryZip.exists()) {
+                    instances = analyzerService.getParser().parseClassLoaderClassesZip(queryZip, 200);
+                } else {
+                    instances = Collections.emptyList();
+                    logger.warn("[ClassInst SSE] OQL 결과 ZIP 없음 (class={}, file={})", classNameFinal, safe);
+                }
+
+                emitter.send(SseEmitter.event().name("instances")
+                        .data(instances, MediaType.APPLICATION_JSON));
+
+                Map<String, Object> cacheVal = new HashMap<>();
+                cacheVal.put("instances", instances);
+                DOM_REF_CACHE.put(cacheKey, cacheVal);
+
+                emitter.send(SseEmitter.event().name("done").data("{}"));
+                emitter.complete();
+                logger.info("[ClassInst SSE] {} instances={} for {}", classNameFinal, instances.size(), safe);
+
+            } catch (IllegalStateException ise) {
+                logger.debug("[ClassInst SSE] client disconnected ({}): {}", classNameFinal, ise.getMessage());
+            } catch (Exception e) {
+                logger.error("[ClassInst SSE] 실패 (filename={}, class={}): {}",
+                        filename, classNameFinal, e.getMessage(), e);
+                try { sendInstError(emitter, "인스턴스 조회 실패: " + e.getMessage()); }
+                catch (Exception ignore) {}
+            } finally {
+                cleanup.run();
+            }
+        });
+        t.setDaemon(true);
+        t.setName("cl-inst-" + shortName.replaceAll("[^a-zA-Z0-9]", "_"));
+        t.start();
+
+        return emitter;
+    }
+
+    private static void sendInstError(SseEmitter emitter, String msg) {
+        try {
+            emitter.send(SseEmitter.event().name("inst-error")
+                    .data(Map.of("error", msg), MediaType.APPLICATION_JSON));
+            emitter.complete();
+        } catch (Exception ignore) {}
+    }
 }

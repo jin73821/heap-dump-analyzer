@@ -94,6 +94,10 @@ public class MatReportParser {
             Pattern.DOTALL);
     private static final Pattern ARROW_CHAR_PATTERN = Pattern.compile("[\u00BB\u203A\u2039\u00AB]");
     private static final Pattern ARROW_SPACE_PATTERN = Pattern.compile("\u00BB\\s*");
+    // ClassLoaderExplorerQuery \uACB0\uACFC HTML\uC758 OQL \uB9C1\uD06C\uC5D0\uC11C classLoaderId \uCD94\uCD9C\uC6A9
+    // URL-encoded: classLoaderId+%3D+2636  \uB610\uB294 plain: classLoaderId = 2636
+    private static final Pattern CL_ID_FROM_EXPLORER_PATTERN =
+            Pattern.compile("classLoaderId(?:\\+%3D\\+|\\s*=\\s*)(\\d+)", Pattern.CASE_INSENSITIVE);
     private static final Pattern ONLY_OBJECT_PATTERN = Pattern.compile("(?i)\\bOnly\\s+object\\b.*");
     private static final Pattern FIRST_N_OF_PATTERN = Pattern.compile(
             "(?i)\\bFirst\\s+[\\d,]+\\s+of\\s+[\\d,]+\\s+objects?\\b.*");
@@ -1273,7 +1277,8 @@ public class MatReportParser {
             double pct = 0;
             try { pct = Double.parseDouble(pctStr); } catch (NumberFormatException ignored) {}
 
-            entries.add(new DominatorTreeEntry(className, objectAddress, shallowHeap, retainedHeap, pct, null, null));
+            entries.add(new DominatorTreeEntry(className, objectAddress, shallowHeap, retainedHeap, pct,
+                    isClassLoaderClass(className), null, null));
         }
 
         result.setDominatorTreeEntries(entries);
@@ -1356,6 +1361,181 @@ public class MatReportParser {
         logger.debug("[Parser] parseRefZipImpl: {} entries from {} (cols {}/{}/{})",
                 refs.size(), zip.getName(), classCol, shallowCol, retainedCol);
         return refs;
+    }
+
+    /**
+     * className이 ClassLoader 계열인지 heuristic으로 판정.
+     * Dominator Tree 항목 생성 시 classLoader 필드 설정에 사용.
+     */
+    public static boolean isClassLoaderClass(String className) {
+        if (className == null || className.isEmpty()) return false;
+        String lower = className.toLowerCase();
+        return lower.contains("classloader")
+            || lower.endsWith("contextloader")
+            || lower.startsWith("sun.misc.launcher")
+            || lower.startsWith("jeus.servlet.loader.")
+            || lower.startsWith("weblogic.utils.classloaders.")
+            || lower.startsWith("org.apache.catalina.loader.")
+            || lower.startsWith("org.springframework.boot.loader.");
+    }
+
+    /**
+     * OQL "SELECT c FROM java.lang.Class c WHERE c.@classLoaderAddress = 0x..." 결과 ZIP 파싱.
+     * 컬럼 구조(MAT OQL 표준): [Class Name | Shallow Heap | Retained Heap | ...]
+     */
+    public List<com.heapdump.analyzer.model.LoadedClassEntry> parseClassLoaderClassesZip(File zip, int cap) {
+        List<com.heapdump.analyzer.model.LoadedClassEntry> result = new ArrayList<>();
+        String html = extractFirstHtmlFromZip(zip);
+        if (html == null || html.isEmpty()) {
+            logger.warn("[Parser] No HTML extracted from classloader classes ZIP: {}", zip.getName());
+            return result;
+        }
+
+        // 헤더 행에서 컬럼 인덱스 동적 감지
+        int classCol = 0, shallowCol = -1, retainedCol = -1;
+        Matcher headerRowM = TR_PATTERN.matcher(html);
+        if (headerRowM.find()) {
+            String headerRow = headerRowM.group(1);
+            if (headerRow.contains("<th")) {
+                List<String> headers = new ArrayList<>();
+                Matcher thM = Pattern.compile("<th[^>]*>(.*?)</th>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE)
+                        .matcher(headerRow);
+                while (thM.find()) headers.add(stripTags(thM.group(1)).trim().toLowerCase());
+                for (int i = 0; i < headers.size(); i++) {
+                    String h = headers.get(i);
+                    if (h.contains("shallow")) shallowCol = i;
+                    else if (h.contains("retained")) retainedCol = i;
+                }
+            }
+        }
+        // 컬럼 감지 실패 시 기본값 (OQL 출력 표준 순서)
+        if (shallowCol < 0) shallowCol = 1;
+        if (retainedCol < 0) retainedCol = 2;
+        int needed = Math.max(classCol, Math.max(shallowCol, retainedCol)) + 1;
+
+        Matcher rowM = TR_PATTERN.matcher(html);
+        while (rowM.find()) {
+            if (result.size() >= cap) break;
+            String row = rowM.group(1);
+            if (row.contains("<th")) continue;
+
+            List<String> cells = new ArrayList<>();
+            Matcher cellM = TD_PATTERN.matcher(row);
+            while (cellM.find()) cells.add(cellM.group(1));
+            if (cells.size() < needed) continue;
+
+            String firstCellText = stripTags(cells.get(classCol)).trim();
+            if (firstCellText.startsWith("Total:") || firstCellText.isEmpty()) continue;
+
+            String objectAddress = null;
+            Matcher addrM = DOM_TREE_ADDR_PATTERN.matcher(cells.get(classCol));
+            if (addrM.find()) objectAddress = addrM.group(1);
+
+            String rawName = stripTags(cells.get(classCol));
+            String className = extractCleanClassName(rawName);
+            if (className.startsWith("class ")) className = className.substring(6).trim();
+            className = className.replace("System Class", "").trim();
+            if (className.isEmpty()) continue;
+
+            long shallowHeap = parseLong(COMMA_SPACE_PATTERN.matcher(
+                    stripTags(cells.get(shallowCol)).trim()).replaceAll(""));
+            long retainedHeap = parseLong(COMMA_SPACE_PATTERN.matcher(
+                    stripTags(cells.get(retainedCol)).trim()).replaceAll(""));
+
+            result.add(new com.heapdump.analyzer.model.LoadedClassEntry(
+                    className, objectAddress, shallowHeap, retainedHeap));
+        }
+        logger.debug("[Parser] parseClassLoaderClassesZip: {} entries from {}", result.size(), zip.getName());
+        return result;
+    }
+
+    /**
+     * OQL "SELECT s.@objectId FROM INSTANCEOF java.lang.ClassLoader s WHERE s.@objectAddress = N"
+     * 결과 ZIP에서 첫 번째 @objectId 정수값을 추출. 실패 시 -1 반환.
+     */
+    public long extractObjectIdFromOqlZip(File zip) {
+        String html = extractFirstHtmlFromZip(zip);
+        if (html == null || html.isEmpty()) return -1;
+        Matcher rowM = TR_PATTERN.matcher(html);
+        while (rowM.find()) {
+            String row = rowM.group(1);
+            if (row.contains("<th")) continue;
+            Matcher cellM = TD_PATTERN.matcher(row);
+            if (cellM.find()) {
+                String text = COMMA_SPACE_PATTERN.matcher(
+                        stripTags(cellM.group(1)).trim()).replaceAll("").trim();
+                if (text.isEmpty()) continue;
+                try { return Long.parseLong(text); } catch (NumberFormatException ignore) {}
+            }
+        }
+        logger.warn("[Parser] extractObjectIdFromOqlZip: objectId 파싱 실패 (zip={})", zip.getName());
+        return -1;
+    }
+
+    /**
+     * ClassLoaderExplorerQuery 결과 ZIP에서 특정 주소(addrHex)에 해당하는 classLoaderId 추출.
+     * TR 단위 파싱으로 addrHex가 포함된 행에서만 classLoaderId를 읽으므로,
+     * 부모 ClassLoader의 classLoaderId가 먼저 등장하는 문제를 회피.
+     * 실패 시 -1 반환.
+     */
+    public long extractClassLoaderIdNearAddress(File zip, String addrHex) {
+        String html = extractFirstHtmlFromZip(zip);
+        if (html == null || html.isEmpty()) return -1;
+        String addrLower = addrHex.toLowerCase();
+        Matcher rowM = TR_PATTERN.matcher(html);
+        while (rowM.find()) {
+            String row = rowM.group(1);
+            if (!row.toLowerCase().contains(addrLower)) continue;
+            Matcher clM = CL_ID_FROM_EXPLORER_PATTERN.matcher(row);
+            if (clM.find()) {
+                try {
+                    return Long.parseLong(clM.group(1));
+                } catch (NumberFormatException e) {
+                    logger.warn("[Parser] classLoaderId 파싱 실패 (addr={}): {}", addrHex, clM.group(1));
+                }
+            }
+        }
+        logger.warn("[Parser] extractClassLoaderIdNearAddress: address={} 에 해당하는 classLoaderId 없음 (zip={})", addrHex, zip.getName());
+        return -1;
+    }
+
+    /**
+     * ZIP HTML에서 "Total: N of M entries" 패턴의 M(전체 항목 수)을 추출.
+     * MAT가 결과를 일부만 반환할 때 전체 수를 표시하기 위해 사용.
+     * 패턴 없으면 -1 반환.
+     */
+    public long extractTotalEntryCount(File zip) {
+        String html = extractFirstHtmlFromZip(zip);
+        if (html == null || html.isEmpty()) return -1;
+        Matcher m = DOM_TREE_TOTAL_PATTERN.matcher(html);
+        if (m.find()) {
+            try {
+                return Long.parseLong(COMMA_SPACE_PATTERN.matcher(m.group(1)).replaceAll(""));
+            } catch (NumberFormatException ignore) {}
+        }
+        return -1;
+    }
+
+    /**
+     * ClassLoaderExplorerQuery 결과 ZIP에서 MAT 내부 classLoaderId(정수)를 추출.
+     * 결과 HTML의 "All objects" OQL 링크 URL에서 @classLoaderId = &lt;id&gt; 패턴을 파싱.
+     * 추출 실패 시 -1 반환.
+     * @deprecated addrHex 없이 첫 classLoaderId를 반환하므로 부모 ClassLoader를 잡을 수 있음.
+     *             extractClassLoaderIdNearAddress(zip, addrHex) 사용 권장.
+     */
+    @Deprecated
+    public int extractClassLoaderIdFromExplorerZip(File zip) {
+        String html = extractFirstHtmlFromZip(zip);
+        if (html == null || html.isEmpty()) return -1;
+        Matcher m = CL_ID_FROM_EXPLORER_PATTERN.matcher(html);
+        if (m.find()) {
+            try {
+                return Integer.parseInt(m.group(1));
+            } catch (NumberFormatException e) {
+                logger.warn("[Parser] classLoaderId 파싱 실패: {}", m.group(1));
+            }
+        }
+        return -1;
     }
 
     /**

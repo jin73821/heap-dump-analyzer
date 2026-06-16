@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-14">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-15">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -1016,6 +1016,7 @@ function loadFullErrorLog() {
                             th:data-retained="${d.retainedHeap}"
                             th:data-shallow="${d.shallowHeap}"
                             th:data-idx="${s.index}"
+                            th:data-is-loader="${d.classLoader}"
                             onclick="domRowClick(this)"
                             style="cursor:pointer"
                             th:title="${s.index &lt; 50} ? 'inbound/outbound 참조 펼치기' : '클릭하여 상세 보기'">
@@ -1024,6 +1025,7 @@ function loadFullErrorLog() {
                             </td>
                             <td style="text-align:center"><span class="rank-num" th:text="${s.count}">1</span></td>
                             <td>
+                                <span th:if="${d.classLoader}" class="cl-badge" title="ClassLoader — 로드 클래스 목록 조회 가능">CL</span>
                                 <div class="class-name-cell" th:text="${d.className}"
                                      th:title="${d.objectAddress}"
                                      onclick="event.stopPropagation();showComponentDetail(this.parentNode.parentNode.dataset['class'])"
@@ -1483,7 +1485,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-06-14"></script>
+<script src="/js/analyze.js?v=2026-06-15"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

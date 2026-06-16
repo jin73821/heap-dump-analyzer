@@ -1,31 +1,20 @@
 package com.heapdump.analyzer.model;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.List;
-
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonIgnoreProperties(ignoreUnknown = true)
-public class DominatorTreeEntry {
+public class LoadedClassEntry {
 
     private String className;
     private String objectAddress;
     private long   shallowHeap;
     private long   retainedHeap;
-    private double percentOfHeap;
-    private boolean classLoader;
-
-    @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    private List<DominatorRefEntry> incomingRefs;
-
-    @JsonInclude(JsonInclude.Include.NON_EMPTY)
-    private List<DominatorRefEntry> outgoingRefs;
 
     public String getShallowHeapHuman() {
         return formatBytes(shallowHeap);

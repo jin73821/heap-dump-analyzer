@@ -1,5 +1,204 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-16] Dominator Tree (Raw) 패널 표출 안되는 버그 수정
+
+**대상:** `src/main/resources/static/js/analyze.js`
+
+### 변경 내용
+
+- `showPanel()`의 iframe lazy-load `iframeMap`에 `mat-domtree` 항목 누락 → "Dominator Tree (Raw)" 패널(`panel-mat-domtree`, iframe id=`matDomTreeIframe`) 클릭 시 `src` 속성이 끝까지 설정되지 않아 항상 빈 화면으로 표출됨
+- `iframeMap`에 `'mat-domtree': 'matDomTreeIframe'` 추가 → 클릭 시 `data-src`(`/report/{filename}/mat-page/dominator_tree/index.html`)가 정상 적용되어 MAT Single Query 리포트 렌더링 확인
+
+## [2026-06-16] Dominator Tree 로드 클래스 목록 — 25개 초기 표시 + 추가 조회 버튼
+
+**대상:** `src/main/resources/static/js/analyze.js`, `src/main/resources/static/css/analyze.css`
+
+### 변경 내용
+
+- 초기 렌더 시 상위 **25개만 표시** (Retained 내림차순 기준)
+- 25개 초과 시 **"추가 조회 (N개 더)"** 버튼 표시 → 클릭마다 25개씩 추가 (`clShowMore`)
+- 정렬 헤더 클릭 시 전체 데이터 재정렬 후 첫 25개로 리셋, "추가 조회" 버튼 카운트 자동 갱신
+- `_buildClRows(sorted, start, end)` / `_clSortArray(classes, col, dir)` 헬퍼 분리
+- `_renderClassLoaderTable`에 `addr` 인자 추가 → 테이블 `data-addr` 속성 및 버튼에 전달
+- `analyze.css`: `.cl-more-wrap` / `.cl-more-btn` 스타일 추가
+
+---
+
+## [2026-06-16] Dominator Tree 로드 클래스 목록 — Retained 기본 정렬 + 헤더 클릭 정렬
+
+**대상:** `src/main/resources/static/js/analyze.js`, `src/main/resources/static/css/analyze.css`
+
+### 변경 내용
+
+- `_renderClassLoaderTable()`: 클래스 목록을 **Retained 내림차순**으로 기본 정렬하여 렌더
+- 각 클래스 행에 `data-shallow` / `data-retained` 속성 추가 (raw 바이트 수치)
+- Shallow / Retained 헤더 클릭 시 오름차순 ↔ 내림차순 토글 (`sortClTable()` 신규 추가)
+  - 정렬 방향 아이콘(▼/▲) 헤더에 표시, 활성 헤더 보라색 강조
+  - 정렬 전 열려 있는 인스턴스 서브행 자동 닫힘 처리
+- `analyze.css`: `.cl-sort-th`, `.cl-sort-active`, `.cl-sort-icon` 스타일 추가
+
+---
+
+## [2026-06-15] Dominator Tree domOut.index 바이너리 파싱 연구 완료 + 구현 검증
+
+**대상:** 코드 변경 없음 (연구/검증 완료)
+
+### 연구 결론
+
+`DOMTREE_CHILDREN_RESEARCH.md`에 기술된 구현 과제에 대한 Python 바이너리 검증 완료:
+
+**1. classLoaderId=330648 정확성 확인 (이진 검색)**
+- `wgdist_1_heapdump_20260326.idx.index` (LongIndexReader)를 Python으로 직접 파싱.
+- `objectId=330648 → address=0x8216b620` (ContextLoader 정확히 일치).
+- `objectId=311451 → address=0x81184668` (별개 객체 — RESEARCH.md의 "311451이 올바른 값" 주장은 오류).
+- 결론: 앱이 사용 중인 classLoaderId=330648이 **정확한 값**이며 수정 불필요.
+
+**2. domOut.index 파싱 알고리즘 검증 (oom-test 교차검증)**
+- `oom-test.hprof`의 domOut.index 파싱 → `objectId=1635(0xfd780098)`: count=6.
+- 동일 객체가 `oql "SELECT * FROM ... dominator_tree"` Query ZIP HTML 최상단에 표시됨 확인.
+- ArrayIntCompressed bit-packing 알고리즘(varyingBits/trailingClearBits) 정확성 입증.
+
+**3. ContextLoader의 Dominator Tree children = 0 (leaf 노드)**
+- `objectId=330648`(ContextLoader @ 0x8216b620): domOut.index에서 count=0 → 직접 dominate하는 자식 없음.
+- MAT GUI의 "Σ Total: 25 of 27,044 entries"는 Dominator Tree children이 아니라 `classloaderexplorerquery` 결과(로드된 클래스 + 인스턴스).
+- 결론: 현재 OQL 기반 구현(classloaderexplorerquery → OQL `@classLoaderId = N`)이 MAT GUI 동작과 **동일한 뷰**를 제공하는 올바른 접근법.
+
+**4. wgdist domOut 이상 (기존 덤프 파일 corruption)**
+- `objectId=311451` domOut: count=1, children=[311451] (자기 자신).
+- domIn 교차검증: domIn[292746]=311451 이나 domOut[311451] child=311451 → 논리 불일치.
+- 원인: wgdist_1_heapdump_20260326.domOut.index 파일 내 pre-existing corruption. 코드 버그 아님.
+
+---
+
+## [2026-06-15] ClassLoader classLoaderId 파싱 버그 완전 수정 (extractClassLoaderIdNearAddress)
+
+**대상:** `controller/HeapReportApiController.java`, `parser/MatReportParser.java`, `static/js/analyze.js`
+
+### 문제 (2차 수정)
+- Phase 1 OQL `SELECT s.@objectId FROM INSTANCEOF java.lang.ClassLoader s WHERE s.@objectAddress = {addrLong}` 방식이 MAT 1.16.1에서 작동하지 않음 (`InstanceImpl has no property dominatorId` 유사 에러 — 실제로는 결과 0건).
+- classLoaderId 추출 실패 → `classes=0` 반환, 화면에 클래스가 조회되지 않음.
+
+### 수정 (2차)
+**`MatReportParser.java` 신규 메서드 2개 추가:**
+- `extractClassLoaderIdNearAddress(File zip, String addrHex)`: `classloaderexplorerquery` HTML을 TR 단위로 파싱, `addrHex`가 포함된 TR에서만 `CL_ID_FROM_EXPLORER_PATTERN`으로 classLoaderId 추출 → 부모 ClassLoader ID 오추출 버그 완전 해소
+- `extractTotalEntryCount(File zip)`: HTML의 `"Total: N of M entries"` 패턴에서 M(전체 수) 추출 → `DOM_TREE_TOTAL_PATTERN` 재사용
+
+**`HeapReportApiController.java` `classLoaderClassesSse` 수정:**
+- Step 1: `classloaderexplorerquery {address}` 실행 → `extractClassLoaderIdNearAddress(zip, addrHex)` 호출
+- Step 2: `@classLoaderId = N` OQL로 Java 클래스 목록 조회 (cap 500)
+- SSE 이벤트 payload: `{ classes: [...], total: N }` 구조로 변경
+
+**`analyze.js` 수정:**
+- `handleClSseEvent('classes', ...)`: `parsed.classes` / `parsed.total` 분리 처리
+- `_clCache[addr]`: `{ classes, total }` 구조로 저장
+- `_renderClassLoaderTable(classes, total)`: total 있으면 "N개 클래스 (전체 M개 중)" 표시
+
+### 검증 결과 (Python 시뮬레이션)
+- `oom-test.hprof` / `classloaderexplorerquery 0xffceaf10` 실행 → TR 내 `ffceaf10` 탐지 → `classLoaderId = 17496` 정확 추출 확인
+
+## [2026-06-15] ClassLoader 클래스 OQL `SELECT *` 수정 (classes=0 버그 해소)
+
+**대상:** `controller/HeapReportApiController.java`
+
+### 문제
+- `classLoaderId` 추출에 성공했음에도 `classes=0` 반환.
+- 원인: Step 2 OQL이 `SELECT c FROM java.lang.Class c WHERE ...`였는데, MAT가 `c` 컬럼 **1개짜리** HTML 테이블을 생성 → `parseClassLoaderClassesZip`이 `cells.size() < needed(3)` 조건 실패로 모든 행 스킵.
+
+### 수정
+- `SELECT c FROM` → `SELECT * FROM` 변경.
+- `SELECT *` 사용 시 MAT가 `Class Name / Shallow Heap / Retained Heap` 3컬럼 표준 테이블 생성 → 파싱 정상 동작.
+
+---
+
+## [2026-06-15] ClassLoader 로드 클래스 수 불일치 수정 (MAT GUI 기준으로 정확히 조회)
+
+**대상:** `controller/HeapReportApiController.java`, `parser/MatReportParser.java`
+
+### 문제
+- `jeus.servlet.loader.ContextLoader`에서 MAT GUI는 25개 클래스를 보여주지만 앱은 500개를 반환.
+- 원인: `classloaderexplorerquery` HTML 결과에는 **부모 ClassLoader 계층 전체**의 classLoaderId 링크가 포함되며, 부모의 classLoaderId가 HTML에서 먼저 등장해 `m.find()`가 잘못된 ID(330648)를 추출.
+  - 330648 = 부모 ClassLoader의 objectId → OQL이 부모의 클래스(500개)를 반환
+
+### 수정
+**Step 1 교체** (`HeapReportApiController.java`):
+- 기존: `classloaderexplorerquery` 실행 → HTML에서 첫 번째 classLoaderId 추출 (부모 ID 오추출)
+- 신규: OQL `SELECT s.@objectId FROM INSTANCEOF java.lang.ClassLoader s WHERE s.@objectAddress = {addrLong}` 실행
+  - 주소(`0x8216b620`)를 `Long.parseUnsignedLong(addrHex, 16)`으로 decimal long 변환
+  - `INSTANCEOF java.lang.ClassLoader`로 스캔 범위 최소화 (빠름)
+  - ClassLoader 자신의 MAT objectId를 직접 획득 → 부모 혼동 없음
+
+**신규 파서 메서드** (`MatReportParser.java`):
+- `extractObjectIdFromOqlZip(File zip)`: TR_PATTERN + TD_PATTERN으로 첫 번째 데이터 셀의 정수를 long으로 파싱
+- 기존 `extractClassLoaderIdFromExplorerZip` + `CL_ID_FROM_EXPLORER_PATTERN`은 `@Deprecated` 보존
+
+### 검증
+- 앱 재기동 후 ContextLoader "목록 조회" → 로그에서 `classLoaderId={올바른ID} classes=25` 확인 예정
+- 핵심 개념: `IClass.getClassLoaderId()` == 정의 ClassLoader의 `IObject.getObjectId()` 이므로 objectId로 조회하면 MAT GUI와 완전 동일한 결과
+
+---
+
+## [2026-06-15] ClassLoader 로드 클래스 → 인스턴스 조회 (Class 조회 기능 추가)
+
+**대상:** `controller/HeapReportApiController.java`, `static/js/analyze.js`, `static/css/analyze.css`
+
+### 추가 기능
+- ClassLoader "목록 조회" 후 각 클래스 행을 클릭하면 해당 클래스의 힙 인스턴스 목록 인라인 조회 가능.
+- 클릭 → `oql "SELECT * FROM {className}"` 실행(MAT CLI, 최대 90초) → 인스턴스 주소·Shallow/Retained Heap 서브 테이블 렌더.
+- 클릭된 행에 `▶`/`▼` chevron + hover 하이라이트로 상태 시각화.
+- 재클릭 시 서브 행 접힘(토글), 동일 클래스 재조회 시 클라이언트·서버 2계층 캐시 활용(즉시 반환).
+
+### 신규 엔드포인트
+- `GET /api/class-instances/{filename}?className=...` (SSE): `DOM_REF_CACHE(":inst:")` + `DOM_SEMAPHORES(2)` 재사용. `LoadedClassEntry` 최대 200건 반환.
+
+### JS
+- `_renderClassLoaderTable`: 각 행에 `cl-class-row` 클래스 + `onclick="toggleClassInstances(this)"` + `data-classname` 추가.
+- 신규 `toggleClassInstances(row)`: 열기/닫기 토글 + SSE 스트리밍 처리.
+- 신규 `_renderInstanceTable(instances)`: 인스턴스 서브 테이블 렌더러.
+- 전역 `_classInstCache` / `_classInstAbortCtrls` 추가.
+
+### CSS
+- `.cl-class-row`, `.cl-chev`, `.cl-inst-row`, `.cl-inst-tbl`, `.cl-inst-addr`, `.cl-inst-count` 스타일 추가.
+
+---
+
+## [2026-06-15] ClassLoader 로드 클래스 목록 조회 버그 수정 (0건 → 정상 반환)
+
+**대상:** `controller/HeapReportApiController.java`, `parser/MatReportParser.java`
+
+### 문제
+- MAT GUI에서는 `jeus.server.classloader.RootClassLoader`에 25건 로드된 클래스가 조회되나, 애플리케이션에서는 0건 반환.
+- 원인 1: MAT OQL 문법 오류 — `WHERE c.@classLoaderAddress = 0x8002dc78` 에서 HEX 리터럴(`0x...`)이 OQL grammar에서 token으로 정의되어 있으나 expression으로 사용 불가 (정수 리터럴만 허용).
+- 원인 2: `FROM java.lang.Class c`는 `InstanceImpl`(힙 Class 미러 객체)을 반환하는데 `@classLoaderAddress`는 `ClassImpl`(클래스 정의) 전용 속성 → `Type InstanceImpl has no property classLoaderAddress`.
+
+### 수정 — 2단계 접근으로 교체
+**Step 1** (`HeapReportApiController.java`): `org.eclipse.mat.inspections.classloaderexplorerquery 0x<addr>` 실행 → `MatReportParser.extractClassLoaderIdFromExplorerZip()` 로 MAT 내부 정수 classLoaderId 추출.
+
+**Step 2** (`HeapReportApiController.java`): `oql "SELECT * FROM java.lang.Class c WHERE c implements org.eclipse.mat.snapshot.model.IClass and c.@classLoaderId = <id>"` 실행 → 기존 `parseClassLoaderClassesZip()` 파싱. cap 200 → 500 상향.
+
+**신규 메서드** (`MatReportParser.java`): `extractClassLoaderIdFromExplorerZip(File zip)` — `CL_ID_FROM_EXPLORER_PATTERN`(`classLoaderId(?:\+%3D\+|\s*=\s*)(\d+)`)으로 URL-encoded / plain 두 형식 모두 파싱. 실패 시 -1 반환.
+
+### 검증
+- 실제 덤프 `wgdist_1_heapdump_20260326.hprof` / `RootClassLoader @ 0x8002dc78` → classLoaderId = 2636 → OQL 결과 6,905건 확인.
+
+---
+
+## [2026-06-15] Dominator Tree ClassLoader 로드 클래스 목록 조회 기능
+
+**대상:** `model/DominatorTreeEntry.java`, `model/LoadedClassEntry.java`(신규), `parser/MatReportParser.java`, `controller/HeapReportApiController.java`, `templates/analyze.html`, `static/js/analyze.js`, `static/css/analyze.css`
+
+### 핵심 변경
+- **ClassLoader 자동 감지**: `MatReportParser.isClassLoaderClass(className)` — `classloader`/`contextloader` 포함 or 알려진 WAS 로더 prefix(jeus/weblogic/catalina/spring-boot)에 해당하면 `DominatorTreeEntry.classLoader = true` 설정. Dominator Tree 행에 보라색 `CL` 배지 표시.
+- **신규 SSE 엔드포인트** `GET /api/classloader-classes/{filename}?address={0xADDR}`: MAT OQL `SELECT c FROM java.lang.Class c WHERE c.@classLoaderAddress = {address}` 실행 → `classes` SSE 이벤트로 `List<LoadedClassEntry>` 반환. DOM_REF_CACHE(키 suffix `:cl:`) + DOM_SEMAPHORES 재사용.
+- **신규 모델 클래스** `LoadedClassEntry`: `className`, `objectAddress`, `shallowHeap`, `retainedHeap` + human-readable 포맷 메서드.
+- **`parseClassLoaderClassesZip(File, int)`**: OQL 결과 ZIP 파싱. 헤더 행 동적 컬럼 감지 + `extractCleanClassName` 재사용. cap 200.
+
+### Frontend 변경
+- `analyze.html`: `th:data-is-loader="${d.classLoader}"` + `<span class="cl-badge">CL</span>` 추가.
+- `analyze.js`: `_clCache`/`_clAbortCtrl` 추가, `_buildDomDetailLoadingHtml(isLoader)` 파라미터화, `_buildDomDetailHtml` ClassLoader 섹션 추가, `loadClassLoaderClasses(btn)` + `_renderClassLoaderTable(classes)` 신규 함수.
+- `analyze.css`: `.cl-badge`, `.dom-cl-section`, `.dom-cl-load-btn` 스타일 추가.
+
+---
+
 ## [2026-06-15] Dominator Tree 인바운드/아웃바운드 참조 SSE 스트리밍 + LRU 캐시 개편
 
 **대상:** `controller/HeapReportApiController.java`, `static/js/analyze.js`

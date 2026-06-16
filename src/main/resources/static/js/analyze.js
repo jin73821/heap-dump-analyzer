@@ -184,11 +184,12 @@ function showPanel(name, btn) {
         renderDomBars();
     }
 
-    // iframe lazy-load (Overview, Top Components, Suspects)
+    // iframe lazy-load (Overview, Top Components, Suspects, Dominator Tree Raw)
     var iframeMap = {
         'mat-overview': 'matOverviewIframe',
         'mat-top': 'matTopIframe',
-        'mat-suspects': 'matSuspectsIframe'
+        'mat-suspects': 'matSuspectsIframe',
+        'mat-domtree': 'matDomTreeIframe'
     };
     if (iframeMap[name]) {
         var iframe = document.getElementById(iframeMap[name]);
@@ -831,6 +832,10 @@ var _domDetailRow = null;
 var _domOpenAddr  = null;
 var _domCache     = {};   // addr → { incoming, outgoing }
 var _domAbortCtrl = null; // 진행 중인 SSE fetch AbortController
+var _clCache      = {};   // addr → List<LoadedClassEntry>
+var _clAbortCtrl  = null; // ClassLoader 클래스 목록 SSE fetch AbortController
+var _classInstCache      = {}; // className → List<LoadedClassEntry> (인스턴스 조회 캐시)
+var _classInstAbortCtrls = {}; // className → AbortController
 
 function _closeDomDetail() {
     if (_domAbortCtrl) { _domAbortCtrl.abort(); _domAbortCtrl = null; }
@@ -876,17 +881,16 @@ function _escapeHtml(s) {
         .replace(/'/g, '&#39;');
 }
 
-function _buildDomDetailHtml(data, loading, err) {
+function _buildDomDetailHtml(data, loading, err, isLoader) {
     if (loading) {
-        // 레거시 경로 — 실제로는 _buildDomDetailLoadingHtml() 로 대체됨
-        return _buildDomDetailLoadingHtml();
+        return _buildDomDetailLoadingHtml(isLoader);
     }
     if (err) {
         return '<div class="dom-refs-error">' + _escapeHtml(err) + '</div>';
     }
     var inHtml  = _renderDomRefsTable(data ? data.incoming : null, '인바운드 참조 없음 (GC root 경로)');
     var outHtml = _renderDomRefsTable(data ? data.outgoing : null, '아웃바운드 참조 없음 (retained set)');
-    return '<div class="dom-refs-wrap">'
+    var html = '<div class="dom-refs-wrap">'
         +   '<div class="dom-refs-section">'
         +     '<h4>&#8592; Incoming — GC Root 참조 경로 (이 객체가 살아있는 이유)</h4>'
         +     inHtml
@@ -894,13 +898,22 @@ function _buildDomDetailHtml(data, loading, err) {
         +   '<div class="dom-refs-section">'
         +     '<h4>&#8594; Outgoing — Retained Set (클래스별 집계, 이 객체가 보유하는 객체)</h4>'
         +     outHtml
-        +   '</div>'
-        + '</div>';
+        +   '</div>';
+    if (isLoader) {
+        html += '<div class="dom-refs-section dom-cl-section">'
+            +   '<h4>&#128218; 로드된 클래스 목록 (ClassLoader가 정의한 클래스)</h4>'
+            +   '<div class="dom-cl-body">'
+            +     '<button class="dom-cl-load-btn" onclick="loadClassLoaderClasses(this)">목록 조회</button>'
+            +   '</div>'
+            + '</div>';
+    }
+    html += '</div>';
+    return html;
 }
 
 // SSE 점진적 로딩용 — incoming/outgoing 섹션을 독립적으로 업데이트 가능한 구조
-function _buildDomDetailLoadingHtml() {
-    return '<div class="dom-refs-wrap">'
+function _buildDomDetailLoadingHtml(isLoader) {
+    var html = '<div class="dom-refs-wrap">'
         + '<div class="dom-refs-section">'
         +   '<h4>&#8592; Incoming — GC Root 참조 경로 (이 객체가 살아있는 이유)</h4>'
         +   '<div class="dom-incoming-body"><span class="dom-spinner"></span> path2gc 쿼리 실행 중...</div>'
@@ -908,8 +921,17 @@ function _buildDomDetailLoadingHtml() {
         + '<div class="dom-refs-section">'
         +   '<h4>&#8594; Outgoing — Retained Set (클래스별 집계, 이 객체가 보유하는 객체)</h4>'
         +   '<div class="dom-outgoing-body"><span class="dom-spinner"></span> incoming 완료 후 시작...</div>'
-        + '</div>'
         + '</div>';
+    if (isLoader) {
+        html += '<div class="dom-refs-section dom-cl-section">'
+            +   '<h4>&#128218; 로드된 클래스 목록 (ClassLoader가 정의한 클래스)</h4>'
+            +   '<div class="dom-cl-body">'
+            +     '<button class="dom-cl-load-btn" onclick="loadClassLoaderClasses(this)">목록 조회</button>'
+            +   '</div>'
+            + '</div>';
+    }
+    html += '</div>';
+    return html;
 }
 
 function domRowClick(row) {
@@ -926,6 +948,7 @@ function toggleDomDetail(row) {
     if (!row || !row.dataset) return;
     var addr = row.dataset.address;
     if (!addr) return;
+    var isLoader = row.dataset.isLoader === 'true';
     if (_domOpenAddr === addr) { _closeDomDetail(); return; }
     _closeDomDetail();  // 이전 SSE fetch도 abort됨
 
@@ -941,12 +964,12 @@ function toggleDomDetail(row) {
 
     // 캐시 HIT → 즉시 렌더
     if (_domCache[addr]) {
-        td.innerHTML = _buildDomDetailHtml(_domCache[addr], false, null);
+        td.innerHTML = _buildDomDetailHtml(_domCache[addr], false, null, isLoader);
         return;
     }
 
     // SSE 점진적 로딩: incoming 테이블을 먼저 보여주고 outgoing은 추후 업데이트
-    td.innerHTML = _buildDomDetailLoadingHtml();
+    td.innerHTML = _buildDomDetailLoadingHtml(isLoader);
 
     var url = '/api/dominator-refs/' + encodeURIComponent(FILENAME)
             + '?address=' + encodeURIComponent(addr);
@@ -1027,6 +1050,370 @@ function toggleDomDetail(row) {
             var inEl = td.querySelector('.dom-incoming-body');
             if (inEl && !accumulated.incoming) inEl.innerHTML = '';
             if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
+        });
+}
+
+// ── ClassLoader 로드 클래스 목록 조회 ─────────────────────────────────────────
+
+var _CL_PAGE_SIZE = 25;
+
+function _buildClRows(sorted, start, end) {
+    var rows = '';
+    var limit = Math.min(end, sorted.length);
+    for (var i = start; i < limit; i++) {
+        var c = sorted[i];
+        var cn = c.className || '-';
+        rows += '<tr class="cl-class-row" data-classname="' + _escapeHtml(cn) + '"'
+              + ' data-shallow="' + (c.shallowHeap || 0) + '"'
+              + ' data-retained="' + (c.retainedHeap || 0) + '"'
+              + ' onclick="toggleClassInstances(this)">'
+              + '<td class="cl-name-cell">'
+              + '<span class="cl-chev">&#9658;</span> '
+              + _escapeHtml(cn) + '</td>'
+              + '<td class="dom-refs-num">' + _escapeHtml(c.shallowHeapHuman || '') + '</td>'
+              + '<td class="dom-refs-num">' + _escapeHtml(c.retainedHeapHuman || '') + '</td>'
+              + '</tr>';
+    }
+    return rows;
+}
+
+function _clSortArray(classes, col, dir) {
+    return classes.slice().sort(function(a, b) {
+        var aVal = col === 'shallow' ? (a.shallowHeap || 0) : (a.retainedHeap || 0);
+        var bVal = col === 'shallow' ? (b.shallowHeap || 0) : (b.retainedHeap || 0);
+        return dir === 'desc' ? bVal - aVal : aVal - bVal;
+    });
+}
+
+function _renderClassLoaderTable(classes, total, addr) {
+    if (!classes || classes.length === 0) {
+        return '<div class="dom-refs-empty">로드된 클래스 없음</div>';
+    }
+    var sorted = _clSortArray(classes, 'retained', 'desc');
+    var shown  = Math.min(_CL_PAGE_SIZE, sorted.length);
+
+    var countLabel = classes.length + '개 클래스';
+    if (total > 0 && total > classes.length) {
+        countLabel += ' (전체 ' + Number(total).toLocaleString() + '개 중)';
+    }
+
+    var addrAttr = addr ? ' data-addr="' + _escapeHtml(addr) + '"' : '';
+    var moreHtml = '';
+    if (sorted.length > shown) {
+        var remaining = sorted.length - shown;
+        moreHtml = '<div class="cl-more-wrap">'
+            + '<button class="cl-more-btn" data-offset="' + shown + '"'
+            + addrAttr + ' onclick="clShowMore(this)">'
+            + '추가 조회 (<strong>' + remaining.toLocaleString() + '</strong>개 더)'
+            + '</button></div>';
+    }
+
+    return '<div style="font-size:11px;color:#6B7280;margin-bottom:6px">' + countLabel + ' — 행 클릭 시 인스턴스 조회</div>'
+         + '<table class="dom-refs-tbl cl-class-tbl"' + addrAttr + '>'
+         + '<thead><tr><th>Class Name</th>'
+         + '<th class="cl-sort-th" style="width:90px;text-align:right;cursor:pointer;user-select:none" data-col="shallow" data-dir="none" onclick="sortClTable(this)">Shallow <span class="cl-sort-icon"></span></th>'
+         + '<th class="cl-sort-th cl-sort-active" style="width:100px;text-align:right;cursor:pointer;user-select:none" data-col="retained" data-dir="desc" onclick="sortClTable(this)">Retained <span class="cl-sort-icon">&#9660;</span></th></tr></thead>'
+         + '<tbody>' + _buildClRows(sorted, 0, shown) + '</tbody>'
+         + '</table>'
+         + moreHtml;
+}
+
+function sortClTable(th) {
+    var table = th.closest('table');
+    if (!table) return;
+    var col = th.dataset.col;
+    var dir = th.dataset.dir === 'desc' ? 'asc' : 'desc';
+
+    table.querySelectorAll('.cl-sort-th').forEach(function(t) {
+        t.dataset.dir = 'none';
+        t.classList.remove('cl-sort-active');
+        var icon = t.querySelector('.cl-sort-icon');
+        if (icon) icon.innerHTML = '';
+    });
+    th.dataset.dir = dir;
+    th.classList.add('cl-sort-active');
+    var icon = th.querySelector('.cl-sort-icon');
+    if (icon) icon.innerHTML = dir === 'desc' ? '&#9660;' : '&#9650;';
+
+    var tbody = table.querySelector('tbody');
+    if (!tbody) return;
+
+    // 캐시에서 전체 데이터 재정렬 후 첫 페이지만 표시
+    var addr = table.dataset.addr;
+    if (addr && _clCache[addr]) {
+        var sorted = _clSortArray(_clCache[addr].classes, col, dir);
+        tbody.innerHTML = _buildClRows(sorted, 0, Math.min(_CL_PAGE_SIZE, sorted.length));
+
+        // "추가 조회" 버튼 갱신
+        var wrap = table.nextElementSibling;
+        if (wrap && wrap.classList.contains('cl-more-wrap')) {
+            if (sorted.length > _CL_PAGE_SIZE) {
+                var btn = wrap.querySelector('.cl-more-btn');
+                if (btn) {
+                    btn.dataset.offset = _CL_PAGE_SIZE;
+                    btn.innerHTML = '추가 조회 (<strong>' + (sorted.length - _CL_PAGE_SIZE).toLocaleString() + '</strong>개 더)';
+                }
+            } else {
+                wrap.parentNode.removeChild(wrap);
+            }
+        }
+        return;
+    }
+
+    // 캐시 없을 때 DOM 정렬 폴백 (열려있는 인스턴스 서브행 먼저 닫기)
+    tbody.querySelectorAll('tr.cl-inst-row').forEach(function(r) { r.parentNode.removeChild(r); });
+    tbody.querySelectorAll('tr.cl-class-row.expanded').forEach(function(r) { r.classList.remove('expanded'); });
+    var rows = Array.from(tbody.querySelectorAll('tr.cl-class-row'));
+    rows.sort(function(a, b) {
+        var aVal = parseFloat(a.dataset[col]) || 0;
+        var bVal = parseFloat(b.dataset[col]) || 0;
+        return dir === 'desc' ? bVal - aVal : aVal - bVal;
+    });
+    rows.forEach(function(r) { tbody.appendChild(r); });
+}
+
+function clShowMore(btn) {
+    var addr = btn.dataset.addr;
+    if (!addr || !_clCache[addr]) return;
+
+    var wrap = btn.closest('.cl-more-wrap');
+    var table = wrap ? wrap.previousElementSibling : null;
+    if (!table || !table.classList.contains('cl-class-tbl')) return;
+
+    var activeTh = table.querySelector('.cl-sort-th.cl-sort-active');
+    var col = activeTh ? activeTh.dataset.col : 'retained';
+    var dir = activeTh ? activeTh.dataset.dir : 'desc';
+    var sorted = _clSortArray(_clCache[addr].classes, col, dir);
+
+    var offset    = parseInt(btn.dataset.offset) || _CL_PAGE_SIZE;
+    var newOffset = Math.min(offset + _CL_PAGE_SIZE, sorted.length);
+
+    // 열려있는 인스턴스 서브행 닫기
+    var tbody = table.querySelector('tbody');
+    tbody.querySelectorAll('tr.cl-inst-row').forEach(function(r) { r.parentNode.removeChild(r); });
+    tbody.querySelectorAll('tr.cl-class-row.expanded').forEach(function(r) { r.classList.remove('expanded'); });
+
+    // 새 행 추가
+    var tmp = document.createElement('tbody');
+    tmp.innerHTML = _buildClRows(sorted, offset, newOffset);
+    Array.from(tmp.querySelectorAll('tr')).forEach(function(r) { tbody.appendChild(r); });
+
+    if (newOffset >= sorted.length) {
+        wrap.parentNode.removeChild(wrap);
+    } else {
+        btn.dataset.offset = newOffset;
+        btn.innerHTML = '추가 조회 (<strong>' + (sorted.length - newOffset).toLocaleString() + '</strong>개 더)';
+    }
+}
+
+function _renderInstanceTable(instances) {
+    if (!instances || instances.length === 0) {
+        return '<div class="dom-refs-empty">인스턴스 없음</div>';
+    }
+    var rows = '';
+    for (var i = 0; i < instances.length; i++) {
+        var inst = instances[i];
+        rows += '<tr>'
+              + '<td class="cl-inst-addr">' + _escapeHtml(inst.objectAddress || '-') + '</td>'
+              + '<td class="dom-refs-num">' + _escapeHtml(inst.shallowHeapHuman || '') + '</td>'
+              + '<td class="dom-refs-num">' + _escapeHtml(inst.retainedHeapHuman || '') + '</td>'
+              + '</tr>';
+    }
+    return '<div class="cl-inst-count">' + instances.length + '개 인스턴스 (최대 200)</div>'
+         + '<table class="dom-refs-tbl cl-inst-tbl"><thead>'
+         + '<tr><th>Object Address</th>'
+         + '<th style="width:90px;text-align:right">Shallow</th>'
+         + '<th style="width:100px;text-align:right">Retained</th></tr>'
+         + '</thead><tbody>' + rows + '</tbody></table>';
+}
+
+function toggleClassInstances(row) {
+    if (!row || !row.dataset) return;
+    var className = row.dataset.classname;
+    if (!className || className === '-') return;
+
+    // 이미 열려있으면 닫기
+    var next = row.nextElementSibling;
+    if (next && next.classList.contains('cl-inst-row')) {
+        next.parentNode.removeChild(next);
+        row.classList.remove('expanded');
+        return;
+    }
+
+    row.classList.add('expanded');
+
+    // 서브 행 삽입
+    var instRow = document.createElement('tr');
+    instRow.className = 'cl-inst-row';
+    var td = document.createElement('td');
+    td.colSpan = 3;
+    td.innerHTML = '<span class="dom-spinner"></span> OQL 인스턴스 조회 중 (최대 90초)...';
+    instRow.appendChild(td);
+    row.parentNode.insertBefore(instRow, row.nextSibling);
+
+    // 캐시 HIT
+    if (_classInstCache[className]) {
+        td.innerHTML = _renderInstanceTable(_classInstCache[className]);
+        return;
+    }
+
+    // 진행 중인 요청 취소
+    if (_classInstAbortCtrls[className]) {
+        _classInstAbortCtrls[className].abort();
+    }
+    var ctrl = new AbortController();
+    _classInstAbortCtrls[className] = ctrl;
+
+    var url = '/api/class-instances/' + encodeURIComponent(FILENAME)
+            + '?className=' + encodeURIComponent(className);
+
+    var sseBuffer = '';
+    var sseEvent  = '';
+
+    function processSseLine(line) {
+        if (line.indexOf('event:') === 0) {
+            sseEvent = line.substring(6).trim();
+        } else if (line.indexOf('data:') === 0) {
+            var data = line.substring(5).trim();
+            handleInstSseEvent(sseEvent, data);
+            sseEvent = '';
+        }
+    }
+
+    function handleInstSseEvent(event, data) {
+        try {
+            var parsed = JSON.parse(data);
+            var currentTd = instRow.querySelector('td');
+            if (!currentTd) return;
+            if (event === 'instances') {
+                _classInstCache[className] = parsed;
+                currentTd.innerHTML = _renderInstanceTable(parsed);
+            } else if (event === 'done') {
+                delete _classInstAbortCtrls[className];
+            } else if (event === 'inst-error') {
+                currentTd.innerHTML = '<div class="dom-refs-error">' + _escapeHtml((parsed && parsed.error) || '조회 실패') + '</div>';
+                delete _classInstAbortCtrls[className];
+            }
+        } catch (x) {}
+    }
+
+    fetch(url, { credentials: 'same-origin', signal: ctrl.signal })
+        .then(function(response) {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            var reader  = response.body.getReader();
+            var decoder = new TextDecoder();
+            function pump() {
+                return reader.read().then(function(result) {
+                    if (result.done) {
+                        if (sseBuffer.trim()) sseBuffer.split('\n').forEach(function(l) { processSseLine(l); });
+                        return;
+                    }
+                    sseBuffer += decoder.decode(result.value, { stream: true });
+                    var lines = sseBuffer.split('\n');
+                    sseBuffer = lines.pop();
+                    lines.forEach(function(l) { processSseLine(l); });
+                    return pump();
+                });
+            }
+            return pump();
+        })
+        .catch(function(e) {
+            if (e.name === 'AbortError') return;
+            var currentTd = instRow.querySelector('td');
+            if (currentTd) currentTd.innerHTML =
+                '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
+            delete _classInstAbortCtrls[className];
+        });
+}
+
+function loadClassLoaderClasses(btn) {
+    if (!btn) return;
+    var detailRow = btn.closest('.dom-detail-row');
+    if (!detailRow) return;
+    var ownerRow = detailRow.previousElementSibling;
+    var addr = ownerRow ? ownerRow.dataset.address : _domOpenAddr;
+    if (!addr) return;
+
+    var clBody = btn.closest('.dom-cl-body');
+    if (!clBody) return;
+
+    // 캐시 HIT → 즉시 렌더
+    if (_clCache[addr]) {
+        var cached = _clCache[addr];
+        clBody.innerHTML = _renderClassLoaderTable(cached.classes, cached.total, addr);
+        return;
+    }
+
+    btn.disabled = true;
+    clBody.innerHTML = '<span class="dom-spinner"></span> OQL 쿼리 실행 중 (최대 90초)...';
+
+    if (_clAbortCtrl) { _clAbortCtrl.abort(); _clAbortCtrl = null; }
+    var ctrl = new AbortController();
+    _clAbortCtrl = ctrl;
+
+    var url = '/api/classloader-classes/' + encodeURIComponent(FILENAME)
+            + '?address=' + encodeURIComponent(addr);
+
+    var sseBuffer = '';
+    var sseCurrentEvent = '';
+
+    function processSseLine(line) {
+        if (line.indexOf('event:') === 0) {
+            sseCurrentEvent = line.substring(6).trim();
+        } else if (line.indexOf('data:') === 0) {
+            var data = line.substring(5).trim();
+            handleClSseEvent(sseCurrentEvent, data);
+            sseCurrentEvent = '';
+        }
+    }
+
+    function handleClSseEvent(event, data) {
+        try {
+            var parsed = JSON.parse(data);
+            if (event === 'classes') {
+                // payload: { classes: [...], total: N }
+                var classList = parsed.classes || [];
+                var totalCount = parsed.total || -1;
+                _clCache[addr] = { classes: classList, total: totalCount };
+                var currentClBody = detailRow.querySelector('.dom-cl-body');
+                if (currentClBody) currentClBody.innerHTML = _renderClassLoaderTable(classList, totalCount, addr);
+            } else if (event === 'done') {
+                if (_clAbortCtrl === ctrl) _clAbortCtrl = null;
+            } else if (event === 'cl-error') {
+                var currentClBody2 = detailRow.querySelector('.dom-cl-body');
+                if (currentClBody2) currentClBody2.innerHTML =
+                    '<div class="dom-refs-error">' + _escapeHtml((parsed && parsed.error) || '조회 실패') + '</div>';
+                if (_clAbortCtrl === ctrl) _clAbortCtrl = null;
+            }
+        } catch (x) {}
+    }
+
+    fetch(url, { credentials: 'same-origin', signal: ctrl.signal })
+        .then(function(response) {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            var reader = response.body.getReader();
+            var decoder = new TextDecoder();
+            function pump() {
+                return reader.read().then(function(result) {
+                    if (result.done) {
+                        if (sseBuffer.trim()) sseBuffer.split('\n').forEach(function(l) { processSseLine(l); });
+                        return;
+                    }
+                    sseBuffer += decoder.decode(result.value, { stream: true });
+                    var lines = sseBuffer.split('\n');
+                    sseBuffer = lines.pop();
+                    lines.forEach(function(l) { processSseLine(l); });
+                    return pump();
+                });
+            }
+            return pump();
+        })
+        .catch(function(e) {
+            if (e.name === 'AbortError') return;
+            var currentClBody3 = detailRow.querySelector('.dom-cl-body');
+            if (currentClBody3) currentClBody3.innerHTML =
+                '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
+            if (_clAbortCtrl === ctrl) _clAbortCtrl = null;
         });
 }
 
