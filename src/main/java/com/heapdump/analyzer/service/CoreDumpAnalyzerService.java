@@ -323,6 +323,9 @@ public class CoreDumpAnalyzerService {
         return rawOutput.toString();
     }
 
+    // --batch 모드는 (gdb) 프롬프트를 출력하지 않으므로 echo 마커로 섹션 경계를 표시
+    private static final String SECTION_PREFIX = "===SECTION:";
+
     private List<String> buildGdbCommand(File corePath, File execPath) {
         String gdb = config.getGdbCliPath();
         List<String> cmd = new ArrayList<>();
@@ -333,13 +336,18 @@ public class CoreDumpAnalyzerService {
         if (execPath != null && execPath.exists()) {
             cmd.addAll(Arrays.asList(
                 "-ex", "set pagination off",
-                "-ex", "set print limit 0",
                 "-ex", "set print elements 50",
+                "-ex", "echo " + SECTION_PREFIX + "sharedlibrary===\\n",
                 "-ex", "info sharedlibrary",
+                "-ex", "echo " + SECTION_PREFIX + "registers===\\n",
                 "-ex", "info registers",
+                "-ex", "echo " + SECTION_PREFIX + "bt===\\n",
                 "-ex", "bt",
+                "-ex", "echo " + SECTION_PREFIX + "bt_full===\\n",
                 "-ex", "bt full",
+                "-ex", "echo " + SECTION_PREFIX + "threads===\\n",
                 "-ex", "info threads",
+                "-ex", "echo " + SECTION_PREFIX + "thread_apply===\\n",
                 "-ex", "thread apply all bt full"
             ));
             cmd.add(execPath.getAbsolutePath());
@@ -349,8 +357,11 @@ public class CoreDumpAnalyzerService {
             cmd.addAll(Arrays.asList(
                 "-ex", "set pagination off",
                 "-ex", "core-file " + corePath.getAbsolutePath(),
+                "-ex", "echo " + SECTION_PREFIX + "bt===\\n",
                 "-ex", "bt",
+                "-ex", "echo " + SECTION_PREFIX + "threads===\\n",
                 "-ex", "info threads",
+                "-ex", "echo " + SECTION_PREFIX + "thread_apply===\\n",
                 "-ex", "thread apply all bt"
             ));
         }
@@ -382,7 +393,7 @@ public class CoreDumpAnalyzerService {
     private static final Pattern REGISTER_PATTERN =
             Pattern.compile("^(\\w+)\\s+(0x[0-9a-fA-F]+)");
     private static final Pattern SHAREDLIB_PATTERN =
-            Pattern.compile("^(0x[0-9a-fA-F]+)\\s+(0x[0-9a-fA-F]+)\\s+(Yes|No|Yes \\(\\*\\))\\s+(\\S+)");
+            Pattern.compile("^(0x[0-9a-fA-F]+)\\s+(0x[0-9a-fA-F]+)\\s+(Yes(?:\\s+\\(\\*\\))?|No)\\s+(\\S+)");
     private static final Pattern THREAD_LINE_PATTERN =
             Pattern.compile("^\\s*(\\*?)\\s*(\\d+)\\s+(Thread\\s+\\S+(?:\\s+\\(LWP\\s+\\d+\\))?)\\s*(.*)");
     private static final Pattern THREAD_APPLY_HEADER =
@@ -403,6 +414,16 @@ public class CoreDumpAnalyzerService {
         if (rawOutput == null || rawOutput.isEmpty()) {
             result.setErrorMessage("GDB 출력이 없습니다.");
             return result;
+        }
+
+        // GDB 파일 인식 실패 조기 감지 (파싱 전)
+        for (String raw : rawOutput.split("\n")) {
+            String l = raw.strip();
+            if (l.contains("is not a core dump") || l.contains("file format not recognized")
+                    || l.contains("No such file or directory") || l.contains("not a core file")) {
+                result.setErrorMessage(l);
+                return result;
+            }
         }
 
         Section currentSection = Section.NONE;
@@ -437,14 +458,12 @@ public class CoreDumpAnalyzerService {
                 if (m.find()) result.setCoreProgramName(m.group(1).trim());
             }
 
-            // 섹션 전환 감지 (GDB 프롬프트 행)
-            if (line.startsWith("(gdb) ")) {
-                String cmd = line.substring(6).trim();
-                // 현재 섹션 결과 저장
-                if (currentSection == Section.BT || currentSection == Section.BT_FULL) {
-                    if (result.getMainBacktrace().isEmpty()) {
-                        result.setMainBacktrace(new ArrayList<>(currentBt));
-                    }
+            // 섹션 전환 감지 — echo 마커 (--batch 모드는 (gdb) 프롬프트 미출력)
+            if (line.startsWith(SECTION_PREFIX)) {
+                // 이전 섹션 결과 저장
+                if ((currentSection == Section.BT || currentSection == Section.BT_FULL)
+                        && result.getMainBacktrace().isEmpty()) {
+                    result.setMainBacktrace(new ArrayList<>(currentBt));
                 }
                 if (currentSection == Section.THREAD_APPLY_BT && currentThread != null) {
                     currentThread.setBacktrace(new ArrayList<>(currentBt));
@@ -453,22 +472,18 @@ public class CoreDumpAnalyzerService {
 
                 currentBt = new ArrayList<>();
                 currentFrameLocals = null;
+                currentThread = null;
 
-                if (cmd.startsWith("info sharedlibrary")) {
-                    currentSection = Section.SHAREDLIB;
-                } else if (cmd.startsWith("info registers")) {
-                    currentSection = Section.REGISTERS;
-                } else if (cmd.equals("bt") || cmd.equals("backtrace")) {
-                    currentSection = Section.BT;
-                } else if (cmd.equals("bt full") || cmd.equals("backtrace full")) {
-                    currentSection = Section.BT_FULL;
-                } else if (cmd.startsWith("info threads")) {
-                    currentSection = Section.THREADS;
-                } else if (cmd.startsWith("thread apply all")) {
-                    currentSection = Section.THREAD_APPLY_BT;
-                    currentThread = null;
-                } else {
-                    currentSection = Section.NONE;
+                String sectionName = line.substring(SECTION_PREFIX.length())
+                        .replace("===", "").trim();
+                switch (sectionName) {
+                    case "sharedlibrary"  -> currentSection = Section.SHAREDLIB;
+                    case "registers"      -> currentSection = Section.REGISTERS;
+                    case "bt"             -> currentSection = Section.BT;
+                    case "bt_full"        -> currentSection = Section.BT_FULL;
+                    case "threads"        -> currentSection = Section.THREADS;
+                    case "thread_apply"   -> currentSection = Section.THREAD_APPLY_BT;
+                    default               -> currentSection = Section.NONE;
                 }
                 continue;
             }
@@ -495,7 +510,7 @@ public class CoreDumpAnalyzerService {
                     } else if (currentSection == Section.BT_FULL
                             && currentFrameLocals != null
                             && !line.isBlank()
-                            && !line.startsWith("(gdb)")) {
+                            && !line.startsWith(SECTION_PREFIX)) {
                         currentFrameLocals.add(line.trim());
                     }
                     break;

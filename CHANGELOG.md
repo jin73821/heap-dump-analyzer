@@ -1,5 +1,57 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-19] 버전 2.1.1 → 2.1.2
+
+**대상:** `pom.xml`, `restart.sh`, `run.sh`, `stop.sh`, `fragments/banner.html`, `index.html`, `progress.html`
+
+### 변경 내용
+
+- 버전 문자열 `2.1.1` → `2.1.2` 일괄 변경 (JAR 파일명 포함 7개 파일)
+
+## [2026-06-19] Core Dump — 파일 형식 인식 실패 시 오류 카드 표시
+
+**대상:** `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`, `src/main/resources/templates/core-dump/analyze.html`
+
+### 변경 내용
+
+- `parseGdbOutput()`: GDB 파싱 전 `"is not a core dump"` / `"file format not recognized"` / `"not a core file"` / `"No such file or directory"` 패턴 조기 감지 → `result.errorMessage` 설정 후 즉시 반환
+- `analyze.html`: `result.crashSignal == null and result.errorMessage != null` 조건일 때 탭·메타 정보 영역 전체를 숨기고 전용 오류 카드(빨간 배경, 안내 문구, 목록으로/재분석 버튼) 표시. 시그널이 있는 경우의 기존 경고 배너는 유지.
+
+## [2026-06-19] Core Dump 분석 결과 페이지 ERR_INCOMPLETE_CHUNKED_ENCODING 수정
+
+**대상:** `src/main/resources/templates/core-dump/analyze.html`
+
+### 변경 내용
+
+- line 292: `th:text="${thread.backtrace != null} ? (#lists.size(thread.backtrace) + ' frames') : '0 frames'"` → Thymeleaf 3.1에서 `${condition} ? (expr)` 형식이 파싱 오류(`TemplateProcessingException`) 발생. 응답이 chunked로 이미 전송 중에 예외가 나면 종료 마커가 미전송되어 브라우저에서 `ERR_INCOMPLETE_CHUNKED_ENCODING`으로 표출됨.
+- 수정: 조건·분기 전체를 단일 `${}` 안으로 이동 → `th:text="${thread.backtrace != null ? #lists.size(thread.backtrace) + ' frames' : '0 frames'}"`
+
+## [2026-06-19] Core Dump GDB 파서 버그 수정 — 섹션 파싱 불가 + 공유 라이브러리 경로 오류
+
+**대상:** `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+
+### 변경 내용
+
+1. **`(gdb)` 프롬프트 기반 섹션 감지 제거** — GDB `--batch` 모드는 `(gdb)` 프롬프트를 출력하지 않아 스택트레이스·레지스터·스레드·공유라이브러리가 모두 빈 배열로 파싱됨. `-ex "echo ===SECTION:xxx===\n"` 마커를 각 GDB 명령 앞에 삽입하고, 파서가 해당 마커로 섹션 전환을 감지하도록 변경.
+2. **`set print limit 0` 제거** — 유효하지 않은 GDB 명령어(`Undefined set print command` 경고 발생). 제거.
+3. **`SHAREDLIB_PATTERN` 정규식 대안 순서 수정** — `(Yes|No|Yes \(\*\))` 에서 `Yes` 가 `Yes (*)` 보다 먼저 매칭되어 `(*)` 가 경로(path) 필드로 잘못 파싱됨. → `(Yes(?:\s+\(\*\))?|No)` 로 변경, `symsRead` 에 `Yes (*)` 전체가 캡처되고 경로에 실제 라이브러리 경로 정상 표시.
+
+## [2026-06-19] GDB 기반 Core Dump 분석 기능 추가 (PR #6)
+
+**대상:** 신규 15개 파일
+
+### 변경 내용
+
+- `CoreDumpAnalyzerService` — GDB `--batch` 실행·파싱·결과 저장 (678줄)
+- `CoreDumpApiController` — 업로드·SSE 분석 스트림·이력·삭제·재분석 REST API
+- `CoreDumpViewController` — `/core-dump`, `/core-dump/progress/{f}`, `/core-dump/analyze/{f}` Thymeleaf 뷰
+- `CoreDumpAnalysisEntity` + `CoreDumpAnalysisRepository` — `core_dump_analysis_history` DB 이력
+- `HeapDumpConfig` 확장 — `coredump.directory` / `gdb.cli.path` / `coredump.timeout.minutes` 설정 + 기동 시 GDB PATH 검증
+- `core-dump/index.html` — 코어파일+실행파일 드래그앤드롭 업로드, 분석 이력 테이블
+- `core-dump/progress.html` — SSE 기반 GDB 실행 실시간 진행률
+- `core-dump/analyze.html` — 시그널 배너·스택·스레드·레지스터·공유라이브러리·GDB raw 6탭
+- `banner.html` — 사이드바 "코어 덤프" 메뉴 항목 추가
+
 ## [2026-06-16] Dominator Tree (Raw) 패널 표출 안되는 버그 수정
 
 **대상:** `src/main/resources/static/js/analyze.js`

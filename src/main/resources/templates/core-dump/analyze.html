@@ -197,6 +197,22 @@
 
     <div th:if="${error == null}">
 
+        <!-- GDB 파일 인식 실패 (치명적 오류) -->
+        <div th:if="${result != null and result.errorMessage != null and !#strings.isEmpty(result.errorMessage) and result.crashSignal == null}"
+             class="error-card">
+            <div class="error-card-icon">&#128196;</div>
+            <div class="error-card-title">파일을 분석할 수 없습니다</div>
+            <div class="error-card-msg" th:text="${result.errorMessage}"></div>
+            <div style="margin-top:8px;font-size:12px;color:#9B1C1C;">
+                유효한 코어 덤프 파일(.core, core.*)인지 확인하세요.
+            </div>
+            <div style="margin-top:20px;display:flex;gap:10px;justify-content:center;">
+                <a href="/core-dump" style="background:#2563EB;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">&#8592; 목록으로</a>
+                <a th:href="@{'/core-dump/progress/' + ${filename}}"
+                   style="background:#6B7280;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">&#8635; 재분석</a>
+            </div>
+        </div>
+
         <!-- 시그널 배너 -->
         <div th:if="${result != null and result.crashSignal != null}"
              class="signal-banner"
@@ -212,8 +228,8 @@
             </div>
         </div>
 
-        <!-- 메타 정보 -->
-        <div class="meta-grid" th:if="${result != null}">
+        <!-- 메타 정보 (파일 인식 실패 시 숨김) -->
+        <div class="meta-grid" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="meta-card" th:if="${result.filename != null}">
                 <div class="meta-label">코어 파일</div>
                 <div class="meta-value mono" th:text="${result.filename}"></div>
@@ -240,14 +256,14 @@
             </div>
         </div>
 
-        <!-- 에러 메시지 (분석은 됐지만 오류 있을 때) -->
-        <div th:if="${result != null and result.errorMessage != null and !#strings.isEmpty(result.errorMessage)}"
+        <!-- 에러 메시지 (분석은 됐으나 일부 경고 — 시그널은 있는 경우만) -->
+        <div th:if="${result != null and result.errorMessage != null and !#strings.isEmpty(result.errorMessage) and result.crashSignal != null}"
              style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#92400E;">
             &#9888; <strong>분석 경고:</strong> <span th:text="${result.errorMessage}"></span>
         </div>
 
-        <!-- 탭 네비게이션 -->
-        <div class="cd-tabs" th:if="${result != null}">
+        <!-- 탭 네비게이션 (파일 인식 실패 시 숨김) -->
+        <div class="cd-tabs" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <button class="cd-tab-btn active" onclick="switchTab('bt')">&#128203; 스택 트레이스</button>
             <button class="cd-tab-btn" onclick="switchTab('threads')">&#129303; 스레드</button>
             <button class="cd-tab-btn" onclick="switchTab('registers')">&#9881; 레지스터</button>
@@ -256,7 +272,7 @@
         </div>
 
         <!-- 탭 패널: 스택 트레이스 -->
-        <div class="cd-tab-panel active" id="tab-bt" th:if="${result != null}">
+        <div class="cd-tab-panel active" id="tab-bt" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
                 <div class="content-card-title">메인 스레드 스택 트레이스 (Backtrace)</div>
                 <div th:if="${result.mainBacktrace == null or #lists.isEmpty(result.mainBacktrace)}"
@@ -275,7 +291,7 @@
         </div>
 
         <!-- 탭 패널: 스레드 -->
-        <div class="cd-tab-panel" id="tab-threads" th:if="${result != null}">
+        <div class="cd-tab-panel" id="tab-threads" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
                 <div class="content-card-title">전체 스레드 (<span th:text="${#lists.size(result.allThreads)}"></span>개)</div>
                 <div th:if="${result.allThreads == null or #lists.isEmpty(result.allThreads)}" class="empty-msg">
@@ -289,7 +305,7 @@
                         <span class="crash-badge" th:if="${thread.current}">CRASH</span>
                         <span class="thread-target" th:text="${thread.targetId}"></span>
                         <span class="thread-frame-count"
-                              th:text="${thread.backtrace != null} ? (#lists.size(thread.backtrace) + ' frames') : '0 frames'"></span>
+                              th:text="${thread.backtrace != null ? #lists.size(thread.backtrace) + ' frames' : '0 frames'}"></span>
                         <span class="thread-chevron" th:id="'chevron-' + ${thread.id}">&#9654;</span>
                     </div>
                     <div class="thread-body" th:id="'thread-body-' + ${thread.id}"
@@ -312,7 +328,7 @@
         </div>
 
         <!-- 탭 패널: 레지스터 -->
-        <div class="cd-tab-panel" id="tab-registers" th:if="${result != null}">
+        <div class="cd-tab-panel" id="tab-registers" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
                 <div class="content-card-title">CPU 레지스터</div>
                 <div th:if="${result.registers == null or #maps.isEmpty(result.registers)}" class="empty-msg">
@@ -330,7 +346,7 @@
         </div>
 
         <!-- 탭 패널: 공유 라이브러리 -->
-        <div class="cd-tab-panel" id="tab-libs" th:if="${result != null}">
+        <div class="cd-tab-panel" id="tab-libs" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
                 <div class="content-card-title">공유 라이브러리</div>
                 <div th:if="${result.sharedLibraries == null or #lists.isEmpty(result.sharedLibraries)}" class="empty-msg">
@@ -361,7 +377,7 @@
         </div>
 
         <!-- 탭 패널: Raw 출력 -->
-        <div class="cd-tab-panel" id="tab-raw" th:if="${result != null}">
+        <div class="cd-tab-panel" id="tab-raw" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
                 <div class="content-card-title">GDB Raw 출력</div>
                 <button class="copy-btn" onclick="copyRaw()">&#128203; 복사</button>
