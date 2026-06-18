@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>코어 덤프 분석 중... - Heap Dump Analyzer</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-18}">
+    <style>
+        body { background: #F3F4F6 !important; }
+        .cd-topbar {
+            position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100;
+            height: 52px; background: #fff; border-bottom: 1px solid #E5E7EB;
+            transition: left .25s cubic-bezier(.4,0,.2,1);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+        }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+        .topbar-title { font-size: 15px; font-weight: 700; color: #1F2937; white-space: nowrap; }
+        .topbar-right { flex-shrink: 0; display: flex; align-items: center; gap: 8px; }
+        .file-chip {
+            background: #DBEAFE; color: #1D4ED8; border-radius: 20px;
+            padding: 4px 14px; font-size: 13px; font-weight: 600;
+            max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .elapsed-chip {
+            background: #F3F4F6; color: #374151; border-radius: 12px;
+            padding: 4px 10px; font-size: 12px; font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .cd-page {
+            max-width: 1200px; margin: 72px auto 40px;
+            padding: 0 20px; padding-left: calc(var(--banner-w, 220px) + 20px);
+            transition: padding-left .25s cubic-bezier(.4,0,.2,1);
+        }
+        @media (max-width: 900px) {
+            .cd-topbar { left: 0; }
+            .cd-page { padding-left: 20px; }
+        }
+        .progress-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+        }
+        @media (max-width: 900px) { .progress-grid { grid-template-columns: 1fr; } }
+
+        /* 진행 카드 */
+        .progress-card {
+            background: #fff; border-radius: 14px;
+            box-shadow: 0 2px 12px rgba(0,0,0,.08); overflow: hidden;
+        }
+        .progress-card-header { padding: 24px 28px 20px; border-bottom: 1px solid #F3F4F6; }
+        .progress-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .progress-label { font-size: 15px; font-weight: 600; color: #1F2937; }
+        .progress-pct { font-size: 22px; font-weight: 800; color: #2563EB; }
+        .progress-track { background: #E5E7EB; border-radius: 999px; height: 12px; overflow: hidden; }
+        .progress-fill {
+            height: 100%; border-radius: 999px;
+            background: linear-gradient(90deg, #3B82F6, #60A5FA);
+            width: 0%; transition: width .5s ease;
+            position: relative; overflow: hidden;
+        }
+        .progress-fill::after {
+            content: ''; position: absolute; top: 0; left: -100%; width: 60%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,.4), transparent);
+            animation: shimmer 1.6s infinite;
+        }
+        @keyframes shimmer { 0% { left: -60%; } 100% { left: 160%; } }
+        .progress-fill.done { background: linear-gradient(90deg, #059669, #34D399); }
+        .progress-fill.done::after { animation: none; }
+        .progress-fill.error { background: linear-gradient(90deg, #DC2626, #F87171); }
+        .progress-fill.error::after { animation: none; }
+        .status-msg { margin-top: 10px; font-size: 13px; color: #6B7280; min-height: 18px; }
+
+        /* 타임라인 */
+        .timeline { padding: 20px 28px 24px; }
+        .timeline-item { display: flex; align-items: flex-start; gap: 14px; position: relative; padding: 4px 0; }
+        .timeline-line {
+            position: absolute; left: 15px; top: 32px; bottom: 0;
+            width: 2px; background: #E5E7EB; transition: background .4s;
+        }
+        .timeline-item:last-child .timeline-line { display: none; }
+        .timeline-item.step-done .timeline-line { background: #86EFAC; }
+        .timeline-item.step-active .timeline-line { background: #93C5FD; }
+        .timeline-dot {
+            width: 32px; height: 32px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px; font-weight: 700; flex-shrink: 0;
+            transition: all .4s; z-index: 1; position: relative;
+        }
+        .timeline-dot.waiting { background: #F3F4F6; color: #9CA3AF; }
+        .timeline-dot.active  { background: #DBEAFE; color: #2563EB; animation: pulse 1.2s infinite; }
+        .timeline-dot.done    { background: #D1FAE5; color: #059669; }
+        .timeline-dot.error   { background: #FEE2E2; color: #DC2626; }
+        @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(37,99,235,.3); } 50% { box-shadow: 0 0 0 8px rgba(37,99,235,0); } }
+        .timeline-dot .dot-num { display: block; }
+        .timeline-dot .dot-check { display: none; }
+        .timeline-dot .dot-err { display: none; }
+        .timeline-dot.done .dot-num { display: none; }
+        .timeline-dot.done .dot-check { display: block; animation: scaleIn .3s ease; }
+        .timeline-dot.error .dot-num { display: none; }
+        .timeline-dot.error .dot-err { display: block; }
+        @keyframes scaleIn { from { transform: scale(0); } to { transform: scale(1); } }
+        .timeline-content { flex: 1; padding: 5px 0 12px; }
+        .timeline-label { font-size: 14px; font-weight: 600; color: #1F2937; }
+        .timeline-desc { font-size: 12px; color: #6B7280; margin-top: 2px; }
+
+        /* 로그 콘솔 */
+        .log-card {
+            background: #fff; border-radius: 14px;
+            padding: 18px 20px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
+            display: flex; flex-direction: column;
+        }
+        .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .log-title { font-size: 14px; font-weight: 700; color: #1F2937; }
+        .log-count {
+            font-size: 11px; color: #9CA3AF; background: #F3F4F6;
+            padding: 2px 8px; border-radius: 10px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .log-console {
+            background: #0F172A; color: #94A3B8;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            font-size: 12px; line-height: 1.6;
+            padding: 14px; border-radius: 8px;
+            flex: 1; min-height: 400px;
+            overflow-y: scroll; overflow-x: hidden;
+            white-space: pre-wrap; word-break: break-all;
+        }
+
+        /* 완료 배너 */
+        .complete-banner {
+            background: linear-gradient(135deg, #065F46, #059669);
+            border-radius: 12px; padding: 12px 18px;
+            color: #fff; display: none; margin-bottom: 16px;
+            align-items: center; gap: 16px;
+        }
+        .complete-banner.visible { display: flex; animation: fadeIn .4s ease; }
+        .complete-info { flex: 1; }
+        .complete-title { font-size: 15px; font-weight: 700; }
+        .complete-sub { font-size: 12px; opacity: .85; }
+        .complete-btn {
+            background: #fff; color: #059669;
+            font-size: 13px; font-weight: 700;
+            padding: 8px 18px; border-radius: 8px;
+            text-decoration: none; flex-shrink: 0;
+            box-shadow: 0 2px 6px rgba(0,0,0,.12);
+        }
+
+        /* 에러 배너 */
+        .error-banner {
+            background: linear-gradient(135deg, #FFF5F5, #FEE2E2);
+            border: 1px solid #FECACA; border-left: 4px solid #DC2626;
+            border-radius: 12px; padding: 20px 24px;
+            display: none; margin-bottom: 16px;
+        }
+        .error-banner.visible { display: block; animation: fadeIn .4s ease; }
+        .error-title { font-size: 16px; font-weight: 700; color: #991B1B; margin-bottom: 8px; }
+        .error-msg { font-size: 13px; color: #7F1D1D; margin-bottom: 12px; }
+        .error-actions { display: flex; gap: 10px; }
+        .error-btn-retry {
+            background: #2563EB; color: #fff; border: none; border-radius: 8px;
+            padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+            text-decoration: none; display: inline-block;
+        }
+        .error-btn-home {
+            background: #F3F4F6; color: #374151; border: none; border-radius: 8px;
+            padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+            text-decoration: none; display: inline-block;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+<div th:replace="~{fragments/banner :: banner}"></div>
+
+<div class="cd-topbar">
+    <div class="topbar-brand">
+        <a href="/core-dump" style="color:#374151;text-decoration:none;font-size:18px;">&#8592;</a>
+        <span class="topbar-title">코어 덤프 GDB 분석</span>
+    </div>
+    <div class="topbar-right">
+        <span class="file-chip" th:text="${filename}">core.12345</span>
+        <span class="elapsed-chip" id="elapsedTime">--:--</span>
+    </div>
+</div>
+
+<div class="cd-page">
+
+    <!-- 완료 배너 -->
+    <div class="complete-banner" id="completeBanner">
+        <div class="complete-info">
+            <div class="complete-title">GDB 분석 완료</div>
+            <div class="complete-sub" id="countdownText">결과 페이지로 이동 중...</div>
+        </div>
+        <a href="#" class="complete-btn" id="resultLink">&#128202; 결과 보기</a>
+    </div>
+
+    <!-- 에러 배너 -->
+    <div class="error-banner" id="errorBanner">
+        <div class="error-title">&#10007; 분석 실패</div>
+        <div class="error-msg" id="errorMsg"></div>
+        <div class="error-actions">
+            <a href="/core-dump" class="error-btn-home">&#8592; 목록으로</a>
+        </div>
+    </div>
+
+    <div class="progress-grid">
+
+        <!-- 진행 카드 -->
+        <div class="progress-card">
+            <div class="progress-card-header">
+                <div class="progress-info">
+                    <span class="progress-label" id="statusLabel">GDB 분석 준비 중...</span>
+                    <span class="progress-pct" id="pctText">0%</span>
+                </div>
+                <div class="progress-track">
+                    <div class="progress-fill" id="mainBar"></div>
+                </div>
+                <div class="status-msg" id="statusMsg">GDB 연결 대기 중...</div>
+            </div>
+            <div class="timeline">
+                <div class="timeline-item" id="step-file">
+                    <div class="timeline-dot waiting" id="icon-file">
+                        <span class="dot-num">1</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
+                    </div>
+                    <div class="timeline-content">
+                        <div class="timeline-label">파일 확인</div>
+                        <div class="timeline-desc" id="desc-file">코어 덤프 파일 존재 여부 확인</div>
+                    </div>
+                    <div class="timeline-line"></div>
+                </div>
+                <div class="timeline-item" id="step-gdb">
+                    <div class="timeline-dot waiting" id="icon-gdb">
+                        <span class="dot-num">2</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
+                    </div>
+                    <div class="timeline-content">
+                        <div class="timeline-label">GDB 실행</div>
+                        <div class="timeline-desc" id="desc-gdb">GDB 배치 모드로 코어 덤프 분석</div>
+                    </div>
+                    <div class="timeline-line"></div>
+                </div>
+                <div class="timeline-item" id="step-parse">
+                    <div class="timeline-dot waiting" id="icon-parse">
+                        <span class="dot-num">3</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
+                    </div>
+                    <div class="timeline-content">
+                        <div class="timeline-label">GDB 출력 파싱</div>
+                        <div class="timeline-desc" id="desc-parse">시그널·스택·스레드·레지스터·공유라이브러리 추출</div>
+                    </div>
+                    <div class="timeline-line"></div>
+                </div>
+                <div class="timeline-item" id="step-save">
+                    <div class="timeline-dot waiting" id="icon-save">
+                        <span class="dot-num">4</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
+                    </div>
+                    <div class="timeline-content">
+                        <div class="timeline-label">결과 저장</div>
+                        <div class="timeline-desc" id="desc-save">분석 결과 JSON 저장 및 DB 기록</div>
+                    </div>
+                    <div class="timeline-line"></div>
+                </div>
+                <div class="timeline-item" id="step-done">
+                    <div class="timeline-dot waiting" id="icon-done">
+                        <span class="dot-num">5</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
+                    </div>
+                    <div class="timeline-content">
+                        <div class="timeline-label">분석 완료</div>
+                        <div class="timeline-desc" id="desc-done">결과 페이지 이동</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- GDB 출력 콘솔 -->
+        <div class="log-card">
+            <div class="log-header">
+                <span class="log-title">GDB 실시간 출력</span>
+                <span class="log-count" id="logCount">0 lines</span>
+            </div>
+            <div class="log-console" id="logConsole"></div>
+        </div>
+
+    </div><!-- /.progress-grid -->
+</div>
+
+<script th:inline="javascript">
+    const FILENAME   = /*[[${filename}]]*/ '';
+    const SSE_URL    = '/core-dump/analyze-progress/' + encodeURIComponent(FILENAME);
+    const RESULT_URL = '/core-dump/analyze/' + encodeURIComponent(FILENAME);
+
+    const mainBar     = document.getElementById('mainBar');
+    const pctText     = document.getElementById('pctText');
+    const statusLabel = document.getElementById('statusLabel');
+    const statusMsg   = document.getElementById('statusMsg');
+    const logConsole  = document.getElementById('logConsole');
+    const logCountEl  = document.getElementById('logCount');
+    const completeBanner = document.getElementById('completeBanner');
+    const errorBanner    = document.getElementById('errorBanner');
+    const errorMsgEl     = document.getElementById('errorMsg');
+    const resultLink     = document.getElementById('resultLink');
+    const elapsedEl      = document.getElementById('elapsedTime');
+    const countdownText  = document.getElementById('countdownText');
+
+    // 경과 시간
+    let startTime = null, elapsedTimer = null;
+    function startElapsed() {
+        if (startTime) return;
+        startTime = Date.now();
+        elapsedTimer = setInterval(function() {
+            var e = Date.now() - startTime;
+            var m = Math.floor(e / 60000), s = Math.floor((e % 60000) / 1000);
+            elapsedEl.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+        }, 1000);
+    }
+
+    // 타임라인
+    var stepState = {};
+    function setStep(id, state, desc) {
+        if (stepState[id] === state && !desc) return;
+        stepState[id] = state;
+        var dot  = document.getElementById('icon-' + id);
+        var item = document.getElementById('step-' + id);
+        var descEl = document.getElementById('desc-' + id);
+        if (dot)  dot.className = 'timeline-dot ' + state;
+        if (desc && descEl) descEl.textContent = desc;
+        if (item) {
+            item.classList.remove('step-waiting','step-active','step-done','step-error');
+            item.classList.add('step-' + state);
+        }
+    }
+
+    // 진행바
+    function setProgress(pct, msg, state, label) {
+        mainBar.style.width = pct + '%';
+        pctText.textContent = pct + '%';
+        if (msg) statusMsg.textContent = msg;
+        if (label) statusLabel.textContent = label;
+        if (state === 'done') {
+            mainBar.classList.add('done'); mainBar.classList.remove('error');
+        } else if (state === 'error') {
+            mainBar.classList.add('error'); mainBar.classList.remove('done');
+        } else {
+            mainBar.classList.remove('done','error');
+        }
+    }
+
+    // 로그 콘솔 (버퍼링)
+    var logBuffer = [], logTotal = 0, logFlushId = null, autoScroll = true;
+    logConsole.addEventListener('scroll', function() {
+        autoScroll = (logConsole.scrollHeight - logConsole.scrollTop - logConsole.clientHeight) < 60;
+    }, { passive: true });
+
+    function appendLog(line) {
+        logBuffer.push(line.length > 250 ? line.slice(0,250) + '…' : line);
+        if (!logFlushId) logFlushId = setTimeout(flushLog, 120);
+    }
+    function flushLog() {
+        logFlushId = null;
+        if (!logBuffer.length) return;
+        var chunk = logBuffer.join('\n') + '\n';
+        logBuffer = [];
+        // 줄 수 제한
+        var MAX = 600, TRIM = 400;
+        logTotal += chunk.split('\n').length - 1;
+        var existing = logConsole.textContent.split('\n').length - 1;
+        if (existing > MAX) {
+            var lines = logConsole.textContent.split('\n');
+            logConsole.textContent = lines.slice(lines.length - TRIM).join('\n') + '\n';
+        }
+        logConsole.appendChild(document.createTextNode(chunk));
+        logCountEl.textContent = logTotal + ' lines';
+        if (autoScroll) logConsole.scrollTop = 999999;
+    }
+
+    // 자동 이동
+    function showComplete(url) {
+        if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+        if (logBuffer.length) flushLog();
+        resultLink.href = url || RESULT_URL;
+        completeBanner.classList.add('visible');
+        setStep('done', 'done', '결과 페이지 준비 완료');
+
+        var remaining = 5;
+        countdownText.textContent = remaining + '초 후 자동으로 결과 페이지로 이동합니다...';
+        var t = setInterval(function() {
+            remaining--;
+            if (remaining <= 0) {
+                clearInterval(t);
+                window.location.href = url || RESULT_URL;
+            } else {
+                countdownText.textContent = remaining + '초 후 자동으로 결과 페이지로 이동합니다...';
+            }
+        }, 1000);
+    }
+
+    // SSE
+    function startSSE() {
+        var evtSource = new EventSource(SSE_URL);
+
+        evtSource.addEventListener('progress', function(e) {
+            var d = JSON.parse(e.data);
+            var status = d.status, percent = d.percent, message = d.message;
+
+            if (status === 'RUNNING' || status === 'PARSING') startElapsed();
+
+            setProgress(percent, message,
+                status === 'COMPLETED' ? 'done' : status === 'ERROR' ? 'error' : 'running',
+                message);
+
+            if (percent >= 3  && percent < 10) setStep('file', 'done', '파일 확인 완료');
+            else if (percent < 3)              setStep('file', 'active');
+
+            if (percent >= 10 && percent < 85) { setStep('file','done'); setStep('gdb', 'active'); }
+            if (percent >= 85 && percent < 92) { setStep('gdb','done','GDB 실행 완료'); setStep('parse', 'active'); }
+            if (percent >= 92 && percent < 100) { setStep('parse','done','파싱 완료'); setStep('save', 'active'); }
+
+            if (d.logLine) appendLog(d.logLine);
+
+            if (status === 'COMPLETED') {
+                evtSource.close();
+                setStep('file','done'); setStep('gdb','done'); setStep('parse','done'); setStep('save','done','저장 완료');
+                setProgress(100, '분석 완료!', 'done', '분석 완료');
+                showComplete(d.resultUrl || RESULT_URL);
+            }
+            if (status === 'ERROR') {
+                evtSource.close();
+                if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+                if (logBuffer.length) flushLog();
+                // 현재 active 단계를 error로
+                ['file','gdb','parse','save','done'].forEach(function(s) {
+                    if (stepState[s] === 'active') setStep(s, 'error');
+                });
+                setProgress(d.percent || 0, '분석 실패', 'error', '분석 실패');
+                errorMsgEl.textContent = d.errorMessage || '알 수 없는 오류가 발생했습니다.';
+                errorBanner.classList.add('visible');
+            }
+        });
+
+        evtSource.onerror = function() {
+            evtSource.close();
+            // SSE 끊김 시 결과 파일 존재 여부 확인
+            setTimeout(function() {
+                fetch(RESULT_URL, { method: 'HEAD' })
+                    .then(function(r) { if (r.ok) showComplete(RESULT_URL); })
+                    .catch(function() {
+                        errorMsgEl.textContent = 'SSE 연결이 끊겼습니다. 잠시 후 새로고침하거나 목록 페이지에서 재분석해 주세요.';
+                        errorBanner.classList.add('visible');
+                    });
+            }, 2000);
+        };
+    }
+
+    startSSE();
+</script>
+
+</body>
+</html>

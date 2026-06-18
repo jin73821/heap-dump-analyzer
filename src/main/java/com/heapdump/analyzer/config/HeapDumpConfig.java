@@ -198,9 +198,23 @@ public class HeapDumpConfig {
     @Value("${rag.chunking.max-total-chars:6000}")
     private int ragChunkingMaxTotalChars;
 
+    // ── 코어 덤프 설정 ──────────────────────────────────────────
+    @Value("${coredump.directory:/opt/coredumps}")
+    private String coreDumpDirectory;
+
+    @Value("${gdb.cli.path:gdb}")
+    private String gdbCliPath;
+
+    @Value("${coredump.timeout.minutes:10}")
+    private int coreDumpTimeoutMinutes;
+
     /** MAT CLI 유효성 상태 (init 후 설정) */
     private boolean matCliReady;
     private String  matCliStatusMessage;
+
+    /** GDB CLI 유효성 상태 (init 후 설정) */
+    private boolean gdbCliReady;
+    private String  gdbCliStatusMessage;
 
     @PostConstruct
     public void init() {
@@ -211,15 +225,88 @@ public class HeapDumpConfig {
         // ── 1. 힙 덤프 디렉토리 검증 ──────────────────────────
         initHeapDumpDirectory();
 
-        // ── 2. MAT CLI 검증 ───────────────────────────────────
+        // ── 2. 코어 덤프 디렉토리 초기화 ──────────────────────
+        initCoreDumpDirectory();
+
+        // ── 3. MAT CLI 검증 ───────────────────────────────────
         validateMatCli();
 
-        // ── 3. 스레드 풀 설정 검증 ─────────────────────────────
+        // ── 4. GDB CLI 검증 ───────────────────────────────────
+        validateGdbCli();
+
+        // ── 5. 스레드 풀 설정 검증 ─────────────────────────────
         validateThreadPoolConfig();
 
-        // ── 4. 설정 값 로깅 ───────────────────────────────────
+        // ── 6. 설정 값 로깅 ───────────────────────────────────
         logger.info("[Config] keep_unreachable_objects: {}", keepUnreachableObjects);
         logger.info("========================================");
+    }
+
+    private void initCoreDumpDirectory() {
+        logger.info("[Config] Core dump directory: {}", coreDumpDirectory);
+        try {
+            for (String sub : new String[]{"", "dumpfiles", "data", "tmp"}) {
+                Path p = sub.isEmpty() ? Paths.get(coreDumpDirectory)
+                                       : Paths.get(coreDumpDirectory, sub);
+                if (!Files.exists(p)) {
+                    Files.createDirectories(p);
+                    logger.info("[Config] Created core dump directory: {}", p);
+                }
+            }
+            File dir = new File(coreDumpDirectory);
+            if (!dir.canWrite()) {
+                logger.warn("[Config] Core dump directory is NOT writable: {}", coreDumpDirectory);
+            } else {
+                logger.info("[Config] Core dump directory OK (writable)");
+            }
+        } catch (IOException e) {
+            logger.error("[Config] Failed to create core dump directory: {} — {}", coreDumpDirectory, e.getMessage());
+        }
+    }
+
+    private void validateGdbCli() {
+        logger.info("[Config] GDB CLI path: {}", gdbCliPath);
+        // PATH 기반 gdb 탐색 (기본값 "gdb" 처리)
+        File gdbFile = new File(gdbCliPath);
+        if (!gdbFile.isAbsolute()) {
+            // PATH 환경 변수에서 탐색 — 기동 검증용 which 실행
+            try {
+                Process p = new ProcessBuilder("which", gdbCliPath)
+                        .redirectErrorStream(true).start();
+                p.waitFor();
+                String found = new String(p.getInputStream().readAllBytes()).trim();
+                if (found.isEmpty() || p.exitValue() != 0) {
+                    gdbCliReady = false;
+                    gdbCliStatusMessage = "GDB not found in PATH: " + gdbCliPath;
+                    logger.warn("[Config] GDB CLI STATUS: NOT FOUND in PATH — 코어 덤프 분석 비활성화");
+                    return;
+                }
+                gdbCliPath = found;
+                logger.info("[Config] GDB found at: {}", gdbCliPath);
+            } catch (Exception e) {
+                gdbCliReady = false;
+                gdbCliStatusMessage = "GDB path check failed: " + e.getMessage();
+                logger.warn("[Config] GDB CLI STATUS: CHECK FAILED — {}", e.getMessage());
+                return;
+            }
+        }
+
+        File f = new File(gdbCliPath);
+        if (!f.exists() || !f.isFile()) {
+            gdbCliReady = false;
+            gdbCliStatusMessage = "GDB not found at: " + gdbCliPath;
+            logger.warn("[Config] GDB CLI STATUS: NOT FOUND at {}", gdbCliPath);
+            return;
+        }
+        if (!f.canExecute()) {
+            gdbCliReady = false;
+            gdbCliStatusMessage = "GDB not executable: " + gdbCliPath;
+            logger.warn("[Config] GDB CLI STATUS: NOT EXECUTABLE — {}", gdbCliPath);
+            return;
+        }
+        gdbCliReady = true;
+        gdbCliStatusMessage = "Ready";
+        logger.info("[Config] GDB CLI STATUS: READY — {}", gdbCliPath);
     }
 
     private void initHeapDumpDirectory() {
@@ -379,6 +466,13 @@ public class HeapDumpConfig {
     public int     getThreadPoolMaxSize()        { return threadPoolMaxSize; }
     public int     getThreadPoolQueueCapacity()  { return threadPoolQueueCapacity; }
     public boolean isCompressAfterAnalysis()    { return compressAfterAnalysis; }
+
+    // ── 코어 덤프 getters ─────────────────────────────────────────
+    public String  getCoreDumpDirectory()        { return coreDumpDirectory; }
+    public String  getGdbCliPath()               { return gdbCliPath; }
+    public boolean isGdbCliReady()               { return gdbCliReady; }
+    public String  getGdbCliStatusMessage()      { return gdbCliStatusMessage; }
+    public int     getCoreDumpTimeoutMinutes()   { return coreDumpTimeoutMinutes; }
 
     // ── LLM getters ────────────────────────────────────────────
     public boolean isLlmEnabled()              { return llmEnabled; }

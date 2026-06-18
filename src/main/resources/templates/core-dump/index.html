@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>코어 덤프 분석 - Heap Dump Analyzer</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-18}">
+    <style>
+        body { background: #F3F4F6 !important; }
+        .cd-topbar {
+            position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100;
+            height: 52px; background: #fff; border-bottom: 1px solid #E5E7EB;
+            transition: left .25s cubic-bezier(.4,0,.2,1);
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+        }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+        .topbar-title { font-size: 15px; font-weight: 700; color: #1F2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .topbar-right { flex-shrink: 0; }
+        .cd-page {
+            max-width: 1000px; margin: 72px auto 40px;
+            padding: 0 20px; padding-left: calc(var(--banner-w, 220px) + 20px);
+            transition: padding-left .25s cubic-bezier(.4,0,.2,1);
+        }
+        @media (max-width: 900px) {
+            .cd-topbar { left: 0; }
+            .cd-page { padding-left: 20px; }
+        }
+        .section-card {
+            background: #fff; border-radius: 14px;
+            box-shadow: 0 2px 12px rgba(0,0,0,.08);
+            padding: 28px 32px; margin-bottom: 24px;
+        }
+        .section-title {
+            font-size: 16px; font-weight: 700; color: #1F2937; margin-bottom: 20px;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .upload-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+            margin-bottom: 20px;
+        }
+        @media (max-width: 600px) { .upload-grid { grid-template-columns: 1fr; } }
+        .upload-zone {
+            border: 2px dashed #D1D5DB; border-radius: 12px;
+            padding: 20px; text-align: center; cursor: pointer;
+            transition: all .2s; background: #FAFAFA; position: relative;
+        }
+        .upload-zone:hover, .upload-zone.dragover {
+            border-color: #3B82F6; background: #EFF6FF;
+        }
+        .upload-zone.has-file { border-color: #10B981; background: #F0FDF4; }
+        .upload-zone input[type=file] {
+            position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
+        }
+        .upload-icon { font-size: 32px; margin-bottom: 8px; }
+        .upload-label { font-size: 14px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+        .upload-sub { font-size: 12px; color: #9CA3AF; }
+        .upload-filename {
+            font-size: 13px; color: #059669; font-weight: 600; margin-top: 6px;
+            word-break: break-all;
+        }
+        .optional-badge {
+            background: #F3F4F6; color: #6B7280; border-radius: 6px;
+            padding: 2px 8px; font-size: 11px; font-weight: 600;
+        }
+        .required-badge {
+            background: #FEE2E2; color: #DC2626; border-radius: 6px;
+            padding: 2px 8px; font-size: 11px; font-weight: 600;
+        }
+        .upload-btn {
+            width: 100%; padding: 12px; font-size: 15px; font-weight: 700;
+            background: #2563EB; color: #fff; border: none; border-radius: 10px;
+            cursor: pointer; transition: all .2s;
+        }
+        .upload-btn:hover { background: #1D4ED8; }
+        .upload-btn:disabled { background: #9CA3AF; cursor: not-allowed; }
+        .upload-progress {
+            display: none; margin-top: 12px; background: #E5E7EB;
+            border-radius: 999px; height: 8px; overflow: hidden;
+        }
+        .upload-progress.visible { display: block; }
+        .upload-progress-fill {
+            height: 100%; background: #3B82F6; border-radius: 999px;
+            transition: width .3s ease; width: 0%;
+        }
+        .upload-status { font-size: 13px; color: #6B7280; margin-top: 8px; text-align: center; }
+        /* 이력 테이블 */
+        .history-table { width: 100%; border-collapse: collapse; }
+        .history-table th {
+            background: #F9FAFB; text-align: left; padding: 10px 14px;
+            font-size: 12px; font-weight: 600; color: #6B7280; border-bottom: 1px solid #E5E7EB;
+        }
+        .history-table td {
+            padding: 12px 14px; font-size: 13px; border-bottom: 1px solid #F3F4F6;
+            vertical-align: middle;
+        }
+        .history-table tr:hover { background: #F9FAFB; }
+        .status-badge {
+            display: inline-block; padding: 3px 10px; border-radius: 20px;
+            font-size: 11px; font-weight: 700;
+        }
+        .status-success { background: #D1FAE5; color: #065F46; }
+        .status-error   { background: #FEE2E2; color: #991B1B; }
+        .status-analyzing { background: #DBEAFE; color: #1E40AF; }
+        .status-not-analyzed { background: #F3F4F6; color: #6B7280; }
+        .action-btn {
+            padding: 5px 12px; border-radius: 6px; font-size: 12px;
+            font-weight: 600; cursor: pointer; border: none; transition: all .15s;
+            text-decoration: none; display: inline-block;
+        }
+        .action-view { background: #DBEAFE; color: #1D4ED8; }
+        .action-view:hover { background: #BFDBFE; }
+        .action-delete { background: #FEE2E2; color: #DC2626; }
+        .action-delete:hover { background: #FECACA; }
+        .signal-chip {
+            display: inline-block; background: #FEF3C7; color: #92400E;
+            border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .empty-state {
+            text-align: center; padding: 40px 20px; color: #9CA3AF;
+        }
+        .empty-state-icon { font-size: 40px; margin-bottom: 10px; }
+        .gdb-status {
+            display: flex; align-items: center; gap: 8px;
+            font-size: 13px; color: #6B7280;
+        }
+        .gdb-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .gdb-dot.ready { background: #10B981; }
+        .gdb-dot.not-ready { background: #EF4444; }
+    </style>
+</head>
+<body>
+
+<div th:replace="~{fragments/banner :: banner}"></div>
+
+<div class="cd-topbar">
+    <div class="topbar-brand">
+        <span class="topbar-title">코어 덤프 분석</span>
+    </div>
+    <div class="topbar-right">
+        <!-- GDB 상태 표시 -->
+    </div>
+</div>
+
+<div class="cd-page">
+
+    <!-- 업로드 카드 -->
+    <div class="section-card">
+        <div class="section-title">
+            &#128229; 코어 덤프 파일 업로드
+        </div>
+        <div class="upload-grid">
+            <div>
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                    <span style="font-size:13px;font-weight:600;color:#374151;">코어 덤프 파일</span>
+                    <span class="required-badge">필수</span>
+                </div>
+                <div class="upload-zone" id="coreDropZone">
+                    <input type="file" id="coreFileInput" onchange="onCoreFileSelect(this)">
+                    <div class="upload-icon">&#128196;</div>
+                    <div class="upload-label">코어 덤프 파일 선택</div>
+                    <div class="upload-sub">core, core.PID, core.PROG 등</div>
+                    <div class="upload-filename" id="coreFileName"></div>
+                </div>
+            </div>
+            <div>
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                    <span style="font-size:13px;font-weight:600;color:#374151;">실행 파일</span>
+                    <span class="optional-badge">선택</span>
+                </div>
+                <div class="upload-zone" id="execDropZone">
+                    <input type="file" id="execFileInput" onchange="onExecFileSelect(this)">
+                    <div class="upload-icon">&#9881;</div>
+                    <div class="upload-label">실행 파일 선택</div>
+                    <div class="upload-sub">크래시된 바이너리 (디버그 심볼 있으면 더 정확)</div>
+                    <div class="upload-filename" id="execFileName"></div>
+                </div>
+            </div>
+        </div>
+        <button class="upload-btn" id="uploadBtn" onclick="startUpload()" disabled>
+            &#128269; GDB 분석 시작
+        </button>
+        <div class="upload-progress" id="uploadProgress">
+            <div class="upload-progress-fill" id="uploadProgressFill"></div>
+        </div>
+        <div class="upload-status" id="uploadStatus"></div>
+    </div>
+
+    <!-- 분석 이력 카드 -->
+    <div class="section-card">
+        <div class="section-title">
+            &#128202; 분석 이력
+            <span style="font-size:12px;font-weight:400;color:#9CA3AF;margin-left:auto;"
+                  th:text="${#lists.size(history)} + '건'"></span>
+        </div>
+
+        <div th:if="${#lists.isEmpty(history)}" class="empty-state">
+            <div class="empty-state-icon">&#128203;</div>
+            <div>분석 이력이 없습니다. 코어 덤프 파일을 업로드하여 분석을 시작하세요.</div>
+        </div>
+
+        <div th:if="${!#lists.isEmpty(history)}" style="overflow-x:auto;">
+            <table class="history-table">
+                <thead>
+                    <tr>
+                        <th>No.</th>
+                        <th>파일명</th>
+                        <th>시그널</th>
+                        <th>상태</th>
+                        <th>업로드 시각</th>
+                        <th>분석 시각</th>
+                        <th>액션</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="item, stat : ${history}">
+                        <td th:text="${stat.count}"></td>
+                        <td>
+                            <span style="font-family:monospace;font-size:12px;" th:text="${item.filename}"></span>
+                        </td>
+                        <td>
+                            <span class="signal-chip" th:if="${item.crashSignal != null}"
+                                  th:text="${item.crashSignal}"></span>
+                            <span th:if="${item.crashSignal == null}" style="color:#9CA3AF">-</span>
+                        </td>
+                        <td>
+                            <span class="status-badge"
+                                  th:classappend="${item.status == 'SUCCESS'} ? 'status-success'
+                                                 : (${item.status == 'ERROR'} ? 'status-error'
+                                                 : (${item.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                                  th:text="${item.status == 'SUCCESS'} ? '완료'
+                                           : (${item.status == 'ERROR'} ? '실패'
+                                           : (${item.status == 'ANALYZING'} ? '분석 중' : '미분석'))">
+                            </span>
+                        </td>
+                        <td>
+                            <span th:if="${item.createdAt != null}"
+                                  th:text="${#temporals.format(item.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
+                            <span th:if="${item.createdAt == null}">-</span>
+                        </td>
+                        <td>
+                            <span th:if="${item.analyzedAt != null}"
+                                  th:text="${#temporals.format(item.analyzedAt, 'yyyy-MM-dd HH:mm')}"></span>
+                            <span th:if="${item.analyzedAt == null}">-</span>
+                        </td>
+                        <td>
+                            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                                <a th:if="${item.status == 'SUCCESS'}"
+                                   th:href="@{/core-dump/analyze/{fn}(fn=${item.filename})}"
+                                   class="action-btn action-view">&#128202; 결과</a>
+                                <a th:if="${item.status == 'ANALYZING'}"
+                                   th:href="@{/core-dump/progress/{fn}(fn=${item.filename})}"
+                                   class="action-btn action-view">&#9654; 진행</a>
+                                <button class="action-btn action-delete"
+                                        th:data-filename="${item.filename}"
+                                        onclick="deleteDump(this.dataset.filename)">&#128465; 삭제</button>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>
+
+<script th:inline="javascript">
+    function onCoreFileSelect(input) {
+        var file = input.files[0];
+        if (!file) return;
+        document.getElementById('coreFileName').textContent = file.name;
+        document.getElementById('coreDropZone').classList.add('has-file');
+        document.getElementById('uploadBtn').disabled = false;
+    }
+
+    function onExecFileSelect(input) {
+        var file = input.files[0];
+        if (!file) return;
+        document.getElementById('execFileName').textContent = file.name;
+        document.getElementById('execDropZone').classList.add('has-file');
+    }
+
+    // 드래그앤드롭
+    ['coreDropZone', 'execDropZone'].forEach(function(zoneId) {
+        var zone = document.getElementById(zoneId);
+        zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('dragover'); });
+        zone.addEventListener('dragleave', function() { zone.classList.remove('dragover'); });
+        zone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            zone.classList.remove('dragover');
+            var file = e.dataTransfer.files[0];
+            if (!file) return;
+            if (zoneId === 'coreDropZone') {
+                document.getElementById('coreFileName').textContent = file.name;
+                zone.classList.add('has-file');
+                document.getElementById('uploadBtn').disabled = false;
+                // DataTransfer로 input에 파일 설정
+                var dt = new DataTransfer();
+                dt.items.add(file);
+                document.getElementById('coreFileInput').files = dt.files;
+            } else {
+                document.getElementById('execFileName').textContent = file.name;
+                zone.classList.add('has-file');
+                var dt2 = new DataTransfer();
+                dt2.items.add(file);
+                document.getElementById('execFileInput').files = dt2.files;
+            }
+        });
+    });
+
+    function startUpload() {
+        var coreInput = document.getElementById('coreFileInput');
+        if (!coreInput.files || !coreInput.files[0]) {
+            alert('코어 덤프 파일을 선택해주세요.');
+            return;
+        }
+
+        var btn = document.getElementById('uploadBtn');
+        btn.disabled = true;
+        btn.textContent = '업로드 중...';
+
+        var fd = new FormData();
+        fd.append('coreFile', coreInput.files[0]);
+        var execInput = document.getElementById('execFileInput');
+        if (execInput.files && execInput.files[0]) {
+            fd.append('execFile', execInput.files[0]);
+        }
+
+        // CSRF 헤더
+        var csrfToken  = document.querySelector('meta[name="_csrf"]')?.content;
+        var csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.content;
+        var headers = {};
+        if (csrfToken && csrfHeader) headers[csrfHeader] = csrfToken;
+
+        document.getElementById('uploadProgress').classList.add('visible');
+        document.getElementById('uploadProgressFill').style.width = '30%';
+        document.getElementById('uploadStatus').textContent = '파일 업로드 중...';
+
+        fetch('/api/core-dump/upload', { method: 'POST', headers: headers, body: fd })
+            .then(function(r) {
+                if (!r.ok) return r.json().then(function(d) { throw new Error(d.message || '업로드 실패'); });
+                return r.json();
+            })
+            .then(function(d) {
+                document.getElementById('uploadProgressFill').style.width = '100%';
+                document.getElementById('uploadStatus').textContent = '업로드 완료! 분석 페이지로 이동합니다...';
+                setTimeout(function() {
+                    window.location.href = '/core-dump/progress/' + encodeURIComponent(d.filename);
+                }, 500);
+            })
+            .catch(function(e) {
+                document.getElementById('uploadProgress').classList.remove('visible');
+                document.getElementById('uploadStatus').textContent = '오류: ' + e.message;
+                btn.disabled = false;
+                btn.textContent = '&#128269; GDB 분석 시작';
+            });
+    }
+
+    function deleteDump(filename) {
+        if (!confirm('"' + filename + '" 파일과 분석 결과를 삭제하시겠습니까?')) return;
+
+        var csrfToken  = document.querySelector('meta[name="_csrf"]')?.content;
+        var csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.content;
+        var headers = { 'Content-Type': 'application/json' };
+        if (csrfToken && csrfHeader) headers[csrfHeader] = csrfToken;
+
+        fetch('/api/core-dump/' + encodeURIComponent(filename), { method: 'DELETE', headers: headers })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.status === 'ok') {
+                    window.location.reload();
+                } else {
+                    alert('삭제 실패: ' + (d.message || '알 수 없는 오류'));
+                }
+            })
+            .catch(function(e) { alert('삭제 중 오류: ' + e.message); });
+    }
+</script>
+
+</body>
+</html>
