@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>코어 덤프 분석 결과 - Heap Dump Analyzer</title>
+    <link rel="stylesheet" th:href="@{/css/style.css}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-18}">
+    <style>
+        body { background: #F3F4F6 !important; }
+        .cd-topbar {
+            position: fixed; top: 0; left: var(--banner-w, 220px); right: 0; z-index: 100;
+            height: 52px; background: #fff; border-bottom: 1px solid #E5E7EB;
+            transition: left .25s cubic-bezier(.4,0,.2,1);
+            display: flex; align-items: center; gap: 12px;
+            padding: 0 20px; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+        }
+        .topbar-back { color: #374151; text-decoration: none; font-size: 18px; }
+        .topbar-title { font-size: 15px; font-weight: 700; color: #1F2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; }
+        .topbar-right { flex-shrink: 0; }
+        .cd-page {
+            max-width: 1200px; margin: 72px auto 40px;
+            padding: 0 20px; padding-left: calc(var(--banner-w, 220px) + 20px);
+            transition: padding-left .25s cubic-bezier(.4,0,.2,1);
+        }
+        @media (max-width: 900px) {
+            .cd-topbar { left: 0; }
+            .cd-page { padding-left: 20px; }
+        }
+
+        /* 에러 상태 */
+        .error-card {
+            background: #FEF2F2; border: 1px solid #FECACA; border-radius: 14px;
+            padding: 40px; text-align: center;
+        }
+        .error-card-icon { font-size: 48px; margin-bottom: 16px; }
+        .error-card-title { font-size: 20px; font-weight: 700; color: #991B1B; margin-bottom: 8px; }
+        .error-card-msg { font-size: 14px; color: #7F1D1D; }
+
+        /* 메타 정보 */
+        .meta-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px; margin-bottom: 24px;
+        }
+        .meta-card {
+            background: #fff; border-radius: 10px; padding: 14px 16px;
+            box-shadow: 0 1px 4px rgba(0,0,0,.06);
+        }
+        .meta-label { font-size: 11px; color: #9CA3AF; font-weight: 600; text-transform: uppercase; margin-bottom: 4px; }
+        .meta-value { font-size: 14px; font-weight: 600; color: #1F2937; word-break: break-all; }
+        .meta-value.mono { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
+
+        /* 시그널 배너 */
+        .signal-banner {
+            border-radius: 10px; padding: 14px 20px;
+            display: flex; align-items: center; gap: 14px; margin-bottom: 24px;
+        }
+        .signal-banner.sig-fatal   { background: #FEE2E2; border-left: 4px solid #EF4444; }
+        .signal-banner.sig-warn    { background: #FEF3C7; border-left: 4px solid #F59E0B; }
+        .signal-banner.sig-neutral { background: #F3F4F6; border-left: 4px solid #9CA3AF; }
+        .signal-icon { font-size: 28px; flex-shrink: 0; }
+        .signal-name { font-size: 18px; font-weight: 800; font-family: 'JetBrains Mono', monospace; }
+        .signal-desc { font-size: 13px; color: #6B7280; margin-top: 2px; }
+
+        /* 탭 */
+        .cd-tabs { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
+        .cd-tab-btn {
+            padding: 8px 18px; border-radius: 8px; border: 1px solid #E5E7EB;
+            background: #fff; font-size: 13px; font-weight: 600; color: #6B7280;
+            cursor: pointer; transition: all .15s;
+        }
+        .cd-tab-btn:hover { background: #F3F4F6; }
+        .cd-tab-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+        .cd-tab-panel { display: none; }
+        .cd-tab-panel.active { display: block; }
+
+        /* 콘텐츠 카드 */
+        .content-card {
+            background: #fff; border-radius: 14px;
+            box-shadow: 0 2px 12px rgba(0,0,0,.08); padding: 24px 28px; margin-bottom: 20px;
+        }
+        .content-card-title {
+            font-size: 14px; font-weight: 700; color: #374151; margin-bottom: 16px;
+            padding-bottom: 10px; border-bottom: 1px solid #F3F4F6;
+        }
+
+        /* 스택 프레임 */
+        .cd-frame-line {
+            font-family: 'JetBrains Mono', 'Courier New', monospace;
+            font-size: 13px; line-height: 1.8;
+            padding: 2px 0; border-bottom: 1px solid #F9FAFB;
+        }
+        .cd-frame-num { color: #9CA3AF; min-width: 36px; display: inline-block; }
+        .cd-frame-addr { color: #6B7280; }
+        .cd-frame-func { color: #1D4ED8; font-weight: 600; }
+        .cd-frame-loc { color: #059669; }
+        .cd-frame-lib { color: #7C3AED; }
+        .bt-pre {
+            background: #F8FAFC; border: 1px solid #E5E7EB; border-radius: 8px;
+            padding: 16px; overflow-x: auto;
+        }
+
+        /* 스레드 아코디언 */
+        .thread-header {
+            display: flex; align-items: center; gap: 10px;
+            padding: 12px 16px; cursor: pointer; border-radius: 10px;
+            border: 1px solid #E5E7EB; background: #FAFAFA; margin-bottom: 8px;
+            transition: all .15s;
+        }
+        .thread-header:hover { background: #F3F4F6; }
+        .thread-header.crash-thread {
+            border-color: #93C5FD; background: #EFF6FF;
+        }
+        .thread-header.crash-thread:hover { background: #DBEAFE; }
+        .thread-id-badge {
+            background: #E5E7EB; color: #374151; border-radius: 6px;
+            padding: 2px 8px; font-size: 11px; font-weight: 700; font-family: monospace;
+            flex-shrink: 0;
+        }
+        .crash-badge {
+            background: #FEE2E2; color: #DC2626; border-radius: 6px;
+            padding: 2px 8px; font-size: 11px; font-weight: 700; flex-shrink: 0;
+        }
+        .thread-target { font-size: 12px; color: #6B7280; font-family: monospace; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .thread-frame-count { font-size: 12px; color: #9CA3AF; flex-shrink: 0; }
+        .thread-chevron { color: #9CA3AF; font-size: 12px; flex-shrink: 0; transition: transform .2s; }
+        .thread-chevron.open { transform: rotate(90deg); }
+        .thread-body { display: none; margin-bottom: 16px; }
+        .thread-body.open { display: block; }
+        .thread-bt { background: #F8FAFC; border: 1px solid #E5E7EB; border-radius: 8px; padding: 12px 16px; }
+
+        /* 레지스터 테이블 */
+        .reg-table { width: 100%; border-collapse: collapse; }
+        .reg-table td { padding: 7px 12px; font-family: 'JetBrains Mono', monospace; font-size: 13px; border-bottom: 1px solid #F3F4F6; }
+        .reg-table td:first-child { color: #374151; font-weight: 600; width: 120px; }
+        .reg-table td:last-child { color: #1D4ED8; }
+        .reg-table tbody tr:hover { background: #F9FAFB; }
+
+        /* 공유 라이브러리 테이블 */
+        .lib-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .lib-table th { background: #F9FAFB; padding: 8px 12px; text-align: left; font-weight: 600; color: #6B7280; border-bottom: 1px solid #E5E7EB; }
+        .lib-table td { padding: 8px 12px; border-bottom: 1px solid #F3F4F6; font-family: 'JetBrains Mono', monospace; }
+        .lib-table tr.syms-no { opacity: 0.5; }
+        .lib-table tr:hover { background: #F9FAFB; }
+        .syms-yes { color: #059669; font-weight: 700; }
+        .syms-no  { color: #9CA3AF; }
+
+        /* Raw 출력 */
+        .raw-output {
+            background: #0F172A; color: #94A3B8;
+            font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6;
+            padding: 16px; border-radius: 8px; white-space: pre;
+            overflow: auto; max-height: 600px;
+        }
+        .copy-btn {
+            background: #374151; color: #F9FAFB; border: none;
+            padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
+            cursor: pointer; transition: all .15s; float: right; margin-bottom: 8px;
+        }
+        .copy-btn:hover { background: #1F2937; }
+
+        .empty-msg { color: #9CA3AF; font-size: 13px; text-align: center; padding: 30px; }
+
+        /* 2열 레이아웃 (레지스터) */
+        .reg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+        @media (max-width: 700px) { .reg-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+<div th:replace="~{fragments/banner :: banner}"></div>
+
+<div class="cd-topbar">
+    <a href="/core-dump" class="topbar-back">&#8592;</a>
+    <span class="topbar-title" th:text="${filename}">core.12345</span>
+    <div class="topbar-right">
+        <a th:if="${entity != null}"
+           th:href="@{/core-dump/progress/{fn}(fn=${entity.filename})}"
+           style="font-size:12px;color:#6B7280;text-decoration:none;">&#8635; 재분석</a>
+    </div>
+</div>
+
+<div class="cd-page">
+
+    <!-- 오류: 결과 없음 -->
+    <div th:if="${error != null}" class="error-card">
+        <div class="error-card-icon">&#128196;</div>
+        <div class="error-card-title">분석 결과를 찾을 수 없습니다</div>
+        <div class="error-card-msg" th:text="${error}"></div>
+        <div style="margin-top:20px;">
+            <a href="/core-dump" style="background:#2563EB;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">&#8592; 목록으로</a>
+        </div>
+    </div>
+
+    <div th:if="${error == null}">
+
+        <!-- 시그널 배너 -->
+        <div th:if="${result != null and result.crashSignal != null}"
+             class="signal-banner"
+             th:classappend="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? ' sig-fatal'
+                            : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? ' sig-warn' : ' sig-neutral')">
+            <span class="signal-icon"
+                  th:text="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? '&#128683;'
+                           : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? '&#9888;&#65039;' : 'ℹ️')">
+            </span>
+            <div>
+                <div class="signal-name" th:text="${result.crashSignal}"></div>
+                <div class="signal-desc" th:text="${result.signalDescription}"></div>
+            </div>
+        </div>
+
+        <!-- 메타 정보 -->
+        <div class="meta-grid" th:if="${result != null}">
+            <div class="meta-card" th:if="${result.filename != null}">
+                <div class="meta-label">코어 파일</div>
+                <div class="meta-value mono" th:text="${result.filename}"></div>
+            </div>
+            <div class="meta-card" th:if="${result.executableName != null}">
+                <div class="meta-label">실행 파일</div>
+                <div class="meta-value mono" th:text="${result.executableName}"></div>
+            </div>
+            <div class="meta-card" th:if="${result.coreProgramName != null}">
+                <div class="meta-label">프로그램명</div>
+                <div class="meta-value mono" th:text="${result.coreProgramName}"></div>
+            </div>
+            <div class="meta-card" th:if="${result.gdbVersion != null}">
+                <div class="meta-label">GDB 버전</div>
+                <div class="meta-value mono" th:text="${result.gdbVersion}"></div>
+            </div>
+            <div class="meta-card" th:if="${result.analyzedAt != null}">
+                <div class="meta-label">분석 시각</div>
+                <div class="meta-value" th:text="${result.analyzedAt}"></div>
+            </div>
+            <div class="meta-card" th:if="${result.analysisTimeMs != null}">
+                <div class="meta-label">분석 소요</div>
+                <div class="meta-value" th:text="${result.analysisTimeMs + ' ms'}"></div>
+            </div>
+        </div>
+
+        <!-- 에러 메시지 (분석은 됐지만 오류 있을 때) -->
+        <div th:if="${result != null and result.errorMessage != null and !#strings.isEmpty(result.errorMessage)}"
+             style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#92400E;">
+            &#9888; <strong>분석 경고:</strong> <span th:text="${result.errorMessage}"></span>
+        </div>
+
+        <!-- 탭 네비게이션 -->
+        <div class="cd-tabs" th:if="${result != null}">
+            <button class="cd-tab-btn active" onclick="switchTab('bt')">&#128203; 스택 트레이스</button>
+            <button class="cd-tab-btn" onclick="switchTab('threads')">&#129303; 스레드</button>
+            <button class="cd-tab-btn" onclick="switchTab('registers')">&#9881; 레지스터</button>
+            <button class="cd-tab-btn" onclick="switchTab('libs')">&#128220; 공유 라이브러리</button>
+            <button class="cd-tab-btn" onclick="switchTab('raw')">&#128196; Raw 출력</button>
+        </div>
+
+        <!-- 탭 패널: 스택 트레이스 -->
+        <div class="cd-tab-panel active" id="tab-bt" th:if="${result != null}">
+            <div class="content-card">
+                <div class="content-card-title">메인 스레드 스택 트레이스 (Backtrace)</div>
+                <div th:if="${result.mainBacktrace == null or #lists.isEmpty(result.mainBacktrace)}"
+                     class="empty-msg">스택 트레이스 정보가 없습니다.</div>
+                <div class="bt-pre" th:if="${result.mainBacktrace != null and !#lists.isEmpty(result.mainBacktrace)}">
+                    <div class="cd-frame-line" th:each="frame : ${result.mainBacktrace}">
+                        <span class="cd-frame-num" th:text="'#' + ${frame.frameNumber} + '  '"></span>
+                        <span class="cd-frame-addr" th:if="${frame.address != null}" th:text="${frame.address} + ' in '"></span>
+                        <span class="cd-frame-func" th:text="${frame.function != null} ? ${frame.function} : '??'"></span>
+                        <span th:if="${frame.args != null and !#strings.isEmpty(frame.args)}" th:text="'(' + ${frame.args} + ')'"></span>
+                        <span class="cd-frame-loc" th:if="${frame.location != null}" th:text="' at ' + ${frame.location}"></span>
+                        <span class="cd-frame-lib" th:if="${frame.library != null}" th:text="' from ' + ${frame.library}"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 탭 패널: 스레드 -->
+        <div class="cd-tab-panel" id="tab-threads" th:if="${result != null}">
+            <div class="content-card">
+                <div class="content-card-title">전체 스레드 (<span th:text="${#lists.size(result.allThreads)}"></span>개)</div>
+                <div th:if="${result.allThreads == null or #lists.isEmpty(result.allThreads)}" class="empty-msg">
+                    스레드 정보가 없습니다.
+                </div>
+                <div th:each="thread : ${result.allThreads}">
+                    <div class="thread-header"
+                         th:classappend="${thread.current} ? ' crash-thread' : ''"
+                         th:onclick="'toggleThread(' + ${thread.id} + ')'">
+                        <span class="thread-id-badge" th:text="'Thread ' + ${thread.id}"></span>
+                        <span class="crash-badge" th:if="${thread.current}">CRASH</span>
+                        <span class="thread-target" th:text="${thread.targetId}"></span>
+                        <span class="thread-frame-count"
+                              th:text="${thread.backtrace != null} ? (#lists.size(thread.backtrace) + ' frames') : '0 frames'"></span>
+                        <span class="thread-chevron" th:id="'chevron-' + ${thread.id}">&#9654;</span>
+                    </div>
+                    <div class="thread-body" th:id="'thread-body-' + ${thread.id}"
+                         th:classappend="${thread.current} ? ' open' : ''">
+                        <div class="thread-bt">
+                            <div th:if="${thread.backtrace == null or #lists.isEmpty(thread.backtrace)}"
+                                 style="color:#9CA3AF;font-size:12px;padding:8px;">스택 정보 없음</div>
+                            <div class="cd-frame-line" th:each="frame : ${thread.backtrace}">
+                                <span class="cd-frame-num" th:text="'#' + ${frame.frameNumber} + '  '"></span>
+                                <span class="cd-frame-addr" th:if="${frame.address != null}" th:text="${frame.address} + ' in '"></span>
+                                <span class="cd-frame-func" th:text="${frame.function != null} ? ${frame.function} : '??'"></span>
+                                <span th:if="${frame.args != null and !#strings.isEmpty(frame.args)}" th:text="'(' + ${frame.args} + ')'"></span>
+                                <span class="cd-frame-loc" th:if="${frame.location != null}" th:text="' at ' + ${frame.location}"></span>
+                                <span class="cd-frame-lib" th:if="${frame.library != null}" th:text="' from ' + ${frame.library}"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 탭 패널: 레지스터 -->
+        <div class="cd-tab-panel" id="tab-registers" th:if="${result != null}">
+            <div class="content-card">
+                <div class="content-card-title">CPU 레지스터</div>
+                <div th:if="${result.registers == null or #maps.isEmpty(result.registers)}" class="empty-msg">
+                    레지스터 정보가 없습니다.
+                </div>
+                <div class="reg-grid" th:if="${result.registers != null and !#maps.isEmpty(result.registers)}">
+                    <table class="reg-table">
+                        <tbody id="regTbodyLeft"></tbody>
+                    </table>
+                    <table class="reg-table">
+                        <tbody id="regTbodyRight"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 탭 패널: 공유 라이브러리 -->
+        <div class="cd-tab-panel" id="tab-libs" th:if="${result != null}">
+            <div class="content-card">
+                <div class="content-card-title">공유 라이브러리</div>
+                <div th:if="${result.sharedLibraries == null or #lists.isEmpty(result.sharedLibraries)}" class="empty-msg">
+                    공유 라이브러리 정보가 없습니다.
+                </div>
+                <div th:if="${result.sharedLibraries != null and !#lists.isEmpty(result.sharedLibraries)}" style="overflow-x:auto;">
+                    <table class="lib-table">
+                        <thead>
+                            <tr>
+                                <th>From</th><th>To</th><th>심볼</th><th>경로</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr th:each="lib : ${result.sharedLibraries}"
+                                th:classappend="${lib.symsRead == 'No'} ? 'syms-no' : ''">
+                                <td th:text="${lib.fromAddr}"></td>
+                                <td th:text="${lib.toAddr}"></td>
+                                <td>
+                                    <span th:text="${lib.symsRead}"
+                                          th:classappend="${lib.symsRead != null and lib.symsRead.startsWith('Yes')} ? 'syms-yes' : 'syms-no'"></span>
+                                </td>
+                                <td th:text="${lib.path}"></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 탭 패널: Raw 출력 -->
+        <div class="cd-tab-panel" id="tab-raw" th:if="${result != null}">
+            <div class="content-card">
+                <div class="content-card-title">GDB Raw 출력</div>
+                <button class="copy-btn" onclick="copyRaw()">&#128203; 복사</button>
+                <div style="clear:both;"></div>
+                <div th:if="${result.gdbRawOutput == null or #strings.isEmpty(result.gdbRawOutput)}" class="empty-msg">
+                    Raw 출력이 없습니다.
+                </div>
+                <pre class="raw-output" id="rawOutput"
+                     th:if="${result.gdbRawOutput != null}"
+                     th:text="${result.gdbRawOutput}"></pre>
+            </div>
+        </div>
+
+    </div><!-- th:if="${error == null}" -->
+</div>
+
+<script th:inline="javascript">
+    /*[- */
+    var REGISTERS = {};
+    /* -]*/
+    /*[(${result != null and result.registers != null} ? '' : '')]*/ // ensure thymeleaf processes
+</script>
+<script th:if="${result != null and result.registers != null}" th:inline="javascript">
+    var REGISTERS = /*[[${result.registers}]]*/ {};
+    // 레지스터를 2열로 렌더
+    (function() {
+        var keys = Object.keys(REGISTERS);
+        var half = Math.ceil(keys.length / 2);
+        var leftTbody  = document.getElementById('regTbodyLeft');
+        var rightTbody = document.getElementById('regTbodyRight');
+        if (!leftTbody || !rightTbody) return;
+        keys.forEach(function(k, i) {
+            var tr = document.createElement('tr');
+            tr.innerHTML = '<td>' + k + '</td><td>' + REGISTERS[k] + '</td>';
+            if (i < half) leftTbody.appendChild(tr);
+            else rightTbody.appendChild(tr);
+        });
+    })();
+</script>
+<script>
+    // 탭 전환
+    var activeTab = 'bt';
+    function switchTab(name) {
+        document.querySelectorAll('.cd-tab-panel').forEach(function(el) { el.classList.remove('active'); });
+        document.querySelectorAll('.cd-tab-btn').forEach(function(el) { el.classList.remove('active'); });
+        var panel = document.getElementById('tab-' + name);
+        if (panel) panel.classList.add('active');
+        event.target.classList.add('active');
+        activeTab = name;
+    }
+
+    // 스레드 아코디언
+    function toggleThread(id) {
+        var body    = document.getElementById('thread-body-' + id);
+        var chevron = document.getElementById('chevron-' + id);
+        if (!body) return;
+        var isOpen = body.classList.contains('open');
+        body.classList.toggle('open', !isOpen);
+        if (chevron) chevron.classList.toggle('open', !isOpen);
+    }
+    // 크래시 스레드 기본 오픈
+    document.querySelectorAll('.thread-body.open').forEach(function(el) {
+        var id = el.id.replace('thread-body-', '');
+        var chevron = document.getElementById('chevron-' + id);
+        if (chevron) chevron.classList.add('open');
+    });
+
+    // Raw 출력 복사
+    function copyRaw() {
+        var pre = document.getElementById('rawOutput');
+        if (!pre) return;
+        navigator.clipboard.writeText(pre.textContent)
+            .then(function() { alert('복사되었습니다.'); })
+            .catch(function() {
+                var sel = window.getSelection();
+                var range = document.createRange();
+                range.selectNodeContents(pre);
+                sel.removeAllRanges();
+                sel.addRange(range);
+                document.execCommand('copy');
+                sel.removeAllRanges();
+                alert('복사되었습니다.');
+            });
+    }
+</script>
+
+</body>
+</html>
