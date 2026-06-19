@@ -33,7 +33,7 @@ public class CoreDumpAnalyzerService {
     private final CoreDumpAnalysisRepository repository;
     private final ObjectMapper objectMapper;
 
-    private final ExecutorService executor = Executors.newCachedThreadPool(r -> {
+    private final ExecutorService executor = Executors.newFixedThreadPool(4, r -> {
         Thread t = new Thread(r, "coredump-analyzer");
         t.setDaemon(false);
         return t;
@@ -122,24 +122,25 @@ public class CoreDumpAnalyzerService {
     // ── 삭제 ──────────────────────────────────────────────────────
 
     public void deleteDump(String filename) {
-        String safe = validateCoreDumpFilename(filename);
+        // filename은 호출자(컨트롤러)에서 이미 validateCoreDumpFilename()을 거친 값
         // 파일 삭제
-        File dumpFile = new File(dumpFilesDir(), safe);
-        File execFile = new File(dumpFilesDir(), safe + ".exec");
+        File dumpFile = new File(dumpFilesDir(), filename);
+        File execFile = new File(dumpFilesDir(), filename + ".exec");
         deleteQuietly(dumpFile);
         deleteQuietly(execFile);
         // 데이터 디렉토리 삭제
-        deleteDirectoryQuietly(dataDir(safe));
+        deleteDirectoryQuietly(dataDir(filename));
         // DB 플래그
-        repository.findByFilename(safe).ifPresent(e -> {
+        repository.findByFilename(filename).ifPresent(e -> {
             e.setFileDeleted(true);
             repository.save(e);
         });
-        logger.info("[CoreDump] 삭제 완료: {}", safe);
+        logger.info("[CoreDump] 삭제 완료: {}", filename);
     }
 
     private void deleteQuietly(File f) {
-        try { if (f.exists()) f.delete(); } catch (Exception ignored) {}
+        if (!f.exists()) return;
+        if (!f.delete()) logger.warn("[CoreDump] 파일 삭제 실패: {}", f.getAbsolutePath());
     }
 
     private void deleteDirectoryQuietly(File dir) {
@@ -148,13 +149,15 @@ public class CoreDumpAnalyzerService {
             Files.walk(dir.toPath())
                  .sorted(Comparator.reverseOrder())
                  .map(Path::toFile)
-                 .forEach(File::delete);
-        } catch (Exception ignored) {}
+                 .forEach(f -> { if (!f.delete()) logger.warn("[CoreDump] 삭제 실패: {}", f.getAbsolutePath()); });
+        } catch (Exception e) {
+            logger.warn("[CoreDump] 디렉토리 삭제 실패: {}", dir.getAbsolutePath(), e);
+        }
     }
 
     // ── 분석 실행 (SSE) ───────────────────────────────────────────
 
-    public Future<?> analyzeWithProgress(String filename, SseEmitter emitter) {
+    public Future<?> analyzeWithProgress(String filename, SseEmitter emitter, String uploadedBy) {
         String safe = validateCoreDumpFilename(filename);
 
         if (activeTasks.containsKey(safe)) {
@@ -167,16 +170,18 @@ public class CoreDumpAnalyzerService {
             return CompletableFuture.completedFuture(null);
         }
 
-        Future<?> task = executor.submit(() -> runAnalysis(safe, emitter));
+        Future<?> task = executor.submit(() -> runAnalysis(safe, emitter, uploadedBy));
         activeTasks.put(safe, task);
         return task;
     }
 
-    private void runAnalysis(String filename, SseEmitter emitter) {
+    private void runAnalysis(String filename, SseEmitter emitter, String uploadedBy) {
         long startTime = System.currentTimeMillis();
         File tmpAnalysisDir = new File(tmpDir(), filename);
 
         try {
+            logger.info("[CoreDump] 분석 시작: {}", filename);
+
             // 1. 파일 존재 확인
             sendProgress(emitter, AnalysisProgress.step(filename, 3, "코어 덤프 파일 확인 중..."));
             File coreFile = new File(dumpFilesDir(), filename);
@@ -190,6 +195,7 @@ public class CoreDumpAnalyzerService {
             // 2. 실행 파일 확인 (선택)
             File execFile = new File(dumpFilesDir(), filename + ".exec");
             String executableName = execFile.exists() ? filename + ".exec" : null;
+            logger.info("[CoreDump] 실행 파일: {}", executableName != null ? executableName : "없음 (시그널 제한 모드)");
 
             // 3. DB 레코드 생성/갱신
             CoreDumpAnalysisEntity entity = repository.findByFilename(filename)
@@ -198,6 +204,7 @@ public class CoreDumpAnalyzerService {
                         e.setFilename(filename);
                         e.setFileSize(coreFile.length());
                         e.setFileDeleted(false);
+                        e.setUploadedBy(uploadedBy);
                         return e;
                     });
             entity.setStatus("ANALYZING");
@@ -226,6 +233,10 @@ public class CoreDumpAnalyzerService {
             CoreDumpAnalysisResult result = parseGdbOutput(rawOutput, filename, executableName);
             result.setAnalysisTimeMs(System.currentTimeMillis() - startTime);
             result.setAnalyzedAt(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
+            result.setCoreDumpTime(LocalDateTime.ofInstant(
+                    java.time.Instant.ofEpochMilli(coreFile.lastModified()),
+                    java.time.ZoneId.systemDefault())
+                    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
 
             // 7. result.json 저장
             sendProgress(emitter, AnalysisProgress.step(filename, 92, "분석 결과 저장 중..."));
@@ -253,17 +264,33 @@ public class CoreDumpAnalyzerService {
             sendProgress(emitter, AnalysisProgress.completed(filename, resultUrl));
             emitter.complete();
 
-            logger.info("[CoreDump] 분석 완료: {} ({}ms)", filename, result.getAnalysisTimeMs());
+            logger.info("[CoreDump] 분석 완료: {} — signal={}, frames={}, threads={}, {}ms",
+                    filename,
+                    result.getCrashSignal() != null ? result.getCrashSignal() : "없음",
+                    result.getMainBacktrace() != null ? result.getMainBacktrace().size() : 0,
+                    result.getAllThreads() != null ? result.getAllThreads().size() : 0,
+                    result.getAnalysisTimeMs());
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            logger.info("[CoreDump] 분석 취소됨: {}", filename);
+            long elapsed = System.currentTimeMillis() - startTime;
+            logger.warn("[CoreDump] 분석 취소됨: {} (경과: {}ms)", filename, elapsed);
             updateDbError(filename, "분석이 취소되었습니다");
             try { emitter.complete(); } catch (Exception ignored) {}
 
         } catch (Exception e) {
-            logger.error("[CoreDump] 분석 중 오류: {}", filename, e);
+            long elapsed = System.currentTimeMillis() - startTime;
             String errMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+            if (errMsg.contains("시간 초과")) {
+                logger.error("[CoreDump] 분석 타임아웃: {} (경과: {}ms) — {}",
+                        filename, elapsed, errMsg);
+            } else if (e instanceof IOException) {
+                logger.error("[CoreDump] I/O 오류: {} (경과: {}ms) — {}",
+                        filename, elapsed, errMsg);
+            } else {
+                logger.error("[CoreDump] 분석 실패: {} (경과: {}ms) — {}",
+                        filename, elapsed, errMsg, e);
+            }
             updateDbError(filename, errMsg);
             try {
                 sendProgress(emitter, AnalysisProgress.error(filename, errMsg));
@@ -313,12 +340,21 @@ public class CoreDumpAnalyzerService {
         if (!finished) {
             process.destroyForcibly();
             reader.join(3000);
-            throw new RuntimeException("GDB 분석 시간 초과 (" + config.getCoreDumpTimeoutMinutes() + "분)");
+            throw new RuntimeException("GDB 분석 시간 초과 ("
+                    + config.getCoreDumpTimeoutMinutes() + "분, file=" + corePath.getName() + ")");
         }
         reader.join(5000);
 
         int exitCode = process.exitValue();
-        logger.info("[CoreDump] GDB 종료 코드: {}", exitCode);
+        if (exitCode != 0) {
+            logger.warn("[CoreDump] GDB 비정상 종료: exitCode={}, file={}, outputLen={}",
+                    exitCode, corePath.getName(), rawOutput.length());
+        } else {
+            logger.info("[CoreDump] GDB 정상 종료: file={}, outputLen={}", corePath.getName(), rawOutput.length());
+        }
+        if (rawOutput.length() < 10) {
+            logger.error("[CoreDump] GDB 출력 없음 — GDB 설치 여부 및 파일 형식 확인 필요: {}", corePath.getName());
+        }
 
         return rawOutput.toString();
     }
@@ -412,7 +448,8 @@ public class CoreDumpAnalyzerService {
         result.setSharedLibraries(new ArrayList<>());
 
         if (rawOutput == null || rawOutput.isEmpty()) {
-            result.setErrorMessage("GDB 출력이 없습니다.");
+            logger.warn("[CoreDump] GDB 출력 비어있음: {}", filename);
+            result.setErrorMessage("GDB 출력이 없습니다. GDB 설치 여부 및 코어 파일 형식을 확인하세요.");
             return result;
         }
 
@@ -421,6 +458,7 @@ public class CoreDumpAnalyzerService {
             String l = raw.strip();
             if (l.contains("is not a core dump") || l.contains("file format not recognized")
                     || l.contains("No such file or directory") || l.contains("not a core file")) {
+                logger.warn("[CoreDump] GDB 파일 인식 실패: filename={}, reason='{}'", filename, l);
                 result.setErrorMessage(l);
                 return result;
             }
@@ -569,7 +607,14 @@ public class CoreDumpAnalyzerService {
         threads.sort(Comparator.comparingInt(t -> t.isCurrent() ? -1 : t.getId()));
         result.setAllThreads(threads);
 
-        // crashSummary는 엔티티 저장 시 별도 처리
+        // 파싱 결과 요약 로그
+        logger.info("[CoreDump] GDB 파싱 완료: filename={}, signal={}, frames={}, threads={}{}",
+                filename,
+                result.getCrashSignal() != null ? result.getCrashSignal() : "없음",
+                result.getMainBacktrace().size(),
+                result.getAllThreads().size(),
+                result.getErrorMessage() != null ? ", warn='" + result.getErrorMessage() + "'" : "");
+
         return result;
     }
 
@@ -676,6 +721,71 @@ public class CoreDumpAnalyzerService {
         } catch (Exception e) {
             logger.warn("[CoreDump] DB 오류 갱신 실패: {}", e.getMessage());
         }
+    }
+
+    // ── 소스 코드 뷰어 ─────────────────────────────────────────────
+
+    public boolean existsAnalysis(String filename) {
+        return repository.existsByFilename(filename);
+    }
+
+    public Map<String, Object> readSourceContext(String locationStr, int contextLines) {
+        if (locationStr == null || locationStr.isBlank())
+            return Map.of("error", "위치 정보가 없습니다");
+        if (locationStr.contains("\0"))
+            return Map.of("error", "유효하지 않은 경로입니다");
+
+        int lastColon = locationStr.lastIndexOf(':');
+        if (lastColon <= 0)
+            return Map.of("error", "위치 정보 형식이 올바르지 않습니다 (파일:라인 형식 필요)");
+
+        String rawPath = locationStr.substring(0, lastColon);
+        int targetLine;
+        try {
+            targetLine = Integer.parseInt(locationStr.substring(lastColon + 1));
+        } catch (NumberFormatException e) {
+            return Map.of("error", "라인 번호가 올바르지 않습니다");
+        }
+        if (targetLine < 1) return Map.of("error", "라인 번호는 1 이상이어야 합니다");
+
+        Path path;
+        try {
+            path = Paths.get(rawPath).toRealPath();
+        } catch (IOException e) {
+            return Map.of("error", "소스 파일을 찾을 수 없습니다: " + rawPath);
+        }
+        if (!Files.isReadable(path))
+            return Map.of("error", "소스 파일을 읽을 수 없습니다: " + rawPath);
+
+        List<String> allLines;
+        try {
+            allLines = Files.readAllLines(path, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return Map.of("error", "소스 파일 읽기 실패: " + e.getMessage());
+        }
+
+        if (targetLine > allLines.size())
+            return Map.of("error", "라인 번호(" + targetLine + ")가 파일 크기(" + allLines.size() + ")를 초과합니다");
+
+        int startLine = Math.max(1, targetLine - contextLines);
+        int endLine   = Math.min(allLines.size(), targetLine + contextLines);
+
+        List<Map<String, Object>> lines = new ArrayList<>();
+        for (int i = startLine; i <= endLine; i++) {
+            Map<String, Object> lineMap = new LinkedHashMap<>();
+            lineMap.put("lineNum",  i);
+            lineMap.put("content",  allLines.get(i - 1));
+            lineMap.put("isTarget", i == targetLine);
+            lines.add(lineMap);
+        }
+
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("lines",      lines);
+        res.put("startLine",  startLine);
+        res.put("targetLine", targetLine);
+        res.put("filePath",   rawPath);
+        res.put("fileName",   path.getFileName().toString());
+        return res;
     }
 
     // ── SSE 전송 헬퍼 ─────────────────────────────────────────────

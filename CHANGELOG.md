@@ -1,5 +1,197 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-19] Core Dump — 코드 리팩토링 (uploadedBy 설정·감사로깅·CSS 중복 제거)
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/controller/CoreDumpApiController.java`
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/resources/static/css/core-dump.css`
+- `src/main/resources/templates/core-dump/index.html`
+- `src/main/resources/templates/core-dump/progress.html`
+- `src/main/resources/templates/core-dump/analyze.html`
+
+### 변경 내용
+
+**백엔드 (CoreDumpApiController, CoreDumpAnalyzerService):**
+- `streamProgress` 엔드포인트에 `Principal` 추가 → `analyzeWithProgress(filename, emitter, uploadedBy)` 시그니처 변경
+- `CoreDumpAnalysisEntity.uploadedBy` 최초 생성 시 설정 (기존 미설정 버그 수정)
+- `deleteDump` API에 `Principal` 추가 + `[CoreDump] action=delete, filename=*, by=*` 감사 로그
+- `reanalyze` API에 `Principal` 추가 + `[CoreDump] action=reanalyze, filename=*, by=*` 감사 로그
+- `deleteDump()` 서비스 내부 중복 파일명 재검증 제거 (호출자에서 이미 검증됨)
+- `deleteQuietly` / `deleteDirectoryQuietly` 삭제 실패를 조용히 무시하던 방식 → `logger.warn` 로그 출력으로 변경
+- `ExecutorService`: `newCachedThreadPool` → `newFixedThreadPool(4)` 변경 (스레드 무한 생성 위험 방지)
+
+**프론트엔드 CSS 리팩토링:**
+- `core-dump.css`에 3개 페이지 공통 스타일 추가: `.cd-topbar`, `.topbar-back/brand/title/right`, `.cd-page`, `@media (max-width:900px)`, `.content-card`, `.content-card-title`, `.cd-tabs`, `.cd-tab-panel`, `.status-badge` 계열, `.signal-chip` 계열, `.action-btn` 계열
+- `index.html`, `progress.html`, `analyze.html` 인라인 `<style>` 블록에서 공통 스타일 제거 (각 파일 약 130~170줄 감소)
+- `progress.html`: `.cd-topbar { justify-content: space-between; }` 페이지 전용 override 유지
+- `index.html`: `.content-card`/`.content-card-title` 인덱스 전용 크기 override 유지
+- 3개 HTML 파일에 `common.css` 로드 추가 (기존 누락)
+
+---
+
+## [2026-06-19] Core Dump — 최초 분석 로깅/에러 표시 보강
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/controller/CoreDumpApiController.java`
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/resources/templates/core-dump/index.html`
+- `src/main/resources/templates/core-dump/progress.html`
+
+### 변경 내용
+
+**업로드 컨트롤러 로깅 보강 (CoreDumpApiController):**
+- 파일명 검증 실패 시 WARN 로그 추가 (originalName, reason, 요청자)
+- 업로드 성공 로그에 파일 크기 + 요청자(`principal.getName()`) 포함
+- 실행 파일 업로드 성공 로그에 파일 크기 + 요청자 포함
+- IOException과 일반 Exception 분리 처리 + 상세 에러 메시지
+
+**파싱/분석 서비스 로깅 보강 (CoreDumpAnalyzerService):**
+- GDB 출력 비어있음 → WARN 로그 + 에러 메시지에 조치 안내 추가
+- GDB 파일 인식 실패(is not a core dump 등) → WARN 로그 (filename, reason)
+- `parseGdbOutput` 완료 후 결과 요약 INFO 로그 (signal, frames, threads, warn 여부)
+- 분석 완료 로그에 signal/frames/threads/경과시간 포함
+
+**index.html 업로드 에러 표시 개선:**
+- 기존: alert() 또는 uploadStatus 텍스트 변경(시인성 낮음)
+- 변경: `.upload-error-box` 에러 배너 추가 — 빨간 테두리, 에러 제목 + 상세 메시지 구분 표시
+- 재시도 가능: 에러 후 파일 선택 유지 + 버튼 재활성화
+- 새 업로드 시도 시 이전 에러 박스 자동 초기화
+- CSRF 토큰 취득 방식을 안전한 방식으로 변경 (`?.content` → null 체크)
+
+**progress.html SSE 연결 오류 처리 개선:**
+- `evtSource.onerror` 발생 시 elapsed timer 정리
+- HEAD 요청으로 결과 확인 후 3가지 케이스 분기:
+  1. 결과 있음 → 완료 처리 (기존 동일)
+  2. 서버 응답 있지만 결과 없음 → 에러 배너 + 힌트 표시
+  3. 서버 응답 없음 → 에러 배너 + 서버 재기동 안내 힌트
+- `showSseError(msg, hint)` 헬퍼 함수 추출 (에러 배너 + 힌트 + active 스텝 error 처리)
+
+## [2026-06-19] Core Dump — 재분석 버튼 구현 + 로깅/에러 표시 보강
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/resources/templates/core-dump/progress.html`
+- `src/main/resources/templates/core-dump/index.html`
+- `src/main/resources/templates/core-dump/analyze.html`
+
+### 변경 내용
+
+**재분석 버튼 동작 개선 (index.html, analyze.html):**
+- 기존: `<a href="/core-dump/progress/...">` 단순 링크 → result.json 미삭제 상태로 이동
+- 변경: `POST /api/core-dump/reanalyze/{filename}` 호출(result.json 삭제) 후 progress 페이지 이동
+- 버튼 클릭 중 disabled + 텍스트 변경으로 중복 클릭 방지
+- CSRF 토큰 자동 포함
+
+**progress.html 에러 배너 보강:**
+- 에러 발생 시 "재분석" 버튼 추가 → `POST /api/core-dump/reanalyze/` 호출 후 페이지 리로드
+- 에러 원인별 힌트 메시지 자동 표시 (파일 없음 / 시간 초과 / GDB 출력 없음 / 취소)
+- `.error-hint` 영역 추가, 재분석 버튼 스타일 개선 (보라 계열, disabled 상태 처리)
+
+**서비스 로깅 보강 (CoreDumpAnalyzerService):**
+- 분석 시작: 파일명 + 실행 파일 유무 INFO 로그
+- GDB 종료: exitCode ≠ 0 시 WARN (종료코드/파일명/출력길이), 출력 10자 미만 ERROR
+- 분석 취소: 경과 시간 포함 WARN 로그
+- Exception catch: 에러 유형 분류 (타임아웃 / IOException / 일반 예외) + 경과 시간 + stacktrace 포함
+
+## [2026-06-19] Core Dump — 스택 프레임 소스 코드 뷰어 추가
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/CoreDumpApiController.java`
+- `src/main/resources/templates/core-dump/analyze.html`
+- `src/main/resources/static/css/core-dump.css`
+
+### 변경 내용
+
+**백엔드:**
+- `CoreDumpAnalyzerService.readSourceContext(locationStr, contextLines)` 추가
+  - `location` 필드(`/path/file.c:42` 형식)에서 경로·라인 파싱
+  - `Path.toRealPath()`로 경로 정규화 (null byte / 경로 순회 차단)
+  - 타겟 라인 전후 N줄(기본 8줄) 반환
+- `CoreDumpAnalyzerService.existsAnalysis(filename)` 추가 — repository 위임
+- `GET /api/core-dump/{filename}/source?location=...&context=N` 신규 API 추가 (`CoreDumpApiController`)
+
+**프론트엔드 (analyze.html):**
+- 크래시 히어로 카드에 `#heroSource` div 추가 → Frame #0 `location` 있을 때 페이지 로드 시 소스 자동 표시
+- 스택 트레이스 탭·스레드 탭 프레임 카드에 "📄 소스" 버튼 추가 (`location != null`인 경우)
+  - 클릭 시 API 호출하여 소스 뷰어 인라인 펼침/닫기 토글
+  - 이미 로드된 경우 재요청 없이 캐시 사용 (`dataset.loaded`)
+- 소스 뷰어: 라인 번호 + 코드 표시, 크래시 라인 빨간 강조(user 프레임은 초록)
+- `CORE_FILENAME` Thymeleaf 인라인 변수로 API URL 동적 구성
+- `renderSourceView()` / `loadFrameSource()` / `autoLoadHeroSource()` / `escSrc()` JS 함수 추가
+
+**CSS (core-dump.css):**
+- `.frame-src-btn` — 소스 보기 버튼 (라이트 아웃라인, 호버 시 다크)
+- `.frame-source` — 소스 뷰어 영역 (다크 배경, 기본 숨김, `.visible`로 표시)
+- `.src-line`, `.src-line-target`, `.src-linenum`, `.src-code` — 소스 라인 스타일
+- `.hero-source` — 히어로 카드 내부 소스 뷰어
+
+## [2026-06-19] Core Dump — 분석 전 화면 디자인 개편 + 프로그램명 절대경로 표시
+
+**대상:** `src/main/resources/templates/core-dump/index.html`, `src/main/resources/templates/core-dump/analyze.html`
+
+### 변경 내용
+
+**index.html (분석 전 화면) 전면 재작성 — analyze.html 디자인 통일:**
+- `section-card` → `content-card` (analyze.html과 동일 스타일: border-radius 14px, shadow)
+- 업로드 존 UI 개선: 플렉스 레이아웃 + 아이콘 + 서브텍스트, `has-file` 시 solid 초록 테두리
+- 이력 테이블 → 카드형 플렉스 목록 (`.hi-item`)으로 전환
+  - 상태별 배경/테두리 색상 구분: SUCCESS(초록) / ERROR(빨강) / ANALYZING(파란 pulse)
+  - 파일명 monospace 강조, 시그널 칩 3색 구분(fatal/warn/neutral), 업로드 시각 인라인 표시
+  - 분석 시각을 상태 배지 아래 작게 표시
+  - ERROR/NOT_ANALYZED 항목에 "재분석" 버튼 추가 (보라 계열)
+- 모든 버튼/배지 스타일 analyze.html과 완전 통일
+- CSS 버전 `?v=2026-06-18` → `?v=2026-06-19` 갱신
+
+**analyze.html (분석 결과 화면) 프로그램명 카드 개선:**
+- 기존: 전체 명령행 한 줄 표시
+- 변경: `th:with`로 basename / execPath 분리
+  - 첫 줄: basename (파일명만, 굵게)
+  - 둘째 줄: 절대경로 (`/` 포함 시에만, 회색 monospace 11px)
+  - 인자 포함 명령행(`/path/prog arg1`) 처리 — 첫 공백 이전을 execPath로 파싱
+
+## [2026-06-19] Core Dump — 분석 결과 페이지 고도화
+
+**대상:** `src/main/resources/templates/core-dump/analyze.html`, `src/main/resources/static/css/core-dump.css`
+
+### 변경 내용
+
+- **크래시 히어로 카드 신설** (기존 단순 시그널 배너 대체)
+  - 최상단에서 즉시 "어느 코드에서 크래시가 났는지" 파악 가능
+  - `mainBacktrace[0]`의 함수명(22px bold monospace) + 파일:라인(초록 강조) + 시그널 칩 통합 표시
+  - 시그널별 3가지 색상 배경 (SIGSEGV/SIGBUS/SIGILL → 빨강, SIGABRT/SIGFPE → 노랑, 기타 → 회색)
+  - gradient 배경 + border + shadow + 배경 장식 원
+  - 모바일(≤600px): flex-direction column 전환
+- **콜 체인 타임라인 신설** (히어로 카드 아래)
+  - 상위 최대 8프레임을 세로 타임라인으로 시각화
+  - 사용자 소스 코드 (초록 도트 + 초록 배경) vs 라이브러리 (보라 도트 + 희미 처리) 색상 구분
+  - Frame #0 빨간 도트 + CRASH 배지
+  - 8개 초과 시 "+ N개 더" 안내
+- **스택 트레이스 탭 카드화** (단순 텍스트 라인 → 독립 카드)
+  - 프레임별 `frame-crash/frame-user/frame-lib` 색상 구분 카드
+  - `locals` (지역변수) 있는 프레임은 클릭 시 다크 배경으로 확장 (▼ 아이콘)
+  - Frame #0 자동 확장 (locals 있을 경우)
+- **스레드 탭 프레임도 동일 카드화** 적용
+- **메타 그리드 간소화**: 6개 → 4개 (실행파일/프로그램명/GDB버전/분석시각+소요시간)
+- **CSS 정리**: 시그널 배너 등 인라인 중복 제거, `core-dump.css` 신규 컴포넌트 블록 추가 (버전 `?v=2026-06-19`)
+
+## [2026-06-19] Core Dump — 분석 이력 상태 배지·액션 버튼 디자인 개선
+
+**대상:** `src/main/resources/templates/core-dump/index.html`
+
+### 변경 내용
+
+- **상태 배지 재디자인:** `inline-flex` + 왼쪽 컬러 도트 + 아웃라인 테두리 적용
+  - 완료: 에메랄드 (#ECFDF5 배경 / #047857 텍스트 / #6EE7B7 테두리)
+  - 실패: 로즈 (#FFF1F2 / #BE123C / #FECDD3)
+  - 분석 중: 블루 pulse-ring 애니메이션 + 다이아몬드 스피너
+  - 미분석: 슬레이트 (#F8FAFC / #64748B / #CBD5E1)
+- **액션 버튼 재디자인:** 아웃라인 스타일 → 호버 시 배경 솔리드 전환 + 그림자 + translateY(-1px) 상승 효과
+  - "결과 보기" (`action-view`): 블루 계열
+  - "진행 확인" (`action-progress`): 그린 계열 (기존 `action-view`에서 분리)
+  - "삭제" (`action-delete`): 로즈 계열
+
 ## [2026-06-19] 버전 2.1.1 → 2.1.2
 
 **대상:** `pom.xml`, `restart.sh`, `run.sh`, `stop.sh`, `fragments/banner.html`, `index.html`, `progress.html`

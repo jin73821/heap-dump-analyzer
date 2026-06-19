@@ -21,6 +21,7 @@ public class CoreDumpAnalysisResult {
     private Map<String, String> registers;
     private List<GdbSharedLib> sharedLibraries;
     private String gdbRawOutput;
+    private String coreDumpTime;          // 코어 파일 생성 시각 (파일 mtime)
     private String errorMessage;
     private String analyzedAt;            // ISO-8601 문자열
     private long analysisTimeMs;

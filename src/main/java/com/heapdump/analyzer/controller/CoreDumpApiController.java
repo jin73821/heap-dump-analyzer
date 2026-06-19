@@ -45,10 +45,13 @@ public class CoreDumpApiController {
         }
 
         String originalName = coreFile.getOriginalFilename();
+        String who = principal != null ? principal.getName() : "unknown";
         String safe;
         try {
             safe = analyzerService.validateCoreDumpFilename(originalName);
         } catch (IllegalArgumentException e) {
+            logger.warn("[CoreDump] 파일명 검증 실패: originalName='{}', reason='{}', by={}",
+                    originalName, e.getMessage(), who);
             return ResponseEntity.badRequest().body(Map.of("status", "error",
                     "message", e.getMessage()));
         }
@@ -60,7 +63,7 @@ public class CoreDumpApiController {
             // 코어 파일 저장
             File dest = new File(dumpFilesDir, safe);
             coreFile.transferTo(dest);
-            logger.info("[CoreDump] 업로드: {} ({} bytes)", safe, dest.length());
+            logger.info("[CoreDump] 코어 파일 업로드: {} ({} bytes) by {}", safe, dest.length(), who);
 
             // 실행 파일 저장 (선택)
             String executableName = null;
@@ -68,7 +71,8 @@ public class CoreDumpApiController {
                 File execDest = new File(dumpFilesDir, safe + ".exec");
                 execFile.transferTo(execDest);
                 executableName = safe + ".exec";
-                logger.info("[CoreDump] 실행 파일 업로드: {}", executableName);
+                logger.info("[CoreDump] 실행 파일 업로드: {} ({} bytes) by {}",
+                        executableName, execDest.length(), who);
             }
 
             Map<String, Object> response = new LinkedHashMap<>();
@@ -77,8 +81,13 @@ public class CoreDumpApiController {
             response.put("executableName", executableName);
             return ResponseEntity.ok(response);
 
+        } catch (java.io.IOException e) {
+            logger.error("[CoreDump] 업로드 I/O 실패: filename='{}', by={}, reason={}",
+                    safe, who, e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("status", "error",
+                    "message", "파일 저장 중 오류가 발생했습니다: " + e.getMessage()));
         } catch (Exception e) {
-            logger.error("[CoreDump] 업로드 실패: {}", e.getMessage(), e);
+            logger.error("[CoreDump] 업로드 실패: filename='{}', by={}", safe, who, e);
             return ResponseEntity.internalServerError().body(Map.of("status", "error",
                     "message", "업로드 중 오류가 발생했습니다: " + e.getMessage()));
         }
@@ -88,12 +97,13 @@ public class CoreDumpApiController {
 
     @GetMapping(value = "/core-dump/analyze-progress/{filename:.+}",
                 produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter streamProgress(@PathVariable String filename) {
+    public SseEmitter streamProgress(@PathVariable String filename, Principal principal) {
         String safe = analyzerService.validateCoreDumpFilename(filename);
+        String who = principal != null ? principal.getName() : "unknown";
         long timeoutMs = config.getCoreDumpTimeoutMinutes() * 60L * 1000;
         SseEmitter emitter = new SseEmitter(timeoutMs);
 
-        Future<?> task = analyzerService.analyzeWithProgress(safe, emitter);
+        Future<?> task = analyzerService.analyzeWithProgress(safe, emitter, who);
         Runnable cancel = () -> {
             if (task != null && !task.isDone()) task.cancel(true);
         };
@@ -113,7 +123,9 @@ public class CoreDumpApiController {
     // ── 삭제 ──────────────────────────────────────────────────────
 
     @DeleteMapping("/api/core-dump/{filename:.+}")
-    public ResponseEntity<Map<String, Object>> deleteDump(@PathVariable String filename) {
+    public ResponseEntity<Map<String, Object>> deleteDump(@PathVariable String filename,
+                                                          Principal principal) {
+        String who = principal != null ? principal.getName() : "unknown";
         String safe;
         try {
             safe = analyzerService.validateCoreDumpFilename(filename);
@@ -123,18 +135,41 @@ public class CoreDumpApiController {
         }
         try {
             analyzerService.deleteDump(safe);
+            logger.info("[CoreDump] action=delete, filename={}, by={}", safe, who);
             return ResponseEntity.ok(Map.of("status", "ok", "filename", safe));
         } catch (Exception e) {
-            logger.error("[CoreDump] 삭제 실패: {}", e.getMessage(), e);
+            logger.error("[CoreDump] 삭제 실패: filename={}, by={}, reason={}", safe, who, e.getMessage(), e);
             return ResponseEntity.internalServerError().body(Map.of("status", "error",
                     "message", "삭제 중 오류가 발생했습니다: " + e.getMessage()));
         }
     }
 
+    // ── 소스 코드 뷰어 ──────────────────────────────────────────────
+
+    @GetMapping("/api/core-dump/{filename:.+}/source")
+    public ResponseEntity<Map<String, Object>> getSourceCode(
+            @PathVariable String filename,
+            @RequestParam String location,
+            @RequestParam(defaultValue = "8") int context) {
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+        if (!analyzerService.existsAnalysis(safe)) {
+            return ResponseEntity.notFound().build();
+        }
+        Map<String, Object> result = analyzerService.readSourceContext(location, context);
+        return ResponseEntity.ok(result);
+    }
+
     // ── 재분석 ───────────────────────────────────────────────────
 
     @PostMapping("/api/core-dump/reanalyze/{filename:.+}")
-    public ResponseEntity<Map<String, Object>> reanalyze(@PathVariable String filename) {
+    public ResponseEntity<Map<String, Object>> reanalyze(@PathVariable String filename,
+                                                         Principal principal) {
+        String who = principal != null ? principal.getName() : "unknown";
         String safe;
         try {
             safe = analyzerService.validateCoreDumpFilename(filename);
@@ -150,6 +185,7 @@ public class CoreDumpApiController {
 
         // 기존 result.json 삭제 → 새 SSE 연결로 재분석 트리거
         analyzerService.resultJsonFile(safe).delete();
+        logger.info("[CoreDump] action=reanalyze, filename={}, by={}", safe, who);
         return ResponseEntity.ok(Map.of("status", "ok", "filename", safe,
                 "message", "/core-dump/progress/" + safe + " 로 이동하여 재분석을 시작하세요."));
     }
