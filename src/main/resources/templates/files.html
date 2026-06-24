@@ -178,6 +178,18 @@
         .ai-badge.ai-default  { background: #D1FAE5; color: #065F46; }
         .ai-none { font-size: 11px; color: #D1D5DB; }
         .col-compressed { white-space: nowrap; }
+        /* ── 파일 타입 탭 ─────────────────────────────────────────── */
+        .type-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #E5E7EB; }
+        .type-tab { padding: 8px 18px; font-size: 13px; font-weight: 600; color: #6B7280; cursor: pointer;
+                    border: none; background: transparent; border-bottom: 2px solid transparent;
+                    margin-bottom: -2px; border-radius: 6px 6px 0 0; transition: color .15s; }
+        .type-tab:hover { color: #374151; background: #F9FAFB; }
+        .type-tab.active { color: #2563EB; border-bottom-color: #2563EB; background: transparent; }
+        .type-tab .tab-count { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700;
+                               background: #E5E7EB; color: #6B7280; border-radius: 10px; padding: 1px 7px; }
+        .type-tab.active .tab-count { background: #DBEAFE; color: #1E40AF; }
+        .core-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
+                      background: #FEF3C7; color: #92400E; font-weight: 600; vertical-align: middle; }
 
         /* Delete confirm modal */
         .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
@@ -373,6 +385,19 @@
         </div>
     </div>
 
+    <!-- 파일 타입 탭 -->
+    <div class="type-tabs" id="typeTabs">
+        <button class="type-tab active" data-tab="all" onclick="onTabClick(this)">
+            ALL <span class="tab-count" id="tabCntAll">0</span>
+        </button>
+        <button class="type-tab" data-tab="heapdump" onclick="onTabClick(this)">
+            Heapdump <span class="tab-count" id="tabCntHeap">0</span>
+        </button>
+        <button class="type-tab" data-tab="coredump" onclick="onTabClick(this)">
+            Coredump <span class="tab-count" id="tabCntCore">0</span>
+        </button>
+    </div>
+
     <div class="table-toolbar">
         <input type="text" class="search-bar" id="searchInput"
                placeholder="파일명·서버명으로 검색..." oninput="onSearchInput()">
@@ -477,7 +502,7 @@
             <tbody id="fileTableBody">
                 <tr th:each="h : ${analysisHistory}" th:classappend="${h.fileDeleted} ? 'fi-deleted'"
                     th:data-name="${h.filename}" th:data-deleted="${h.fileDeleted}"
-                    th:data-status="${h.status}"
+                    th:data-status="${h.status}" th:data-file-type="${h.fileType}"
                     th:attr="data-sort-id=${h.id != null ? h.id : 0},
                              data-sort-osize=${h.originalSizeBytes},
                              data-sort-csize=${h.compressedSizeBytes},
@@ -489,6 +514,7 @@
                     <td class="td-seq col-seq" data-label="#" th:text="${h.id != null ? h.id : '-'}">1</td>
                     <td class="col-fname" data-label="파일명">
                         <span class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</span>
+                        <span th:if="${h.fileType == 'coredump'}" class="core-badge">CORE</span>
                         <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
                     </td>
                     <td class="col-osize" data-label="원본">
@@ -519,36 +545,58 @@
                     </td>
                     <td class="col-actions" data-label="작업">
                         <div class="file-actions">
-                            <a th:if="${h.status == 'SUCCESS'}"
+                            <!-- ── Heapdump 액션 ── -->
+                            <a th:if="${h.fileType == 'heapdump' and h.status == 'SUCCESS'}"
                                th:href="@{/analyze/result/{f}(f=${h.filename})}"
                                class="fb v" title="View Result">
                                 <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
                             </a>
-                            <a th:if="${h.status == 'ERROR' and !h.fileDeleted}"
+                            <a th:if="${h.fileType == 'heapdump' and h.status == 'ERROR' and !h.fileDeleted}"
                                th:href="@{/analyze/result/{f}(f=${h.filename})}"
                                class="fb e" title="View Error">
                                 <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                             </a>
-                            <a th:if="${h.status == 'NOT_ANALYZED' and !h.fileDeleted}"
+                            <a th:if="${h.fileType == 'heapdump' and h.status == 'NOT_ANALYZED' and !h.fileDeleted}"
                                th:href="@{/analyze/{f}(f=${h.filename})}"
                                class="fb p" title="Analyze">
                                 <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                             </a>
-                            <a th:if="${!h.fileDeleted}" href="#" class="fb" title="Download"
+                            <a th:if="${h.fileType == 'heapdump' and !h.fileDeleted}" href="#" class="fb" title="Download"
                                th:data-filename="${h.filename}" th:data-size="${h.formattedSize}"
                                th:data-orig="${h.compressed ? h.formattedOriginalSize : ''}"
                                th:data-gz="${h.compressed ? h.formattedCompressedSize : ''}"
                                onclick="showDownloadModal(this.dataset.filename,this.dataset.size,this.dataset.orig,this.dataset.gz);return false;">
                                 <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
                             </a>
-                            <a th:if="${!h.fileDeleted}" href="#" class="fb d" title="Delete"
+                            <a th:if="${h.fileType == 'heapdump' and !h.fileDeleted}" href="#" class="fb d" title="Delete"
                                th:data-filename="${h.filename}"
                                onclick="confirmDelete(this.dataset.filename);return false;">
                                 <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                             </a>
-                            <a th:if="${h.fileDeleted and isAdmin}" href="#" class="fb d" title="기록 영구 삭제 (관리자)"
+                            <a th:if="${h.fileType == 'heapdump' and h.fileDeleted and isAdmin}" href="#" class="fb d" title="기록 영구 삭제 (관리자)"
                                th:data-filename="${h.filename}"
                                onclick="confirmPurge(this.dataset.filename);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
+                            </a>
+                            <!-- ── Coredump 액션 ── -->
+                            <a th:if="${h.fileType == 'coredump' and h.status == 'SUCCESS'}"
+                               th:href="@{/core-dump/analyze/{f}(f=${h.filename})}"
+                               class="fb v" title="분석 결과 보기">
+                                <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
+                            </a>
+                            <a th:if="${h.fileType == 'coredump' and (h.status == 'ERROR' or h.status == 'NOT_ANALYZED') and !h.fileDeleted}"
+                               href="/core-dump"
+                               class="fb p" title="코어 덤프 분석 페이지로 이동">
+                                <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                            </a>
+                            <a th:if="${h.fileType == 'coredump' and !h.fileDeleted}" href="#" class="fb" title="Download"
+                               th:data-filename="${h.filename}" th:data-size="${h.formattedSize}"
+                               onclick="showDownloadModal(this.dataset.filename,this.dataset.size,'','',true);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
+                            </a>
+                            <a th:if="${h.fileType == 'coredump' and !h.fileDeleted}" href="#" class="fb d" title="Delete"
+                               th:data-filename="${h.filename}"
+                               onclick="confirmCoreDumpDelete(this.dataset.filename);return false;">
                                 <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                             </a>
                         </div>
@@ -593,7 +641,7 @@
 <div class="modal-ov" id="deleteModal">
     <div class="modal-box">
         <h3>파일 삭제</h3>
-        <p>정말 <strong id="delFileName"></strong> 파일을 삭제하시겠습니까?<br>힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.</p>
+        <p>정말 <strong id="delFileName"></strong> 파일을 삭제하시겠습니까?<br><span id="delModalNote">힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.</span></p>
         <div class="modal-btns">
             <button class="btn-cancel" onclick="closeDeleteModal()">취소</button>
             <button class="btn-delete" id="btnConfirmDel">삭제</button>
@@ -654,17 +702,38 @@ var ALLOW_ALL_EXT    = /*[[${allowAllExtensions}]]*/ false;
 <script src="/js/upload-queue.js?v=2026-05-23a"></script>
 <script>
 var _delTarget = '';
+var _delIsCore = false;
 function confirmDelete(filename) {
-    _delTarget = filename;
+    _delTarget = filename; _delIsCore = false;
     document.getElementById('delFileName').textContent = filename;
+    document.getElementById('delModalNote').textContent = '힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.';
+    document.getElementById('deleteModal').classList.add('open');
+}
+function confirmCoreDumpDelete(filename) {
+    _delTarget = filename; _delIsCore = true;
+    document.getElementById('delFileName').textContent = filename;
+    document.getElementById('delModalNote').textContent = '코어 덤프 파일과 분석 결과가 함께 삭제됩니다.';
     document.getElementById('deleteModal').classList.add('open');
 }
 function closeDeleteModal() {
     document.getElementById('deleteModal').classList.remove('open');
-    _delTarget = '';
+    _delTarget = ''; _delIsCore = false;
 }
 document.getElementById('btnConfirmDel').onclick = function() {
-    if (_delTarget) {
+    if (!_delTarget) return;
+    if (_delIsCore) {
+        var csrfMeta = document.querySelector('meta[name="_csrf"]');
+        var csrfHdr  = document.querySelector('meta[name="_csrf_header"]');
+        var headers  = {};
+        if (csrfMeta && csrfHdr) headers[csrfHdr.content] = csrfMeta.content;
+        fetch('/api/core-dump/' + encodeURIComponent(_delTarget), { method: 'DELETE', headers: headers })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.status === 'ok') { closeDeleteModal(); location.reload(); }
+                else alert('삭제 실패: ' + (d.message || '알 수 없는 오류'));
+            })
+            .catch(function(e) { alert('삭제 중 오류: ' + e.message); });
+    } else {
         var f = document.createElement('form');
         f.method = 'POST'; f.action = '/delete/' + encodeURIComponent(_delTarget); f.style.display = 'none';
         Common.appendCsrfToForm(f);
@@ -700,8 +769,10 @@ document.getElementById('deleteModal').addEventListener('click', function(e) {
 });
 
 var _dlFilename = '';
-function showDownloadModal(filename, size, origSize, gzSize) {
+var _dlIsCore = false;
+function showDownloadModal(filename, size, origSize, gzSize, isCore) {
     _dlFilename = filename;
+    _dlIsCore = !!isCore;
     document.getElementById('dlModalFilename').textContent = filename;
     var hasGz = origSize && origSize.length > 0 && gzSize && gzSize.length > 0;
     document.getElementById('dlModalSizeRow').style.display = hasGz ? 'none' : 'flex';
@@ -717,13 +788,41 @@ function showDownloadModal(filename, size, origSize, gzSize) {
 }
 function closeDownloadModal() {
     document.getElementById('downloadModal').classList.remove('open');
-    _dlFilename = '';
+    _dlFilename = ''; _dlIsCore = false;
 }
 document.getElementById('btnConfirmDl').onclick = function() {
-    if (_dlFilename) {
-        closeDownloadModal();
-        window.location.href = '/download/' + encodeURIComponent(_dlFilename);
-    }
+    if (!_dlFilename) return;
+    var filename = _dlFilename;
+    var isCore = _dlIsCore;
+    closeDownloadModal();
+    var downloadUrl = isCore
+        ? '/api/core-dump/download/' + encodeURIComponent(filename)
+        : '/download/' + encodeURIComponent(filename);
+    fetch(downloadUrl, {credentials: 'same-origin'})
+        .then(function(r) {
+            var cd = r.headers.get('Content-Disposition');
+            if (!cd || cd.indexOf('attachment') < 0) {
+                // 세션 만료 등으로 로그인 페이지가 반환된 경우
+                window.location.href = '/login';
+                return;
+            }
+            var dlName = filename;
+            var m = cd.match(/filename="?([^";]+)"?/);
+            if (m) dlName = m[1];
+            return r.blob().then(function(blob) {
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = dlName;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            });
+        })
+        .catch(function(e) {
+            alert('다운로드 실패: ' + e.message);
+        });
 };
 
 // ── 다중 선택 모드 ────────────────────────────────────────────
@@ -849,6 +948,49 @@ function submitBulkDelete() {
     });
 }
 
+// ── 탭 ────────────────────────────────────────────────────────
+var _activeTab = 'all';
+
+window.onUploadQueueDone = function() {
+    var items = typeof UploadQueue !== 'undefined' ? UploadQueue.getLastQueueTypes() : [];
+    var doneCore = items.filter(function(i) { return i.fileType === 'coredump' && i.status === 'done'; });
+    var doneHeap = items.filter(function(i) { return i.fileType === 'heapdump' && i.status === 'done'; });
+    if (doneCore.length > 0 && doneHeap.length === 0) {
+        var url = '/core-dump';
+        if (doneCore.length === 1) url += '?file=' + encodeURIComponent(doneCore[0].filename);
+        window.location.href = url;
+    } else {
+        window.location.reload();
+    }
+};
+
+function onTabClick(btn) {
+    _activeTab = btn.getAttribute('data-tab');
+    document.querySelectorAll('.type-tab').forEach(function(t) { t.classList.remove('active'); });
+    btn.classList.add('active');
+    // 탭에 따라 업로드 모드 및 파일 선택기 accept 속성 변경
+    var modeMap = { all: 'auto', heapdump: 'heapdump', coredump: 'coredump' };
+    if (typeof UploadQueue !== 'undefined') UploadQueue.setUploadMode(modeMap[_activeTab] || 'auto');
+    var fi = document.querySelectorAll('#fileInput, #fileInputBanner');
+    var heapAccept = ALLOW_ALL_EXT ? '' : '.hprof,.bin,.dump,.gz';
+    fi.forEach(function(el) {
+        el.setAttribute('accept', _activeTab === 'coredump' ? '' : heapAccept);
+    });
+    applyFilter();
+}
+
+function updateTabCounts(rows) {
+    var heap = 0, core = 0;
+    rows.forEach(function(r) {
+        var t = r.getAttribute('data-file-type');
+        if (t === 'coredump') core++;
+        else heap++;
+    });
+    document.getElementById('tabCntAll').textContent  = heap + core;
+    document.getElementById('tabCntHeap').textContent = heap;
+    document.getElementById('tabCntCore').textContent = core;
+}
+
 // ── 검색 + 페이지네이션 + 정렬 ────────────────────────────────
 var _allRows = [];
 var _filteredRows = [];
@@ -968,33 +1110,33 @@ function applyFilter() {
         customEnd = new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate()).getTime() + dayMs;
     }
 
-    _filteredRows = _allRows.filter(function(el) {
+    // 탭 카운트는 탭 필터 제외, 나머지 필터 적용 후 계산
+    var tabBaseRows = _allRows.filter(function(el) {
         if (!_showDeleted && el.getAttribute('data-deleted') === 'true') return false;
-
         if (q) {
             var name = (el.getAttribute('data-name') || '').toLowerCase();
             var srv  = (el.getAttribute('data-sort-server') || '').toLowerCase();
             if (name.indexOf(q) === -1 && srv.indexOf(q) === -1) return false;
         }
-
         if (server) {
             var rowServer = el.getAttribute('data-sort-server') || '';
-            if (server === '__local__') {
-                if (rowServer !== '') return false;
-            } else if (rowServer !== server) return false;
+            if (server === '__local__') { if (rowServer !== '') return false; }
+            else if (rowServer !== server) return false;
         }
-
         if (status && status !== 'all') {
-            var rowStatus = el.getAttribute('data-status') || '';
-            if (rowStatus !== status) return false;
+            if ((el.getAttribute('data-status') || '') !== status) return false;
         }
-
         var ts = parseFloat(el.getAttribute('data-sort-date')) || 0;
         if (periodThreshold > 0 && ts < periodThreshold) return false;
         if (customStart > 0 && ts < customStart) return false;
         if (customEnd > 0 && ts >= customEnd) return false;
-
         return true;
+    });
+    updateTabCounts(tabBaseRows);
+
+    _filteredRows = tabBaseRows.filter(function(el) {
+        if (_activeTab === 'all') return true;
+        return (el.getAttribute('data-file-type') || 'heapdump') === _activeTab;
     });
     _currentPage = 1;
     render();

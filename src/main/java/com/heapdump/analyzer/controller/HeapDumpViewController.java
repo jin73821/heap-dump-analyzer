@@ -9,7 +9,9 @@ import com.heapdump.analyzer.model.dto.DetectionAggregate;
 import com.heapdump.analyzer.model.dto.HistogramDiff;
 import com.heapdump.analyzer.model.dto.KpiDiff;
 import com.heapdump.analyzer.model.dto.SuspectDiff;
+import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.service.ComparisonHistoryService;
+import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapHistoryAggregator;
 import com.heapdump.analyzer.service.PdfReportService;
@@ -47,17 +49,20 @@ public class HeapDumpViewController {
     private final PdfReportService pdfReportService;
     private final HeapHistoryAggregator aggregator;
     private final ComparisonHistoryService comparisonHistoryService;
+    private final CoreDumpAnalyzerService coreDumpService;
 
     public HeapDumpViewController(HeapDumpAnalyzerService analyzerService,
                                   HeapDumpConfig config,
                                   PdfReportService pdfReportService,
                                   HeapHistoryAggregator aggregator,
-                                  ComparisonHistoryService comparisonHistoryService) {
+                                  ComparisonHistoryService comparisonHistoryService,
+                                  CoreDumpAnalyzerService coreDumpService) {
         this.analyzerService = analyzerService;
         this.config = config;
         this.pdfReportService = pdfReportService;
         this.aggregator = aggregator;
         this.comparisonHistoryService = comparisonHistoryService;
+        this.coreDumpService = coreDumpService;
     }
 
     // ── 메인 페이지 ──────────────────────────────────────────────
@@ -147,14 +152,21 @@ public class HeapDumpViewController {
         List<HeapDumpFile> files = analyzerService.listFiles();
         List<AnalysisHistoryItem> history = aggregator.buildHistory(files);
 
-        List<AnalysisHistoryItem> visible = isAdmin ? history :
+        List<AnalysisHistoryItem> heapVisible = isAdmin ? history :
                 history.stream().filter(h -> !h.isFileDeleted()).collect(Collectors.toList());
-        model.addAttribute("analysisHistory", visible);
+
+        // 코어 덤프 항목 병합
+        List<AnalysisHistoryItem> coreItems = buildCoreDumpHistory(isAdmin);
+        List<AnalysisHistoryItem> combined = new ArrayList<>(heapVisible);
+        combined.addAll(coreItems);
+        combined.sort(Comparator.comparingLong(AnalysisHistoryItem::getLastModified).reversed());
+
+        model.addAttribute("analysisHistory", combined);
         model.addAttribute("isAdmin", isAdmin);
         model.addAttribute("fileCount", files.size());
+        model.addAttribute("coreDumpCount", coreItems.stream().filter(h -> !h.isFileDeleted()).count());
 
-        // 실제 파일이 존재하는 행(fileDeleted=false)에 기반한 서버만 노출 — DB 잔존 기록 제외.
-        List<String> serverNames = visible.stream()
+        List<String> serverNames = heapVisible.stream()
                 .filter(h -> !h.isFileDeleted())
                 .map(AnalysisHistoryItem::getServerName)
                 .filter(n -> n != null && !n.isEmpty())
@@ -171,7 +183,7 @@ public class HeapDumpViewController {
         model.addAttribute("diskSize", FormatUtils.formatBytes(diskBytes));
         model.addAttribute("hasCompressed", originalBytes != diskBytes);
 
-        long analyzedCount = visible.stream()
+        long analyzedCount = combined.stream()
             .filter(h -> "SUCCESS".equals(h.getStatus())).count();
         model.addAttribute("analyzedCount", analyzedCount);
 
@@ -181,6 +193,70 @@ public class HeapDumpViewController {
         model.addAttribute("allowAllExtensions", analyzerService.isAllowAllExtensions());
 
         return "files";
+    }
+
+    private List<AnalysisHistoryItem> buildCoreDumpHistory(boolean isAdmin) {
+        List<AnalysisHistoryItem> result = new ArrayList<>();
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+        List<CoreDumpAnalysisEntity> entities = coreDumpService.getHistory();
+        Set<String> processedNames = new HashSet<>();
+
+        File dumpDir = coreDumpService.dumpFilesDir();
+
+        for (CoreDumpAnalysisEntity e : entities) {
+            boolean deleted = Boolean.TRUE.equals(e.getFileDeleted());
+            if (!isAdmin && deleted) continue;
+
+            AnalysisHistoryItem item = new AnalysisHistoryItem();
+            item.setFileType("coredump");
+            item.setId(e.getId());
+            item.setFilename(e.getFilename());
+            item.setStatus(e.getStatus());
+            item.setFileDeleted(deleted);
+            if (e.getAnalysisTimeMs() != null) item.setAnalysisTime(e.getAnalysisTimeMs());
+
+            File f = new File(dumpDir, e.getFilename());
+            if (f.exists()) {
+                item.setFormattedSize(FormatUtils.formatBytes(f.length()));
+                item.setSizeBytes(f.length());
+                item.setFormattedDate(sdf.format(new Date(f.lastModified())));
+                item.setLastModified(f.lastModified());
+            } else {
+                item.setFileDeleted(true);
+                long fb = e.getFileSize() != null ? e.getFileSize() : 0;
+                item.setFormattedSize(fb > 0 ? FormatUtils.formatBytes(fb) : "-");
+                item.setSizeBytes(fb);
+                if (e.getCreatedAt() != null) {
+                    item.setFormattedDate(e.getCreatedAt().format(
+                            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+                    item.setLastModified(e.getCreatedAt()
+                            .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
+                }
+            }
+            processedNames.add(e.getFilename());
+            result.add(item);
+        }
+
+        // DB 미등록 파일 (dumpfiles/ 직접 접근)
+        File[] files = dumpDir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                String name = f.getName();
+                if (name.startsWith(".") || name.endsWith(".exec") || !f.isFile()) continue;
+                if (processedNames.contains(name)) continue;
+                AnalysisHistoryItem item = new AnalysisHistoryItem();
+                item.setFileType("coredump");
+                item.setFilename(name);
+                item.setStatus("NOT_ANALYZED");
+                item.setFileDeleted(false);
+                item.setFormattedSize(FormatUtils.formatBytes(f.length()));
+                item.setSizeBytes(f.length());
+                item.setFormattedDate(sdf.format(new Date(f.lastModified())));
+                item.setLastModified(f.lastModified());
+                result.add(item);
+            }
+        }
+        return result;
     }
 
     // ── 분석 이력 페이지 ─────────────────────────────────────────

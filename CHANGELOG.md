@@ -1,5 +1,166 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-24] History 페이지 — 분석결과 목록 파일명 폰트를 Files 페이지와 통일
+
+**대상:**
+- `src/main/resources/templates/history.html`
+
+### 변경 내용
+- `.hi-name` 클래스에서 `font-family: 'JetBrains Mono', Consolas, monospace; font-size: 13px;` 제거
+- Files 페이지의 `.fname` 클래스(font-family 미지정, 기본 sans-serif 상속)와 동일하게 변경
+
+---
+
+## [2026-06-23] Files 페이지 — 코어 덤프 다운로드·삭제 버튼 추가
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/controller/CoreDumpApiController.java`
+- `src/main/resources/templates/files.html`
+
+### 변경 내용
+
+**백엔드 (`CoreDumpApiController.java`):**
+- `GET /api/core-dump/download/{filename}` 엔드포인트 추가
+  - `/opt/coredumps/dumpfiles/` 에서 파일 서빙 (`Content-Disposition: attachment`)
+  - 파일 미존재 시 404
+
+**프론트엔드 (`files.html`):**
+- 코어 덤프 행에 다운로드 버튼 추가 (`!fileDeleted` 조건)
+  - `showDownloadModal(filename, size, '', '', true)` 호출 → `_dlIsCore=true`
+  - `btnConfirmDl` 핸들러: `_dlIsCore` 시 `/api/core-dump/download/{filename}` blob 다운로드
+- 코어 덤프 행에 삭제 버튼 추가 (`!fileDeleted` 조건)
+  - `confirmCoreDumpDelete(filename)` 호출 → `_delIsCore=true`
+  - 삭제 모달 문구 동적 전환: "코어 덤프 파일과 분석 결과가 함께 삭제됩니다."
+  - `btnConfirmDel` 핸들러: `_delIsCore` 시 `DELETE /api/core-dump/{filename}` 호출 후 페이지 새로고침
+
+---
+
+## [2026-06-23] 코어 덤프 업로드 후 코어 덤프 페이지 업로드 카드 사전 등록
+
+**대상:**
+- `src/main/resources/static/js/upload-queue.js`
+- `src/main/resources/templates/files.html`
+- `src/main/resources/templates/index.html`
+- `src/main/resources/templates/core-dump/index.html`
+
+### 변경 내용
+
+- `upload-queue.js` `getLastQueueTypes()`: `filename` 필드 추가
+- `files.html` / `index.html` `onUploadQueueDone`: 단일 코어 덤프 업로드 성공 시 `/core-dump?file={filename}` 으로 이동
+- `core-dump/index.html`:
+  - DOMContentLoaded 시 `?file` URL 파라미터 감지
+  - 파라미터 있으면 업로드 카드에 파일명 표시 + `has-file` 스타일 적용 + 버튼 활성화 + 안내 문구 표시
+  - `URL history.replaceState`로 파라미터 제거 (새로고침 재진입 방지)
+  - `startUpload()`: `_preloadedFilename` 있으면 재업로드 없이 바로 `/core-dump/progress/{filename}` 이동
+  - 새 파일 직접 선택 시 `_preloadedFilename` 초기화 → 기존 업로드 흐름 유지
+
+---
+
+## [2026-06-23] 코어 덤프 업로드 후 자동으로 코어 덤프 페이지 이동
+
+**대상:**
+- `src/main/resources/static/js/upload-queue.js`
+- `src/main/resources/templates/files.html`
+- `src/main/resources/templates/index.html`
+
+### 변경 내용
+
+- `upload-queue.js`: `UploadQueue.getLastQueueTypes()` 공개 — 마지막 업로드 배치의 파일 타입·상태 배열 반환
+- `files.html` / `index.html`: `window.onUploadQueueDone` 콜백 등록
+  - 업로드 완료 모달 "확인" 클릭 시:
+    - 성공한 파일이 **코어 덤프만** 있는 경우 → `/core-dump` 페이지로 이동
+    - 힙덤프가 1개라도 포함된 경우 (또는 혼합) → 현재 페이지 새로고침 (기존 동작 유지)
+
+---
+
+## [2026-06-23] 업로드 자동 분류 — 코어 덤프 패턴 감지 및 탭별 강제 분류
+
+**대상:**
+- `src/main/resources/static/js/upload-queue.js`
+- `src/main/resources/templates/files.html`
+
+### 변경 내용
+
+**`upload-queue.js`:**
+- `_uploadMode` 변수 추가 (`'auto'` | `'heapdump'` | `'coredump'`)
+- `isCoreDumpFilename(name)` — `core.*`, `*.core`, `core` 정확히 일치 패턴 감지
+- `resolveFileType(name)` — 모드와 파일명으로 `'heapdump'` | `'coredump'` 결정
+- `enqueueFiles()` 확장자 검사 개선: `coredump` 타입은 확장자 제한 없음
+- 큐 아이템에 `fileType` 필드 추가
+- `startDuplicateChecks()`: 코어 덤프는 중복 검사 건너뜀 (저장 경로 다름)
+- `processNextInQueue()`: `fileType === 'coredump'` 시 `/api/core-dump/upload` + `coreFile` 파라미터로 라우팅
+- `UploadQueue.setUploadMode(mode)` 공개 API 추가
+
+**`files.html`:**
+- `onTabClick()`: 탭 변경 시 `UploadQueue.setUploadMode()` 호출
+  - ALL 탭 → `'auto'` (파일명 패턴으로 자동 판별)
+  - Heapdump 탭 → `'heapdump'` (항상 힙덤프)
+  - Coredump 탭 → `'coredump'` (항상 코어 덤프)
+- 탭 변경 시 `<input accept>` 속성도 동기화 (Coredump 탭: 제한 없음)
+
+---
+
+## [2026-06-23] Target Servers 스캔 결과에 덤프파일 날짜/시간 표시
+
+**대상:**
+- `src/main/resources/templates/servers.html`
+
+### 변경 내용
+
+**프론트엔드 (`servers.html`):**
+- `renderScanResultsHtml()` 함수에서 파일명 아래에 날짜/시간 표시 추가
+- `f.date` 필드(예: `"Jun 15 14:23"`, `"Jun 15 2024"`) 를 파일명 아래 회색 소자로 렌더링
+- 날짜가 없는 경우(구버전 파서 호환) 미표시 처리 (`f.date` falsy 시 빈 문자열)
+- `parseLsLine()`이 이미 `ls -la` 출력의 5·6·7번째 필드를 `date`로 반환하고 있으므로 백엔드 변경 불필요
+
+---
+
+## [2026-06-23] Analysis Files — ALL / Heapdump / Coredump 탭 추가
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/model/dto/AnalysisHistoryItem.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/resources/templates/files.html`
+
+### 변경 내용
+
+**백엔드:**
+- `AnalysisHistoryItem`에 `fileType` 필드 추가 (기본값 `"heapdump"`, 코어 덤프 항목은 `"coredump"`)
+- `HeapDumpViewController`에 `CoreDumpAnalyzerService` 주입 → `buildCoreDumpHistory()` 메서드 추가
+  - `/opt/coredumps/dumpfiles/` 디렉토리 파일 + `core_dump_analysis_history` DB 레코드 통합
+  - 날짜 역순으로 힙덤프 목록과 병합하여 `analysisHistory`로 전달
+  - 관리자: deleted 항목 포함 / 일반 사용자: fileDeleted=false만 표시
+
+**프론트엔드 (`files.html`):**
+- 테이블 상단에 **ALL / Heapdump / Coredump** 탭 추가 (`type-tabs`)
+- 탭 클릭 시 `data-file-type` 속성으로 행 필터링 (JS `onTabClick()` → `applyFilter()`)
+- 탭 카운트 배지: 나머지 필터(검색·서버·기간·상태) 적용 후 타입별 카운트 실시간 표시
+- 코어 덤프 행 파일명 옆 `CORE` 황색 배지 표시
+- 코어 덤프 액션 버튼 분리:
+  - SUCCESS: `/core-dump/analyze/{filename}` View 버튼
+  - ERROR/NOT_ANALYZED: `/core-dump` 이동 버튼
+  - 힙덤프 전용 Download·Delete 버튼은 코어 덤프 행에 미표시
+
+---
+
+## [2026-06-23] 빌드 오류 수정 + Files 다운로드 로그인 이탈 버그 수정
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/FileManagementService.java`
+- `src/main/resources/templates/files.html`
+
+### 변경 내용
+
+**빌드 오류 수정:**
+- `FileManagementService.listFiles()` 내 `FilenameValidator.isAllowAllExtensions()` 호출 시 import 누락 → `import com.heapdump.analyzer.util.FilenameValidator` 추가
+
+**Files 다운로드 로그인 이탈 버그 수정:**
+- 기존: `window.location.href` 방식으로 `/download/{filename}` 직접 페이지 이동 → 세션 만료 또는 브라우저 종류에 따라 Spring Security가 `/login`으로 302 리다이렉트하면 사용자가 로그인 페이지로 이탈
+- 수정: `fetch(..., {credentials:'same-origin'}) → r.blob() → URL.createObjectURL → a.click()` blob 다운로드 방식으로 전환 (CLAUDE.md 권장 패턴)
+  - 페이지 이동 없이 다운로드 처리 (현재 페이지 유지)
+  - 세션 만료 시 `Content-Disposition: attachment` 부재 감지 → `window.location.href = '/login'` 으로 명시적 안내
+  - 다운로드 실패 시 `alert()` 오류 메시지 표시
+
 ## [2026-06-19] Core Dump — 코드 리팩토링 (uploadedBy 설정·감사로깅·CSS 중복 제거)
 
 **대상:**

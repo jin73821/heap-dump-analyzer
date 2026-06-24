@@ -25,6 +25,7 @@ public class AnalysisHistoryItem {
     private String  aiInsightSeverity;
     private long    analyzedAtEpoch;
     private String  dumpCreationTime;
+    private String  fileType = "heapdump";
 
     public Long    getId()            { return id; }
     public void    setId(Long v)              { id = v; }
@@ -74,4 +75,6 @@ public class AnalysisHistoryItem {
     public void    setAnalyzedAtEpoch(long v) { analyzedAtEpoch = v; }
     public String  getDumpCreationTime() { return dumpCreationTime; }
     public void    setDumpCreationTime(String v) { dumpCreationTime = v; }
+    public String  getFileType()         { return fileType; }
+    public void    setFileType(String v)          { fileType = v; }
 }

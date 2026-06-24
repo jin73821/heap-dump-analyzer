@@ -23,6 +23,7 @@
     var _uploading = false;
     var _uploadCancelled = false;
     var _currentXhr = null;
+    var _uploadMode = 'auto'; // 'auto' | 'heapdump' | 'coredump'
 
     /* ── 작은 유틸 ── */
     function fmtB(b) {
@@ -89,6 +90,19 @@
         return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
     }
 
+    /* ── 코어 덤프 파일 판별 ── */
+    function isCoreDumpFilename(name) {
+        var lower = name.toLowerCase();
+        // core.* (core.1234 등) 또는 *.core (vmcore.core 등) 또는 정확히 "core"
+        return lower === 'core' || lower.startsWith('core.') || lower.endsWith('.core');
+    }
+    function resolveFileType(name) {
+        if (_uploadMode === 'heapdump') return 'heapdump';
+        if (_uploadMode === 'coredump') return 'coredump';
+        // auto: 파일명 패턴으로 자동 판별
+        return isCoreDumpFilename(name) ? 'coredump' : 'heapdump';
+    }
+
     /* ── 확장자 경고 모달 ── */
     function showExtWarning(filename, ext) {
         var overlay = document.getElementById('extWarningOverlay');
@@ -122,10 +136,16 @@
     function enqueueFiles(files) {
         if (_uploading) { toast('업로드가 진행 중입니다. 완료 후 다시 시도해주세요.', 'error'); return; }
         var valid = [], rejected = [], oversized = [];
-        var validExts = ['.hprof', '.bin', '.dump', '.hprof.gz', '.bin.gz', '.dump.gz'];
+        var heapExts = ['.hprof', '.bin', '.dump', '.hprof.gz', '.bin.gz', '.dump.gz'];
         for (var i = 0; i < files.length; i++) {
+            var ftype = resolveFileType(files[i].name);
             var lower = files[i].name.toLowerCase();
-            var extOk = global.ALLOW_ALL_EXT || validExts.some(function(ext) { return lower.endsWith(ext); });
+            var extOk;
+            if (ftype === 'coredump') {
+                extOk = true; // 코어 덤프는 확장자 제한 없음
+            } else {
+                extOk = global.ALLOW_ALL_EXT || heapExts.some(function(ext) { return lower.endsWith(ext); });
+            }
             if (!extOk) rejected.push(files[i].name);
             else if (files[i].size > global.MAX_UPLOAD_BYTES) oversized.push(files[i].name);
             else valid.push(files[i]);
@@ -192,7 +212,7 @@
             toast('최대 ' + _MAX_QUEUE + '개까지 동시 업로드 가능합니다. 처음 ' + _MAX_QUEUE + '개만 처리합니다.', 'error');
             valid = valid.slice(0, _MAX_QUEUE);
         }
-        _uploadQueue = valid.map(function(f) { return { file: f, uploadName: f.name, status: 'pending' }; });
+        _uploadQueue = valid.map(function(f) { return { file: f, uploadName: f.name, status: 'pending', fileType: resolveFileType(f.name) }; });
         fetch('/api/disk/check').then(function(r) { return r.json(); }).then(function(d) {
             var totalSize = valid.reduce(function(s, f) { return s + f.size; }, 0);
             if (d.usableSpaceBytes != null && totalSize > d.usableSpaceBytes) {
@@ -205,7 +225,7 @@
     function startDuplicateChecks(idx) {
         if (idx >= _uploadQueue.length) { startQueueUploads(); return; }
         var item = _uploadQueue[idx];
-        if (item.status === 'skipped') { startDuplicateChecks(idx + 1); return; }
+        if (item.status === 'skipped' || item.fileType === 'coredump') { startDuplicateChecks(idx + 1); return; }
         computePartialHash(item.file).then(function(hash) {
             item._hash = hash;
             fetch('/api/upload/check', {
@@ -452,10 +472,17 @@
             renderUploadModalList();
             processNextInQueue(idx + 1);
         });
-        xhr.open('POST', '/api/upload');
-        var fd = new FormData();
-        fd.append('file', item.file, item.uploadName);
-        xhr.send(fd);
+        if (item.fileType === 'coredump') {
+            xhr.open('POST', '/api/core-dump/upload');
+            var fd = new FormData();
+            fd.append('coreFile', item.file, item.uploadName);
+            xhr.send(fd);
+        } else {
+            xhr.open('POST', '/api/upload');
+            var fd = new FormData();
+            fd.append('file', item.file, item.uploadName);
+            xhr.send(fd);
+        }
     }
 
     function setUploadZoneDisabled(disabled, filename) {
@@ -533,6 +560,12 @@
     global.UploadQueue = {
         enqueueFiles: enqueueFiles,
         bindZone: bindZone,
+        setUploadMode: function(mode) { _uploadMode = mode; },
+        getLastQueueTypes: function() {
+            return _uploadQueue.map(function(item) {
+                return { fileType: item.fileType, status: item.status, filename: item.uploadName };
+            });
+        },
         toast: toast,
         fmtB: fmtB,
         fmtSpeed: fmtSpeed,

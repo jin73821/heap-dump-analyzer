@@ -1134,6 +1134,19 @@ function saveSetting(k,v) {
     toast('Setting saved','success');
 }
 
+window.onUploadQueueDone = function() {
+    var items = typeof UploadQueue !== 'undefined' ? UploadQueue.getLastQueueTypes() : [];
+    var doneCore = items.filter(function(i) { return i.fileType === 'coredump' && i.status === 'done'; });
+    var doneHeap = items.filter(function(i) { return i.fileType === 'heapdump' && i.status === 'done'; });
+    if (doneCore.length > 0 && doneHeap.length === 0) {
+        var url = '/core-dump';
+        if (doneCore.length === 1) url += '?file=' + encodeURIComponent(doneCore[0].filename);
+        window.location.href = url;
+    } else {
+        window.location.reload();
+    }
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('togAA');
     if (el && localStorage.getItem('autoAnalyze')==='true') el.checked = true;

@@ -288,12 +288,30 @@
 </div>
 
 <script>
+    var _preloadedFilename = null;
+
+    document.addEventListener('DOMContentLoaded', function() {
+        var params = new URLSearchParams(window.location.search);
+        var preFile = params.get('file');
+        if (preFile) {
+            _preloadedFilename = preFile;
+            document.getElementById('coreFileName').textContent = preFile;
+            document.getElementById('coreDropZone').classList.add('has-file');
+            document.getElementById('uploadBtn').disabled = false;
+            document.getElementById('uploadStatus').textContent = '✓ 서버 업로드 완료 — GDB 분석을 시작하세요.';
+            // URL에서 ?file 파라미터 제거 (새로고침 시 재진입 방지)
+            history.replaceState({}, document.title, window.location.pathname);
+        }
+    });
+
     function onCoreFileSelect(input) {
         var file = input.files[0];
         if (!file) return;
+        _preloadedFilename = null; // 새 파일 선택 시 preload 해제
         document.getElementById('coreFileName').textContent = file.name;
         document.getElementById('coreDropZone').classList.add('has-file');
         document.getElementById('uploadBtn').disabled = false;
+        document.getElementById('uploadStatus').textContent = '';
     }
 
     function onExecFileSelect(input) {
@@ -331,6 +349,11 @@
     });
 
     function startUpload() {
+        // 이미 서버에 업로드된 파일인 경우 바로 분석 페이지로 이동
+        if (_preloadedFilename) {
+            window.location.href = '/core-dump/progress/' + encodeURIComponent(_preloadedFilename);
+            return;
+        }
         var coreInput = document.getElementById('coreFileInput');
         if (!coreInput.files || !coreInput.files[0]) {
             alert('코어 덤프 파일을 선택해주세요.');

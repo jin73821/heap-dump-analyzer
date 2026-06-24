@@ -5,6 +5,9 @@ import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -91,6 +94,20 @@ public class CoreDumpApiController {
             return ResponseEntity.internalServerError().body(Map.of("status", "error",
                     "message", "업로드 중 오류가 발생했습니다: " + e.getMessage()));
         }
+    }
+
+    // ── 다운로드 ──────────────────────────────────────────────────
+
+    @GetMapping("/api/core-dump/download/{filename:.+}")
+    public ResponseEntity<Resource> download(@PathVariable String filename) {
+        String safe = analyzerService.validateCoreDumpFilename(filename);
+        File file = new File(analyzerService.dumpFilesDir(), safe);
+        if (!file.exists() || !file.isFile()) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + safe + "\"")
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .contentLength(file.length())
+                .body(new FileSystemResource(file));
     }
 
     // ── SSE 분석 진행 스트림 ──────────────────────────────────────

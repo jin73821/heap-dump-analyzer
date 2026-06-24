@@ -734,6 +734,21 @@ function scanServer(id, name) {
     });
 }
 
+function parseLsDate(s) {
+    if (!s) return '';
+    var MONTHS = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
+                  Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+    var parts = s.trim().split(/\s+/);
+    if (parts.length < 3) return s;
+    var mon = MONTHS[parts[0]] || '??';
+    var day = parts[1].length === 1 ? '0' + parts[1] : parts[1];
+    var third = parts[2];
+    if (third.indexOf(':') >= 0) {
+        return new Date().getFullYear() + '-' + mon + '-' + day + ' ' + third;
+    }
+    return third + '-' + mon + '-' + day;
+}
+
 function renderScanResultsHtml(files) {
     // 다중 경로 환경에서는 source 경로별로 그룹화. sourceDumpPath 미존재(레거시)면 단일 그룹.
     var groups = {};
@@ -754,8 +769,11 @@ function renderScanResultsHtml(files) {
         for (var i = 0; i < arr.length; i++) {
             var f = arr[i];
             html += '<div class="scan-file">';
-            html += '<span style="flex:1;font-weight:500">' + escHtml(f.filename) + '</span>';
-            html += '<span style="color:#6B7280;font-size:12px">' + escHtml(f.formattedSize) + '</span>';
+            html += '<span style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden">'
+                  + '<span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(f.filename) + '</span>'
+                  + (f.date ? '<span style="font-size:12px;color:#9CA3AF;flex-shrink:0;white-space:nowrap">' + escHtml(parseLsDate(f.date)) + '</span>' : '')
+                  + '</span>';
+            html += '<span style="color:#6B7280;font-size:12px;flex-shrink:0">' + escHtml(f.formattedSize) + '</span>';
             if (f.transferred && f.analyzed) {
                 html += '<span style="font-size:11px;color:#059669;font-weight:600">전송됨(분석완료)</span>';
             } else if (f.transferred) {

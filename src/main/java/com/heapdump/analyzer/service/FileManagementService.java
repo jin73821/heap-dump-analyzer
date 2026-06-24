@@ -3,6 +3,7 @@ package com.heapdump.analyzer.service;
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.HeapDumpFile;
+import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -211,7 +212,7 @@ public class FileManagementService {
     // ── 조회 ──────────────────────────────────────────────────────
 
     public List<HeapDumpFile> listFiles() {
-        return listFiles(false);
+        return listFiles(FilenameValidator.isAllowAllExtensions());
     }
 
     /**
