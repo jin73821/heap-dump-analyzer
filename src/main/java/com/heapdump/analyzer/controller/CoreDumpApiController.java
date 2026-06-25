@@ -68,12 +68,17 @@ public class CoreDumpApiController {
             coreFile.transferTo(dest);
             logger.info("[CoreDump] 코어 파일 업로드: {} ({} bytes) by {}", safe, dest.length(), who);
 
-            // 실행 파일 저장 (선택)
+            // 실행 파일 저장 (선택) — 원본 파일명 유지 + 페어링 등록
             String executableName = null;
             if (execFile != null && !execFile.isEmpty()) {
-                File execDest = new File(dumpFilesDir, safe + ".exec");
+                String origExec = execFile.getOriginalFilename();
+                String safeExec = (origExec != null && !origExec.isBlank())
+                        ? analyzerService.validateCoreDumpFilename(origExec)
+                        : safe + ".exec";
+                File execDest = new File(dumpFilesDir, safeExec);
                 execFile.transferTo(execDest);
-                executableName = safe + ".exec";
+                analyzerService.saveExecPairing(safe, safeExec);
+                executableName = safeExec;
                 logger.info("[CoreDump] 실행 파일 업로드: {} ({} bytes) by {}",
                         executableName, execDest.length(), who);
             }
@@ -141,6 +146,7 @@ public class CoreDumpApiController {
 
     @DeleteMapping("/api/core-dump/{filename:.+}")
     public ResponseEntity<Map<String, Object>> deleteDump(@PathVariable String filename,
+                                                          @RequestParam(defaultValue = "true") boolean deleteFile,
                                                           Principal principal) {
         String who = principal != null ? principal.getName() : "unknown";
         String safe;
@@ -151,11 +157,17 @@ public class CoreDumpApiController {
                     "message", e.getMessage()));
         }
         try {
-            analyzerService.deleteDump(safe);
-            logger.info("[CoreDump] action=delete, filename={}, by={}", safe, who);
+            if (deleteFile) {
+                analyzerService.deleteDump(safe);
+                logger.info("[CoreDump] action=delete, filename={}, deleteFile=true, by={}", safe, who);
+            } else {
+                analyzerService.deleteHistoryOnly(safe);
+                logger.info("[CoreDump] action=delete-history-only, filename={}, deleteFile=false, by={}", safe, who);
+            }
             return ResponseEntity.ok(Map.of("status", "ok", "filename", safe));
         } catch (Exception e) {
-            logger.error("[CoreDump] 삭제 실패: filename={}, by={}, reason={}", safe, who, e.getMessage(), e);
+            logger.error("[CoreDump] 삭제 실패: filename={}, deleteFile={}, by={}, reason={}",
+                    safe, deleteFile, who, e.getMessage(), e);
             return ResponseEntity.internalServerError().body(Map.of("status", "error",
                     "message", "삭제 중 오류가 발생했습니다: " + e.getMessage()));
         }
@@ -205,6 +217,30 @@ public class CoreDumpApiController {
         logger.info("[CoreDump] action=reanalyze, filename={}, by={}", safe, who);
         return ResponseEntity.ok(Map.of("status", "ok", "filename", safe,
                 "message", "/core-dump/progress/" + safe + " 로 이동하여 재분석을 시작하세요."));
+    }
+
+    // ── exec 페어링 해제 ──────────────────────────────────────────
+
+    @DeleteMapping("/api/core-dump/{filename:.+}/exec")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> unpairExec(
+            @PathVariable String filename, Principal principal) {
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", e.getMessage()));
+        }
+        String who = principal != null ? principal.getName() : "unknown";
+        try {
+            analyzerService.unpairExec(safe);
+            logger.info("[CoreDump] action=unpair-exec, filename={}, by={}", safe, who);
+            return ResponseEntity.ok(Map.of("status", "ok", "filename", safe));
+        } catch (java.io.IOException e) {
+            logger.error("[CoreDump] exec 페어링 해제 실패: filename={}, reason={}", safe, e.getMessage());
+            return ResponseEntity.internalServerError().body(
+                    Map.of("status", "error", "message", "페어링 해제 실패: " + e.getMessage()));
+        }
     }
 
     // ── AI 크래시 분석 ────────────────────────────────────────────

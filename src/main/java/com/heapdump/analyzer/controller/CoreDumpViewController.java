@@ -30,6 +30,7 @@ public class CoreDumpViewController {
     public String indexPage(Model model) {
         List<CoreDumpAnalysisEntity> history = analyzerService.getHistory();
         model.addAttribute("history", history);
+        model.addAttribute("coreDumpFiles", analyzerService.listExistingDumpFiles());
         return "core-dump/index";
     }
 

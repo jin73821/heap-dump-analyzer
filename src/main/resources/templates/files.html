@@ -237,6 +237,9 @@
         .fb.cl:hover { border-color: #A78BFA; background: #F5F3FF; }
         .fb.cl:hover svg { stroke: #7C3AED; }
 
+        /* 초기 렌더링 flash 방지 — JS 필터 적용 전까지 행 숨김 */
+        #fileTableBody.tb-loading tr { display: none; }
+
         /* exec 서브 row */
         .exec-subrow { background: #F5F3FF !important; }
         .exec-subrow td { padding-top: 5px !important; padding-bottom: 5px !important; font-size: 12px; color: #6B7280; }
@@ -260,6 +263,10 @@
                              padding: 10px 12px; margin-bottom: 12px; }
         .exec-pair-section label { color: #6D28D9; }
         .exec-pair-section select { border-color: #C4B5FD; }
+        .classify-exec-warn { display:none; background:#FFF7ED; border:1px solid #FCD34D;
+                              border-radius:6px; padding:9px 12px; margin-bottom:12px;
+                              font-size:12px; color:#92400E; line-height:1.5; }
+        .classify-exec-warn strong { color:#B45309; }
         .exec-pair-notice { font-size: 11px; color: #7C3AED; margin-top: 4px; }
 
         @media (min-width: 1024px) {
@@ -557,7 +564,7 @@
                     <th>작업</th>
                 </tr>
             </thead>
-            <tbody id="fileTableBody">
+            <tbody id="fileTableBody" class="tb-loading">
                 <th:block th:each="h : ${analysisHistory}">
                 <tr th:classappend="${h.fileDeleted} ? 'fi-deleted'"
                     th:data-name="${h.filename}" th:data-deleted="${h.fileDeleted}"
@@ -577,6 +584,7 @@
                         <span th:if="${h.fileType == 'coredump' and h.hasExec}" class="exec-badge">EXEC</span>
                         <span th:if="${h.fileType == 'core'}" class="core-badge">CORE</span>
                         <span th:if="${h.fileType == 'exec'}" class="exec-badge">EXEC</span>
+                        <span th:if="${h.fileType == 'coreexec'}" class="exec-badge">EXEC</span>
                         <span th:if="${h.fileType == 'others'}" class="others-badge">OTHERS</span>
                         <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
                     </td>
@@ -667,6 +675,17 @@
                                onclick="confirmCoreDumpDelete(this.dataset.filename);return false;">
                                 <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                             </a>
+                            <!-- ── CoreExec (연결 해제된 실행파일) 액션 ── -->
+                            <a th:if="${h.fileType == 'coreexec' and !h.fileDeleted}" href="#" class="fb" title="Download"
+                               th:data-filename="${h.filename}" th:data-size="${h.formattedSize}"
+                               onclick="showDownloadModal(this.dataset.filename,this.dataset.size,'','',true);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
+                            </a>
+                            <a th:if="${h.fileType == 'coreexec' and !h.fileDeleted}" href="#" class="fb d" title="Delete"
+                               th:data-filename="${h.filename}"
+                               onclick="confirmCoreDumpDelete(this.dataset.filename);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
+                            </a>
                             <!-- ── Others / Exec 액션 ── -->
                             <a th:if="${(h.fileType == 'others' or h.fileType == 'exec') and h.status == 'SUCCESS'}"
                                th:href="@{/analyze/result/{f}(f=${h.filename})}"
@@ -699,9 +718,9 @@
                                onclick="confirmPurge(this.dataset.filename);return false;">
                                 <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                             </a>
-                            <!-- ── 분류 버튼 (모든 파일) ── -->
+                            <!-- ── 분류 버튼 ── -->
                             <a th:if="${!h.fileDeleted}" href="#" class="fb cl" title="파일 분류"
-                               th:attr="data-filename=${h.filename},data-current-type=${h.fileType},data-paired-exec=${h.pairedExecFilename != null ? h.pairedExecFilename : ''}"
+                               th:attr="data-filename=${h.filename},data-current-type=${h.fileType == 'coredump' ? 'core' : (h.fileType == 'coreexec' ? 'exec' : h.fileType)},data-paired-exec=${h.pairedExecFilename != null ? h.pairedExecFilename : ''}"
                                onclick="openClassifyModal(this.dataset.filename, this.dataset.currentType, this.dataset.pairedExec); return false;">
                                 <svg viewBox="0 0 12 12"><path d="M1 3h7M1 6h5M1 9h3"/><path d="M9 5l2 2-2 2"/></svg>
                             </a>
@@ -743,9 +762,17 @@
                                onclick="showDownloadModal(this.dataset.filename,this.dataset.size,'','',this.dataset.isCore==='true');return false;">
                                 <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
                             </a>
-                            <button th:if="${h.fileType == 'core'}" class="unpair-btn" title="연결 해제"
+                            <button th:if="${h.fileType == 'core' or h.fileType == 'coredump'}"
+                                    class="unpair-btn" title="연결 해제"
                                     th:data-core="${h.filename}"
-                                    onclick="confirmUnpair(this.dataset.core)">연결해제</button>
+                                    th:data-coretype="${h.fileType}"
+                                    onclick="confirmUnpair(this.dataset.core, this.dataset.coretype)">연결해제</button>
+                            <!-- ── exec 서브 row 분류 버튼 ── -->
+                            <a th:if="${(h.fileType == 'core' or h.fileType == 'coredump') and !execItem.fileDeleted}" href="#" class="fb cl" title="파일 분류"
+                               th:data-filename="${execItem.filename}"
+                               onclick="openClassifyModal(this.dataset.filename, 'exec', ''); return false;">
+                                <svg viewBox="0 0 12 12"><path d="M1 3h7M1 6h5M1 9h3"/><path d="M9 5l2 2-2 2"/></svg>
+                            </a>
                         </div>
                     </td>
                 </tr>
@@ -832,6 +859,10 @@
                 <option th:each="ef : ${execFilenames}" th:value="${ef}" th:text="${ef}"></option>
             </select>
             <div class="exec-pair-notice" style="margin-top:6px">코어파일 row 하단에 실행파일이 연결되어 표시됩니다.</div>
+        </div>
+        <div class="classify-exec-warn" id="classifyExecWarn">
+            ⚠ 이 파일은 실행파일 <strong id="classifyExecWarnName"></strong>과(와) 연결되어 있습니다.<br>
+            유형을 변경하면 <strong>실행파일 연결이 해제</strong>됩니다. 계속하시겠습니까?
         </div>
         <div class="modal-btns">
             <button class="btn-cancel" onclick="closeClassifyModal()">취소</button>
@@ -1179,6 +1210,7 @@ window.onUploadQueueDone = function() {
 
 function onTabClick(btn) {
     _activeTab = btn.getAttribute('data-tab');
+    localStorage.setItem('filesActiveTab', _activeTab);
     document.querySelectorAll('.type-tab').forEach(function(t) { t.classList.remove('active'); });
     btn.classList.add('active');
     var modeMap = { all: 'auto', heapdump: 'heapdump', coredump: 'coredump', others: 'auto' };
@@ -1200,7 +1232,7 @@ function updateTabCounts(rows) {
     var heap = 0, core = 0, others = 0;
     rows.forEach(function(r) {
         var t = r.getAttribute('data-file-type') || 'heapdump';
-        if (t === 'coredump' || t === 'core') core++;
+        if (t === 'coredump' || t === 'core' || t === 'coreexec') core++;
         else if (t === 'others' || t === 'exec') others++;
         else heap++;
     });
@@ -1213,17 +1245,20 @@ function updateTabCounts(rows) {
 // ── 파일 분류 모달 ────────────────────────────────────────────
 
 var _classifyFilename = '';
+var _classifyCurrentType = '';
 var _classifyCurrentPairedExec = '';
 
 function openClassifyModal(filename, currentType, pairedExec) {
     _classifyFilename = filename;
+    _classifyCurrentType = currentType || 'others';
     _classifyCurrentPairedExec = pairedExec || '';
     document.getElementById('classifyModalFilename').textContent = filename;
     var sel = document.getElementById('classifyTypeSelect');
-    sel.value = currentType || 'others';
+    sel.value = _classifyCurrentType;
     // exec pair select 초기값: 현재 페어링된 exec (있으면)
     var pairSel = document.getElementById('execPairSelect');
     pairSel.value = _classifyCurrentPairedExec || '';
+    document.getElementById('classifyExecWarn').style.display = 'none';
     onClassifyTypeChange();
     document.getElementById('classifyModal').classList.add('open');
 }
@@ -1231,12 +1266,23 @@ function openClassifyModal(filename, currentType, pairedExec) {
 function closeClassifyModal() {
     document.getElementById('classifyModal').classList.remove('open');
     _classifyFilename = '';
+    _classifyCurrentType = '';
     _classifyCurrentPairedExec = '';
 }
 
 function onClassifyTypeChange() {
     var type = document.getElementById('classifyTypeSelect').value;
     document.getElementById('execPairSection').style.display = (type === 'core') ? '' : 'none';
+    // 실행파일 연결된 코어파일을 다른 유형으로 변경 시 경고
+    var warn = document.getElementById('classifyExecWarn');
+    var hasExec = !!_classifyCurrentPairedExec;
+    var typeChanged = type !== _classifyCurrentType;
+    if (hasExec && typeChanged) {
+        document.getElementById('classifyExecWarnName').textContent = _classifyCurrentPairedExec;
+        warn.style.display = '';
+    } else {
+        warn.style.display = 'none';
+    }
 }
 
 function submitClassify() {
@@ -1288,9 +1334,11 @@ function submitClassify() {
 // ── 연결 해제 ─────────────────────────────────────────────────
 
 var _unpairCoreName = '';
+var _unpairCoreType = '';
 
-function confirmUnpair(coreFilename) {
+function confirmUnpair(coreFilename, coreType) {
     _unpairCoreName = coreFilename;
+    _unpairCoreType = coreType || 'core';
     document.getElementById('unpairCoreName').textContent = coreFilename;
     document.getElementById('unpairModal').classList.add('open');
 }
@@ -1305,8 +1353,10 @@ document.getElementById('btnConfirmUnpair').onclick = function() {
     var headers = {};
     var csrfToken = Common.csrfToken();
     if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;
-    fetch('/api/files/' + encodeURIComponent(_unpairCoreName) + '/pair', {
-        method: 'DELETE', headers: headers
+    var url = _unpairCoreType === 'coredump'
+        ? '/api/core-dump/' + encodeURIComponent(_unpairCoreName) + '/exec'
+        : '/api/files/' + encodeURIComponent(_unpairCoreName) + '/pair';
+    fetch(url, { method: 'DELETE', headers: headers
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.status === 'ok') { closeUnpairModal(); location.reload(); }
         else alert('연결 해제 실패: ' + (d.message || '알 수 없는 오류'));
@@ -1386,6 +1436,22 @@ function initRows() {
         storageKey: 'files',
         onChange: function() { applyFilter(); }
     });
+    // 저장된 탭 복원 (작업 후 페이지 새로고침 시 이전 탭 유지)
+    var savedTab = localStorage.getItem('filesActiveTab') || 'all';
+    var savedTabBtn = document.querySelector('.type-tab[data-tab="' + savedTab + '"]');
+    if (savedTabBtn && savedTab !== 'all') {
+        _activeTab = savedTab;
+        document.querySelectorAll('.type-tab').forEach(function(t) { t.classList.remove('active'); });
+        savedTabBtn.classList.add('active');
+        var modeMap = { heapdump: 'heapdump', coredump: 'coredump', others: 'auto' };
+        if (typeof UploadQueue !== 'undefined') UploadQueue.setUploadMode(modeMap[_activeTab] || 'auto');
+        var heapAccept = ALLOW_ALL_EXT ? '' : '.hprof,.bin,.dump,.gz';
+        document.querySelectorAll('#fileInput, #fileInputBanner').forEach(function(el) {
+            el.setAttribute('accept', _activeTab === 'coredump' ? '' : heapAccept);
+        });
+        var table = document.getElementById('filesTable');
+        if (table && _activeTab === 'others') table.classList.add('hide-ai-col');
+    }
     sortRows();
     updateSortIndicators();
     applyFilter();
@@ -1501,7 +1567,7 @@ function applyFilter() {
         var t = el.getAttribute('data-file-type') || 'heapdump';
         if (_activeTab === 'others')   return (t === 'others' || t === 'exec');
         if (_activeTab === 'heapdump') return t === 'heapdump';
-        if (_activeTab === 'coredump') return (t === 'coredump' || t === 'core');
+        if (_activeTab === 'coredump') return (t === 'coredump' || t === 'core' || t === 'coreexec');
         return t === _activeTab;
     });
     _currentPage = 1;
@@ -1540,6 +1606,7 @@ function gotoPage(p) {
 }
 
 function render() {
+    document.getElementById('fileTableBody').classList.remove('tb-loading');
     _allRows.forEach(function(el) { el.style.display = 'none'; });
     // sub-row도 기본 숨김
     Object.keys(_subrowMap).forEach(function(k) { _subrowMap[k].style.display = 'none'; });

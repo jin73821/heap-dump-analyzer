@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.*;
+import com.heapdump.analyzer.model.dto.AnalysisHistoryItem;
 import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.repository.CoreDumpAnalysisRepository;
+import com.heapdump.analyzer.util.FormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -122,15 +124,101 @@ public class CoreDumpAnalyzerService {
         return repository.findByFilename(filename);
     }
 
+    // ── exec 파일 페어링 ───────────────────────────────────────────
+
+    /**
+     * exec 파일명 조회.
+     * - properties에 키 존재 + 비어있지 않은 값 → 신규 스타일 페어링
+     * - properties에 키 존재 + 빈 값("") → 명시적 해제 마커 → null 반환(레거시 폴백 차단)
+     * - properties에 키 없음 → 레거시 {coreName}.exec 파일 존재 여부 폴백
+     */
+    public String getExecFilename(String coreFilename) {
+        Map<String, String> pairings = heapFacade.loadCoreExecPairings();
+        if (pairings.containsKey(coreFilename)) {
+            String paired = pairings.get(coreFilename);
+            if (paired == null || paired.isEmpty()) return null; // 명시적 해제
+            return new File(dumpFilesDir(), paired).exists() ? paired : null;
+        }
+        // properties에 없을 때만 레거시 폴백 사용
+        File legacyExec = new File(dumpFilesDir(), coreFilename + ".exec");
+        return legacyExec.exists() ? coreFilename + ".exec" : null;
+    }
+
+    public void saveExecPairing(String coreFilename, String execFilename) throws IOException {
+        heapFacade.saveCoreExecPairing(coreFilename, execFilename);
+        logger.info("[CoreDump] exec 페어링 저장: {} → {}", coreFilename, execFilename);
+    }
+
+    /**
+     * exec 페어링 해제. 실행파일 본체는 삭제하지 않음 — Files 페이지 코어덤프 탭에 계속 표시.
+     * 레거시 .exec 파일이 있으면 빈 값("")으로 마킹하여 레거시 폴백을 명시적으로 차단.
+     */
+    public void unpairExec(String coreFilename) throws IOException {
+        File legacyExec = new File(dumpFilesDir(), coreFilename + ".exec");
+        if (legacyExec.exists()) {
+            heapFacade.saveCoreExecPairing(coreFilename, ""); // 명시적 해제 마커
+        } else {
+            heapFacade.removeCoreExecPairing(coreFilename);
+        }
+        logger.info("[CoreDump] exec 페어링 해제 (파일 보존): {}", coreFilename);
+    }
+
+    /**
+     * dumpfiles/ 에 실제 존재하는 코어 덤프 파일 목록 (인덱스 좌측 패널용).
+     * .exec / dotfile / 디렉토리 제외. DB 이력과 파일명으로 조인해 status 채움(없으면 NOT_ANALYZED).
+     * 최신 수정순(내림차순) 정렬.
+     */
+    public List<AnalysisHistoryItem> listExistingDumpFiles() {
+        File dumpDir = dumpFilesDir();
+        File[] files = dumpDir.listFiles();
+        if (files == null) return Collections.emptyList();
+
+        Map<String, CoreDumpAnalysisEntity> byName = new HashMap<>();
+        for (CoreDumpAnalysisEntity e : getHistory()) {
+            byName.put(e.getFilename(), e);
+        }
+
+        List<AnalysisHistoryItem> result = new ArrayList<>();
+        for (File f : files) {
+            String name = f.getName();
+            if (name.startsWith(".") || name.endsWith(".exec") || !f.isFile()) continue;
+
+            AnalysisHistoryItem item = new AnalysisHistoryItem();
+            item.setFileType("coredump");
+            item.setFilename(name);
+            item.setSizeBytes(f.length());
+            item.setFormattedSize(FormatUtils.formatBytes(f.length()));
+            item.setLastModified(f.lastModified());
+            String execFn = getExecFilename(name);
+            item.setHasExec(execFn != null);
+            if (execFn != null) item.setPairedExecFilename(execFn);
+
+            CoreDumpAnalysisEntity e = byName.get(name);
+            if (e != null) {
+                item.setId(e.getId());
+                item.setStatus(e.getStatus() != null ? e.getStatus() : "NOT_ANALYZED");
+            } else {
+                item.setStatus("NOT_ANALYZED");
+            }
+            result.add(item);
+        }
+        result.sort(Comparator.comparingLong(AnalysisHistoryItem::getLastModified).reversed());
+        return result;
+    }
+
     // ── 삭제 ──────────────────────────────────────────────────────
 
     public void deleteDump(String filename) {
         // filename은 호출자(컨트롤러)에서 이미 validateCoreDumpFilename()을 거친 값
-        // 파일 삭제
+        // 페어링된 exec 파일 삭제 (원본명 + 레거시 .exec 모두)
+        String execFn = getExecFilename(filename);
+        if (execFn != null) deleteQuietly(new File(dumpFilesDir(), execFn));
+        deleteQuietly(new File(dumpFilesDir(), filename + ".exec")); // 레거시 폴백
+        try { heapFacade.removeCoreExecPairing(filename); } catch (IOException e) {
+            logger.warn("[CoreDump] 페어링 정보 삭제 실패 (무시): {}", e.getMessage());
+        }
         File dumpFile = new File(dumpFilesDir(), filename);
-        File execFile = new File(dumpFilesDir(), filename + ".exec");
         deleteQuietly(dumpFile);
-        deleteQuietly(execFile);
         // 데이터 디렉토리 삭제
         deleteDirectoryQuietly(dataDir(filename));
         // DB 플래그
@@ -139,6 +227,24 @@ public class CoreDumpAnalyzerService {
             repository.save(e);
         });
         logger.info("[CoreDump] 삭제 완료: {}", filename);
+    }
+
+    /** 분석 이력(결과 디렉토리 + DB 상태)만 삭제하고 원본 파일은 보존. */
+    public void deleteHistoryOnly(String filename) {
+        deleteDirectoryQuietly(dataDir(filename));
+        deleteAiInsight(coreInsightKey(filename));
+        repository.findByFilename(filename).ifPresent(e -> {
+            e.setStatus("NOT_ANALYZED");
+            e.setCrashSignal(null);
+            e.setSignalDescription(null);
+            e.setCrashSummary(null);
+            e.setErrorMessage(null);
+            e.setAnalysisTimeMs(null);
+            e.setAnalyzedAt(null);
+            e.setFileDeleted(false);
+            repository.save(e);
+        });
+        logger.info("[CoreDump] 분석 이력 삭제(파일 보존) 완료: {}", filename);
     }
 
     private void deleteQuietly(File f) {
@@ -195,9 +301,9 @@ public class CoreDumpAnalyzerService {
                 return;
             }
 
-            // 2. 실행 파일 확인 (선택)
-            File execFile = new File(dumpFilesDir(), filename + ".exec");
-            String executableName = execFile.exists() ? filename + ".exec" : null;
+            // 2. 실행 파일 확인 (페어링 맵 우선, .exec 폴백)
+            String executableName = getExecFilename(filename);
+            File execFile = executableName != null ? new File(dumpFilesDir(), executableName) : null;
             logger.info("[CoreDump] 실행 파일: {}", executableName != null ? executableName : "없음 (시그널 제한 모드)");
 
             // 3. DB 레코드 생성/갱신
@@ -215,7 +321,7 @@ public class CoreDumpAnalyzerService {
             entity.setUploadedBy(uploadedBy);
             entity.setStatus("ANALYZING");
             entity.setExecutableName(executableName);
-            if (execFile.exists()) entity.setExecutableSize(execFile.length());
+            if (execFile != null && execFile.exists()) entity.setExecutableSize(execFile.length());
             repository.save(entity);
 
             // 4. tmp 디렉토리 준비
@@ -225,7 +331,7 @@ public class CoreDumpAnalyzerService {
             Files.copy(coreFile.toPath(), coreCopy.toPath(), StandardCopyOption.REPLACE_EXISTING);
 
             File execCopy = null;
-            if (execFile.exists()) {
+            if (execFile != null && execFile.exists()) {
                 execCopy = new File(tmpAnalysisDir, filename + ".exec");
                 Files.copy(execFile.toPath(), execCopy.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
@@ -494,13 +600,22 @@ public class CoreDumpAnalyzerService {
 
             if (l.contains("is not a core dump") || l.contains("file format not recognized")
                     || l.contains("No such file or directory") || l.contains("not a core file")) {
-                // vmcore(Linux 커널 크래시 덤프) 전용 안내
-                String userMsg = l;
+                // 사용자 친화적 에러 메시지 생성
+                String userMsg;
                 String fn = filename.toLowerCase();
                 if ((fn.startsWith("vmcore") || fn.equals("vmcore"))
                         && (l.contains("is not a core dump") || l.contains("file format not recognized"))) {
                     userMsg = "vmcore는 Linux 커널 크래시 덤프입니다. GDB로는 분석할 수 없으며, " +
-                              "'crash' 유틸리티로 분석하세요. (GDB 원문: " + l + ")";
+                              "'crash' 유틸리티로 분석하세요.";
+                } else if (l.contains("is not a core dump") || l.contains("file format not recognized")) {
+                    userMsg = "파일 형식을 인식할 수 없습니다. 유효한 코어 덤프 파일(.core, core.PID 등)인지 확인하세요. "
+                              + "일반 실행 파일이나 로그 파일은 분석할 수 없습니다.";
+                } else if (l.contains("No such file or directory")) {
+                    userMsg = "코어 덤프 파일 또는 실행 파일을 찾을 수 없습니다. 파일이 삭제되었거나 경로가 올바르지 않습니다.";
+                } else if (l.contains("not a core file")) {
+                    userMsg = "코어 덤프 파일 형식이 아닙니다. GDB가 지원하는 코어 덤프 파일(.core, core.PID)인지 확인하세요.";
+                } else {
+                    userMsg = "GDB가 파일을 인식하지 못했습니다: " + l;
                 }
                 logger.warn("[CoreDump] GDB 파일 인식 실패: filename={}, reason='{}'", filename, l);
                 result.setErrorMessage(userMsg);

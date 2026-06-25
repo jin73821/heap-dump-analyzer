@@ -78,6 +78,9 @@
         .timeline-dot.active  { background: #DBEAFE; color: #2563EB; animation: pulse 1.2s infinite; }
         .timeline-dot.done    { background: #D1FAE5; color: #059669; }
         .timeline-dot.error   { background: #FEE2E2; color: #DC2626; }
+        .timeline-dot.skipped { background: #F9FAFB; color: #D1D5DB; border: 1.5px dashed #E5E7EB; }
+        .timeline-item.step-skipped .timeline-label { color: #C4C9D4; }
+        .timeline-item.step-skipped .timeline-desc  { color: #D1D5DB; }
         @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(37,99,235,.3); } 50% { box-shadow: 0 0 0 8px rgba(37,99,235,0); } }
         .timeline-dot .dot-num { display: block; }
         .timeline-dot .dot-check { display: none; }
@@ -293,7 +296,7 @@
     var SSE_URL    = '/core-dump/analyze-progress/' + encodeURIComponent(FILENAME);
     var RESULT_URL = '/core-dump/analyze/' + encodeURIComponent(FILENAME);
 </script>
-<script th:src="@{/js/core-dump-progress.js?v=2026-06-25}"></script>
+<script th:src="@{/js/core-dump-progress.js?v=2026-06-26}"></script>
 
 </body>
 </html>

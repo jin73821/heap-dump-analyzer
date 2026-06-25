@@ -151,6 +151,106 @@
             .hi-item { flex-wrap: wrap; gap: 10px; }
             .hi-status-col { align-items: flex-start; }
         }
+
+        /* ── 인덱스 2-컬럼 레이아웃 (좌측 파일 패널 + 메인) ─────────── */
+        .cd-page { max-width: 1500px; }
+        .cd-index-layout { display: flex; align-items: flex-start; gap: 20px; }
+        .cd-index-main { flex: 1 1 0; min-width: 0; }
+
+        .cd-file-panel {
+            flex: 0 0 300px; width: 300px;
+            background: var(--cd-surface, #fff); border-radius: var(--cd-radius, 14px);
+            box-shadow: var(--cd-shadow-lg, 0 2px 12px rgba(0,0,0,.08));
+            padding: 18px 16px; position: sticky; top: 72px;
+            display: flex; flex-direction: column; max-height: calc(100vh - 92px);
+        }
+        .cd-file-panel-head {
+            display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+            font-size: 14px; font-weight: 700; color: #1F2937;
+        }
+        .cd-file-panel-count {
+            font-size: 11px; font-weight: 600; color: var(--cd-text-muted, #9CA3AF);
+            background: #F3F4F6; border-radius: 999px; padding: 1px 8px;
+        }
+        .cd-file-search {
+            display: flex; gap: 6px; margin-bottom: 12px;
+        }
+        .cd-file-search input {
+            flex: 1 1 0; min-width: 0; padding: 8px 10px; font-size: 12px;
+            border: 1.5px solid var(--cd-border, #e2e5ec); border-radius: 8px; outline: none;
+        }
+        .cd-file-search input:focus { border-color: var(--cd-primary, #2563eb); }
+        .cd-file-search-btn {
+            flex-shrink: 0; padding: 0 12px; font-size: 13px; cursor: pointer;
+            background: var(--cd-primary, #2563eb); color: #fff; border: none; border-radius: 8px;
+        }
+        .cd-file-search-btn:hover { background: #1D4ED8; }
+
+        .cd-file-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+        .cd-file-item {
+            display: flex; align-items: center; gap: 8px; cursor: grab;
+            padding: 9px 10px; border-radius: 10px;
+            border: 1.5px solid var(--cd-border, #e2e5ec); background: #FAFAFA;
+            transition: border-color .15s, background .15s, box-shadow .15s;
+        }
+        .cd-file-item:hover { background: #EFF6FF; border-color: #93C5FD; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
+        .cd-file-item.is-selected { background: #EFF6FF; border-color: var(--cd-primary, #2563eb); }
+        .cd-file-item:active { cursor: grabbing; }
+        .cd-file-grip { color: #CBD5E1; font-size: 14px; flex-shrink: 0; line-height: 1; }
+        .cd-file-info { flex: 1 1 0; min-width: 0; }
+        .cd-file-name {
+            font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700;
+            color: #1F2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .cd-file-meta { display: flex; align-items: center; gap: 6px; margin-top: 3px; flex-wrap: wrap; }
+        .cd-file-size { font-size: 10px; color: var(--cd-text-muted, #9CA3AF); white-space: nowrap; }
+        .cd-file-exec {
+            font-size: 9px; padding: 1px 5px; border-radius: 4px;
+            background: #EDE9FE; color: #5B21B6; font-weight: 700;
+        }
+        .cd-file-empty { text-align: center; padding: 28px 10px; color: #9CA3AF; font-size: 12px; }
+        .cd-file-noresult { text-align: center; padding: 16px 10px; color: #9CA3AF; font-size: 12px; display: none; }
+
+        @media (max-width: 900px) {
+            .cd-index-layout { flex-direction: column; }
+            .cd-file-panel {
+                flex: none; width: 100%; position: static; max-height: 340px; margin-bottom: 4px;
+            }
+        }
+
+        /* 삭제 확인 모달 */
+        #deleteDumpModal .modal-box {
+            padding: 28px 28px 24px; border-radius: 14px; width: 420px; max-width: 94vw;
+        }
+        #deleteDumpModal .modal-title {
+            font-size: 16px; font-weight: 700; color: #1F2937; margin-bottom: 6px;
+        }
+        #deleteDumpModal .modal-filename {
+            font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #6B7280;
+            background: #F3F4F6; border-radius: 6px; padding: 4px 10px;
+            word-break: break-all; margin-bottom: 16px; display: block;
+        }
+        #deleteDumpModal .modal-check-row {
+            display: flex; align-items: center; gap: 10px;
+            padding: 12px 14px; border-radius: 10px;
+            background: #FFF7ED; border: 1.5px solid #FED7AA; margin-bottom: 20px;
+        }
+        #deleteDumpModal .modal-check-row input[type=checkbox] {
+            width: 17px; height: 17px; accent-color: #DC2626; flex-shrink: 0; cursor: pointer;
+        }
+        #deleteDumpModal .modal-check-label {
+            font-size: 13px; font-weight: 600; color: #92400E; cursor: pointer; user-select: none;
+        }
+        #deleteDumpModal .modal-check-desc {
+            font-size: 11px; color: #B45309; margin-top: 2px;
+        }
+        #deleteDumpModal .modal-btns {
+            display: flex; justify-content: flex-end; gap: 8px;
+        }
+        #deleteDumpModal .modal-btns button {
+            padding: 9px 20px; border-radius: 8px; font-size: 13px; font-weight: 600;
+            border: none; cursor: pointer; transition: background .15s;
+        }
     </style>
 </head>
 <body>
@@ -162,6 +262,52 @@
 </div>
 
 <div class="cd-page">
+  <div class="cd-index-layout">
+
+    <!-- 좌측: 서버 코어 덤프 파일 패널 -->
+    <aside class="cd-file-panel">
+        <div class="cd-file-panel-head">
+            &#128193; 서버 코어 덤프 파일
+            <span class="cd-file-panel-count" id="cdFileCount"
+                  th:text="${#lists.size(coreDumpFiles)}">0</span>
+        </div>
+        <div class="cd-file-search">
+            <input type="text" id="cdFileSearch" placeholder="파일명 검색..." autocomplete="off">
+            <button type="button" class="cd-file-search-btn" id="cdFileSearchBtn">&#128269;</button>
+        </div>
+
+        <div th:if="${#lists.isEmpty(coreDumpFiles)}" class="cd-file-empty">
+            서버에 코어 덤프 파일이 없습니다.
+        </div>
+
+        <div th:if="${!#lists.isEmpty(coreDumpFiles)}" class="cd-file-list" id="cdFileList">
+            <div th:each="f : ${coreDumpFiles}"
+                 class="cd-file-item" draggable="true"
+                 th:data-filename="${f.filename}"
+                 th:data-exec="${f.pairedExecFilename != null ? f.pairedExecFilename : ''}"
+                 th:title="${f.filename}">
+                <span class="cd-file-grip">&#9783;</span>
+                <div class="cd-file-info">
+                    <div class="cd-file-name" th:text="${f.filename}"></div>
+                    <div class="cd-file-meta">
+                        <span class="cd-file-size" th:text="${f.formattedSize}"></span>
+                        <span class="status-badge"
+                              th:classappend="${f.status == 'SUCCESS'} ? 'status-success'
+                                             : (${f.status == 'ERROR'} ? 'status-error'
+                                             : (${f.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                              th:text="${f.status == 'SUCCESS'} ? '완료'
+                                       : (${f.status == 'ERROR'} ? '실패'
+                                       : (${f.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
+                        <span th:if="${f.hasExec}" class="cd-file-exec">EXEC</span>
+                    </div>
+                </div>
+            </div>
+            <div class="cd-file-noresult" id="cdFileNoResult">검색 결과가 없습니다.</div>
+        </div>
+    </aside>
+
+    <!-- 우측: 메인 (업로드 + 이력) -->
+    <div class="cd-index-main">
 
     <!-- 업로드 카드 -->
     <div class="content-card">
@@ -292,9 +438,30 @@
         </div>
     </div>
 
+    </div><!-- .cd-index-main -->
+  </div><!-- .cd-index-layout -->
 </div>
 
-<script th:src="@{/js/core-dump-index.js?v=2026-06-25}"></script>
+<!-- 삭제 확인 모달 -->
+<div id="deleteDumpModal" class="modal-ov" style="display:none" onclick="if(event.target===this)closeDumpDeleteModal()">
+    <div class="modal-box">
+        <div class="modal-title">&#128465; 삭제 확인</div>
+        <span id="deleteDumpModalFilename" class="modal-filename"></span>
+        <div class="modal-check-row">
+            <input type="checkbox" id="deleteFileChk">
+            <div>
+                <label class="modal-check-label" for="deleteFileChk">원본 파일도 삭제</label>
+                <div class="modal-check-desc">체크 해제 시 분석 이력만 삭제하고 원본 파일은 보존합니다.</div>
+            </div>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeDumpDeleteModal()">취소</button>
+            <button class="mbtn-del" id="deleteDumpConfirmBtn" onclick="confirmDumpDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<script th:src="@{/js/core-dump-index.js?v=2026-06-26}"></script>
 
 </body>
 </html>

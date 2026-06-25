@@ -139,7 +139,20 @@ public class HeapDumpViewController {
         long maxUpload = analyzerService.getMaxUploadSizeBytes();
         model.addAttribute("maxUploadSizeBytes", maxUpload);
         model.addAttribute("maxUploadSizeGb", maxUpload / (1024L * 1024 * 1024));
-        model.addAttribute("allowAllExtensions", analyzerService.isAllowAllExtensions());
+        boolean allowAll = analyzerService.isAllowAllExtensions();
+        model.addAttribute("allowAllExtensions", allowAll);
+
+        if (allowAll) {
+            Map<String, String> classifications = analyzerService.loadFileClassifications();
+            Set<String> othersFiles = files.stream()
+                .filter(f -> !hasRecognizedHeapDumpExtension(f.getName()))
+                .filter(f -> "others".equals(classifications.getOrDefault(f.getName(), "others")))
+                .map(HeapDumpFile::getName)
+                .collect(Collectors.toSet());
+            model.addAttribute("othersFiles", othersFiles);
+        } else {
+            model.addAttribute("othersFiles", java.util.Collections.emptySet());
+        }
 
         return "index";
     }
@@ -191,12 +204,19 @@ public class HeapDumpViewController {
             }
         }
 
-        // coredump 타입 exec 서브row: {corename}.exec 파일이 존재하면 표시
+        // coredump 타입 exec 서브row: 페어링 맵 우선, .exec 폴백
         SimpleDateFormat sdfExec = new SimpleDateFormat("yyyy-MM-dd HH:mm");
         File coreDumpDir = coreDumpService.dumpFilesDir();
+        java.util.Set<String> pairedExecNames = new java.util.HashSet<>();
         for (AnalysisHistoryItem item : coreItems) {
-            if ("coredump".equals(item.getFileType()) && item.isHasExec()) {
-                String execName = item.getFilename() + ".exec";
+            if ("coredump".equals(item.getFileType())) {
+                String execName = coreDumpService.getExecFilename(item.getFilename());
+                if (execName == null) {
+                    item.setHasExec(false); // buildCoreDumpHistory의 레거시 판단을 명시적 해제로 덮어씀
+                    continue;
+                }
+                item.setHasExec(true);
+                item.setPairedExecFilename(execName);
                 File execFile = new File(coreDumpDir, execName);
                 if (execFile.exists()) {
                     AnalysisHistoryItem execItem = new AnalysisHistoryItem();
@@ -209,7 +229,14 @@ public class HeapDumpViewController {
                     execItem.setFileDeleted(false);
                     execItem.setStatus("NOT_ANALYZED");
                     coreExecSubrowMap.put(item.getFilename(), execItem);
+                    pairedExecNames.add(execName);
                 }
+            }
+        }
+        // 페어링된 exec 파일(coreexec/coredump 타입)이 독립 행으로 중복 표시되지 않도록 마킹
+        for (AnalysisHistoryItem item : coreItems) {
+            if (pairedExecNames.contains(item.getFilename())) {
+                item.setPairedExec(true);
             }
         }
 
@@ -220,12 +247,22 @@ public class HeapDumpViewController {
                 .filter(h -> !h.isPairedExec())
                 .collect(Collectors.toList());
 
-        // exec 파일 목록 (분류 모달 드롭다운용: 아직 페어링되지 않은 것만)
-        List<String> execFilenames = combined.stream()
-                .filter(h -> "exec".equals(h.getFileType()) && !h.isPairedExec())
+        // exec 파일 목록 (분류 모달 드롭다운용)
+        // 1) 아직 페어링되지 않은 exec/coreexec 파일
+        // 2) 이미 페어링된 exec도 포함 — 현재 연결 상태를 모달에서 확인·변경할 수 있어야 함
+        java.util.LinkedHashSet<String> execFilenameSet = new java.util.LinkedHashSet<>();
+        combined.stream()
+                .filter(h -> ("exec".equals(h.getFileType()) || "coreexec".equals(h.getFileType()))
+                        && !h.isPairedExec())
                 .map(AnalysisHistoryItem::getFilename)
                 .sorted()
-                .collect(Collectors.toList());
+                .forEach(execFilenameSet::add);
+        displayList.stream()
+                .filter(h -> h.getPairedExecFilename() != null && !h.getPairedExecFilename().isEmpty())
+                .map(AnalysisHistoryItem::getPairedExecFilename)
+                .forEach(execFilenameSet::add);
+        List<String> execFilenames = new ArrayList<>(execFilenameSet);
+        java.util.Collections.sort(execFilenames);
         model.addAttribute("execFilenames", execFilenames);
         model.addAttribute("coreExecSubrowMap", coreExecSubrowMap);
 
@@ -311,10 +348,16 @@ public class HeapDumpViewController {
         if (files != null) {
             for (File f : files) {
                 String name = f.getName();
-                if (name.startsWith(".") || name.endsWith(".exec") || !f.isFile()) continue;
+                if (name.startsWith(".") || !f.isFile()) continue;
                 if (processedNames.contains(name)) continue;
                 AnalysisHistoryItem item = new AnalysisHistoryItem();
-                item.setFileType("coredump");
+                if (name.endsWith(".exec")) {
+                    // 실행파일 — 코어덤프 탭 내 별도 표시 (페어링 해제 후 보존된 파일 포함)
+                    item.setFileType("coreexec");
+                } else {
+                    item.setFileType("coredump");
+                    item.setHasExec(new File(dumpDir, name + ".exec").exists());
+                }
                 item.setFilename(name);
                 item.setStatus("NOT_ANALYZED");
                 item.setFileDeleted(false);
@@ -322,7 +365,6 @@ public class HeapDumpViewController {
                 item.setSizeBytes(f.length());
                 item.setFormattedDate(sdf.format(new Date(f.lastModified())));
                 item.setLastModified(f.lastModified());
-                item.setHasExec(new File(dumpDir, name + ".exec").exists());
                 result.add(item);
             }
         }

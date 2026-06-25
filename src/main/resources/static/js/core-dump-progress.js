@@ -19,6 +19,7 @@
 
     // ── 경과 시간 ──────────────────────────────────────────────
     var startTime = null, elapsedTimer = null;
+    var lastPercent = 0;
     function startElapsed() {
         if (startTime) return;
         startTime = Date.now();
@@ -43,6 +44,44 @@
             item.classList.remove('step-waiting', 'step-active', 'step-done', 'step-error');
             item.classList.add('step-' + state);
         }
+    }
+
+    // ── 에러 메시지 → 단계 설명 축약 ─────────────────────────────
+    function shortReason(msg) {
+        if (msg.includes('파일 형식을 인식할 수 없') || msg.includes('코어 덤프 파일 형식이 아닙니다')) return '파일 형식 불일치';
+        if (msg.includes('찾을 수 없') || msg.includes('경로가 올바르지 않')) return '파일 없음';
+        if (msg.includes('시간 초과')) return '시간 초과';
+        if (msg.includes('GDB 출력 없음')) return 'GDB 출력 없음';
+        if (msg.includes('취소')) return '사용자 취소';
+        if (msg.includes('vmcore')) return 'vmcore — crash 유틸 필요';
+        return '오류 발생';
+    }
+
+    // ── 에러 발생 시 타임라인 정리 ────────────────────────────────
+    var STEPS = ['file', 'gdb', 'parse', 'save', 'done'];
+    function markTimelineError(msg) {
+        var reason = shortReason(msg);
+        var foundError = false;
+        // active 상태 스텝 → error
+        STEPS.forEach(function (s) {
+            if (stepState[s] === 'active') {
+                setStep(s, 'error', '실패: ' + reason);
+                foundError = true;
+            }
+        });
+        // active 없으면 첫 번째 waiting 스텝을 error로
+        if (!foundError) {
+            for (var i = 0; i < STEPS.length; i++) {
+                if (!stepState[STEPS[i]] || stepState[STEPS[i]] === 'waiting') {
+                    setStep(STEPS[i], 'error', '실패: ' + reason);
+                    break;
+                }
+            }
+        }
+        // 나머지 waiting 스텝 → skipped (흐리게)
+        STEPS.forEach(function (s) {
+            if (!stepState[s] || stepState[s] === 'waiting') setStep(s, 'skipped', '—');
+        });
     }
 
     // ── 진행바 ─────────────────────────────────────────────────
@@ -124,6 +163,7 @@
 
             if (status === 'RUNNING' || status === 'PARSING') startElapsed();
 
+            if (status !== 'ERROR') lastPercent = percent;
             setProgress(percent, message,
                 status === 'COMPLETED' ? 'done' : status === 'ERROR' ? 'error' : 'running',
                 message);
@@ -147,16 +187,17 @@
                 evtSource.close();
                 if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
                 if (logBuffer.length) flushLog();
-                ['file', 'gdb', 'parse', 'save', 'done'].forEach(function (s) {
-                    if (stepState[s] === 'active') setStep(s, 'error');
-                });
-                setProgress(d.percent || 0, '분석 실패', 'error', '분석 실패');
                 var msg = d.errorMessage || '알 수 없는 오류가 발생했습니다.';
+                markTimelineError(msg);
+                // 진행바를 100%로 채우되 빨간색 — 에러로 "완료"됨을 명확히
+                setProgress(100, '분석 실패', 'error', '분석 실패');
                 errorMsgEl.textContent = msg;
                 var hint = '';
-                if (msg.includes('찾을 수 없')) hint = '코어 덤프 파일이 삭제되었거나 경로가 변경되었을 수 있습니다.';
+                if (msg.includes('파일 형식을 인식할 수 없') || msg.includes('코어 덤프 파일 형식이 아닙니다')) hint = '업로드된 파일이 코어 덤프가 아닐 수 있습니다. Linux 프로세스 크래시 시 생성된 core 또는 core.PID 파일인지 확인하세요.';
+                else if (msg.includes('찾을 수 없') || msg.includes('경로가 올바르지 않')) hint = '코어 덤프 파일이 삭제되었거나 경로가 변경되었을 수 있습니다.';
                 else if (msg.includes('시간 초과')) hint = 'GDB 분석이 제한 시간을 초과했습니다. 실행 파일 없이 재분석하거나 관리자에게 문의하세요.';
                 else if (msg.includes('GDB 출력 없음') || msg.includes('outputLen=0')) hint = 'GDB가 설치되지 않았거나 유효하지 않은 코어 덤프 파일입니다.';
+                else if (msg.includes('vmcore')) hint = "'crash' 유틸리티를 사용해 vmcore를 분석하거나 관리자에게 문의하세요.";
                 else if (msg.includes('취소')) hint = '분석이 사용자에 의해 중단되었습니다. 재분석을 시도할 수 있습니다.';
                 document.getElementById('errorHint').textContent = hint;
                 errorBanner.classList.add('visible');
@@ -182,10 +223,8 @@
 
         function showSseError(msg, hint) {
             if (logBuffer.length) flushLog();
-            ['file', 'gdb', 'parse', 'save', 'done'].forEach(function (s) {
-                if (stepState[s] === 'active') setStep(s, 'error');
-            });
-            setProgress(0, '연결 오류', 'error', '연결 오류');
+            markTimelineError(msg);
+            setProgress(100, '연결 오류', 'error', '연결 오류');
             errorMsgEl.textContent = msg;
             document.getElementById('errorHint').textContent = hint;
             errorBanner.classList.add('visible');

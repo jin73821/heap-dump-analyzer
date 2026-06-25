@@ -1,5 +1,178 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-26] 코어 덤프 삭제 시 원본 파일 보존 옵션 모달 추가
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/CoreDumpApiController.java`
+- `src/main/resources/templates/core-dump/index.html`
+- `src/main/resources/static/js/core-dump-index.js`
+
+### 내용
+- 삭제 버튼 클릭 시 `confirm()` 대신 전용 모달 표시.
+- 모달에 "원본 파일도 삭제" 체크박스 추가(기본: 체크됨).
+  - **체크 ON**: 기존 동작 — 원본 파일 + exec 파일 + 분석 결과 디렉토리 + DB 레코드 삭제.
+  - **체크 OFF**: 분석 이력만 삭제 — 원본 파일·exec 파일 보존, 결과 디렉토리 + AI 인사이트 제거, DB 상태를 `NOT_ANALYZED`로 초기화.
+- `CoreDumpAnalyzerService.deleteHistoryOnly()` 신규 메서드 추가.
+- `DELETE /api/core-dump/{filename}` 엔드포인트에 `deleteFile` 쿼리 파라미터 추가(기본 `true`).
+
+---
+
+## [2026-06-25] 로그인 버튼 클릭 시 스피너 표시
+
+**대상:**
+- `src/main/resources/templates/login.html`
+
+### 내용
+- 로그인 버튼(`button[type="submit"]`) 클릭(form submit) 시 `.loading` 클래스 추가.
+- `.login-btn.loading`: `color: transparent`으로 텍스트 숨김 + `::after` pseudo-element로 흰색 원형 스피너(`@keyframes loginSpin`) 표시 + `pointer-events: none`으로 중복 제출 방지.
+- 로그인 성공/실패 모두 페이지 전환 또는 새로고침이 발생하므로 별도 리셋 불필요.
+
+---
+
+## [2026-06-25] Files 페이지 — 탭 전환 후 페이지 새로고침 시 행 flash 방지
+
+**대상:**
+- `src/main/resources/templates/files.html`
+
+### 내용
+- **현상**: Coredump 탭에서 분류 저장 등 작업 후 페이지가 새로고침될 때 전체 행이 아주 짧게 표시되었다 사라지는 flash 현상.
+- **원인**: Thymeleaf가 서버에서 모든 `<tr>`을 표시 상태로 렌더링한 후, JS `render()`가 실행되어 탭 필터를 적용하기까지의 간격에 전체 행이 노출됨.
+- **수정**: `<tbody id="fileTableBody">`에 `tb-loading` 클래스 부여 + CSS `#fileTableBody.tb-loading tr { display:none }` 추가. `render()` 첫 줄에서 클래스 제거(이 시점에 inline `display:none`이 즉시 일괄 적용되므로 flash 없음).
+
+---
+
+## [2026-06-25] Files 페이지 — 탭 작업 후 탭 위치 유지
+
+**대상:**
+- `src/main/resources/templates/files.html`
+
+### 내용
+- **버그**: ALL / Heapdump / Coredump / Others 탭에서 삭제·다운로드·분류 등 작업 후 확인 버튼을 누르면 페이지가 새로고침되면서 항상 ALL 탭으로 이동하는 현상.
+- **원인**: `_activeTab = 'all'` 초기값이며, 페이지 새로고침(AJAX `location.reload()` 또는 form POST redirect) 시 탭 상태를 복원하는 코드 없음.
+- **수정**: `onTabClick()`에서 현재 탭을 `localStorage('filesActiveTab')`에 저장, `initRows()` 초기화 시 저장된 탭을 읽어 탭 버튼 활성화 + `_activeTab` 복원 + 탭별 부가 설정(upload mode, file accept, AI 컬럼 숨김) 적용.
+
+---
+
+## [2026-06-25] Files 페이지 — 실행파일 분류 버튼 표시 개선 (3차)
+
+**대상:**
+- `src/main/resources/templates/files.html`
+
+### 내용
+- **버그**: `coreexec` 타입(코어덤프 디렉토리의 `.exec` 파일, 페어링 해제 후 독립 행으로 표시)이 분류 버튼 조건 `h.fileType != 'coreexec'`에 걸려 표시되지 않음.
+- **수정 1**: 분류 버튼 조건에서 `coreexec` 제외를 제거 → 삭제되지 않은 모든 타입에 분류 버튼 표시.
+- **수정 2**: `data-current-type`에 `coreexec → exec` 변환 추가 — 분류 모달 select에 `coreexec` 옵션이 없으므로 `exec`로 매핑해야 정상 선택됨.
+
+---
+
+## [2026-06-25] Files 페이지 — exec 서브 row 파일 분류 버튼 추가 (1·2차)
+
+**대상:**
+- `src/main/resources/templates/files.html`
+
+### 내용
+- exec 서브 row 작업 컬럼에 분류 버튼 추가. `core` 및 `coredump` 타입 파일의 exec 서브 row 모두 적용.
+  - 클릭 시 `openClassifyModal(filename, 'exec', '')` 호출 → 기존 분류 모달 재사용.
+
+---
+
+## [2026-06-25] 대시보드 RECENT FILES — Others 파일 분석 시 확인 모달 표시
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/resources/templates/index.html`
+
+### 내용
+- **변경**: 대시보드 RECENT FILES에서 Others(기타) 유형 파일의 분석 버튼 클릭 시 Files 페이지와 동일한 "분석 시작 확인" 모달을 표시하도록 개선.
+- **컨트롤러**: `index()` 메서드에 `othersFiles` Set 계산 로직 추가. `allowAllExtensions=true`일 때 파일 분류 맵을 로드하여 Others로 분류된 파일명 집합을 모델에 전달.
+- **index.html**:
+  - 미분석 분석 버튼을 Others/일반 두 경우로 분리. Others 파일은 `confirmOthersAnalyze()` 함수 호출.
+  - "분석 시작 확인" 모달 HTML 추가(기존 deleteModal 스타일 재사용).
+  - `confirmOthersAnalyze` / `closeOthersAnalyzeModal` / `btnDashConfirmOthersAnalyze` onclick JS 추가.
+
+---
+
+## [2026-06-25] 파일 분류 모달 — 코어덤프 실행파일 연결 드롭다운 미표시 버그 수정
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/resources/templates/files.html`
+
+### 내용
+- **버그**: 코어덤프 디렉토리(`/opt/coredumps/dumpfiles/`)의 `.exec` 파일은 `fileType="coreexec"`로
+  분류되는데, `filesPage()`의 `execFilenames` 필터가 `"exec"` 타입만 포함해 드롭다운에 미표시.
+  또한 명명 규약(`.exec` 접미사)으로 이미 자동 페어링된 파일은 `isPairedExec=true`로 이중 제외.
+- **수정1 (`HeapDumpViewController.java`)**: `execFilenames` 빌드 로직을 `LinkedHashSet` 기반으로 재작성.
+  - `"exec"` 및 `"coreexec"` 타입 + 아직 미페어링(`!isPairedExec`) 파일 포함.
+  - `displayList` 내 파일의 `pairedExecFilename`도 추가해, 이미 연결된 exec도 드롭다운에 표시되어
+    현재 연결 상태 확인·변경 가능.
+- **수정2 (`files.html`)**: 분류 버튼의 `data-current-type` 속성에서 `"coredump"` → `"core"` 정규화.
+  - 기존: 타입 select에 `"coredump"` 옵션 없어 첫 번째 옵션 기본 선택 + `typeChanged=true` 판정으로
+    불필요한 "연결 해제 경고" 항상 표시.
+  - 수정: `h.fileType == 'coredump' ? 'core' : h.fileType` 변환으로 `"코어덤프"` 옵션 정확히 선택되고
+    경고가 실제 타입 변경 시에만 표시됨.
+
+---
+
+## [2026-06-25] 실행파일 연결 해제 시 파일 보존 + 코어덤프 탭 계속 표시
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/resources/templates/files.html`
+
+### 내용
+- `unpairExec()`: 기존 실행파일 물리 삭제 → 파일 보존으로 변경. 레거시 `.exec` 파일이 있으면
+  `core-exec-pairs.properties`에 빈 값(`coreName=`)을 마커로 저장해 레거시 폴백을 명시적으로 차단.
+- `getExecFilename()`: properties에 키가 존재하되 빈 값이면 "명시적 해제"로 판단해 null 반환
+  (레거시 파일 탐색 스킵). 키 없을 때만 기존 폴백 유지.
+- `buildCoreDumpHistory()` 디스크 루프: `.exec` 파일 제외 → `fileType="coreexec"`로 포함.
+  연결 해제 후 실행파일이 코어덤프 탭에 독립 행으로 표시됨.
+- `filesPage()` 코어덤프 루프: `getExecFilename()`이 null 반환 시 `hasExec=false`로 명시 갱신
+  (buildCoreDumpHistory의 레거시 판단 덮어씀).
+- `filesPage()` 코어덤프 루프: 페어링된 exec 항목을 `pairedExec=true`로 마킹해 독립 행 중복 표시 방지.
+- `files.html`: `coreexec` 타입 → 코어덤프 탭 포함, EXEC 배지, 다운로드·삭제 버튼(코어덤프 API 라우팅),
+  분류 버튼 제외.
+
+---
+
+## [2026-06-25] Files 분류 모달 — 실행파일 연결 코어파일 유형 변경 경고
+
+**대상:**
+- `src/main/resources/templates/files.html`
+
+### 내용
+- Files 페이지 분류 모달(`#classifyModal`)에서 실행파일이 연결된 코어파일(또는 coredump)의 유형을
+  변경 시 경고 메시지 표시 추가. `onClassifyTypeChange()`에서 `_classifyCurrentPairedExec`가
+  있고 선택 유형이 원래 유형과 다를 때 `#classifyExecWarn` 노출(주황색 경고 배지, 연결 해제 안내).
+  원래 유형으로 되돌리거나 연결 exec 가 없는 파일에서는 경고 미표시.
+
+---
+
+## [2026-06-25] 코어 덤프 인덱스 좌측 파일 패널 + 드래그-드롭 기존 파일 프리로드
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/CoreDumpViewController.java`
+- `src/main/resources/templates/core-dump/index.html`
+- `src/main/resources/static/js/core-dump-index.js`
+
+### 내용
+- `/core-dump` 인덱스 페이지를 2-컬럼 레이아웃(`.cd-index-layout`)으로 개편. 좌측에 "서버 코어 덤프
+  파일" 패널(`.cd-file-panel`, sticky) 추가 — `dumpfiles/` 에 실제 존재하는 코어 덤프를 리스트로 표시
+  (파일명·크기·상태 배지·EXEC 배지). 공유 클래스 `.cd-page` 는 미변경, 인덱스 인라인 `<style>` 에서
+  폭만 `max-width:1500px` 로 확장. 모바일(≤900px)은 세로 적층.
+- 데이터: `CoreDumpAnalyzerService.listExistingDumpFiles()` 신규 — `dumpFilesDir()` 파일 나열
+  (.exec/dotfile/디렉토리 제외) + DB 이력 join 으로 status 채움, 최신순 정렬. `CoreDumpViewController.indexPage()`
+  가 `coreDumpFiles` 모델 속성으로 전달(서버사이드 렌더, 신규 엔드포인트/CSRF 영향 없음).
+- 검색: 패널 상단 검색 입력 + 버튼 → 파일명 부분일치 클라이언트 필터 + "결과 없음" 표시.
+- 드래그-드롭/클릭 프리로드: 리스트 항목을 업로드칸(`#coreDropZone`)에 드래그-드롭(또는 클릭)하면
+  기존 `_preloadedFilename` 프리로드 경로 재사용 → 업로드칸에 파일명 채우고 "GDB 분석 시작" 활성화.
+  재업로드 없이 기존 서버 파일을 분석. 신규 `preloadExisting()` 로 `?file=` URL 경로와 로직 통합.
+  드롭 핸들러는 `text/plain`(파일명)·`application/x-core-exec`(실행파일) dataTransfer 수신.
+- 캐시 무효화: `core-dump-index.js?v=2026-06-26`.
+
 ## [2026-06-25] 코어 덤프 분석 UI 전면 개편 (비주얼 통일 + AI 크래시 분석 + JS 외부화)
 
 **대상:**
