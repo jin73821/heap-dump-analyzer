@@ -1,5 +1,24 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-26] UI 명칭 통일 및 버전 2.1.6 업데이트
+
+**대상:**
+- `src/main/resources/templates/fragments/banner.html`
+- `src/main/resources/templates/core-dump/index.html`
+- `src/main/resources/templates/index.html`
+- `pom.xml`
+- `restart.sh` / `run.sh` / `stop.sh`
+
+### 내용
+- Navigation 메뉴 "코어 덤프" → "코어 파일" 명칭 변경 (사이드바 텍스트 + 축소 아이콘 title)
+- 코어 파일 분석 페이지 헤더 "코어 덤프 분석" → "코어 파일 분석"
+- 좌측 패널 제목 "서버 코어 덤프 파일" → "서버 코어 파일", 빈 상태 메시지 동일 교체
+- 업로드 카드 제목 "코어 덤프 파일 업로드" → "코어 파일 업로드"
+- 업로드 레이블 "코어 덤프 파일 (필수)" → "코어 파일 (필수)"
+- 어플리케이션 버전 2.1.4 → 2.1.6 (pom.xml, restart/run/stop.sh JAR 경로, banner.html, index.html)
+
+---
+
 ## [2026-06-26] Target Servers 코어파일 탐지 기능 추가
 
 **대상:**

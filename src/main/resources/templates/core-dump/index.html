@@ -258,16 +258,16 @@
 <div th:replace="~{fragments/banner :: banner}"></div>
 
 <div class="cd-topbar">
-    <span class="topbar-title">코어 덤프 분석</span>
+    <span class="topbar-title">코어 파일 분석</span>
 </div>
 
 <div class="cd-page">
   <div class="cd-index-layout">
 
-    <!-- 좌측: 서버 코어 덤프 파일 패널 -->
+    <!-- 좌측: 서버 코어 파일 패널 -->
     <aside class="cd-file-panel">
         <div class="cd-file-panel-head">
-            &#128193; 서버 코어 덤프 파일
+            &#128193; 서버 코어 파일
             <span class="cd-file-panel-count" id="cdFileCount"
                   th:text="${#lists.size(coreDumpFiles)}">0</span>
         </div>
@@ -277,7 +277,7 @@
         </div>
 
         <div th:if="${#lists.isEmpty(coreDumpFiles)}" class="cd-file-empty">
-            서버에 코어 덤프 파일이 없습니다.
+            서버에 코어 파일이 없습니다.
         </div>
 
         <div th:if="${!#lists.isEmpty(coreDumpFiles)}" class="cd-file-list" id="cdFileList">
@@ -312,14 +312,14 @@
     <!-- 업로드 카드 -->
     <div class="content-card">
         <div class="content-card-title">
-            &#128229; 코어 덤프 파일 업로드
+            &#128229; 코어 파일 업로드
         </div>
 
         <div class="upload-grid">
-            <!-- 코어 덤프 파일 -->
+            <!-- 코어 파일 -->
             <div>
                 <div class="upload-zone-label">
-                    코어 덤프 파일 <span class="required-badge">필수</span>
+                    코어 파일 <span class="required-badge">필수</span>
                 </div>
                 <div class="upload-zone" id="coreDropZone">
                     <input type="file" id="coreFileInput" onchange="onCoreFileSelect(this)">
