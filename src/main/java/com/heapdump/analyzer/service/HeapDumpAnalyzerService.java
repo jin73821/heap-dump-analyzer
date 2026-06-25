@@ -1532,14 +1532,33 @@ public class HeapDumpAnalyzerService {
 
     private File findExternalPropertiesFile() {
         // 1) JAR과 같은 디렉토리
+        // Spring Boot 3.x 팻 JAR은 getCodeSource().getLocation()이 nested:/...!/... 또는
+        // jar:file:/...!/... 형태라 toURI()->new File() 변환이 실패함.
+        // URL 문자열에서 .jar 경로를 직접 추출하여 처리.
         try {
-            File jarDir = new File(getClass().getProtectionDomain()
-                    .getCodeSource().getLocation().toURI()).getParentFile();
-            File f = new File(jarDir, "application.properties");
+            String loc = getClass().getProtectionDomain().getCodeSource().getLocation().toString();
+            // "nested:/path/to/app.jar/!BOOT-INF/..." 또는 "jar:file:/path/to/app.jar!/..."
+            String jarPath = loc;
+            if (jarPath.contains(".jar!") || jarPath.contains(".jar/!")) {
+                int idx = jarPath.contains(".jar!") ? jarPath.indexOf(".jar!") : jarPath.indexOf(".jar/!");
+                jarPath = jarPath.substring(0, idx + 4); // ".jar" 까지만
+            }
+            // 스킴 제거 (nested:, jar:file:, file: 등)
+            jarPath = jarPath.replaceFirst("^(?:nested:|jar:file:|file:)", "");
+            File jarDir = new File(jarPath).getParentFile();
+            if (jarDir != null) {
+                File f = new File(jarDir, "application.properties");
+                if (f.exists()) return f;
+            }
+        } catch (Exception ignored) {}
+
+        // 2) 현재 작업 디렉토리
+        try {
+            File f = new File(System.getProperty("user.dir", "."), "application.properties");
             if (f.exists()) return f;
         } catch (Exception ignored) {}
 
-        // 2) 프로젝트 소스 디렉토리 (개발 환경)
+        // 3) 프로젝트 소스 디렉토리 (개발 환경)
         File srcProps = new File("src/main/resources/application.properties");
         if (srcProps.exists()) return srcProps;
 
@@ -1906,6 +1925,26 @@ public class HeapDumpAnalyzerService {
 
     public void deleteFile(String filename) throws IOException {
         fileMgmt.deleteFile(filename);
+    }
+
+    public Map<String, String> loadFileClassifications() {
+        return fileMgmt.loadFileClassifications();
+    }
+
+    public void saveFileClassification(String filename, String fileType) throws IOException {
+        fileMgmt.saveFileClassification(filename, fileType);
+    }
+
+    public Map<String, String> loadCoreExecPairings() {
+        return fileMgmt.loadCoreExecPairings();
+    }
+
+    public void saveCoreExecPairing(String coreFilename, String execFilename) throws IOException {
+        fileMgmt.saveCoreExecPairing(coreFilename, execFilename);
+    }
+
+    public void removeCoreExecPairing(String coreFilename) throws IOException {
+        fileMgmt.removeCoreExecPairing(coreFilename);
     }
 
     /**

@@ -206,4 +206,105 @@ public class CoreDumpApiController {
         return ResponseEntity.ok(Map.of("status", "ok", "filename", safe,
                 "message", "/core-dump/progress/" + safe + " 로 이동하여 재분석을 시작하세요."));
     }
+
+    // ── AI 크래시 분석 ────────────────────────────────────────────
+    // heap 의 /api/llm/analyze 흐름을 미러링. ai_insights 테이블을
+    // 합성 키("__core__:" + filename)로 재사용한다(별도 테이블 없음).
+
+    @PostMapping("/api/core-dump/{filename:.+}/ai-analyze")
+    public ResponseEntity<Map<String, Object>> aiAnalyze(@PathVariable String filename,
+                                                         Principal principal) {
+        String who = principal != null ? principal.getName() : "unknown";
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false,
+                    "errorCode", "INVALID_FILENAME", "error", e.getMessage()));
+        }
+
+        if (!analyzerService.isLlmEnabled()) {
+            logger.info("[CoreDump-AI] action=analyze 거부 — LLM 비활성, filename={}, by={}", safe, who);
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("errorCode", "LLM_DISABLED");
+            err.put("error", "AI 분석이 비활성화되어 있습니다. 설정에서 LLM 을 활성화하세요.");
+            return ResponseEntity.ok(err);
+        }
+
+        long reqStart = System.currentTimeMillis();
+        Map<String, Object> result = analyzerService.analyzeCrashWithAi(safe);
+        long elapsed = System.currentTimeMillis() - reqStart;
+
+        boolean success = Boolean.TRUE.equals(result.get("success"));
+        Object dataObj = result.get("data");
+        String severity = null;
+        if (dataObj instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> dm = (Map<String, Object>) dataObj;
+            severity = (String) dm.get("severity");
+        }
+
+        if (success) {
+            logger.info("[CoreDump-AI] action=analyze filename={} severity={} elapsed={}ms model={} by={}",
+                    safe, severity, elapsed, result.get("model"), who);
+            String key = CoreDumpAnalyzerService.coreInsightKey(safe);
+            Map<String, Object> toStore = new LinkedHashMap<>();
+            toStore.put("model", result.get("model"));
+            toStore.put("latencyMs", result.get("latencyMs"));
+            if (dataObj instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> dataMap = (Map<String, Object>) dataObj;
+                toStore.putAll(dataMap);
+            }
+            try {
+                analyzerService.saveAiInsight(key, toStore);
+                result.put("saved", true);
+                result.put("savedTo", "database");
+                if (toStore.get("analysedAt") != null) result.put("analysedAt", toStore.get("analysedAt"));
+            } catch (Exception saveEx) {
+                logger.error("[CoreDump-AI] action=analyze 저장 실패 — filename={}, msg={}", safe, saveEx.getMessage());
+                result.put("saved", false);
+                result.put("saveError", saveEx.getMessage());
+                result.put("saveErrorCode", "SAVE_FAILED");
+                result.put("retryPayload", toStore);
+            }
+        } else {
+            logger.warn("[CoreDump-AI] action=analyze 실패 — filename={}, errorCode={}, elapsed={}ms, by={}",
+                    safe, result.get("errorCode"), elapsed, who);
+        }
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/api/core-dump/{filename:.+}/ai-insight")
+    public ResponseEntity<Map<String, Object>> getAiInsight(@PathVariable String filename) {
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("found", false, "error", e.getMessage()));
+        }
+        Map<String, Object> insight = analyzerService.loadAiInsight(CoreDumpAnalyzerService.coreInsightKey(safe));
+        if (insight == null) {
+            return ResponseEntity.ok(Map.of("found", false));
+        }
+        insight.put("found", true);
+        insight.put("savedTo", "database");
+        return ResponseEntity.ok(insight);
+    }
+
+    @DeleteMapping("/api/core-dump/{filename:.+}/ai-insight")
+    public ResponseEntity<Map<String, Object>> deleteAiInsight(@PathVariable String filename,
+                                                               Principal principal) {
+        String who = principal != null ? principal.getName() : "unknown";
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "error", e.getMessage()));
+        }
+        boolean deleted = analyzerService.deleteAiInsight(CoreDumpAnalyzerService.coreInsightKey(safe));
+        logger.info("[CoreDump-AI] action=delete-insight filename={} deleted={} by={}", safe, deleted, who);
+        return ResponseEntity.ok(Map.of("success", deleted));
+    }
 }

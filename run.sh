@@ -1,9 +1,9 @@
-JAR=/opt/genspark/webapp_dump/target/heap-analyzer-2.1.2.jar
+JAR=/opt/genspark/webapp_dump/target/heap-analyzer-2.1.4.jar
 LOG_DIR=/opt/genspark/webapp_dump/logs
 NOHUP_LOG="$LOG_DIR/nohup.out"
 
 # 이미 실행 중이면 거절 (재기동은 restart.sh 사용)
-RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.1.2.jar | grep -v grep | awk '{print $2}')
+RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.1.4.jar | grep -v grep | awk '{print $2}')
 if [ -n "$RUNNING_PIDS" ]; then
     echo "[run] 이미 실행 중: PID=$RUNNING_PIDS"
     echo "[run] 'bash stop.sh' 후 다시 실행하거나 'bash restart.sh' 를 사용하세요."
@@ -24,7 +24,18 @@ JVM_HEAP_OPTS="-Xms256m -Xmx1g"
 # GC 로깅: 로테이션 20MB × 5파일
 GC_LOG_OPTS="-Xlog:gc*:file=$LOG_DIR/gc.log:time,uptime,level,tags:filecount=5,filesize=20m"
 
-setsid nohup stdbuf -oL -eL java $JVM_HEAP_OPTS $GC_LOG_OPTS -jar "$JAR" --server.port=18080 \
+# 사내 사설 CA 인증서가 추가된 truststore 사용 (PKIX 검증용)
+# 파일 미존재 시에는 JDK 기본 cacerts 사용 (기동에 영향 없음)
+TRUSTSTORE=/opt/genspark/webapp_dump/certs/heap-truststore.jks
+TRUST_OPTS=""
+if [ -f "$TRUSTSTORE" ]; then
+    TRUST_OPTS="-Djavax.net.ssl.trustStore=$TRUSTSTORE -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=JKS"
+    echo "[run] Using custom truststore: $TRUSTSTORE"
+else
+    echo "[run] Custom truststore not found at $TRUSTSTORE — using JDK default cacerts"
+fi
+
+setsid nohup stdbuf -oL -eL java $JVM_HEAP_OPTS $GC_LOG_OPTS -Dfile.encoding=UTF-8 $TRUST_OPTS -jar "$JAR" --server.port=18080 \
     < /dev/null > "$NOHUP_LOG" 2>&1 &
 PID=$!
 disown $PID 2>/dev/null || true

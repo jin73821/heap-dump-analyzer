@@ -11,6 +11,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -28,6 +29,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 파일 업로드/다운로드/일괄 삭제/중복 검사 API (Phase 4B-2).
@@ -124,6 +126,93 @@ public class HeapFileApiController {
         long fileSize = fileSizeNum.longValue();
         Map<String, String> result = analyzerService.checkDuplicate(filename, fileSize, partialHash);
         return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/api/files/{filename:.+}/classify")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> classifyFile(
+            @PathVariable String filename,
+            @RequestBody Map<String, String> body,
+            Authentication authentication) {
+        filename = FilenameValidator.validate(filename);
+        String fileType = body.get("fileType");
+        Set<String> allowed = Set.of("core", "exec", "heapdump", "others");
+        if (fileType == null || !allowed.contains(fileType)) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("status", "error");
+            err.put("message", "유효하지 않은 파일 유형입니다. (core|exec|heapdump|others)");
+            return ResponseEntity.badRequest().body(err);
+        }
+        try {
+            String who = authentication != null ? authentication.getName() : "unknown";
+            analyzerService.saveFileClassification(filename, fileType);
+            logger.info("[ClassifyFile] action=classify file={} type={} by={}", filename, fileType, who);
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("status", "ok");
+            resp.put("filename", filename);
+            resp.put("fileType", fileType);
+            return ResponseEntity.ok(resp);
+        } catch (IOException e) {
+            logger.error("[ClassifyFile] Failed for '{}': {}", filename, e.getMessage());
+            Map<String, Object> err = new HashMap<>();
+            err.put("status", "error");
+            err.put("message", "분류 저장 실패: " + e.getMessage());
+            return ResponseEntity.status(500).body(err);
+        }
+    }
+
+    @PostMapping("/api/files/{filename:.+}/pair")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> pairCoreExec(
+            @PathVariable String filename,
+            @RequestBody Map<String, String> body,
+            Authentication authentication) {
+        filename = FilenameValidator.validate(filename);
+        String execFilename = body.get("execFilename");
+        String who = authentication != null ? authentication.getName() : "unknown";
+        Map<String, Object> resp = new HashMap<>();
+        try {
+            if (execFilename == null || execFilename.trim().isEmpty()) {
+                analyzerService.removeCoreExecPairing(filename);
+                logger.info("[FilePair] action=unpair core={} by={}", filename, who);
+                resp.put("status", "ok");
+                resp.put("action", "unpaired");
+            } else {
+                execFilename = FilenameValidator.validate(execFilename.trim());
+                analyzerService.saveCoreExecPairing(filename, execFilename);
+                logger.info("[FilePair] action=pair core={} exec={} by={}", filename, execFilename, who);
+                resp.put("status", "ok");
+                resp.put("action", "paired");
+                resp.put("execFilename", execFilename);
+            }
+            return ResponseEntity.ok(resp);
+        } catch (IOException e) {
+            logger.error("[FilePair] Failed for '{}': {}", filename, e.getMessage());
+            resp.put("status", "error");
+            resp.put("message", "페어링 저장 실패: " + e.getMessage());
+            return ResponseEntity.status(500).body(resp);
+        }
+    }
+
+    @DeleteMapping("/api/files/{filename:.+}/pair")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> unpairCoreExec(
+            @PathVariable String filename,
+            Authentication authentication) {
+        filename = FilenameValidator.validate(filename);
+        String who = authentication != null ? authentication.getName() : "unknown";
+        Map<String, Object> resp = new HashMap<>();
+        try {
+            analyzerService.removeCoreExecPairing(filename);
+            logger.info("[FilePair] action=unpair core={} by={}", filename, who);
+            resp.put("status", "ok");
+            return ResponseEntity.ok(resp);
+        } catch (IOException e) {
+            logger.error("[FilePair] Unpair failed for '{}': {}", filename, e.getMessage());
+            resp.put("status", "error");
+            resp.put("message", "페어링 해제 실패: " + e.getMessage());
+            return ResponseEntity.status(500).body(resp);
+        }
     }
 
     @GetMapping("/download/{filename:.+}")

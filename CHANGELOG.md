@@ -1,5 +1,289 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-25] 코어 덤프 분석 UI 전면 개편 (비주얼 통일 + AI 크래시 분석 + JS 외부화)
+
+**대상:**
+- `src/main/resources/static/css/core-dump.css`
+- `src/main/resources/templates/core-dump/{index,progress,analyze}.html`
+- `src/main/resources/static/js/core-dump-index.js` (신규)
+- `src/main/resources/static/js/core-dump-progress.js` (신규)
+- `src/main/resources/static/js/core-dump-analyze.js` (신규)
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/CoreDumpApiController.java`
+
+### 1. 비주얼/디자인 현대화 (heap dump 와 통일)
+- `core-dump.css` 상단에 `:root` 디자인 토큰 도입 (heap `analyze.css` 와 동일 색/카드/radius 체계).
+- 심각도 팔레트를 `analyze.js _SEV_CONFIG` 와 1:1 일치 (CLAUDE.md 함정 #22). 시그널 칩
+  (`chip-fatal/warn/neutral`)·`cd-tab-btn.active` 등을 토큰으로 치환.
+- 3개 HTML 인라인 `<style>` 의 공통 규칙(`.error-card/.meta-grid/.thread-*/.reg-table/.lib-table/.raw-output` 등)을
+  `core-dump.css` 로 이관, 페이지엔 고유 override 만 잔존. `?v=2026-06-25` 캐시 무효화.
+
+### 2. 코드 구조 정리 (인라인 JS 외부화)
+- `analyze.html`(인라인 ~155줄)·`index.html`(~170줄)·`progress.html`(~240줄)의 인라인 `<script>` 를
+  `core-dump-analyze.js` / `core-dump-index.js` / `core-dump-progress.js` 로 분리.
+- Thymeleaf 모델 변수(`CORE_FILENAME`/`CORE_HAS_RESULT`/`REGISTERS`/`FILENAME`/`SSE_URL`/`RESULT_URL`)만
+  인라인 `th:inline` 으로 노출, external JS 가 글로벌 참조 (순서 인라인→external 유지).
+
+### 3. AI 크래시 분석 (신규 — heap LLM 인프라 재사용)
+- `CoreDumpAnalyzerService` 에 `HeapDumpAnalyzerService` facade 주입 →
+  `isLlmEnabled/callLlmAnalysis/saveAiInsight/loadAiInsight/deleteAiInsight` 재사용.
+  `buildCrashPrompt(result)`(시그널·콜체인·레지스터·스레드 → LLM)·`analyzeCrashWithAi(filename)` 추가.
+- `ai_insights` 테이블을 합성 키 `"__core__:" + filename` 로 재사용 (별도 테이블/컬럼 없음 —
+  `HeapAiApiController.compareKey` 의 `"__compare__:"` 패턴과 동일 컨벤션).
+- 신규 엔드포인트: `POST /api/core-dump/{f}/ai-analyze`, `GET/DELETE /api/core-dump/{f}/ai-insight`
+  (일반 인증 + `/api/**` CSRF 자동 면제, SecurityConfig 무수정). 감사 로깅 `[CoreDump-AI] action=...`.
+- `analyze.html` 최상단(히어로 카드 직후)에 AI 패널 추가: 미분석/진행/결과(심각도 배너 +
+  요약·근본원인·권장조치·심각도근거 카드)/오류 4상태. `core-dump-analyze.js` 가 페이지 로드 시
+  저장 인사이트 자동 로드, "AI 크래시 분석 실행" 버튼으로 분석/재분석/삭제.
+
+### 검증
+- `mvn clean package` 성공, 기동 13.3s. `/core-dump`·`/progress`·`/analyze` 200.
+- `POST .../ai-analyze` 파이프라인 end-to-end 동작 확인 (실 덤프 `crash_demo_2.core` SIGSEGV →
+  프롬프트 생성 → Claude 호출 → 응답 파싱). 외부 Anthropic 잔액 부족으로 happy-path 저장만 미검증,
+  오류 경로(`success:false`, 미저장)는 정상.
+- 3개 신규 JS `node --check` 통과. AI 패널 4상태 블록·외부 JS·CSS 토큰 렌더 확인.
+
+## [2026-06-25] 버전 2.1.2 → 2.1.4 업데이트
+
+**대상:**
+- `pom.xml`
+- `restart.sh` / `run.sh` / `stop.sh`
+- `src/main/resources/templates/fragments/banner.html`
+- `src/main/resources/templates/index.html`
+
+---
+
+## [2026-06-25] Files — 코어덤프 분석 버튼 개선 + 코어덤프 페이지 자동 카드 채우기
+
+**대상:**
+- `src/main/resources/templates/files.html`
+- `src/main/resources/templates/core-dump/index.html`
+
+### 변경 내용
+
+**files.html**
+- `ANALYZING` 상태 코어덤프 행에 "분석 진행 확인" 버튼 추가 → `/core-dump/progress/{filename}` 이동
+- `ERROR` / `NOT_ANALYZED` 상태 분석 버튼: `href="/core-dump"` (파라미터 없음) →
+  `th:href="@{/core-dump(file=..., exec=...)}"` 로 변경.
+  `hasExec=true`이면 `?exec={filename}.exec` 자동 추가, `false`이면 exec 파라미터 생략.
+
+**core-dump/index.html**
+- `?exec=` URL 파라미터 처리 추가: exec 파일명을 실행파일 카드에 자동 표시, `has-file` 스타일 적용
+- `_preloadedExecFilename` 변수 추가 (기존 `_preloadedFilename` 패턴 동일)
+- `?file` + `?exec` 모두 있을 때 statusMessage: "서버 파일 준비 완료 (코어 + 실행 파일)"
+- `onExecFileSelect()`: 새 파일 선택 시 `_preloadedExecFilename = null` 초기화
+
+### 동작 흐름
+```
+Files 페이지 (NOT_ANALYZED/ERROR 코어덤프 행) → 분석 버튼 클릭
+  → /core-dump?file=crash_demo_2.core&exec=crash_demo_2.core.exec
+  → 코어 카드 + 실행파일 카드 자동 채워짐, "GDB 분석 시작" 활성화
+  → 클릭 → /core-dump/progress/{filename} → SSE 분석 시작
+```
+
+---
+
+## [2026-06-25] Files — coredump 항목의 exec 파일 서브 row 표시 추가
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/resources/templates/files.html`
+
+### 변경 내용
+기존에는 코어 덤프 디렉토리(`/opt/coredumps/dumpfiles/`)의 `.exec` 파일이 EXEC 배지로만 표시되어
+파일명·크기·날짜 등 세부 정보를 확인하거나 다운로드할 수 없었음.
+
+- **Controller** (`filesPage()`): `coredump` 타입 항목에 `hasExec=true`인 경우 `{corename}.exec` 파일 메타데이터를 `coreExecSubrowMap`에 추가
+- **Template** (`files.html`): 서브 row 표시 조건을 `fileType == 'core'` → `fileType == 'core' or fileType == 'coredump'`로 확장
+  - exec 서브 row에서 다운로드 버튼이 `/api/core-dump/download/` 경로 사용 (`isCore` 플래그 활용)
+  - `coredump` 타입 서브 row에는 "연결해제" 버튼 미표시 (이름 규약 기반 자동 매칭이므로 수동 해제 불필요)
+
+---
+
+## [2026-06-25] Files — .tar.gz 등 비힙덤프 .gz 파일의 확장자가 잘려 표시되는 버그 수정
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/FileManagementService.java`
+
+### 원인
+`listFiles()` / `checkDuplicate()` / `computePartialHash()` 세 메서드가 `.gz`로 끝나는 모든 파일을 압축 힙덤프로 간주해 `.gz`를 제거.
+`heapApp_20260622.tar.gz` 같은 파일이 `heapApp_20260622.tar`로 표시되고 DB 파일명(`tar.gz`)과 불일치 → fileDeleted=true 오판 및 중복 항목 생성.
+
+### 변경 내용
+`.gz` 처리 조건을 `isValidHeapDumpFile()` 통과 파일(`.hprof.gz` / `.bin.gz` / `.dump.gz`)에만 한정:
+- `listFiles()`: `compressed` 판정 조건 수정
+- `checkDuplicate()`: `isGz` 판정 조건 수정
+- `computePartialHash()`: `GZIPInputStream` 사용 조건 수정
+
+---
+
+## [2026-06-25] CoreDump — 삭제 후 재업로드 시 분석 결과가 이력에 보이지 않는 버그 수정
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/resources/templates/core-dump/index.html`
+
+### 원인
+`CoreDumpAnalyzerService.runAnalysis()` 에서 기존 DB 엔티티(`fileDeleted=true`) 재사용 시
+`setFileDeleted(false)` 가 `orElseGet` 람다 안에만 있어 호출되지 않음.
+결과적으로 `getHistory()` 의 `findByFileDeletedFalseOrderByCreatedAtDesc()` 에서 필터링되어
+result.json 과 DB status=SUCCESS 임에도 이력 목록에 나타나지 않음.
+
+### 변경 내용
+- `runAnalysis()`: `setFileSize` / `setFileDeleted(false)` / `setUploadedBy` 를 `orElseGet` 밖으로 이동
+  → 신규 엔티티·기존 엔티티 모두 동일하게 재초기화
+- `index.html` exec 업로드 슬롯 설명 문구 개선 (별도 업로드 경로 혼동 방지)
+
+---
+
+## [2026-06-25] Files 페이지 — Others 탭 분석 버튼 클릭 시 경고 모달 표시
+
+**대상:**
+- `src/main/resources/templates/files.html`
+
+### 변경 내용
+- **Others/Exec 분석 경고 모달 추가**: Others 탭 파일의 분석 버튼 클릭 시 직접 이동 대신 경고 모달 표시
+  - 모달에서 파일명, 지원 불가 가능성, 분석 실패 위험 안내
+  - 취소 → 모달 닫기 / 분석 시작 → `/analyze/{filename}` 이동
+  - `confirmOthersAnalyze()` / `closeOthersAnalyzeModal()` JS 함수 추가
+
+---
+
+## [2026-06-24] Files 페이지 — Others 탭 작업 버튼 추가 (분석·다운로드·삭제)
+
+**대상:**
+- `src/main/resources/templates/files.html`
+
+### 변경 내용
+- **Others/Exec 타입 파일 액션 버튼 추가**: 기존에 분류 버튼만 있던 `others`/`exec` 타입 파일에 분석·다운로드·삭제 버튼 추가
+  - NOT_ANALYZED + !deleted → 분석 버튼 (파란색, `/analyze/{filename}`)
+  - SUCCESS → 결과 보기 버튼 (초록색, `/analyze/result/{filename}`)
+  - ERROR + !deleted → 오류 확인 버튼 (빨간색, `/analyze/result/{filename}`)
+  - !deleted → 다운로드 버튼 (기존 Download 모달 재사용)
+  - !deleted → 삭제 버튼 (기존 `/delete/{filename}` POST 재사용)
+  - deleted + admin → 기록 영구 삭제 버튼 (관리자 전용 Purge)
+
+---
+
+## [2026-06-24] Files 페이지 — 전체 파일 분류 버튼 + 코어-실행파일 페어링 sub-row
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/model/dto/AnalysisHistoryItem.java`
+- `src/main/java/com/heapdump/analyzer/service/FileManagementService.java`
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapFileApiController.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/resources/templates/files.html`
+
+### 변경 내용
+- **`AnalysisHistoryItem`**: `pairedExecFilename` / `pairedExec` 필드 추가
+- **`FileManagementService`**: `loadCoreExecPairings()` / `saveCoreExecPairing()` / `removeCoreExecPairing()` 추가 — `data/core-exec-pairs.properties`에 코어→실행파일 매핑 저장
+- **`HeapDumpAnalyzerService`**: 위 3개 메서드 facade 위임 추가
+- **`HeapFileApiController`**: `POST /api/files/{filename}/pair` (페어링 저장/해제), `DELETE /api/files/{filename}/pair` (해제) 추가. 감사 로그 `[FilePair] action=pair|unpair`
+- **`HeapDumpViewController.filesPage()`**: 코어-실행파일 페어링 로드 후 core item에 `pairedExecFilename` 설정, 페어링된 exec는 top-level 목록 제외 + `coreExecSubrowMap`·`execFilenames` 모델 전달
+- **`files.html`**:
+  - **분류 버튼(전체)**: 모든 파일 action 셀에 "분류" 버튼 추가 → 클릭 시 "파일 분류 설정" 모달 오픈
+  - **분류 모달**: 코어덤프/실행파일/덤프파일/기타 선택. "코어덤프" 선택 시 연결할 실행파일 드롭다운 표시
+  - **exec sub-row**: 코어파일과 페어링된 실행파일을 코어 row 하단에 들여쓰기된 서브 row로 표시. "연결해제" 버튼 제공
+  - **JS sub-row 처리**: `_subrowMap` 분리, `sortRows()`에서 core row 다음에 sub-row 삽입, `render()`에서 core row show/hide 시 sub-row 동기화
+  - **Others 탭 분류 드롭다운 컬럼 제거**: 모달 방식으로 통합
+
+---
+
+## [2026-06-24] Files 페이지 — Others 탭·파일 분류 기능·CORE/EXEC 태그 추가
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/FileManagementService.java`
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapFileApiController.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/resources/templates/files.html`
+- `src/main/resources/static/js/upload-queue.js`
+
+### 변경 내용
+- **`FileManagementService`**: `loadFileClassifications()` / `saveFileClassification(filename, fileType)` 추가 — `data/file-classifications.properties` 파일에 파일 유형 저장
+- **`HeapDumpAnalyzerService`**: `loadFileClassifications()` / `saveFileClassification()` facade 메서드 추가
+- **`HeapFileApiController`**: `POST /api/files/{filename}/classify` 엔드포인트 추가 — `{"fileType":"core|exec|heapdump|others"}` 요청으로 분류 저장
+- **`HeapDumpViewController.filesPage()`**: 인식된 힙덤프 확장자(.hprof/.bin/.dump 및 .gz) 없는 파일에 `fileType='others'` 기본 지정 + 사용자 저장 분류 반영 (`allowAllExtensions=true` 시)
+- **`files.html`**:
+  - **Others 탭** 추가: 확장자 없는 파일(코어·힙덤프 패턴 미포함) 자동 분류
+  - **CORE/EXEC/OTHERS 배지**: user-classified `core`·`exec`·`others` 타입에 배지 표시
+  - **KRDS 셀렉트** (`component_06_03` 가이드라인): Others 탭 활성화 시 "분류" 열 노출, 코어파일/실행파일/덤프파일/기타 선택 → 즉시 API 저장·배지 갱신·`applyFilter()` 재실행으로 **해당 분류 탭으로 행 이동**
+  - 탭 카운트 3분류(heap/core/others)로 확장; `core` 타입은 Coredump 탭에 집계, `exec`·`others`는 Others 탭에 집계
+- **`upload-queue.js`**: 업로드 모달에서 코어덤프→CORE, 실행파일→EXEC, 미분류→? 배지 표시; 확장자 없는 파일 자동 `others` 타입 판별
+
+---
+
+## [2026-06-24] 코어 덤프 — EXEC 배지 추가 · Files 페이지 조회 확인
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/model/dto/AnalysisHistoryItem.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/resources/templates/files.html`
+- `src/main/resources/templates/core-dump/index.html`
+
+### 변경 내용
+- **`AnalysisHistoryItem`**: `hasExec` 필드 추가 (getter `isHasExec()` / setter `setHasExec()`)
+- **`buildCoreDumpHistory()`**: DB 등록 항목·미등록 파일 모두 `filename + ".exec"` 존재 여부 검사 후 `hasExec` 세팅
+- **`files.html`**: 코어덤프 행에 `EXEC` 배지 추가 (`th:if="${h.fileType == 'coredump' and h.hasExec}"`) + `.exec-badge` CSS(보라 계열)
+- **`core-dump/index.html`**: `hi-filename` 줄을 `hi-filename-row` flex 래퍼로 교체, `item.executableName != null` 조건으로 `EXEC` 배지 표시 + `.exec-badge` CSS 추가
+- **Files 페이지 점검**: 코어 덤프 페이지에서 업로드한 파일은 `buildCoreDumpHistory()`가 `coreDumpService.dumpFilesDir()` 동일 디렉토리를 스캔하므로 Files 페이지에서 즉시 조회 가능. `.exec` 파일은 이미 필터링되어 별도 행 미표시 — 정상 동작 확인.
+
+---
+
+## [2026-06-24] 코어 덤프 분석 저장 로직 강화 · 로깅 개선
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+
+### 변경 내용
+- **버그 수정**: `dataDirFile.mkdirs()` 반환값 미검사 → 디렉토리 생성 실패 시 `IOException("결과 저장 디렉토리 생성 실패: ...")` 명시적 throw (이전: `objectMapper.writeValue()`에서 의미 불명 IOException 발생)
+- **로그 추가**: `result.json` 저장 성공 시 절대 경로·파일 크기 INFO 로그
+- **로그 추가**: DB 갱신 완료 시 status 값 포함 INFO 로그
+- **로그 추가**: `gdb_output.txt` 저장 실패 시 WARN 로그 (분석에 영향 없는 부가 파일이므로 예외 격리)
+- **SSE 이벤트 수정**: 파서가 errorMessage 반환 시 `completed` 대신 `error` SSE 전송 → progress 페이지에 에러 배너 표시 (이전: 성공 배너 5초 카운트다운 후 에러 결과 페이지로 이동하여 "저장 안됨"으로 오인)
+- **로그 구분**: 분석 완료 로그를 정상(INFO) / 파서 오류(WARN)로 분리, 오류 시 errorMessage 포함
+
+---
+
+## [2026-06-24] 코어 덤프 파서 — 소스 파일 누락 오탐 수정 · vmcore 안내 메시지 추가
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+
+### 변경 내용
+- **버그 수정**: `parseGdbOutput()` 조기 실패 감지에서 `"No such file or directory"` 가 소스 코드 라인 번호 형식(`688     /path/file.c: No such file or directory.`)에도 매치되어 7,000+ 바이트 GDB 출력이 있음에도 `frames=0, threads=0` 반환하던 오탐 수정
+  - 라인이 숫자(`\d+`)로 시작하는 경우 소스 표시 실패로 간주하고 조기 종료 대상에서 제외
+- **vmcore 안내**: `"is not a core dump"` / `"file format not recognized"` 매치 시 파일명이 `vmcore`로 시작하면 `'crash' 유틸리티를 사용하세요` 안내 포함 메시지로 교체 (GDB 원문은 괄호 안에 보존)
+
+---
+
+## [2026-06-24] 코어 덤프 progress 페이지 — 분석 완료 후 자동 이동 취소 버튼 추가
+
+**대상:**
+- `src/main/resources/templates/core-dump/progress.html`
+
+### 변경 내용
+- 완료 배너에 "여기 머무르기" 버튼 추가 (`#stayBtn`, `.stay-btn`)
+- `showComplete()`: 카운트다운 타이머를 모듈 레벨 변수 `autoRedirectTimer`로 분리
+- `cancelAutoRedirect()` 함수 추가: 타이머 해제 → 안내 문구 변경 → 버튼 숨김
+- 버튼 클릭 후 "결과 보기" 링크는 유지되어 원할 때 수동 이동 가능
+
+---
+
+## [2026-06-24] findExternalPropertiesFile — Spring Boot 3.x 팻 JAR 경로 파싱 수정
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/HeapDumpAnalyzerService.java`
+
+### 변경 내용
+- `findExternalPropertiesFile()`: `getCodeSource().getLocation().toURI()` → `new File()` 변환이 Spring Boot 3.x 팻 JAR의 `nested:/...` URL 스킴에서 예외 발생 후 묵살되어 JAR 옆 `application.properties`를 못 찾는 버그 수정
+- URL 문자열에서 `.jar` 경로를 직접 파싱하는 방식으로 교체 (`nested:`, `jar:file:`, `file:` 스킴 모두 처리)
+- 폴백으로 현재 작업 디렉토리(`user.dir`) 검색 추가 (기존: JAR 디렉토리 → 소스 디렉토리)
+- 결과: `/sw/heapApp/` 처럼 JAR과 같은 디렉토리에 `application.properties` 배치 시 정상 동기화
+
+---
+
 ## [2026-06-24] History 페이지 — 분석결과 목록 파일명 폰트를 Files 페이지와 통일
 
 **대상:**

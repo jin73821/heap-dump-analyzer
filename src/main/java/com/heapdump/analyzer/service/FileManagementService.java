@@ -16,6 +16,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -27,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.Set;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
@@ -49,8 +51,10 @@ public class FileManagementService {
 
     private static final Logger logger = LoggerFactory.getLogger(FileManagementService.class);
 
-    private static final String RESULT_JSON  = "result.json";
-    private static final String TMP_DIR_NAME = "tmp";
+    private static final String RESULT_JSON         = "result.json";
+    private static final String TMP_DIR_NAME        = "tmp";
+    private static final String FILE_CLASSIFICATIONS = "file-classifications.properties";
+    private static final String CORE_EXEC_PAIRS      = "core-exec-pairs.properties";
 
     private final HeapDumpConfig config;
     private final HeapAnalysisResultCache resultCache;
@@ -117,7 +121,9 @@ public class FileManagementService {
 
     public String computePartialHash(File file, int bytes) throws IOException, NoSuchAlgorithmException {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        try (InputStream is = file.getName().toLowerCase().endsWith(".gz")
+        String fname = file.getName();
+        boolean heapGz = isValidHeapDumpFile(fname) && fname.toLowerCase().endsWith(".gz");
+        try (InputStream is = heapGz
                 ? new GZIPInputStream(new FileInputStream(file))
                 : new FileInputStream(file)) {
             byte[] buf = new byte[8192];
@@ -167,7 +173,7 @@ public class FileManagementService {
         for (File f : files) {
             String fName = f.getName();
             long existingSize;
-            boolean isGz = fName.toLowerCase().endsWith(".gz");
+            boolean isGz = isValidHeapDumpFile(fName) && fName.toLowerCase().endsWith(".gz");
             if (isGz) {
                 String displayName = fName.substring(0, fName.length() - 3);
                 HeapAnalysisResult cached = resultCache.get(displayName);
@@ -228,7 +234,8 @@ public class FileManagementService {
         if (files != null) {
             for (File f : files) {
                 String displayName = f.getName();
-                boolean compressed = displayName.toLowerCase().endsWith(".gz");
+                boolean compressed = isValidHeapDumpFile(displayName)
+                        && displayName.toLowerCase().endsWith(".gz");
                 if (compressed) {
                     displayName = displayName.substring(0, displayName.length() - 3);
                 }
@@ -406,6 +413,104 @@ public class FileManagementService {
         }
 
         logger.info("[Delete] Completed: heap dump file deleted for '{}', analysis data preserved in data/", safe);
+    }
+
+    // ── 파일 분류 저장/로드 ──────────────────────────────────────────
+
+    private File fileClassificationsFile() {
+        return new File(config.getDataDirectory(), FILE_CLASSIFICATIONS);
+    }
+
+    public Map<String, String> loadFileClassifications() {
+        File f = fileClassificationsFile();
+        Properties p = new Properties();
+        if (f.exists()) {
+            try (InputStream is = new FileInputStream(f)) {
+                p.load(is);
+            } catch (IOException e) {
+                logger.warn("[FileMeta] Load failed: {}", e.getMessage());
+            }
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        for (String key : p.stringPropertyNames()) {
+            result.put(key, p.getProperty(key));
+        }
+        return result;
+    }
+
+    public synchronized void saveFileClassification(String filename, String fileType) throws IOException {
+        File dir = new File(config.getDataDirectory());
+        Files.createDirectories(dir.toPath());
+        File f = fileClassificationsFile();
+        Properties p = new Properties();
+        if (f.exists()) {
+            try (InputStream is = new FileInputStream(f)) {
+                p.load(is);
+            } catch (IOException e) {
+                logger.warn("[FileMeta] Load failed during save: {}", e.getMessage());
+            }
+        }
+        p.setProperty(filename, fileType);
+        try (OutputStream os = new FileOutputStream(f)) {
+            p.store(os, null);
+        }
+        logger.info("[FileMeta] Saved classification: {}={}", filename, fileType);
+    }
+
+    // ── 코어-실행파일 페어링 저장/로드 ──────────────────────────────────
+
+    private File coreExecPairsFile() {
+        return new File(config.getDataDirectory(), CORE_EXEC_PAIRS);
+    }
+
+    public Map<String, String> loadCoreExecPairings() {
+        File f = coreExecPairsFile();
+        Properties p = new Properties();
+        if (f.exists()) {
+            try (InputStream is = new FileInputStream(f)) {
+                p.load(is);
+            } catch (IOException e) {
+                logger.warn("[CoreExecPair] Load failed: {}", e.getMessage());
+            }
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        for (String key : p.stringPropertyNames()) {
+            result.put(key, p.getProperty(key));
+        }
+        return result;
+    }
+
+    public synchronized void saveCoreExecPairing(String coreFilename, String execFilename) throws IOException {
+        File dir = new File(config.getDataDirectory());
+        Files.createDirectories(dir.toPath());
+        File f = coreExecPairsFile();
+        Properties p = new Properties();
+        if (f.exists()) {
+            try (InputStream is = new FileInputStream(f)) {
+                p.load(is);
+            } catch (IOException e) {
+                logger.warn("[CoreExecPair] Load failed during save: {}", e.getMessage());
+            }
+        }
+        p.setProperty(coreFilename, execFilename);
+        try (OutputStream os = new FileOutputStream(f)) {
+            p.store(os, "core-filename=exec-filename");
+        }
+        logger.info("[CoreExecPair] Saved pairing: {}={}", coreFilename, execFilename);
+    }
+
+    public synchronized void removeCoreExecPairing(String coreFilename) throws IOException {
+        File f = coreExecPairsFile();
+        if (!f.exists()) return;
+        Properties p = new Properties();
+        try (InputStream is = new FileInputStream(f)) {
+            p.load(is);
+        }
+        p.remove(coreFilename);
+        try (OutputStream os = new FileOutputStream(f)) {
+            p.store(os, "core-filename=exec-filename");
+        }
+        logger.info("[CoreExecPair] Removed pairing for core: {}", coreFilename);
     }
 
     /**

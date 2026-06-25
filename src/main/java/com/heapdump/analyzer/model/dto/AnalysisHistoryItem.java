@@ -26,6 +26,9 @@ public class AnalysisHistoryItem {
     private long    analyzedAtEpoch;
     private String  dumpCreationTime;
     private String  fileType = "heapdump";
+    private boolean hasExec;
+    private String  pairedExecFilename;
+    private boolean pairedExec;
 
     public Long    getId()            { return id; }
     public void    setId(Long v)              { id = v; }
@@ -77,4 +80,10 @@ public class AnalysisHistoryItem {
     public void    setDumpCreationTime(String v) { dumpCreationTime = v; }
     public String  getFileType()         { return fileType; }
     public void    setFileType(String v)          { fileType = v; }
+    public boolean isHasExec()           { return hasExec; }
+    public void    setHasExec(boolean v)          { hasExec = v; }
+    public String  getPairedExecFilename()        { return pairedExecFilename; }
+    public void    setPairedExecFilename(String v){ pairedExecFilename = v; }
+    public boolean isPairedExec()                 { return pairedExec; }
+    public void    setPairedExec(boolean v)       { pairedExec = v; }
 }

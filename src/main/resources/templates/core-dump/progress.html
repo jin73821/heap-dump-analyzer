@@ -7,11 +7,11 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>코어 덤프 분석 중... - Heap Dump Analyzer</title>
-    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-05}">
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-25}">
     <link rel="stylesheet" th:href="@{/css/style.css}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-19}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-25}">
     <style>
-        body { background: #F3F4F6 !important; }
+        body { background: var(--cd-bg, #F3F4F6) !important; }
         /* progress 전용 topbar override: gap 대신 space-between */
         .cd-topbar { justify-content: space-between; }
         .topbar-right { display: flex; align-items: center; gap: 8px; }
@@ -132,6 +132,15 @@
             text-decoration: none; flex-shrink: 0;
             box-shadow: 0 2px 6px rgba(0,0,0,.12);
         }
+        .stay-btn {
+            background: rgba(255,255,255,.15); color: #fff;
+            border: 1.5px solid rgba(255,255,255,.5);
+            font-size: 13px; font-weight: 600;
+            padding: 8px 16px; border-radius: 8px;
+            cursor: pointer; flex-shrink: 0;
+            transition: background .15s;
+        }
+        .stay-btn:hover { background: rgba(255,255,255,.28); }
 
         /* 에러 배너 */
         .error-banner {
@@ -184,6 +193,7 @@
             <div class="complete-title">GDB 분석 완료</div>
             <div class="complete-sub" id="countdownText">결과 페이지로 이동 중...</div>
         </div>
+        <button class="stay-btn" id="stayBtn" onclick="cancelAutoRedirect()">&#9646;&#9646; 여기 머무르기</button>
         <a href="#" class="complete-btn" id="resultLink">&#128202; 결과 보기</a>
     </div>
 
@@ -277,232 +287,13 @@
     </div><!-- /.progress-grid -->
 </div>
 
+<!-- Thymeleaf 모델 변수 노출 (external JS 가 글로벌로 참조 — 순서: 인라인 → external 유지) -->
 <script th:inline="javascript">
-    const FILENAME   = /*[[${filename}]]*/ '';
-    const SSE_URL    = '/core-dump/analyze-progress/' + encodeURIComponent(FILENAME);
-    const RESULT_URL = '/core-dump/analyze/' + encodeURIComponent(FILENAME);
-
-    const mainBar     = document.getElementById('mainBar');
-    const pctText     = document.getElementById('pctText');
-    const statusLabel = document.getElementById('statusLabel');
-    const statusMsg   = document.getElementById('statusMsg');
-    const logConsole  = document.getElementById('logConsole');
-    const logCountEl  = document.getElementById('logCount');
-    const completeBanner = document.getElementById('completeBanner');
-    const errorBanner    = document.getElementById('errorBanner');
-    const errorMsgEl     = document.getElementById('errorMsg');
-    const resultLink     = document.getElementById('resultLink');
-    const elapsedEl      = document.getElementById('elapsedTime');
-    const countdownText  = document.getElementById('countdownText');
-
-    // 경과 시간
-    let startTime = null, elapsedTimer = null;
-    function startElapsed() {
-        if (startTime) return;
-        startTime = Date.now();
-        elapsedTimer = setInterval(function() {
-            var e = Date.now() - startTime;
-            var m = Math.floor(e / 60000), s = Math.floor((e % 60000) / 1000);
-            elapsedEl.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
-        }, 1000);
-    }
-
-    // 타임라인
-    var stepState = {};
-    function setStep(id, state, desc) {
-        if (stepState[id] === state && !desc) return;
-        stepState[id] = state;
-        var dot  = document.getElementById('icon-' + id);
-        var item = document.getElementById('step-' + id);
-        var descEl = document.getElementById('desc-' + id);
-        if (dot)  dot.className = 'timeline-dot ' + state;
-        if (desc && descEl) descEl.textContent = desc;
-        if (item) {
-            item.classList.remove('step-waiting','step-active','step-done','step-error');
-            item.classList.add('step-' + state);
-        }
-    }
-
-    // 진행바
-    function setProgress(pct, msg, state, label) {
-        mainBar.style.width = pct + '%';
-        pctText.textContent = pct + '%';
-        if (msg) statusMsg.textContent = msg;
-        if (label) statusLabel.textContent = label;
-        if (state === 'done') {
-            mainBar.classList.add('done'); mainBar.classList.remove('error');
-        } else if (state === 'error') {
-            mainBar.classList.add('error'); mainBar.classList.remove('done');
-        } else {
-            mainBar.classList.remove('done','error');
-        }
-    }
-
-    // 로그 콘솔 (버퍼링)
-    var logBuffer = [], logTotal = 0, logFlushId = null, autoScroll = true;
-    logConsole.addEventListener('scroll', function() {
-        autoScroll = (logConsole.scrollHeight - logConsole.scrollTop - logConsole.clientHeight) < 60;
-    }, { passive: true });
-
-    function appendLog(line) {
-        logBuffer.push(line.length > 250 ? line.slice(0,250) + '…' : line);
-        if (!logFlushId) logFlushId = setTimeout(flushLog, 120);
-    }
-    function flushLog() {
-        logFlushId = null;
-        if (!logBuffer.length) return;
-        var chunk = logBuffer.join('\n') + '\n';
-        logBuffer = [];
-        // 줄 수 제한
-        var MAX = 600, TRIM = 400;
-        logTotal += chunk.split('\n').length - 1;
-        var existing = logConsole.textContent.split('\n').length - 1;
-        if (existing > MAX) {
-            var lines = logConsole.textContent.split('\n');
-            logConsole.textContent = lines.slice(lines.length - TRIM).join('\n') + '\n';
-        }
-        logConsole.appendChild(document.createTextNode(chunk));
-        logCountEl.textContent = logTotal + ' lines';
-        if (autoScroll) logConsole.scrollTop = 999999;
-    }
-
-    // 자동 이동
-    function showComplete(url) {
-        if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
-        if (logBuffer.length) flushLog();
-        resultLink.href = url || RESULT_URL;
-        completeBanner.classList.add('visible');
-        setStep('done', 'done', '결과 페이지 준비 완료');
-
-        var remaining = 5;
-        countdownText.textContent = remaining + '초 후 자동으로 결과 페이지로 이동합니다...';
-        var t = setInterval(function() {
-            remaining--;
-            if (remaining <= 0) {
-                clearInterval(t);
-                window.location.href = url || RESULT_URL;
-            } else {
-                countdownText.textContent = remaining + '초 후 자동으로 결과 페이지로 이동합니다...';
-            }
-        }, 1000);
-    }
-
-    // SSE
-    function startSSE() {
-        var evtSource = new EventSource(SSE_URL);
-
-        evtSource.addEventListener('progress', function(e) {
-            var d = JSON.parse(e.data);
-            var status = d.status, percent = d.percent, message = d.message;
-
-            if (status === 'RUNNING' || status === 'PARSING') startElapsed();
-
-            setProgress(percent, message,
-                status === 'COMPLETED' ? 'done' : status === 'ERROR' ? 'error' : 'running',
-                message);
-
-            if (percent >= 3  && percent < 10) setStep('file', 'done', '파일 확인 완료');
-            else if (percent < 3)              setStep('file', 'active');
-
-            if (percent >= 10 && percent < 85) { setStep('file','done'); setStep('gdb', 'active'); }
-            if (percent >= 85 && percent < 92) { setStep('gdb','done','GDB 실행 완료'); setStep('parse', 'active'); }
-            if (percent >= 92 && percent < 100) { setStep('parse','done','파싱 완료'); setStep('save', 'active'); }
-
-            if (d.logLine) appendLog(d.logLine);
-
-            if (status === 'COMPLETED') {
-                evtSource.close();
-                setStep('file','done'); setStep('gdb','done'); setStep('parse','done'); setStep('save','done','저장 완료');
-                setProgress(100, '분석 완료!', 'done', '분석 완료');
-                showComplete(d.resultUrl || RESULT_URL);
-            }
-            if (status === 'ERROR') {
-                evtSource.close();
-                if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
-                if (logBuffer.length) flushLog();
-                // 현재 active 단계를 error로
-                ['file','gdb','parse','save','done'].forEach(function(s) {
-                    if (stepState[s] === 'active') setStep(s, 'error');
-                });
-                setProgress(d.percent || 0, '분석 실패', 'error', '분석 실패');
-                var msg = d.errorMessage || '알 수 없는 오류가 발생했습니다.';
-                errorMsgEl.textContent = msg;
-                // 에러 원인별 힌트
-                var hint = '';
-                if (msg.includes('찾을 수 없')) hint = '코어 덤프 파일이 삭제되었거나 경로가 변경되었을 수 있습니다.';
-                else if (msg.includes('시간 초과')) hint = 'GDB 분석이 제한 시간을 초과했습니다. 실행 파일 없이 재분석하거나 관리자에게 문의하세요.';
-                else if (msg.includes('GDB 출력 없음') || msg.includes('outputLen=0')) hint = 'GDB가 설치되지 않았거나 유효하지 않은 코어 덤프 파일입니다.';
-                else if (msg.includes('취소')) hint = '분석이 사용자에 의해 중단되었습니다. 재분석을 시도할 수 있습니다.';
-                document.getElementById('errorHint').textContent = hint;
-                errorBanner.classList.add('visible');
-            }
-        });
-
-        evtSource.onerror = function() {
-            evtSource.close();
-            if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
-            // SSE 끊김 — 결과가 이미 완성됐는지 먼저 확인
-            setTimeout(function() {
-                fetch(RESULT_URL, { method: 'HEAD' })
-                    .then(function(r) {
-                        if (r.ok) {
-                            showComplete(RESULT_URL);
-                        } else {
-                            showSseError(
-                                'SSE 연결이 끊겼고 분석 결과를 확인할 수 없습니다.',
-                                '재분석을 시도하거나 잠시 후 새로고침해 주세요.'
-                            );
-                        }
-                    })
-                    .catch(function() {
-                        showSseError(
-                            'SSE 연결이 끊겼고 서버 응답이 없습니다.',
-                            '서버 재기동 중이거나 네트워크 문제일 수 있습니다. 잠시 후 새로고침해 주세요.'
-                        );
-                    });
-            }, 2000);
-        };
-
-        function showSseError(msg, hint) {
-            if (logBuffer.length) flushLog();
-            ['file','gdb','parse','save','done'].forEach(function(s) {
-                if (stepState[s] === 'active') setStep(s, 'error');
-            });
-            setProgress(0, '연결 오류', 'error', '연결 오류');
-            errorMsgEl.textContent = msg;
-            document.getElementById('errorHint').textContent = hint;
-            errorBanner.classList.add('visible');
-        }
-    }
-
-    startSSE();
-
-    // 재분석: result.json 삭제 후 페이지 리로드 → SSE 재시작
-    function retryAnalysis() {
-        var btn = document.getElementById('retryBtn');
-        if (btn) { btn.disabled = true; btn.textContent = '재분석 요청 중...'; }
-        var csrfToken  = document.querySelector('meta[name="_csrf"]') && document.querySelector('meta[name="_csrf"]').content;
-        var csrfHeader = document.querySelector('meta[name="_csrf_header"]') && document.querySelector('meta[name="_csrf_header"]').content;
-        var headers = {};
-        if (csrfToken && csrfHeader) headers[csrfHeader] = csrfToken;
-        fetch('/api/core-dump/reanalyze/' + encodeURIComponent(FILENAME), {
-            method: 'POST', headers: headers
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (d.status === 'ok') {
-                window.location.reload();
-            } else {
-                alert('재분석 요청 실패: ' + (d.message || '알 수 없는 오류'));
-                if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; 재분석'; }
-            }
-        })
-        .catch(function(e) {
-            alert('재분석 중 오류: ' + e.message);
-            if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; 재분석'; }
-        });
-    }
+    var FILENAME   = /*[[${filename}]]*/ '';
+    var SSE_URL    = '/core-dump/analyze-progress/' + encodeURIComponent(FILENAME);
+    var RESULT_URL = '/core-dump/analyze/' + encodeURIComponent(FILENAME);
 </script>
+<script th:src="@{/js/core-dump-progress.js?v=2026-06-25}"></script>
 
 </body>
 </html>

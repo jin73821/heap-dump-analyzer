@@ -190,6 +190,28 @@
         .type-tab.active .tab-count { background: #DBEAFE; color: #1E40AF; }
         .core-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
                       background: #FEF3C7; color: #92400E; font-weight: 600; vertical-align: middle; }
+        .exec-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
+                      background: #EDE9FE; color: #5B21B6; font-weight: 600; vertical-align: middle; margin-left: 3px; }
+        .others-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
+                        background: #F3F4F6; color: #6B7280; font-weight: 600; vertical-align: middle; }
+        /* KRDS 선택 컴포넌트 (component_06_03) */
+        .krds-select-wrap { display: flex; align-items: center; gap: 6px; }
+        .krds-file-type-sel {
+            display: block; min-width: 110px; padding: 5px 28px 5px 10px; font-size: 12px;
+            color: #1A1A1A; background-color: #fff; border: 1px solid #ADB5BD; border-radius: 4px;
+            appearance: none; -webkit-appearance: none; cursor: pointer; outline: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23495057' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+            background-repeat: no-repeat; background-position: right 8px center;
+            transition: border-color .15s, box-shadow .15s;
+        }
+        .krds-file-type-sel:focus { border-color: #003366; box-shadow: 0 0 0 2px rgba(0,51,102,.2); }
+        .krds-file-type-sel:disabled { background-color: #F8F9FA; color: #6C757D; cursor: not-allowed; }
+        .krds-classify-btn {
+            padding: 5px 10px; font-size: 11px; font-weight: 600; border-radius: 4px; border: none;
+            background: #003366; color: #fff; cursor: pointer; flex-shrink: 0; transition: background .15s;
+        }
+        .krds-classify-btn:hover { background: #002244; }
+        .krds-classify-btn:disabled { background: #ADB5BD; cursor: not-allowed; }
 
         /* Delete confirm modal */
         .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
@@ -206,6 +228,39 @@
         @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
         .dl-modal-fname { font-weight: 700; font-size: 12px; max-width: 260px;
                           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* Others 탭: AI 인사이트 컬럼 숨김 */
+        .ftable.hide-ai-col th.col-ai,
+        .ftable.hide-ai-col td.col-ai { display: none; }
+
+        /* 분류 버튼 */
+        .fb.cl:hover { border-color: #A78BFA; background: #F5F3FF; }
+        .fb.cl:hover svg { stroke: #7C3AED; }
+
+        /* exec 서브 row */
+        .exec-subrow { background: #F5F3FF !important; }
+        .exec-subrow td { padding-top: 5px !important; padding-bottom: 5px !important; font-size: 12px; color: #6B7280; }
+        .exec-subrow .col-fname { padding-left: 24px; }
+        .exec-subrow .fname { font-weight: 400; color: #374151; }
+        .exec-subrow-indent { color: #A78BFA; margin-right: 6px; font-size: 14px; }
+        .unpair-btn { padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid #D1D5DB;
+                      background: #fff; color: #6B7280; cursor: pointer; }
+        .unpair-btn:hover { border-color: #EF4444; color: #EF4444; }
+
+        /* 분류 모달 */
+        .classify-modal-box { max-width: 420px; text-align: left; }
+        .classify-modal-box h3 { margin-bottom: 6px; }
+        .classify-modal-fname { font-size: 12px; color: #6B7280; margin-bottom: 14px; word-break: break-all; }
+        .classify-field { margin-bottom: 12px; }
+        .classify-field label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+        .classify-field select { width: 100%; padding: 8px 10px; font-size: 13px; border: 1px solid #D1D5DB;
+                                  border-radius: 6px; background: #fff; outline: none; }
+        .classify-field select:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .exec-pair-section { background: #F5F3FF; border: 1px solid #DDD6FE; border-radius: 6px;
+                             padding: 10px 12px; margin-bottom: 12px; }
+        .exec-pair-section label { color: #6D28D9; }
+        .exec-pair-section select { border-color: #C4B5FD; }
+        .exec-pair-notice { font-size: 11px; color: #7C3AED; margin-top: 4px; }
 
         @media (min-width: 1024px) {
             .ftable { font-size: 14px; }
@@ -396,6 +451,9 @@
         <button class="type-tab" data-tab="coredump" onclick="onTabClick(this)">
             Coredump <span class="tab-count" id="tabCntCore">0</span>
         </button>
+        <button class="type-tab" data-tab="others" onclick="onTabClick(this)">
+            Others <span class="tab-count" id="tabCntOthers">0</span>
+        </button>
     </div>
 
     <div class="table-toolbar">
@@ -493,14 +551,15 @@
                     <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="onHeaderSort(this)">파일명 <span class="sort-arrow">▲</span></th>
                     <th class="sortable" data-sort-key="osize" data-sort-type="num" onclick="onHeaderSort(this)">원본 크기 <span class="sort-arrow">▲</span></th>
                     <th class="col-compressed sortable" data-sort-key="csize" data-sort-type="num" onclick="onHeaderSort(this)">압축 크기 <span class="sort-arrow">▲</span></th>
-                    <th class="sortable" data-sort-key="ai" data-sort-type="num" onclick="onHeaderSort(this)">AI 인사이트 <span class="sort-arrow">▲</span></th>
+                    <th class="col-ai sortable" data-sort-key="ai" data-sort-type="num" onclick="onHeaderSort(this)">AI 인사이트 <span class="sort-arrow">▲</span></th>
                     <th class="col-hide-sm sortable" data-sort-key="server" data-sort-type="str" onclick="onHeaderSort(this)">서버 <span class="sort-arrow">▲</span></th>
                     <th class="col-date sortable" data-sort-key="date" data-sort-type="num" onclick="onHeaderSort(this)">날짜 <span class="sort-arrow">▲</span></th>
                     <th>작업</th>
                 </tr>
             </thead>
             <tbody id="fileTableBody">
-                <tr th:each="h : ${analysisHistory}" th:classappend="${h.fileDeleted} ? 'fi-deleted'"
+                <th:block th:each="h : ${analysisHistory}">
+                <tr th:classappend="${h.fileDeleted} ? 'fi-deleted'"
                     th:data-name="${h.filename}" th:data-deleted="${h.fileDeleted}"
                     th:data-status="${h.status}" th:data-file-type="${h.fileType}"
                     th:attr="data-sort-id=${h.id != null ? h.id : 0},
@@ -515,6 +574,10 @@
                     <td class="col-fname" data-label="파일명">
                         <span class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</span>
                         <span th:if="${h.fileType == 'coredump'}" class="core-badge">CORE</span>
+                        <span th:if="${h.fileType == 'coredump' and h.hasExec}" class="exec-badge">EXEC</span>
+                        <span th:if="${h.fileType == 'core'}" class="core-badge">CORE</span>
+                        <span th:if="${h.fileType == 'exec'}" class="exec-badge">EXEC</span>
+                        <span th:if="${h.fileType == 'others'}" class="others-badge">OTHERS</span>
                         <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
                     </td>
                     <td class="col-osize" data-label="원본">
@@ -584,9 +647,14 @@
                                class="fb v" title="분석 결과 보기">
                                 <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
                             </a>
+                            <a th:if="${h.fileType == 'coredump' and h.status == 'ANALYZING' and !h.fileDeleted}"
+                               th:href="@{/core-dump/progress/{f}(f=${h.filename})}"
+                               class="fb p" title="분석 진행 확인">
+                                <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                            </a>
                             <a th:if="${h.fileType == 'coredump' and (h.status == 'ERROR' or h.status == 'NOT_ANALYZED') and !h.fileDeleted}"
-                               href="/core-dump"
-                               class="fb p" title="코어 덤프 분석 페이지로 이동">
+                               th:href="@{/core-dump(file=${h.filename}, exec=${h.hasExec ? h.filename + '.exec' : null})}"
+                               class="fb p" title="코어 덤프 분석 시작">
                                 <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                             </a>
                             <a th:if="${h.fileType == 'coredump' and !h.fileDeleted}" href="#" class="fb" title="Download"
@@ -599,9 +667,89 @@
                                onclick="confirmCoreDumpDelete(this.dataset.filename);return false;">
                                 <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                             </a>
+                            <!-- ── Others / Exec 액션 ── -->
+                            <a th:if="${(h.fileType == 'others' or h.fileType == 'exec') and h.status == 'SUCCESS'}"
+                               th:href="@{/analyze/result/{f}(f=${h.filename})}"
+                               class="fb v" title="분석 결과 보기">
+                                <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
+                            </a>
+                            <a th:if="${(h.fileType == 'others' or h.fileType == 'exec') and h.status == 'ERROR' and !h.fileDeleted}"
+                               th:href="@{/analyze/result/{f}(f=${h.filename})}"
+                               class="fb e" title="오류 확인">
+                                <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                            </a>
+                            <a th:if="${(h.fileType == 'others' or h.fileType == 'exec') and h.status == 'NOT_ANALYZED' and !h.fileDeleted}"
+                               href="#" class="fb p" title="분석"
+                               th:data-filename="${h.filename}"
+                               onclick="confirmOthersAnalyze(this.dataset.filename); return false;">
+                                <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                            </a>
+                            <a th:if="${(h.fileType == 'others' or h.fileType == 'exec') and !h.fileDeleted}" href="#" class="fb" title="Download"
+                               th:data-filename="${h.filename}" th:data-size="${h.formattedSize}"
+                               onclick="showDownloadModal(this.dataset.filename,this.dataset.size,'','');return false;">
+                                <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
+                            </a>
+                            <a th:if="${(h.fileType == 'others' or h.fileType == 'exec') and !h.fileDeleted}" href="#" class="fb d" title="Delete"
+                               th:data-filename="${h.filename}"
+                               onclick="confirmOthersDelete(this.dataset.filename);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
+                            </a>
+                            <a th:if="${(h.fileType == 'others' or h.fileType == 'exec') and h.fileDeleted and isAdmin}" href="#" class="fb d" title="기록 영구 삭제 (관리자)"
+                               th:data-filename="${h.filename}"
+                               onclick="confirmPurge(this.dataset.filename);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
+                            </a>
+                            <!-- ── 분류 버튼 (모든 파일) ── -->
+                            <a th:if="${!h.fileDeleted}" href="#" class="fb cl" title="파일 분류"
+                               th:attr="data-filename=${h.filename},data-current-type=${h.fileType},data-paired-exec=${h.pairedExecFilename != null ? h.pairedExecFilename : ''}"
+                               onclick="openClassifyModal(this.dataset.filename, this.dataset.currentType, this.dataset.pairedExec); return false;">
+                                <svg viewBox="0 0 12 12"><path d="M1 3h7M1 6h5M1 9h3"/><path d="M9 5l2 2-2 2"/></svg>
+                            </a>
                         </div>
                     </td>
                 </tr>
+                <!-- exec 파일 서브 row (코어파일과 페어링된 경우 또는 coredump 이름 규약 자동 매칭) -->
+                <tr th:if="${(h.fileType == 'core' or h.fileType == 'coredump') and coreExecSubrowMap != null and coreExecSubrowMap.get(h.filename) != null}"
+                    th:with="execItem=${coreExecSubrowMap.get(h.filename)}"
+                    class="exec-subrow"
+                    th:data-parent-core="${h.filename}"
+                    th:data-name="${execItem.filename}"
+                    th:data-file-type="exec"
+                    th:data-deleted="${execItem.fileDeleted}"
+                    th:attr="data-sort-id=0, data-sort-osize=${execItem.sizeBytes},
+                             data-sort-csize=0, data-sort-ai=0,
+                             data-sort-server='', data-sort-date=${execItem.lastModified}">
+                    <td class="td-check"></td>
+                    <td class="td-seq col-seq"><span class="exec-subrow-indent">└</span></td>
+                    <td class="col-fname" data-label="파일명">
+                        <span class="fname" th:text="${execItem.filename}">exec</span>
+                        <span class="exec-badge">EXEC</span>
+                        <span th:if="${execItem.fileDeleted}" class="fi-del-badge">deleted</span>
+                    </td>
+                    <td class="col-osize" data-label="원본">
+                        <span class="fsize" th:text="${execItem.formattedSize}">-</span>
+                    </td>
+                    <td class="col-compressed" data-label="압축"><span class="ai-none">—</span></td>
+                    <td class="col-ai" data-label="AI"><span class="ai-none">—</span></td>
+                    <td class="col-hide-sm col-server" data-label="서버"><span style="color:#9CA3AF;font-size:12px">—</span></td>
+                    <td class="col-date" data-label="날짜">
+                        <span class="fdate" th:text="${execItem.formattedDate}">-</span>
+                    </td>
+                    <td class="col-actions" data-label="작업">
+                        <div class="file-actions">
+                            <a th:if="${!execItem.fileDeleted}" href="#" class="fb" title="Download"
+                               th:data-filename="${execItem.filename}" th:data-size="${execItem.formattedSize}"
+                               th:data-is-core="${h.fileType == 'coredump'}"
+                               onclick="showDownloadModal(this.dataset.filename,this.dataset.size,'','',this.dataset.isCore==='true');return false;">
+                                <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
+                            </a>
+                            <button th:if="${h.fileType == 'core'}" class="unpair-btn" title="연결 해제"
+                                    th:data-core="${h.filename}"
+                                    onclick="confirmUnpair(this.dataset.core)">연결해제</button>
+                        </div>
+                    </td>
+                </tr>
+                </th:block>
             </tbody>
         </table>
         <div class="no-match" id="noMatch">No files matching your search.</div>
@@ -663,6 +811,65 @@
     </div>
 </div>
 
+<!-- Classify modal -->
+<div class="modal-ov" id="classifyModal" onclick="if(event.target===this)closeClassifyModal()">
+    <div class="modal-box classify-modal-box">
+        <h3>파일 분류 설정</h3>
+        <p class="classify-modal-fname" id="classifyModalFilename">-</p>
+        <div class="classify-field">
+            <label for="classifyTypeSelect">파일 유형</label>
+            <select id="classifyTypeSelect" onchange="onClassifyTypeChange()">
+                <option value="core">코어덤프</option>
+                <option value="exec">실행파일</option>
+                <option value="heapdump">덤프파일</option>
+                <option value="others">기타</option>
+            </select>
+        </div>
+        <div class="exec-pair-section classify-field" id="execPairSection" style="display:none">
+            <label for="execPairSelect">연결할 실행파일 <span class="exec-pair-notice">(선택)</span></label>
+            <select id="execPairSelect">
+                <option value="">선택 안 함</option>
+                <option th:each="ef : ${execFilenames}" th:value="${ef}" th:text="${ef}"></option>
+            </select>
+            <div class="exec-pair-notice" style="margin-top:6px">코어파일 row 하단에 실행파일이 연결되어 표시됩니다.</div>
+        </div>
+        <div class="modal-btns">
+            <button class="btn-cancel" onclick="closeClassifyModal()">취소</button>
+            <button class="mbtn-save" id="btnConfirmClassify" onclick="submitClassify()"
+                    style="padding:7px 20px;border-radius:7px;font-size:13px;border:none;cursor:pointer;font-weight:500;">저장</button>
+        </div>
+    </div>
+</div>
+
+<!-- Unpair confirm modal -->
+<div class="modal-ov" id="unpairModal" onclick="if(event.target===this)closeUnpairModal()">
+    <div class="modal-box">
+        <h3>연결 해제</h3>
+        <p>코어파일과 실행파일의 연결을 해제합니다.<br><span id="unpairCoreName" style="font-weight:600"></span></p>
+        <div class="modal-btns">
+            <button class="btn-cancel" onclick="closeUnpairModal()">취소</button>
+            <button class="btn-delete" id="btnConfirmUnpair">해제</button>
+        </div>
+    </div>
+</div>
+
+<!-- Others 분석 경고 모달 -->
+<div class="modal-ov" id="othersAnalyzeModal" onclick="if(event.target===this)closeOthersAnalyzeModal()">
+    <div class="modal-box">
+        <h3>분석 시작 확인</h3>
+        <p>
+            <strong id="othersAnalyzeFilename"></strong>은(는) <strong>기타(Others)</strong> 유형으로 분류된 파일입니다.<br><br>
+            표준 힙 덤프 형식(.hprof/.bin/.dump)이 아닌 경우 Eclipse MAT이 분석을 지원하지 않을 수 있으며,
+            분석 실패 또는 부정확한 결과가 반환될 수 있습니다.<br><br>
+            <span style="color:#D97706;font-size:12px">⚠ 계속하면 분석이 시작됩니다.</span>
+        </p>
+        <div class="modal-btns">
+            <button class="btn-cancel" onclick="closeOthersAnalyzeModal()">취소</button>
+            <button class="mbtn-primary" id="btnConfirmOthersAnalyze">분석 시작</button>
+        </div>
+    </div>
+</div>
+
 <!-- Download confirm modal -->
 <div class="modal-ov" id="downloadModal" onclick="if(event.target===this)closeDownloadModal()">
     <div class="modal-box">
@@ -707,6 +914,12 @@ function confirmDelete(filename) {
     _delTarget = filename; _delIsCore = false;
     document.getElementById('delFileName').textContent = filename;
     document.getElementById('delModalNote').textContent = '힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.';
+    document.getElementById('deleteModal').classList.add('open');
+}
+function confirmOthersDelete(filename) {
+    _delTarget = filename; _delIsCore = false;
+    document.getElementById('delFileName').textContent = filename;
+    document.getElementById('delModalNote').textContent = '';
     document.getElementById('deleteModal').classList.add('open');
 }
 function confirmCoreDumpDelete(filename) {
@@ -968,31 +1181,162 @@ function onTabClick(btn) {
     _activeTab = btn.getAttribute('data-tab');
     document.querySelectorAll('.type-tab').forEach(function(t) { t.classList.remove('active'); });
     btn.classList.add('active');
-    // 탭에 따라 업로드 모드 및 파일 선택기 accept 속성 변경
-    var modeMap = { all: 'auto', heapdump: 'heapdump', coredump: 'coredump' };
+    var modeMap = { all: 'auto', heapdump: 'heapdump', coredump: 'coredump', others: 'auto' };
     if (typeof UploadQueue !== 'undefined') UploadQueue.setUploadMode(modeMap[_activeTab] || 'auto');
     var fi = document.querySelectorAll('#fileInput, #fileInputBanner');
     var heapAccept = ALLOW_ALL_EXT ? '' : '.hprof,.bin,.dump,.gz';
     fi.forEach(function(el) {
         el.setAttribute('accept', _activeTab === 'coredump' ? '' : heapAccept);
     });
+    var table = document.getElementById('filesTable');
+    if (table) {
+        if (_activeTab === 'others') table.classList.add('hide-ai-col');
+        else table.classList.remove('hide-ai-col');
+    }
     applyFilter();
 }
 
 function updateTabCounts(rows) {
-    var heap = 0, core = 0;
+    var heap = 0, core = 0, others = 0;
     rows.forEach(function(r) {
-        var t = r.getAttribute('data-file-type');
-        if (t === 'coredump') core++;
+        var t = r.getAttribute('data-file-type') || 'heapdump';
+        if (t === 'coredump' || t === 'core') core++;
+        else if (t === 'others' || t === 'exec') others++;
         else heap++;
     });
-    document.getElementById('tabCntAll').textContent  = heap + core;
-    document.getElementById('tabCntHeap').textContent = heap;
-    document.getElementById('tabCntCore').textContent = core;
+    document.getElementById('tabCntAll').textContent    = heap + core + others;
+    document.getElementById('tabCntHeap').textContent   = heap;
+    document.getElementById('tabCntCore').textContent   = core;
+    document.getElementById('tabCntOthers').textContent = others;
 }
+
+// ── 파일 분류 모달 ────────────────────────────────────────────
+
+var _classifyFilename = '';
+var _classifyCurrentPairedExec = '';
+
+function openClassifyModal(filename, currentType, pairedExec) {
+    _classifyFilename = filename;
+    _classifyCurrentPairedExec = pairedExec || '';
+    document.getElementById('classifyModalFilename').textContent = filename;
+    var sel = document.getElementById('classifyTypeSelect');
+    sel.value = currentType || 'others';
+    // exec pair select 초기값: 현재 페어링된 exec (있으면)
+    var pairSel = document.getElementById('execPairSelect');
+    pairSel.value = _classifyCurrentPairedExec || '';
+    onClassifyTypeChange();
+    document.getElementById('classifyModal').classList.add('open');
+}
+
+function closeClassifyModal() {
+    document.getElementById('classifyModal').classList.remove('open');
+    _classifyFilename = '';
+    _classifyCurrentPairedExec = '';
+}
+
+function onClassifyTypeChange() {
+    var type = document.getElementById('classifyTypeSelect').value;
+    document.getElementById('execPairSection').style.display = (type === 'core') ? '' : 'none';
+}
+
+function submitClassify() {
+    if (!_classifyFilename) return;
+    var filename = _classifyFilename;
+    var fileType = document.getElementById('classifyTypeSelect').value;
+    var execFilename = document.getElementById('execPairSelect').value;
+    var btn = document.getElementById('btnConfirmClassify');
+    btn.disabled = true; btn.textContent = '저장 중...';
+
+    var headers = { 'Content-Type': 'application/json' };
+    var csrfToken = Common.csrfToken();
+    if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;
+
+    // 1) 분류 저장
+    fetch('/api/files/' + encodeURIComponent(filename) + '/classify', {
+        method: 'POST', headers: headers,
+        body: JSON.stringify({ fileType: fileType })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.status !== 'ok') throw new Error(d.message || '분류 저장 실패');
+
+        // 2) 코어덤프 선택 시 페어링 처리
+        if (fileType === 'core') {
+            var newExec = execFilename || '';
+            // exec가 변경되었거나 해제가 필요한 경우
+            if (newExec !== _classifyCurrentPairedExec) {
+                return fetch('/api/files/' + encodeURIComponent(filename) + '/pair', {
+                    method: 'POST', headers: headers,
+                    body: JSON.stringify({ execFilename: newExec })
+                }).then(function(r2) { return r2.json(); }).then(function(d2) {
+                    if (d2.status !== 'ok') throw new Error(d2.message || '페어링 저장 실패');
+                });
+            }
+        } else if (_classifyCurrentPairedExec) {
+            // 코어덤프에서 다른 유형으로 변경 시 기존 페어링 해제
+            return fetch('/api/files/' + encodeURIComponent(filename) + '/pair', {
+                method: 'DELETE', headers: headers
+            }).then(function(r2) { return r2.json(); });
+        }
+    }).then(function() {
+        closeClassifyModal();
+        location.reload();
+    }).catch(function(e) {
+        btn.disabled = false; btn.textContent = '저장';
+        alert('저장 실패: ' + e.message);
+    });
+}
+
+// ── 연결 해제 ─────────────────────────────────────────────────
+
+var _unpairCoreName = '';
+
+function confirmUnpair(coreFilename) {
+    _unpairCoreName = coreFilename;
+    document.getElementById('unpairCoreName').textContent = coreFilename;
+    document.getElementById('unpairModal').classList.add('open');
+}
+
+function closeUnpairModal() {
+    document.getElementById('unpairModal').classList.remove('open');
+    _unpairCoreName = '';
+}
+
+document.getElementById('btnConfirmUnpair').onclick = function() {
+    if (!_unpairCoreName) return;
+    var headers = {};
+    var csrfToken = Common.csrfToken();
+    if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;
+    fetch('/api/files/' + encodeURIComponent(_unpairCoreName) + '/pair', {
+        method: 'DELETE', headers: headers
+    }).then(function(r) { return r.json(); }).then(function(d) {
+        if (d.status === 'ok') { closeUnpairModal(); location.reload(); }
+        else alert('연결 해제 실패: ' + (d.message || '알 수 없는 오류'));
+    }).catch(function(e) { alert('연결 해제 중 오류: ' + e.message); });
+};
+
+document.getElementById('unpairModal').addEventListener('click', function(e) {
+    if (e.target === this) closeUnpairModal();
+});
+
+// ── Others 분석 경고 ─────────────────────────────────────────
+var _othersAnalyzeTarget = '';
+function confirmOthersAnalyze(filename) {
+    _othersAnalyzeTarget = filename;
+    document.getElementById('othersAnalyzeFilename').textContent = filename;
+    document.getElementById('othersAnalyzeModal').classList.add('open');
+}
+function closeOthersAnalyzeModal() {
+    document.getElementById('othersAnalyzeModal').classList.remove('open');
+    _othersAnalyzeTarget = '';
+}
+document.getElementById('btnConfirmOthersAnalyze').onclick = function() {
+    if (_othersAnalyzeTarget) {
+        window.location.href = '/analyze/' + encodeURIComponent(_othersAnalyzeTarget);
+    }
+};
 
 // ── 검색 + 페이지네이션 + 정렬 ────────────────────────────────
 var _allRows = [];
+var _subrowMap = {}; // coreFilename → exec sub-row TR
 var _filteredRows = [];
 var _pageSize = 20;
 var _currentPage = 1;
@@ -1002,7 +1346,17 @@ var _sortDir = 'desc';
 var _sortType = 'num';
 
 function initRows() {
-    _allRows = Array.prototype.slice.call(document.querySelectorAll('#fileTableBody tr'));
+    var allTr = Array.prototype.slice.call(document.querySelectorAll('#fileTableBody tr'));
+    _subrowMap = {};
+    _allRows = [];
+    allTr.forEach(function(tr) {
+        var parentCore = tr.getAttribute('data-parent-core');
+        if (parentCore) {
+            _subrowMap[parentCore] = tr;
+        } else {
+            _allRows.push(tr);
+        }
+    });
     var saved = parseInt(localStorage.getItem('filesPageSize') || '20', 10);
     if ([20, 30, 50, 100].indexOf(saved) !== -1) {
         _pageSize = saved;
@@ -1064,7 +1418,15 @@ function sortRows() {
         return va.localeCompare(vb, 'ko') * dir;
     });
     var tbody = document.getElementById('fileTableBody');
-    if (tbody) _allRows.forEach(function(r) { tbody.appendChild(r); });
+    if (tbody) {
+        _allRows.forEach(function(r) {
+            tbody.appendChild(r);
+            var coreName = r.getAttribute('data-name');
+            if (coreName && _subrowMap[coreName]) {
+                tbody.appendChild(_subrowMap[coreName]);
+            }
+        });
+    }
 }
 
 function updateSortIndicators() {
@@ -1136,7 +1498,11 @@ function applyFilter() {
 
     _filteredRows = tabBaseRows.filter(function(el) {
         if (_activeTab === 'all') return true;
-        return (el.getAttribute('data-file-type') || 'heapdump') === _activeTab;
+        var t = el.getAttribute('data-file-type') || 'heapdump';
+        if (_activeTab === 'others')   return (t === 'others' || t === 'exec');
+        if (_activeTab === 'heapdump') return t === 'heapdump';
+        if (_activeTab === 'coredump') return (t === 'coredump' || t === 'core');
+        return t === _activeTab;
     });
     _currentPage = 1;
     render();
@@ -1175,12 +1541,22 @@ function gotoPage(p) {
 
 function render() {
     _allRows.forEach(function(el) { el.style.display = 'none'; });
+    // sub-row도 기본 숨김
+    Object.keys(_subrowMap).forEach(function(k) { _subrowMap[k].style.display = 'none'; });
+
     var total = _filteredRows.length;
     var totalPages = Math.max(1, Math.ceil(total / _pageSize));
     if (_currentPage > totalPages) _currentPage = totalPages;
     var start = (_currentPage - 1) * _pageSize;
     var end = Math.min(start + _pageSize, total);
-    for (var i = start; i < end; i++) _filteredRows[i].style.display = '';
+    for (var i = start; i < end; i++) {
+        _filteredRows[i].style.display = '';
+        // core row가 보이면 연결된 sub-row도 표시
+        var coreName = _filteredRows[i].getAttribute('data-name');
+        if (coreName && _subrowMap[coreName]) {
+            _subrowMap[coreName].style.display = '';
+        }
+    }
 
     document.getElementById('noMatch').style.display = total === 0 ? 'block' : 'none';
     renderPagination(total, totalPages, start, end);

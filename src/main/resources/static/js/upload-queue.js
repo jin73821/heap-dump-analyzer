@@ -96,11 +96,22 @@
         // core.* (core.1234 등) 또는 *.core (vmcore.core 등) 또는 정확히 "core"
         return lower === 'core' || lower.startsWith('core.') || lower.endsWith('.core');
     }
+    var _HEAP_EXTS = ['.hprof', '.bin', '.dump', '.hprof.gz', '.bin.gz', '.dump.gz'];
+    function isRecognizedHeapExt(name) {
+        var l = name.toLowerCase();
+        return _HEAP_EXTS.some(function(e) { return l.endsWith(e); });
+    }
+    function hasNoExtension(name) {
+        var base = name.split('/').pop();
+        return base.indexOf('.') === -1;
+    }
     function resolveFileType(name) {
         if (_uploadMode === 'heapdump') return 'heapdump';
         if (_uploadMode === 'coredump') return 'coredump';
         // auto: 파일명 패턴으로 자동 판별
-        return isCoreDumpFilename(name) ? 'coredump' : 'heapdump';
+        if (isCoreDumpFilename(name)) return 'coredump';
+        if (!isRecognizedHeapExt(name) && hasNoExtension(name)) return 'others';
+        return 'heapdump';
     }
 
     /* ── 확장자 경고 모달 ── */
@@ -337,9 +348,17 @@
             else if (q.status === 'error') { icon = _UQ_ICON.error; cls = 'error'; label = q._error ? q._error : '실패'; }
             else if (q.status === 'cancelled') { icon = _UQ_ICON.cancelled; cls = 'skipped'; label = '취소됨'; }
             else { icon = _UQ_ICON.pending; cls = 'pending'; label = '대기'; }
+            var typeBadge = '';
+            if (q.fileType === 'coredump') {
+                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#FEF3C7;color:#92400E;font-weight:700;margin-left:4px;vertical-align:middle">CORE</span>';
+            } else if (q.fileType === 'exec') {
+                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#EDE9FE;color:#5B21B6;font-weight:700;margin-left:4px;vertical-align:middle">EXEC</span>';
+            } else if (q.fileType === 'others') {
+                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#F3F4F6;color:#6B7280;font-weight:700;margin-left:4px;vertical-align:middle">?</span>';
+            }
             html += '<div class="uq-item" id="uqi' + i + '">'
                 + '<span class="uq-icon">' + icon + '</span>'
-                + '<span class="uq-name" title="' + escapeHtml(q.uploadName) + '">' + escapeHtml(q.uploadName) + ' <span style="color:#9CA3AF;font-size:13px">' + fmtB(q.file.size) + '</span></span>'
+                + '<span class="uq-name" title="' + escapeHtml(q.uploadName) + '">' + escapeHtml(q.uploadName) + typeBadge + ' <span style="color:#9CA3AF;font-size:13px">' + fmtB(q.file.size) + '</span></span>'
                 + '<span class="uq-status ' + cls + '">' + label + '</span></div>';
             if (q.status === 'uploading') {
                 html += '<div class="uq-bar-bg"><div class="uq-bar" id="uqbar' + i + '" style="width:' + (q._pct || 0) + '%"></div></div>';

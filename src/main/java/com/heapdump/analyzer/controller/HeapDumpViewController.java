@@ -159,9 +159,77 @@ public class HeapDumpViewController {
         List<AnalysisHistoryItem> coreItems = buildCoreDumpHistory(isAdmin);
         List<AnalysisHistoryItem> combined = new ArrayList<>(heapVisible);
         combined.addAll(coreItems);
+
+        // 확장자 없는 파일에 사용자 분류 적용 (allowAllExtensions=true 일 때만 유효)
+        if (analyzerService.isAllowAllExtensions()) {
+            Map<String, String> classifications = analyzerService.loadFileClassifications();
+            for (AnalysisHistoryItem item : combined) {
+                if ("heapdump".equals(item.getFileType()) && !hasRecognizedHeapDumpExtension(item.getFilename())) {
+                    String cls = classifications.getOrDefault(item.getFilename(), "others");
+                    item.setFileType(cls);
+                }
+            }
+        }
+
+        // 코어-실행파일 페어링 적용
+        Map<String, String> coreExecPairings = analyzerService.loadCoreExecPairings();
+        Map<String, AnalysisHistoryItem> execItemByName = combined.stream()
+                .filter(h -> "exec".equals(h.getFileType()))
+                .collect(Collectors.toMap(AnalysisHistoryItem::getFilename, h -> h, (a, b) -> a));
+        Map<String, AnalysisHistoryItem> coreExecSubrowMap = new HashMap<>();
+        for (AnalysisHistoryItem item : combined) {
+            if ("core".equals(item.getFileType())) {
+                String execName = coreExecPairings.get(item.getFilename());
+                if (execName != null) {
+                    item.setPairedExecFilename(execName);
+                    AnalysisHistoryItem execItem = execItemByName.get(execName);
+                    if (execItem != null) {
+                        execItem.setPairedExec(true);
+                        coreExecSubrowMap.put(item.getFilename(), execItem);
+                    }
+                }
+            }
+        }
+
+        // coredump 타입 exec 서브row: {corename}.exec 파일이 존재하면 표시
+        SimpleDateFormat sdfExec = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+        File coreDumpDir = coreDumpService.dumpFilesDir();
+        for (AnalysisHistoryItem item : coreItems) {
+            if ("coredump".equals(item.getFileType()) && item.isHasExec()) {
+                String execName = item.getFilename() + ".exec";
+                File execFile = new File(coreDumpDir, execName);
+                if (execFile.exists()) {
+                    AnalysisHistoryItem execItem = new AnalysisHistoryItem();
+                    execItem.setFilename(execName);
+                    execItem.setFileType("exec");
+                    execItem.setSizeBytes(execFile.length());
+                    execItem.setFormattedSize(FormatUtils.formatBytes(execFile.length()));
+                    execItem.setFormattedDate(sdfExec.format(new Date(execFile.lastModified())));
+                    execItem.setLastModified(execFile.lastModified());
+                    execItem.setFileDeleted(false);
+                    execItem.setStatus("NOT_ANALYZED");
+                    coreExecSubrowMap.put(item.getFilename(), execItem);
+                }
+            }
+        }
+
         combined.sort(Comparator.comparingLong(AnalysisHistoryItem::getLastModified).reversed());
 
-        model.addAttribute("analysisHistory", combined);
+        // 페어링된 exec는 top-level에서 제외 (sub-row로만 표시)
+        List<AnalysisHistoryItem> displayList = combined.stream()
+                .filter(h -> !h.isPairedExec())
+                .collect(Collectors.toList());
+
+        // exec 파일 목록 (분류 모달 드롭다운용: 아직 페어링되지 않은 것만)
+        List<String> execFilenames = combined.stream()
+                .filter(h -> "exec".equals(h.getFileType()) && !h.isPairedExec())
+                .map(AnalysisHistoryItem::getFilename)
+                .sorted()
+                .collect(Collectors.toList());
+        model.addAttribute("execFilenames", execFilenames);
+        model.addAttribute("coreExecSubrowMap", coreExecSubrowMap);
+
+        model.addAttribute("analysisHistory", displayList);
         model.addAttribute("isAdmin", isAdmin);
         model.addAttribute("fileCount", files.size());
         model.addAttribute("coreDumpCount", coreItems.stream().filter(h -> !h.isFileDeleted()).count());
@@ -233,6 +301,7 @@ public class HeapDumpViewController {
                             .atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
                 }
             }
+            item.setHasExec(new File(dumpDir, e.getFilename() + ".exec").exists());
             processedNames.add(e.getFilename());
             result.add(item);
         }
@@ -253,10 +322,18 @@ public class HeapDumpViewController {
                 item.setSizeBytes(f.length());
                 item.setFormattedDate(sdf.format(new Date(f.lastModified())));
                 item.setLastModified(f.lastModified());
+                item.setHasExec(new File(dumpDir, name + ".exec").exists());
                 result.add(item);
             }
         }
         return result;
+    }
+
+    private static boolean hasRecognizedHeapDumpExtension(String name) {
+        if (name == null) return false;
+        String l = name.toLowerCase();
+        return l.endsWith(".hprof") || l.endsWith(".bin") || l.endsWith(".dump")
+                || l.endsWith(".hprof.gz") || l.endsWith(".bin.gz") || l.endsWith(".dump.gz");
     }
 
     // ── 분석 이력 페이지 ─────────────────────────────────────────

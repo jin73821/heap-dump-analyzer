@@ -1,16 +1,16 @@
-RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.1.2.jar | grep -v grep | awk '{print $2}')
+RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.1.4.jar | grep -v grep | awk '{print $2}')
 if [ -z "$RUNNING_PIDS" ]; then
     echo "[stop] 실행 중인 프로세스가 없습니다."
     exit 0
 fi
 
 echo "[stop] SIGTERM 전송: PID=$RUNNING_PIDS"
-ps -ef | grep heap-analyzer-2.1.2.jar | grep -v grep | awk '{print "kill -15 " $2}' | sh
+ps -ef | grep heap-analyzer-2.1.4.jar | grep -v grep | awk '{print "kill -15 " $2}' | sh
 
 # 최대 15초 대기하면서 종료 확인
 for i in $(seq 1 15); do
     sleep 1
-    REMAINING=$(ps -ef | grep heap-analyzer-2.1.2.jar | grep -v grep | awk '{print $2}')
+    REMAINING=$(ps -ef | grep heap-analyzer-2.1.4.jar | grep -v grep | awk '{print $2}')
     if [ -z "$REMAINING" ]; then
         echo "[stop] 종료 완료. (${i}s)"
         exit 0

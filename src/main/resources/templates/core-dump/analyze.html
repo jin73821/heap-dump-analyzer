@@ -7,94 +7,12 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>코어 덤프 분석 결과 - Heap Dump Analyzer</title>
-    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-05}">
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-25}">
     <link rel="stylesheet" th:href="@{/css/style.css}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-19}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-25}">
     <style>
-        body { background: #F3F4F6 !important; }
-
-        /* 에러 상태 */
-        .error-card {
-            background: #FEF2F2; border: 1px solid #FECACA; border-radius: 14px;
-            padding: 40px; text-align: center;
-        }
-        .error-card-icon { font-size: 48px; margin-bottom: 16px; }
-        .error-card-title { font-size: 20px; font-weight: 700; color: #991B1B; margin-bottom: 8px; }
-        .error-card-msg { font-size: 14px; color: #7F1D1D; }
-
-        /* 메타 정보 */
-        .meta-grid {
-            display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            gap: 12px; margin-bottom: 24px;
-        }
-        .meta-card {
-            background: #fff; border-radius: 10px; padding: 14px 16px;
-            box-shadow: 0 1px 4px rgba(0,0,0,.06);
-        }
-        .meta-label { font-size: 11px; color: #9CA3AF; font-weight: 600; text-transform: uppercase; margin-bottom: 4px; }
-        .meta-value { font-size: 14px; font-weight: 600; color: #1F2937; word-break: break-all; }
-        .meta-value.mono { font-family: 'JetBrains Mono', monospace; font-size: 13px; }
-        .meta-sub { font-size: 11px; color: #9CA3AF; margin-top: 3px; }
-
-        /* 스레드 아코디언 */
-        .thread-header {
-            display: flex; align-items: center; gap: 10px;
-            padding: 12px 16px; cursor: pointer; border-radius: 10px;
-            border: 1px solid #E5E7EB; background: #FAFAFA; margin-bottom: 8px;
-            transition: all .15s;
-        }
-        .thread-header:hover { background: #F3F4F6; }
-        .thread-header.crash-thread { border-color: #93C5FD; background: #EFF6FF; }
-        .thread-header.crash-thread:hover { background: #DBEAFE; }
-        .thread-id-badge {
-            background: #E5E7EB; color: #374151; border-radius: 6px;
-            padding: 2px 8px; font-size: 11px; font-weight: 700; font-family: monospace;
-            flex-shrink: 0;
-        }
-        .crash-badge {
-            background: #FEE2E2; color: #DC2626; border-radius: 6px;
-            padding: 2px 8px; font-size: 11px; font-weight: 700; flex-shrink: 0;
-        }
-        .thread-target { font-size: 12px; color: #6B7280; font-family: monospace; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .thread-frame-count { font-size: 12px; color: #9CA3AF; flex-shrink: 0; }
-        .thread-chevron { color: #9CA3AF; font-size: 12px; flex-shrink: 0; transition: transform .2s; }
-        .thread-chevron.open { transform: rotate(90deg); }
-        .thread-body { display: none; margin-bottom: 16px; padding: 0 4px; }
-        .thread-body.open { display: block; }
-
-        /* 레지스터 테이블 */
-        .reg-table { width: 100%; border-collapse: collapse; }
-        .reg-table td { padding: 7px 12px; font-family: 'JetBrains Mono', monospace; font-size: 13px; border-bottom: 1px solid #F3F4F6; }
-        .reg-table td:first-child { color: #374151; font-weight: 600; width: 120px; }
-        .reg-table td:last-child { color: #1D4ED8; }
-        .reg-table tbody tr:hover { background: #F9FAFB; }
-        .reg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
-        @media (max-width: 700px) { .reg-grid { grid-template-columns: 1fr; } }
-
-        /* 공유 라이브러리 테이블 */
-        .lib-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-        .lib-table th { background: #F9FAFB; padding: 8px 12px; text-align: left; font-weight: 600; color: #6B7280; border-bottom: 1px solid #E5E7EB; }
-        .lib-table td { padding: 8px 12px; border-bottom: 1px solid #F3F4F6; font-family: 'JetBrains Mono', monospace; }
-        .lib-table tr.syms-no { opacity: 0.5; }
-        .lib-table tr:hover { background: #F9FAFB; }
-        .syms-yes { color: #059669; font-weight: 700; }
-        .syms-no  { color: #9CA3AF; }
-
-        /* Raw 출력 */
-        .raw-output {
-            background: #0F172A; color: #94A3B8;
-            font-family: 'JetBrains Mono', monospace; font-size: 12px; line-height: 1.6;
-            padding: 16px; border-radius: 8px; white-space: pre;
-            overflow: auto; max-height: 600px;
-        }
-        .copy-btn {
-            background: #374151; color: #F9FAFB; border: none;
-            padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
-            cursor: pointer; transition: all .15s; float: right; margin-bottom: 8px;
-        }
-        .copy-btn:hover { background: #1F2937; }
-
-        .empty-msg { color: #9CA3AF; font-size: 13px; text-align: center; padding: 30px; }
+        /* 공통 스타일은 core-dump.css 로 이관. 페이지 고유 override 만 잔존. */
+        body { background: var(--cd-bg, #F3F4F6) !important; }
     </style>
 </head>
 <body>
@@ -205,6 +123,80 @@
             <div>
                 <div style="font-size:18px;font-weight:800;font-family:monospace;" th:text="${result.crashSignal}"></div>
                 <div style="font-size:13px;color:#6B7280;margin-top:2px;" th:text="${result.signalDescription}"></div>
+            </div>
+        </div>
+
+        <!-- ★ AI 크래시 분석 패널 -->
+        <div th:if="${result != null and result.crashSignal != null}"
+             class="content-card cda-panel" id="cdaPanel">
+            <div class="cda-head">
+                <div class="cda-head-title">&#129504; AI 크래시 분석
+                    <span class="cda-head-badge" id="cdaBadge">미분석</span>
+                </div>
+                <div class="cda-head-actions" id="cdaActions" style="display:none;">
+                    <button type="button" class="cda-btn cda-btn-ghost" onclick="startCoreAiAnalysis()">&#8635; 재분석</button>
+                    <button type="button" class="cda-btn cda-btn-danger" onclick="deleteCoreAiInsight()">&#128465; 삭제</button>
+                </div>
+            </div>
+            <div class="cda-body">
+                <!-- 미분석 -->
+                <div id="cdaStateEmpty" class="cda-empty">
+                    <div class="cda-empty-icon">&#129504;</div>
+                    <div class="cda-empty-title">AI 크래시 분석을 실행하세요</div>
+                    <div class="cda-empty-desc">시그널·콜 체인·레지스터·스레드 정보를 LLM 에 전달해
+                        근본 원인과 조치 방안을 진단합니다.</div>
+                    <button type="button" class="cda-btn cda-btn-primary" id="cdaStartBtn"
+                            onclick="startCoreAiAnalysis()">AI 크래시 분석 실행</button>
+                </div>
+                <!-- 진행 중 -->
+                <div id="cdaStateLoading" class="cda-loading" style="display:none;">
+                    <div class="cda-progress-track"><div class="cda-progress-fill" id="cdaProgressFill"></div></div>
+                    <div class="cda-loading-msg" id="cdaLoadingMsg">크래시 데이터 수집 중&#8230;</div>
+                    <div class="cda-loading-detail">시그널·콜 체인·레지스터를 LLM 에 전달하여 분석합니다.</div>
+                    <div class="cda-elapsed" id="cdaElapsed"></div>
+                </div>
+                <!-- 결과 -->
+                <div id="cdaStateResult" style="display:none;">
+                    <div class="cda-sev-banner" id="cdaSevBanner">
+                        <span class="cda-sev-icon" id="cdaSevIcon"></span>
+                        <span class="cda-sev-label" id="cdaSevLabel"></span>
+                        <div class="cda-sev-meta">
+                            <div id="cdaAt"></div>
+                            <div id="cdaModel"></div>
+                            <div id="cdaLatency"></div>
+                        </div>
+                    </div>
+                    <div class="cda-cards">
+                        <div class="cda-card">
+                            <div class="cda-card-title">&#128221; 요약</div>
+                            <div class="cda-card-body" id="cdaSummary"></div>
+                        </div>
+                        <div class="cda-card">
+                            <div class="cda-card-title">&#128270; 근본 원인</div>
+                            <div class="cda-card-body" id="cdaRootCause"></div>
+                        </div>
+                        <div class="cda-card">
+                            <div class="cda-card-title">&#9989; 권장 조치</div>
+                            <div class="cda-card-body" id="cdaRecommendations"></div>
+                        </div>
+                        <div class="cda-card is-risk" id="cdaRiskCard" style="display:none;">
+                            <div class="cda-card-title">&#9888; 심각도 판단 근거</div>
+                            <div class="cda-card-body" id="cdaRiskDesc"></div>
+                        </div>
+                    </div>
+                </div>
+                <!-- 오류 -->
+                <div id="cdaStateError" style="display:none;">
+                    <div class="cda-error">
+                        <span class="cda-error-icon">&#9888;</span>
+                        <div>
+                            <div class="cda-error-code" id="cdaErrCode" style="display:none;"></div>
+                            <div class="cda-error-msg" id="cdaErrMsg"></div>
+                            <button type="button" class="cda-btn cda-btn-ghost" style="margin-top:14px;"
+                                    onclick="startCoreAiAnalysis()">&#8635; 다시 시도</button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -549,182 +541,15 @@
     </div><!-- th:if="${error == null}" -->
 </div>
 
+<!-- Thymeleaf 모델 변수 노출 (external JS 가 글로벌로 참조 — 순서: 인라인 → external 유지) -->
 <script th:inline="javascript">
     var CORE_FILENAME = /*[[${filename}]]*/ '';
+    var CORE_HAS_RESULT = /*[[${result != null and result.crashSignal != null}]]*/ false;
 </script>
 <script th:if="${result != null and result.registers != null}" th:inline="javascript">
     var REGISTERS = /*[[${result.registers}]]*/ {};
-    (function() {
-        var keys = Object.keys(REGISTERS);
-        var half = Math.ceil(keys.length / 2);
-        var leftTbody  = document.getElementById('regTbodyLeft');
-        var rightTbody = document.getElementById('regTbodyRight');
-        if (!leftTbody || !rightTbody) return;
-        keys.forEach(function(k, i) {
-            var tr = document.createElement('tr');
-            tr.innerHTML = '<td>' + k + '</td><td>' + REGISTERS[k] + '</td>';
-            if (i < half) leftTbody.appendChild(tr);
-            else rightTbody.appendChild(tr);
-        });
-    })();
 </script>
-<script>
-    // 재분석
-    function reanalyzeThis(btn) {
-        var filename = btn.dataset.filename;
-        if (!filename) return;
-        btn.disabled = true; btn.textContent = '요청 중...';
-        var csrfToken  = document.querySelector('meta[name="_csrf"]') && document.querySelector('meta[name="_csrf"]').content;
-        var csrfHeader = document.querySelector('meta[name="_csrf_header"]') && document.querySelector('meta[name="_csrf_header"]').content;
-        var headers = { 'Content-Type': 'application/json' };
-        if (csrfToken && csrfHeader) headers[csrfHeader] = csrfToken;
-        fetch('/api/core-dump/reanalyze/' + encodeURIComponent(filename), { method: 'POST', headers: headers })
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.status === 'ok') {
-                    window.location.href = '/core-dump/progress/' + encodeURIComponent(filename);
-                } else {
-                    alert('재분석 요청 실패: ' + (d.message || '알 수 없는 오류'));
-                    btn.disabled = false; btn.innerHTML = '&#8635; 재분석';
-                }
-            })
-            .catch(function(e) {
-                alert('재분석 중 오류: ' + e.message);
-                btn.disabled = false; btn.innerHTML = '&#8635; 재분석';
-            });
-    }
-
-    // 탭 전환
-    function switchTab(name, e) {
-        document.querySelectorAll('.cd-tab-panel').forEach(function(el) { el.classList.remove('active'); });
-        document.querySelectorAll('.cd-tab-btn').forEach(function(el) { el.classList.remove('active'); });
-        var panel = document.getElementById('tab-' + name);
-        if (panel) panel.classList.add('active');
-        if (e && e.target) e.target.classList.add('active');
-    }
-
-    // 스레드 아코디언
-    function toggleThread(id) {
-        var body    = document.getElementById('thread-body-' + id);
-        var chevron = document.getElementById('chevron-' + id);
-        if (!body) return;
-        var isOpen = body.classList.contains('open');
-        body.classList.toggle('open', !isOpen);
-        if (chevron) chevron.classList.toggle('open', !isOpen);
-    }
-    document.querySelectorAll('.thread-body.open').forEach(function(el) {
-        var id = el.id.replace('thread-body-', '');
-        var chevron = document.getElementById('chevron-' + id);
-        if (chevron) chevron.classList.add('open');
-    });
-
-    // 프레임 카드 locals 토글
-    function toggleFrame(el) {
-        if (!el.querySelector('.frame-locals')) return;
-        el.classList.toggle('expanded');
-    }
-
-    // Frame #0 locals 자동 확장 + 히어로 소스 자동 로드
-    document.addEventListener('DOMContentLoaded', function() {
-        var f = document.querySelector('.frame-card.frame-crash');
-        if (f && f.querySelector('.frame-locals')) f.classList.add('expanded');
-
-        // 히어로 카드 소스 자동 로드 (Frame #0 location 있을 때)
-        var heroSrc = document.getElementById('heroSource');
-        var firstSrcBtn = document.querySelector('#tab-bt .frame-card.frame-crash .frame-src-btn');
-        if (heroSrc && firstSrcBtn) {
-            autoLoadHeroSource(firstSrcBtn.dataset.location, heroSrc);
-        }
-    });
-
-    // 소스 HTML 렌더링
-    function renderSourceView(data) {
-        var html = '<div class="src-filepath">' + escSrc(data.filePath) + '</div>'
-                 + '<div class="src-lines">';
-        data.lines.forEach(function(l) {
-            var cls = l.isTarget ? ' src-line-target' : '';
-            html += '<div class="src-line' + cls + '">'
-                  + '<span class="src-linenum">' + l.lineNum + '</span>'
-                  + '<span class="src-code">' + escSrc(l.content) + '</span>'
-                  + '</div>';
-        });
-        return html + '</div>';
-    }
-
-    function escSrc(s) {
-        return String(s)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
-    // 히어로 카드 소스 자동 로드
-    function autoLoadHeroSource(location, container) {
-        fetch('/api/core-dump/' + encodeURIComponent(CORE_FILENAME)
-              + '/source?location=' + encodeURIComponent(location) + '&context=6')
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (!d.error) container.innerHTML = renderSourceView(d);
-            })
-            .catch(function() { /* 소스 없음 — 조용히 무시 */ });
-    }
-
-    // 프레임 카드 소스 버튼 토글 로드
-    function loadFrameSource(btn) {
-        var location = btn.dataset.location;
-        var idx      = btn.dataset.frameidx;
-        var container = document.getElementById('src-' + idx);
-        if (!container) return;
-
-        if (container.classList.contains('visible')) {
-            container.classList.remove('visible');
-            btn.innerHTML = '&#128196; 소스';
-            return;
-        }
-
-        if (container.dataset.loaded) {
-            container.classList.add('visible');
-            btn.innerHTML = '&#10005; 닫기';
-            return;
-        }
-
-        container.innerHTML = '<div class="src-loading">소스 파일 로딩 중...</div>';
-        container.classList.add('visible');
-        btn.innerHTML = '&#10005; 닫기';
-
-        fetch('/api/core-dump/' + encodeURIComponent(CORE_FILENAME)
-              + '/source?location=' + encodeURIComponent(location) + '&context=8')
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                container.dataset.loaded = '1';
-                if (d.error) {
-                    container.innerHTML = '<div class="src-error">&#9888; ' + escSrc(d.error) + '</div>';
-                } else {
-                    container.innerHTML = renderSourceView(d);
-                }
-            })
-            .catch(function() {
-                container.innerHTML = '<div class="src-error">소스 파일을 불러올 수 없습니다</div>';
-            });
-    }
-
-    // Raw 출력 복사
-    function copyRaw() {
-        var pre = document.getElementById('rawOutput');
-        if (!pre) return;
-        navigator.clipboard.writeText(pre.textContent)
-            .then(function() { alert('복사되었습니다.'); })
-            .catch(function() {
-                var sel = window.getSelection();
-                var range = document.createRange();
-                range.selectNodeContents(pre);
-                sel.removeAllRanges();
-                sel.addRange(range);
-                document.execCommand('copy');
-                sel.removeAllRanges();
-                alert('복사되었습니다.');
-            });
-    }
-</script>
+<script th:src="@{/js/core-dump-analyze.js?v=2026-06-25}"></script>
 
 </body>
 </html>

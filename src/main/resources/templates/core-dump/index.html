@@ -7,11 +7,11 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>코어 덤프 분석 - Heap Dump Analyzer</title>
-    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-05}">
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-25}">
     <link rel="stylesheet" th:href="@{/css/style.css}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-19}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-25}">
     <style>
-        body { background: #F3F4F6 !important; }
+        body { background: var(--cd-bg, #F3F4F6) !important; }
 
         /* index.html 전용 콘텐츠 카드 크기 override */
         .content-card { margin-bottom: 24px; }
@@ -121,10 +121,14 @@
         }
 
         .hi-body { flex: 1 1 0; min-width: 0; }
+        .hi-filename-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 5px; }
         .hi-filename {
             font-family: 'JetBrains Mono', monospace; font-size: 13px;
             font-weight: 700; color: #1F2937; word-break: break-all;
-            margin-bottom: 5px;
+        }
+        .exec-badge {
+            display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
+            background: #EDE9FE; color: #5B21B6; font-weight: 600; white-space: nowrap; flex-shrink: 0;
         }
         .hi-meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
         .hi-time { font-size: 11px; color: #9CA3AF; white-space: nowrap; }
@@ -188,7 +192,7 @@
                     <input type="file" id="execFileInput" onchange="onExecFileSelect(this)">
                     <div class="upload-zone-icon">&#9881;</div>
                     <div class="upload-zone-text">파일 선택 또는 드래그</div>
-                    <div class="upload-zone-sub">디버그 심볼 포함 시 더 정확한 분석</div>
+                    <div class="upload-zone-sub">코어 파일과 함께 이 슬롯에 업로드해야 분석에 반영됩니다</div>
                     <div class="upload-zone-file" id="execFileName"></div>
                 </div>
             </div>
@@ -233,7 +237,10 @@
 
                 <!-- 파일명 + 메타 -->
                 <div class="hi-body">
-                    <div class="hi-filename" th:text="${item.filename}"></div>
+                    <div class="hi-filename-row">
+                        <span class="hi-filename" th:text="${item.filename}"></span>
+                        <span th:if="${item.executableName != null}" class="exec-badge">EXEC</span>
+                    </div>
                     <div class="hi-meta-row">
                         <!-- 시그널 칩 -->
                         <span th:if="${item.crashSignal != null}"
@@ -287,166 +294,7 @@
 
 </div>
 
-<script>
-    var _preloadedFilename = null;
-
-    document.addEventListener('DOMContentLoaded', function() {
-        var params = new URLSearchParams(window.location.search);
-        var preFile = params.get('file');
-        if (preFile) {
-            _preloadedFilename = preFile;
-            document.getElementById('coreFileName').textContent = preFile;
-            document.getElementById('coreDropZone').classList.add('has-file');
-            document.getElementById('uploadBtn').disabled = false;
-            document.getElementById('uploadStatus').textContent = '✓ 서버 업로드 완료 — GDB 분석을 시작하세요.';
-            // URL에서 ?file 파라미터 제거 (새로고침 시 재진입 방지)
-            history.replaceState({}, document.title, window.location.pathname);
-        }
-    });
-
-    function onCoreFileSelect(input) {
-        var file = input.files[0];
-        if (!file) return;
-        _preloadedFilename = null; // 새 파일 선택 시 preload 해제
-        document.getElementById('coreFileName').textContent = file.name;
-        document.getElementById('coreDropZone').classList.add('has-file');
-        document.getElementById('uploadBtn').disabled = false;
-        document.getElementById('uploadStatus').textContent = '';
-    }
-
-    function onExecFileSelect(input) {
-        var file = input.files[0];
-        if (!file) return;
-        document.getElementById('execFileName').textContent = file.name;
-        document.getElementById('execDropZone').classList.add('has-file');
-    }
-
-    // 드래그앤드롭
-    ['coreDropZone', 'execDropZone'].forEach(function(zoneId) {
-        var zone = document.getElementById(zoneId);
-        zone.addEventListener('dragover', function(e) { e.preventDefault(); zone.classList.add('dragover'); });
-        zone.addEventListener('dragleave', function() { zone.classList.remove('dragover'); });
-        zone.addEventListener('drop', function(e) {
-            e.preventDefault();
-            zone.classList.remove('dragover');
-            var file = e.dataTransfer.files[0];
-            if (!file) return;
-            if (zoneId === 'coreDropZone') {
-                document.getElementById('coreFileName').textContent = file.name;
-                zone.classList.add('has-file');
-                document.getElementById('uploadBtn').disabled = false;
-                var dt = new DataTransfer();
-                dt.items.add(file);
-                document.getElementById('coreFileInput').files = dt.files;
-            } else {
-                document.getElementById('execFileName').textContent = file.name;
-                zone.classList.add('has-file');
-                var dt2 = new DataTransfer();
-                dt2.items.add(file);
-                document.getElementById('execFileInput').files = dt2.files;
-            }
-        });
-    });
-
-    function startUpload() {
-        // 이미 서버에 업로드된 파일인 경우 바로 분석 페이지로 이동
-        if (_preloadedFilename) {
-            window.location.href = '/core-dump/progress/' + encodeURIComponent(_preloadedFilename);
-            return;
-        }
-        var coreInput = document.getElementById('coreFileInput');
-        if (!coreInput.files || !coreInput.files[0]) {
-            alert('코어 덤프 파일을 선택해주세요.');
-            return;
-        }
-        var btn = document.getElementById('uploadBtn');
-        btn.disabled = true;
-        btn.innerHTML = '업로드 중...';
-
-        // 이전 에러 초기화
-        var errorBox = document.getElementById('uploadErrorBox');
-        errorBox.classList.remove('visible');
-
-        var fd = new FormData();
-        fd.append('coreFile', coreInput.files[0]);
-        var execInput = document.getElementById('execFileInput');
-        if (execInput.files && execInput.files[0]) fd.append('execFile', execInput.files[0]);
-
-        var csrfMeta  = document.querySelector('meta[name="_csrf"]');
-        var csrfHMeta = document.querySelector('meta[name="_csrf_header"]');
-        var headers = {};
-        if (csrfMeta && csrfHMeta) headers[csrfHMeta.content] = csrfMeta.content;
-
-        var progressBar  = document.getElementById('uploadProgress');
-        var progressFill = document.getElementById('uploadProgressFill');
-        var statusEl     = document.getElementById('uploadStatus');
-
-        progressBar.classList.add('visible');
-        progressFill.style.width = '30%';
-        statusEl.textContent = '파일 업로드 중...';
-
-        fetch('/api/core-dump/upload', { method: 'POST', headers: headers, body: fd })
-            .then(function(r) {
-                if (!r.ok) return r.json().then(function(d) { throw new Error(d.message || '서버 오류 (' + r.status + ')'); });
-                return r.json();
-            })
-            .then(function(d) {
-                progressFill.style.width = '100%';
-                statusEl.textContent = '업로드 완료! 분석 페이지로 이동합니다...';
-                setTimeout(function() {
-                    window.location.href = '/core-dump/progress/' + encodeURIComponent(d.filename);
-                }, 500);
-            })
-            .catch(function(e) {
-                progressBar.classList.remove('visible');
-                progressFill.style.width = '0%';
-                statusEl.textContent = '';
-                document.getElementById('uploadErrorMsg').textContent = e.message;
-                errorBox.classList.add('visible');
-                btn.disabled = false;
-                btn.innerHTML = '&#128269; GDB 분석 시작';
-            });
-    }
-
-    function reanalyze(filename, btn) {
-        if (btn) { btn.disabled = true; btn.textContent = '요청 중...'; }
-        var csrfToken  = document.querySelector('meta[name="_csrf"]') && document.querySelector('meta[name="_csrf"]').content;
-        var csrfHeader = document.querySelector('meta[name="_csrf_header"]') && document.querySelector('meta[name="_csrf_header"]').content;
-        var headers = { 'Content-Type': 'application/json' };
-        if (csrfToken && csrfHeader) headers[csrfHeader] = csrfToken;
-        fetch('/api/core-dump/reanalyze/' + encodeURIComponent(filename), { method: 'POST', headers: headers })
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.status === 'ok') {
-                    window.location.href = '/core-dump/progress/' + encodeURIComponent(filename);
-                } else {
-                    alert('재분석 요청 실패: ' + (d.message || '알 수 없는 오류'));
-                    if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; 재분석'; }
-                }
-            })
-            .catch(function(e) {
-                alert('재분석 중 오류: ' + e.message);
-                if (btn) { btn.disabled = false; btn.innerHTML = '&#8635; 재분석'; }
-            });
-    }
-
-    function deleteDump(filename) {
-        if (!confirm('"' + filename + '" 파일과 분석 결과를 삭제하시겠습니까?')) return;
-
-        var csrfToken  = document.querySelector('meta[name="_csrf"]')?.content;
-        var csrfHeader = document.querySelector('meta[name="_csrf_header"]')?.content;
-        var headers = { 'Content-Type': 'application/json' };
-        if (csrfToken && csrfHeader) headers[csrfHeader] = csrfToken;
-
-        fetch('/api/core-dump/' + encodeURIComponent(filename), { method: 'DELETE', headers: headers })
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.status === 'ok') window.location.reload();
-                else alert('삭제 실패: ' + (d.message || '알 수 없는 오류'));
-            })
-            .catch(function(e) { alert('삭제 중 오류: ' + e.message); });
-    }
-</script>
+<script th:src="@{/js/core-dump-index.js?v=2026-06-25}"></script>
 
 </body>
 </html>
