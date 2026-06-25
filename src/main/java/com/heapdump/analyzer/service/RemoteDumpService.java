@@ -141,7 +141,7 @@ public class RemoteDumpService {
     }
 
     /**
-     * 원격 서버에서 힙 덤프 파일 목록 스캔 — 다중 경로(최대 5개) 모두 순회.
+     * 원격 서버에서 힙 덤프 + 코어파일 목록 스캔 — 다중 경로(최대 5개) 모두 순회.
      * - 모든 경로가 같은 종류(NOT_FOUND / NOT_READABLE / SSH_ERROR)로 실패하면 그 errorCode 반환
      * - 일부만 실패하면 partial 성공: 성공한 경로의 파일은 반환, 실패 경로는 pathErrors에 기록
      * - 한 경로라도 성공하면 서버 상태는 OK
@@ -151,9 +151,13 @@ public class RemoteDumpService {
         List<Map<String, Object>> files = new ArrayList<>();
         List<Map<String, Object>> pathErrors = new ArrayList<>();
 
-        List<String> paths = server.getDumpPaths();
-        if (paths.isEmpty()) {
-            String errorMsg = "덤프 경로가 설정되지 않았습니다.";
+        List<String> heapPaths = server.isScanHeap() ? server.getDumpPaths() : Collections.emptyList();
+        List<String> corePaths = server.isScanCore() ? server.getCoreDumpPaths() : Collections.emptyList();
+
+        if (heapPaths.isEmpty() && corePaths.isEmpty()) {
+            String errorMsg = server.isScanHeap() || server.isScanCore()
+                    ? "탐지 경로가 설정되지 않았습니다."
+                    : "힙덤프 또는 코어파일 탐지 경로가 설정되지 않았습니다.";
             result.put("errorCode", "NO_DUMP_PATH");
             result.put("error", errorMsg);
             result.put("files", files);
@@ -162,13 +166,13 @@ public class RemoteDumpService {
             return result;
         }
 
-        // 같은 파일 path 중복 제거 (다중 경로가 겹치는 경우)
         Set<String> seenPaths = new HashSet<>();
         int successCount = 0;
         String firstFatalError = null;
         String firstFatalCode = null;
 
-        for (String dumpPath : paths) {
+        // 힙덤프 경로 스캔
+        for (String dumpPath : heapPaths) {
             try {
                 Map<String, Object> single = scanSinglePath(server, dumpPath);
                 if (single.containsKey("error")) {
@@ -206,24 +210,62 @@ public class RemoteDumpService {
             }
         }
 
+        // 코어파일 경로 스캔
+        for (String corePath : corePaths) {
+            try {
+                Map<String, Object> single = scanCorePath(server, corePath);
+                if (single.containsKey("error")) {
+                    Map<String, Object> err = new HashMap<>();
+                    err.put("dumpPath", corePath);
+                    err.put("errorCode", single.get("errorCode"));
+                    err.put("error", single.get("error"));
+                    pathErrors.add(err);
+                    if (firstFatalError == null) {
+                        firstFatalError = (String) single.get("error");
+                        firstFatalCode = (String) single.get("errorCode");
+                    }
+                } else {
+                    successCount++;
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> pathFiles = (List<Map<String, Object>>) single.get("files");
+                    for (Map<String, Object> f : pathFiles) {
+                        String p = (String) f.get("path");
+                        if (p != null && seenPaths.add(p)) {
+                            files.add(f);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Map<String, Object> err = new HashMap<>();
+                err.put("dumpPath", corePath);
+                err.put("errorCode", "SCAN_EXCEPTION");
+                err.put("error", "코어파일 스캔 실패: " + e.getMessage());
+                pathErrors.add(err);
+                if (firstFatalError == null) {
+                    firstFatalError = "코어파일 스캔 실패: " + e.getMessage();
+                    firstFatalCode = "SCAN_EXCEPTION";
+                }
+                logger.error("[RemoteDump] Core scan failed for {} path={}: {}", server.getName(), corePath, e.getMessage());
+            }
+        }
+
         result.put("files", files);
         result.put("count", files.size());
         if (!pathErrors.isEmpty()) result.put("pathErrors", pathErrors);
 
         if (successCount == 0) {
-            // 모든 경로 실패
             result.put("errorCode", firstFatalCode != null ? firstFatalCode : "SCAN_EXCEPTION");
             result.put("error", firstFatalError != null ? firstFatalError : "모든 경로 스캔 실패");
             updateServerStatus(server, "FAIL", firstFatalError);
         } else {
             updateServerStatus(server, "OK", null);
         }
-        logger.info("[RemoteDump] Scanned {} files across {}/{} path(s) on server {}",
-                files.size(), successCount, paths.size(), server.getName());
+        logger.info("[RemoteDump] Scanned {} files ({} heap-paths, {} core-paths) on server {}",
+                files.size(), heapPaths.size(), corePaths.size(), server.getName());
         return result;
     }
 
-    /** 단일 경로 스캔 — error/errorCode/files 키 반환. 상태 DB 업데이트는 호출자에서 집계. */
+    /** 힙덤프 단일 경로 스캔 — error/errorCode/files 키 반환. 상태 DB 업데이트는 호출자에서 집계. */
     private Map<String, Object> scanSinglePath(TargetServer server, String dumpPath) throws Exception {
         Map<String, Object> result = new HashMap<>();
         List<Map<String, Object>> files = new ArrayList<>();
@@ -251,7 +293,6 @@ public class RemoteDumpService {
             logger.warn("[RemoteDump] Dump path not readable on {} (user={}): {}",
                     server.getName(), server.getSshUser(), dumpPath);
         } else if (pr.exitCode != 0) {
-            // exit 2/3 도 아니고 0 도 아닌 경우는 진짜 SSH 클라이언트 실패 (auth/network 등). stderr 에 단서 있음.
             String errorMsg = cleanSshError(pr.stderr);
             if (errorMsg.isEmpty()) errorMsg = "원격 명령 실행 실패 (exit " + pr.exitCode + ")";
             result.put("errorCode", "SSH_ERROR");
@@ -259,8 +300,6 @@ public class RemoteDumpService {
             logger.warn("[RemoteDump] SSH error on {} path={}: exit={}, stderr={}",
                     server.getName(), dumpPath, pr.exitCode, errorMsg);
         } else {
-            // exit 0 — find 가 일부 디렉토리 권한 부족으로 stderr 를 남겼더라도 정상 처리.
-            // 단, stderr 내용을 INFO 로 첫 몇 줄만 로그에 남겨 추후 디버깅 근거로 활용.
             if (pr.stderr != null && !pr.stderr.trim().isEmpty()) {
                 logger.info("[RemoteDump] find non-fatal stderr on {} path={}: {}",
                         server.getName(), dumpPath, summarizeStderr(pr.stderr, 5));
@@ -273,8 +312,6 @@ public class RemoteDumpService {
                     if (fileInfo != null) {
                         String filename = (String) fileInfo.get("filename");
                         Long size = (Long) fileInfo.get("size");
-                        // 전송됨 판정: SUCCESS 로그 + 로컬 파일 실존(.gz 포함) 모두 충족해야 함.
-                        // 같은 원격 파일이 여러 번 전송된 경우(_2/_3 suffix 등) 로컬 파일이 남아있는 row를 우선 채택.
                         List<DumpTransferLog> succLogs = transferLogRepository
                                 .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
                                         server.getId(), filename, size, "SUCCESS");
@@ -296,6 +333,7 @@ public class RemoteDumpService {
                         fileInfo.put("transferred", transferred);
                         fileInfo.put("analyzed", analyzed);
                         fileInfo.put("sourceDumpPath", dumpPath);
+                        fileInfo.put("fileType", "heap");
                         files.add(fileInfo);
                     }
                 }
@@ -303,6 +341,142 @@ public class RemoteDumpService {
         }
         result.put("files", files);
         return result;
+    }
+
+    /**
+     * 코어파일 단일 경로 스캔 — Linux core 파일(core, core.*, *.core) 탐지.
+     * 파일 권한(600/400)으로 read 불가한 경우에도 find+ls로 파일 존재는 확인.
+     * scanExecutable=true면 각 파일에 대해 file 명령으로 실행파일 경로 추출 시도.
+     */
+    private Map<String, Object> scanCorePath(TargetServer server, String corePath) throws Exception {
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, Object>> files = new ArrayList<>();
+
+        String safePath = corePath.replace("'", "'\\''");
+        // 2>/dev/null || true : 하위 파일 권한 부족으로 Permission denied 발생해도 통과.
+        // 코어파일은 root:root 600/400이 일반적이라 sshUser가 ls -la로 속성은 볼 수 있어도
+        // 파일 내용을 읽을 수 없는 경우가 많음. find+ls는 디렉토리 execute 권한만 있으면 동작.
+        String findCmd = String.format(
+            "[ -d '%s' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
+            + "[ -r '%s' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
+            + "find '%s' -maxdepth 3 -type f \\( -name 'core' -o -name 'core.[0-9]*' -o -name '*.core' \\) "
+            + "-exec ls -la {} \\; 2>/dev/null || true",
+            safePath, safePath, safePath);
+        String[] cmd = buildSshCommand(server, findCmd);
+        ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
+
+        if (pr.exitCode == 2) {
+            result.put("errorCode", "DUMP_PATH_NOT_FOUND");
+            result.put("error", "코어파일 경로가 존재하지 않습니다: " + corePath);
+            logger.warn("[RemoteDump] Core path not found on {}: {}", server.getName(), corePath);
+        } else if (pr.exitCode == 3) {
+            result.put("errorCode", "DUMP_PATH_NOT_READABLE");
+            result.put("error", "코어파일 경로 읽기 권한이 없습니다: " + corePath);
+            logger.warn("[RemoteDump] Core path not readable on {} (user={}): {}",
+                    server.getName(), server.getSshUser(), corePath);
+        } else if (pr.exitCode != 0) {
+            String errorMsg = cleanSshError(pr.stderr);
+            if (errorMsg.isEmpty()) errorMsg = "원격 명령 실행 실패 (exit " + pr.exitCode + ")";
+            result.put("errorCode", "SSH_ERROR");
+            result.put("error", "SSH 오류: " + errorMsg);
+            logger.warn("[RemoteDump] SSH core scan error on {} path={}: exit={}, stderr={}",
+                    server.getName(), corePath, pr.exitCode, errorMsg);
+        } else {
+            if (pr.stderr != null && !pr.stderr.trim().isEmpty()) {
+                logger.info("[RemoteDump] core scan non-fatal stderr on {} path={}: {}",
+                        server.getName(), corePath, summarizeStderr(pr.stderr, 5));
+            }
+            if (!pr.stdout.trim().isEmpty()) {
+                for (String line : pr.stdout.split("\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    Map<String, Object> fileInfo = parseLsLine(line);
+                    if (fileInfo != null) {
+                        String filePath = (String) fileInfo.get("path");
+                        Long size = (Long) fileInfo.get("size");
+                        // 전송 여부 판정 — 힙덤프와 동일 로직
+                        String filename = (String) fileInfo.get("filename");
+                        List<DumpTransferLog> succLogs = transferLogRepository
+                                .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
+                                        server.getId(), filename, size, "SUCCESS");
+                        File localDir = new File(config.getDumpFilesDirectory());
+                        String matchedLocalFilename = null;
+                        for (DumpTransferLog sl : succLogs) {
+                            String local = sl.getFilename();
+                            if (local == null) continue;
+                            File f = new File(localDir, local);
+                            File gz = new File(localDir, local + ".gz");
+                            if (f.exists() || gz.exists()) {
+                                matchedLocalFilename = local;
+                                break;
+                            }
+                        }
+                        boolean transferred = matchedLocalFilename != null;
+                        fileInfo.put("transferred", transferred);
+                        fileInfo.put("analyzed", false);
+                        fileInfo.put("sourceDumpPath", corePath);
+                        fileInfo.put("fileType", "core");
+
+                        // 실행파일 탐지 (scanExecutable=true)
+                        if (server.isScanExecutable() && filePath != null) {
+                            String[] execInfo = detectExecutable(server, filePath);
+                            if (execInfo[0] != null) fileInfo.put("executablePath", execInfo[0]);
+                            if (execInfo[1] != null) fileInfo.put("executableWarning", execInfo[1]);
+                        }
+                        files.add(fileInfo);
+                    }
+                }
+            }
+        }
+        result.put("files", files);
+        return result;
+    }
+
+    /**
+     * 코어파일에서 실행파일 경로를 추출 — `file` 명령 출력 파싱.
+     * 반환: [executablePath, warningMessage]. 파싱 실패 시 각각 null.
+     * 코어파일이 400/600 권한이면 `file` 명령도 Permission denied 발생 가능 → warningMessage 설정.
+     */
+    private String[] detectExecutable(TargetServer server, String coreFilePath) {
+        try {
+            String safePath = coreFilePath.replace("'", "'\\''");
+            // file 명령 실패(권한 없음 등)는 || echo CORE_UNREADABLE 로 표시
+            String fileCmd = "file '" + safePath + "' 2>&1 || echo CORE_UNREADABLE";
+            String[] cmd = buildSshCommand(server, fileCmd);
+            ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
+
+            String output = pr.stdout.trim();
+            if (output.isEmpty() || output.contains("CORE_UNREADABLE")
+                    || output.contains("Permission denied") || output.contains("cannot open")) {
+                logger.debug("[RemoteDump] Core file not readable for file cmd: {}", coreFilePath);
+                return new String[]{null, "파일 읽기 권한 부족 (chmod 또는 sudo 필요)"};
+            }
+
+            // execfn: '/path/to/bin' 우선 파싱 (정확한 full path)
+            java.util.regex.Matcher m1 = java.util.regex.Pattern
+                    .compile("execfn:\\s*'([^']+)'").matcher(output);
+            if (m1.find()) {
+                return new String[]{m1.group(1), null};
+            }
+
+            // from 'procname' 파싱 (이름만 있는 경우)
+            java.util.regex.Matcher m2 = java.util.regex.Pattern
+                    .compile("from\\s+'([^']+)'").matcher(output);
+            if (m2.find()) {
+                return new String[]{m2.group(1), null};
+            }
+
+            // ELF core file 이지만 execfn/from 없는 경우
+            if (output.contains("core file")) {
+                return new String[]{null, "실행파일 정보를 추출할 수 없습니다"};
+            }
+
+            // core 파일이 아닌 경우
+            return new String[]{null, "코어파일 형식이 아닙니다: " + output.substring(0, Math.min(80, output.length()))};
+        } catch (Exception e) {
+            logger.debug("[RemoteDump] detectExecutable failed for {}: {}", coreFilePath, e.getMessage());
+            return new String[]{null, "실행파일 탐지 오류: " + e.getMessage()};
+        }
     }
 
     /** stderr 첫 N 줄만 발췌해 로깅용 한 줄로 묶음. */
@@ -522,7 +696,8 @@ public class RemoteDumpService {
     }
 
     /**
-     * 자동 탐지 — 10초마다 체크, 설정된 주기가 경과했으면 스캔 실행
+     * 자동 탐지 — 10초마다 체크, 설정된 주기가 경과했으면 스캔 실행.
+     * scanHeap=true면 힙덤프, scanCore=true면 코어파일도 자동 전송.
      */
     @Scheduled(fixedDelay = 10000, initialDelay = 30000)
     public void autoDetectAndTransfer() {
@@ -536,20 +711,21 @@ public class RemoteDumpService {
             try {
                 Map<String, Object> scanResult = scanRemoteDumpsWithStatus(server);
 
-                // 에러 기록
                 if (scanResult.containsKey("error")) {
                     lastAutoScanErrors.put(server.getId(), (String) scanResult.get("error"));
                 } else {
                     lastAutoScanErrors.remove(server.getId());
                 }
 
+                @SuppressWarnings("unchecked")
                 List<Map<String, Object>> remoteDumps =
                         (List<Map<String, Object>>) scanResult.getOrDefault("files", Collections.emptyList());
                 for (Map<String, Object> dump : remoteDumps) {
                     boolean transferred = (Boolean) dump.getOrDefault("transferred", false);
                     if (!transferred) {
                         String remotePath = (String) dump.get("path");
-                        logger.info("[AutoDetect] New dump found on {}: {}", server.getName(), remotePath);
+                        String fileType = (String) dump.getOrDefault("fileType", "heap");
+                        logger.info("[AutoDetect] New {} file found on {}: {}", fileType, server.getName(), remotePath);
                         transferFile(server, remotePath);
                     }
                 }

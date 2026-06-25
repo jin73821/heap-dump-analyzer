@@ -102,6 +102,10 @@
                      border-bottom: 1px solid #F3F4F6; font-size: 13px; }
         .scan-file:last-child { border-bottom: none; }
         .scan-transferred { color: #9CA3AF; }
+        .badge-core { font-size:10px;padding:2px 6px;border-radius:4px;background:#FEF3C7;color:#92400E;font-weight:700;flex-shrink:0; }
+        .badge-heap { font-size:10px;padding:2px 6px;border-radius:4px;background:#DBEAFE;color:#1E40AF;font-weight:700;flex-shrink:0; }
+        .exec-info { font-size:11px;color:#6B7280;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0; }
+        .exec-warn { font-size:11px;color:#D97706;flex-shrink:0; }
         .btn-transfer { padding: 4px 10px; border: 1px solid #2563EB; border-radius: 5px;
                         background: #2563EB; color: #fff; font-size: 11px; cursor: pointer; }
         .btn-transfer:hover { background: #1D4ED8; }
@@ -347,6 +351,10 @@
                         th:data-dumppath="${s.dumpPath}"
                         th:data-autodetect="${s.autoDetect}"
                         th:data-enabled="${s.enabled}"
+                        th:data-scanheap="${s.isScanHeap()}"
+                        th:data-scancore="${s.isScanCore()}"
+                        th:data-scanexecutable="${s.isScanExecutable()}"
+                        th:data-coredumppath="${s.coreDumpPath}"
                         th:attr="data-status=${!s.enabled ? 'DISABLED' : (s.connStatus == null ? 'UNKNOWN' : s.connStatus)}">
                         <td class="col-name" data-label="이름" style="font-weight:600">
                             <a th:href="@{'/servers/' + ${s.id}}" th:text="${s.name}"
@@ -386,6 +394,10 @@
                                     th:data-host="${s.host}" th:data-port="${s.port}"
                                     th:data-sshuser="${s.sshUser}" th:data-dumppath="${s.dumpPath}"
                                     th:data-autodetect="${s.autoDetect}" th:data-enabled="${s.enabled}"
+                                    th:data-scanheap="${s.isScanHeap()}"
+                                    th:data-scancore="${s.isScanCore()}"
+                                    th:data-scanexecutable="${s.isScanExecutable()}"
+                                    th:data-coredumppath="${s.coreDumpPath}"
                                     onclick="openEditModal(this.dataset)">수정</button>
                             <button class="action-btn danger"
                                     th:data-id="${s.id}" th:data-name="${s.name}"
@@ -447,16 +459,42 @@
             </div>
         </div>
         <div class="modal-group">
-            <label class="modal-label">덤프 파일 경로 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(최대 5개 — 추가된 모든 경로를 스캔)</span></label>
+            <label class="modal-label">탐지 항목</label>
+            <div style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;background:#F9FAFB;border-radius:8px;border:1px solid #E5E7EB">
+                <label class="modal-check">
+                    <input type="checkbox" id="smScanHeap" checked>
+                    <span>힙덤프 파일 탐지 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(.hprof / .bin / .dump)</span></span>
+                </label>
+                <label class="modal-check">
+                    <input type="checkbox" id="smScanCore" onchange="onScanCoreChange()">
+                    <span>코어파일 탐지 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(Linux 프로세스 크래시 코어파일)</span></span>
+                </label>
+                <div id="smCoreOptions" style="display:none;padding-left:24px;display:none;flex-direction:column;gap:8px">
+                    <label class="modal-check" id="smScanExecutableLabel">
+                        <input type="checkbox" id="smScanExecutable" disabled>
+                        <span>실행파일 경로 탐지 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(file 명령으로 크래시 프로세스 확인)</span></span>
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div class="modal-group">
+            <label class="modal-label">힙덤프 파일 경로 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(최대 5개 — 추가된 모든 경로를 스캔)</span></label>
             <div id="smDumpPathList"></div>
             <button type="button" class="action-btn" id="smDumpPathAdd"
                     style="margin-top:6px;font-size:11px;padding:4px 10px"
                     onclick="addDumpPathRow()">+ 경로 추가</button>
         </div>
+        <div class="modal-group" id="smCoreDumpPathSection" style="display:none">
+            <label class="modal-label">코어파일 경로 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(최대 5개 — 코어파일이 생성되는 경로)</span></label>
+            <div id="smCoreDumpPathList"></div>
+            <button type="button" class="action-btn" id="smCoreDumpPathAdd"
+                    style="margin-top:6px;font-size:11px;padding:4px 10px"
+                    onclick="addCoreDumpPathRow()">+ 경로 추가</button>
+        </div>
         <div class="modal-group">
             <label class="modal-check">
                 <input type="checkbox" id="smAutoDetect">
-                자동 탐지 활성화 (주기적으로 새 덤프 파일 탐지 및 전송)
+                자동 탐지 활성화 (주기적으로 새 파일 탐지 및 전송)
             </label>
         </div>
         <div class="modal-btns">
@@ -512,26 +550,16 @@ var _isEdit = false;
 
 var MAX_DUMP_PATHS = 5;
 
-function setDumpPaths(paths) {
-    var list = document.getElementById('smDumpPathList');
-    list.innerHTML = '';
-    var arr = (paths && paths.length > 0) ? paths : [''];
-    for (var i = 0; i < arr.length && i < MAX_DUMP_PATHS; i++) {
-        appendDumpPathRow(arr[i]);
-    }
-    refreshDumpPathAddBtn();
-}
-
-function appendDumpPathRow(value) {
-    var list = document.getElementById('smDumpPathList');
+function makeDumpPathRow(value, listId, inputClass, addBtnRefresh) {
+    var list = document.getElementById(listId);
     if (list.children.length >= MAX_DUMP_PATHS) return;
     var row = document.createElement('div');
     row.className = 'sm-path-row';
     row.style.cssText = 'display:flex;gap:6px;margin-bottom:6px';
     var input = document.createElement('input');
     input.type = 'text';
-    input.className = 'modal-input sm-path-input';
-    input.placeholder = '/opt/app/logs';
+    input.className = 'modal-input ' + inputClass;
+    input.placeholder = inputClass === 'sm-core-path-input' ? '/var/crash/corefiles' : '/opt/app/logs';
     input.value = value || '';
     input.style.flex = '1';
     var rm = document.createElement('button');
@@ -539,10 +567,24 @@ function appendDumpPathRow(value) {
     rm.className = 'action-btn';
     rm.textContent = '−';
     rm.style.cssText = 'flex-shrink:0;padding:0 12px';
-    rm.onclick = function() { row.remove(); refreshDumpPathAddBtn(); };
+    rm.onclick = function() { row.remove(); addBtnRefresh(); };
     row.appendChild(input);
     row.appendChild(rm);
     list.appendChild(row);
+}
+
+function setDumpPaths(paths) {
+    var list = document.getElementById('smDumpPathList');
+    list.innerHTML = '';
+    var arr = (paths && paths.length > 0) ? paths : [''];
+    for (var i = 0; i < arr.length && i < MAX_DUMP_PATHS; i++) {
+        makeDumpPathRow(arr[i], 'smDumpPathList', 'sm-path-input', refreshDumpPathAddBtn);
+    }
+    refreshDumpPathAddBtn();
+}
+
+function appendDumpPathRow(value) {
+    makeDumpPathRow(value, 'smDumpPathList', 'sm-path-input', refreshDumpPathAddBtn);
 }
 
 function addDumpPathRow() {
@@ -567,6 +609,56 @@ function collectDumpPaths() {
     return out;
 }
 
+// 코어파일 경로 관련
+function setCoreDumpPaths(paths) {
+    var list = document.getElementById('smCoreDumpPathList');
+    list.innerHTML = '';
+    var arr = (paths && paths.length > 0) ? paths : [''];
+    for (var i = 0; i < arr.length && i < MAX_DUMP_PATHS; i++) {
+        makeDumpPathRow(arr[i], 'smCoreDumpPathList', 'sm-core-path-input', refreshCoreDumpPathAddBtn);
+    }
+    refreshCoreDumpPathAddBtn();
+}
+
+function addCoreDumpPathRow() {
+    makeDumpPathRow('', 'smCoreDumpPathList', 'sm-core-path-input', refreshCoreDumpPathAddBtn);
+    refreshCoreDumpPathAddBtn();
+}
+
+function refreshCoreDumpPathAddBtn() {
+    var btn = document.getElementById('smCoreDumpPathAdd');
+    var count = document.querySelectorAll('#smCoreDumpPathList .sm-path-row').length;
+    if (btn) btn.style.display = count >= MAX_DUMP_PATHS ? 'none' : '';
+}
+
+function collectCoreDumpPaths() {
+    var inputs = document.querySelectorAll('#smCoreDumpPathList .sm-core-path-input');
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < inputs.length; i++) {
+        var v = inputs[i].value.trim();
+        if (v && !seen[v]) { seen[v] = 1; out.push(v); }
+    }
+    return out;
+}
+
+function onScanCoreChange() {
+    var checked = document.getElementById('smScanCore').checked;
+    var coreOptions = document.getElementById('smCoreOptions');
+    var coreSection = document.getElementById('smCoreDumpPathSection');
+    var execCb = document.getElementById('smScanExecutable');
+    if (checked) {
+        coreOptions.style.display = 'flex';
+        coreSection.style.display = '';
+        execCb.disabled = false;
+    } else {
+        coreOptions.style.display = 'none';
+        coreSection.style.display = 'none';
+        execCb.disabled = true;
+        execCb.checked = false;
+    }
+}
+
 function openCreateModal() {
     _isEdit = false;
     document.getElementById('serverModalTitle').textContent = '서버 추가';
@@ -576,6 +668,13 @@ function openCreateModal() {
     document.getElementById('smPort').value = '22';
     document.getElementById('smSshUser').value = 'sscuser';
     setDumpPaths([]);
+    document.getElementById('smScanHeap').checked = true;
+    document.getElementById('smScanCore').checked = false;
+    document.getElementById('smScanExecutable').checked = false;
+    document.getElementById('smScanExecutable').disabled = true;
+    document.getElementById('smCoreOptions').style.display = 'none';
+    document.getElementById('smCoreDumpPathSection').style.display = 'none';
+    setCoreDumpPaths([]);
     document.getElementById('smAutoDetect').checked = false;
     document.body.style.overflow = 'hidden';
     document.getElementById('serverModal').classList.add('open');
@@ -591,6 +690,18 @@ function openEditModal(ds) {
     document.getElementById('smSshUser').value = ds.sshuser;
     var paths = (ds.dumppath || '').split(/\r?\n/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
     setDumpPaths(paths);
+    // 탐지 항목 설정 (데이터 속성 기본값: scanheap=true, scancore=false)
+    var scanHeap = ds.scanheap !== 'false';
+    var scanCore = ds.scancore === 'true';
+    var scanExec = ds.scanexecutable === 'true';
+    document.getElementById('smScanHeap').checked = scanHeap;
+    document.getElementById('smScanCore').checked = scanCore;
+    document.getElementById('smScanExecutable').checked = scanExec;
+    document.getElementById('smScanExecutable').disabled = !scanCore;
+    document.getElementById('smCoreOptions').style.display = scanCore ? 'flex' : 'none';
+    document.getElementById('smCoreDumpPathSection').style.display = scanCore ? '' : 'none';
+    var corePaths = (ds.coredumppath || '').split(/\r?\n/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+    setCoreDumpPaths(corePaths);
     document.getElementById('smAutoDetect').checked = ds.autodetect === 'true';
     document.body.style.overflow = 'hidden';
     document.getElementById('serverModal').classList.add('open');
@@ -598,17 +709,38 @@ function openEditModal(ds) {
 
 function submitServer() {
     var paths = collectDumpPaths();
+    var scanCore = document.getElementById('smScanCore').checked;
+    var corePaths = scanCore ? collectCoreDumpPaths() : [];
+    var scanHeap = document.getElementById('smScanHeap').checked;
+
+    if (!scanHeap && !scanCore) {
+        showToast('힙덤프 또는 코어파일 탐지 중 하나 이상을 선택하세요.', 'error'); return;
+    }
+    if (scanHeap && paths.length === 0) {
+        showToast('힙덤프 탐지를 활성화한 경우 힙덤프 경로(1개 이상)를 입력하세요.', 'error'); return;
+    }
+    if (scanCore && corePaths.length === 0) {
+        showToast('코어파일 탐지를 활성화한 경우 코어파일 경로(1개 이상)를 입력하세요.', 'error'); return;
+    }
+
+    var name = document.getElementById('smName').value.trim();
+    var host = document.getElementById('smHost').value.trim();
+    if (!name || !host) {
+        showToast('이름과 호스트를 입력하세요.', 'error'); return;
+    }
+
     var data = {
-        name: document.getElementById('smName').value.trim(),
-        host: document.getElementById('smHost').value.trim(),
+        name: name,
+        host: host,
         port: parseInt(document.getElementById('smPort').value) || 22,
         sshUser: document.getElementById('smSshUser').value.trim() || 'sscuser',
         dumpPath: paths.join('\n'),
-        autoDetect: document.getElementById('smAutoDetect').checked
+        autoDetect: document.getElementById('smAutoDetect').checked,
+        scanHeap: scanHeap,
+        scanCore: scanCore,
+        scanExecutable: document.getElementById('smScanExecutable').checked,
+        coreDumpPath: corePaths.join('\n')
     };
-    if (!data.name || !data.host || paths.length === 0) {
-        showToast('이름, 호스트, 덤프 경로(1개 이상)를 입력하세요.', 'error'); return;
-    }
     var id = document.getElementById('smId').value;
     var url = _isEdit ? '/api/servers/' + id : '/api/servers';
     var method = _isEdit ? 'PUT' : 'POST';
@@ -768,8 +900,12 @@ function renderScanResultsHtml(files) {
         var arr = groups[key];
         for (var i = 0; i < arr.length; i++) {
             var f = arr[i];
-            html += '<div class="scan-file">';
+            var isCore = f.fileType === 'core';
+            html += '<div class="scan-file"' + (isCore ? ' style="flex-wrap:wrap"' : '') + '>';
             html += '<span style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden">'
+                  + (isCore
+                      ? '<span class="badge-core">CORE</span>'
+                      : '')
                   + '<span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(f.filename) + '</span>'
                   + (f.date ? '<span style="font-size:12px;color:#9CA3AF;flex-shrink:0;white-space:nowrap">' + escHtml(parseLsDate(f.date)) + '</span>' : '')
                   + '</span>';
@@ -780,6 +916,18 @@ function renderScanResultsHtml(files) {
                 html += '<span class="scan-transferred" style="font-size:11px">전송됨</span>';
             } else {
                 html += '<button class="btn-transfer" data-path="' + escAttr(f.path) + '" onclick="transferFile(this)">전송</button>';
+            }
+            // 코어파일: 실행파일 경로 / 경고 표시 (두 번째 줄)
+            if (isCore && (f.executablePath || f.executableWarning)) {
+                html += '<div style="flex:1 1 100%;display:flex;align-items:center;gap:8px;padding-top:4px;margin-top:2px;border-top:1px dashed #F3F4F6">';
+                if (f.executablePath) {
+                    html += '<span style="font-size:11px;color:#6B7280;flex-shrink:0">실행파일:</span>'
+                          + '<span class="exec-info" title="' + escAttr(f.executablePath) + '">' + escHtml(f.executablePath) + '</span>';
+                }
+                if (f.executableWarning) {
+                    html += '<span class="exec-warn">⚠ ' + escHtml(f.executableWarning) + '</span>';
+                }
+                html += '</div>';
             }
             html += '</div>';
         }

@@ -1,5 +1,30 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-06-26] Target Servers 코어파일 탐지 기능 추가
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/model/entity/TargetServer.java`
+- `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`
+- `src/main/java/com/heapdump/analyzer/controller/ServerController.java`
+- `src/main/resources/templates/servers.html`
+
+### 내용
+- `TargetServer` 엔티티에 4개 필드 추가: `scanHeap`(Boolean, 기본 true), `scanCore`(Boolean, 기본 false), `scanExecutable`(Boolean, 기본 false), `coreDumpPath`(VARCHAR 2500).
+  - DB: Hibernate ddl-auto=update로 `target_servers` 테이블에 컬럼 자동 추가.
+- 서버 편집 모달에 **탐지 항목** 섹션 추가:
+  - ☑ 힙덤프 파일 탐지 (.hprof / .bin / .dump)
+  - ☐ 코어파일 탐지 (Linux 프로세스 크래시 코어파일) — 체크 시 코어파일 경로 입력 섹션 표시
+  - ☐ 실행파일 경로 탐지 — 코어파일 체크 시에만 활성화
+  - 코어파일 경로 필드: 힙덤프 경로와 별도로 최대 5개 경로 입력 가능
+- `RemoteDumpService.scanRemoteDumpsWithStatus()`: `scanHeap`/`scanCore` 플래그에 따라 각 경로 유형 스캔
+- `RemoteDumpService.scanCorePath()` 신규 메서드: `core`, `core.*`, `*.core` 패턴 find (maxdepth 3), `2>/dev/null || true`로 하위 파일 권한 부족 graceful 처리
+- `RemoteDumpService.detectExecutable()` 신규 메서드: 각 코어파일에 대해 `file` 명령 실행 → `execfn:` 또는 `from '...'` 파싱으로 실행파일 경로 추출; 읽기 권한 부족 시 경고 메시지 반환
+- 스캔 결과 각 파일에 `fileType: "heap"` / `"core"` 추가
+- 스캔 결과 UI: 코어파일에 `[CORE]` 주황 배지 표시 + 실행파일 경로/경고 2번째 줄 표시
+- 자동 탐지 시 `scanCore=true` 서버의 코어파일도 자동 전송 대상에 포함
+
+---
+
 ## [2026-06-26] 코어 덤프 삭제 시 원본 파일 보존 옵션 모달 추가
 
 **대상:**

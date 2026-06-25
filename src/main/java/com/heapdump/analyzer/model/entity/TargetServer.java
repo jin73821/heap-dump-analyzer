@@ -54,6 +54,38 @@ public class TargetServer {
         return result;
     }
 
+    /** 힙덤프 파일 탐지 여부. null은 true로 처리(기존 서버 호환). */
+    @Column(name = "scan_heap")
+    private Boolean scanHeap;
+
+    /** 코어파일 탐지 여부. null은 false로 처리. */
+    @Column(name = "scan_core")
+    private Boolean scanCore;
+
+    /** 코어파일에서 실행파일 경로 추출 여부. scanCore=true일 때만 유효. */
+    @Column(name = "scan_executable")
+    private Boolean scanExecutable;
+
+    /** 코어파일 탐지 경로 — 1~5개. 다중 경로는 줄바꿈(\n)으로 구분 저장. */
+    @Column(name = "core_dump_path", length = 2500)
+    private String coreDumpPath;
+
+    public boolean isScanHeap()       { return scanHeap == null || scanHeap; }
+    public boolean isScanCore()       { return Boolean.TRUE.equals(scanCore); }
+    public boolean isScanExecutable() { return Boolean.TRUE.equals(scanExecutable); }
+
+    /** coreDumpPath를 줄바꿈 기준으로 분리 — 빈/공백 제거, 최대 MAX_DUMP_PATHS개. */
+    @Transient
+    public List<String> getCoreDumpPaths() {
+        if (coreDumpPath == null || coreDumpPath.isEmpty()) return Collections.emptyList();
+        return Arrays.stream(coreDumpPath.split("\\r?\\n"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .distinct()
+                .limit(MAX_DUMP_PATHS)
+                .collect(Collectors.toList());
+    }
+
     @Column(name = "auto_detect", nullable = false)
     private boolean autoDetect = false;
 

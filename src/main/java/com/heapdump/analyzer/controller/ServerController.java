@@ -117,11 +117,15 @@ public class ServerController {
             server.setAutoDetect(body.containsKey("autoDetect") && Boolean.TRUE.equals(body.get("autoDetect")));
             server.setScanIntervalSec(body.containsKey("scanIntervalSec")
                     ? ((Number) body.get("scanIntervalSec")).intValue() : 300);
+            if (body.containsKey("scanHeap"))       server.setScanHeap(Boolean.TRUE.equals(body.get("scanHeap")));
+            if (body.containsKey("scanCore"))       server.setScanCore(Boolean.TRUE.equals(body.get("scanCore")));
+            if (body.containsKey("scanExecutable")) server.setScanExecutable(Boolean.TRUE.equals(body.get("scanExecutable")));
+            if (body.containsKey("coreDumpPath"))   server.setCoreDumpPath((String) body.get("coreDumpPath"));
             server.setEnabled(true);
             serverRepository.save(server);
-            logger.info("[Server] action=create id={} name='{}' host='{}' port={} sshUser='{}' autoDetect={} by={}",
+            logger.info("[Server] action=create id={} name='{}' host='{}' port={} sshUser='{}' autoDetect={} scanHeap={} scanCore={} by={}",
                     server.getId(), server.getName(), server.getHost(), server.getPort(),
-                    server.getSshUser(), server.isAutoDetect(), who(auth));
+                    server.getSshUser(), server.isAutoDetect(), server.isScanHeap(), server.isScanCore(), who(auth));
             result.put("success", true);
             result.put("serverId", server.getId());
             return ResponseEntity.ok(result);
@@ -156,6 +160,10 @@ public class ServerController {
             if (body.containsKey("autoDetect")) { server.setAutoDetect(Boolean.TRUE.equals(body.get("autoDetect"))); changed.add("autoDetect"); }
             if (body.containsKey("scanIntervalSec")) { server.setScanIntervalSec(((Number) body.get("scanIntervalSec")).intValue()); changed.add("scanIntervalSec"); }
             if (body.containsKey("enabled")) { server.setEnabled(Boolean.TRUE.equals(body.get("enabled"))); changed.add("enabled"); }
+            if (body.containsKey("scanHeap")) { server.setScanHeap(Boolean.TRUE.equals(body.get("scanHeap"))); changed.add("scanHeap"); }
+            if (body.containsKey("scanCore")) { server.setScanCore(Boolean.TRUE.equals(body.get("scanCore"))); changed.add("scanCore"); }
+            if (body.containsKey("scanExecutable")) { server.setScanExecutable(Boolean.TRUE.equals(body.get("scanExecutable"))); changed.add("scanExecutable"); }
+            if (body.containsKey("coreDumpPath")) { server.setCoreDumpPath((String) body.get("coreDumpPath")); changed.add("coreDumpPath"); }
             serverRepository.save(server);
             logger.info("[Server] action=update id={} name='{}'->'{}' host='{}'->'{}' port={}->{} autoDetect={}->{} enabled={}->{} fields={} by={}",
                     id, oldName, server.getName(), oldHost, server.getHost(), oldPort, server.getPort(),
