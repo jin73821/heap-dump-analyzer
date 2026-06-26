@@ -25,4 +25,12 @@ public class CoreDumpAnalysisResult {
     private String errorMessage;
     private String analyzedAt;            // ISO-8601 문자열
     private long analysisTimeMs;
+
+    // ── 분석 신뢰도 메타 (심볼 없는/손상된 스택 대응) ──────────────
+    private String analysisConfidence;       // "HIGH" | "MEDIUM" | "LOW"
+    private List<String> qualityWarnings;    // 신뢰도 저하 사유(한국어) 목록
+    private int resolvedFrameCount;          // 심볼 해석된(RESOLVED) 프레임 수
+    private int totalFrameCount;             // 메인 백트레이스 총 프레임 수
+    private boolean symbolsAvailable;        // 심볼/공유라이브러리 심볼 존재 여부
+    private GdbStackFrame firstResolvedFrame; // 최초 RESOLVED 프레임(없으면 null)
 }

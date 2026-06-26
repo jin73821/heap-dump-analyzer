@@ -249,6 +249,13 @@ public class RemoteDumpService {
             }
         }
 
+        // 탐지 파일 — 수정시각(mtime) 기준 내림차순 정렬 (최신 파일 우선)
+        files.sort((a, b) -> {
+            double ma = a.get("mtime") instanceof Number ? ((Number) a.get("mtime")).doubleValue() : 0;
+            double mb = b.get("mtime") instanceof Number ? ((Number) b.get("mtime")).doubleValue() : 0;
+            return Double.compare(mb, ma);
+        });
+
         result.put("files", files);
         result.put("count", files.size());
         if (!pathErrors.isEmpty()) result.put("pathErrors", pathErrors);
@@ -275,11 +282,14 @@ public class RemoteDumpService {
         //   매칭된 파일이 stdout 에 있으면 성공으로 처리. find stderr 는 그대로 SSH stderr 로
         //   올라와 디버깅 단서로 로그에 남김 (2>/dev/null 로 묻히지 않음).
         String safePath = dumpPath.replace("'", "'\\''");
-        String findCmd = String.format(
-            "[ -d '%s' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
-            + "[ -r '%s' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
-            + "find '%s' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' \\) -exec ls -la {} \\; || true",
-            safePath, safePath, safePath);
+        // -printf 로 epoch mtime(%T@) + 정렬가능 날짜 + 크기 + 경로를 '|' 구분 출력.
+        //   기존 `-exec ls -la` 의 파일별 fork 제거 + 정렬 키(mtime) 확보. (String.format 미사용:
+        //   printf 포맷의 % 가 format specifier 로 오인되는 것 방지 — 경로만 직접 치환.)
+        String findCmd =
+            "[ -d '" + safePath + "' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
+            + "[ -r '" + safePath + "' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
+            + "find '" + safePath + "' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' \\) "
+            + "-printf '%T@|%TY-%Tm-%Td %TH:%TM|%s|%p\\n' || true";
         String[] cmd = buildSshCommand(server, findCmd);
         ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
 
@@ -308,7 +318,7 @@ public class RemoteDumpService {
                 for (String line : pr.stdout.split("\n")) {
                     line = line.trim();
                     if (line.isEmpty()) continue;
-                    Map<String, Object> fileInfo = parseLsLine(line);
+                    Map<String, Object> fileInfo = parsePrintfLine(line);
                     if (fileInfo != null) {
                         String filename = (String) fileInfo.get("filename");
                         Long size = (Long) fileInfo.get("size");
@@ -354,14 +364,14 @@ public class RemoteDumpService {
 
         String safePath = corePath.replace("'", "'\\''");
         // 2>/dev/null || true : 하위 파일 권한 부족으로 Permission denied 발생해도 통과.
-        // 코어파일은 root:root 600/400이 일반적이라 sshUser가 ls -la로 속성은 볼 수 있어도
-        // 파일 내용을 읽을 수 없는 경우가 많음. find+ls는 디렉토리 execute 권한만 있으면 동작.
-        String findCmd = String.format(
-            "[ -d '%s' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
-            + "[ -r '%s' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
-            + "find '%s' -maxdepth 3 -type f \\( -name 'core' -o -name 'core.[0-9]*' -o -name '*.core' \\) "
-            + "-exec ls -la {} \\; 2>/dev/null || true",
-            safePath, safePath, safePath);
+        // 코어파일은 root:root 600/400이 일반적이라 sshUser가 속성은 볼 수 있어도
+        // 파일 내용을 읽을 수 없는 경우가 많음. find -printf 는 디렉토리 execute 권한만 있으면 동작.
+        // -printf: epoch mtime(%T@) + 정렬가능 날짜 + 크기 + 경로 ('|' 구분). 파일별 ls fork 제거.
+        String findCmd =
+            "[ -d '" + safePath + "' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
+            + "[ -r '" + safePath + "' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
+            + "find '" + safePath + "' -maxdepth 3 -type f \\( -name 'core' -o -name 'core.[0-9]*' -o -name '*.core' \\) "
+            + "-printf '%T@|%TY-%Tm-%Td %TH:%TM|%s|%p\\n' 2>/dev/null || true";
         String[] cmd = buildSshCommand(server, findCmd);
         ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
 
@@ -387,43 +397,52 @@ public class RemoteDumpService {
                         server.getName(), corePath, summarizeStderr(pr.stderr, 5));
             }
             if (!pr.stdout.trim().isEmpty()) {
+                // 1) 코어파일 메타 파싱 + 전송 여부 판정
+                File localCoreDir = new File(config.getCoreDumpDirectory(), "dumpfiles");
+                File localHeapDir = new File(config.getDumpFilesDirectory());
                 for (String line : pr.stdout.split("\n")) {
                     line = line.trim();
                     if (line.isEmpty()) continue;
-                    Map<String, Object> fileInfo = parseLsLine(line);
+                    Map<String, Object> fileInfo = parsePrintfLine(line);
                     if (fileInfo != null) {
-                        String filePath = (String) fileInfo.get("path");
                         Long size = (Long) fileInfo.get("size");
-                        // 전송 여부 판정 — 힙덤프와 동일 로직
                         String filename = (String) fileInfo.get("filename");
                         List<DumpTransferLog> succLogs = transferLogRepository
                                 .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
                                         server.getId(), filename, size, "SUCCESS");
-                        File localDir = new File(config.getDumpFilesDirectory());
-                        String matchedLocalFilename = null;
+                        boolean transferred = false;
                         for (DumpTransferLog sl : succLogs) {
                             String local = sl.getFilename();
                             if (local == null) continue;
-                            File f = new File(localDir, local);
-                            File gz = new File(localDir, local + ".gz");
-                            if (f.exists() || gz.exists()) {
-                                matchedLocalFilename = local;
+                            if (new File(localCoreDir, local).exists()
+                                    || new File(localHeapDir, local).exists()
+                                    || new File(localHeapDir, local + ".gz").exists()) {
+                                transferred = true;
                                 break;
                             }
                         }
-                        boolean transferred = matchedLocalFilename != null;
                         fileInfo.put("transferred", transferred);
                         fileInfo.put("analyzed", false);
                         fileInfo.put("sourceDumpPath", corePath);
                         fileInfo.put("fileType", "core");
-
-                        // 실행파일 탐지 (scanExecutable=true)
-                        if (server.isScanExecutable() && filePath != null) {
-                            String[] execInfo = detectExecutable(server, filePath);
-                            if (execInfo[0] != null) fileInfo.put("executablePath", execInfo[0]);
-                            if (execInfo[1] != null) fileInfo.put("executableWarning", execInfo[1]);
-                        }
                         files.add(fileInfo);
+                    }
+                }
+
+                // 2) 실행파일 탐지 — 파일별 SSH 대신 단일 배치 `file` 호출(성능 핵심).
+                if (server.isScanExecutable() && !files.isEmpty()) {
+                    List<String> corePaths = new ArrayList<>();
+                    for (Map<String, Object> fi : files) {
+                        String p = (String) fi.get("path");
+                        if (p != null) corePaths.add(p);
+                    }
+                    Map<String, String[]> execMap = detectExecutablesBatch(server, corePaths);
+                    for (Map<String, Object> fi : files) {
+                        String[] info = execMap.get(fi.get("path"));
+                        if (info == null) continue;
+                        if (info[0] != null) fi.put("executablePath", info[0]);     // execfn (실행파일)
+                        if (info[1] != null) fi.put("executableCommand", info[1]);  // from (실행명령, 참고용)
+                        if (info[2] != null) fi.put("executableWarning", info[2]);
                     }
                 }
             }
@@ -432,51 +451,71 @@ public class RemoteDumpService {
         return result;
     }
 
+    private static final int FILE_BATCH_SIZE = 150;       // 단일 `file` 호출당 코어파일 수 상한
+    private static final int FILE_BATCH_TIMEOUT_SEC = 90;  // 배치 file 명령 타임아웃
+    private static final java.util.regex.Pattern EXECFN_PAT =
+            java.util.regex.Pattern.compile("execfn:\\s*'([^']+)'");
+    private static final java.util.regex.Pattern FROM_PAT =
+            java.util.regex.Pattern.compile("from\\s+'([^']+)'");
+
     /**
-     * 코어파일에서 실행파일 경로를 추출 — `file` 명령 출력 파싱.
-     * 반환: [executablePath, warningMessage]. 파싱 실패 시 각각 null.
-     * 코어파일이 400/600 권한이면 `file` 명령도 Permission denied 발생 가능 → warningMessage 설정.
+     * 여러 코어파일의 실행파일 정보를 단일 SSH `file` 호출(들)로 일괄 추출 — 파일별 SSH 왕복 제거(성능 핵심).
+     * 반환: path → [executablePath(execfn), executableCommand(from), warning]. 각 요소 미상 시 null.
+     * - executablePath 는 **execfn 만** 사용(실제 실행 바이너리 경로). from 은 실행명령(참고용)이라 path 로 쓰지 않음.
      */
-    private String[] detectExecutable(TargetServer server, String coreFilePath) {
-        try {
-            String safePath = coreFilePath.replace("'", "'\\''");
-            // file 명령 실패(권한 없음 등)는 || echo CORE_UNREADABLE 로 표시
-            String fileCmd = "file '" + safePath + "' 2>&1 || echo CORE_UNREADABLE";
-            String[] cmd = buildSshCommand(server, fileCmd);
-            ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
-
-            String output = pr.stdout.trim();
-            if (output.isEmpty() || output.contains("CORE_UNREADABLE")
-                    || output.contains("Permission denied") || output.contains("cannot open")) {
-                logger.debug("[RemoteDump] Core file not readable for file cmd: {}", coreFilePath);
-                return new String[]{null, "파일 읽기 권한 부족 (chmod 또는 sudo 필요)"};
+    private Map<String, String[]> detectExecutablesBatch(TargetServer server, List<String> paths) {
+        Map<String, String[]> out = new HashMap<>();
+        if (paths == null || paths.isEmpty()) return out;
+        for (int start = 0; start < paths.size(); start += FILE_BATCH_SIZE) {
+            List<String> chunk = paths.subList(start, Math.min(start + FILE_BATCH_SIZE, paths.size()));
+            try {
+                StringBuilder sb = new StringBuilder("file");
+                for (String p : chunk) sb.append(" '").append(p.replace("'", "'\\''")).append("'");
+                sb.append(" 2>&1 || true");
+                String[] cmd = buildSshCommand(server, sb.toString());
+                ProcessResult pr = executeCommand(cmd, FILE_BATCH_TIMEOUT_SEC);
+                for (String line : pr.stdout.split("\n")) {
+                    line = line.trim();
+                    if (line.isEmpty()) continue;
+                    // `file` 출력은 "경로: 설명" — 경로엔 ": " 가 없으므로 첫 ": " 로 분리
+                    int idx = line.indexOf(": ");
+                    if (idx < 0) continue;
+                    String path = line.substring(0, idx);
+                    String desc = line.substring(idx + 2);
+                    out.put(path, parseFileDesc(desc));
+                }
+            } catch (Exception e) {
+                logger.debug("[RemoteDump] detectExecutablesBatch chunk failed (start={}): {}", start, e.getMessage());
             }
-
-            // execfn: '/path/to/bin' 우선 파싱 (정확한 full path)
-            java.util.regex.Matcher m1 = java.util.regex.Pattern
-                    .compile("execfn:\\s*'([^']+)'").matcher(output);
-            if (m1.find()) {
-                return new String[]{m1.group(1), null};
-            }
-
-            // from 'procname' 파싱 (이름만 있는 경우)
-            java.util.regex.Matcher m2 = java.util.regex.Pattern
-                    .compile("from\\s+'([^']+)'").matcher(output);
-            if (m2.find()) {
-                return new String[]{m2.group(1), null};
-            }
-
-            // ELF core file 이지만 execfn/from 없는 경우
-            if (output.contains("core file")) {
-                return new String[]{null, "실행파일 정보를 추출할 수 없습니다"};
-            }
-
-            // core 파일이 아닌 경우
-            return new String[]{null, "코어파일 형식이 아닙니다: " + output.substring(0, Math.min(80, output.length()))};
-        } catch (Exception e) {
-            logger.debug("[RemoteDump] detectExecutable failed for {}: {}", coreFilePath, e.getMessage());
-            return new String[]{null, "실행파일 탐지 오류: " + e.getMessage()};
         }
+        return out;
+    }
+
+    /**
+     * `file` 명령 설명부 파싱 → [execfn 실행파일 경로, from 실행명령, warning].
+     * execfn 이 실제 실행 바이너리 경로(전송 대상), from 은 실행 시 명령행(참고용 표시).
+     */
+    private String[] parseFileDesc(String desc) {
+        if (desc == null) desc = "";
+        if (desc.contains("Permission denied") || desc.contains("cannot open")) {
+            return new String[]{null, null, "파일 읽기 권한 부족 (chmod 또는 sudo 필요)"};
+        }
+        String execfn = null, fromCmd = null;
+        java.util.regex.Matcher m1 = EXECFN_PAT.matcher(desc);
+        if (m1.find()) execfn = m1.group(1);
+        java.util.regex.Matcher m2 = FROM_PAT.matcher(desc);
+        if (m2.find()) fromCmd = m2.group(1);
+
+        if (execfn == null && fromCmd == null) {
+            if (desc.contains("core file")) {
+                return new String[]{null, null, "실행파일 정보(execfn)를 추출할 수 없습니다"};
+            }
+            return new String[]{null, null, "코어파일 형식이 아닙니다: "
+                    + desc.substring(0, Math.min(80, desc.length()))};
+        }
+        // execfn 없이 from 만 있는 경우: 실행명령은 표시하되 전송 가능한 실행파일 경로는 없음
+        String warn = (execfn == null) ? "실행파일 경로(execfn) 없음 — 실행명령만 확인됨" : null;
+        return new String[]{execfn, fromCmd, warn};
     }
 
     /** stderr 첫 N 줄만 발췌해 로깅용 한 줄로 묶음. */
@@ -505,6 +544,23 @@ public class RemoteDumpService {
         return (List<Map<String, Object>>) result.getOrDefault("files", Collections.emptyList());
     }
 
+    /**
+     * 원격 코어 원본명으로 이미 전송된 로컬 코어파일명을 조회 (코어덤프 dumpfiles 디렉터리에 실존하는 SUCCESS 로그).
+     * 실행파일을 "{coreLocal}.exec" 로 저장해 자동 페어링하기 위한 lookup. 없으면 null.
+     */
+    public String findTransferredCoreLocalName(TargetServer server, String coreRemoteName) {
+        if (coreRemoteName == null) return null;
+        File coreDir = new File(config.getCoreDumpDirectory(), "dumpfiles");
+        List<DumpTransferLog> logs = transferLogRepository
+                .findByServerIdAndRemoteFilenameAndTransferStatusOrderByCompletedAtDesc(
+                        server.getId(), coreRemoteName, "SUCCESS");
+        for (DumpTransferLog l : logs) {
+            String local = l.getFilename();
+            if (local != null && new File(coreDir, local).exists()) return local;
+        }
+        return null;
+    }
+
     /** 전송 진행률 콜백 — bytesTransferred / totalBytes (-1이면 unknown). 예외는 호출자에서 swallow. */
     public interface TransferProgressListener {
         void onProgress(long bytes, long total);
@@ -528,16 +584,25 @@ public class RemoteDumpService {
         return transferFile(server, remoteFilePath, fileType, null);
     }
 
-    /**
-     * 진행률 콜백 버전. listener가 null이 아닐 때만 SCP 진행 중 임시 파일 크기를 폴링하여 보고.
-     * fileType: "core" → 코어덤프 디렉터리, 나머지 → 힙덤프 디렉터리.
-     */
     public DumpTransferLog transferFile(TargetServer server, String remoteFilePath,
                                         String fileType,
                                         TransferProgressListener listener) {
+        return transferFile(server, remoteFilePath, fileType, null, listener);
+    }
+
+    /**
+     * 진행률 콜백 버전. listener가 null이 아닐 때만 SCP 진행 중 임시 파일 크기를 폴링하여 보고.
+     * fileType: "core"/"coreexec" → 코어덤프 디렉터리, 나머지 → 힙덤프 디렉터리.
+     * targetFilename: 지정 시 로컬 저장명으로 사용(예: 코어 실행파일을 "{coreLocal}.exec" 로 저장해 자동 페어링).
+     *                 null 이면 원격 원본명 사용.
+     */
+    public DumpTransferLog transferFile(TargetServer server, String remoteFilePath,
+                                        String fileType, String targetFilename,
+                                        TransferProgressListener listener) {
         // 원격 원본명 — rename 후에도 변하지 않는 식별자 (scan transferred 판정 키)
         final String remoteFilename = new File(remoteFilePath).getName();
-        String filename = remoteFilename;
+        String filename = (targetFilename != null && !targetFilename.isBlank())
+                ? targetFilename : remoteFilename;
         DumpTransferLog log = new DumpTransferLog();
         log.setServerId(server.getId());
         log.setFilename(filename);
@@ -550,8 +615,9 @@ public class RemoteDumpService {
         File tempFile = null;
 
         try {
-            boolean isCore = "core".equals(fileType);
-            File localDir = isCore
+            // core(코어덤프) / coreexec(코어의 실행 바이너리) 모두 코어덤프 dumpfiles 디렉터리로 전송
+            boolean toCoreDir = "core".equals(fileType) || "coreexec".equals(fileType);
+            File localDir = toCoreDir
                     ? new File(config.getCoreDumpDirectory(), "dumpfiles")
                     : new File(config.getDumpFilesDirectory());
             if (!localDir.exists()) localDir.mkdirs();
@@ -868,19 +934,25 @@ public class RemoteDumpService {
         return result;
     }
 
-    private Map<String, Object> parseLsLine(String line) {
-        String[] parts = line.split("\\s+", 9);
-        if (parts.length < 9) return null;
+    /**
+     * find -printf '%T@|%TY-%Tm-%Td %TH:%TM|%s|%p\n' 출력 1줄 파싱.
+     * 반환 맵: filename/path/size/formattedSize/date(정렬가능 "YYYY-MM-DD HH:MM") + mtime(epoch double, 정렬 키).
+     */
+    private Map<String, Object> parsePrintfLine(String line) {
+        String[] parts = line.split("\\|", 4);
+        if (parts.length < 4) return null;
         try {
+            double mtime = Double.parseDouble(parts[0].trim());
+            String date = parts[1];
+            long size = Long.parseLong(parts[2].trim());
+            String path = parts[3];
             Map<String, Object> info = new HashMap<>();
-            long size = Long.parseLong(parts[4]);
-            String path = parts[8];
-            String filename = new File(path).getName();
-            info.put("filename", filename);
+            info.put("filename", new File(path).getName());
             info.put("path", path);
             info.put("size", size);
             info.put("formattedSize", formatBytes(size));
-            info.put("date", parts[5] + " " + parts[6] + " " + parts[7]);
+            info.put("date", date);
+            info.put("mtime", mtime);
             return info;
         } catch (NumberFormatException e) {
             return null;

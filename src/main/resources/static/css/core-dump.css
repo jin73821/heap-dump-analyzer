@@ -693,4 +693,75 @@
     .frame-locals { padding-left: 14px; }
     .cda-head-actions { margin-left: 0; width: 100%; }
     .cda-sev-meta { margin-left: 0; text-align: left; }
+    .cdc-stat { margin-left: 0; }
+    .garbage-toggle-bar { flex-direction: column; align-items: flex-start; }
 }
+
+/* ── 분석 신뢰도 배너 ───────────────────────────────────────── */
+.cd-confidence {
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    border: 1px solid transparent;
+}
+.cd-confidence.cdc-low    { background: #FEF2F2; border-color: #FECACA; }
+.cd-confidence.cdc-medium { background: #FFFBEB; border-color: #FDE68A; }
+.cd-confidence.cdc-high   { background: #F0FDF4; border-color: #BBF7D0; }
+.cdc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cdc-icon { font-size: 18px; }
+.cdc-label { font-size: 15px; font-weight: 800; }
+.cdc-low    .cdc-label { color: #B91C1C; }
+.cdc-medium .cdc-label { color: #B45309; }
+.cdc-high   .cdc-label { color: #15803D; }
+.cdc-stat {
+    margin-left: auto; font-family: 'JetBrains Mono', monospace;
+    font-size: 12px; color: #6B7280; font-weight: 600;
+}
+.cdc-warnings { margin: 12px 0 0; padding-left: 20px; }
+.cdc-warnings li { font-size: 13px; color: #374151; line-height: 1.7; }
+.cdc-guide {
+    margin-top: 12px; padding: 10px 14px; border-radius: 8px;
+    background: rgba(255,255,255,0.6); font-size: 12.5px; color: #4B5563; line-height: 1.6;
+}
+
+/* ── 히어로 보조: 식별된 최근접 심볼 ───────────────────────────── */
+.crash-hero-nearest {
+    margin-top: 10px; padding: 8px 12px; border-radius: 8px;
+    background: rgba(255,255,255,0.55); display: flex; flex-wrap: wrap;
+    align-items: baseline; gap: 8px; font-size: 13px;
+}
+.crash-hero-nearest-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.03em; color: #6B7280;
+}
+.crash-hero-nearest-value { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #111827; }
+.crash-hero-nearest-loc { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #6B7280; }
+
+/* ── 콜체인: 심볼/심볼없음 배지 + 의미없음 안내 ─────────────────── */
+.cc-badge-sym   { background: #DCFCE7; color: #15803D; }
+.cc-badge-unsym { background: #F3F4F6; color: #6B7280; }
+.cc-empty-meaningful {
+    padding: 16px; text-align: center; color: #9CA3AF; font-size: 13px;
+}
+
+/* ── 스택 탭: 프레임 품질 배지 + 노이즈 토글 ───────────────────── */
+.frame-q-badge {
+    font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 6px;
+    letter-spacing: 0.02em; white-space: nowrap;
+}
+.fq-resolved { background: #DCFCE7; color: #15803D; }
+.fq-unsym    { background: #F3F4F6; color: #6B7280; }
+.fq-garbage  { background: #FEF2F2; color: #B91C1C; }
+.frame-card.frame-garbage { opacity: 0.7; }
+.frame-list.hide-garbage .frame-garbage { display: none; }
+.garbage-toggle-bar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 12px; padding: 10px 14px; border-radius: 8px;
+    background: #FEF2F2; border: 1px solid #FECACA;
+}
+.gtb-note { font-size: 12.5px; color: #991B1B; flex: 1 1 auto; }
+.gtb-btn {
+    flex-shrink: 0; padding: 6px 14px; border: 1px solid #FCA5A5; border-radius: 6px;
+    background: #fff; color: #B91C1C; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.gtb-btn:hover { background: #FEF2F2; }

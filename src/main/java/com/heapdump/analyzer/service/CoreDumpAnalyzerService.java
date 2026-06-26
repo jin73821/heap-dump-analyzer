@@ -793,11 +793,16 @@ public class CoreDumpAnalyzerService {
         threads.sort(Comparator.comparingInt(t -> t.isCurrent() ? -1 : t.getId()));
         result.setAllThreads(threads);
 
+        // 프레임 품질 분류 + 분석 신뢰도 판정 (심볼 없는/손상된 스택 대응)
+        assessAnalysisQuality(result, rawOutput);
+
         // 파싱 결과 요약 로그
-        logger.info("[CoreDump] GDB 파싱 완료: filename={}, signal={}, frames={}, threads={}{}",
+        logger.info("[CoreDump] GDB 파싱 완료: filename={}, signal={}, frames={}, resolved={}, conf={}, threads={}{}",
                 filename,
                 result.getCrashSignal() != null ? result.getCrashSignal() : "없음",
                 result.getMainBacktrace().size(),
+                result.getResolvedFrameCount(),
+                result.getAnalysisConfidence(),
                 result.getAllThreads().size(),
                 result.getErrorMessage() != null ? ", warn='" + result.getErrorMessage() + "'" : "");
 
@@ -883,13 +888,141 @@ public class CoreDumpAnalyzerService {
     private String buildCrashSummary(CoreDumpAnalysisResult result) {
         List<GdbStackFrame> bt = result.getMainBacktrace();
         if (bt == null || bt.isEmpty()) return null;
-        return bt.stream()
+        // RESOLVED 프레임 우선 5개 (전부 ??/노이즈인 경우 폴백으로 상위 5개)
+        List<GdbStackFrame> pick = bt.stream()
+                .filter(f -> "RESOLVED".equals(f.getQuality()))
                 .limit(5)
+                .collect(Collectors.toList());
+        if (pick.isEmpty()) pick = bt.stream().limit(5).collect(Collectors.toList());
+        return pick.stream()
                 .map(f -> "#" + f.getFrameNumber() + " " +
                         (f.getAddress() != null ? f.getAddress() + " in " : "") +
                         (f.getFunction() != null ? f.getFunction() : "??") +
                         (f.getLocation() != null ? " at " + f.getLocation() : ""))
                 .collect(Collectors.joining("\n"));
+    }
+
+    // ── 분석 신뢰도 판정 (심볼 없는/손상된 스택 대응) ────────────────
+
+    /** 함수명이 심볼 없음(?? 또는 null)인지. */
+    private static boolean isUnsymbolized(GdbStackFrame f) {
+        String fn = f.getFunction();
+        return fn == null || fn.isBlank() || "??".equals(fn.trim());
+    }
+
+    /**
+     * 주소가 코드가 아닌 데이터(스택 스캔 노이즈)로 보이는지.
+     * 0x + 16 hex 를 8바이트로 보고 6바이트 이상이 출력가능 ASCII(0x20–0x7e)이거나
+     * 모든 바이트가 동일하면 garbage 로 판정.
+     * 예: 0x2020202020202020, 0x454c545730353232("ELTW0522"), 0x3030303134313135("00014115")
+     */
+    static boolean looksLikeStackGarbage(String address) {
+        if (address == null) return false;
+        String hex = address.trim();
+        if (hex.startsWith("0x") || hex.startsWith("0X")) hex = hex.substring(2);
+        if (hex.length() != 16) return false;          // 64-bit 정규 주소만 평가
+        int[] bytes = new int[8];
+        for (int i = 0; i < 8; i++) {
+            try {
+                bytes[i] = Integer.parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+        int printable = 0;
+        boolean allSame = true;
+        for (int i = 0; i < 8; i++) {
+            if (bytes[i] >= 0x20 && bytes[i] <= 0x7e) printable++;
+            if (bytes[i] != bytes[0]) allSame = false;
+        }
+        return printable >= 6 || allSame;
+    }
+
+    /** 프레임 1개의 quality 등급 산정. */
+    private static String classifyFrame(GdbStackFrame f) {
+        boolean resolved = !isUnsymbolized(f) || f.getLocation() != null || f.getLibrary() != null;
+        if (resolved) return "RESOLVED";
+        if (looksLikeStackGarbage(f.getAddress())) return "GARBAGE";
+        return "UNSYMBOLIZED";
+    }
+
+    /**
+     * 메인 백트레이스/스레드 백트레이스 프레임에 quality 부여 후
+     * 분석 신뢰도(analysisConfidence) + 신뢰도 저하 사유(qualityWarnings) 산정.
+     */
+    void assessAnalysisQuality(CoreDumpAnalysisResult result, String rawOutput) {
+        List<GdbStackFrame> bt = result.getMainBacktrace();
+        if (bt == null) bt = Collections.emptyList();
+
+        // 1) 프레임 분류 (메인 + 각 스레드)
+        for (GdbStackFrame f : bt) f.setQuality(classifyFrame(f));
+        if (result.getAllThreads() != null) {
+            for (GdbThreadInfo t : result.getAllThreads()) {
+                if (t.getBacktrace() != null) {
+                    for (GdbStackFrame f : t.getBacktrace()) f.setQuality(classifyFrame(f));
+                }
+            }
+        }
+
+        int total = bt.size();
+        int resolved = 0, garbage = 0;
+        GdbStackFrame firstResolved = null;
+        for (GdbStackFrame f : bt) {
+            if ("RESOLVED".equals(f.getQuality())) {
+                resolved++;
+                if (firstResolved == null) firstResolved = f;
+            } else if ("GARBAGE".equals(f.getQuality())) {
+                garbage++;
+            }
+        }
+        result.setTotalFrameCount(total);
+        result.setResolvedFrameCount(resolved);
+        result.setFirstResolvedFrame(firstResolved);
+
+        // 공유 라이브러리 심볼 존재 여부
+        boolean libSyms = result.getSharedLibraries() != null && result.getSharedLibraries().stream()
+                .anyMatch(l -> l.getSymsRead() != null && l.getSymsRead().startsWith("Yes"));
+        boolean symbolsAvailable = resolved > 0 || libSyms;
+        result.setSymbolsAvailable(symbolsAvailable);
+
+        double garbageRatio = total > 0 ? (double) garbage / total : 0.0;
+
+        // 2) 신뢰도 저하 사유 수집
+        List<String> warnings = new ArrayList<>();
+        String raw = rawOutput == null ? "" : rawOutput;
+        boolean noSharedLibs = raw.contains("No shared libraries loaded at this time")
+                || (result.getSharedLibraries() == null || result.getSharedLibraries().isEmpty());
+        if (noSharedLibs) {
+            warnings.add("공유 라이브러리 정보 없음 — 실행 파일/라이브러리 경로가 코어와 매칭되지 않습니다.");
+        }
+        if (resolved == 0 || raw.contains("No symbol table info available")) {
+            warnings.add("디버그 심볼 없음 — stripped 바이너리이거나 일치하는 실행 파일이 페어링되지 않았습니다.");
+        }
+        if (raw.contains("Cannot access memory at address")) {
+            warnings.add("일부 메모리 접근 불가 — 코어가 부분 저장(truncated)되었거나 매핑이 누락되었습니다.");
+        }
+        if (raw.contains(".reg-xstate") && raw.contains("too small")) {
+            warnings.add("레지스터 확장 상태(xstate) 일부 손상 — 레지스터 값 신뢰도가 낮을 수 있습니다.");
+        }
+        if (raw.contains("Can't open file (null) during file-backed mapping")) {
+            warnings.add("파일 기반 매핑 노트 처리 실패 — 원본 실행 환경의 파일을 찾을 수 없습니다.");
+        }
+        if (garbageRatio >= 0.5 && total > 100) {
+            warnings.add("스택이 손상되어 백트레이스 대부분(" + garbage + "/" + total
+                    + ")이 무효 프레임입니다 — 스택 스캔 노이즈로 추정됩니다.");
+        }
+
+        // 3) 신뢰도 등급
+        String confidence;
+        if (resolved == 0 || (!symbolsAvailable && garbageRatio >= 0.5)) {
+            confidence = "LOW";
+        } else if (garbageRatio >= 0.3 || !libSyms || resolved < 3) {
+            confidence = "MEDIUM";
+        } else {
+            confidence = "HIGH";
+        }
+        result.setAnalysisConfidence(confidence);
+        result.setQualityWarnings(warnings);
     }
 
     private void updateDbError(String filename, String errorMessage) {
@@ -1037,10 +1170,28 @@ public class CoreDumpAnalyzerService {
         if (r.getExecutableName() != null)  sb.append("실행 파일: ").append(r.getExecutableName()).append('\n');
         if (r.getGdbVersion() != null)      sb.append("GDB 버전: ").append(r.getGdbVersion()).append('\n');
 
+        // 분석 신뢰도 — 심볼 없는/손상된 스택일 때 LLM 이 단정 짓지 않도록 명시
+        if (r.getAnalysisConfidence() != null) {
+            sb.append("\n== 분석 신뢰도 ==\n");
+            sb.append("신뢰도: ").append(r.getAnalysisConfidence())
+              .append(" (식별된 심볼 프레임 ").append(r.getResolvedFrameCount())
+              .append(" / 전체 ").append(r.getTotalFrameCount()).append(")\n");
+            sb.append("심볼 가용: ").append(r.isSymbolsAvailable() ? "있음" : "없음").append('\n');
+            if (r.getQualityWarnings() != null && !r.getQualityWarnings().isEmpty()) {
+                sb.append("저하 사유:\n");
+                for (String w : r.getQualityWarnings()) sb.append("  - ").append(w).append('\n');
+            }
+        }
+
         List<GdbStackFrame> bt = r.getMainBacktrace();
         if (bt != null && !bt.isEmpty()) {
             GdbStackFrame f0 = bt.get(0);
+            // quality 미설정(구버전 result.json)은 정상(RESOLVED)으로 간주
+            boolean f0Resolved = f0.getQuality() == null || "RESOLVED".equals(f0.getQuality());
             sb.append("\n== 크래시 지점 (Frame #0) ==\n");
+            if (!f0Resolved) {
+                sb.append("Frame #0 심볼 없음 — 주소만 존재(정확한 함수/라인 단정 불가).\n");
+            }
             sb.append("함수: ").append(nz(f0.getFunction()));
             if (f0.getArgs() != null && !f0.getArgs().isBlank()) sb.append(" (").append(f0.getArgs()).append(')');
             sb.append('\n');
@@ -1048,13 +1199,39 @@ public class CoreDumpAnalyzerService {
             if (f0.getLibrary() != null)  sb.append("라이브러리: ").append(f0.getLibrary()).append('\n');
             if (f0.getAddress() != null)  sb.append("주소: ").append(f0.getAddress()).append('\n');
 
-            sb.append("\n== 콜 체인 (상위 ").append(Math.min(bt.size(), 12)).append("프레임) ==\n");
-            for (int i = 0; i < bt.size() && i < 12; i++) {
-                GdbStackFrame f = bt.get(i);
-                sb.append('#').append(f.getFrameNumber()).append(' ').append(nz(f.getFunction()));
-                if (f.getLocation() != null)      sb.append(" at ").append(f.getLocation());
-                else if (f.getLibrary() != null)  sb.append(" from ").append(f.getLibrary());
+            // Frame #0 이 심볼 없으면 식별 가능한 최근접 심볼 별도 제공
+            GdbStackFrame fr = r.getFirstResolvedFrame();
+            if (!f0Resolved && fr != null) {
+                sb.append("식별 가능한 최근접 심볼: #").append(fr.getFrameNumber())
+                  .append(' ').append(nz(fr.getFunction()));
+                if (fr.getLocation() != null)     sb.append(" at ").append(fr.getLocation());
+                else if (fr.getLibrary() != null) sb.append(" from ").append(fr.getLibrary());
                 sb.append('\n');
+            }
+
+            // 콜 체인 — RESOLVED 프레임만 (노이즈/무효 프레임 제외).
+            // quality 미설정(구버전)은 정상으로 간주해 기존 동작 유지.
+            java.util.function.Predicate<GdbStackFrame> isResolved =
+                    f -> f.getQuality() == null || "RESOLVED".equals(f.getQuality());
+            List<GdbStackFrame> resolvedFrames = bt.stream()
+                    .filter(isResolved)
+                    .limit(12)
+                    .collect(Collectors.toList());
+            int noiseCount = bt.size() - (int) bt.stream().filter(isResolved).count();
+            if (!resolvedFrames.isEmpty()) {
+                sb.append("\n== 콜 체인 (식별된 심볼 ").append(resolvedFrames.size()).append("프레임) ==\n");
+                for (GdbStackFrame f : resolvedFrames) {
+                    sb.append('#').append(f.getFrameNumber()).append(' ').append(nz(f.getFunction()));
+                    if (f.getLocation() != null)      sb.append(" at ").append(f.getLocation());
+                    else if (f.getLibrary() != null)  sb.append(" from ").append(f.getLibrary());
+                    sb.append('\n');
+                }
+                if (noiseCount > 0) {
+                    sb.append("(무효/노이즈 프레임 ").append(noiseCount).append("개는 제외됨 — 스택 손상)\n");
+                }
+            } else {
+                sb.append("\n== 콜 체인 ==\n식별된 심볼 프레임 없음 (전체 ")
+                  .append(bt.size()).append("개 프레임 모두 심볼 없음/노이즈).\n");
             }
         }
 
@@ -1079,7 +1256,13 @@ public class CoreDumpAnalyzerService {
             }
         }
 
-        sb.append("\n위 데이터만 근거로 진단하세요. 마크다운 코드블록 없이 아래 순수 JSON 한 개만 출력하세요.\n");
+        sb.append("\n위 데이터만 근거로 진단하세요. ");
+        sb.append("심볼/디버그 정보가 없거나 신뢰도가 LOW 인 경우, 특정 코드 라인이나 함수를 단정하지 마세요. ");
+        sb.append("시그널 의미·레지스터·프로그램 실행 인자·식별된 심볼 범위 내에서만 추론하고, ");
+        sb.append("정밀 분석에 필요한 추가 자료(코어 생성 시점의 stripped 되지 않은 동일 실행 파일 페어링, ");
+        sb.append("또는 debuginfo 설치 후 재분석)를 recommendations 에 반드시 포함하세요. ");
+        sb.append("식별된 심볼 프레임이 전혀 없으면 추측 대신 위 절차적 가이드를 답하세요.\n");
+        sb.append("마크다운 코드블록 없이 아래 순수 JSON 한 개만 출력하세요.\n");
         sb.append("{\"summary\":\"한두 문장 핵심 요약\",")
           .append("\"rootCause\":\"근본 원인 상세 설명\",")
           .append("\"recommendations\":\"1. ...\\n2. ...\\n3. ... 형식의 구체적 조치\",")

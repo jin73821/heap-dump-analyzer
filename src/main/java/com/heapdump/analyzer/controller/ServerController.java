@@ -271,7 +271,8 @@ public class ServerController {
     @GetMapping(value = "/api/servers/{id}/transfer/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public org.springframework.web.servlet.mvc.method.annotation.SseEmitter transferStream(
             @PathVariable Long id, @RequestParam("remotePath") String remotePath,
-            @RequestParam(value = "fileType", defaultValue = "heap") String fileType) {
+            @RequestParam(value = "fileType", defaultValue = "heap") String fileType,
+            @RequestParam(value = "pairCore", required = false) String pairCore) {
         // 11분 — SCP timeout(10분)보다 약간 길게
         org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter =
                 new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(11L * 60 * 1000);
@@ -279,9 +280,29 @@ public class ServerController {
         TargetServer server = serverRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("서버를 찾을 수 없습니다: " + id));
 
+        // 코어 실행파일(coreexec) 전송 — 페어링 대상 코어가 로컬에 있어야 "{coreLocal}.exec" 로 저장해 자동 페어링.
+        final String targetFilename;
+        if ("coreexec".equals(fileType)) {
+            String coreLocal = remoteDumpService.findTransferredCoreLocalName(server, pairCore);
+            if (coreLocal == null) {
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("success", false);
+                err.put("message", "실행파일을 페어링할 코어파일이 로컬에 없습니다. 코어파일을 먼저 전송하세요.");
+                try {
+                    emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
+                            .event().name("done").data(err));
+                } catch (Exception ignored) {}
+                emitter.complete();
+                return emitter;
+            }
+            targetFilename = coreLocal + ".exec";
+        } else {
+            targetFilename = null;
+        }
+
         Thread worker = new Thread(() -> {
             try {
-                DumpTransferLog log = remoteDumpService.transferFile(server, remotePath, fileType, (bytes, total) -> {
+                DumpTransferLog log = remoteDumpService.transferFile(server, remotePath, fileType, targetFilename, (bytes, total) -> {
                     Map<String, Object> p = new LinkedHashMap<>();
                     p.put("bytes", bytes);
                     p.put("total", total);

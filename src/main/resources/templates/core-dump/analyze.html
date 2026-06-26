@@ -9,7 +9,7 @@
     <title>코어 덤프 분석 결과 - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-25}">
     <link rel="stylesheet" th:href="@{/css/style.css}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-25}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-26}">
     <style>
         /* 공통 스타일은 core-dump.css 로 이관. 페이지 고유 override 만 잔존. */
         body { background: var(--cd-bg, #F3F4F6) !important; }
@@ -81,8 +81,9 @@
             </div>
 
             <!-- 크래시 발생 지점 정보 -->
-            <div class="crash-hero-body">
-                <div class="crash-hero-eyebrow">크래시 발생 지점 (Frame #0)</div>
+            <div class="crash-hero-body" th:with="f0Resolved=${frame0.quality == null or frame0.quality == 'RESOLVED'}">
+                <div class="crash-hero-eyebrow"
+                     th:text="${f0Resolved} ? '크래시 발생 지점 (Frame #0)' : '크래시 발생 지점 (Frame #0) — 심볼 없음'"></div>
                 <div class="crash-hero-func"
                      th:text="${frame0.function != null} ? ${frame0.function} : '??'"></div>
 
@@ -99,6 +100,20 @@
                 <div class="crash-hero-args"
                      th:if="${frame0.args != null and !#strings.isEmpty(frame0.args)}"
                      th:text="'args: ' + ${frame0.args}"></div>
+
+                <!-- Frame #0 심볼 없을 때: 식별 가능한 최근접 심볼 보조 표시 -->
+                <div class="crash-hero-nearest"
+                     th:if="${!f0Resolved and result.firstResolvedFrame != null}">
+                    <span class="crash-hero-nearest-label">식별된 최근접 심볼</span>
+                    <span class="crash-hero-nearest-value"
+                          th:text="'#' + ${result.firstResolvedFrame.frameNumber} + ' ' + ${result.firstResolvedFrame.function}"></span>
+                    <span class="crash-hero-nearest-loc"
+                          th:if="${result.firstResolvedFrame.location != null}"
+                          th:text="'at ' + ${result.firstResolvedFrame.location}"></span>
+                    <span class="crash-hero-nearest-loc"
+                          th:if="${result.firstResolvedFrame.location == null and result.firstResolvedFrame.library != null}"
+                          th:text="'from ' + ${result.firstResolvedFrame.library}"></span>
+                </div>
 
                 <!-- 크래시 지점 소스 코드 자동 표시 -->
                 <div id="heroSource"
@@ -123,6 +138,31 @@
             <div>
                 <div style="font-size:18px;font-weight:800;font-family:monospace;" th:text="${result.crashSignal}"></div>
                 <div style="font-size:13px;color:#6B7280;margin-top:2px;" th:text="${result.signalDescription}"></div>
+            </div>
+        </div>
+
+        <!-- ★ 분석 신뢰도 배너 -->
+        <div th:if="${result != null and result.crashSignal != null and result.analysisConfidence != null}"
+             class="cd-confidence"
+             th:classappend="${result.analysisConfidence == 'LOW'} ? ' cdc-low'
+                            : (${result.analysisConfidence == 'MEDIUM'} ? ' cdc-medium' : ' cdc-high')">
+            <div class="cdc-head">
+                <span class="cdc-icon"
+                      th:text="${result.analysisConfidence == 'LOW'} ? '&#9888;'
+                               : (${result.analysisConfidence == 'MEDIUM'} ? '&#9888;' : '&#9989;')"></span>
+                <span class="cdc-label"
+                      th:text="'분석 신뢰도: ' + (${result.analysisConfidence == 'LOW'} ? '낮음'
+                               : (${result.analysisConfidence == 'MEDIUM'} ? '보통' : '높음'))"></span>
+                <span class="cdc-stat"
+                      th:text="'식별된 심볼 프레임 ' + ${result.resolvedFrameCount} + ' / ' + ${result.totalFrameCount}"></span>
+            </div>
+            <ul class="cdc-warnings"
+                th:if="${result.qualityWarnings != null and !#lists.isEmpty(result.qualityWarnings)}">
+                <li th:each="w : ${result.qualityWarnings}" th:text="${w}"></li>
+            </ul>
+            <div class="cdc-guide" th:if="${result.analysisConfidence != 'HIGH'}">
+                &#128161; 정확한 분석을 위해 코어 생성 시점의 <strong>stripped 되지 않은 동일 실행 파일</strong>을
+                페어링하거나, 디버그 심볼(debuginfo)을 설치한 후 재분석하세요.
             </div>
         </div>
 
@@ -239,26 +279,31 @@
             </div>
         </div>
 
-        <!-- ★ 콜 체인 타임라인 -->
+        <!-- ★ 콜 체인 타임라인 (GARBAGE/노이즈 프레임 제외, 최대 8개) -->
         <div th:if="${result != null and result.mainBacktrace != null and #lists.size(result.mainBacktrace) > 1
                      and (result.crashSignal != null or result.errorMessage == null)}"
+             th:with="ccFrames=${result.mainBacktrace.?[quality != 'GARBAGE']}"
              class="callchain-card content-card">
             <div class="callchain-title">
                 <span>크래시 콜 체인</span>
                 <span class="callchain-total"
                       th:text="'전체 ' + ${#lists.size(result.mainBacktrace)} + ' 프레임'"></span>
             </div>
-            <div class="callchain-list">
-                <div th:each="frame, iterStat : ${result.mainBacktrace}"
+            <!-- 의미있는 프레임이 하나도 없을 때 -->
+            <div th:if="${#lists.isEmpty(ccFrames)}" class="cc-empty-meaningful">
+                식별 가능한 프레임이 없습니다 — 백트레이스 전체가 노이즈/심볼 없음입니다.
+            </div>
+            <div class="callchain-list" th:unless="${#lists.isEmpty(ccFrames)}">
+                <div th:each="frame, iterStat : ${ccFrames}"
                      th:if="${iterStat.index < 8}"
                      class="callchain-item"
-                     th:classappend="${iterStat.index == 0} ? ' cc-crash'
+                     th:classappend="${frame.frameNumber == 0} ? ' cc-crash'
                                     : (${frame.location != null} ? ' cc-usercode' : ' cc-libcode')">
 
                     <!-- 수직 커넥터 (마지막 가시 아이템이 아니면 라인 표시) -->
                     <div class="cc-connector">
                         <div class="cc-dot"
-                             th:classappend="${iterStat.index == 0} ? ' cc-dot-crash'
+                             th:classappend="${frame.frameNumber == 0} ? ' cc-dot-crash'
                                             : (${frame.location != null} ? ' cc-dot-user' : ' cc-dot-lib')">
                         </div>
                         <div class="cc-line"
@@ -270,11 +315,15 @@
                         <div class="cc-header">
                             <span class="cc-frame-num" th:text="'#' + ${frame.frameNumber}"></span>
                             <span class="cc-type-badge"
-                                  th:if="${iterStat.index == 0}">CRASH</span>
+                                  th:if="${frame.frameNumber == 0}">CRASH</span>
                             <span class="cc-type-badge cc-badge-user"
-                                  th:if="${iterStat.index != 0 and frame.location != null}">소스</span>
+                                  th:if="${frame.frameNumber != 0 and frame.location != null}">소스</span>
                             <span class="cc-type-badge cc-badge-lib"
                                   th:if="${frame.location == null and frame.library != null}">라이브러리</span>
+                            <span class="cc-type-badge cc-badge-sym"
+                                  th:if="${frame.location == null and frame.library == null and frame.quality == 'RESOLVED'}">심볼</span>
+                            <span class="cc-type-badge cc-badge-unsym"
+                                  th:if="${frame.quality == 'UNSYMBOLIZED'}">심볼없음</span>
                         </div>
                         <div class="cc-func"
                              th:text="${frame.function != null} ? ${frame.function} : '??'"></div>
@@ -287,10 +336,11 @@
                     </div>
                 </div>
 
-                <!-- 8개 초과 시 안내 -->
+                <!-- 숨겨진(노이즈/초과) 프레임 안내 -->
                 <div class="cc-more"
-                     th:if="${#lists.size(result.mainBacktrace) > 8}"
-                     th:text="'+ ' + (${#lists.size(result.mainBacktrace) - 8}) + '개 프레임 더 있음 (아래 스택 트레이스 탭 참조)'">
+                     th:with="ccShown=${#lists.size(ccFrames) > 8 ? 8 : #lists.size(ccFrames)}"
+                     th:if="${#lists.size(result.mainBacktrace) > ccShown}"
+                     th:text="'노이즈/무효 프레임 등 ' + ${#lists.size(result.mainBacktrace) - ccShown} + '개 숨김 (아래 스택 트레이스 탭 참조)'">
                 </div>
             </div>
         </div>
@@ -313,7 +363,8 @@
         <!-- 탭 패널: 스택 트레이스 -->
         <div class="cd-tab-panel active" id="tab-bt"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
-            <div class="content-card">
+            <div class="content-card"
+                 th:with="garbageCount=${result.mainBacktrace != null ? #lists.size(result.mainBacktrace.?[quality == 'GARBAGE']) : 0}">
                 <div class="content-card-title">
                     메인 스레드 스택 트레이스
                     <span th:if="${result.mainBacktrace != null}"
@@ -324,12 +375,21 @@
                 <div th:if="${result.mainBacktrace == null or #lists.isEmpty(result.mainBacktrace)}"
                      class="empty-msg">스택 트레이스 정보가 없습니다.</div>
 
-                <div class="frame-list"
+                <!-- 노이즈(GARBAGE) 프레임 토글 바 -->
+                <div class="garbage-toggle-bar"
+                     th:if="${garbageCount > 0}">
+                    <span class="gtb-note"
+                          th:text="'스택 손상으로 추정되는 노이즈/무효 프레임 ' + ${garbageCount} + '개가 기본 숨김 처리되었습니다.'"></span>
+                    <button type="button" class="gtb-btn" onclick="toggleGarbageFrames(this)">노이즈 프레임 표시</button>
+                </div>
+
+                <div class="frame-list hide-garbage"
                      th:if="${result.mainBacktrace != null and !#lists.isEmpty(result.mainBacktrace)}">
                     <div th:each="frame, iterStat : ${result.mainBacktrace}"
                          class="frame-card"
-                         th:classappend="${iterStat.index == 0} ? ' frame-crash'
-                                        : (${frame.location != null} ? ' frame-user' : ' frame-lib')"
+                         th:classappend="${frame.quality == 'GARBAGE'} ? ' frame-lib frame-garbage'
+                                        : (${iterStat.index == 0} ? ' frame-crash'
+                                          : (${frame.location != null} ? ' frame-user' : ' frame-lib'))"
                          th:attrappend="class=${frame.locals != null and !#lists.isEmpty(frame.locals)} ? ' has-locals' : ''"
                          onclick="toggleFrame(this)">
 
@@ -361,6 +421,13 @@
                             </div>
                             <div class="frame-right">
                                 <span th:if="${iterStat.index == 0}" class="frame-badge-crash">CRASH</span>
+                                <!-- 프레임 품질 배지 -->
+                                <span th:if="${iterStat.index != 0 and frame.quality == 'RESOLVED'}"
+                                      class="frame-q-badge fq-resolved">심볼</span>
+                                <span th:if="${frame.quality == 'UNSYMBOLIZED'}"
+                                      class="frame-q-badge fq-unsym">심볼없음</span>
+                                <span th:if="${frame.quality == 'GARBAGE'}"
+                                      class="frame-q-badge fq-garbage">노이즈</span>
                                 <!-- 소스 보기 버튼 -->
                                 <button th:if="${frame.location != null}"
                                         class="frame-src-btn"
@@ -549,7 +616,7 @@
 <script th:if="${result != null and result.registers != null}" th:inline="javascript">
     var REGISTERS = /*[[${result.registers}]]*/ {};
 </script>
-<script th:src="@{/js/core-dump-analyze.js?v=2026-06-25}"></script>
+<script th:src="@{/js/core-dump-analyze.js?v=2026-06-26}"></script>
 
 </body>
 </html>

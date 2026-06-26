@@ -110,6 +110,26 @@
                         background: #2563EB; color: #fff; font-size: 11px; cursor: pointer; }
         .btn-transfer:hover { background: #1D4ED8; }
         .btn-transfer:disabled { background: #9CA3AF; border-color: #9CA3AF; cursor: default; }
+        /* 실행파일(execfn) 전송 버튼 — 코어/힙 전송과 구분되는 보라색 */
+        .btn-exec-transfer { background: #7C3AED; border-color: #7C3AED; }
+        .btn-exec-transfer:hover { background: #6D28D9; }
+        .exec-cmd { font-size:11px;color:#9CA3AF;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0; }
+        .exec-label { font-size:11px;color:#6B7280;flex-shrink:0;font-weight:600; }
+        /* 스캔 경과시간 / 지연 인디케이터 */
+        .scan-elapsed { font-size:12px;color:#6B7280;text-align:center;padding:14px 12px; }
+        .scan-elapsed .se-spin { display:inline-block;width:14px;height:14px;border:2px solid #E5E7EB;
+                        border-top-color:#2563EB;border-radius:50%;animation:seSpin .8s linear infinite;vertical-align:-2px;margin-right:8px; }
+        @keyframes seSpin { to { transform: rotate(360deg); } }
+        .scan-elapsed .se-slow { display:block;margin-top:8px;color:#D97706;font-size:11px; }
+        /* 스캔 결과 페이지네이션 */
+        .scan-pagination { display:flex;align-items:center;justify-content:center;gap:6px;
+                        flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid #F3F4F6; }
+        .scan-pagination button { min-width:30px;padding:4px 8px;border:1px solid #E5E7EB;border-radius:5px;
+                        background:#fff;color:#374151;font-size:12px;cursor:pointer; }
+        .scan-pagination button:hover:not(:disabled) { background:#F3F4F6; }
+        .scan-pagination button.active { background:#2563EB;border-color:#2563EB;color:#fff;font-weight:700; }
+        .scan-pagination button:disabled { color:#D1D5DB;cursor:default; }
+        .scan-pagination .sp-info { font-size:11px;color:#9CA3AF;margin:0 6px; }
         .transfer-progress { display: inline-flex; align-items: center; gap: 8px; min-width: 260px; }
         .transfer-bar { width: 140px; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden; }
         .transfer-bar-fill { height: 100%; border-radius: 4px; background: #2563EB;
@@ -423,7 +443,7 @@
         <div class="scan-title">
             <span><span id="scanServerName"></span> — Remote Dump Files</span>
             <div style="display:flex;gap:6px;align-items:center">
-                <button class="btn-transfer" id="btnTransferAll" style="display:none;font-size:11px;padding:4px 12px" onclick="transferAll()">All Transfer</button>
+                <button class="btn-transfer" id="btnTransferAll" style="display:none;font-size:11px;padding:4px 12px" onclick="transferAll()">현재 페이지 전송</button>
                 <button class="action-btn" onclick="closeScanPanel()" style="font-size:12px">&times; 닫기</button>
             </div>
         </div>
@@ -793,6 +813,29 @@ function testConn(id) {
 }
 
 var _scanServerId = null;
+var _scanFiles = [];          // 현재 스캔 결과(시간 내림차순, 백엔드 정렬)
+var _scanPage = 0;            // 0-base 페이지
+var _scanPageSize = 20;       // 페이지당 파일 수
+var _scanElapsedTimer = null; // 스캔 경과시간 인디케이터
+
+function startScanElapsed() {
+    var el = document.getElementById('scanResults');
+    var t0 = Date.now();
+    function tick() {
+        var sec = Math.floor((Date.now() - t0) / 1000);
+        var slow = sec >= 8
+            ? '<span class="se-slow">⏳ 대용량 디렉터리(예: /tmp, /var/crash) 스캔은 시간이 걸릴 수 있습니다. 잠시만 기다려 주세요…</span>'
+            : '';
+        el.innerHTML = '<div class="scan-elapsed"><span class="se-spin"></span>스캔 중… ' + sec + '초 경과' + slow + '</div>';
+    }
+    tick();
+    stopScanElapsed();
+    _scanElapsedTimer = setInterval(tick, 1000);
+}
+function stopScanElapsed() {
+    if (_scanElapsedTimer) { clearInterval(_scanElapsedTimer); _scanElapsedTimer = null; }
+}
+
 function scanServer(id, name) {
     _scanServerId = id;
     var scanPanel = document.getElementById('scanPanel');
@@ -804,13 +847,14 @@ function scanServer(id, name) {
         }
     }
     document.getElementById('scanServerName').textContent = name;
-    document.getElementById('scanResults').innerHTML = '<div style="padding:12px;color:#6B7280;text-align:center">스캔 중...</div>';
+    startScanElapsed();
     scanPanel.classList.add('open');
     setTimeout(function() { scanPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 80);
 
     fetch('/api/servers/' + id + '/scan', { method: 'POST' })
     .then(function(r) { return r.json(); })
     .then(function(d) {
+        stopScanElapsed();
         var html = '';
         // 일부 경로 실패 — pathErrors 배너 (전체 성공이 아닐 때)
         if (d.pathErrors && d.pathErrors.length > 0 && !d.error) {
@@ -846,14 +890,22 @@ function scanServer(id, name) {
         } else {
             updateStatusBadge(id, 'OK');
         }
-        if (d.files && d.files.length > 0) {
-            html += renderScanResultsHtml(d.files);
-        } else if (!d.error) {
-            html += '<div style="padding:12px;color:#9CA3AF;text-align:center">덤프 파일이 없습니다.</div>';
-        }
+
+        // 파일 목록은 별도 컨테이너(#scanFileList)에서 페이지네이션 렌더
+        html += '<div id="scanFileList"></div>';
         document.getElementById('scanResults').innerHTML = html;
-        // 미전송 파일 2개 이상이면 "모두 전송" 버튼 표시
-        var untransferred = (d.files || []).filter(function(f) { return !f.transferred; });
+
+        _scanFiles = (d.files || []);
+        _scanPage = 0;
+        if (_scanFiles.length > 0) {
+            renderScanPage();
+        } else if (!d.error) {
+            document.getElementById('scanFileList').innerHTML =
+                '<div style="padding:12px;color:#9CA3AF;text-align:center">덤프 파일이 없습니다.</div>';
+        }
+
+        // 미전송 파일 2개 이상이면 "현재 페이지 전송" 버튼 표시
+        var untransferred = _scanFiles.filter(function(f) { return !f.transferred; });
         var btnAll = document.getElementById('btnTransferAll');
         if (btnAll) btnAll.style.display = untransferred.length >= 2 ? '' : 'none';
         if (!d.success && !d.error) {
@@ -861,6 +913,7 @@ function scanServer(id, name) {
                 '<div style="padding:12px;color:#EF4444;text-align:center">' + escHtml(d.message || '스캔 실패') + '</div>';
         }
     }).catch(function() {
+        stopScanElapsed();
         document.getElementById('scanResults').innerHTML =
             '<div style="padding:12px;color:#EF4444;text-align:center">요청 실패</div>';
     });
@@ -868,6 +921,9 @@ function scanServer(id, name) {
 
 function parseLsDate(s) {
     if (!s) return '';
+    // 백엔드 find -printf 는 "YYYY-MM-DD HH:MM" (정렬가능) 형식 → 그대로 표시
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s;
+    // 레거시 "Mon DD time|year" 형식 폴백
     var MONTHS = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
                   Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
     var parts = s.trim().split(/\s+/);
@@ -881,58 +937,109 @@ function parseLsDate(s) {
     return third + '-' + mon + '-' + day;
 }
 
-function renderScanResultsHtml(files) {
-    // 다중 경로 환경에서는 source 경로별로 그룹화. sourceDumpPath 미존재(레거시)면 단일 그룹.
-    var groups = {};
-    var order = [];
-    for (var i = 0; i < files.length; i++) {
-        var key = files[i].sourceDumpPath || '';
-        if (!(key in groups)) { groups[key] = []; order.push(key); }
-        groups[key].push(files[i]);
+// 한 파일 row 렌더 (시간 내림차순으로 이미 정렬된 _scanFiles 의 단일 항목)
+function renderScanFileRow(f) {
+    var isCore = f.fileType === 'core';
+    // 다중 경로일 때 출처 경로를 작은 태그로 표시 (그룹 헤더 대신 행 단위)
+    var showSrc = _scanDistinctPaths > 1 && f.sourceDumpPath;
+    var html = '<div class="scan-file" style="flex-wrap:wrap">';
+    html += '<span style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden">'
+          + (isCore ? '<span class="badge-core">CORE</span>' : '')
+          + '<span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(f.filename) + '</span>'
+          + (f.date ? '<span style="font-size:12px;color:#9CA3AF;flex-shrink:0;white-space:nowrap">' + escHtml(parseLsDate(f.date)) + '</span>' : '')
+          + '</span>';
+    html += '<span style="color:#6B7280;font-size:12px;flex-shrink:0">' + escHtml(f.formattedSize) + '</span>';
+    if (f.transferred && f.analyzed) {
+        html += '<span style="font-size:11px;color:#059669;font-weight:600">전송됨(분석완료)</span>';
+    } else if (f.transferred) {
+        html += '<span class="scan-transferred" style="font-size:11px">전송됨</span>';
+    } else {
+        html += '<button class="btn-transfer" data-path="' + escAttr(f.path) + '" data-file-type="' + escAttr(f.fileType || 'heap') + '" onclick="transferFile(this)">전송</button>';
     }
-    var multi = order.length > 1 || (order.length === 1 && order[0] !== '');
-    var html = '';
-    for (var g = 0; g < order.length; g++) {
-        var key = order[g];
-        if (multi && key) {
-            html += '<div style="font-size:11px;color:#6B7280;font-weight:600;margin:8px 0 4px;padding:4px 8px;background:#F9FAFB;border-radius:4px;font-family:monospace">' + escHtml(key) + '</div>';
-        }
-        var arr = groups[key];
-        for (var i = 0; i < arr.length; i++) {
-            var f = arr[i];
-            var isCore = f.fileType === 'core';
-            html += '<div class="scan-file"' + (isCore ? ' style="flex-wrap:wrap"' : '') + '>';
-            html += '<span style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden">'
-                  + (isCore
-                      ? '<span class="badge-core">CORE</span>'
-                      : '')
-                  + '<span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(f.filename) + '</span>'
-                  + (f.date ? '<span style="font-size:12px;color:#9CA3AF;flex-shrink:0;white-space:nowrap">' + escHtml(parseLsDate(f.date)) + '</span>' : '')
-                  + '</span>';
-            html += '<span style="color:#6B7280;font-size:12px;flex-shrink:0">' + escHtml(f.formattedSize) + '</span>';
-            if (f.transferred && f.analyzed) {
-                html += '<span style="font-size:11px;color:#059669;font-weight:600">전송됨(분석완료)</span>';
-            } else if (f.transferred) {
-                html += '<span class="scan-transferred" style="font-size:11px">전송됨</span>';
+    if (showSrc) {
+        html += '<span style="flex:1 1 100%;font-size:10px;color:#9CA3AF;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">↳ ' + escHtml(f.sourceDumpPath) + '</span>';
+    }
+    // 코어파일: 실행파일(execfn) + 전송버튼 / 실행명령(from, 참고) / 경고 — 두 번째 줄
+    if (isCore && (f.executablePath || f.executableCommand || f.executableWarning)) {
+        if (f.executablePath) {
+            html += '<div style="flex:1 1 100%;display:flex;align-items:center;gap:8px;padding-top:4px;margin-top:2px;border-top:1px dashed #F3F4F6">'
+                  + '<span class="exec-label">실행파일:</span>'
+                  + '<span class="exec-info" title="' + escAttr(f.executablePath) + '">' + escHtml(f.executablePath) + '</span>';
+            // 코어가 전송된 경우에만 페어링 전송 가능
+            if (f.transferred) {
+                html += '<button class="btn-transfer btn-exec-transfer" data-path="' + escAttr(f.executablePath)
+                      + '" data-file-type="coreexec" data-pair-core="' + escAttr(f.filename)
+                      + '" onclick="transferFile(this)">실행파일 전송</button>';
             } else {
-                html += '<button class="btn-transfer" data-path="' + escAttr(f.path) + '" data-file-type="' + escAttr(f.fileType || 'heap') + '" onclick="transferFile(this)">전송</button>';
-            }
-            // 코어파일: 실행파일 경로 / 경고 표시 (두 번째 줄)
-            if (isCore && (f.executablePath || f.executableWarning)) {
-                html += '<div style="flex:1 1 100%;display:flex;align-items:center;gap:8px;padding-top:4px;margin-top:2px;border-top:1px dashed #F3F4F6">';
-                if (f.executablePath) {
-                    html += '<span style="font-size:11px;color:#6B7280;flex-shrink:0">실행파일:</span>'
-                          + '<span class="exec-info" title="' + escAttr(f.executablePath) + '">' + escHtml(f.executablePath) + '</span>';
-                }
-                if (f.executableWarning) {
-                    html += '<span class="exec-warn">⚠ ' + escHtml(f.executableWarning) + '</span>';
-                }
-                html += '</div>';
+                html += '<span class="exec-warn" title="코어파일 전송 후 실행파일을 페어링 전송할 수 있습니다">코어 전송 후 가능</span>';
             }
             html += '</div>';
         }
+        if (f.executableCommand) {
+            html += '<div style="flex:1 1 100%;display:flex;align-items:center;gap:8px;padding-top:2px">'
+                  + '<span class="exec-label">실행명령(참고):</span>'
+                  + '<span class="exec-cmd" title="' + escAttr(f.executableCommand) + '">' + escHtml(f.executableCommand) + '</span>'
+                  + '</div>';
+        }
+        if (f.executableWarning) {
+            html += '<div style="flex:1 1 100%;padding-top:2px"><span class="exec-warn">⚠ ' + escHtml(f.executableWarning) + '</span></div>';
+        }
     }
+    html += '</div>';
     return html;
+}
+
+var _scanDistinctPaths = 1;
+// 현재 페이지(_scanPage) 렌더 + 페이지네이션 컨트롤
+function renderScanPage() {
+    var container = document.getElementById('scanFileList');
+    if (!container) return;
+    var total = _scanFiles.length;
+    var pageCount = Math.max(1, Math.ceil(total / _scanPageSize));
+    if (_scanPage >= pageCount) _scanPage = pageCount - 1;
+    if (_scanPage < 0) _scanPage = 0;
+
+    // 출처 경로 distinct 수 (행 단위 출처 태그 표시 판단)
+    var pathSet = {};
+    for (var i = 0; i < total; i++) { if (_scanFiles[i].sourceDumpPath) pathSet[_scanFiles[i].sourceDumpPath] = 1; }
+    _scanDistinctPaths = Object.keys(pathSet).length;
+
+    var start = _scanPage * _scanPageSize;
+    var end = Math.min(start + _scanPageSize, total);
+    var html = '';
+    for (var j = start; j < end; j++) html += renderScanFileRow(_scanFiles[j]);
+
+    // 페이지네이션 (2페이지 이상일 때만)
+    if (pageCount > 1) {
+        html += '<div class="scan-pagination">';
+        html += '<button onclick="gotoScanPage(' + (_scanPage - 1) + ')"' + (_scanPage === 0 ? ' disabled' : '') + '>‹</button>';
+        var win = 2;
+        var from = Math.max(0, _scanPage - win), to = Math.min(pageCount - 1, _scanPage + win);
+        if (from > 0) {
+            html += '<button onclick="gotoScanPage(0)">1</button>';
+            if (from > 1) html += '<span class="sp-info">…</span>';
+        }
+        for (var p = from; p <= to; p++) {
+            html += '<button class="' + (p === _scanPage ? 'active' : '') + '" onclick="gotoScanPage(' + p + ')">' + (p + 1) + '</button>';
+        }
+        if (to < pageCount - 1) {
+            if (to < pageCount - 2) html += '<span class="sp-info">…</span>';
+            html += '<button onclick="gotoScanPage(' + (pageCount - 1) + ')">' + pageCount + '</button>';
+        }
+        html += '<button onclick="gotoScanPage(' + (_scanPage + 1) + ')"' + (_scanPage === pageCount - 1 ? ' disabled' : '') + '>›</button>';
+        html += '<span class="sp-info">' + (start + 1) + '–' + end + ' / 총 ' + total + '개</span>';
+        html += '</div>';
+    } else {
+        html += '<div class="scan-pagination"><span class="sp-info">총 ' + total + '개</span></div>';
+    }
+    container.innerHTML = html;
+}
+
+function gotoScanPage(p) {
+    _scanPage = p;
+    renderScanPage();
+    var panel = document.getElementById('scanPanel');
+    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function fmtMB(bytes) {
@@ -945,6 +1052,7 @@ function fmtMB(bytes) {
 function transferFile(btn, callback) {
     var path = btn.getAttribute('data-path');
     var fileType = btn.getAttribute('data-file-type') || 'heap';
+    var pairCore = btn.getAttribute('data-pair-core');
     var parent = btn.parentNode;
 
     // 버튼을 진행바로 교체
@@ -960,6 +1068,7 @@ function transferFile(btn, callback) {
     var label = prog.querySelector('.transfer-label');
 
     var url = '/api/servers/' + _scanServerId + '/transfer/stream?remotePath=' + encodeURIComponent(path) + '&fileType=' + encodeURIComponent(fileType);
+    if (pairCore) url += '&pairCore=' + encodeURIComponent(pairCore);
     var es;
     try { es = new EventSource(url); }
     catch (e) {
@@ -1004,6 +1113,12 @@ function transferFile(btn, callback) {
             label.textContent = '완료' + sizeStr;
             label.style.color = '#059669';
             showToast((d.filename || '파일') + ' 전송 완료', 'success');
+            // 페이지 재렌더 시 상태 유지 — _scanFiles 의 해당 코어/힙 파일을 transferred 로 마킹
+            if (fileType !== 'coreexec') {
+                for (var si = 0; si < _scanFiles.length; si++) {
+                    if (_scanFiles[si].path === path) { _scanFiles[si].transferred = true; break; }
+                }
+            }
         } else {
             fill.classList.remove('indeterminate');
             fill.className = 'transfer-bar-fill fail';
@@ -1038,7 +1153,9 @@ function transferFile(btn, callback) {
 }
 
 function transferAll() {
-    var btns = document.querySelectorAll('#scanResults .btn-transfer:not(:disabled)');
+    // 현재 페이지의 코어/힙 전송 버튼만 (실행파일 전송 btn-exec-transfer 제외)
+    var all = document.querySelectorAll('#scanResults .btn-transfer:not(:disabled)');
+    var btns = Array.prototype.filter.call(all, function(b) { return !b.classList.contains('btn-exec-transfer'); });
     if (btns.length === 0) { showToast('전송할 파일이 없습니다.', 'error'); return; }
     var allBtn = document.getElementById('btnTransferAll');
     if (allBtn) { allBtn.disabled = true; allBtn.textContent = '전송 중...'; }

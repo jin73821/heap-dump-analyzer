@@ -32,6 +32,11 @@ public interface DumpTransferLogRepository
         findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
             Long serverId, String remoteFilename, Long fileSize, String transferStatus);
 
+    /** 코어-실행파일 페어링용 — 원격 코어 원본명으로 로컬 저장명 조회(크기 무관). */
+    List<DumpTransferLog>
+        findByServerIdAndRemoteFilenameAndTransferStatusOrderByCompletedAtDesc(
+            Long serverId, String remoteFilename, String transferStatus);
+
     /** 레거시 row 보정: remote_filename이 NULL인 경우 filename으로 1회 채움. */
     @Modifying
     @Transactional

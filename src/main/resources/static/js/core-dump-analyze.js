@@ -56,6 +56,14 @@
         el.classList.toggle('expanded');
     }
 
+    // 노이즈(GARBAGE) 프레임 표시/숨김 토글
+    function toggleGarbageFrames(btn) {
+        var list = document.querySelector('.frame-list');
+        if (!list) return;
+        var hidden = list.classList.toggle('hide-garbage');
+        btn.textContent = hidden ? '노이즈 프레임 표시' : '노이즈 프레임 숨김';
+    }
+
     // ── 소스 코드 뷰어 ───────────────────────────────────────────
     function escSrc(s) {
         return String(s)
@@ -337,6 +345,7 @@
     window.switchTab = switchTab;
     window.toggleThread = toggleThread;
     window.toggleFrame = toggleFrame;
+    window.toggleGarbageFrames = toggleGarbageFrames;
     window.loadFrameSource = loadFrameSource;
     window.copyRaw = copyRaw;
     window.startCoreAiAnalysis = startCoreAiAnalysis;

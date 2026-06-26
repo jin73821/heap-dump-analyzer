@@ -1,6 +1,52 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-06-26] 원격 스캔 성능 개선 + 탐지결과 페이지네이션/정렬 + 실행파일 전송 (버전 2.1.9)
+
+**배경:** 사내망 스캔 로그에서 `/tmp`·`/var/crash/corefile` 스캔에 약 1분이 소요됨. 원인은 **코어파일마다 별도 SSH 연결로 `file` 명령을 실행**(N회 왕복)하는 구조. 또한 331개 탐지결과가 한 화면에 나열되어 가독성이 떨어지고, 정렬·실행파일 전송 기능이 없었다.
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`
+- `src/main/java/com/heapdump/analyzer/controller/ServerController.java`
+- `src/main/java/com/heapdump/analyzer/repository/DumpTransferLogRepository.java`
+- `src/main/resources/templates/servers.html`
+
+### 내용
+1. **스캔 성능 (핵심):** 코어 실행파일 탐지를 **파일별 SSH → 단일 배치 `file` 호출**로 전환(`detectExecutablesBatch`, 150개씩 청크). N+1회 SSH 왕복 → 경로당 2회(find + 배치 file)로 축소. find 출력도 `-exec ls -la {} \;`(파일별 fork) → `find -printf`(단일 패스)로 변경.
+2. **시간 내림차순 정렬:** `find -printf '%T@|...'`로 epoch mtime 확보 → 백엔드에서 탐지파일을 mtime 기준 내림차순 정렬(최신 우선). 표시 날짜도 정렬가능 `YYYY-MM-DD HH:MM` 형식.
+3. **지연 시각화:** 스캔 중 경과시간 인디케이터(스피너 + "N초 경과"), 8초 초과 시 대용량 디렉터리 안내 표시.
+4. **페이지네이션:** 탐지결과를 20개/페이지로 분할(‹ 1 … 현재±2 … 끝 ›, "start–end / 총 N개"). 다중 경로는 행별 출처 태그로 표시.
+5. **execfn/from 분리 (req 4):** `file` 출력의 `execfn`(실제 실행 바이너리 경로)만 `executablePath`로 사용해 전송 대상으로, `from`(실행 시 명령행)은 `executableCommand`로 분리해 **"실행명령(참고)" 표시 전용**. execfn 없으면 전송 불가 + 경고.
+6. **실행파일 전송 (req 5):** execfn 감지 + 코어가 이미 전송된 경우 **"실행파일 전송" 버튼** 제공. `fileType=coreexec`로 코어덤프 dumpfiles에 `{coreLocal}.exec` 명으로 저장 → 레거시 페어링 컨벤션으로 **자동 페어링**(코어 분석 시 실행파일 자동 인식, 목록에서는 `.exec`라 자동 제외). 코어 미전송 시 "코어 전송 후 가능" 안내.
+
+### 비고
+- `find -printf` 는 GNU findutils 전용(리눅스 타깃 가정). 비-GNU `find` 환경에서는 stdout 공백 → 0건으로 graceful degrade.
+- 자동 탐지/전송 스케줄러(`autoDetectAndTransfer`)도 동일 배치·정렬 개선을 그대로 활용. 실행파일(coreexec)은 사용자 버튼 전용(자동 전송 비대상).
+- 검증: find -printf 포맷·mtime 내림차순(로컬 RHEL8 GNU find), `parseFileDesc` execfn/from 분리 3케이스, 배치 `file` 라인 분리, servers.html 인라인 JS 문법(node --check), 앱 기동 2.1.9 + /servers 200, SSH 미연결 시 에러 경로 graceful.
+
+---
+
+## [2026-06-26] 코어덤프 분석 신뢰도 판정 — 심볼 없는/손상된 스택 대응 (버전 2.1.8)
+
+**배경:** 사내망 실제 코어덤프의 GDB 출력은 stripped 바이너리 + 손상된 스택인 경우가 많아, Frame #0가 `?? () at 0x...`로만 나오고 백트레이스가 `0x2020202020202020`(ASCII 공백)·`0x454c545730353232`("ELTW0522") 등 스택 스캔 노이즈 수백~수천 프레임으로 폭주한다. 기존 화면/AI는 이를 그대로 노출/주입해 무의미한 결과를 냈다.
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/model/GdbStackFrame.java` (quality 필드)
+- `src/main/java/com/heapdump/analyzer/model/CoreDumpAnalysisResult.java` (analysisConfidence/qualityWarnings/resolvedFrameCount/totalFrameCount/symbolsAvailable/firstResolvedFrame)
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java` (assessAnalysisQuality/looksLikeStackGarbage/classifyFrame, buildCrashSummary·buildCrashPrompt 보정)
+- `src/main/resources/templates/core-dump/analyze.html`
+- `src/main/resources/static/js/core-dump-analyze.js`, `static/css/core-dump.css` (`?v=2026-06-26`)
+
+### 내용
+- **파서 프레임 품질 분류**: 각 프레임을 `RESOLVED`(심볼/소스/라이브러리 보유) / `UNSYMBOLIZED`(코드 주소이나 심볼 없음) / `GARBAGE`(주소 8바이트 중 6+가 출력가능 ASCII이거나 전부 동일 → 스택 스캔 노이즈)로 분류. `looksLikeStackGarbage()` 헬퍼.
+- **분석 신뢰도 산정**: `analysisConfidence`(HIGH/MEDIUM/LOW) + `qualityWarnings`(GDB 경고 문자열 `No shared libraries loaded`/`No symbol table info available`/`Cannot access memory`/`.reg-xstate too small`/`Can't open file (null)` + 노이즈 비율 → 한국어 사유). `firstResolvedFrame`로 최초 식별 심볼 보존.
+- **화면**: 신뢰도 배너(LOW/MEDIUM/HIGH 색상 + 식별 프레임 수 + 사유 + debuginfo/unstripped 실행파일 가이드), 크래시 히어로가 Frame #0 심볼 없을 때 "심볼 없음" + 최초 식별 심볼 보조 표시, 콜체인은 GARBAGE 제외·노이즈 N개 숨김 안내, 스택 탭은 품질 배지(심볼/심볼없음/노이즈) + 노이즈 프레임 기본 접힘 + 표시/숨김 토글.
+- **AI 프롬프트**: 신뢰도/사유 주입, 콜체인을 RESOLVED 프레임만으로 구성(노이즈 제외 명시), Frame #0 심볼 없으면 단정 금지·자료요청형 답변 유도. 심볼 없으면 debuginfo/unstripped 바이너리 페어링 권고를 recommendations에 포함하도록 지시.
+- **하위 호환**: 구버전 result.json(quality·analysisConfidence 없음)은 quality null을 정상으로 간주해 기존 동작 유지(배너·토글 미표시).
+- 검증: `looksLikeStackGarbage` 단위 검증(예시 노이즈 주소 전 케이스 통과), stripped 실코어(LOW·UNSYMBOLIZED 23/GARBAGE 1)·GARBAGE 합성·구버전 레거시 3개 경로 페이지 렌더링 200 + 템플릿 에러 0.
+
+---
+
 ## [2026-06-26] 버전 2.1.7 릴리스
 
 **대상:** `pom.xml`, `restart.sh`, `run.sh`, `stop.sh`, `fragments/banner.html`, `index.html`
