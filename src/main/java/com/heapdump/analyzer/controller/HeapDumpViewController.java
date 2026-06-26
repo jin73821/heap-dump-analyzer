@@ -177,9 +177,15 @@ public class HeapDumpViewController {
         if (analyzerService.isAllowAllExtensions()) {
             Map<String, String> classifications = analyzerService.loadFileClassifications();
             for (AnalysisHistoryItem item : combined) {
-                if ("heapdump".equals(item.getFileType()) && !hasRecognizedHeapDumpExtension(item.getFilename())) {
-                    String cls = classifications.getOrDefault(item.getFilename(), "others");
-                    item.setFileType(cls);
+                String cls = classifications.get(item.getFilename());
+                if (!hasRecognizedHeapDumpExtension(item.getFilename())) {
+                    if ("coredump".equals(item.getFileType()) || "coreexec".equals(item.getFileType())) {
+                        // 코어덤프 디렉터리 파일: exec 분류만 적용 (이미 coredump이므로 core 분류는 무시)
+                        if ("exec".equals(cls)) item.setFileType("exec");
+                    } else if ("heapdump".equals(item.getFileType())) {
+                        // 힙덤프 디렉터리 파일: 명시적 분류 적용, 없으면 others
+                        item.setFileType(cls != null ? cls : "others");
+                    }
                 }
             }
         }
@@ -218,6 +224,13 @@ public class HeapDumpViewController {
                 item.setHasExec(true);
                 item.setPairedExecFilename(execName);
                 File execFile = new File(coreDumpDir, execName);
+                if (!execFile.exists()) {
+                    // 코어덤프 디렉터리에 없으면 힙덤프 디렉터리(exec 타입 업로드 위치) 확인
+                    try {
+                        File inHeap = analyzerService.getFile(execName);
+                        if (inHeap != null && inHeap.exists()) execFile = inHeap;
+                    } catch (Exception ignored) {}
+                }
                 if (execFile.exists()) {
                     AnalysisHistoryItem execItem = new AnalysisHistoryItem();
                     execItem.setFilename(execName);
@@ -344,15 +357,21 @@ public class HeapDumpViewController {
         }
 
         // DB 미등록 파일 (dumpfiles/ 직접 접근)
+        // 현재 활성 페어링의 exec 파일명 — 코어파일 서브row로만 표시해야 하므로 독립 행 제외
+        Set<String> pairedExecNamesForHistory = new HashSet<>(
+                analyzerService.loadCoreExecPairings().values().stream()
+                        .filter(v -> v != null && !v.isEmpty())
+                        .collect(Collectors.toSet()));
         File[] files = dumpDir.listFiles();
         if (files != null) {
             for (File f : files) {
                 String name = f.getName();
                 if (name.startsWith(".") || !f.isFile()) continue;
                 if (processedNames.contains(name)) continue;
+                if (pairedExecNamesForHistory.contains(name)) continue; // 페어링된 exec는 sub-item으로만 표시
                 AnalysisHistoryItem item = new AnalysisHistoryItem();
                 if (name.endsWith(".exec")) {
-                    // 실행파일 — 코어덤프 탭 내 별도 표시 (페어링 해제 후 보존된 파일 포함)
+                    // 실행파일 — 코어덤프 탭 내 별도 표시 (레거시 .exec 파일)
                     item.setFileType("coreexec");
                 } else {
                     item.setFileType("coredump");

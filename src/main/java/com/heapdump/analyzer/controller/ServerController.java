@@ -250,7 +250,8 @@ public class ServerController {
             TargetServer server = serverRepository.findById(id)
                     .orElseThrow(() -> new IllegalArgumentException("서버를 찾을 수 없습니다: " + id));
             String remotePath = body.get("remotePath");
-            DumpTransferLog log = remoteDumpService.transferFile(server, remotePath);
+            String fileType = body.getOrDefault("fileType", "heap");
+            DumpTransferLog log = remoteDumpService.transferFile(server, remotePath, fileType);
             result.put("success", "SUCCESS".equals(log.getTransferStatus()));
             result.put("filename", log.getFilename());
             result.put("status", log.getTransferStatus());
@@ -269,7 +270,8 @@ public class ServerController {
      */
     @GetMapping(value = "/api/servers/{id}/transfer/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public org.springframework.web.servlet.mvc.method.annotation.SseEmitter transferStream(
-            @PathVariable Long id, @RequestParam("remotePath") String remotePath) {
+            @PathVariable Long id, @RequestParam("remotePath") String remotePath,
+            @RequestParam(value = "fileType", defaultValue = "heap") String fileType) {
         // 11분 — SCP timeout(10분)보다 약간 길게
         org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter =
                 new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(11L * 60 * 1000);
@@ -279,7 +281,7 @@ public class ServerController {
 
         Thread worker = new Thread(() -> {
             try {
-                DumpTransferLog log = remoteDumpService.transferFile(server, remotePath, (bytes, total) -> {
+                DumpTransferLog log = remoteDumpService.transferFile(server, remotePath, fileType, (bytes, total) -> {
                     Map<String, Object> p = new LinkedHashMap<>();
                     p.put("bytes", bytes);
                     p.put("total", total);

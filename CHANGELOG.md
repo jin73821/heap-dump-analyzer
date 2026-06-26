@@ -1,5 +1,115 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+
+## [2026-06-26] 버전 2.1.7 릴리스
+
+**대상:** `pom.xml`, `restart.sh`, `run.sh`, `stop.sh`, `fragments/banner.html`, `index.html`
+
+### 내용
+- 애플리케이션 버전 2.1.6 → 2.1.7 업데이트
+- JAR 산출물: `heap-analyzer-2.1.7.jar`
+
+---
+## [2026-06-26] Corefile 탭 작업 버튼 사라짐 수정
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+
+### 내용
+- **원인**: 이전 수정에서 `filesPage()` 분류 적용 범위를 `coredump` 타입까지 확장했는데, `file-classifications.properties`에 `crash_demo_2.core=core` 등이 저장되어 있어 `coredump` 타입이 `core`로 변경됨 → `files.html`의 분석/다운로드/삭제 버튼이 `coredump` 타입에만 조건부 표시되어 버튼 사라짐
+- 분류 적용 로직 수정: 코어덤프 디렉터리 파일(`coredump`/`coreexec` 타입)은 `exec` 분류만 적용 (이미 `coredump`이므로 `core` 분류는 무시), 힙덤프 디렉터리 파일(`heapdump` 타입)은 기존 방식대로 적용
+
+---
+
+## [2026-06-26] 페어링 해제 후 exec 파일 코어파일 오분류 및 목록 소실 수정
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapFileApiController.java`
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java` (buildCoreDumpHistory)
+
+### 내용
+**버그 1: 페어링 해제 후 exec 파일이 코어파일로 잘못 분류**
+- 원인: 페어링 해제 시 코어덤프 디렉터리의 exec 복사본이 남아 `.exec` 확장자가 없으면 `coredump` 타입으로 분류
+- `HeapFileApiController.unpairCoreExec/pairCoreExec(unpair)`: 페어링 해제 전 `removeExecCopyFromCoreDirIfNeeded()` 호출 — 힙덤프 디렉터리에 원본이 있는 경우만 복사본 삭제
+- `CoreDumpAnalyzerService.unpairExec()`: 동일한 복사본 삭제 로직 추가
+- `filesPage()` 분류 적용 범위 확장: `file-classifications.properties`에 명시적 분류가 있으면 `coredump` 타입 파일에도 적용 (코어덤프 디렉터리에 있는 exec 파일도 올바른 타입으로 표시)
+
+**버그 2: exec 분류 설정 후 목록에서 사라짐**
+- 원인: 비정상 자기 참조 페어링 `4nqolz=4nqolz`가 생성되어 `pairedExecNamesForHistory`에 포함 → 목록에서 제외
+- `buildCoreDumpHistory()` DB 미등록 파일 처리에 `pairedExecNamesForHistory` 필터 추가 (활성 페어링의 exec 파일은 독립 행 제외)
+- 데이터 정리: `core-exec-pairs.properties`에서 `4nqolz=4nqolz` 비정상 페어링 제거, `file-classifications.properties`에서 `4nqolz=core` → `4nqolz=exec` 수정
+
+---
+
+## [2026-06-26] 코어덤프 분석 페이지에서 페어링된 exec 파일 단독 표시 제거
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+
+### 내용
+- **원인**: `listExistingDumpFiles()`에서 `.exec` 확장자 파일만 제외하고, `4nqolz`처럼 확장자 없는 exec 파일은 독립 행으로 목록에 포함됨
+- 페어링 맵(`core-exec-pairs.properties`)의 값(exec 파일명) Set을 구성 후, 해당 이름이 목록에 포함되지 않도록 필터 추가
+- 페어링된 exec 파일은 코어파일 하위 sub-item으로만 표시됨
+
+---
+
+## [2026-06-26] GDB 분석 시 exec 파일 tmp 복사본 이름을 원본 exec 파일명으로 유지
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+
+### 내용
+- **원인**: 분석 전 exec 파일을 tmp 디렉터리에 `{coreFilename}.exec` 이름으로 복사 — GDB에 이 이름이 전달되어 분석 화면(progress 로그·분석 결과)에 `crash_demo_4nqolz.core.exec` 같은 변형 이름이 표시됨
+- `execCopy` 파일명을 `filename + ".exec"` 대신 `execFile.getName()` (원본 exec 파일명)으로 변경 → `4nqolz` 이름 그대로 GDB에 전달
+
+---
+
+## [2026-06-26] 코어파일-실행파일 페어링 후 서브row 미표시 수정
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/controller/HeapFileApiController.java`
+- `src/main/java/com/heapdump/analyzer/service/CoreDumpAnalyzerService.java`
+- `src/main/java/com/heapdump/analyzer/controller/HeapDumpViewController.java`
+
+### 내용
+- **원인**: 실행파일(`exec` 타입)이 힙덤프 디렉터리(`/opt/heapdumps/dumpfiles/`)에 업로드되지만, 페어링 조회 및 서브row 렌더링이 코어덤프 디렉터리(`/opt/coredumps/dumpfiles/`)에서만 exec 파일을 탐색 → 파일 못 찾아 null 반환 → 서브row 미생성
+- `HeapFileApiController.pairCoreExec`: 페어링 저장 후 `copyExecToCoreDirIfNeeded()` 호출 — exec 파일이 코어덤프 디렉터리에 없고 힙덤프 디렉터리에 있으면 코어덤프 디렉터리로 복사
+- `CoreDumpAnalyzerService.getExecFilename`: 코어덤프 디렉터리에서 못 찾으면 힙덤프 디렉터리 폴백 추가 (`heapFacade.getFile()` 사용)
+- `HeapDumpViewController.filesPage`: 코어덤프 서브row 렌더링 시 exec 파일을 코어덤프 디렉터리에서 못 찾으면 힙덤프 디렉터리(`analyzerService.getFile()`) 폴백 추가
+
+---
+
+## [2026-06-26] 원격 서버 코어파일 전송 시 Corefile 탭 표시 수정
+
+**대상:**
+- `src/main/java/com/heapdump/analyzer/service/RemoteDumpService.java`
+- `src/main/java/com/heapdump/analyzer/controller/ServerController.java`
+- `src/main/resources/templates/servers.html`
+
+### 내용
+- **원인**: `transferFile`이 파일 타입을 받지 않아 코어파일을 힙덤프 디렉터리(`dumpfiles/`)에 저장 → Files 탭에서 Others로 분류
+- `RemoteDumpService.transferFile`에 `fileType` 파라미터 추가 — `"core"` 시 코어덤프 디렉터리(`coreDumpDirectory/dumpfiles/`)로 저장
+- `autoDetectAndTransfer` 자동 전송 시 `fileType`("core"/"heap") 전달
+- `ServerController.transferStream` SSE 엔드포인트에 `fileType` 쿼리 파라미터 추가
+- `ServerController.transferFile` POST 엔드포인트에 `fileType` 요청 바디 필드 추가
+- `servers.html` 전송 버튼에 `data-file-type` 속성 추가, SSE URL에 `fileType` 포함
+
+---
+
+## [2026-06-26] Files 탭: exec 타입 파일 Corefile 탭으로 이동
+
+**대상:**
+- `src/main/resources/templates/files.html`
+
+### 내용
+- `exec` 타입 파일(실행파일로 분류된 파일)이 Others 탭 대신 Corefile 탭에 표시되도록 수정
+- `updateTabCounts`: `exec` → core 카운트로 변경 (기존: others 카운트)
+- `applyFilter`: `coredump` 탭 필터에 `exec` 추가, `others` 탭 필터에서 `exec` 제거
+
+---
+
 ## [2026-06-26] UI 명칭 통일 및 버전 2.1.6 업데이트
 
 **대상:**

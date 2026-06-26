@@ -137,7 +137,13 @@ public class CoreDumpAnalyzerService {
         if (pairings.containsKey(coreFilename)) {
             String paired = pairings.get(coreFilename);
             if (paired == null || paired.isEmpty()) return null; // 명시적 해제
-            return new File(dumpFilesDir(), paired).exists() ? paired : null;
+            if (new File(dumpFilesDir(), paired).exists()) return paired;
+            // 코어덤프 디렉터리에 없으면 힙덤프 디렉터리(exec 타입 업로드 위치) 도 확인
+            try {
+                File inHeap = heapFacade.getFile(paired);
+                if (inHeap != null && inHeap.exists()) return paired;
+            } catch (Exception ignored) {}
+            return null;
         }
         // properties에 없을 때만 레거시 폴백 사용
         File legacyExec = new File(dumpFilesDir(), coreFilename + ".exec");
@@ -150,17 +156,33 @@ public class CoreDumpAnalyzerService {
     }
 
     /**
-     * exec 페어링 해제. 실행파일 본체는 삭제하지 않음 — Files 페이지 코어덤프 탭에 계속 표시.
-     * 레거시 .exec 파일이 있으면 빈 값("")으로 마킹하여 레거시 폴백을 명시적으로 차단.
+     * exec 페어링 해제.
+     * - 힙덤프 디렉터리에 원본이 있는 exec 복사본은 코어덤프 디렉터리에서 삭제
+     *   (복사본이므로 원본은 힙덤프 디렉터리에 보존).
+     * - 레거시 .exec 파일(코어덤프 디렉터리 독립 파일)은 빈 값 마킹 후 보존.
      */
     public void unpairExec(String coreFilename) throws IOException {
+        // 해제 전에 현재 페어링된 exec 확인 후 복사본 삭제
+        String pairedExec = getExecFilename(coreFilename);
+        if (pairedExec != null) {
+            File execInCoreDir = new File(dumpFilesDir(), pairedExec);
+            if (execInCoreDir.exists()) {
+                try {
+                    File execInHeapDir = heapFacade.getFile(pairedExec);
+                    if (execInHeapDir != null && execInHeapDir.exists()) {
+                        deleteQuietly(execInCoreDir);
+                        logger.info("[CoreDump] 페어링 해제: exec 복사본 삭제 {}", pairedExec);
+                    }
+                } catch (Exception ignored) {}
+            }
+        }
         File legacyExec = new File(dumpFilesDir(), coreFilename + ".exec");
         if (legacyExec.exists()) {
             heapFacade.saveCoreExecPairing(coreFilename, ""); // 명시적 해제 마커
         } else {
             heapFacade.removeCoreExecPairing(coreFilename);
         }
-        logger.info("[CoreDump] exec 페어링 해제 (파일 보존): {}", coreFilename);
+        logger.info("[CoreDump] exec 페어링 해제: {}", coreFilename);
     }
 
     /**
@@ -178,10 +200,14 @@ public class CoreDumpAnalyzerService {
             byName.put(e.getFilename(), e);
         }
 
+        // 페어링된 exec 파일명 — 코어파일 하위에 sub-item으로 표시되므로 독립 행 제외
+        Set<String> pairedExecNames = new HashSet<>(heapFacade.loadCoreExecPairings().values());
+
         List<AnalysisHistoryItem> result = new ArrayList<>();
         for (File f : files) {
             String name = f.getName();
             if (name.startsWith(".") || name.endsWith(".exec") || !f.isFile()) continue;
+            if (pairedExecNames.contains(name)) continue; // 페어링된 exec 파일은 sub-item으로만 표시
 
             AnalysisHistoryItem item = new AnalysisHistoryItem();
             item.setFileType("coredump");
@@ -332,7 +358,8 @@ public class CoreDumpAnalyzerService {
 
             File execCopy = null;
             if (execFile != null && execFile.exists()) {
-                execCopy = new File(tmpAnalysisDir, filename + ".exec");
+                // 원본 exec 파일명을 그대로 유지 — GDB 출력/분석 결과에 올바른 이름이 표시됨
+                execCopy = new File(tmpAnalysisDir, execFile.getName());
                 Files.copy(execFile.toPath(), execCopy.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
 

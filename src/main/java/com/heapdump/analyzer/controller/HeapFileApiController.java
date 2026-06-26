@@ -1,5 +1,6 @@
 package com.heapdump.analyzer.controller;
 
+import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
@@ -23,6 +24,8 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -40,9 +43,12 @@ public class HeapFileApiController {
     private static final Logger logger = LoggerFactory.getLogger(HeapFileApiController.class);
 
     private final HeapDumpAnalyzerService analyzerService;
+    private final CoreDumpAnalyzerService coreDumpService;
 
-    public HeapFileApiController(HeapDumpAnalyzerService analyzerService) {
+    public HeapFileApiController(HeapDumpAnalyzerService analyzerService,
+                                 CoreDumpAnalyzerService coreDumpService) {
         this.analyzerService = analyzerService;
+        this.coreDumpService = coreDumpService;
     }
 
     @PostMapping("/api/files/bulk-delete")
@@ -173,6 +179,7 @@ public class HeapFileApiController {
         Map<String, Object> resp = new HashMap<>();
         try {
             if (execFilename == null || execFilename.trim().isEmpty()) {
+                removeExecCopyFromCoreDirIfNeeded(filename);
                 analyzerService.removeCoreExecPairing(filename);
                 logger.info("[FilePair] action=unpair core={} by={}", filename, who);
                 resp.put("status", "ok");
@@ -181,6 +188,8 @@ public class HeapFileApiController {
                 execFilename = FilenameValidator.validate(execFilename.trim());
                 analyzerService.saveCoreExecPairing(filename, execFilename);
                 logger.info("[FilePair] action=pair core={} exec={} by={}", filename, execFilename, who);
+                // 코어파일이 코어덤프 디렉터리에 있고, 실행파일이 힙덤프 디렉터리에만 있으면 복사
+                copyExecToCoreDirIfNeeded(filename, execFilename);
                 resp.put("status", "ok");
                 resp.put("action", "paired");
                 resp.put("execFilename", execFilename);
@@ -203,6 +212,7 @@ public class HeapFileApiController {
         String who = authentication != null ? authentication.getName() : "unknown";
         Map<String, Object> resp = new HashMap<>();
         try {
+            removeExecCopyFromCoreDirIfNeeded(filename);
             analyzerService.removeCoreExecPairing(filename);
             logger.info("[FilePair] action=unpair core={} by={}", filename, who);
             resp.put("status", "ok");
@@ -212,6 +222,46 @@ public class HeapFileApiController {
             resp.put("status", "error");
             resp.put("message", "페어링 해제 실패: " + e.getMessage());
             return ResponseEntity.status(500).body(resp);
+        }
+    }
+
+    /**
+     * 코어파일이 코어덤프 디렉터리에 있고 실행파일이 힙덤프 디렉터리에만 존재하면
+     * 코어덤프 디렉터리로 복사한다. GDB 분석 및 getExecFilename() 탐색이 코어덤프 디렉터리를
+     * 기준으로 동작하기 때문에 복사가 필요하다.
+     */
+    private void copyExecToCoreDirIfNeeded(String coreFilename, String execFilename) {
+        File coreInCoreDir = new File(coreDumpService.dumpFilesDir(), coreFilename);
+        if (!coreInCoreDir.exists()) return; // 힙덤프 디렉터리의 "core" 타입 — 복사 불필요
+        File execInCoreDir = new File(coreDumpService.dumpFilesDir(), execFilename);
+        if (execInCoreDir.exists()) return;  // 이미 코어덤프 디렉터리에 있음
+        try {
+            File execInHeapDir = analyzerService.getFile(execFilename);
+            Files.copy(execInHeapDir.toPath(), execInCoreDir.toPath(), StandardCopyOption.REPLACE_EXISTING);
+            logger.info("[FilePair] exec 파일 코어덤프 디렉터리로 복사 완료: {} → {}", execInHeapDir, execInCoreDir);
+        } catch (IOException e) {
+            logger.warn("[FilePair] exec 파일 복사 실패 (힙덤프 디렉터리에 없음): {} — {}", execFilename, e.getMessage());
+        }
+    }
+
+    /**
+     * 페어링 해제 시, exec 파일이 힙덤프 디렉터리에 원본이 있고
+     * 코어덤프 디렉터리에 복사본만 있는 경우 복사본을 삭제한다.
+     * 코어덤프 디렉터리에만 존재하는 파일(독립 업로드)은 삭제하지 않는다.
+     */
+    private void removeExecCopyFromCoreDirIfNeeded(String coreFilename) {
+        try {
+            String execFn = coreDumpService.getExecFilename(coreFilename);
+            if (execFn == null) return;
+            File execInCoreDir = new File(coreDumpService.dumpFilesDir(), execFn);
+            if (!execInCoreDir.exists()) return;
+            File execInHeapDir = analyzerService.getFile(execFn);
+            if (execInHeapDir != null && execInHeapDir.exists()) {
+                execInCoreDir.delete();
+                logger.info("[FilePair] 페어링 해제: exec 복사본 삭제 {}", execFn);
+            }
+        } catch (Exception e) {
+            logger.warn("[FilePair] exec 복사본 삭제 실패: {}", e.getMessage());
         }
     }
 

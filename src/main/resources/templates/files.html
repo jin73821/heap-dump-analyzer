@@ -456,7 +456,7 @@
             Heapdump <span class="tab-count" id="tabCntHeap">0</span>
         </button>
         <button class="type-tab" data-tab="coredump" onclick="onTabClick(this)">
-            Coredump <span class="tab-count" id="tabCntCore">0</span>
+            Corefile <span class="tab-count" id="tabCntCore">0</span>
         </button>
         <button class="type-tab" data-tab="others" onclick="onTabClick(this)">
             Others <span class="tab-count" id="tabCntOthers">0</span>
@@ -846,7 +846,7 @@
         <div class="classify-field">
             <label for="classifyTypeSelect">파일 유형</label>
             <select id="classifyTypeSelect" onchange="onClassifyTypeChange()">
-                <option value="core">코어덤프</option>
+                <option value="core">코어파일</option>
                 <option value="exec">실행파일</option>
                 <option value="heapdump">덤프파일</option>
                 <option value="others">기타</option>
@@ -1232,8 +1232,8 @@ function updateTabCounts(rows) {
     var heap = 0, core = 0, others = 0;
     rows.forEach(function(r) {
         var t = r.getAttribute('data-file-type') || 'heapdump';
-        if (t === 'coredump' || t === 'core' || t === 'coreexec') core++;
-        else if (t === 'others' || t === 'exec') others++;
+        if (t === 'coredump' || t === 'core' || t === 'coreexec' || t === 'exec') core++;
+        else if (t === 'others') others++;
         else heap++;
     });
     document.getElementById('tabCntAll').textContent    = heap + core + others;
@@ -1304,7 +1304,7 @@ function submitClassify() {
     }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.status !== 'ok') throw new Error(d.message || '분류 저장 실패');
 
-        // 2) 코어덤프 선택 시 페어링 처리
+        // 2) 코어파일 선택 시 페어링 처리
         if (fileType === 'core') {
             var newExec = execFilename || '';
             // exec가 변경되었거나 해제가 필요한 경우
@@ -1317,7 +1317,7 @@ function submitClassify() {
                 });
             }
         } else if (_classifyCurrentPairedExec) {
-            // 코어덤프에서 다른 유형으로 변경 시 기존 페어링 해제
+            // 코어파일에서 다른 유형으로 변경 시 기존 페어링 해제
             return fetch('/api/files/' + encodeURIComponent(filename) + '/pair', {
                 method: 'DELETE', headers: headers
             }).then(function(r2) { return r2.json(); });
@@ -1565,9 +1565,9 @@ function applyFilter() {
     _filteredRows = tabBaseRows.filter(function(el) {
         if (_activeTab === 'all') return true;
         var t = el.getAttribute('data-file-type') || 'heapdump';
-        if (_activeTab === 'others')   return (t === 'others' || t === 'exec');
+        if (_activeTab === 'others')   return t === 'others';
         if (_activeTab === 'heapdump') return t === 'heapdump';
-        if (_activeTab === 'coredump') return (t === 'coredump' || t === 'core' || t === 'coreexec');
+        if (_activeTab === 'coredump') return (t === 'coredump' || t === 'core' || t === 'coreexec' || t === 'exec');
         return t === _activeTab;
     });
     _currentPage = 1;

@@ -516,13 +516,24 @@ public class RemoteDumpService {
      * Phase 2: Files.move()로 앱 계정 권한으로 최종 경로에 이동
      */
     public DumpTransferLog transferFile(TargetServer server, String remoteFilePath) {
-        return transferFile(server, remoteFilePath, null);
+        return transferFile(server, remoteFilePath, "heap", null);
+    }
+
+    public DumpTransferLog transferFile(TargetServer server, String remoteFilePath,
+                                        TransferProgressListener listener) {
+        return transferFile(server, remoteFilePath, "heap", listener);
+    }
+
+    public DumpTransferLog transferFile(TargetServer server, String remoteFilePath, String fileType) {
+        return transferFile(server, remoteFilePath, fileType, null);
     }
 
     /**
      * 진행률 콜백 버전. listener가 null이 아닐 때만 SCP 진행 중 임시 파일 크기를 폴링하여 보고.
+     * fileType: "core" → 코어덤프 디렉터리, 나머지 → 힙덤프 디렉터리.
      */
     public DumpTransferLog transferFile(TargetServer server, String remoteFilePath,
+                                        String fileType,
                                         TransferProgressListener listener) {
         // 원격 원본명 — rename 후에도 변하지 않는 식별자 (scan transferred 판정 키)
         final String remoteFilename = new File(remoteFilePath).getName();
@@ -539,7 +550,10 @@ public class RemoteDumpService {
         File tempFile = null;
 
         try {
-            File localDir = new File(config.getDumpFilesDirectory());
+            boolean isCore = "core".equals(fileType);
+            File localDir = isCore
+                    ? new File(config.getCoreDumpDirectory(), "dumpfiles")
+                    : new File(config.getDumpFilesDirectory());
             if (!localDir.exists()) localDir.mkdirs();
             File localFile = new File(localDir, filename);
 
@@ -726,7 +740,7 @@ public class RemoteDumpService {
                         String remotePath = (String) dump.get("path");
                         String fileType = (String) dump.getOrDefault("fileType", "heap");
                         logger.info("[AutoDetect] New {} file found on {}: {}", fileType, server.getName(), remotePath);
-                        transferFile(server, remotePath);
+                        transferFile(server, remotePath, fileType);
                     }
                 }
             } catch (Exception e) {

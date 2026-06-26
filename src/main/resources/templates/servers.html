@@ -915,7 +915,7 @@ function renderScanResultsHtml(files) {
             } else if (f.transferred) {
                 html += '<span class="scan-transferred" style="font-size:11px">전송됨</span>';
             } else {
-                html += '<button class="btn-transfer" data-path="' + escAttr(f.path) + '" onclick="transferFile(this)">전송</button>';
+                html += '<button class="btn-transfer" data-path="' + escAttr(f.path) + '" data-file-type="' + escAttr(f.fileType || 'heap') + '" onclick="transferFile(this)">전송</button>';
             }
             // 코어파일: 실행파일 경로 / 경고 표시 (두 번째 줄)
             if (isCore && (f.executablePath || f.executableWarning)) {
@@ -944,6 +944,7 @@ function fmtMB(bytes) {
 
 function transferFile(btn, callback) {
     var path = btn.getAttribute('data-path');
+    var fileType = btn.getAttribute('data-file-type') || 'heap';
     var parent = btn.parentNode;
 
     // 버튼을 진행바로 교체
@@ -958,7 +959,7 @@ function transferFile(btn, callback) {
     var fill = prog.querySelector('.transfer-bar-fill');
     var label = prog.querySelector('.transfer-label');
 
-    var url = '/api/servers/' + _scanServerId + '/transfer/stream?remotePath=' + encodeURIComponent(path);
+    var url = '/api/servers/' + _scanServerId + '/transfer/stream?remotePath=' + encodeURIComponent(path) + '&fileType=' + encodeURIComponent(fileType);
     var es;
     try { es = new EventSource(url); }
     catch (e) {
