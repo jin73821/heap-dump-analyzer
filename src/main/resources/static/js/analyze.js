@@ -852,6 +852,12 @@ function _renderDomRefsTable(refs, emptyMsg) {
     if (!refs || refs.length === 0) {
         return '<div class="dom-refs-empty">' + (emptyMsg || '참조 데이터 없음') + '</div>';
     }
+    // retained 비례 막대용 최대값 (목록 내 정규화)
+    var maxR = 0;
+    for (var k = 0; k < refs.length; k++) {
+        var rv = refs[k].retainedHeap || 0;
+        if (rv > maxR) maxR = rv;
+    }
     var rows = '';
     for (var i = 0; i < refs.length; i++) {
         var r = refs[i];
@@ -859,14 +865,18 @@ function _renderDomRefsTable(refs, emptyMsg) {
         var addr = _escapeHtml(r.objectAddress || '');
         var sh   = _escapeHtml(r.shallowHeapHuman || '');
         var rh   = _escapeHtml(r.retainedHeapHuman || '');
+        var pct  = maxR > 0 ? Math.max(2, ((r.retainedHeap || 0) / maxR) * 100) : 0;
         rows += '<tr>'
               + '<td>' + cls + (addr ? ' <code>@ ' + addr + '</code>' : '') + '</td>'
               + '<td class="dom-refs-num">' + sh + '</td>'
-              + '<td class="dom-refs-num">' + rh + '</td>'
+              + '<td class="dom-refs-num dom-ref-bar-cell">'
+              +   '<span class="dom-ref-bar" style="width:' + pct.toFixed(1) + '%"></span>'
+              +   '<span class="dom-ref-bar-val">' + rh + '</span>'
+              + '</td>'
               + '</tr>';
     }
     return '<table class="dom-refs-tbl">'
-         + '<thead><tr><th>Class @ Address</th><th style="width:90px;text-align:right">Shallow</th><th style="width:100px;text-align:right">Retained</th></tr></thead>'
+         + '<thead><tr><th>Class @ Address</th><th style="width:90px;text-align:right">Shallow</th><th style="width:120px;text-align:right">Retained</th></tr></thead>'
          + '<tbody>' + rows + '</tbody>'
          + '</table>';
 }
@@ -881,6 +891,55 @@ function _escapeHtml(s) {
         .replace(/'/g, '&#39;');
 }
 
+// ── 탭 구조 헬퍼 ───────────────────────────────────────────────
+// [Incoming] [Outgoing] [Loaded Classes(CL만)] 탭 + 단일 본문 패널.
+function _domTabBar(isLoader) {
+    var tabs = '<div class="dom-tabs">'
+        + '<button class="dom-tab-btn active" data-tab="incoming" onclick="switchDomTab(this)">&#8592; Incoming</button>'
+        + '<button class="dom-tab-btn" data-tab="outgoing" onclick="switchDomTab(this)">&#8594; Outgoing</button>';
+    if (isLoader) {
+        tabs += '<button class="dom-tab-btn" data-tab="classes" onclick="switchDomTab(this)">&#128218; Loaded Classes</button>';
+    }
+    return tabs + '</div>';
+}
+
+// 로딩 스켈레톤 (탭별 회색 펄스 행)
+function _domSkeleton(label) {
+    var widths = [62, 48, 70, 40, 55];
+    var rows = '';
+    for (var i = 0; i < widths.length; i++) {
+        rows += '<div class="dom-skel-row">'
+              + '<span class="dom-skel" style="width:' + widths[i] + '%"></span>'
+              + '<span class="dom-skel dom-skel-sm"></span>'
+              + '</div>';
+    }
+    return '<div class="dom-skel-wrap">'
+         + '<div class="dom-skel-label"><span class="dom-spinner"></span>' + _escapeHtml(label || '조회 중...') + '</div>'
+         + rows + '</div>';
+}
+
+function _domClPanelHtml() {
+    return '<div class="dom-tab-panel" data-tab="classes">'
+        +    '<div class="dom-tab-desc">&#128218; 이 ClassLoader 가 정의한 Java 클래스 목록</div>'
+        +    '<div class="dom-cl-body">'
+        +      '<button class="dom-cl-load-btn" onclick="loadClassLoaderClasses(this)">목록 조회</button>'
+        +    '</div>'
+        +  '</div>';
+}
+
+// 탭 전환 (querySelector 사용 — 규약 일관, 클론 충돌 방지)
+function switchDomTab(btn) {
+    var tab  = btn.dataset.tab;
+    var wrap = btn.closest('.dom-refs-wrap');
+    if (!wrap) return;
+    wrap.querySelectorAll('.dom-tab-btn').forEach(function(b) {
+        b.classList.toggle('active', b === btn);
+    });
+    wrap.querySelectorAll('.dom-tab-panel').forEach(function(p) {
+        p.classList.toggle('active', p.dataset.tab === tab);
+    });
+}
+
 function _buildDomDetailHtml(data, loading, err, isLoader) {
     if (loading) {
         return _buildDomDetailLoadingHtml(isLoader);
@@ -890,48 +949,38 @@ function _buildDomDetailHtml(data, loading, err, isLoader) {
     }
     var inHtml  = _renderDomRefsTable(data ? data.incoming : null, '인바운드 참조 없음 (GC root 경로)');
     var outHtml = _renderDomRefsTable(data ? data.outgoing : null, '아웃바운드 참조 없음 (retained set)');
-    var html = '<div class="dom-refs-wrap">'
-        +   '<div class="dom-refs-section">'
-        +     '<h4>&#8592; Incoming — GC Root 참조 경로 (이 객체가 살아있는 이유)</h4>'
-        +     inHtml
+    return '<div class="dom-refs-wrap">'
+        + _domTabBar(isLoader)
+        + '<div class="dom-tab-body">'
+        +   '<div class="dom-tab-panel active" data-tab="incoming">'
+        +     '<div class="dom-tab-desc">&#8592; GC Root 참조 경로 — 이 객체가 살아있는 이유</div>'
+        +     '<div class="dom-tab-incoming-body">' + inHtml + '</div>'
         +   '</div>'
-        +   '<div class="dom-refs-section">'
-        +     '<h4>&#8594; Outgoing — Retained Set (클래스별 집계, 이 객체가 보유하는 객체)</h4>'
-        +     outHtml
-        +   '</div>';
-    if (isLoader) {
-        html += '<div class="dom-refs-section dom-cl-section">'
-            +   '<h4>&#128218; 로드된 클래스 목록 (ClassLoader가 정의한 클래스)</h4>'
-            +   '<div class="dom-cl-body">'
-            +     '<button class="dom-cl-load-btn" onclick="loadClassLoaderClasses(this)">목록 조회</button>'
-            +   '</div>'
-            + '</div>';
-    }
-    html += '</div>';
-    return html;
+        +   '<div class="dom-tab-panel" data-tab="outgoing">'
+        +     '<div class="dom-tab-desc">&#8594; Retained Set — 이 객체가 보유(dominate)하는 객체, 클래스별 집계</div>'
+        +     '<div class="dom-tab-outgoing-body">' + outHtml + '</div>'
+        +   '</div>'
+        +   (isLoader ? _domClPanelHtml() : '')
+        + '</div>'
+        + '</div>';
 }
 
-// SSE 점진적 로딩용 — incoming/outgoing 섹션을 독립적으로 업데이트 가능한 구조
+// SSE 점진적 로딩용 — incoming/outgoing 탭 본문을 독립적으로 업데이트 가능한 구조
 function _buildDomDetailLoadingHtml(isLoader) {
-    var html = '<div class="dom-refs-wrap">'
-        + '<div class="dom-refs-section">'
-        +   '<h4>&#8592; Incoming — GC Root 참조 경로 (이 객체가 살아있는 이유)</h4>'
-        +   '<div class="dom-incoming-body"><span class="dom-spinner"></span> path2gc 쿼리 실행 중...</div>'
+    return '<div class="dom-refs-wrap">'
+        + _domTabBar(isLoader)
+        + '<div class="dom-tab-body">'
+        +   '<div class="dom-tab-panel active" data-tab="incoming">'
+        +     '<div class="dom-tab-desc">&#8592; GC Root 참조 경로 — 이 객체가 살아있는 이유</div>'
+        +     '<div class="dom-tab-incoming-body">' + _domSkeleton('path2gc 참조 경로 조회 중...') + '</div>'
+        +   '</div>'
+        +   '<div class="dom-tab-panel" data-tab="outgoing">'
+        +     '<div class="dom-tab-desc">&#8594; Retained Set — 이 객체가 보유(dominate)하는 객체, 클래스별 집계</div>'
+        +     '<div class="dom-tab-outgoing-body">' + _domSkeleton('retained set 조회 중...') + '</div>'
+        +   '</div>'
+        +   (isLoader ? _domClPanelHtml() : '')
         + '</div>'
-        + '<div class="dom-refs-section">'
-        +   '<h4>&#8594; Outgoing — Retained Set (클래스별 집계, 이 객체가 보유하는 객체)</h4>'
-        +   '<div class="dom-outgoing-body"><span class="dom-spinner"></span> incoming 완료 후 시작...</div>'
         + '</div>';
-    if (isLoader) {
-        html += '<div class="dom-refs-section dom-cl-section">'
-            +   '<h4>&#128218; 로드된 클래스 목록 (ClassLoader가 정의한 클래스)</h4>'
-            +   '<div class="dom-cl-body">'
-            +     '<button class="dom-cl-load-btn" onclick="loadClassLoaderClasses(this)">목록 조회</button>'
-            +   '</div>'
-            + '</div>';
-    }
-    html += '</div>';
-    return html;
 }
 
 function domRowClick(row) {
@@ -995,25 +1044,33 @@ function toggleDomDetail(row) {
         if (_domOpenAddr !== addr) return;
         try {
             var parsed = JSON.parse(data);
-            if (event === 'incoming') {
+            if (event === 'waiting') {
+                // 동시 MAT 한도(분석 진행 등)로 대기 — 스켈레톤 라벨을 대기 안내로 교체
+                var wMsg = (parsed && parsed.message) || '다른 분석 진행 중 — 잠시 대기 중...';
+                var inW = td.querySelector('.dom-tab-incoming-body');
+                if (inW && !accumulated.incoming) inW.innerHTML = _domSkeleton(wMsg);
+                var outW = td.querySelector('.dom-tab-outgoing-body');
+                if (outW && !accumulated.outgoing) outW.innerHTML = _domSkeleton(wMsg);
+            } else if (event === 'incoming') {
                 accumulated.incoming = parsed;
-                var inEl = td.querySelector('.dom-incoming-body');
+                var inEl = td.querySelector('.dom-tab-incoming-body');
                 if (inEl) inEl.innerHTML = _renderDomRefsTable(parsed, '인바운드 참조 없음 (GC root 경로)');
-                var outEl = td.querySelector('.dom-outgoing-body');
-                if (outEl) outEl.innerHTML = '<span class="dom-spinner"></span> show_retained_set 쿼리 실행 중...';
+                // outgoing 은 병렬 진행 중 — 스켈레톤 유지(아직 안 왔으면)
+                var outEl = td.querySelector('.dom-tab-outgoing-body');
+                if (outEl && !accumulated.outgoing) outEl.innerHTML = _domSkeleton('retained set 조회 중...');
             } else if (event === 'outgoing') {
                 accumulated.outgoing = parsed;
-                var outEl2 = td.querySelector('.dom-outgoing-body');
+                var outEl2 = td.querySelector('.dom-tab-outgoing-body');
                 if (outEl2) outEl2.innerHTML = _renderDomRefsTable(parsed, '아웃바운드 참조 없음 (retained set)');
             } else if (event === 'done') {
                 _domCache[addr] = accumulated;
                 if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
             } else if (event === 'refs-error') {
                 var errMsg = parsed.error || '참조 추출 실패';
-                var outErrEl = td.querySelector('.dom-outgoing-body');
+                var outErrEl = td.querySelector('.dom-tab-outgoing-body');
                 if (outErrEl) outErrEl.innerHTML = '<div class="dom-refs-error">' + _escapeHtml(errMsg) + '</div>';
-                var inErrEl = td.querySelector('.dom-incoming-body');
-                if (inErrEl && !accumulated.incoming) inErrEl.innerHTML = '';
+                var inErrEl = td.querySelector('.dom-tab-incoming-body');
+                if (inErrEl && !accumulated.incoming) inErrEl.innerHTML = '<div class="dom-refs-error">' + _escapeHtml(errMsg) + '</div>';
                 if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
             }
         } catch (x) {}
@@ -1045,10 +1102,10 @@ function toggleDomDetail(row) {
         .catch(function(e) {
             if (e.name === 'AbortError') return;  // 사용자가 다른 행 클릭 → 정상 취소
             if (_domOpenAddr !== addr) return;
-            var outEl = td.querySelector('.dom-outgoing-body');
+            var outEl = td.querySelector('.dom-tab-outgoing-body');
             if (outEl) outEl.innerHTML = '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
-            var inEl = td.querySelector('.dom-incoming-body');
-            if (inEl && !accumulated.incoming) inEl.innerHTML = '';
+            var inEl = td.querySelector('.dom-tab-incoming-body');
+            if (inEl && !accumulated.incoming) inEl.innerHTML = '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
             if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
         });
 }
@@ -1285,7 +1342,10 @@ function toggleClassInstances(row) {
             var parsed = JSON.parse(data);
             var currentTd = instRow.querySelector('td');
             if (!currentTd) return;
-            if (event === 'instances') {
+            if (event === 'inst-waiting') {
+                currentTd.innerHTML = '<span class="dom-spinner"></span> '
+                    + _escapeHtml((parsed && parsed.message) || '다른 분석 진행 중 — 잠시 대기 중...');
+            } else if (event === 'instances') {
                 _classInstCache[className] = parsed;
                 currentTd.innerHTML = _renderInstanceTable(parsed);
             } else if (event === 'done') {
@@ -1370,7 +1430,11 @@ function loadClassLoaderClasses(btn) {
     function handleClSseEvent(event, data) {
         try {
             var parsed = JSON.parse(data);
-            if (event === 'classes') {
+            if (event === 'cl-waiting') {
+                var clW = detailRow.querySelector('.dom-cl-body');
+                if (clW) clW.innerHTML = '<span class="dom-spinner"></span> '
+                    + _escapeHtml((parsed && parsed.message) || '다른 분석 진행 중 — 잠시 대기 중...');
+            } else if (event === 'classes') {
                 // payload: { classes: [...], total: N }
                 var classList = parsed.classes || [];
                 var totalCount = parsed.total || -1;

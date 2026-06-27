@@ -1,6 +1,128 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-06-28] MAT 동시성 메모리 기반 동적 게이트 + lazy 분석 양보 + 대기 안내
+
+**배경:** 직전 변경의 precompute 양보는 "항상 분석에 양보"로 하드코딩이라, 고용량 호스트(예: 32GB)에서도
+불필요하게 직렬화됐고 lazy 클릭은 분석과 무관하게 MAT 를 띄울 수 있었다(소형 호스트 메모리 중첩 위험).
+
+**1) 메모리 기반 동적 동시성 게이트 (`HeapDumpAnalyzerService`):**
+- 전역 공정(FIFO) `ResizableSemaphore matSlots` 신설. **모든 MAT 자식 프로세스 spawn**(분석
+  `runMatCliWithProgress` + precompute/lazy `runMatSingleQuery`)이 슬롯을 점유 → 동시 MAT ≤ 한도.
+- 한도 = `recomputeMatConcurrency()` 가 **호스트 RAM(/proc/meminfo) / 앱 -Xmx / MAT -Xmx(MemoryAnalyzer.ini)
+  / CPU 수**로 동적 산정: `min( floor((RAM×0.8 − appXmx) / matXmx), cpus )`, 최소 1. 시작 시 + MAT -Xmx
+  변경(`setMatHeapSize`) 시 재산정(재기동 불필요). 설정 `mat.max-concurrent-processes`(0=자동, >0=고정) override.
+- 검증: 4GB/앱1g/MAT2g → 1(직렬화), 동일 호스트 MAT1g → 2, 32GB/MAT2g/8cpu → 8, 32GB/MAT8g → 3.
+- precompute 의 기존 `analysisSemaphore` 주소단위 양보 로직 제거 → matSlots 로 일원화(고용량에서 동시 실행 허용).
+
+**2) lazy 분석 양보 + 사용자 대기 안내 (`HeapReportApiController` + `analyze.js`):**
+- lazy(dominator-refs/classloader-classes/class-instances)도 matSlots 게이트를 통과 → 슬롯 부족 시 분석에 양보.
+  **사이드카 HIT 는 게이트 이전에 즉시 응답**(영향 없음). cache-miss MAT 만 대기.
+- 슬롯 한도 도달 시 SSE `waiting`/`cl-waiting`/`inst-waiting` 이벤트 전송 → 프론트가 스켈레톤 라벨을
+  `다른 분석이 진행 중입니다 — 잠시 대기 중... (메모리 보호)` 로 갱신. 검증: 분석 중 lazy 클릭 →
+  `cl-waiting` → 분석 종료 후 `classes`/`done`, 동시 java-MAT=1 유지.
+
+**대상 파일:** `service/HeapDumpAnalyzerService.java`, `controller/HeapReportApiController.java`,
+`config/HeapDumpConfig.java`·`application.properties`(`mat.max-concurrent-processes`),
+`static/js/analyze.js`·`templates/analyze.html`(`?v=2026-06-28`).
+
+---
+
+## [2026-06-27] Dominator Refs precompute 동시성 방어 (소형 호스트 메모리 보호)
+
+**배경:** MAT 자식 프로세스는 각 `-Xmx2048m`(MemoryAnalyzer.ini). 소형 호스트(예: 운영 4GB)에서
+분석 MAT(2GB) + precompute MAT(2GB) + 앱(1GB) 동시 실행 시 메모리 초과·스왑·과부하 위험.
+
+**점검 결과:**
+- precompute ↔ precompute: 이미 `domRefPrecomputeExecutor = newSingleThreadExecutor` 로 **직렬화**되어
+  분석 N건 연속 수행해도 precompute 는 큐에 쌓여 한 번에 하나만 실행(동시 실행 없음). 큐 항목은 파일명
+  문자열뿐이라 메모리 부담 없음. 스테일 작업은 `doPrecomputeDominatorRefs` 초입 가드(캐시·결과디렉토리·
+  사이드카 존재 검사)로 안전 no-op.
+- precompute ↔ 분석(다른 파일): **방어 없음 — 추가**. 분석1 종료 직후 제출된 precompute1 이 분석2 의
+  MAT 와 겹쳐 2GB×2 중첩 가능.
+
+**수정 (`doPrecomputeDominatorRefs`, `service/HeapDumpAnalyzerService.java`):** precompute 가 주소 단위로
+`analysisSemaphore` 를 획득/해제 → 활성 분석이 있으면 양보(대기). 분석은 전체 구간 세마포어를 점유하므로
+precompute MAT 가 분석 MAT 와 **절대 겹치지 않음**(동시 heavy MAT ≤ 1). 주소 단위 점유라 대기 중인 분석은
+최대 1개 주소(~수초)만 지연. budget 초과 시 부분 사이드카 저장 후 종료. 검증: 분석 B 30초 MAT 구간 동안
+precompute A MAT 쿼리 0건, 분석 B 종료 즉시 재개, 동시 java-MAT = 1.
+
+---
+
+## [2026-06-27] Dominator Tree refs 사이드카 빈 결과 + Loaded Classes reparse 부하 버그 수정
+
+**증상:**
+1. 덤프 최초 분석 직후엔 Dominator Tree 행의 incoming/outgoing 이 정상 표시되지만, **브라우저 재접속 시 항상 "참조 없음"** 으로 표시됨.
+2. Loaded Classes 조회가 매우 느리고 서버/브라우저 부하가 큼.
+
+**근본 원인 (공통):** lazy/precompute 워킹 디렉토리는 원본 hprof 를 symlink 하는데, 분석 후 덤프가
+`.gz` 로 압축되면 재조회 시 `.gz` 를 tmp 로 **1회 해제** 한다. 이 해제본의 mtime 은 항상 현재 시각이라
+data/ 의 `.index` 파일보다 **최신** → MAT 가 `"hprof is newer than index"` 로 판단해 **전체 힙(수십만~백만
+객체)을 재파싱(reparse)** 한다. reparse 는 30~60초가 걸릴 뿐 아니라, symlink 인덱스를 덮어쓰며 `exit 13`
+으로 실패하기도 한다. 그 결과:
+- Dominator Refs **사전계산(precompute)** 의 모든 MAT 쿼리가 exit 13 으로 실패 → `dominator-refs.json`
+  사이드카가 **전부 빈 목록**으로 생성됨. 재접속 시 이 빈 사이드카가 정상 동작하는 lazy 경로를 가려서
+  "참조 없음" 으로 표시됨 (증상 1).
+- Loaded Classes lazy 쿼리도 재접속(압축 후)마다 전체 reparse → 느림/부하 (증상 2).
+
+**추가 원인 (precompute 전용): 공유 tmp 삭제 레이스.** precompute 는 분석 완료 직후 백그라운드로 도는데,
+분석의 `finally` 블록이 작업본 `tmp/{base}.hprof` 를 삭제하는 시점과 겹친다. precompute 가 그 tmp 를
+symlink 한 직후 분석이 삭제 → symlink dangling → MAT 가 hprof 를 못 읽어 **exit 13**. 브라우저 재접속
+lazy 가 `.gz` 를 같은 경로로 재해제하기 전까지 precompute 쿼리가 계속 실패(사이드카가 부분/전부 빈 목록).
+
+**수정 (`service/HeapDumpAnalyzerService.java`):**
+- `alignHprofMtimeToIndex()` 신설 + `linkMatInputs()` 에서 호출 — 워킹 hprof 의 mtime 이 `.index` 보다
+  최신이면 index 보다 **60초 이전으로 조정**해 MAT 가 기존 인덱스를 **재사용(reopen, ~4초)** 하도록 강제.
+  이미 오래된 원본(dumpfiles)은 손대지 않음. 검증: reparse 30~60초 → reopen 4초.
+- `resolveSourceHprofIsolated()` 신설 — precompute 는 공유 tmp 대신 **전용 해제본(`{base}.precompute.hprof`)**
+  을 쓰고 사후 삭제. 분석 cleanup·lazy 와 경로 분리로 레이스 제거. 검증: exit 13 60건 → **0건**, 사이드카
+  437주소 채워짐, 재접속 sidecar-hit 0.07초.
+- `doPrecomputeDominatorRefs()` 안전장치 — 모든 항목이 incoming/outgoing 둘 다 빈 목록이면(=쿼리 전반
+  실패 신호) 사이드카를 **쓰지 않는다**(lazy 폴백 유지).
+- `loadDominatorRefsSidecar()` 자가 치유 — 구버전이 남긴 전부-빈 사이드카는 무효 취급 → lazy 폴백
+  (수동 삭제 불필요).
+
+**대상 파일:** `service/HeapDumpAnalyzerService.java`. (기존 빈 사이드카 1건은 일회성 삭제.)
+
+---
+
+## [2026-06-27] Dominator Tree 분석 로직 전면 고도화 (성능 + UX)
+
+**배경:** Dominator Tree 행 클릭 시 incoming/outgoing 참조·로드클래스 조회가 **매번 새 MAT CLI
+프로세스를 spawn 하고 전체 힙 인덱스를 재로드**해 표시가 느리고 서버 부하가 컸음. 또한 incoming/outgoing
+참조가 **항상 빈 목록**으로 표시되는 잠재 버그 존재(파서 컬럼 매핑 오류). UI 도 2-col 세로 스택이라 가독성 낮음.
+
+**1) 파서 컬럼 매핑 버그 수정 (incoming/outgoing 빈 목록 원인):**
+- `MatReportParser.parseRefZipPath2gc`/`parseRefZipRetained` — MAT 실제 출력은 3컬럼
+  `[Class | Shallow | Retained]` 인데 4컬럼(`0,2,3`)으로 매핑해 모든 행이 스킵됨 → `0,1,2` 로 수정.
+- `parseRefZipImpl` — path2gc 트리 출력의 선두 트리아트(`+ | \ .`) 제거로 클래스명 가독성 개선.
+
+**2) 성능 — 사전계산 + 사이드카 영속화 (플래그 `mat.dominator-refs.precompute`):**
+- `HeapDumpAnalyzerService.precomputeDominatorRefsAsync()` — 분석 완료 직후 백그라운드(직렬, 시간예산 캡)로
+  Top-N 객체의 incoming/outgoing 을 미리 계산해 `data/{base}/dominator-refs.json` 사이드카에 atomic 저장.
+- `dominatorRefsSse()` 캐시 우선순위: **사이드카(MAT 0회) → 인메모리 LRU → lazy MAT**. 사이드카 HIT 시 즉시 응답(검증: 0.05초).
+- `getPrecomputedRefs`/`loadDominatorRefsSidecar` + `clearCache`·재분석 시 사이드카 캐시 무효화.
+
+**3) 성능 — Lazy 경로 개선 (저위험, 항상 적용):**
+- 공용 헬퍼 `resolveSourceHprof`/`dumpBaseName`/`linkMatInputs` 추출 — 3개 SSE 메서드 중복 제거.
+- 매 클릭 수 GB `.index`/`.threads` **copy → symlink**(플래그 `mat.dominator-refs.symlink-index`, copy 폴백).
+- incoming(path2gc)/outgoing(show_retained_set) **병렬 실행**(`in`/`out` 하위 디렉토리 + 전용 데몬 풀).
+
+**4) UX — 탭 전환 구조 재설계:**
+- 인라인 2-col disclosure → `[Incoming] [Outgoing] [Loaded Classes]` 탭 + 단일 본문 패널.
+- 로딩 스켈레톤(펄스 행), retained 비례 막대, sticky 테이블 헤더, 탭 전환 애니메이션 추가.
+
+**설정 플래그(application.properties):** `mat.dominator-refs.precompute`(기본 true) /
+`.precompute.top-n`(30) / `.precompute.cap-per-list`(50) / `.precompute.budget-seconds`(180) /
+`.symlink-index`(true). 전부 OFF = 종전 동작(거대 덤프 안전망).
+
+**대상 파일:** `controller/HeapReportApiController.java`(lazy SSE 사이드카 우선·symlink·병렬),
+`service/HeapDumpAnalyzerService.java`(precompute·사이드카 IO·공용 헬퍼),
+`parser/MatReportParser.java`(컬럼 매핑·트리아트 제거), `config/HeapDumpConfig.java`·`application.properties`(플래그),
+`static/js/analyze.js`·`static/css/analyze.css`·`templates/analyze.html`(탭 UI + `?v=2026-06-27`)
+
+---
+
 ## [2026-06-27] Analysis Files 코어파일 탭 업로드 후 자동 이동 제거
 
 **변경:** 코어파일 탭에서 업로드 완료 시 `/core-dump` 분석 페이지로 자동 이동하던 동작 제거.

@@ -249,7 +249,49 @@
         .dom-row.dom-open .dom-chevron { transform:rotate(90deg); color:var(--primary); }
         .dom-row.dom-open { background:#F8FAFC; }
         .dom-detail-row td { background:#FAFBFC; padding:14px 18px; border-top:1px dashed #E5E7EB; }
-        .dom-refs-wrap { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+        .dom-refs-wrap { display:block; }
+
+        /* ── 탭 전환 구조 ── */
+        .dom-tabs { display:flex; gap:4px; border-bottom:2px solid #E5E7EB; margin-bottom:0; }
+        .dom-tab-btn {
+            appearance:none; border:none; background:transparent; cursor:pointer;
+            padding:8px 16px; font-size:12px; font-weight:600; color:#6B7280;
+            border-bottom:2px solid transparent; margin-bottom:-2px;
+            border-radius:6px 6px 0 0; transition:color .15s, background .15s, border-color .15s;
+            white-space:nowrap;
+        }
+        .dom-tab-btn:hover { color:var(--primary); background:#F3F4F6; }
+        .dom-tab-btn.active { color:var(--primary); border-bottom-color:var(--primary); background:#fff; }
+        .dom-tab-body { max-height:420px; overflow:auto; padding-top:12px; }
+        .dom-tab-panel { display:none; }
+        .dom-tab-panel.active { display:block; animation:domTabIn .18s ease; }
+        @keyframes domTabIn { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:none; } }
+        .dom-tab-desc {
+            font-size:11px; color:#6B7280; margin:0 0 10px;
+            letter-spacing:.2px; line-height:1.5;
+        }
+
+        /* ── 로딩 스켈레톤 ── */
+        .dom-skel-wrap { padding:4px 2px; }
+        .dom-skel-label { font-size:12px; color:#6B7280; margin-bottom:10px; }
+        .dom-skel-row { display:flex; align-items:center; gap:10px; margin-bottom:9px; }
+        .dom-skel {
+            display:inline-block; height:11px; border-radius:5px;
+            background:linear-gradient(90deg,#EEF0F3 25%,#E2E5EA 37%,#EEF0F3 63%);
+            background-size:400% 100%; animation:domSkel 1.3s ease infinite;
+        }
+        .dom-skel-sm { width:70px; margin-left:auto; flex-shrink:0; }
+        @keyframes domSkel { 0% { background-position:100% 0; } 100% { background-position:0 0; } }
+
+        /* ── retained 비례 막대 (refs 행 내) ── */
+        .dom-refs-tbl td.dom-ref-bar-cell { position:relative; }
+        .dom-ref-bar {
+            position:absolute; left:0; top:3px; bottom:3px; width:0;
+            background:linear-gradient(90deg,#dbeafe 0%,#93c5fd 100%);
+            border-radius:0 3px 3px 0; z-index:0;
+        }
+        .dom-ref-bar-val { position:relative; z-index:1; }
+
         .dom-refs-section h4 {
             font-size:11px; margin:0 0 8px; color:#6B7280;
             text-transform:uppercase; letter-spacing:.6px; font-weight:700;
@@ -257,7 +299,8 @@
         .dom-refs-tbl { width:100%; font-size:12px; border-collapse:collapse; background:#fff;
                         border:1px solid #E5E7EB; border-radius:6px; overflow:hidden; }
         .dom-refs-tbl th { text-align:left; background:#F3F4F6; padding:6px 8px;
-                           font-weight:600; color:#6B7280; font-size:11px; border-bottom:1px solid #E5E7EB; }
+                           font-weight:600; color:#6B7280; font-size:11px; border-bottom:1px solid #E5E7EB;
+                           position:sticky; top:0; z-index:2; }
         .dom-refs-tbl td { padding:6px 8px; border-bottom:1px solid #F3F4F6; vertical-align:top; }
         .dom-refs-tbl tr:last-child td { border-bottom:none; }
         .dom-refs-tbl td.dom-refs-num { text-align:right; font-family:var(--mono); color:#374151; white-space:nowrap; }
@@ -276,7 +319,9 @@
         }
         @keyframes dom-spin { to { transform: rotate(360deg); } }
         @media (max-width: 900px) {
-            .dom-refs-wrap { grid-template-columns:1fr; }
+            .dom-tabs { flex-wrap:wrap; }
+            .dom-tab-btn { padding:7px 11px; font-size:11px; }
+            .dom-tab-body { max-height:none; }
         }
         /* ── ClassLoader 배지 & 로드 클래스 섹션 ── */
         .cl-badge {

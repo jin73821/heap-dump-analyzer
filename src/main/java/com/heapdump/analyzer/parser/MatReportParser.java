@@ -1289,20 +1289,20 @@ public class MatReportParser {
 
     /**
      * path2gc 쿼리 ZIP 파싱.
-     * MAT 출력 컬럼 구조: [Object+addr | Ref.Field | Shallow Heap | Retained Heap]
-     * cells[0]=class+addr, cells[2]=shallow, cells[3]=retained.
+     * MAT 출력 컬럼 구조: [Class+addr(트리 prefix 포함) | Shallow Heap | Retained Heap]
+     * cells[0]=class+addr, cells[1]=shallow, cells[2]=retained.
      */
     public List<DominatorRefEntry> parseRefZipPath2gc(File zip, int cap) {
-        return parseRefZipImpl(zip, cap, 0, 2, 3);
+        return parseRefZipImpl(zip, cap, 0, 1, 2);
     }
 
     /**
      * show_retained_set 쿼리 ZIP 파싱.
-     * MAT 출력 컬럼 구조: [Class Name | # Objects | Shallow Heap | Retained Heap]
-     * cells[0]=class(no addr), cells[2]=shallow, cells[3]=retained.
+     * MAT 출력 컬럼 구조: [Class Name | Shallow Heap | Retained Heap]
+     * cells[0]=class(no addr), cells[1]=shallow, cells[2]=retained.
      */
     public List<DominatorRefEntry> parseRefZipRetained(File zip, int cap) {
-        return parseRefZipImpl(zip, cap, 0, 2, 3);
+        return parseRefZipImpl(zip, cap, 0, 1, 2);
     }
 
     /**
@@ -1347,6 +1347,8 @@ public class MatReportParser {
 
             String rawName = stripTags(cells.get(classCol));
             String className = extractCleanClassName(rawName);
+            // path2gc 트리 출력의 선두 트리아트(+ | \ . 공백) 제거 — 뒤에 "필드명 ClassName" 형태 유지
+            className = className.replaceFirst("^[\\s+|.\\\\»›]+", "");
             if (className.startsWith("class ")) className = className.substring(6).trim();
             className = className.replace("System Class", "").trim();
             if (className.isEmpty()) continue;
@@ -1433,6 +1435,8 @@ public class MatReportParser {
 
             String rawName = stripTags(cells.get(classCol));
             String className = extractCleanClassName(rawName);
+            // path2gc 트리 출력의 선두 트리아트(+ | \ . 공백) 제거 — 뒤에 "필드명 ClassName" 형태 유지
+            className = className.replaceFirst("^[\\s+|.\\\\»›]+", "");
             if (className.startsWith("class ")) className = className.substring(6).trim();
             className = className.replace("System Class", "").trim();
             if (className.isEmpty()) continue;

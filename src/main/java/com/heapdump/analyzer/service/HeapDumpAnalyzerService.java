@@ -83,6 +83,39 @@ public class HeapDumpAnalyzerService {
     // 활성 분석 태스크 추적 (명시적 취소 API용)
     private final ConcurrentHashMap<String, java.util.concurrent.Future<?>> activeTasks = new ConcurrentHashMap<>();
 
+    // Dominator Refs 사전계산 전용 직렬 executor (분석 풀과 분리, 글로벌 동시 1개)
+    private final ExecutorService domRefPrecomputeExecutor =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread th = new Thread(r, "dom-ref-precompute");
+                th.setDaemon(true);
+                return th;
+            });
+    // 사이드카(dominator-refs.json) 파싱 결과 캐시: filename → (address → {incoming,outgoing})
+    private final ConcurrentHashMap<String, Map<String, Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>>>> domRefSidecarCache
+            = new ConcurrentHashMap<>();
+
+    // ── MAT 프로세스 동시성 게이트 (메모리 기반 동적) ────────────────────────────
+    // MAT 자식 프로세스(MemoryAnalyzer)는 각 -Xmx(MemoryAnalyzer.ini) 만큼 힙을 점유한다.
+    // 호스트 RAM / 앱 -Xmx / MAT -Xmx 로 동시 실행 가능 개수를 산정해 모든 MAT spawn(분석·precompute·lazy)
+    // 을 게이트한다. 저용량(예: 4GB)=1 → 직렬화(양보). 고용량(예: 32GB)=N → 동시 실행 허용.
+    // MAT -Xmx 를 설정 UI 로 바꾸면 setMatHeapSize → recompute 로 즉시 재산정(재기동 불필요).
+    private final ResizableSemaphore matSlots = new ResizableSemaphore(1);
+    private volatile int matMaxConcurrent = 1;
+
+    /** 공정(FIFO) + 런타임 permit 변경 가능한 Semaphore. */
+    static final class ResizableSemaphore extends java.util.concurrent.Semaphore {
+        private int maxPermits;
+        ResizableSemaphore(int permits) { super(Math.max(1, permits), true); this.maxPermits = Math.max(1, permits); }
+        synchronized void setMaxPermits(int newMax) {
+            if (newMax < 1) newMax = 1;
+            int delta = newMax - maxPermits;
+            if (delta > 0) release(delta);
+            else if (delta < 0) reducePermits(-delta);
+            maxPermits = newMax;
+        }
+        int getMaxPermits() { return maxPermits; }
+    }
+
     // ── Observer 모드: 진행 상황 스냅샷 캐시 (파일명 → 최신 AnalysisProgress) ──
     private final ConcurrentHashMap<String, AnalysisProgress> lastProgressCache = new ConcurrentHashMap<>();
     // ── Observer 모드: MAT 로그 캐시 (파일명 → 최근 500줄, ConcurrentLinkedDeque는 스레드 안전) ──
@@ -189,6 +222,9 @@ public class HeapDumpAnalyzerService {
 
         // 영속 설정 복원 (application.properties 기본값을 settings.json으로 덮어씀)
         loadPersistedSettings();
+
+        // MAT 동시 실행 한도 산정 (호스트 RAM / 앱·MAT -Xmx 기반)
+        recomputeMatConcurrency();
 
         File baseDir = new File(config.getHeapDumpDirectory());
         if (!baseDir.exists()) return;
@@ -1770,6 +1806,56 @@ public class HeapDumpAnalyzerService {
         }
     }
 
+    // ── MAT 프로세스 동시성 산정 (메모리 기반 동적) ───────────────────────────
+
+    /**
+     * 동시 실행 가능한 MAT 프로세스 수를 (재)산정해 게이트에 반영.
+     * 시작 시 + MAT -Xmx 변경 시 호출. config override(>0) 가 있으면 그 값을 사용.
+     */
+    public synchronized void recomputeMatConcurrency() {
+        int computed = computeMaxConcurrentMat();
+        matMaxConcurrent = computed;
+        matSlots.setMaxPermits(computed);
+        logger.info("[MAT Concurrency] 동시 MAT 프로세스 한도 = {} (matXmx={}MB, appXmx={}MB, hostRAM={}MB, cpus={}, override={})",
+                computed, getMatHeapSize() / 1048576L, Runtime.getRuntime().maxMemory() / 1048576L,
+                hostPhysicalRamBytes() / 1048576L, Runtime.getRuntime().availableProcessors(),
+                config.getMatMaxConcurrentProcesses());
+    }
+
+    private int computeMaxConcurrentMat() {
+        int override = config.getMatMaxConcurrentProcesses();
+        if (override > 0) return override; // 운영자 명시 고정값
+        long matXmx = getMatHeapSize();
+        if (matXmx <= 0) matXmx = 2048L * 1048576L; // ini 읽기 실패 시 보수적 기본 2GB
+        long appXmx = Runtime.getRuntime().maxMemory();
+        long hostRam = hostPhysicalRamBytes();
+        if (hostRam <= 0) return 1; // RAM 미상 → 보수적 1
+        // OS/버퍼 여유 20% 확보 후, 앱 힙 제외한 가용분을 MAT -Xmx 로 나눔. CPU 수로도 상한.
+        long usable = (long) (hostRam * 0.80) - appXmx;
+        int byMem = (int) Math.max(1L, usable / Math.max(matXmx, 256L * 1048576L));
+        int byCpu = Math.max(1, Runtime.getRuntime().availableProcessors());
+        return Math.max(1, Math.min(byMem, byCpu));
+    }
+
+    /** 호스트 물리 RAM(bytes). Linux /proc/meminfo MemTotal. 실패 시 -1. */
+    private long hostPhysicalRamBytes() {
+        try {
+            for (String line : Files.readAllLines(Paths.get("/proc/meminfo"))) {
+                if (line.startsWith("MemTotal:")) {
+                    String[] p = line.trim().split("\\s+");
+                    if (p.length >= 2) return Long.parseLong(p[1]) * 1024L; // kB → bytes
+                }
+            }
+        } catch (Exception ignore) {}
+        return -1;
+    }
+
+    /** 현재 MAT 동시 실행 한도에 도달해 추가 MAT 가 대기해야 하는 상태인지. lazy 대기 안내용. */
+    public boolean isMatThrottled() { return matSlots.availablePermits() <= 0; }
+
+    /** 현재 설정된 동시 MAT 한도. */
+    public int getMatMaxConcurrent() { return matMaxConcurrent; }
+
     // ── MAT JVM 힙 메모리 설정 ───────────────────────────────────
 
     /**
@@ -1805,6 +1891,8 @@ public class HeapDumpAnalyzerService {
      */
     public void setMatHeapSize(String newXmx) throws IOException {
         writeIniJvmArg("-Xmx", newXmx);
+        // MAT -Xmx 변경 → 동시 실행 한도 재산정(재기동 불필요)
+        recomputeMatConcurrency();
     }
 
     /**
@@ -2065,6 +2153,7 @@ public class HeapDumpAnalyzerService {
     public void clearCache(String filename) {
         String safe = new File(filename).getName();
         resultCache.remove(safe);
+        domRefSidecarCache.remove(safe);
         File resultDir = resultDirectory(safe);
         if (resultDir.exists() && resultDir.isDirectory()) {
             deleteDirectoryRecursively(resultDir);
@@ -2310,6 +2399,9 @@ public class HeapDumpAnalyzerService {
                         compressDumpFile(dumpOriginal);
                     }
 
+                    // Dominator Refs 사전계산 (백그라운드 직렬). 압축 후 호출 → .gz 해제 경로 결정적.
+                    precomputeDominatorRefsAsync(safe);
+
                     sendProgress(emitter, AnalysisProgress.completed(safe, "/analyze/result/" + safe));
                     logger.info("[Analysis] Done: {} in {}ms", safe, result.getAnalysisTime());
                 }
@@ -2420,6 +2512,12 @@ public class HeapDumpAnalyzerService {
         pb.directory(resultDir);
         pb.redirectErrorStream(true);
 
+        // 메모리 보호: 분석 MAT 도 동시 MAT 게이트를 점유(precompute/lazy 와 공용 한도)
+        if (matSlots.availablePermits() <= 0) {
+            logger.info("[MAT Concurrency] 분석 '{}' 슬롯 대기 — 동시 MAT 한도({}) 도달", filename, matMaxConcurrent);
+        }
+        matSlots.acquire();
+        try {
         Process process = pb.start();
         final int[] pct = {15};
         final int[] lineCount = {0};
@@ -2527,6 +2625,9 @@ public class HeapDumpAnalyzerService {
         sendProgress(emitter, AnalysisProgress.step(filename, 82,
                 "MAT CLI 완료 (exit=" + exitCode + ")"));
         return matOutput;
+        } finally {
+            matSlots.release();
+        }
     }
 
     /**
@@ -2555,31 +2656,40 @@ public class HeapDumpAnalyzerService {
         pb.directory(workDir);
         pb.redirectErrorStream(true);
 
-        Process process = pb.start();
-        StringBuilder output = new StringBuilder();
-        Thread reader = new Thread(() -> {
-            try (BufferedReader br = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = br.readLine()) != null) {
-                    output.append(line).append('\n');
-                }
-            } catch (IOException ignored) {}
-        }, "mat-lazy-reader");
-        reader.setDaemon(true);
-        reader.start();
-
-        boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
-        reader.join(1000);
-
-        if (!finished) {
-            process.destroyForcibly();
-            throw new RuntimeException("MAT 쿼리 타임아웃 (" + timeoutSeconds + "s): " + queryWithArgs);
+        // 메모리 보호: 동시 MAT 한도 게이트(분석/precompute/lazy 공용). 한도 도달 시 슬롯이 빌 때까지 대기.
+        if (matSlots.availablePermits() <= 0) {
+            logger.info("[MAT Concurrency] '{}' 슬롯 대기 — 동시 MAT 한도({}) 도달", queryWithArgs, matMaxConcurrent);
         }
-        int exitCode = process.exitValue();
-        if (exitCode != 0) {
-            logger.warn("[MAT Lazy] Query exited with code {} for '{}'", exitCode, queryWithArgs);
+        matSlots.acquire();
+        try {
+            Process process = pb.start();
+            StringBuilder output = new StringBuilder();
+            Thread reader = new Thread(() -> {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        output.append(line).append('\n');
+                    }
+                } catch (IOException ignored) {}
+            }, "mat-lazy-reader");
+            reader.setDaemon(true);
+            reader.start();
+
+            boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+            reader.join(1000);
+
+            if (!finished) {
+                process.destroyForcibly();
+                throw new RuntimeException("MAT 쿼리 타임아웃 (" + timeoutSeconds + "s): " + queryWithArgs);
+            }
+            int exitCode = process.exitValue();
+            if (exitCode != 0) {
+                logger.warn("[MAT Lazy] Query exited with code {} for '{}'", exitCode, queryWithArgs);
+            }
+            return output.toString();
+        } finally {
+            matSlots.release();
         }
-        return output.toString();
     }
 
     // ── DB 저장 ───────────────────────────────────────────────────
@@ -2912,6 +3022,311 @@ public class HeapDumpAnalyzerService {
     /** 컨트롤러에서 임시 디렉토리 정리 시 사용 (내부 deleteDirectoryRecursively 위임). */
     public void deleteDirectoryPublic(File dir) {
         deleteDirectoryRecursively(dir);
+    }
+
+    // ── Dominator Refs lazy/precompute 공용 헬퍼 ────────────────────────────────
+
+    /** 덤프 파일명에서 확장자(.hprof/.bin/.dump[.gz])를 제거한 base 이름. */
+    public String dumpBaseName(String safe) {
+        return safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
+    }
+
+    /**
+     * MAT lazy 쿼리용 원본 hprof 확보: dumpfiles > tmp > .gz(1회 해제) 순.
+     * .gz 만 있으면 tmp/{base}.hprof 로 해제하고 그 경로를 반환(이후 lazy 클릭이 재사용).
+     * 못 찾으면 null.
+     */
+    public File resolveSourceHprof(String safe) throws IOException {
+        String base = dumpBaseName(safe);
+        String dumpfiles = config.getHeapDumpDirectory() + File.separator + "dumpfiles";
+        File original = new File(dumpfiles, safe);
+        if (original.exists()) return original;
+        File tmpHprof = new File(config.getHeapDumpDirectory() + File.separator + TMP_DIR_NAME, base + ".hprof");
+        if (tmpHprof.exists() && tmpHprof.length() > 0) return tmpHprof;
+        File gz = new File(dumpfiles, safe + ".gz");
+        if (gz.exists()) {
+            logger.info("[MAT Lazy] Decompressing {} → {} (1-time)", gz.getName(), tmpHprof.getName());
+            decompressGzTo(gz, tmpHprof);
+            return tmpHprof;
+        }
+        return null;
+    }
+
+    /**
+     * precompute 전용 hprof 확보. 분석의 공유 작업본(tmp/{base}.hprof)은 분석 finally 가 곧 삭제하므로
+     * precompute 가 그것을 symlink 하면 도중에 dangling 되어 MAT 가 exit 13 으로 실패한다(레이스).
+     * 따라서 압축 원본이 있으면 그대로(안정), .gz 만 있으면 **precompute 전용 경로**로 해제해 격리한다.
+     * 반환된 전용 해제본은 호출자가 사용 후 삭제한다(원본/공유 tmp 는 삭제 금지).
+     */
+    public File resolveSourceHprofIsolated(String safe) throws IOException {
+        String dumpfiles = config.getHeapDumpDirectory() + File.separator + "dumpfiles";
+        File original = new File(dumpfiles, safe);
+        if (original.exists()) return original; // 압축 비활성 — 원본 안정적, 삭제 안 함
+        String base = dumpBaseName(safe);
+        File gz = new File(dumpfiles, safe + ".gz");
+        if (gz.exists()) {
+            // 공유 tmp/{base}.hprof 와 분리된 전용 경로(분석 cleanup·lazy 와 충돌 없음)
+            File priv = new File(config.getHeapDumpDirectory() + File.separator + TMP_DIR_NAME,
+                                 base + ".precompute.hprof");
+            logger.info("[DomRefs] precompute 전용 해제 {} → {}", gz.getName(), priv.getName());
+            decompressGzTo(gz, priv);
+            return priv;
+        }
+        return null;
+    }
+
+    private void decompressGzTo(File gz, File dest) throws IOException {
+        if (dest.getParentFile() != null && !dest.getParentFile().exists()) dest.getParentFile().mkdirs();
+        try (GZIPInputStream gis = new GZIPInputStream(Files.newInputStream(gz.toPath()));
+             OutputStream os = Files.newOutputStream(dest.toPath())) {
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
+        }
+    }
+
+    /**
+     * lazy 워킹 디렉토리에 data/{base}/ 의 index/threads + 원본 hprof 를 연결한다.
+     * index/threads 는 symlink(플래그 OFF 또는 실패 시 copy 폴백), hprof 는 항상 symlink 우선.
+     * 매 클릭 수 GB copy 를 제거하는 핵심 최적화. 반환값은 워킹 디렉토리의 {base}.hprof.
+     */
+    public File linkMatInputs(File workDir, File resultDir, File sourceHprof, String base) throws IOException {
+        if (!workDir.exists()) workDir.mkdirs();
+        boolean symlinkIndex = config.isDominatorRefsSymlinkIndex();
+        File[] idxFiles = resultDir.listFiles((d, n) ->
+                n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
+        long oldestIndexMtime = Long.MAX_VALUE;
+        if (idxFiles != null) {
+            for (File f : idxFiles) {
+                linkOrCopy(f, new File(workDir, f.getName()), symlinkIndex);
+                if (f.getName().endsWith(".index")) {
+                    oldestIndexMtime = Math.min(oldestIndexMtime, f.lastModified());
+                }
+            }
+        }
+        File workHprof = new File(workDir, base + ".hprof");
+        linkOrCopy(sourceHprof, workHprof, true);
+        alignHprofMtimeToIndex(sourceHprof, oldestIndexMtime);
+        return workHprof;
+    }
+
+    /**
+     * MAT reparse 방지: MAT 는 hprof 의 mtime 이 index 파일보다 최신이면 "newer than index" 로 판단해
+     * 전체 힙(수십만~백만 객체)을 재파싱한다. .gz 1회 해제본은 해제 시각(=현재)이 mtime 이라 항상
+     * index 보다 최신 → lazy/precompute 매 호출이 30~60초 reparse(또는 symlink 인덱스 쓰기 충돌로 exit 13).
+     * hprof mtime 을 index 보다 오래되게 맞추면 MAT 가 기존 인덱스를 재사용(reopen, ~4초)한다.
+     * 이미 index 보다 오래된 원본(dumpfiles)은 조건 미충족 → 손대지 않음.
+     */
+    private void alignHprofMtimeToIndex(File hprof, long oldestIndexMtime) {
+        if (oldestIndexMtime == Long.MAX_VALUE || hprof == null || !hprof.exists()) return;
+        if (hprof.lastModified() <= oldestIndexMtime) return; // 이미 인덱스보다 오래됨 — reparse 안 됨
+        long target = Math.max(1000L, oldestIndexMtime - 60_000L);
+        if (hprof.setLastModified(target)) {
+            logger.info("[MAT Lazy] hprof mtime 을 index 이전으로 조정 — reparse 방지: {}", hprof.getName());
+        } else {
+            logger.warn("[MAT Lazy] hprof mtime 조정 실패(권한?) — reparse 발생 가능: {}", hprof.getName());
+        }
+    }
+
+    private void linkOrCopy(File src, File dest, boolean preferSymlink) throws IOException {
+        if (dest.exists()) return;
+        if (preferSymlink) {
+            try {
+                Files.createSymbolicLink(dest.toPath(), src.toPath());
+                return;
+            } catch (IOException | UnsupportedOperationException e) {
+                logger.warn("[MAT Lazy] symlink 실패, copy 폴백: {} ({})", dest.getName(), e.getMessage());
+            }
+        }
+        Files.copy(src.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    // ── Dominator Refs 사전계산 + 사이드카 영속화 ───────────────────────────────
+
+    /** 분석 완료 직후 호출. 백그라운드(직렬)로 Top-N refs 를 사이드카에 사전계산. */
+    public void precomputeDominatorRefsAsync(String safe) {
+        if (!config.isDominatorRefsPrecompute()) return;
+        try {
+            domRefPrecomputeExecutor.submit(() -> {
+                try {
+                    doPrecomputeDominatorRefs(safe);
+                } catch (Exception e) {
+                    logger.warn("[DomRefs] precompute failed for {}: {}", safe,
+                            e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            logger.debug("[DomRefs] precompute submit rejected for {}", safe);
+        }
+    }
+
+    private void doPrecomputeDominatorRefs(String safe) throws Exception {
+        long start    = System.currentTimeMillis();
+        long budgetMs = Math.max(10L, config.getDominatorRefsPrecomputeBudgetSeconds()) * 1000L;
+        int  topN     = Math.max(1, config.getDominatorRefsPrecomputeTopN());
+        int  cap      = Math.max(1, config.getDominatorRefsPrecomputeCap());
+
+        HeapAnalysisResult r = getCachedResult(safe);
+        if (r == null || r.getDominatorTreeEntries() == null || r.getDominatorTreeEntries().isEmpty()) return;
+
+        File resultDir = resultDirectory(safe);
+        if (!resultDir.exists()) return;
+        File sidecar = new File(resultDir, "dominator-refs.json");
+        if (sidecar.exists()) {
+            logger.info("[DomRefs] sidecar already present for {}, skip precompute", safe);
+            return;
+        }
+
+        // 분석 finally 가 삭제하는 공유 tmp 대신 격리된 전용 hprof 사용(레이스→exit 13 방지)
+        File sourceHprof = resolveSourceHprofIsolated(safe);
+        if (sourceHprof == null) {
+            logger.warn("[DomRefs] precompute skipped — hprof not found for {}", safe);
+            return;
+        }
+        // 전용 해제본(.precompute.hprof)만 사후 삭제 대상. 압축 원본(dumpfiles)은 보존.
+        File privateHprof = sourceHprof.getName().endsWith(".precompute.hprof") ? sourceHprof : null;
+        String base = dumpBaseName(safe);
+        File workDir = new File(resultDir, ".precompute_" + System.currentTimeMillis());
+        File workHprof;
+        try {
+            workHprof = linkMatInputs(workDir, resultDir, sourceHprof, base);
+        } catch (Exception e) {
+            logger.warn("[DomRefs] precompute work dir setup failed for {}: {}", safe, e.getMessage());
+            deleteDirectoryRecursively(workDir);
+            if (privateHprof != null) privateHprof.delete();
+            return;
+        }
+
+        Map<String, Object> refsMap = new LinkedHashMap<>();
+        int done = 0;
+        try {
+            List<com.heapdump.analyzer.model.DominatorTreeEntry> entries = r.getDominatorTreeEntries();
+            int limit = Math.min(topN, entries.size());
+            File zip = new File(workDir, base + "_Query.zip");
+            for (int i = 0; i < limit; i++) {
+                if (System.currentTimeMillis() - start > budgetMs) {
+                    logger.info("[DomRefs] precompute budget({}s) exceeded for {} after {} entries",
+                            config.getDominatorRefsPrecomputeBudgetSeconds(), safe, done);
+                    break;
+                }
+                com.heapdump.analyzer.model.DominatorTreeEntry e = entries.get(i);
+                String addr = e.getObjectAddress();
+                if (addr == null || !addr.matches("0x[0-9a-fA-F]+")) continue;
+
+                // 동시성/메모리 보호는 runMatSingleQuery 내부의 동적 matSlots 게이트가 담당한다.
+                // 저용량 호스트(슬롯 1)에서는 분석 MAT 가 슬롯을 점유하는 동안 아래 쿼리가 대기(양보)하고,
+                // 고용량 호스트(슬롯 N)에서는 MAT -Xmx 한도 내에서 분석과 동시 실행된다.
+                List<com.heapdump.analyzer.model.DominatorRefEntry> incoming = Collections.emptyList();
+                List<com.heapdump.analyzer.model.DominatorRefEntry> outgoing = Collections.emptyList();
+                try {
+                    runMatSingleQuery(workHprof.getAbsolutePath(), workDir, "path2gc " + addr, 90L);
+                    if (zip.exists()) { incoming = parser.parseRefZipPath2gc(zip, cap); zip.delete(); }
+                } catch (Exception qe) {
+                    logger.debug("[DomRefs] path2gc failed for {} addr {}: {}", safe, addr, qe.getMessage());
+                }
+                try {
+                    runMatSingleQuery(workHprof.getAbsolutePath(), workDir, "show_retained_set " + addr, 90L);
+                    if (zip.exists()) { outgoing = parser.parseRefZipRetained(zip, cap); zip.delete(); }
+                } catch (Exception qe) {
+                    logger.debug("[DomRefs] show_retained_set failed for {} addr {}: {}", safe, addr, qe.getMessage());
+                }
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("incoming", incoming);
+                one.put("outgoing", outgoing);
+                refsMap.put(addr, one);
+                done++;
+            }
+        } finally {
+            deleteDirectoryRecursively(workDir);
+            if (privateHprof != null && privateHprof.exists() && privateHprof.delete()) {
+                logger.debug("[DomRefs] precompute 전용 해제본 삭제: {}", privateHprof.getName());
+            }
+        }
+
+        // 안전장치: 모든 항목이 incoming/outgoing 둘 다 빈 목록이면 MAT 쿼리 전반 실패(예: reparse/exit 13)
+        // 신호 → 사이드카를 쓰지 않는다. 빈 사이드카는 reconnect 시 정상 동작하는 lazy 경로를 가려서
+        // "참조 없음" 으로 잘못 표시되는 회귀를 유발하므로, 차라리 lazy 폴백을 유지한다.
+        boolean anyData = false;
+        for (Object v : refsMap.values()) {
+            Map<?, ?> m = (Map<?, ?>) v;
+            List<?> in  = (List<?>) m.get("incoming");
+            List<?> out = (List<?>) m.get("outgoing");
+            if ((in != null && !in.isEmpty()) || (out != null && !out.isEmpty())) { anyData = true; break; }
+        }
+        if (!refsMap.isEmpty() && !anyData) {
+            logger.warn("[DomRefs] precompute produced only empty refs for {} ({} entries) — skip sidecar (lazy 폴백 유지)",
+                    safe, done);
+            return;
+        }
+
+        // 사이드카 atomic write (temp → move)
+        Map<String, Object> sidecarData = new LinkedHashMap<>();
+        sidecarData.put("version", 1);
+        sidecarData.put("generatedAt", java.time.LocalDateTime.now().toString());
+        sidecarData.put("topN", topN);
+        sidecarData.put("capPerList", cap);
+        sidecarData.put("refs", refsMap);
+        File tmp = new File(resultDir, "dominator-refs.json.tmp");
+        objectMapper.writerWithDefaultPrettyPrinter().writeValue(tmp, sidecarData);
+        try {
+            Files.move(tmp.toPath(), sidecar.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (IOException atomicFail) {
+            Files.move(tmp.toPath(), sidecar.toPath(), StandardCopyOption.REPLACE_EXISTING);
+        }
+        domRefSidecarCache.remove(safe); // 다음 조회 시 새로 로드
+        logger.info("[DomRefs] precompute done for {}: {} entries in {}ms",
+                safe, done, System.currentTimeMillis() - start);
+    }
+
+    /**
+     * 사이드카에서 특정 주소의 incoming/outgoing 반환 (사전계산 HIT 시 MAT 호출 0회).
+     * 없으면 null → 호출자가 lazy 경로로 폴백. 파일별 파싱 결과는 메모리 캐시.
+     */
+    public Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>> getPrecomputedRefs(String safe, String address) {
+        Map<String, Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>>> all =
+                domRefSidecarCache.computeIfAbsent(safe, this::loadDominatorRefsSidecar);
+        if (all == null || all.isEmpty()) return null;
+        return all.get(address);
+    }
+
+    private Map<String, Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>>> loadDominatorRefsSidecar(String safe) {
+        File sidecar = new File(resultDirectory(safe), "dominator-refs.json");
+        if (!sidecar.exists()) return null; // computeIfAbsent: null → 미저장(다음 호출 재시도)
+        try {
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(sidecar);
+            com.fasterxml.jackson.databind.JsonNode refs = root.get("refs");
+            if (refs == null || !refs.isObject()) return Collections.emptyMap();
+            com.fasterxml.jackson.core.type.TypeReference<List<com.heapdump.analyzer.model.DominatorRefEntry>> listType =
+                    new com.fasterxml.jackson.core.type.TypeReference<List<com.heapdump.analyzer.model.DominatorRefEntry>>() {};
+            Map<String, Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>>> out = new HashMap<>();
+            Iterator<Map.Entry<String, com.fasterxml.jackson.databind.JsonNode>> it = refs.fields();
+            boolean anyData = false;
+            while (it.hasNext()) {
+                Map.Entry<String, com.fasterxml.jackson.databind.JsonNode> en = it.next();
+                com.fasterxml.jackson.databind.JsonNode node = en.getValue();
+                List<com.heapdump.analyzer.model.DominatorRefEntry> in =
+                        node.has("incoming") ? objectMapper.convertValue(node.get("incoming"), listType) : null;
+                List<com.heapdump.analyzer.model.DominatorRefEntry> outv =
+                        node.has("outgoing") ? objectMapper.convertValue(node.get("outgoing"), listType) : null;
+                if ((in != null && !in.isEmpty()) || (outv != null && !outv.isEmpty())) anyData = true;
+                Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>> m = new HashMap<>();
+                m.put("incoming", in != null ? in : Collections.emptyList());
+                m.put("outgoing", outv != null ? outv : Collections.emptyList());
+                out.put(en.getKey(), m);
+            }
+            // 자가 치유: 구버전이 남긴 전부-빈 사이드카(예: reparse 실패로 생성)는 무효 취급 → lazy 폴백.
+            // 빈 사이드카가 정상 lazy 데이터를 가리는 회귀를 런타임에서 차단(수동 삭제 불필요).
+            if (!out.isEmpty() && !anyData) {
+                logger.warn("[DomRefs] sidecar for {} is all-empty — 무효 처리, lazy 폴백", safe);
+                return Collections.emptyMap();
+            }
+            logger.info("[DomRefs] sidecar loaded for {}: {} addresses", safe, out.size());
+            return out;
+        } catch (Exception e) {
+            logger.warn("[DomRefs] sidecar load failed for {}: {}", safe, e.getMessage());
+            return Collections.emptyMap();
+        }
     }
 
     private File resultDirectory(String filename) {

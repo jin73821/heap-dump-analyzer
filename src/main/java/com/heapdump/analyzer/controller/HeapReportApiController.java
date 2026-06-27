@@ -34,7 +34,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -61,6 +65,14 @@ public class HeapReportApiController {
                 }
             });
     private static final ConcurrentHashMap<String, Semaphore> DOM_SEMAPHORES = new ConcurrentHashMap<>();
+
+    // Dominator Refs lazy 폴백: incoming/outgoing 병렬 실행 전용 데몬 풀
+    private static final ExecutorService LAZY_POOL =
+            Executors.newFixedThreadPool(6, r -> {
+                Thread th = new Thread(r, "mat-lazy-parallel");
+                th.setDaemon(true);
+                return th;
+            });
 
     private final HeapDumpAnalyzerService analyzerService;
     private final PdfReportService pdfReportService;
@@ -412,7 +424,21 @@ public class HeapReportApiController {
 
         Thread t = new Thread(() -> {
             try {
-                // 캐시 HIT → 즉시 반환
+                // (1) 사이드카(사전계산) HIT → MAT 호출 0회로 즉시 반환
+                Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>> pre =
+                        analyzerService.getPrecomputedRefs(safe, addrFinal);
+                if (pre != null) {
+                    emitter.send(SseEmitter.event().name("incoming")
+                            .data(pre.getOrDefault("incoming", Collections.emptyList()), MediaType.APPLICATION_JSON));
+                    emitter.send(SseEmitter.event().name("outgoing")
+                            .data(pre.getOrDefault("outgoing", Collections.emptyList()), MediaType.APPLICATION_JSON));
+                    emitter.send(SseEmitter.event().name("done").data("{}"));
+                    emitter.complete();
+                    logger.info("[Dominator Refs SSE] sidecar-hit {} for {}", addrFinal, safe);
+                    return;
+                }
+
+                // (2) 인메모리 LRU 캐시 HIT
                 Map<String, Object> hit = DOM_REF_CACHE.get(cacheKey);
                 if (hit != null) {
                     emitter.send(SseEmitter.event().name("incoming")
@@ -425,7 +451,7 @@ public class HeapReportApiController {
                     return;
                 }
 
-                // 분석 결과 캐시 + 결과 디렉토리 확인
+                // (3) lazy MAT 경로 — 분석 결과 캐시 + 결과 디렉토리 확인
                 HeapAnalysisResult cachedResult = analyzerService.getCachedResult(safe);
                 if (cachedResult == null) {
                     sendDomRefError(emitter, "분석 결과 캐시 없음 — 재분석 필요");
@@ -437,7 +463,7 @@ public class HeapReportApiController {
                     return;
                 }
 
-                // 파일별 동시 MAT 쿼리 Semaphore (최대 2)
+                // 파일별 동시 MAT 쿼리 Semaphore (최대 2 클릭)
                 Semaphore sem = DOM_SEMAPHORES.computeIfAbsent(safe, k -> new Semaphore(2));
                 if (!sem.tryAcquire(10, TimeUnit.SECONDS)) {
                     sendDomRefError(emitter, "서버가 바쁩니다 — 잠시 후 재시도하세요");
@@ -445,84 +471,60 @@ public class HeapReportApiController {
                 }
                 semRef.set(sem);
 
-                // sourceHprof 탐색: dumpfiles > tmp > .gz 압축해제
-                String base      = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
-                String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
-                File originalHprof = new File(dumpfiles, safe);
-                File tmpHprof      = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
-                                               base + ".hprof");
-                File sourceHprof   = null;
-                if (originalHprof.exists()) {
-                    sourceHprof = originalHprof;
-                } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
-                    sourceHprof = tmpHprof;
-                } else {
-                    File gzFile = new File(dumpfiles, safe + ".gz");
-                    if (gzFile.exists()) {
-                        if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
-                        logger.info("[Dominator Refs SSE] Decompressing {} → {} (1-time)",
-                                gzFile.getName(), tmpHprof.getName());
-                        try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
-                                java.nio.file.Files.newInputStream(gzFile.toPath()));
-                             java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
-                            byte[] buf = new byte[64 * 1024];
-                            int n;
-                            while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
-                        }
-                        sourceHprof = tmpHprof;
-                    } else {
-                        sendDomRefError(emitter, "원본 hprof 파일을 찾을 수 없습니다");
-                        return;
-                    }
+                File sourceHprof = analyzerService.resolveSourceHprof(safe);
+                if (sourceHprof == null) {
+                    sendDomRefError(emitter, "원본 hprof 파일을 찾을 수 없습니다");
+                    return;
                 }
+                String base = analyzerService.dumpBaseName(safe);
 
-                // 요청별 격리 temp 디렉토리
+                // 요청별 격리 부모 디렉토리 + in/out 하위 (index/hprof symlink, zip 충돌 방지 + 병렬)
                 File refWorkDir = new File(resultDir,
                         ".dom_ref_" + addrHex + "_" + System.currentTimeMillis());
                 refWorkDir.mkdirs();
                 workDirRef.set(refWorkDir);
+                File inDir  = new File(refWorkDir, "in");
+                File outDir = new File(refWorkDir, "out");
+                File inHprof  = analyzerService.linkMatInputs(inDir,  resultDir, sourceHprof, base);
+                File outHprof = analyzerService.linkMatInputs(outDir, resultDir, sourceHprof, base);
 
-                // index/threads 파일 복사
-                File[] idxFiles = resultDir.listFiles((d, n) ->
-                        n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
-                if (idxFiles != null) {
-                    for (File f : idxFiles) {
-                        java.nio.file.Files.copy(f.toPath(),
-                                new File(refWorkDir, f.getName()).toPath(),
-                                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    }
+                // 동시 MAT 한도 도달 시(분석 등 진행 중) 사용자에게 대기 안내 — 사이드카 HIT 는 이 경로 전에 즉시 응답
+                if (analyzerService.isMatThrottled()) {
+                    emitter.send(SseEmitter.event().name("waiting")
+                            .data(Map.of("message", "다른 분석이 진행 중입니다 — 잠시 대기 중... (메모리 보호)"),
+                                    MediaType.APPLICATION_JSON));
                 }
 
-                // hprof 심볼릭 링크 (실패 시 copy 폴백)
-                File workHprof = new File(refWorkDir, base + ".hprof");
-                try {
-                    java.nio.file.Files.createSymbolicLink(workHprof.toPath(), sourceHprof.toPath());
-                } catch (IOException linkErr) {
-                    logger.warn("[Dominator Refs SSE] symlink 실패, copy 폴백: {}", linkErr.getMessage());
-                    java.nio.file.Files.copy(sourceHprof.toPath(), workHprof.toPath());
-                }
+                // 1) Incoming(path2gc) + 2) Outgoing(show_retained_set) 병렬 실행
+                CompletableFuture<List<com.heapdump.analyzer.model.DominatorRefEntry>> inF =
+                        CompletableFuture.supplyAsync(() -> {
+                            try {
+                                analyzerService.runMatSingleQuery(inHprof.getAbsolutePath(), inDir,
+                                        "path2gc " + addrFinal, 90L);
+                                File z = new File(inDir, base + "_Query.zip");
+                                return z.exists()
+                                        ? analyzerService.getParser().parseRefZipPath2gc(z, 50)
+                                        : Collections.<com.heapdump.analyzer.model.DominatorRefEntry>emptyList();
+                            } catch (Exception e) { throw new CompletionException(e); }
+                        }, LAZY_POOL);
+                CompletableFuture<List<com.heapdump.analyzer.model.DominatorRefEntry>> outF =
+                        CompletableFuture.supplyAsync(() -> {
+                            try {
+                                analyzerService.runMatSingleQuery(outHprof.getAbsolutePath(), outDir,
+                                        "show_retained_set " + addrFinal, 90L);
+                                File z = new File(outDir, base + "_Query.zip");
+                                return z.exists()
+                                        ? analyzerService.getParser().parseRefZipRetained(z, 50)
+                                        : Collections.<com.heapdump.analyzer.model.DominatorRefEntry>emptyList();
+                            } catch (Exception e) { throw new CompletionException(e); }
+                        }, LAZY_POOL);
 
-                File queryZip = new File(refWorkDir, base + "_Query.zip");
-
-                // 1) Incoming: path to GC roots
-                analyzerService.runMatSingleQuery(workHprof.getAbsolutePath(), refWorkDir,
-                        "path2gc " + addrFinal, 90L);
-                List<com.heapdump.analyzer.model.DominatorRefEntry> incoming = queryZip.exists()
-                        ? analyzerService.getParser().parseRefZipPath2gc(queryZip, 50)
-                        : Collections.emptyList();
-                if (queryZip.exists()) queryZip.delete();
-
-                // incoming 먼저 전송 (클라이언트가 즉시 렌더)
+                // incoming 먼저 전송 (클라이언트가 즉시 렌더), outgoing 은 병렬 진행 후 전송
+                List<com.heapdump.analyzer.model.DominatorRefEntry> incoming = inF.get();
                 emitter.send(SseEmitter.event().name("incoming")
                         .data(incoming, MediaType.APPLICATION_JSON));
 
-                // 2) Outgoing: retained set
-                analyzerService.runMatSingleQuery(workHprof.getAbsolutePath(), refWorkDir,
-                        "show_retained_set " + addrFinal, 90L);
-                List<com.heapdump.analyzer.model.DominatorRefEntry> outgoing = queryZip.exists()
-                        ? analyzerService.getParser().parseRefZipRetained(queryZip, 50)
-                        : Collections.emptyList();
-
+                List<com.heapdump.analyzer.model.DominatorRefEntry> outgoing = outF.get();
                 emitter.send(SseEmitter.event().name("outgoing")
                         .data(outgoing, MediaType.APPLICATION_JSON));
 
@@ -642,58 +644,22 @@ public class HeapReportApiController {
                 }
                 semRef.set(sem);
 
-                // sourceHprof 탐색: dumpfiles > tmp > .gz 압축해제
-                String base      = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
-                String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
-                File originalHprof = new File(dumpfiles, safe);
-                File tmpHprof      = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
-                                               base + ".hprof");
-                File sourceHprof   = null;
-                if (originalHprof.exists()) {
-                    sourceHprof = originalHprof;
-                } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
-                    sourceHprof = tmpHprof;
-                } else {
-                    File gzFile = new File(dumpfiles, safe + ".gz");
-                    if (gzFile.exists()) {
-                        if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
-                        logger.info("[ClassLoader Classes SSE] Decompressing {} → {}", gzFile.getName(), tmpHprof.getName());
-                        try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
-                                java.nio.file.Files.newInputStream(gzFile.toPath()));
-                             java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
-                            byte[] buf = new byte[64 * 1024];
-                            int n;
-                            while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
-                        }
-                        sourceHprof = tmpHprof;
-                    } else {
-                        sendClError(emitter, "원본 hprof 파일을 찾을 수 없습니다");
-                        return;
-                    }
+                // sourceHprof 탐색 + 워킹 디렉토리(index/hprof symlink) — 공용 헬퍼
+                File sourceHprof = analyzerService.resolveSourceHprof(safe);
+                if (sourceHprof == null) {
+                    sendClError(emitter, "원본 hprof 파일을 찾을 수 없습니다");
+                    return;
                 }
-
+                String base = analyzerService.dumpBaseName(safe);
                 File refWorkDir = new File(resultDir, ".cl_ref_" + addrHex + "_" + System.currentTimeMillis());
-                refWorkDir.mkdirs();
                 workDirRef.set(refWorkDir);
+                File workHprof = analyzerService.linkMatInputs(refWorkDir, resultDir, sourceHprof, base);
 
-                // index/threads 파일 복사
-                File[] idxFiles = resultDir.listFiles((d, n) ->
-                        n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
-                if (idxFiles != null) {
-                    for (File f : idxFiles) {
-                        java.nio.file.Files.copy(f.toPath(),
-                                new File(refWorkDir, f.getName()).toPath(),
-                                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    }
-                }
-
-                // hprof 심볼릭 링크 (실패 시 copy 폴백)
-                File workHprof = new File(refWorkDir, base + ".hprof");
-                try {
-                    java.nio.file.Files.createSymbolicLink(workHprof.toPath(), sourceHprof.toPath());
-                } catch (IOException linkErr) {
-                    logger.warn("[ClassLoader Classes SSE] symlink 실패, copy 폴백: {}", linkErr.getMessage());
-                    java.nio.file.Files.copy(sourceHprof.toPath(), workHprof.toPath());
+                // 동시 MAT 한도 도달 시 사용자에게 대기 안내
+                if (analyzerService.isMatThrottled()) {
+                    emitter.send(SseEmitter.event().name("cl-waiting")
+                            .data(Map.of("message", "다른 분석이 진행 중입니다 — 잠시 대기 중... (메모리 보호)"),
+                                    MediaType.APPLICATION_JSON));
                 }
 
                 // Step 1: classloaderexplorerquery HTML에서 target address에 해당하는 classLoaderId 추출.
@@ -844,59 +810,23 @@ public class HeapReportApiController {
                 }
                 semRef.set(sem);
 
-                // sourceHprof 탐색
-                String base      = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
-                String dumpfiles = analyzerService.getHeapDumpDirectory() + File.separator + "dumpfiles";
-                File originalHprof = new File(dumpfiles, safe);
-                File tmpHprof      = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp",
-                                               base + ".hprof");
-                File sourceHprof = null;
-                if (originalHprof.exists()) {
-                    sourceHprof = originalHprof;
-                } else if (tmpHprof.exists() && tmpHprof.length() > 0) {
-                    sourceHprof = tmpHprof;
-                } else {
-                    File gzFile = new File(dumpfiles, safe + ".gz");
-                    if (gzFile.exists()) {
-                        if (!tmpHprof.getParentFile().exists()) tmpHprof.getParentFile().mkdirs();
-                        logger.info("[ClassInst SSE] Decompressing {} → {}", gzFile.getName(), tmpHprof.getName());
-                        try (java.util.zip.GZIPInputStream gis = new java.util.zip.GZIPInputStream(
-                                java.nio.file.Files.newInputStream(gzFile.toPath()));
-                             java.io.OutputStream os = java.nio.file.Files.newOutputStream(tmpHprof.toPath())) {
-                            byte[] buf = new byte[64 * 1024];
-                            int n;
-                            while ((n = gis.read(buf)) != -1) os.write(buf, 0, n);
-                        }
-                        sourceHprof = tmpHprof;
-                    } else {
-                        sendInstError(emitter, "원본 hprof 파일을 찾을 수 없습니다");
-                        return;
-                    }
+                // sourceHprof 탐색 + 워킹 디렉토리(index/hprof symlink) — 공용 헬퍼
+                File sourceHprof = analyzerService.resolveSourceHprof(safe);
+                if (sourceHprof == null) {
+                    sendInstError(emitter, "원본 hprof 파일을 찾을 수 없습니다");
+                    return;
                 }
-
+                String base = analyzerService.dumpBaseName(safe);
                 File refWorkDir = new File(resultDir, ".cl_inst_"
                         + shortName.replaceAll("[^a-zA-Z0-9]", "_") + "_" + System.currentTimeMillis());
-                refWorkDir.mkdirs();
                 workDirRef.set(refWorkDir);
+                File workHprof = analyzerService.linkMatInputs(refWorkDir, resultDir, sourceHprof, base);
 
-                // index/threads 파일 복사
-                File[] idxFiles = resultDir.listFiles((d, n) ->
-                        n.startsWith(base + ".") && (n.endsWith(".index") || n.endsWith(".threads")));
-                if (idxFiles != null) {
-                    for (File f : idxFiles) {
-                        java.nio.file.Files.copy(f.toPath(),
-                                new File(refWorkDir, f.getName()).toPath(),
-                                java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    }
-                }
-
-                // hprof 심볼릭 링크 (실패 시 copy 폴백)
-                File workHprof = new File(refWorkDir, base + ".hprof");
-                try {
-                    java.nio.file.Files.createSymbolicLink(workHprof.toPath(), sourceHprof.toPath());
-                } catch (IOException linkErr) {
-                    logger.warn("[ClassInst SSE] symlink 실패, copy 폴백: {}", linkErr.getMessage());
-                    java.nio.file.Files.copy(sourceHprof.toPath(), workHprof.toPath());
+                // 동시 MAT 한도 도달 시 사용자에게 대기 안내
+                if (analyzerService.isMatThrottled()) {
+                    emitter.send(SseEmitter.event().name("inst-waiting")
+                            .data(Map.of("message", "다른 분석이 진행 중입니다 — 잠시 대기 중... (메모리 보호)"),
+                                    MediaType.APPLICATION_JSON));
                 }
 
                 // OQL: SELECT * FROM {className}

@@ -92,6 +92,39 @@ public class HeapDumpConfig {
     private boolean dominatorRefsEnabled;
     public boolean isDominatorRefsEnabled() { return dominatorRefsEnabled; }
 
+    /**
+     * 동시 실행 가능한 MAT 프로세스 수. 0(기본)=자동 산정(호스트 RAM / 앱 -Xmx / MAT -Xmx / CPU 기반).
+     * >0 이면 그 값으로 고정. 분석·precompute·lazy 의 MAT spawn 전체에 적용되는 글로벌 한도.
+     */
+    @Value("${mat.max-concurrent-processes:0}")
+    private int matMaxConcurrentProcesses;
+    public int getMatMaxConcurrentProcesses() { return matMaxConcurrentProcesses; }
+
+    /** 분석 완료 후 백그라운드로 Top-N 객체 refs 를 사이드카(dominator-refs.json)에 사전계산 */
+    @Value("${mat.dominator-refs.precompute:true}")
+    private boolean dominatorRefsPrecompute;
+    public boolean isDominatorRefsPrecompute() { return dominatorRefsPrecompute; }
+
+    /** 사전계산 대상 Top-N 객체 수 (retained 상위) */
+    @Value("${mat.dominator-refs.precompute.top-n:30}")
+    private int dominatorRefsPrecomputeTopN;
+    public int getDominatorRefsPrecomputeTopN() { return dominatorRefsPrecomputeTopN; }
+
+    /** 사전계산 incoming/outgoing 각 목록 항목 상한 */
+    @Value("${mat.dominator-refs.precompute.cap-per-list:50}")
+    private int dominatorRefsPrecomputeCap;
+    public int getDominatorRefsPrecomputeCap() { return dominatorRefsPrecomputeCap; }
+
+    /** 사전계산 시간 예산(초). 초과 시 부분 저장 후 중단 */
+    @Value("${mat.dominator-refs.precompute.budget-seconds:180}")
+    private long dominatorRefsPrecomputeBudgetSeconds;
+    public long getDominatorRefsPrecomputeBudgetSeconds() { return dominatorRefsPrecomputeBudgetSeconds; }
+
+    /** lazy/사전계산 워킹 디렉토리에 .index 를 symlink 연결 (false=copy, 안전 폴백) */
+    @Value("${mat.dominator-refs.symlink-index:true}")
+    private boolean dominatorRefsSymlinkIndex;
+    public boolean isDominatorRefsSymlinkIndex() { return dominatorRefsSymlinkIndex; }
+
     /** SSH/SCP 로컬 실행 계정 (runuser 로 전환). 비어있으면 현재 프로세스 계정 */
     @Value("${remote.ssh.local-user:}")
     private String sshLocalUser;
