@@ -179,12 +179,14 @@
 
 <div class="cd-topbar">
     <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
         <a href="/core-dump" style="color:#374151;text-decoration:none;font-size:18px;">&#8592;</a>
         <span class="topbar-title">코어 덤프 GDB 분석</span>
     </div>
     <div class="topbar-right">
         <span class="file-chip" th:text="${filename}">core.12345</span>
         <span class="elapsed-chip" id="elapsedTime">--:--</span>
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
     </div>
 </div>
 

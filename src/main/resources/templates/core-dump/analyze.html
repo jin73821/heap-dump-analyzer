@@ -20,8 +20,11 @@
 <div th:replace="~{fragments/banner :: banner}"></div>
 
 <div class="cd-topbar">
-    <a href="/core-dump" class="topbar-back">&#8592;</a>
-    <span class="topbar-title" th:text="${filename}">core.12345</span>
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <a href="/core-dump" class="topbar-back">&#8592;</a>
+        <span class="topbar-title" th:text="${filename}">core.12345</span>
+    </div>
     <div class="topbar-right">
         <button th:if="${entity != null}"
                 th:data-filename="${entity.filename}"
@@ -29,6 +32,7 @@
                 style="font-size:12px;color:#6B7280;background:none;border:1px solid #E5E7EB;border-radius:6px;padding:5px 12px;cursor:pointer;font-weight:600;transition:all .15s;"
                 onmouseover="this.style.background='#F3F4F6'"
                 onmouseout="this.style.background='none'">&#8635; 재분석</button>
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
     </div>
 </div>
 

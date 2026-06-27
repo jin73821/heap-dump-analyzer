@@ -180,8 +180,9 @@ public class HeapDumpViewController {
                 String cls = classifications.get(item.getFilename());
                 if (!hasRecognizedHeapDumpExtension(item.getFilename())) {
                     if ("coredump".equals(item.getFileType()) || "coreexec".equals(item.getFileType())) {
-                        // 코어덤프 디렉터리 파일: exec 분류만 적용 (이미 coredump이므로 core 분류는 무시)
+                        // 코어덤프 디렉터리 파일: exec/others 분류 적용 (core 분류는 무시)
                         if ("exec".equals(cls)) item.setFileType("exec");
+                        else if ("others".equals(cls)) item.setFileType("others");
                     } else if ("heapdump".equals(item.getFileType())) {
                         // 힙덤프 디렉터리 파일: 명시적 분류 적용, 없으면 others
                         item.setFileType(cls != null ? cls : "others");
@@ -327,6 +328,7 @@ public class HeapDumpViewController {
 
             AnalysisHistoryItem item = new AnalysisHistoryItem();
             item.setFileType("coredump");
+            item.setFromCoreDir(true);
             item.setId(e.getId());
             item.setFilename(e.getFilename());
             item.setStatus(e.getStatus());
@@ -370,6 +372,7 @@ public class HeapDumpViewController {
                 if (processedNames.contains(name)) continue;
                 if (pairedExecNamesForHistory.contains(name)) continue; // 페어링된 exec는 sub-item으로만 표시
                 AnalysisHistoryItem item = new AnalysisHistoryItem();
+                item.setFromCoreDir(true);
                 if (name.endsWith(".exec")) {
                     // 실행파일 — 코어덤프 탭 내 별도 표시 (레거시 .exec 파일)
                     item.setFileType("coreexec");

@@ -29,6 +29,27 @@ public final class FilenameValidator {
     public static boolean isAllowAllExtensions()        { return allowAllExtensions; }
 
     /**
+     * 확장자 무관하게 경로 탐색·null byte·빈 파일명만 차단합니다.
+     * 분류 변경 등 메타데이터 조작 엔드포인트에서 사용합니다.
+     */
+    public static String validateSafe(String filename) {
+        if (filename == null || filename.trim().isEmpty()) {
+            throw new IllegalArgumentException("Filename is required");
+        }
+        String safe = Paths.get(filename).getFileName().toString();
+        if (safe.contains("\0")) {
+            throw new IllegalArgumentException("Invalid filename: contains null byte");
+        }
+        if (safe.contains("..") || safe.contains("/") || safe.contains("\\")) {
+            throw new IllegalArgumentException("Invalid filename: path traversal detected");
+        }
+        if (safe.trim().isEmpty() || safe.equals(".")) {
+            throw new IllegalArgumentException("Invalid filename");
+        }
+        return safe;
+    }
+
+    /**
      * 파일명을 검증하고 안전한 파일명(경로 구성요소 없음)을 반환합니다.
      *
      * @param filename 사용자 입력 파일명

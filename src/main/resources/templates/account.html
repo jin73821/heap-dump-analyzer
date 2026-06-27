@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-05">
+    <link rel="stylesheet" href="/css/common.css?v=2026-06-27">
     <title>My Account — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }
@@ -64,7 +64,7 @@
         /* 메모장 */
         .memo-area {
             width: 100%; min-height: 240px; padding: 12px 14px;
-            font-size: 13px; line-height: 1.6; font-family: ui-monospace, monospace;
+            font-size: 13px; line-height: 1.7; font-family: 'D2Coding', 'JetBrains Mono', 'Nanum Gothic Coding', Consolas, monospace;
             border: 1px solid #E5E7EB; border-radius: 8px; background: #FCFCFD;
             color: #1F2937; outline: none; resize: vertical;
         }
@@ -73,6 +73,17 @@
                      font-size: 11px; color: #9CA3AF; margin-top: 6px; }
         .memo-meta strong { color: #6B7280; font-weight: 600; }
         .memo-count.warn { color: #DC2626; font-weight: 600; }
+        .memo-font-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .memo-font-label { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .memo-font-select {
+            padding: 4px 24px 4px 8px; font-size: 12px; color: #374151;
+            border: 1px solid #E5E7EB; border-radius: 6px; background: #fff;
+            outline: none; cursor: pointer; appearance: none; -webkit-appearance: none;
+            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+            background-repeat: no-repeat; background-position: right 8px center;
+        }
+        .memo-font-select:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        .memo-font-preview { font-size: 11px; color: #9CA3AF; }
 
         /* Modal 변형 (common.css 의 .modal-ov/.modal-box base 를 채움) */
         .modal-box { max-width: 380px; width: 90%; text-align: center; }
@@ -171,6 +182,16 @@
         <div class="card-title">
             <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             개인 메모장
+        </div>
+        <div class="memo-font-bar">
+            <span class="memo-font-label">폰트</span>
+            <select id="memoFontSelect" class="memo-font-select" onchange="applyMemoFont(this.value)">
+                <option value="d2coding">D2Coding</option>
+                <option value="jb+nanum">JetBrains Mono + 나눔고딕코딩</option>
+                <option value="nanum">나눔고딕코딩</option>
+                <option value="system">시스템 기본</option>
+            </select>
+            <span class="memo-font-preview" id="memoFontPreview">한글 ABC 123</span>
         </div>
         <textarea id="memoBox" class="memo-area"
                   placeholder="자유 메모… 본인만 볼 수 있습니다."
@@ -288,6 +309,36 @@ function changePassword() {
         btn.disabled = false; btn.textContent = '변경';
     });
 }
+
+/* ── 메모장 폰트 선택 ───────────────────────── */
+var MEMO_FONT_MAP = {
+    'd2coding':  "'D2Coding', monospace",
+    'jb+nanum':  "'JetBrains Mono', 'Nanum Gothic Coding', Consolas, monospace",
+    'nanum':     "'Nanum Gothic Coding', monospace",
+    'system':    "ui-monospace, monospace"
+};
+var MEMO_FONT_PREVIEW_MAP = {
+    'd2coding':  'D2Coding',
+    'jb+nanum':  'JetBrains Mono',
+    'nanum':     '나눔고딕코딩',
+    'system':    '시스템 기본'
+};
+
+function applyMemoFont(val) {
+    var ff = MEMO_FONT_MAP[val] || MEMO_FONT_MAP['d2coding'];
+    var box = document.getElementById('memoBox');
+    var preview = document.getElementById('memoFontPreview');
+    box.style.fontFamily = ff;
+    if (preview) preview.style.fontFamily = ff;
+    localStorage.setItem('memoFont', val);
+}
+
+(function initMemoFont() {
+    var saved = localStorage.getItem('memoFont') || 'd2coding';
+    var sel = document.getElementById('memoFontSelect');
+    if (sel) sel.value = saved;
+    applyMemoFont(saved);
+})();
 
 /* ── 메모장 ────────────────────────────────── */
 var MEMO_MAX = 10 * 1024 * 1024;  // 10 MB (UTF-8 byte)

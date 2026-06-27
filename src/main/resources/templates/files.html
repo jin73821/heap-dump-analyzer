@@ -709,8 +709,8 @@
                                 <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
                             </a>
                             <a th:if="${(h.fileType == 'others' or h.fileType == 'exec') and !h.fileDeleted}" href="#" class="fb d" title="Delete"
-                               th:data-filename="${h.filename}"
-                               onclick="confirmOthersDelete(this.dataset.filename);return false;">
+                               th:data-filename="${h.filename}" th:data-from-core="${h.fromCoreDir}"
+                               onclick="confirmOthersDelete(this.dataset.filename,this.dataset.fromCore==='true');return false;">
                                 <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                             </a>
                             <a th:if="${(h.fileType == 'others' or h.fileType == 'exec') and h.fileDeleted and isAdmin}" href="#" class="fb d" title="기록 영구 삭제 (관리자)"
@@ -947,8 +947,8 @@ function confirmDelete(filename) {
     document.getElementById('delModalNote').textContent = '힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.';
     document.getElementById('deleteModal').classList.add('open');
 }
-function confirmOthersDelete(filename) {
-    _delTarget = filename; _delIsCore = false;
+function confirmOthersDelete(filename, fromCore) {
+    _delTarget = filename; _delIsCore = !!fromCore;
     document.getElementById('delFileName').textContent = filename;
     document.getElementById('delModalNote').textContent = '';
     document.getElementById('deleteModal').classList.add('open');
@@ -1196,16 +1196,7 @@ function submitBulkDelete() {
 var _activeTab = 'all';
 
 window.onUploadQueueDone = function() {
-    var items = typeof UploadQueue !== 'undefined' ? UploadQueue.getLastQueueTypes() : [];
-    var doneCore = items.filter(function(i) { return i.fileType === 'coredump' && i.status === 'done'; });
-    var doneHeap = items.filter(function(i) { return i.fileType === 'heapdump' && i.status === 'done'; });
-    if (doneCore.length > 0 && doneHeap.length === 0) {
-        var url = '/core-dump';
-        if (doneCore.length === 1) url += '?file=' + encodeURIComponent(doneCore[0].filename);
-        window.location.href = url;
-    } else {
-        window.location.reload();
-    }
+    window.location.reload();
 };
 
 function onTabClick(btn) {

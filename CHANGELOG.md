@@ -1,6 +1,138 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-06-27] Analysis Files 코어파일 탭 업로드 후 자동 이동 제거
+
+**변경:** 코어파일 탭에서 업로드 완료 시 `/core-dump` 분석 페이지로 자동 이동하던 동작 제거.
+업로드 완료 후 Files 페이지(`/files`)를 그대로 새로고침.
+
+**대상 파일:** `templates/files.html` — `window.onUploadQueueDone` 콜백에서 core 전용 분기 제거
+
+---
+
+## [2026-06-27] 코어덤프 탭 파일 삭제 라우팅 버그 수정
+
+**원인:** 코어덤프 탭에서 업로드한 파일이 "others"로 재분류된 경우, Files 페이지 삭제 버튼이
+`confirmOthersDelete()` → `_delIsCore=false` → `POST /delete/{filename}` (힙덤프 서비스)를 호출.
+파일은 코어덤프 디렉터리에만 존재하므로 "File not found" 오류 발생.
+
+**수정:**
+- `AnalysisHistoryItem` — `fromCoreDir` boolean 필드 추가
+- `HeapDumpViewController.buildCoreDumpHistory()` — 코어덤프 탭 출처 항목 전체에 `fromCoreDir=true` 설정
+- `files.html` — "others"/"exec" 삭제 버튼에 `data-from-core` 속성 추가; `confirmOthersDelete(filename, fromCore)` 로 변경
+- `confirmOthersDelete(filename, fromCore)` — `fromCore=true` 시 `_delIsCore=true` 설정 → 코어덤프 DELETE API 경유
+
+**대상 파일:**
+- `model/dto/AnalysisHistoryItem.java` — `fromCoreDir` 필드·getter·setter 추가
+- `controller/HeapDumpViewController.java` — `buildCoreDumpHistory()` 두 곳에 `setFromCoreDir(true)`
+- `templates/files.html` — 삭제 버튼 `data-from-core` 속성 + JS 함수 시그니처 변경
+
+---
+
+## [2026-06-27] 파일 분류 변경 버그 수정 (비힙덤프 확장자 + coredump→others)
+
+**원인 1 — 백엔드 확장자 거부:** `POST /api/files/{filename}/classify` 에서 `FilenameValidator.validate()`를 호출하여
+`.hprof/.bin/.dump` 이외의 확장자(`.pptx` 등)를 가진 파일 분류 변경 시 400 에러 발생.
+코어파일 페어링 엔드포인트(`/pair`, DELETE `/pair`)도 동일 문제 (exec 바이너리는 확장자 없음).
+
+**원인 2 — 뷰 컨트롤러 분류 미반영:** `HeapDumpViewController.filesPage()` 에서 `coredump` 타입 파일에
+"exec" 분류만 적용하고 "others" 분류를 무시하여, 저장 후 페이지 새로고침 시 계속 CORE로 표시됨.
+
+**수정:**
+- `FilenameValidator.validateSafe()` 메서드 추가 — 경로 탐색·null byte·빈 파일명 차단, 확장자 검사 제외
+- `HeapFileApiController.classifyFile()` — `validate()` → `validateSafe()`
+- `HeapFileApiController.pairCoreExec()` — core/exec 파일명 모두 `validateSafe()`
+- `HeapFileApiController.unpairCoreExec()` — `validateSafe()`
+- `HeapDumpViewController.filesPage()` — coredump 파일에 "others" 분류도 적용하도록 수정
+
+**대상 파일:**
+- `util/FilenameValidator.java` — `validateSafe()` 신규 추가
+- `controller/HeapFileApiController.java` — classify·pair·unpair 3곳 교체
+- `controller/HeapDumpViewController.java` — coredump 분류 적용 로직 보완
+
+---
+
+## [2026-06-27] 개인 메모장 D2Coding 폰트 적용 + 폰트 선택 UI
+
+**변경 내용:**
+- D2Coding Ligature v1.3.2 (Regular/Bold) TTF → woff2 변환 후 번들링
+- 메모장 기본 폰트를 D2Coding으로 변경 (한글+영문 모두 지원)
+- 메모장 상단에 폰트 선택 드롭다운 추가 (선택값 localStorage 저장, 즉시 적용)
+
+**폰트 선택 옵션:**
+1. D2Coding (기본)
+2. JetBrains Mono + 나눔고딕코딩
+3. 나눔고딕코딩
+4. 시스템 기본
+
+**대상:**
+- `static/fonts/D2Coding-Regular.woff2` / `D2Coding-Bold.woff2` (신규)
+- `static/css/common.css` — D2Coding @font-face 2개 추가
+- `templates/account.html` — 폰트 선택 바 UI + `applyMemoFont()` JS
+
+---
+
+## [2026-06-27] 개인 메모장 폰트 코드 가독성 개선 (폰트 번들링)
+
+**변경:** `ui-monospace, monospace` → `'JetBrains Mono', 'Nanum Gothic Coding', 'Cascadia Code', Consolas, monospace`
+줄간격 `line-height: 1.6` → `1.7`
+
+**폰트 번들링:** Google Fonts에서 woff2 다운로드 → `static/fonts/` 로컬 번들 (CDN 의존 없음)
+- `JetBrainsMono-Regular-latin.woff2` / `JetBrainsMono-Regular-latin-ext.woff2` (영문·코드)
+- `nanum-000.woff2` ~ `nanum-092.woff2` (한글 93개 조각, Nanum Gothic Coding v27)
+
+**@font-face:** `static/css/common.css` 최상단에 95개 블록 추가
+
+**대상:**
+- `src/main/resources/static/fonts/` — 95개 woff2 파일 (1.8 MB)
+- `src/main/resources/static/css/common.css` — @font-face 규칙 추가 (v=2026-06-27)
+- `src/main/resources/templates/account.html` — .memo-area font-family, common.css 버전 갱신
+
+---
+
+## [2026-06-27] 코어 덤프 분석 페이지 모바일 topbar 개선
+
+**현상:**
+1. 모바일에서 좌측 상단 탐색바(배너) 햄버거 아이콘 미표시
+2. 세 페이지(index/progress/analyze) 헤더에 Dashboard 복귀 버튼 없음
+
+**원인:**
+- `cd-topbar` 내부에 `gb-menu-btn` 버튼이 없고 `topbar-brand` 래퍼도 미적용
+- `topbar-right`에 `display:flex; align-items:center; gap:6px` 미설정
+- Dashboard 링크(`topbar-btn`) 미추가
+
+**대상:**
+- `src/main/resources/templates/core-dump/index.html`
+- `src/main/resources/templates/core-dump/progress.html`
+- `src/main/resources/templates/core-dump/analyze.html`
+- `src/main/resources/static/css/core-dump.css`
+
+**변경 내용:**
+- 세 페이지 `cd-topbar`에 `topbar-brand` 래퍼 + `gb-menu-btn` 햄버거 버튼 추가
+- 세 페이지 `topbar-right`에 `← Dashboard` 버튼 추가
+- `core-dump.css` `.topbar-right`에 `display:flex; align-items:center; gap:6px` 추가
+
+---
+
+## [2026-06-27] Comparison History 테이블 행 높이 증가 버그 수정
+
+**현상:** 브라우저 창 너비를 1920px 미만으로 줄이면 테이블 일부 행의 높이가 증가함.
+
+**원인:**
+1. `.run-btn`("다시 보기") / `.del-btn`("삭제")에 `white-space: nowrap` 미설정 → 창이 좁아지면 한글 텍스트가 공백 기준으로 줄바꿈되어 버튼 높이 증가
+2. `.row-actions`에 `flex-shrink: 0` 미설정 → flex 컨테이너가 shrink되면서 내부 버튼도 함께 줄어들어 줄바꿈 유발
+3. Base/Target 열 `<td>`에 `white-space: nowrap` 미설정 → 파일 삭제 시 `.file-cell`+`.hi-badge` 두 inline-block이 다른 줄로 분리 가능
+
+**대상:**
+- `src/main/resources/templates/comparison-history.html`
+
+**변경 내용:**
+- `.run-btn`, `.del-btn`에 `white-space: nowrap` 추가
+- `.row-actions`에 `flex-shrink: 0` 추가
+- Base/Target 열 `<td>`에 `.td-file` 클래스 적용 + `.td-file { white-space: nowrap; }` CSS 추가
+
+---
+
 ## [2026-06-26] 원격 스캔 성능 개선 + 탐지결과 페이지네이션/정렬 + 실행파일 전송 (버전 2.1.9)
 
 **배경:** 사내망 스캔 로그에서 `/tmp`·`/var/crash/corefile` 스캔에 약 1분이 소요됨. 원인은 **코어파일마다 별도 SSH 연결로 `file` 명령을 실행**(N회 왕복)하는 구조. 또한 331개 탐지결과가 한 화면에 나열되어 가독성이 떨어지고, 정렬·실행파일 전송 기능이 없었다.

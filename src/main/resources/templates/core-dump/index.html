@@ -258,7 +258,13 @@
 <div th:replace="~{fragments/banner :: banner}"></div>
 
 <div class="cd-topbar">
-    <span class="topbar-title">코어 파일 분석</span>
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title">코어 파일 분석</span>
+    </div>
+    <div class="topbar-right">
+        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+    </div>
 </div>
 
 <div class="cd-page">

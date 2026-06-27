@@ -140,7 +140,7 @@ public class HeapFileApiController {
             @PathVariable String filename,
             @RequestBody Map<String, String> body,
             Authentication authentication) {
-        filename = FilenameValidator.validate(filename);
+        filename = FilenameValidator.validateSafe(filename);
         String fileType = body.get("fileType");
         Set<String> allowed = Set.of("core", "exec", "heapdump", "others");
         if (fileType == null || !allowed.contains(fileType)) {
@@ -173,7 +173,7 @@ public class HeapFileApiController {
             @PathVariable String filename,
             @RequestBody Map<String, String> body,
             Authentication authentication) {
-        filename = FilenameValidator.validate(filename);
+        filename = FilenameValidator.validateSafe(filename);
         String execFilename = body.get("execFilename");
         String who = authentication != null ? authentication.getName() : "unknown";
         Map<String, Object> resp = new HashMap<>();
@@ -185,7 +185,7 @@ public class HeapFileApiController {
                 resp.put("status", "ok");
                 resp.put("action", "unpaired");
             } else {
-                execFilename = FilenameValidator.validate(execFilename.trim());
+                execFilename = FilenameValidator.validateSafe(execFilename.trim());
                 analyzerService.saveCoreExecPairing(filename, execFilename);
                 logger.info("[FilePair] action=pair core={} exec={} by={}", filename, execFilename, who);
                 // 코어파일이 코어덤프 디렉터리에 있고, 실행파일이 힙덤프 디렉터리에만 있으면 복사
@@ -208,7 +208,7 @@ public class HeapFileApiController {
     public ResponseEntity<Map<String, Object>> unpairCoreExec(
             @PathVariable String filename,
             Authentication authentication) {
-        filename = FilenameValidator.validate(filename);
+        filename = FilenameValidator.validateSafe(filename);
         String who = authentication != null ? authentication.getName() : "unknown";
         Map<String, Object> resp = new HashMap<>();
         try {

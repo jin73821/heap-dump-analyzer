@@ -29,6 +29,7 @@ public class AnalysisHistoryItem {
     private boolean hasExec;
     private String  pairedExecFilename;
     private boolean pairedExec;
+    private boolean fromCoreDir;
 
     public Long    getId()            { return id; }
     public void    setId(Long v)              { id = v; }
@@ -86,4 +87,6 @@ public class AnalysisHistoryItem {
     public void    setPairedExecFilename(String v){ pairedExecFilename = v; }
     public boolean isPairedExec()                 { return pairedExec; }
     public void    setPairedExec(boolean v)       { pairedExec = v; }
+    public boolean isFromCoreDir()                { return fromCoreDir; }
+    public void    setFromCoreDir(boolean v)      { fromCoreDir = v; }
 }

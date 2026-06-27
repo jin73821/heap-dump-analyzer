@@ -104,21 +104,22 @@
         .hi-badge { font-size: 10px; padding: 2px 7px; border-radius: 20px; font-weight: 500;
                     display: inline-block; margin-left: 6px; vertical-align: middle; }
         .hb-del { background: #F3F4F6; color: #6B7280; }
+        .td-file { white-space: nowrap; }
         .td-meta { font-size: 12px; color: #6B7280; white-space: nowrap; }
         .user-chip { display: inline-block; padding: 2px 8px; font-size: 11px; font-weight: 600;
                      border-radius: 10px; background: #EFF6FF; color: #2563EB; }
         .run-btn { display: inline-flex; align-items: center; gap: 4px;
                    padding: 5px 10px; font-size: 12px; font-weight: 600;
                    color: #2563EB; background: #EFF6FF; border: 1px solid #BFDBFE;
-                   border-radius: 6px; text-decoration: none; }
+                   border-radius: 6px; text-decoration: none; white-space: nowrap; }
         .run-btn:hover { background: #DBEAFE; border-color: #93C5FD; }
         .run-btn.disabled { color: #9CA3AF; background: #F3F4F6; border-color: #E5E7EB;
                             cursor: not-allowed; pointer-events: none; }
-        .row-actions { display: inline-flex; gap: 6px; align-items: center; }
+        .row-actions { display: inline-flex; gap: 6px; align-items: center; flex-shrink: 0; }
         .del-btn { display: inline-flex; align-items: center; gap: 4px;
                    padding: 5px 10px; font-size: 12px; font-weight: 600;
                    color: #DC2626; background: #FEF2F2; border: 1px solid #FECACA;
-                   border-radius: 6px; cursor: pointer; font-family: inherit; }
+                   border-radius: 6px; cursor: pointer; font-family: inherit; white-space: nowrap; }
         .del-btn:hover { background: #FEE2E2; border-color: #FCA5A5; }
         .del-btn:disabled, .del-btn.disabled { color: #9CA3AF; background: #F3F4F6;
                                                border-color: #E5E7EB; cursor: not-allowed; }
@@ -272,13 +273,13 @@
                              data-sort-date=${h.comparedAt}">
                     <td class="td-check"><input type="checkbox" class="row-check" th:value="${h.id}" onchange="onRowCheck()"></td>
                     <td class="td-seq" th:text="${h.id}">1</td>
-                    <td>
+                    <td class="td-file">
                         <span class="file-cell" th:classappend="${h.baseDeleted} ? 'deleted'"
                               th:title="${h.baseFilename}"
                               th:text="${h.baseFilename}">base.hprof</span>
                         <span th:if="${h.baseDeleted}" class="hi-badge hb-del">deleted</span>
                     </td>
-                    <td>
+                    <td class="td-file">
                         <span class="file-cell" th:classappend="${h.targetDeleted} ? 'deleted'"
                               th:title="${h.targetFilename}"
                               th:text="${h.targetFilename}">target.hprof</span>
