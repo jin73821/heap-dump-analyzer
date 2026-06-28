@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-05">
+    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
     <title>Login — Heap Dump Analyzer</title>
     <style>
         body { display: flex; align-items: center; justify-content: center; }
@@ -136,6 +136,7 @@
     <div th:if="${disabledMessage}" class="msg-disabled" th:text="${disabledMessage}"></div>
     <div th:if="${errorMessage}" class="msg-error" th:text="${errorMessage}"></div>
     <div th:if="${logoutMessage}" class="msg-info" th:text="${logoutMessage}"></div>
+    <div th:if="${expiredMessage}" class="msg-disabled" th:text="${expiredMessage}"></div>
 
     <form th:action="@{/login}" method="post" id="loginForm">
         <div class="form-group">
@@ -201,7 +202,7 @@
 (function () {
     try {
         if (window.history && window.history.replaceState
-                && (location.search.indexOf('error') >= 0 || location.search.indexOf('logout') >= 0)) {
+                && (location.search.indexOf('error') >= 0 || location.search.indexOf('logout') >= 0 || location.search.indexOf('expired') >= 0)) {
             window.history.replaceState({}, document.title, location.pathname);
         }
     } catch (e) { /* 구형 브라우저 무시 */ }

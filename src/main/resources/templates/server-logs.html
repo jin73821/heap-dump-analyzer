@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-05">
+    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
     <title>Transfer Logs — Heap Dump Analyzer</title>
     <style>
         /* topbar 는 anti-wrap 확장이 있어 인라인 유지 */
@@ -290,22 +290,15 @@
     <div class="date-filter-row" id="dateFilterRow">
         <div class="form-tit"><label for="dateStart">기간선택</label></div>
         <div class="form-conts calendar-conts">
-            <div class="calendar-input">
-                <input type="text" class="cal-text" id="dateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
-                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
+            <div class="calendar-range">
+                <input type="text" class="cal-text" id="dateStart" placeholder="시작일" readonly aria-label="시작일">
+                <span class="calendar-input-sep">~</span>
+                <input type="text" class="cal-text" id="dateEnd" placeholder="종료일" readonly aria-label="종료일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open()" aria-label="달력 열기">
                     <span class="sr-only">달력 열기</span>
                     <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
                 </button>
-                <div class="krds-calendar-area" id="calArea-start"></div>
-            </div>
-            <span class="calendar-input-sep">~</span>
-            <div class="calendar-input">
-                <input type="text" class="cal-text" id="dateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
-                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
-                    <span class="sr-only">달력 열기</span>
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
-                </button>
-                <div class="krds-calendar-area" id="calArea-end"></div>
+                <div class="krds-calendar-area" id="calArea"></div>
             </div>
             <button type="button" class="date-clear-btn-row" onclick="onCalendarClear()" title="기간 지우기">지우기</button>
         </div>
@@ -412,7 +405,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // 캘린더 위젯 부착 — onChange 에서 dateFrom/dateTo 파라미터 갱신 후 재조회
     Calendar.attach({
         startInputId: 'dateStart', endInputId: 'dateEnd',
-        startAreaId: 'calArea-start', endAreaId: 'calArea-end',
+        areaId: 'calArea',
         storageKey: 'logs',
         onChange: function(start, end) {
             _params.dateFrom = start ? toIsoDate(start) : '';

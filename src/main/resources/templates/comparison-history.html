@@ -6,12 +6,14 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-05">
+    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
     <title>Comparison History — Heap Dump Analyzer</title>
     <style>
         .container { max-width: 1800px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
-                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1),
+                                 padding-bottom .2s ease; }
+        body.action-bar-open .container { padding-bottom: 96px; }
         .page-hdr { display: flex; align-items: center; justify-content: space-between;
                     margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
         .page-ttl { font-size: 18px; font-weight: 700; }
@@ -211,22 +213,15 @@
     <div class="date-filter-row" id="dateFilterRow">
         <div class="form-tit"><label for="dateStart">기간선택</label></div>
         <div class="form-conts calendar-conts">
-            <div class="calendar-input">
-                <input type="text" class="cal-text" id="dateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
-                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
+            <div class="calendar-range">
+                <input type="text" class="cal-text" id="dateStart" placeholder="시작일" readonly aria-label="시작일">
+                <span class="calendar-input-sep">~</span>
+                <input type="text" class="cal-text" id="dateEnd" placeholder="종료일" readonly aria-label="종료일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open()" aria-label="달력 열기">
                     <span class="sr-only">달력 열기</span>
                     <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
                 </button>
-                <div class="krds-calendar-area" id="calArea-start"></div>
-            </div>
-            <span class="calendar-input-sep">~</span>
-            <div class="calendar-input">
-                <input type="text" class="cal-text" id="dateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
-                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
-                    <span class="sr-only">달력 열기</span>
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
-                </button>
-                <div class="krds-calendar-area" id="calArea-end"></div>
+                <div class="krds-calendar-area" id="calArea"></div>
             </div>
             <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()" title="기간 지우기">지우기</button>
         </div>
@@ -394,7 +389,7 @@ function initRows() {
     }
     Calendar.attach({
         startInputId: 'dateStart', endInputId: 'dateEnd',
-        startAreaId: 'calArea-start', endAreaId: 'calArea-end',
+        areaId: 'calArea',
         storageKey: 'cmpHistory',
         onChange: function() { applyFilter(); }
     });
@@ -553,6 +548,7 @@ function toggleSelectMode() {
         btn.classList.add('active');
         label.textContent = '선택 종료';
         bar.classList.add('show');
+        document.body.classList.add('action-bar-open');
         updateSelectionCount();
     } else {
         exitSelectMode();
@@ -565,6 +561,7 @@ function exitSelectMode() {
     document.getElementById('selectModeBtn').classList.remove('active');
     document.getElementById('selectModeBtnLabel').textContent = '선택';
     document.getElementById('selectActionBar').classList.remove('show');
+    document.body.classList.remove('action-bar-open');
     document.querySelectorAll('.row-check').forEach(function(c) { c.checked = false; });
     var all = document.getElementById('allCheck');
     if (all) { all.checked = false; all.indeterminate = false; }

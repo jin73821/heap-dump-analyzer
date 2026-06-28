@@ -6,7 +6,7 @@
 <!-- 공통 헬퍼 (window.Common) — 페이지 인라인 스크립트보다 먼저 로드 -->
 <script src="/js/common.js?v=2026-05-12"></script>
 <!-- KRDS 캘린더 위젯 (window.Calendar) — 기간 범위 선택용 공통 라이브러리 -->
-<script src="/js/calendar.js?v=2026-06-05"></script>
+<script src="/js/calendar.js?v=2026-06-28a"></script>
 
 <script>
 /* 렌더링 전 즉시 실행 — 접힌 상태 깜빡임 방지 */
@@ -276,7 +276,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         </div>
         <div class="gb-header-text">
             <div class="gb-header-title">Heap Dump Analyzer</div>
-            <div class="gb-header-sub">v2.1.9 · MAT CLI</div>
+            <div class="gb-header-sub">v2.2.0 · MAT CLI</div>
         </div>
     </a>
 
@@ -783,7 +783,14 @@ function getCacheAge() {
 
 /* API 호출 */
 function fetchBannerStatus(cb) {
-    fetch('/api/system/status').then(function(r) { return r.json(); }).then(function(d) {
+    fetch('/api/system/status').then(function(r) {
+        if (r.redirected && r.url.indexOf('/login') !== -1) {
+            location.href = '/login?expired=true';
+            return null;
+        }
+        return r.json();
+    }).then(function(d) {
+        if (!d) return;
         saveStatusCache(d);
         applyBannerStatus(d);
         if (cb) cb();

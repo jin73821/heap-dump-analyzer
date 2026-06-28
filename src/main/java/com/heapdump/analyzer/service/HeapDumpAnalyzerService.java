@@ -2125,7 +2125,10 @@ public class HeapDumpAnalyzerService {
     public HeapAnalysisResult getCachedResult(String filename) {
         String safe = new File(filename).getName();
         HeapAnalysisResult cached = resultCache.get(safe);
-        if (cached != null) return cached;
+        if (cached != null) {
+            syncGzFileSize(cached, safe);
+            return cached;
+        }
 
         File resultFile = resultJsonFile(safe);
         if (resultFile.exists()) {
@@ -2140,6 +2143,7 @@ public class HeapDumpAnalyzerService {
                     if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
                         sanitizeCachedHtml(r);
                     }
+                    syncGzFileSize(r, safe);
                     resultCache.put(safe, r);
                     return r;
                 }
@@ -2148,6 +2152,16 @@ public class HeapDumpAnalyzerService {
             }
         }
         return null;
+    }
+
+    /** gz 파일이 있고 아직 fileSize에 반영되지 않은 경우 originalFileSize/fileSize를 동기화. */
+    private void syncGzFileSize(HeapAnalysisResult r, String safe) {
+        if (r.getFileSize() <= 0) return;
+        File gzFile = new File(config.getDumpFilesDirectory(), safe + ".gz");
+        if (gzFile.exists() && r.getOriginalFileSize() <= r.getFileSize()) {
+            r.setOriginalFileSize(r.getFileSize());
+            r.setFileSize(gzFile.length());
+        }
     }
 
     public void clearCache(String filename) {

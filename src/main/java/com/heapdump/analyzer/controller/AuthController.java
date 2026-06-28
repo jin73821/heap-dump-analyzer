@@ -11,6 +11,7 @@ public class AuthController {
     @GetMapping("/login")
     public String loginPage(@RequestParam(value = "error", required = false) String error,
                             @RequestParam(value = "logout", required = false) String logout,
+                            @RequestParam(value = "expired", required = false) String expired,
                             Model model) {
         if ("disabled".equals(error)) {
             model.addAttribute("disabledMessage", "비활성화된 계정입니다. 관리자에게 문의하세요.");
@@ -19,6 +20,9 @@ public class AuthController {
         }
         if (logout != null) {
             model.addAttribute("logoutMessage", "로그아웃 되었습니다.");
+        }
+        if (expired != null) {
+            model.addAttribute("expiredMessage", "세션이 만료되어 자동으로 로그아웃 되었습니다. 다시 로그인해 주세요.");
         }
         return "login";
     }

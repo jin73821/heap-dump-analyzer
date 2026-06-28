@@ -1,6 +1,77 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-06-28] 개인 메모장 — 복사 / 새창에서 열기 버튼 추가
+
+**대상:** `account.html` (My Account 개인 메모장 카드)
+- **복사 버튼:** 메모 내용을 클립보드에 복사. `navigator.clipboard.writeText` 사용,
+  비보안(HTTP) 컨텍스트에서는 `execCommand('copy')` textarea 폴백으로 자동 전환(함정 #7 동일 원리).
+- **새창에서 열기 버튼:** `window.open` 으로 전폭 textarea 편집 창을 띄움(더 넓은 작업 공간).
+  - 입력 시 본문 `#memoBox` 와 즉시 동기화(창을 닫아도 내용 유지) + 바이트 카운터 표시.
+  - 저장은 신설 `saveMemoExternal()` → `saveMemoValue()` 경유로 본문과 동일한 `/api/account/memo`
+    POST 재사용(opener 의 CSRF/`Common.fetchJSON` 그대로 활용 — 팝업에 토큰 미주입).
+  - 팝업 차단 시 토스트 안내.
+- **리팩토링:** 기존 `saveMemo()` 의 저장 로직을 `saveMemoValue(v)` 로 추출해 본문/새창 공유.
+
+- 캘린더 단일 달력 범위 선택 개편 (KRDS), 하단 선택 바 겹침 수정, History deleted 숨김 정책 개선 등
+  2026-06-28 변경 사항을 묶어 마이너 버전 상향.
+- 변경 파일: `pom.xml`, `restart.sh`, `run.sh`, `stop.sh`, `fragments/banner.html`, `index.html`, `progress.html`
+
+
+## [2026-06-28] History / Files 페이지 하단 선택 바 겹침 수정
+
+**증상:** 선택 모드 진입 시 `position: fixed; bottom: 0` 선택 액션 바(높이 ~54px)가 테이블 마지막 행과 겹침.
+**원인:** `.container`의 `padding-bottom: 40px`이 바 높이보다 작아 바 뒤에 콘텐츠가 가려짐.
+**수정:**
+- `history.html`: 선택 모드 ON → `body.action-bar-open` 클래스 토글, `.container { padding-bottom: 96px }` 적용.
+  `padding-bottom` 에 `transition: .2s ease` 추가해 부드럽게 밀려남.
+- `files.html`: 동일 패턴 적용 (`body.has-select-bar .container { padding-bottom: 96px }` — 기존 모바일 전용이었던 규칙을 데스크톱에도 확장).
+
+
+## [2026-06-28] History 페이지 deleted 숨김 정책 개선
+
+**변경:** `deleted 표시` 토글 OFF 상태에서 덤프 파일이 삭제된 기록의 숨김 기준을 정밀화.
+
+- **이전:** `fileDeleted=true` 이면 분석 성공 여부와 무관하게 무조건 숨김
+- **변경 후:** `fileDeleted=true` **이고** 분석 상태가 `SUCCESS`가 아닌 경우(ERROR·미분석)만 숨김.
+  분석 완료(SUCCESS) 기록은 덤프가 삭제되어도 항상 표시 — 분석 결과 자체는 파일시스템에 유지되므로 조회 가능.
+
+**수정 파일:** `templates/history.html` `applyFilter()` 내 deleted 행 제외 조건 1라인.
+
+
+## [2026-06-28] 기간선택 캘린더 단일 달력 범위 선택으로 개편 (KRDS 패턴)
+
+**배경:** Files / History / Comparison History / Transfer Logs / 사용자 목록 5개 페이지의 기간선택 캘린더가
+시작일·종료일 **각각 별도 달력 2개**로 동작해, 한 범위를 고르려면 달력을 두 번 열어야 했다.
+KRDS Date Range 컴포넌트(`component_04_03`)를 참고해 **하나의 달력에서 시작·마감일을 모두 선택**하도록 통합.
+
+**1) `calendar.js` 전면 재작성 — 단일 달력 범위 선택기:**
+- 두 개의 `_state.start/end` + side 인자(`open('start'|'end')`) 구조를 폐기. 단일 팝업(`areaId`, 기본 `calArea`)에서
+  **committed(`_c`) ↔ draft(`_d`)** 2단계 상태로 동작. 열 때 확정값을 draft 로 복사, **확인** 시 commit + `onChange`,
+  **취소·바깥클릭·ESC** 시 draft 폐기(입력 표시 원복).
+- 날짜 클릭 선택 로직: 첫 클릭=시작일(종료일 초기화) → 둘째 클릭이 시작일 이후면 종료일·이전이면 시작일 재지정 →
+  둘 다 지정 상태에서 클릭 시 새 시작일로 리셋. 시작일만 지정 후 셀 hover 시 **범위 미리보기**(`paintRange` 경량 재칠).
+- 범위 강조는 `td.period`(사이) / `td.period.start` / `td.period.end` 클래스로 표현(KRDS 마크업 규약 동일).
+  확인 시 종료일 미선택이면 단일 일자(시작=종료)로 확정. 입력은 선택 도중 라이브 미리보기, 하단에 `시작일 ~ 종료일` 요약 표시.
+- 공개 API 유지: `attach({startInputId,endInputId,areaId,storageKey,onChange})` / `open()` / `clear()` / `getRange()` /
+  `close()`. localStorage 키(`<prefix>PeriodStart/End`)·검증(시작>종료 시 `.invalid`)·뷰포트 보정(`clampToViewport`) 유지.
+
+**2) `common.css` — 단일 범위 박스 + 연속 바 강조:**
+- `.calendar-input` 2박스 → `.calendar-range` **단일 박스**(시작일 input ~ 종료일 input + 달력 버튼, `:focus-within` 하이라이트).
+- 기간 강조를 **td 배경 연속 바**로: `.calendar-tbl td` 가로 패딩 0 으로 인접 셀 배경 맞닿음, 양 끝(`.start/.end`)은 둥근 솔리드 버튼.
+  `.calendar-selinfo`(선택 요약 라인) 신설. 모바일 미디어쿼리 `.calendar-input` → `.calendar-range` 갱신.
+
+**3) 5개 페이지 HTML 마크업 통일:** `files` / `history` / `comparison-history` / `server-logs` / `admin/users` —
+`calArea-start`·`calArea-end` 2영역 → 단일 `calArea`, `Calendar.open('start'|'end')` → `Calendar.open()`,
+`attach` 옵션 `startAreaId/endAreaId` → `areaId: 'calArea'`. 캐시 무효화: 전 페이지 `common.css`/`calendar.js` `?v=2026-06-28`.
+
+**검증:** 빌드 OK + 기동 13.0s. 5개 페이지 200 + 단일 `calendar-range`/`calArea` 마크업 확인. 헤드리스 Chrome 렌더로
+범위 선택(8~17일) 시 연속 바 + 양 끝 솔리드 원 + 입력/요약 라이브 반영 확인.
+
+**보완(`calendar.js?v=2026-06-28a`):** `오늘` 버튼이 "화면을 이번 달로 이동"만 해서 이미 이번 달을 보고 있으면 무동작처럼
+보이던 문제 → **오늘 날짜를 바로 선택**(셀 클릭과 동일 규칙: 시작일 지정/종료일 지정/리셋)하도록 변경. 누르면 항상 시각적 피드백.
+
+
 ## [2026-06-28] MAT 동시성 메모리 기반 동적 게이트 + lazy 분석 양보 + 대기 안내
 
 **배경:** 직전 변경의 precompute 양보는 "항상 분석에 양보"로 하드코딩이라, 고용량 호스트(예: 32GB)에서도

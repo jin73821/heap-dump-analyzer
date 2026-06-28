@@ -5,6 +5,7 @@ import com.heapdump.analyzer.repository.LoginHistoryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.event.AbstractAuthenticationFailureEvent;
 import org.springframework.security.authentication.event.InteractiveAuthenticationSuccessEvent;
@@ -71,6 +72,8 @@ public class AuthEventListener {
             String reason;
             if (ex instanceof DisabledException) {
                 reason = "비활성화된 계정";
+            } else if (ex instanceof BadCredentialsException) {
+                reason = "자격 증명에 실패하였습니다.";
             } else {
                 reason = ex != null ? ex.getMessage() : event.getClass().getSimpleName();
             }

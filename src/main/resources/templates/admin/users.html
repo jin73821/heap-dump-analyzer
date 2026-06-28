@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-05">
-    <script src="/js/calendar.js?v=2026-06-14"></script>
+    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <script src="/js/calendar.js?v=2026-06-28a"></script>
     <title>User Management — Heap Dump Analyzer</title>
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
@@ -38,8 +38,8 @@
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
         .table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
         /* .utable base/thead/td 색상·hover 는 common.css 에서 제공. padding/font-size 만 인라인 */
-        .utable th { padding: 12px 16px; font-size: 12px; }
-        .utable td { padding: 12px 16px; }
+        .utable th { padding: 10px 12px; font-size: 11px; }
+        .utable td { padding: 10px 12px; }
 
         .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600;
                  display: inline-block; white-space: nowrap; }
@@ -110,7 +110,7 @@
         .lh-btn:hover { background: #F9FAFB; }
 
         /* Status badges */
-        .badge-success { background: #D1FAE5; color: #065F46; }
+        .badge-success { background: #DBEAFE; color: #1E40AF; }
         .badge-failure { background: #FEE2E2; color: #991B1B; }
 
         /* Pagination */
@@ -172,8 +172,8 @@
         }
         @media (min-width: 1024px) {
             .utable { font-size: 15px; }
-            .utable th { font-size: 13px; padding: 14px 18px; }
-            .utable td { padding: 14px 18px; }
+            .utable th { font-size: 11px; padding: 10px 12px; }
+            .utable td { padding: 10px 12px; }
             .page-ttl { font-size: 20px; }
             .btn-primary { font-size: 14px; padding: 9px 18px; }
             .action-btn { font-size: 13px; padding: 6px 14px; }
@@ -219,22 +219,15 @@
             </select>
             <span style="width:1px;height:20px;background:#E5E7EB;flex-shrink:0;align-self:center"></span>
             <span style="font-size:12px;color:#6B7280;flex-shrink:0;white-space:nowrap">생성일</span>
-            <div class="calendar-input">
-                <input type="text" class="cal-text" id="userDateStart" placeholder="YYYY.MM.DD" readonly aria-label="시작일">
-                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('start')" aria-label="시작일 달력 열기">
+            <div class="calendar-range">
+                <input type="text" class="cal-text" id="userDateStart" placeholder="시작일" readonly aria-label="시작일">
+                <span class="calendar-input-sep">~</span>
+                <input type="text" class="cal-text" id="userDateEnd" placeholder="종료일" readonly aria-label="종료일">
+                <button type="button" class="form-btn-datepicker" onclick="Calendar.open()" aria-label="달력 열기">
                     <span class="sr-only">달력 열기</span>
                     <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
                 </button>
-                <div class="krds-calendar-area" id="calArea-start"></div>
-            </div>
-            <span class="calendar-input-sep">~</span>
-            <div class="calendar-input">
-                <input type="text" class="cal-text" id="userDateEnd" placeholder="YYYY.MM.DD" readonly aria-label="종료일">
-                <button type="button" class="form-btn-datepicker" onclick="Calendar.open('end')" aria-label="종료일 달력 열기">
-                    <span class="sr-only">달력 열기</span>
-                    <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
-                </button>
-                <div class="krds-calendar-area" id="calArea-end"></div>
+                <div class="krds-calendar-area" id="calArea"></div>
             </div>
             <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()">지우기</button>
             <button class="lh-btn" onclick="resetUserFilters()">초기화</button>
@@ -1082,8 +1075,7 @@ document.addEventListener('DOMContentLoaded', function() {
     Calendar.attach({
         startInputId: 'userDateStart',
         endInputId:   'userDateEnd',
-        startAreaId:  'calArea-start',
-        endAreaId:    'calArea-end',
+        areaId:       'calArea',
         storageKey:   'users',
         onChange:     function() { filterAndRenderUsers(); }
     });

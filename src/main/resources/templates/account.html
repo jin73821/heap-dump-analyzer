@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-27">
+    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
     <title>My Account — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }
@@ -84,6 +84,13 @@
         }
         .memo-font-select:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
         .memo-font-preview { font-size: 11px; color: #9CA3AF; }
+        .memo-tool-group { margin-left: auto; display: flex; gap: 6px; }
+        .memo-tool-btn { padding: 4px 11px; font-size: 11px; font-weight: 600;
+                         border: 1px solid #D1D5DB; border-radius: 6px; background: #fff;
+                         color: #374151; cursor: pointer; font-family: inherit; line-height: 1.5;
+                         display: inline-flex; align-items: center; gap: 5px; }
+        .memo-tool-btn:hover { background: #F3F4F6; border-color: #9CA3AF; }
+        .memo-tool-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; }
 
         /* Modal 변형 (common.css 의 .modal-ov/.modal-box base 를 채움) */
         .modal-box { max-width: 380px; width: 90%; text-align: center; }
@@ -192,6 +199,16 @@
                 <option value="system">시스템 기본</option>
             </select>
             <span class="memo-font-preview" id="memoFontPreview">한글 ABC 123</span>
+            <span class="memo-tool-group">
+                <button type="button" class="memo-tool-btn" onclick="copyMemo()" title="메모 내용을 클립보드에 복사">
+                    <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    복사
+                </button>
+                <button type="button" class="memo-tool-btn" onclick="openMemoWindow()" title="더 넓은 새 창에서 메모장 열기">
+                    <svg viewBox="0 0 24 24"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    새창에서 열기
+                </button>
+            </span>
         </div>
         <textarea id="memoBox" class="memo-area"
                   placeholder="자유 메모… 본인만 볼 수 있습니다."
@@ -361,22 +378,28 @@ function updateMemoCount() {
     el.classList.toggle('warn', n > MEMO_MAX);
 }
 
+/* 실제 저장 (값 → API). 메인 저장 버튼과 새창 모두 공유. */
+function saveMemoValue(v) {
+    if (utf8ByteLen(v) > MEMO_MAX) {
+        return Promise.reject(new Error('메모는 최대 10MB까지 저장할 수 있습니다.'));
+    }
+    return Common.fetchJSON('/api/account/memo', {
+        method: 'POST',
+        body: JSON.stringify({ memo: v })
+    }).then(function(d) {
+        document.getElementById('memoUpdatedAt').textContent = formatTs(d.memoUpdatedAt) || '—';
+        return d;
+    });
+}
+
 function saveMemo() {
     var v = document.getElementById('memoBox').value;
     var msg = document.getElementById('memoMsg');
     msg.textContent = '';
     msg.className = 'form-err';
-    if (utf8ByteLen(v) > MEMO_MAX) {
-        msg.textContent = '메모는 최대 10MB까지 저장할 수 있습니다.';
-        return;
-    }
     var btn = document.getElementById('btnSaveMemo');
     btn.disabled = true; btn.textContent = '저장 중...';
-    Common.fetchJSON('/api/account/memo', {
-        method: 'POST',
-        body: JSON.stringify({ memo: v })
-    }).then(function(d) {
-        document.getElementById('memoUpdatedAt').textContent = formatTs(d.memoUpdatedAt) || '—';
+    saveMemoValue(v).then(function() {
         msg.className = 'form-ok';
         msg.textContent = '메모가 저장되었습니다.';
         toast('메모가 저장되었습니다.', 'ok');
@@ -385,6 +408,174 @@ function saveMemo() {
     }).finally(function() {
         btn.disabled = false; btn.textContent = '저장';
     });
+}
+
+/* 새창에서 호출 — 본문 textarea 동기화 후 저장 */
+window.saveMemoExternal = function(v) {
+    var box = document.getElementById('memoBox');
+    box.value = v;
+    updateMemoCount();
+    return saveMemoValue(v).then(function(d) {
+        toast('메모가 저장되었습니다.', 'ok');
+        return d;
+    });
+};
+
+/* ── 복사 ──────────────────────────────────── */
+function legacyCopy(text) {
+    try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed'; ta.style.top = '0'; ta.style.left = '0'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus(); ta.select();
+        var ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+    } catch (e) { return false; }
+}
+
+function copyMemo() {
+    var v = document.getElementById('memoBox').value;
+    if (!v) { toast('복사할 내용이 없습니다.', 'err'); return; }
+    var ok = function() { toast('메모를 클립보드에 복사했습니다.', 'ok'); };
+    var fail = function() { toast('복사에 실패했습니다.', 'err'); };
+    // navigator.clipboard 는 HTTPS/localhost 에서만 동작 → 실패 시 execCommand 폴백
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(v).then(ok).catch(function() {
+            if (legacyCopy(v)) ok(); else fail();
+        });
+    } else {
+        if (legacyCopy(v)) ok(); else fail();
+    }
+}
+
+/* ── 새창에서 열기 ─────────────────────────── */
+function openMemoWindow() {
+    var box = document.getElementById('memoBox');
+    var fontSel = document.getElementById('memoFontSelect');
+    var fontVal = fontSel ? fontSel.value : 'd2coding';
+    var ff = MEMO_FONT_MAP[fontVal] || MEMO_FONT_MAP['d2coding'];
+
+    var w = window.open('', 'memoEditorWindow', 'width=960,height=760,resizable=yes,scrollbars=yes');
+    if (!w) { toast('팝업이 차단되었습니다. 팝업을 허용한 뒤 다시 시도하세요.', 'err'); return; }
+
+    // 본문 폰트 select 의 옵션을 그대로 복제 (DRY)
+    var optsHtml = '';
+    if (fontSel) {
+        for (var i = 0; i < fontSel.options.length; i++) {
+            var o = fontSel.options[i];
+            optsHtml += '<option value="' + o.value + '"' + (o.value === fontVal ? ' selected' : '') + '>' +
+                        Common.escHtml(o.text) + '</option>';
+        }
+    }
+
+    var html =
+        '<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">' +
+        '<title>개인 메모장</title>' +
+        '<link rel="stylesheet" href="/css/common.css?v=2026-06-28">' +  // @font-face (D2Coding 등) 로드
+        '<style>' +
+        '*{box-sizing:border-box}' +
+        'html,body{height:100%;margin:0}' +
+        'body{display:flex;flex-direction:column;background:#F3F4F6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}' +
+        '.bar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff;border-bottom:1px solid #E5E7EB;flex:0 0 auto}' +
+        '.bar .title{font-size:13px;font-weight:700;color:#374151;display:flex;align-items:center;gap:6px}' +
+        '.bar .spacer{flex:1 1 auto}' +
+        '.bar .meta{font-size:11px;color:#9CA3AF}' +
+        '.bar .meta.warn{color:#DC2626;font-weight:600}' +
+        '.bar button{padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #D1D5DB;border-radius:6px;background:#fff;color:#374151;cursor:pointer}' +
+        '.bar button:hover{background:#F3F4F6;border-color:#9CA3AF}' +
+        '.bar button.primary{background:#2563EB;border-color:#2563EB;color:#fff}' +
+        '.bar button.primary:hover{background:#1D4ED8}' +
+        '.bar button:disabled{opacity:.6;cursor:default}' +
+        '.status{font-size:11px;color:#6B7280;min-width:80px;text-align:right}' +
+        '.bar .flabel{font-size:11px;color:#6B7280;white-space:nowrap}' +
+        '.bar select{padding:5px 8px;font-size:12px;color:#374151;border:1px solid #D1D5DB;border-radius:6px;background:#fff;cursor:pointer}' +
+        'textarea{flex:1 1 auto;width:100%;border:none;outline:none;resize:none;padding:18px 22px;' +
+        'font-size:14px;line-height:1.7;color:#1F2937;background:#fff}' +
+        '</style></head><body>' +
+        '<div class="bar">' +
+        '<span class="title">개인 메모장</span>' +
+        '<span class="spacer"></span>' +
+        '<span class="flabel">폰트</span>' +
+        '<select id="fsel">' + optsHtml + '</select>' +
+        '<span class="meta" id="cnt">0</span>' +
+        '<span class="status" id="st"></span>' +
+        '<button id="copyBtn" type="button">복사</button>' +
+        '<button id="saveBtn" class="primary" type="button">저장</button>' +
+        '</div>' +
+        '<textarea id="m" spellcheck="false" placeholder="자유 메모… 본인만 볼 수 있습니다."></textarea>' +
+        '</body></html>';
+
+    w.document.open();
+    w.document.write(html);
+    w.document.close();
+
+    var ta = w.document.getElementById('m');
+    var cnt = w.document.getElementById('cnt');
+    var st = w.document.getElementById('st');
+    var saveBtn = w.document.getElementById('saveBtn');
+    var copyBtn = w.document.getElementById('copyBtn');
+    var fsel = w.document.getElementById('fsel');
+
+    ta.value = box.value;
+    ta.style.fontFamily = ff;
+
+    // 폰트 변경 → 새창 textarea 적용 + 본문/localStorage 동기화
+    if (fsel) {
+        fsel.onchange = function() {
+            var val = fsel.value;
+            ta.style.fontFamily = MEMO_FONT_MAP[val] || MEMO_FONT_MAP['d2coding'];
+            if (fontSel) fontSel.value = val;
+            applyMemoFont(val);
+        };
+    }
+
+    function refreshCnt() {
+        var n = utf8ByteLen(ta.value);
+        cnt.textContent = fmtBytes(n) + ' / 10 MB';
+        cnt.className = 'meta' + (n > MEMO_MAX ? ' warn' : '');
+    }
+    refreshCnt();
+
+    // 입력 시 본문과 즉시 동기화 (창을 닫아도 내용 유지)
+    ta.oninput = function() {
+        box.value = ta.value;
+        updateMemoCount();
+        refreshCnt();
+        st.textContent = '미저장';
+    };
+
+    saveBtn.onclick = function() {
+        saveBtn.disabled = true; saveBtn.textContent = '저장 중...';
+        st.textContent = '';
+        window.saveMemoExternal(ta.value).then(function() {
+            st.textContent = '저장됨';
+        }).catch(function(e) {
+            st.textContent = (e && e.message) || '저장 실패';
+        }).finally(function() {
+            saveBtn.disabled = false; saveBtn.textContent = '저장';
+        });
+    };
+
+    copyBtn.onclick = function() {
+        var v = ta.value;
+        if (!v) { st.textContent = '내용 없음'; return; }
+        var done = function() { st.textContent = '복사됨'; };
+        // 새창 자체 컨텍스트의 clipboard / execCommand 사용
+        if (w.navigator.clipboard && w.navigator.clipboard.writeText) {
+            w.navigator.clipboard.writeText(v).then(done).catch(function() {
+                ta.focus(); ta.select();
+                st.textContent = w.document.execCommand('copy') ? '복사됨' : '복사 실패';
+            });
+        } else {
+            ta.focus(); ta.select();
+            st.textContent = w.document.execCommand('copy') ? '복사됨' : '복사 실패';
+        }
+    };
+
+    w.focus();
+    ta.focus();
 }
 
 function openClearMemoModal()  { document.getElementById('clearMemoModal').classList.add('open'); }

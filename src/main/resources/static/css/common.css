@@ -920,23 +920,29 @@ body {
 .date-filter-row .form-tit { font-size: 12px; font-weight: 600; color: #374151; min-width: 60px; }
 .date-filter-row .form-tit label { cursor: default; }
 .calendar-conts { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; flex-wrap: wrap; }
-.calendar-input { position: relative; display: inline-flex; align-items: center; }
-.cal-text {
-    padding: 7px 36px 7px 10px; font-size: 13px; width: 130px;
-    border: 1px solid #E5E7EB; border-radius: 8px; background: #fff;
-    color: #374151; outline: none; font-family: inherit; cursor: pointer;
+/* 단일 달력 기간 박스: 시작일 ~ 종료일 + 달력 버튼을 한 박스에 묶고 팝업을 그 아래 앵커 */
+.calendar-range {
+    position: relative; display: inline-flex; align-items: center; gap: 2px;
+    border: 1px solid #E5E7EB; border-radius: 8px; background: #fff; padding: 0 4px 0 2px;
 }
-.cal-text:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
-.cal-text.invalid { border-color: #FCA5A5; background: #FEF2F2; }
+.calendar-range:focus-within { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+.calendar-range.invalid { border-color: #FCA5A5; background: #FEF2F2; }
+.cal-text {
+    padding: 7px 6px; font-size: 13px; width: 96px; text-align: center;
+    border: none; background: transparent; color: #374151; outline: none;
+    font-family: inherit; cursor: pointer; box-shadow: none;
+}
+.cal-text::placeholder { color: #9CA3AF; }
+.cal-text:focus { box-shadow: none; }
 .form-btn-datepicker {
-    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+    position: static; transform: none; flex-shrink: 0;
     width: 26px; height: 26px; padding: 0; border: none; background: transparent;
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     border-radius: 5px;
 }
 .form-btn-datepicker:hover { background: #F3F4F6; }
 .form-btn-datepicker svg { width: 14px; height: 14px; stroke: #6B7280; fill: none; stroke-width: 1.6; }
-.calendar-input-sep { color: #9CA3AF; font-size: 13px; padding: 0 2px; }
+.calendar-input-sep { color: #9CA3AF; font-size: 13px; padding: 0; flex-shrink: 0; }
 .date-clear-btn-row {
     padding: 7px 12px; font-size: 12px; color: #6B7280; background: #fff;
     border: 1px solid #E5E7EB; border-radius: 7px; cursor: pointer;
@@ -993,7 +999,8 @@ body {
 .calendar-tbl { width: 100%; border-collapse: collapse; }
 .calendar-tbl caption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
 .calendar-tbl th { font-size: 11px; font-weight: 500; color: #6B7280; padding: 6px 0; text-align: center; }
-.calendar-tbl td { padding: 2px; text-align: center; }
+/* 가로 패딩 0 → 인접 셀 배경이 맞닿아 기간 강조가 끊김 없는 연속 바로 보임 */
+.calendar-tbl td { padding: 2px 0; text-align: center; }
 .btn-set-date {
     width: 32px; height: 32px; border: 1px solid transparent; background: transparent;
     cursor: pointer; border-radius: 6px; color: #1F2937; font-size: 12px; padding: 0; line-height: 1;
@@ -1003,11 +1010,29 @@ body {
 .calendar-tbl td.old .btn-set-date, .calendar-tbl td.new .btn-set-date { color: #D1D5DB; }
 .calendar-tbl td.day-off .btn-set-date { color: #DC2626; }
 .calendar-tbl td.today .btn-set-date { border-color: #93C5FD; }
-.calendar-tbl td.period .btn-set-date { background: #DBEAFE; color: #1E40AF; border-radius: 0; }
+/* 기간 강조: 사이 셀은 td 배경으로 연속 바, 양 끝은 둥근 솔리드 버튼 */
+.calendar-tbl td.period { background: #DBEAFE; }
+.calendar-tbl td.period .btn-set-date { color: #1E40AF; }
+.calendar-tbl td.period.start { border-top-left-radius: 16px; border-bottom-left-radius: 16px; }
+.calendar-tbl td.period.end { border-top-right-radius: 16px; border-bottom-right-radius: 16px; }
+.calendar-tbl td.period.start.end { background: transparent; }
 .calendar-tbl td.period.start .btn-set-date,
 .calendar-tbl td.period.end .btn-set-date {
-    background: #2563EB; color: #fff; border-radius: 6px; border-color: #2563EB;
+    background: #2563EB; color: #fff; border-radius: 50%; border-color: #2563EB;
 }
+.calendar-tbl td.period.start .btn-set-date:hover,
+.calendar-tbl td.period.end .btn-set-date:hover { background: #1D4ED8; }
+/* 선택 요약(시작일 ~ 종료일) 라인 */
+.calendar-selinfo {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    margin: 8px 0 2px; font-size: 12px;
+}
+.calendar-selinfo .seg {
+    min-width: 80px; text-align: center; padding: 4px 8px; border-radius: 6px;
+    background: #F3F4F6; color: #9CA3AF;
+}
+.calendar-selinfo .seg.on { background: #EFF6FF; color: #1E40AF; font-weight: 600; }
+.calendar-selinfo .sep { color: #9CA3AF; }
 .calendar-footer { display: flex; justify-content: flex-end; padding-top: 8px; border-top: 1px solid #F3F4F6; }
 .calendar-btn-wrap { display: flex; gap: 6px; }
 .krds-btn {
@@ -1025,8 +1050,8 @@ body {
     .date-filter-row { padding: 10px; gap: 8px; }
     .date-filter-row .form-tit { flex: 1 1 100%; }
     .calendar-conts { width: 100%; }
-    .calendar-input { flex: 1 1 0; min-width: 0; }
-    .cal-text { width: 100%; }
+    .calendar-range { flex: 1 1 auto; min-width: 0; }
+    .cal-text { width: 100%; min-width: 0; }
     /* .calendar-wrap 폭 축소 금지: 테이블 최소 폭(버튼 32px×7 + td padding = 252px + wrap padding 24 + border 2 = 278px)
        미만으로 줄이면 토요일 열이 우측으로 넘친다. 위치는 calendar.js clampToViewport 가 보정 (280px, ≥320px 뷰포트 안전). */
 }
