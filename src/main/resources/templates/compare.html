@@ -317,31 +317,18 @@
         /* ── Comparison redesign system ───────────────── */
         body {
             min-height: 100vh;
-            background:
-                radial-gradient(ellipse 70% 60% at 18% 0%, rgba(37, 99, 235, .11), transparent 70%),
-                radial-gradient(ellipse 65% 55% at 92% 12%, rgba(99, 102, 241, .10), transparent 72%),
-                radial-gradient(ellipse 80% 55% at 50% 100%, rgba(165, 180, 252, .09), transparent 75%),
-                linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%);
-            background-attachment: fixed;
+            background: #F3F4F6;
         }
         .main { padding-top: 28px; padding-bottom: 42px; }
         .panel {
-            border-radius: 18px; border-color: rgba(226, 232, 240, .95);
-            box-shadow: 0 18px 45px rgba(15, 23, 42, .06);
+            border-radius: 10px; border-color: #E5E7EB;
         }
         .panel-title { border-bottom-color: #EEF2F7; }
         .cmp-hero {
             position: relative; overflow: hidden;
-            border: 1px solid rgba(191, 219, 254, .85);
-            border-radius: 24px; padding: 26px; margin-bottom: 18px;
-            background:
-                linear-gradient(135deg, rgba(239, 246, 255, .98), rgba(238, 242, 255, .92) 55%, rgba(255,255,255,.96)),
-                #fff;
-            box-shadow: 0 24px 60px rgba(37, 99, 235, .10);
-        }
-        .cmp-hero::after {
-            content: ''; position: absolute; right: -90px; top: -90px; width: 260px; height: 260px;
-            background: radial-gradient(circle, rgba(37,99,235,.14), transparent 68%);
+            border: 1px solid #E5E7EB;
+            border-radius: 10px; padding: 20px; margin-bottom: 16px;
+            background: #fff;
         }
         .cmp-hero-content { position: relative; z-index: 1; display: flex; justify-content: space-between; gap: 22px; align-items: flex-start; flex-wrap: wrap; }
         .cmp-eyebrow { font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #2563EB; margin-bottom: 8px; }
@@ -542,7 +529,7 @@
             .kpi-grid { grid-template-columns: repeat(2, 1fr); }
         }
         @media (max-width: 700px) {
-            .cmp-hero { padding: 18px 16px; border-radius: 16px; margin-bottom: 12px; }
+            .cmp-hero { padding: 16px; border-radius: 10px; margin-bottom: 12px; }
             .cmp-hero h1 { font-size: 20px; }
             .cmp-hero p { font-size: 12px; line-height: 1.5; }
             .cmp-picker-grid { grid-template-columns: 1fr; }
@@ -1065,8 +1052,6 @@
                     <p>분석 완료된 두 개의 힙 덤프를 선택하면 핵심 지표, 클래스별 메모리 변화, 누수 의심 항목과 AI 인사이트를 비교 화면으로 정리합니다.</p>
                 </div>
                 <div class="cmp-hero-actions">
-                    <span class="cmp-status-chip warning">분석 전</span>
-                    <a href="/history" class="cmp-action-secondary">분석 이력 보기</a>
                     <a href="/comparison-history" class="cmp-action-primary">비교 이력</a>
                 </div>
             </div>

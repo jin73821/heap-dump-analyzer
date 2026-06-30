@@ -1,6 +1,62 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-06-30] MAT 파싱 속도 회귀(5분→17분) 진단 계측 추가 (B-3)
+
+**대상:** `service/HeapDumpAnalyzerService.java`
+
+**배경:** 사내망 운영에서 8GB 힙덤프 MAT 파싱이 기존 5분 이내 → 17분으로 증가. `78f2898`(MAT 동적 동시성 게이트 + DomRefs precompute) 배포 이후 발생. 파싱 커맨드·MAT `-Xmx`·keep_unreachable·GC 플래그는 변경되지 않았으므로(diff 전수 확인), 원인은 파싱 알고리즘이 아니라 **자원(메모리/IO) 경합** — 새로 도입된 precompute MAT 가 분석 MAT 와 동시 실행(동시 한도 N≥2)되며 물리 RAM 초과 → 스왑/thrashing 으로 추정.
+
+**변경(진단 계측만 — 동작 불변):** `runMatCliWithProgress` 가 그동안 `[Analysis] Done ... in {}ms` 단일 합산값(큐대기+copy+MAT+parse)만 남겨 "파싱이 느림"의 실제 원인을 구분 못 했던 문제를 해소:
+- `matSlots.acquire()` 전후 타임스탬프로 **슬롯 대기 시간 vs MAT 서브프로세스 실제 wall time** 분리 로깅: `[MAT CLI] 파싱 분리 측정 — 슬롯 대기={}ms, MAT 서브프로세스={}ms, ...`.
+- MAT spawn 직전/종료 후 **호스트 가용 메모리(MemAvailable)** + 현재 동시 한도/가용 슬롯 INFO 기록(`hostAvailableRamMb()` 신규 헬퍼) → 스왑/thrashing 여부 즉시 판별.
+
+**후속(운영 확인 후):** 동시 한도 N 확인(`[MAT Concurrency]` 로그), 경합 확정 시 `mat.max-concurrent-processes=1` 로 구 동작 복원(B-1), 이후 `computeMaxConcurrentMat` 보수화 + precompute 분석중 양보(B-2). 상세는 플랜 파일 참조.
+
+
+## [2026-06-28] 코어 파일 분석 페이지 — 좌측 "서버 코어 파일" 패널 고도화
+
+**대상:** `core-dump/index.html`, `static/css/core-dump.css`, `static/js/core-dump-index.js`
+
+좌측 사이드바 패널(`.cd-file-panel`, 300px)을 위치는 유지한 채 내부 재디자인:
+- **한줄 리스트화:** 기존 2줄 카드(파일명 / 크기·상태·EXEC)를 grip + 파일명(ellipsis) + 크기 + 상태배지 + EXEC를
+  한 줄에 배치(`.cd-file-info` 래퍼 제거, `.cd-file-name` 에 `flex:1` 부여).
+- **상태 필터 추가:** `상태: 전체/완료(SUCCESS)/실패(ERROR)/미분석(NOT_ANALYZED)` 셀렉트. 아이템에 `data-status` 추가.
+- **유형 필터 추가:** `유형: 전체/실행파일 있음/실행파일 없음` — 기존 `data-exec`(EXEC 페어링 유무)로 필터(백엔드 무변경).
+- **상태 배지 솔리드 채움(`core-dump.css`):** 점+연한배경 → 배경 채움 + 흰 글씨(완료 초록/실패 빨강/미분석 회색/분석중 파랑+흰 스피너).
+  좌측 패널·우측 분석 이력 공유 클래스라 양쪽 동시 적용.
+- **페이지네이션:** 페이지당 20개 + 슬라이딩 윈도우(`‹ 1 … N ›` + "1–20 / 전체 N"). 20개 이하면 숨김.
+  `history.html` 패턴 축소판. 검색 전용 `applyFileFilter` → 검색+상태+유형 필터 + 페이지네이션 엔진으로 교체.
+- 헤더 카운트(`#cdFileCount`)는 현재 필터 결과 개수로 갱신. 클릭 preload·드래그는 전체 아이템 1회 바인딩 유지(페이지네이션은 display 토글).
+
+
+## [2026-06-28] 개인 메모장 — 모바일 복사/새창 버튼 최적화
+
+**대상:** `account.html` (`@media (max-width:640px)`)
+- 메모 폰트 바가 한 줄에 폰트 라벨·셀렉트·미리보기·복사/새창 버튼을 모두 담아 모바일에서 넘침/어색한 줄바꿈 발생.
+- 모바일 레이아웃: 폰트 셀렉트 `flex:1` 로 1줄 채움 → 미리보기(한글 ABC 123) 숨김 →
+  복사/새창 버튼은 `flex-basis:100%` 로 둘째 줄 전폭 50:50 배치 + `min-height:42px` 터치 타깃 확대.
+
+
+## [2026-06-28] Comparison 페이지 — hero 배경 통일 + 불필요 액션 제거
+
+**대상:** `compare.html`
+- **배경 통일:** `body` 에 걸려 있던 파란 그라데이션 배경(radial 3겹 + `#F8FAFC→#EEF2FF` linear, `background-attachment:fixed`)을
+  다른 페이지와 동일한 단색 `#F3F4F6` 로 변경(페이지 전체가 파랗게 보이던 주원인). `.panel` override 도
+  18px 라운드 + 강한 그림자 → 표준 10px 라운드 + `#E5E7EB` 테두리(그림자 제거).
+- **hero 통일:** `.cmp-hero` 의 파란 그라데이션 배경 + 24px 라운드 + 블루 그림자 + 우상단 radial 장식을
+  표준 카드 디자인(`#fff` / `1px solid #E5E7EB` / `10px`)으로 변경. picker·result 공용 클래스라 양쪽 동시 통일. 모바일 라운드 16px→10px.
+- **불필요 요소 제거:** picker 화면 hero 의 `분석 전` 상태 칩 + `분석 이력 보기` 버튼 삭제(`비교 이력` 버튼만 유지).
+
+
+## [2026-06-28] 개인 메모장 — 메인 메모 영역 미저장 표시 추가
+
+**대상:** `account.html`
+- 메모 textarea 입력 시 저장 시각 옆에 **● 미저장** 인디케이터(주황색) 표시.
+- 저장(`saveMemo`) · 새창 저장(`saveMemoExternal`) · 초기화(`confirmClearMemo`) 성공 시 인디케이터 자동 해제.
+- 새창(팝업)에서 저장하면 메인 창의 미저장 표시도 함께 해제.
+
+
 ## [2026-06-28] 개인 메모장 — 복사 / 새창에서 열기 버튼 추가
 
 **대상:** `account.html` (My Account 개인 메모장 카드)

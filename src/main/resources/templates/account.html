@@ -127,6 +127,14 @@
         @media (max-width: 640px) {
             .container { padding: 60px 14px 32px; }
             .info-dl { grid-template-columns: 90px 1fr; column-gap: 10px; font-size: 12px; }
+            /* 메모장 폰트 바: 1줄 = 폰트 선택, 2줄 = 복사/새창 버튼(전폭 50:50, 터치 타깃 확대) */
+            .memo-font-bar { flex-wrap: wrap; gap: 8px; }
+            .memo-font-select { flex: 1 1 auto; min-width: 0; }
+            .memo-font-preview { display: none; }
+            .memo-tool-group { flex-basis: 100%; margin-left: 0; gap: 8px; }
+            .memo-tool-btn { flex: 1; justify-content: center; padding: 10px 8px;
+                             font-size: 12px; min-height: 42px; }
+            .memo-tool-btn svg { width: 14px; height: 14px; }
         }
     </style>
 </head>
@@ -214,12 +222,13 @@
                   placeholder="자유 메모… 본인만 볼 수 있습니다."
                   spellcheck="false"
                   th:text="${user.memo}"
-                  oninput="updateMemoCount()"></textarea>
+                  oninput="updateMemoCount(); markMemoDirty()"></textarea>
         <div class="memo-meta">
             <span>
                 저장 시각:
                 <strong id="memoUpdatedAt"
                         th:text="${user.memoUpdatedAt != null} ? ${#temporals.format(user.memoUpdatedAt, 'yyyy-MM-dd HH:mm')} : '—'">—</strong>
+                <span id="memoDirty" style="display:none;color:#D97706;font-size:11px;font-weight:600;margin-left:8px">● 미저장</span>
             </span>
             <span>
                 <span id="memoCount" class="memo-count">0</span> / 10 MB <span style="color:#D1D5DB">(UTF-8 byte)</span>
@@ -360,6 +369,15 @@ function applyMemoFont(val) {
 /* ── 메모장 ────────────────────────────────── */
 var MEMO_MAX = 10 * 1024 * 1024;  // 10 MB (UTF-8 byte)
 
+function markMemoDirty() {
+    var el = document.getElementById('memoDirty');
+    if (el) el.style.display = '';
+}
+function clearMemoDirty() {
+    var el = document.getElementById('memoDirty');
+    if (el) el.style.display = 'none';
+}
+
 function utf8ByteLen(str) {
     return new Blob([str]).size;
 }
@@ -403,6 +421,7 @@ function saveMemo() {
         msg.className = 'form-ok';
         msg.textContent = '메모가 저장되었습니다.';
         toast('메모가 저장되었습니다.', 'ok');
+        clearMemoDirty();
     }).catch(function(e) {
         msg.textContent = extractErrorMessage(e) || '메모 저장에 실패했습니다.';
     }).finally(function() {
@@ -417,6 +436,7 @@ window.saveMemoExternal = function(v) {
     updateMemoCount();
     return saveMemoValue(v).then(function(d) {
         toast('메모가 저장되었습니다.', 'ok');
+        clearMemoDirty();
         return d;
     });
 };
@@ -489,6 +509,7 @@ function openMemoWindow() {
         '.bar button.primary:hover{background:#1D4ED8}' +
         '.bar button:disabled{opacity:.6;cursor:default}' +
         '.status{font-size:11px;color:#6B7280;min-width:80px;text-align:right}' +
+        '.status.unsaved{color:#D97706;font-weight:600}' +
         '.bar .flabel{font-size:11px;color:#6B7280;white-space:nowrap}' +
         '.bar select{padding:5px 8px;font-size:12px;color:#374151;border:1px solid #D1D5DB;border-radius:6px;background:#fff;cursor:pointer}' +
         'textarea{flex:1 1 auto;width:100%;border:none;outline:none;resize:none;padding:18px 22px;' +
@@ -543,16 +564,16 @@ function openMemoWindow() {
         box.value = ta.value;
         updateMemoCount();
         refreshCnt();
-        st.textContent = '미저장';
+        st.className = 'status unsaved'; st.textContent = '● 미저장';
     };
 
     saveBtn.onclick = function() {
         saveBtn.disabled = true; saveBtn.textContent = '저장 중...';
-        st.textContent = '';
+        st.className = 'status'; st.textContent = '';
         window.saveMemoExternal(ta.value).then(function() {
-            st.textContent = '저장됨';
+            st.className = 'status'; st.textContent = '저장됨';
         }).catch(function(e) {
-            st.textContent = (e && e.message) || '저장 실패';
+            st.className = 'status'; st.textContent = (e && e.message) || '저장 실패';
         }).finally(function() {
             saveBtn.disabled = false; saveBtn.textContent = '저장';
         });
@@ -560,17 +581,17 @@ function openMemoWindow() {
 
     copyBtn.onclick = function() {
         var v = ta.value;
-        if (!v) { st.textContent = '내용 없음'; return; }
-        var done = function() { st.textContent = '복사됨'; };
+        if (!v) { st.className = 'status'; st.textContent = '내용 없음'; return; }
+        var done = function() { st.className = 'status'; st.textContent = '복사됨'; };
         // 새창 자체 컨텍스트의 clipboard / execCommand 사용
         if (w.navigator.clipboard && w.navigator.clipboard.writeText) {
             w.navigator.clipboard.writeText(v).then(done).catch(function() {
                 ta.focus(); ta.select();
-                st.textContent = w.document.execCommand('copy') ? '복사됨' : '복사 실패';
+                st.className = 'status'; st.textContent = w.document.execCommand('copy') ? '복사됨' : '복사 실패';
             });
         } else {
             ta.focus(); ta.select();
-            st.textContent = w.document.execCommand('copy') ? '복사됨' : '복사 실패';
+            st.className = 'status'; st.textContent = w.document.execCommand('copy') ? '복사됨' : '복사 실패';
         }
     };
 
@@ -587,6 +608,7 @@ function confirmClearMemo() {
         document.getElementById('memoBox').value = '';
         document.getElementById('memoUpdatedAt').textContent = '—';
         updateMemoCount();
+        clearMemoDirty();
         toast('메모가 초기화되었습니다.', 'ok');
     }).catch(function(e) {
         toast(extractErrorMessage(e) || '초기화에 실패했습니다.', 'err');

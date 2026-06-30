@@ -81,24 +81,18 @@
     font-size: 11px; font-weight: 700; letter-spacing: .02em;
     border: 1.5px solid transparent; white-space: nowrap;
 }
-.status-badge::before {
-    content: ''; display: inline-block;
-    width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-}
-.status-success { background: #ECFDF5; color: #047857; border-color: #6EE7B7; }
-.status-success::before { background: #10B981; }
-.status-error   { background: #FFF1F2; color: #BE123C; border-color: #FECDD3; }
-.status-error::before   { background: #F43F5E; }
-.status-analyzing {
-    background: #EFF6FF; color: #1D4ED8; border-color: #93C5FD;
-    animation: pulse-ring 1.6s cubic-bezier(.4,0,.6,1) infinite;
-}
+/* 솔리드 채움 배지 — 배경색 채움 + 흰 글씨 (요구사항 4) */
+.status-success      { background: #10B981; color: #fff; border-color: transparent; }
+.status-error        { background: #F43F5E; color: #fff; border-color: transparent; }
+.status-not-analyzed { background: #94A3B8; color: #fff; border-color: transparent; }
+.status-analyzing    { background: #3B82F6; color: #fff; border-color: transparent; }
+/* 분석중만 흰색 회전 스피너 유지 */
 .status-analyzing::before {
-    background: #3B82F6; animation: spin .9s linear infinite;
-    border-radius: 0; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+    content: ''; display: inline-block; flex-shrink: 0;
+    width: 9px; height: 9px; border-radius: 50%;
+    border: 1.5px solid rgba(255,255,255,.45); border-top-color: #fff;
+    animation: spin .8s linear infinite;
 }
-.status-not-analyzed { background: #F8FAFC; color: #64748B; border-color: #CBD5E1; }
-.status-not-analyzed::before { background: #94A3B8; }
 
 /* ── 시그널 칩 ── */
 .signal-chip {

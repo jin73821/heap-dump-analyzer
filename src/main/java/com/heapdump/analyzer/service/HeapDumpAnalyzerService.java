@@ -1850,6 +1850,19 @@ public class HeapDumpAnalyzerService {
         return -1;
     }
 
+    /** 호스트 가용 메모리(MB). Linux /proc/meminfo MemAvailable. 실패 시 -1. 진단 로깅용. */
+    private long hostAvailableRamMb() {
+        try {
+            for (String line : Files.readAllLines(Paths.get("/proc/meminfo"))) {
+                if (line.startsWith("MemAvailable:")) {
+                    String[] p = line.trim().split("\\s+");
+                    if (p.length >= 2) return Long.parseLong(p[1]) / 1024L; // kB → MB
+                }
+            }
+        } catch (Exception ignore) {}
+        return -1;
+    }
+
     /** 현재 MAT 동시 실행 한도에 도달해 추가 MAT 가 대기해야 하는 상태인지. lazy 대기 안내용. */
     public boolean isMatThrottled() { return matSlots.availablePermits() <= 0; }
 
@@ -2527,10 +2540,17 @@ public class HeapDumpAnalyzerService {
         pb.redirectErrorStream(true);
 
         // 메모리 보호: 분석 MAT 도 동시 MAT 게이트를 점유(precompute/lazy 와 공용 한도)
+        // 진단(B-3): 슬롯 대기 시간과 MAT 실제 파싱(서브프로세스) wall time 을 분리 측정해
+        //          "파싱이 느림" 회귀의 원인(슬롯 대기 vs 연산/메모리 thrashing)을 구분 가능하게 한다.
+        logger.info("[MAT Concurrency] 분석 '{}' MAT spawn 직전 — 한도={}, 가용슬롯={}, 가용메모리={}MB",
+                filename, matMaxConcurrent, matSlots.availablePermits(), hostAvailableRamMb());
         if (matSlots.availablePermits() <= 0) {
             logger.info("[MAT Concurrency] 분석 '{}' 슬롯 대기 — 동시 MAT 한도({}) 도달", filename, matMaxConcurrent);
         }
+        long slotWaitStart = System.currentTimeMillis();
         matSlots.acquire();
+        long slotWaitMs = System.currentTimeMillis() - slotWaitStart;
+        long matSpawnStart = System.currentTimeMillis();
         try {
         Process process = pb.start();
         final int[] pct = {15};
@@ -2635,6 +2655,11 @@ public class HeapDumpAnalyzerService {
         } else {
             logger.info("[MAT CLI] Completed successfully for file: {} (exit=0)", filename);
         }
+
+        // 진단(B-3): 슬롯 대기 vs MAT 서브프로세스 실제 파싱 시간 분리. 가용메모리도 함께 기록.
+        long matWallMs = System.currentTimeMillis() - matSpawnStart;
+        logger.info("[MAT CLI] 파싱 분리 측정 — 슬롯 대기={}ms, MAT 서브프로세스={}ms, 종료후 가용메모리={}MB, 파일={}",
+                slotWaitMs, matWallMs, hostAvailableRamMb(), filename);
 
         sendProgress(emitter, AnalysisProgress.step(filename, 82,
                 "MAT CLI 완료 (exit=" + exitCode + ")"));

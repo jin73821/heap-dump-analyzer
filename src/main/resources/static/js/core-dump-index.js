@@ -232,27 +232,108 @@
             });
         });
 
+        // 좌측 파일 패널: 검색 + 상태/유형 필터 + 페이지네이션
         var search = document.getElementById('cdFileSearch');
         var searchBtn = document.getElementById('cdFileSearchBtn');
+        var statusFilter = document.getElementById('cdFileStatusFilter');
+        var typeFilter = document.getElementById('cdFileTypeFilter');
         var noResult = document.getElementById('cdFileNoResult');
-        function applyFileFilter() {
-            if (!search) return;
-            var q = search.value.trim().toLowerCase();
-            var shown = 0;
-            fileItems.forEach(function (item) {
-                var match = (item.dataset.filename || '').toLowerCase().indexOf(q) !== -1;
-                item.style.display = match ? '' : 'none';
-                if (match) shown++;
+        var countEl = document.getElementById('cdFileCount');
+        var pgBar = document.getElementById('cdFilePg');
+        var pgList = document.getElementById('cdFilePgList');
+        var pgInfo = document.getElementById('cdFilePgInfo');
+
+        var CD_PAGE_SIZE = 20;
+        var cdCurPage = 1;
+
+        function cdFilteredItems() {
+            var q = search ? search.value.trim().toLowerCase() : '';
+            var status = statusFilter ? statusFilter.value : 'all';
+            var type = typeFilter ? typeFilter.value : 'all';
+            return fileItems.filter(function (item) {
+                if (q && (item.dataset.filename || '').toLowerCase().indexOf(q) === -1) return false;
+                if (status !== 'all' && (item.dataset.status || 'NOT_ANALYZED') !== status) return false;
+                if (type === 'exec' && !item.dataset.exec) return false;
+                if (type === 'noexec' && item.dataset.exec) return false;
+                return true;
             });
-            if (noResult) noResult.style.display = (fileItems.length > 0 && shown === 0) ? 'block' : 'none';
         }
+
+        function renderFiles() {
+            var filtered = cdFilteredItems();
+            var total = filtered.length;
+            var totalPages = Math.max(1, Math.ceil(total / CD_PAGE_SIZE));
+            if (cdCurPage > totalPages) cdCurPage = totalPages;
+            if (cdCurPage < 1) cdCurPage = 1;
+
+            // 전부 숨김 후 현재 페이지 슬라이스만 표시
+            fileItems.forEach(function (i) { i.style.display = 'none'; });
+            var start = (cdCurPage - 1) * CD_PAGE_SIZE;
+            var end = Math.min(start + CD_PAGE_SIZE, total);
+            for (var i = start; i < end; i++) filtered[i].style.display = '';
+
+            if (countEl) countEl.textContent = total;
+            if (noResult) noResult.style.display = (fileItems.length > 0 && total === 0) ? 'block' : 'none';
+            renderPagination(total, totalPages, start, end);
+        }
+
+        function renderPagination(total, totalPages, start, end) {
+            if (!pgBar || !pgList) return;
+            if (total <= CD_PAGE_SIZE) { pgBar.classList.remove('show'); pgList.innerHTML = ''; if (pgInfo) pgInfo.textContent = ''; return; }
+            pgBar.classList.add('show');
+            pgList.innerHTML = '';
+
+            var addBtn = function (label, page, opts) {
+                opts = opts || {};
+                var b = document.createElement('button');
+                b.className = 'cd-pg-btn' + (opts.active ? ' active' : '');
+                b.textContent = label;
+                if (opts.disabled) b.disabled = true;
+                if (!opts.disabled && !opts.active) b.addEventListener('click', function () { gotoPage(page); });
+                pgList.appendChild(b);
+            };
+
+            addBtn('‹', cdCurPage - 1, { disabled: cdCurPage === 1 });
+            var pages = {};
+            pages[1] = true; pages[totalPages] = true; pages[cdCurPage] = true;
+            for (var d = 1; d <= 2; d++) {
+                if (cdCurPage - d >= 1) pages[cdCurPage - d] = true;
+                if (cdCurPage + d <= totalPages) pages[cdCurPage + d] = true;
+            }
+            var sorted = Object.keys(pages).map(Number).sort(function (a, b) { return a - b; });
+            var prev = 0;
+            sorted.forEach(function (p) {
+                if (p - prev > 1) {
+                    var s = document.createElement('span');
+                    s.className = 'cd-pg-ellipsis'; s.textContent = '…';
+                    pgList.appendChild(s);
+                }
+                addBtn(String(p), p, { active: p === cdCurPage });
+                prev = p;
+            });
+            addBtn('›', cdCurPage + 1, { disabled: cdCurPage === totalPages });
+
+            if (pgInfo) pgInfo.textContent = (start + 1) + '–' + end + ' / 전체 ' + total;
+        }
+
+        function gotoPage(p) {
+            cdCurPage = p;
+            renderFiles();
+        }
+
+        function onFilterChange() { cdCurPage = 1; renderFiles(); }
+
         if (search) {
-            search.addEventListener('input', applyFileFilter);
+            search.addEventListener('input', onFilterChange);
             search.addEventListener('keydown', function (e) {
-                if (e.key === 'Enter') { e.preventDefault(); applyFileFilter(); }
+                if (e.key === 'Enter') { e.preventDefault(); onFilterChange(); }
             });
         }
-        if (searchBtn) searchBtn.addEventListener('click', applyFileFilter);
+        if (searchBtn) searchBtn.addEventListener('click', onFilterChange);
+        if (statusFilter) statusFilter.addEventListener('change', onFilterChange);
+        if (typeFilter) typeFilter.addEventListener('change', onFilterChange);
+
+        renderFiles();
     });
 
     window.onCoreFileSelect = onCoreFileSelect;
