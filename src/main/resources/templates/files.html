@@ -118,6 +118,9 @@
         .sa-btn { padding: 8px 16px; font-size: 13px; border-radius: 7px; border: none; cursor: pointer; font-weight: 500; }
         /* .sa-btn-cancel / .sa-btn-del 색상은 common.css 에서 제공 */
         .sa-btn-del:disabled { background: #FCA5A5; cursor: not-allowed; }
+        .sa-btn-dl  { background: #2563EB; color: #fff; }
+        .sa-btn-dl:hover:not(:disabled) { background: #1D4ED8; }
+        .sa-btn-dl:disabled { background: #BFDBFE; color: #fff; cursor: not-allowed; }
         /* 정렬 가능 헤더 */
         /* .ftable sortable cursor/hover/sort-active 색상은 common.css 에서 제공 */
         .ftable th.sortable .sort-arrow { display: inline-block; margin-left: 4px; opacity: 0.3;
@@ -166,6 +169,11 @@
         .fb.d:hover { border-color: #FCA5A5; background: #FEF2F2; }
         .fb.d:hover svg { stroke: #EF4444; }
         .fb svg { width: 12px; height: 12px; stroke: #6B7280; fill: none; stroke-width: 1.5; }
+        /* 분석 진행 중 애니메이션 버튼 (진행 스트리밍 페이지로 이동) */
+        .fb.analyzing { background: #2563EB; border-color: #2563EB; }
+        .fb.analyzing:hover { background: #1D4ED8; }
+        .fb.analyzing svg { stroke: #fff; animation: fbSpin .8s linear infinite; }
+        @keyframes fbSpin { to { transform: rotate(360deg); } }
         .no-match { text-align: center; padding: 32px; color: #9CA3AF; font-size: 13px; display: none; }
         .gz-badge { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 4px;
                     background: #DBEAFE; color: #1E40AF; font-weight: 600; vertical-align: middle; }
@@ -787,7 +795,22 @@
     <div class="sa-info"><strong id="saCount">0</strong>건 선택됨</div>
     <div class="sa-btns">
         <button class="sa-btn sa-btn-cancel" onclick="exitSelectMode()">취소</button>
+        <button class="sa-btn sa-btn-dl" id="saDlBtn" onclick="openBulkDownloadModal()" disabled>선택 다운로드</button>
         <button class="sa-btn sa-btn-del" id="saDelBtn" onclick="openBulkDeleteModal()" disabled>선택 삭제</button>
+    </div>
+</div>
+
+<!-- 일괄 다운로드 확인 모달 -->
+<div class="modal-ov" id="bulkDownloadModal" onclick="if(event.target===this)closeBulkDownloadModal()">
+    <div class="modal-box">
+        <h3>선택 항목 일괄 다운로드</h3>
+        <p>선택한 <strong id="bulkDlCount">0</strong>건의 파일을 순차 다운로드합니다.<br>
+           <span style="color:#6B7280;font-size:11px">deleted 항목은 제외됩니다. 파일 수에 따라 시간이 걸릴 수 있습니다.</span>
+        </p>
+        <div class="modal-btns">
+            <button class="btn-cancel" onclick="closeBulkDownloadModal()">취소</button>
+            <button class="btn-download" id="bulkDlConfirmBtn" onclick="submitBulkDownload()">다운로드</button>
+        </div>
     </div>
 </div>
 
@@ -1113,6 +1136,8 @@ function updateSelectionCount() {
     var selCheckboxes = getSelectedCheckboxes();
     var n = selCheckboxes.length;
     document.getElementById('saCount').textContent = n;
+    var downloadable = selCheckboxes.filter(function(c) { return c.getAttribute('data-deleted') !== 'true'; });
+    document.getElementById('saDlBtn').disabled = (downloadable.length === 0);
     document.getElementById('saDelBtn').disabled = (n === 0);
     var visible = [];
     document.querySelectorAll('#fileTableBody tr').forEach(function(tr) {
@@ -1138,6 +1163,57 @@ function onSelectAll() {
         if (c) c.checked = checked;
     });
     updateSelectionCount();
+}
+
+function openBulkDownloadModal() {
+    var sel = getSelectedCheckboxes();
+    var downloadable = sel.filter(function(c) { return c.getAttribute('data-deleted') !== 'true'; });
+    if (downloadable.length === 0) return;
+    document.getElementById('bulkDlCount').textContent = downloadable.length;
+    document.getElementById('bulkDownloadModal').classList.add('open');
+}
+function closeBulkDownloadModal() { document.getElementById('bulkDownloadModal').classList.remove('open'); }
+
+function submitBulkDownload() {
+    var sel = getSelectedCheckboxes();
+    var items = sel.filter(function(c) { return c.getAttribute('data-deleted') !== 'true'; }).map(function(c) {
+        var tr = c.closest('tr');
+        var fileType = tr ? tr.getAttribute('data-file-type') : 'heapdump';
+        var isCore = fileType === 'coredump' || fileType === 'coreexec';
+        return {
+            filename: c.value,
+            url: isCore ? '/api/core-dump/download/' + encodeURIComponent(c.value)
+                        : '/download/' + encodeURIComponent(c.value)
+        };
+    });
+    if (items.length === 0) return;
+    closeBulkDownloadModal();
+
+    function downloadNext(idx) {
+        if (idx >= items.length) return;
+        var item = items[idx];
+        fetch(item.url, { credentials: 'same-origin' })
+            .then(function(r) {
+                var cd = r.headers.get('Content-Disposition');
+                if (!cd || cd.indexOf('attachment') < 0) { window.location.href = '/login'; return; }
+                var dlName = item.filename;
+                var m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';\r\n]+)["']?/i);
+                if (m) dlName = decodeURIComponent(m[1].replace(/\+/g, ' '));
+                return r.blob().then(function(blob) {
+                    var url = URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url; a.download = dlName;
+                    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                    setTimeout(function() { URL.revokeObjectURL(url); }, 200);
+                });
+            })
+            .then(function() { setTimeout(function() { downloadNext(idx + 1); }, 600); })
+            .catch(function(e) {
+                toast('다운로드 실패: ' + item.filename + ' — ' + e.message, 'error');
+                setTimeout(function() { downloadNext(idx + 1); }, 300);
+            });
+    }
+    downloadNext(0);
 }
 
 function openBulkDeleteModal() {
@@ -1661,7 +1737,53 @@ function renderPagination(total, totalPages, start, end) {
     addBtn('›', _currentPage + 1, { disabled: _currentPage === totalPages });
 }
 
+// ── 분석 진행 중 애니메이션 버튼 (백그라운드 진행 표시 + 진행 페이지 이동) ──
+var _trackedInProgress = new Set();
+var _ANALYZING_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+
+function applyInProgress(files) {
+    var current = new Set(files || []);
+    // 완료 감지: 이전에 추적 중이던 파일이 진행 목록에서 사라짐 → 상태 갱신 위해 reload
+    var completed = false;
+    _trackedInProgress.forEach(function(name) { if (!current.has(name)) completed = true; });
+    if (completed) { location.reload(); return; }
+    _trackedInProgress = current;
+
+    document.querySelectorAll('#fileTableBody tr').forEach(function(tr) {
+        var name = tr.getAttribute('data-name');
+        if (!name) return;
+        var actions = tr.querySelector('.file-actions');
+        if (!actions) return;
+        var isAnalyzing = current.has(name);
+        var existing = actions.querySelector('.fb.analyzing');
+        var primaries = actions.querySelectorAll('.fb.v, .fb.p, .fb.e');
+        if (isAnalyzing) {
+            primaries.forEach(function(b) { b.style.display = 'none'; });
+            if (!existing) {
+                var a = document.createElement('a');
+                a.className = 'fb analyzing';
+                a.title = '분석 중 — 진행 상황 보기';
+                a.href = '/analyze/' + encodeURIComponent(name);
+                a.innerHTML = _ANALYZING_SVG;
+                actions.insertBefore(a, actions.firstChild);
+            }
+        } else {
+            if (existing) existing.remove();
+            primaries.forEach(function(b) { b.style.display = ''; });
+        }
+    });
+}
+
+function pollInProgress() {
+    fetch('/api/queue/status', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) { applyInProgress(d.inProgressFiles || []); })
+        .catch(function() {});
+}
+
 initRows();
+pollInProgress();
+setInterval(pollInProgress, 5000);
 </script>
 
 </body>

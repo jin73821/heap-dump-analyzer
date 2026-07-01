@@ -65,6 +65,17 @@ public class AccountController {
         Map<String, Object> res = new HashMap<>();
         res.put("memo", user.getMemo() == null ? "" : user.getMemo());
         res.put("memoUpdatedAt", user.getMemoUpdatedAt());
+        res.put("memoFont", user.getMemoFont() == null ? "d2coding" : user.getMemoFont());
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/api/account/memo-font")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> saveMemoFont(@RequestBody Map<String, String> body,
+                                                            Principal principal) {
+        userService.saveMemoFont(principal.getName(), body.get("font"));
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
         return ResponseEntity.ok(res);
     }
 

@@ -206,4 +206,19 @@ public class UserService {
         user.setMemoUpdatedAt(null);
         userRepository.save(user);
     }
+
+    /** 메모장 폰트 설정 — 계정별 영속화(브라우저 localStorage 가 아닌 DB). 화이트리스트 검증. */
+    private static final java.util.Set<String> ALLOWED_MEMO_FONTS =
+            java.util.Set.of("d2coding", "jb+nanum", "nanum", "system");
+
+    public void saveMemoFont(String username, String font) {
+        String f = (font == null || font.isBlank()) ? "d2coding" : font.trim();
+        if (!ALLOWED_MEMO_FONTS.contains(f)) {
+            throw new IllegalArgumentException("지원하지 않는 폰트입니다: " + f);
+        }
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        user.setMemoFont(f);
+        userRepository.save(user);
+    }
 }

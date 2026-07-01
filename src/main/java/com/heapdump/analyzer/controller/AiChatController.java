@@ -346,26 +346,22 @@ public class AiChatController {
                 } catch (Exception ignored) {}
                 return emitter;
             }
-            if (!analyzerService.isFileAttachCapable()) {
-                logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_ATTACH_UNSUPPORTED, sessionId={}, provider={}", sessionId, analyzerService.getLlmProvider());
-                try {
-                    emitter.send(SseEmitter.event().name("error")
-                        .data("{\"errorCode\":\"FILE_ATTACH_UNSUPPORTED\",\"error\":\"현재 LLM provider가 파일 첨부를 지원하지 않습니다.\"}"));
-                    emitter.complete();
-                } catch (Exception ignored) {}
-                return emitter;
-            }
+            boolean hasImage = false;
             for (Map<String, Object> att : attachments) {
                 String mediaType = (String) att.get("mediaType");
-                if (mediaType == null || !mediaType.startsWith("image/")) {
-                    logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_TYPE_INVALID, sessionId={}, mediaType={}", sessionId, mediaType);
+                String attName = (String) att.get("name");
+                boolean isImage = mediaType != null && mediaType.startsWith("image/");
+                boolean isText = isTextAttachment(mediaType, attName);
+                if (!isImage && !isText) {
+                    logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_TYPE_INVALID, sessionId={}, mediaType={}, name={}", sessionId, mediaType, attName);
                     try {
                         emitter.send(SseEmitter.event().name("error")
-                            .data("{\"errorCode\":\"FILE_TYPE_INVALID\",\"error\":\"이미지 파일(JPEG/PNG/GIF/WEBP)만 첨부 가능합니다.\"}"));
+                            .data("{\"errorCode\":\"FILE_TYPE_INVALID\",\"error\":\"이미지(JPEG/PNG/GIF/WEBP) 또는 텍스트/로그 파일만 첨부 가능합니다.\"}"));
                         emitter.complete();
                     } catch (Exception ignored) {}
                     return emitter;
                 }
+                if (isImage) hasImage = true;
                 Number size = (Number) att.get("size");
                 if (size != null && size.longValue() > 5L * 1024 * 1024) {
                     logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_TOO_LARGE, sessionId={}, size={}", sessionId, size.longValue());
@@ -377,7 +373,17 @@ public class AiChatController {
                     return emitter;
                 }
             }
-            logger.info("[AI-Chat-Attach] 첨부 파일 {}개 검증 완료 — sessionId={}, provider={}", attachments.size(), sessionId, analyzerService.getLlmProvider());
+            // 이미지 첨부는 Vision 지원 provider 가 필요(텍스트/로그 전용은 모든 provider 에서 본문 주입으로 처리)
+            if (hasImage && !analyzerService.isFileAttachCapable()) {
+                logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_ATTACH_UNSUPPORTED(image), sessionId={}, provider={}", sessionId, analyzerService.getLlmProvider());
+                try {
+                    emitter.send(SseEmitter.event().name("error")
+                        .data("{\"errorCode\":\"FILE_ATTACH_UNSUPPORTED\",\"error\":\"현재 LLM provider가 이미지 첨부(Vision)를 지원하지 않습니다. 텍스트/로그 파일은 첨부 가능합니다.\"}"));
+                    emitter.complete();
+                } catch (Exception ignored) {}
+                return emitter;
+            }
+            logger.info("[AI-Chat-Attach] 첨부 파일 {}개 검증 완료 — sessionId={}, provider={}, hasImage={}", attachments.size(), sessionId, analyzerService.getLlmProvider(), hasImage);
         }
 
         // 마지막 user 메시지 DB 저장
@@ -391,7 +397,7 @@ public class AiChatController {
                 StringBuilder contentBuilder = new StringBuilder(lastUserMsg.get("content") != null ? lastUserMsg.get("content") : "");
                 for (Map<String, Object> att : attachments) {
                     String name = (String) att.get("name");
-                    if (name != null) contentBuilder.append(" [이미지 첨부: ").append(name).append("]");
+                    if (name != null) contentBuilder.append(" [첨부: ").append(name).append("]");
                 }
                 userMsg.setContent(contentBuilder.toString());
                 AiChatMessage savedUser = messageRepo.save(userMsg);
@@ -530,6 +536,34 @@ public class AiChatController {
 
         emitter.onTimeout(emitter::complete);
         return emitter;
+    }
+
+    // ── 첨부 파일 타입 헬퍼 ──────────────────────────────────────
+
+    private static final Set<String> TEXT_ATTACH_EXTENSIONS = new HashSet<>(Arrays.asList(
+        ".log", ".txt", ".text", ".csv", ".tsv", ".json", ".xml", ".md", ".markdown",
+        ".yaml", ".yml", ".properties", ".conf", ".ini", ".out", ".trace", ".gc", ".diff", ".patch"));
+
+    /**
+     * 이미지가 아닌 텍스트/로그 계열 첨부 허용 판정. 브라우저가 .log 등에 빈/octet-stream MIME 을
+     * 주는 경우가 많아 MIME 과 확장자 기반 판정을 병행한다.
+     */
+    private static boolean isTextAttachment(String mediaType, String name) {
+        if (mediaType != null) {
+            String mt = mediaType.toLowerCase();
+            if (mt.startsWith("text/") || mt.equals("application/json") || mt.equals("application/xml")
+                || mt.equals("application/x-yaml") || mt.equals("application/yaml")
+                || mt.equals("application/x-ndjson")) {
+                return true;
+            }
+        }
+        if (name != null) {
+            String n = name.toLowerCase();
+            for (String ext : TEXT_ATTACH_EXTENSIONS) {
+                if (n.endsWith(ext)) return true;
+            }
+        }
+        return false;
     }
 
     // ── 권한 헬퍼 ───────────────────────────────────────────────

@@ -6,6 +6,7 @@ import com.heapdump.analyzer.model.entity.TargetServer;
 import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.TargetServerRepository;
+import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.RemoteDumpService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -47,15 +48,18 @@ public class ServerController {
     private final RemoteDumpService remoteDumpService;
     private final AnalysisHistoryRepository analysisHistoryRepository;
     private final DumpTransferLogRepository dumpTransferLogRepository;
+    private final HeapDumpAnalyzerService analyzerService;
 
     public ServerController(TargetServerRepository serverRepository,
                             RemoteDumpService remoteDumpService,
                             AnalysisHistoryRepository analysisHistoryRepository,
-                            DumpTransferLogRepository dumpTransferLogRepository) {
+                            DumpTransferLogRepository dumpTransferLogRepository,
+                            HeapDumpAnalyzerService analyzerService) {
         this.serverRepository = serverRepository;
         this.remoteDumpService = remoteDumpService;
         this.analysisHistoryRepository = analysisHistoryRepository;
         this.dumpTransferLogRepository = dumpTransferLogRepository;
+        this.analyzerService = analyzerService;
     }
 
     @GetMapping("/servers")
@@ -280,8 +284,10 @@ public class ServerController {
         TargetServer server = serverRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("서버를 찾을 수 없습니다: " + id));
 
-        // 코어 실행파일(coreexec) 전송 — 페어링 대상 코어가 로컬에 있어야 "{coreLocal}.exec" 로 저장해 자동 페어링.
-        final String targetFilename;
+        // 코어 실행파일(coreexec) 전송 — 페어링 대상 코어가 로컬에 있어야 함.
+        // 원본 실행파일명을 그대로 유지(과거: "{coreLocal}.exec" 로 강제 변경)하고,
+        // 코어-실행파일 연결은 전송 성공 후 페어링 맵(loadCoreExecPairings)에 명시적으로 저장한다.
+        final String coreLocalForPair;
         if ("coreexec".equals(fileType)) {
             String coreLocal = remoteDumpService.findTransferredCoreLocalName(server, pairCore);
             if (coreLocal == null) {
@@ -295,10 +301,12 @@ public class ServerController {
                 emitter.complete();
                 return emitter;
             }
-            targetFilename = coreLocal + ".exec";
+            coreLocalForPair = coreLocal;
         } else {
-            targetFilename = null;
+            coreLocalForPair = null;
         }
+        // 원본명 유지 — targetFilename 미지정(null) → RemoteDumpService 가 원격 원본명을 그대로 사용.
+        final String targetFilename = null;
 
         Thread worker = new Thread(() -> {
             try {
@@ -311,6 +319,17 @@ public class ServerController {
                                 .event().name("progress").data(p));
                     } catch (Exception ignored) { /* 클라이언트 disconnect */ }
                 });
+                // coreexec 전송 성공 시 코어-실행파일 페어링을 명시적으로 저장(원본명 유지).
+                if (coreLocalForPair != null && "SUCCESS".equals(log.getTransferStatus())) {
+                    try {
+                        analyzerService.saveCoreExecPairing(coreLocalForPair, log.getFilename());
+                        logger.info("[FilePair] action=pair source=coreexec-transfer core={} exec={}",
+                                coreLocalForPair, log.getFilename());
+                    } catch (Exception e) {
+                        logger.warn("[FilePair] core-exec 페어링 저장 실패: core={} exec={} — {}",
+                                coreLocalForPair, log.getFilename(), e.getMessage());
+                    }
+                }
                 Map<String, Object> done = new LinkedHashMap<>();
                 done.put("success", "SUCCESS".equals(log.getTransferStatus()));
                 done.put("filename", log.getFilename());
@@ -650,6 +669,7 @@ public class ServerController {
         try {
             int sec = ((Number) body.get("intervalSec")).intValue();
             remoteDumpService.setScanIntervalSec(sec);
+            analyzerService.persistRuntimeSettings();
             result.put("success", true);
             result.put("intervalSec", remoteDumpService.getScanIntervalSec());
             return ResponseEntity.ok(result);
@@ -677,6 +697,7 @@ public class ServerController {
         try {
             String dir = body.getOrDefault("tempDir", "/tmp");
             remoteDumpService.setScpTempDir(dir);
+            analyzerService.persistRuntimeSettings();
             result.put("success", true);
             result.put("tempDir", remoteDumpService.getScpTempDir());
             return ResponseEntity.ok(result);
@@ -704,6 +725,7 @@ public class ServerController {
         try {
             String user = body.getOrDefault("localUser", "");
             remoteDumpService.setSshLocalUser(user);
+            analyzerService.persistRuntimeSettings();
             result.put("success", true);
             result.put("localUser", remoteDumpService.getSshLocalUser());
             return ResponseEntity.ok(result);

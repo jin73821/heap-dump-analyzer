@@ -1014,6 +1014,35 @@ public class LlmConfigService {
             return;
         }
 
+        // 텍스트/로그 첨부는 Vision API 로 보낼 수 없으므로 디코드해 마지막 user 메시지 본문에 접어 넣고,
+        // 이미지 첨부만 provider 별 Vision 경로로 전송한다. (텍스트 전용이면 Vision 불필요 → 모든 provider 지원)
+        List<Map<String, Object>> imageAtts = new ArrayList<>();
+        StringBuilder textBlocks = new StringBuilder();
+        for (Map<String, Object> att : attachments) {
+            String mt = (String) att.get("mediaType");
+            if (mt != null && mt.startsWith("image/")) {
+                imageAtts.add(att);
+            } else {
+                String name = (String) att.get("name");
+                String decoded = decodeAttachmentText((String) att.get("data"));
+                if (decoded != null) {
+                    textBlocks.append("\n\n[첨부 파일: ").append(name != null ? name : "file")
+                              .append("]\n```\n").append(decoded).append("\n```");
+                }
+            }
+        }
+        if (textBlocks.length() > 0) {
+            messages = appendTextToLastUserMessage(messages, textBlocks.toString());
+        }
+        if (imageAtts.isEmpty()) {
+            // 텍스트/로그 전용 — 본문 주입 후 일반 스트리밍 경로 위임 (Vision 미지원 provider 도 동작)
+            logger.info("[AI-Chat-Stream] 텍스트 첨부 {}개 본문 주입 — provider={}, 이미지 없음",
+                attachments.size(), llmProvider);
+            callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError);
+            return;
+        }
+        attachments = imageAtts; // 이하 Vision 경로는 이미지 첨부만 처리
+
         if (!llmEnabled) { onError.accept("LLM_DISABLED", "AI 분석 기능이 비활성화 상태입니다."); return; }
         if (llmApiKey == null || llmApiKey.trim().isEmpty()) { onError.accept("NO_API_KEY", "API 키가 설정되지 않았습니다."); return; }
         if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) { onError.accept("NO_API_URL", "API URL이 설정되지 않았습니다."); return; }
@@ -1155,6 +1184,44 @@ public class LlmConfigService {
      * 마지막 user 메시지에 attachments를 provider별 Vision 형식으로 주입한다.
      * 나머지 메시지는 기존 {role, content:String} 형식 유지.
      */
+    /** 텍스트/로그 첨부 본문 주입 시 컨텍스트 보호용 문자 상한(약 50K 토큰). 초과분은 잘라낸다. */
+    private static final int MAX_ATTACH_TEXT_CHARS = 200_000;
+
+    /** 첨부 텍스트(base64) 를 UTF-8 로 디코드. 과대 입력은 잘라 컨텍스트 보호. 실패 시 null. */
+    private String decodeAttachmentText(String base64) {
+        if (base64 == null || base64.isEmpty()) return null;
+        try {
+            byte[] raw = java.util.Base64.getDecoder().decode(base64);
+            String s = new String(raw, java.nio.charset.StandardCharsets.UTF_8);
+            if (s.length() > MAX_ATTACH_TEXT_CHARS) {
+                s = s.substring(0, MAX_ATTACH_TEXT_CHARS) + "\n…(이하 생략 — 파일이 커서 일부만 첨부됨)";
+            }
+            return s;
+        } catch (Exception e) {
+            logger.warn("[AI-Chat-Attach] 텍스트 첨부 디코드 실패: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 마지막 user 메시지(없으면 마지막 메시지) content 뒤에 텍스트를 덧붙인 새 메시지 리스트 반환. */
+    private List<Map<String, String>> appendTextToLastUserMessage(List<Map<String, String>> messages, String extra) {
+        int target = -1;
+        for (int i = 0; i < messages.size(); i++) {
+            if ("user".equals(messages.get(i).get("role"))) target = i;
+        }
+        if (target < 0) target = messages.size() - 1;
+        List<Map<String, String>> copy = new ArrayList<>();
+        for (int i = 0; i < messages.size(); i++) {
+            Map<String, String> m = new LinkedHashMap<>(messages.get(i));
+            if (i == target) {
+                String c = m.get("content") != null ? m.get("content") : "";
+                m.put("content", c + extra);
+            }
+            copy.add(m);
+        }
+        return copy;
+    }
+
     private List<Map<String, Object>> buildMsgListWithAttachments(
             List<Map<String, String>> messages, List<Map<String, Object>> attachments) {
         boolean isClaude = "claude".equals(llmProvider);

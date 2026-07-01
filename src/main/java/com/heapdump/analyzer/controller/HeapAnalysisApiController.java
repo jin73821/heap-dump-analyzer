@@ -19,7 +19,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Future;
 
 /**
  * 분석 실행/큐/취소/SSE 진행 스트림 API (Phase 4B-2).
@@ -44,17 +43,14 @@ public class HeapAnalysisApiController {
     public SseEmitter streamProgress(@PathVariable String filename) {
         final String safe = FilenameValidator.validate(filename);
         SseEmitter emitter = new SseEmitter(config.getSseEmitterTimeoutMinutes() * 60L * 1000);
-        Future<?> task = analyzerService.analyzeWithProgress(safe, emitter);
+        analyzerService.analyzeWithProgress(safe, emitter);
 
-        Runnable cancelTask = () -> {
-            if (task != null && !task.isDone()) {
-                logger.info("[SSE] Client disconnected, cancelling analysis for: {}", safe);
-                task.cancel(true);
-            }
-        };
-        emitter.onTimeout(cancelTask);
-        emitter.onError(e -> cancelTask.run());
-        emitter.onCompletion(cancelTask);
+        // 클라이언트 disconnect(페이지 이탈/탭 닫기)는 분석을 취소하지 않는다 — 백그라운드로 계속 진행.
+        // 죽은 emitter 로의 전송은 service.sendProgress 가 deadEmitters 로 조용히 스킵한다.
+        // 명시적 취소는 오직 POST /api/analyze/cancel/{filename} 로만 수행된다.
+        emitter.onTimeout(() -> logger.debug("[SSE] Emitter timeout (analysis continues in background): {}", safe));
+        emitter.onError(e -> logger.debug("[SSE] Emitter error (analysis continues in background): {}", safe));
+        emitter.onCompletion(() -> logger.debug("[SSE] Emitter completed: {}", safe));
 
         return emitter;
     }
@@ -77,6 +73,7 @@ public class HeapAnalysisApiController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("queueSize", analyzerService.getQueueSize());
         resp.put("currentAnalysis", analyzerService.getCurrentAnalysisFilename());
+        resp.put("inProgressFiles", analyzerService.getInProgressFilenames());
         return ResponseEntity.ok(resp);
     }
 

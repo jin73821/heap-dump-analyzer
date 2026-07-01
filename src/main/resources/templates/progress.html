@@ -555,7 +555,7 @@
 <!-- ── 상단바 ──────────────────────────────────────────────── -->
 <div class="progress-topbar">
     <div class="topbar-left">
-        <a href="/" class="topbar-back" onclick="if(typeof analysisRunning!=='undefined'&&analysisRunning){if(!confirm('분석이 진행 중입니다. 페이지를 떠나시겠습니까?'))return false;}">&#8592;</a>
+        <a href="/" class="topbar-back" title="분석은 백그라운드로 계속 진행됩니다">&#8592;</a>
         <span class="topbar-brand">Heap Dump Analyzer</span>
     </div>
     <div class="topbar-center">
@@ -816,7 +816,7 @@
 
 <!-- ── Footer ─────────────────────────────────────────────── -->
 <div class="progress-footer">
-    &copy; 2026 Heap Dump Analyzer v2.2.0 | Powered by Eclipse MAT CLI
+    &copy; 2026 Heap Dump Analyzer v2.2.3 | Powered by Eclipse MAT CLI
 </div>
 
 <!-- ── SSE 진행 상황 처리 스크립트 (성능 최적화) ───────────── -->
@@ -1280,8 +1280,9 @@
                 disableLeaveWarning();
                 document.getElementById('alreadyBanner').classList.add('visible');
                 document.getElementById('alreadyFilename').textContent = data.filename || FILENAME;
-                document.getElementById('cancelBtn').style.display = 'none';
-                document.title = '⚙ 분석 중 (대기) - Heap Dump Analyzer';
+                // 관찰 모드에서도 취소 버튼 유지 — 백그라운드 진행 분석을 중단할 수 있게 한다.
+                document.getElementById('cancelBtn').style.display = '';
+                document.title = '⚙ 분석 중 (관찰) - Heap Dump Analyzer';
                 startAlreadyPolling();
                 return;
             }
@@ -1477,15 +1478,9 @@
         };
     }
 
-    // ── 페이지 이탈 경고 (분석 중일 때만) ────────────────
+    // ── 페이지 이탈: 분석은 백그라운드로 계속 진행되므로 차단 경고 없이 매끄럽게 이탈 ──
+    // (analysisRunning / disableLeaveWarning 은 다른 코드 경로 호환을 위해 유지하되 경고는 표시하지 않음)
     let analysisRunning = true;
-
-    window.addEventListener('beforeunload', function(e) {
-        if (analysisRunning) {
-            e.preventDefault();
-            e.returnValue = '';
-        }
-    });
 
     function disableLeaveWarning() {
         analysisRunning = false;
@@ -1493,6 +1488,19 @@
 
     // ── 분석 전 힙 메모리 사전 체크 ────────────────────
     function checkHeapAndStart() {
+        // 이미 백그라운드로 분석이 진행 중인 파일에 재진입한 경우:
+        // 메모리는 이미 사용 중이고, heap-check 는 분석 중 생성된 대용량 tmp 작업본을 기준으로
+        // 무의미한 경고를 띄우므로 사전 체크를 건너뛰고 바로 SSE(→ ALREADY_ANALYZING 관찰 모드)로 진입.
+        fetch('/api/analyze/in-progress/' + encodeURIComponent(FILENAME))
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d && d.inProgress) { startSSE(); return; }
+                doHeapCheck();
+            })
+            .catch(function() { doHeapCheck(); });
+    }
+
+    function doHeapCheck() {
         var skipWarn = localStorage.getItem('skipHeapWarning') === 'true';
         if (skipWarn) { startSSE(); return; }
 

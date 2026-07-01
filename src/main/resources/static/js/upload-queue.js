@@ -234,7 +234,7 @@
     }
 
     function startDuplicateChecks(idx) {
-        if (idx >= _uploadQueue.length) { startQueueUploads(); return; }
+        if (idx >= _uploadQueue.length) { showStagedModal(); return; }
         var item = _uploadQueue[idx];
         if (item.status === 'skipped' || item.fileType === 'coredump') { startDuplicateChecks(idx + 1); return; }
         computePartialHash(item.file).then(function(hash) {
@@ -408,6 +408,57 @@
         var done = _uploadQueue.filter(function(q) { return q.status === 'done'; }).length;
         var total = _uploadQueue.filter(function(q) { return q.status !== 'skipped'; }).length;
         if (sub) sub.textContent = done + ' / ' + total + ' 완료 — 취소됨';
+    }
+
+    /* ── 전송 시작 전 확인 모달 ── */
+    function showStagedModal() {
+        var pending = _uploadQueue.filter(function(q) { return q.status === 'pending'; });
+        if (pending.length === 0) { toast('업로드할 파일이 없습니다.'); return; }
+
+        var totalSize = pending.reduce(function(s, q) { return s + q.file.size; }, 0);
+
+        var existing = document.getElementById('stagedUploadOv');
+        if (existing) existing.remove();
+        var ov = document.createElement('div'); ov.id = 'stagedUploadOv';
+        ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10000;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+
+        var listHtml = '';
+        pending.forEach(function(q) {
+            var typeBadge = '';
+            if (q.fileType === 'coredump') {
+                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#FEF3C7;color:#92400E;font-weight:700;margin-left:4px;vertical-align:middle">CORE</span>';
+            } else if (q.fileType === 'others') {
+                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#F3F4F6;color:#6B7280;font-weight:700;margin-left:4px;vertical-align:middle">?</span>';
+            }
+            listHtml += '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #F3F4F6">'
+                + '<svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.5" style="width:16px;height:16px;flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'
+                + '<span style="flex:1;font-size:13px;color:#1F2937;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(q.uploadName) + '">' + escapeHtml(q.uploadName) + typeBadge + '</span>'
+                + '<span style="font-size:12px;color:#9CA3AF;flex-shrink:0">' + fmtB(q.file.size) + '</span>'
+                + '</div>';
+        });
+
+        ov.innerHTML = '<div style="background:#fff;border-radius:12px;padding:28px;max-width:520px;width:92%;max-height:84vh;overflow-y:auto">'
+            + '<div style="display:flex;align-items:center;gap:14px;margin-bottom:20px">'
+            + '<div style="width:46px;height:46px;border-radius:50%;background:#DBEAFE;display:flex;align-items:center;justify-content:center;flex-shrink:0">'
+            + '<svg viewBox="0 0 24 24" fill="none" stroke="#2563EB" stroke-width="2" style="width:24px;height:24px"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>'
+            + '<div><h3 style="font-size:18px;font-weight:700;color:#1F2937;margin:0">업로드 준비 완료</h3>'
+            + '<div style="font-size:13px;color:#6B7280;margin-top:3px">' + pending.length + '개 파일 · 총 ' + fmtB(totalSize) + '</div></div></div>'
+            + '<div style="max-height:280px;overflow-y:auto;margin-bottom:20px">' + listHtml + '</div>'
+            + '<div style="display:flex;gap:10px">'
+            + '<button id="stagedCancelBtn" style="flex:1;padding:11px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">취소</button>'
+            + '<button id="stagedStartBtn" style="flex:2;padding:11px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">전송 시작</button>'
+            + '</div></div>';
+
+        document.body.appendChild(ov);
+        ov.querySelector('#stagedCancelBtn').onclick = function() {
+            ov.remove();
+            _uploadQueue = [];
+            setUploadZoneDisabled(false);
+        };
+        ov.querySelector('#stagedStartBtn').onclick = function() {
+            ov.remove();
+            startQueueUploads();
+        };
     }
 
     function startQueueUploads() {

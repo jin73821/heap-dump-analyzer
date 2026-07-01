@@ -46,6 +46,9 @@ public class User {
     @Column(name = "memo_updated_at")
     private LocalDateTime memoUpdatedAt;
 
+    @Column(name = "memo_font", length = 20)
+    private String memoFont;
+
     public enum Role {
         ADMIN, USER
     }

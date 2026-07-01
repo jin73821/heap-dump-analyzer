@@ -1,6 +1,128 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-07-01] 애플리케이션 버전 2.2.0 → 2.2.3
+
+**대상:** `pom.xml`, `restart.sh`, `run.sh`, `stop.sh`, `templates/fragments/banner.html`, `templates/index.html`, `templates/progress.html`
+
+- `pom.xml <version>` 및 스크립트 3종의 `heap-analyzer-X.Y.Z.jar` grep/실행 경로, UI 버전 표기(배너/대시보드/진행 페이지)를 일괄 `2.2.3` 으로 갱신.
+- 배포 절차: 스크립트가 새 JAR 명으로만 프로세스를 grep 하므로 구 `2.2.0` 프로세스(PID 434443)를 수동 종료 후 재기동. 신 프로세스(`heap-analyzer-2.2.3.jar`) 정상 기동 + UI `v2.2.3` 확인.
+
+
+## [2026-07-01] MAT 힙 경고 정확도 개선 + 분석 중 재진입 시 사전 체크 생략
+
+**대상:** `controller/HeapSystemApiController.java`, `templates/progress.html`
+
+### 배경 (원인)
+`/api/mat/heap-check` 가 판정 시점에 디스크에서 보이는 덤프 사본으로 `dumpSize` 를 계산했는데,
+① 원본/`.gz` 를 **루트(`/opt/heapdumps`)** 에서만 찾아 실제 위치 **`dumpfiles/`** 를 놓쳤고,
+② 압축본(`.gz`)만 있을 때 **압축 크기**(예 29MB)를 그대로 사용해 실제 비압축 크기(예 1.17GB)를 크게 과소평가했다.
+결과: **재분석(유휴)** 시엔 `dumpSize=0` 으로 경고가 잘못 억제되고, **분석 중 재진입** 시엔 분석이 `tmp/{safe}` 로 풀어놓은 대용량 작업본이 잡혀 경고가 표시되는 불일치 발생.
+
+### 1) heap-check 비압축 크기 정확 인식
+- `estimateUncompressedDumpSize(safe)` 도입 — 우선순위: ① 분석 중 `tmp/` 작업본 → ② `dumpfiles/` 비압축 원본 → ③ legacy 루트 비압축 원본 → ④ `.gz`(dumpfiles/ 우선): **캐시된 분석결과 `originalFileSize` > gzip ISIZE(마지막 4바이트) > `.gz` 길이**.
+- 검증: 유휴 상태 `wgdist_2_heapdump_20260326.hprof` → `dumpSize=1.17GB, warning=true`(이전 `0/false`). 소용량 `oom-test.hprof`(99MB) → `warning=false`.
+
+### 2) 분석 중 재진입 시 heap-check 생략
+- `progress.html` `checkHeapAndStart()` 가 먼저 `/api/analyze/in-progress/{filename}` 를 조회하여 이미 진행 중이면 사전 체크를 건너뛰고 바로 `startSSE()`(→ `ALREADY_ANALYZING` 관찰 모드)로 진입. 기존 heap-check 본문은 `doHeapCheck()` 로 분리.
+- 이미 메모리를 사용 중인 백그라운드 분석에 대해 무의미한 힙 경고 모달이 뜨지 않음.
+
+
+## [2026-07-01] 힙덤프 백그라운드 분석 + 진행 중 애니메이션 버튼
+
+**대상:** `controller/HeapAnalysisApiController.java`, `service/HeapDumpAnalyzerService.java`,
+`templates/progress.html`, `templates/files.html`, `templates/index.html`
+
+### 배경
+기존 힙덤프 분석은 **SSE 연결 자체가 분석 트리거**였다. 진행 페이지의 `EventSource('/analyze/progress/{filename}')` 연결이 분석을 시작하고, 연결이 끊기면(페이지 이탈/탭 닫기) 분석이 **취소**됐다. 취소 경로는 ① 컨트롤러의 `emitter.onTimeout/onError/onCompletion → task.cancel(true)`, ② 서비스 `sendProgress`의 전송 실패 시 `Thread.interrupt()` 두 곳이었다.
+
+### 1) 백그라운드 분석 (SSE 수명 ↔ 분석 태스크 분리)
+- **컨트롤러:** disconnect 시 `task.cancel(true)` 제거. `onTimeout/onError/onCompletion`은 debug 로그만. 취소는 오직 `POST /api/analyze/cancel/{filename}`로만.
+- **서비스:** dead-emitter 집합(`deadEmitters`) 추가. `sendProgress`는 진행 상황을 `lastProgressCache`/`logCache`에 **항상 먼저 기록**한 뒤 emitter 전송을 시도하고, 전송 실패 시 스레드를 인터럽트하지 않고 emitter만 dead 처리하여 **분석은 백그라운드로 계속 진행**. 태스크 `finally`에서 `deadEmitters` 정리.
+- **progress.html:** 분석이 더 이상 취소되지 않으므로 `beforeunload` 차단 경고와 back 화살표 confirm 제거(매끄러운 이탈). 재진입(관찰) 모드에서 **취소 버튼 노출 유지** → 백그라운드 분석 중단 가능.
+- 검증: SSE 6초 후 강제 disconnect → `inProgressFiles`에 파일 유지, 로그 `analysis continues in background`, 이후 `[Analysis] Done`까지 정상 완료(취소·인터럽트 없음).
+
+### 2) 진행 중 애니메이션 버튼 (Files + Dashboard)
+- `/api/queue/status` 응답에 `inProgressFiles`(실행+큐 대기 파일명 배열) 추가 — `getInProgressFilenames()` (`activeTasks` 기반).
+- **files.html / index.html:** `.fb.analyzing` 스피너 버튼 CSS(`@keyframes fbSpin`). `/api/queue/status`를 폴링(files=5초 독립 폴러, dashboard=기존 큐 패널 폴링에 통합)하여 진행 중 파일 행의 primary 버튼(View/Error/Analyze)을 숨기고 **애니메이션 '분석 중' 버튼**(→ `/analyze/{filename}` 진행 스트리밍 페이지)으로 스왑. 추적하던 파일이 진행 목록에서 사라지면(완료/실패/취소) `location.reload()`로 상태 갱신(루프 안전: 최초 폴링은 reload 미유발).
+
+### 재진입 관찰
+기존 `ALREADY_ANALYZING` 관찰 흐름 재사용 — 애니메이션 버튼 클릭 시 진행 페이지 재진입, `/api/analyze/live-snapshot` 2초 폴링으로 진행 표시 + 취소 버튼으로 중단 가능.
+
+
+## [2026-07-01] Files 다중 선택 다운로드 + 업로드 전송 시작 버튼 + 코어 실행파일 원본명 유지 + 개인 메모장 새창 동기화·폰트 계정 영속화
+
+**대상:** `templates/files.html`
+
+### 1) Files 페이지 — 다중 선택 다운로드 버튼
+
+- 선택 모드 진입 시 하단 액션 바에 **[선택 다운로드]** 버튼 추가.
+- 선택된 파일 중 `deleted` 상태가 아닌 파일이 1개 이상일 때 활성화됨.
+- 확인 모달에서 다운로드할 파일 수 확인 후 시작. deleted 항목은 자동 제외.
+- heapdump·others·exec → `/download/{filename}`, coredump·coreexec → `/api/core-dump/download/{filename}` (기존 단건 다운로드와 동일 URL).
+- 파일을 순차적으로 blob 다운로드 (파일 간 600ms 딜레이, 브라우저 병렬 차단 방지). 개별 실패 시 toast 경고 후 다음 파일 계속.
+
+## [2026-07-01] 업로드 전송 시작 버튼 추가 + 코어 실행파일 원본명 유지 + 개인 메모장 새창 동기화·폰트 계정 영속화
+
+**대상:** `static/js/upload-queue.js`
+
+### 1) 다중 파일 업로드 — 전송 시작 버튼
+
+- **변경 전:** 파일 선택(또는 드래그앤드롭) 후 중복 검사 완료 즉시 업로드 시작.
+- **변경 후:** 중복 검사 완료 후 **"업로드 준비 완료" 확인 모달**이 표시되며, 파일 목록(이름·크기·타입)과 총 크기를 확인한 뒤 **[전송 시작]** 버튼을 눌러야 업로드가 시작됨. [취소] 클릭 시 큐 초기화.
+- 대시보드(`/`)와 Files(`/files`) 페이지 양쪽에 동일 적용 (공유 `upload-queue.js` 수정).
+
+## [2026-07-01] 코어 실행파일 원본명 유지 + 개인 메모장 새창 동기화·폰트 계정 영속화
+
+**대상:** `controller/ServerController.java`, `model/entity/User.java`, `service/UserService.java`,
+`controller/AccountController.java`, `templates/account.html`
+
+### 1) Target Servers — 코어 실행파일(coreexec) 전송 시 원본 파일명 유지
+- **증상:** 코어파일과 연관된 실행파일을 전송하면 `{코어파일명}.exec` 로 강제 변경되어 저장됨.
+- **수정:** `ServerController.transferStream` coreexec 분기에서 `targetFilename` 강제 지정(`coreLocal + ".exec"`)을 제거하고 **원격 원본명 그대로 전송**. 코어-실행파일 연결은 전송 성공 후 `saveCoreExecPairing(coreLocal, 실제저장명)` 으로 페어링 맵에 명시 저장. `getExecFilename()` 이 페어링 맵을 우선 조회하므로(.exec 는 레거시 폴백) 표시·GDB 분석·서브행 dedup 모두 정상 동작. 기존 `.exec` 전송분은 레거시 폴백으로 계속 호환.
+
+### 2) 개인 메모장 — 본문 ↔ "새창에서 열기" 저장상태 동시 동기화
+- 어느 한쪽에서 타이핑하면 **본문과 새창 모두 '● 미저장'** 표시, 저장 시 **양쪽 모두 '저장됨'** 으로 갱신.
+- `account.html`: 팝업 핸들 `_memoPopup{win,ta,st,refreshCnt}` + `setMemoSaveState(dirty)`(양쪽 동시 갱신) + `onMainMemoInput()`(본문 입력 시 팝업 내용·상태 동기화). 팝업 입력 핸들러는 본문 동기화 후 `setMemoSaveState(true)` 호출. 저장(`clearMemoDirty`)·미저장(`markMemoDirty`)을 단일 상태 함수로 통합. 팝업 오픈 시 현재 본문 미저장 상태를 즉시 반영.
+
+### 3) 개인 메모장 폰트 — 계정별 서버 영속화 (재접속/다른 브라우저에서도 유지)
+- 기존엔 `localStorage`(브라우저 한정)만 저장 → 재접속·타 기기에서 초기화됨.
+- `User.memoFont` 컬럼 추가(`ddl-auto=update` 자동 생성, varchar(20)) + `UserService.saveMemoFont`(화이트리스트 검증) + `AccountController` `POST /api/account/memo-font` & `getMemo` 응답에 `memoFont` 포함.
+- `account.html`: 페이지에 `user.memoFont` 를 `window.SERVER_MEMO_FONT` 로 주입 → 초기 폰트 우선순위 **서버값 > localStorage > 기본(d2coding)**. 폰트 변경 시(본문/새창 양쪽) 서버에 POST 영속화 + localStorage 캐시 유지.
+
+
+## [2026-07-01] Settings 원격(SSH/SCP) 설정 영속화 버그 수정 — application.properties 미반영 해결
+
+**대상:** `service/RemoteDumpService.java`, `service/HeapDumpAnalyzerService.java`, `controller/ServerController.java`
+
+**증상:** Settings 에서 SSH local user(및 SCP temp dir, scan interval)를 변경해도 `application.properties`/`settings.json` 에 반영되지 않아 재기동 시 원복.
+
+**원인:** `RemoteDumpService.setSshLocalUser/setScpTempDir/setScanIntervalSec` 는 `volatile` 필드만 갱신하고 영속화를 트리거하지 않았음. LLM/RAG 설정과 달리 `RemoteDumpService` 가 영속화 단일 책임(`HeapDumpAnalyzerService.persistSettings/syncApplicationProperties/loadSettings`) 흐름에 전혀 연결돼 있지 않았다.
+
+**수정 (LlmConfigService/RagConfigService 와 동일 패턴):**
+- `RemoteDumpService`: `collectSettings()`/`collectApplicationProperties()`/`applyFromSettings()` 추가. 키 = `remote.ssh.local-user`/`remote.scp.temp-dir`/`remote.scan.interval-sec`.
+- `HeapDumpAnalyzerService`: `RemoteDumpService` 주입(단방향, 순환 없음). `persistSettings`/`syncApplicationProperties`/`loadSettings` 의 LLM·RAG 위임 지점에 원격 설정 위임 추가. 외부 트리거용 `public persistRuntimeSettings()` 노출.
+- `ServerController`: `HeapDumpAnalyzerService` 주입 후 3개 setter 엔드포인트(`/api/servers/{ssh-local-user,scp-temp-dir,scan-interval}`)에서 setter 직후 `persistRuntimeSettings()` 호출 → settings.json + application.properties 즉시 동기화.
+
+부수 효과: 같은 결함이 있던 SCP temp dir·scan interval 도 함께 영속화되도록 수정됨.
+
+
+## [2026-07-01] AI Chat 첨부 — 텍스트/로그 파일 지원 추가 (기존 이미지 전용 → 이미지+텍스트)
+
+**대상:** `service/LlmConfigService.java`, `controller/AiChatController.java`,
+`templates/ai-chat.html`, `templates/analyze.html`, `static/js/analyze.js`, `templates/llm-settings.html`
+
+기존엔 JPEG/PNG/GIF/WEBP 이미지만 첨부 가능했음. 텍스트·로그 파일(`.log/.txt/.json/.xml/.csv/.yaml/.md/.properties/.conf/.ini/.out` 등)을 첨부할 수 있도록 확장.
+
+- **처리 방식 분기(핵심):** 이미지와 텍스트는 LLM 전달 경로가 다름.
+  - 이미지 → 기존 Vision 경로(Claude `image`/OpenAI `image_url` 블록). Vision 지원 provider 필요.
+  - 텍스트/로그 → base64 디코드 후 **마지막 user 메시지 본문에 ```코드블록```으로 주입**(`LlmConfigService.callLlmChatStream` attachments overload + `decodeAttachmentText`/`appendTextToLastUserMessage` 신규). Vision 불필요 → **모든 provider(claude/gpt/genspark/custom)에서 동작**. 컨텍스트 보호용 200,000자 상한(초과분 절단).
+- **백엔드 검증(`AiChatController`):** 첨부 타입 판정을 이미지 전용 → 이미지 또는 텍스트로 확장(`isTextAttachment` MIME+확장자 병행 — 브라우저가 `.log` 에 빈/octet-stream MIME 을 주는 경우 대응). Vision 미지원 provider 는 **이미지 첨부 시에만** 거부(텍스트 전용은 허용). 5MB 상한 유지.
+- **프론트(ai-chat.html · analyze.js):** `accept` 확장 + 검증(`chatAttachKind`/`analyzeAttachKind`) + 미리보기·메시지 버블에서 비이미지 첨부는 `📄 파일명` 칩으로 렌더(이미지는 썸네일 유지). DB 저장 라벨 `[이미지 첨부:]` → `[첨부:]`.
+- **설정 페이지:** "File Attachment (Vision)" → "(Vision / Text)" + 설명에 텍스트/로그 지원 명시.
+- 캐시 무효화: `analyze.js?v=2026-07-01`.
+
+
 ## [2026-06-30] MAT 파싱 속도 회귀(5분→17분) 진단 계측 추가 (B-3)
 
 **대상:** `service/HeapDumpAnalyzerService.java`

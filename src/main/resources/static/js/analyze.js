@@ -4313,13 +4313,25 @@ function _parseChatDateTime(dt) {
 
 var _aiChatAttachments = [];
 
+// 첨부 허용 판정: 이미지(image) / 텍스트·로그(text) / 미지원(null)
+function analyzeAttachKind(file) {
+    var t = (file.type || '').toLowerCase();
+    if (['image/jpeg', 'image/png', 'image/gif', 'image/webp'].indexOf(t) >= 0) return 'image';
+    var n = (file.name || '').toLowerCase();
+    var TEXT_EXT = ['.log', '.txt', '.text', '.csv', '.tsv', '.json', '.xml', '.md', '.markdown',
+                    '.yaml', '.yml', '.properties', '.conf', '.ini', '.out', '.trace', '.gc', '.diff', '.patch'];
+    var extOk = TEXT_EXT.some(function(e) { return n.endsWith(e); });
+    var mimeOk = t.indexOf('text/') === 0 || t === 'application/json' || t === 'application/xml'
+              || t === 'application/x-yaml' || t === 'application/yaml' || t === 'application/x-ndjson';
+    return (extOk || mimeOk) ? 'text' : null;
+}
+
 function onAnalyzeChatFileSelect(input) {
     var files = Array.prototype.slice.call(input.files || []);
     var MAX_SIZE = 5 * 1024 * 1024;
-    var ALLOWED = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     files.forEach(function(file) {
-        if (ALLOWED.indexOf(file.type) < 0) {
-            renderChatError('지원하지 않는 파일 형식: ' + file.name + ' (JPEG/PNG/GIF/WEBP만 가능)');
+        if (!analyzeAttachKind(file)) {
+            renderChatError('지원하지 않는 파일 형식: ' + file.name + ' (이미지 JPEG/PNG/GIF/WEBP 또는 텍스트/로그 파일)');
             return;
         }
         if (file.size > MAX_SIZE) {
@@ -4351,15 +4363,24 @@ function renderAnalyzeAttachBar() {
         _aiChatAttachments.forEach(function(att, idx) {
             var item = document.createElement('div');
             item.className = 'attach-preview-item';
-            var img = document.createElement('img');
-            img.src = 'data:' + att.mediaType + ';base64,' + att.data;
-            img.alt = att.name;
+            if (att.mediaType && att.mediaType.indexOf('image/') === 0) {
+                var img = document.createElement('img');
+                img.src = 'data:' + att.mediaType + ';base64,' + att.data;
+                img.alt = att.name;
+                item.appendChild(img);
+            } else {
+                var chip = document.createElement('span');
+                chip.className = 'attach-preview-file';
+                chip.style.cssText = 'display:inline-block;max-width:120px;padding:6px 8px;font-size:12px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+                chip.textContent = '📄 ' + att.name;
+                chip.title = att.name;
+                item.appendChild(chip);
+            }
             var removeBtn = document.createElement('button');
             removeBtn.className = 'attach-preview-remove';
             removeBtn.innerHTML = '&#10005;';
             removeBtn.title = '제거';
             removeBtn.onclick = (function(i) { return function() { removeAiAttachment(i); }; })(idx);
-            item.appendChild(img);
             item.appendChild(removeBtn);
             bar.appendChild(item);
         });
@@ -4643,11 +4664,19 @@ function renderChatMessage(role, content, attachments) {
         div.textContent = content;
         if (attachments && attachments.length) {
             attachments.forEach(function(att) {
-                var img = document.createElement('img');
-                img.className = 'chat-msg-image';
-                img.src = 'data:' + att.mediaType + ';base64,' + att.data;
-                img.alt = att.name || '첨부 이미지';
-                div.appendChild(img);
+                if (att.mediaType && att.mediaType.indexOf('image/') === 0) {
+                    var img = document.createElement('img');
+                    img.className = 'chat-msg-image';
+                    img.src = 'data:' + att.mediaType + ';base64,' + att.data;
+                    img.alt = att.name || '첨부 이미지';
+                    div.appendChild(img);
+                } else {
+                    var chip = document.createElement('div');
+                    chip.className = 'chat-msg-file';
+                    chip.style.cssText = 'margin-top:6px;padding:6px 10px;border-radius:8px;background:rgba(0,0,0,0.06);font-size:12px;display:inline-block;';
+                    chip.textContent = '📄 ' + (att.name || '첨부 파일');
+                    div.appendChild(chip);
+                }
             });
         }
     }

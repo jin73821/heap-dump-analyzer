@@ -200,7 +200,7 @@
         </div>
         <div class="memo-font-bar">
             <span class="memo-font-label">폰트</span>
-            <select id="memoFontSelect" class="memo-font-select" onchange="applyMemoFont(this.value)">
+            <select id="memoFontSelect" class="memo-font-select" onchange="applyMemoFont(this.value, true)">
                 <option value="d2coding">D2Coding</option>
                 <option value="jb+nanum">JetBrains Mono + 나눔고딕코딩</option>
                 <option value="nanum">나눔고딕코딩</option>
@@ -222,7 +222,7 @@
                   placeholder="자유 메모… 본인만 볼 수 있습니다."
                   spellcheck="false"
                   th:text="${user.memo}"
-                  oninput="updateMemoCount(); markMemoDirty()"></textarea>
+                  oninput="onMainMemoInput()"></textarea>
         <div class="memo-meta">
             <span>
                 저장 시각:
@@ -283,6 +283,10 @@
     </div>
 </div>
 
+<script th:inline="javascript">
+/* 계정별 저장된 메모장 폰트 (서버 영속화 — DB). 없으면 빈 문자열 → JS 에서 d2coding 폴백. */
+window.SERVER_MEMO_FONT = /*[[${user.memoFont}]]*/ '';
+</script>
 <script>
 /* ── Toast ───────────────────────────────────── */
 function toast(msg, type) {
@@ -350,32 +354,73 @@ var MEMO_FONT_PREVIEW_MAP = {
     'system':    '시스템 기본'
 };
 
-function applyMemoFont(val) {
+function applyMemoFont(val, persist) {
     var ff = MEMO_FONT_MAP[val] || MEMO_FONT_MAP['d2coding'];
     var box = document.getElementById('memoBox');
     var preview = document.getElementById('memoFontPreview');
-    box.style.fontFamily = ff;
+    if (box) box.style.fontFamily = ff;
     if (preview) preview.style.fontFamily = ff;
-    localStorage.setItem('memoFont', val);
+    localStorage.setItem('memoFont', val);  // 빠른 캐시 (서버가 최종 출처)
+    // 새창 폰트도 동기화
+    if (popupAlive()) {
+        try {
+            _memoPopup.ta.style.fontFamily = ff;
+            var pf = _memoPopup.win.document.getElementById('fsel');
+            if (pf && pf.value !== val) pf.value = val;
+        } catch (e) {}
+    }
+    // 계정별 서버 영속화 — 다음 접속/다른 브라우저에서도 동일 폰트 (item 3)
+    if (persist) {
+        Common.fetchJSON('/api/account/memo-font', {
+            method: 'POST', body: JSON.stringify({ font: val })
+        }).catch(function() { /* 폰트 저장 실패는 UI 동작에 영향 없으므로 조용히 무시 */ });
+    }
 }
 
 (function initMemoFont() {
-    var saved = localStorage.getItem('memoFont') || 'd2coding';
+    // 우선순위: 서버 저장값(계정별) > localStorage(캐시) > 기본값
+    var server = (window.SERVER_MEMO_FONT || '').trim();
+    var saved = server || localStorage.getItem('memoFont') || 'd2coding';
+    if (!MEMO_FONT_MAP[saved]) saved = 'd2coding';
     var sel = document.getElementById('memoFontSelect');
     if (sel) sel.value = saved;
-    applyMemoFont(saved);
+    applyMemoFont(saved, false);  // 초기 적용은 서버 저장 안 함
 })();
 
 /* ── 메모장 ────────────────────────────────── */
 var MEMO_MAX = 10 * 1024 * 1024;  // 10 MB (UTF-8 byte)
 
-function markMemoDirty() {
-    var el = document.getElementById('memoDirty');
-    if (el) el.style.display = '';
+/* ── 본문 ↔ 새창 저장상태 동기화 (item 2) ───────────────
+   _memoPopup = openMemoWindow() 가 채우는 { win, ta, st, refreshCnt } 핸들.
+   '미저장/저장됨' 표시와 본문 내용을 양쪽 창에서 동시에 갱신한다. */
+var _memoPopup = null;
+
+function popupAlive() {
+    try { return !!(_memoPopup && _memoPopup.win && !_memoPopup.win.closed && _memoPopup.ta); }
+    catch (e) { return false; }
 }
-function clearMemoDirty() {
+
+/* 미저장(true)/저장됨(false) 표시를 본문과 새창에 동시 반영 */
+function setMemoSaveState(dirty) {
     var el = document.getElementById('memoDirty');
-    if (el) el.style.display = 'none';
+    if (el) el.style.display = dirty ? '' : 'none';
+    if (popupAlive()) {
+        try {
+            if (dirty) { _memoPopup.st.className = 'status unsaved'; _memoPopup.st.textContent = '● 미저장'; }
+            else       { _memoPopup.st.className = 'status';         _memoPopup.st.textContent = '저장됨'; }
+        } catch (e) {}
+    }
+}
+function markMemoDirty()  { setMemoSaveState(true); }
+function clearMemoDirty() { setMemoSaveState(false); }
+
+/* 본문 textarea 입력 → 새창 내용 동기화 + 양쪽 미저장 표시 */
+function onMainMemoInput() {
+    updateMemoCount();
+    if (popupAlive()) {
+        try { _memoPopup.ta.value = document.getElementById('memoBox').value; _memoPopup.refreshCnt(); } catch (e) {}
+    }
+    setMemoSaveState(true);
 }
 
 function utf8ByteLen(str) {
@@ -548,7 +593,7 @@ function openMemoWindow() {
             var val = fsel.value;
             ta.style.fontFamily = MEMO_FONT_MAP[val] || MEMO_FONT_MAP['d2coding'];
             if (fontSel) fontSel.value = val;
-            applyMemoFont(val);
+            applyMemoFont(val, true);  // 새창에서 변경해도 서버 영속화 (item 3)
         };
     }
 
@@ -559,12 +604,16 @@ function openMemoWindow() {
     }
     refreshCnt();
 
-    // 입력 시 본문과 즉시 동기화 (창을 닫아도 내용 유지)
+    // 본문 ↔ 새창 동기화 핸들 등록 (item 2) + 현재 본문 미저장 상태를 새창에 즉시 반영
+    _memoPopup = { win: w, ta: ta, st: st, refreshCnt: refreshCnt };
+    setMemoSaveState(document.getElementById('memoDirty').style.display !== 'none');
+
+    // 입력 시 본문과 즉시 동기화 (창을 닫아도 내용 유지) + 양쪽 미저장 표시
     ta.oninput = function() {
         box.value = ta.value;
         updateMemoCount();
         refreshCnt();
-        st.className = 'status unsaved'; st.textContent = '● 미저장';
+        setMemoSaveState(true);
     };
 
     saveBtn.onclick = function() {

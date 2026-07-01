@@ -67,6 +67,7 @@ public class HeapDumpAnalyzerService {
     private final FileManagementService fileMgmt;
     private final LlmConfigService llmConfig;
     private final RagConfigService ragConfig;
+    private final RemoteDumpService remoteDumpService;
     private final AiInsightManager aiInsight;
 
     public MatReportParser getParser() { return parser; }
@@ -82,6 +83,11 @@ public class HeapDumpAnalyzerService {
 
     // 활성 분석 태스크 추적 (명시적 취소 API용)
     private final ConcurrentHashMap<String, java.util.concurrent.Future<?>> activeTasks = new ConcurrentHashMap<>();
+
+    // 클라이언트 disconnect 로 전송 불가가 된 SSE emitter 집합.
+    // 여기 담긴 emitter 로는 sendProgress 가 전송을 건너뛰되(로그 스팸 방지) 분석은 백그라운드로 계속한다.
+    private final java.util.Set<SseEmitter> deadEmitters =
+            java.util.Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     // Dominator Refs 사전계산 전용 직렬 executor (분석 풀과 분리, 글로벌 동시 1개)
     private final ExecutorService domRefPrecomputeExecutor =
@@ -158,6 +164,7 @@ public class HeapDumpAnalyzerService {
                                    FileManagementService fileMgmt,
                                    LlmConfigService llmConfig,
                                    RagConfigService ragConfig,
+                                   RemoteDumpService remoteDumpService,
                                    AiInsightManager aiInsight,
                                    MultipartProperties multipartProperties) {
         this.config  = config;
@@ -172,6 +179,7 @@ public class HeapDumpAnalyzerService {
         this.fileMgmt = fileMgmt;
         this.llmConfig = llmConfig;
         this.ragConfig = ragConfig;
+        this.remoteDumpService = remoteDumpService;
         this.aiInsight = aiInsight;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
         this.compressAfterAnalysis = config.isCompressAfterAnalysis();
@@ -1324,6 +1332,14 @@ public class HeapDumpAnalyzerService {
 
     // ── 런타임 설정 영속화 (settings.json) ─────────────────────────
 
+    /**
+     * 외부 서비스(예: RemoteDumpService 의 SSH local user/SCP temp dir/scan interval 변경)가
+     * 런타임 설정을 바꾼 뒤 settings.json + application.properties 동기화를 트리거하기 위한 공개 진입점.
+     */
+    public void persistRuntimeSettings() {
+        persistSettings();
+    }
+
     private File getSettingsFile() {
         return new File(config.getDataDirectory(), SETTINGS_FILE);
     }
@@ -1442,9 +1458,10 @@ public class HeapDumpAnalyzerService {
                 }
             }
 
-            // LLM/RAG 설정 복원 — 각 ConfigService 에 위임
+            // LLM/RAG/원격 설정 복원 — 각 서비스에 위임
             llmConfig.applyFromSettings(saved);
             ragConfig.applyFromSettings(saved);
+            remoteDumpService.applyFromSettings(saved);
             if (ragConfig.isRagEnabled()) {
                 logger.info("[Settings] RAG enabled: url={}, index={}, mode={}",
                         ragConfig.getRagElasticsearchUrl(), ragConfig.getRagIndex(), ragConfig.getRagSearchMode());
@@ -1493,9 +1510,10 @@ public class HeapDumpAnalyzerService {
             settings.put("allowAllExtensions", allowAllExtensions);
             settings.put("sessionTimeoutHours", sessionTimeoutHours);
             settings.put("dashboardDetectDays", dashboardDetectDays);
-            // LLM/RAG 설정 — 각 ConfigService 에 위임
+            // LLM/RAG/원격 설정 — 각 서비스에 위임
             llmConfig.collectSettings(settings);
             ragConfig.collectSettings(settings);
+            remoteDumpService.collectSettings(settings);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
         } catch (IOException e) {
@@ -1527,9 +1545,10 @@ public class HeapDumpAnalyzerService {
             updates.put("spring.servlet.multipart.max-file-size", multipartSize);
             updates.put("spring.servlet.multipart.max-request-size", multipartSize);
             updates.put("server.servlet.session.timeout", sessionTimeoutHours + "h");
-            // LLM/RAG 설정 — 각 ConfigService 에 위임
+            // LLM/RAG/원격 설정 — 각 서비스에 위임
             llmConfig.collectApplicationProperties(updates);
             ragConfig.collectApplicationProperties(updates);
+            remoteDumpService.collectApplicationProperties(updates);
             List<String> newLines = new ArrayList<>();
             for (String line : lines) {
                 String trimmed = line.trim();
@@ -2211,6 +2230,15 @@ public class HeapDumpAnalyzerService {
     /** 현재 분석 중인 파일명 (API 노출용) */
     public String getCurrentAnalysisFilename() { return currentAnalysisFilename; }
 
+    /** 진행 중(실행+큐 대기)인 모든 파일명 목록 (목록 페이지의 '분석 중' 애니메이션 버튼용) */
+    public java.util.List<String> getInProgressFilenames() {
+        java.util.List<String> names = new java.util.ArrayList<>();
+        activeTasks.forEach((name, task) -> {
+            if (task != null && !task.isDone()) names.add(name);
+        });
+        return names;
+    }
+
     /** 명시적 분석 취소 (API 호출용) */
     public boolean cancelAnalysis(String filename) {
         String safe = new File(filename).getName();
@@ -2503,6 +2531,7 @@ public class HeapDumpAnalyzerService {
                     }
                 }
                 try { emitter.complete(); } catch (Exception ignored) {}
+                deadEmitters.remove(emitter);  // dead-emitter 집합 누수 방지
             }
         });
         activeTasks.put(safe, future);
@@ -3391,10 +3420,13 @@ public class HeapDumpAnalyzerService {
     }
 
     /**
-     * SSE 진행 전송. emitter가 이미 완료된 경우 조용히 스킵.
-     * 클라이언트 disconnect 감지 시 분석 스레드를 인터럽트한다.
+     * SSE 진행 전송. 진행 상황은 항상 Observer 캐시(lastProgressCache/logCache)에 먼저 기록되므로
+     * emitter 가 죽어도(페이지 이탈) 재진입/관찰 경로에서 진행 상황을 계속 볼 수 있다.
+     * 클라이언트 disconnect 로 전송이 실패하면 해당 emitter 를 deadEmitters 에 담아 이후 전송만 스킵하고
+     * 분석 스레드는 인터럽트하지 않는다 → 백그라운드로 계속 진행. (명시적 취소는 cancelAnalysis 로만.)
      */
     private void sendProgress(SseEmitter emitter, AnalysisProgress progress) {
+        // 명시적 취소(cancelAnalysis → cancel(true)) 시에만 인터럽트되므로 조기 종료.
         if (Thread.currentThread().isInterrupted()) return;
 
         // ── Observer 캐시 업데이트 (ALREADY_ANALYZING은 실제 진행 상황이 아니므로 제외) ──
@@ -3410,14 +3442,16 @@ public class HeapDumpAnalyzerService {
             }
         }
 
+        // 이미 죽은 emitter 로는 전송 시도하지 않음 (캐시는 위에서 이미 갱신됨)
+        if (emitter == null || deadEmitters.contains(emitter)) return;
+
         try {
             emitter.send(SseEmitter.event().name("progress")
                     .data(objectMapper.writeValueAsString(progress)));
         } catch (Exception e) {
-            // SSE 전송 실패 = 클라이언트 disconnect (SSE 연결은 복구 불가)
-            // 현재 스레드 인터럽트하여 분석 중단 유도
-            logger.info("[SSE] Client disconnected ({}), interrupting thread", e.getClass().getSimpleName());
-            Thread.currentThread().interrupt();
+            // SSE 전송 실패 = 클라이언트 disconnect. 분석은 백그라운드로 계속 진행, 전송만 중단.
+            deadEmitters.add(emitter);
+            logger.info("[SSE] Client disconnected ({}), analysis continues in background", e.getClass().getSimpleName());
         }
     }
 

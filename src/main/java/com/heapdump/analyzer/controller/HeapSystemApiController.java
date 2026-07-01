@@ -1,6 +1,7 @@
 package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.config.HeapDumpConfig;
+import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.HeapDumpFile;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.util.AesEncryptor;
@@ -209,15 +210,7 @@ public class HeapSystemApiController {
         Map<String, Object> resp = new LinkedHashMap<>();
         String safe = filename;
 
-        File dumpFile = new File(analyzerService.getHeapDumpDirectory(), safe);
-        File tmpFile = new File(analyzerService.getHeapDumpDirectory() + "/tmp", safe);
-        File gzFile = new File(analyzerService.getHeapDumpDirectory(), safe + ".gz");
-
-        long dumpSize = 0;
-        if (tmpFile.exists()) dumpSize = tmpFile.length();
-        else if (dumpFile.exists()) dumpSize = dumpFile.length();
-        else if (gzFile.exists()) dumpSize = gzFile.length();
-
+        long dumpSize = estimateUncompressedDumpSize(safe);
         long matHeap = analyzerService.getMatHeapSize();
         boolean warning = matHeap > 0 && dumpSize > 0 && dumpSize * 2 > matHeap;
 
@@ -228,6 +221,57 @@ public class HeapSystemApiController {
         resp.put("matHeap", matHeap);
         resp.put("matHeapFormatted", matHeap > 0 ? FormatUtils.formatBytes(matHeap) : "unknown");
         return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * 힙 경고 판정을 위한 "비압축(압축 해제) 덤프 크기" 추정.
+     * 압축된 .gz 만 존재할 때 압축 크기를 그대로 쓰면 실제 크기를 크게 과소평가하므로 비압축 크기를 추정한다.
+     * 우선순위: ① 분석 중 tmp 작업본 → ② dumpfiles/ 비압축 원본 → ③ legacy 루트 비압축 원본
+     *          → ④ .gz(dumpfiles/ 우선, 없으면 루트): 캐시된 분석결과 originalFileSize > gzip ISIZE > .gz 길이
+     */
+    private long estimateUncompressedDumpSize(String safe) {
+        // ① 분석 중 tmp 작업본 (압축 해제됨 — 가장 정확)
+        File tmpFile = new File(analyzerService.getHeapDumpDirectory() + File.separator + "tmp", safe);
+        if (tmpFile.exists()) return tmpFile.length();
+
+        // ② dumpfiles/ 비압축 원본
+        File dumpFile = new File(config.getDumpFilesDirectory(), safe);
+        if (dumpFile.exists()) return dumpFile.length();
+
+        // ③ legacy 루트 비압축 원본 (마이그레이션 호환)
+        File legacyDump = new File(analyzerService.getHeapDumpDirectory(), safe);
+        if (legacyDump.exists()) return legacyDump.length();
+
+        // ④ 압축본만 존재 — 비압축 크기 추정
+        File gzFile = new File(config.getDumpFilesDirectory(), safe + ".gz");
+        if (!gzFile.exists()) gzFile = new File(analyzerService.getHeapDumpDirectory(), safe + ".gz");
+        if (gzFile.exists()) {
+            // (a) 이전 분석 결과에 기록된 비압축 원본 크기 (가장 정확)
+            HeapAnalysisResult cached = analyzerService.getCachedResult(safe);
+            if (cached != null && cached.getOriginalFileSize() > gzFile.length()) {
+                return cached.getOriginalFileSize();
+            }
+            // (b) gzip ISIZE (마지막 4바이트, little-endian, 비압축 mod 2^32 — <4GB 정확)
+            long isize = readGzipUncompressedSize(gzFile);
+            if (isize > gzFile.length()) return isize;
+            // (c) 최후: 압축 크기 (과소평가 가능하나 0보다 안전)
+            return gzFile.length();
+        }
+        return 0;
+    }
+
+    /** gzip 파일의 마지막 4바이트 ISIZE(비압축 크기 mod 2^32) 읽기. 실패 시 0. */
+    private long readGzipUncompressedSize(File gz) {
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(gz, "r")) {
+            long len = raf.length();
+            if (len < 4) return 0;
+            raf.seek(len - 4);
+            byte[] b = new byte[4];
+            raf.readFully(b);
+            return (b[0] & 0xFFL) | ((b[1] & 0xFFL) << 8) | ((b[2] & 0xFFL) << 16) | ((b[3] & 0xFFL) << 24);
+        } catch (Exception e) {
+            return 0;
+        }
     }
 
     @GetMapping("/api/system/status")

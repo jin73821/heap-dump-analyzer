@@ -1,9 +1,9 @@
-JAR=/opt/genspark/webapp_dump/target/heap-analyzer-2.2.0.jar
+JAR=/opt/genspark/webapp_dump/target/heap-analyzer-2.2.3.jar
 LOG_DIR=/opt/genspark/webapp_dump/logs
 NOHUP_LOG="$LOG_DIR/nohup.out"
 
 # 이미 실행 중이면 거절 (재기동은 restart.sh 사용)
-RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.2.0.jar | grep -v grep | awk '{print $2}')
+RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.2.3.jar | grep -v grep | awk '{print $2}')
 if [ -n "$RUNNING_PIDS" ]; then
     echo "[run] 이미 실행 중: PID=$RUNNING_PIDS"
     echo "[run] 'bash stop.sh' 후 다시 실행하거나 'bash restart.sh' 를 사용하세요."

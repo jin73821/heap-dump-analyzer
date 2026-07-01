@@ -112,6 +112,52 @@ public class RemoteDumpService {
         return Collections.unmodifiableMap(lastAutoScanErrors);
     }
 
+    // ── 런타임 설정 영속화 연동 (LlmConfigService/RagConfigService 와 동일 패턴) ──
+    // HeapDumpAnalyzerService.persistSettings()/syncApplicationProperties()/loadSettings() 가 위임 호출.
+
+    /** settings.json 에 저장할 원격(SSH/SCP) 설정 수집. */
+    public void collectSettings(Map<String, Object> settings) {
+        settings.put("sshLocalUser", sshLocalUser);
+        settings.put("scpTempDir", scpTempDir);
+        settings.put("scanIntervalSec", scanIntervalSec);
+    }
+
+    /** application.properties 동기화용 키-값 수집(줄 단위 치환). */
+    public void collectApplicationProperties(Map<String, String> updates) {
+        updates.put("remote.ssh.local-user", sshLocalUser != null ? sshLocalUser : "");
+        updates.put("remote.scp.temp-dir", scpTempDir != null ? scpTempDir : "/tmp");
+        updates.put("remote.scan.interval-sec", String.valueOf(scanIntervalSec));
+    }
+
+    /** settings.json 복원 — 저장된 값으로 런타임 필드 덮어씀(application.properties 기본값 우선). */
+    public void applyFromSettings(Map<String, Object> saved) {
+        if (saved.containsKey("sshLocalUser")) {
+            Object v = saved.get("sshLocalUser");
+            if (v != null) {
+                this.sshLocalUser = String.valueOf(v).trim();
+                logger.info("[Settings] Restored sshLocalUser='{}'", this.sshLocalUser);
+            }
+        }
+        if (saved.containsKey("scpTempDir")) {
+            Object v = saved.get("scpTempDir");
+            if (v != null && !String.valueOf(v).trim().isEmpty()) {
+                this.scpTempDir = String.valueOf(v).trim();
+                logger.info("[Settings] Restored scpTempDir='{}'", this.scpTempDir);
+            }
+        }
+        if (saved.containsKey("scanIntervalSec")) {
+            Object v = saved.get("scanIntervalSec");
+            int sec = (v instanceof Number) ? ((Number) v).intValue() : -1;
+            if (sec <= 0 && v != null) {
+                try { sec = Integer.parseInt(String.valueOf(v).trim()); } catch (NumberFormatException ignored) {}
+            }
+            if (sec > 0) {
+                this.scanIntervalSec = sec;
+                logger.info("[Settings] Restored scanIntervalSec={}", this.scanIntervalSec);
+            }
+        }
+    }
+
     /**
      * SSH 연결 테스트 — 성공/실패 시 서버 상태 DB 업데이트
      */

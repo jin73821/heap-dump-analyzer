@@ -1485,7 +1485,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-06-28"></script>
+<script src="/js/analyze.js?v=2026-07-01"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
@@ -1505,7 +1505,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
     <div class="ai-chat-messages" id="aiChatMessages"></div>
     <div class="attach-preview-bar" id="aiChatAttachBar" style="display:none;padding:6px 12px;border-top:1px solid #F3F4F6;background:#fff"></div>
     <div class="ai-chat-input-area">
-        <input type="file" id="aiChatFileInput" accept="image/jpeg,image/png,image/gif,image/webp" multiple style="display:none" onchange="onAnalyzeChatFileSelect(this)">
+        <input type="file" id="aiChatFileInput" accept="image/jpeg,image/png,image/gif,image/webp,text/plain,text/csv,text/markdown,application/json,application/xml,.log,.txt,.text,.csv,.tsv,.json,.xml,.md,.markdown,.yaml,.yml,.properties,.conf,.ini,.out,.trace,.gc,.diff,.patch" multiple style="display:none" onchange="onAnalyzeChatFileSelect(this)">
         <button type="button" id="aiChatAttachBtn" class="chat-attach-btn" title="이미지 첨부" style="width:32px;height:32px" onclick="document.getElementById('aiChatFileInput').click()">
             <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
         </button>
