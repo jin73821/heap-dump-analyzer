@@ -71,9 +71,13 @@ public class HeapAnalysisApiController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getQueueStatus() {
         Map<String, Object> resp = new LinkedHashMap<>();
+        String current = analyzerService.getCurrentAnalysisFilename();
         resp.put("queueSize", analyzerService.getQueueSize());
-        resp.put("currentAnalysis", analyzerService.getCurrentAnalysisFilename());
+        resp.put("currentAnalysis", current);
         resp.put("inProgressFiles", analyzerService.getInProgressFilenames());
+        // 경과 시간 표기: 현재 분석 파일의 실제 시작 시각 + 서버 현재 시각(클라이언트 시계 오차 보정)
+        resp.put("currentAnalysisStartMs", analyzerService.getAnalysisStartEpoch(current));
+        resp.put("serverNowMs", System.currentTimeMillis());
         return ResponseEntity.ok(resp);
     }
 
@@ -97,6 +101,8 @@ public class HeapAnalysisApiController {
         resp.put("inProgress", analyzerService.isInProgress(safe));
         resp.put("progress", progress);
         resp.put("logLines", logLines);
+        // 재진입 경과시간 이어보기: 서버 현재 시각을 신선하게 내려 클라이언트 시계 오차 보정에 사용.
+        resp.put("serverNowMs", System.currentTimeMillis());
         return ResponseEntity.ok(resp);
     }
 }

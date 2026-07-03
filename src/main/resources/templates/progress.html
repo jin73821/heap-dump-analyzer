@@ -801,6 +801,32 @@
     </div>
 </div>
 
+<!-- 대용량 덤프 분석 소요 시간 안내 모달 -->
+<div class="heap-warn-ov" id="timeWarnModal">
+    <div class="heap-warn-box">
+        <div class="hw-icon">&#9203;</div>
+        <div class="hw-title" style="color:#1D4ED8">대용량 덤프 분석 안내</div>
+        <div class="hw-info" style="background:#EFF6FF;border-color:#BFDBFE">
+            <div class="hw-info-row">
+                <span class="hw-info-label" style="color:#1E40AF">덤프 파일 크기</span>
+                <span class="hw-info-val" id="twDumpSize" style="color:#1D4ED8">-</span>
+            </div>
+            <div class="hw-info-row">
+                <span class="hw-info-label" style="color:#1E40AF">예상 소요 시간</span>
+                <span class="hw-info-val" id="twEstTime" style="color:#1D4ED8">-</span>
+            </div>
+        </div>
+        <div class="hw-desc">
+            대용량 힙 덤프는 파싱에 시간이 오래 걸립니다. 파일 크기에 따라 <b>수 분에서 십수 분</b>까지 소요될 수 있습니다.<br>
+            분석 중 이 창을 닫아도 <b>분석은 백그라운드로 계속 진행</b>되며, 완료되면 자동으로 결과 페이지로 이동합니다.
+        </div>
+        <div class="hw-btns">
+            <button class="hw-btn-cancel" onclick="cancelTimeWarnModal()">취소</button>
+            <button class="hw-btn-proceed" style="background:#2563EB" onclick="proceedFromTimeWarn()">분석 시작</button>
+        </div>
+    </div>
+</div>
+
 <!-- ── 대기열 취소 확인 모달 ──────────────────────────────── -->
 <div class="heap-warn-ov" id="cancelModal">
     <div class="heap-warn-box">
@@ -816,7 +842,7 @@
 
 <!-- ── Footer ─────────────────────────────────────────────── -->
 <div class="progress-footer">
-    &copy; 2026 Heap Dump Analyzer v2.2.4 | Powered by Eclipse MAT CLI
+    &copy; 2026 Heap Dump Analyzer v2.2.6 | Powered by Eclipse MAT CLI
 </div>
 
 <!-- ── SSE 진행 상황 처리 스크립트 (성능 최적화) ───────────── -->
@@ -860,9 +886,15 @@
     let analysisStartTime = null;
     let elapsedTimerId    = null;
 
-    function startElapsedTimer() {
+    // startEpochMs/serverNowMs 가 있으면 서버 기준 경과분을 클라이언트 시계에 앵커링해
+    // 재진입 시에도 실제 분석 경과 시간을 이어서 표시한다(시계 오차는 무시). 없으면 지금부터 0.
+    function startElapsedTimer(startEpochMs, serverNowMs) {
         if (analysisStartTime) return;
-        analysisStartTime = Date.now();
+        if (startEpochMs && serverNowMs && serverNowMs >= startEpochMs) {
+            analysisStartTime = Date.now() - (serverNowMs - startEpochMs);
+        } else {
+            analysisStartTime = Date.now();
+        }
         updateElapsed();
         elapsedTimerId = setInterval(updateElapsed, 1000);
     }
@@ -992,7 +1024,7 @@
                         var p = d.progress;
                         var st = p.status || 'RUNNING';
                         if (!analysisStartTime && (st === 'RUNNING' || st === 'PARSING')) {
-                            startElapsedTimer();
+                            startElapsedTimer(p.startEpochMs, d.serverNowMs);
                         }
                         var stateStr = st === 'COMPLETED' ? 'done' : st === 'ERROR' ? 'error' : 'running';
                         setProgress(p.percent || 0, p.message || '', stateStr, p.message || '');
@@ -1305,9 +1337,9 @@
 
 
 
-            // 첫 RUNNING 수신 시 타이머 시작 + 배너 상태 갱신
+            // 첫 RUNNING 수신 시 타이머 시작 + 배너 상태 갱신 (재진입 시 서버 시작 시각 기준으로 이어서 표시)
             if (!analysisStartTime && (status === 'RUNNING' || status === 'PARSING')) {
-                startElapsedTimer();
+                startElapsedTimer(data.startEpochMs, data.serverNowMs);
                 if (typeof refreshBannerStatus === 'function') refreshBannerStatus();
             }
 
@@ -1500,6 +1532,18 @@
             .catch(function() { doHeapCheck(); });
     }
 
+    // 이 크기(비압축 기준) 이상의 덤프는 파싱에 수 분 이상 소요될 수 있어 사전 안내 모달 표시
+    var LARGE_DUMP_WARN_BYTES = 2 * 1024 * 1024 * 1024; // 2GB
+
+    // 비압축 덤프 크기 → 대략적인 예상 소요 시간 라벨 (보수적 하한, 환경/동시성에 따라 변동)
+    function estimateAnalysisTime(bytes) {
+        var gb = bytes / (1024 * 1024 * 1024);
+        if (gb >= 8) return '20분 이상';
+        if (gb >= 5) return '약 15~30분';
+        if (gb >= 3) return '약 8~20분';
+        return '약 5~10분';
+    }
+
     function doHeapCheck() {
         var skipWarn = localStorage.getItem('skipHeapWarning') === 'true';
         if (skipWarn) { startSSE(); return; }
@@ -1512,11 +1556,26 @@
                     document.getElementById('hwRecommended').textContent = d.recommendedHeap;
                     document.getElementById('hwCurrentHeap').textContent = d.matHeapFormatted;
                     document.getElementById('heapWarnModal').classList.add('open');
+                } else if (d.dumpSize && d.dumpSize >= LARGE_DUMP_WARN_BYTES) {
+                    document.getElementById('twDumpSize').textContent = d.dumpSizeFormatted;
+                    document.getElementById('twEstTime').textContent = estimateAnalysisTime(d.dumpSize);
+                    document.getElementById('timeWarnModal').classList.add('open');
                 } else {
                     startSSE();
                 }
             })
             .catch(function() { startSSE(); }); // 체크 실패 시 그냥 진행
+    }
+
+    function proceedFromTimeWarn() {
+        document.getElementById('timeWarnModal').classList.remove('open');
+        startSSE();
+    }
+
+    function cancelTimeWarnModal() {
+        document.getElementById('timeWarnModal').classList.remove('open');
+        analysisRunning = false;
+        window.location.href = '/';
     }
 
     function proceedAnalysis() {

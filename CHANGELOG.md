@@ -1,6 +1,84 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-07-04] 대시보드 Analysis Queue 에 분석 경과 시간 표기
+
+**대상:** `service/HeapDumpAnalyzerService.java`, `controller/HeapAnalysisApiController.java`, `templates/index.html`
+
+### 배경
+대시보드 우측 **Analysis Queue** 패널의 `ANALYZING` 행은 현재 분석 파일명만 보여줬다. 진행 화면(`/progress`)의 경과 시간 이어보기와 동일하게, 큐 패널에서도 현재 분석의 경과 시간을 확인할 수 있도록 표기.
+
+### 변경
+- **서버**: `getAnalysisStartEpoch(filename)` getter 신규(앞서 도입한 `analysisStartEpoch` 맵 재사용). `GET /api/queue/status` 응답에 `currentAnalysisStartMs`(현재 분석 파일의 실제 시작 시각) + `serverNowMs`(호출 시점) 추가.
+- **프론트(`index.html`)**: `ANALYZING` 행 우측에 `⏱ MM:SS` 경과 시간 칩(`.queue-elapsed-chip`) 추가. `syncQueueElapsed()` 가 서버 시작 시각을 클라이언트 시계에 앵커링(`_queueElapsedBase`)해 **폴링 주기와 무관하게 1초 단위**로 갱신(별도 ticker). 파일 변경/재실행(startMs 변화) 시 재앵커, 시작 시각 미기록(대기→실행 전환 순간)이면 `--:--`. 큐 idle/조회 실패 시 ticker 정리.
+
+### 검증
+빌드+기동 OK. 실분석 트리거 후 `queue/status` 응답에서 `currentAnalysisStartMs` 고정 + `serverNowMs` 증가 확인, 분석 완료 시 `currentAnalysisStartMs=null` 정리 확인.
+
+
+## [2026-07-04] 진행 화면 재진입 시 경과 시간 이어보기 (0 리셋 수정)
+
+**대상:** `model/AnalysisProgress.java`, `service/HeapDumpAnalyzerService.java`, `controller/HeapAnalysisApiController.java`, `templates/progress.html`
+
+### 배경
+분석 진행 중 **본인 새로고침 / 다른 사용자 관찰(observer)** 로 `/progress` 화면에 재진입하면 경과 시간이 `00:00` 으로 리셋됐다. 클라이언트 `startElapsedTimer()` 가 페이지 로드 시점의 `Date.now()` 를 기준점으로 잡아, 실제 분석 시작 시각과 무관하게 매 진입마다 0부터 셌기 때문.
+
+### 변경
+- **서버가 실제 분석 시작 시각을 권위적으로 보유**: `analysisStartEpoch`(파일→epoch millis) 맵 신규. `sendProgress()` 가 첫 `RUNNING/PARSING` 전송 시 `computeIfAbsent` 로 1회 기록하고 진행 객체에 `startEpochMs` 스탬프(+`serverNowMs` 신선 스탬프). QUEUED 는 미기록(분석 전 = 타이머 미시작). 분석 `finally`(취소·오류·정상 모두)에서 `analysisStartEpoch.remove(safe)` 로 정리 → 재실행 시 새 시작 시각 재기록.
+- **관찰 경로 신선도**: `GET /api/analyze/live-snapshot` 응답에 `serverNowMs`(호출 시점) 추가.
+- **클라이언트 앵커링**: `startElapsedTimer(startEpochMs, serverNowMs)` 로 시그니처 변경 — 서버 기준 경과분(`serverNow − start`)을 클라이언트 시계에 앵커(`Date.now() − 경과분`)해 **시계 오차 무시**하고 이어서 표시. SSE·observer 두 호출부 모두 서버 값 전달. 값 없으면 기존대로 지금부터 0(무회귀).
+
+### 검증
+빌드+기동 OK(13.1s). `live-snapshot` 응답에 `serverNowMs` 포함 확인.
+
+
+## [2026-07-04] 분석 취소 시 MAT 프로세스 강제 종료 + 실패 방어 + 로깅
+
+**대상:** `service/HeapDumpAnalyzerService.java`
+
+### 배경
+`/progress` 화면에서 "분석 취소"를 눌러도 **MAT 자식 프로세스(`sh`→`java`/MemoryAnalyzer)가 오펀으로 잔존**했다. `cancelAnalysis()`의 `task.cancel(true)`는 자바 스레드만 인터럽트하고, `process.waitFor()`가 던진 `InterruptedException`이 전파되며 타임아웃 분기의 `destroyForcibly()`를 건너뛰기 때문. `Process`를 추적하는 필드/맵이 전무해 취소 시 프로세스를 종료할 방법이 없었다. (tmp 정리는 기존에도 `finally`에서 동작했으나, 오펀 프로세스가 파일을 연 채로 있어 디스크 회수가 지연되는 부작용 존재.)
+
+### 1) MAT 프로세스 추적 + 트리 종료
+- `activeMatProcesses`(`ConcurrentHashMap<String, Process>`) 신규 — `runMatCliWithProgress`가 spawn 직후 `new File(filename).getName()` 키로 등록, finally에서 제거.
+- `killMatProcessTree(Process, ctx)` 헬퍼 — `Process.descendants()`로 **자식(java) 먼저 강제 종료 후 부모 종료**(JDK 21). 개별 실패도 로깅.
+- `confirmProcessDead(Process, sec)` — bounded `waitFor`로 실제 종료 확인(인터럽트 안전).
+
+### 2) `cancelAnalysis()` — 즉시 프로세스 종료 + 실패 방어
+- `task.cancel(true)` 후 추적 맵에서 프로세스를 꺼내 트리 종료. **5초 내 종료 확인 → 실패 시 1회 재시도 → 그래도 잔존 시 ERROR(수동 확인 필요)** 로깅.
+
+### 3) 방어 finally (양 spawn 메서드)
+- `runMatCliWithProgress`/`runMatSingleQuery` finally에 **잔존 프로세스 방어 종료** 추가(취소·SSE disconnect·shutdown·precompute executor 종료 등 모든 인터럽트 경로 커버). 중첩 `try/catch/finally`로 kill 예외가 **`matSlots.release()`를 막지 못하게 격리**(슬롯 누수 방지 = 최우선 불변식). 정상 완료 시엔 `isAlive()==false`라 no-op.
+- 람다 캡처 위해 `final Process proc` 분리(reader 스레드는 `proc` 참조), finally 참조용으로 `process`를 hoist.
+
+### 4) tmp 정리 실패 방어
+- `tmpFile.delete()` bounded 재시도(0.5s×3, 인터럽트 안전) + 최종 실패 시 경로·크기 포함 **ERROR** 로깅.
+
+### 5) 분석 막바지(재압축·precompute) 취소 방어
+- 재압축 `FileManagementService.compressDumpFile`은 이미 원자적으로 안전(.gz 검증 후 원본 삭제, IOException 시 부분 .gz 삭제·원본 보존, gzip I/O는 인터럽트 비반응으로 완주) → **변경 없음**.
+- compress·precompute 제출 앞에 `Thread.isInterrupted()` 가드 추가 → **취소가 성공 경계 구간에 도달해도 precompute 미제출 보장**("취소 시 precompute 미작동"). MAT 파싱 중 일반 취소는 애초에 이 라인에 도달하지 않음. 이미 실행 중인 precompute는 별도 executor라 독립(분석 성공 후에만 발생, 유지 무방).
+
+### 로깅
+성공: `[Cancel] MAT 프로세스 트리 종료 확인`. 실패/방어: `[Cancel] ...미종료 재시도/최종 실패`, `[MAT CLI]/[MAT Lazy] 취소·중단 감지 — 잔존 MAT 강제 종료`, `[Analysis] Tmp file 정리 최종 실패`, `[Analysis] 취소 감지 — 후속 압축/precompute 건너뜀`.
+
+
+## [2026-07-03] 대용량 힙 덤프 분석 소요 시간 사전 안내 모달 추가
+
+**대상:** `templates/progress.html`
+
+### 배경
+`MAT_PARSE_REGRESSION_DIAGNOSIS.md` 에 정리된 대로 8GB급 힙 덤프는 파싱에 5~17분까지 소요된다. 사용자가 분석을 시작한 뒤 오래 걸리는 이유를 알 수 없어 실패로 오인하거나 반복 재시도하는 문제가 있어, **분석 시작 전** 예상 소요 시간을 안내하는 모달을 추가한다.
+
+### 구현
+- 모든 분석 트리거(대시보드/파일/이력 Analyze·재분석)는 `GET /analyze/{filename}` → `progress.html` 로 수렴하며, 분석 시작 직전 `doHeapCheck()` 가 유일한 choke point. 여기서 `/api/mat/heap-check` 응답의 `dumpSize`(비압축 바이트)를 기준으로 분기.
+- **우선순위:** ① MAT 힙 부족 경고(기존, `d.warning`) → ② 비압축 크기 ≥ **2GB** 이면 신규 **시간 안내 모달**(`#timeWarnModal`) → ③ 그 외 즉시 `startSSE()`. 메모리 경고가 뜨는 덤프는 이미 대용량이므로 중복 모달을 피하려 상호배타 분기.
+- 모달은 기존 `.heap-warn-*` 스타일 재사용(정보=파란 테마). 덤프 크기 + 예상 소요 시간(`estimateAnalysisTime()`: 2GB~ 약 5~10분 / 3GB~ 약 8~20분 / 5GB~ 약 15~30분 / 8GB~ 20분 이상, 실측 대비 넉넉히 상향) 표기. "창을 닫아도 백그라운드로 계속 진행" 안내.
+- `skipHeapWarning` localStorage 플래그가 켜져 있으면 시간 모달도 함께 skip(기존 동작 일관).
+
+### 판단
+임계값 2GB(비압축)는 JS 상수 `LARGE_DUMP_WARN_BYTES` 로 쉽게 조정 가능. 예상 시간은 보수적 하한(환경·동시성 편차 큼)이라 "약/이상" 으로 표기.
+
+
 ## [2026-07-03] 코어 단독(실행파일 없음) 분석 고도화 — gdb 명령 세트 확장
 
 **대상:** `service/CoreDumpAnalyzerService.java`, `model/CoreDumpAnalysisResult.java`, `templates/core-dump/analyze.html`

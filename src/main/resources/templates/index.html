@@ -363,6 +363,13 @@
         .queue-stat-val { font-size: 14px; font-weight: 700; color: #1F2937;
                           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .queue-stat-val.running { color: #2563EB; }
+        .queue-elapsed-chip {
+            flex-shrink: 0; margin-left: auto; align-self: center;
+            font-size: 12px; font-weight: 700; color: #1D4ED8;
+            font-variant-numeric: tabular-nums;
+            background: #EFF6FF; border: 1px solid #DBEAFE;
+            border-radius: 999px; padding: 3px 9px; white-space: nowrap;
+        }
         .queue-items { margin-top: 6px; }
         .queue-item {
             display: flex; align-items: center; gap: 8px; padding: 6px 12px;
@@ -599,7 +606,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.2.4 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.2.6 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -1270,6 +1277,7 @@ function renderQueueFetchError() {
     panel.classList.add('visible');
     dot.style.background = '#EF4444';
     dot.style.animation = 'none';
+    stopQueueElapsed();
     body.innerHTML = '<div class="queue-idle">' +
         '<div class="queue-idle-icon" style="font-size:16px;color:#EF4444">&#9888;</div>' +
         '<div class="queue-idle-text" style="color:#DC2626">큐 상태를 확인할 수 없습니다</div></div>';
@@ -1312,6 +1320,47 @@ function applyInProgress(files) {
     });
 }
 
+// ── Analysis Queue 경과 시간 (현재 분석 중 파일) ──────────────────────
+// 서버 시작 시각을 클라이언트 시계에 앵커링(_queueElapsedBase)해 폴링 주기와 무관하게 1초마다 표기.
+var _queueElapsedBase   = null;   // Date.now() 기준 분석 시작 시각(ms)
+var _queueElapsedFile   = null;   // 현재 앵커된 파일명
+var _queueElapsedStartMs = null;  // 앵커에 사용한 서버 startMs (재실행 감지용)
+var _queueElapsedTimer  = null;
+
+function syncQueueElapsed(current, startMs, serverNowMs) {
+    // 시작 시각 미기록(대기→실행 전환 순간)이면 앵커 보류 — 다음 폴링에서 확정.
+    if (!startMs || !serverNowMs || serverNowMs < startMs) {
+        if (_queueElapsedFile !== current) { _queueElapsedBase = null; _queueElapsedFile = current; _queueElapsedStartMs = null; }
+        return;
+    }
+    // 파일이 바뀌었거나(다른 분석) 같은 파일이라도 시작 시각이 달라졌으면(재실행) 재앵커.
+    if (_queueElapsedFile !== current || _queueElapsedStartMs !== startMs || _queueElapsedBase === null) {
+        _queueElapsedBase   = Date.now() - (serverNowMs - startMs);
+        _queueElapsedFile   = current;
+        _queueElapsedStartMs = startMs;
+    }
+    if (!_queueElapsedTimer) {
+        _queueElapsedTimer = setInterval(tickQueueElapsed, 1000);
+    }
+}
+function formatQueueElapsed() {
+    if (_queueElapsedBase === null) return '--:--';
+    var elapsed = Date.now() - _queueElapsedBase;
+    if (elapsed < 0) elapsed = 0;
+    var mins = Math.floor(elapsed / 60000);
+    var secs = Math.floor((elapsed % 60000) / 1000);
+    return String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+}
+function tickQueueElapsed() {
+    var el = document.getElementById('queueElapsedChip');
+    if (!el) return;   // 패널이 idle 로 재렌더된 경우 — 다음 stopQueueElapsed 가 정리
+    el.innerHTML = '&#9201; ' + formatQueueElapsed();
+}
+function stopQueueElapsed() {
+    if (_queueElapsedTimer) { clearInterval(_queueElapsedTimer); _queueElapsedTimer = null; }
+    _queueElapsedBase = null; _queueElapsedFile = null; _queueElapsedStartMs = null;
+}
+
 function renderQueuePanel(d) {
     applyInProgress(d.inProgressFiles || []);
 
@@ -1334,6 +1383,7 @@ function renderQueuePanel(d) {
         var now = new Date();
         updated.textContent = 'Updated ' + String(now.getHours()).padStart(2,'0') + ':' +
             String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
+        stopQueueElapsed();
         stopQueuePolling();
         return;
     }
@@ -1345,13 +1395,19 @@ function renderQueuePanel(d) {
     var html = '';
     // 현재 분석 중
     if (current) {
+        // 경과 시간: 서버 시작 시각을 클라이언트 시계에 앵커링(시계 오차 무시). 파일/시작 시각 바뀌면 재앵커.
+        syncQueueElapsed(current, d.currentAnalysisStartMs, d.serverNowMs);
         html += '<div class="queue-stat-row">' +
             '<div class="queue-stat-icon qsi-blue">' +
             '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></div>' +
             '<div class="queue-stat-info">' +
             '<div class="queue-stat-label">ANALYZING</div>' +
             '<div class="queue-stat-val running"><a class="queue-file-link" href="/analyze/' + encodeURIComponent(current) + '">' + escHtml(current) + '</a></div>' +
-            '</div></div>';
+            '</div>' +
+            '<span class="queue-elapsed-chip" id="queueElapsedChip">&#9201; ' + formatQueueElapsed() + '</span>' +
+            '</div>';
+    } else {
+        stopQueueElapsed();
     }
     // 대기 중
     var waiting = current ? qSize - 1 : qSize;

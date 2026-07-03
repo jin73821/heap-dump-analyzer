@@ -84,6 +84,9 @@ public class HeapDumpAnalyzerService {
     // 활성 분석 태스크 추적 (명시적 취소 API용)
     private final ConcurrentHashMap<String, java.util.concurrent.Future<?>> activeTasks = new ConcurrentHashMap<>();
 
+    // 활성 메인 분석 MAT 프로세스 추적 (취소 시 자식 프로세스 강제 종료용)
+    private final ConcurrentHashMap<String, Process> activeMatProcesses = new ConcurrentHashMap<>();
+
     // 클라이언트 disconnect 로 전송 불가가 된 SSE emitter 집합.
     // 여기 담긴 emitter 로는 sendProgress 가 전송을 건너뛰되(로그 스팸 방지) 분석은 백그라운드로 계속한다.
     private final java.util.Set<SseEmitter> deadEmitters =
@@ -124,6 +127,9 @@ public class HeapDumpAnalyzerService {
 
     // ── Observer 모드: 진행 상황 스냅샷 캐시 (파일명 → 최신 AnalysisProgress) ──
     private final ConcurrentHashMap<String, AnalysisProgress> lastProgressCache = new ConcurrentHashMap<>();
+    // ── 재진입 경과시간 이어보기: 파일별 실제 분석 시작 시각(epoch millis) ──
+    // 첫 RUNNING/PARSING 진행 전송 시 1회 기록, COMPLETED/ERROR 시 제거. 재실행 시 새 시작 시각 재기록.
+    private final ConcurrentHashMap<String, Long> analysisStartEpoch = new ConcurrentHashMap<>();
     // ── Observer 모드: MAT 로그 캐시 (파일명 → 최근 500줄, ConcurrentLinkedDeque는 스레드 안전) ──
     private final ConcurrentHashMap<String, java.util.concurrent.ConcurrentLinkedDeque<String>> logCache
             = new ConcurrentHashMap<>();
@@ -2230,6 +2236,12 @@ public class HeapDumpAnalyzerService {
     /** 현재 분석 중인 파일명 (API 노출용) */
     public String getCurrentAnalysisFilename() { return currentAnalysisFilename; }
 
+    /** 지정 파일의 실제 분석 시작 시각(epoch millis). 미기록(대기 중/미시작)이면 null. (경과 시간 표기용) */
+    public Long getAnalysisStartEpoch(String filename) {
+        if (filename == null) return null;
+        return analysisStartEpoch.get(new File(filename).getName());
+    }
+
     /** 진행 중(실행+큐 대기)인 모든 파일명 목록 (목록 페이지의 '분석 중' 애니메이션 버튼용) */
     public java.util.List<String> getInProgressFilenames() {
         java.util.List<String> names = new java.util.ArrayList<>();
@@ -2242,13 +2254,70 @@ public class HeapDumpAnalyzerService {
     /** 명시적 분석 취소 (API 호출용) */
     public boolean cancelAnalysis(String filename) {
         String safe = new File(filename).getName();
+        boolean cancelled = false;
         java.util.concurrent.Future<?> task = activeTasks.remove(safe);
         if (task != null && !task.isDone()) {
             logger.info("[Analysis] Cancel requested via API: {}", safe);
-            return task.cancel(true);
+            cancelled = task.cancel(true);
+        } else {
+            logger.info("[Analysis] Cancel requested but no active task found: {}", safe);
         }
-        logger.info("[Analysis] Cancel requested but no active task found: {}", safe);
-        return false;
+        // 스레드 인터럽트만으로는 MAT 자식 프로세스가 오펀으로 잔존 → 프로세스 트리 즉시 강제 종료
+        Process mat = activeMatProcesses.remove(safe);
+        if (mat != null && mat.isAlive()) {
+            long kids = killMatProcessTree(mat, "cancel-api");
+            // 종료 실패 방어: 5초 내 종료 확인 → 실패 시 1회 재시도 → 그래도 살아있으면 ERROR (수동 확인 필요)
+            if (confirmProcessDead(mat, 5)) {
+                logger.info("[Cancel] MAT 프로세스 트리 종료 확인: {} (pid={}, 자식={}개)", safe, mat.pid(), kids);
+            } else {
+                logger.error("[Cancel] MAT 프로세스 5초 내 미종료 — 재시도: {} (pid={})", safe, mat.pid());
+                killMatProcessTree(mat, "cancel-retry");
+                if (confirmProcessDead(mat, 3)) {
+                    logger.warn("[Cancel] MAT 프로세스 재시도 후 종료: {} (pid={})", safe, mat.pid());
+                } else {
+                    logger.error("[Cancel] MAT 프로세스 강제 종료 최종 실패 — 잔존 가능, 수동 확인 필요: {} (pid={})", safe, mat.pid());
+                }
+            }
+            cancelled = true;
+        }
+        return cancelled;
+    }
+
+    /** MAT 프로세스와 그 자식(java 등)을 모두 강제 종료. 반환: 종료 시도한 자식 수. */
+    private long killMatProcessTree(Process p, String ctx) {
+        if (p == null) return 0;
+        long descCount = 0;
+        try {
+            java.util.List<ProcessHandle> kids = p.descendants().collect(java.util.stream.Collectors.toList());
+            descCount = kids.size();
+            for (ProcessHandle h : kids) {
+                try { h.destroyForcibly(); }
+                catch (Exception e) { logger.warn("[Cancel] 자식 프로세스 종료 실패 (pid={}, {}): {}", h.pid(), ctx, msgOf(e)); }
+            }
+        } catch (Exception e) {
+            logger.warn("[Cancel] 프로세스 트리 열거 실패 ({}): {}", ctx, msgOf(e));  // 부모라도 종료 시도 계속
+        }
+        try { p.destroyForcibly(); }
+        catch (Exception e) { logger.error("[Cancel] 부모 프로세스 종료 실패 (pid={}, {}): {}", safePid(p), ctx, msgOf(e)); }
+        return descCount;
+    }
+
+    /** 종료 후 실제로 죽었는지 확인 (bounded wait). 인터럽트 안전. true=종료 확인. */
+    private boolean confirmProcessDead(Process p, long waitSeconds) {
+        if (p == null) return true;
+        try { return p.waitFor(waitSeconds, TimeUnit.SECONDS); }
+        catch (InterruptedException ie) { Thread.currentThread().interrupt(); return !p.isAlive(); }
+    }
+
+    /** 예외 메시지 안전 추출 (null 시 클래스명). */
+    private static String msgOf(Throwable t) {
+        if (t == null) return "null";
+        return (t.getMessage() != null && !t.getMessage().isEmpty()) ? t.getMessage() : t.getClass().getSimpleName();
+    }
+
+    /** 프로세스 pid 안전 추출 (이미 종료돼 조회 실패 시 -1). */
+    private static long safePid(Process p) {
+        try { return p != null ? p.pid() : -1; } catch (Exception e) { return -1; }
     }
 
     public boolean isInProgress(String filename) {
@@ -2445,17 +2514,23 @@ public class HeapDumpAnalyzerService {
                     saveAnalysisToDb(result);
                     analysisSuccess = true;
 
-                    // 분석 완료 후 dumpfiles 원본 gzip 압축
-                    if (compressAfterAnalysis) {
-                        File dumpOriginal = new File(config.getDumpFilesDirectory(), safe);
-                        if (!dumpOriginal.exists()) {
-                            dumpOriginal = new File(config.getHeapDumpDirectory(), safe);
+                    // 취소가 분석 성공 직후 경계 구간에 도달한 경우: 후속 압축/precompute 를 건너뛴다.
+                    // (결과는 이미 SUCCESS 로 저장 완료 — precompute 미제출로 "취소 시 미작동" 보장)
+                    if (Thread.currentThread().isInterrupted()) {
+                        logger.info("[Analysis] 취소 감지 — 후속 압축/precompute 건너뜀 (분석 결과는 SUCCESS 저장 완료): {}", safe);
+                    } else {
+                        // 분석 완료 후 dumpfiles 원본 gzip 압축
+                        if (compressAfterAnalysis) {
+                            File dumpOriginal = new File(config.getDumpFilesDirectory(), safe);
+                            if (!dumpOriginal.exists()) {
+                                dumpOriginal = new File(config.getHeapDumpDirectory(), safe);
+                            }
+                            compressDumpFile(dumpOriginal);
                         }
-                        compressDumpFile(dumpOriginal);
-                    }
 
-                    // Dominator Refs 사전계산 (백그라운드 직렬). 압축 후 호출 → .gz 해제 경로 결정적.
-                    precomputeDominatorRefsAsync(safe);
+                        // Dominator Refs 사전계산 (백그라운드 직렬). 압축 후 호출 → .gz 해제 경로 결정적.
+                        precomputeDominatorRefsAsync(safe);
+                    }
 
                     sendProgress(emitter, AnalysisProgress.completed(safe, "/analyze/result/" + safe));
                     logger.info("[Analysis] Done: {} in {}ms", safe, result.getAnalysisTime());
@@ -2521,13 +2596,22 @@ public class HeapDumpAnalyzerService {
                 }
                 queueSize.decrementAndGet();
                 activeTasks.remove(safe);
+                // 재진입 경과시간 이어보기용 시작 시각 정리 (취소·오류·정상 종료 모두 포함 — 재실행 시 새 시작 시각 재기록)
+                analysisStartEpoch.remove(safe);
 
                 // tmp 파일 항상 정리 (원본은 dumpfiles에 안전하게 보존)
                 if (tmpFile.exists()) {
-                    if (tmpFile.delete()) {
+                    boolean deleted = tmpFile.delete();
+                    // 취소로 방금 종료된 MAT 가 파일 핸들을 놓을 때까지 짧게 재시도 (인터럽트 안전)
+                    for (int i = 0; i < 3 && !deleted && tmpFile.exists(); i++) {
+                        try { Thread.sleep(500); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+                        deleted = tmpFile.delete();
+                    }
+                    if (deleted || !tmpFile.exists()) {
                         logger.info("[Analysis] Tmp file cleaned up: {}", safe);
                     } else {
-                        logger.warn("[Analysis] Failed to clean up tmp file: {}", safe);
+                        logger.error("[Analysis] Tmp file 정리 최종 실패 — 잔존 프로세스/권한 확인 필요: {} ({}, {} bytes)",
+                                safe, tmpFile.getAbsolutePath(), tmpFile.length());
                     }
                 }
                 try { emitter.complete(); } catch (Exception ignored) {}
@@ -2576,12 +2660,16 @@ public class HeapDumpAnalyzerService {
         if (matSlots.availablePermits() <= 0) {
             logger.info("[MAT Concurrency] 분석 '{}' 슬롯 대기 — 동시 MAT 한도({}) 도달", filename, matMaxConcurrent);
         }
+        final String procKey = new File(filename).getName();
+        Process process = null;                       // finally 참조용 (hoist)
         long slotWaitStart = System.currentTimeMillis();
         matSlots.acquire();
         long slotWaitMs = System.currentTimeMillis() - slotWaitStart;
         long matSpawnStart = System.currentTimeMillis();
         try {
-        Process process = pb.start();
+        process = pb.start();
+        activeMatProcesses.put(procKey, process);     // 취소 API가 참조할 수 있도록 등록
+        final Process proc = process;                 // 람다 캡처용 effectively-final
         final int[] pct = {15};
         final int[] lineCount = {0};
         final String[] phase = {"init"};  // init → overview → top_components → suspects
@@ -2591,7 +2679,7 @@ public class HeapDumpAnalyzerService {
         // MAT 출력 리더를 전용 데몬 스레드로 실행 (분석 executor 스레드 고갈 방지)
         Thread readerThread = new Thread(() -> {
             try (BufferedReader br = new BufferedReader(
-                    new InputStreamReader(process.getInputStream()))) {
+                    new InputStreamReader(proc.getInputStream()))) {
                 String line;
                 while ((line = br.readLine()) != null) {
                     output.append(line).append('\n');
@@ -2694,7 +2782,20 @@ public class HeapDumpAnalyzerService {
                 "MAT CLI 완료 (exit=" + exitCode + ")"));
         return matOutput;
         } finally {
-            matSlots.release();
+            // 인터럽트/예외로 빠져나온 경우에도 잔존 MAT 프로세스 방어 종료 (취소·SSE·shutdown 모두 커버)
+            // ★ kill 이 실패해도 원래 예외를 삼키거나 matSlots.release() 를 막지 않도록 try/catch 로 격리
+            try {
+                if (process != null && process.isAlive()) {
+                    long kids = killMatProcessTree(process, "mat-cli-finally");
+                    logger.warn("[MAT CLI] 취소/중단 감지 — 잔존 MAT 프로세스 강제 종료: {} (pid={}, 자식={}개)",
+                            filename, safePid(process), kids);
+                }
+            } catch (Throwable t) {
+                logger.error("[MAT CLI] 방어 종료 중 오류(무시하고 슬롯 반납): {} — {}", filename, msgOf(t));
+            } finally {
+                activeMatProcesses.remove(procKey, process);
+                matSlots.release();   // 슬롯 반납은 어떤 경우에도 보장 (누수 방지)
+            }
         }
     }
 
@@ -2728,12 +2829,14 @@ public class HeapDumpAnalyzerService {
         if (matSlots.availablePermits() <= 0) {
             logger.info("[MAT Concurrency] '{}' 슬롯 대기 — 동시 MAT 한도({}) 도달", queryWithArgs, matMaxConcurrent);
         }
+        Process process = null;                       // finally 참조용 (hoist)
         matSlots.acquire();
         try {
-            Process process = pb.start();
+            process = pb.start();
+            final Process proc = process;             // reader 람다 캡처용 effectively-final
             StringBuilder output = new StringBuilder();
             Thread reader = new Thread(() -> {
-                try (BufferedReader br = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                try (BufferedReader br = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
                     String line;
                     while ((line = br.readLine()) != null) {
                         output.append(line).append('\n');
@@ -2756,7 +2859,18 @@ public class HeapDumpAnalyzerService {
             }
             return output.toString();
         } finally {
-            matSlots.release();
+            // 인터럽트/중단(precompute executor 종료·요청 스레드 인터럽트) 시 오펀 MAT 방어 종료
+            try {
+                if (process != null && process.isAlive()) {
+                    long kids = killMatProcessTree(process, "mat-lazy-finally");
+                    logger.warn("[MAT Lazy] 중단 감지 — 잔존 MAT 프로세스 강제 종료: {} (pid={}, 자식={}개)",
+                            queryWithArgs, safePid(process), kids);
+                }
+            } catch (Throwable t) {
+                logger.error("[MAT Lazy] 방어 종료 중 오류(무시하고 슬롯 반납): {} — {}", queryWithArgs, msgOf(t));
+            } finally {
+                matSlots.release();
+            }
         }
     }
 
@@ -3432,7 +3546,18 @@ public class HeapDumpAnalyzerService {
         // ── Observer 캐시 업데이트 (ALREADY_ANALYZING은 실제 진행 상황이 아니므로 제외) ──
         if (progress.getStatus() != AnalysisProgress.Status.ALREADY_ANALYZING
                 && progress.getFilename() != null) {
-            lastProgressCache.put(progress.getFilename(), progress);
+            // 재진입 경과시간 이어보기: 실제 분석 시작 시각을 파일별 1회 기록 후 진행 객체에 스탬프.
+            // (QUEUED 는 아직 시작 전이므로 미기록 → 클라이언트 타이머 미시작. COMPLETED/ERROR 는 정리.)
+            AnalysisProgress.Status st = progress.getStatus();
+            String fn = progress.getFilename();
+            if (st == AnalysisProgress.Status.RUNNING || st == AnalysisProgress.Status.PARSING) {
+                Long startTs = analysisStartEpoch.computeIfAbsent(fn, k -> System.currentTimeMillis());
+                progress.setStartEpochMs(startTs);
+            } else if (st == AnalysisProgress.Status.COMPLETED || st == AnalysisProgress.Status.ERROR) {
+                analysisStartEpoch.remove(fn);
+            }
+            progress.setServerNowMs(System.currentTimeMillis());
+            lastProgressCache.put(fn, progress);
             if (progress.getLogLine() != null) {
                 java.util.concurrent.ConcurrentLinkedDeque<String> deque =
                         logCache.computeIfAbsent(progress.getFilename(),

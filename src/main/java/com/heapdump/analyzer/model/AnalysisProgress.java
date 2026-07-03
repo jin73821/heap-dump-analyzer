@@ -50,6 +50,12 @@ public class AnalysisProgress {
     /** MAT CLI 리포트 단계 (overview, top_components, suspects) */
     private String reportPhase;
 
+    /** 실제 분석 시작 시각(epoch millis). 재진입 시 경과 시간 이어보기용 (RUNNING/PARSING 에서만 세팅) */
+    private Long startEpochMs;
+
+    /** 서버 현재 시각(epoch millis). 클라이언트 시계 오차 보정용 (전송 직전 스탬프) */
+    private Long serverNowMs;
+
     public static AnalysisProgress queued(String filename, int queuePosition, String currentAnalysis) {
         AnalysisProgress p = new AnalysisProgress();
         p.filename = filename;
