@@ -17,11 +17,10 @@
         .content-card { margin-bottom: 24px; }
         .content-card-title { font-size: 15px; color: #1F2937; margin-bottom: 20px; padding-bottom: 12px; }
 
-        /* 업로드 영역 */
+        /* 업로드 영역 (우측 메인 카드 — 코어·실행 가로 2열) */
         .upload-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px;
+            display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;
         }
-        @media (max-width: 600px) { .upload-grid { grid-template-columns: 1fr; } }
 
         .upload-zone-label {
             display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
@@ -37,11 +36,11 @@
         }
 
         .upload-zone {
-            border: 2px dashed #D1D5DB; border-radius: 12px;
-            padding: 24px 16px; text-align: center; cursor: pointer;
-            transition: all .2s; background: #FAFAFA; position: relative;
-            min-height: 110px; display: flex; flex-direction: column;
-            align-items: center; justify-content: center; gap: 4px;
+            border: 1.5px dashed #93C5FD; border-radius: 10px;
+            padding: 14px 12px; text-align: center; cursor: pointer;
+            transition: all .2s; background: #F8FAFF; position: relative;
+            min-height: 76px; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; gap: 3px;
         }
         .upload-zone:hover, .upload-zone.dragover {
             border-color: #3B82F6; background: #EFF6FF;
@@ -52,18 +51,29 @@
         .upload-zone input[type=file] {
             position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
         }
-        .upload-zone-icon { font-size: 28px; }
-        .upload-zone-text { font-size: 13px; font-weight: 600; color: #374151; }
+        .upload-zone-icon { font-size: 22px; }
+        .upload-zone-text { font-size: 12px; font-weight: 600; color: #374151; }
         .upload-zone-sub  { font-size: 11px; color: #9CA3AF; }
         .upload-zone-file {
             font-size: 12px; color: #059669; font-weight: 700;
             word-break: break-all; margin-top: 4px;
         }
+        /* 선택 해제(×) 버튼 — 파일이 선택된 칸에서만 노출, input 위로 z-index */
+        .upload-zone-clear {
+            display: none; position: absolute; top: 6px; right: 6px; z-index: 2;
+            width: 20px; height: 20px; border: none; border-radius: 50%;
+            background: #E5E7EB; color: #6B7280; font-size: 15px; line-height: 1;
+            cursor: pointer; padding: 0; transition: all .15s;
+        }
+        .upload-zone-clear:hover { background: #FCA5A5; color: #fff; }
+        .upload-zone.has-file .upload-zone-clear {
+            display: flex; align-items: center; justify-content: center;
+        }
 
         /* 업로드 제출 버튼 */
         .upload-submit-btn {
-            width: 100%; padding: 13px; font-size: 15px; font-weight: 700;
-            background: #2563EB; color: #fff; border: none; border-radius: 10px;
+            width: 100%; padding: 10px; font-size: 13px; font-weight: 700;
+            background: #2563EB; color: #fff; border: none; border-radius: 8px;
             cursor: pointer; transition: all .2s;
             display: flex; align-items: center; justify-content: center; gap: 8px;
         }
@@ -90,87 +100,85 @@
         .upload-error-title { font-size: 13px; font-weight: 700; color: #991B1B; margin-bottom: 4px; }
         .upload-error-msg   { font-size: 12px; color: #7F1D1D; }
 
-        /* 이력 항목 카드 */
-        @keyframes pulse-border {
-            0%, 100% { border-color: #93C5FD; }
-            50%       { border-color: #3B82F6; }
+        /* 분석 이력 테이블 */
+        @keyframes pulse-bg {
+            0%, 100% { background: #EFF6FF; }
+            50%       { background: #DBEAFE; }
         }
-
-        .hi-list { display: flex; flex-direction: column; gap: 8px; }
-
-        .hi-item {
-            display: flex; align-items: center; gap: 14px;
-            padding: 14px 18px; border-radius: 12px;
-            border: 1.5px solid #E5E7EB; background: #FAFAFA;
-            transition: border-color .15s, box-shadow .15s, background .15s;
+        .hi-table-wrap { overflow-x: auto; }
+        .hi-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .hi-table th {
+            text-align: left; font-size: 11px; font-weight: 600; color: #9CA3AF;
+            text-transform: uppercase; letter-spacing: .04em;
+            padding: 8px 10px; border-bottom: 2px solid #E5E7EB; white-space: nowrap;
         }
-        .hi-item:hover { background: #F3F4F6; border-color: #D1D5DB; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
-        .hi-item.hi-success { border-color: #A7F3D0; background: #F0FDF4; }
-        .hi-item.hi-success:hover { border-color: #34D399; box-shadow: 0 2px 8px rgba(16,185,129,.12); }
-        .hi-item.hi-error   { border-color: #FECACA; background: #FFF8F8; }
-        .hi-item.hi-error:hover   { border-color: #F87171; box-shadow: 0 2px 8px rgba(239,68,68,.12); }
-        .hi-item.hi-analyzing {
-            border-color: #93C5FD; background: #EFF6FF;
-            animation: pulse-border 1.8s ease infinite;
-        }
+        .hi-table td { padding: 12px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
+        .hi-table tbody tr:last-child td { border-bottom: none; }
+        .hi-table tbody tr { transition: background .15s; }
+        .hi-table tbody tr:hover { background: #F9FAFB; }
+        .hi-table tbody tr.hi-success { background: #F0FDF4; }
+        .hi-table tbody tr.hi-success:hover { background: #E7F9EE; }
+        .hi-table tbody tr.hi-error { background: #FFF8F8; }
+        .hi-table tbody tr.hi-error:hover { background: #FEF0F0; }
+        .hi-table tbody tr.hi-analyzing { animation: pulse-bg 1.8s ease infinite; }
 
-        .hi-num {
+        .hi-col-num {
+            width: 34px; text-align: right; font-family: 'JetBrains Mono', monospace;
             font-size: 12px; font-weight: 700; color: #CBD5E1;
-            min-width: 22px; text-align: right; flex-shrink: 0;
-            font-family: 'JetBrains Mono', monospace;
         }
-
-        .hi-body { flex: 1 1 0; min-width: 0; }
-        .hi-filename-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 5px; }
+        .hi-fname-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
         .hi-filename {
             font-family: 'JetBrains Mono', monospace; font-size: 13px;
-            font-weight: 700; color: #1F2937; word-break: break-all;
+            font-weight: 700; color: #1F2937; white-space: nowrap;
         }
         .exec-badge {
             display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
-            background: #EDE9FE; color: #5B21B6; font-weight: 600; white-space: nowrap; flex-shrink: 0;
+            background: #EDE9FE; color: #5B21B6; font-weight: 600; white-space: nowrap;
         }
-        .hi-meta-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        .hi-time { font-size: 11px; color: #9CA3AF; white-space: nowrap; }
-        .hi-time-sep { font-size: 11px; color: #D1D5DB; }
-
-        .hi-status-col {
-            display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
-            flex-shrink: 0; min-width: 70px;
-        }
-        .hi-analyzed-time { font-size: 10px; color: #9CA3AF; white-space: nowrap; }
-
-        .hi-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; align-items: center; }
+        .hi-time, .hi-analyzed-time { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .hi-muted { color: #D1D5DB; }
+        .hi-actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; }
+        .hi-table td:last-child, .hi-table th:last-child { white-space: nowrap; width: 1%; }
 
         /* 빈 상태 */
         .empty-state { text-align: center; padding: 48px 20px; color: #9CA3AF; }
         .empty-state-icon { font-size: 44px; margin-bottom: 12px; }
         .empty-state-text { font-size: 14px; }
 
-        @media (max-width: 640px) {
-            .hi-item { flex-wrap: wrap; gap: 10px; }
-            .hi-status-col { align-items: flex-start; }
+        @media (max-width: 760px) {
+            .hi-table th.hi-hide-sm, .hi-table td.hi-hide-sm { display: none; }
+            .upload-grid { grid-template-columns: 1fr; }
         }
 
-        /* ── 인덱스 2-컬럼 레이아웃 (좌측 파일 패널 + 메인) ─────────── */
-        .cd-page { max-width: 1500px; }
-        .cd-index-layout { display: flex; align-items: flex-start; gap: 20px; }
-        .cd-index-main { flex: 1 1 0; min-width: 0; }
-
-        .cd-file-panel {
-            flex: 0 0 360px; width: 360px;
-            background: var(--cd-surface, #fff); border-radius: var(--cd-radius, 14px);
-            box-shadow: var(--cd-shadow-lg, 0 2px 12px rgba(0,0,0,.08));
-            padding: 18px 16px; position: sticky; top: 72px;
-            display: flex; flex-direction: column; max-height: calc(100vh - 92px);
+        /* ── 대시보드형 좌측 sidebar 레이아웃 (배너에 붙는 flush 컬럼) ── */
+        .cd-app-layout {
+            margin-left: var(--banner-w, 220px); margin-top: 52px;
+            display: grid; grid-template-columns: 340px 1fr;
+            align-items: start; min-height: calc(100vh - 52px);
+            transition: margin-left .25s cubic-bezier(.4,0,.2,1);
+        }
+        .cd-sidebar {
+            background: #fff; border-right: 1px solid #E5E7EB;
+            display: flex; flex-direction: column;
+            position: sticky; top: 52px; height: calc(100vh - 52px); overflow-y: auto;
+        }
+        .cd-side-section { padding: 16px; border-bottom: 1px solid #F3F4F6; }
+        .cd-side-section:last-child { border-bottom: none; }
+        .cd-side-files { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+        .cd-main { padding: 20px 24px 40px; min-width: 0; }
+        .s-title {
+            font-size: 10px; font-weight: 600; color: #9CA3AF;
+            text-transform: uppercase; letter-spacing: .07em; margin-bottom: 12px;
+            display: flex; align-items: center; gap: 6px;
         }
         .cd-file-panel-head {
-            display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
-            font-size: 14px; font-weight: 700; color: #1F2937;
+            display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+            font-size: 10px; font-weight: 600; color: #9CA3AF;
+            text-transform: uppercase; letter-spacing: .07em;
         }
         .cd-file-panel-count {
             font-size: 11px; font-weight: 600; color: var(--cd-text-muted, #9CA3AF);
-            background: #F3F4F6; border-radius: 999px; padding: 1px 8px;
+            background: #F3F4F6; border-radius: 999px; padding: 1px 8px; text-transform: none;
         }
         .cd-file-search {
             display: flex; gap: 6px; margin-bottom: 8px;
@@ -197,29 +205,33 @@
         }
         .cd-file-filter select:focus { border-color: var(--cd-primary, #2563eb); }
 
-        .cd-file-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
-        /* 한줄 라인 리스트 (요구사항 1·6) */
+        .cd-file-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-height: 0; }
+        /* 대시보드 RECENT FILES(.file-item) 룩 이식 */
         .cd-file-item {
-            display: flex; align-items: center; gap: 8px; cursor: grab;
-            padding: 8px 10px; border-radius: 9px;
-            border: 1.5px solid var(--cd-border, #e2e5ec); background: #FAFAFA;
-            transition: border-color .15s, background .15s, box-shadow .15s;
+            display: flex; align-items: center; gap: 9px; cursor: grab;
+            padding: 9px 10px; border-radius: 8px; position: relative;
+            border: 1px solid #E5E7EB; background: #F9FAFB;
+            transition: border-color .15s, background .15s;
         }
-        .cd-file-item:hover { background: #EFF6FF; border-color: #93C5FD; box-shadow: 0 2px 8px rgba(0,0,0,.05); }
-        .cd-file-item.is-selected { background: #EFF6FF; border-color: var(--cd-primary, #2563eb); }
+        .cd-file-item:hover { border-color: #93C5FD; background: #EFF6FF; }
+        .cd-file-item.is-selected { border-color: var(--cd-primary, #2563eb); background: #EFF6FF; }
         .cd-file-item:active { cursor: grabbing; }
-        .cd-file-grip { color: #CBD5E1; font-size: 14px; flex-shrink: 0; line-height: 1; }
+        /* 파일 유형 배지 (요구사항 2·3: core / exec) */
+        .cd-fext {
+            width: 34px; height: 38px; border-radius: 5px; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 9px; font-weight: 700; letter-spacing: .3px;
+        }
+        .cd-fext-core { background: #DBEAFE; color: #1D4ED8; }
+        .cd-fext-exec { background: #EDE9FE; color: #6D28D9; }
+        .cd-finfo { flex: 1 1 0; min-width: 0; }
         .cd-file-name {
-            flex: 1 1 0; min-width: 0;
             font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700;
             color: #1F2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
-        .cd-file-size { flex-shrink: 0; font-size: 10px; color: var(--cd-text-muted, #9CA3AF); white-space: nowrap; }
-        .cd-file-item .status-badge { flex-shrink: 0; padding: 3px 8px; font-size: 10px; }
-        .cd-file-exec {
-            flex-shrink: 0; font-size: 9px; padding: 1px 5px; border-radius: 4px;
-            background: #EDE9FE; color: #5B21B6; font-weight: 700;
-        }
+        .cd-fmeta { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+        .cd-file-size { font-size: 11px; color: var(--cd-text-muted, #9CA3AF); white-space: nowrap; }
+        .cd-file-item .status-badge { flex-shrink: 0; padding: 2px 7px; font-size: 10px; }
         .cd-file-empty { text-align: center; padding: 28px 10px; color: #9CA3AF; font-size: 12px; }
         .cd-file-noresult { text-align: center; padding: 16px 10px; color: #9CA3AF; font-size: 12px; display: none; }
 
@@ -239,10 +251,12 @@
         .cd-pg-info { font-size: 10px; color: #9CA3AF; }
 
         @media (max-width: 900px) {
-            .cd-index-layout { flex-direction: column; }
-            .cd-file-panel {
-                flex: none; width: 100%; position: static; max-height: 340px; margin-bottom: 4px;
+            .cd-app-layout { margin-left: 0; grid-template-columns: 1fr; }
+            .cd-sidebar {
+                position: static; height: auto;
+                border-right: none; border-bottom: 1px solid #E5E7EB;
             }
+            .cd-side-files { max-height: 360px; }
         }
 
         /* 삭제 확인 모달 */
@@ -294,11 +308,11 @@
     </div>
 </div>
 
-<div class="cd-page">
-  <div class="cd-index-layout">
+<div class="cd-app-layout">
+  <aside class="cd-sidebar">
 
-    <!-- 좌측: 서버 코어 파일 패널 -->
-    <aside class="cd-file-panel">
+    <!-- 파일 목록 섹션 (대시보드 RECENT FILES 영역과 동일 구성) -->
+    <div class="cd-side-section cd-side-files">
         <div class="cd-file-panel-head">
             &#128193; 서버 코어 파일
             <span class="cd-file-panel-count" id="cdFileCount"
@@ -317,8 +331,8 @@
             </select>
             <select id="cdFileTypeFilter" aria-label="유형 필터">
                 <option value="all">유형: 전체</option>
-                <option value="exec">실행파일 있음</option>
-                <option value="noexec">실행파일 없음</option>
+                <option value="coredump">코어</option>
+                <option value="exec">실행파일</option>
             </select>
         </div>
 
@@ -332,18 +346,24 @@
                  th:data-filename="${f.filename}"
                  th:data-exec="${f.pairedExecFilename != null ? f.pairedExecFilename : ''}"
                  th:data-status="${f.status}"
+                 th:data-type="${f.fileType}"
                  th:title="${f.filename}">
-                <span class="cd-file-grip">&#9783;</span>
-                <span class="cd-file-name" th:text="${f.filename}"></span>
-                <span class="cd-file-size" th:text="${f.formattedSize}"></span>
-                <span class="status-badge"
-                      th:classappend="${f.status == 'SUCCESS'} ? 'status-success'
-                                     : (${f.status == 'ERROR'} ? 'status-error'
-                                     : (${f.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
-                      th:text="${f.status == 'SUCCESS'} ? '완료'
-                               : (${f.status == 'ERROR'} ? '실패'
-                               : (${f.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
-                <span th:if="${f.hasExec}" class="cd-file-exec">EXEC</span>
+                <div class="cd-fext"
+                     th:classappend="${f.fileType == 'exec'} ? 'cd-fext-exec' : 'cd-fext-core'"
+                     th:text="${f.fileType == 'exec'} ? 'EXEC' : 'CORE'">CORE</div>
+                <div class="cd-finfo">
+                    <div class="cd-file-name" th:text="${f.filename}"></div>
+                    <div class="cd-fmeta">
+                        <span class="cd-file-size" th:text="${f.formattedSize}"></span>
+                        <span class="status-badge"
+                              th:classappend="${f.status == 'SUCCESS'} ? 'status-success'
+                                             : (${f.status == 'ERROR'} ? 'status-error'
+                                             : (${f.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                              th:text="${f.status == 'SUCCESS'} ? '완료'
+                                       : (${f.status == 'ERROR'} ? '실패'
+                                       : (${f.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
+                    </div>
+                </div>
             </div>
         </div>
         <div th:if="${!#lists.isEmpty(coreDumpFiles)}" class="cd-file-noresult" id="cdFileNoResult">검색 결과가 없습니다.</div>
@@ -351,17 +371,15 @@
             <div class="cd-pg-list" id="cdFilePgList"></div>
             <div class="cd-pg-info" id="cdFilePgInfo"></div>
         </div>
-    </aside>
+    </div><!-- .cd-side-files -->
+  </aside><!-- .cd-sidebar -->
 
-    <!-- 우측: 메인 (업로드 + 이력) -->
-    <div class="cd-index-main">
+  <!-- 우측: 메인 (업로드 + 분석 이력) -->
+  <main class="cd-main">
 
-    <!-- 업로드 카드 -->
+    <!-- 업로드 섹션 (대시보드 UPLOAD 영역과 동일 구성) -->
     <div class="content-card">
-        <div class="content-card-title">
-            &#128229; 코어 파일 업로드
-        </div>
-
+        <div class="s-title">&#128229; 코어 파일 업로드</div>
         <div class="upload-grid">
             <!-- 코어 파일 -->
             <div>
@@ -374,6 +392,9 @@
                     <div class="upload-zone-text">파일 선택 또는 드래그</div>
                     <div class="upload-zone-sub">core, core.PID, core.PROG 등</div>
                     <div class="upload-zone-file" id="coreFileName"></div>
+                    <button type="button" class="upload-zone-clear" id="coreClearBtn"
+                            title="선택 해제" aria-label="코어 파일 선택 해제"
+                            onclick="clearCoreZone(event)">&times;</button>
                 </div>
             </div>
             <!-- 실행 파일 -->
@@ -385,12 +406,14 @@
                     <input type="file" id="execFileInput" onchange="onExecFileSelect(this)">
                     <div class="upload-zone-icon">&#9881;</div>
                     <div class="upload-zone-text">파일 선택 또는 드래그</div>
-                    <div class="upload-zone-sub">코어 파일과 함께 이 슬롯에 업로드해야 분석에 반영됩니다</div>
+                    <div class="upload-zone-sub">코어 파일과 함께 이 슬롯에 업로드해야 반영</div>
                     <div class="upload-zone-file" id="execFileName"></div>
+                    <button type="button" class="upload-zone-clear" id="execClearBtn"
+                            title="선택 해제" aria-label="실행 파일 선택 해제"
+                            onclick="clearExecZone(event)">&times;</button>
                 </div>
             </div>
         </div>
-
         <button class="upload-submit-btn" id="uploadBtn" onclick="startUpload()" disabled>
             &#128269; GDB 분석 시작
         </button>
@@ -417,77 +440,92 @@
             <div class="empty-state-text">분석 이력이 없습니다.<br>코어 덤프 파일을 업로드하여 분석을 시작하세요.</div>
         </div>
 
-        <!-- 이력 목록 -->
-        <div th:if="${!#lists.isEmpty(history)}" class="hi-list">
-            <div th:each="item, stat : ${history}"
-                 class="hi-item"
-                 th:classappend="${item.status == 'SUCCESS'} ? ' hi-success'
-                                : (${item.status == 'ERROR'} ? ' hi-error'
-                                : (${item.status == 'ANALYZING'} ? ' hi-analyzing' : ''))">
+        <!-- 이력 테이블 -->
+        <div th:if="${!#lists.isEmpty(history)}" class="hi-table-wrap">
+            <table class="hi-table">
+                <thead>
+                    <tr>
+                        <th class="hi-col-num">#</th>
+                        <th>파일명</th>
+                        <th class="hi-hide-sm">업로드</th>
+                        <th>상태</th>
+                        <th class="hi-hide-sm">분석 시각</th>
+                        <th>액션</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr th:each="item, stat : ${history}"
+                        th:classappend="${item.status == 'SUCCESS'} ? 'hi-success'
+                                       : (${item.status == 'ERROR'} ? 'hi-error'
+                                       : (${item.status == 'ANALYZING'} ? 'hi-analyzing' : ''))">
 
-                <!-- 번호 -->
-                <div class="hi-num" th:text="${stat.count}"></div>
+                        <!-- 번호 -->
+                        <td class="hi-col-num" th:text="${stat.count}"></td>
 
-                <!-- 파일명 + 메타 -->
-                <div class="hi-body">
-                    <div class="hi-filename-row">
-                        <span class="hi-filename" th:text="${item.filename}"></span>
-                        <span th:if="${item.executableName != null}" class="exec-badge">EXEC</span>
-                    </div>
-                    <div class="hi-meta-row">
-                        <!-- 시그널 칩 -->
-                        <span th:if="${item.crashSignal != null}"
-                              class="signal-chip"
-                              th:classappend="${item.crashSignal == 'SIGSEGV' or item.crashSignal == 'SIGBUS' or item.crashSignal == 'SIGILL'} ? ' chip-fatal'
-                                             : (${item.crashSignal == 'SIGABRT' or item.crashSignal == 'SIGFPE'} ? ' chip-warn' : ' chip-neutral')"
-                              th:text="${item.crashSignal}">
-                        </span>
+                        <!-- 파일명 + EXEC + 시그널 -->
+                        <td>
+                            <div class="hi-fname-cell">
+                                <span class="hi-filename" th:text="${item.filename}"></span>
+                                <span th:if="${item.executableName != null}" class="exec-badge">EXEC</span>
+                                <span th:if="${item.crashSignal != null}"
+                                      class="signal-chip"
+                                      th:classappend="${item.crashSignal == 'SIGSEGV' or item.crashSignal == 'SIGBUS' or item.crashSignal == 'SIGILL'} ? ' chip-fatal'
+                                                     : (${item.crashSignal == 'SIGABRT' or item.crashSignal == 'SIGFPE'} ? ' chip-warn' : ' chip-neutral')"
+                                      th:text="${item.crashSignal}"></span>
+                            </div>
+                        </td>
+
                         <!-- 업로드 시각 -->
-                        <span class="hi-time" th:if="${item.createdAt != null}">
-                            &#128337;
-                            <span th:text="${#temporals.format(item.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
-                        </span>
-                    </div>
-                </div>
+                        <td class="hi-hide-sm">
+                            <span class="hi-time" th:if="${item.createdAt != null}"
+                                  th:text="${#temporals.format(item.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
+                            <span th:unless="${item.createdAt != null}" class="hi-muted">–</span>
+                        </td>
 
-                <!-- 상태 + 분석 시각 -->
-                <div class="hi-status-col">
-                    <span class="status-badge"
-                          th:classappend="${item.status == 'SUCCESS'} ? 'status-success'
-                                         : (${item.status == 'ERROR'} ? 'status-error'
-                                         : (${item.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
-                          th:text="${item.status == 'SUCCESS'} ? '완료'
-                                   : (${item.status == 'ERROR'} ? '실패'
-                                   : (${item.status == 'ANALYZING'} ? '분석 중' : '미분석'))">
-                    </span>
-                    <span class="hi-analyzed-time"
-                          th:if="${item.analyzedAt != null}"
-                          th:text="${#temporals.format(item.analyzedAt, 'MM-dd HH:mm')}"></span>
-                </div>
+                        <!-- 상태 -->
+                        <td>
+                            <span class="status-badge"
+                                  th:classappend="${item.status == 'SUCCESS'} ? 'status-success'
+                                                 : (${item.status == 'ERROR'} ? 'status-error'
+                                                 : (${item.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                                  th:text="${item.status == 'SUCCESS'} ? '완료'
+                                           : (${item.status == 'ERROR'} ? '실패'
+                                           : (${item.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
+                        </td>
 
-                <!-- 액션 -->
-                <div class="hi-actions">
-                    <a th:if="${item.status == 'SUCCESS'}"
-                       th:href="@{/core-dump/analyze/{fn}(fn=${item.filename})}"
-                       class="action-btn action-view">결과 보기</a>
-                    <a th:if="${item.status == 'ANALYZING'}"
-                       th:href="@{/core-dump/progress/{fn}(fn=${item.filename})}"
-                       class="action-btn action-progress">&#9654; 진행 확인</a>
-                    <button th:if="${item.status == 'ERROR' or item.status == 'NOT_ANALYZED'}"
-                            class="action-btn action-reanalyze"
-                            th:data-filename="${item.filename}"
-                            onclick="reanalyze(this.dataset.filename, this)">&#8635; 재분석</button>
-                    <button class="action-btn action-delete"
-                            th:data-filename="${item.filename}"
-                            onclick="deleteDump(this.dataset.filename)">&#128465; 삭제</button>
-                </div>
-            </div>
+                        <!-- 분석 시각 -->
+                        <td class="hi-hide-sm">
+                            <span class="hi-analyzed-time" th:if="${item.analyzedAt != null}"
+                                  th:text="${#temporals.format(item.analyzedAt, 'MM-dd HH:mm')}"></span>
+                            <span th:unless="${item.analyzedAt != null}" class="hi-muted">–</span>
+                        </td>
+
+                        <!-- 액션 -->
+                        <td>
+                            <div class="hi-actions">
+                                <a th:if="${item.status == 'SUCCESS'}"
+                                   th:href="@{/core-dump/analyze/{fn}(fn=${item.filename})}"
+                                   class="action-btn action-view">결과 보기</a>
+                                <a th:if="${item.status == 'ANALYZING'}"
+                                   th:href="@{/core-dump/progress/{fn}(fn=${item.filename})}"
+                                   class="action-btn action-progress">&#9654; 진행 확인</a>
+                                <button th:if="${item.status == 'ERROR' or item.status == 'NOT_ANALYZED'}"
+                                        class="action-btn action-reanalyze"
+                                        th:data-filename="${item.filename}"
+                                        onclick="reanalyze(this.dataset.filename, this)">&#8635; 재분석</button>
+                                <button class="action-btn action-delete"
+                                        th:data-filename="${item.filename}"
+                                        onclick="deleteDump(this.dataset.filename)">&#128465; 삭제</button>
+                            </div>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </div>
 
-    </div><!-- .cd-index-main -->
-  </div><!-- .cd-index-layout -->
-</div>
+    </main><!-- .cd-main -->
+</div><!-- .cd-app-layout -->
 
 <!-- 삭제 확인 모달 -->
 <div id="deleteDumpModal" class="modal-ov" style="display:none" onclick="if(event.target===this)closeDumpDeleteModal()">
@@ -508,7 +546,7 @@
     </div>
 </div>
 
-<script th:src="@{/js/core-dump-index.js?v=2026-06-28}"></script>
+<script th:src="@{/js/core-dump-index.js?v=2026-07-03}"></script>
 
 </body>
 </html>

@@ -37,6 +37,14 @@ public class CoreDumpViewController {
     @GetMapping("/progress/{filename:.+}")
     public String progressPage(@PathVariable String filename, Model model) {
         String safe = analyzerService.validateCoreDumpFilename(filename);
+        // 방어 로직: 이미 정상 분석 결과가 있으면 분석중 페이지를 렌더하지 않고 결과 페이지로 리다이렉트.
+        // (결과 페이지에서 뒤로가기 → 분석중 페이지 재노출 + GDB 전체 재분석 재실행 방지.
+        //  재분석은 reanalyze 가 result.json 을 삭제하므로 이 조건에 걸리지 않아 정상 동작.)
+        Optional<CoreDumpAnalysisResult> done = analyzerService.loadResult(safe);
+        if (done.isPresent()
+                && (done.get().getErrorMessage() == null || done.get().getErrorMessage().isEmpty())) {
+            return "redirect:/core-dump/analyze/" + safe;
+        }
         model.addAttribute("filename", safe);
         return "core-dump/progress";
     }

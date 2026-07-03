@@ -13,6 +13,20 @@
     <style>
         /* 공통 스타일은 core-dump.css 로 이관. 페이지 고유 override 만 잔존. */
         body { background: var(--cd-bg, #F3F4F6) !important; }
+        /* 코어 단독 보강 데이터 접이식 섹션 (디스어셈블리·메모리 매핑) */
+        .cd-extra { margin-top: 14px; border-top: 1px solid #E5E7EB; padding-top: 12px; }
+        .cd-extra > summary {
+            cursor: pointer; font-size: 13px; font-weight: 600; color: #374151;
+            list-style: none; user-select: none; padding: 4px 0;
+        }
+        .cd-extra > summary::-webkit-details-marker { display: none; }
+        .cd-extra[open] > summary { color: #1D4ED8; }
+        .cd-pre {
+            margin-top: 8px; padding: 12px 14px; background: #0F172A; color: #E2E8F0;
+            border-radius: 8px; overflow-x: auto; max-height: 360px; overflow-y: auto;
+            font-family: 'JetBrains Mono', 'D2Coding', monospace; font-size: 12px; line-height: 1.6;
+        }
+        .cd-pre > div { white-space: pre; }
     </style>
 </head>
 <body>
@@ -560,6 +574,13 @@
                     <table class="reg-table"><tbody id="regTbodyLeft"></tbody></table>
                     <table class="reg-table"><tbody id="regTbodyRight"></tbody></table>
                 </div>
+                <details class="cd-extra"
+                         th:if="${result.crashDisassembly != null and !#lists.isEmpty(result.crashDisassembly)}">
+                    <summary>&#128269; 크래시 지점 디스어셈블리 (x/16i $pc)</summary>
+                    <div class="cd-pre">
+                        <div th:each="l : ${result.crashDisassembly}" th:text="${l}"></div>
+                    </div>
+                </details>
             </div>
         </div>
 
@@ -590,6 +611,13 @@
                         </tbody>
                     </table>
                 </div>
+                <details class="cd-extra"
+                         th:if="${result.memoryMappings != null and !#lists.isEmpty(result.memoryMappings)}">
+                    <summary>&#128193; 메모리 매핑 (info proc mappings) — 로드된 바이너리/라이브러리 경로</summary>
+                    <div class="cd-pre">
+                        <div th:each="m : ${result.memoryMappings}" th:text="${m}"></div>
+                    </div>
+                </details>
             </div>
         </div>
 

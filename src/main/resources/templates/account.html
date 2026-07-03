@@ -646,6 +646,8 @@ function openMemoWindow() {
 
     w.focus();
     ta.focus();
+    ta.setSelectionRange(0, 0);
+    ta.scrollTop = 0;
 }
 
 function openClearMemoModal()  { document.getElementById('clearMemoModal').classList.add('open'); }

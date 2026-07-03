@@ -123,12 +123,18 @@
     }
 
     // ── 자동 이동 ──────────────────────────────────────────────
-    var autoRedirectTimer = null, autoRedirectUrl = null;
+    // 분석 완료 후에는 이 진행(분석중) 페이지를 히스토리에서 replace 로 대체한다.
+    // (결과 페이지에서 뒤로가기 시 분석중 페이지가 다시 뜨지 않도록 방어 — location.href push 금지)
+    var autoRedirectTimer = null, autoRedirectUrl = null, analysisDone = false;
+    function goResult() { window.location.replace(autoRedirectUrl || RESULT_URL); }
     function showComplete(url) {
         if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
         if (logBuffer.length) flushLog();
         autoRedirectUrl = url || RESULT_URL;
+        analysisDone = true;
         resultLink.href = autoRedirectUrl;
+        // 수동 "결과 보기" 클릭도 push 대신 replace (뒤로가기로 분석중 페이지 복귀 방지)
+        resultLink.onclick = function (e) { e.preventDefault(); goResult(); };
         completeBanner.classList.add('visible');
         setStep('done', 'done', '결과 페이지 준비 완료');
 
@@ -139,7 +145,7 @@
             if (remaining <= 0) {
                 clearInterval(autoRedirectTimer);
                 autoRedirectTimer = null;
-                window.location.href = autoRedirectUrl;
+                goResult();
             } else {
                 countdownText.textContent = remaining + '초 후 자동으로 결과 페이지로 이동합니다...';
             }
@@ -257,6 +263,12 @@
     // 전역 노출 (인라인 onclick 핸들러용)
     window.cancelAutoRedirect = cancelAutoRedirect;
     window.retryAnalysis = retryAnalysis;
+
+    // bfcache 복원 방어: 뒤로가기로 이 분석중 페이지가 메모리에서 복원되면(서버 리다이렉트 미발생)
+    // 이미 완료된 분석이면 즉시 결과 페이지로 대체 이동.
+    window.addEventListener('pageshow', function (e) {
+        if (e.persisted && analysisDone) goResult();
+    });
 
     startSSE();
 })();

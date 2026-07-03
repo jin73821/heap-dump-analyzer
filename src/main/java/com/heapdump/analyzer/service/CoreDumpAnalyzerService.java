@@ -186,9 +186,9 @@ public class CoreDumpAnalyzerService {
     }
 
     /**
-     * dumpfiles/ 에 실제 존재하는 코어 덤프 파일 목록 (인덱스 좌측 패널용).
-     * .exec / dotfile / 디렉토리 제외. DB 이력과 파일명으로 조인해 status 채움(없으면 NOT_ANALYZED).
-     * 최신 수정순(내림차순) 정렬.
+     * dumpfiles/ 에 실제 존재하는 코어 덤프 + 실행파일 목록 (인덱스 좌측 패널용).
+     * dotfile / 디렉토리 제외. .exec 또는 페어링된 exec 는 fileType="exec", 그 외는 "coredump".
+     * DB 이력과 파일명으로 조인해 status 채움(없으면 NOT_ANALYZED). 최신 수정순(내림차순) 정렬.
      */
     public List<AnalysisHistoryItem> listExistingDumpFiles() {
         File dumpDir = dumpFilesDir();
@@ -200,24 +200,29 @@ public class CoreDumpAnalyzerService {
             byName.put(e.getFilename(), e);
         }
 
-        // 페어링된 exec 파일명 — 코어파일 하위에 sub-item으로 표시되므로 독립 행 제외
+        // 페어링된 exec 파일명 — 실행파일 항목으로 분류(코어와 구분해 태그 표시)
         Set<String> pairedExecNames = new HashSet<>(heapFacade.loadCoreExecPairings().values());
 
         List<AnalysisHistoryItem> result = new ArrayList<>();
         for (File f : files) {
             String name = f.getName();
-            if (name.startsWith(".") || name.endsWith(".exec") || !f.isFile()) continue;
-            if (pairedExecNames.contains(name)) continue; // 페어링된 exec 파일은 sub-item으로만 표시
+            if (name.startsWith(".") || !f.isFile()) continue;
+
+            // .exec 확장자(레거시) 또는 페어링된 exec 파일 → 실행파일 항목
+            boolean isExec = name.endsWith(".exec") || pairedExecNames.contains(name);
 
             AnalysisHistoryItem item = new AnalysisHistoryItem();
-            item.setFileType("coredump");
+            item.setFileType(isExec ? "exec" : "coredump");
             item.setFilename(name);
             item.setSizeBytes(f.length());
             item.setFormattedSize(FormatUtils.formatBytes(f.length()));
             item.setLastModified(f.lastModified());
-            String execFn = getExecFilename(name);
-            item.setHasExec(execFn != null);
-            if (execFn != null) item.setPairedExecFilename(execFn);
+            if (!isExec) {
+                // 코어 항목에만 페어링 exec 세팅(드래그 시 core+exec 동반 프리로드용)
+                String execFn = getExecFilename(name);
+                item.setHasExec(execFn != null);
+                if (execFn != null) item.setPairedExecFilename(execFn);
+            }
 
             CoreDumpAnalysisEntity e = byName.get(name);
             if (e != null) {
@@ -255,21 +260,15 @@ public class CoreDumpAnalyzerService {
         logger.info("[CoreDump] 삭제 완료: {}", filename);
     }
 
-    /** 분석 이력(결과 디렉토리 + DB 상태)만 삭제하고 원본 파일은 보존. */
+    /** 분석 이력(결과 디렉토리 + DB 행)만 삭제하고 원본 파일은 보존. */
     public void deleteHistoryOnly(String filename) {
         deleteDirectoryQuietly(dataDir(filename));
         deleteAiInsight(coreInsightKey(filename));
-        repository.findByFilename(filename).ifPresent(e -> {
-            e.setStatus("NOT_ANALYZED");
-            e.setCrashSignal(null);
-            e.setSignalDescription(null);
-            e.setCrashSummary(null);
-            e.setErrorMessage(null);
-            e.setAnalysisTimeMs(null);
-            e.setAnalyzedAt(null);
-            e.setFileDeleted(false);
-            repository.save(e);
-        });
+        // DB 이력 행을 완전히 제거 → "분석 이력" 목록에서 사라짐.
+        // (기존엔 status 를 NOT_ANALYZED 로 리셋만 해 행이 미분석 상태로 잔존했음.)
+        // 원본 파일은 dumpfiles/ 에 보존되므로 좌측 "서버 코어 파일" 목록에
+        // 미분석 상태로 남아 재분석할 수 있다(listExistingDumpFiles 가 디스크 기반).
+        repository.findByFilename(filename).ifPresent(repository::delete);
         logger.info("[CoreDump] 분석 이력 삭제(파일 보존) 완료: {}", filename);
     }
 
@@ -532,37 +531,41 @@ public class CoreDumpAnalyzerService {
         cmd.add("--batch");
         cmd.add("--nx");
 
-        if (execPath != null && execPath.exists()) {
-            cmd.addAll(Arrays.asList(
-                "-ex", "set pagination off",
-                "-ex", "set print elements 50",
-                "-ex", "echo " + SECTION_PREFIX + "sharedlibrary===\\n",
-                "-ex", "info sharedlibrary",
-                "-ex", "echo " + SECTION_PREFIX + "registers===\\n",
-                "-ex", "info registers",
-                "-ex", "echo " + SECTION_PREFIX + "bt===\\n",
-                "-ex", "bt",
-                "-ex", "echo " + SECTION_PREFIX + "bt_full===\\n",
-                "-ex", "bt full",
-                "-ex", "echo " + SECTION_PREFIX + "threads===\\n",
-                "-ex", "info threads",
-                "-ex", "echo " + SECTION_PREFIX + "thread_apply===\\n",
-                "-ex", "thread apply all bt full"
-            ));
+        // 코어 단독/실행파일 페어링 모두 동일한 리치 명령 세트를 실행한다.
+        // (레지스터·공유 라이브러리·bt full·메모리 매핑·크래시 디스어셈블리는 코어에 이미
+        //  담긴 정보라 실행 파일이 없어도 gdb 가 추출 가능 — 함수명 심볼만 exec/디버그심볼 필요.)
+        // 제공 방식만 분기: exec 있으면 positional `<exec> <core>` (심볼 자동 로드),
+        //                   없으면 세션 내 `core-file <core>` 로 로드.
+        boolean hasExec = execPath != null && execPath.exists();
+
+        cmd.add("-ex"); cmd.add("set pagination off");
+        cmd.add("-ex"); cmd.add("set print elements 50");
+        if (!hasExec) { cmd.add("-ex"); cmd.add("core-file " + corePath.getAbsolutePath()); }
+
+        cmd.addAll(Arrays.asList(
+            "-ex", "echo " + SECTION_PREFIX + "sharedlibrary===\\n",
+            "-ex", "info sharedlibrary",
+            "-ex", "echo " + SECTION_PREFIX + "registers===\\n",
+            "-ex", "info registers",
+            "-ex", "echo " + SECTION_PREFIX + "bt===\\n",
+            "-ex", "bt",
+            "-ex", "echo " + SECTION_PREFIX + "bt_full===\\n",
+            "-ex", "bt full",
+            "-ex", "echo " + SECTION_PREFIX + "threads===\\n",
+            "-ex", "info threads",
+            "-ex", "echo " + SECTION_PREFIX + "thread_apply===\\n",
+            "-ex", "thread apply all bt full",
+            // 신규: 메모리 매핑(NT_FILE) — 어떤 바이너리/라이브러리가 로드됐는지
+            "-ex", "echo " + SECTION_PREFIX + "proc_mappings===\\n",
+            "-ex", "info proc mappings",
+            // 신규: 크래시 지점($pc) 디스어셈블리
+            "-ex", "echo " + SECTION_PREFIX + "disasm===\\n",
+            "-ex", "x/16i $pc"
+        ));
+
+        if (hasExec) {
             cmd.add(execPath.getAbsolutePath());
             cmd.add(corePath.getAbsolutePath());
-        } else {
-            // 실행 파일 없는 경우 — 코어 파일만
-            cmd.addAll(Arrays.asList(
-                "-ex", "set pagination off",
-                "-ex", "core-file " + corePath.getAbsolutePath(),
-                "-ex", "echo " + SECTION_PREFIX + "bt===\\n",
-                "-ex", "bt",
-                "-ex", "echo " + SECTION_PREFIX + "threads===\\n",
-                "-ex", "info threads",
-                "-ex", "echo " + SECTION_PREFIX + "thread_apply===\\n",
-                "-ex", "thread apply all bt"
-            ));
         }
         return cmd;
     }
@@ -598,7 +601,7 @@ public class CoreDumpAnalyzerService {
     private static final Pattern THREAD_APPLY_HEADER =
             Pattern.compile("^Thread\\s+(\\d+)\\s+\\(");
 
-    private enum Section { NONE, BT, BT_FULL, SHAREDLIB, REGISTERS, THREADS, THREAD_APPLY_BT }
+    private enum Section { NONE, BT, BT_FULL, SHAREDLIB, REGISTERS, THREADS, THREAD_APPLY_BT, PROC_MAPPINGS, DISASM }
 
     CoreDumpAnalysisResult parseGdbOutput(String rawOutput, String filename, String executableName) {
         CoreDumpAnalysisResult result = new CoreDumpAnalysisResult();
@@ -609,6 +612,8 @@ public class CoreDumpAnalyzerService {
         result.setAllThreads(new ArrayList<>());
         result.setRegisters(new LinkedHashMap<>());
         result.setSharedLibraries(new ArrayList<>());
+        result.setMemoryMappings(new ArrayList<>());
+        result.setCrashDisassembly(new ArrayList<>());
 
         if (rawOutput == null || rawOutput.isEmpty()) {
             logger.warn("[CoreDump] GDB 출력 비어있음: {}", filename);
@@ -707,6 +712,8 @@ public class CoreDumpAnalyzerService {
                     case "bt_full"        -> currentSection = Section.BT_FULL;
                     case "threads"        -> currentSection = Section.THREADS;
                     case "thread_apply"   -> currentSection = Section.THREAD_APPLY_BT;
+                    case "proc_mappings"  -> currentSection = Section.PROC_MAPPINGS;
+                    case "disasm"         -> currentSection = Section.DISASM;
                     default               -> currentSection = Section.NONE;
                 }
                 continue;
@@ -721,6 +728,20 @@ public class CoreDumpAnalyzerService {
                 case REGISTERS:
                     parseRegisterLine(line, result.getRegisters());
                     break;
+
+                case PROC_MAPPINGS: {
+                    // 매핑 행만 수집 (헤더/전문 제외) — 예: "0x400000  0x401000  0x1000  0x0  /path/bin"
+                    String t = line.strip();
+                    if (t.startsWith("0x")) result.getMemoryMappings().add(t);
+                    break;
+                }
+
+                case DISASM: {
+                    // 명령어 라인만 수집 — 예: "=> 0x... <func+0x..>: mov ..." / "0x...: call ..."
+                    String t = line.strip();
+                    if (t.startsWith("0x") || t.startsWith("=>")) result.getCrashDisassembly().add(t);
+                    break;
+                }
 
                 case BT:
                 case BT_FULL: {
@@ -990,6 +1011,14 @@ public class CoreDumpAnalyzerService {
         // 2) 신뢰도 저하 사유 수집
         List<String> warnings = new ArrayList<>();
         String raw = rawOutput == null ? "" : rawOutput;
+        // 코어 단독(실행 파일 미페어링) — 심볼 향상을 위해 어떤 바이너리를 올려야 하는지 명시
+        if (result.getExecutableName() == null) {
+            String prog = result.getCoreProgramName();
+            String bin = (prog != null && !prog.isBlank()) ? prog.trim().split("\\s+")[0] : null;
+            warnings.add("실행 파일 없이 코어 단독으로 분석됨 — 시그널·레지스터·로드된 모듈·크래시 지점은 추출되었으나 "
+                    + "함수명 심볼 해석은 제한됩니다."
+                    + (bin != null ? " 정확한 콜스택을 위해 프로그램 바이너리를 함께 페어링하세요: " + bin : ""));
+        }
         boolean noSharedLibs = raw.contains("No shared libraries loaded at this time")
                 || (result.getSharedLibraries() == null || result.getSharedLibraries().isEmpty());
         if (noSharedLibs) {
@@ -1241,6 +1270,24 @@ public class CoreDumpAnalyzerService {
             for (String key : new String[]{"rip", "rsp", "rbp", "rax", "rbx", "rsi", "rdi", "pc", "sp", "lr"}) {
                 if (regs.containsKey(key)) sb.append(key).append('=').append(regs.get(key)).append('\n');
             }
+        }
+
+        // 크래시 지점 디스어셈블리 — 심볼이 없어도 명령어로 크래시 원인 추론 가능
+        List<String> disasm = r.getCrashDisassembly();
+        if (disasm != null && !disasm.isEmpty()) {
+            sb.append("\n== 크래시 지점 디스어셈블리 ($pc) ==\n");
+            disasm.stream().limit(16).forEach(l -> sb.append(l).append('\n'));
+        }
+
+        // 로드된 모듈(메모리 매핑) — 크래시가 어느 바이너리/라이브러리에서 발생했는지 단서
+        List<String> maps = r.getMemoryMappings();
+        if (maps != null && !maps.isEmpty()) {
+            sb.append("\n== 로드된 모듈(메모리 매핑, 상위 일부) ==\n");
+            maps.stream().limit(25).forEach(l -> sb.append(l).append('\n'));
+        }
+
+        if (r.getExecutableName() == null) {
+            sb.append("\n[주의] 실행 파일이 페어링되지 않은 코어 단독 분석입니다 — 함수명 심볼이 제한적입니다.\n");
         }
 
         List<GdbThreadInfo> threads = r.getAllThreads();

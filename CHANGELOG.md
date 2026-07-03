@@ -1,6 +1,114 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-07-03] 코어 단독(실행파일 없음) 분석 고도화 — gdb 명령 세트 확장
+
+**대상:** `service/CoreDumpAnalyzerService.java`, `model/CoreDumpAnalysisResult.java`, `templates/core-dump/analyze.html`
+
+### 배경
+코어 파일만 업로드해 분석하면 결과가 미미했다. 실행 파일은 GDB 분석에 **필수가 아니지만**, `buildGdbCommand()` 의 코어 단독 분기가 `bt`/`info threads`/`thread apply all bt` 만 실행하고 `info registers`·`info sharedlibrary`·`bt full` 을 **아예 요청하지 않아** 레지스터·공유 라이브러리 탭이 항상 비었다(코어에 담긴 정보인데도 미추출). 호스트 gdb 8.2 는 debuginfod(gdb≥10.1) 미지원이라 심볼 자동해석은 범위 밖 — 코어에 이미 담긴 정보를 최대 추출하는 방향으로 고도화.
+
+### 1) gdb 명령 세트 통일·확장 (`buildGdbCommand`)
+- 코어 단독/실행파일 페어링 분기를 **동일한 리치 명령 세트**로 통일(제공 방식만 분기: exec 있으면 positional `<exec> <core>`, 없으면 세션 내 `core-file <core>`). 코어 단독도 이제 `info sharedlibrary`·`info registers`·`bt full`·`thread apply all bt full` 실행.
+- **신규 섹션 2개**(양 분기 공통): `info proc mappings`(SECTION:proc_mappings) — 로드된 바이너리/라이브러리 경로, `x/16i $pc`(SECTION:disasm) — 크래시 지점 명령어. `--batch` 는 개별 명령 오류에도 계속 진행하므로 안전.
+
+### 2) 파서·모델
+- `CoreDumpAnalysisResult` 에 `memoryMappings`/`crashDisassembly`(List<String>) 필드 추가(Lombok `@Data`).
+- `parseGdbOutput`: `Section` enum 에 `PROC_MAPPINGS`/`DISASM` 추가, 섹션 라인 수집(매핑은 `0x` 행, 디스어셈블리는 `0x`/`=>` 행).
+
+### 3) UI (기존 탭 통합, 접이식)
+- 레지스터 탭: CPU 레지스터 표 아래 **"크래시 지점 디스어셈블리"** `<details>` 추가.
+- 공유 라이브러리 탭: **"메모리 매핑(info proc mappings)"** `<details>` 추가(공유 라이브러리 비어도 매핑은 노출 — 어떤 바이너리를 올려야 하는지 식별 가능).
+- analyze.html 인라인 `<style>` 에 `.cd-extra`/`.cd-pre` 소폭 추가(외부 css/js 미변경).
+
+### 4) 안내·LLM 컨텍스트
+- 코어 단독(`executableName == null`) 시 신뢰도 경고에 **"프로그램 바이너리를 함께 페어링하세요: <bin>"**(coreProgramName 첫 토큰) 구체 안내 추가.
+- `buildCrashPrompt`: 크래시 지점 디스어셈블리·로드된 모듈 매핑·코어 단독 여부를 프롬프트에 주입 → 심볼 없어도 AI 가 크래시 명령어·레지스터로 추론.
+
+### 판단(요약)
+실행 파일은 **필수 아님**. 코어 단독으로 시그널·레지스터·로드 모듈·메모리 매핑·크래시 지점·(심볼 없는)백트레이스까지 추출 가능하며, 실행 파일/디버그심볼은 **함수명 심볼 해석 향상**에만 필요.
+
+
+## [2026-07-03] 코어 덤프 "이력만 삭제" 시 분석 이력에서 사라지지 않던 버그 수정
+
+**대상:** `service/CoreDumpAnalyzerService.java`
+
+### 배경
+`/core-dump` 분석 이력에서 삭제 모달의 "원본 파일도 삭제" 체크 해제(기본값 = 이력만 삭제, 파일 보존)로 기록을 삭제하면, 상태가 **완료 → 미분석으로만 바뀌고 이력 목록에서 사라지지 않았다**. `deleteHistoryOnly()` 가 DB 엔티티의 status 를 `NOT_ANALYZED` 로 리셋만 하고 행을 남겨서, `getHistory()`(fileDeleted=false 전체 반환)에 계속 잡혔기 때문.
+
+### 수정
+- `deleteHistoryOnly()`: status 리셋 대신 **DB 이력 행을 완전히 삭제**(`repository.delete`). 결과 디렉토리·AI 인사이트 삭제는 유지, 원본 파일은 그대로 보존.
+- 효과: "분석 이력" 표에서 행이 즉시 사라짐. 원본 파일은 `dumpfiles/` 에 남으므로 좌측 "서버 코어 파일" 목록에 **미분석 상태로 유지되어 재분석 가능**(`listExistingDumpFiles()` 는 디스크 스캔 + DB 조인이라 엔티티 부재 시 NOT_ANALYZED). 모달 설명("분석 이력만 삭제하고 원본 파일은 보존")과 동작 일치.
+- "원본 파일도 삭제"(`deleteFile=true` → `deleteDump()`) 경로는 변경 없음(파일 삭제 + `fileDeleted=true` 플래그).
+
+
+## [2026-07-03] 코어 덤프 분석완료 페이지 뒤로가기 → 분석중 페이지 재노출 방어
+
+**대상:** `controller/CoreDumpViewController.java`, `static/js/core-dump-progress.js`, `templates/core-dump/progress.html`
+
+### 배경
+`/core-dump` → 파일 선택 → 분석 시작 → 분석중(`/core-dump/progress/{f}`) → 분석완료(`/core-dump/analyze/{f}`) 흐름에서, 완료 페이지에서 **브라우저 뒤로가기 시 분석중 페이지가 다시 표시**되었다. 근본 원인 2가지: ① 진행 페이지가 SSE 재연결 시 캐시 확인 없이 **GDB 전체 재분석을 재실행**(`runAnalysis` 에 완료 가드 없음), ② 자동 이동이 `window.location.href`(history push)라 진행 페이지가 뒤로가기 스택에 잔존.
+
+### 1) 서버 측 방어 — 완료 결과 존재 시 결과 페이지로 리다이렉트
+- `CoreDumpViewController.progressPage()`: `loadResult(safe)` 가 존재하고 파서 오류가 없으면(정상 완료) 분석중 뷰 대신 `redirect:/core-dump/analyze/{filename}`. 뒤로가기로 진행 URL 재-GET 시 분석중 화면·GDB 재분석 모두 차단. 재분석(reanalyze)은 `result.json` 을 삭제하므로 이 조건에 걸리지 않아 정상 재시작.
+
+### 2) 클라이언트 측 방어 — replace 이동 + bfcache 가드
+- `core-dump-progress.js` `showComplete()`: 자동 이동·수동 "결과 보기" 링크 모두 `window.location.href`(push) → **`window.location.replace()`** 로 변경(`goResult()`). 완료 후 진행 페이지가 히스토리에서 대체되어 뒤로가기 시 파일 목록으로 이동.
+- `pageshow` 리스너 추가: 뒤로가기로 진행 페이지가 **bfcache 메모리 복원**(서버 리다이렉트 미발생)돼도 `event.persisted && analysisDone` 이면 즉시 결과 페이지로 대체 이동.
+- `core-dump-progress.js` `?v=2026-06-26` → `?v=2026-07-03` 캐시 무효화.
+
+※ 힙 덤프 진행 페이지(`templates/progress.html`)도 동일 패턴(`location.href` push)이나 이번 변경은 요청 범위인 코어 덤프 흐름에 한정.
+
+
+## [2026-07-03] 코어 파일 선택 해제(×) 버튼 + 업로드 영역 우측 이동
+
+**대상:** `templates/core-dump/index.html`, `static/js/core-dump-index.js`
+
+### 배경
+`/core-dump` 인덱스에서 코어/실행 파일을 업로드 칸에 선택(로컬 파일·서버 목록·드래그)한 뒤 **취소(해제)할 방법이 없어** 새로고침하거나 다른 파일로 덮어써야 했다. 또한 "코어 파일 업로드" 영역이 좌측 사이드바에 있어 넓은 우측 공간은 분석 이력만 차지했다.
+
+### 1) 선택 해제(×) 버튼
+- 코어/실행 각 드롭존(`#coreDropZone`/`#execDropZone`)에 `has-file` 상태일 때만 노출되는 원형 `×` 버튼(`.upload-zone-clear`) 추가. 파일 input(`inset:0`) 위로 `z-index:2` 처리해 클릭 가로챔.
+- `core-dump-index.js`에 `clearCoreZone(e)`/`clearExecZone(e)` 추가(+`window` 노출). 각각 파일명·`has-file`·`input.value`·`_preloaded*` 변수를 되돌리고 좌측 목록 `is-selected` 하이라이트 정리. 코어는 필수 슬롯이라 해제 시 GDB 분석 시작 버튼 비활성화. 로컬 파일·서버 프리로드·드래그 모든 선택 경로에 동작.
+
+### 2) 업로드 영역을 우측(분석 이력 위)으로 이동
+- 좌측 사이드바의 업로드 `.cd-side-section` 블록을 우측 메인(`.cd-main`) 최상단, 분석 이력 카드 앞으로 이동하고 `.content-card`로 래핑. 좌측 사이드바에는 "서버 코어 파일" 목록만 남김.
+- 넓은 폭에 맞춰 `.upload-grid`를 세로 스택 → **가로 2열 그리드**(`grid-template-columns:1fr 1fr`)로 변경. `@media (max-width:760px)`에서 1열 폴백.
+- 업로드 존/버튼/진행바/에러박스 DOM id 유지 → JS·드래그앤드롭 로직 무변경.
+
+### 3) 캐시 무효화
+- `core-dump-index.js` `?v=2026-07-01` → `?v=2026-07-03`. CSS는 index.html 인라인 `<style>`만 변경(외부 css·버전·스크립트 무변경).
+
+
+## [2026-07-01] 코어 파일 좌측 패널 카드 디자인 + exec/core 태그 (버전 2.2.3 → 2.2.4)
+
+**대상:** `service/CoreDumpAnalyzerService.java`, `templates/core-dump/index.html`, `static/js/core-dump-index.js`, `pom.xml`, `restart.sh`/`run.sh`/`stop.sh`, `templates/fragments/banner.html`, `templates/index.html`, `templates/progress.html`
+
+### 배경
+`/core-dump` 인덱스 좌측 "서버 코어 파일" 패널이 한 줄 라인 리스트였고, 실행파일(`.exec`/페어링 exec)은 코어에 페어링되어 독립 항목으로 숨겨져 있었다. 코어/실행 파일을 한눈에 구분되는 카드형 목록으로 개선.
+
+### 1) 실행파일을 독립 항목으로 노출 + 유형 분류
+- `CoreDumpAnalyzerService.listExistingDumpFiles()`: `.exec`/페어링 exec 를 제외하던 로직을 **분류**로 변경 — `.exec` 또는 페어링된 exec 는 `fileType="exec"`, 그 외는 `"coredump"`. dotfile/디렉터리 제외는 유지. 코어 항목의 `hasExec`/`pairedExecFilename`(드래그 동반 프리로드용)은 유지.
+
+### 2) 대시보드형 좌측 sidebar 레이아웃 (Dashboard UPLOAD + RECENT FILES 룩 이식)
+- 기존 2-컬럼(좌 파일패널 / 우 업로드+이력) → **배너에 flush로 붙는 좌측 sidebar + 우측 메인** 구조로 재구성(`.cd-app-layout` grid `340px 1fr` + `margin-left:var(--banner-w)`, `.cd-sidebar` 흰 배경·`border-right`·sticky).
+- 좌측 sidebar 상단 = **업로드 섹션**(대시보드 `.upload-zone` 점선 드롭존 스타일, 코어/실행 슬롯 세로 스택 + GDB 분석 시작 버튼). 하단 = **파일 목록 섹션**(대시보드 RECENT FILES `.file-item` 룩: 좌측 `CORE`/`EXEC` ext-badge + 파일명 + `크기 · 상태` 메타). 검색/상태·유형 필터/페이지네이션 유지.
+- 우측 메인(`.cd-main`) = 분석 이력 카드(기존 업로드 카드는 좌측 sidebar 로 이동).
+
+### 2-1) 분석 이력 카드 → 테이블 형태
+- 기존 카드 리스트(`.hi-list`/`.hi-item` flex 카드) → **테이블(`.hi-table`)** 로 변환. 컬럼: `# · 파일명(EXEC 배지 + 시그널 칩 병합) · 업로드 · 상태 · 분석 시각 · 액션`.
+- 상태별 행 배경 유지(완료 연녹색 / 실패 연빨강 / 분석 중 파란 `pulse-bg` 애니메이션), 헤더 밑줄 + hover 하이라이트. 좁은 화면(≤760px)에서 업로드/분석 시각 컬럼 `hi-hide-sm` 로 숨김, `overflow-x:auto` 래퍼로 스크롤 폴백.
+- 파일 유형 표시(요구사항 2·3): 좌측 ext-badge `CORE`(파랑 `.cd-fext-core`) / `EXEC`(보라 `.cd-fext-exec`). (초기 AI Chat 카드형 시안 → 사용자 피드백으로 대시보드 룩으로 최종 확정.)
+
+### 3) 필터·프리로드 동작
+- 유형 필터 옵션을 "실행파일 있음/없음" → **코어 / 실행파일**(`data-type` 기준)로 변경.
+- 좌측 항목 클릭/드래그: 코어 항목은 기존대로 core 슬롯(+페어링 exec) 프리로드, 실행파일 항목은 exec 슬롯 전용 프리로드(`preloadExistingExec()`, `execDropZone` drop 확장).
+- `core-dump-index.js` `?v=2026-07-01` 캐시 무효화.
+
+### 4) 버전 상향
+- `pom.xml <version>` + 스크립트 3종 grep/실행 경로 + UI 표기(배너/대시보드/진행)를 `2.2.4` 로 일괄 갱신.
+
+
 ## [2026-07-01] 애플리케이션 버전 2.2.0 → 2.2.3
 
 **대상:** `pom.xml`, `restart.sh`, `run.sh`, `stop.sh`, `templates/fragments/banner.html`, `templates/index.html`, `templates/progress.html`

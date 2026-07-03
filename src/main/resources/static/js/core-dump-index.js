@@ -61,6 +61,50 @@
         }
     }
 
+    // 실행파일 항목을 exec 슬롯에만 프리로드 (코어 슬롯은 건드리지 않음)
+    function preloadExistingExec(execName) {
+        if (!execName) return;
+        _preloadedExecFilename = execName;
+        var execInput = document.getElementById('execFileInput');
+        if (execInput) execInput.value = '';
+        document.getElementById('execFileName').textContent = execName;
+        document.getElementById('execDropZone').classList.add('has-file');
+        document.getElementById('uploadStatus').textContent =
+            '✓ 실행 파일 준비 완료 — 코어 파일을 함께 선택한 뒤 GDB 분석을 시작하세요.';
+    }
+
+    // 좌측 파일 목록의 선택 하이라이트 정리
+    function clearFileListSelection() {
+        Array.prototype.slice.call(document.querySelectorAll('.cd-file-item.is-selected'))
+            .forEach(function (i) { i.classList.remove('is-selected'); });
+    }
+
+    // 코어 칸 선택 해제 (필수 슬롯 → 업로드 버튼 비활성화)
+    function clearCoreZone(e) {
+        if (e) e.stopPropagation();
+        _preloadedFilename = null;
+        var coreInput = document.getElementById('coreFileInput');
+        if (coreInput) coreInput.value = '';
+        document.getElementById('coreFileName').textContent = '';
+        document.getElementById('coreDropZone').classList.remove('has-file');
+        document.getElementById('uploadBtn').disabled = true;
+        document.getElementById('uploadStatus').textContent = '';
+        var errBox = document.getElementById('uploadErrorBox');
+        if (errBox) errBox.classList.remove('visible');
+        clearFileListSelection();
+    }
+
+    // 실행 칸 선택 해제 (선택 슬롯 → 업로드 버튼 상태는 코어 유무를 따름)
+    function clearExecZone(e) {
+        if (e) e.stopPropagation();
+        _preloadedExecFilename = null;
+        var execInput = document.getElementById('execFileInput');
+        if (execInput) execInput.value = '';
+        document.getElementById('execFileName').textContent = '';
+        document.getElementById('execDropZone').classList.remove('has-file');
+        clearFileListSelection();
+    }
+
     function startUpload() {
         if (_preloadedFilename) {
             window.location.href = '/core-dump/progress/' + encodeURIComponent(_preloadedFilename);
@@ -189,6 +233,9 @@
                         var nm = e.dataTransfer.getData('text/plain');
                         var ex = e.dataTransfer.getData('application/x-core-exec');
                         if (nm) preloadExisting(nm, ex || null);
+                    } else {
+                        var exNm = e.dataTransfer.getData('application/x-core-exec-standalone');
+                        if (exNm) preloadExistingExec(exNm);
                     }
                     return;
                 }
@@ -220,15 +267,25 @@
         // 좌측 파일 패널: 드래그/클릭 프리로드 + 검색
         var fileItems = Array.prototype.slice.call(document.querySelectorAll('.cd-file-item'));
         fileItems.forEach(function (item) {
+            var isExec = item.dataset.type === 'exec';
             item.addEventListener('dragstart', function (e) {
-                e.dataTransfer.setData('text/plain', item.dataset.filename || '');
-                if (item.dataset.exec) e.dataTransfer.setData('application/x-core-exec', item.dataset.exec);
+                if (isExec) {
+                    // 실행파일 항목 → exec 슬롯 전용
+                    e.dataTransfer.setData('application/x-core-exec-standalone', item.dataset.filename || '');
+                } else {
+                    e.dataTransfer.setData('text/plain', item.dataset.filename || '');
+                    if (item.dataset.exec) e.dataTransfer.setData('application/x-core-exec', item.dataset.exec);
+                }
                 e.dataTransfer.effectAllowed = 'copy';
             });
             item.addEventListener('click', function () {
                 fileItems.forEach(function (i) { i.classList.remove('is-selected'); });
                 item.classList.add('is-selected');
-                preloadExisting(item.dataset.filename, item.dataset.exec || null);
+                if (isExec) {
+                    preloadExistingExec(item.dataset.filename);
+                } else {
+                    preloadExisting(item.dataset.filename, item.dataset.exec || null);
+                }
             });
         });
 
@@ -253,8 +310,7 @@
             return fileItems.filter(function (item) {
                 if (q && (item.dataset.filename || '').toLowerCase().indexOf(q) === -1) return false;
                 if (status !== 'all' && (item.dataset.status || 'NOT_ANALYZED') !== status) return false;
-                if (type === 'exec' && !item.dataset.exec) return false;
-                if (type === 'noexec' && item.dataset.exec) return false;
+                if (type !== 'all' && (item.dataset.type || 'coredump') !== type) return false;
                 return true;
             });
         }
@@ -338,6 +394,8 @@
 
     window.onCoreFileSelect = onCoreFileSelect;
     window.onExecFileSelect = onExecFileSelect;
+    window.clearCoreZone = clearCoreZone;
+    window.clearExecZone = clearExecZone;
     window.startUpload = startUpload;
     window.reanalyze = reanalyze;
     window.deleteDump = deleteDump;

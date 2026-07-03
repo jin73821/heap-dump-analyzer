@@ -20,6 +20,8 @@ public class CoreDumpAnalysisResult {
     private List<GdbThreadInfo> allThreads;
     private Map<String, String> registers;
     private List<GdbSharedLib> sharedLibraries;
+    private List<String> memoryMappings;      // info proc mappings (NT_FILE) — 파일-백트 매핑 행
+    private List<String> crashDisassembly;    // x/16i $pc — 크래시 지점 명령어 라인
     private String gdbRawOutput;
     private String coreDumpTime;          // 코어 파일 생성 시각 (파일 mtime)
     private String errorMessage;
