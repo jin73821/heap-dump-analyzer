@@ -13,6 +13,10 @@ import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PostConstruct;
 import java.io.*;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.LocalDateTime;
@@ -356,9 +360,10 @@ public class RemoteDumpService {
             logger.warn("[RemoteDump] SSH error on {} path={}: exit={}, stderr={}",
                     server.getName(), dumpPath, pr.exitCode, errorMsg);
         } else {
-            if (pr.stderr != null && !pr.stderr.trim().isEmpty()) {
+            String nonFatal = stripBanners(pr.stderr, 5);
+            if (!nonFatal.isEmpty()) {
                 logger.info("[RemoteDump] find non-fatal stderr on {} path={}: {}",
-                        server.getName(), dumpPath, summarizeStderr(pr.stderr, 5));
+                        server.getName(), dumpPath, nonFatal);
             }
             if (!pr.stdout.trim().isEmpty()) {
                 for (String line : pr.stdout.split("\n")) {
@@ -438,9 +443,10 @@ public class RemoteDumpService {
             logger.warn("[RemoteDump] SSH core scan error on {} path={}: exit={}, stderr={}",
                     server.getName(), corePath, pr.exitCode, errorMsg);
         } else {
-            if (pr.stderr != null && !pr.stderr.trim().isEmpty()) {
+            String nonFatal = stripBanners(pr.stderr, 5);
+            if (!nonFatal.isEmpty()) {
                 logger.info("[RemoteDump] core scan non-fatal stderr on {} path={}: {}",
-                        server.getName(), corePath, summarizeStderr(pr.stderr, 5));
+                        server.getName(), corePath, nonFatal);
             }
             if (!pr.stdout.trim().isEmpty()) {
                 // 1) 코어파일 메타 파싱 + 전송 여부 판정
@@ -564,24 +570,49 @@ public class RemoteDumpService {
         return new String[]{execfn, fromCmd, warn};
     }
 
-    /** stderr 첫 N 줄만 발췌해 로깅용 한 줄로 묶음. */
-    private String summarizeStderr(String stderr, int maxLines) {
-        if (stderr == null) return "";
-        String[] lines = stderr.split("\n");
-        StringBuilder sb = new StringBuilder();
-        int shown = 0;
-        for (String l : lines) {
+    // 6자 이상 연속된 프레임/룰(rule) 문자 (=, -, _, *, #, ~, +) — 배너 구분선 탐지용.
+    private static final java.util.regex.Pattern RULE_RUN =
+            java.util.regex.Pattern.compile("[=\\-_*#~+]{6,}");
+    // 트림 후 프레임 문자(+ 공백/가운뎃점/화살표)만으로 구성된 라인 — 순수 장식 라인.
+    private static final java.util.regex.Pattern FRAME_ONLY =
+            java.util.regex.Pattern.compile("[=\\-_*#~+|<>·\\s]{3,}");
+    // "1. ", "2) " 등 번호 매긴 고지 항목.
+    private static final java.util.regex.Pattern NUMBERED_NOTICE =
+            java.util.regex.Pattern.compile("^\\s*\\d+\\s*[.)]\\s");
+
+    /**
+     * SSH 로그인 배너/MOTD(법적 고지 등) 라인을 구조적으로 제거하고, 실제 find/ssh 에러로 보이는
+     * 라인만 남겨 최대 maxLines 줄을 로깅용 한 줄로 묶는다. 남는 게 없으면 빈 문자열 → 호출자 로그 생략.
+     * 비ASCII 블랭킷 삭제는 하지 않음 (decodeStderr 로 복원된 한글 '진짜' 에러 보존).
+     */
+    private String stripBanners(String stderr, int maxLines) {
+        if (stderr == null || stderr.trim().isEmpty()) return "";
+        List<String> kept = new ArrayList<>();
+        for (String l : stderr.split("\n")) {
             String t = l.trim();
             if (t.isEmpty()) continue;
+            if (isBannerLine(t)) continue;
+            kept.add(t);
+        }
+        StringBuilder sb = new StringBuilder();
+        int shown = 0;
+        for (String t : kept) {
             if (shown > 0) sb.append(" | ");
             sb.append(t);
-            shown++;
-            if (shown >= maxLines) break;
+            if (++shown >= maxLines) break;
         }
-        int total = 0;
-        for (String l : lines) if (!l.trim().isEmpty()) total++;
-        if (total > shown) sb.append(" (외 ").append(total - shown).append("줄)");
+        if (kept.size() > shown) sb.append(" (외 ").append(kept.size() - shown).append("줄)");
         return sb.toString();
+    }
+
+    /** 트림된 한 줄이 SSH 배너/MOTD 장식·고지 라인인지 구조적으로 판정. */
+    private boolean isBannerLine(String t) {
+        if (FRAME_ONLY.matcher(t).matches()) return true;      // 순수 프레임/구분선
+        if (t.startsWith("|") || t.endsWith("|")) return true;  // 액자형 텍스트 라인
+        if (RULE_RUN.matcher(t).find()) return true;            // ====== 류 룰 포함
+        if (NUMBERED_NOTICE.matcher(t).find()) return true;     // "1. ..." 번호 고지
+        if (t.indexOf('�') >= 0) return true;    // 디코딩 실패 잔재(U+FFFD 치환문자)
+        return false;
     }
 
     /** 하위 호환용 */
@@ -765,7 +796,7 @@ public class RemoteDumpService {
         Process process = pb.start();
 
         StringBuilder stdout = new StringBuilder();
-        StringBuilder stderr = new StringBuilder();
+        ByteArrayOutputStream stderrBuf = new ByteArrayOutputStream();
 
         Thread outReader = new Thread(() -> {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
@@ -773,10 +804,12 @@ public class RemoteDumpService {
                 while ((line = r.readLine()) != null) stdout.append(line).append("\n");
             } catch (IOException ignored) {}
         });
+        // stderr 는 raw 바이트로 캡처 후 decodeStderr 로 디코딩 (UTF-8 실패 시 MS949 폴백)
         Thread errReader = new Thread(() -> {
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = r.readLine()) != null) stderr.append(line).append("\n");
+            try (InputStream es = process.getErrorStream()) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = es.read(buf)) != -1) stderrBuf.write(buf, 0, n);
             } catch (IOException ignored) {}
         });
         outReader.setDaemon(true);
@@ -804,7 +837,7 @@ public class RemoteDumpService {
 
         outReader.join(5000);
         errReader.join(5000);
-        return new ProcessResult(process.exitValue(), stdout.toString(), stderr.toString());
+        return new ProcessResult(process.exitValue(), stdout.toString(), decodeStderr(stderrBuf.toByteArray()));
     }
 
     private void cleanupTempFile(File tempFile) {
@@ -929,7 +962,7 @@ public class RemoteDumpService {
         Process process = pb.start();
 
         StringBuilder stdout = new StringBuilder();
-        StringBuilder stderr = new StringBuilder();
+        ByteArrayOutputStream stderrBuf = new ByteArrayOutputStream();
 
         Thread outReader = new Thread(() -> {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
@@ -937,10 +970,12 @@ public class RemoteDumpService {
                 while ((line = r.readLine()) != null) stdout.append(line).append("\n");
             } catch (IOException ignored) {}
         });
+        // stderr 는 raw 바이트로 캡처 후 decodeStderr 로 디코딩 (UTF-8 실패 시 MS949 폴백 — 사내 EUC-KR 배너/에러 대응)
         Thread errReader = new Thread(() -> {
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
-                String line;
-                while ((line = r.readLine()) != null) stderr.append(line).append("\n");
+            try (InputStream es = process.getErrorStream()) {
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = es.read(buf)) != -1) stderrBuf.write(buf, 0, n);
             } catch (IOException ignored) {}
         });
 
@@ -956,28 +991,47 @@ public class RemoteDumpService {
         outReader.join(5000);
         errReader.join(5000);
 
-        return new ProcessResult(process.exitValue(), stdout.toString(), stderr.toString());
+        return new ProcessResult(process.exitValue(), stdout.toString(), decodeStderr(stderrBuf.toByteArray()));
     }
 
     /**
-     * SSH/SCP stderr에서 배너 등 불필요한 텍스트 제거, 핵심 에러만 추출
+     * SSH/SCP stderr 에서 배너/MOTD 를 제거하고 핵심 에러만 추출 (에러 경로 전용).
+     * 배너 판정은 stripBanners 와 동일한 구조적 필터(isBannerLine) 재사용 + 기존 prefix 패턴 보강.
      */
     private String cleanSshError(String stderr) {
         if (stderr == null || stderr.trim().isEmpty()) return "";
-        // 배너나 MOTD 라인 제거, 에러 관련 라인만 추출
         StringBuilder cleaned = new StringBuilder();
         for (String line : stderr.split("\n")) {
             String t = line.trim();
             if (t.isEmpty()) continue;
-            // 배너/MOTD 패턴 건너뛰기
-            if (t.startsWith("*") || t.startsWith("NOTICE") || t.startsWith("SSH Connect")
-                || t.startsWith("****")) continue;
+            if (isBannerLine(t)) continue;
+            if (t.startsWith("NOTICE") || t.startsWith("SSH Connect")) continue;
             cleaned.append(t).append(" ");
         }
         String result = cleaned.toString().trim();
         // 너무 길면 잘라내기
         if (result.length() > 300) result = result.substring(0, 300) + "...";
         return result;
+    }
+
+    /**
+     * 프로세스 stderr raw 바이트를 문자열로 디코딩. UTF-8 strict 시도 후 실패하면
+     * MS949(EUC-KR 상위호환)로 폴백 — 사내 서버의 EUC-KR 로그인 배너/에러 가독 처리.
+     */
+    private static String decodeStderr(byte[] bytes) {
+        if (bytes == null || bytes.length == 0) return "";
+        try {                                   // 1) UTF-8 strict
+            return StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException e) {  // 2) EUC-KR/MS949 폴백
+            try {
+                return new String(bytes, Charset.forName("MS949"));
+            } catch (Exception ex) {
+                return new String(bytes, StandardCharsets.UTF_8);
+            }
+        }
     }
 
     /**

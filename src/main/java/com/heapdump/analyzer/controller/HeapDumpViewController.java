@@ -261,6 +261,19 @@ public class HeapDumpViewController {
                 .filter(h -> !h.isPairedExec())
                 .collect(Collectors.toList());
 
+        // 출처 서버명 보강 — analysis_history.server_name 이 아직 없는 항목(코어/실행파일/미분석 힙덤프)은
+        // SSH 전송 로그(DumpTransferLog)로 소급 조회해 "서버" 칼럼이 Local 로 뜨지 않도록 채운다.
+        for (AnalysisHistoryItem item : displayList) {
+            if (item.getServerName() == null || item.getServerName().isEmpty()) {
+                item.setServerName(analyzerService.resolveServerNameByFilename(item.getFilename()));
+            }
+        }
+        for (AnalysisHistoryItem execItem : coreExecSubrowMap.values()) {
+            if (execItem.getServerName() == null || execItem.getServerName().isEmpty()) {
+                execItem.setServerName(analyzerService.resolveServerNameByFilename(execItem.getFilename()));
+            }
+        }
+
         // exec 파일 목록 (분류 모달 드롭다운용)
         // 1) 아직 페어링되지 않은 exec/coreexec 파일
         // 2) 이미 페어링된 exec도 포함 — 현재 연결 상태를 모달에서 확인·변경할 수 있어야 함
@@ -285,7 +298,8 @@ public class HeapDumpViewController {
         model.addAttribute("fileCount", files.size());
         model.addAttribute("coreDumpCount", coreItems.stream().filter(h -> !h.isFileDeleted()).count());
 
-        List<String> serverNames = heapVisible.stream()
+        // 필터 드롭다운 서버명 — 힙덤프뿐 아니라 코어/실행파일까지 포함(보강된 displayList 기준)
+        List<String> serverNames = displayList.stream()
                 .filter(h -> !h.isFileDeleted())
                 .map(AnalysisHistoryItem::getServerName)
                 .filter(n -> n != null && !n.isEmpty())

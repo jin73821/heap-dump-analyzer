@@ -1,6 +1,57 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-07-08] 원격 스캔 로그 — SSH EUC-KR 로그인 배너 노이즈 방어 + stderr 인코딩 폴백
+
+**대상:** `service/RemoteDumpService.java`
+
+### 배경 / 증상
+사내망 서버 스캔 시 `logs/heapdump-analyzer.log` 에 `[RemoteDump] find non-fatal stderr on daniwb1p ...: ====== | 1. \261\315\307ϴ\302 ... (외 5줄)` 형태의 노이즈가 반복 기록. 원인은 **원격 서버의 SSH 로그인 법적고지 배너(sshd Banner/MOTD)** 가 `find` stderr 로 함께 올라오는 것. 두 결함이 겹침: (1) `scanSinglePath`/`scanCorePath` 가 스캔 **성공**(exit==0) 시에도 비어있지 않은 stderr 를 `summarizeStderr` 로 무필터 INFO 로깅, (2) `executeCommand`/`executeCommandWithProgress` 의 stderr 리더가 **UTF-8 하드코딩**이라 **EUC-KR** 배너가 mojibake(octal escape)로 깨짐. 기존 `cleanSshError` 배너 필터는 에러 경로(exit≠0)에서만 호출되고 prefix 패턴(`*`/`NOTICE`/`****`)이라 `======`/액자형 한글 배너를 못 잡음.
+
+### 변경
+- **배너 구조적 필터 `stripBanners(stderr, maxLines)` + `isBannerLine` 신설**: 프레임/구분선(`======` 6자+ 룰 문자, `[=\-_*#~+|<>·]` 전용 라인), 액자형(`|` 시작/끝), 번호 고지(`1. `/`2) `), U+FFFD 잔재 라인을 제거하고 **진짜 find/ssh 에러 라인만** 최대 N줄 ` | ` 결합. 비ASCII 블랭킷 삭제는 안 함 → decodeStderr 로 복원된 **한글 진짜 에러도 보존**. 결과가 비면 호출자가 로그 생략. (기존 `summarizeStderr` 대체)
+- **성공 경로 로깅 3곳 필터 적용**: `scanSinglePath`/`scanCorePath` 의 non-fatal stderr INFO 는 `stripBanners` 결과가 비어있지 않을 때만 기록. `cleanSshError`(에러 경로)도 내부에서 `isBannerLine` 재사용해 배너 제거 일관화.
+- **stderr 인코딩 폴백 `decodeStderr(byte[])` 신설**: `executeCommand`/`executeCommandWithProgress` 의 errReader 를 라인 디코딩 → **raw 바이트 캡처**(`ByteArrayOutputStream`)로 변경 후, UTF-8 strict 디코딩 시도 → 실패 시 **MS949(EUC-KR 상위호환) 폴백**. stdout 은 UTF-8 유지(파싱 대상, 범위 밖). SSH 명령 구성은 불변(서버 소유 배너라 클라 플래그로 억제 불가).
+
+### 검증
+독립 단위 테스트 11/11 통과(정확한 액자형 한글 배너 → decodeStderr 한글 복원 + stripBanners 전량 제거, 영문/한글 `Permission denied` 보존, 혼합 입력 에러만 추출, U+FFFD 라인 제거). 빌드+기동 12.7s OK. 실 스캔(JeusServer1 `/tmp`)에서 실제 `find: '...': Permission denied` (UTF-8 멀티바이트 따옴표 포함) 다수가 **깨짐 없이 보존 로깅**되고 `(외 N줄)` 요약 정상 확인 — 진짜 에러 디버깅 단서 유지 회귀 없음.
+
+
+## [2026-07-08] Target Servers 코어 전송 UX 수정 — 실행파일 전송 버튼 즉시 노출 + Files 서버 칼럼 서버명 표시
+
+**대상:** `templates/servers.html`, `controller/HeapDumpViewController.java`, `service/HeapDumpAnalyzerService.java`, `templates/files.html`
+
+### 배경 / 증상
+1. Target Servers 스캔 패널에서 **코어파일을 전송해도 연결된 실행파일 전송 버튼이 재스캔 전까지 나타나지 않았다.** 전송 완료 시 `_scanFiles[].transferred` 만 갱신하고 해당 행을 재렌더하지 않아, `renderScanFileRow` 의 "코어 전송 후 가능" 플레이스홀더가 그대로 남았다.
+2. Target Servers 로 전송한 **코어/실행파일이 Files 페이지 "서버" 칼럼에 Local(실행파일 서브row 는 "—")** 로 표시됐다. `CoreDumpAnalysisEntity` 에는 server_name 필드가 없고, 코어/실행파일 항목은 serverName 이 비어 있었다.
+
+### 변경
+- **(1) 코어 전송 즉시 실행파일 버튼 노출**(`servers.html` `transferFile`): 코어(`fileType==='core'`) 전송 성공 시 해당 `.scan-file` 행만 `renderScanFileRow` 로 재렌더(다른 행/전송 중 항목 무영향) → 실행파일 전송 버튼이 재스캔 없이 즉시 표시.
+- **(2) Files 서버명 소급 표시**: `HeapDumpAnalyzerService.resolveServerNameByFilename(filename)` 신규 — 로컬 저장명으로 SSH 전송 로그(`DumpTransferLog`, SUCCESS 최신) → serverId → `TargetServer.name` 조회(전송 이력 없으면 null). 기존 힙 백필(`fixMissingServerInfoInHistory`)과 동일한 전송로그 기반 소스 재사용. `HeapDumpViewController.filesPage` 가 serverName 이 빈 항목(코어/실행파일/미분석 힙덤프)과 실행파일 서브row 에 이를 적용, 필터 드롭다운 서버명도 보강된 `displayList` 기준으로 재구성. `files.html` 실행파일 서브row 의 하드코딩 "—" 서버 셀을 `execItem.serverName` 표시로 교체.
+
+### 검증
+빌드+기동 OK. 임시 전송로그(core+exec, server_id=JeusServer1) 삽입 후 `/files` 로드 → 코어 행·실행파일 서브row 모두 **JeusServer1** 표시 확인, 미전송 코어(`4nqolz` 등)는 여전히 **Local**(무회귀) 확인, 테스트 로그 DELETE 정리. `/servers` 200 렌더 + 인라인 JS `node --check` 통과.
+
+
+## [2026-07-08] 코어 덤프 — 정상 페어링에도 콜스택 끊김(서드파티 stripped 라이브러리 크래시) 표출 개선
+
+**대상:** `model/GdbStackFrame.java`, `model/CoreDumpAnalysisResult.java`, `service/CoreDumpAnalyzerService.java`, `templates/core-dump/analyze.html`, `static/css/core-dump.css`
+
+### 배경
+실행 파일을 **정상 페어링**했는데도 GDB 백트레이스가 `#0 raise() → #1 ??() → #2 0x0` 로 끊기는 사례(예: Tmax/Oracle 연동 프로세스). 원인은 실행 파일 매칭 실패가 아니라, **결함이 Oracle/Tmax 네이티브 라이브러리(`libclntsh.so.19.1` 등, Syms Read=No) 내부**에 있고 stripped 서드파티 라이브러리에 CFI가 없어 언와인드가 중단되기 때문. 기존 UI 는 `?? ()` 프레임을 맨주소+`심볼없음` 으로만 표시하고, 신뢰도 가이드는 exec 가 이미 페어링돼 있어도 항상 "unstripped exec 페어링/​debuginfo 설치" 라고 안내해 오해를 유발했다.
+
+### 변경
+- **주소→모듈 귀속**: `?? ()` 프레임 주소를 `info proc mappings`(우선)/`info sharedlibrary`(폴백) 로드 구간에 대입해 소유 모듈 basename + 오프셋(`libclntsh.so.19.1 + 0x28fb14f`) + 벤더 라벨(경로 프리픽스 분류: Oracle Client / Tmax / glibc / GCC 런타임) + 심볼 로드 여부를 프레임에 부여(`GdbStackFrame.module/moduleOffset/moduleVendor/moduleHasSymbols`). 메인 + 모든 스레드 백트레이스에 적용.
+- **결함 모듈·self-raise·가이드 종류 판정**(`CoreDumpAnalysisResult.faultingModule/…Vendor/…HasSymbols/selfRaisedSignal/guidanceKind`): 최상단 `raise/abort/gsignal/pthread_kill/__stack_chk_fail` 계열은 시그널 자체-재raise 로 간주해 건너뛰고 첫 실질 프레임의 소유 모듈을 결함 모듈로 승격. `guidanceKind` = `EXEC_MISSING`/`THIRDPARTY_STRIPPED`/`APP_STRIPPED`/`OK` 로 분기.
+- **심볼 미로드(No) 공유 라이브러리 캡처**: 기존 정규식은 From/To 주소가 있는 라이브러리만 잡아 Oracle/Tmax stripped 라이브러리가 목록·귀속에서 누락됐다. `SHAREDLIB_NOSYM_PATTERN` 추가로 No-라이브러리(주소 없음)도 수집 → 공유 라이브러리 탭 표시 + `moduleHasSymbols=false` 정확화.
+- **UI 표출**(`analyze.html` + `core-dump.css`): 심볼 없는 프레임 카드에 `모듈 + 오프셋 + 벤더 칩` 표기(메인/스레드 탭 모두), 크래시 히어로에 "결함 모듈: X (벤더) · 심볼 없음" 라인 + self-raise 힌트, 신뢰도 가이드를 `guidanceKind` 별 3분기로 교체(서드파티 케이스는 exec 페어링 재촉 문구 제거, 벤더 debuginfo/에스컬레이션 안내). `core-dump.css?v=2026-07-08` 캐시 무효화.
+- **AI 프롬프트**(`buildCrashPrompt`): 결함 모듈·벤더·self-raise 를 크래시 개요에 주입, 심볼 없는 콜 체인을 `#N libX.so + 0xoff (벤더, 심볼없음)` 형태로 강화, 결함이 서드파티 stripped 라이브러리면 앱 코드 라인 단정 금지 + 벤더 debuginfo/이슈 에스컬레이션을 recommendations 에 포함하도록 지시.
+- 신규 필드는 모두 널/false 기본 + `@JsonIgnoreProperties(ignoreUnknown=true)` 로 구버전 result.json 하위호환.
+
+### 검증
+빌드 OK. 실제 pasted GDB 출력(Tmax `sgiba110a` + Oracle client)을 파서에 투입 → `#1` = `libclntsh.so.19.1 + 0x28fb14f (Oracle Client, hasSyms=false)`, `selfRaisedSignal=true`, `guidanceKind=THIRDPARTY_STRIPPED`, THIRDPARTY 경고문 확인. `crash_demo_2.core`(stripped 앱) 재분석 → `guidanceKind=APP_STRIPPED`, 프레임 `crash_demo_2 + 0x809` 귀속, 히어로 "결함 모듈" 라인 렌더(200) 확인. 구버전 result.json 페이지 200 렌더(하위호환) 확인.
+
+
 ## [2026-07-04] 대시보드 Analysis Queue 에 분석 경과 시간 표기
 
 **대상:** `service/HeapDumpAnalyzerService.java`, `controller/HeapAnalysisApiController.java`, `templates/index.html`

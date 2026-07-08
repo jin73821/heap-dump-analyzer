@@ -596,6 +596,10 @@ public class CoreDumpAnalyzerService {
             Pattern.compile("^(\\w+)\\s+(0x[0-9a-fA-F]+)");
     private static final Pattern SHAREDLIB_PATTERN =
             Pattern.compile("^(0x[0-9a-fA-F]+)\\s+(0x[0-9a-fA-F]+)\\s+(Yes(?:\\s+\\(\\*\\))?|No)\\s+(\\S+)");
+    // 심볼 미로드(No) 라이브러리는 From/To 주소가 비어 있어 위 패턴에 안 잡힘 → 별도 캡처
+    // (예: "                    No          /sw/oracle/client/lib/libclntsh.so.19.1")
+    private static final Pattern SHAREDLIB_NOSYM_PATTERN =
+            Pattern.compile("^\\s+(No)\\s+(/\\S+)\\s*$");
     private static final Pattern THREAD_LINE_PATTERN =
             Pattern.compile("^\\s*(\\*?)\\s*(\\d+)\\s+(Thread\\s+\\S+(?:\\s+\\(LWP\\s+\\d+\\))?)\\s*(.*)");
     private static final Pattern THREAD_APPLY_HEADER =
@@ -839,6 +843,15 @@ public class CoreDumpAnalyzerService {
             lib.setSymsRead(m.group(3));
             lib.setPath(m.group(4));
             libs.add(lib);
+            return;
+        }
+        // 심볼 미로드(No) 라이브러리 — From/To 주소 없음
+        Matcher mn = SHAREDLIB_NOSYM_PATTERN.matcher(line);
+        if (mn.find()) {
+            GdbSharedLib lib = new GdbSharedLib();
+            lib.setSymsRead(mn.group(1));   // "No"
+            lib.setPath(mn.group(2));
+            libs.add(lib);
         }
     }
 
@@ -985,6 +998,9 @@ public class CoreDumpAnalyzerService {
             }
         }
 
+        // 1.5) 주소→모듈 귀속 (심볼 없는 ?? 프레임을 소유 라이브러리·벤더에 매핑)
+        attributeModules(result);
+
         int total = bt.size();
         int resolved = 0, garbage = 0;
         GdbStackFrame firstResolved = null;
@@ -1006,6 +1022,9 @@ public class CoreDumpAnalyzerService {
         boolean symbolsAvailable = resolved > 0 || libSyms;
         result.setSymbolsAvailable(symbolsAvailable);
 
+        // 결함 모듈 · self-raise · 가이드 종류 판정 (귀속 결과 활용)
+        computeFaultingModule(result);
+
         double garbageRatio = total > 0 ? (double) garbage / total : 0.0;
 
         // 2) 신뢰도 저하 사유 수집
@@ -1024,7 +1043,21 @@ public class CoreDumpAnalyzerService {
         if (noSharedLibs) {
             warnings.add("공유 라이브러리 정보 없음 — 실행 파일/라이브러리 경로가 코어와 매칭되지 않습니다.");
         }
-        if (resolved == 0 || raw.contains("No symbol table info available")) {
+        // 정상 페어링에도 결함이 서드파티 stripped 라이브러리 내부인 경우 — exec 페어링 재촉 대신 벤더 안내
+        if ("THIRDPARTY_STRIPPED".equals(result.getGuidanceKind())) {
+            String vendor = result.getFaultingModuleVendor() != null
+                    ? " (" + result.getFaultingModuleVendor() + ")" : "";
+            StringBuilder w = new StringBuilder();
+            w.append("크래시는 서드파티 라이브러리 ")
+             .append(result.getFaultingModule() != null ? result.getFaultingModule() : "(미상 모듈)")
+             .append(vendor)
+             .append(" 내부에서 발생했습니다 — 애플리케이션 실행 파일 페어링은 정상이나 해당 라이브러리에 "
+                   + "심볼이 없어 콜스택 해석이 제한됩니다. 해당 벤더의 debuginfo 확보 또는 벤더 측 이슈로 취급하세요.");
+            if (result.isSelfRaisedSignal()) {
+                w.append(" 최상단 raise()/abort() 는 시그널 핸들러의 자체-재raise 로, 실제 결함 지점은 결함 모듈 프레임입니다.");
+            }
+            warnings.add(w.toString());
+        } else if (resolved == 0 || raw.contains("No symbol table info available")) {
             warnings.add("디버그 심볼 없음 — stripped 바이너리이거나 일치하는 실행 파일이 페어링되지 않았습니다.");
         }
         if (raw.contains("Cannot access memory at address")) {
@@ -1052,6 +1085,216 @@ public class CoreDumpAnalyzerService {
         }
         result.setAnalysisConfidence(confidence);
         result.setQualityWarnings(warnings);
+    }
+
+    // ── 주소→모듈 귀속 ────────────────────────────────────────────
+
+    /** proc_mappings / sharedlibrary 로부터 파싱한 로드 구간. */
+    private static final class ModRange {
+        final long start, end, fileOffset;
+        final String objfile;
+        ModRange(long start, long end, long fileOffset, String objfile) {
+            this.start = start; this.end = end; this.fileOffset = fileOffset; this.objfile = objfile;
+        }
+    }
+
+    /** 경로 basename 추출. */
+    private static String basenameOf(String path) {
+        if (path == null) return null;
+        String p = path.trim();
+        int slash = p.lastIndexOf('/');
+        return slash >= 0 ? p.substring(slash + 1) : p;
+    }
+
+    /** hex 주소 문자열(0x…) → unsigned long. 실패 시 null. */
+    private static Long parseHexAddr(String hex) {
+        if (hex == null) return null;
+        String h = hex.trim();
+        if (h.startsWith("0x") || h.startsWith("0X")) h = h.substring(2);
+        if (h.isEmpty()) return null;
+        try { return Long.parseUnsignedLong(h, 16); } catch (NumberFormatException e) { return null; }
+    }
+
+    /**
+     * 네이티브 라이브러리 경로 → 벤더 라벨. 미상이면 null.
+     * util/MiddlewareDetector 의 벤더 네이밍과 라벨 정합 유지(native .so 경로 전용 소형 분류).
+     */
+    static String classifyVendor(String objfilePath) {
+        if (objfilePath == null) return null;
+        String p = objfilePath.toLowerCase();
+        String base = basenameOf(p);
+        if (base == null) return null;
+        if (base.startsWith("libclntsh") || base.startsWith("libnnz") || base.startsWith("libclntshcore")
+                || base.startsWith("libnque") || base.startsWith("libsyscomm")
+                || p.contains("oracore") || p.contains("/oracle/"))
+            return "Oracle Client";
+        if (p.contains("/tmax/") || base.startsWith("libsvr") || base.startsWith("libcli")
+                || base.startsWith("liboras") || base.startsWith("libdhcli") || base.startsWith("libtmax"))
+            return "Tmax";
+        if (base.startsWith("libc-") || base.equals("libc.so.6") || base.startsWith("libpthread")
+                || base.startsWith("libm-") || base.startsWith("libm.so") || base.startsWith("libdl")
+                || base.startsWith("librt") || base.startsWith("libnsl") || base.startsWith("libresolv")
+                || base.startsWith("libnss") || base.startsWith("ld-") || base.startsWith("ld-linux"))
+            return "glibc";
+        if (base.startsWith("libstdc++") || base.startsWith("libgcc_s"))
+            return "GCC 런타임";
+        return null;
+    }
+
+    /** memoryMappings(우선) / sharedLibraries(폴백) 를 로드 구간 목록으로 파싱. */
+    private List<ModRange> parseModuleRanges(CoreDumpAnalysisResult result) {
+        List<ModRange> ranges = new ArrayList<>();
+        List<String> maps = result.getMemoryMappings();
+        if (maps != null) {
+            for (String line : maps) {
+                // "0xSTART 0xEND 0xSIZE 0xOFFSET /path/objfile"
+                String[] tok = line.trim().split("\\s+");
+                if (tok.length < 5) continue;
+                if (!tok[0].startsWith("0x") || !tok[4].startsWith("/")) continue;
+                if (tok[4].startsWith("/SYSV")) continue; // SysV 공유메모리 세그먼트 제외
+                Long start = parseHexAddr(tok[0]);
+                Long end   = parseHexAddr(tok[1]);
+                Long off   = tok[3].startsWith("0x") ? parseHexAddr(tok[3]) : 0L;
+                if (start == null || end == null) continue;
+                if (off == null) off = 0L;
+                String obj = tok[4];
+                ranges.add(new ModRange(start, end, off, obj));
+            }
+        }
+        // proc_mappings 미가용 시 sharedLibraries From/To 로 폴백(fileOffset 정보 없음 → 0)
+        if (ranges.isEmpty() && result.getSharedLibraries() != null) {
+            for (GdbSharedLib lib : result.getSharedLibraries()) {
+                Long start = parseHexAddr(lib.getFromAddr());
+                Long end   = parseHexAddr(lib.getToAddr());
+                if (start == null || end == null || lib.getPath() == null) continue;
+                ranges.add(new ModRange(start, end, 0L, lib.getPath()));
+            }
+        }
+        return ranges;
+    }
+
+    private ModRange resolveRange(long addr, List<ModRange> ranges) {
+        for (ModRange m : ranges) {
+            if (Long.compareUnsigned(addr, m.start) >= 0 && Long.compareUnsigned(addr, m.end) < 0) return m;
+        }
+        return null;
+    }
+
+    /** 프레임 1개에 소유 모듈/오프셋/벤더/심볼여부 귀속. */
+    private void attributeFrame(GdbStackFrame f, List<ModRange> ranges, Map<String, String> symsByBase) {
+        if (f == null) return;
+        Long addr = parseHexAddr(f.getAddress());
+        if (addr == null || addr == 0L) return;
+        ModRange m = resolveRange(addr, ranges);
+        if (m != null) {
+            String base = basenameOf(m.objfile);
+            f.setModule(base);
+            long off = addr - m.start + m.fileOffset;
+            f.setModuleOffset("0x" + Long.toHexString(off));
+            f.setModuleVendor(classifyVendor(m.objfile));
+            String syms = symsByBase.get(base);
+            if (syms != null) f.setModuleHasSymbols(syms.startsWith("Yes"));
+        } else if (f.getLibrary() != null) {
+            // 구간 매칭 실패 시 from 절 라이브러리 basename 폴백(오프셋 미상)
+            String base = basenameOf(f.getLibrary());
+            f.setModule(base);
+            f.setModuleVendor(classifyVendor(f.getLibrary()));
+            String syms = symsByBase.get(base);
+            if (syms != null) f.setModuleHasSymbols(syms.startsWith("Yes"));
+        }
+    }
+
+    /** 메인 + 모든 스레드 백트레이스 프레임에 모듈 귀속 수행. */
+    private void attributeModules(CoreDumpAnalysisResult result) {
+        List<ModRange> ranges = parseModuleRanges(result);
+        Map<String, String> symsByBase = new HashMap<>();
+        if (result.getSharedLibraries() != null) {
+            for (GdbSharedLib lib : result.getSharedLibraries()) {
+                if (lib.getPath() != null) {
+                    symsByBase.put(basenameOf(lib.getPath()), lib.getSymsRead() == null ? "" : lib.getSymsRead());
+                }
+            }
+        }
+        if (ranges.isEmpty() && symsByBase.isEmpty()) return;
+        if (result.getMainBacktrace() != null) {
+            for (GdbStackFrame f : result.getMainBacktrace()) attributeFrame(f, ranges, symsByBase);
+        }
+        if (result.getAllThreads() != null) {
+            for (GdbThreadInfo t : result.getAllThreads()) {
+                if (t.getBacktrace() != null) {
+                    for (GdbStackFrame f : t.getBacktrace()) attributeFrame(f, ranges, symsByBase);
+                }
+            }
+        }
+    }
+
+    /** 시그널 자체-재raise 계열 함수명(실제 결함 지점이 아님). */
+    private static boolean isSignalPlumbing(String fn) {
+        if (fn == null) return false;
+        String f = fn.trim();
+        return f.equals("raise") || f.equals("abort") || f.equals("gsignal")
+                || f.equals("pthread_kill") || f.equals("__pthread_kill_implementation")
+                || f.equals("__pthread_kill_internal") || f.equals("__GI_raise") || f.equals("__GI_abort")
+                || f.equals("__stack_chk_fail") || f.equals("__libc_message") || f.equals("__fortify_fail");
+    }
+
+    /**
+     * 결함 모듈(최상단 시그널 프레임을 건너뛴 첫 실질 프레임의 소유 모듈) + self-raise 여부 +
+     * 신뢰도 가이드 종류(guidanceKind) 판정.
+     */
+    private void computeFaultingModule(CoreDumpAnalysisResult result) {
+        List<GdbStackFrame> bt = result.getMainBacktrace();
+        if (bt == null) bt = Collections.emptyList();
+
+        // self-raise: 최상단 함수가 raise/abort 계열
+        boolean selfRaised = !bt.isEmpty() && isSignalPlumbing(bt.get(0).getFunction());
+        result.setSelfRaisedSignal(selfRaised);
+
+        // 결함 프레임: 시그널 배관/노이즈 프레임을 건너뛴 첫 프레임
+        GdbStackFrame fault = null;
+        for (GdbStackFrame f : bt) {
+            if (isSignalPlumbing(f.getFunction())) continue;
+            if ("GARBAGE".equals(f.getQuality())) continue;
+            fault = f;
+            break;
+        }
+        if (fault != null) {
+            result.setFaultingModule(fault.getModule());
+            result.setFaultingModuleVendor(fault.getModuleVendor());
+            result.setFaultingModuleHasSymbols(fault.getModuleHasSymbols());
+        }
+
+        // 앱 바이너리 basename (페어링 exec 우선, 없으면 core 프로그램명)
+        String appBase = null;
+        if (result.getExecutableName() != null) {
+            appBase = basenameOf(result.getExecutableName());
+        } else if (result.getCoreProgramName() != null && !result.getCoreProgramName().isBlank()) {
+            appBase = basenameOf(result.getCoreProgramName().trim().split("\\s+")[0]);
+        }
+
+        String gk;
+        if (result.getExecutableName() == null) {
+            gk = "EXEC_MISSING";
+        } else {
+            String fm = result.getFaultingModule();
+            Boolean fhs = result.getFaultingModuleHasSymbols();
+            boolean faultHasSyms = fhs != null && fhs;
+            boolean faultIsApp = fm != null && appBase != null && fm.equals(appBase);
+            boolean faultIsThirdParty = fm != null && !faultIsApp
+                    && (result.getFaultingModuleVendor() != null || Boolean.FALSE.equals(fhs));
+            if (result.getResolvedFrameCount() > 0 && faultHasSyms) {
+                gk = "OK";
+            } else if (faultIsThirdParty) {
+                gk = "THIRDPARTY_STRIPPED";
+            } else if (faultIsApp && !faultHasSyms) {
+                gk = "APP_STRIPPED";
+            } else if (result.getResolvedFrameCount() > 0) {
+                gk = "OK";
+            } else {
+                gk = "APP_STRIPPED";
+            }
+        }
+        result.setGuidanceKind(gk);
     }
 
     private void updateDbError(String filename, String errorMessage) {
@@ -1198,6 +1441,20 @@ public class CoreDumpAnalyzerService {
         if (r.getCoreProgramName() != null) sb.append("실행 명령: ").append(r.getCoreProgramName()).append('\n');
         if (r.getExecutableName() != null)  sb.append("실행 파일: ").append(r.getExecutableName()).append('\n');
         if (r.getGdbVersion() != null)      sb.append("GDB 버전: ").append(r.getGdbVersion()).append('\n');
+        if (r.isSelfRaisedSignal()) {
+            sb.append("시그널 형태: 시그널 핸들러가 raise()/abort() 로 자체-재raise (최상단 raise 프레임은 실제 결함 지점 아님)\n");
+        }
+        if (r.getFaultingModule() != null) {
+            sb.append("결함 모듈: ").append(r.getFaultingModule());
+            if (r.getFaultingModuleVendor() != null) sb.append(" (").append(r.getFaultingModuleVendor()).append(')');
+            if (Boolean.FALSE.equals(r.getFaultingModuleHasSymbols())) sb.append(" — 심볼 없음(stripped)");
+            sb.append('\n');
+            if (r.getExecutableName() != null && Boolean.FALSE.equals(r.getFaultingModuleHasSymbols())
+                    && r.getFaultingModuleVendor() != null) {
+                sb.append("[중요] 애플리케이션 실행 파일은 정상 페어링됐으나 결함은 위 서드파티 라이브러리 내부입니다 — "
+                        + "앱 소스 코드 라인을 단정하지 마세요.\n");
+            }
+        }
 
         // 분석 신뢰도 — 심볼 없는/손상된 스택일 때 LLM 이 단정 짓지 않도록 명시
         if (r.getAnalysisConfidence() != null) {
@@ -1259,8 +1516,26 @@ public class CoreDumpAnalyzerService {
                     sb.append("(무효/노이즈 프레임 ").append(noiseCount).append("개는 제외됨 — 스택 손상)\n");
                 }
             } else {
-                sb.append("\n== 콜 체인 ==\n식별된 심볼 프레임 없음 (전체 ")
-                  .append(bt.size()).append("개 프레임 모두 심볼 없음/노이즈).\n");
+                sb.append("\n== 콜 체인 (심볼 없음 — 모듈 귀속) ==\n식별된 심볼 프레임 없음. ")
+                  .append("아래는 각 프레임 주소를 소유 모듈에 귀속한 결과입니다:\n");
+                List<GdbStackFrame> nonGarbage = bt.stream()
+                        .filter(f -> !"GARBAGE".equals(f.getQuality()))
+                        .limit(12)
+                        .collect(Collectors.toList());
+                for (GdbStackFrame f : nonGarbage) {
+                    sb.append('#').append(f.getFrameNumber()).append(' ');
+                    if (f.getModule() != null) {
+                        sb.append(f.getModule());
+                        if (f.getModuleOffset() != null) sb.append(" + ").append(f.getModuleOffset());
+                        if (f.getModuleVendor() != null) sb.append(" (").append(f.getModuleVendor());
+                        if (Boolean.FALSE.equals(f.getModuleHasSymbols())) sb.append(", 심볼없음");
+                        if (f.getModuleVendor() != null) sb.append(')');
+                    } else {
+                        sb.append(nz(f.getFunction()));
+                        if (f.getAddress() != null) sb.append(' ').append(f.getAddress());
+                    }
+                    sb.append('\n');
+                }
             }
         }
 
@@ -1305,6 +1580,12 @@ public class CoreDumpAnalyzerService {
 
         sb.append("\n위 데이터만 근거로 진단하세요. ");
         sb.append("심볼/디버그 정보가 없거나 신뢰도가 LOW 인 경우, 특정 코드 라인이나 함수를 단정하지 마세요. ");
+        if ("THIRDPARTY_STRIPPED".equals(r.getGuidanceKind())) {
+            sb.append("결함이 서드파티 stripped 라이브러리")
+              .append(r.getFaultingModuleVendor() != null ? "(" + r.getFaultingModuleVendor() + ")" : "")
+              .append(" 내부이므로 애플리케이션 소스 코드 라인을 단정하지 말고, 해당 벤더의 debuginfo 확보 후 재분석 "
+                    + "또는 벤더 측 이슈 에스컬레이션을 recommendations 에 반드시 포함하세요. ");
+        }
         sb.append("시그널 의미·레지스터·프로그램 실행 인자·식별된 심볼 범위 내에서만 추론하고, ");
         sb.append("정밀 분석에 필요한 추가 자료(코어 생성 시점의 stripped 되지 않은 동일 실행 파일 페어링, ");
         sb.append("또는 debuginfo 설치 후 재분석)를 recommendations 에 반드시 포함하세요. ");

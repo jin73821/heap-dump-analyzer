@@ -351,6 +351,29 @@ public class HeapDumpAnalyzerService {
         }
     }
 
+    /**
+     * 로컬 저장 파일명으로 출처 서버명을 조회한다.
+     * SSH 전송 로그(DumpTransferLog, SUCCESS)의 최신 항목 → serverId → TargetServer.name.
+     * 전송 이력이 없으면(수동 업로드) null. analysis_history.server_name 이 아직 없는
+     * 코어/실행파일/미분석 힙덤프의 Files 페이지 "서버" 칼럼 표시에 사용(전송 로그 기반, 소급 적용).
+     */
+    public String resolveServerNameByFilename(String filename) {
+        if (filename == null || filename.isEmpty()) return null;
+        try {
+            List<DumpTransferLog> logs = transferLogRepository
+                    .findByFilenameAndTransferStatusOrderByCompletedAtDesc(filename, "SUCCESS");
+            if (logs.isEmpty()) return null;
+            Long serverId = logs.get(0).getServerId();
+            if (serverId == null) return null;
+            return targetServerRepository.findById(serverId)
+                    .map(com.heapdump.analyzer.model.entity.TargetServer::getName)
+                    .orElse(null);
+        } catch (Exception e) {
+            logger.debug("[Server] resolveServerNameByFilename 실패 (무시): {} — {}", filename, e.getMessage());
+            return null;
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private void migrateAiInsightsToDb() {
         aiInsight.migrateAiInsightsToDb();

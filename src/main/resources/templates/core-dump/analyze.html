@@ -9,7 +9,7 @@
     <title>코어 덤프 분석 결과 - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-28}">
     <link rel="stylesheet" th:href="@{/css/style.css}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-26}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-07-08}">
     <style>
         /* 공통 스타일은 core-dump.css 로 이관. 페이지 고유 override 만 잔존. */
         body { background: var(--cd-bg, #F3F4F6) !important; }
@@ -133,6 +133,24 @@
                           th:text="'from ' + ${result.firstResolvedFrame.library}"></span>
                 </div>
 
+                <!-- self-raise 힌트: 최상단 raise()/abort() 는 실제 결함 지점이 아님 -->
+                <div class="crash-hero-selfraise"
+                     th:if="${result.selfRaisedSignal}">
+                    &#8505; 최상단 <code>raise()/abort()</code> 는 시그널 핸들러의 자체-재raise 로, 실제 결함 지점이 아닙니다.
+                </div>
+
+                <!-- 결함 모듈: ?? 프레임 주소를 소유 라이브러리·벤더에 귀속 -->
+                <div class="crash-hero-faultmod"
+                     th:if="${result.faultingModule != null}">
+                    <span class="crash-hero-faultmod-label">결함 모듈</span>
+                    <span class="crash-hero-faultmod-name" th:text="${result.faultingModule}"></span>
+                    <span class="crash-hero-faultmod-vendor"
+                          th:if="${result.faultingModuleVendor != null}"
+                          th:text="${result.faultingModuleVendor}"></span>
+                    <span class="crash-hero-faultmod-nosym"
+                          th:if="${result.faultingModuleHasSymbols != null and !result.faultingModuleHasSymbols}">심볼 없음</span>
+                </div>
+
                 <!-- 크래시 지점 소스 코드 자동 표시 -->
                 <div id="heroSource"
                      th:if="${frame0.location != null}"
@@ -178,7 +196,20 @@
                 th:if="${result.qualityWarnings != null and !#lists.isEmpty(result.qualityWarnings)}">
                 <li th:each="w : ${result.qualityWarnings}" th:text="${w}"></li>
             </ul>
-            <div class="cdc-guide" th:if="${result.analysisConfidence != 'HIGH'}">
+            <!-- 상황별 가이드 (guidanceKind 분기) -->
+            <div class="cdc-guide" th:if="${result.guidanceKind == 'THIRDPARTY_STRIPPED'}">
+                &#128161; 애플리케이션 실행 파일 페어링은 <strong>정상</strong>입니다. 결함은 서드파티 라이브러리
+                <strong th:text="${result.faultingModule}">lib</strong><span th:if="${result.faultingModuleVendor != null}"
+                       th:text="' (' + ${result.faultingModuleVendor} + ')'"></span> 내부에서 발생했으며,
+                해당 라이브러리에 심볼이 없어 콜스택 해석이 제한됩니다.
+                <strong>해당 벤더의 debuginfo 확보</strong> 후 재분석하거나, 벤더 측 이슈로 에스컬레이션하세요.
+            </div>
+            <div class="cdc-guide" th:if="${result.guidanceKind == 'EXEC_MISSING'}">
+                &#128161; 실행 파일 없이 코어 단독으로 분석되었습니다. 정확한 콜스택을 위해 코어 생성 시점의
+                <strong>동일 실행 파일</strong>을 페어링한 후 재분석하세요.
+            </div>
+            <div class="cdc-guide"
+                 th:if="${result.guidanceKind == 'APP_STRIPPED' or (result.guidanceKind == null and result.analysisConfidence != 'HIGH')}">
                 &#128161; 정확한 분석을 위해 코어 생성 시점의 <strong>stripped 되지 않은 동일 실행 파일</strong>을
                 페어링하거나, 디버그 심볼(debuginfo)을 설치한 후 재분석하세요.
             </div>
@@ -432,6 +463,15 @@
                                     <span class="frame-library"
                                           th:if="${frame.library != null}"
                                           th:text="'from ' + ${frame.library}"></span>
+                                    <!-- 심볼 없는 프레임: 소유 모듈 + 오프셋 + 벤더 귀속 -->
+                                    <span class="frame-module"
+                                          th:if="${frame.module != null and frame.location == null and frame.library == null}">
+                                        <span class="frame-module-name"
+                                              th:text="${frame.module} + (${frame.moduleOffset != null} ? ' + ' + ${frame.moduleOffset} : '')"></span>
+                                        <span class="frame-module-vendor"
+                                              th:if="${frame.moduleVendor != null}"
+                                              th:text="${frame.moduleVendor}"></span>
+                                    </span>
                                     <span class="frame-addr"
                                           th:if="${frame.address != null}"
                                           th:text="${frame.address}"></span>
@@ -529,6 +569,14 @@
                                             <span class="frame-library"
                                                   th:if="${frame.library != null}"
                                                   th:text="'from ' + ${frame.library}"></span>
+                                            <span class="frame-module"
+                                                  th:if="${frame.module != null and frame.location == null and frame.library == null}">
+                                                <span class="frame-module-name"
+                                                      th:text="${frame.module} + (${frame.moduleOffset != null} ? ' + ' + ${frame.moduleOffset} : '')"></span>
+                                                <span class="frame-module-vendor"
+                                                      th:if="${frame.moduleVendor != null}"
+                                                      th:text="${frame.moduleVendor}"></span>
+                                            </span>
                                             <span class="frame-addr"
                                                   th:if="${frame.address != null}"
                                                   th:text="${frame.address}"></span>

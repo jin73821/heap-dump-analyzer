@@ -35,4 +35,12 @@ public class CoreDumpAnalysisResult {
     private int totalFrameCount;             // 메인 백트레이스 총 프레임 수
     private boolean symbolsAvailable;        // 심볼/공유라이브러리 심볼 존재 여부
     private GdbStackFrame firstResolvedFrame; // 최초 RESOLVED 프레임(없으면 null)
+
+    // ── 결함 모듈 귀속 (정상 페어링에도 서드파티 stripped 라이브러리 크래시 대응) ──
+    private String faultingModule;           // 실제 결함 프레임의 소유 모듈 basename
+    private String faultingModuleVendor;     // 결함 모듈 벤더 라벨 (예: Oracle Client)
+    private Boolean faultingModuleHasSymbols;// 결함 모듈 심볼 로드 여부. 미상이면 null
+    private boolean selfRaisedSignal;        // 최상단이 raise/abort 등 시그널 자체-재raise 여부
+    // 신뢰도 가이드 종류: EXEC_MISSING | THIRDPARTY_STRIPPED | APP_STRIPPED | OK
+    private String guidanceKind;
 }

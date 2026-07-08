@@ -740,7 +740,7 @@
                     th:data-deleted="${execItem.fileDeleted}"
                     th:attr="data-sort-id=0, data-sort-osize=${execItem.sizeBytes},
                              data-sort-csize=0, data-sort-ai=0,
-                             data-sort-server='', data-sort-date=${execItem.lastModified}">
+                             data-sort-server=${execItem.serverName != null ? execItem.serverName : ''}, data-sort-date=${execItem.lastModified}">
                     <td class="td-check"></td>
                     <td class="td-seq col-seq"><span class="exec-subrow-indent">└</span></td>
                     <td class="col-fname" data-label="파일명">
@@ -753,7 +753,10 @@
                     </td>
                     <td class="col-compressed" data-label="압축"><span class="ai-none">—</span></td>
                     <td class="col-ai" data-label="AI"><span class="ai-none">—</span></td>
-                    <td class="col-hide-sm col-server" data-label="서버"><span style="color:#9CA3AF;font-size:12px">—</span></td>
+                    <td class="col-hide-sm col-server" data-label="서버">
+                        <span th:if="${execItem.serverName != null}" th:text="${execItem.serverName}" style="background:#EFF6FF;color:#2563EB;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600">server1</span>
+                        <span th:unless="${execItem.serverName != null}" style="color:#9CA3AF;font-size:12px">—</span>
+                    </td>
                     <td class="col-date" data-label="날짜">
                         <span class="fdate" th:text="${execItem.formattedDate}">-</span>
                     </td>

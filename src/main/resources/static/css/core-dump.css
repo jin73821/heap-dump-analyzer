@@ -416,6 +416,16 @@
     font-size: 11px; color: #9CA3AF;
     font-family: 'JetBrains Mono', monospace;
 }
+/* 심볼 없는 프레임: 소유 모듈 + 오프셋 + 벤더 귀속 */
+.frame-module { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.frame-module-name {
+    font-size: 12px; color: #B45309; font-weight: 600;
+    font-family: 'JetBrains Mono', monospace; word-break: break-all;
+}
+.frame-module-vendor {
+    font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 5px;
+    background: #FEF3C7; color: #92400E; white-space: nowrap;
+}
 
 .frame-right {
     display: flex; align-items: center; gap: 6px;
@@ -730,6 +740,34 @@
 }
 .crash-hero-nearest-value { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #111827; }
 .crash-hero-nearest-loc { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #6B7280; }
+
+/* ── 히어로 보조: self-raise 힌트 + 결함 모듈 귀속 ─────────────── */
+.crash-hero-selfraise {
+    margin-top: 10px; padding: 7px 12px; border-radius: 8px;
+    background: rgba(255,255,255,0.55); font-size: 12.5px; color: #4B5563; line-height: 1.5;
+}
+.crash-hero-selfraise code {
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 4px;
+}
+.crash-hero-faultmod {
+    margin-top: 10px; padding: 8px 12px; border-radius: 8px;
+    background: rgba(255,255,255,0.55); display: flex; flex-wrap: wrap;
+    align-items: baseline; gap: 8px; font-size: 13px;
+}
+.crash-hero-faultmod-label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.03em; color: #6B7280;
+}
+.crash-hero-faultmod-name { font-family: 'JetBrains Mono', monospace; font-weight: 700; color: #B45309; word-break: break-all; }
+.crash-hero-faultmod-vendor {
+    font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 5px;
+    background: #FEF3C7; color: #92400E; white-space: nowrap;
+}
+.crash-hero-faultmod-nosym {
+    font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 5px;
+    background: #F3F4F6; color: #6B7280; white-space: nowrap;
+}
 
 /* ── 콜체인: 심볼/심볼없음 배지 + 의미없음 안내 ─────────────────── */
 .cc-badge-sym   { background: #DCFCE7; color: #15803D; }

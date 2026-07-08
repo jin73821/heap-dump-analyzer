@@ -1115,8 +1115,17 @@ function transferFile(btn, callback) {
             showToast((d.filename || '파일') + ' 전송 완료', 'success');
             // 페이지 재렌더 시 상태 유지 — _scanFiles 의 해당 코어/힙 파일을 transferred 로 마킹
             if (fileType !== 'coreexec') {
+                var tf = null;
                 for (var si = 0; si < _scanFiles.length; si++) {
-                    if (_scanFiles[si].path === path) { _scanFiles[si].transferred = true; break; }
+                    if (_scanFiles[si].path === path) { _scanFiles[si].transferred = true; tf = _scanFiles[si]; break; }
+                }
+                // 코어파일 전송 완료 → 연결된 실행파일 전송 버튼이 재스캔 없이 즉시 나타나도록 해당 행만 재렌더
+                // ('전송됨' 상태 + 실행파일 전송 버튼 반영). 다른 행/전송 중 항목엔 영향 없음.
+                if (tf && fileType === 'core' && tf.executablePath && parent && parent.parentNode) {
+                    var tmpRow = document.createElement('div');
+                    tmpRow.innerHTML = renderScanFileRow(tf);
+                    var newRow = tmpRow.firstChild;
+                    if (newRow) parent.parentNode.replaceChild(newRow, parent);
                 }
             }
         } else {
