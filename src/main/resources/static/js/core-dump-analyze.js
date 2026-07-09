@@ -122,20 +122,40 @@
     }
 
     // ── Raw 출력 복사 ────────────────────────────────────────────
+    // navigator.clipboard 는 보안 컨텍스트(HTTPS/localhost)에서만 존재.
+    // HTTP 운영에서는 undefined 이므로 writeText 호출이 동기 TypeError 를
+    // 던져 .catch() 로도 못 잡는다 → execCommand 폴백을 항상 확보. (함정 #7)
+    function execCommandCopy(pre) {
+        try {
+            var sel = window.getSelection();
+            var range = document.createRange();
+            range.selectNodeContents(pre);
+            sel.removeAllRanges(); sel.addRange(range);
+            var ok = document.execCommand('copy');
+            sel.removeAllRanges();
+            return ok;
+        } catch (e) {
+            return false;
+        }
+    }
+
     function copyRaw() {
         var pre = document.getElementById('rawOutput');
         if (!pre) return;
-        navigator.clipboard.writeText(pre.textContent)
-            .then(function () { alert('복사되었습니다.'); })
-            .catch(function () {
-                var sel = window.getSelection();
-                var range = document.createRange();
-                range.selectNodeContents(pre);
-                sel.removeAllRanges(); sel.addRange(range);
-                document.execCommand('copy');
-                sel.removeAllRanges();
-                alert('복사되었습니다.');
-            });
+        var done = function () { alert('복사되었습니다.'); };
+        var fail = function () {
+            if (execCommandCopy(pre)) { done(); }
+            else { alert('복사에 실패했습니다. 텍스트를 직접 선택해 복사해 주세요.'); }
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            try {
+                navigator.clipboard.writeText(pre.textContent).then(done, fail);
+            } catch (e) {
+                fail();
+            }
+        } else {
+            fail();
+        }
     }
 
     // ── 레지스터 테이블 빌드 ─────────────────────────────────────

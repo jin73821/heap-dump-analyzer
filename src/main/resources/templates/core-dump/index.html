@@ -206,31 +206,34 @@
         .cd-file-filter select:focus { border-color: var(--cd-primary, #2563eb); }
 
         .cd-file-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-height: 0; }
-        /* 대시보드 RECENT FILES(.file-item) 룩 이식 */
+        /* 간결한 단일 컬럼 카드 (배지 제거 — 요구사항 3·4) */
         .cd-file-item {
-            display: flex; align-items: center; gap: 9px; cursor: grab;
-            padding: 9px 10px; border-radius: 8px; position: relative;
+            display: block; cursor: grab;
+            padding: 10px 12px; border-radius: 8px; position: relative;
             border: 1px solid #E5E7EB; background: #F9FAFB;
             transition: border-color .15s, background .15s;
         }
         .cd-file-item:hover { border-color: #93C5FD; background: #EFF6FF; }
         .cd-file-item.is-selected { border-color: var(--cd-primary, #2563eb); background: #EFF6FF; }
         .cd-file-item:active { cursor: grabbing; }
-        /* 파일 유형 배지 (요구사항 2·3: core / exec) */
-        .cd-fext {
-            width: 34px; height: 38px; border-radius: 5px; flex-shrink: 0;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 9px; font-weight: 700; letter-spacing: .3px;
-        }
-        .cd-fext-core { background: #DBEAFE; color: #1D4ED8; }
-        .cd-fext-exec { background: #EDE9FE; color: #6D28D9; }
-        .cd-finfo { flex: 1 1 0; min-width: 0; }
+        /* 코어↔실행 페어 좌측 강조선 (요구사항 2) — border 위 border-left 만 override */
+        .cd-file-item.is-paired { border-left: 3px solid #10B981; }
+        .cd-finfo { min-width: 0; }
+        /* 파일명: Files 페이지와 동일 폰트/굵기 (요구사항 1) */
         .cd-file-name {
-            font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700;
+            font-size: 13px; font-weight: 500;
             color: #1F2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
-        .cd-fmeta { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
-        .cd-file-size { font-size: 11px; color: var(--cd-text-muted, #9CA3AF); white-space: nowrap; }
+        .cd-fmeta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+        .cd-file-size { font-size: 12px; color: var(--cd-text-muted, #9CA3AF); white-space: nowrap; }
+        /* 페어 연결 칩 (요구사항 2) */
+        .cd-pair-chip {
+            display: flex; align-items: center; gap: 4px; margin-top: 5px;
+            font-size: 11px; font-weight: 600; color: #059669;
+        }
+        .cd-pair-chip span {
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
         .cd-file-item .status-badge { flex-shrink: 0; padding: 2px 7px; font-size: 10px; }
         .cd-file-empty { text-align: center; padding: 28px 10px; color: #9CA3AF; font-size: 12px; }
         .cd-file-noresult { text-align: center; padding: 16px 10px; color: #9CA3AF; font-size: 12px; display: none; }
@@ -343,14 +346,12 @@
         <div th:if="${!#lists.isEmpty(coreDumpFiles)}" class="cd-file-list" id="cdFileList">
             <div th:each="f : ${coreDumpFiles}"
                  class="cd-file-item" draggable="true"
+                 th:classappend="${f.pairedExecFilename != null and !#strings.isEmpty(f.pairedExecFilename)} ? 'is-paired'"
                  th:data-filename="${f.filename}"
                  th:data-exec="${f.pairedExecFilename != null ? f.pairedExecFilename : ''}"
                  th:data-status="${f.status}"
                  th:data-type="${f.fileType}"
                  th:title="${f.filename}">
-                <div class="cd-fext"
-                     th:classappend="${f.fileType == 'exec'} ? 'cd-fext-exec' : 'cd-fext-core'"
-                     th:text="${f.fileType == 'exec'} ? 'EXEC' : 'CORE'">CORE</div>
                 <div class="cd-finfo">
                     <div class="cd-file-name" th:text="${f.filename}"></div>
                     <div class="cd-fmeta">
@@ -362,6 +363,10 @@
                               th:text="${f.status == 'SUCCESS'} ? '완료'
                                        : (${f.status == 'ERROR'} ? '실패'
                                        : (${f.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
+                    </div>
+                    <div th:if="${f.pairedExecFilename != null and !#strings.isEmpty(f.pairedExecFilename)}"
+                         class="cd-pair-chip" th:title="'페어 실행 파일: ' + ${f.pairedExecFilename}">
+                        &#128279; <span th:text="${f.pairedExecFilename}"></span>
                     </div>
                 </div>
             </div>

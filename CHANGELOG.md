@@ -1,6 +1,52 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-07-09] 코어 파일 페이지 — 좌측 사이드바 파일 목록 디자인 개선
+
+**대상:** `templates/core-dump/index.html` (인라인 `<style>` + `th:each` 마크업)
+
+### 배경
+코어 파일 분석 페이지(`/core-dump`) 좌측 사이드바의 파일 카드(`.cd-file-item`)가 가독성이 낮고 번잡. 파일명이 `JetBrains Mono` 모노스페이스 12px 볼드라 Files 페이지 본문 폰트(`Segoe UI` 계열, weight 500)와 이질적. 카드 좌측 34×38px `CORE`/`EXEC` 배지 박스가 공간 점유. 코어↔실행파일 페어 여부를 사이드바에서 인지할 수단 없음.
+
+### 변경
+- **폰트 통일**: `.cd-file-name` 의 `JetBrains Mono` monospace 제거 → 본문 폰트 상속, `12px/700 → 13px/500` (Files `.fname` 와 일치).
+- **좌측 배지 삭제**: `.cd-fext`/`.cd-fext-core`/`.cd-fext-exec` CSS + 마크업 `<div class="cd-fext">` 제거. 카드를 단일 컬럼(`display:block`) 간결 레이아웃으로 전환.
+- **페어 시각 표시**: `pairedExecFilename` 존재 시 카드에 `is-paired` 클래스(좌측 3px 녹색 강조선 `#10B981`) + 메타 하단에 연결 칩 `🔗 <실행파일명>`(`.cd-pair-chip`, `#059669`) 추가. 페어 없는 항목은 미표시.
+
+### 검증
+빌드 OK, 기동 14.1s. 로그인 후 `/core-dump` 렌더 확인: `cd-fext` 0건(배지 제거), 페어 코어(`crash_demo_2.core`) 1건에 `is-paired` + `🔗 crash_demo_2.core.exec` 칩 노출, 파일명 monospace 규칙 0건. 검색/필터/페이지네이션 JS 무변경(회귀 없음). 인라인 CSS라 `?v=` 캐시키 불필요.
+
+
+## [2026-07-09] 코어 분석 결과 — GDB Raw 출력 복사 버튼 동작 수정
+
+**대상:** `static/js/core-dump-analyze.js`, `templates/core-dump/analyze.html`
+
+### 배경
+코어 파일 분석 결과 페이지의 **GDB Raw 출력 "복사" 버튼**이 무반응. 원인은 `navigator.clipboard` 가 **보안 컨텍스트(HTTPS/localhost)에서만 존재**하는데(함정 #7 의 `crypto.subtle` 과 동일 성격), 앱은 HTTP(18080) 운영이라 `navigator.clipboard` 가 `undefined`. `copyRaw()` 가 `navigator.clipboard.writeText(...)` 를 바로 호출해 **동기 TypeError** 가 발생 → promise 체인이 아니므로 `.catch()` 폴백(execCommand)도 타지 못하고 조용히 실패.
+
+### 변경
+- `copyRaw()` 를 방어적으로 재작성: `navigator.clipboard && navigator.clipboard.writeText` 존재 여부 선검사 + `try/catch` 로 동기 예외 포착 → 실패 시 `execCommandCopy()` 폴백(선택 영역 지정 후 `document.execCommand('copy')`). 폴백까지 실패하면 "직접 선택해 복사" 안내 alert.
+- `analyze.html` 의 `core-dump-analyze.js?v=` 캐시키 `2026-06-26` → `2026-07-09` 갱신.
+
+### 검증
+빌드 OK, 기동 12.9s. HTTP 컨텍스트에서 `navigator.clipboard` 미존재 시 execCommand 경로로 복사 동작.
+
+
+## [2026-07-08] LLM 설정 — Claude provider 모델 리스트를 현행 Anthropic 라인업으로 보강
+
+**대상:** `templates/llm-settings.html`, `controller/HeapSystemApiController.java`, `resources/application.properties`, `config/HeapDumpConfig.java`
+
+### 배경
+LLM 설정의 **Claude provider**(Anthropic Messages API 직결, `api.anthropic.com/v1/messages`) 모델 드롭다운이 구형 3종(`claude-sonnet-4-20250514`·`claude-haiku-4-5-20251001`·`claude-opus-4-20250514`)만 노출. Sonnet 4·Opus 4 의 dated ID 는 **2026-06-15 자로 retire** 되어 실제 호출 시 404 위험. Claude Sonnet/Opus 세부 모델을 최신으로 선택할 수 없었음.
+
+### 변경
+- **Claude provider 모델 리스트를 현행 Anthropic 라인업으로 교체**(프론트 드롭다운 `_providerModels.claude` + 백엔드 `/api/settings` 의 `providerModels.claude` **동시 갱신**, 동일 순서 유지): Opus `4-8`/`4-7`/`4-6`/`4-5` + Sonnet `5`/`4-6`/`4-5` + Haiku `4-5`. bare alias 사용(현세대 모델은 date suffix 미부착). retire 된 Sonnet 4·Opus 4 dated ID 제거.
+- **코드 기본값 갱신**: `application.properties` `llm.model` + `HeapDumpConfig` `@Value` 폴백을 retire 된 `claude-sonnet-4-20250514` → 후속 현행 모델 `claude-sonnet-5` 로. (신규 배포가 retire 모델로 태어나지 않도록. 운영 인스턴스의 `settings.json` 활성 선택값은 미변경 — 운영자가 UI 드롭다운에서 선택 시 반영.)
+
+### 검증
+빌드 OK, 기동 13.2s. `/api/settings` `providerModels.claude` = `[opus-4-8, opus-4-7, opus-4-6, opus-4-5, sonnet-5, sonnet-4-6, sonnet-4-5, haiku-4-5]` 확인. `/settings/llm` 200 렌더 + 드롭다운에 신규 8종 노출 확인. 모델 리스트는 템플릿 인라인이라 `?v=` 캐시키 불필요.
+
+
 ## [2026-07-08] 원격 스캔 로그 — SSH EUC-KR 로그인 배너 노이즈 방어 + stderr 인코딩 폴백
 
 **대상:** `service/RemoteDumpService.java`
