@@ -507,7 +507,10 @@ public class HeapSystemApiController {
         llm.put("maxOutputTokens", analyzerService.getLlmMaxOutputTokens());
         llm.put("availableProviders", Arrays.asList("claude", "gpt", "genspark", "custom"));
         Map<String, List<String>> providerModels = new LinkedHashMap<>();
-        providerModels.put("claude", Arrays.asList("claude-sonnet-4-20250514", "claude-haiku-4-5-20251001", "claude-opus-4-20250514"));
+        providerModels.put("claude", Arrays.asList(
+                "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
+                "claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5",
+                "claude-haiku-4-5"));
         providerModels.put("gpt", Arrays.asList("gpt-4o", "gpt-4o-mini", "gpt-4-turbo"));
         providerModels.put("genspark", com.heapdump.analyzer.service.HeapDumpAnalyzerService.GENSPARK_MODELS);
         providerModels.put("custom", Collections.emptyList());

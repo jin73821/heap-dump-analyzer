@@ -147,7 +147,7 @@ public class HeapDumpConfig {
     private String llmProvider;
     @Value("${llm.api.url:https://api.anthropic.com/v1/messages}")
     private String llmApiUrl;
-    @Value("${llm.model:claude-sonnet-4-20250514}")
+    @Value("${llm.model:claude-sonnet-5}")
     private String llmModel;
     @Value("${llm.api.key:}")
     private String llmApiKey;
