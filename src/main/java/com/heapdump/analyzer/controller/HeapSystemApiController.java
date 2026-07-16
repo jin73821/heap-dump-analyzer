@@ -4,6 +4,7 @@ import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.HeapDumpFile;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.service.TwoFactorConfigService;
 import com.heapdump.analyzer.util.AesEncryptor;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
@@ -47,17 +48,20 @@ public class HeapSystemApiController {
     private final DataSourceProperties dataSourceProperties;
     private final DataSource dataSource;
     private final org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo;
+    private final TwoFactorConfigService twoFactorConfig;
 
     public HeapSystemApiController(HeapDumpAnalyzerService analyzerService,
                                    HeapDumpConfig config,
                                    DataSourceProperties dataSourceProperties,
                                    DataSource dataSource,
-                                   org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo) {
+                                   org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo,
+                                   TwoFactorConfigService twoFactorConfig) {
         this.analyzerService = analyzerService;
         this.config = config;
         this.dataSourceProperties = dataSourceProperties;
         this.dataSource = dataSource;
         this.jdbcSessionRepo = jdbcSessionRepo;
+        this.twoFactorConfig = twoFactorConfig;
     }
 
     @PostMapping("/api/settings/unreachable")
@@ -108,6 +112,83 @@ public class HeapSystemApiController {
         resp.put("requireRestart", true);
         resp.put("message", "최대 업로드 크기가 " + gb + " GB 로 변경되었습니다. Tomcat 멀티파트 한도는 앱 재시작 후 적용됩니다.");
         logger.info("[Settings] Max upload size changed to {} bytes ({} GB)", bytes, gb);
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * 로그인 2차인증 모드 변경 (off | otp | sso).
+     * /api/settings/** 이므로 ADMIN + CSRF 보호 자동 적용.
+     */
+    @PostMapping("/api/settings/two-factor")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setTwoFactorMode(@RequestParam String mode,
+                                                                org.springframework.security.core.Authentication auth) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (mode == null || !mode.matches("off|otp|sso")) {
+            resp.put("success", false);
+            resp.put("message", "mode 는 off | otp | sso 중 하나여야 합니다.");
+            return ResponseEntity.badRequest().body(resp);
+        }
+        // SSO 는 연동 설정(Endpoint URL·Client ID·Client Secret) 이 저장돼 있어야만 활성화 가능
+        if ("sso".equals(mode) && !twoFactorConfig.isSsoConfigured()) {
+            resp.put("success", false);
+            resp.put("message", "SSO 연동 설정(Endpoint URL·Client ID·Client Secret)을 먼저 저장해야 활성화할 수 있습니다.");
+            return ResponseEntity.badRequest().body(resp);
+        }
+        String before = twoFactorConfig.getTwoFactorMode();
+        analyzerService.setTwoFactorMode(mode);
+        logger.info("[TwoFactor] action=update field=mode before={} after={} by={}",
+                before, mode, auth != null ? auth.getName() : "unknown");
+        resp.put("success", true);
+        resp.put("twoFactorMode", mode);
+        resp.put("message", "2차인증 모드가 변경되었습니다. 다음 로그인부터 적용됩니다.");
+        return ResponseEntity.ok(resp);
+    }
+
+    /** 관리자 OTP 정책 변경 (enforce | enforce_no_lock | exempt) */
+    @PostMapping("/api/settings/two-factor/admin-policy")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setTwoFactorAdminPolicy(@RequestParam String policy,
+                                                                       org.springframework.security.core.Authentication auth) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (policy == null || !policy.matches("enforce|enforce_no_lock|exempt")) {
+            resp.put("success", false);
+            resp.put("message", "policy 는 enforce | enforce_no_lock | exempt 중 하나여야 합니다.");
+            return ResponseEntity.badRequest().body(resp);
+        }
+        String before = twoFactorConfig.getTwoFactorAdminPolicy();
+        analyzerService.setTwoFactorAdminPolicy(policy);
+        logger.info("[TwoFactor] action=update field=admin-policy before={} after={} by={}",
+                before, policy, auth != null ? auth.getName() : "unknown");
+        resp.put("success", true);
+        resp.put("adminPolicy", twoFactorConfig.getTwoFactorAdminPolicy());
+        resp.put("message", "관리자 OTP 정책이 변경되었습니다.");
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * SSO 연동 설정 변경. clientSecret: 키 없음/null = 기존 값 유지, 빈 문자열 = 삭제.
+     */
+    @PostMapping("/api/settings/two-factor/sso")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setSsoConfig(@RequestBody Map<String, String> body,
+                                                            org.springframework.security.core.Authentication auth) {
+        analyzerService.setSsoConfig(
+                body.get("endpointUrl"),
+                body.get("clientId"),
+                body.containsKey("clientSecret") ? body.get("clientSecret") : null,
+                body.get("redirectUri"));
+        logger.info("[TwoFactor] action=update field=sso-config endpointUrl={} clientId={} redirectUri={} secretSet={} by={}",
+                twoFactorConfig.getSsoEndpointUrl(), twoFactorConfig.getSsoClientId(),
+                twoFactorConfig.getSsoRedirectUri(), twoFactorConfig.isSsoClientSecretSet(),
+                auth != null ? auth.getName() : "unknown");
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("ssoEndpointUrl", twoFactorConfig.getSsoEndpointUrl());
+        resp.put("ssoClientId", twoFactorConfig.getSsoClientId());
+        resp.put("ssoRedirectUri", twoFactorConfig.getSsoRedirectUri());
+        resp.put("ssoClientSecretSet", twoFactorConfig.isSsoClientSecretSet());
+        resp.put("message", "SSO 연동 설정이 저장되었습니다.");
         return ResponseEntity.ok(resp);
     }
 
@@ -557,6 +638,17 @@ public class HeapSystemApiController {
             db.put("version", "Error");
         }
         settings.put("database", db);
+
+        // 로그인 2차인증 설정 (secret 값 미노출)
+        Map<String, Object> twoFactor = new LinkedHashMap<>();
+        twoFactor.put("mode", twoFactorConfig.getTwoFactorMode());
+        twoFactor.put("adminPolicy", twoFactorConfig.getTwoFactorAdminPolicy());
+        twoFactor.put("ssoEndpointUrl", twoFactorConfig.getSsoEndpointUrl());
+        twoFactor.put("ssoClientId", twoFactorConfig.getSsoClientId());
+        twoFactor.put("ssoRedirectUri", twoFactorConfig.getSsoRedirectUri());
+        twoFactor.put("ssoClientSecretSet", twoFactorConfig.isSsoClientSecretSet());
+        twoFactor.put("ssoConfigured", twoFactorConfig.isSsoConfigured());
+        settings.put("twoFactor", twoFactor);
 
         return ResponseEntity.ok(settings);
     }

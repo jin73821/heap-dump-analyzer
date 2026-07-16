@@ -158,6 +158,29 @@ public class UserService {
         userRepository.deleteById(id);
     }
 
+    // ── 2차인증 (OTP) 잠금 관리 ────────────────────────────────────
+
+    /** OTP 반복 실패로 잠긴 계정 해제 (실패 카운트 리셋 포함) */
+    public User unlockUser(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
+        user.setAccountLocked(false);
+        user.setLockedAt(null);
+        user.setOtpFailCount(0);
+        return userRepository.save(user);
+    }
+
+    /** OTP seed 초기화 — 다음 로그인 시 Seed 등록 페이지로 재진입 */
+    public User resetOtp(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
+        user.setOtpSecret(null);
+        user.setOtpEnrolledAt(null);
+        user.setOtpLastUsedStep(null);
+        user.setOtpFailCount(0);
+        return userRepository.save(user);
+    }
+
     // ── 자기서비스 (My Account 페이지) ─────────────────────────────
 
     /** 본인 비밀번호 변경: 현재 PW 검증 + 복잡도 검증 + 동일 PW 차단. */
@@ -177,6 +200,30 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
         logger.info("[UserService] 비밀번호 변경 (self): {}", username);
+    }
+
+    /**
+     * 본인 OTP 초기화 (자기서비스): 현재 비밀번호 검증 후 OTP 등록 정보 삭제.
+     * 다음 로그인 시 Seed 등록 화면으로 재진입. 세션 탈취 시 무단 재등록을 막기 위해 현재 PW 확인.
+     */
+    public void resetOwnOtp(String username, String currentPassword) {
+        if (currentPassword == null || currentPassword.isEmpty()) {
+            throw new IllegalArgumentException("현재 비밀번호를 입력하세요.");
+        }
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
+            throw new IllegalArgumentException("현재 비밀번호가 일치하지 않습니다.");
+        }
+        if (user.getOtpSecret() == null || user.getOtpSecret().isEmpty()) {
+            throw new IllegalArgumentException("등록된 OTP가 없습니다.");
+        }
+        user.setOtpSecret(null);
+        user.setOtpEnrolledAt(null);
+        user.setOtpLastUsedStep(null);
+        user.setOtpFailCount(0);
+        userRepository.save(user);
+        logger.info("[UserService] OTP 초기화 (self): {}", username);
     }
 
     private static final int MEMO_MAX_BYTES = 10 * 1024 * 1024; // 10 MB (UTF-8 byte 기준)

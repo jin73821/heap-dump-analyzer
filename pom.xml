@@ -106,6 +106,18 @@
             <version>1.0.10</version>
         </dependency>
 
+        <!-- ZXing (OTP Seed 등록 QR 코드 생성 — 서버사이드 PNG data URI) -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+
         <!-- Test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

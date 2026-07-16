@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <title>OTP 등록 — Heap Dump Analyzer</title>
+    <style>
+        body { display: flex; align-items: center; justify-content: center; }
+        .login-card { background: #fff; border-radius: 16px; padding: 36px 36px 30px;
+                      width: 100%; max-width: 440px; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+        .login-logo { display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+                      justify-content: center; }
+        .login-logo-icon { width: 40px; height: 40px; background: #2563EB; border-radius: 10px;
+                           display: flex; align-items: center; justify-content: center; }
+        .login-logo-icon svg { width: 22px; height: 22px; }
+        .login-logo-text { font-size: 18px; font-weight: 700; }
+        .login-sub { text-align: center; font-size: 13px; color: #6B7280; margin-bottom: 6px; }
+        .otp-user { text-align: center; font-size: 13px; font-weight: 700; color: #1F2937; margin-bottom: 16px; }
+        .msg-error { background: #FEF2F2; border: 1px solid #FECACA; color: #DC2626;
+                     padding: 10px 14px; border-radius: 8px; font-size: 13px;
+                     margin-bottom: 14px; text-align: center; }
+        .qr-wrap { display: flex; justify-content: center; margin-bottom: 12px; }
+        .qr-wrap img { width: 200px; height: 200px; border: 1px solid #E5E7EB; border-radius: 12px;
+                       padding: 8px; background: #fff; }
+        .manual-label { text-align: center; font-size: 11.5px; color: #9CA3AF; margin-bottom: 5px; }
+        .manual-code { text-align: center; font-family: 'SF Mono', Consolas, monospace;
+                       font-size: 14px; font-weight: 700; color: #1F2937; background: #F3F4F6;
+                       border: 1px solid #E5E7EB; border-radius: 8px; padding: 9px 12px;
+                       margin-bottom: 6px; word-break: break-all; user-select: all; }
+        .manual-note { font-size: 11.5px; color: #6B7280; background: #FFFBEB; border: 1px solid #FDE68A;
+                       border-radius: 7px; padding: 8px 11px; margin: 6px 0 2px; line-height: 1.75; text-align: left; }
+        .manual-note b { color: #92400E; }
+        .renew-row { text-align: center; margin-bottom: 16px; }
+        .renew-link { color: #2563EB; font-size: 12px; font-weight: 600; text-decoration: underline; }
+        .renew-link:hover { color: #1D4ED8; }
+        .step-title { font-size: 12.5px; font-weight: 700; color: #374151; margin: 14px 0 8px; }
+        .otp-input { width: 100%; padding: 11px 14px; border: 1px solid #E5E7EB;
+                     border-radius: 8px; font-size: 22px; outline: none; background: #F9FAFB;
+                     text-align: center; letter-spacing: 10px; font-weight: 700;
+                     font-family: 'SF Mono', Consolas, monospace; }
+        .otp-input:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1);
+                           background: #fff; }
+        .login-btn { width: 100%; padding: 11px; border: none; border-radius: 8px;
+                     background: #2563EB; color: #fff; font-size: 14px; font-weight: 600;
+                     cursor: pointer; margin-top: 12px; position: relative; transition: background .15s; }
+        .login-btn:hover { background: #1D4ED8; }
+        .login-btn:disabled { background: #93C5FD; cursor: not-allowed; }
+        .login-btn.loading { pointer-events: none; color: transparent; cursor: wait; }
+        .login-btn.loading::after {
+            content: ''; position: absolute; left: 50%; top: 50%;
+            width: 18px; height: 18px; margin: -9px 0 0 -9px;
+            border: 2.5px solid rgba(255,255,255,.35); border-top-color: #fff;
+            border-radius: 50%; animation: loginSpin .65s linear infinite;
+        }
+        @keyframes loginSpin { to { transform: rotate(360deg); } }
+        .switch-row { text-align: center; margin-top: 14px; }
+        .switch-link { background: transparent; border: none; color: #2563EB; font-size: 12px;
+                       font-weight: 600; cursor: pointer; padding: 0; text-decoration: underline; }
+        .switch-link:hover { color: #1D4ED8; }
+
+        @media (max-width: 480px) {
+            body { padding: 24px; align-items: flex-start; padding-top: 40px; }
+            .login-card { padding: 22px 18px; border-radius: 12px; max-width: 330px;
+                          box-shadow: 0 2px 12px rgba(0,0,0,.06); margin: 0 auto; }
+            .login-logo { gap: 8px; margin-bottom: 12px; }
+            .login-logo-icon { width: 30px; height: 30px; border-radius: 7px; }
+            .login-logo-icon svg { width: 17px; height: 17px; }
+            .login-logo-text { font-size: 15px; }
+            .qr-wrap img { width: 170px; height: 170px; }
+            .otp-input { font-size: 19px; letter-spacing: 8px; }
+            .msg-error { font-size: 11px; padding: 8px 10px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-card">
+    <div class="login-logo">
+        <div class="login-logo-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        </div>
+        <span class="login-logo-text">OTP 등록</span>
+    </div>
+    <div class="login-sub">Google Authenticator &middot; MS Authenticator 등 OTP 앱으로 등록하세요</div>
+    <div class="otp-user" th:text="${username}"></div>
+
+    <div th:if="${errorMessage}" class="msg-error" th:text="${errorMessage}"></div>
+
+    <div class="step-title">1. 앱으로 QR 코드를 스캔하세요</div>
+    <div class="qr-wrap">
+        <img th:src="${qrDataUri}" alt="OTP QR Code">
+    </div>
+    <div class="manual-label">QR 스캔이 어려우면 아래 코드를 앱에 직접 입력하세요 (Base32)</div>
+    <div class="manual-code" th:text="${manualCode}"></div>
+    <div class="manual-note">
+        &middot; 키(계정) 유형은 <b>시간 기준(Time-based)</b>으로 선택하세요.<br>
+        &middot; 코드는 <b>표시된 띄어쓰기까지 그대로</b> 입력하세요.
+    </div>
+    <div class="renew-row">
+        <a class="renew-link" th:href="@{/login/otp/setup(renew=1)}">새 코드 발급</a>
+    </div>
+
+    <div class="step-title">2. 앱에 표시된 6자리 코드를 입력해 등록을 완료하세요</div>
+    <form th:action="@{/login/otp/setup}" method="post" id="setupForm">
+        <input class="otp-input" type="text" id="code" name="code"
+               inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}"
+               maxlength="6" placeholder="&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;" autofocus required>
+        <button class="login-btn" type="submit" id="setupSubmit" disabled>등록 완료</button>
+    </form>
+    <div class="switch-row">
+        <form th:action="@{/logout}" method="post" style="display:inline">
+            <button type="submit" class="switch-link">다른 계정으로 로그인</button>
+        </form>
+    </div>
+</div>
+
+<script>
+(function () {
+    try {
+        if (window.history && window.history.replaceState
+                && (location.search.indexOf('error') >= 0 || location.search.indexOf('renew') >= 0)) {
+            window.history.replaceState({}, document.title, location.pathname);
+        }
+    } catch (e) { /* 구형 브라우저 무시 */ }
+})();
+
+(function () {
+    var codeEl = document.getElementById('code');
+    var formEl = document.getElementById('setupForm');
+    var btnEl  = document.getElementById('setupSubmit');
+    if (!codeEl || !formEl) return;
+    // 숫자만 허용. 자동 제출하지 않음(오입력 방지) — 6자리일 때만 등록 버튼 활성화.
+    codeEl.addEventListener('input', function () {
+        codeEl.value = codeEl.value.replace(/\D/g, '').slice(0, 6);
+        if (btnEl) btnEl.disabled = codeEl.value.length !== 6;
+    });
+    formEl.addEventListener('submit', function () {
+        if (btnEl) btnEl.classList.add('loading');
+    });
+})();
+</script>
+
+</body>
+</html>

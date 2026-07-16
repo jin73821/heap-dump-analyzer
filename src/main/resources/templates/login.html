@@ -53,6 +53,17 @@
         .form-remember input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer;
                                                  accent-color: #2563EB; margin: 0; }
 
+        /* SSO login (mode=sso 일 때만 노출) */
+        .sso-divider { display: flex; align-items: center; gap: 10px; margin: 16px 0 12px;
+                       color: #9CA3AF; font-size: 11.5px; }
+        .sso-divider::before, .sso-divider::after { content: ''; flex: 1; height: 1px; background: #E5E7EB; }
+        .sso-btn { display: flex; align-items: center; justify-content: center; gap: 8px;
+                   width: 100%; padding: 11px; border: 1px solid #D1D5DB; border-radius: 8px;
+                   background: #fff; color: #374151; font-size: 14px; font-weight: 600;
+                   cursor: pointer; text-decoration: none; transition: background .15s, border-color .15s; }
+        .sso-btn:hover { background: #F9FAFB; border-color: #93C5FD; }
+        .sso-btn svg { width: 16px; height: 16px; }
+
         /* Signup link below login button */
         .signup-row { text-align: center; font-size: 12px; color: #6B7280; margin-top: 14px; }
         .signup-link { background: transparent; border: none; color: #2563EB; font-size: 12px;
@@ -155,6 +166,14 @@
         </label>
         <button class="login-btn" type="submit">로그인</button>
     </form>
+    <!-- 2차인증 SSO 모드일 때만 표시 (Settings → Login Two-Factor Authentication) -->
+    <div th:if="${twoFactorMode == 'sso'}">
+        <div class="sso-divider">또는</div>
+        <a class="sso-btn" th:href="@{/sso/login}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+            SSO 로그인
+        </a>
+    </div>
     <div class="signup-row">
         계정이 없으신가요?
         <button type="button" class="signup-link" onclick="openSignupModal()">계정 신청</button>
@@ -202,7 +221,8 @@
 (function () {
     try {
         if (window.history && window.history.replaceState
-                && (location.search.indexOf('error') >= 0 || location.search.indexOf('logout') >= 0 || location.search.indexOf('expired') >= 0)) {
+                && (location.search.indexOf('error') >= 0 || location.search.indexOf('logout') >= 0
+                    || location.search.indexOf('expired') >= 0 || location.search.indexOf('ssoNotice') >= 0)) {
             window.history.replaceState({}, document.title, location.pathname);
         }
     } catch (e) { /* 구형 브라우저 무시 */ }

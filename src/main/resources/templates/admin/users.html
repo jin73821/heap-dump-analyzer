@@ -47,6 +47,8 @@
         .badge-user { background: #D1FAE5; color: #065F46; }
         .badge-disabled { background: #FEE2E2; color: #991B1B; }
         .badge-enabled { background: #D1FAE5; color: #065F46; }
+        .badge-locked { background: #FEE2E2; color: #991B1B; border: 1px solid #FCA5A5; }
+        .badge-otp { background: #E0E7FF; color: #3730A3; }
 
         .action-btn { padding: 5px 12px; border: 1px solid #E5E7EB; border-radius: 5px;
                       background: transparent; font-size: 12px; cursor: pointer; color: #6B7280; }
@@ -216,6 +218,7 @@
                 <option value="">전체 상태</option>
                 <option value="active">활성</option>
                 <option value="disabled">비활성</option>
+                <option value="locked">잠김</option>
             </select>
             <span style="width:1px;height:20px;background:#E5E7EB;flex-shrink:0;align-self:center"></span>
             <span style="font-size:12px;color:#6B7280;flex-shrink:0;white-space:nowrap">생성일</span>
@@ -259,6 +262,9 @@
                         <td>
                             <span class="badge badge-enabled" th:if="${u.enabled}">활성</span>
                             <span class="badge badge-disabled" th:unless="${u.enabled}">비활성</span>
+                            <span class="badge badge-locked" th:if="${u.accountLocked}"
+                                  th:title="${u.lockedAt != null ? '잠금 시각: ' + #temporals.format(u.lockedAt, 'yyyy-MM-dd HH:mm') : ''}">잠김</span>
+                            <span class="badge badge-otp" th:if="${u.otpSecret != null and !u.otpSecret.isEmpty()}">OTP</span>
                         </td>
                         <td th:text="${u.createdAt != null ? #temporals.format(u.createdAt, 'yyyy-MM-dd HH:mm') : '-'}">2026-04-12</td>
                         <td>
@@ -270,6 +276,12 @@
                             <button class="action-btn"
                                     th:data-id="${u.id}"
                                     onclick="openResetPwModal(this.dataset.id)">비밀번호</button>
+                            <button class="action-btn" th:if="${u.accountLocked}"
+                                    th:data-id="${u.id}" th:data-username="${u.username}"
+                                    onclick="openUnlockModal(this.dataset.id, this.dataset.username)">잠금해제</button>
+                            <button class="action-btn" th:if="${u.otpSecret != null and !u.otpSecret.isEmpty()}"
+                                    th:data-id="${u.id}" th:data-username="${u.username}"
+                                    onclick="openOtpResetModal(this.dataset.id, this.dataset.username)">OTP 초기화</button>
                             <button class="action-btn danger"
                                     th:data-id="${u.id}" th:data-username="${u.username}"
                                     th:data-admin="${u.username == 'admin'}"
@@ -514,6 +526,38 @@
     </div>
 </div>
 
+<!-- Unlock Modal (OTP 잠금 해제) -->
+<div class="modal-ov" id="unlockModal" onclick="if(event.target===this)closeModal('unlockModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">계정 잠금 해제</div>
+        <input type="hidden" id="ulId">
+        <p style="font-size:13px;color:#6B7280;margin-bottom:16px">
+            <strong id="ulUsername"></strong> 계정의 잠금(OTP 반복 실패)을 해제하시겠습니까?<br>
+            실패 카운트가 초기화되며 즉시 로그인 가능해집니다.
+        </p>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('unlockModal')">취소</button>
+            <button class="mbtn-save" onclick="submitUnlock()">잠금 해제</button>
+        </div>
+    </div>
+</div>
+
+<!-- OTP Reset Modal (Seed 초기화) -->
+<div class="modal-ov" id="otpResetModal" onclick="if(event.target===this)closeModal('otpResetModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">OTP 초기화</div>
+        <input type="hidden" id="orId">
+        <p style="font-size:13px;color:#6B7280;margin-bottom:16px">
+            <strong id="orUsername"></strong> 계정의 OTP 등록 정보(Seed)를 초기화하시겠습니까?<br>
+            기존 Authenticator 앱 등록이 무효화되며, 다음 로그인 시 QR 등록 화면이 다시 표시됩니다.
+        </p>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('otpResetModal')">취소</button>
+            <button class="mbtn-del" onclick="submitOtpReset()">초기화</button>
+        </div>
+    </div>
+</div>
+
 <!-- Info Modal (안내 전용) -->
 <div class="modal-ov" id="infoModal" onclick="if(event.target===this)closeModal('infoModal')">
     <div class="modal-box">
@@ -728,6 +772,39 @@ function submitDelete() {
     closeModal('deleteModal');
 }
 
+// ── 2차인증: 잠금 해제 / OTP 초기화 ─────────────────────────
+function openUnlockModal(id, username) {
+    document.getElementById('ulId').value = id;
+    document.getElementById('ulUsername').textContent = username;
+    document.getElementById('unlockModal').classList.add('open');
+}
+
+function submitUnlock() {
+    var id = document.getElementById('ulId').value;
+    fetch('/api/admin/users/' + id + '/unlock', { method: 'POST', headers: csrfHeaders() })
+    .then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) { showToast('잠금이 해제되었습니다.', 'success'); loadUsers(); }
+        else { showToast(d.message || '잠금 해제 실패', 'error'); }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+    closeModal('unlockModal');
+}
+
+function openOtpResetModal(id, username) {
+    document.getElementById('orId').value = id;
+    document.getElementById('orUsername').textContent = username;
+    document.getElementById('otpResetModal').classList.add('open');
+}
+
+function submitOtpReset() {
+    var id = document.getElementById('orId').value;
+    fetch('/api/admin/users/' + id + '/otp-reset', { method: 'POST', headers: csrfHeaders() })
+    .then(function(r) { return r.json(); }).then(function(d) {
+        if (d.success) { showToast('OTP 등록 정보가 초기화되었습니다.', 'success'); loadUsers(); }
+        else { showToast(d.message || 'OTP 초기화 실패', 'error'); }
+    }).catch(function() { showToast('요청 실패', 'error'); });
+    closeModal('otpResetModal');
+}
+
 // ── 탭 전환 ─────────────────────────────────────────────────
 function switchTab(name) {
     document.querySelectorAll('.tab').forEach(function(t) {
@@ -782,6 +859,7 @@ function filterAndRenderUsers() {
         if (q && u.username.toLowerCase().indexOf(q) < 0 && (u.displayName || '').toLowerCase().indexOf(q) < 0) return false;
         if (status === 'active'   && !u.enabled) return false;
         if (status === 'disabled' &&  u.enabled) return false;
+        if (status === 'locked'   && !u.locked)  return false;
         if (dateFrom || dateTo) {
             var d = (u.createdAt || '').substring(0, 10);
             if (dateFrom && d < dateFrom) return false;
@@ -843,7 +921,25 @@ function renderUsers(list) {
         var statusBadge = u.enabled
             ? '<span class="badge badge-enabled">활성</span>'
             : '<span class="badge badge-disabled">비활성</span>';
+        if (u.locked) {
+            statusBadge += '<span class="badge badge-locked"' +
+                (u.lockedAt ? ' title="잠금 시각: ' + escHtml(u.lockedAt) + '"' : '') + '>잠김</span>';
+        }
+        if (u.otpEnrolled) {
+            statusBadge += '<span class="badge badge-otp">OTP</span>';
+        }
         var dn = u.displayName || '';
+        var extraBtns = '';
+        if (u.locked) {
+            extraBtns += '<button class="action-btn"' +
+                ' data-id="' + u.id + '" data-username="' + escHtml(u.username) + '"' +
+                ' onclick="openUnlockModal(this.dataset.id, this.dataset.username)">잠금해제</button>';
+        }
+        if (u.otpEnrolled) {
+            extraBtns += '<button class="action-btn"' +
+                ' data-id="' + u.id + '" data-username="' + escHtml(u.username) + '"' +
+                ' onclick="openOtpResetModal(this.dataset.id, this.dataset.username)">OTP 초기화</button>';
+        }
         html += '<tr>' +
             '<td>' + u.id + '</td>' +
             '<td style="font-weight:600">' + escHtml(u.username) + '</td>' +
@@ -861,6 +957,7 @@ function renderUsers(list) {
                     ' onclick="openEditModal(this.dataset)">수정</button>' +
                 '<button class="action-btn" data-id="' + u.id + '"' +
                     ' onclick="openResetPwModal(this.dataset.id)">비밀번호</button>' +
+                extraBtns +
                 '<button class="action-btn danger"' +
                     ' data-id="' + u.id + '"' +
                     ' data-username="' + escHtml(u.username) + '"' +

@@ -166,6 +166,8 @@
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             계정 정보
             <button class="card-title-btn" onclick="openPwModal()">비밀번호 변경</button>
+            <button class="card-title-btn" th:if="${!#strings.isEmpty(user.otpSecret)}"
+                    style="margin-left:8px" onclick="openOtpResetModal()">OTP 초기화</button>
         </div>
         <dl class="info-dl">
             <dt>사용자명</dt>
@@ -183,6 +185,9 @@
 
             <dt>활성 상태</dt>
             <dd th:text="${user.enabled} ? '활성' : '비활성'">활성</dd>
+
+            <dt>2차인증(OTP)</dt>
+            <dd th:text="${!#strings.isEmpty(user.otpSecret)} ? '등록됨' : '미등록'">미등록</dd>
 
             <dt>생성일</dt>
             <dd th:text="${user.createdAt != null} ? ${#temporals.format(user.createdAt, 'yyyy-MM-dd HH:mm')} : '—'">2025-01-01 00:00</dd>
@@ -283,6 +288,29 @@
     </div>
 </div>
 
+<!-- OTP 초기화 모달 (현재 비밀번호 확인) -->
+<div class="modal-ov" id="otpResetModal">
+    <div class="modal-box pw-modal-box">
+        <h3>
+            <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            OTP 초기화
+        </h3>
+        <p style="font-size:12.5px;color:#6B7280;margin:-4px 0 14px;line-height:1.6">
+            현재 등록된 OTP(Authenticator 앱)를 초기화합니다.<br>
+            초기화 후 <b>다음 로그인 시 QR 등록 화면</b>이 다시 표시됩니다. (기기 변경 시 사용)
+        </p>
+        <div class="form-row">
+            <label for="otpResetPw">현재 비밀번호</label>
+            <input id="otpResetPw" type="password" class="input" autocomplete="current-password">
+        </div>
+        <div id="otpResetMsg" class="form-err"></div>
+        <div class="pw-modal-btns">
+            <button class="btn btn-secondary" onclick="closeOtpResetModal()">취소</button>
+            <button id="btnOtpReset" class="btn btn-danger" onclick="confirmOtpReset()">초기화</button>
+        </div>
+    </div>
+</div>
+
 <script th:inline="javascript">
 /* 계정별 저장된 메모장 폰트 (서버 영속화 — DB). 없으면 빈 문자열 → JS 에서 d2coding 폴백. */
 window.SERVER_MEMO_FONT = /*[[${user.memoFont}]]*/ '';
@@ -311,6 +339,36 @@ function openPwModal() {
 }
 function closePwModal() {
     document.getElementById('pwModal').classList.remove('open');
+}
+
+/* ── OTP 초기화 (자기서비스) ─────────────── */
+function openOtpResetModal() {
+    document.getElementById('otpResetPw').value = '';
+    document.getElementById('otpResetMsg').textContent = '';
+    document.getElementById('otpResetModal').classList.add('open');
+    setTimeout(function() { document.getElementById('otpResetPw').focus(); }, 100);
+}
+function closeOtpResetModal() {
+    document.getElementById('otpResetModal').classList.remove('open');
+}
+function confirmOtpReset() {
+    var pw = document.getElementById('otpResetPw').value;
+    var msg = document.getElementById('otpResetMsg');
+    msg.textContent = '';
+    if (!pw) { msg.textContent = '현재 비밀번호를 입력하세요.'; return; }
+    var btn = document.getElementById('btnOtpReset');
+    btn.disabled = true; btn.textContent = '초기화 중...';
+    Common.fetchJSON('/api/account/otp-reset', {
+        method: 'POST',
+        body: JSON.stringify({ currentPassword: pw })
+    }).then(function() {
+        closeOtpResetModal();
+        toast('OTP가 초기화되었습니다. 다음 로그인 시 재등록이 필요합니다.', 'ok');
+    }).catch(function(e) {
+        msg.textContent = extractErrorMessage(e) || 'OTP 초기화에 실패했습니다.';
+    }).finally(function() {
+        btn.disabled = false; btn.textContent = '초기화';
+    });
 }
 
 function changePassword() {

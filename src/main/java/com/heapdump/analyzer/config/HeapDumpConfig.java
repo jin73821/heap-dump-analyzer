@@ -231,6 +231,20 @@ public class HeapDumpConfig {
     @Value("${rag.chunking.max-total-chars:6000}")
     private int ragChunkingMaxTotalChars;
 
+    // ── 로그인 2차인증 설정 ─────────────────────────────────────
+    @Value("${security.two-factor.mode:off}")
+    private String twoFactorMode;
+    @Value("${security.two-factor.admin-policy:enforce_no_lock}")
+    private String twoFactorAdminPolicy;
+    @Value("${security.sso.endpoint-url:}")
+    private String ssoEndpointUrl;
+    @Value("${security.sso.client-id:}")
+    private String ssoClientId;
+    @Value("${security.sso.client-secret:}")
+    private String ssoClientSecret;
+    @Value("${security.sso.redirect-uri:}")
+    private String ssoRedirectUri;
+
     // ── 코어 덤프 설정 ──────────────────────────────────────────
     @Value("${coredump.directory:/opt/coredumps}")
     private String coreDumpDirectory;
@@ -554,4 +568,12 @@ public class HeapDumpConfig {
     public int     getRagChunkingOverlap()        { return ragChunkingOverlap; }
     public int     getRagChunkingMaxChunksPerDoc(){ return ragChunkingMaxChunksPerDoc; }
     public int     getRagChunkingMaxTotalChars()  { return ragChunkingMaxTotalChars; }
+
+    // ── 로그인 2차인증 getters ─────────────────────────────────
+    public String  getTwoFactorMode()        { return twoFactorMode; }
+    public String  getTwoFactorAdminPolicy() { return twoFactorAdminPolicy; }
+    public String  getSsoEndpointUrl()  { return ssoEndpointUrl; }
+    public String  getSsoClientId()     { return ssoClientId; }
+    public String  getSsoClientSecret() { return ssoClientSecret; }
+    public String  getSsoRedirectUri()  { return ssoRedirectUri; }
 }

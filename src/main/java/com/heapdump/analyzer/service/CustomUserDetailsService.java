@@ -28,7 +28,8 @@ public class CustomUserDetailsService implements UserDetailsService {
                 user.getUsername(),
                 user.getPassword(),
                 user.isEnabled(),          // enabled=false → Spring Security가 DisabledException 발생
-                true, true, true,
+                true, true,
+                !user.isAccountLocked(),   // accountLocked=true → LockedException (OTP 반복 실패 잠금)
                 Collections.singletonList(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()))
         );
     }

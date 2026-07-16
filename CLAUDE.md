@@ -30,7 +30,7 @@ sleep 18 && grep -E "Started HeapAnalyzerApplication|FAILED|Exception in thread"
   /opt/genspark/webapp_dump/logs/heapdump-analyzer.log | tail -3
 ```
 
-**MariaDB 미연결 시 기동 실패** (Spring Session JDBC가 SPRING_SESSION 자동 생성). DB 점검: `mysql -h 192.168.56.9 -u heap_user -pshinhan@10 HEAPDB -e "..."`.
+**MariaDB 미연결 시 기동 실패** (Spring Session JDBC가 SPRING_SESSION 자동 생성). DB 점검: `mysql -h 192.168.56.9 -u heap_user -p<REDACTED> HEAPDB -e "..."`.
 
 ## Architecture
 
@@ -159,9 +159,11 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 ```
 페이지 `<head>`에 `<meta name="_csrf" th:content="${_csrf.token}">` + `<meta name="_csrf_header" th:content="${_csrf.headerName}">` 필요.
 
-**기본 계정:** admin / shinhan@10 (BCrypt, `UserService.initDefaultAdmin()`).
+**기본 계정:** admin / <REDACTED> (BCrypt, `UserService.initDefaultAdmin()`).
 
 **계정별 격리:** AI 채팅 세션은 `Principal.getName()`으로 username 일치 검증.
+
+**로그인 2차인증 (2026-07-16):** Settings(General)에서 `off|otp|sso` 3-state (`TwoFactorConfigService` — LLM/RAG 와 동일 3-hook 영속화). OTP 모드는 표준 TOTP(RFC 6238, `TotpUtil` 자체 구현 + zxing QR) — 1차 성공 시 `TwoFactorAuthenticationSuccessHandler` 가 SecurityContext 를 **`ROLE_PRE_AUTH` 부분 인증 토큰으로 교체** 후 `/login/otp(/setup)` 유도. 인가는 `anyRequest().hasAnyRole("ADMIN","USER")` 라 PRE_AUTH 는 구조적으로 다른 경로 접근 불가 (accessDeniedHandler 가 `/login/otp` redirect). seed 는 `users.otp_secret` 에 `ENC(...)` 저장, ±1 스텝 드리프트 + `otp_last_used_step` replay 방지. **OTP 10회 연속 실패 → `account_locked`** (enabled 와 별개, `CustomUserDetailsService` 가 `accountNonLocked` 매핑 → `LockedException` → `/login?error=locked`) — 해제/OTP 초기화는 `/admin/users` (`POST /api/admin/users/{id}/unlock|otp-reset`), 본인 초기화는 `/account` (`POST /api/account/otp-reset`, 현재 PW 확인). OTP 모드에선 `AuthEventListener.onSuccess` 가 skip — 완전 인증 성공만 `TwoFactorService` 가 login_history 기록 (`LoginHistoryRecorder` 공용). **관리자 OTP 정책** `security.two-factor.admin-policy` = `enforce|enforce_no_lock(기본)|exempt`: exempt 는 SuccessHandler 가 관리자 OTP 건너뜀(+onSuccess 가 성공 기록), enforce_no_lock 은 `verifyOtp` 가 관리자 실패 시 잠금/카운트 누적 안 함. 일반 USER 는 정책 무관 항상 OTP+잠금. **SSO 는 `isSsoConfigured()`(Endpoint URL·Client ID·Client Secret 3필드) 저장돼야만 mode=sso 활성화** (미충족 시 `/api/settings/two-factor?mode=sso` 400). SSO 실연동은 틀만 (`SsoAuthenticator`+`StubSsoAuthenticator`+`/sso/login·callback` 스텁). OTP 입력 화면은 자동제출 안 함(6자리 시 버튼 활성). admin 자기 잠금 비상 복구 SQL 은 CHANGELOG 2026-07-16 참조.
 
 ## ⚠️ 중요한 함정 (Pitfalls)
 

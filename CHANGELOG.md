@@ -1,6 +1,81 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-07-16] 로그인 2차인증 고도화 — 관리자 OTP 정책 / SSO 저장 후 활성화 / 자기서비스 OTP 초기화 / 입력 UX
+
+**대상:** `service/TwoFactorConfigService.java`, `service/TwoFactorService.java`, `service/UserService.java`, `service/HeapDumpAnalyzerService.java`, `config/HeapDumpConfig.java`, `config/TwoFactorAuthenticationSuccessHandler.java`, `controller/HeapSystemApiController.java`, `controller/HeapDumpViewController.java`, `controller/AccountController.java`, `controller/TwoFactorController.java`, `listener/AuthEventListener.java`, `templates/settings.html`, `templates/account.html`, `templates/login-otp.html`, `templates/login-otp-setup.html`, `application.properties`
+
+8개 항목 고도화:
+
+1. **OTP 등록 안내 문구 보강** (`login-otp-setup.html`): 수동 입력 코드 하단에 "키(계정) 유형은 **시간 기준(Time-based)**으로 선택", "코드는 **표시된 띄어쓰기까지 그대로** 입력" 안내 박스 추가.
+2. **(위 1과 동일 블록)** 시간 기준 키 유형 안내 명시.
+3. **일반 유저 자기서비스 OTP 초기화** (`account.html` + `AccountController`): 내 계정 페이지에 OTP 등록 시 "OTP 초기화" 버튼 + 상태 행("2차인증(OTP): 등록됨/미등록"). `POST /api/account/otp-reset` — **현재 비밀번호 확인** 후 본인 OTP seed 삭제(다음 로그인 시 재등록). 세션 탈취로 인한 무단 재등록 방지 위해 PW 재확인.
+4. **OTP 오입력 방지** (`login-otp.html`·`login-otp-setup.html`): 6자리 입력 시 **자동 제출(requestSubmit) 제거** → 확인 버튼은 6자리일 때만 활성화(disabled 토글). 키보드 오타로 인한 남은 시도 급소진 문제 해결(사용자가 검토 후 클릭).
+5. **'30초마다 갱신' 문구 삭제** (`login-otp.html`): 인증기마다 갱신 주기가 달라 오해 소지 → "6자리를 입력한 뒤 확인을 눌러 인증하세요"로 대체.
+6. **관리자 OTP 정책** (`TwoFactorConfigService`·`SuccessHandler`·`TwoFactorService`·`AuthEventListener` + `/api/settings/two-factor/admin-policy`): `enforce`(일반 사용자와 동일·잠금 가능) / `enforce_no_lock`(OTP 필수 + 자기 잠금 방지·**기본값**) / `exempt`(관리자 OTP 예외). `exempt`는 SuccessHandler 에서 관리자면 OTP 건너뛰고 즉시 완전 인증(+ `AuthEventListener` 가 이 성공을 login_history 에 기록). `enforce_no_lock`은 `TwoFactorService.verifyOtp` 에서 관리자 실패 시 카운트 누적/잠금 없이 매번 리셋(remain 미표시). 일반 USER 는 정책과 무관하게 항상 OTP + 10회 잠금 유지. Settings OTP 정보 박스에 셀렉트 노출.
+7. **2차인증 설정화면 모바일 최적화** (`settings.html`): 2FA 카드에 클래스(`tfa-mode-row`/`tfa-mode-radios`/`sso-grid`/`tfa-policy-row`) 부여 후 `@media (max-width:768px)` 에서 라디오 세로 스택·SSO 필드 1열·정책 셀렉트 전폭.
+8. **SSO는 설정 저장 시에만 활성화** (`settings.html` + `HeapSystemApiController`·`TwoFactorConfigService.isSsoConfigured`): 이전엔 SSO 라디오 클릭 즉시 mode=sso 로 활성화되어 미설정 상태로도 로그인 화면에 버튼 노출 → 오해 유발. 변경: 라디오 클릭은 설정 박스만 표시("저장해야 활성화" 안내), **Save SSO Config 시 필수 3필드(Endpoint URL·Client ID·Client Secret) 검증 후 활성화**. 백엔드도 `POST /api/settings/two-factor?mode=sso` 를 `isSsoConfigured()==false` 면 400 거부(직접 호출 방어).
+
+### 설정 키
+`security.two-factor.admin-policy=enforce_no_lock` (application.properties + settings.json 3-hook 영속화).
+
+### 검증 (e2e — curl + python TOTP)
+빌드 OK, 기동 13.0s. ⑧ config 없이 mode=sso → 400 거부, config 저장 후 활성화 → 로그인 SSO 버튼 노출. ⑥ 테스트 관리자 OTP 등록 후 `enforce_no_lock` 12회 오답 → 미잠금(locked=0)·정상 코드로 인증 성공; `exempt` → 관리자 ID/PW 만으로 `/` 직행 + login_history SUCCESS 기록; 일반 USER 는 정책=exempt 여도 10회에서 잠김(회귀 OK). ③ 자기 OTP 초기화: 오답 PW 400 / 정답 성공 + otp_secret NULL. ①②④⑤ setup·otp 페이지 문구·disabled 버튼·requestSubmit 0 확인. 재기동 후 mode/adminPolicy 영속. 테스트 계정·설정 원복(mode=off).
+
+
+## [2026-07-16] 로그인 2차인증 시스템 구축 — OTP(TOTP) 인증 + 커스텀 SSO 틀 + 계정 잠금
+
+**대상(신규 13):** `util/TotpUtil.java`, `util/QrCodeUtil.java`, `service/TwoFactorConfigService.java`, `service/TwoFactorService.java`, `service/LoginHistoryRecorder.java`, `service/sso/SsoAuthenticator.java`, `service/sso/StubSsoAuthenticator.java`, `config/TwoFactorAuthenticationSuccessHandler.java`, `controller/TwoFactorController.java`, `controller/SsoController.java`, `templates/login-otp.html`, `templates/login-otp-setup.html`
+**대상(수정 15):** `pom.xml`, `model/entity/User.java`, `repository/UserRepository.java`, `service/CustomUserDetailsService.java`, `service/UserService.java`, `service/HeapDumpAnalyzerService.java`, `config/SecurityConfig.java`, `config/HeapDumpConfig.java`, `controller/AuthController.java`, `controller/AdminController.java`, `controller/HeapSystemApiController.java`, `controller/HeapDumpViewController.java`, `listener/AuthEventListener.java`, `templates/login.html`, `templates/settings.html`, `templates/admin/users.html`, `application.properties`
+
+### 기능
+- **Settings(General) → Login Two-Factor Authentication 카드**: `미사용 / OTP 인증 / SSO 연동` 3-state 라디오 (ADMIN 전용, 변경 확인 모달). `POST /api/settings/two-factor?mode=off|otp|sso` — `/api/settings/**` 라 ADMIN+CSRF 자동 적용. settings.json(`twoFactorMode`) + application.properties(`security.two-factor.mode`) 영속화 (`TwoFactorConfigService` 3-hook — LlmConfig/RagConfig 와 동일 패턴).
+- **미사용(off)**: 로그인 화면·흐름 기존과 100% 동일 (SSO 버튼/OTP 흔적 없음, successHandler 즉시 `/` redirect — 오버헤드 0).
+- **OTP 모드 (표준 TOTP)**: RFC 6238 — 6자리/30초/HmacSHA1, Google/MS Authenticator 호환. `TotpUtil` 자체 구현(JDK crypto + 자체 Base32, RFC 6238 Appendix B 전 벡터 검증 통과).
+  - ID/PW 성공 → `TwoFactorAuthenticationSuccessHandler` 가 SecurityContext 를 **`ROLE_PRE_AUTH` 부분 인증 토큰으로 교체**(+`HttpSessionSecurityContextRepository.saveContext` 명시 저장) → 등록계정 `/login/otp`, 미등록 `/login/otp/setup` redirect.
+  - 인가 규칙을 `anyRequest().hasAnyRole("ADMIN","USER")` 로 전환 → PRE_AUTH 상태의 모든 경로 접근 구조적 차단. accessDeniedHandler 가 PRE_AUTH 를 `/login/otp` 로 유도 (그 외는 기존 `sendError(403)` 유지).
+  - **Seed 등록 페이지**: QR(otpauth:// URI, zxing 서버사이드 PNG data URI — 별도 GET 엔드포인트 없음) + Base32 수동 입력 코드 + 새 코드 발급. 임시 seed 는 세션(`TFA_PENDING_SECRET`)에만 보관, **첫 코드 검증 성공 시에만 DB 확정** (`users.otp_secret` 에 `ENC(...)` AES 암호화 저장). `Cache-Control: no-store`.
+  - **검증**: ±1 스텝(90초) 드리프트 허용 + `otp_last_used_step` 로 동일 코드 재사용(replay) 거부 + 상수시간 비교. OTP 성공 시 DB 에서 UserDetails 재로드 후 완전 인증 승격 (대기 중 비활성화/삭제/초기화 감지). 검증 중 관리자가 모드를 off/sso 로 바꾸면 1차 인증으로 즉시 승격.
+- **10회 연속 실패 잠금**: `otp_fail_count` 원자 증가(`@Modifying` UPDATE, 동시 브라우저 카운트 유실 방지) → 10회 도달 시 `account_locked=1` + 세션 무효화 + `/login?error=locked`. 잠긴 계정은 비밀번호 로그인도 `LockedException` 거부 (`CustomUserDetailsService` `accountNonLocked` 매핑 — 함정 #21 준수, UserDetails 플래그 방식). 남은 시도 3회 이하부터 경고 배너.
+- **관리자 잠금 해제/OTP 초기화**: `/admin/users` 사용자 목록에 `잠김`/`OTP` 배지 + 상태 필터 `잠김` + 잠금해제·OTP 초기화 버튼(확인 모달). `POST /api/admin/users/{id}/unlock`, `POST /api/admin/users/{id}/otp-reset`. 감사 로그 `[User] action=unlock|otp-reset target={} by={who}` / `[TwoFactor] action=enroll|verify-success|lock|update ...`.
+- **login_history 정합**: OTP 모드에서 1차(ID/PW) 통과는 SUCCESS 미기록(`AuthEventListener` skip) — OTP 최종 성공만 `TwoFactorService` 가 sessionId 포함 기록(세션 회전 없음 → 활성 세션 매칭 유지, 함정 #1/#2 정합). OTP 실패는 FAILURE + 사유("OTP 코드 불일치 (남은 시도 N회)"/"OTP 10회 연속 실패 — 계정 잠금"). ip/UA 헬퍼는 `LoginHistoryRecorder` 로 추출해 리스너와 공용.
+- **SSO 연동 틀** (사내 가이드 확정 전 선구축): mode=sso 시 로그인 화면에 "SSO 로그인" 버튼 표시. Settings 에 SSO 필드 4종(Endpoint URL/Client ID/Client Secret(ENC, 비워두면 유지)/Redirect URI) 저장 UI. `/sso/login`·`/sso/callback` 스텁(현재 `/login?ssoNotice=1` 안내 redirect) + `SsoAuthenticator` 인터페이스(`buildAuthorizationUrl`/`authenticate`) + `StubSsoAuthenticator`. **가이드 도착 시 구현체 교체 + SsoController TODO 두 곳만 채우면 됨.**
+
+### DB 스키마 (`users` 신규 6컬럼 — ddl-auto=update 자동 반영 완료)
+`otp_secret` varchar(512) / `otp_enrolled_at` / `otp_fail_count` int NOT NULL / `otp_last_used_step` bigint / `account_locked` bit NOT NULL / `locked_at`. 기존 행은 0/NULL 로 채워짐.
+
+### 비상 복구 (admin 자기 잠금 / seed 분실 시)
+```sql
+UPDATE users SET account_locked=0, otp_fail_count=0, otp_secret=NULL, otp_enrolled_at=NULL, otp_last_used_step=NULL WHERE username='admin';
+```
+
+### 의존성
+`com.google.zxing:core`/`javase` 3.5.3 추가 (QR 생성 전용).
+
+### 검증 (e2e — curl + python TOTP 계산)
+빌드 OK, 기동 13.2s. ① mode=off 회귀: 로그인 → `/` 302, SSO/OTP 흔적 없음, 주요 9 페이지 200. ② OTP: 1차 로그인 → setup 302 → QR+Base32 표시 → TOTP 계산 등록 → `/` 302, `otp_secret`=`ENC(` 확인. 재로그인 → `/login/otp` → 오답 `remain=9` → 정답 승격. 동일 코드 재사용 거부. ③ PRE_AUTH 우회: `/`·`/api/history` 접근 → `/login/otp` 302. ④ 잠금: 10회 실패 → `error=locked` + DB `account_locked=1` → 잠긴 계정 비밀번호 로그인도 locked 거부 → admin unlock 후 정상. OTP 초기화 → setup 재진입. ⑤ SSO: 버튼 노출, `/sso/login` → ssoNotice, clientSecret `ENC(` 저장(settings.json + application.properties), 키 생략 시 기존 값 유지. ⑥ 재기동 후 mode 영속 + PRE_AUTH 세션이 모드 변경 시 즉시 승격. 감사 로그 전 항목 확인. 테스트 계정/설정 원복 완료(mode=off).
+
+
+## [2026-07-10] Transfer Logs — 긴 파일명/경로 시 우측 컬럼 잘림 수정
+
+**대상:** `templates/server-logs.html` (인라인 `<style>` + `markTruncated()` JS)
+
+### 배경
+Transfer Logs 페이지(`/servers/logs`)에서 파일명·원격 경로가 길 경우 테이블 우측 컬럼(시작·소요시간·에러)이 좁아지거나 잘리는 현상.
+
+### 원인
+`.td-name`(파일명 셀)은 `max-width: 240px` + `text-overflow: ellipsis` 가 지정돼 있으나 인라인 `<span>` 이었다. CSS 에서 **비대체 인라인 요소는 `max-width`/`width` 를 무시**하므로 파일명이 실제로 잘리지 않고 그대로 늘어나 컬럼을 밀어냈고, 그 여파로 우측 컬럼이 좁아지거나 잘림. (반면 `.td-path` 는 이미 `display: inline-block` 이라 정상 truncate)
+
+### 변경
+- **`.td-name` → `display: inline-block; vertical-align: middle;`** 추가 → `max-width` + ellipsis 실제 동작. (`.td-path` 와 동일 패턴)
+- **파일명 hover 펼침 추가**: `.td-name.is-truncated` cursor: help + hover 시 `white-space: normal` 로 전체 노출(경로와 동일 UX). `markTruncated()` 가 `.td-name` 도 검사하도록 셀렉터 확장.
+- **`.td-mono { white-space: nowrap }`** 추가: 크기·시작·소요시간 컬럼이 좁아질 때 줄바꿈되어 지저분해지는 것 방지 → 대신 `.table-scroll` 가로 스크롤로 처리.
+- `.td-path` max-width `360 → 320px` 소폭 축소로 기본 레이아웃 여유 확보.
+
+### 검증
+빌드 OK, 기동 12.95s. 인라인 CSS/JS 라 `?v=` 캐시키 불필요.
+
+
 ## [2026-07-09] 코어 파일 페이지 — 좌측 사이드바 파일 목록 디자인 개선
 
 **대상:** `templates/core-dump/index.html` (인라인 `<style>` + `th:each` 마크업)
@@ -8623,7 +8698,7 @@ Phase 1(2026-04-26)에서 `keyword(BM25)`만 동작. 운영팀 ES 예시 쿼리 
 - **권한 최소화 옵션**: 운영 시 `GRANT ALL` 대신 `SELECT/INSERT/UPDATE/DELETE/CREATE/ALTER/DROP/INDEX/REFERENCES`만 부여 가능함을 명시
 - **암호화 키 설정**: `HEAP_ANALYZER_ENCRYPTION_KEY` 환경변수로 별도 키 지정 권장 (기본 키는 운영 부적합)
 - **나머지 섹션**: 사전 준비(OS/Java/포트), 디렉토리 권한(`/opt/heapdumps/{dumpfiles,data,tmp}`), MAT CLI 설치, 앱 기동(`restart.sh`), 트러블슈팅 표(접속 실패/권한/한글 깨짐/`ENC()` 복호화 실패), 이관 패키지 체크리스트
-- **기본 admin 계정 변경 강조** — admin/shinhan@10 자동 생성 후 즉시 변경 권고
+- **기본 admin 계정 변경 강조** — admin/<REDACTED> 자동 생성 후 즉시 변경 권고
 
 ## [2026-04-26] Transfer Logs 페이지 고도화 — 검색/필터/페이지네이션/Export
 
@@ -9380,7 +9455,7 @@ Phase 1(2026-04-26)에서 `keyword(BM25)`만 동작. 운영팀 ES 예시 쿼리 
 - 기존 `ENC(...)` 암호화 값 호환성 유지
 
 ### 3.3 [높음] 기본 관리자 비밀번호 외부화
-- `shinhan@10` 하드코딩 제거, 환경변수 `HEAP_ADMIN_DEFAULT_PASSWORD`에서 로드
+- `<REDACTED>` 하드코딩 제거, 환경변수 `HEAP_ADMIN_DEFAULT_PASSWORD`에서 로드
 - 미설정 시 UUID 자동 생성 + warn 로그로 비밀번호 출력
 
 ### 3.4 [높음] init.sql DB 비밀번호 제거
@@ -9572,7 +9647,7 @@ Phase 1(2026-04-26)에서 `keyword(BM25)`만 동작. 운영팀 ES 예시 쿼리 
 ### Phase 3: Spring Security + 로그인/계정 관리
 **신규 파일:** `config/SecurityConfig.java`, `service/CustomUserDetailsService.java`, `service/UserService.java`, `controller/AuthController.java`, `controller/AdminController.java`, `templates/login.html`, `templates/admin/users.html`
 - Spring Security 기반 세션 인증 (모든 페이지 인증 필요, /login 공개)
-- 기본 관리자 계정: admin / shinhan@10 (BCrypt)
+- 기본 관리자 계정: admin / <REDACTED> (BCrypt)
 - ADMIN 전용 계정 관리 페이지 (/admin/users): 사용자 추가/수정/삭제/비밀번호 초기화
 - CSRF: API 경로(/api/**) 제외, Thymeleaf 페이지는 자동 토큰 삽입
 

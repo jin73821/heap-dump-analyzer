@@ -34,7 +34,14 @@ import java.util.Map;
 @PreAuthorize("hasRole('ADMIN')")
 public class AdminController {
 
+    private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(AdminController.class);
+
     private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /** 감사 로깅용 수행자 식별 (LeakRuleAdminController 컨벤션) */
+    private static String who(org.springframework.security.core.Authentication auth) {
+        return auth != null ? auth.getName() : "unknown";
+    }
 
     private final UserService userService;
     private final LoginHistoryRepository loginHistoryRepository;
@@ -71,6 +78,11 @@ public class AdminController {
             m.put("enabled", u.isEnabled());
             m.put("createdAt", u.getCreatedAt() != null
                     ? u.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : null);
+            m.put("locked", u.isAccountLocked());
+            m.put("lockedAt", u.getLockedAt() != null
+                    ? u.getLockedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : null);
+            m.put("otpEnrolled", u.getOtpSecret() != null && !u.getOtpSecret().isEmpty());
+            m.put("otpFailCount", u.getOtpFailCount());
             result.add(m);
         }
         return ResponseEntity.ok(result);
@@ -127,6 +139,44 @@ public class AdminController {
             String newPassword = body.get("password");
             userService.resetPassword(id, newPassword);
             result.put("success", true);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /** OTP 반복 실패 잠금 해제 */
+    @PostMapping("/api/admin/users/{id}/unlock")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> unlockUser(@PathVariable Long id,
+                                                          org.springframework.security.core.Authentication auth) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            User user = userService.unlockUser(id);
+            logger.info("[User] action=unlock target={} by={}", user.getUsername(), who(auth));
+            result.put("success", true);
+            result.put("username", user.getUsername());
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /** OTP seed 초기화 — 대상 사용자는 다음 로그인 시 Seed 재등록 */
+    @PostMapping("/api/admin/users/{id}/otp-reset")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> resetOtp(@PathVariable Long id,
+                                                        org.springframework.security.core.Authentication auth) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            User user = userService.resetOtp(id);
+            logger.info("[User] action=otp-reset target={} by={}", user.getUsername(), who(auth));
+            result.put("success", true);
+            result.put("username", user.getUsername());
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             result.put("success", false);

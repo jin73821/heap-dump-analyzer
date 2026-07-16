@@ -67,6 +67,7 @@ public class HeapDumpAnalyzerService {
     private final FileManagementService fileMgmt;
     private final LlmConfigService llmConfig;
     private final RagConfigService ragConfig;
+    private final TwoFactorConfigService twoFactorConfig;
     private final RemoteDumpService remoteDumpService;
     private final AiInsightManager aiInsight;
 
@@ -170,6 +171,7 @@ public class HeapDumpAnalyzerService {
                                    FileManagementService fileMgmt,
                                    LlmConfigService llmConfig,
                                    RagConfigService ragConfig,
+                                   TwoFactorConfigService twoFactorConfig,
                                    RemoteDumpService remoteDumpService,
                                    AiInsightManager aiInsight,
                                    MultipartProperties multipartProperties) {
@@ -185,6 +187,7 @@ public class HeapDumpAnalyzerService {
         this.fileMgmt = fileMgmt;
         this.llmConfig = llmConfig;
         this.ragConfig = ragConfig;
+        this.twoFactorConfig = twoFactorConfig;
         this.remoteDumpService = remoteDumpService;
         this.aiInsight = aiInsight;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
@@ -1359,6 +1362,23 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
+    // ── 로그인 2차인증 설정 facade (TwoFactorConfigService 위임 + 영속화) ──
+
+    public void setTwoFactorMode(String mode) {
+        twoFactorConfig.setTwoFactorMode(mode);
+        persistSettings();
+    }
+
+    public void setTwoFactorAdminPolicy(String policy) {
+        twoFactorConfig.setTwoFactorAdminPolicy(policy);
+        persistSettings();
+    }
+
+    public void setSsoConfig(String endpointUrl, String clientId, String clientSecret, String redirectUri) {
+        twoFactorConfig.setSsoConfig(endpointUrl, clientId, clientSecret, redirectUri);
+        persistSettings();
+    }
+
     // ── 런타임 설정 영속화 (settings.json) ─────────────────────────
 
     /**
@@ -1487,9 +1507,10 @@ public class HeapDumpAnalyzerService {
                 }
             }
 
-            // LLM/RAG/원격 설정 복원 — 각 서비스에 위임
+            // LLM/RAG/2FA/원격 설정 복원 — 각 서비스에 위임
             llmConfig.applyFromSettings(saved);
             ragConfig.applyFromSettings(saved);
+            twoFactorConfig.applyFromSettings(saved);
             remoteDumpService.applyFromSettings(saved);
             if (ragConfig.isRagEnabled()) {
                 logger.info("[Settings] RAG enabled: url={}, index={}, mode={}",
@@ -1539,9 +1560,10 @@ public class HeapDumpAnalyzerService {
             settings.put("allowAllExtensions", allowAllExtensions);
             settings.put("sessionTimeoutHours", sessionTimeoutHours);
             settings.put("dashboardDetectDays", dashboardDetectDays);
-            // LLM/RAG/원격 설정 — 각 서비스에 위임
+            // LLM/RAG/2FA/원격 설정 — 각 서비스에 위임
             llmConfig.collectSettings(settings);
             ragConfig.collectSettings(settings);
+            twoFactorConfig.collectSettings(settings);
             remoteDumpService.collectSettings(settings);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
@@ -1574,9 +1596,10 @@ public class HeapDumpAnalyzerService {
             updates.put("spring.servlet.multipart.max-file-size", multipartSize);
             updates.put("spring.servlet.multipart.max-request-size", multipartSize);
             updates.put("server.servlet.session.timeout", sessionTimeoutHours + "h");
-            // LLM/RAG/원격 설정 — 각 서비스에 위임
+            // LLM/RAG/2FA/원격 설정 — 각 서비스에 위임
             llmConfig.collectApplicationProperties(updates);
             ragConfig.collectApplicationProperties(updates);
+            twoFactorConfig.collectApplicationProperties(updates);
             remoteDumpService.collectApplicationProperties(updates);
             List<String> newLines = new ArrayList<>();
             for (String line : lines) {

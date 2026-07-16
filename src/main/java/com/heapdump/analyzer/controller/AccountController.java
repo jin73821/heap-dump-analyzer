@@ -55,6 +55,18 @@ public class AccountController {
         return ResponseEntity.ok(res);
     }
 
+    // ── OTP 초기화 (자기서비스) ────────────────────────────────
+
+    @PostMapping("/api/account/otp-reset")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> resetOwnOtp(@RequestBody Map<String, String> body,
+                                                           Principal principal) {
+        userService.resetOwnOtp(principal.getName(), body.get("currentPassword"));
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        return ResponseEntity.ok(res);
+    }
+
     // ── 메모장 ──────────────────────────────────────────────
 
     @GetMapping("/api/account/memo")
