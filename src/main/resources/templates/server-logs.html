@@ -94,16 +94,20 @@
         .badge-success { background: #D1FAE5; color: #065F46; }
         .badge-failed { background: #FEE2E2; color: #991B1B; }
         .badge-progress { background: #FEF3C7; color: #92400E; }
-        .td-mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px; }
+        .td-mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px;
+                   white-space: nowrap; }
         .td-num { color: #6B7280; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
         .td-server { font-weight: 500; color: #2563EB; }
+        /* 파일명·경로 셀 공통: inline-block 이어야 max-width + ellipsis 가 실제로 동작한다
+           (인라인 <span> 은 max-width 를 무시해 잘리지 않고 컬럼을 밀어내 우측이 잘림). */
         .td-name { font-weight: 500; max-width: 240px; overflow: hidden; text-overflow: ellipsis;
-                   white-space: nowrap; }
-        .td-path { font-size: 11px; color: #6B7280; max-width: 360px; overflow: hidden;
+                   white-space: nowrap; display: inline-block; vertical-align: middle; }
+        .td-path { font-size: 11px; color: #6B7280; max-width: 320px; overflow: hidden;
                    text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace;
                    display: inline-block; vertical-align: middle; }
-        /* 잘린 경로(.is-truncated) 만 hover 시 펼침 및 cursor: help */
-        .td-path.is-truncated { cursor: help; }
+        /* 잘린 셀(.is-truncated) 만 hover 시 펼침 및 cursor: help */
+        .td-name.is-truncated, .td-path.is-truncated { cursor: help; }
+        .td-name.is-truncated:hover { white-space: normal; word-break: break-all; max-width: 360px; }
         .td-path.is-truncated:hover { white-space: normal; word-break: break-all; max-width: 480px; }
         /* 에러 컬럼 — 버튼 + 팝오버 (긴 메시지로 다른 행 높이가 부풀지 않도록) */
         .err-btn { font-size: 11px; padding: 3px 9px; border-radius: 14px;
@@ -503,7 +507,7 @@ function renderTable(items) {
 
 // 렌더 또는 폭 변경 시 실제 truncate 여부 검사하여 .is-truncated 토글
 function markTruncated() {
-    document.querySelectorAll('#logsTableBody .td-path').forEach(function(el) {
+    document.querySelectorAll('#logsTableBody .td-path, #logsTableBody .td-name').forEach(function(el) {
         if (el.scrollWidth > el.clientWidth + 1) el.classList.add('is-truncated');
         else el.classList.remove('is-truncated');
     });
