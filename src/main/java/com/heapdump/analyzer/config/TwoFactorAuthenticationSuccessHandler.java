@@ -45,13 +45,14 @@ public class TwoFactorAuthenticationSuccessHandler implements AuthenticationSucc
     public void onAuthenticationSuccess(HttpServletRequest request, HttpServletResponse response,
                                         Authentication authentication) throws IOException {
         if (!twoFactorConfig.isOtpMode()) {
-            response.sendRedirect("/");
+            // 2FA 미사용/SSO 모드: 1차 인증이 곧 최종 완료 지점 → 비밀번호 만료 검사
+            finishOrForceChange(authentication.getName(), request, response);
             return;
         }
 
-        // 관리자 OTP 예외 정책: 관리자는 OTP 단계를 건너뛰고 즉시 완전 인증
+        // 관리자 OTP 예외 정책: 관리자는 OTP 단계를 건너뛰고 즉시 완전 인증 (여기서 만료 검사)
         if (isAdmin(authentication) && twoFactorConfig.isAdminExempt()) {
-            response.sendRedirect("/");
+            finishOrForceChange(authentication.getName(), request, response);
             return;
         }
 
@@ -64,6 +65,19 @@ public class TwoFactorAuthenticationSuccessHandler implements AuthenticationSucc
         contextRepository.saveContext(ctx, request, response);
 
         response.sendRedirect(twoFactorService.isEnrolled(username) ? "/login/otp" : "/login/otp/setup");
+    }
+
+    /**
+     * 로그인 최종 완료 처리: 비밀번호 만료면 부분 인증(ROLE_PWD_EXPIRED)으로 강등 후
+     * 강제 변경 페이지로, 아니면 "/" 로 이동.
+     */
+    private void finishOrForceChange(String username, HttpServletRequest request, HttpServletResponse response)
+            throws IOException {
+        if (twoFactorService.forcePasswordChangeIfExpired(username, request, response)) {
+            response.sendRedirect("/login/password");
+        } else {
+            response.sendRedirect("/");
+        }
     }
 
     private static boolean isAdmin(Authentication auth) {

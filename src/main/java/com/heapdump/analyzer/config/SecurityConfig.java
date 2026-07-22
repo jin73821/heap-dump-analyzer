@@ -1,6 +1,7 @@
 package com.heapdump.analyzer.config;
 
 import com.heapdump.analyzer.service.CustomUserDetailsService;
+import com.heapdump.analyzer.service.PasswordPolicyConfigService;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -44,6 +45,8 @@ public class SecurityConfig {
                 .requestMatchers("/sso/login", "/sso/callback").permitAll()
                 // OTP 2차인증 페이지 — ROLE_PRE_AUTH 부분 인증 토큰도 접근 가능해야 함
                 .requestMatchers("/login/otp", "/login/otp/setup").authenticated()
+                // 비밀번호 만료 강제 변경 페이지 — ROLE_PWD_EXPIRED 부분 인증 토큰도 접근 가능해야 함
+                .requestMatchers("/login/password").authenticated()
                 .requestMatchers("/admin/**", "/api/admin/**").hasRole("ADMIN")
 
                 // ── Settings 변경 API: ADMIN 전용 (USER 는 GET 으로 조회만 가능) ──
@@ -94,11 +97,20 @@ public class SecurityConfig {
             // PRE_AUTH(OTP 대기) 상태로 다른 경로 접근 시 403 대신 OTP 페이지로 유도
             .exceptionHandling(eh -> eh.accessDeniedHandler((req, res, ex) -> {
                 Authentication a = SecurityContextHolder.getContext().getAuthentication();
-                boolean preAuth = a != null && a.getAuthorities().stream()
-                        .anyMatch(g -> TwoFactorAuthenticationSuccessHandler.ROLE_PRE_AUTH.equals(g.getAuthority()));
-                if (preAuth) {
-                    res.sendRedirect("/login/otp");
-                    return;
+                if (a != null) {
+                    boolean preAuth = a.getAuthorities().stream()
+                            .anyMatch(g -> TwoFactorAuthenticationSuccessHandler.ROLE_PRE_AUTH.equals(g.getAuthority()));
+                    if (preAuth) {
+                        res.sendRedirect("/login/otp");
+                        return;
+                    }
+                    // 비밀번호 만료(ROLE_PWD_EXPIRED) 부분 인증 → 강제 변경 페이지로 유도
+                    boolean pwdExpired = a.getAuthorities().stream()
+                            .anyMatch(g -> PasswordPolicyConfigService.ROLE_PWD_EXPIRED.equals(g.getAuthority()));
+                    if (pwdExpired) {
+                        res.sendRedirect("/login/password");
+                        return;
+                    }
                 }
                 res.sendError(HttpServletResponse.SC_FORBIDDEN); // 기존 기본 403 동작 보존 (CSRF 거부 포함)
             }))

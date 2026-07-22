@@ -68,6 +68,7 @@ public class HeapDumpAnalyzerService {
     private final LlmConfigService llmConfig;
     private final RagConfigService ragConfig;
     private final TwoFactorConfigService twoFactorConfig;
+    private final PasswordPolicyConfigService passwordPolicyConfig;
     private final RemoteDumpService remoteDumpService;
     private final AiInsightManager aiInsight;
 
@@ -172,6 +173,7 @@ public class HeapDumpAnalyzerService {
                                    LlmConfigService llmConfig,
                                    RagConfigService ragConfig,
                                    TwoFactorConfigService twoFactorConfig,
+                                   PasswordPolicyConfigService passwordPolicyConfig,
                                    RemoteDumpService remoteDumpService,
                                    AiInsightManager aiInsight,
                                    MultipartProperties multipartProperties) {
@@ -188,6 +190,7 @@ public class HeapDumpAnalyzerService {
         this.llmConfig = llmConfig;
         this.ragConfig = ragConfig;
         this.twoFactorConfig = twoFactorConfig;
+        this.passwordPolicyConfig = passwordPolicyConfig;
         this.remoteDumpService = remoteDumpService;
         this.aiInsight = aiInsight;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
@@ -1379,6 +1382,13 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
+    // ── 비밀번호 만료 정책 facade (PasswordPolicyConfigService 위임 + 영속화) ──
+
+    public void setPasswordPolicy(int expiryDays, boolean adminExempt) {
+        passwordPolicyConfig.setPasswordPolicy(expiryDays, adminExempt);
+        persistSettings();
+    }
+
     // ── 런타임 설정 영속화 (settings.json) ─────────────────────────
 
     /**
@@ -1511,6 +1521,7 @@ public class HeapDumpAnalyzerService {
             llmConfig.applyFromSettings(saved);
             ragConfig.applyFromSettings(saved);
             twoFactorConfig.applyFromSettings(saved);
+            passwordPolicyConfig.applyFromSettings(saved);
             remoteDumpService.applyFromSettings(saved);
             if (ragConfig.isRagEnabled()) {
                 logger.info("[Settings] RAG enabled: url={}, index={}, mode={}",
@@ -1564,6 +1575,7 @@ public class HeapDumpAnalyzerService {
             llmConfig.collectSettings(settings);
             ragConfig.collectSettings(settings);
             twoFactorConfig.collectSettings(settings);
+            passwordPolicyConfig.collectSettings(settings);
             remoteDumpService.collectSettings(settings);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
@@ -1600,6 +1612,7 @@ public class HeapDumpAnalyzerService {
             llmConfig.collectApplicationProperties(updates);
             ragConfig.collectApplicationProperties(updates);
             twoFactorConfig.collectApplicationProperties(updates);
+            passwordPolicyConfig.collectApplicationProperties(updates);
             remoteDumpService.collectApplicationProperties(updates);
             List<String> newLines = new ArrayList<>();
             for (String line : lines) {

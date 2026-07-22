@@ -20,6 +20,7 @@ import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -701,13 +702,9 @@ public class RemoteDumpService {
             File localFile = new File(localDir, filename);
 
             if (localFile.exists()) {
-                String base = filename.contains(".") ? filename.substring(0, filename.lastIndexOf('.')) : filename;
-                String ext = filename.contains(".") ? filename.substring(filename.lastIndexOf('.')) : "";
-                int count = 2;
-                while (localFile.exists()) {
-                    localFile = new File(localDir, base + "_" + count + ext);
-                    count++;
-                }
+                localFile = new File(localDir, dedupFilename(localDir, filename, LocalDateTime.now()));
+                logger.info("[RemoteDump] Local name collision: {} → {} (server={})",
+                        filename, localFile.getName(), server.getName());
                 filename = localFile.getName();
                 log.setFilename(filename);
             }
@@ -761,6 +758,28 @@ public class RemoteDumpService {
 
         transferLogRepository.save(log);
         return log;
+    }
+
+    /**
+     * 로컬 동명 파일 충돌 시 회피명 생성 — 전송 시각 타임스탬프를 마지막 확장자 앞에 삽입.
+     * "_2" 카운터와 달리 언제 전송된 사본인지 이름만으로 드러난다(원본명인지 회피명인지 모호성 제거).
+     * 1) base_yyyyMMddHHmm.ext → 2) 같은 분 재충돌 시 base_yyyyMMddHHmmss.ext
+     * → 3) 같은 초까지 충돌하면 카운터 폴백(base_yyyyMMddHHmmss_N.ext).
+     * 확장자 없는 파일(exec 바이너리 등)은 이름 끝에 붙는다.
+     */
+    static String dedupFilename(File dir, String filename, LocalDateTime now) {
+        int dot = filename.lastIndexOf('.');
+        String base = dot > 0 ? filename.substring(0, dot) : filename;
+        String ext  = dot > 0 ? filename.substring(dot) : "";
+        String minute = now.format(DateTimeFormatter.ofPattern("yyyyMMddHHmm"));
+        String candidate = base + "_" + minute + ext;
+        if (!new File(dir, candidate).exists()) return candidate;
+        String second = now.format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
+        candidate = base + "_" + second + ext;
+        if (!new File(dir, candidate).exists()) return candidate;
+        int count = 2;
+        while (new File(dir, base + "_" + second + "_" + count + ext).exists()) count++;
+        return base + "_" + second + "_" + count + ext;
     }
 
     /** SSH `stat -c %s` 로 원격 파일 크기 조회. 실패 시 -1. */

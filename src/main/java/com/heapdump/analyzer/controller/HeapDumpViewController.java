@@ -15,7 +15,6 @@ import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapHistoryAggregator;
 import com.heapdump.analyzer.service.PdfReportService;
-import com.heapdump.analyzer.service.TwoFactorConfigService;
 import com.heapdump.analyzer.util.AuthUtil;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
@@ -51,22 +50,19 @@ public class HeapDumpViewController {
     private final HeapHistoryAggregator aggregator;
     private final ComparisonHistoryService comparisonHistoryService;
     private final CoreDumpAnalyzerService coreDumpService;
-    private final TwoFactorConfigService twoFactorConfig;
 
     public HeapDumpViewController(HeapDumpAnalyzerService analyzerService,
                                   HeapDumpConfig config,
                                   PdfReportService pdfReportService,
                                   HeapHistoryAggregator aggregator,
                                   ComparisonHistoryService comparisonHistoryService,
-                                  CoreDumpAnalyzerService coreDumpService,
-                                  TwoFactorConfigService twoFactorConfig) {
+                                  CoreDumpAnalyzerService coreDumpService) {
         this.analyzerService = analyzerService;
         this.config = config;
         this.pdfReportService = pdfReportService;
         this.aggregator = aggregator;
         this.comparisonHistoryService = comparisonHistoryService;
         this.coreDumpService = coreDumpService;
-        this.twoFactorConfig = twoFactorConfig;
     }
 
     // ── 메인 페이지 ──────────────────────────────────────────────
@@ -470,12 +466,7 @@ public class HeapDumpViewController {
         model.addAttribute("matKeepUnreachable", analyzerService.isKeepUnreachableObjects());
         model.addAttribute("compressAfterAnalysis", analyzerService.isCompressAfterAnalysis());
         model.addAttribute("isAdmin", AuthUtil.isAdmin(authentication));
-        model.addAttribute("twoFactorMode", twoFactorConfig.getTwoFactorMode());
-        model.addAttribute("twoFactorAdminPolicy", twoFactorConfig.getTwoFactorAdminPolicy());
-        model.addAttribute("ssoEndpointUrl", twoFactorConfig.getSsoEndpointUrl());
-        model.addAttribute("ssoClientId", twoFactorConfig.getSsoClientId());
-        model.addAttribute("ssoRedirectUri", twoFactorConfig.getSsoRedirectUri());
-        model.addAttribute("ssoClientSecretSet", twoFactorConfig.isSsoClientSecretSet());
+        // 2차인증 / 비밀번호 만료 설정은 Accounts(/admin/users) '설정' 탭으로 이동됨
         return "settings";
     }
 

@@ -38,6 +38,14 @@ public class TwoFactorService {
 
     public enum EnrollResult { SUCCESS, INVALID_CODE, USER_GONE }
 
+    /**
+     * 로그인 최종 확정 결과.
+     *   COMPLETE    — 완전 인증 승격 완료 → "/"
+     *   PWD_EXPIRED — 2FA 통과했으나 비밀번호 만료 → 강제 변경(/login/password)
+     *   FAILED      — 사용자 재조회 불가/비활성/잠금 → 세션 무효화
+     */
+    public enum LoginCompletion { COMPLETE, PWD_EXPIRED, FAILED }
+
     /** verifyOtp 결과 + 남은 시도 횟수 */
     public record OtpVerification(OtpResult result, int remainingAttempts) {
         static OtpVerification of(OtpResult r) { return new OtpVerification(r, 0); }
@@ -47,16 +55,19 @@ public class TwoFactorService {
     private final CustomUserDetailsService userDetailsService;
     private final LoginHistoryRecorder historyRecorder;
     private final TwoFactorConfigService twoFactorConfig;
+    private final PasswordPolicyConfigService passwordPolicy;
     private final HttpSessionSecurityContextRepository contextRepository = new HttpSessionSecurityContextRepository();
 
     public TwoFactorService(UserRepository userRepository,
                             CustomUserDetailsService userDetailsService,
                             LoginHistoryRecorder historyRecorder,
-                            TwoFactorConfigService twoFactorConfig) {
+                            TwoFactorConfigService twoFactorConfig,
+                            PasswordPolicyConfigService passwordPolicy) {
         this.userRepository = userRepository;
         this.userDetailsService = userDetailsService;
         this.historyRecorder = historyRecorder;
         this.twoFactorConfig = twoFactorConfig;
+        this.passwordPolicy = passwordPolicy;
     }
 
     /** OTP seed 등록 여부 */
@@ -156,13 +167,90 @@ public class TwoFactorService {
     }
 
     /**
-     * PRE_AUTH 상태를 완전 인증으로 승격.
+     * PRE_AUTH 상태를 완전 인증으로 승격 (OTP/SSO 최종 확정 지점).
      * DB 에서 UserDetails 를 재로드 (OTP 대기 중 비활성화/삭제/잠금 감지) 후
      * SecurityContext 를 교체하고 세션에 명시 저장 (Security 6 explicit save).
      *
-     * @return 승격 성공 여부. false 면 호출자가 세션 무효화 + /login redirect 처리.
+     * 2FA 통과 = 로그인 성공으로 기록(sessionId 포함, 활성 세션 매칭용). 이후 비밀번호 만료면
+     * 완전 인증 대신 ROLE_PWD_EXPIRED 부분 인증으로 교체해 강제 변경 페이지로 유도한다.
+     *
+     * @return {@link LoginCompletion}. FAILED 면 호출자가 세션 무효화 + /login redirect 처리.
      */
-    public boolean completeAuthentication(HttpServletRequest req, HttpServletResponse res) {
+    public LoginCompletion completeAuthentication(HttpServletRequest req, HttpServletResponse res) {
+        Authentication current = SecurityContextHolder.getContext().getAuthentication();
+        if (current == null) {
+            return LoginCompletion.FAILED;
+        }
+        String username = current.getName();
+        UserDetails ud;
+        try {
+            ud = userDetailsService.loadUserByUsername(username);
+        } catch (Exception e) {
+            logger.warn("[TwoFactor] 완전 인증 승격 실패 — 사용자 재조회 불가: {}", username);
+            return LoginCompletion.FAILED;
+        }
+        if (!ud.isEnabled() || !ud.isAccountNonLocked()) {
+            logger.warn("[TwoFactor] 완전 인증 승격 거부 — enabled={}, nonLocked={}, user={}",
+                    ud.isEnabled(), ud.isAccountNonLocked(), username);
+            return LoginCompletion.FAILED;
+        }
+        // 세션 회전 없음 → login_history sessionId ↔ 활성 세션 매칭 유지
+        historyRecorder.recordSuccess(username, req);
+
+        User user = userRepository.findByUsername(username).orElse(null);
+        if (user != null && passwordPolicy.isExpired(user)) {
+            establishPasswordExpiredContext(username, req, res);
+            logger.info("[TwoFactor] action=verify-success user={} pwdExpired=true → 강제 변경", username);
+            return LoginCompletion.PWD_EXPIRED;
+        }
+
+        UsernamePasswordAuthenticationToken full =
+                UsernamePasswordAuthenticationToken.authenticated(ud, null, ud.getAuthorities());
+        SecurityContext ctx = SecurityContextHolder.createEmptyContext();
+        ctx.setAuthentication(full);
+        SecurityContextHolder.setContext(ctx);
+        contextRepository.saveContext(ctx, req, res);
+        logger.info("[TwoFactor] action=verify-success user={}", username);
+        return LoginCompletion.COMPLETE;
+    }
+
+    // ── 비밀번호 만료 강제 변경 게이트 (Task2) ──────────────────────
+
+    /**
+     * 로그인 최종 완료 시점(2FA 미사용/관리자 예외)에서 비밀번호 만료면 부분 인증으로 강등.
+     * 폼 로그인 필터가 이미 완전 인증을 세팅한 상태에서 SuccessHandler 가 호출 → 교체 저장.
+     *
+     * @return true = 만료로 강제 변경 필요(호출자가 /login/password redirect), false = 정상.
+     */
+    public boolean forcePasswordChangeIfExpired(String username, HttpServletRequest req, HttpServletResponse res) {
+        User user = userRepository.findByUsername(username).orElse(null);
+        if (user == null || !passwordPolicy.isExpired(user)) {
+            return false;
+        }
+        establishPasswordExpiredContext(username, req, res);
+        logger.info("[PwdPolicy] password expired at login — forcing change: user={}", username);
+        return true;
+    }
+
+    /** SecurityContext 를 ROLE_PWD_EXPIRED 부분 인증 토큰으로 교체 + 세션 저장 */
+    private void establishPasswordExpiredContext(String username, HttpServletRequest req, HttpServletResponse res) {
+        UsernamePasswordAuthenticationToken token = UsernamePasswordAuthenticationToken.authenticated(
+                username, null,
+                java.util.List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(
+                        PasswordPolicyConfigService.ROLE_PWD_EXPIRED)));
+        SecurityContext ctx = SecurityContextHolder.createEmptyContext();
+        ctx.setAuthentication(token);
+        SecurityContextHolder.setContext(ctx);
+        contextRepository.saveContext(ctx, req, res);
+    }
+
+    /**
+     * 강제 비밀번호 변경 완료 후 ROLE_PWD_EXPIRED → 완전 인증 승격.
+     * 로그인 성공은 2FA/1차 통과 시 이미 기록됨 → 재기록하지 않음.
+     *
+     * @return 승격 성공 여부. false 면 호출자가 세션 무효화 처리.
+     */
+    public boolean upgradeAfterPasswordChange(HttpServletRequest req, HttpServletResponse res) {
         Authentication current = SecurityContextHolder.getContext().getAuthentication();
         if (current == null) {
             return false;
@@ -172,12 +260,10 @@ public class TwoFactorService {
         try {
             ud = userDetailsService.loadUserByUsername(username);
         } catch (Exception e) {
-            logger.warn("[TwoFactor] 완전 인증 승격 실패 — 사용자 재조회 불가: {}", username);
+            logger.warn("[PwdPolicy] 변경 후 승격 실패 — 사용자 재조회 불가: {}", username);
             return false;
         }
         if (!ud.isEnabled() || !ud.isAccountNonLocked()) {
-            logger.warn("[TwoFactor] 완전 인증 승격 거부 — enabled={}, nonLocked={}, user={}",
-                    ud.isEnabled(), ud.isAccountNonLocked(), username);
             return false;
         }
         UsernamePasswordAuthenticationToken full =
@@ -186,9 +272,7 @@ public class TwoFactorService {
         ctx.setAuthentication(full);
         SecurityContextHolder.setContext(ctx);
         contextRepository.saveContext(ctx, req, res);
-        // 세션 회전 없음 → login_history sessionId ↔ 활성 세션 매칭 유지
-        historyRecorder.recordSuccess(username, req);
-        logger.info("[TwoFactor] action=verify-success user={}", username);
+        logger.info("[PwdPolicy] action=change-success user={} — 완전 인증 승격", username);
         return true;
     }
 }

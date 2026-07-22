@@ -40,6 +40,14 @@ public class User {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    /**
+     * 마지막 비밀번호 변경 시각 — 비밀번호 만료 정책 판정 기준.
+     * null 이면 판정 시 createdAt 으로 폴백 (기존 계정 무중단 마이그레이션).
+     * 생성 시 onCreate 에서 스탬프, 이후 모든 비밀번호 변경 경로에서 갱신.
+     */
+    @Column(name = "password_changed_at")
+    private LocalDateTime passwordChangedAt;
+
     @Column(name = "memo", columnDefinition = "MEDIUMTEXT")
     private String memo;
 
@@ -81,6 +89,9 @@ public class User {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
+        if (passwordChangedAt == null) {
+            passwordChangedAt = createdAt;
+        }
     }
 
     @PreUpdate

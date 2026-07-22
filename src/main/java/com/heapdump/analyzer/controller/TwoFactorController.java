@@ -178,11 +178,17 @@ public class TwoFactorController {
     }
 
     private String completeOrFallback(HttpServletRequest req, HttpServletResponse res) {
-        if (twoFactorService.completeAuthentication(req, res)) {
-            return "redirect:/";
+        switch (twoFactorService.completeAuthentication(req, res)) {
+            case COMPLETE:
+                return "redirect:/";
+            case PWD_EXPIRED:
+                // 2FA 통과했으나 비밀번호 만료 → 강제 변경 페이지로 유도
+                return "redirect:/login/password";
+            case FAILED:
+            default:
+                invalidateSession(req);
+                return "redirect:/login?error=true";
         }
-        invalidateSession(req);
-        return "redirect:/login?error=true";
     }
 
     private void invalidateSession(HttpServletRequest req) {

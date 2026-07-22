@@ -7,170 +7,11 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>코어 덤프 분석 중... - Heap Dump Analyzer</title>
-    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-28}">
-    <link rel="stylesheet" th:href="@{/css/style.css}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-25}">
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-07-17}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-07-17c}">
     <style>
-        body { background: var(--cd-bg, #F3F4F6) !important; }
-        /* progress 전용 topbar override: gap 대신 space-between */
+        /* progress 전용: topbar 우측 칩 정렬만 인라인 변형 */
         .cd-topbar { justify-content: space-between; }
-        .topbar-right { display: flex; align-items: center; gap: 8px; }
-        .file-chip {
-            background: #DBEAFE; color: #1D4ED8; border-radius: 20px;
-            padding: 4px 14px; font-size: 13px; font-weight: 600;
-            max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .elapsed-chip {
-            background: #F3F4F6; color: #374151; border-radius: 12px;
-            padding: 4px 10px; font-size: 12px; font-weight: 600;
-            font-family: 'JetBrains Mono', monospace;
-        }
-        .progress-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
-        }
-        @media (max-width: 900px) { .progress-grid { grid-template-columns: 1fr; } }
-
-        /* 진행 카드 */
-        .progress-card {
-            background: #fff; border-radius: 14px;
-            box-shadow: 0 2px 12px rgba(0,0,0,.08); overflow: hidden;
-        }
-        .progress-card-header { padding: 24px 28px 20px; border-bottom: 1px solid #F3F4F6; }
-        .progress-info { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-        .progress-label { font-size: 15px; font-weight: 600; color: #1F2937; }
-        .progress-pct { font-size: 22px; font-weight: 800; color: #2563EB; }
-        .progress-track { background: #E5E7EB; border-radius: 999px; height: 12px; overflow: hidden; }
-        .progress-fill {
-            height: 100%; border-radius: 999px;
-            background: linear-gradient(90deg, #3B82F6, #60A5FA);
-            width: 0%; transition: width .5s ease;
-            position: relative; overflow: hidden;
-        }
-        .progress-fill::after {
-            content: ''; position: absolute; top: 0; left: -100%; width: 60%; height: 100%;
-            background: linear-gradient(90deg, transparent, rgba(255,255,255,.4), transparent);
-            animation: shimmer 1.6s infinite;
-        }
-        @keyframes shimmer { 0% { left: -60%; } 100% { left: 160%; } }
-        .progress-fill.done { background: linear-gradient(90deg, #059669, #34D399); }
-        .progress-fill.done::after { animation: none; }
-        .progress-fill.error { background: linear-gradient(90deg, #DC2626, #F87171); }
-        .progress-fill.error::after { animation: none; }
-        .status-msg { margin-top: 10px; font-size: 13px; color: #6B7280; min-height: 18px; }
-
-        /* 타임라인 */
-        .timeline { padding: 20px 28px 24px; }
-        .timeline-item { display: flex; align-items: flex-start; gap: 14px; position: relative; padding: 4px 0; }
-        .timeline-line {
-            position: absolute; left: 15px; top: 32px; bottom: 0;
-            width: 2px; background: #E5E7EB; transition: background .4s;
-        }
-        .timeline-item:last-child .timeline-line { display: none; }
-        .timeline-item.step-done .timeline-line { background: #86EFAC; }
-        .timeline-item.step-active .timeline-line { background: #93C5FD; }
-        .timeline-dot {
-            width: 32px; height: 32px; border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 13px; font-weight: 700; flex-shrink: 0;
-            transition: all .4s; z-index: 1; position: relative;
-        }
-        .timeline-dot.waiting { background: #F3F4F6; color: #9CA3AF; }
-        .timeline-dot.active  { background: #DBEAFE; color: #2563EB; animation: pulse 1.2s infinite; }
-        .timeline-dot.done    { background: #D1FAE5; color: #059669; }
-        .timeline-dot.error   { background: #FEE2E2; color: #DC2626; }
-        .timeline-dot.skipped { background: #F9FAFB; color: #D1D5DB; border: 1.5px dashed #E5E7EB; }
-        .timeline-item.step-skipped .timeline-label { color: #C4C9D4; }
-        .timeline-item.step-skipped .timeline-desc  { color: #D1D5DB; }
-        @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(37,99,235,.3); } 50% { box-shadow: 0 0 0 8px rgba(37,99,235,0); } }
-        .timeline-dot .dot-num { display: block; }
-        .timeline-dot .dot-check { display: none; }
-        .timeline-dot .dot-err { display: none; }
-        .timeline-dot.done .dot-num { display: none; }
-        .timeline-dot.done .dot-check { display: block; animation: scaleIn .3s ease; }
-        .timeline-dot.error .dot-num { display: none; }
-        .timeline-dot.error .dot-err { display: block; }
-        @keyframes scaleIn { from { transform: scale(0); } to { transform: scale(1); } }
-        .timeline-content { flex: 1; padding: 5px 0 12px; }
-        .timeline-label { font-size: 14px; font-weight: 600; color: #1F2937; }
-        .timeline-desc { font-size: 12px; color: #6B7280; margin-top: 2px; }
-
-        /* 로그 콘솔 */
-        .log-card {
-            background: #fff; border-radius: 14px;
-            padding: 18px 20px; box-shadow: 0 2px 12px rgba(0,0,0,.08);
-            display: flex; flex-direction: column;
-        }
-        .log-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
-        .log-title { font-size: 14px; font-weight: 700; color: #1F2937; }
-        .log-count {
-            font-size: 11px; color: #9CA3AF; background: #F3F4F6;
-            padding: 2px 8px; border-radius: 10px;
-            font-family: 'JetBrains Mono', monospace;
-        }
-        .log-console {
-            background: #0F172A; color: #94A3B8;
-            font-family: 'JetBrains Mono', 'Fira Code', monospace;
-            font-size: 12px; line-height: 1.6;
-            padding: 14px; border-radius: 8px;
-            flex: 1; min-height: 400px;
-            overflow-y: scroll; overflow-x: hidden;
-            white-space: pre-wrap; word-break: break-all;
-        }
-
-        /* 완료 배너 */
-        .complete-banner {
-            background: linear-gradient(135deg, #065F46, #059669);
-            border-radius: 12px; padding: 12px 18px;
-            color: #fff; display: none; margin-bottom: 16px;
-            align-items: center; gap: 16px;
-        }
-        .complete-banner.visible { display: flex; animation: fadeIn .4s ease; }
-        .complete-info { flex: 1; }
-        .complete-title { font-size: 15px; font-weight: 700; }
-        .complete-sub { font-size: 12px; opacity: .85; }
-        .complete-btn {
-            background: #fff; color: #059669;
-            font-size: 13px; font-weight: 700;
-            padding: 8px 18px; border-radius: 8px;
-            text-decoration: none; flex-shrink: 0;
-            box-shadow: 0 2px 6px rgba(0,0,0,.12);
-        }
-        .stay-btn {
-            background: rgba(255,255,255,.15); color: #fff;
-            border: 1.5px solid rgba(255,255,255,.5);
-            font-size: 13px; font-weight: 600;
-            padding: 8px 16px; border-radius: 8px;
-            cursor: pointer; flex-shrink: 0;
-            transition: background .15s;
-        }
-        .stay-btn:hover { background: rgba(255,255,255,.28); }
-
-        /* 에러 배너 */
-        .error-banner {
-            background: linear-gradient(135deg, #FFF5F5, #FEE2E2);
-            border: 1px solid #FECACA; border-left: 4px solid #DC2626;
-            border-radius: 12px; padding: 20px 24px;
-            display: none; margin-bottom: 16px;
-        }
-        .error-banner.visible { display: block; animation: fadeIn .4s ease; }
-        .error-title { font-size: 16px; font-weight: 700; color: #991B1B; margin-bottom: 8px; }
-        .error-msg { font-size: 13px; color: #7F1D1D; margin-bottom: 4px; }
-        .error-hint { font-size: 12px; color: #9CA3AF; margin-bottom: 14px; }
-        .error-actions { display: flex; gap: 10px; flex-wrap: wrap; }
-        .error-btn-retry {
-            background: #7C3AED; color: #fff; border: none; border-radius: 8px;
-            padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
-            text-decoration: none; display: inline-block; transition: background .15s;
-        }
-        .error-btn-retry:hover:not(:disabled) { background: #6D28D9; }
-        .error-btn-retry:disabled { opacity: .6; cursor: not-allowed; }
-        .error-btn-home {
-            background: #F3F4F6; color: #374151; border: none; border-radius: 8px;
-            padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
-            text-decoration: none; display: inline-block;
-        }
-
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body>
@@ -180,125 +21,121 @@
 <div class="cd-topbar">
     <div class="topbar-brand">
         <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
-        <a href="/core-dump" style="color:#374151;text-decoration:none;font-size:18px;">&#8592;</a>
+        <a href="/core-dump" class="topbar-back" aria-label="코어 덤프 목록으로">&#8592;</a>
         <span class="topbar-title">코어 덤프 GDB 분석</span>
     </div>
+    <nav class="cd-steps" aria-label="분석 단계">
+        <span class="cd-step is-done"><span class="cd-step-dot"></span><span class="cd-step-label">파일</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step is-current pulse"><span class="cd-step-dot"></span><span class="cd-step-label">분석</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step"><span class="cd-step-dot"></span><span class="cd-step-label">결과</span></span>
+    </nav>
     <div class="topbar-right">
-        <span class="file-chip" th:text="${filename}">core.12345</span>
+        <span class="file-chip" th:text="${filename}" th:title="${filename}">core.12345</span>
         <span class="elapsed-chip" id="elapsedTime">--:--</span>
-        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+        <a href="/" class="topbar-btn">Dashboard</a>
     </div>
 </div>
 
 <div class="cd-page">
 
-    <!-- 완료 배너 -->
-    <div class="complete-banner" id="completeBanner">
-        <div class="complete-info">
-            <div class="complete-title">GDB 분석 완료</div>
-            <div class="complete-sub" id="countdownText">결과 페이지로 이동 중...</div>
+    <!-- 아웃컴 존 (완료/실패 배타) -->
+    <div class="outcome-zone">
+        <div class="complete-banner" id="completeBanner">
+            <div class="complete-preview">
+                <span class="complete-check">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"></path></svg>
+                </span>
+                <div class="complete-info">
+                    <div class="complete-title">GDB 분석 완료</div>
+                    <div class="complete-sub" id="countdownText">결과 페이지로 이동 중...</div>
+                </div>
+            </div>
+            <div class="complete-actions">
+                <button class="btn btn-ghost" id="stayBtn" onclick="cancelAutoRedirect()">여기 머무르기</button>
+                <a href="#" class="btn btn-primary" id="resultLink">결과 보기 →</a>
+            </div>
         </div>
-        <button class="stay-btn" id="stayBtn" onclick="cancelAutoRedirect()">&#9646;&#9646; 여기 머무르기</button>
-        <a href="#" class="complete-btn" id="resultLink">&#128202; 결과 보기</a>
-    </div>
 
-    <!-- 에러 배너 -->
-    <div class="error-banner" id="errorBanner">
-        <div class="error-title">&#10007; 분석 실패</div>
-        <div class="error-msg" id="errorMsg"></div>
-        <div class="error-hint" id="errorHint"></div>
-        <div class="error-actions">
-            <button class="error-btn-retry" id="retryBtn" onclick="retryAnalysis()">&#8635; 재분석</button>
-            <a href="/core-dump" class="error-btn-home">&#8592; 목록으로</a>
+        <div class="error-banner" id="errorBanner">
+            <div class="error-title">✕ 분석 실패</div>
+            <div class="error-msg" id="errorMsg"></div>
+            <div class="error-hint" id="errorHint"></div>
+            <div class="code-surface error-logtail" id="errorLogtail" style="display:none">
+                <div class="code-surface-head"><span>GDB 로그 (마지막 5줄)</span></div>
+                <div class="code-surface-body" id="errorLogtailBody"></div>
+            </div>
+            <div class="error-actions">
+                <button class="btn btn-primary" id="retryBtn" onclick="retryAnalysis()">재분석</button>
+                <a href="/core-dump" class="btn btn-ghost">목록으로</a>
+            </div>
         </div>
     </div>
 
     <div class="progress-grid">
-
-        <!-- 진행 카드 -->
+        <!-- 진행 패널 -->
         <div class="progress-card">
             <div class="progress-card-header">
                 <div class="progress-info">
                     <span class="progress-label" id="statusLabel">GDB 분석 준비 중...</span>
                     <span class="progress-pct" id="pctText">0%</span>
                 </div>
-                <div class="progress-track">
+                <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressTrack">
                     <div class="progress-fill" id="mainBar"></div>
                 </div>
-                <div class="status-msg" id="statusMsg">GDB 연결 대기 중...</div>
+                <div class="status-msg" id="statusMsg" aria-live="polite">GDB 연결 대기 중...</div>
             </div>
             <div class="timeline">
                 <div class="timeline-item" id="step-file">
-                    <div class="timeline-dot waiting" id="icon-file">
-                        <span class="dot-num">1</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
-                    </div>
-                    <div class="timeline-content">
-                        <div class="timeline-label">파일 확인</div>
-                        <div class="timeline-desc" id="desc-file">코어 덤프 파일 존재 여부 확인</div>
-                    </div>
+                    <div class="timeline-dot waiting" id="icon-file"><span class="dot-num">1</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span></div>
+                    <div class="timeline-content"><div class="timeline-label">파일 확인</div><div class="timeline-desc" id="desc-file">코어 덤프 파일 존재 여부 확인</div></div>
                     <div class="timeline-line"></div>
                 </div>
                 <div class="timeline-item" id="step-gdb">
-                    <div class="timeline-dot waiting" id="icon-gdb">
-                        <span class="dot-num">2</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
-                    </div>
-                    <div class="timeline-content">
-                        <div class="timeline-label">GDB 실행</div>
-                        <div class="timeline-desc" id="desc-gdb">GDB 배치 모드로 코어 덤프 분석</div>
-                    </div>
+                    <div class="timeline-dot waiting" id="icon-gdb"><span class="dot-num">2</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span></div>
+                    <div class="timeline-content"><div class="timeline-label">GDB 실행</div><div class="timeline-desc" id="desc-gdb">GDB 배치 모드로 코어 덤프 분석</div></div>
                     <div class="timeline-line"></div>
                 </div>
                 <div class="timeline-item" id="step-parse">
-                    <div class="timeline-dot waiting" id="icon-parse">
-                        <span class="dot-num">3</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
-                    </div>
-                    <div class="timeline-content">
-                        <div class="timeline-label">GDB 출력 파싱</div>
-                        <div class="timeline-desc" id="desc-parse">시그널·스택·스레드·레지스터·공유라이브러리 추출</div>
-                    </div>
+                    <div class="timeline-dot waiting" id="icon-parse"><span class="dot-num">3</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span></div>
+                    <div class="timeline-content"><div class="timeline-label">GDB 출력 파싱</div><div class="timeline-desc" id="desc-parse">시그널·스택·스레드·레지스터·공유라이브러리 추출</div></div>
                     <div class="timeline-line"></div>
                 </div>
                 <div class="timeline-item" id="step-save">
-                    <div class="timeline-dot waiting" id="icon-save">
-                        <span class="dot-num">4</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
-                    </div>
-                    <div class="timeline-content">
-                        <div class="timeline-label">결과 저장</div>
-                        <div class="timeline-desc" id="desc-save">분석 결과 JSON 저장 및 DB 기록</div>
-                    </div>
+                    <div class="timeline-dot waiting" id="icon-save"><span class="dot-num">4</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span></div>
+                    <div class="timeline-content"><div class="timeline-label">결과 저장</div><div class="timeline-desc" id="desc-save">분석 결과 JSON 저장 및 DB 기록</div></div>
                     <div class="timeline-line"></div>
                 </div>
                 <div class="timeline-item" id="step-done">
-                    <div class="timeline-dot waiting" id="icon-done">
-                        <span class="dot-num">5</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span>
-                    </div>
-                    <div class="timeline-content">
-                        <div class="timeline-label">분석 완료</div>
-                        <div class="timeline-desc" id="desc-done">결과 페이지 이동</div>
-                    </div>
+                    <div class="timeline-dot waiting" id="icon-done"><span class="dot-num">5</span><span class="dot-check">&#10003;</span><span class="dot-err">!</span></div>
+                    <div class="timeline-content"><div class="timeline-label">분석 완료</div><div class="timeline-desc" id="desc-done">결과 페이지 이동</div></div>
                 </div>
             </div>
         </div>
 
-        <!-- GDB 출력 콘솔 -->
+        <!-- GDB 라이브 콘솔 (코드 웰) -->
         <div class="log-card">
             <div class="log-header">
                 <span class="log-title">GDB 실시간 출력</span>
-                <span class="log-count" id="logCount">0 lines</span>
+                <div class="log-tools">
+                    <button class="log-autoscroll" id="logAutoscroll" type="button">자동 스크롤 켜짐</button>
+                    <span class="log-count" id="logCount">0 lines</span>
+                </div>
             </div>
-            <div class="log-console" id="logConsole"></div>
+            <div class="log-console" id="logConsole" aria-live="polite"></div>
         </div>
-
-    </div><!-- /.progress-grid -->
+    </div>
 </div>
 
-<!-- Thymeleaf 모델 변수 노출 (external JS 가 글로벌로 참조 — 순서: 인라인 → external 유지) -->
+<div class="cd-toast-wrap" id="cdToastWrap"></div>
+
 <script th:inline="javascript">
     var FILENAME   = /*[[${filename}]]*/ '';
     var SSE_URL    = '/core-dump/analyze-progress/' + encodeURIComponent(FILENAME);
     var RESULT_URL = '/core-dump/analyze/' + encodeURIComponent(FILENAME);
 </script>
-<script th:src="@{/js/core-dump-progress.js?v=2026-07-03}"></script>
+<script th:src="@{/js/core-dump-progress.js?v=2026-07-17}"></script>
 
 </body>
 </html>

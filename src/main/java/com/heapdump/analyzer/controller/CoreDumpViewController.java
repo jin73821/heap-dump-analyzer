@@ -1,6 +1,7 @@
 package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.model.CoreDumpAnalysisResult;
+import com.heapdump.analyzer.model.dto.CoreDumpRevision;
 import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import org.slf4j.Logger;
@@ -10,6 +11,7 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 import java.util.Optional;
@@ -49,22 +51,48 @@ public class CoreDumpViewController {
         return "core-dump/progress";
     }
 
+    /**
+     * 결과 페이지. rev 파라미터가 있으면 보존된 과거 리비전을 읽기 전용으로 렌더한다.
+     * (현재 결과는 rev 없음 — 재분석은 항상 현재 결과에 대해서만 수행)
+     */
     @GetMapping("/analyze/{filename:.+}")
-    public String analyzePage(@PathVariable String filename, Model model) {
+    public String analyzePage(@PathVariable String filename,
+                              @RequestParam(value = "rev", required = false) String rev,
+                              Model model) {
         String safe = analyzerService.validateCoreDumpFilename(filename);
 
-        Optional<CoreDumpAnalysisResult> resultOpt = analyzerService.loadResult(safe);
+        List<CoreDumpRevision> revisions = analyzerService.listRevisions(safe);
         Optional<CoreDumpAnalysisEntity> entityOpt = analyzerService.getEntity(safe);
+        boolean viewingRevision = rev != null && !rev.isBlank();
 
-        if (resultOpt.isEmpty() && entityOpt.isEmpty()) {
-            model.addAttribute("error", "분석 결과를 찾을 수 없습니다: " + safe);
-            model.addAttribute("filename", safe);
-            return "core-dump/analyze";
+        Optional<CoreDumpAnalysisResult> resultOpt;
+        if (viewingRevision) {
+            try {
+                resultOpt = analyzerService.loadRevisionResult(safe, rev);
+            } catch (IllegalArgumentException e) {
+                model.addAttribute("error", e.getMessage());
+                model.addAttribute("filename", safe);
+                return "core-dump/analyze";
+            }
+            if (resultOpt.isEmpty()) {
+                model.addAttribute("error", "보존된 분석 리비전을 찾을 수 없습니다: " + rev);
+                model.addAttribute("filename", safe);
+                return "core-dump/analyze";
+            }
+        } else {
+            resultOpt = analyzerService.loadResult(safe);
+            if (resultOpt.isEmpty() && entityOpt.isEmpty()) {
+                model.addAttribute("error", "분석 결과를 찾을 수 없습니다: " + safe);
+                model.addAttribute("filename", safe);
+                return "core-dump/analyze";
+            }
         }
 
         model.addAttribute("result", resultOpt.orElse(null));
         model.addAttribute("entity", entityOpt.orElse(null));
         model.addAttribute("filename", safe);
+        model.addAttribute("revisions", revisions);
+        model.addAttribute("currentRevision", viewingRevision ? rev : null);
         return "core-dump/analyze";
     }
 }

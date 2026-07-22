@@ -212,11 +212,97 @@ public class CoreDumpApiController {
                     "message", "이미 분석이 진행 중입니다."));
         }
 
-        // 기존 result.json 삭제 → 새 SSE 연결로 재분석 트리거
-        analyzerService.resultJsonFile(safe).delete();
-        logger.info("[CoreDump] action=reanalyze, filename={}, by={}", safe, who);
-        return ResponseEntity.ok(Map.of("status", "ok", "filename", safe,
-                "message", "/core-dump/progress/" + safe + " 로 이동하여 재분석을 시작하세요."));
+        // 기존 result.json 은 삭제하지 않고 revisions/{ts}/ 로 이관해 보존한다.
+        // 이관이므로 현재 result.json 이 사라져 새 SSE 연결이 재분석을 트리거한다.
+        String revisionId;
+        try {
+            revisionId = analyzerService.archiveCurrentResult(safe);
+        } catch (java.io.IOException e) {
+            logger.error("[CoreDump] 기존 결과 보존 실패 — 재분석 중단: filename={}, by={}, reason={}",
+                    safe, who, e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("status", "error",
+                    "message", "기존 분석 결과를 보존하지 못해 재분석을 중단했습니다: " + e.getMessage()));
+        }
+
+        logger.info("[CoreDump] action=reanalyze, filename={}, archivedRevision={}, by={}",
+                safe, revisionId != null ? revisionId : "none", who);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "ok");
+        body.put("filename", safe);
+        body.put("archivedRevision", revisionId);
+        body.put("message", "/core-dump/progress/" + safe + " 로 이동하여 재분석을 시작하세요.");
+        return ResponseEntity.ok(body);
+    }
+
+    // ── 분석 리비전 목록 ──────────────────────────────────────────
+
+    @GetMapping("/api/core-dump/{filename:.+}/revisions")
+    public ResponseEntity<List<com.heapdump.analyzer.model.dto.CoreDumpRevision>> listRevisions(
+            @PathVariable String filename) {
+        String safe = analyzerService.validateCoreDumpFilename(filename);
+        return ResponseEntity.ok(analyzerService.listRevisions(safe));
+    }
+
+    // ── exec 첨부 (기존 코어에 실행 파일 연결) ─────────────────────
+    // 업로드 파일(multipart) 또는 서버에 이미 있는 파일명(execFilename) 둘 다 허용.
+
+    @PostMapping("/api/core-dump/{filename:.+}/exec")
+    public ResponseEntity<Map<String, Object>> attachExec(
+            @PathVariable String filename,
+            @RequestParam(value = "execFile", required = false) MultipartFile execFile,
+            @RequestParam(value = "execFilename", required = false) String execFilename,
+            Principal principal) {
+
+        String who = principal != null ? principal.getName() : "unknown";
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", e.getMessage()));
+        }
+
+        boolean hasUpload = execFile != null && !execFile.isEmpty();
+        boolean hasExisting = execFilename != null && !execFilename.isBlank();
+        if (!hasUpload && !hasExisting) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error",
+                    "message", "실행 파일(execFile) 또는 서버 파일명(execFilename)이 필요합니다."));
+        }
+
+        File coreFile = new File(analyzerService.dumpFilesDir(), safe);
+        if (!coreFile.isFile()) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error",
+                    "message", "코어 파일을 찾을 수 없습니다: " + safe));
+        }
+
+        try {
+            String safeExec;
+            if (hasUpload) {
+                String origExec = execFile.getOriginalFilename();
+                safeExec = (origExec != null && !origExec.isBlank())
+                        ? analyzerService.validateCoreDumpFilename(origExec)
+                        : safe + ".exec";
+                File execDest = new File(analyzerService.dumpFilesDir(), safeExec);
+                execFile.transferTo(execDest);
+                logger.info("[CoreDump] 실행 파일 업로드(첨부): {} ({} bytes) by {}",
+                        safeExec, execDest.length(), who);
+            } else {
+                safeExec = analyzerService.validateCoreDumpFilename(execFilename);
+                if (!new File(analyzerService.dumpFilesDir(), safeExec).isFile()) {
+                    return ResponseEntity.badRequest().body(Map.of("status", "error",
+                            "message", "서버에 실행 파일이 없습니다: " + safeExec));
+                }
+            }
+            analyzerService.saveExecPairing(safe, safeExec);
+            logger.info("[CoreDump] action=attach-exec, filename={}, exec={}, by={}", safe, safeExec, who);
+            return ResponseEntity.ok(Map.of("status", "ok", "filename", safe, "executableName", safeExec));
+
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("[CoreDump] exec 첨부 실패: filename={}, by={}", safe, who, e);
+            return ResponseEntity.internalServerError().body(Map.of("status", "error",
+                    "message", "실행 파일 연결 중 오류가 발생했습니다: " + e.getMessage()));
+        }
     }
 
     // ── exec 페어링 해제 ──────────────────────────────────────────

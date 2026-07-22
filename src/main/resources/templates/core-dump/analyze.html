@@ -7,27 +7,8 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>코어 덤프 분석 결과 - Heap Dump Analyzer</title>
-    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-28}">
-    <link rel="stylesheet" th:href="@{/css/style.css}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-07-08}">
-    <style>
-        /* 공통 스타일은 core-dump.css 로 이관. 페이지 고유 override 만 잔존. */
-        body { background: var(--cd-bg, #F3F4F6) !important; }
-        /* 코어 단독 보강 데이터 접이식 섹션 (디스어셈블리·메모리 매핑) */
-        .cd-extra { margin-top: 14px; border-top: 1px solid #E5E7EB; padding-top: 12px; }
-        .cd-extra > summary {
-            cursor: pointer; font-size: 13px; font-weight: 600; color: #374151;
-            list-style: none; user-select: none; padding: 4px 0;
-        }
-        .cd-extra > summary::-webkit-details-marker { display: none; }
-        .cd-extra[open] > summary { color: #1D4ED8; }
-        .cd-pre {
-            margin-top: 8px; padding: 12px 14px; background: #0F172A; color: #E2E8F0;
-            border-radius: 8px; overflow-x: auto; max-height: 360px; overflow-y: auto;
-            font-family: 'JetBrains Mono', 'D2Coding', monospace; font-size: 12px; line-height: 1.6;
-        }
-        .cd-pre > div { white-space: pre; }
-    </style>
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-07-17}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-07-17c}">
 </head>
 <body>
 
@@ -36,17 +17,21 @@
 <div class="cd-topbar">
     <div class="topbar-brand">
         <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
-        <a href="/core-dump" class="topbar-back">&#8592;</a>
-        <span class="topbar-title" th:text="${filename}">core.12345</span>
+        <a href="/core-dump" class="topbar-back" aria-label="코어 덤프 목록으로">&#8592;</a>
+        <span class="topbar-title" th:text="${filename}" th:title="${filename}">core.12345</span>
     </div>
+    <nav class="cd-steps" aria-label="분석 단계">
+        <a href="/core-dump" class="cd-step is-done"><span class="cd-step-dot"></span><span class="cd-step-label">파일</span></a>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step is-done"><span class="cd-step-dot"></span><span class="cd-step-label">분석</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step is-current"><span class="cd-step-dot"></span><span class="cd-step-label">결과</span></span>
+    </nav>
     <div class="topbar-right">
-        <button th:if="${entity != null}"
-                th:data-filename="${entity.filename}"
-                onclick="reanalyzeThis(this)"
-                style="font-size:12px;color:#6B7280;background:none;border:1px solid #E5E7EB;border-radius:6px;padding:5px 12px;cursor:pointer;font-weight:600;transition:all .15s;"
-                onmouseover="this.style.background='#F3F4F6'"
-                onmouseout="this.style.background='none'">&#8635; 재분석</button>
-        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+        <!-- 재분석은 현재 결과에 대해서만 — 보존된 리비전을 보는 중엔 숨김 -->
+        <button th:if="${entity != null and currentRevision == null}" class="btn btn-ghost btn-sm"
+                th:data-filename="${entity.filename}" onclick="reanalyzeThis(this)">&#8635; 재분석</button>
+        <a href="/" class="topbar-btn">Dashboard</a>
     </div>
 </div>
 
@@ -54,56 +39,83 @@
 
     <!-- 오류: 결과 없음 -->
     <div th:if="${error != null}" class="error-card">
-        <div class="error-card-icon">&#128196;</div>
+        <div class="error-card-icon">
+            <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg>
+        </div>
         <div class="error-card-title">분석 결과를 찾을 수 없습니다</div>
         <div class="error-card-msg" th:text="${error}"></div>
-        <div style="margin-top:20px;">
-            <a href="/core-dump" style="background:#2563EB;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">&#8592; 목록으로</a>
+        <div class="error-card-actions">
+            <a href="/core-dump" class="btn btn-primary">&#8592; 목록으로</a>
         </div>
     </div>
 
     <div th:if="${error == null}">
 
-        <!-- GDB 파일 인식 실패 (치명적 오류) -->
+        <!-- 분석 리비전 선택 — 재분석으로 보존된 과거 결과가 있을 때만 노출 -->
+        <div th:if="${revisions != null and !#lists.isEmpty(revisions)}"
+             class="cd-rev-bar" th:classappend="${currentRevision != null} ? 'is-archived'">
+            <span class="cd-rev-label">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"></path><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path><path d="M12 7v5l4 2"></path></svg>
+                분석 리비전
+            </span>
+            <select id="cdRevSelect" class="cd-select cd-rev-select" aria-label="분석 리비전 선택"
+                    th:data-filename="${filename}">
+                <option value=""
+                        th:selected="${currentRevision == null}"
+                        th:text="${result != null and result.executableName != null and !#strings.isEmpty(result.executableName)}
+                                 ? '현재 · exec: ' + ${result.executableName}
+                                 : '현재 · exec 없음'">현재</option>
+                <option th:each="rev : ${revisions}"
+                        th:value="${rev.id}"
+                        th:selected="${currentRevision != null and currentRevision == rev.id}"
+                        th:text="${rev.label}"></option>
+            </select>
+            <span th:if="${currentRevision != null}" class="cd-rev-archived-note">
+                보존된 과거 분석 결과를 보고 있습니다.
+            </span>
+            <a th:if="${currentRevision != null}"
+               th:href="@{/core-dump/analyze/{fn}(fn=${filename})}"
+               class="btn btn-sm btn-soft">현재 결과로</a>
+        </div>
+
+        <!-- GDB 파일 인식 실패 -->
         <div th:if="${result != null and result.errorMessage != null and !#strings.isEmpty(result.errorMessage) and result.crashSignal == null}"
              class="error-card">
-            <div class="error-card-icon">&#128196;</div>
+            <div class="error-card-icon">
+                <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg>
+            </div>
             <div class="error-card-title">파일을 분석할 수 없습니다</div>
             <div class="error-card-msg" th:text="${result.errorMessage}"></div>
-            <div style="margin-top:8px;font-size:12px;color:#9B1C1C;">
-                유효한 코어 덤프 파일(.core, core.*)인지 확인하세요.
-            </div>
-            <div style="margin-top:20px;display:flex;gap:10px;justify-content:center;">
-                <a href="/core-dump" style="background:#2563EB;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">&#8592; 목록으로</a>
-                <a th:href="@{'/core-dump/progress/' + ${filename}}"
-                   style="background:#6B7280;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600;">&#8635; 재분석</a>
+            <div style="margin-top:8px;font-size:12px;color:#9B1C1C;">유효한 코어 덤프 파일(.core, core.*)인지 확인하세요.</div>
+            <div class="error-card-actions">
+                <a href="/core-dump" class="btn btn-ghost">&#8592; 목록으로</a>
+                <a th:href="@{/core-dump/progress/{fn}(fn=${filename})}" class="btn btn-primary">&#8635; 재분석</a>
             </div>
         </div>
 
-        <!-- ★ 크래시 히어로 카드 (시그널 배너 대체) -->
+        <!-- ★ 크래시 히어로 v2 -->
         <div th:if="${result != null and result.crashSignal != null and result.mainBacktrace != null and !#lists.isEmpty(result.mainBacktrace)}"
-             th:with="frame0=${result.mainBacktrace[0]}"
-             class="crash-hero"
+             th:with="frame0=${result.mainBacktrace[0]}, f0Resolved=${result.mainBacktrace[0].quality == null or result.mainBacktrace[0].quality == 'RESOLVED'}"
+             class="card--hero crash-hero"
              th:classappend="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? ''
-                            : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? ' hero-warn' : ' hero-neutral')">
+                            : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? 'hero-warn' : 'hero-neutral')">
 
-            <!-- 아이콘 컬럼 -->
             <div class="crash-hero-icon-col">
                 <div class="crash-hero-icon-wrap">
                     <span class="crash-hero-icon-glyph"
                           th:text="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? '&#128683;'
-                                   : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? '&#9888;' : '&#8505;')">
-                    </span>
+                                   : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? '&#9888;' : '&#8505;')"></span>
                 </div>
                 <div class="crash-hero-signal-chip" th:text="${result.crashSignal}"></div>
             </div>
 
-            <!-- 크래시 발생 지점 정보 -->
-            <div class="crash-hero-body" th:with="f0Resolved=${frame0.quality == null or frame0.quality == 'RESOLVED'}">
-                <div class="crash-hero-eyebrow"
-                     th:text="${f0Resolved} ? '크래시 발생 지점 (Frame #0)' : '크래시 발생 지점 (Frame #0) — 심볼 없음'"></div>
-                <div class="crash-hero-func"
-                     th:text="${frame0.function != null} ? ${frame0.function} : '??'"></div>
+            <div class="crash-hero-body">
+                <div class="crash-hero-eyebrow">
+                    <span th:text="${f0Resolved} ? '크래시 발생 지점 · FRAME #0' : '크래시 발생 지점 · FRAME #0 — 심볼 없음'"></span>
+                    <span class="hero-sigdesc" th:if="${result.signalDescription != null}"
+                          th:text="' · ' + ${result.signalDescription}" th:title="${result.signalDescription}"></span>
+                </div>
+                <div class="crash-hero-func" th:text="${frame0.function != null} ? ${frame0.function} : '??'"></div>
 
                 <div class="crash-hero-location" th:if="${frame0.location != null}">
                     <span class="crash-hero-loc-label">at</span>
@@ -113,129 +125,138 @@
                     <span class="crash-hero-lib-label">from</span>
                     <span class="crash-hero-lib-value" th:text="${frame0.library}"></span>
                 </div>
-                <div class="crash-hero-addr" th:if="${frame0.address != null}"
-                     th:text="${frame0.address}"></div>
-                <div class="crash-hero-args"
-                     th:if="${frame0.args != null and !#strings.isEmpty(frame0.args)}"
-                     th:text="'args: ' + ${frame0.args}"></div>
+                <div class="crash-hero-addr" th:if="${frame0.address != null}" th:text="${frame0.address}"></div>
 
-                <!-- Frame #0 심볼 없을 때: 식별 가능한 최근접 심볼 보조 표시 -->
-                <div class="crash-hero-nearest"
-                     th:if="${!f0Resolved and result.firstResolvedFrame != null}">
-                    <span class="crash-hero-nearest-label">식별된 최근접 심볼</span>
-                    <span class="crash-hero-nearest-value"
-                          th:text="'#' + ${result.firstResolvedFrame.frameNumber} + ' ' + ${result.firstResolvedFrame.function}"></span>
-                    <span class="crash-hero-nearest-loc"
-                          th:if="${result.firstResolvedFrame.location != null}"
-                          th:text="'at ' + ${result.firstResolvedFrame.location}"></span>
-                    <span class="crash-hero-nearest-loc"
-                          th:if="${result.firstResolvedFrame.location == null and result.firstResolvedFrame.library != null}"
-                          th:text="'from ' + ${result.firstResolvedFrame.library}"></span>
+                <!-- 메타 칩: 발생 시각 · 실행 파일 -->
+                <div class="crash-hero-metachips"
+                     th:if="${result.coreDumpTime != null or result.executableName != null}">
+                    <span class="hero-metachip" th:if="${result.coreDumpTime != null}">
+                        발생 <span class="hmc-val" th:text="${result.coreDumpTime}"></span>
+                    </span>
+                    <span class="hero-metachip" th:if="${result.executableName != null}">
+                        실행 파일 <span class="hmc-val" th:text="${result.executableName}"></span>
+                    </span>
                 </div>
 
-                <!-- self-raise 힌트: 최상단 raise()/abort() 는 실제 결함 지점이 아님 -->
-                <div class="crash-hero-selfraise"
-                     th:if="${result.selfRaisedSignal}">
-                    &#8505; 최상단 <code>raise()/abort()</code> 는 시그널 핸들러의 자체-재raise 로, 실제 결함 지점이 아닙니다.
+                <!-- 해석 힌트 통합 dl -->
+                <div class="crash-hero-hints"
+                     th:if="${(!f0Resolved and result.firstResolvedFrame != null) or result.selfRaisedSignal or result.faultingModule != null}">
+                    <div class="hero-hint-row" th:if="${!f0Resolved and result.firstResolvedFrame != null}">
+                        <span class="hero-hint-dt">최근접 심볼</span>
+                        <span class="hero-hint-dd">
+                            <span th:text="'#' + ${result.firstResolvedFrame.frameNumber} + ' ' + ${result.firstResolvedFrame.function}"></span>
+                            <span th:if="${result.firstResolvedFrame.location != null}" th:text="' at ' + ${result.firstResolvedFrame.location}"></span>
+                            <span th:if="${result.firstResolvedFrame.location == null and result.firstResolvedFrame.library != null}" th:text="' from ' + ${result.firstResolvedFrame.library}"></span>
+                        </span>
+                    </div>
+                    <div class="hero-hint-row" th:if="${result.selfRaisedSignal}">
+                        <span class="hero-hint-dt">self-raise</span>
+                        <span class="hero-hint-dd">최상단 <code>raise()/abort()</code> 는 시그널 핸들러의 자체-재raise 로, 실제 결함 지점이 아닙니다.</span>
+                    </div>
+                    <div class="hero-hint-row" th:if="${result.faultingModule != null}">
+                        <span class="hero-hint-dt">결함 모듈</span>
+                        <span class="hero-hint-dd">
+                            <span th:text="${result.faultingModule}"></span>
+                            <span class="hero-hint-vendor" th:if="${result.faultingModuleVendor != null}" th:text="${result.faultingModuleVendor}"></span>
+                            <span class="hero-hint-nosym" th:if="${result.faultingModuleHasSymbols != null and !result.faultingModuleHasSymbols}">심볼 없음</span>
+                        </span>
+                    </div>
                 </div>
 
-                <!-- 결함 모듈: ?? 프레임 주소를 소유 라이브러리·벤더에 귀속 -->
-                <div class="crash-hero-faultmod"
-                     th:if="${result.faultingModule != null}">
-                    <span class="crash-hero-faultmod-label">결함 모듈</span>
-                    <span class="crash-hero-faultmod-name" th:text="${result.faultingModule}"></span>
-                    <span class="crash-hero-faultmod-vendor"
-                          th:if="${result.faultingModuleVendor != null}"
-                          th:text="${result.faultingModuleVendor}"></span>
-                    <span class="crash-hero-faultmod-nosym"
-                          th:if="${result.faultingModuleHasSymbols != null and !result.faultingModuleHasSymbols}">심볼 없음</span>
-                </div>
+                <!-- 크래시 지점 소스 (코드 웰) -->
+                <div id="heroSource" th:if="${frame0.location != null}" class="hero-source"></div>
 
-                <!-- 크래시 지점 소스 코드 자동 표시 -->
-                <div id="heroSource"
-                     th:if="${frame0.location != null}"
-                     class="hero-source"></div>
+                <!-- 신뢰도 푸터 칩 + 디스클로저 -->
+                <details th:if="${result.analysisConfidence != null}"
+                         class="hero-confidence"
+                         th:classappend="${result.analysisConfidence == 'LOW'} ? 'cdc-low'
+                                        : (${result.analysisConfidence == 'MEDIUM'} ? 'cdc-medium' : 'cdc-high')"
+                         th:attr="open=${(result.analysisConfidence == 'LOW' or result.guidanceKind != null)} ? 'open' : null">
+                    <summary class="hero-conf-chip">
+                        <span class="hero-conf-dots"><i></i><i></i><i></i></span>
+                        <span th:text="'신뢰도 ' + (${result.analysisConfidence == 'LOW'} ? '낮음' : (${result.analysisConfidence == 'MEDIUM'} ? '보통' : '높음'))"></span>
+                        <span class="hero-conf-stat" th:text="'심볼 ' + ${result.resolvedFrameCount} + '/' + ${result.totalFrameCount}"></span>
+                    </summary>
+                    <div class="hero-conf-detail">
+                        <ul th:if="${result.qualityWarnings != null and !#lists.isEmpty(result.qualityWarnings)}">
+                            <li th:each="w : ${result.qualityWarnings}" th:text="${w}"></li>
+                        </ul>
+                        <div class="hero-conf-guide" th:if="${result.guidanceKind == 'THIRDPARTY_STRIPPED'}">
+                            &#128161; 애플리케이션 실행 파일 페어링은 <strong>정상</strong>입니다. 결함은 서드파티 라이브러리
+                            <strong th:text="${result.faultingModule}">lib</strong><span th:if="${result.faultingModuleVendor != null}" th:text="' (' + ${result.faultingModuleVendor} + ')'"></span> 내부에서 발생했으며,
+                            해당 라이브러리에 심볼이 없어 콜스택 해석이 제한됩니다. <strong>해당 벤더의 debuginfo 확보</strong> 후 재분석하거나 벤더 측 이슈로 에스컬레이션하세요.
+                        </div>
+                        <div class="hero-conf-guide" th:if="${result.guidanceKind == 'EXEC_MISSING'}">
+                            &#128161; 실행 파일 없이 코어 단독으로 분석되었습니다. 정확한 콜스택을 위해 코어 생성 시점의 <strong>동일 실행 파일</strong>을 페어링한 후 재분석하세요.
+                        </div>
+                        <div class="hero-conf-guide" th:if="${result.guidanceKind == 'APP_STRIPPED' or (result.guidanceKind == null and result.analysisConfidence != 'HIGH')}">
+                            &#128161; 정확한 분석을 위해 코어 생성 시점의 <strong>stripped 되지 않은 동일 실행 파일</strong>을 페어링하거나 디버그 심볼(debuginfo)을 설치한 후 재분석하세요.
+                        </div>
+                    </div>
+                </details>
             </div>
-
-            <!-- 우상단 시그널 설명 -->
-            <div class="crash-hero-sig-desc" th:if="${result.signalDescription != null}"
-                 th:text="${result.signalDescription}"></div>
         </div>
 
-        <!-- 시그널은 있으나 스택 없을 때 — 단순 배너 fallback -->
+        <!-- 시그널은 있으나 스택 없음 — fallback 배너 -->
         <div th:if="${result != null and result.crashSignal != null and (result.mainBacktrace == null or #lists.isEmpty(result.mainBacktrace))}"
              class="signal-banner"
-             th:classappend="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? ' sig-fatal'
-                            : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? ' sig-warn' : ' sig-neutral')">
-            <span style="font-size:28px;flex-shrink:0;"
+             th:classappend="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? 'sig-fatal'
+                            : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? 'sig-warn' : 'sig-neutral')">
+            <span style="font-size:26px;flex-shrink:0;"
                   th:text="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? '&#128683;'
-                           : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? '&#9888;' : '&#8505;')">
-            </span>
+                           : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? '&#9888;' : '&#8505;')"></span>
             <div>
-                <div style="font-size:18px;font-weight:800;font-family:monospace;" th:text="${result.crashSignal}"></div>
-                <div style="font-size:13px;color:#6B7280;margin-top:2px;" th:text="${result.signalDescription}"></div>
+                <div class="signal-banner-sig" th:text="${result.crashSignal}"></div>
+                <div class="signal-banner-desc" th:text="${result.signalDescription}"></div>
             </div>
         </div>
 
-        <!-- ★ 분석 신뢰도 배너 -->
-        <div th:if="${result != null and result.crashSignal != null and result.analysisConfidence != null}"
-             class="cd-confidence"
-             th:classappend="${result.analysisConfidence == 'LOW'} ? ' cdc-low'
-                            : (${result.analysisConfidence == 'MEDIUM'} ? ' cdc-medium' : ' cdc-high')">
-            <div class="cdc-head">
-                <span class="cdc-icon"
-                      th:text="${result.analysisConfidence == 'LOW'} ? '&#9888;'
-                               : (${result.analysisConfidence == 'MEDIUM'} ? '&#9888;' : '&#9989;')"></span>
-                <span class="cdc-label"
-                      th:text="'분석 신뢰도: ' + (${result.analysisConfidence == 'LOW'} ? '낮음'
-                               : (${result.analysisConfidence == 'MEDIUM'} ? '보통' : '높음'))"></span>
-                <span class="cdc-stat"
-                      th:text="'식별된 심볼 프레임 ' + ${result.resolvedFrameCount} + ' / ' + ${result.totalFrameCount}"></span>
+        <!-- ★ 요약 스트립 (원인 → 위치 → 조치) -->
+        <div th:if="${result != null and result.crashSignal != null and result.mainBacktrace != null and !#lists.isEmpty(result.mainBacktrace)}"
+             th:with="frame0=${result.mainBacktrace[0]}"
+             class="crash-summary">
+            <div class="summary-cell">
+                <span class="summary-label">원인 · WHY</span>
+                <span class="summary-value mono" th:text="${result.crashSignal}"></span>
+                <span class="summary-value is-empty" th:if="${result.faultingModule == null and result.signalDescription != null}" th:text="${result.signalDescription}"></span>
+                <span class="summary-value" th:if="${result.faultingModule != null}" th:text="'결함 모듈: ' + ${result.faultingModule}"></span>
             </div>
-            <ul class="cdc-warnings"
-                th:if="${result.qualityWarnings != null and !#lists.isEmpty(result.qualityWarnings)}">
-                <li th:each="w : ${result.qualityWarnings}" th:text="${w}"></li>
-            </ul>
-            <!-- 상황별 가이드 (guidanceKind 분기) -->
-            <div class="cdc-guide" th:if="${result.guidanceKind == 'THIRDPARTY_STRIPPED'}">
-                &#128161; 애플리케이션 실행 파일 페어링은 <strong>정상</strong>입니다. 결함은 서드파티 라이브러리
-                <strong th:text="${result.faultingModule}">lib</strong><span th:if="${result.faultingModuleVendor != null}"
-                       th:text="' (' + ${result.faultingModuleVendor} + ')'"></span> 내부에서 발생했으며,
-                해당 라이브러리에 심볼이 없어 콜스택 해석이 제한됩니다.
-                <strong>해당 벤더의 debuginfo 확보</strong> 후 재분석하거나, 벤더 측 이슈로 에스컬레이션하세요.
+            <div class="summary-cell">
+                <span class="summary-label">위치 · WHERE</span>
+                <span class="summary-value mono" th:if="${result.firstResolvedFrame != null and result.firstResolvedFrame.location != null}"
+                      th:text="${result.firstResolvedFrame.location}"></span>
+                <span class="summary-value mono" th:if="${(result.firstResolvedFrame == null or result.firstResolvedFrame.location == null) and frame0.location != null}"
+                      th:text="${frame0.location}"></span>
+                <span class="summary-value is-empty" th:if="${(result.firstResolvedFrame == null or result.firstResolvedFrame.location == null) and frame0.location == null}">심볼 없음 — debuginfo 필요</span>
+                <a class="summary-link" href="#" onclick="switchTab('bt', event); return false;">스택 트레이스 보기 →</a>
             </div>
-            <div class="cdc-guide" th:if="${result.guidanceKind == 'EXEC_MISSING'}">
-                &#128161; 실행 파일 없이 코어 단독으로 분석되었습니다. 정확한 콜스택을 위해 코어 생성 시점의
-                <strong>동일 실행 파일</strong>을 페어링한 후 재분석하세요.
-            </div>
-            <div class="cdc-guide"
-                 th:if="${result.guidanceKind == 'APP_STRIPPED' or (result.guidanceKind == null and result.analysisConfidence != 'HIGH')}">
-                &#128161; 정확한 분석을 위해 코어 생성 시점의 <strong>stripped 되지 않은 동일 실행 파일</strong>을
-                페어링하거나, 디버그 심볼(debuginfo)을 설치한 후 재분석하세요.
+            <div class="summary-cell cell-fix">
+                <span class="summary-label">조치 · FIX</span>
+                <span class="summary-value" th:if="${result.guidanceKind == 'EXEC_MISSING'}">실행 파일을 페어링하면 정확도가 올라갑니다.</span>
+                <span class="summary-value" th:if="${result.guidanceKind == 'THIRDPARTY_STRIPPED'}">벤더 debuginfo 확보 후 재분석하세요.</span>
+                <span class="summary-value" th:if="${result.guidanceKind != 'EXEC_MISSING' and result.guidanceKind != 'THIRDPARTY_STRIPPED'}">AI 크래시 분석으로 근본 원인을 진단하세요.</span>
+                <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('cdaPanel').scrollIntoView({behavior:'smooth',block:'center'})">AI 분석으로 이동</button>
             </div>
         </div>
 
         <!-- ★ AI 크래시 분석 패널 -->
-        <div th:if="${result != null and result.crashSignal != null}"
-             class="content-card cda-panel" id="cdaPanel">
+        <div th:if="${result != null and result.crashSignal != null}" class="content-card cda-panel" id="cdaPanel">
             <div class="cda-head">
-                <div class="cda-head-title">&#129504; AI 크래시 분석
-                    <span class="cda-head-badge" id="cdaBadge">미분석</span>
-                </div>
+                <div class="cda-head-title">&#129504; AI 크래시 분석 <span class="cda-head-badge" id="cdaBadge">미분석</span></div>
                 <div class="cda-head-actions" id="cdaActions" style="display:none;">
-                    <button type="button" class="cda-btn cda-btn-ghost" onclick="startCoreAiAnalysis()">&#8635; 재분석</button>
-                    <button type="button" class="cda-btn cda-btn-danger" onclick="deleteCoreAiInsight()">&#128465; 삭제</button>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="startCoreAiAnalysis()">&#8635; 재분석</button>
+                    <button type="button" class="btn btn-soft soft-danger btn-sm" onclick="deleteCoreAiInsight()">&#128465; 삭제</button>
                 </div>
             </div>
             <div class="cda-body">
                 <!-- 미분석 -->
                 <div id="cdaStateEmpty" class="cda-empty">
-                    <div class="cda-empty-icon">&#129504;</div>
-                    <div class="cda-empty-title">AI 크래시 분석을 실행하세요</div>
-                    <div class="cda-empty-desc">시그널·콜 체인·레지스터·스레드 정보를 LLM 에 전달해
-                        근본 원인과 조치 방안을 진단합니다.</div>
-                    <button type="button" class="cda-btn cda-btn-primary" id="cdaStartBtn"
-                            onclick="startCoreAiAnalysis()">AI 크래시 분석 실행</button>
+                    <span class="cda-empty-icon">&#129504;</span>
+                    <div class="cda-empty-text">
+                        <div class="cda-empty-title">AI 크래시 분석</div>
+                        <div class="cda-empty-desc">시그널·콜 체인·레지스터·스레드를 LLM 에 전달해 근본 원인과 조치 방안을 진단합니다.</div>
+                    </div>
+                    <button type="button" class="btn btn-soft" id="cdaStartBtn" onclick="startCoreAiAnalysis()">분석 실행</button>
                 </div>
                 <!-- 진행 중 -->
                 <div id="cdaStateLoading" class="cda-loading" style="display:none;">
@@ -250,28 +271,14 @@
                         <span class="cda-sev-icon" id="cdaSevIcon"></span>
                         <span class="cda-sev-label" id="cdaSevLabel"></span>
                         <div class="cda-sev-meta">
-                            <div id="cdaAt"></div>
-                            <div id="cdaModel"></div>
-                            <div id="cdaLatency"></div>
+                            <div id="cdaAt"></div><div id="cdaModel"></div><div id="cdaLatency"></div>
                         </div>
                     </div>
                     <div class="cda-cards">
-                        <div class="cda-card">
-                            <div class="cda-card-title">&#128221; 요약</div>
-                            <div class="cda-card-body" id="cdaSummary"></div>
-                        </div>
-                        <div class="cda-card">
-                            <div class="cda-card-title">&#128270; 근본 원인</div>
-                            <div class="cda-card-body" id="cdaRootCause"></div>
-                        </div>
-                        <div class="cda-card">
-                            <div class="cda-card-title">&#9989; 권장 조치</div>
-                            <div class="cda-card-body" id="cdaRecommendations"></div>
-                        </div>
-                        <div class="cda-card is-risk" id="cdaRiskCard" style="display:none;">
-                            <div class="cda-card-title">&#9888; 심각도 판단 근거</div>
-                            <div class="cda-card-body" id="cdaRiskDesc"></div>
-                        </div>
+                        <div class="cda-card"><div class="cda-card-title">&#128221; 요약</div><div class="cda-card-body" id="cdaSummary"></div></div>
+                        <div class="cda-card"><div class="cda-card-title">&#128270; 근본 원인</div><div class="cda-card-body" id="cdaRootCause"></div></div>
+                        <div class="cda-card"><div class="cda-card-title">&#9989; 권장 조치</div><div class="cda-card-body" id="cdaRecommendations"></div></div>
+                        <div class="cda-card is-risk" id="cdaRiskCard" style="display:none;"><div class="cda-card-title">&#9888; 심각도 판단 근거</div><div class="cda-card-body" id="cdaRiskDesc"></div></div>
                     </div>
                 </div>
                 <!-- 오류 -->
@@ -281,328 +288,214 @@
                         <div>
                             <div class="cda-error-code" id="cdaErrCode" style="display:none;"></div>
                             <div class="cda-error-msg" id="cdaErrMsg"></div>
-                            <button type="button" class="cda-btn cda-btn-ghost" style="margin-top:14px;"
-                                    onclick="startCoreAiAnalysis()">&#8635; 다시 시도</button>
+                            <button type="button" class="btn btn-ghost btn-sm" style="margin-top:14px;" onclick="startCoreAiAnalysis()">&#8635; 다시 시도</button>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- 메타 정보 (파일 인식 실패 시 숨김) -->
-        <div class="meta-grid" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
-            <!-- 코어 덤프 발생 시각 -->
-            <div class="meta-card" th:if="${result.coreDumpTime != null}">
-                <div class="meta-label">발생 시각</div>
-                <div class="meta-value" th:text="${result.coreDumpTime}"></div>
-            </div>
-            <div class="meta-card" th:if="${result.executableName != null}">
-                <div class="meta-label">실행 파일</div>
-                <div class="meta-value mono" th:text="${result.executableName}"></div>
-            </div>
-            <div class="meta-card"
-                 th:if="${result.coreProgramName != null}"
-                 th:with="fullCmd=${result.coreProgramName},
-                          execPath=${#strings.contains(fullCmd, ' ') ? #strings.substringBefore(fullCmd, ' ') : fullCmd},
-                          basename=${#strings.contains(execPath, '/') ? execPath.substring(execPath.lastIndexOf('/') + 1) : execPath}">
-                <div class="meta-label">프로그램명</div>
-                <div class="meta-value mono" th:text="${basename}"></div>
-                <div th:if="${#strings.contains(execPath, '/')}"
-                     style="font-family:'JetBrains Mono',monospace;font-size:11px;color:#6B7280;margin-top:3px;word-break:break-all;"
-                     th:text="${execPath}"></div>
-            </div>
-            <div class="meta-card" th:if="${result.gdbVersion != null}">
-                <div class="meta-label">GDB 버전</div>
-                <div class="meta-value mono" th:text="${result.gdbVersion}"></div>
-            </div>
-            <div class="meta-card" th:if="${result.analyzedAt != null}">
-                <div class="meta-label">분석 완료</div>
-                <div class="meta-value" th:text="${result.analyzedAt}"></div>
-                <div class="meta-sub" th:if="${result.analysisTimeMs != null}"
-                     th:text="${result.analysisTimeMs} + ' ms'"></div>
-            </div>
-            <!-- 실행 파일이 없을 때 파일명 표시 -->
-            <div class="meta-card" th:if="${result.executableName == null and result.filename != null}">
-                <div class="meta-label">코어 파일</div>
-                <div class="meta-value mono" th:text="${result.filename}"></div>
-            </div>
+        <!-- 에러 경고 배너 (분석은 됐으나 일부 경고) -->
+        <div th:if="${result != null and result.errorMessage != null and !#strings.isEmpty(result.errorMessage) and result.crashSignal != null}"
+             class="callout rail-warn" style="margin-bottom:16px;">
+            <div class="callout-body">&#9888; <strong>분석 경고:</strong> <span th:text="${result.errorMessage}"></span></div>
         </div>
 
-        <!-- ★ 콜 체인 타임라인 (GARBAGE/노이즈 프레임 제외, 최대 8개) -->
+        <!-- ★ 크래시 콜 체인 (compact, 최대 6) -->
         <div th:if="${result != null and result.mainBacktrace != null and #lists.size(result.mainBacktrace) > 1
                      and (result.crashSignal != null or result.errorMessage == null)}"
              th:with="ccFrames=${result.mainBacktrace.?[quality != 'GARBAGE']}"
              class="callchain-card content-card">
-            <div class="callchain-title">
-                <span>크래시 콜 체인</span>
-                <span class="callchain-total"
-                      th:text="'전체 ' + ${#lists.size(result.mainBacktrace)} + ' 프레임'"></span>
+            <div class="content-card-title">크래시 콜 체인
+                <span class="title-count" th:text="'전체 ' + ${#lists.size(result.mainBacktrace)} + ' 프레임'"></span>
             </div>
-            <!-- 의미있는 프레임이 하나도 없을 때 -->
             <div th:if="${#lists.isEmpty(ccFrames)}" class="cc-empty-meaningful">
                 식별 가능한 프레임이 없습니다 — 백트레이스 전체가 노이즈/심볼 없음입니다.
             </div>
             <div class="callchain-list" th:unless="${#lists.isEmpty(ccFrames)}">
-                <div th:each="frame, iterStat : ${ccFrames}"
-                     th:if="${iterStat.index < 8}"
+                <div th:each="frame, iterStat : ${ccFrames}" th:if="${iterStat.index < 6}"
                      class="callchain-item"
-                     th:classappend="${frame.frameNumber == 0} ? ' cc-crash'
-                                    : (${frame.location != null} ? ' cc-usercode' : ' cc-libcode')">
-
-                    <!-- 수직 커넥터 (마지막 가시 아이템이 아니면 라인 표시) -->
+                     th:classappend="${frame.frameNumber == 0} ? 'cc-crash' : (${frame.location != null} ? 'cc-usercode' : 'cc-libcode')">
                     <div class="cc-connector">
                         <div class="cc-dot"
-                             th:classappend="${frame.frameNumber == 0} ? ' cc-dot-crash'
-                                            : (${frame.location != null} ? ' cc-dot-user' : ' cc-dot-lib')">
-                        </div>
-                        <div class="cc-line"
-                             th:if="${!iterStat.last and iterStat.index < 7}"></div>
+                             th:classappend="${frame.frameNumber == 0} ? 'cc-dot-crash' : (${frame.location != null} ? 'cc-dot-user' : 'cc-dot-lib')"></div>
+                        <div class="cc-line" th:if="${!iterStat.last and iterStat.index < 5}"></div>
                     </div>
-
-                    <!-- 프레임 내용 -->
                     <div class="cc-content">
                         <div class="cc-header">
                             <span class="cc-frame-num" th:text="'#' + ${frame.frameNumber}"></span>
-                            <span class="cc-type-badge"
-                                  th:if="${frame.frameNumber == 0}">CRASH</span>
-                            <span class="cc-type-badge cc-badge-user"
-                                  th:if="${frame.frameNumber != 0 and frame.location != null}">소스</span>
-                            <span class="cc-type-badge cc-badge-lib"
-                                  th:if="${frame.location == null and frame.library != null}">라이브러리</span>
-                            <span class="cc-type-badge cc-badge-sym"
-                                  th:if="${frame.location == null and frame.library == null and frame.quality == 'RESOLVED'}">심볼</span>
-                            <span class="cc-type-badge cc-badge-unsym"
-                                  th:if="${frame.quality == 'UNSYMBOLIZED'}">심볼없음</span>
+                            <span class="tag-badge tag-crash" th:if="${frame.frameNumber == 0}">CRASH</span>
+                            <span class="tag-badge tag-user" th:if="${frame.frameNumber != 0 and frame.location != null}">소스</span>
+                            <span class="tag-badge tag-lib" th:if="${frame.location == null and frame.library != null}">라이브러리</span>
+                            <span class="tag-badge tag-sym" th:if="${frame.location == null and frame.library == null and frame.quality == 'RESOLVED'}">심볼</span>
+                            <span class="tag-badge tag-unsym" th:if="${frame.quality == 'UNSYMBOLIZED'}">심볼없음</span>
                         </div>
-                        <div class="cc-func"
-                             th:text="${frame.function != null} ? ${frame.function} : '??'"></div>
-                        <div class="cc-detail"
-                             th:if="${frame.location != null}"
-                             th:text="${frame.location}"></div>
-                        <div class="cc-detail cc-lib-text"
-                             th:if="${frame.location == null and frame.library != null}"
-                             th:text="${frame.library}"></div>
+                        <div class="cc-func" th:text="${frame.function != null} ? ${frame.function} : '??'"></div>
+                        <div class="cc-detail" th:if="${frame.location != null}" th:text="${frame.location}"></div>
+                        <div class="cc-detail cc-lib-text" th:if="${frame.location == null and frame.library != null}" th:text="${frame.library}"></div>
                     </div>
                 </div>
-
-                <!-- 숨겨진(노이즈/초과) 프레임 안내 -->
                 <div class="cc-more"
-                     th:with="ccShown=${#lists.size(ccFrames) > 8 ? 8 : #lists.size(ccFrames)}"
+                     th:with="ccShown=${#lists.size(ccFrames) > 6 ? 6 : #lists.size(ccFrames)}, noise=${#lists.size(result.mainBacktrace.?[quality == 'GARBAGE'])}"
                      th:if="${#lists.size(result.mainBacktrace) > ccShown}"
-                     th:text="'노이즈/무효 프레임 등 ' + ${#lists.size(result.mainBacktrace) - ccShown} + '개 숨김 (아래 스택 트레이스 탭 참조)'">
-                </div>
+                     th:text="'추가 프레임 ' + ${#lists.size(result.mainBacktrace) - ccShown} + '개 숨김' + (${noise > 0} ? ' (노이즈 ' + ${noise} + '개 포함)' : '') + ' — 스택 트레이스 탭 참조'"></div>
             </div>
         </div>
 
-        <!-- 에러 메시지 경고 배너 (분석은 됐으나 일부 경고 — 시그널 있는 경우만) -->
-        <div th:if="${result != null and result.errorMessage != null and !#strings.isEmpty(result.errorMessage) and result.crashSignal != null}"
-             style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:14px 18px;margin-bottom:20px;font-size:13px;color:#92400E;">
-            &#9888; <strong>분석 경고:</strong> <span th:text="${result.errorMessage}"></span>
+        <!-- 탭 네비게이션 -->
+        <div class="cd-tabs-bar" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
+        <div class="cd-tabs" role="tablist">
+            <button class="cd-tab-btn active" role="tab" aria-selected="true" onclick="switchTab('bt', event)">스택 트레이스
+                <span class="tab-count" th:if="${result.mainBacktrace != null}" th:text="${#lists.size(result.mainBacktrace)}"></span></button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" onclick="switchTab('threads', event)">스레드
+                <span class="tab-count" th:if="${result.allThreads != null}" th:text="${#lists.size(result.allThreads)}"></span></button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" onclick="switchTab('registers', event)">레지스터
+                <span class="tab-count" th:if="${result.registers != null}" th:text="${#maps.size(result.registers)}"></span></button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" onclick="switchTab('libs', event)">공유 라이브러리
+                <span class="tab-count" th:if="${result.sharedLibraries != null}" th:text="${#lists.size(result.sharedLibraries)}"></span></button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" onclick="switchTab('raw', event)">Raw 출력</button>
+        </div>
         </div>
 
-        <!-- 탭 네비게이션 (파일 인식 실패 시 숨김) -->
-        <div class="cd-tabs" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
-            <button class="cd-tab-btn active" onclick="switchTab('bt', event)">스택 트레이스</button>
-            <button class="cd-tab-btn" onclick="switchTab('threads', event)">스레드</button>
-            <button class="cd-tab-btn" onclick="switchTab('registers', event)">레지스터</button>
-            <button class="cd-tab-btn" onclick="switchTab('libs', event)">공유 라이브러리</button>
-            <button class="cd-tab-btn" onclick="switchTab('raw', event)">Raw 출력</button>
-        </div>
-
-        <!-- 탭 패널: 스택 트레이스 -->
+        <!-- 탭: 스택 트레이스 -->
         <div class="cd-tab-panel active" id="tab-bt"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card"
                  th:with="garbageCount=${result.mainBacktrace != null ? #lists.size(result.mainBacktrace.?[quality == 'GARBAGE']) : 0}">
-                <div class="content-card-title">
-                    메인 스레드 스택 트레이스
-                    <span th:if="${result.mainBacktrace != null}"
-                          style="font-size:12px;font-weight:400;color:#9CA3AF;"
-                          th:text="'(' + ${#lists.size(result.mainBacktrace)} + ' 프레임)'"></span>
+                <div class="content-card-title">메인 스레드 스택 트레이스
+                    <span class="title-count" th:if="${result.mainBacktrace != null}" th:text="'(' + ${#lists.size(result.mainBacktrace)} + ' 프레임)'"></span>
+                    <div class="card-actions" th:if="${result.mainBacktrace != null and !#lists.isEmpty(result.mainBacktrace)}">
+                        <div class="frame-density-toggle" id="frameDensityToggle">
+                            <button type="button" class="active" data-density="default" onclick="setFrameDensity('default', this)">기본</button>
+                            <button type="button" data-density="compact" onclick="setFrameDensity('compact', this)">컴팩트</button>
+                        </div>
+                    </div>
                 </div>
 
-                <div th:if="${result.mainBacktrace == null or #lists.isEmpty(result.mainBacktrace)}"
-                     class="empty-msg">스택 트레이스 정보가 없습니다.</div>
+                <div th:if="${result.mainBacktrace == null or #lists.isEmpty(result.mainBacktrace)}" class="empty-msg">스택 트레이스 정보가 없습니다.</div>
 
-                <!-- 노이즈(GARBAGE) 프레임 토글 바 -->
-                <div class="garbage-toggle-bar"
-                     th:if="${garbageCount > 0}">
-                    <span class="gtb-note"
-                          th:text="'스택 손상으로 추정되는 노이즈/무효 프레임 ' + ${garbageCount} + '개가 기본 숨김 처리되었습니다.'"></span>
-                    <button type="button" class="gtb-btn" onclick="toggleGarbageFrames(this)">노이즈 프레임 표시</button>
+                <div class="garbage-toggle-bar" th:if="${garbageCount > 0}">
+                    <span class="gtb-note" th:text="'스택 손상으로 추정되는 노이즈/무효 프레임 ' + ${garbageCount} + '개가 기본 숨김 처리되었습니다.'"></span>
+                    <button type="button" class="btn btn-ghost btn-sm" onclick="toggleGarbageFrames(this)">노이즈 프레임 표시</button>
                 </div>
 
-                <div class="frame-list hide-garbage"
+                <div class="frame-list hide-garbage" id="btFrameList"
                      th:if="${result.mainBacktrace != null and !#lists.isEmpty(result.mainBacktrace)}">
                     <div th:each="frame, iterStat : ${result.mainBacktrace}"
                          class="frame-card"
-                         th:classappend="${frame.quality == 'GARBAGE'} ? ' frame-lib frame-garbage'
-                                        : (${iterStat.index == 0} ? ' frame-crash'
-                                          : (${frame.location != null} ? ' frame-user' : ' frame-lib'))"
+                         th:classappend="${frame.quality == 'GARBAGE'} ? 'frame-lib frame-garbage'
+                                        : (${iterStat.index == 0} ? 'frame-crash'
+                                          : (${frame.location != null} ? 'frame-user' : 'frame-lib'))"
                          th:attrappend="class=${frame.locals != null and !#lists.isEmpty(frame.locals)} ? ' has-locals' : ''"
                          onclick="toggleFrame(this)">
-
                         <div class="frame-header">
                             <div class="frame-num-badge"
-                                 th:classappend="${iterStat.index == 0} ? ' fnum-crash'
-                                                : (${frame.location != null} ? ' fnum-user' : '')">
+                                 th:classappend="${iterStat.index == 0} ? 'fnum-crash' : (${frame.location != null} ? 'fnum-user' : '')">
                                 <span th:text="'#' + ${frame.frameNumber}"></span>
                             </div>
                             <div class="frame-main">
                                 <div class="frame-func-row">
-                                    <span class="frame-func-name"
-                                          th:text="${frame.function != null} ? ${frame.function} : '??'"></span>
-                                    <span class="frame-args"
-                                          th:if="${frame.args != null and !#strings.isEmpty(frame.args)}"
-                                          th:text="'(' + ${frame.args} + ')'"></span>
+                                    <span class="frame-func-name" th:text="${frame.function != null} ? ${frame.function} : '??'"></span>
+                                    <span class="frame-args" th:if="${frame.args != null and !#strings.isEmpty(frame.args)}" th:text="'(' + ${frame.args} + ')'"></span>
                                 </div>
                                 <div class="frame-meta-row">
-                                    <span class="frame-location"
-                                          th:if="${frame.location != null}"
-                                          th:text="'at ' + ${frame.location}"></span>
-                                    <span class="frame-library"
-                                          th:if="${frame.library != null}"
-                                          th:text="'from ' + ${frame.library}"></span>
-                                    <!-- 심볼 없는 프레임: 소유 모듈 + 오프셋 + 벤더 귀속 -->
-                                    <span class="frame-module"
-                                          th:if="${frame.module != null and frame.location == null and frame.library == null}">
-                                        <span class="frame-module-name"
-                                              th:text="${frame.module} + (${frame.moduleOffset != null} ? ' + ' + ${frame.moduleOffset} : '')"></span>
-                                        <span class="frame-module-vendor"
-                                              th:if="${frame.moduleVendor != null}"
-                                              th:text="${frame.moduleVendor}"></span>
+                                    <span class="frame-location" th:if="${frame.location != null}" th:text="'at ' + ${frame.location}"></span>
+                                    <span class="frame-library" th:if="${frame.library != null}" th:text="'from ' + ${frame.library}"></span>
+                                    <span class="frame-module" th:if="${frame.module != null and frame.location == null and frame.library == null}">
+                                        <span class="frame-module-name" th:text="${frame.module} + (${frame.moduleOffset != null} ? ' + ' + ${frame.moduleOffset} : '')"></span>
+                                        <span class="hero-hint-vendor" th:if="${frame.moduleVendor != null}" th:text="${frame.moduleVendor}"></span>
                                     </span>
-                                    <span class="frame-addr"
-                                          th:if="${frame.address != null}"
-                                          th:text="${frame.address}"></span>
+                                    <span class="frame-addr" th:if="${frame.address != null}" th:text="${frame.address}"></span>
                                 </div>
                             </div>
                             <div class="frame-right">
-                                <span th:if="${iterStat.index == 0}" class="frame-badge-crash">CRASH</span>
-                                <!-- 프레임 품질 배지 -->
-                                <span th:if="${iterStat.index != 0 and frame.quality == 'RESOLVED'}"
-                                      class="frame-q-badge fq-resolved">심볼</span>
-                                <span th:if="${frame.quality == 'UNSYMBOLIZED'}"
-                                      class="frame-q-badge fq-unsym">심볼없음</span>
-                                <span th:if="${frame.quality == 'GARBAGE'}"
-                                      class="frame-q-badge fq-garbage">노이즈</span>
-                                <!-- 소스 보기 버튼 -->
-                                <button th:if="${frame.location != null}"
-                                        class="frame-src-btn"
-                                        th:data-location="${frame.location}"
-                                        th:data-frameidx="'bt-' + ${iterStat.index}"
+                                <span th:if="${iterStat.index == 0}" class="tag-badge tag-crash">CRASH</span>
+                                <span th:if="${iterStat.index != 0 and frame.quality == 'RESOLVED'}" class="tag-badge tag-sym">심볼</span>
+                                <span th:if="${frame.quality == 'UNSYMBOLIZED'}" class="tag-badge tag-unsym">심볼없음</span>
+                                <span th:if="${frame.quality == 'GARBAGE'}" class="tag-badge tag-noise">노이즈</span>
+                                <button th:if="${frame.location != null}" class="frame-src-btn"
+                                        th:data-location="${frame.location}" th:data-frameidx="'bt-' + ${iterStat.index}"
                                         onclick="event.stopPropagation(); loadFrameSource(this)">&#128196; 소스</button>
-                                <span th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}"
-                                      class="frame-expand-icon">&#9660;</span>
+                                <span th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}" class="frame-locals-chip"
+                                      th:text="'지역변수 ' + ${#lists.size(frame.locals)}"></span>
+                                <span th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}" class="frame-expand-icon">&#9660;</span>
                             </div>
                         </div>
-
-                        <!-- 지역변수 확장 영역 -->
-                        <div class="frame-locals"
-                             th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}">
+                        <div class="frame-locals" th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}">
                             <div class="locals-title">지역 변수</div>
-                            <div th:each="local : ${frame.locals}"
-                                 class="locals-line" th:text="${local}"></div>
+                            <div th:each="local : ${frame.locals}" class="locals-line" th:text="${local}"></div>
                         </div>
-
-                        <!-- 소스 코드 뷰어 -->
-                        <div th:if="${frame.location != null}"
-                             class="frame-source"
-                             th:id="'src-bt-' + ${iterStat.index}"></div>
+                        <div th:if="${frame.location != null}" class="frame-source" th:id="'src-bt-' + ${iterStat.index}"></div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- 탭 패널: 스레드 -->
+        <!-- 탭: 스레드 -->
         <div class="cd-tab-panel" id="tab-threads"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
-                <div class="content-card-title">
-                    전체 스레드
-                    <span style="font-size:12px;font-weight:400;color:#9CA3AF;"
-                          th:text="'(' + ${#lists.size(result.allThreads)} + '개)'"></span>
-                </div>
-                <div th:if="${result.allThreads == null or #lists.isEmpty(result.allThreads)}" class="empty-msg">
-                    스레드 정보가 없습니다.
-                </div>
+                <div class="content-card-title">전체 스레드
+                    <span class="title-count" th:text="'(' + ${#lists.size(result.allThreads)} + '개)'"></span></div>
+                <div th:if="${result.allThreads == null or #lists.isEmpty(result.allThreads)}" class="empty-msg">스레드 정보가 없습니다.</div>
                 <div th:each="thread : ${result.allThreads}">
-                    <div class="thread-header"
-                         th:classappend="${thread.current} ? ' crash-thread' : ''"
-                         th:onclick="'toggleThread(' + ${thread.id} + ')'">
+                    <button class="thread-header" type="button"
+                            th:classappend="${thread.current} ? 'crash-thread' : ''"
+                            th:data-tid="${thread.id}" onclick="toggleThread(this.dataset.tid)"
+                            th:attr="aria-expanded=${thread.current} ? 'true' : 'false'">
                         <span class="thread-id-badge" th:text="'Thread ' + ${thread.id}"></span>
                         <span class="crash-badge" th:if="${thread.current}">CRASH</span>
                         <span class="thread-target" th:text="${thread.targetId}"></span>
-                        <span class="thread-frame-count"
-                              th:text="${thread.backtrace != null ? #lists.size(thread.backtrace) + ' frames' : '0 frames'}"></span>
+                        <span class="thread-frame-count" th:text="${thread.backtrace != null ? #lists.size(thread.backtrace) + ' frames' : '0 frames'}"></span>
                         <span class="thread-chevron" th:id="'chevron-' + ${thread.id}">&#9654;</span>
-                    </div>
-                    <div class="thread-body" th:id="'thread-body-' + ${thread.id}"
-                         th:classappend="${thread.current} ? ' open' : ''">
-                        <div th:if="${thread.backtrace == null or #lists.isEmpty(thread.backtrace)}"
-                             style="color:#9CA3AF;font-size:12px;padding:8px 16px;">스택 정보 없음</div>
+                    </button>
+                    <div class="thread-body" th:id="'thread-body-' + ${thread.id}" th:classappend="${thread.current} ? 'open' : ''">
+                        <div th:if="${thread.backtrace == null or #lists.isEmpty(thread.backtrace)}" style="color:#9CA3AF;font-size:12px;padding:8px 16px;">스택 정보 없음</div>
                         <div class="frame-list" th:if="${thread.backtrace != null and !#lists.isEmpty(thread.backtrace)}">
                             <div th:each="frame, iterStat : ${thread.backtrace}"
                                  class="frame-card"
-                                 th:classappend="${iterStat.index == 0 and thread.current} ? ' frame-crash'
-                                                : (${frame.location != null} ? ' frame-user' : ' frame-lib')"
+                                 th:classappend="${iterStat.index == 0 and thread.current} ? 'frame-crash'
+                                                : (${frame.quality == 'GARBAGE'} ? 'frame-lib frame-garbage'
+                                                  : (${frame.location != null} ? 'frame-user' : 'frame-lib'))"
                                  th:attrappend="class=${frame.locals != null and !#lists.isEmpty(frame.locals)} ? ' has-locals' : ''"
                                  onclick="toggleFrame(this)">
                                 <div class="frame-header">
                                     <div class="frame-num-badge"
-                                         th:classappend="${iterStat.index == 0 and thread.current} ? ' fnum-crash'
-                                                        : (${frame.location != null} ? ' fnum-user' : '')">
+                                         th:classappend="${iterStat.index == 0 and thread.current} ? 'fnum-crash' : (${frame.location != null} ? 'fnum-user' : '')">
                                         <span th:text="'#' + ${frame.frameNumber}"></span>
                                     </div>
                                     <div class="frame-main">
                                         <div class="frame-func-row">
-                                            <span class="frame-func-name"
-                                                  th:text="${frame.function != null} ? ${frame.function} : '??'"></span>
-                                            <span class="frame-args"
-                                                  th:if="${frame.args != null and !#strings.isEmpty(frame.args)}"
-                                                  th:text="'(' + ${frame.args} + ')'"></span>
+                                            <span class="frame-func-name" th:text="${frame.function != null} ? ${frame.function} : '??'"></span>
+                                            <span class="frame-args" th:if="${frame.args != null and !#strings.isEmpty(frame.args)}" th:text="'(' + ${frame.args} + ')'"></span>
                                         </div>
                                         <div class="frame-meta-row">
-                                            <span class="frame-location"
-                                                  th:if="${frame.location != null}"
-                                                  th:text="'at ' + ${frame.location}"></span>
-                                            <span class="frame-library"
-                                                  th:if="${frame.library != null}"
-                                                  th:text="'from ' + ${frame.library}"></span>
-                                            <span class="frame-module"
-                                                  th:if="${frame.module != null and frame.location == null and frame.library == null}">
-                                                <span class="frame-module-name"
-                                                      th:text="${frame.module} + (${frame.moduleOffset != null} ? ' + ' + ${frame.moduleOffset} : '')"></span>
-                                                <span class="frame-module-vendor"
-                                                      th:if="${frame.moduleVendor != null}"
-                                                      th:text="${frame.moduleVendor}"></span>
+                                            <span class="frame-location" th:if="${frame.location != null}" th:text="'at ' + ${frame.location}"></span>
+                                            <span class="frame-library" th:if="${frame.library != null}" th:text="'from ' + ${frame.library}"></span>
+                                            <span class="frame-module" th:if="${frame.module != null and frame.location == null and frame.library == null}">
+                                                <span class="frame-module-name" th:text="${frame.module} + (${frame.moduleOffset != null} ? ' + ' + ${frame.moduleOffset} : '')"></span>
+                                                <span class="hero-hint-vendor" th:if="${frame.moduleVendor != null}" th:text="${frame.moduleVendor}"></span>
                                             </span>
-                                            <span class="frame-addr"
-                                                  th:if="${frame.address != null}"
-                                                  th:text="${frame.address}"></span>
+                                            <span class="frame-addr" th:if="${frame.address != null}" th:text="${frame.address}"></span>
                                         </div>
                                     </div>
                                     <div class="frame-right">
-                                        <!-- 소스 보기 버튼 -->
-                                        <button th:if="${frame.location != null}"
-                                                class="frame-src-btn"
-                                                th:data-location="${frame.location}"
-                                                th:data-frameidx="'th-' + ${thread.id} + '-' + ${iterStat.index}"
+                                        <span th:if="${iterStat.index != 0 and frame.quality == 'RESOLVED'}" class="tag-badge tag-sym">심볼</span>
+                                        <span th:if="${frame.quality == 'UNSYMBOLIZED'}" class="tag-badge tag-unsym">심볼없음</span>
+                                        <span th:if="${frame.quality == 'GARBAGE'}" class="tag-badge tag-noise">노이즈</span>
+                                        <button th:if="${frame.location != null}" class="frame-src-btn"
+                                                th:data-location="${frame.location}" th:data-frameidx="'th-' + ${thread.id} + '-' + ${iterStat.index}"
                                                 onclick="event.stopPropagation(); loadFrameSource(this)">&#128196; 소스</button>
-                                        <span th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}"
-                                              class="frame-expand-icon">&#9660;</span>
+                                        <span th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}" class="frame-locals-chip"
+                                              th:text="'지역변수 ' + ${#lists.size(frame.locals)}"></span>
+                                        <span th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}" class="frame-expand-icon">&#9660;</span>
                                     </div>
                                 </div>
-                                <div class="frame-locals"
-                                     th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}">
+                                <div class="frame-locals" th:if="${frame.locals != null and !#lists.isEmpty(frame.locals)}">
                                     <div class="locals-title">지역 변수</div>
-                                    <div th:each="local : ${frame.locals}"
-                                         class="locals-line" th:text="${local}"></div>
+                                    <div th:each="local : ${frame.locals}" class="locals-line" th:text="${local}"></div>
                                 </div>
-                                <!-- 소스 코드 뷰어 -->
-                                <div th:if="${frame.location != null}"
-                                     class="frame-source"
-                                     th:id="'src-th-' + ${thread.id} + '-' + ${iterStat.index}"></div>
+                                <div th:if="${frame.location != null}" class="frame-source" th:id="'src-th-' + ${thread.id} + '-' + ${iterStat.index}"></div>
                             </div>
                         </div>
                     </div>
@@ -610,83 +503,96 @@
             </div>
         </div>
 
-        <!-- 탭 패널: 레지스터 -->
+        <!-- 탭: 레지스터 -->
         <div class="cd-tab-panel" id="tab-registers"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
-                <div class="content-card-title">CPU 레지스터</div>
-                <div th:if="${result.registers == null or #maps.isEmpty(result.registers)}" class="empty-msg">
-                    레지스터 정보가 없습니다.
-                </div>
+                <div class="content-card-title">CPU 레지스터
+                    <span class="title-count">PC·SP 상단 고정</span></div>
+                <div th:if="${result.registers == null or #maps.isEmpty(result.registers)}" class="empty-msg">레지스터 정보가 없습니다.</div>
                 <div class="reg-grid" th:if="${result.registers != null and !#maps.isEmpty(result.registers)}">
                     <table class="reg-table"><tbody id="regTbodyLeft"></tbody></table>
                     <table class="reg-table"><tbody id="regTbodyRight"></tbody></table>
                 </div>
-                <details class="cd-extra"
-                         th:if="${result.crashDisassembly != null and !#lists.isEmpty(result.crashDisassembly)}">
-                    <summary>&#128269; 크래시 지점 디스어셈블리 (x/16i $pc)</summary>
-                    <div class="cd-pre">
-                        <div th:each="l : ${result.crashDisassembly}" th:text="${l}"></div>
-                    </div>
+                <details class="cd-extra" th:if="${result.crashDisassembly != null and !#lists.isEmpty(result.crashDisassembly)}">
+                    <summary>크래시 지점 디스어셈블리 (x/16i $pc)</summary>
+                    <div class="cd-pre"><div th:each="l : ${result.crashDisassembly}" th:text="${l}"></div></div>
                 </details>
             </div>
         </div>
 
-        <!-- 탭 패널: 공유 라이브러리 -->
+        <!-- 탭: 공유 라이브러리 -->
         <div class="cd-tab-panel" id="tab-libs"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
-            <div class="content-card">
-                <div class="content-card-title">공유 라이브러리</div>
-                <div th:if="${result.sharedLibraries == null or #lists.isEmpty(result.sharedLibraries)}" class="empty-msg">
-                    공유 라이브러리 정보가 없습니다.
-                </div>
+            <div class="content-card"
+                 th:with="loadedLibs=${result.sharedLibraries != null ? #lists.size(result.sharedLibraries.?[symsRead != null and #strings.startsWith(symsRead, 'Yes')]) : 0}">
+                <div class="content-card-title">공유 라이브러리
+                    <span class="title-count" th:if="${result.sharedLibraries != null and !#lists.isEmpty(result.sharedLibraries)}"
+                          th:text="${loadedLibs} + '/' + ${#lists.size(result.sharedLibraries)} + ' 심볼 로드'"></span></div>
+                <div th:if="${result.sharedLibraries == null or #lists.isEmpty(result.sharedLibraries)}" class="empty-msg">공유 라이브러리 정보가 없습니다.</div>
                 <div th:if="${result.sharedLibraries != null and !#lists.isEmpty(result.sharedLibraries)}" style="overflow-x:auto;">
                     <table class="lib-table">
-                        <thead>
-                            <tr><th>From</th><th>To</th><th>심볼</th><th>경로</th></tr>
-                        </thead>
+                        <thead><tr><th>From</th><th>To</th><th>심볼</th><th>경로</th></tr></thead>
                         <tbody>
                             <tr th:each="lib : ${result.sharedLibraries}"
                                 th:classappend="${lib.symsRead == 'No'} ? 'syms-no' : ''">
                                 <td th:text="${lib.fromAddr}"></td>
                                 <td th:text="${lib.toAddr}"></td>
-                                <td>
-                                    <span th:text="${lib.symsRead}"
-                                          th:classappend="${lib.symsRead != null and lib.symsRead.startsWith('Yes')} ? 'syms-yes' : 'syms-no'"></span>
-                                </td>
+                                <td><span th:text="${lib.symsRead}"
+                                          th:classappend="${lib.symsRead != null and #strings.startsWith(lib.symsRead, 'Yes')} ? 'syms-yes' : 'syms-no'"></span></td>
                                 <td th:text="${lib.path}"></td>
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <details class="cd-extra"
-                         th:if="${result.memoryMappings != null and !#lists.isEmpty(result.memoryMappings)}">
-                    <summary>&#128193; 메모리 매핑 (info proc mappings) — 로드된 바이너리/라이브러리 경로</summary>
-                    <div class="cd-pre">
-                        <div th:each="m : ${result.memoryMappings}" th:text="${m}"></div>
-                    </div>
+                <details class="cd-extra" th:if="${result.memoryMappings != null and !#lists.isEmpty(result.memoryMappings)}">
+                    <summary>메모리 매핑 (info proc mappings) — 로드된 바이너리/라이브러리 경로</summary>
+                    <div class="cd-pre"><div th:each="m : ${result.memoryMappings}" th:text="${m}"></div></div>
                 </details>
             </div>
         </div>
 
-        <!-- 탭 패널: Raw 출력 -->
+        <!-- 탭: Raw 출력 -->
         <div class="cd-tab-panel" id="tab-raw"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
-                <div class="content-card-title">GDB Raw 출력</div>
-                <button class="copy-btn" onclick="copyRaw()">&#128203; 복사</button>
-                <div style="clear:both;"></div>
-                <div th:if="${result.gdbRawOutput == null or #strings.isEmpty(result.gdbRawOutput)}" class="empty-msg">
-                    Raw 출력이 없습니다.
+                <div class="content-card-title">GDB Raw 출력
+                    <div class="card-actions"><button class="copy-btn" onclick="copyRaw()" id="copyRawBtn">&#128203; 복사</button></div>
                 </div>
-                <pre class="raw-output" id="rawOutput"
-                     th:if="${result.gdbRawOutput != null}"
-                     th:text="${result.gdbRawOutput}"></pre>
+                <div th:if="${result.gdbRawOutput == null or #strings.isEmpty(result.gdbRawOutput)}" class="empty-msg">Raw 출력이 없습니다.</div>
+                <div class="code-surface" th:if="${result.gdbRawOutput != null}">
+                    <pre class="raw-output" id="rawOutput" th:text="${result.gdbRawOutput}"></pre>
+                </div>
             </div>
         </div>
 
-    </div><!-- th:if="${error == null}" -->
+        <!-- 덤프 메타 정보 (최하단, 접기) -->
+        <details class="content-card" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}"
+                 style="padding:0;">
+            <summary style="padding:16px 24px;cursor:pointer;font-size:13px;font-weight:600;color:#374151;list-style:none;">
+                덤프 메타 정보
+            </summary>
+            <div style="padding:0 24px 20px;">
+                <div class="meta-dl">
+                    <div th:if="${result.coreProgramName != null}"
+                         th:with="fullCmd=${result.coreProgramName}, execPath=${#strings.contains(fullCmd, ' ') ? #strings.substringBefore(fullCmd, ' ') : fullCmd}, basename=${#strings.contains(execPath, '/') ? execPath.substring(execPath.lastIndexOf('/') + 1) : execPath}">
+                        <div class="meta-dt">프로그램명</div>
+                        <div class="meta-dd mono" th:text="${basename}"></div>
+                        <div class="meta-sub" th:if="${#strings.contains(execPath, '/')}" th:text="${execPath}"></div>
+                    </div>
+                    <div th:if="${result.executableName != null}"><div class="meta-dt">실행 파일</div><div class="meta-dd mono" th:text="${result.executableName}"></div></div>
+                    <div th:if="${result.coreDumpTime != null}"><div class="meta-dt">발생 시각</div><div class="meta-dd" th:text="${result.coreDumpTime}"></div></div>
+                    <div th:if="${result.gdbVersion != null}"><div class="meta-dt">GDB 버전</div><div class="meta-dd mono" th:text="${result.gdbVersion}"></div></div>
+                    <div th:if="${result.analyzedAt != null}"><div class="meta-dt">분석 완료</div><div class="meta-dd" th:text="${result.analyzedAt}"></div><div class="meta-sub" th:if="${result.analysisTimeMs != null}" th:text="${result.analysisTimeMs} + ' ms'"></div></div>
+                    <div th:if="${result.executableName == null and result.filename != null}"><div class="meta-dt">코어 파일</div><div class="meta-dd mono" th:text="${result.filename}"></div></div>
+                </div>
+            </div>
+        </details>
+
+    </div><!-- error == null -->
 </div>
+
+<div class="cd-toast-wrap" id="cdToastWrap"></div>
 
 <!-- Thymeleaf 모델 변수 노출 (external JS 가 글로벌로 참조 — 순서: 인라인 → external 유지) -->
 <script th:inline="javascript">
@@ -696,7 +602,7 @@
 <script th:if="${result != null and result.registers != null}" th:inline="javascript">
     var REGISTERS = /*[[${result.registers}]]*/ {};
 </script>
-<script th:src="@{/js/core-dump-analyze.js?v=2026-07-09}"></script>
+<script th:src="@{/js/core-dump-analyze.js?v=2026-07-17b}"></script>
 
 </body>
 </html>

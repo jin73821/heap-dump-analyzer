@@ -1,6 +1,160 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-07-22] Files 페이지 순번(#) 넘버링 개선 — 유형 접두 + 날짜순 고정 순위
+
+**대상:** `templates/files.html`
+
+- **문제:** Files 페이지 "#" 컬럼이 연속 순번이 아니라 DB `analysis_history.id`(auto-increment PK)를 그대로 표시 → 날짜 정렬인데 숫자가 뒤죽박죽(128/3/47…), 미분석·코어/exec 행은 `-`/`└`로 번호 없음, ALL 탭에서 유형 혼재 시 구분 불가.
+- **개선:** # 컬럼을 **유형 접두 + 카테고리별 날짜 오름차순 고정 순위**로 변경.
+  - 접두: `H`=Heapdump · `C`=Corefile(coredump/core) · **`E`=실행파일(exec/coreexec)** · `O`=Others. (기존안의 exec→C 통합을 E 로 분리.)
+  - 순위: 각 카테고리를 **가장 오래된 파일=1**(예: 6/19 코어=`C-1`, 6/26 코어=`C-4`)로 매김. 기본 표시가 최신순이라 화면에선 위→아래로 숫자가 내려감.
+  - **안정적 식별자:** 정렬 컬럼·필터·검색·페이지·탭 전환과 무관하게 파일별 번호 고정. 같은 파일은 어디서든 동일 번호.
+- **연결/연결해제(코어-실행파일 페어링) 시 순번 유지:** E 번호 계산 시 독립 실행파일(top-level)뿐 아니라 **연결되어 서브행(`└`)이 된 exec 까지 함께 포함**해 날짜순 순위를 매김. `submitClassify`/`confirmUnpair` 가 `location.reload()` 로 재렌더 → 결정적(날짜 기반) 계산이라 링크/언링크 후에도 동일 E-n 재현. 서브행은 `└E-3` 형태로 순번 표기(기존 `└`만 표시 → 번호 병기).
+- **구현:** 순수 클라이언트 JS. 신규 `assignStableNumbers()`(+`categoryOf()`) 가 `_allRows`(top-level) + `_subrowMap`(서브행 exec) 전체를 카테고리별로 묶어 `data-sort-date` 오름차순 정렬 후 1..N 부여, `.td-seq` 셀에 고정. **`initRows` 에서 최초 1회만** 호출(정렬/필터 시 재계산 안 함). 삭제 행은 순번 미부여.
+- "#" 헤더는 정렬 불가로 변경(고정 식별자라 id 정렬 무의미). 순번 셀 서버 placeholder 제거(JS 소유, `tb-loading`이 렌더 전 행 숨김 → FOUC 없음). History 페이지는 유형 탭이 없어 범위 외(현행 유지).
+- **서브행 순번 개행 수정:** 연결된 실행파일 서브행이 `└`(14px)+`E-n` 조합으로 48px `.td-seq` 폭을 넘어 하이픈에서 줄바꿈(`E-`↵`2`)되던 문제 → `.td-seq` 에 `white-space: nowrap` 추가 + `.exec-subrow-indent` 마진 6px→3px 축소. auto 레이아웃이라 컬럼이 몇 px 늘며 오버플로 없이 단일 라인. (헤드리스 재현: `table-layout:fixed` 48px 제약에서 수정 전 서브행 58px 개행 → 수정 후 45px 단일 라인 확인.)
+
+
+## [2026-07-22] 애플리케이션 버전 2.2.7 → 2.3.0
+
+**대상:** `pom.xml`, `run.sh`, `stop.sh`, `restart.sh`, `templates/index.html`, `templates/fragments/banner.html`, `templates/progress.html`
+
+- `pom.xml <version>` 2.2.7 → 2.3.0. 산출물 JAR 명이 `heap-analyzer-2.3.0.jar` 로 변경.
+- 기동/정지 스크립트 3종(`run.sh`/`stop.sh`/`restart.sh`)의 `heap-analyzer-2.2.7.jar` grep 패턴 + `restart.sh` `JAR=` 경로 일괄 갱신(주석 라인 포함).
+- UI 버전 표기 3곳 갱신: `index.html`(`v2.3.0 · MAT CLI Edition`), `fragments/banner.html`(`v2.3.0 · MAT CLI`), `progress.html`(footer `Heap Dump Analyzer v2.3.0`).
+- **함정 준수:** 새 스크립트는 신규 JAR 명(`2.3.0`)으로만 프로세스를 grep 하므로 첫 재기동 시 구버전 `2.2.7` 프로세스를 자동 종료하지 못해 포트 18080 충돌 → 구 프로세스 수동 `kill` 후 재기동.
+
+
+
+**대상:** `templates/admin/users.html`, `templates/settings.html`, `templates/account.html`, `controller/AdminController.java`, `controller/HeapDumpViewController.java`, `controller/AccountController.java`, `test/.../PasswordExpiryTest.java`(신규)
+
+1. **2차인증 / 비밀번호 만료 설정을 General(`/settings`) → Accounts(`/admin/users`) '설정' 탭으로 이동**: `admin/users.html` 에 5번째 탭 `설정`(`panel-settings`) 추가 후 `tfaCard`(2FA 라디오·관리자 OTP 정책·SSO 필드) + `pwPolicyCard`(만료 기간·관리자 예외) 마크업/CSS/JS/TFA 확인 모달 전체 이전. `AdminController.usersPage` 가 모델(twoFactor* / password* / sso*) 주입. `settings.html` 에서 해당 카드·모달·CSS·JS 제거, `HeapDumpViewController.settingsPage` 모델·미사용 주입(TwoFactorConfigService/PasswordPolicyConfigService) 정리. 설정이 **ADMIN 전용 페이지로 이동**해 접근 권한도 정합(기존 `/api/settings/**` 엔드포인트·CSRF 불변). settings.html `toast()` ↔ users.html `showToast()` 는 `function toast(m,t){showToast(m,t);}` alias 로 흡수.
+2. **각 계정 수정 모달에 비밀번호 만료 잔여일 표기**: `openEditModal` 이 `renderEditExpiry(id)` 로 `_allUsers` 에서 조회 → `만료 미적용`(정책 비활성/관리자 예외) / `만료됨 — 변경 필요 (마지막 변경: …)` / `YYYY-MM-DD 만료 (D-n)`(7일 이하 앰버 강조). 별도 API 없이 목록 데이터 재사용.
+3. **계정 페이지 만료 임박 경고 뱃지**: `/account` 상단에 만료 7일 이하(또는 이미 만료) + **정책 활성 시에만** 경고 뱃지(`pw-alert`, 만료 시 레드) + "지금 변경" 버튼. 정책 미설정/관리자 예외면 `pwWarnSoon=false` → 미표기. `AccountController` 가 `pwWarnSoon`/`pwDaysLeft`/`pwExpired` 전달.
+4. **수동 변경 시 만료 초기화 점검**: `PasswordExpiryTest`(6건, 신규) 로 `changeOwnPassword`(본인)·`resetPassword`(관리자) 가 만료 전이라도 `passwordChangedAt` 를 현재로 갱신함을 검증(+ 정책 비활성/관리자예외/폴백 판정). → **만료일자 정상 초기화 확인**.
+
+### 함정 준수
+- CSS 충돌 없음: `.card`/`.setting-row`/`.tog`/`.tfa-*`/`.sso-*`/`.heap-btn-apply` 는 users.html 에 미존재(0건) 확인 후 이전. 모달은 users.html 기존 `.modal-box`/`.modal-btns`(+common.css `.mbtn-*`) 재사용, `.modal-desc`/`.modal-warn` 만 추가.
+- **이동 후 잔재 제거**: settings.html Escape 키 핸들러의 `closeTfaModal()` 호출 제거(정의가 users.html 로 이동 → 미제거 시 설정 페이지 Escape 입력마다 ReferenceError). div 균형 226/226 재확인.
+- `?v=` 캐시 키: 정적 리소스(common.*) 미변경이라 불필요.
+
+### 검증
+빌드 OK, `mvn test` 27건(기존 21 + PasswordExpiryTest 6) 통과, 기동 13.4s 무오류. **`admin/users.html` 실제 인라인 스크립트를 헤드리스 Chrome 으로 구동** — 이식 JS+기존 JS 공존 시 페이지 오류 0, 만료 정책 상태/OTP 표시 초기화 정상, 상태필터(잠김 0건·만료 1건·전체 3건) 회귀 없음, 수정 모달 만료 표기 3종(미적용/만료됨/D-5) 정상. 라우팅 `/admin/users`·`/settings`·`/account` 익명 302. Thymeleaf 런타임 렌더는 서브에이전트 정적 감사로 보완.
+
+
+## [2026-07-18] 비밀번호 만료 정책 + 만료 시 2차인증 경유 강제 변경 + 사용자목록 상태필터 견고화
+
+**대상(신규):** `service/PasswordPolicyConfigService.java`, `controller/PasswordChangeController.java`, `templates/login-password-expired.html`
+**대상(수정):** `model/entity/User.java`, `config/HeapDumpConfig.java`, `config/SecurityConfig.java`, `config/TwoFactorAuthenticationSuccessHandler.java`, `service/HeapDumpAnalyzerService.java`, `service/UserService.java`, `service/TwoFactorService.java`, `controller/HeapSystemApiController.java`, `controller/HeapDumpViewController.java`, `controller/AdminController.java`, `controller/AccountController.java`, `controller/TwoFactorController.java`, `templates/settings.html`, `templates/account.html`, `templates/admin/users.html`, `application.properties`
+
+### 1. 비밀번호 만료 정책 (Task 1)
+- **`PasswordPolicyConfigService`** 신설 — LLM/RAG/TwoFactor 와 동일한 **3-hook 영속화 패턴**(`applyFromSettings`/`collectSettings`/`collectApplicationProperties`) + `HeapDumpAnalyzerService` 배선(생성자·3 훅·`setPasswordPolicy` facade). 필드: `passwordExpiryDays`(0=비활성) + `passwordExpiryAdminExempt`. 판정 헬퍼 `isExpired`/`daysUntilExpiry`/`expiresAt`/`isExempt`.
+- **판정 기준**: `users.password_changed_at`(신규 컬럼, `@PrePersist` 로 생성 시 스탬프) 우선, 없으면 `created_at` 폴백(기존 계정 무중단). 모든 비밀번호 변경 경로(`changeOwnPassword`·`resetPassword`·강제 변경)에서 `password_changed_at` 갱신 → 만료 카운트 리셋.
+- **설정 UI**: `/settings` (General) 에 "Password Expiry Policy" 카드 추가 — 만료 기간(일) 입력 + "관리자 예외" 토글. `POST /api/settings/password-policy?expiryDays=&adminExempt=`(ADMIN + CSRF, `/api/settings/**` 매처에 이미 포함). 기본값 **0(비활성)** / 관리자 예외 **ON**(운영 요청).
+- **application.properties**: `security.password.expiry-days=0`, `security.password.expiry-admin-exempt=true`.
+
+### 2. 만료 시 2차인증 경유 강제 비밀번호 변경 (Task 2)
+- **`ROLE_PWD_EXPIRED` 부분 인증** 도입 — `ROLE_PRE_AUTH`(OTP 대기)와 동일 철학. `anyRequest().hasAnyRole("ADMIN","USER")` 인가상 이 role 만으로는 어떤 경로도 접근 불가 → `/login/password` 외 접근 **구조적 차단**. `SecurityConfig` 에 `/login/password` 매처(`authenticated()`) + accessDeniedHandler 분기(PWD_EXPIRED → `/login/password` redirect) 추가.
+- **흐름**: OTP 모드에선 **OTP 통과 후** 만료 검사(`TwoFactorService.completeAuthentication` → `LoginCompletion.PWD_EXPIRED`) → 강제 변경 페이지. OTP 미사용/SSO/관리자예외 모드에선 1차 인증 완료 시점(`TwoFactorAuthenticationSuccessHandler.finishOrForceChange`)에서 검사. 두 경우 모두 **로그인 성공(login_history)은 2FA/1차 통과 시 이미 기록**, 강제 변경은 post-auth 게이트. 변경 성공 시 `upgradeAfterPasswordChange` 가 완전 인증으로 승격(세션 회전 없음 → 활성 세션 매칭 유지).
+- **`PasswordChangeController`**(`/login/password` GET/POST) — 현재 PW 확인 + 복잡도 + 동일 PW 차단(`changeOwnPassword` 재사용). 검증 실패는 **리다이렉트 대신 재렌더**로 `GlobalExceptionHandler`(IllegalArgumentException→302) 우회 + 한글 메시지 노출. 정책이 대기 중 비활성화되면 즉시 승격(OTP `guardOrComplete` 와 동일 자가 치유). CSRF 는 `/api/` 밖이라 자동 적용, 로그아웃 폼으로 탈출 가능.
+- **`login-password-expired.html`** 신설 — `login-otp.html` 스타일 미러(현재/새/확인 PW, 실시간 일치·복잡도 검증, 자동제출 안 함).
+
+### 3. 사용자목록 '상태' 필터 견고화 + 만료 상태 (Task 3)
+- **재현 조사**: 소스/배포 JAR/실제 인라인 스크립트 헤드리스 실행 3중 검증 결과 **'잠김' 필터는 정상**(잠김 0건 시 "조건에 맞는 사용자가 없습니다", 전체 출력 아님). 배포 JAR = 소스 = 실행 프로세스 동일, 컴파일된 API 도 `locked` 키 정상 반환 — 보고된 "전체 출력" 증상은 현재 코드에서 미재현.
+- **견고화**: `admin/users.html` 의 서버렌더 `<tr th:each="u:${users}">` 전체 목록을 **제거하고 JS 단일 소스**(`loadUsers()`)로 통일 + "불러오는 중…" 플레이스홀더. JS 가 실패해도 **필터 미적용 전체 목록이 잔존하는 실패모드 제거**(보고 증상과 정확히 일치하는 유일 시나리오).
+- **만료 상태 통합**: `/api/admin/users` 에 `passwordExpired`/`passwordExpiresInDays`/`passwordExpiresAt`/`passwordChangedAt` 추가. 상태 배지 `비번만료`(레드)·`만료 D-n`(앰버, 14일 이내) + 상태 필터 옵션 `비밀번호 만료`. `/account` 에도 만료 예정일/D-day 표시.
+
+### 함정 준수
+- #21 계열: `DisabledException` 대신 `enabled=false UserDetails` 반환 유지(변경 없음). 만료도 예외 throw 아닌 **role 강등** 방식이라 wrapping 무관.
+- #14: `savePwPolicy` 는 `Common.fetchJSON`(non-2xx throw) 사용 — 성공/실패 메시지 분기 정상.
+- 감사 로깅: `POST /api/settings/password-policy` 는 `[PwdPolicy] action=update field=expiry before=..d/.. after=..d/.. by={auth}` 구조 로깅(기존 컨벤션).
+- `?v=` 캐시 키: common.css/js 정적 리소스는 **미변경**(users.html 인라인 CSS·settings 인라인 JS 만 변경)이라 갱신 불필요.
+
+### 검증
+빌드 OK, `mvn test` 기존 21건 통과, 기동 13.1s(무경고, `password_changed_at` 컬럼 `ddl-auto=update` 자동 추가). 라우팅: `/login/password`·`/settings`·`POST /api/settings/password-policy` 익명 → 302 `/login`(등록 확인). **`admin/users.html` 실제 인라인 스크립트를 헤드리스 Chrome 으로 구동** — 전체/활성/비활성/잠김/만료 5개 필터 정상(잠김 0건 시 빈 메시지, 만료 필터 만료계정만, 만료/임박 배지 렌더, 페이지 오류 0). Thymeleaf 런타임 렌더는 서브에이전트 정적 감사로 보완(로그인 필요 페이지 직접 렌더 불가). 강제 변경 end-to-end 흐름은 자격증명 추출 차단으로 실로그인 미검증 — 기존 검증된 OTP `ROLE_PRE_AUTH` 게이트 패턴을 그대로 미러하여 구현.
+
+
+## [2026-07-17] 원격 전송 중복명 타임스탬프 회피 + 코어 재클릭 해제 시 페어 exec 동반 해제
+
+**대상:** `service/RemoteDumpService.java`, `static/js/core-dump-index.js`, `templates/core-dump/index.html`, `src/test/.../RemoteDumpDedupFilenameTest.java`(신규)
+
+1. **Target Servers 전송 시 로컬 동명 충돌 회피명을 `_YYYYMMDDHHMM` 타임스탬프로 변경**: 기존 `_2, _3…` 카운터는 결과 이름(`crash_demo_2.core`)이 원본명인지 회피명인지 구분되지 않았음. `transferFile()` 의 충돌 분기에서 `dedupFilename()` 호출로 대체 — ① `base_yyyyMMddHHmm.ext`(마지막 확장자 앞 삽입, 확장자 없으면 끝에) → ② 같은 분 재충돌 시 `base_yyyyMMddHHmmss.ext` → ③ 같은 초까지 충돌하면 `_N` 카운터 폴백. 시각 기준은 **전송 시각**(SSH 왕복 없음). 충돌 없으면 원격 원본명 그대로 유지(운영자 육안 대조 우선). 회피명 적용 시 `[RemoteDump] Local name collision: old → new` 로그. heap/core/coreexec 모든 fileType 공통 적용. **기존 rename-safe 구조라 부작용 없음** — 스캔 "전송됨" 판정은 `remote_filename` 컬럼 기준, 코어–exec 페어링은 전송 성공 후 최종 로컬명으로 명시 저장.
+
+2. **코어 파일 재클릭 해제 시 페어링된 exec 존 동반 해제**: 코어 클릭 시 페어 exec 가 자동 프리로드되는데, 재클릭 해제는 코어 존만 비우고 exec 존이 남는 비대칭이 있었음. `activate()` 해제 분기에서 exec 존이 **이 코어의 페어링으로 채워진 상태**(`_preloadedExecFilename === item.dataset.exec`, 수동 업로드 아님)면 `clearExecZone()` 동반 호출. 사용자가 직접 넣은 exec(파일 업로드 또는 다른 독립 exec 선택)는 유지.
+
+### 함정 준수
+#13 `?v=2026-07-17d` 캐시 키 갱신(core-dump-index.js).
+
+### 검증
+빌드 OK, 기동 13.5s. `mvn test` 21건 전부 통과 — 신규 `RemoteDumpDedupFilenameTest` 6건(분/초/카운터 3단 폴백, 확장자 없는 exec, `.hprof.gz` 이중 확장자, 선행 점 이름). 재클릭 동반 해제는 실제 core-dump-index.js + core-dump.css 를 물린 정적 픽스처를 헤드리스 Chrome 으로 구동해 6개 시나리오 검증 전부 통과(선택 시 양쪽 존 채움 / 재클릭 시 양쪽 존 해제 / 독립 exec 로 교체 후 코어 해제 시 exec 유지).
+
+
+## [2026-07-17] 코어 파일 페이지 개선 2건 — 연결된 exec 사이드바 숨김 / 크래시 히어로 파스텔 배경
+
+**대상:** `service/CoreDumpAnalyzerService.java`, `model/dto/AnalysisHistoryItem.java`, `templates/core-dump/index.html`, `static/js/core-dump-index.js`, `static/css/core-dump.css`, `src/test/.../CoreDumpFileListTest.java`
+
+1. **코어에 연결된 exec 파일 사이드바 숨김** (항목 1): 같은 날 오전에 넣었던 "exec 항목이 코어 status 를 상속" 방식(직전 엔트리 항목 1)을 **표시 정책 변경으로 대체** — 연결된 exec(예: `crash_demo_2.core.exec` → `crash_demo_2.core`)는 사이드바 목록에서 아예 제외하고, 연결 정보는 **코어 항목의 페어 칩(`pairedExecFilename`)으로만** 노출한다(한 파일이 두 항목으로 중복 표시되는 문제 해소). 서버 측 `listExistingDumpFiles()` 에서 필터링: 페어링 맵(`coresByExec.containsKey`) 또는 레거시 `{core}.exec` 파일명 규칙(동명 코어 실존 + `getExecFilename` 일치)으로 연결 판정 → `continue`. **연결 없는 독립 exec 는 그대로 목록 유지**(미분석, 독립 드래그 페어링용). 이에 따라 상속 로직 전용이던 `pickPrimaryLinkedCore()` / DTO `pairedCoreFilename` / index.html 역방향 칩 / JS `syncPairedExecSelection()` 제거(코어 클릭 시 독립 exec 수동 선택만 `clearFileListSelection('exec')` 로 해제). 유형 필터의 "실행파일" 옵션은 독립 exec 용으로 유지.
+
+2. **크래시 발생 지점(크래시 히어로) 카드 파스텔 배경** (항목 3): `card--hero` 의 흰 배경 대신 시그널 톤별 파스텔 그라데이션 — fatal(SIGSEGV/SIGBUS/SIGILL) `--dn-bg`(#FEF2F2), `hero-warn`(SIGABRT/SIGFPE) `--wn-bg`(#FFFBEB), `hero-neutral` #F0F4F9. `linear-gradient(160deg, 파스텔 0% → 55% → 흰색 100%)` 로 아래쪽 코드 웰/힌트 박스와 자연스럽게 연결. 카드 외곽 보더도 톤 매칭(`--dn-border`/`--wn-border`). **함정**: `border-color` 단축 속성이 좌측 상태 레일 색을 덮어쓰므로 `border-left` 를 블록 내 마지막에 선언. 아이콘 웰엔 흰 인셋 링 추가(파스텔 배경과의 융화 방지).
+
+### 함정 준수
+#13 `?v=2026-07-17c` 캐시 키 갱신(core-dump.css 3 페이지 + core-dump-index.js).
+
+### 검증
+빌드 OK, 기동 13.7s. `mvn test` 15건 전부 통과 — `CoreDumpFileListTest` 7건을 새 정책으로 재작성(연결 exec 숨김 + 코어 페어 칩 유지 / 독립 exec 표시 / 해제 마커 비연결 / 다중 연결 숨김 / 레거시 규칙 숨김 / 동명 코어 부재 시 표시). 운영 페어링 데이터(`core-exec-pairs.properties`: `crash_demo_2.core=crash_demo_2.core.exec`)가 정확히 요청 사례임을 확인. 파스텔 히어로는 정적 픽스처 + 헤드리스 Chrome 으로 fatal/warn/neutral 3종 실렌더 — 좌측 레일 색 유지·내부 박스 대비 정상.
+
+
+## [2026-07-17] 코어 파일 페이지 후속 개선 5건 — exec 상태 표기 / 재분석 리비전 보존 / 선택 토글 / 드래그 고스트
+
+**대상:** `service/CoreDumpAnalyzerService.java`, `controller/CoreDumpApiController.java`, `controller/CoreDumpViewController.java`, `model/dto/AnalysisHistoryItem.java`, `model/dto/CoreDumpRevision.java`(신규), `templates/core-dump/index.html`·`analyze.html`, `static/js/core-dump-index.js`·`core-dump-analyze.js`, `static/css/core-dump.css`, `src/test/.../CoreDumpRevisionTest.java`·`CoreDumpFileListTest.java`(신규)
+
+1. **exec 파일이 연결돼 있는데 "미분석" 표기** (항목 1): exec 는 그 자체로 분석 대상이 아니라 DB 이력이 없는데 `listExistingDumpFiles()` 가 **자기 파일명으로 DB 조인** → 항상 `NOT_ANALYZED` 로 떨어졌음(`crash_demo_2.core.exec` 사례). **역방향 페어링 인덱스(exec → core)** 를 만들어 연결된 코어의 status 를 상속시키고, 코어명을 `cd-pair-chip` 으로 노출(코어 항목이 exec 칩을 보여주는 것과 대칭). 명시적 해제 마커(빈 값)는 연결로 치지 않고, 레거시 `{core}.exec` 는 **동명 코어 파일이 실존할 때만** 파일명 규칙으로 연결 복원. 한 exec 가 여러 코어에 연결되면 분석 완료된 코어를 대표로 선택(`pickPrimaryLinkedCore`, 동률은 사전순 안정화). 미연결 exec 만 미분석 유지. DTO 에 `pairedCoreFilename` 추가.
+
+2. **이미 분석된 코어에 다른 실행파일을 넣어도 기존 결과 페이지로 새던 문제** (항목 2): `startUpload()` 의 프리로드 분기가 **exec 입력을 통째로 무시**하고 status=SUCCESS 면 곧장 결과 페이지로 이동했음. 이제 프리로드 시점의 서버 페어링(`_originalExecPairing`)과 현재 선택을 비교해 **분석 조건 변경을 판정** → 변경 시 **재분석 확인 모달**(기존/새 exec diff + "기존 결과는 리비전 보존" 안내 + 취소/기존 결과 보기/새로 분석 3버튼). 확인 시 exec 페어링 반영 → 재분석 → 진행 페이지. 미분석/실패 상태는 모달 없이 exec 변경분만 반영 후 분석 시작.
+   - **기존 결과 보존(리비전)**: `POST /api/core-dump/reanalyze/{filename}` 이 기존 `result.json` 을 **삭제하던 것을 이관으로 변경** — `data/{core}/revisions/{yyyyMMdd-HHmmss}/` 로 `result.json` + `gdb_output.txt` 를 함께 옮긴다(같은 분석의 산출물이라 짝 유지). 이관이라 현재 result.json 이 사라져 기존 재분석 트리거(progress 페이지의 "결과 있으면 analyze redirect" 방어 로직)가 그대로 동작. 동일 초 충돌은 `-N` 접미사. **보존 실패 시 재분석을 중단**(결과를 잃느니 멈춘다). DB 행은 최신 1건 유지 → `findByFilename` 구조 무변경.
+   - **신규 API**: `GET /api/core-dump/{filename}/revisions`(목록), `POST /api/core-dump/{filename}/exec`(exec 첨부 — multipart 업로드 또는 서버 기존 파일명 `execFilename` 둘 다 허용, 기존 `DELETE .../exec` 와 대칭).
+   - **결과 페이지 리비전 선택** (항목 2 후속): `GET /core-dump/analyze/{fn}?rev={id}` 로 보존된 과거 결과를 읽기 전용 조회. 보존 리비전이 있을 때만 상단에 `cd-rev-bar` 노출(`현재 · exec: xxx` / `2026-07-17 14:20 · exec 없음`). 리비전 조회 중엔 배경을 warn 계열로 바꾸고 topbar 재분석 버튼을 숨김(재분석은 현재 결과 대상만). 리비전 ID 는 `^\d{8}-\d{6}(-\d+)?$` 화이트리스트로 **경로 조작 차단**. 깨진 result.json 은 목록에서 조용히 제외.
+
+3. **업로드 카드 상단 "SIGSEGV … 결과 보기" 카드 삭제** (항목 3): 컨텍스트 스트립의 **최근 SUCCESS 분기**(`recentOk`)로, 아래 분석 이력 표의 "결과 보기" 버튼과 중복이라 제거. **진행 중 분석 복귀 스트립(`analyzing` 분기)은 유지** — 상단 고정 안내로서 값이 있음.
+
+4. **파일 재클릭 시 선택 해제** (항목 4): 같은 항목 재클릭 → 선택 해제 + 해당 드롭존 비움. 코어/실행파일은 드롭존이 독립이라 **선택도 타입별로 분리 관리**(`clearFileListSelection(type)`) — 기존엔 exec 를 고르면 코어 선택이 시각적으로 풀리는 모순이 있었음. 코어 선택 시 페어링된 exec 항목도 선택 동기화.
+
+5. **드래그 시 카드가 그대로 커서에 붙도록 개선** (항목 5): 기본 드래그 이미지는 스크롤 컨테이너에 잘리고 흐릿하게 렌더 → **카드를 복제해 화면 밖(`-9999px`)에 띄우고 `setDragImage` 로 지정**, 커서 오프셋 유지. 원본은 `.is-dragging`(opacity .4)로 흐리고 `dragend` 에서 복제본 제거. `.cd-drag-ghost` 는 `.cd-file-item.is-paired` 의 inset 레일에 밀리지 않도록 **`.cd-file-item.cd-drag-ghost` 로 특이도를 맞춤**(함정 #13). `setDragImage` 미지원 시 기본 이미지로 폴백.
+
+### 함정 준수
+#13 CSS base/변형 분리 + `?v=2026-07-17b` 캐시 키 갱신(css/index.js/analyze.js) / #17 `#reanalyzeModal` 에 `.modal-btns button` 형태 규칙 동반(`.mbtn-ghost` 는 common.css 그룹에 없는 로컬 변형이라 색상까지 로컬 정의) / #4 `th:onclick` 문자열 미사용(정적 마크업 + `dataset`) / 감사 로깅 컨벤션(`[CoreDump] action=attach-exec|reanalyze ... by={who}`, reanalyze 는 `archivedRevision` 동반).
+
+### 검증
+빌드 OK, 기동 13.5s. **신규 단위 테스트 15건 전부 통과**(`mvn test`) — 리비전 아카이브 8건(이관/보존/동일초 `-N` 충돌/경로조작 차단/깨진 JSON 제외/삭제 정리 + **재분석 후에도 이전 단일 분석이 남는지** 직접 검증), exec 상태 상속 7건(페어링/미연결/미분석 코어/해제 마커/다중 연결/레거시 폴백). 자격증명 추출이 정책상 차단되어 로그인 실렌더 대신 **실제 core-dump.css + core-dump-index.js 를 로컬 HTTP 로 물린 정적 픽스처를 헤드리스 Chrome 으로 구동** — 항목 1/2/4/5 **26개 검증 전부 통과**(exec 배지=완료·연결칩, 재클릭 해제, 드래그 고스트 카드 동일 크기·그림자·정리, 모달 표시·diff·버튼 형태, exec 첨부 multipart boundary·CSRF 헤더 → reanalyze → progress 호출 순서). **서브에이전트 Thymeleaf 감사** → SpEL/getter 이슈 0, 지적된 2건 반영(`@{'/path/' + ${filename}}` 문자열 연결이 URL 인코딩을 우회 → `@{/path/{fn}(fn=...)}` 경로변수 형태로 수정, 미사용 `data-core` 속성 제거). **잔여 리스크**: Thymeleaf 런타임 렌더 + 실제 GDB 재분석 e2e 는 로그인 필요로 미실행 — 로그인 후 육안 확인 권장.
+
+
+## [2026-07-17] 코어 파일 페이지 UI/UX 전면 개편 — "정제된 라이트" 통일 디자인 시스템 (3종 페이지)
+
+**대상:** `static/css/core-dump.css`(전면 재작성), `templates/core-dump/index.html`·`progress.html`·`analyze.html`(전면 재작성), `static/js/core-dump-index.js`·`core-dump-progress.js`·`core-dump-analyze.js`(전면 재작성)
+
+코어 덤프 목록(`/core-dump`) · 진행(`/core-dump/progress`) · 분석결과(`/core-dump/analyze`) 3종 페이지를 하나의 **"정제된 라이트(Refined Light)"** 디자인 시스템으로 통일. 진화형 리팩터링 — **기능·데이터·JS 훅(함수명/ID/글로벌 변수) 전부 보존**, 시각·구조·정보 위계만 재정의. 백엔드(Java) 무변경.
+
+### 디자인 시스템 (core-dump.css `:root` 토큰 + 공통 컴포넌트)
+- **디자인 원칙**: ① Border-first 라이트 셸(그림자·채도 대신 1px 헤어라인 보더 + 배경 3단 + 타이포 대비) ② Hue 다이어트(solid 배지=진행 상태 / tinted 칩=사실 정보) ③ 3px 상태 레일 단일 언어 ④ 라이트 셸 속 다크 코드 웰(스택/레지스터/RAW/로그) ⑤ 정직한 상태 + 다음 행동 CTA.
+- **토큰**: spacing 4px 그리드 8단(`--sp-*`), 타이포 6단, radius/shadow 3단, gray 단일 중립 계열, primary/success/danger/warning 상태색, `--code-*` 다크웰. 심각도 `--sev-*`(#DC2626/#CA8A04/#16A34A/#2563EB)는 **불변 유지** — 4곳 정합 계약(함정 #22) 준수, danger 를 #DC2626 로 수렴해 rose 3종 분열 해소.
+- **공통 컴포넌트**: 카드 3단(`.content-card`/`.card--hero`/`.card--flat`), 버튼(`.btn` primary/soft/ghost/dark × sm/md/lg), 배지/칩(solid status · tinted signal · tag/pill), 상태 레일(`.rail-*`), 코드 웰(`.code-surface`), 세그먼티드 탭, 콜아웃/배너, 토스트(`alert()` 대체), 빈 상태, 저니 스테퍼(파일→분석→결과).
+
+### 페이지별
+- **index**: `style.css` 제거(→ body `!important` 핵 철거) + 컨텍스트 스트립(진행 중/최근 완료 판정) + 업로드 카드 **동적 CTA + XHR 실 진행률** + 이력 테이블(3px 상태 레일 + row-as-action + 검색/헤더정렬/페이지네이션) + 사이드바(키보드 접근·검색 클리어·분수 카운트·grip 드래그) + 삭제 모달 `.open` 규약.
+- **progress**: SSE **정직한 진행바**(GDB 실행 구간 percent 고정 → indeterminate 바 + "단계 N/5 · 로그 N줄") + 완료 미니 히어로 + 에러 배너(로그 tail 코드웰) + GDB 콘솔 max-height 상한(무한 성장 수정) + 자동스크롤 토글 + **SSE 백오프 재연결 3회 → history status 프로브**(HEAD 200 오탐 폐기) + a11y(progressbar/aria-live).
+- **analyze**: 크래시 히어로 v2(4px 레일·메타 칩·해석 힌트 dl·**다크 코드웰 소스뷰어**·신뢰도 푸터 칩+디스클로저) + **원인→위치→조치 요약 스트립** + AI 패널 4-state(심각도 배너 **클래스 토글**·인라인 스타일 주입 폐기·indeterminate 로딩) + 콜체인 compact + **sticky 세그먼티드 탭(hash 딥링크·aria·카운트)** + 프레임 카드 2밀도 토글 + **레지스터 PC/SP 상단 고정** + 공유 라이브러리 심볼없음 warn 레일 강조 + 메타 dl 강등(접기).
+
+### 함정 준수 (CLAUDE.md)
+#4 스레드 아코디언 `th:data-tid`+`dataset`(th:onclick 문자열 제거) / #7 copyRaw execCommand 폴백 유지(+성공 시 "복사됨" 라벨) / #13 base=core-dump.css 토큰, 페이지 인라인은 변형만 / #14 에러 body 검사 경로는 fetch 유지 / #17 삭제 모달 `.modal-btns button` 형태 규칙 동반 / #18 미디어쿼리 큰→작은 순서(1200→900→760, 1열 붕괴 회귀 수정) / #22 심각도 4곳 hex diff=0 / topbar 줄바꿈 규약 3페이지 적용 / 3페이지 CSS·JS `?v=2026-07-17` 일괄 갱신.
+
+### 후속 수정 (동일일자)
+- **분석결과 최하단 "덤프 메타 정보" 카드 아래 공간 확보**: 마지막 자식 카드의 `margin-bottom` 은 부모(`.cd-page`) 하단 마진과 **상쇄(margin collapse)** 되어 실제 여백이 생기지 않음 → `.cd-page` 를 `margin-bottom` 대신 상쇄되지 않는 `padding-bottom: 48px` 로 변경(analyze·progress 공통 적용). `core-dump.css` 캐시 키 `?v=2026-07-17a` 로 3페이지 갱신.
+
+### 검증
+빌드 OK, 기동 13.5s. 신규 CSS/JS 4종 200 서빙, `/core-dump` 인증 302 리다이렉트 정상. **자격증명 추출이 정책상 차단**되어 로그인 기반 실렌더 대신 **실제 core-dump.css 를 링크한 정적 픽스처를 헤드리스 Chrome(puppeteer-core@2.1.1)으로 렌더 검증** — 데스크톱 1440px + 모바일 600px 3종 페이지 모두 디자인 시스템 일관 적용 확인(1열 반응형 붕괴·탭 nowrap 포함). JS 훅 회귀 0(`getElementById`/`window.*` grep 대조), 심각도 4곳 hex 정합 확인. **4차원 서브에이전트 리뷰(Thymeleaf 문법·JS 훅·함정·CSS) + 적대적 검증** → 확정 5건(전부 cosmetic: 행번호/시그널칩 대비, 소스뷰어 롱라인 스크롤, sticky 탭 backdrop, cd-pre 다크 스크롤바) 반영. **잔여 리스크**: Thymeleaf 표현식 런타임 렌더는 로그인 필요로 미실행 — 서브에이전트 Thymeleaf 감사로 대체(문법 이슈 0). 로그인 후 3페이지 육안 확인 권장.
+
+
 ## [2026-07-16] 로그인 2차인증 고도화 — 관리자 OTP 정책 / SSO 저장 후 활성화 / 자기서비스 OTP 초기화 / 입력 UX
 
 **대상:** `service/TwoFactorConfigService.java`, `service/TwoFactorService.java`, `service/UserService.java`, `service/HeapDumpAnalyzerService.java`, `config/HeapDumpConfig.java`, `config/TwoFactorAuthenticationSuccessHandler.java`, `controller/HeapSystemApiController.java`, `controller/HeapDumpViewController.java`, `controller/AccountController.java`, `controller/TwoFactorController.java`, `listener/AuthEventListener.java`, `templates/settings.html`, `templates/account.html`, `templates/login-otp.html`, `templates/login-otp-setup.html`, `application.properties`

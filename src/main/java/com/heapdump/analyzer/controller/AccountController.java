@@ -21,9 +21,12 @@ import java.util.Map;
 public class AccountController {
 
     private final UserService userService;
+    private final com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy;
 
-    public AccountController(UserService userService) {
+    public AccountController(UserService userService,
+                            com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy) {
         this.userService = userService;
+        this.passwordPolicy = passwordPolicy;
     }
 
     // ── 페이지 ────────────────────────────────────────────────
@@ -34,6 +37,23 @@ public class AccountController {
         User user = userService.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
         model.addAttribute("user", user);
+        // 비밀번호 만료 정책 상태 (본인 계정 기준) — 표시 문자열은 컨트롤러에서 조립(Thymeleaf 단순화)
+        boolean pwEnabled = passwordPolicy.isEnabled() && !passwordPolicy.isExempt(user);
+        boolean pwExpired = passwordPolicy.isExpired(user);
+        java.time.LocalDateTime expiresAt = passwordPolicy.expiresAt(user);
+        Long daysLeft = passwordPolicy.daysUntilExpiry(user);
+        String pwExpiryText = null;
+        if (pwEnabled && expiresAt != null) {
+            pwExpiryText = expiresAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd")) + " 만료"
+                    + (daysLeft != null ? " (D-" + daysLeft + ")" : "");
+        }
+        // 만료 7일 이하(또는 이미 만료) + 정책 활성 시에만 상단 경고 뱃지 표기 (미설정 시 미표기)
+        boolean pwWarnSoon = pwEnabled && daysLeft != null && daysLeft <= 7;
+        model.addAttribute("pwExpiryEnabled", pwEnabled);
+        model.addAttribute("pwExpired", pwExpired);
+        model.addAttribute("pwExpiryText", pwExpiryText);
+        model.addAttribute("pwWarnSoon", pwWarnSoon);
+        model.addAttribute("pwDaysLeft", daysLeft);
         return "account";
     }
 

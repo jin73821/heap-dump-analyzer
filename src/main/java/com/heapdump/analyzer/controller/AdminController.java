@@ -16,7 +16,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.session.FindByIndexNameSessionRepository;
 import org.springframework.session.Session;
 import org.springframework.stereotype.Controller;
-import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.persistence.criteria.Predicate;
@@ -46,22 +45,36 @@ public class AdminController {
     private final UserService userService;
     private final LoginHistoryRepository loginHistoryRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy;
+    private final com.heapdump.analyzer.service.TwoFactorConfigService twoFactorConfig;
 
     @Autowired(required = false)
     private FindByIndexNameSessionRepository<? extends Session> sessionRepository;
 
     public AdminController(UserService userService,
                            LoginHistoryRepository loginHistoryRepository,
-                           JdbcTemplate jdbcTemplate) {
+                           JdbcTemplate jdbcTemplate,
+                           com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy,
+                           com.heapdump.analyzer.service.TwoFactorConfigService twoFactorConfig) {
         this.userService = userService;
         this.loginHistoryRepository = loginHistoryRepository;
         this.jdbcTemplate = jdbcTemplate;
+        this.passwordPolicy = passwordPolicy;
+        this.twoFactorConfig = twoFactorConfig;
     }
 
     @GetMapping("/admin/users")
-    public String usersPage(Model model) {
-        List<User> users = userService.findAll();
-        model.addAttribute("users", users);
+    public String usersPage(org.springframework.ui.Model model) {
+        // 사용자 행은 /api/admin/users 로 JS 가 채운다 (서버 렌더 th:each 제거 — 필터 정합성)
+        // 설정 탭(2차인증 / 비밀번호 만료 — General 에서 이동)용 모델
+        model.addAttribute("twoFactorMode", twoFactorConfig.getTwoFactorMode());
+        model.addAttribute("twoFactorAdminPolicy", twoFactorConfig.getTwoFactorAdminPolicy());
+        model.addAttribute("ssoEndpointUrl", twoFactorConfig.getSsoEndpointUrl());
+        model.addAttribute("ssoClientId", twoFactorConfig.getSsoClientId());
+        model.addAttribute("ssoRedirectUri", twoFactorConfig.getSsoRedirectUri());
+        model.addAttribute("ssoClientSecretSet", twoFactorConfig.isSsoClientSecretSet());
+        model.addAttribute("passwordExpiryDays", passwordPolicy.getPasswordExpiryDays());
+        model.addAttribute("passwordExpiryAdminExempt", passwordPolicy.isAdminExempt());
         return "admin/users";
     }
 
@@ -83,6 +96,15 @@ public class AdminController {
                     ? u.getLockedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : null);
             m.put("otpEnrolled", u.getOtpSecret() != null && !u.getOtpSecret().isEmpty());
             m.put("otpFailCount", u.getOtpFailCount());
+            // 비밀번호 만료 정책 상태 (정책 비활성/예외면 null·false)
+            m.put("passwordExpired", passwordPolicy.isExpired(u));
+            Long daysLeft = passwordPolicy.daysUntilExpiry(u);
+            m.put("passwordExpiresInDays", daysLeft);   // 음수=만료됨, null=판정 불가
+            java.time.LocalDateTime pExpiresAt = passwordPolicy.expiresAt(u);
+            m.put("passwordExpiresAt", pExpiresAt != null
+                    ? pExpiresAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : null);
+            m.put("passwordChangedAt", u.getPasswordChangedAt() != null
+                    ? u.getPasswordChangedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : null);
             result.add(m);
         }
         return ResponseEntity.ok(result);

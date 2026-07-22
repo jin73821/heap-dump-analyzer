@@ -130,7 +130,7 @@
         .ftable th { padding: 10px 12px; font-size: 11px; }
         .ftable td { padding: 10px 12px; }
         .td-seq { width: 48px; text-align: center; color: #9CA3AF; font-size: 12px;
-                  font-variant-numeric: tabular-nums; }
+                  font-variant-numeric: tabular-nums; white-space: nowrap; }
 
         /* Pagination */
         .pagination-bar { display: none; align-items: center; justify-content: space-between;
@@ -255,7 +255,7 @@
         .exec-subrow td { padding-top: 5px !important; padding-bottom: 5px !important; font-size: 12px; color: #6B7280; }
         .exec-subrow .col-fname { padding-left: 24px; }
         .exec-subrow .fname { font-weight: 400; color: #374151; }
-        .exec-subrow-indent { color: #A78BFA; margin-right: 6px; font-size: 14px; }
+        .exec-subrow-indent { color: #A78BFA; margin-right: 3px; font-size: 14px; }
         .unpair-btn { padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid #D1D5DB;
                       background: #fff; color: #6B7280; cursor: pointer; }
         .unpair-btn:hover { border-color: #EF4444; color: #EF4444; }
@@ -557,7 +557,7 @@
             <thead>
                 <tr>
                     <th class="td-check"><input type="checkbox" class="all-check" id="allCheck" onchange="onSelectAll()"></th>
-                    <th class="td-seq sortable" data-sort-key="id" data-sort-type="num" onclick="onHeaderSort(this)"># <span class="sort-arrow">▲</span></th>
+                    <th class="td-seq">#</th>
                     <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="onHeaderSort(this)">파일명 <span class="sort-arrow">▲</span></th>
                     <th class="sortable" data-sort-key="osize" data-sort-type="num" onclick="onHeaderSort(this)">원본 크기 <span class="sort-arrow">▲</span></th>
                     <th class="col-compressed sortable" data-sort-key="csize" data-sort-type="num" onclick="onHeaderSort(this)">압축 크기 <span class="sort-arrow">▲</span></th>
@@ -580,7 +580,7 @@
                              data-sort-date=${h.lastModified}">
                     <td class="td-check" data-label="선택"><input type="checkbox" class="row-check" th:value="${h.filename}"
                                                 th:data-deleted="${h.fileDeleted}" onchange="onRowCheck()"></td>
-                    <td class="td-seq col-seq" data-label="#" th:text="${h.id != null ? h.id : '-'}">1</td>
+                    <td class="td-seq col-seq" data-label="#"></td>
                     <td class="col-fname" data-label="파일명">
                         <span class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</span>
                         <span th:if="${h.fileType == 'coredump'}" class="core-badge">CORE</span>
@@ -1472,6 +1472,7 @@ function initRows() {
             _allRows.push(tr);
         }
     });
+    assignStableNumbers();   // 순번은 정렬/필터와 무관한 고정 식별자 — 최초 1회만 계산
     var saved = parseInt(localStorage.getItem('filesPageSize') || '20', 10);
     if ([20, 30, 50, 100].indexOf(saved) !== -1) {
         _pageSize = saved;
@@ -1558,6 +1559,44 @@ function sortRows() {
             }
         });
     }
+}
+
+// 순번(#) = 유형 접두 + 카테고리별 "날짜 오름차순 고정 순위"(가장 오래된 파일 = 1).
+// 정렬/필터/페이지/페어링과 무관한 안정적 식별자 → 한 번만(initRows) 계산해 셀에 고정.
+// 카테고리: H=Heapdump, C=Corefile(coredump/core), E=실행파일(exec/coreexec), O=Others.
+//   ⚠ 이 매핑은 탭 필터 로직(applyFilter)과 동기 유지(단 exec/coreexec 는 coredump 탭에 함께 노출).
+function categoryOf(t) {
+    t = t || 'heapdump';
+    if (t === 'others') return 'O';
+    if (t === 'exec' || t === 'coreexec') return 'E';
+    if (t === 'coredump' || t === 'core') return 'C';
+    return 'H';
+}
+function assignStableNumbers() {
+    // top-level 행 + 페어링된 exec 서브행(연결 상태)까지 모두 포함 → 연결/연결해제에도 E 순번 유지.
+    var all = _allRows.slice();
+    Object.keys(_subrowMap).forEach(function(k) { all.push(_subrowMap[k]); });
+    var groups = { H: [], C: [], E: [], O: [] };
+    all.forEach(function(row) {
+        if (row.getAttribute('data-deleted') === 'true') return;   // 삭제 행은 순번 미부여
+        groups[categoryOf(row.getAttribute('data-file-type'))].push(row);
+    });
+    Object.keys(groups).forEach(function(cat) {
+        groups[cat].sort(function(a, b) {
+            return (parseFloat(a.getAttribute('data-sort-date')) || 0)
+                 - (parseFloat(b.getAttribute('data-sort-date')) || 0);   // 오래된 → 최신(오름차순)
+        });
+        groups[cat].forEach(function(row, i) {
+            var cell = row.querySelector('.td-seq');
+            if (!cell) return;
+            var label = cat + '-' + (i + 1);
+            if (row.hasAttribute('data-parent-core')) {
+                cell.innerHTML = '<span class="exec-subrow-indent">└</span>' + label;  // 연결된 실행파일
+            } else {
+                cell.textContent = label;
+            }
+        });
+    });
 }
 
 function updateSortIndicators() {

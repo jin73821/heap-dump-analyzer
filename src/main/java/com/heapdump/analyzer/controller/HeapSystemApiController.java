@@ -4,6 +4,7 @@ import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.HeapDumpFile;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.service.PasswordPolicyConfigService;
 import com.heapdump.analyzer.service.TwoFactorConfigService;
 import com.heapdump.analyzer.util.AesEncryptor;
 import com.heapdump.analyzer.util.FilenameValidator;
@@ -49,19 +50,22 @@ public class HeapSystemApiController {
     private final DataSource dataSource;
     private final org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo;
     private final TwoFactorConfigService twoFactorConfig;
+    private final PasswordPolicyConfigService passwordPolicyConfig;
 
     public HeapSystemApiController(HeapDumpAnalyzerService analyzerService,
                                    HeapDumpConfig config,
                                    DataSourceProperties dataSourceProperties,
                                    DataSource dataSource,
                                    org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo,
-                                   TwoFactorConfigService twoFactorConfig) {
+                                   TwoFactorConfigService twoFactorConfig,
+                                   PasswordPolicyConfigService passwordPolicyConfig) {
         this.analyzerService = analyzerService;
         this.config = config;
         this.dataSourceProperties = dataSourceProperties;
         this.dataSource = dataSource;
         this.jdbcSessionRepo = jdbcSessionRepo;
         this.twoFactorConfig = twoFactorConfig;
+        this.passwordPolicyConfig = passwordPolicyConfig;
     }
 
     @PostMapping("/api/settings/unreachable")
@@ -189,6 +193,39 @@ public class HeapSystemApiController {
         resp.put("ssoRedirectUri", twoFactorConfig.getSsoRedirectUri());
         resp.put("ssoClientSecretSet", twoFactorConfig.isSsoClientSecretSet());
         resp.put("message", "SSO 연동 설정이 저장되었습니다.");
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * 비밀번호 만료 정책 변경 (만료 기간(일) + 관리자 예외).
+     * /api/settings/** 이므로 ADMIN + CSRF 보호 자동 적용.
+     * expiryDays 0 이하 = 만료 미적용(비활성).
+     */
+    @PostMapping("/api/settings/password-policy")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setPasswordPolicy(
+            @RequestParam int expiryDays,
+            @RequestParam boolean adminExempt,
+            org.springframework.security.core.Authentication auth) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (expiryDays < 0 || expiryDays > PasswordPolicyConfigService.MAX_EXPIRY_DAYS) {
+            resp.put("success", false);
+            resp.put("message", "만료 기간은 0(비활성)~" + PasswordPolicyConfigService.MAX_EXPIRY_DAYS + "일 사이여야 합니다.");
+            return ResponseEntity.badRequest().body(resp);
+        }
+        int before = passwordPolicyConfig.getPasswordExpiryDays();
+        boolean beforeExempt = passwordPolicyConfig.isAdminExempt();
+        analyzerService.setPasswordPolicy(expiryDays, adminExempt);
+        logger.info("[PwdPolicy] action=update field=expiry before={}d/{} after={}d/{} by={}",
+                before, beforeExempt, passwordPolicyConfig.getPasswordExpiryDays(),
+                passwordPolicyConfig.isAdminExempt(), auth != null ? auth.getName() : "unknown");
+        resp.put("success", true);
+        resp.put("expiryDays", passwordPolicyConfig.getPasswordExpiryDays());
+        resp.put("adminExempt", passwordPolicyConfig.isAdminExempt());
+        resp.put("enabled", passwordPolicyConfig.isEnabled());
+        resp.put("message", passwordPolicyConfig.isEnabled()
+                ? "비밀번호 만료 정책이 " + passwordPolicyConfig.getPasswordExpiryDays() + "일로 설정되었습니다. 다음 로그인부터 적용됩니다."
+                : "비밀번호 만료 정책이 비활성화되었습니다.");
         return ResponseEntity.ok(resp);
     }
 

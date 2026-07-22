@@ -245,6 +245,14 @@ public class HeapDumpConfig {
     @Value("${security.sso.redirect-uri:}")
     private String ssoRedirectUri;
 
+    // ── 비밀번호 만료 정책 ──────────────────────────────────────
+    /** 비밀번호 만료 기간(일). 0 이하 = 만료 미적용(비활성) */
+    @Value("${security.password.expiry-days:0}")
+    private int passwordExpiryDays;
+    /** 관리자(ADMIN) 계정 만료 예외 여부. true = 관리자는 만료 없음 */
+    @Value("${security.password.expiry-admin-exempt:true}")
+    private boolean passwordExpiryAdminExempt;
+
     // ── 코어 덤프 설정 ──────────────────────────────────────────
     @Value("${coredump.directory:/opt/coredumps}")
     private String coreDumpDirectory;
@@ -576,4 +584,6 @@ public class HeapDumpConfig {
     public String  getSsoClientId()     { return ssoClientId; }
     public String  getSsoClientSecret() { return ssoClientSecret; }
     public String  getSsoRedirectUri()  { return ssoRedirectUri; }
+    public int     getPasswordExpiryDays()        { return passwordExpiryDays; }
+    public boolean isPasswordExpiryAdminExempt()  { return passwordExpiryAdminExempt; }
 }

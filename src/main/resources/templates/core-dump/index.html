@@ -7,295 +7,8 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>코어 덤프 분석 - Heap Dump Analyzer</title>
-    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-06-28}">
-    <link rel="stylesheet" th:href="@{/css/style.css}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-06-28}">
-    <style>
-        body { background: var(--cd-bg, #F3F4F6) !important; }
-
-        /* index.html 전용 콘텐츠 카드 크기 override */
-        .content-card { margin-bottom: 24px; }
-        .content-card-title { font-size: 15px; color: #1F2937; margin-bottom: 20px; padding-bottom: 12px; }
-
-        /* 업로드 영역 (우측 메인 카드 — 코어·실행 가로 2열) */
-        .upload-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;
-        }
-
-        .upload-zone-label {
-            display: flex; align-items: center; gap: 6px; margin-bottom: 8px;
-            font-size: 13px; font-weight: 600; color: #374151;
-        }
-        .required-badge {
-            background: #FEE2E2; color: #DC2626; border-radius: 6px;
-            padding: 2px 8px; font-size: 11px; font-weight: 700;
-        }
-        .optional-badge {
-            background: #F3F4F6; color: #6B7280; border-radius: 6px;
-            padding: 2px 8px; font-size: 11px; font-weight: 600;
-        }
-
-        .upload-zone {
-            border: 1.5px dashed #93C5FD; border-radius: 10px;
-            padding: 14px 12px; text-align: center; cursor: pointer;
-            transition: all .2s; background: #F8FAFF; position: relative;
-            min-height: 76px; display: flex; flex-direction: column;
-            align-items: center; justify-content: center; gap: 3px;
-        }
-        .upload-zone:hover, .upload-zone.dragover {
-            border-color: #3B82F6; background: #EFF6FF;
-        }
-        .upload-zone.has-file {
-            border-color: #10B981; background: #F0FDF4; border-style: solid;
-        }
-        .upload-zone input[type=file] {
-            position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%;
-        }
-        .upload-zone-icon { font-size: 22px; }
-        .upload-zone-text { font-size: 12px; font-weight: 600; color: #374151; }
-        .upload-zone-sub  { font-size: 11px; color: #9CA3AF; }
-        .upload-zone-file {
-            font-size: 12px; color: #059669; font-weight: 700;
-            word-break: break-all; margin-top: 4px;
-        }
-        /* 선택 해제(×) 버튼 — 파일이 선택된 칸에서만 노출, input 위로 z-index */
-        .upload-zone-clear {
-            display: none; position: absolute; top: 6px; right: 6px; z-index: 2;
-            width: 20px; height: 20px; border: none; border-radius: 50%;
-            background: #E5E7EB; color: #6B7280; font-size: 15px; line-height: 1;
-            cursor: pointer; padding: 0; transition: all .15s;
-        }
-        .upload-zone-clear:hover { background: #FCA5A5; color: #fff; }
-        .upload-zone.has-file .upload-zone-clear {
-            display: flex; align-items: center; justify-content: center;
-        }
-
-        /* 업로드 제출 버튼 */
-        .upload-submit-btn {
-            width: 100%; padding: 10px; font-size: 13px; font-weight: 700;
-            background: #2563EB; color: #fff; border: none; border-radius: 8px;
-            cursor: pointer; transition: all .2s;
-            display: flex; align-items: center; justify-content: center; gap: 8px;
-        }
-        .upload-submit-btn:hover:not(:disabled) { background: #1D4ED8; box-shadow: 0 4px 14px rgba(37,99,235,.3); }
-        .upload-submit-btn:disabled { background: #9CA3AF; cursor: not-allowed; }
-
-        /* 업로드 진행 */
-        .upload-progress-bar {
-            display: none; margin-top: 12px; background: #E5E7EB;
-            border-radius: 999px; height: 6px; overflow: hidden;
-        }
-        .upload-progress-bar.visible { display: block; }
-        .upload-progress-fill {
-            height: 100%; background: linear-gradient(90deg, #3B82F6, #6366F1);
-            border-radius: 999px; transition: width .3s ease; width: 0%;
-        }
-        .upload-status { font-size: 12px; color: #6B7280; margin-top: 8px; text-align: center; }
-        .upload-error-box {
-            display: none; margin-top: 12px;
-            background: #FEF2F2; border: 1px solid #FECACA; border-left: 4px solid #DC2626;
-            border-radius: 10px; padding: 14px 16px;
-        }
-        .upload-error-box.visible { display: block; }
-        .upload-error-title { font-size: 13px; font-weight: 700; color: #991B1B; margin-bottom: 4px; }
-        .upload-error-msg   { font-size: 12px; color: #7F1D1D; }
-
-        /* 분석 이력 테이블 */
-        @keyframes pulse-bg {
-            0%, 100% { background: #EFF6FF; }
-            50%       { background: #DBEAFE; }
-        }
-        .hi-table-wrap { overflow-x: auto; }
-        .hi-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .hi-table th {
-            text-align: left; font-size: 11px; font-weight: 600; color: #9CA3AF;
-            text-transform: uppercase; letter-spacing: .04em;
-            padding: 8px 10px; border-bottom: 2px solid #E5E7EB; white-space: nowrap;
-        }
-        .hi-table td { padding: 12px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
-        .hi-table tbody tr:last-child td { border-bottom: none; }
-        .hi-table tbody tr { transition: background .15s; }
-        .hi-table tbody tr:hover { background: #F9FAFB; }
-        .hi-table tbody tr.hi-success { background: #F0FDF4; }
-        .hi-table tbody tr.hi-success:hover { background: #E7F9EE; }
-        .hi-table tbody tr.hi-error { background: #FFF8F8; }
-        .hi-table tbody tr.hi-error:hover { background: #FEF0F0; }
-        .hi-table tbody tr.hi-analyzing { animation: pulse-bg 1.8s ease infinite; }
-
-        .hi-col-num {
-            width: 34px; text-align: right; font-family: 'JetBrains Mono', monospace;
-            font-size: 12px; font-weight: 700; color: #CBD5E1;
-        }
-        .hi-fname-cell { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-        .hi-filename {
-            font-family: 'JetBrains Mono', monospace; font-size: 13px;
-            font-weight: 700; color: #1F2937; white-space: nowrap;
-        }
-        .exec-badge {
-            display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
-            background: #EDE9FE; color: #5B21B6; font-weight: 600; white-space: nowrap;
-        }
-        .hi-time, .hi-analyzed-time { font-size: 12px; color: #6B7280; white-space: nowrap; }
-        .hi-muted { color: #D1D5DB; }
-        .hi-actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; }
-        .hi-table td:last-child, .hi-table th:last-child { white-space: nowrap; width: 1%; }
-
-        /* 빈 상태 */
-        .empty-state { text-align: center; padding: 48px 20px; color: #9CA3AF; }
-        .empty-state-icon { font-size: 44px; margin-bottom: 12px; }
-        .empty-state-text { font-size: 14px; }
-
-        @media (max-width: 760px) {
-            .hi-table th.hi-hide-sm, .hi-table td.hi-hide-sm { display: none; }
-            .upload-grid { grid-template-columns: 1fr; }
-        }
-
-        /* ── 대시보드형 좌측 sidebar 레이아웃 (배너에 붙는 flush 컬럼) ── */
-        .cd-app-layout {
-            margin-left: var(--banner-w, 220px); margin-top: 52px;
-            display: grid; grid-template-columns: 340px 1fr;
-            align-items: start; min-height: calc(100vh - 52px);
-            transition: margin-left .25s cubic-bezier(.4,0,.2,1);
-        }
-        .cd-sidebar {
-            background: #fff; border-right: 1px solid #E5E7EB;
-            display: flex; flex-direction: column;
-            position: sticky; top: 52px; height: calc(100vh - 52px); overflow-y: auto;
-        }
-        .cd-side-section { padding: 16px; border-bottom: 1px solid #F3F4F6; }
-        .cd-side-section:last-child { border-bottom: none; }
-        .cd-side-files { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-        .cd-main { padding: 20px 24px 40px; min-width: 0; }
-        .s-title {
-            font-size: 10px; font-weight: 600; color: #9CA3AF;
-            text-transform: uppercase; letter-spacing: .07em; margin-bottom: 12px;
-            display: flex; align-items: center; gap: 6px;
-        }
-        .cd-file-panel-head {
-            display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
-            font-size: 10px; font-weight: 600; color: #9CA3AF;
-            text-transform: uppercase; letter-spacing: .07em;
-        }
-        .cd-file-panel-count {
-            font-size: 11px; font-weight: 600; color: var(--cd-text-muted, #9CA3AF);
-            background: #F3F4F6; border-radius: 999px; padding: 1px 8px; text-transform: none;
-        }
-        .cd-file-search {
-            display: flex; gap: 6px; margin-bottom: 8px;
-        }
-        .cd-file-search input {
-            flex: 1 1 0; min-width: 0; padding: 8px 10px; font-size: 12px;
-            border: 1.5px solid var(--cd-border, #e2e5ec); border-radius: 8px; outline: none;
-        }
-        .cd-file-search input:focus { border-color: var(--cd-primary, #2563eb); }
-        .cd-file-search-btn {
-            flex-shrink: 0; padding: 0 12px; font-size: 13px; cursor: pointer;
-            background: var(--cd-primary, #2563eb); color: #fff; border: none; border-radius: 8px;
-        }
-        .cd-file-search-btn:hover { background: #1D4ED8; }
-
-        /* 상태/유형 필터 행 (요구사항 2·3) */
-        .cd-file-filter { display: flex; gap: 6px; margin-bottom: 12px; }
-        .cd-file-filter select {
-            flex: 1 1 0; min-width: 0; padding: 6px 8px; font-size: 11px; cursor: pointer;
-            color: #374151; border: 1.5px solid var(--cd-border, #e2e5ec); border-radius: 8px;
-            background: #fff; outline: none; appearance: none; -webkit-appearance: none;
-            background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
-            background-repeat: no-repeat; background-position: right 8px center; padding-right: 22px;
-        }
-        .cd-file-filter select:focus { border-color: var(--cd-primary, #2563eb); }
-
-        .cd-file-list { overflow-y: auto; display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-height: 0; }
-        /* 간결한 단일 컬럼 카드 (배지 제거 — 요구사항 3·4) */
-        .cd-file-item {
-            display: block; cursor: grab;
-            padding: 10px 12px; border-radius: 8px; position: relative;
-            border: 1px solid #E5E7EB; background: #F9FAFB;
-            transition: border-color .15s, background .15s;
-        }
-        .cd-file-item:hover { border-color: #93C5FD; background: #EFF6FF; }
-        .cd-file-item.is-selected { border-color: var(--cd-primary, #2563eb); background: #EFF6FF; }
-        .cd-file-item:active { cursor: grabbing; }
-        /* 코어↔실행 페어 좌측 강조선 (요구사항 2) — border 위 border-left 만 override */
-        .cd-file-item.is-paired { border-left: 3px solid #10B981; }
-        .cd-finfo { min-width: 0; }
-        /* 파일명: Files 페이지와 동일 폰트/굵기 (요구사항 1) */
-        .cd-file-name {
-            font-size: 13px; font-weight: 500;
-            color: #1F2937; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .cd-fmeta { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
-        .cd-file-size { font-size: 12px; color: var(--cd-text-muted, #9CA3AF); white-space: nowrap; }
-        /* 페어 연결 칩 (요구사항 2) */
-        .cd-pair-chip {
-            display: flex; align-items: center; gap: 4px; margin-top: 5px;
-            font-size: 11px; font-weight: 600; color: #059669;
-        }
-        .cd-pair-chip span {
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        }
-        .cd-file-item .status-badge { flex-shrink: 0; padding: 2px 7px; font-size: 10px; }
-        .cd-file-empty { text-align: center; padding: 28px 10px; color: #9CA3AF; font-size: 12px; }
-        .cd-file-noresult { text-align: center; padding: 16px 10px; color: #9CA3AF; font-size: 12px; display: none; }
-
-        /* 페이지네이션 (요구사항 5) */
-        .cd-pg { display: none; flex-direction: column; align-items: center; gap: 6px;
-                 margin-top: 10px; padding-top: 10px; border-top: 1px solid #EEF0F4; }
-        .cd-pg.show { display: flex; }
-        .cd-pg-list { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; justify-content: center; }
-        .cd-pg-btn {
-            min-width: 26px; height: 26px; padding: 0 5px; font-size: 11px; font-weight: 600;
-            color: #374151; background: #fff; border: 1px solid #E5E7EB; border-radius: 6px; cursor: pointer;
-        }
-        .cd-pg-btn:hover:not(:disabled):not(.active) { background: #F3F4F6; }
-        .cd-pg-btn.active { background: var(--cd-primary, #2563eb); color: #fff; border-color: var(--cd-primary, #2563eb); cursor: default; }
-        .cd-pg-btn:disabled { opacity: .4; cursor: default; }
-        .cd-pg-ellipsis { color: #9CA3AF; font-size: 11px; padding: 0 2px; }
-        .cd-pg-info { font-size: 10px; color: #9CA3AF; }
-
-        @media (max-width: 900px) {
-            .cd-app-layout { margin-left: 0; grid-template-columns: 1fr; }
-            .cd-sidebar {
-                position: static; height: auto;
-                border-right: none; border-bottom: 1px solid #E5E7EB;
-            }
-            .cd-side-files { max-height: 360px; }
-        }
-
-        /* 삭제 확인 모달 */
-        #deleteDumpModal .modal-box {
-            padding: 28px 28px 24px; border-radius: 14px; width: 420px; max-width: 94vw;
-        }
-        #deleteDumpModal .modal-title {
-            font-size: 16px; font-weight: 700; color: #1F2937; margin-bottom: 6px;
-        }
-        #deleteDumpModal .modal-filename {
-            font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #6B7280;
-            background: #F3F4F6; border-radius: 6px; padding: 4px 10px;
-            word-break: break-all; margin-bottom: 16px; display: block;
-        }
-        #deleteDumpModal .modal-check-row {
-            display: flex; align-items: center; gap: 10px;
-            padding: 12px 14px; border-radius: 10px;
-            background: #FFF7ED; border: 1.5px solid #FED7AA; margin-bottom: 20px;
-        }
-        #deleteDumpModal .modal-check-row input[type=checkbox] {
-            width: 17px; height: 17px; accent-color: #DC2626; flex-shrink: 0; cursor: pointer;
-        }
-        #deleteDumpModal .modal-check-label {
-            font-size: 13px; font-weight: 600; color: #92400E; cursor: pointer; user-select: none;
-        }
-        #deleteDumpModal .modal-check-desc {
-            font-size: 11px; color: #B45309; margin-top: 2px;
-        }
-        #deleteDumpModal .modal-btns {
-            display: flex; justify-content: flex-end; gap: 8px;
-        }
-        #deleteDumpModal .modal-btns button {
-            padding: 9px 20px; border-radius: 8px; font-size: 13px; font-weight: 600;
-            border: none; cursor: pointer; transition: background .15s;
-        }
-    </style>
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-07-17}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-07-17c}">
 </head>
 <body>
 
@@ -304,35 +17,44 @@
 <div class="cd-topbar">
     <div class="topbar-brand">
         <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
-        <span class="topbar-title">코어 파일 분석</span>
+        <span class="topbar-title">코어 덤프 분석</span>
     </div>
+    <nav class="cd-steps" aria-label="분석 단계">
+        <span class="cd-step is-current"><span class="cd-step-dot"></span><span class="cd-step-label">파일</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step"><span class="cd-step-dot"></span><span class="cd-step-label">분석</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step"><span class="cd-step-dot"></span><span class="cd-step-label">결과</span></span>
+    </nav>
     <div class="topbar-right">
-        <a href="/" class="topbar-btn">&larr; Dashboard</a>
+        <a href="/" class="topbar-btn">Dashboard</a>
     </div>
 </div>
 
 <div class="cd-app-layout">
   <aside class="cd-sidebar">
-
-    <!-- 파일 목록 섹션 (대시보드 RECENT FILES 영역과 동일 구성) -->
     <div class="cd-side-section cd-side-files">
         <div class="cd-file-panel-head">
-            &#128193; 서버 코어 파일
-            <span class="cd-file-panel-count" id="cdFileCount"
-                  th:text="${#lists.size(coreDumpFiles)}">0</span>
+            서버 코어 파일
+            <span class="cd-file-panel-count" id="cdFileCount" th:text="${#lists.size(coreDumpFiles)}">0</span>
         </div>
-        <div class="cd-file-search">
+        <div class="cd-side-hint">파일을 클릭하거나 업로드 존으로 끌어다 놓으면 분석이 준비됩니다.</div>
+
+        <div class="cd-file-search" id="cdFileSearchWrap">
+            <span class="cd-file-search-icon" aria-hidden="true">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+            </span>
             <input type="text" id="cdFileSearch" placeholder="파일명 검색..." autocomplete="off">
-            <button type="button" class="cd-file-search-btn" id="cdFileSearchBtn">&#128269;</button>
+            <button type="button" class="cd-file-search-clear" id="cdFileSearchClear" aria-label="검색 지우기">&times;</button>
         </div>
         <div class="cd-file-filter">
-            <select id="cdFileStatusFilter" aria-label="상태 필터">
+            <select id="cdFileStatusFilter" class="cd-select" aria-label="상태 필터">
                 <option value="all">상태: 전체</option>
                 <option value="SUCCESS">완료</option>
                 <option value="ERROR">실패</option>
                 <option value="NOT_ANALYZED">미분석</option>
             </select>
-            <select id="cdFileTypeFilter" aria-label="유형 필터">
+            <select id="cdFileTypeFilter" class="cd-select" aria-label="유형 필터">
                 <option value="all">유형: 전체</option>
                 <option value="coredump">코어</option>
                 <option value="exec">실행파일</option>
@@ -345,7 +67,7 @@
 
         <div th:if="${!#lists.isEmpty(coreDumpFiles)}" class="cd-file-list" id="cdFileList">
             <div th:each="f : ${coreDumpFiles}"
-                 class="cd-file-item" draggable="true"
+                 class="cd-file-item" draggable="true" tabindex="0" role="button"
                  th:classappend="${f.pairedExecFilename != null and !#strings.isEmpty(f.pairedExecFilename)} ? 'is-paired'"
                  th:data-filename="${f.filename}"
                  th:data-exec="${f.pairedExecFilename != null ? f.pairedExecFilename : ''}"
@@ -366,9 +88,13 @@
                     </div>
                     <div th:if="${f.pairedExecFilename != null and !#strings.isEmpty(f.pairedExecFilename)}"
                          class="cd-pair-chip" th:title="'페어 실행 파일: ' + ${f.pairedExecFilename}">
-                        &#128279; <span th:text="${f.pairedExecFilename}"></span>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"></path><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"></path></svg>
+                        <span th:text="${f.pairedExecFilename}"></span>
                     </div>
                 </div>
+                <span class="cd-file-grip" aria-hidden="true">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg>
+                </span>
             </div>
         </div>
         <div th:if="${!#lists.isEmpty(coreDumpFiles)}" class="cd-file-noresult" id="cdFileNoResult">검색 결과가 없습니다.</div>
@@ -376,24 +102,40 @@
             <div class="cd-pg-list" id="cdFilePgList"></div>
             <div class="cd-pg-info" id="cdFilePgInfo"></div>
         </div>
-    </div><!-- .cd-side-files -->
-  </aside><!-- .cd-sidebar -->
+    </div>
+  </aside>
 
-  <!-- 우측: 메인 (업로드 + 분석 이력) -->
   <main class="cd-main">
 
-    <!-- 업로드 섹션 (대시보드 UPLOAD 영역과 동일 구성) -->
+    <!-- 컨텍스트 스트립: 진행 중인 분석으로 복귀하는 안내.
+         (최근 완료 건 스트립은 아래 분석 이력 표의 '결과 보기' 와 중복이라 제거) -->
+    <div th:with="analyzing=${history.?[status == 'ANALYZING']}">
+        <div th:if="${analyzing != null and !#lists.isEmpty(analyzing)}"
+             th:with="a=${analyzing[0]}"
+             class="cd-context-strip rail-info">
+            <span class="status-badge status-analyzing">분석 중</span>
+            <div class="ctx-body">
+                <span class="ctx-name" th:text="${a.filename}"></span>
+                <span class="ctx-desc">GDB 분석이 진행 중입니다.</span>
+            </div>
+            <a th:href="@{/core-dump/progress/{fn}(fn=${a.filename})}" class="btn btn-sm btn-soft soft-success">진행 확인</a>
+        </div>
+    </div>
+
+    <!-- 업로드 카드 -->
     <div class="content-card">
-        <div class="s-title">&#128229; 코어 파일 업로드</div>
+        <div class="content-card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M17 8l-5-5-5 5"></path><path d="M12 3v12"></path></svg>
+            코어 파일 업로드
+        </div>
         <div class="upload-grid">
-            <!-- 코어 파일 -->
             <div>
-                <div class="upload-zone-label">
-                    코어 파일 <span class="required-badge">필수</span>
-                </div>
+                <div class="upload-zone-label">코어 파일 <span class="required-badge">필수</span></div>
                 <div class="upload-zone" id="coreDropZone">
-                    <input type="file" id="coreFileInput" onchange="onCoreFileSelect(this)">
-                    <div class="upload-zone-icon">&#128196;</div>
+                    <input type="file" id="coreFileInput" onchange="onCoreFileSelect(this)" aria-label="코어 파일 선택">
+                    <span class="upload-zone-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg>
+                    </span>
                     <div class="upload-zone-text">파일 선택 또는 드래그</div>
                     <div class="upload-zone-sub">core, core.PID, core.PROG 등</div>
                     <div class="upload-zone-file" id="coreFileName"></div>
@@ -402,14 +144,13 @@
                             onclick="clearCoreZone(event)">&times;</button>
                 </div>
             </div>
-            <!-- 실행 파일 -->
             <div>
-                <div class="upload-zone-label">
-                    실행 파일 <span class="optional-badge">선택</span>
-                </div>
+                <div class="upload-zone-label">실행 파일 <span class="optional-badge">선택</span></div>
                 <div class="upload-zone" id="execDropZone">
-                    <input type="file" id="execFileInput" onchange="onExecFileSelect(this)">
-                    <div class="upload-zone-icon">&#9881;</div>
+                    <input type="file" id="execFileInput" onchange="onExecFileSelect(this)" aria-label="실행 파일 선택">
+                    <span class="upload-zone-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    </span>
                     <div class="upload-zone-text">파일 선택 또는 드래그</div>
                     <div class="upload-zone-sub">코어 파일과 함께 이 슬롯에 업로드해야 반영</div>
                     <div class="upload-zone-file" id="execFileName"></div>
@@ -419,15 +160,16 @@
                 </div>
             </div>
         </div>
-        <button class="upload-submit-btn" id="uploadBtn" onclick="startUpload()" disabled>
-            &#128269; GDB 분석 시작
+        <button class="btn btn-primary btn-lg upload-submit-btn" id="uploadBtn" onclick="startUpload()" disabled>
+            <span class="usb-progress" id="uploadProgressFill"></span>
+            <span class="usb-label" id="uploadBtnLabel">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+                GDB 분석 시작
+            </span>
         </button>
-        <div class="upload-progress-bar" id="uploadProgress">
-            <div class="upload-progress-fill" id="uploadProgressFill"></div>
-        </div>
         <div class="upload-status" id="uploadStatus"></div>
         <div class="upload-error-box" id="uploadErrorBox">
-            <div class="upload-error-title">&#10007; 업로드 실패</div>
+            <div class="upload-error-title">✕ 업로드 실패</div>
             <div class="upload-error-msg" id="uploadErrorMsg"></div>
         </div>
     </div>
@@ -435,107 +177,149 @@
     <!-- 분석 이력 카드 -->
     <div class="content-card">
         <div class="content-card-title">
-            &#128202; 분석 이력
-            <span class="title-count" th:text="${#lists.size(history)} + '건'"></span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 15l4-4 3 3 5-6"></path></svg>
+            분석 이력
+            <span class="title-count" id="hiCount" th:text="${#lists.size(history)} + '건'"></span>
         </div>
 
-        <!-- 빈 상태 -->
         <div th:if="${#lists.isEmpty(history)}" class="empty-state">
-            <div class="empty-state-icon">&#128203;</div>
-            <div class="empty-state-text">분석 이력이 없습니다.<br>코어 덤프 파일을 업로드하여 분석을 시작하세요.</div>
+            <div class="empty-state-icon">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M9 15h6"></path></svg>
+            </div>
+            <div class="empty-state-title">분석 이력이 없습니다</div>
+            <div class="empty-state-text">코어 덤프 파일을 업로드하여 분석을 시작하세요.</div>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="focusUpload()">코어 파일 업로드하기</button>
         </div>
 
-        <!-- 이력 테이블 -->
-        <div th:if="${!#lists.isEmpty(history)}" class="hi-table-wrap">
-            <table class="hi-table">
-                <thead>
-                    <tr>
-                        <th class="hi-col-num">#</th>
-                        <th>파일명</th>
-                        <th class="hi-hide-sm">업로드</th>
-                        <th>상태</th>
-                        <th class="hi-hide-sm">분석 시각</th>
-                        <th>액션</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr th:each="item, stat : ${history}"
-                        th:classappend="${item.status == 'SUCCESS'} ? 'hi-success'
-                                       : (${item.status == 'ERROR'} ? 'hi-error'
-                                       : (${item.status == 'ANALYZING'} ? 'hi-analyzing' : ''))">
+        <div th:if="${!#lists.isEmpty(history)}">
+            <div class="hi-controls">
+                <input type="text" id="hiSearch" class="cd-input" placeholder="파일명 검색..." autocomplete="off">
+            </div>
+            <div class="hi-table-wrap">
+                <table class="hi-table" id="hiTable">
+                    <thead>
+                        <tr>
+                            <th class="hi-col-num">#</th>
+                            <th class="sortable" data-sort-key="fname" data-sort-type="str">파일명 <span class="hi-sort-ind"></span></th>
+                            <th class="hi-hide-sm sortable" data-sort-key="uploaded" data-sort-type="str">업로드 <span class="hi-sort-ind"></span></th>
+                            <th class="sortable" data-sort-key="status" data-sort-type="str">상태 <span class="hi-sort-ind"></span></th>
+                            <th class="hi-hide-sm sortable" data-sort-key="analyzed" data-sort-type="str">분석 시각 <span class="hi-sort-ind"></span></th>
+                            <th>액션</th>
+                        </tr>
+                    </thead>
+                    <tbody id="hiTbody">
+                        <tr th:each="item, stat : ${history}"
+                            th:classappend="${item.status == 'SUCCESS'} ? 'hi-success'
+                                           : (${item.status == 'ERROR'} ? 'hi-error'
+                                           : (${item.status == 'ANALYZING'} ? 'hi-analyzing' : ''))"
+                            th:data-filename="${item.filename}"
+                            th:data-status="${item.status}"
+                            th:data-fname="${item.filename}"
+                            th:data-uploaded="${item.createdAt}"
+                            th:data-analyzed="${item.analyzedAt}"
+                            tabindex="0"
+                            onclick="cdRowAction(event, this)">
 
-                        <!-- 번호 -->
-                        <td class="hi-col-num" th:text="${stat.count}"></td>
+                            <td class="hi-col-num" th:text="${stat.count}"></td>
 
-                        <!-- 파일명 + EXEC + 시그널 -->
-                        <td>
-                            <div class="hi-fname-cell">
-                                <span class="hi-filename" th:text="${item.filename}"></span>
-                                <span th:if="${item.executableName != null}" class="exec-badge">EXEC</span>
-                                <span th:if="${item.crashSignal != null}"
-                                      class="signal-chip"
-                                      th:classappend="${item.crashSignal == 'SIGSEGV' or item.crashSignal == 'SIGBUS' or item.crashSignal == 'SIGILL'} ? ' chip-fatal'
-                                                     : (${item.crashSignal == 'SIGABRT' or item.crashSignal == 'SIGFPE'} ? ' chip-warn' : ' chip-neutral')"
-                                      th:text="${item.crashSignal}"></span>
-                            </div>
-                        </td>
+                            <td>
+                                <div class="hi-fname-cell">
+                                    <span class="hi-filename" th:text="${item.filename}" th:title="${item.filename}"></span>
+                                    <span th:if="${item.executableName != null}" class="tag-badge tag-exec">EXEC</span>
+                                    <span th:if="${item.crashSignal != null}"
+                                          class="signal-chip"
+                                          th:classappend="${item.crashSignal == 'SIGSEGV' or item.crashSignal == 'SIGBUS' or item.crashSignal == 'SIGILL'} ? 'chip-fatal'
+                                                         : (${item.crashSignal == 'SIGABRT' or item.crashSignal == 'SIGFPE'} ? 'chip-warn' : 'chip-neutral')"
+                                          th:text="${item.crashSignal}"></span>
+                                </div>
+                            </td>
 
-                        <!-- 업로드 시각 -->
-                        <td class="hi-hide-sm">
-                            <span class="hi-time" th:if="${item.createdAt != null}"
-                                  th:text="${#temporals.format(item.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
-                            <span th:unless="${item.createdAt != null}" class="hi-muted">–</span>
-                        </td>
+                            <td class="hi-hide-sm">
+                                <span class="hi-time" th:if="${item.createdAt != null}"
+                                      th:text="${#temporals.format(item.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
+                                <span th:unless="${item.createdAt != null}" class="hi-muted">–</span>
+                            </td>
 
-                        <!-- 상태 -->
-                        <td>
-                            <span class="status-badge"
-                                  th:classappend="${item.status == 'SUCCESS'} ? 'status-success'
-                                                 : (${item.status == 'ERROR'} ? 'status-error'
-                                                 : (${item.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
-                                  th:text="${item.status == 'SUCCESS'} ? '완료'
-                                           : (${item.status == 'ERROR'} ? '실패'
-                                           : (${item.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
-                        </td>
+                            <td>
+                                <span class="status-badge"
+                                      th:classappend="${item.status == 'SUCCESS'} ? 'status-success'
+                                                     : (${item.status == 'ERROR'} ? 'status-error'
+                                                     : (${item.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                                      th:text="${item.status == 'SUCCESS'} ? '완료'
+                                               : (${item.status == 'ERROR'} ? '실패'
+                                               : (${item.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
+                            </td>
 
-                        <!-- 분석 시각 -->
-                        <td class="hi-hide-sm">
-                            <span class="hi-analyzed-time" th:if="${item.analyzedAt != null}"
-                                  th:text="${#temporals.format(item.analyzedAt, 'MM-dd HH:mm')}"></span>
-                            <span th:unless="${item.analyzedAt != null}" class="hi-muted">–</span>
-                        </td>
+                            <td class="hi-hide-sm">
+                                <span class="hi-analyzed-time" th:if="${item.analyzedAt != null}"
+                                      th:text="${#temporals.format(item.analyzedAt, 'MM-dd HH:mm')}"></span>
+                                <span th:unless="${item.analyzedAt != null}" class="hi-muted">–</span>
+                            </td>
 
-                        <!-- 액션 -->
-                        <td>
-                            <div class="hi-actions">
-                                <a th:if="${item.status == 'SUCCESS'}"
-                                   th:href="@{/core-dump/analyze/{fn}(fn=${item.filename})}"
-                                   class="action-btn action-view">결과 보기</a>
-                                <a th:if="${item.status == 'ANALYZING'}"
-                                   th:href="@{/core-dump/progress/{fn}(fn=${item.filename})}"
-                                   class="action-btn action-progress">&#9654; 진행 확인</a>
-                                <button th:if="${item.status == 'ERROR' or item.status == 'NOT_ANALYZED'}"
-                                        class="action-btn action-reanalyze"
-                                        th:data-filename="${item.filename}"
-                                        onclick="reanalyze(this.dataset.filename, this)">&#8635; 재분석</button>
-                                <button class="action-btn action-delete"
-                                        th:data-filename="${item.filename}"
-                                        onclick="deleteDump(this.dataset.filename)">&#128465; 삭제</button>
-                            </div>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
+                            <td>
+                                <div class="hi-actions">
+                                    <a th:if="${item.status == 'SUCCESS'}"
+                                       th:href="@{/core-dump/analyze/{fn}(fn=${item.filename})}"
+                                       class="btn btn-sm btn-soft" onclick="event.stopPropagation()">결과 보기</a>
+                                    <a th:if="${item.status == 'ANALYZING'}"
+                                       th:href="@{/core-dump/progress/{fn}(fn=${item.filename})}"
+                                       class="btn btn-sm btn-soft soft-success" onclick="event.stopPropagation()">진행 확인</a>
+                                    <button th:if="${item.status == 'ERROR' or item.status == 'NOT_ANALYZED'}"
+                                            class="btn btn-sm btn-ghost"
+                                            th:data-filename="${item.filename}"
+                                            onclick="event.stopPropagation(); reanalyze(this.dataset.filename, this)">재분석</button>
+                                    <button class="btn btn-sm btn-soft soft-danger"
+                                            th:data-filename="${item.filename}"
+                                            onclick="event.stopPropagation(); deleteDump(this.dataset.filename)">삭제</button>
+                                    <span class="hi-row-chevron" aria-hidden="true">›</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="cd-file-noresult" id="hiNoResult">검색 결과가 없습니다.</div>
+            <div class="cd-pg" id="hiPg">
+                <div class="cd-pg-list" id="hiPgList"></div>
+                <div class="cd-pg-info" id="hiPgInfo"></div>
+            </div>
         </div>
     </div>
 
-    </main><!-- .cd-main -->
-</div><!-- .cd-app-layout -->
+    </main>
+</div>
+
+<!-- 재분석 확인 모달 — 이미 분석된 코어에 실행 파일 구성이 바뀐 채로 분석을 시작할 때 -->
+<div id="reanalyzeModal" class="modal-ov" onclick="if(event.target===this)closeReanalyzeModal()">
+    <div class="modal-box">
+        <div class="modal-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"></path><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path><path d="M12 7v5l4 2"></path></svg>
+            이미 분석된 파일입니다
+        </div>
+        <span id="reanalyzeModalFilename" class="modal-filename"></span>
+        <div class="modal-desc">
+            이 코어 파일은 이미 분석이 완료되어 있습니다. 실행 파일 구성이 바뀌었으니 새로 분석할 수 있습니다.
+        </div>
+        <div id="reanalyzeModalDiff" class="modal-diff"></div>
+        <div class="modal-note">
+            기존 분석 결과는 <b>리비전으로 보존</b>됩니다. 결과 페이지 상단의 &lsquo;분석 리비전&rsquo; 선택에서 다시 볼 수 있습니다.
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeReanalyzeModal()">취소</button>
+            <button class="mbtn-ghost" id="reanalyzeViewBtn" onclick="viewExistingResult()">기존 결과 보기</button>
+            <button class="mbtn-save" id="reanalyzeConfirmBtn" onclick="confirmReanalyzeNew()">새로 분석</button>
+        </div>
+        <div class="modal-err" id="reanalyzeModalErr"></div>
+    </div>
+</div>
 
 <!-- 삭제 확인 모달 -->
-<div id="deleteDumpModal" class="modal-ov" style="display:none" onclick="if(event.target===this)closeDumpDeleteModal()">
+<div id="deleteDumpModal" class="modal-ov" onclick="if(event.target===this)closeDumpDeleteModal()">
     <div class="modal-box">
-        <div class="modal-title">&#128465; 삭제 확인</div>
+        <div class="modal-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
+            삭제 확인
+        </div>
         <span id="deleteDumpModalFilename" class="modal-filename"></span>
         <div class="modal-check-row">
             <input type="checkbox" id="deleteFileChk">
@@ -551,7 +335,9 @@
     </div>
 </div>
 
-<script th:src="@{/js/core-dump-index.js?v=2026-07-03}"></script>
+<div class="cd-toast-wrap" id="cdToastWrap"></div>
+
+<script th:src="@{/js/core-dump-index.js?v=2026-07-17d}"></script>
 
 </body>
 </html>

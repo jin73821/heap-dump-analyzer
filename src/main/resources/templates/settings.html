@@ -119,14 +119,6 @@
             .ao-grid .setting-row:last-child { border-bottom: none; }
         }
 
-        /* ── 2차인증 카드 ────────────────────────────────── */
-        .tfa-mode-radios { display: flex; align-items: center; gap: 16px; flex-shrink: 0; }
-        .tfa-radio { display: flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; white-space: nowrap; }
-        .tfa-policy-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-        .tfa-policy-select { padding: 5px 8px; border: 1px solid #BAE6FD; border-radius: 6px;
-                             font-size: 12.5px; background: #fff; color: #0C4A6E; }
-        .sso-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
-
         /* ── Danger zone ─────────────────────────────────── */
         .danger-zone { border-color: #FECACA; }
         .danger-zone .card-title { color: #DC2626; }
@@ -187,12 +179,6 @@
             .heap-select { min-width: 0; }
             .modal-box { padding: 22px 20px; }
             .page-ttl { font-size: 18px; }
-            /* 2차인증 카드: 라디오 세로 스택 + SSO 필드 1열 */
-            .tfa-mode-row { flex-direction: column; align-items: flex-start; gap: 12px; }
-            .tfa-mode-radios { flex-wrap: wrap; gap: 10px 18px; }
-            .sso-grid { grid-template-columns: 1fr; }
-            .tfa-policy-row { flex-direction: column; align-items: flex-start; gap: 6px; }
-            .tfa-policy-select { width: 100%; }
         }
         @media (max-width: 400px) {
             .container { padding: 58px 8px 24px; }
@@ -410,77 +396,6 @@
             </div>
         </div>
 
-        <!-- Login Two-Factor Authentication -->
-        <div class="card card-full" id="tfaCard"
-             th:attr="data-mode=${twoFactorMode},data-admin-policy=${twoFactorAdminPolicy},data-secret-set=${ssoClientSecretSet}">
-            <div class="card-title">
-                <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-                Login Two-Factor Authentication
-            </div>
-            <div class="setting-row tfa-mode-row" style="border-bottom:none">
-                <div>
-                    <div class="setting-label">로그인 2차인증</div>
-                    <div class="setting-desc">
-                        미사용: 기존 ID/PW 로그인만 사용 &middot;
-                        OTP: 로그인 후 TOTP 6자리 인증 (Google/MS Authenticator 호환, 미등록 계정은 최초 로그인 시 QR 등록) &middot;
-                        SSO: 로그인 화면에 SSO 로그인 버튼 표시 (연동 설정 저장 시 활성화)
-                    </div>
-                </div>
-                <div class="tfa-mode-radios">
-                    <label class="tfa-radio">
-                        <input type="radio" name="tfaMode" value="off" th:checked="${twoFactorMode == 'off'}" onchange="onTfaModeChange(this)"> 미사용
-                    </label>
-                    <label class="tfa-radio">
-                        <input type="radio" name="tfaMode" value="otp" th:checked="${twoFactorMode == 'otp'}" onchange="onTfaModeChange(this)"> OTP 인증
-                    </label>
-                    <label class="tfa-radio">
-                        <input type="radio" name="tfaMode" value="sso" th:checked="${twoFactorMode == 'sso'}" onchange="onTfaModeChange(this)"> SSO 연동
-                    </label>
-                </div>
-            </div>
-            <!-- OTP 정책 + 잠금 안내 (mode=otp 일 때만 표시) -->
-            <div id="tfaOtpInfo" style="display:none;margin-top:8px;padding:10px 14px;background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;font-size:12.5px;color:#0C4A6E">
-                <div style="margin-bottom:8px">OTP 10회 연속 실패 시 계정이 잠기며, 관리자가 <b>Accounts &rarr; 사용자 목록</b>에서 잠금을 해제할 수 있습니다.</div>
-                <div class="tfa-policy-row">
-                    <span style="font-weight:700;white-space:nowrap">관리자 OTP 정책</span>
-                    <select id="tfaAdminPolicy" class="tfa-policy-select" onchange="saveAdminPolicy(this.value)">
-                        <option value="enforce">일반 사용자와 동일 (실패 시 잠금)</option>
-                        <option value="enforce_no_lock">OTP 필수 + 자기 잠금 방지 (권장)</option>
-                        <option value="exempt">관리자 예외 (OTP 미적용)</option>
-                    </select>
-                </div>
-            </div>
-            <!-- SSO 연동 필드 (mode=sso 또는 sso 선택 시 표시) -->
-            <div id="tfaSsoGroup" style="display:none;margin-top:12px;padding:14px 16px;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:8px">
-                <div style="font-size:13px;font-weight:700;color:#374151;margin-bottom:10px">커스텀 SSO 연동 설정 <span style="font-weight:400;color:#9CA3AF">— 사내 SSO 가이드 확정 전 틀 (저장 시 SSO 활성화, 실제 연동은 추후 구현)</span></div>
-                <div id="tfaSsoActivateNotice" style="display:none;margin-bottom:10px;padding:8px 11px;background:#FFFBEB;border:1px solid #FDE68A;border-radius:7px;font-size:12px;color:#92400E">
-                    &#9888; 아래 설정을 <b>저장</b>해야 SSO 연동이 활성화됩니다. (Endpoint URL &middot; Client ID &middot; Client Secret 필수)
-                </div>
-                <div class="sso-grid">
-                    <div>
-                        <div class="setting-label" style="font-size:12.5px;margin-bottom:4px">Endpoint URL (Authorization)</div>
-                        <input id="ssoEndpointUrl" th:value="${ssoEndpointUrl}" style="width:100%;padding:6px 9px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px" placeholder="https://sso.example.co.kr/oauth/authorize">
-                    </div>
-                    <div>
-                        <div class="setting-label" style="font-size:12.5px;margin-bottom:4px">Client ID</div>
-                        <input id="ssoClientId" th:value="${ssoClientId}" style="width:100%;padding:6px 9px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px" placeholder="heap-analyzer">
-                    </div>
-                    <div>
-                        <div class="setting-label" style="font-size:12.5px;margin-bottom:4px">Client Secret</div>
-                        <input id="ssoClientSecret" type="password" autocomplete="new-password"
-                               style="width:100%;padding:6px 9px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px"
-                               th:placeholder="${ssoClientSecretSet} ? '******** (저장됨 — 비워두면 기존 값 유지)' : '비워두면 미설정 유지'">
-                    </div>
-                    <div>
-                        <div class="setting-label" style="font-size:12.5px;margin-bottom:4px">Redirect URI (Callback)</div>
-                        <input id="ssoRedirectUri" th:value="${ssoRedirectUri}" style="width:100%;padding:6px 9px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px" placeholder="http://this-server:18080/sso/callback">
-                    </div>
-                </div>
-                <div style="display:flex;justify-content:flex-end;margin-top:10px">
-                    <button class="heap-btn-apply" style="padding:6px 16px;font-size:12.5px" onclick="saveSsoConfig()">Save SSO Config</button>
-                </div>
-            </div>
-        </div>
 
         <!-- MAT Configuration (구 Database 자리) -->
         <div class="card">
@@ -850,18 +765,6 @@
     </div>
 </div>
 
-<!-- ── 2차인증 모드 변경 confirm modal ─────────────────────── -->
-<div class="modal-ov" id="tfaModal" onclick="if(event.target===this)closeTfaModal()">
-    <div class="modal-box">
-        <div class="modal-ttl">로그인 2차인증 모드 변경</div>
-        <div class="modal-desc" id="tfaModalDesc">-</div>
-        <div class="modal-warn" id="tfaModalWarn" style="display:none">&#9888; <span id="tfaModalWarnText"></span></div>
-        <div class="modal-btns">
-            <button class="mbtn-cancel" onclick="closeTfaModal()">Cancel</button>
-            <button class="mbtn-primary" onclick="doChangeTfaMode()">Apply</button>
-        </div>
-    </div>
-</div>
 
 <!-- ── DB 설정 변경 모달 ──────────────────────────────────── -->
 <div class="modal-ov" id="dbEditModal" onclick="if(event.target===this)closeDbEditModal()">
@@ -1232,127 +1135,6 @@ function doDisableCompress() {
         .catch(function(e){ toast('Setting save failed: ' + e.message, 'error'); });
 }
 
-// ── Login Two-Factor Authentication ─────────────────────
-var _tfaCard = document.getElementById('tfaCard');
-var TFA_MODE = (_tfaCard && _tfaCard.getAttribute('data-mode')) || 'off';
-var TFA_ADMIN_POLICY = (_tfaCard && _tfaCard.getAttribute('data-admin-policy')) || 'enforce_no_lock';
-var SSO_SECRET_SET = (_tfaCard && _tfaCard.getAttribute('data-secret-set') === 'true');
-var tfaPendingMode = null;
-var TFA_MODE_LABELS = { off: '미사용', otp: 'OTP 인증', sso: 'SSO 연동' };
-var ADMIN_POLICY_LABELS = { enforce: '일반 사용자와 동일', enforce_no_lock: 'OTP 필수 + 자기 잠금 방지', exempt: '관리자 예외' };
-
-function updateTfaVisibility() {
-    var sso = document.getElementById('tfaSsoGroup');
-    var otp = document.getElementById('tfaOtpInfo');
-    if (sso) sso.style.display = (TFA_MODE === 'sso') ? 'block' : 'none';
-    if (otp) otp.style.display = (TFA_MODE === 'otp') ? 'block' : 'none';
-    var notice = document.getElementById('tfaSsoActivateNotice');
-    if (notice) notice.style.display = 'none';
-}
-function setTfaRadio(mode) {
-    document.querySelectorAll('input[name="tfaMode"]').forEach(function(r) { r.checked = (r.value === mode); });
-}
-// SSO 는 라디오 클릭만으로 활성화하지 않음 — 설정 저장 시점에 활성화 (오해 방지)
-function showSsoConfigForActivation() {
-    var otp = document.getElementById('tfaOtpInfo');
-    if (otp) otp.style.display = 'none';
-    document.getElementById('tfaSsoGroup').style.display = 'block';
-    var notice = document.getElementById('tfaSsoActivateNotice');
-    if (notice) notice.style.display = (TFA_MODE === 'sso') ? 'none' : 'block';
-}
-function onTfaModeChange(el) {
-    if (el.value === TFA_MODE) { updateTfaVisibility(); return; }
-    if (el.value === 'sso') {
-        showSsoConfigForActivation();   // 활성화는 Save SSO Config 시점
-        return;
-    }
-    tfaPendingMode = el.value;
-    setTfaRadio(TFA_MODE);   // 확정 전까지 실제 모드로 되돌림
-    updateTfaVisibility();   // SSO 박스 숨김
-    var desc = document.getElementById('tfaModalDesc');
-    var warn = document.getElementById('tfaModalWarn');
-    var warnText = document.getElementById('tfaModalWarnText');
-    desc.textContent = '로그인 2차인증 모드를 "' + TFA_MODE_LABELS[TFA_MODE] + '" 에서 "' + TFA_MODE_LABELS[tfaPendingMode] + '" (으)로 변경합니다. 다음 로그인부터 적용됩니다.';
-    if (tfaPendingMode === 'otp') {
-        warn.style.display = '';
-        warnText.textContent = '모든 사용자는 다음 로그인부터 OTP 등록/입력이 필요합니다. (관리자 정책은 아래에서 조정)';
-    } else if (tfaPendingMode === 'off') {
-        warn.style.display = '';
-        warnText.textContent = '2차인증 없이 ID/PW 만으로 로그인됩니다.';
-    } else {
-        warn.style.display = 'none';
-    }
-    document.getElementById('tfaModal').classList.add('open');
-}
-function closeTfaModal() {
-    document.getElementById('tfaModal').classList.remove('open');
-    tfaPendingMode = null;
-    setTfaRadio(TFA_MODE);
-    updateTfaVisibility();
-}
-function doChangeTfaMode() {
-    var target = tfaPendingMode;
-    document.getElementById('tfaModal').classList.remove('open');
-    tfaPendingMode = null;
-    if (!target) return;
-    Common.fetchJSON('/api/settings/two-factor?mode=' + encodeURIComponent(target), {method:'POST'})
-        .then(function(d) {
-            TFA_MODE = d.twoFactorMode || target;
-            setTfaRadio(TFA_MODE);
-            updateTfaVisibility();
-            toast('2차인증 모드 변경: ' + TFA_MODE_LABELS[TFA_MODE], 'success');
-        })
-        .catch(function(e) { setTfaRadio(TFA_MODE); toast('2차인증 모드 변경 실패: ' + e.message, 'error'); });
-}
-function saveAdminPolicy(policy) {
-    Common.fetchJSON('/api/settings/two-factor/admin-policy?policy=' + encodeURIComponent(policy), {method:'POST'})
-        .then(function(d) {
-            TFA_ADMIN_POLICY = d.adminPolicy || policy;
-            toast('관리자 OTP 정책: ' + (ADMIN_POLICY_LABELS[TFA_ADMIN_POLICY] || TFA_ADMIN_POLICY), 'success');
-        })
-        .catch(function(e) {
-            var sel = document.getElementById('tfaAdminPolicy');
-            if (sel) sel.value = TFA_ADMIN_POLICY;   // 실패 시 이전 값 복원
-            toast('정책 변경 실패: ' + e.message, 'error');
-        });
-}
-function saveSsoConfig() {
-    var endpointUrl = document.getElementById('ssoEndpointUrl').value.trim();
-    var clientId    = document.getElementById('ssoClientId').value.trim();
-    var secret      = document.getElementById('ssoClientSecret').value;
-    var redirectUri = document.getElementById('ssoRedirectUri').value.trim();
-    if (!endpointUrl) { toast('Endpoint URL 을 입력하세요.', 'error'); return; }
-    if (!clientId)    { toast('Client ID 를 입력하세요.', 'error'); return; }
-    if (!secret && !SSO_SECRET_SET) { toast('Client Secret 을 입력하세요.', 'error'); return; }
-    var body = { endpointUrl: endpointUrl, clientId: clientId, redirectUri: redirectUri };
-    if (secret !== '') body.clientSecret = secret; // 비워두면 기존 값 유지
-    var willActivate = (TFA_MODE !== 'sso');
-    Common.fetchJSON('/api/settings/two-factor/sso', {method:'POST', body: JSON.stringify(body)})
-        .then(function(d) {
-            SSO_SECRET_SET = !!d.ssoClientSecretSet;
-            var sInput = document.getElementById('ssoClientSecret');
-            sInput.value = '';
-            sInput.placeholder = SSO_SECRET_SET ? '******** (저장됨 — 비워두면 기존 값 유지)' : '비워두면 미설정 유지';
-            if (willActivate) {
-                // 저장 완료 → SSO 연동 활성화
-                return Common.fetchJSON('/api/settings/two-factor?mode=sso', {method:'POST'})
-                    .then(function(m) {
-                        TFA_MODE = m.twoFactorMode || 'sso';
-                        setTfaRadio(TFA_MODE);
-                        updateTfaVisibility();
-                        toast('SSO 설정 저장 및 연동 활성화 완료', 'success');
-                    });
-            }
-            toast('SSO 설정 저장 완료', 'success');
-        })
-        .catch(function(e) { toast('SSO 설정 저장 실패: ' + e.message, 'error'); });
-}
-(function initTfa() {
-    var sel = document.getElementById('tfaAdminPolicy');
-    if (sel) sel.value = TFA_ADMIN_POLICY;
-    updateTfaVisibility();
-})();
-
 // ── Keep Unreachable toggle ────────────────────────────
 function confirmKeepUnreachable(el) {
     if (!el.checked) {
@@ -1669,7 +1451,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') { closeClearModal(); closeKeepURModal(); closeAAModal(); closeHeapWarnModal(); closeSaveResultsModal(); closeDbEditModal(); closeMaxUploadModal(); closeRestartRequiredModal(); closeAllowAllExtModal(); closeTfaModal(); }
+    if (e.key === 'Escape') { closeClearModal(); closeKeepURModal(); closeAAModal(); closeHeapWarnModal(); closeSaveResultsModal(); closeDbEditModal(); closeMaxUploadModal(); closeRestartRequiredModal(); closeAllowAllExtModal(); }
 });
 
 // ── 비-ADMIN 읽기 전용 처리: container 내부의 모든 form 컨트롤/액션 버튼 비활성화 ──

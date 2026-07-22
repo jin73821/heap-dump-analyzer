@@ -146,6 +146,7 @@ public class UserService {
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
         validatePassword(newPassword);
         user.setPassword(passwordEncoder.encode(newPassword));
+        user.setPasswordChangedAt(LocalDateTime.now());   // 관리자 초기화 → 만료 카운트 리셋
         userRepository.save(user);
     }
 
@@ -198,6 +199,7 @@ public class UserService {
             throw new IllegalArgumentException("새 비밀번호는 현재 비밀번호와 달라야 합니다.");
         }
         user.setPassword(passwordEncoder.encode(newPassword));
+        user.setPasswordChangedAt(LocalDateTime.now());   // 만료 카운트 리셋 (강제 변경 포함)
         userRepository.save(user);
         logger.info("[UserService] 비밀번호 변경 (self): {}", username);
     }

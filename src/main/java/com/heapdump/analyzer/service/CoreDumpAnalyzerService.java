@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.*;
 import com.heapdump.analyzer.model.dto.AnalysisHistoryItem;
+import com.heapdump.analyzer.model.dto.CoreDumpRevision;
 import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.repository.CoreDumpAnalysisRepository;
 import com.heapdump.analyzer.util.FormatUtils;
@@ -30,6 +31,12 @@ public class CoreDumpAnalyzerService {
 
     private static final Logger logger = LoggerFactory.getLogger(CoreDumpAnalyzerService.class);
     private static final String RESULT_JSON = "result.json";
+    private static final String GDB_OUTPUT_TXT = "gdb_output.txt";
+    private static final String REVISIONS_DIR = "revisions";
+    /** 리비전 디렉토리명 = yyyyMMdd-HHmmss, 동일 초 충돌 시 -N 접미사 */
+    private static final Pattern REVISION_ID = Pattern.compile("^\\d{8}-\\d{6}(-\\d+)?$");
+    private static final DateTimeFormatter REVISION_ID_FMT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
+    private static final DateTimeFormatter REVISION_LABEL_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final HeapDumpConfig config;
     private final CoreDumpAnalysisRepository repository;
@@ -78,6 +85,10 @@ public class CoreDumpAnalyzerService {
         return new File(dataDir(filename), RESULT_JSON);
     }
 
+    public File revisionsDir(String filename) {
+        return new File(dataDir(filename), REVISIONS_DIR);
+    }
+
     private String baseName(String filename) {
         return Paths.get(filename).getFileName().toString();
     }
@@ -104,6 +115,124 @@ public class CoreDumpAnalyzerService {
             return Optional.of(objectMapper.readValue(f, CoreDumpAnalysisResult.class));
         } catch (Exception e) {
             logger.warn("[CoreDump] result.json 로드 실패: {}", e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    // ── 분석 리비전 (재분석 시 기존 결과 보존) ─────────────────────
+
+    /**
+     * 리비전 ID 검증. 경로 조작 차단 — 디렉토리명 패턴에 정확히 일치해야 한다.
+     */
+    public String validateRevisionId(String revisionId) {
+        if (revisionId == null || revisionId.trim().isEmpty())
+            throw new IllegalArgumentException("리비전 ID가 필요합니다.");
+        String safe = revisionId.trim();
+        if (!REVISION_ID.matcher(safe).matches())
+            throw new IllegalArgumentException("유효하지 않은 리비전 ID입니다: " + revisionId);
+        return safe;
+    }
+
+    /**
+     * 현재 result.json 을 revisions/{yyyyMMdd-HHmmss}/ 로 이관해 보존한다.
+     * gdb_output.txt 도 함께 옮긴다(같은 분석의 산출물이라 짝을 맞춰야 함).
+     * 이관이므로 호출 후 현재 result.json 은 사라진다 → progress 페이지의
+     * "결과 있으면 analyze 로 redirect" 방어 로직에 걸리지 않아 재분석이 정상 진행된다.
+     *
+     * @return 생성된 리비전 ID. 보존할 결과가 없으면 null.
+     */
+    public synchronized String archiveCurrentResult(String filename) throws IOException {
+        File current = resultJsonFile(filename);
+        if (!current.exists()) return null;
+
+        File revsDir = revisionsDir(filename);
+        if (!revsDir.exists() && !revsDir.mkdirs())
+            throw new IOException("리비전 디렉토리 생성 실패: " + revsDir.getAbsolutePath());
+
+        String baseId = LocalDateTime.now().format(REVISION_ID_FMT);
+        File target = new File(revsDir, baseId);
+        for (int n = 2; target.exists(); n++) target = new File(revsDir, baseId + "-" + n);
+        if (!target.mkdirs())
+            throw new IOException("리비전 디렉토리 생성 실패: " + target.getAbsolutePath());
+
+        Files.move(current.toPath(), new File(target, RESULT_JSON).toPath(),
+                StandardCopyOption.REPLACE_EXISTING);
+        File rawFile = new File(dataDir(filename), GDB_OUTPUT_TXT);
+        if (rawFile.exists()) {
+            try {
+                Files.move(rawFile.toPath(), new File(target, GDB_OUTPUT_TXT).toPath(),
+                        StandardCopyOption.REPLACE_EXISTING);
+            } catch (IOException e) {
+                // raw 출력은 부가 산출물 — 실패해도 result.json 보존은 유효
+                logger.warn("[CoreDump] gdb_output.txt 아카이브 실패 (결과 보존에는 영향 없음): {} — {}",
+                        rawFile.getAbsolutePath(), e.getMessage());
+            }
+        }
+        logger.info("[CoreDump] 기존 분석 결과 보존: {} → revisions/{}", filename, target.getName());
+        return target.getName();
+    }
+
+    /**
+     * 보존된 리비전 목록 (최신순). 파일이 깨졌으면 조용히 건너뛴다.
+     */
+    public List<CoreDumpRevision> listRevisions(String filename) {
+        File revsDir = revisionsDir(filename);
+        File[] dirs = revsDir.listFiles(File::isDirectory);
+        if (dirs == null) return Collections.emptyList();
+
+        List<CoreDumpRevision> revisions = new ArrayList<>();
+        for (File d : dirs) {
+            if (!REVISION_ID.matcher(d.getName()).matches()) continue;
+            File rf = new File(d, RESULT_JSON);
+            if (!rf.exists()) continue;
+
+            CoreDumpRevision rev = new CoreDumpRevision();
+            rev.setId(d.getName());
+            rev.setArchivedAtEpoch(d.lastModified());
+            try {
+                CoreDumpAnalysisResult r = objectMapper.readValue(rf, CoreDumpAnalysisResult.class);
+                rev.setAnalyzedAt(r.getAnalyzedAt());
+                rev.setExecutableName(r.getExecutableName());
+                rev.setCrashSignal(r.getCrashSignal());
+            } catch (Exception e) {
+                logger.warn("[CoreDump] 리비전 result.json 로드 실패 (목록에서 제외): {} — {}",
+                        rf.getAbsolutePath(), e.getMessage());
+                continue;
+            }
+            rev.setLabel(buildRevisionLabel(rev));
+            revisions.add(rev);
+        }
+        revisions.sort(Comparator.comparingLong(CoreDumpRevision::getArchivedAtEpoch).reversed());
+        return revisions;
+    }
+
+    /** "2026-07-17 14:20 · exec 없음" 형태의 표기 라벨. */
+    private String buildRevisionLabel(CoreDumpRevision rev) {
+        String when = null;
+        if (rev.getAnalyzedAt() != null) {
+            try {
+                when = LocalDateTime.parse(rev.getAnalyzedAt()).format(REVISION_LABEL_FMT);
+            } catch (Exception ignored) {}
+        }
+        if (when == null) {
+            when = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(rev.getArchivedAtEpoch()),
+                    java.time.ZoneId.systemDefault()).format(REVISION_LABEL_FMT);
+        }
+        String exec = (rev.getExecutableName() != null && !rev.getExecutableName().isEmpty())
+                ? "exec: " + rev.getExecutableName()
+                : "exec 없음";
+        return when + " · " + exec;
+    }
+
+    /** 특정 리비전의 결과 로드. */
+    public Optional<CoreDumpAnalysisResult> loadRevisionResult(String filename, String revisionId) {
+        String safeRev = validateRevisionId(revisionId);
+        File rf = new File(new File(revisionsDir(filename), safeRev), RESULT_JSON);
+        if (!rf.exists()) return Optional.empty();
+        try {
+            return Optional.of(objectMapper.readValue(rf, CoreDumpAnalysisResult.class));
+        } catch (Exception e) {
+            logger.warn("[CoreDump] 리비전 result.json 로드 실패: {} — {}", rf.getAbsolutePath(), e.getMessage());
             return Optional.empty();
         }
     }
@@ -189,6 +318,10 @@ public class CoreDumpAnalyzerService {
      * dumpfiles/ 에 실제 존재하는 코어 덤프 + 실행파일 목록 (인덱스 좌측 패널용).
      * dotfile / 디렉토리 제외. .exec 또는 페어링된 exec 는 fileType="exec", 그 외는 "coredump".
      * DB 이력과 파일명으로 조인해 status 채움(없으면 NOT_ANALYZED). 최신 수정순(내림차순) 정렬.
+     *
+     * 코어에 연결된 exec 는 목록에서 숨긴다 — 연결 정보는 코어 항목의 페어 칩
+     * (pairedExecFilename)으로만 노출한다. 같은 파일이 두 항목으로 중복 표시되는 것을 막기 위함.
+     * 연결이 없는 exec 만 독립 항목(NOT_ANALYZED)으로 남는다.
      */
     public List<AnalysisHistoryItem> listExistingDumpFiles() {
         File dumpDir = dumpFilesDir();
@@ -201,7 +334,15 @@ public class CoreDumpAnalyzerService {
         }
 
         // 페어링된 exec 파일명 — 실행파일 항목으로 분류(코어와 구분해 태그 표시)
-        Set<String> pairedExecNames = new HashSet<>(heapFacade.loadCoreExecPairings().values());
+        Map<String, String> pairings = heapFacade.loadCoreExecPairings();
+        Set<String> pairedExecNames = new HashSet<>(pairings.values());
+        // 역방향 인덱스: exec 파일명 → 연결된 코어 파일명 목록
+        Map<String, List<String>> coresByExec = new HashMap<>();
+        for (Map.Entry<String, String> p : pairings.entrySet()) {
+            String exec = p.getValue();
+            if (exec == null || exec.isEmpty()) continue; // 명시적 해제 마커
+            coresByExec.computeIfAbsent(exec, k -> new ArrayList<>()).add(p.getKey());
+        }
 
         List<AnalysisHistoryItem> result = new ArrayList<>();
         for (File f : files) {
@@ -217,18 +358,30 @@ public class CoreDumpAnalyzerService {
             item.setSizeBytes(f.length());
             item.setFormattedSize(FormatUtils.formatBytes(f.length()));
             item.setLastModified(f.lastModified());
+
             if (!isExec) {
                 // 코어 항목에만 페어링 exec 세팅(드래그 시 core+exec 동반 프리로드용)
                 String execFn = getExecFilename(name);
                 item.setHasExec(execFn != null);
                 if (execFn != null) item.setPairedExecFilename(execFn);
-            }
 
-            CoreDumpAnalysisEntity e = byName.get(name);
-            if (e != null) {
-                item.setId(e.getId());
-                item.setStatus(e.getStatus() != null ? e.getStatus() : "NOT_ANALYZED");
+                CoreDumpAnalysisEntity e = byName.get(name);
+                if (e != null) {
+                    item.setId(e.getId());
+                    item.setStatus(e.getStatus() != null ? e.getStatus() : "NOT_ANALYZED");
+                } else {
+                    item.setStatus("NOT_ANALYZED");
+                }
             } else {
+                // exec 항목: 코어에 연결돼 있으면 숨김(코어 항목의 페어 칩으로 노출).
+                // 레거시 {core}.exec 는 페어링 맵에 없을 수 있으므로 파일명 규칙으로 폴백.
+                boolean linked = coresByExec.containsKey(name);
+                if (!linked && name.endsWith(".exec")) {
+                    String legacyCore = name.substring(0, name.length() - ".exec".length());
+                    linked = new File(dumpDir, legacyCore).isFile()
+                            && name.equals(getExecFilename(legacyCore));
+                }
+                if (linked) continue;
                 item.setStatus("NOT_ANALYZED");
             }
             result.add(item);

@@ -136,6 +136,18 @@
                              font-size: 12px; min-height: 42px; }
             .memo-tool-btn svg { width: 14px; height: 14px; }
         }
+
+        /* 비밀번호 만료 임박/만료 경고 뱃지 */
+        .pw-alert { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px;
+                    margin-bottom: 18px; font-size: 13.5px; font-weight: 600;
+                    background: #FFFBEB; border: 1px solid #FDE68A; color: #B45309; }
+        .pw-alert.expired { background: #FEF2F2; border-color: #FCA5A5; color: #B91C1C; }
+        .pw-alert svg { flex-shrink: 0; }
+        .pw-alert span { flex: 1; line-height: 1.5; }
+        .pw-alert-btn { flex-shrink: 0; padding: 6px 14px; border: none; border-radius: 7px;
+                        background: #D97706; color: #fff; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+        .pw-alert.expired .pw-alert-btn { background: #DC2626; }
+        .pw-alert-btn:hover { opacity: .9; }
     </style>
 </head>
 <body>
@@ -158,6 +170,14 @@
             <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             My Account
         </div>
+    </div>
+
+    <!-- 비밀번호 만료 임박/만료 경고 뱃지 (정책 활성 + D-7 이하일 때만 · 미설정 시 미표기) -->
+    <div th:if="${pwWarnSoon}" class="pw-alert" th:classappend="${pwExpired} ? ' expired' : ''">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span th:if="${pwExpired}">비밀번호가 <b>만료</b>되었습니다 — 지금 비밀번호를 변경하세요.</span>
+        <span th:unless="${pwExpired}">비밀번호 만료가 임박했습니다 — <b>D-<span th:text="${pwDaysLeft}">7</span></b> 이내에 변경이 필요합니다.</span>
+        <button class="pw-alert-btn" onclick="openPwModal()">지금 변경</button>
     </div>
 
     <!-- ── 계정 정보 (read-only) ───────────────────────── -->
@@ -188,6 +208,11 @@
 
             <dt>2차인증(OTP)</dt>
             <dd th:text="${!#strings.isEmpty(user.otpSecret)} ? '등록됨' : '미등록'">미등록</dd>
+
+            <dt>비밀번호 만료</dt>
+            <dd th:if="${!pwExpiryEnabled}">만료 미적용</dd>
+            <dd th:if="${pwExpiryEnabled and pwExpired}" style="color:#DC2626;font-weight:600">만료됨 — 변경 필요</dd>
+            <dd th:if="${pwExpiryEnabled and !pwExpired}" th:text="${pwExpiryText}">2026-10-01 만료 (D-30)</dd>
 
             <dt>생성일</dt>
             <dd th:text="${user.createdAt != null} ? ${#temporals.format(user.createdAt, 'yyyy-MM-dd HH:mm')} : '—'">2025-01-01 00:00</dd>
