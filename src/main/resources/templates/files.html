@@ -25,12 +25,28 @@
                       outline: none; background: #fff; }
         .search-bar:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
         .table-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
-        .table-toolbar .search-bar { flex: 1 1 220px; min-width: 200px; }
+        .table-toolbar .search-row { flex: 1 1 220px; min-width: 200px; display: flex; align-items: center; gap: 8px; }
+        .table-toolbar .search-bar { flex: 1 1 auto; min-width: 0; }
         .filter-sel { padding: 8px 28px 8px 10px; font-size: 13px;
                       border: 1px solid #E5E7EB; border-radius: 8px;
                       background: #fff; cursor: pointer; color: #374151;
                       min-width: 140px; outline: none; }
         .filter-sel:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
+        /* ── 모바일 통합 필터 (검색바 우측 '필터' 버튼 → 바텀시트, ≤640px 에서만 노출) ── */
+        .mf-btn { display: none; align-items: center; gap: 5px; flex: 0 0 auto;
+                  padding: 9px 12px; font-size: 12px; font-weight: 500; color: #374151;
+                  background: #fff; border: 1px solid #E5E7EB; border-radius: 8px; cursor: pointer; }
+        .mf-btn.active { border-color: #2563EB; color: #2563EB; }
+        .mf-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
+        .mf-badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+                    background: #2563EB; color: #fff; font-size: 10px; font-weight: 700;
+                    display: inline-flex; align-items: center; justify-content: center; }
+        .mf-modal-box { max-width: 420px; text-align: left; }
+        .mf-field { margin-bottom: 12px; }
+        .mf-field label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+        .mf-field select { width: 100%; padding: 9px 10px; font-size: 13px; border: 1px solid #D1D5DB;
+                           border-radius: 6px; background: #fff; outline: none; }
+        .mf-field select:focus { border-color: #93C5FD; box-shadow: 0 0 0 3px rgba(37,99,235,.1); }
         /* KRDS 캘린더 스타일은 common.css 에서 제공 */
 
         /* ── 상단 2분할 (좌: 업로드 · 우: 기간선택) ─────────────── */
@@ -126,7 +142,10 @@
         .ftable th.sortable .sort-arrow { display: inline-block; margin-left: 4px; opacity: 0.3;
                                           font-size: 9px; vertical-align: middle; transition: opacity .15s; }
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
+        /* 테이블 가로 스크롤 래퍼 — 폭이 좁아 테이블이 넘칠 때 우측 컬럼 잘림 대신 스크롤 노출 */
+        .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         /* .ftable base/thead/td 색상·hover 는 common.css 에서 제공. padding/font-size 만 인라인 */
+        .ftable { min-width: 1000px; }
         .ftable th { padding: 10px 12px; font-size: 11px; }
         .ftable td { padding: 10px 12px; }
         .td-seq { width: 48px; text-align: center; color: #9CA3AF; font-size: 12px;
@@ -301,15 +320,13 @@
             .page-hdr { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
             .page-stats { gap: 10px; flex-wrap: wrap; }
 
-            /* (b) 툴바: 컨트롤 높이 통일 — 검색 풀폭(컴팩트) / select 3등분 / 선택·deleted·행표시 3등분 */
+            /* (b) 툴바: 검색+통합필터 1행 / 선택·deleted·행표시 3등분.
+               서버·기간·상태 select 는 숨기고 '필터' 버튼 → 바텀시트로 통합 (원본 select 가 필터 상태의 단일 소스) */
             .table-toolbar { gap: 8px; }
-            .table-toolbar .search-bar {
-                flex: 1 1 100%; min-width: 0; padding: 9px 12px; font-size: 13px;
-            }
-            .table-toolbar .filter-sel {
-                flex: 1 1 calc(33.333% - 6px); min-width: 0;
-                padding: 9px 24px 9px 10px; font-size: 12px;
-            }
+            .table-toolbar .search-row { flex: 1 1 100%; min-width: 0; }
+            .table-toolbar .search-bar { padding: 9px 12px; font-size: 13px; }
+            .table-toolbar .filter-sel { display: none; }
+            .mf-btn { display: inline-flex; }
             .table-toolbar .select-toggle-btn,
             .table-toolbar .deleted-toggle {
                 flex: 1 1 calc(33.333% - 6px); min-width: 0;
@@ -321,6 +338,12 @@
                 font-size: 12px; text-align: center; text-align-last: center;
             }
             .page-size-label { display: none; }
+
+            /* (b2) 기간선택: 지우기 버튼을 달력 버튼 우측 동일 행에 고정
+               (common.css 는 wrap 이라 flex:1 1 auto 인 날짜 박스가 행을 채워 지우기가 다음 줄로 밀림) */
+            .date-filter-row .calendar-conts { flex-wrap: nowrap; }
+            .date-filter-row .date-clear-btn-row { flex: 0 0 auto; }
+            .date-filter-row .cal-text { padding: 7px 2px; font-size: 12px; }   /* 좁은 화면 날짜값 잘림 방지 여유 */
 
             /* (c) panel 평탄화 — 카드들이 컨테이너 외부에 직접 노출 */
             .panel { background: transparent; border: none; border-radius: 0;
@@ -474,8 +497,15 @@
     </div>
 
     <div class="table-toolbar">
-        <input type="text" class="search-bar" id="searchInput"
-               placeholder="파일명·서버명으로 검색..." oninput="onSearchInput()">
+        <div class="search-row">
+            <input type="text" class="search-bar" id="searchInput"
+                   placeholder="파일명·서버명으로 검색..." oninput="onSearchInput()">
+            <button type="button" class="mf-btn" id="mobileFilterBtn" onclick="openMobileFilter()" title="서버·기간·상태 통합 필터">
+                <svg viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+                <span>필터</span>
+                <span class="mf-badge" id="mfBadge" style="display:none">0</span>
+            </button>
+        </div>
         <select class="filter-sel" id="serverFilter" onchange="onFilterChange()" title="서버별 필터">
             <option value="">서버: 전체</option>
             <option value="__local__">Local (서버 미지정)</option>
@@ -553,6 +583,7 @@
     </div>
 
     <div class="panel">
+        <div class="table-scroll">
         <table class="ftable" id="filesTable">
             <thead>
                 <tr>
@@ -785,6 +816,7 @@
                 </th:block>
             </tbody>
         </table>
+        </div>
         <div class="no-match" id="noMatch">No files matching your search.</div>
         <div class="pagination-bar" id="paginationBar">
             <div class="pg-info" id="pgInfo">-</div>
@@ -947,6 +979,29 @@
         <div class="modal-btns">
             <button class="btn-cancel" onclick="closeDownloadModal()">취소</button>
             <button class="btn-download" id="btnConfirmDl">다운로드</button>
+        </div>
+    </div>
+</div>
+
+<!-- 모바일 통합 필터 바텀시트 (서버·기간·상태 — 원본 select 로 값 반영) -->
+<div class="modal-ov" id="mobileFilterModal" onclick="if(event.target===this)closeMobileFilter()">
+    <div class="modal-box mf-modal-box">
+        <h3>상세 필터</h3>
+        <div class="mf-field">
+            <label for="mfServer">서버</label>
+            <select id="mfServer"></select>
+        </div>
+        <div class="mf-field">
+            <label for="mfPeriod">기간</label>
+            <select id="mfPeriod"></select>
+        </div>
+        <div class="mf-field">
+            <label for="mfStatus">분석 상태</label>
+            <select id="mfStatus"></select>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="btn-cancel" onclick="resetMobileFilter()">초기화</button>
+            <button type="button" class="mbtn-primary" onclick="applyMobileFilter()">적용</button>
         </div>
     </div>
 </div>
@@ -1676,6 +1731,55 @@ function applyFilter() {
     });
     _currentPage = 1;
     render();
+    updateMobileFilterBadge();   // 모바일 '필터' 버튼 활성 카운트 동기화 (초기 복원 포함 모든 경로)
+}
+
+/* ── 모바일 통합 필터 (검색바 우측 '필터' 버튼 → 바텀시트) ──
+   원본 select(#serverFilter/#periodFilter/#statusFilter)가 필터 상태의 단일 소스.
+   시트는 열 때 원본에서 옵션·값을 복사하고, '적용' 시 원본에 되써서 onFilterChange() 재사용.
+   ⚠ 중첩 배열 리터럴 금지: 여는 대괄호 2연속 시퀀스는 Thymeleaf 인라인 표현식으로 파싱돼 템플릿 파싱이 실패 → 객체 배열 사용. */
+var MF_PAIRS = [
+    { sheet: 'mfServer', src: 'serverFilter' },
+    { sheet: 'mfPeriod', src: 'periodFilter' },
+    { sheet: 'mfStatus', src: 'statusFilter' }
+];
+function openMobileFilter() {
+    MF_PAIRS.forEach(function(p) {
+        var mf = document.getElementById(p.sheet), orig = document.getElementById(p.src);
+        if (!mf || !orig) return;
+        mf.innerHTML = orig.innerHTML;   // 서버 목록 등 옵션은 원본에서 매번 복사 (Thymeleaf 중복 렌더 방지)
+        mf.value = orig.value;
+    });
+    document.getElementById('mobileFilterModal').classList.add('open');
+}
+function closeMobileFilter() { document.getElementById('mobileFilterModal').classList.remove('open'); }
+function resetMobileFilter() {
+    document.getElementById('mfServer').value = '';
+    document.getElementById('mfPeriod').value = 'all';
+    document.getElementById('mfStatus').value = 'all';
+}
+function applyMobileFilter() {
+    MF_PAIRS.forEach(function(p) {
+        var mf = document.getElementById(p.sheet), orig = document.getElementById(p.src);
+        if (mf && orig) orig.value = mf.value;
+    });
+    closeMobileFilter();
+    onFilterChange();   // localStorage 저장 + applyFilter(배지 갱신 포함) 재사용
+}
+function updateMobileFilterBadge() {
+    var btn = document.getElementById('mobileFilterBtn');
+    var badge = document.getElementById('mfBadge');
+    if (!btn || !badge) return;
+    var n = 0;
+    var srv = document.getElementById('serverFilter');
+    if (srv && srv.value) n++;
+    var per = document.getElementById('periodFilter');
+    if (per && per.value !== 'all') n++;
+    var sts = document.getElementById('statusFilter');
+    if (sts && sts.value !== 'all') n++;
+    badge.textContent = n;
+    badge.style.display = n > 0 ? '' : 'none';
+    btn.classList.toggle('active', n > 0);
 }
 
 function onSearchInput() { applyFilter(); }

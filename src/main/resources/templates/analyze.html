@@ -755,10 +755,10 @@ function loadFullErrorLog() {
                 <div class="card" th:if="${hasHeapData}">
                     <div class="card-title"><span class="card-icon">&#128202;</span> Heap Composition by Top Consumers</div>
                     <div class="stacked-bar-container" id="stackedBar">
-                    <div class="sec-loader-center" style="min-height:36px">
-                        <span class="sec-spinner sec-spinner-sm"></span>
+                        <div class="sec-loader-center" style="flex:1">
+                            <span class="sec-spinner sec-spinner-sm"></span>
+                        </div>
                     </div>
-                </div>
                     <div class="stacked-legend" id="stackedLegend"></div>
                     <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-top:4px">
                         <span>Top Consumers: <strong th:text="${result.formattedUsedHeapSize}">-</strong></span>

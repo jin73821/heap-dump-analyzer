@@ -1,6 +1,115 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-07-24] v2.3.1 — Heap Composition 스피너 중앙 정렬 + 버전 2.3.0→2.3.1
+
+**대상:** `templates/analyze.html`, `static/css/analyze.css`(원인 분석), `pom.xml`, `restart.sh`/`run.sh`/`stop.sh`, `templates/fragments/banner.html`·`index.html`·`progress.html`
+
+- **Heap Composition by Top Consumers 스피너 중앙 정렬:** 로딩 스피너(`.sec-loader-center`)가 좌측에 붙고 상단이 잘리던 문제. 원인은 부모 `.stacked-bar-container{display:flex; height:28px; overflow:hidden}` 안에서 로더가 full-width 가 아니라 `justify-content:flex-start`(기본)로 좌측 배치되고, 인라인 `min-height:36px` 가 28px 컨테이너에 클립됨. **수정:** 로더 인라인 스타일 `min-height:36px` → `flex:1` — 컨테이너 전체 폭을 채워 로더 자체 `justify-content:center; align-items:center` 가 스피너를 수평·수직 중앙 정렬(14px 스피너가 28px 바 안에 잘림 없이 표시). JS 는 렌더 시 `container.innerHTML=''` 로 로더 교체 → 로딩 상태에만 영향. (헤드리스 Chrome AS-IS/TO-BE 비교 스크린샷으로 중앙 정렬·무클립 확인.)
+- **버전 2.3.0 → 2.3.1:** `pom.xml <version>` + JAR 명 grep 스크립트 3종(`restart.sh`/`run.sh`/`stop.sh`, 주석 포함) + UI 표기 3곳(`banner.html` `v2.3.1 · MAT CLI` / `index.html` `v2.3.1 · MAT CLI Edition` / `progress.html` 푸터) 동시 갱신(버전 체크리스트 준수). ⚠️ 스크립트가 신규 JAR 명만 grep 하므로 첫 재기동 시 구버전(2.3.0) 프로세스 수동 `kill` 후 `restart.sh` — 정상 기동 확인(13.2s, 포트 18080 충돌 없음, login 200).
+
+**대상:** `service/PdfReportService.java`, `templates/analyze-print.html`
+
+- **경위:** `jeus_admin.hprof` 리포트에서 AI "권장 조치" 문구가 `…6. 즉시 힙 크기를 증설…GC 패턴을 모니…` 로 도중에 잘림. 원인은 ① `PdfReportService.clip()` 의 `RECOMMEND_MAX_CHARS=700`/`SUMMARY_MAX_CHARS=600` 프로그래밍적 절단("…" 부착), ② 리포트가 `.report{height:273mm;overflow:hidden}` 단일 A4 고정이라 남는 텍스트가 시각적으로도 잘림.
+- **캡 상향:** `SUMMARY_MAX_CHARS` 600→4000, `RECOMMEND_MAX_CHARS` 700→8000 (실제 AI 응답 길이를 포괄하는 넉넉한 안전 상한 — 사실상 무절단). OOM 진단 카드의 고정 문자열 클립(280)은 유지.
+- **다중 페이지 흐름 전환:** `.report` 의 `height:273mm; overflow:hidden` 제거 → 내용이 길면 A4 여러 페이지로 자연 분할. 페이지 번호 푸터는 `@page @bottom-center { content: "Heap Dump Analyzer · " counter(page) " / " counter(pages) }` 로 매 페이지 렌더(OpenHTMLtoPDF 지원). 기존 `position:absolute; bottom:0` 본문 푸터(+"Page 1/1" 하드코딩)는 다중 페이지에서 오작동·트레일링 요소가 빈 페이지를 유발하므로 **제거**(생성일시는 헤더 분석일시와 중복이라 표기 생략). 분할 제어: `.sec-title{page-break-after:avoid}`, 표 행·`.oom-box`·`.sus`·KPI/ENV 그리드 `page-break-inside:avoid`(긴 `.ai-box` 는 예외로 페이지 간 흐름 허용). 화면 미리보기(≤900/≥901px) 의 절대위치 `.ftr` 오버라이드도 정리.
+- **검증(Thymeleaf 단독 스모크 + OpenHTMLtoPDF 실렌더 + PDFBox 페이지수/텍스트 + 헤드리스 PNG):** ① 사용자 케이스 재현(6항목 ~1014자 권장 조치) → **1페이지에 전체 텍스트 표기, "…" 없음**. ② 10항목 ~1014자 이상으로 늘린 케이스 → **2페이지 자연 분할**, page 2 에 7~10항목 + `[끝-EOF-마커]` 까지 손실 없이 이어짐, 각 페이지 `· N / M` 푸터. ③ `mvn clean package` 빌드 + 재기동 정상(13.2s).
+
+
+## [2026-07-24] 분석 리포트(PDF/인쇄)에 HOST / Middleware / Instance / Domain 표기
+
+**대상:** `service/PdfReportService.java`, `templates/analyze-print.html`
+
+- **경위:** analyze 웹 화면에만 있던 환경 컨텍스트(HOST·Middleware·Instance·Domain)를 인쇄/PDF 리포트에도 표기 요청. "주요 지표가 자리를 많이 차지" → 해당 공간 재분배 지시.
+- **백엔드:** `PdfReportService` 에 `HeapDumpAnalyzerService` 주입(순환의존 없음 — 기존 PdfReportService 는 컨트롤러 2곳에서만 사용)하고 `buildPrintModel()` 에 4개 값 추가 — analyze 뷰(`HeapDumpViewController`)와 **동일 로직**: `hostname`=server_name(SSH 자동/수동), `middlewareVendor`=`MiddlewareDetector.detect(result...)`, `jeusInstance`/`jeusDomain`=sysProps(jeus.server.name/jeus.domain.name) 자동 + 수동 편집값 우선. PDF 다운로드(`/print-pdf`)·HTML 미리보기(`/print-html`) 두 경로 모두 buildPrintModel 공유라 일괄 반영. `analyze-print-preview.html` 은 iframe 래퍼라 자동 반영.
+- **레이아웃(공간 재분배):** 상단 "주요 지표" 섹션을 "주요 지표 &amp; 환경 (Key Metrics & Environment)" 로 통합. 새 **환경 정보 스트립**(4셀: Host/Middleware/Instance/Domain, 좌측 회색 보더, 값 없으면 `미지정`/`미확인` 회색 폴백) 을 KPI 그리드 위에 배치. KPI 는 보조설명(`.sub` 한글 글로스 — 라벨과 중복) 6개 제거 + 그리드/패딩/폰트 압축(height 36mm→22mm, value 13pt→11.5pt, border-spacing 1.6→1.4mm, vertical-align middle). 결과적으로 환경 스트립이 KPI 에서 회수한 세로 공간에 들어가 **A4 1페이지 유지, 순증 ≈ 0**. 화면 미리보기(≤900px) 미디어쿼리에도 `.env-*` flex 규칙 추가.
+- **검증(Thymeleaf 단독 스모크 — 함정 #23, 인쇄 라우트는 인증 필요라 정적 픽스처론 파싱오류 미검출):** ① SpringTemplateEngine(SpEL) 렌더 — 파싱 정상 + 4값 표기 + 빈 값 시 `env-value na` 폴백 정확히 4개. ② 최악 케이스(OOM + 600자급 AI 요약 + TopMem 5행 + Suspect 3건 긴 설명 + 긴 호스트명) OpenHTMLtoPDF 렌더 → **PDF 1페이지**(PDFBox 페이지수=1). 원본 대비 AI 요약 종료 위치 동일(순증 0) 확인. ③ `mvn clean package` 빌드 + 재기동 정상(13.6s), 순환의존 에러 없음.
+
+**대상:** `templates/analyze-print.html` (후속)
+
+- **KPI 라벨+값 한 줄 배치 (세로 공간 추가 확보):** 기존 2줄(라벨 위 / 값 아래) → `Total Heap 133.50 MB` 형태 한 줄로 변경. `.kpi .label`/`.kpi .value` 를 `display: inline` 으로 전환(값에 `margin-left`), 카드 높이 감소 → 그리드 `height` 22mm→14mm(실측 컨텐츠 약 −9mm). 화면 미리보기(≤900px) 미디어쿼리도 한 줄 기준으로 정리(죽은 `.kpi .sub` 규칙 제거, value `margin-top`→`margin-left`). 
+- **효과:** OpenHTMLtoPDF 실렌더(동일 최악 케이스, Total Heap=133.50MB 값 주입) → PDF 1페이지 유지 + AI 인사이트 블록이 푸터와 **여유 있게 분리**(기존엔 AI 권장조치 마지막 줄이 푸터에 근접). 헤드리스 PNG 육안 확인 완료.
+
+
+## [2026-07-24] 힙덤프 탐지 정책에 .dmp / .gz 확장자 추가
+
+**대상:** `service/RemoteDumpService.java`, `templates/servers.html`, `util/FilenameValidator.java`, `service/FileManagementService.java`, `controller/HeapDumpViewController.java`
+
+- **경위:** Target Servers 스캔의 힙덤프 탐지 정책에 `.dmp`, `.gz` 확장자 추가 요청.
+- **탐지(스캔):** `RemoteDumpService.scanSinglePath()` 의 `find` 패턴에 `-o -name '*.dmp' -o -name '*.gz'` 추가 → 원격 덤프 경로에서 `.dmp` 및 임의 `.gz`(예: `heapdump.gz`, `*.dmp.gz`) 파일도 heap 후보로 수집. servers.html 스캔 설정 모달의 "힙덤프 파일 탐지" 안내문도 `(.hprof / .bin / .dump / .dmp / .gz)` 로 갱신.
+- **전송→분석 일관성:** 전송(`transferFile`)은 확장자 검증이 없어 탐지된 `.dmp`/`.gz` 전송은 가능하나, **분석·파일목록·업로드**가 공유 화이트리스트로 막히므로 함께 확장(탐지만 열면 분석 단계에서 `IllegalArgumentException` 으로 반려됨):
+  - `FilenameValidator.ALLOWED_EXTENSIONS` 에 `.dmp` / `.dmp.gz` / `.gz` 추가(+반려 메시지 갱신). `allow_all_extensions` 토글 우회 로직은 불변.
+  - `FileManagementService.isValidHeapDumpFile()` + `HeapDumpViewController.hasRecognizedHeapDumpExtension()` 를 `.hprof/.bin/.dump/.dmp/.gz`(generic `.gz` 가 기존 `*.gz` 3종 포괄)로 통일. 업로드 반려 메시지·javadoc 동반 갱신.
+  - `stripExtension()`(`.gz` 우선 strip 후 마지막 확장자)이 `.dmp`/`.dmp.gz`/`heapdump.gz` base name 모두 정상 처리 확인. gz 중복검사 해제(`computePartialHash` 등)는 `isValidHeapDumpFile && .gz` 조건이라 자동 적용.
+- **영향/주의:** 업로드 화이트리스트도 함께 넓어져 UI 업로드로도 `.dmp`/`.gz` 허용됨(탐지-업로드 정책 일원화). 스캔 `find` 의 generic `*.gz` 는 덤프 경로 내 무관 `.gz`(로그 회전본 등)도 heap 후보로 잡을 수 있음 — 경로는 운영자가 지정하므로 허용. `.dmp` 가 실제 hprof 포맷이 아니면 MAT 파싱 단계에서 실패(정책 밖, 기존 `extractMatErrorHint` 안내).
+- **검증:** `mvn clean package`(테스트 포함) 통과 → 재기동 정상(13.0s).
+- **후속(settings 문구):** `templates/settings.html` "Allow all file extensions" 설정 설명(`.setting-desc`)과 활성화 확인 모달(`.modal-desc`)의 기본 화이트리스트 표기를 `.hprof/.bin/.dump` → `.hprof/.bin/.dump/.dmp` 로 갱신(확장자 정책 실제 반영과 일치). 재기동 정상(13.3s).
+
+
+## [2026-07-24] Servers 페이지 덤프 경로 툴팁 중복 제거 + 상태 뱃지 개행 방지
+
+**대상:** `templates/servers.html`
+
+- **덤프 경로 흰색 툴팁 중복 제거:** 덤프 경로 셀(`<td>`)에 커스텀 플로팅 툴팁용 `data-tooltip` 과 브라우저 기본 툴팁용 `th:title` 이 **동시에** 걸려 있어, hover 시 어두운 커스텀 툴팁이 먼저 뜨고 잠시 후(~1초) 네이티브 흰색 툴팁이 추가로 표시되던 문제 → `th:title="${s.dumpPath}"` 제거(커스텀 `data-tooltip` 만 유지). 스캔 결과 모달의 실행파일 경로/명령 `title`(3곳)은 `data-tooltip` 미병용이라 중복 없음 → 유지.
+- **상태 뱃지 개행 방지:** `.badge` 에 `white-space` 미지정이라 브라우저 폭 축소 시 `⚠ 실패` 가 '실\패' 로 줄바꿈되던 문제 → `.badge { ... white-space: nowrap; }` 추가(base 규칙, 모바일 미디어쿼리 `.badge` 3곳은 white-space 미override 라 전체 적용).
+- **테이블 가로 스크롤 추가:** `.panel { overflow: hidden }` 이 테이블을 클립하는데 `.stable` 에 `min-width` 가 없어, 데스크톱 폭 축소(예: 배너 유지되는 900~1100px)나 태블릿 구간에서 테이블이 넘칠 때 우측 '작업' 컬럼이 스크롤 없이 잘리던 문제 → 테이블을 `<div class="table-scroll">`(`overflow-x: auto` + `-webkit-overflow-scrolling: touch`)로 감싸고 `.stable { min-width: 860px }` 부여 → 폭 부족 시 가로 스크롤 노출. 카드 레이아웃(≤640px)은 기존 `.stable { min-width: 0 }` override 로 스크롤 미발생(영향 없음). 패널 rounded corner 는 `.panel { overflow: hidden }` 유지로 보존.
+- **검증:** `mvn clean package -DskipTests` + `restart.sh` 재기동 정상(12.8s), `/servers` 302→/login 정상.
+
+**대상:** `templates/files.html`
+
+- **테이블 가로 스크롤 추가(servers 와 동일 패턴):** `.panel { overflow: hidden }` + `.ftable` min-width 미지정 구조라 폭 축소 시 우측 '작업' 컬럼 잘림 → 테이블을 `<div class="table-scroll">`(`overflow-x: auto`)로 감싸고 `.ftable { min-width: 1000px }` 부여(9 컬럼 기준). 카드 레이아웃(≤640px)은 기존 `.ftable { min-width: 0 }` override 로 미발생. 패널 rounded corner 는 `.panel { overflow: hidden }` 유지로 보존.
+- **검증:** 재기동 정상(13.3s), `/files` 302→/login 정상.
+
+
+## [2026-07-23] History deleted 뱃지 툴팁 추가 — SUCCESS 표시 유지 정책 안내
+
+**대상:** `templates/history.html`
+
+- **경위:** `deleted 표시` 토글 OFF 인데도 `[HPROF]local_jeus_admin_202600623.hprof.gz_20260704` 가 deleted 뱃지와 함께 계속 표시된다는 리포트 → 원인은 2026-06-28 "deleted 숨김 정책 개선"(커밋 `06b2475`)의 **의도된 예외**(SUCCESS 기록은 덤프가 삭제되어도 항상 표시)로 확인. 세션 중 예외를 일시 제거했다가 정책 재확인 후 **원복** — 최종적으로 2026-06-28 정책 유지.
+- **개선:** 정책이 잊히기 쉬운 문제를 보완 — SUCCESS 상태 행의 deleted 뱃지에 **KRDS 툴팁**(component_08_05) 추가: "원본 힙덤프 파일은 삭제되었지만 분석 기록은 보존되어 있어 결과 조회가 가능합니다." (ERROR·미분석 행 뱃지는 툴팁 없음 — `th:attr` 삼항 null 로 속성 미출력).
+  - 최초 네이티브 `title` 속성으로 구현했으나 표시 지연(~1초)·모바일 미지원으로 미표시 리포트 → KRDS 가이드(title 중복 사용 금지) 따라 **커스텀 팝오버로 교체**: 싱글턴 `#krdsTip`(`role="tooltip"`, `position: fixed`, 다크 박스 + 화살표) + 뱃지 `data-tip` + `tabindex="0"`.
+  - **트리거(KRDS):** mouseover/focus 표시(위임 — 페이지네이션 재렌더 유효), mouseleave/blur/Esc/바깥클릭 닫기, 터치는 탭 토글. 뷰포트 이탈 방지(수평 클램프 + 위→아래 플립, 화살표는 트리거 중심 보정), `aria-describedby` 는 표시 중에만 부여.
+  - **함정 2건 실측 수정:** ① Chrome scroll 이벤트는 비동기(다음 프레임) — 스크롤 직후 hover 시 늦게 도착한 이벤트가 표시 직후 툴팁을 닫음 → scroll/resize 는 닫기 대신 **위치 재계산**(트리거가 뷰포트 밖일 때만 닫기). ② 터치 탭은 click 직전 mouseover/focusin 을 에뮬레이션해 이미 표시된 상태라 click 토글이 즉시 닫아버림 → hover 가능 기기는 클릭 토글 제외 + **같은 탭 burst(표시 후 350ms 내) click 은 토글 미취급**.
+- `applyFilter()` 주석에 정책 근거(2026-06-28) + 툴팁 안내 명시로 재발 방지.
+- **검증:** SpringTemplateEngine 렌더 스모크(SUCCESS+deleted/ERROR+deleted/정상 3 스텁 행 — `data-tip` 은 SUCCESS+deleted 뱃지에만 출력) + 헤드리스 Chrome 13 시나리오(hover/텍스트/aria/상단 배치/뷰포트 내/Esc/focus/blur/탭 burst 유지/재탭 토글/바깥클릭) ALL_PASS.
+
+**대상:** `templates/history.html`
+
+- **모바일(≤640px) 툴바 재배치:** 1행 = 검색(가변) + **상태 필터 셀렉트(검색칸 우측 고정)** / 2행 = 선택·deleted 표시·**행표시(deleted 우측)** 3등분 — files.html 모바일 패턴과 통일. 기존엔 검색 풀폭 1행 + 상태(flex 1 1 130px)·선택·deleted·행표시(margin-left:auto)가 2행에서 임의 wrap 되던 구조.
+  - 검색+상태를 `.search-row` 래퍼로 묶음(데스크톱 flex 기존값 `1 1 220px`/`min-width:200px` 을 래퍼로 이전, gap 12px 로 데스크톱 시각 불변). 행표시 라벨은 모바일에서 숨김 + select 풀폭/중앙정렬 (files 와 동일).
+- **기간선택 '지우기' 버튼:** 달력 버튼 우측 동일 행 고정 — files.html (b2) 와 동일 규칙(`.calendar-conts { flex-wrap: nowrap }` + `.date-clear-btn-row { flex: 0 0 auto }` + `.cal-text` 축소). common.css 미수정(함정 13).
+- **검증(헤드리스 390px + 데스크톱 1280px):** 상태가 검색 우측 동일 행 / 2행 순서 선택→deleted→행표시 + 행표시가 deleted 우측 동일 행 / 지우기가 달력 버튼 우측(빈 값·날짜 채움 각각) / 기간선택 행 오버플로 없음 / 데스크톱 단일 행 유지·라벨 노출 회귀 없음 — 전부 통과, JS 에러 0. SpringTemplateEngine 렌더 스모크 RENDER_OK(함정 23 준수).
+
+
+## [2026-07-23] Files 페이지 모바일 기간선택 — '지우기' 버튼을 달력 버튼 우측 동일 행으로
+
+**대상:** `templates/files.html`
+
+- **문제:** 모바일(≤640px)에서 기간선택 카드의 '지우기' 버튼이 날짜 입력 행 아래 별도 줄로 밀림 — common.css `.calendar-conts` 가 `flex-wrap: wrap` + `.calendar-range` 가 `flex: 1 1 auto` 라 날짜 박스가 행 전체를 차지.
+- **수정:** 페이지 인라인 ≤640px 블록에 (b2) 규칙 추가 — `.calendar-conts { flex-wrap: nowrap }` + `.date-clear-btn-row { flex: 0 0 auto }` 로 지우기를 달력 버튼 우측 동일 행에 고정, `.cal-text` padding 7px 2px·font 12px 로 좁은 화면 날짜값 잘림 방지. common.css 는 공용(다른 페이지 영향)이라 미수정 — 함정 13(페이지 변형은 인라인 override) 준수.
+- **검증(헤드리스 390/320px, 빈 값·날짜 채움 각각):** 지우기가 달력 버튼 우측 + 동일 행 + 기간선택 행 오버플로 없음 전부 통과. 데스크톱 1280px 기존 배치 회귀 없음. SpringTemplateEngine 렌더 스모크 RENDER_OK(함정 23 준수). 320px 전역 가로 스크롤은 파일 타입 탭 4개 폭(354px)에 의한 **기존 이슈**로 본 변경과 무관(기간선택 행 자체는 오버플로 없음).
+
+
+## [2026-07-23] Files 페이지 모바일 필터 통합 — 검색바 우측 '필터' 버튼 → 바텀시트
+
+**대상:** `templates/files.html`
+
+- **문제:** 모바일(≤640px)에서 서버/기간/상태 3개 select 가 33% 3등분으로 한 행을 차지 → 좁은 화면에서 라벨이 잘리고 툴바가 3행으로 길어짐.
+- **개선:** 모바일에서 3개 select 를 숨기고 **검색바 우측 '필터' 버튼 1개로 통합**. 탭 시 **바텀시트**(상세 필터)가 열려 서버·기간·분석 상태를 각각 세부 선택 → `초기화`/`적용`.
+  - 툴바 1행 = 검색(가변) + 필터 버튼(고정), 2행 = 선택/deleted/행표시 3등분 (기존 유지).
+  - **활성 필터 배지:** 기본값이 아닌 필터 개수(0~3)를 버튼 우측 파란 배지로 표기 + 버튼 테두리 활성색. `applyFilter()` 말미 `updateMobileFilterBadge()` 훅으로 초기 localStorage 복원 경로 포함 모든 경로에서 동기화.
+  - **데스크톱(>640px) 불변:** 필터 버튼 `display:none`, 기존 3개 select 그대로.
+- **구현:** 검색창을 `.search-row` 래퍼로 감싸 데스크톱 flex 기존값(`1 1 220px`/`min-width:200px`)을 래퍼로 이전(모바일은 `1 1 100%`). 시트는 기존 `.modal-ov`/`.modal-box` 재사용(≤640px 바텀시트 변환 기존 규칙 적용) + `.mf-modal-box`/`.mf-field` 페이지 변형. 버튼 형태는 `.modal-btns button`, 색상은 common.css `.btn-cancel`/`.mbtn-primary` (함정 17 준수).
+- **상태 단일 소스:** 원본 select(`#serverFilter/#periodFilter/#statusFilter`)가 필터 상태의 단일 소스. 시트는 열 때 `innerHTML` 복사로 옵션·값 동기화(서버 목록 Thymeleaf 중복 렌더 없음), '적용' 시 원본에 되쓰고 `onFilterChange()` 재사용 → localStorage(filesPeriod/filesStatus) 영속화 로직 불변. `getElementById` 클론 함정(8) 비해당 — 복제가 아닌 미러 select.
+- **검증(헤드리스 Chrome 정적 픽스처, 390px/1280px):** 모바일 — 버튼이 검색바 우측 동일 행 + 3개 select 숨김 + 가로 스크롤 없음 / 시트 오픈 시 옵션 4·5·4개 복사 + 화면 하단 고정 / 적용 시 원본 값 반영·배지 3·localStorage 저장 / 초기화 정상. 데스크톱 — 버튼 숨김 + 3 select 노출. 페이지 JS 에러 0.
+
+### 핫픽스 — `/files` ERR_INCOMPLETE_CHUNKED_ENCODING 빈 페이지 (같은 날 후속)
+- **증상:** 배포 직후 `/files` 접속 시 빈 페이지 + 브라우저 `ERR_INCOMPLETE_CHUNKED_ENCODING`. 앱 로그에 `TemplateProcessingException: Could not parse as expression: "'mfServer', 'serverFilter'], ..."` (files 1729행) 반복 + 2차로 `Unable to handle the Spring Security Exception because the response is already committed`.
+- **원인:** 신규 JS `var MF_PAIRS = [['mfServer','serverFilter'], ...]` 의 **중첩 배열 리터럴 `[[`** 를 Thymeleaf 3 인라인 표현식 시작으로 파싱(일반 `<script>` 블록도 대상) → 템플릿 파싱 실패. 응답 헤더가 이미 chunked 로 커밋된 뒤라 종료 마커 미전송 → 빈 페이지. 정적 픽스처 검증은 Thymeleaf 를 거치지 않아 미검출(신규 함정 — CLAUDE.md Pitfall 23 등재).
+- **수정:** `MF_PAIRS` 를 객체 배열(`[{sheet:'mfServer', src:'serverFilter'}, ...]`)로 재구성해 `[[` 시퀀스 제거(경고 주석 내 `[[` 표기도 제거). 전수 grep 으로 잔존 `[[` 는 기존 `th:inline="javascript"` 의도적 표현식 3건뿐임을 확인.
+- **검증:** ① SpringTemplateEngine(SpEL, thymeleaf-spring6 3.1.5 — 운영 동일) 단독 렌더 스모크: 배너 스텁 + 빈 모델로 files 템플릿 **RENDER_OK**(83KB, 신규 마크업 포함). ② 네거티브 컨트롤: 중첩 배열 재주입 시 운영 로그와 동일 시그니처로 **RENDER_FAIL** 재현 → 검증 도구 유효성 입증. ③ 헤드리스 기능 검증 5항목 재통과. ④ 재기동(10:07) 이후 앱 로그 에러 0건.
+
+
 ## [2026-07-22] Files 페이지 순번(#) 넘버링 개선 — 유형 접두 + 날짜순 고정 순위
 
 **대상:** `templates/files.html`

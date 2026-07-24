@@ -35,11 +35,14 @@
         .btn-pubkey:hover { background: #F9FAFB; border-color: #9CA3AF; }
 
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; overflow: hidden; }
+        /* 테이블 가로 스크롤 래퍼 — 폭이 좁아 테이블이 넘칠 때 우측 컬럼 잘림 대신 스크롤 노출 */
+        .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         /* .stable base/thead/td 색상·hover 는 common.css 에서 제공. padding/font-size + 페이지 고유 td a:hover 만 인라인 */
+        .stable { min-width: 860px; }
         .stable th { padding: 12px 16px; font-size: 12px; }
         .stable td { padding: 12px 16px; }
         .stable td a:hover { text-decoration: underline; }
-        .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; }
+        .badge { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
         .badge-on { background: #D1FAE5; color: #065F46; }
         .badge-fail { background: #DC2626; color: #fff; cursor: default; }
         .badge-off { background: #F3F4F6; color: #6B7280; }
@@ -350,6 +353,7 @@
         </div>
 
         <div class="panel">
+            <div class="table-scroll">
             <table class="stable" id="serversTable">
                 <thead>
                     <tr>
@@ -383,7 +387,7 @@
                         <td data-label="호스트" th:text="${s.host + ':' + s.port}">192.168.1.1:22</td>
                         <td class="col-hide-sm" data-label="SSH 계정" th:text="${s.sshUser}">sscuser</td>
                         <td class="col-hide-sm krds-tooltip tooltip-vertical" data-label="덤프 경로" style="font-size:12px;color:#6B7280;max-width:240px;"
-                            th:title="${s.dumpPath}" th:attr="data-tooltip=${s.dumpPath}"
+                            th:attr="data-tooltip=${s.dumpPath}"
                             th:with="paths=${s.dumpPaths}">
                             <span style="display:inline-flex;align-items:center;gap:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%">
                                 <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" th:text="${#lists.isEmpty(paths) ? '-' : paths[0]}">/opt/dumps</span>
@@ -426,6 +430,7 @@
                     </tr>
                 </tbody>
             </table>
+            </div>
             <div class="no-match" id="noMatch">검색 결과가 없습니다.</div>
         </div>
 
@@ -483,7 +488,7 @@
             <div style="display:flex;flex-direction:column;gap:8px;padding:10px 12px;background:#F9FAFB;border-radius:8px;border:1px solid #E5E7EB">
                 <label class="modal-check">
                     <input type="checkbox" id="smScanHeap" checked>
-                    <span>힙덤프 파일 탐지 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(.hprof / .bin / .dump)</span></span>
+                    <span>힙덤프 파일 탐지 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(.hprof / .bin / .dump / .dmp / .gz)</span></span>
                 </label>
                 <label class="modal-check">
                     <input type="checkbox" id="smScanCore" onchange="onScanCoreChange()">

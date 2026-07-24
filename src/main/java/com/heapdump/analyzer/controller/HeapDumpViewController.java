@@ -410,8 +410,8 @@ public class HeapDumpViewController {
     private static boolean hasRecognizedHeapDumpExtension(String name) {
         if (name == null) return false;
         String l = name.toLowerCase();
-        return l.endsWith(".hprof") || l.endsWith(".bin") || l.endsWith(".dump")
-                || l.endsWith(".hprof.gz") || l.endsWith(".bin.gz") || l.endsWith(".dump.gz");
+        return l.endsWith(".hprof") || l.endsWith(".bin") || l.endsWith(".dump") || l.endsWith(".dmp")
+                || l.endsWith(".gz");
     }
 
     // ── 분석 이력 페이지 ─────────────────────────────────────────

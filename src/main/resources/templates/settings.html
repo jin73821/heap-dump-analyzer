@@ -296,7 +296,7 @@
                 <div class="setting-row">
                     <div>
                         <div class="setting-label">Allow all file extensions</div>
-                        <div class="setting-desc">기본 .hprof/.bin/.dump (+ .gz) 화이트리스트를 해제하고 모든 확장자 업로드 허용.</div>
+                        <div class="setting-desc">기본 .hprof/.bin/.dump/.dmp (+ .gz) 화이트리스트를 해제하고 모든 확장자 업로드 허용.</div>
                     </div>
                     <div>
                         <input type="checkbox" class="tog" id="togAllowAllExt"
@@ -730,7 +730,7 @@
 <div class="modal-ov" id="allowAllExtModal" onclick="if(event.target===this)closeAllowAllExtModal()">
     <div class="modal-box">
         <div class="modal-ttl">확장자 제한 해제</div>
-        <div class="modal-desc">기본 .hprof/.bin/.dump (+.gz) 확장자 화이트리스트가 해제됩니다. 이후 업로드되는 파일은 확장자에 상관없이 모두 허용됩니다.</div>
+        <div class="modal-desc">기본 .hprof/.bin/.dump/.dmp (+.gz) 확장자 화이트리스트가 해제됩니다. 이후 업로드되는 파일은 확장자에 상관없이 모두 허용됩니다.</div>
         <div class="modal-warn">&#9888; 임의 파일 업로드가 가능해지므로 디스크 사용량이 증가하고, 분석이 불가능한 파일이 섞일 수 있습니다.</div>
         <div class="modal-btns">
             <button class="mbtn-cancel" onclick="closeAllowAllExtModal()">Cancel</button>

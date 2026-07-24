@@ -6,6 +6,7 @@ import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.LeakSuspect;
 import com.heapdump.analyzer.model.MemoryObject;
 import com.heapdump.analyzer.util.OomDetector;
+import com.heapdump.analyzer.util.MiddlewareDetector;
 import com.heapdump.analyzer.model.entity.AiInsightEntity;
 import com.heapdump.analyzer.repository.AiInsightRepository;
 import com.openhtmltopdf.outputdevice.helper.BaseRendererBuilder;
@@ -38,17 +39,21 @@ public class PdfReportService {
 
     private static final int TOP_MEMORY_LIMIT = 5;
     private static final int SUSPECT_LIMIT = 3;
-    private static final int SUMMARY_MAX_CHARS = 600;
-    private static final int RECOMMEND_MAX_CHARS = 700;
+    // 리포트가 여러 페이지로 흐르므로 실제 AI 텍스트가 잘리지 않도록 넉넉한 안전 상한만 유지.
+    private static final int SUMMARY_MAX_CHARS = 4000;
+    private static final int RECOMMEND_MAX_CHARS = 8000;
 
     private final TemplateEngine templateEngine;
     private final AiInsightRepository aiInsightRepository;
+    private final HeapDumpAnalyzerService analyzerService;
     private final ObjectMapper jsonMapper = new ObjectMapper();
 
     public PdfReportService(TemplateEngine templateEngine,
-                            AiInsightRepository aiInsightRepository) {
+                            AiInsightRepository aiInsightRepository,
+                            HeapDumpAnalyzerService analyzerService) {
         this.templateEngine = templateEngine;
         this.aiInsightRepository = aiInsightRepository;
+        this.analyzerService = analyzerService;
     }
 
     /**
@@ -83,6 +88,23 @@ public class PdfReportService {
         m.put("topMem", limit(result.getTopMemoryObjects(), TOP_MEMORY_LIMIT));
         m.put("topSuspects", limit(result.getLeakSuspects(), SUSPECT_LIMIT));
         m.put("ai", loadAiInsight(filename));
+
+        // 환경 정보 (HOST / Middleware / Instance / Domain) — analyze 뷰(HeapDumpViewController)와 동일 로직.
+        // HOST: server_name(SSH 자동/수동 편집), Middleware: 히스토그램·sysprop 기반 벤더 추정,
+        // Instance/Domain: sysProps(jeus.server.name/jeus.domain.name) 자동 식별 + 수동 편집값 우선.
+        m.put("hostname", analyzerService.getAnalysisServerName(filename));
+        MiddlewareDetector.Result mw = MiddlewareDetector.detect(
+                result.getHistogramEntries(), result.getThreadInfos(), result.getSystemProperties());
+        m.put("middlewareVendor", mw.detected() ? mw.displayName() : "");
+        Map<String, String> sysProps = result.getSystemProperties();
+        String jeusInstanceAuto = sysProps != null && sysProps.get("jeus.server.name") != null
+                ? sysProps.get("jeus.server.name").trim() : "";
+        String jeusDomainAuto = sysProps != null && sysProps.get("jeus.domain.name") != null
+                ? sysProps.get("jeus.domain.name").trim() : "";
+        String jeusInstanceManual = analyzerService.getAnalysisJeusInstance(filename);
+        String jeusDomainManual = analyzerService.getAnalysisJeusDomain(filename);
+        m.put("jeusInstance", !jeusInstanceManual.isEmpty() ? jeusInstanceManual : jeusInstanceAuto);
+        m.put("jeusDomain", !jeusDomainManual.isEmpty() ? jeusDomainManual : jeusDomainAuto);
 
         long usedPct = result.getTotalHeapSize() > 0
                 ? Math.round(100.0 * result.getUsedHeapSize() / result.getTotalHeapSize())

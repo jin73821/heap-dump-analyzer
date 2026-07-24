@@ -87,8 +87,8 @@ public class FileManagementService {
     public boolean isValidHeapDumpFile(String name) {
         if (name == null) return false;
         String l = name.toLowerCase();
-        return l.endsWith(".hprof") || l.endsWith(".bin") || l.endsWith(".dump")
-                || l.endsWith(".hprof.gz") || l.endsWith(".bin.gz") || l.endsWith(".dump.gz");
+        return l.endsWith(".hprof") || l.endsWith(".bin") || l.endsWith(".dump") || l.endsWith(".dmp")
+                || l.endsWith(".gz");
     }
 
     /**
@@ -223,7 +223,7 @@ public class FileManagementService {
 
     /**
      * dumpfiles/ 디렉토리의 파일 목록을 반환.
-     * @param allowAllExtensions true 면 확장자 화이트리스트(.hprof/.bin/.dump 및 .gz) 우회 — 디렉토리/숨김파일만 제외.
+     * @param allowAllExtensions true 면 확장자 화이트리스트(.hprof/.bin/.dump/.dmp 및 .gz) 우회 — 디렉토리/숨김파일만 제외.
      */
     public List<HeapDumpFile> listFiles(boolean allowAllExtensions) {
         List<HeapDumpFile> result = new ArrayList<>();
@@ -292,10 +292,10 @@ public class FileManagementService {
 
         if (!allowAllExtensions && !isValidHeapDumpFile(filename)) {
             String ext = getExtension(filename);
-            logger.warn("[Upload] Rejected: invalid extension '{}' for file '{}'. Allowed: .hprof, .bin, .dump (+ .gz)",
+            logger.warn("[Upload] Rejected: invalid extension '{}' for file '{}'. Allowed: .hprof, .bin, .dump, .dmp (+ .gz)",
                     ext, filename);
             throw new IllegalArgumentException(
-                    "'" + ext + "' is not a supported file type. Only .hprof, .bin, .dump (+ .gz) files are allowed.");
+                    "'" + ext + "' is not a supported file type. Only .hprof, .bin, .dump, .dmp (+ .gz) files are allowed.");
         }
 
         File dumpDir = dumpFilesDirectory();

@@ -339,7 +339,7 @@ public class RemoteDumpService {
         String findCmd =
             "[ -d '" + safePath + "' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
             + "[ -r '" + safePath + "' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
-            + "find '" + safePath + "' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' \\) "
+            + "find '" + safePath + "' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' -o -name '*.dmp' -o -name '*.gz' \\) "
             + "-printf '%T@|%TY-%Tm-%Td %TH:%TM|%s|%p\\n' || true";
         String[] cmd = buildSshCommand(server, findCmd);
         ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);

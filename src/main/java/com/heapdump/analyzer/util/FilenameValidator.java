@@ -14,8 +14,8 @@ public final class FilenameValidator {
     private FilenameValidator() {}
 
     private static final Set<String> ALLOWED_EXTENSIONS = new HashSet<>(Arrays.asList(
-            ".hprof", ".bin", ".dump",
-            ".hprof.gz", ".bin.gz", ".dump.gz"
+            ".hprof", ".bin", ".dump", ".dmp",
+            ".hprof.gz", ".bin.gz", ".dump.gz", ".dmp.gz", ".gz"
     ));
 
     /**
@@ -81,7 +81,7 @@ public final class FilenameValidator {
 
         // 허용 확장자 확인 — 토글 ON 시 우회
         if (!allowAllExtensions && !hasAllowedExtension(safe)) {
-            throw new IllegalArgumentException("Unsupported file type. Allowed: .hprof, .bin, .dump");
+            throw new IllegalArgumentException("Unsupported file type. Allowed: .hprof, .bin, .dump, .dmp (+ .gz)");
         }
 
         return safe;
