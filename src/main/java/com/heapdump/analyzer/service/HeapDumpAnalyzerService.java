@@ -5,6 +5,8 @@ import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.*;
 import com.heapdump.analyzer.model.entity.AiInsightEntity;
 import com.heapdump.analyzer.model.entity.AnalysisHistoryEntity;
+import com.heapdump.analyzer.model.entity.AnalysisResultDetailEntity;
+import com.heapdump.analyzer.model.entity.DominatorRefsEntity;
 import com.heapdump.analyzer.parser.MatReportParser;
 import com.heapdump.analyzer.model.entity.DumpTransferLog;
 import com.heapdump.analyzer.model.entity.TargetServer;
@@ -12,6 +14,8 @@ import com.heapdump.analyzer.repository.AiChatMessageRepository;
 import com.heapdump.analyzer.repository.AiChatSessionRepository;
 import com.heapdump.analyzer.repository.AiInsightRepository;
 import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
+import com.heapdump.analyzer.repository.AnalysisResultDetailRepository;
+import com.heapdump.analyzer.repository.DominatorRefsRepository;
 import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.TargetServerRepository;
 import com.heapdump.analyzer.util.FormatUtils;
@@ -51,6 +55,7 @@ public class HeapDumpAnalyzerService {
     private static final Logger logger = LoggerFactory.getLogger(HeapDumpAnalyzerService.class);
     // MAT_TIMEOUT_MINUTES → config.getMatTimeoutMinutes()로 이동
     private static final String RESULT_JSON      = "result.json";
+    private static final String DOM_REFS_FILE    = "dominator-refs.json";
     // AI_INSIGHT_FILE 상수는 AiInsightManager 내부로 이동 (Phase 7-5)
     private static final String MAT_LOG_FILE     = "mat.log";
     private static final String TMP_DIR_NAME     = "tmp";
@@ -58,6 +63,8 @@ public class HeapDumpAnalyzerService {
     private final HeapDumpConfig  config;
     private final MatReportParser parser;
     private final AnalysisHistoryRepository analysisHistoryRepository;
+    private final AnalysisResultDetailRepository resultDetailRepository;
+    private final DominatorRefsRepository dominatorRefsRepository;
     private final AiInsightRepository aiInsightRepository;
     private final AiChatSessionRepository aiChatSessionRepository;
     private final AiChatMessageRepository aiChatMessageRepository;
@@ -101,7 +108,7 @@ public class HeapDumpAnalyzerService {
                 th.setDaemon(true);
                 return th;
             });
-    // 사이드카(dominator-refs.json) 파싱 결과 캐시: filename → (address → {incoming,outgoing})
+    // 사전계산 refs(analysis_dominator_refs) 파싱 결과 캐시: filename → (address → {incoming,outgoing})
     private final ConcurrentHashMap<String, Map<String, Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>>>> domRefSidecarCache
             = new ConcurrentHashMap<>();
 
@@ -163,6 +170,8 @@ public class HeapDumpAnalyzerService {
 
     public HeapDumpAnalyzerService(HeapDumpConfig config, MatReportParser parser,
                                    AnalysisHistoryRepository analysisHistoryRepository,
+                                   AnalysisResultDetailRepository resultDetailRepository,
+                                   DominatorRefsRepository dominatorRefsRepository,
                                    AiInsightRepository aiInsightRepository,
                                    AiChatSessionRepository aiChatSessionRepository,
                                    AiChatMessageRepository aiChatMessageRepository,
@@ -180,6 +189,8 @@ public class HeapDumpAnalyzerService {
         this.config  = config;
         this.parser  = parser;
         this.analysisHistoryRepository = analysisHistoryRepository;
+        this.resultDetailRepository = resultDetailRepository;
+        this.dominatorRefsRepository = dominatorRefsRepository;
         this.aiInsightRepository = aiInsightRepository;
         this.aiChatSessionRepository = aiChatSessionRepository;
         this.aiChatMessageRepository = aiChatMessageRepository;
@@ -253,17 +264,19 @@ public class HeapDumpAnalyzerService {
         // 기존 결과 디렉토리를 data/로 마이그레이션
         migrateOldResultDirs(baseDir, dataDir);
 
-        // data 디렉토리에서 결과 복원
-        int loaded = 0;
-        if (dataDir.exists()) {
-            File[] subDirs = dataDir.listFiles(File::isDirectory);
-            if (subDirs != null) {
-                for (File dir : subDirs) {
-                    if (loadResultFromDir(dir)) loaded++;
-                }
-            }
-        }
-        logger.info("Restored {} saved results from disk (data directory)", loaded);
+        // 구 스킴(확장자 제거 base) 결과 디렉토리 → 파일명 스킴으로 rename.
+        // result.json 의 filename 필드가 근거이므로 반드시 DB 이관(=파일 삭제) **이전**에 실행.
+        migrateResultDirsToFilenameScheme(dataDir);
+
+        // 잔존 result.json → analysis_result_detail 이관 후 파일 삭제
+        migrateResultJsonToDb(dataDir);
+
+        // 잔존 dominator-refs.json → analysis_dominator_refs 이관 후 파일 삭제
+        migrateDominatorRefsToDb(dataDir);
+
+        // DB(analysis_result_detail)에서 결과 복원
+        int loaded = restoreResultsFromDb();
+        logger.info("Restored {} saved results from database (analysis_result_detail)", loaded);
 
         // 상위 디렉토리에 남은 .index/.threads 파일을 결과 디렉토리로 이동
         migrateStrayArtifacts(baseDir);
@@ -385,46 +398,261 @@ public class HeapDumpAnalyzerService {
         aiInsight.migrateAiInsightsToDb();
     }
 
+    // ── 상세 결과 영속화 (analysis_result_detail) ────────────────
+
     /**
-     * 개별 결과 디렉토리에서 result.json을 로드하여 resultCache에 적재.
+     * 분석 상세 결과를 DB(analysis_result_detail)에 저장한다.
+     * matLog 는 제외(디스크 mat.log 유지) — cloneWithoutLog 가 이미 null 처리.
      */
-    private boolean loadResultFromDir(File dir) {
-        File resultFile = new File(dir, RESULT_JSON);
-        if (!resultFile.exists()) return false;
+    private void saveResultDetailToDb(HeapAnalysisResult slim) {
+        if (slim == null || slim.getFilename() == null) return;
         try {
-            HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
-            if (r == null || r.getFilename() == null) return false;
-            if (r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS
-                    && r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.ERROR) return false;
-            File logFile = new File(dir, MAT_LOG_FILE);
-            if (logFile.exists()) {
-                r.setMatLog(new String(Files.readAllBytes(logFile.toPath()),
-                        java.nio.charset.StandardCharsets.UTF_8));
-            }
-            // Heap 데이터 없는 SUCCESS → ERROR로 보정
-            if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS
-                    && r.getTotalHeapSize() <= 0 && r.getUsedHeapSize() <= 0) {
-                r.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
-                if (r.getErrorMessage() == null || r.getErrorMessage().isEmpty()) {
-                    r.setErrorMessage("Heap data not available — MAT ZIP 파싱 결과에 힙 데이터가 없습니다.");
-                }
-                logger.info("Corrected status to ERROR for {} (no heap data)", r.getFilename());
-                try {
-                    objectMapper.writerWithDefaultPrettyPrinter()
-                            .writeValue(resultFile, r);
-                } catch (Exception ex) {
-                    logger.warn("Failed to update result.json for {}", r.getFilename());
-                }
-            }
-            // 기존 캐시의 MAT HTML 재정제 (body 추출 등)
-            if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
-                sanitizeCachedHtml(r);
-            }
-            resultCache.put(r.getFilename(), r);
-            return true;
+            String json = objectMapper.writeValueAsString(slim);
+            AnalysisResultDetailEntity e = resultDetailRepository.findByFilename(slim.getFilename())
+                    .orElseGet(AnalysisResultDetailEntity::new);
+            e.setFilename(slim.getFilename());
+            e.setResultJson(json);
+            resultDetailRepository.save(e);
+            logger.info("[DB] Result detail saved for {} ({} chars)", slim.getFilename(), json.length());
+        } catch (Exception ex) {
+            logger.warn("[DB] Failed to save result detail for {}: {}", slim.getFilename(),
+                    ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName());
+        }
+    }
+
+    /** DB 상세 결과 1건 로드 (역직렬화 실패 시 null). */
+    private HeapAnalysisResult loadResultDetailFromDb(String filename) {
+        try {
+            return resultDetailRepository.findByFilename(filename)
+                    .map(e -> {
+                        try {
+                            return objectMapper.readValue(e.getResultJson(), HeapAnalysisResult.class);
+                        } catch (Exception ex) {
+                            logger.warn("[DB] Failed to parse result detail for {}: {}", filename, ex.getMessage());
+                            return null;
+                        }
+                    })
+                    .orElse(null);
         } catch (Exception e) {
-            logger.warn("Failed to restore {}: {}", resultFile, e.getMessage());
-            return false;
+            logger.warn("[DB] Failed to load result detail for {}: {}", filename, e.getMessage());
+            return null;
+        }
+    }
+
+    private void deleteResultDetailFromDb(String filename) {
+        try {
+            resultDetailRepository.deleteByFilename(filename);
+        } catch (Exception e) {
+            logger.warn("[DB] Failed to delete result detail for {}: {}", filename, e.getMessage());
+        }
+    }
+
+    /**
+     * 기동 시 analysis_result_detail 전량을 resultCache 로 복원.
+     * (구 디스크 스캔 loadResultFromDir 대체 — 디스크에는 ZIP/.index/.threads/mat.log 만 남는다.)
+     */
+    private int restoreResultsFromDb() {
+        int loaded = 0;
+        List<AnalysisResultDetailEntity> all;
+        try {
+            all = resultDetailRepository.findAll();
+        } catch (Exception e) {
+            logger.error("[DB] Failed to load analysis_result_detail — 결과 복원 생략: {}", e.getMessage());
+            return 0;
+        }
+        for (AnalysisResultDetailEntity entity : all) {
+            try {
+                HeapAnalysisResult r = objectMapper.readValue(entity.getResultJson(), HeapAnalysisResult.class);
+                if (r == null || r.getFilename() == null) continue;
+                if (r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS
+                        && r.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.ERROR) continue;
+                attachMatLog(r);
+                // Heap 데이터 없는 SUCCESS → ERROR로 보정 (보정본을 DB 에 반영)
+                if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS
+                        && r.getTotalHeapSize() <= 0 && r.getUsedHeapSize() <= 0) {
+                    r.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
+                    if (r.getErrorMessage() == null || r.getErrorMessage().isEmpty()) {
+                        r.setErrorMessage("Heap data not available — MAT ZIP 파싱 결과에 힙 데이터가 없습니다.");
+                    }
+                    logger.info("Corrected status to ERROR for {} (no heap data)", r.getFilename());
+                    saveResultDetailToDb(cloneWithoutLog(r));
+                }
+                // 기존 캐시의 MAT HTML 재정제 (body 추출 등)
+                if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+                    sanitizeCachedHtml(r);
+                }
+                resultCache.put(r.getFilename(), r);
+                loaded++;
+            } catch (Exception e) {
+                logger.warn("Failed to restore result detail for {}: {}", entity.getFilename(), e.getMessage());
+            }
+        }
+        return loaded;
+    }
+
+    /** 결과 디렉토리의 mat.log 를 결과 객체에 부착 (DB 에는 저장하지 않는 항목). */
+    private void attachMatLog(HeapAnalysisResult r) {
+        File logFile = new File(resultDirectory(r.getFilename()), MAT_LOG_FILE);
+        if (!logFile.exists()) return;
+        try {
+            r.setMatLog(new String(Files.readAllBytes(logFile.toPath()),
+                    java.nio.charset.StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            logger.debug("Failed to read mat.log for {}: {}", r.getFilename(), e.getMessage());
+        }
+    }
+
+    /**
+     * 구 스킴(확장자 제거 base) 결과 디렉토리를 파일명 스킴으로 rename.
+     *
+     * 판단 근거는 디렉토리 안의 result.json `filename` 필드뿐이므로 {@link #migrateResultJsonToDb}
+     * 보다 **먼저** 실행되어야 한다. result.json 이 없는 디렉토리는 손대지 않는다(이관 완료분 포함).
+     */
+    private void migrateResultDirsToFilenameScheme(File dataDir) {
+        if (!dataDir.exists()) return;
+        File[] subDirs = dataDir.listFiles(File::isDirectory);
+        if (subDirs == null) return;
+        int renamed = 0;
+        for (File dir : subDirs) {
+            File resultFile = new File(dir, RESULT_JSON);
+            if (!resultFile.exists()) continue;
+            String filename;
+            try {
+                HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
+                filename = (r != null) ? r.getFilename() : null;
+            } catch (Exception e) {
+                logger.warn("[Migrate-DirScheme] result.json 파싱 실패 — 건너뜀: {} ({})",
+                        dir.getName(), e.getMessage());
+                continue;
+            }
+            if (filename == null || filename.isEmpty()) continue;
+            filename = new File(filename).getName();
+            if (dir.getName().equals(filename)) continue;   // 이미 파일명 스킴
+
+            File target = new File(dataDir, filename);
+            if (target.exists()) {
+                logger.warn("[Migrate-DirScheme] 대상 디렉토리가 이미 존재 — 건너뜀: {} → {}",
+                        dir.getName(), filename);
+                continue;
+            }
+            try {
+                Files.move(dir.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE);
+                renamed++;
+                logger.info("[Migrate-DirScheme] {} → {}", dir.getName(), filename);
+            } catch (IOException e) {
+                logger.warn("[Migrate-DirScheme] rename 실패: {} → {} ({})",
+                        dir.getName(), filename, e.getMessage());
+            }
+        }
+        if (renamed > 0) {
+            logger.info("[Migrate-DirScheme] 결과 디렉토리 {} 건을 파일명 스킴으로 전환", renamed);
+        }
+    }
+
+    /**
+     * 잔존 result.json → analysis_result_detail 이관 후 파일 삭제.
+     *
+     * ai_insight.json 과 동일 정책: **DB 저장이 확인된 경우에만** 파일을 지운다(실패 시 다음 기동 재시도).
+     * dumpCreationTime 이 비어 있으면(구 cloneWithoutLog 누락분) Overview ZIP 에서 1회 백필해
+     * 매 기동 재파싱이 반복되지 않게 한다.
+     */
+    private void migrateResultJsonToDb(File dataDir) {
+        if (!dataDir.exists()) return;
+        File[] subDirs = dataDir.listFiles(File::isDirectory);
+        if (subDirs == null) return;
+        int migrated = 0, removed = 0;
+        for (File dir : subDirs) {
+            File resultFile = new File(dir, RESULT_JSON);
+            if (!resultFile.exists()) continue;
+            try {
+                HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
+                if (r == null || r.getFilename() == null || r.getFilename().isEmpty()) {
+                    logger.warn("[Migrate-ResultJson] filename 없음 — 보존: {}", resultFile.getAbsolutePath());
+                    continue;
+                }
+                if (!resultDetailRepository.existsByFilename(r.getFilename())) {
+                    if (r.getDumpCreationTime() == null) {
+                        reparseOverviewMeta(r);   // 구 누락분 백필 (기동마다 재파싱 방지)
+                    }
+                    saveResultDetailToDb(cloneWithoutLog(r));
+                    if (!resultDetailRepository.existsByFilename(r.getFilename())) {
+                        logger.warn("[Migrate-ResultJson] DB 저장 실패 — 파일 보존: {}", r.getFilename());
+                        continue;
+                    }
+                    migrated++;
+                }
+                if (resultFile.delete()) {
+                    removed++;
+                } else {
+                    logger.warn("[Migrate-ResultJson] 파일 삭제 실패: {}", resultFile.getAbsolutePath());
+                }
+            } catch (Exception e) {
+                logger.warn("[Migrate-ResultJson] 이관 실패 — 파일 보존: {} ({})",
+                        resultFile.getAbsolutePath(), e.getMessage());
+            }
+        }
+        if (migrated > 0) {
+            logger.info("[Migrate-ResultJson] {} 건을 analysis_result_detail 로 이관", migrated);
+        }
+        if (removed > 0) {
+            logger.info("[Migrate-ResultJson] DB 저장 확인 후 레거시 {} 파일 {} 건 삭제", RESULT_JSON, removed);
+        }
+    }
+
+    /**
+     * 잔존 dominator-refs.json 사이드카 → analysis_dominator_refs 이관 후 파일 삭제.
+     *
+     * <p>{@link #migrateResultDirsToFilenameScheme} 이후이므로 디렉토리명 = 덤프 파일명이다.
+     * result.json 이관과 동일 정책: **DB 저장이 확인된 경우에만** 파일을 지운다.
+     * 전부-빈 사이드카는 저장하지 않고 파일만 정리한다(lazy 폴백 유지 — CLAUDE.md 함정 24).
+     */
+    private void migrateDominatorRefsToDb(File dataDir) {
+        if (!dataDir.exists()) return;
+        File[] subDirs = dataDir.listFiles(File::isDirectory);
+        if (subDirs == null) return;
+        int migrated = 0, removed = 0, skippedEmpty = 0;
+        for (File dir : subDirs) {
+            File sidecar = new File(dir, DOM_REFS_FILE);
+            if (!sidecar.exists()) continue;
+            String filename = dir.getName();
+            try {
+                if (!dominatorRefsRepository.existsByFilename(filename)) {
+                    Map<String, Object> data = objectMapper.readValue(sidecar,
+                            new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
+                    Object refs = data.get("refs");
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> refsMap = (refs instanceof Map)
+                            ? (Map<String, Object>) refs : Collections.emptyMap();
+                    if (!hasAnyRefData(refsMap)) {
+                        // 전부-빈 사이드카는 DB 에 옮기지 않는다 — lazy 경로를 가리는 회귀 원인
+                        logger.warn("[Migrate-DomRefs] 전부-빈 사이드카 — DB 미저장 후 파일만 삭제: {}", filename);
+                        skippedEmpty++;
+                        if (sidecar.delete()) removed++;
+                        continue;
+                    }
+                    saveDominatorRefsToDb(filename, data, refsMap.size());
+                    if (!dominatorRefsRepository.existsByFilename(filename)) {
+                        logger.warn("[Migrate-DomRefs] DB 저장 실패 — 파일 보존: {}", filename);
+                        continue;
+                    }
+                    migrated++;
+                }
+                if (sidecar.delete()) {
+                    removed++;
+                } else {
+                    logger.warn("[Migrate-DomRefs] 파일 삭제 실패: {}", sidecar.getAbsolutePath());
+                }
+            } catch (Exception e) {
+                logger.warn("[Migrate-DomRefs] 이관 실패 — 파일 보존: {} ({})",
+                        sidecar.getAbsolutePath(), e.getMessage());
+            }
+        }
+        if (migrated > 0) {
+            logger.info("[Migrate-DomRefs] {} 건을 analysis_dominator_refs 로 이관", migrated);
+        }
+        if (removed > 0) {
+            logger.info("[Migrate-DomRefs] 레거시 {} 파일 {} 건 삭제 (전부-빈 미이관 {} 건 포함)",
+                    DOM_REFS_FILE, removed, skippedEmpty);
         }
     }
 
@@ -497,8 +725,10 @@ public class HeapDumpAnalyzerService {
             int firstDot = name.indexOf('.');
             if (firstDot <= 0) continue;
             String base = name.substring(0, firstDot);
-            File resultDir = new File(config.getDataDirectory(), base);
-            if (!resultDir.exists() || !resultDir.isDirectory()) continue;
+            // 결과 디렉토리는 파일명 스킴(확장자 포함)이므로 base 로 직접 조합할 수 없다 →
+            // stripExtension(디렉토리명) 이 base 와 일치하는 디렉토리를 찾는다.
+            File resultDir = findResultDirByBase(base);
+            if (resultDir == null) continue;
             try {
                 Files.move(f.toPath(), new File(resultDir, name).toPath(),
                         StandardCopyOption.REPLACE_EXISTING);
@@ -510,6 +740,22 @@ public class HeapDumpAnalyzerService {
         if (moved > 0) {
             logger.info("[Migrate] Moved {} stray index/threads files to result directories", moved);
         }
+    }
+
+    /**
+     * MAT 산출물 base 이름으로 결과 디렉토리를 역탐색.
+     * 디렉토리는 파일명 스킴(확장자 포함)이라 base 만으로는 조합할 수 없다.
+     * `X.hprof` / `X.hprof.gz` 처럼 base 가 겹치는 후보가 여럿이면 최근 수정본을 택한다.
+     */
+    private File findResultDirByBase(String base) {
+        File[] dirs = new File(config.getDataDirectory()).listFiles(File::isDirectory);
+        if (dirs == null) return null;
+        File best = null;
+        for (File d : dirs) {
+            if (!stripExtension(d.getName()).equals(base)) continue;
+            if (best == null || d.lastModified() > best.lastModified()) best = d;
+        }
+        return best;
     }
 
     private void migrateDumpFilesToNewDir() {
@@ -1421,131 +1667,163 @@ public class HeapDumpAnalyzerService {
             return;
         }
 
-        // 3) JSON 파싱
+        // 3) JSON 파싱 — 실패 시에만 백업 + 기본값 재생성
+        //    ⚠️ 복원 단계(5)를 이 try 안에 넣지 말 것. 예전엔 한 try 로 묶여 있어
+        //    AES 복호화 실패 같은 복원 예외가 "깨진 JSON" 으로 오인됐고,
+        //    settings.json 을 .corrupted 로 밀어낸 뒤 LLM/RAG/2FA/비밀번호정책/원격
+        //    설정 전량을 기본값으로 리셋했다.
+        Map<String, Object> parsed;
         try {
-            Map<String, Object> saved = objectMapper.readValue(file, Map.class);
-
-            // 4) null 또는 빈 맵 → 기본값으로 재생성
-            if (saved == null || saved.isEmpty()) {
-                logger.warn("[Settings] settings.json contains no settings — recreating with defaults");
-                persistSettings();
-                return;
-            }
-
-            // 5) 개별 설정 복원 (타입 안전 처리)
-            if (saved.containsKey("keepUnreachableObjects")) {
-                Object val = saved.get("keepUnreachableObjects");
-                if (val instanceof Boolean) {
-                    this.keepUnreachableObjects = (Boolean) val;
-                } else {
-                    // 문자열 "true"/"false" 등 비정상 타입 대응
-                    this.keepUnreachableObjects = Boolean.parseBoolean(String.valueOf(val));
-                    logger.warn("[Settings] keepUnreachableObjects had unexpected type '{}', parsed as {}",
-                            val.getClass().getSimpleName(), keepUnreachableObjects);
-                }
-                logger.info("[Settings] Restored keepUnreachableObjects={}", keepUnreachableObjects);
-            }
-
-            if (saved.containsKey("compressAfterAnalysis")) {
-                Object val = saved.get("compressAfterAnalysis");
-                if (val instanceof Boolean) {
-                    this.compressAfterAnalysis = (Boolean) val;
-                } else {
-                    this.compressAfterAnalysis = Boolean.parseBoolean(String.valueOf(val));
-                }
-                logger.info("[Settings] Restored compressAfterAnalysis={}", compressAfterAnalysis);
-            }
-
-            if (saved.containsKey("dominatorRefsEnabled")) {
-                Object val = saved.get("dominatorRefsEnabled");
-                if (val instanceof Boolean) {
-                    this.dominatorRefsEnabled = (Boolean) val;
-                } else {
-                    this.dominatorRefsEnabled = Boolean.parseBoolean(String.valueOf(val));
-                }
-                logger.info("[Settings] Restored dominatorRefsEnabled={}", dominatorRefsEnabled);
-            }
-
-            if (saved.containsKey("allowAllExtensions")) {
-                Object val = saved.get("allowAllExtensions");
-                if (val instanceof Boolean) {
-                    this.allowAllExtensions = (Boolean) val;
-                } else {
-                    this.allowAllExtensions = Boolean.parseBoolean(String.valueOf(val));
-                }
-                logger.info("[Settings] Restored allowAllExtensions={}", allowAllExtensions);
-            }
-            // FilenameValidator 정적 플래그 동기화 — 컨트롤러 입구 검증이 토글을 인식하도록.
-            com.heapdump.analyzer.util.FilenameValidator.setAllowAllExtensions(this.allowAllExtensions);
-
-            if (saved.containsKey("maxUploadSizeBytes")) {
-                Object val = saved.get("maxUploadSizeBytes");
-                long bytes = 0;
-                if (val instanceof Number) {
-                    bytes = ((Number) val).longValue();
-                } else if (val != null) {
-                    try { bytes = Long.parseLong(String.valueOf(val)); } catch (NumberFormatException ignored) {}
-                }
-                if (bytes > 0 && bytes <= MAX_UPLOAD_LIMIT_BYTES) {
-                    this.maxUploadSizeBytes = bytes;
-                    logger.info("[Settings] Restored maxUploadSizeBytes={} ({} GB)",
-                            bytes, bytes / (1024.0 * 1024 * 1024));
-                } else {
-                    logger.warn("[Settings] Invalid maxUploadSizeBytes={}, using default {} GB",
-                            val, DEFAULT_UPLOAD_SIZE_BYTES / (1024 * 1024 * 1024));
-                }
-            }
-
-            if (saved.containsKey("sessionTimeoutHours")) {
-                Object val = saved.get("sessionTimeoutHours");
-                int h = (val instanceof Number) ? ((Number) val).intValue() : 1;
-                if (h >= 1 && h <= 6) {
-                    this.sessionTimeoutHours = h;
-                    logger.info("[Settings] Restored sessionTimeoutHours={}", h);
-                }
-            }
-
-            if (saved.containsKey("dashboardDetectDays")) {
-                Object val = saved.get("dashboardDetectDays");
-                int d = (val instanceof Number) ? ((Number) val).intValue() : 14;
-                int[] allowed = {7, 14, 30, 60, 90};
-                boolean valid = false;
-                for (int a : allowed) if (a == d) { valid = true; break; }
-                if (valid) {
-                    this.dashboardDetectDays = d;
-                    logger.info("[Settings] Restored dashboardDetectDays={}", d);
-                }
-            }
-
-            // LLM/RAG/2FA/원격 설정 복원 — 각 서비스에 위임
-            llmConfig.applyFromSettings(saved);
-            ragConfig.applyFromSettings(saved);
-            twoFactorConfig.applyFromSettings(saved);
-            passwordPolicyConfig.applyFromSettings(saved);
-            remoteDumpService.applyFromSettings(saved);
-            if (ragConfig.isRagEnabled()) {
-                logger.info("[Settings] RAG enabled: url={}, index={}, mode={}",
-                        ragConfig.getRagElasticsearchUrl(), ragConfig.getRagIndex(), ragConfig.getRagSearchMode());
-            }
-            // 환경변수 LLM_API_KEY 우선 + 로깅은 LlmConfigService 에서 처리
-            llmConfig.applyEnvOverride();
-            if (llmConfig.isLlmEnabled()) {
-                logger.info("[Settings] LLM enabled: provider={}, model={}",
-                        llmConfig.getLlmProvider(), llmConfig.getLlmModel());
-            }
-
-            logger.info("[Settings] Persisted settings loaded from {}", file.getAbsolutePath());
-
-            // application.properties도 동기화 (settings.json 값 반영)
-            syncApplicationProperties();
+            parsed = objectMapper.readValue(file, Map.class);
         } catch (Exception e) {
-            // 6) 파싱 실패 (깨진 JSON 등) → 백업 후 기본값으로 재생성
             logger.error("[Settings] Failed to parse settings.json: {} — recreating with defaults", e.getMessage());
             File backup = new File(file.getParent(), SETTINGS_FILE + ".corrupted");
             if (file.renameTo(backup)) {
                 logger.info("[Settings] Corrupted file backed up to {}", backup.getName());
             }
             persistSettings();
+            return;
+        }
+
+        // 4) null 또는 빈 맵 → 기본값으로 재생성
+        if (parsed == null || parsed.isEmpty()) {
+            logger.warn("[Settings] settings.json contains no settings — recreating with defaults");
+            persistSettings();
+            return;
+        }
+        final Map<String, Object> saved = parsed;
+
+        // 5) 개별 설정 복원 — 그룹별 격리. 한 그룹이 실패해도 나머지는 복원되며
+        //    settings.json 은 절대 삭제/리셋하지 않는다.
+        List<String> failed = new ArrayList<>();
+        applyStep(failed, "scalar",         () -> restoreScalarSettings(saved));
+        applyStep(failed, "llm",            () -> llmConfig.applyFromSettings(saved));
+        applyStep(failed, "rag",            () -> ragConfig.applyFromSettings(saved));
+        applyStep(failed, "twoFactor",      () -> twoFactorConfig.applyFromSettings(saved));
+        applyStep(failed, "passwordPolicy", () -> passwordPolicyConfig.applyFromSettings(saved));
+        applyStep(failed, "remote",         () -> remoteDumpService.applyFromSettings(saved));
+
+        if (ragConfig.isRagEnabled()) {
+            logger.info("[Settings] RAG enabled: url={}, index={}, mode={}",
+                    ragConfig.getRagElasticsearchUrl(), ragConfig.getRagIndex(), ragConfig.getRagSearchMode());
+        }
+        // 환경변수 LLM_API_KEY 우선 + 로깅은 LlmConfigService 에서 처리
+        applyStep(failed, "llmEnvOverride", () -> llmConfig.applyEnvOverride());
+        if (llmConfig.isLlmEnabled()) {
+            logger.info("[Settings] LLM enabled: provider={}, model={}",
+                    llmConfig.getLlmProvider(), llmConfig.getLlmModel());
+        }
+
+        logger.info("[Settings] Persisted settings loaded from {}", file.getAbsolutePath());
+
+        // 6) application.properties 동기화 — 복원이 완전할 때만.
+        //    반쪽 상태를 properties 로 내보내면 2차 오염이 된다.
+        if (failed.isEmpty()) {
+            syncApplicationProperties();
+        } else {
+            logger.error("[Settings] 복원 실패 그룹 {} — application.properties 동기화 생략 (기존 값 보존)", failed);
+        }
+    }
+
+    /**
+     * 복원 단계 1개 실행. 실패해도 예외를 전파하지 않고 실패 그룹명만 수집한다.
+     * (테스트에서 직접 호출하므로 package-private)
+     */
+    static void applyStep(List<String> failed, String name, Runnable step) {
+        try {
+            step.run();
+        } catch (Exception e) {
+            failed.add(name);
+            logger.error("[Settings] 설정 복원 실패 (group={}) — {}: {} (settings.json 은 보존)",
+                    name, e.getClass().getSimpleName(), e.getMessage(), e);
+        }
+    }
+
+    /** 스칼라 설정 복원 (LLM/RAG/2FA/비밀번호정책/원격 제외, 타입 안전 처리). */
+    @SuppressWarnings("unchecked")
+    private void restoreScalarSettings(Map<String, Object> saved) {
+        if (saved.containsKey("keepUnreachableObjects")) {
+            Object val = saved.get("keepUnreachableObjects");
+            if (val instanceof Boolean) {
+                this.keepUnreachableObjects = (Boolean) val;
+            } else {
+                // 문자열 "true"/"false" 등 비정상 타입 대응
+                this.keepUnreachableObjects = Boolean.parseBoolean(String.valueOf(val));
+                logger.warn("[Settings] keepUnreachableObjects had unexpected type '{}', parsed as {}",
+                        val.getClass().getSimpleName(), keepUnreachableObjects);
+            }
+            logger.info("[Settings] Restored keepUnreachableObjects={}", keepUnreachableObjects);
+        }
+
+        if (saved.containsKey("compressAfterAnalysis")) {
+            Object val = saved.get("compressAfterAnalysis");
+            if (val instanceof Boolean) {
+                this.compressAfterAnalysis = (Boolean) val;
+            } else {
+                this.compressAfterAnalysis = Boolean.parseBoolean(String.valueOf(val));
+            }
+            logger.info("[Settings] Restored compressAfterAnalysis={}", compressAfterAnalysis);
+        }
+
+        if (saved.containsKey("dominatorRefsEnabled")) {
+            Object val = saved.get("dominatorRefsEnabled");
+            if (val instanceof Boolean) {
+                this.dominatorRefsEnabled = (Boolean) val;
+            } else {
+                this.dominatorRefsEnabled = Boolean.parseBoolean(String.valueOf(val));
+            }
+            logger.info("[Settings] Restored dominatorRefsEnabled={}", dominatorRefsEnabled);
+        }
+
+        if (saved.containsKey("allowAllExtensions")) {
+            Object val = saved.get("allowAllExtensions");
+            if (val instanceof Boolean) {
+                this.allowAllExtensions = (Boolean) val;
+            } else {
+                this.allowAllExtensions = Boolean.parseBoolean(String.valueOf(val));
+            }
+            logger.info("[Settings] Restored allowAllExtensions={}", allowAllExtensions);
+        }
+        // FilenameValidator 정적 플래그 동기화 — 컨트롤러 입구 검증이 토글을 인식하도록.
+        com.heapdump.analyzer.util.FilenameValidator.setAllowAllExtensions(this.allowAllExtensions);
+
+        if (saved.containsKey("maxUploadSizeBytes")) {
+            Object val = saved.get("maxUploadSizeBytes");
+            long bytes = 0;
+            if (val instanceof Number) {
+                bytes = ((Number) val).longValue();
+            } else if (val != null) {
+                try { bytes = Long.parseLong(String.valueOf(val)); } catch (NumberFormatException ignored) {}
+            }
+            if (bytes > 0 && bytes <= MAX_UPLOAD_LIMIT_BYTES) {
+                this.maxUploadSizeBytes = bytes;
+                logger.info("[Settings] Restored maxUploadSizeBytes={} ({} GB)",
+                        bytes, bytes / (1024.0 * 1024 * 1024));
+            } else {
+                logger.warn("[Settings] Invalid maxUploadSizeBytes={}, using default {} GB",
+                        val, DEFAULT_UPLOAD_SIZE_BYTES / (1024 * 1024 * 1024));
+            }
+        }
+
+        if (saved.containsKey("sessionTimeoutHours")) {
+            Object val = saved.get("sessionTimeoutHours");
+            int h = (val instanceof Number) ? ((Number) val).intValue() : 1;
+            if (h >= 1 && h <= 6) {
+                this.sessionTimeoutHours = h;
+                logger.info("[Settings] Restored sessionTimeoutHours={}", h);
+            }
+        }
+
+        if (saved.containsKey("dashboardDetectDays")) {
+            Object val = saved.get("dashboardDetectDays");
+            int d = (val instanceof Number) ? ((Number) val).intValue() : 14;
+            int[] allowed = {7, 14, 30, 60, 90};
+            boolean valid = false;
+            for (int a : allowed) if (a == d) { valid = true; break; }
+            if (valid) {
+                this.dashboardDetectDays = d;
+                logger.info("[Settings] Restored dashboardDetectDays={}", d);
+            }
         }
     }
 
@@ -1783,6 +2061,14 @@ public class HeapDumpAnalyzerService {
     public String  getRagEmbeddingApiKeyMasked() { return ragConfig.getRagEmbeddingApiKeyMasked(); }
     public String  getRagPasswordMasked()      { return ragConfig.getRagPasswordMasked(); }
     public String  getRagApiKeyMasked()        { return ragConfig.getRagApiKeyMasked(); }
+
+    // 시크릿 손상 상태 — 저장은 돼 있으나 복호화 결과가 훼손돼 사용할 수 없는 경우
+    public boolean isRagPasswordHealthy()        { return ragConfig.isRagPasswordHealthy(); }
+    public boolean isRagApiKeyHealthy()          { return ragConfig.isRagApiKeyHealthy(); }
+    public boolean isRagEmbeddingApiKeyHealthy() { return ragConfig.isRagEmbeddingApiKeyHealthy(); }
+    public String  getRagPasswordIssue()         { return ragConfig.getRagPasswordIssue(); }
+    public String  getRagApiKeyIssue()           { return ragConfig.getRagApiKeyIssue(); }
+    public String  getRagEmbeddingApiKeyIssue()  { return ragConfig.getRagEmbeddingApiKeyIssue(); }
 
     public void setRagEnabled(boolean enabled) {
         ragConfig.setRagEnabled(enabled);
@@ -2191,12 +2477,24 @@ public class HeapDumpAnalyzerService {
         // 4) 메모리 캐시 제거
         resultCache.remove(safe);
 
-        // 5) DB 레코드 삭제 (analysis_history + ai_insights)
+        // 5) DB 레코드 삭제 (analysis_history + analysis_result_detail + ai_insights)
         try {
             analysisHistoryRepository.deleteByFilename(safe);
             logger.info("[DeleteHistory] DB analysis_history record deleted: {}", safe);
         } catch (Exception e) {
             logger.warn("[DeleteHistory] Failed to delete DB analysis_history for '{}': {}", safe, e.getMessage());
+        }
+        try {
+            resultDetailRepository.deleteByFilename(safe);
+            logger.info("[DeleteHistory] DB analysis_result_detail record deleted: {}", safe);
+        } catch (Exception e) {
+            logger.warn("[DeleteHistory] Failed to delete DB analysis_result_detail for '{}': {}", safe, e.getMessage());
+        }
+        try {
+            dominatorRefsRepository.deleteByFilename(safe);
+            logger.info("[DeleteHistory] DB analysis_dominator_refs record deleted: {}", safe);
+        } catch (Exception e) {
+            logger.warn("[DeleteHistory] Failed to delete DB analysis_dominator_refs for '{}': {}", safe, e.getMessage());
         }
         try {
             aiInsightRepository.deleteByFilename(safe);
@@ -2227,26 +2525,16 @@ public class HeapDumpAnalyzerService {
             return cached;
         }
 
-        File resultFile = resultJsonFile(safe);
-        if (resultFile.exists()) {
-            try {
-                HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
-                if (r != null && (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS
-                        || r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.ERROR)) {
-                    File logFile = new File(resultDirectory(safe), MAT_LOG_FILE);
-                    if (logFile.exists())
-                        r.setMatLog(new String(Files.readAllBytes(logFile.toPath()),
-                                java.nio.charset.StandardCharsets.UTF_8));
-                    if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
-                        sanitizeCachedHtml(r);
-                    }
-                    syncGzFileSize(r, safe);
-                    resultCache.put(safe, r);
-                    return r;
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to read saved result {}: {}", safe, e.getMessage());
+        HeapAnalysisResult r = loadResultDetailFromDb(safe);
+        if (r != null && (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS
+                || r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.ERROR)) {
+            attachMatLog(r);
+            if (r.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+                sanitizeCachedHtml(r);
             }
+            syncGzFileSize(r, safe);
+            resultCache.put(safe, r);
+            return r;
         }
         return null;
     }
@@ -2270,6 +2558,9 @@ public class HeapDumpAnalyzerService {
             deleteDirectoryRecursively(resultDir);
             logger.info("Result directory deleted: {}", resultDir.getAbsolutePath());
         }
+        // 상세 결과·refs 는 DB 가 원본 — 함께 지우지 않으면 재분석 직전 조회에서 옛 결과가 되살아난다.
+        deleteResultDetailFromDb(safe);
+        deleteDominatorRefsFromDb(safe);
         logger.info("Cache cleared: {}", safe);
     }
 
@@ -2561,7 +2852,7 @@ public class HeapDumpAnalyzerService {
                     result.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.ERROR);
                     result.setErrorMessage("Heap data not available — MAT ZIP 파싱 결과에 힙 데이터가 없습니다.");
                     resultCache.put(safe, result);
-                    saveResultToDisk(result, resultDir);
+                    persistResult(result, resultDir);
                     saveAnalysisToDb(result);
                     analysisSuccess = true;
                     sendProgress(emitter, AnalysisProgress.error(safe, "Heap data not available"));
@@ -2569,7 +2860,7 @@ public class HeapDumpAnalyzerService {
                 } else {
                     result.setAnalysisStatus(HeapAnalysisResult.AnalysisStatus.SUCCESS);
                     resultCache.put(safe, result);
-                    saveResultToDisk(result, resultDir);
+                    persistResult(result, resultDir);
                     saveAnalysisToDb(result);
                     analysisSuccess = true;
 
@@ -2638,7 +2929,7 @@ public class HeapDumpAnalyzerService {
                         }
                         Files.createDirectories(errorResultDir.toPath());
                         resultCache.put(safe, errorResult);
-                        saveResultToDisk(errorResult, errorResultDir);
+                        persistResult(errorResult, errorResultDir);
                         saveAnalysisToDb(errorResult);
                         analysisSuccess = true; // tmp 파일 삭제 방지 (이미 이동 완료)
                         logger.info("[Analysis] Error result saved for: {}", safe);
@@ -3112,19 +3403,22 @@ public class HeapDumpAnalyzerService {
 
     // ── 디스크 저장 ──────────────────────────────────────────────
 
-    private void saveResultToDisk(HeapAnalysisResult result, File dir) {
+    /**
+     * 분석 결과 영속화 — 상세 JSON 은 DB(analysis_result_detail), mat.log 는 결과 디렉토리.
+     *
+     * MAT 산출물(ZIP/.index/.threads)은 lazy 재파싱·Raw Data iframe·MAT lazy 쿼리에서
+     * 계속 필요하므로 결과 디렉토리는 그대로 유지된다.
+     */
+    private void persistResult(HeapAnalysisResult result, File dir) {
         try {
             if (result.getMatLog() != null && !result.getMatLog().isEmpty()) {
                 Files.write(Paths.get(dir.getAbsolutePath(), MAT_LOG_FILE),
                         result.getMatLog().getBytes(java.nio.charset.StandardCharsets.UTF_8));
             }
-            HeapAnalysisResult slim = cloneWithoutLog(result);
-            objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValue(new File(dir, RESULT_JSON), slim);
-            logger.info("Result saved: {}", dir.getAbsolutePath());
         } catch (Exception e) {
-            logger.warn("Failed to save result: {}", e.getMessage());
+            logger.warn("Failed to save mat.log: {}", e.getMessage());
         }
+        saveResultDetailToDb(cloneWithoutLog(result));
     }
 
     private HeapAnalysisResult cloneWithoutLog(HeapAnalysisResult r) {
@@ -3139,6 +3433,8 @@ public class HeapDumpAnalyzerService {
         c.setClassLoaderCount(r.getClassLoaderCount()); c.setGcRootCount(r.getGcRootCount());
         c.setAnalysisTime(r.getAnalysisTime());   c.setAnalysisStatus(r.getAnalysisStatus());
         c.setErrorMessage(r.getErrorMessage());
+        // dumpCreationTime 누락 시 기동마다 System_Overview ZIP 재파싱이 반복된다 (restoreMissing 조건)
+        c.setDumpCreationTime(r.getDumpCreationTime());
         c.setOverviewHtml(r.getOverviewHtml());   c.setTopComponentsHtml(r.getTopComponentsHtml());
         c.setSuspectsHtml(r.getSuspectsHtml());   c.setMatLog(null);
         c.setHistogramHtml(r.getHistogramHtml());
@@ -3412,9 +3708,8 @@ public class HeapDumpAnalyzerService {
 
         File resultDir = resultDirectory(safe);
         if (!resultDir.exists()) return;
-        File sidecar = new File(resultDir, "dominator-refs.json");
-        if (sidecar.exists()) {
-            logger.info("[DomRefs] sidecar already present for {}, skip precompute", safe);
+        if (dominatorRefsRepository.existsByFilename(safe)) {
+            logger.info("[DomRefs] refs already present in DB for {}, skip precompute", safe);
             return;
         }
 
@@ -3485,39 +3780,68 @@ public class HeapDumpAnalyzerService {
         }
 
         // 안전장치: 모든 항목이 incoming/outgoing 둘 다 빈 목록이면 MAT 쿼리 전반 실패(예: reparse/exit 13)
-        // 신호 → 사이드카를 쓰지 않는다. 빈 사이드카는 reconnect 시 정상 동작하는 lazy 경로를 가려서
+        // 신호 → 저장하지 않는다. 전부-빈 refs 는 reconnect 시 정상 동작하는 lazy 경로를 가려서
         // "참조 없음" 으로 잘못 표시되는 회귀를 유발하므로, 차라리 lazy 폴백을 유지한다.
-        boolean anyData = false;
-        for (Object v : refsMap.values()) {
-            Map<?, ?> m = (Map<?, ?>) v;
-            List<?> in  = (List<?>) m.get("incoming");
-            List<?> out = (List<?>) m.get("outgoing");
-            if ((in != null && !in.isEmpty()) || (out != null && !out.isEmpty())) { anyData = true; break; }
-        }
-        if (!refsMap.isEmpty() && !anyData) {
-            logger.warn("[DomRefs] precompute produced only empty refs for {} ({} entries) — skip sidecar (lazy 폴백 유지)",
+        if (!refsMap.isEmpty() && !hasAnyRefData(refsMap)) {
+            logger.warn("[DomRefs] precompute produced only empty refs for {} ({} entries) — skip save (lazy 폴백 유지)",
                     safe, done);
             return;
         }
 
-        // 사이드카 atomic write (temp → move)
-        Map<String, Object> sidecarData = new LinkedHashMap<>();
-        sidecarData.put("version", 1);
-        sidecarData.put("generatedAt", java.time.LocalDateTime.now().toString());
-        sidecarData.put("topN", topN);
-        sidecarData.put("capPerList", cap);
-        sidecarData.put("refs", refsMap);
-        File tmp = new File(resultDir, "dominator-refs.json.tmp");
-        objectMapper.writerWithDefaultPrettyPrinter().writeValue(tmp, sidecarData);
-        try {
-            Files.move(tmp.toPath(), sidecar.toPath(),
-                    StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (IOException atomicFail) {
-            Files.move(tmp.toPath(), sidecar.toPath(), StandardCopyOption.REPLACE_EXISTING);
-        }
+        Map<String, Object> refsData = new LinkedHashMap<>();
+        refsData.put("version", 1);
+        refsData.put("generatedAt", java.time.LocalDateTime.now().toString());
+        refsData.put("topN", topN);
+        refsData.put("capPerList", cap);
+        refsData.put("refs", refsMap);
+        saveDominatorRefsToDb(safe, refsData, refsMap.size());
         domRefSidecarCache.remove(safe); // 다음 조회 시 새로 로드
         logger.info("[DomRefs] precompute done for {}: {} entries in {}ms",
                 safe, done, System.currentTimeMillis() - start);
+    }
+
+    /**
+     * refs 맵에 실제 데이터가 하나라도 있는지. 전부-빈이면 MAT 쿼리 전반 실패 신호다.
+     *
+     * <p>전부-빈 결과를 저장하면 정상 동작하는 lazy 경로를 가려 UI 에 "참조 없음" 으로
+     * 잘못 표시되는 회귀가 발생한다 (CLAUDE.md 함정 24). 저장 측 최후 방어선.
+     */
+    static boolean hasAnyRefData(Map<String, Object> refsMap) {
+        if (refsMap == null || refsMap.isEmpty()) return false;
+        for (Object v : refsMap.values()) {
+            if (!(v instanceof Map)) continue;
+            Map<?, ?> m = (Map<?, ?>) v;
+            Object in  = m.get("incoming");
+            Object out = m.get("outgoing");
+            if (in instanceof List && !((List<?>) in).isEmpty())  return true;
+            if (out instanceof List && !((List<?>) out).isEmpty()) return true;
+        }
+        return false;
+    }
+
+    private void saveDominatorRefsToDb(String safe, Map<String, Object> refsData, int addressCount) {
+        try {
+            String json = objectMapper.writeValueAsString(refsData);
+            DominatorRefsEntity e = dominatorRefsRepository.findByFilename(safe)
+                    .orElseGet(DominatorRefsEntity::new);
+            e.setFilename(safe);
+            e.setRefsJson(json);
+            e.setAddressCount(addressCount);
+            dominatorRefsRepository.save(e);
+            logger.info("[DB] Dominator refs saved for {} ({} addresses, {} chars)",
+                    safe, addressCount, json.length());
+        } catch (Exception ex) {
+            logger.warn("[DB] Failed to save dominator refs for {}: {}", safe,
+                    ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName());
+        }
+    }
+
+    private void deleteDominatorRefsFromDb(String filename) {
+        try {
+            dominatorRefsRepository.deleteByFilename(filename);
+        } catch (Exception e) {
+            logger.warn("[DB] Failed to delete dominator refs for {}: {}", filename, e.getMessage());
+        }
     }
 
     /**
@@ -3532,10 +3856,11 @@ public class HeapDumpAnalyzerService {
     }
 
     private Map<String, Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>>> loadDominatorRefsSidecar(String safe) {
-        File sidecar = new File(resultDirectory(safe), "dominator-refs.json");
-        if (!sidecar.exists()) return null; // computeIfAbsent: null → 미저장(다음 호출 재시도)
+        String refsJson = dominatorRefsRepository.findByFilename(safe)
+                .map(DominatorRefsEntity::getRefsJson).orElse(null);
+        if (refsJson == null) return null; // computeIfAbsent: null → 미저장(다음 호출 재시도)
         try {
-            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(sidecar);
+            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(refsJson);
             com.fasterxml.jackson.databind.JsonNode refs = root.get("refs");
             if (refs == null || !refs.isObject()) return Collections.emptyMap();
             com.fasterxml.jackson.core.type.TypeReference<List<com.heapdump.analyzer.model.DominatorRefEntry>> listType =
@@ -3559,22 +3884,19 @@ public class HeapDumpAnalyzerService {
             // 자가 치유: 구버전이 남긴 전부-빈 사이드카(예: reparse 실패로 생성)는 무효 취급 → lazy 폴백.
             // 빈 사이드카가 정상 lazy 데이터를 가리는 회귀를 런타임에서 차단(수동 삭제 불필요).
             if (!out.isEmpty() && !anyData) {
-                logger.warn("[DomRefs] sidecar for {} is all-empty — 무효 처리, lazy 폴백", safe);
+                logger.warn("[DomRefs] refs for {} is all-empty — 무효 처리, lazy 폴백", safe);
                 return Collections.emptyMap();
             }
-            logger.info("[DomRefs] sidecar loaded for {}: {} addresses", safe, out.size());
+            logger.info("[DomRefs] refs loaded from DB for {}: {} addresses", safe, out.size());
             return out;
         } catch (Exception e) {
-            logger.warn("[DomRefs] sidecar load failed for {}: {}", safe, e.getMessage());
+            logger.warn("[DomRefs] refs load failed for {}: {}", safe, e.getMessage());
             return Collections.emptyMap();
         }
     }
 
     private File resultDirectory(String filename) {
         return fileMgmt.resultDirectory(filename);
-    }
-    private File resultJsonFile(String filename) {
-        return fileMgmt.resultJsonFile(filename);
     }
 
     /**

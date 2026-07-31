@@ -14,7 +14,7 @@ Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
-mvn test                                 # 단위 테스트 (코어덤프 리비전/파일목록 15건 + 원격전송 중복명 6건. 그 외 도메인은 테스트 없음)
+mvn test                                 # 단위 테스트 311건 (코어덤프 리비전·파일목록 15 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5)
 java -jar target/heap-analyzer-2.1.0.jar   # 버전은 pom.xml <version>과 항상 일치
 bash restart.sh                          # 운영(18080) 재기동
 ```
@@ -23,7 +23,7 @@ bash restart.sh                          # 운영(18080) 재기동
 
 **CRITICAL:** 모든 프론트엔드 리소스(CSS/HTML/JS)는 JAR 내부에 있음. **어떤 변경이든 `mvn clean package -DskipTests && bash restart.sh` 필수.** 빌드+기동 약 20~24초.
 
-**버전 변경 체크리스트:** `pom.xml <version>` 변경 시 산출물 JAR 명이 바뀌므로 **`restart.sh`/`run.sh`/`stop.sh` 의 `heap-analyzer-X.Y.Z.jar` grep 패턴 + UI 표기(`fragments/banner.html`·`index.html`·`progress.html`) 동시 갱신** 필수. ⚠️ 스크립트가 새 JAR 명으로만 프로세스를 grep 하므로, **첫 재기동 때 구버전 JAR 프로세스를 자동 종료하지 못해 포트 18080 충돌** 발생 → 구 프로세스 수동 `kill` 후 재기동(이후부터는 정상).
+**버전 변경 체크리스트:** `pom.xml <version>` 변경 시 산출물 JAR 명이 바뀌므로 **`restart.sh`/`run.sh`/`stop.sh` 의 `heap-analyzer-X.Y.Z.jar` grep 패턴 + UI 표기(`fragments/banner.html`·`index.html`·`progress.html`) 동시 갱신** 필수. (`heap_enc.sh`/`heap_dec.sh` 는 2026-07-31 부터 JAR 자동 탐색이라 대상 아님 — 체크리스트에 없어서 2.0.0 고정인 채 방치됐던 전례.) ⚠️ 스크립트가 새 JAR 명으로만 프로세스를 grep 하므로, **첫 재기동 때 구버전 JAR 프로세스를 자동 종료하지 못해 포트 18080 충돌** 발생 → 구 프로세스 수동 `kill` 후 재기동(이후부터는 정상).
 
 **기동 검증:**
 ```bash
@@ -35,17 +35,19 @@ sleep 18 && grep -E "Started HeapAnalyzerApplication|FAILED|Exception in thread"
 
 ## Architecture
 
-Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터는 DB(`analysis_history`, `ai_insights`, `ai_chat_*`, `login_history` 등), 분석 상세(HTML/ZIP/result.json)는 파일 시스템.
+Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터 + 분석 상세는 DB(`analysis_history` 요약, `analysis_result_detail` 상세 JSON, `analysis_dominator_refs` 사전계산 refs, `ai_insights`, `ai_chat_*`, `login_history` 등), MAT 산출물(ZIP/`.index`/`.threads`/`mat.log`)만 파일 시스템. **2026-07-31 이전의 `data/{base}/result.json`·`dominator-refs.json` 은 폐지** — 기동 시 DB 이관 후 삭제된다.
 
 **디렉토리:**
 ```
 /opt/heapdumps/
 ├── dumpfiles/    원본 보존 (.hprof/.gz). 업로드 도착지
-├── data/         결과(result.json/mat.log/*.zip/*.threads) + settings.json
+├── data/         결과 산출물(mat.log/*.zip/*.index/*.threads) + settings.json
+│              디렉토리명 = **확장자 포함 파일명**(`data/jeus_admin.hprof/`, `data/jeus_admin.hprof.gz/`)
+│              내부 파일명은 MAT 가 생성한 hprof base 기준 유지
 └── tmp/          분석 중 복사본 (분석 후 항상 삭제)
 ```
 
-**분석 흐름:** Upload → dumpfiles → tmp/ copy → MAT CLI(tmp 대상) → 성공 시 tmp 삭제 + data/{baseName}/ 저장 + (옵션)dumpfiles gzip / 실패 시 tmp만 삭제.
+**분석 흐름:** Upload → dumpfiles → tmp/ copy → MAT CLI(tmp 대상) → 성공 시 tmp 삭제 + data/{filename}/ 에 MAT 산출물 저장 + 상세 JSON 은 `analysis_result_detail` 저장 + (옵션)dumpfiles gzip / 실패 시 tmp만 삭제.
 
 **Controllers (Phase 4B-2 — 도메인별 분할, 2026-05-17):**
 - `HeapDumpViewController` — Thymeleaf 페이지 + form POST → redirect 액션 (대시보드/files/history/settings/compare/upload/delete/rerun 등)
@@ -220,11 +222,17 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 
 23. **Thymeleaf 인라인 `[[` — 일반 `<script>` 안 JS 도 파싱 대상** — `th:inline="javascript"` 가 없는 평범한 인라인 `<script>` 블록이라도 Thymeleaf 3 는 여는 대괄호 2연속(`[[`)을 인라인 표현식 시작으로 해석한다. JS **중첩 배열 리터럴**(`var x = [['a','b'], ...]`)이 대표 사례 — `Could not parse as expression` 로 템플릿 파싱 실패 → 응답이 이미 chunked 전송 중이면 종료 마커 미전송 → 브라우저 `ERR_INCOMPLETE_CHUNKED_ENCODING` 빈 페이지 (+후속 `response is already committed` 로그 오염). **해결**: 객체 배열(`[{a:..},..]`) 등으로 `[[` 시퀀스 자체를 회피 (주석 안 `[[` 도 금지). 정적 픽스처(헤드리스 Chrome) 검증은 Thymeleaf 를 거치지 않아 이 오류를 **못 잡음** — 템플릿 수정 후 SpringTemplateEngine 단독 렌더 스모크(배너 스텁 + 빈 모델)로 검증 가능.
 
-24. **MAT lazy 쿼리 hprof mtime > index mtime ⇒ 전체 reparse** — Dominator Refs/Loaded Classes/Class Instances 의 lazy·precompute 워킹 디렉토리는 원본 hprof 를 symlink 한다. 분석 후 덤프가 `.gz` 압축되면 재조회 시 tmp 로 1회 해제하는데, **해제본 mtime = 현재 시각** 이라 data/ 의 `.index` 보다 항상 최신 → MAT 가 `"hprof is newer than index"` 로 판단해 **전체 힙을 재파싱(30~60초)** 하거나, symlink 인덱스 덮어쓰기 충돌로 **`exit 13`** 실패한다. 후자는 precompute 사이드카(`dominator-refs.json`)를 **전부 빈 목록**으로 만들고, 이 빈 사이드카가 정상 lazy 경로를 가려 재접속 시 "참조 없음" 오표시. **해결:** `HeapDumpAnalyzerService.alignHprofMtimeToIndex()` 가 `linkMatInputs()` 에서 hprof mtime 을 index 보다 60초 이전으로 조정 → MAT reopen(~4초). precompute 는 전부-빈이면 사이드카 미저장, 로드 시 전부-빈이면 무효 처리(자가 치유). 새 lazy MAT 경로 추가 시 반드시 `linkMatInputs()` 경유. **추가 함정:** precompute 는 분석 완료 직후 백그라운드로 도는데 분석 `finally` 가 공유 작업본 `tmp/{base}.hprof` 를 삭제하는 시점과 겹쳐, precompute 가 그 tmp 를 symlink 한 직후 삭제되면 dangling → exit 13(재접속 lazy 가 같은 경로로 .gz 재해제하기 전까지 지속). precompute 는 `resolveSourceHprof()`(공유 tmp) 가 아닌 **`resolveSourceHprofIsolated()`(전용 `{base}.precompute.hprof`, 사후 삭제)** 사용 필수. **동시성(메모리 기반 동적 게이트):** MAT 자식은 각 `MemoryAnalyzer.ini -Xmx` 만큼 힙 점유 → 모든 MAT spawn(`runMatCliWithProgress`(분석) + `runMatSingleQuery`(precompute/lazy))이 전역 공정 세마포어 `matSlots` 를 점유. 한도 = `recomputeMatConcurrency()` 가 `min(floor((hostRAM×0.8 − appXmx)/matXmx), cpus)` 로 산정(시작 시 + `setMatHeapSize` 시 재산정, `mat.max-concurrent-processes`>0 override). 4GB→1(직렬화/양보), 32GB→MAT -Xmx 에 따라 N(동시 실행). precompute 끼리는 `domRefPrecomputeExecutor`(single-thread)로도 직렬. lazy 는 slot 부족 시 SSE `waiting`/`cl-waiting`/`inst-waiting` 로 사용자에게 대기 안내(사이드카 HIT 는 게이트 이전 즉시 응답). **새 MAT 호출 추가 시 반드시 `runMatSingleQuery`/`runMatCliWithProgress` 경유**(직접 MAT spawn 금지 — 게이트 우회).
+24. **MAT lazy 쿼리 hprof mtime > index mtime ⇒ 전체 reparse** — Dominator Refs/Loaded Classes/Class Instances 의 lazy·precompute 워킹 디렉토리는 원본 hprof 를 symlink 한다. 분석 후 덤프가 `.gz` 압축되면 재조회 시 tmp 로 1회 해제하는데, **해제본 mtime = 현재 시각** 이라 data/ 의 `.index` 보다 항상 최신 → MAT 가 `"hprof is newer than index"` 로 판단해 **전체 힙을 재파싱(30~60초)** 하거나, symlink 인덱스 덮어쓰기 충돌로 **`exit 13`** 실패한다. 후자는 precompute refs(`analysis_dominator_refs`, 2026-07-31 이전엔 `dominator-refs.json` 사이드카)를 **전부 빈 목록**으로 만들고, 이 빈 refs 가 정상 lazy 경로를 가려 재접속 시 "참조 없음" 오표시. **해결:** `HeapDumpAnalyzerService.alignHprofMtimeToIndex()` 가 `linkMatInputs()` 에서 hprof mtime 을 index 보다 60초 이전으로 조정 → MAT reopen(~4초). precompute 는 전부-빈이면 미저장(`hasAnyRefData()` 가드), 로드 시 전부-빈이면 무효 처리(자가 치유). 새 lazy MAT 경로 추가 시 반드시 `linkMatInputs()` 경유. **추가 함정:** precompute 는 분석 완료 직후 백그라운드로 도는데 분석 `finally` 가 공유 작업본 `tmp/{base}.hprof` 를 삭제하는 시점과 겹쳐, precompute 가 그 tmp 를 symlink 한 직후 삭제되면 dangling → exit 13(재접속 lazy 가 같은 경로로 .gz 재해제하기 전까지 지속). precompute 는 `resolveSourceHprof()`(공유 tmp) 가 아닌 **`resolveSourceHprofIsolated()`(전용 `{base}.precompute.hprof`, 사후 삭제)** 사용 필수. **동시성(메모리 기반 동적 게이트):** MAT 자식은 각 `MemoryAnalyzer.ini -Xmx` 만큼 힙 점유 → 모든 MAT spawn(`runMatCliWithProgress`(분석) + `runMatSingleQuery`(precompute/lazy))이 전역 공정 세마포어 `matSlots` 를 점유. 한도 = `recomputeMatConcurrency()` 가 `min(floor((hostRAM×0.8 − appXmx)/matXmx), cpus)` 로 산정(시작 시 + `setMatHeapSize` 시 재산정, `mat.max-concurrent-processes`>0 override). 4GB→1(직렬화/양보), 32GB→MAT -Xmx 에 따라 N(동시 실행). precompute 끼리는 `domRefPrecomputeExecutor`(single-thread)로도 직렬. lazy 는 slot 부족 시 SSE `waiting`/`cl-waiting`/`inst-waiting` 로 사용자에게 대기 안내(사전계산 HIT 는 게이트 이전 즉시 응답). **새 MAT 호출 추가 시 반드시 `runMatSingleQuery`/`runMatCliWithProgress` 경유**(직접 MAT spawn 금지 — 게이트 우회).
+
+25. **`loadPersistedSettings()` 의 catch 범위 — 복원 예외를 JSON 파싱 실패로 오인 금지** — 예전엔 하나의 `try` 가 JSON 파싱과 복원 로직(`applyFromSettings` 5개)을 함께 감쌌고, `catch (Exception)` 이 무엇이 터지든 settings.json 을 `.corrupted` 로 rename 한 뒤 **LLM/RAG/2FA/비밀번호정책/원격 설정 전량을 기본값 리셋**했다. AES 복호화 예외 하나로 전 설정이 날아가는 구조(= `HEAP_ANALYZER_ENCRYPTION_KEY` 도입 시 즉시 발동하는 지뢰). 현재는 **파싱 try 와 복원 try 가 분리**돼 있고 복원은 `applyStep(failed, name, Runnable)` 로 그룹별 격리된다. **rename + `persistSettings()` 는 JSON 파싱 실패 경로에서만 호출할 것.** 복원 실패 그룹이 있으면 `syncApplicationProperties()` 도 생략한다(반쪽 상태의 2차 오염 차단). 회귀 방어는 `SettingsRestoreIsolationTest` 4건. **새 `applyFromSettings` 그룹 추가 시 반드시 `applyStep` 으로 감쌀 것.**
 
 ## Key Design Decisions
 
-- **Two-tier cache:** In-memory `ConcurrentHashMap` ← disk `result.json` 복원. 누락 필드(componentDetailHtmlMap/histogramHtml/threadOverviewHtml)는 ZIP에서 lazy 재추출.
+- **Two-tier cache:** In-memory `ConcurrentHashMap` ← DB `analysis_result_detail.result_json` 복원(`restoreResultsFromDb`). 누락 필드(componentDetailHtmlMap/histogramHtml/threadOverviewHtml)는 ZIP에서 lazy 재추출.
+- **분석 상세 저장은 DB 단일 원본 (2026-07-31):** `persistResult()` 가 상세 JSON 을 `analysis_result_detail`(LONGTEXT)에, `mat.log` 만 결과 디렉토리에 쓴다. `analysis_history` 는 목록/집계용 요약 23컬럼 — **별도 테이블로 분리한 이유는 `findAll()` 마다 수 MB LOB 를 끌고 오지 않기 위해서**. 삭제 경로 3곳(`deleteHistory`/`clearCache`/이관 실패)에서 detail 행을 동반 처리해야 하며, 특히 `clearCache()`(재분석 직전 호출) 누락 시 **옛 결과가 되살아난다**. 파생 delete 는 트랜잭션 필수라 리포지토리 메서드에 `@Transactional` 명시(clearCache 는 비트랜잭션 컨텍스트). 레거시 `result.json` 은 기동 시 `migrateResultJsonToDb()` 가 **DB 저장 확인 후에만** 삭제(실패 시 다음 기동 재시도). ⚠️ **data/ 는 없어지지 않는다** — ZIP/`.index`/`.threads` 는 계속 파일.
+- **Dominator Refs 사전계산도 DB (`analysis_dominator_refs`, 2026-07-31):** 구 `data/{filename}/dominator-refs.json` 사이드카. `saveDominatorRefsToDb()`/`loadDominatorRefsSidecar()` 가 담당하고 저장 JSON 구조는 사이드카와 동일(`{version, generatedAt, topN, capPerList, refs{}}`). **`analysis_result_detail` 과 또 별도 테이블인 이유**: refs 는 조회 시점에만 필요한 lazy 데이터(35~135KB/건)라 같은 행에 두면 기동 복원이 쓰지도 않을 LOB 를 매번 로드한다. 전부-빈 refs 미저장 가드는 `hasAnyRefData()` static (`DominatorRefsEmptyGuardTest` 5건) — 저장·이관 양쪽에 적용. 삭제는 `deleteHistory`/`clearCache` 동반.
+- **결과 디렉토리 = 확장자 포함 파일명 (2026-07-31):** 구 스킴(`stripExtension`)에선 `X.hprof` 와 `X.hprof.gz` 가 히스토리 상 별개 행이면서 디렉토리는 base 하나를 공유해, 뒤 분석이 앞 결과를 덮어써 **목록엔 SUCCESS 인데 진입하면 결과가 없는 행**이 생겼다(운영 실측 2건). 기동 시 `migrateResultDirsToFilenameScheme()` 이 result.json 의 `filename` 을 근거로 rename 하므로 **DB 이관보다 반드시 먼저 실행**. base→디렉토리 역탐색이 필요하면 `findResultDirByBase()` 사용(직접 조합 금지). 회귀 방어는 `ResultDirectorySchemeTest`(5).
+- **`dumpCreationTime` 은 `cloneWithoutLog()` 에 반드시 포함:** 빠지면 저장본이 `null` 이 되고 `sanitizeCachedHtml()` 의 `|| dumpCreationTime == null` 조건이 **매 기동 System_Overview ZIP 재파싱**을 영구 반복한다(자가치유라 증상이 안 보임). 신규 필드를 `HeapAnalysisResult` 에 추가할 때 `cloneWithoutLog()` 반영 여부를 항상 확인할 것.
 - **Serial analysis with queue:** `Semaphore(1)`. `analysis.thread-pool.*` 설정 가능. `AtomicInteger queueSize` + `volatile currentAnalysisFilename`. `GET /api/queue/status` 노출.
 - **Cancellation:** `POST /api/analyze/cancel/{filename}` + `activeTasks` (`ConcurrentHashMap<String, Future<?>>`). SSE disconnect도 `task.cancel(true)`.
 - **Component detail keying:** `className#index` (같은 클래스 다중 인스턴스 처리, 예: 여러 `ParallelWebappClassLoader`).
@@ -238,9 +246,15 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 - **SSH local user 빈 값 fallback:** `RemoteDumpService.setSshLocalUser(empty)` 가 `System.getProperty("user.name")` 으로 자동 채움. settings UI 의 빈 입력 = "현재 프로세스 계정으로 사용" 명시. POST `/api/servers/ssh-local-user` 응답에 채워진 값 그대로 반환.
 - **순번 칼럼은 DB id 기반:** `analysis_history.id`(IDENTITY). NOT_ANALYZED는 `-`.
 - **`analysis_history.server_name` 이중 용도:** SSH 전송 시 출처 서버명 자동 기록 + analyze Overview "출처 호스트명" 칩으로 **수동 편집 가능**(`POST /api/history/{filename}/hostname`, 수동 업로드 덤프용). history 목록 Server 컬럼·detection 서버별 집계와 동일 컬럼 공유.
-- **AI 인사이트 영속화:** `ai_insights.insight_data`(JSON mediumtext) 에 전체 맵 저장, `loadAiInsight()` 가 top-level 맵으로 반환(`summary`/`rootCause`/`recommendations`/`severity`/`analysedAt` 등). `saveAiInsight()` 가 `analysedAt` 을 입력 맵에 스탬프하므로 신규 분석 응답(`/api/llm/analyze`)도 즉시 시각 표시 가능. analyze Overview 의 Leak Suspects 하위 요약 카드 + 전용 AI 패널이 동일 데이터 사용.
+- **AI 인사이트 영속화:** `ai_insights.insight_data`(JSON mediumtext) 에 전체 맵 저장, `loadAiInsight()` 가 top-level 맵으로 반환(`summary`/`rootCause`/`recommendations`/`severity`/`analysedAt` 등). `saveAiInsight()` 가 `analysedAt` 을 입력 맵에 스탬프하므로 신규 분석 응답(`/api/llm/analyze`)도 즉시 시각 표시 가능. analyze Overview 의 Leak Suspects 하위 요약 카드 + 전용 AI 패널이 동일 데이터 사용. **DB 가 유일한 저장소 — 파일로 쓰는 경로 없음**(2026-07-31): 레거시 `data/{base}/ai_insight.json` 은 기동 시 `migrateAiInsightsToDb()` 또는 `loadAiInsight()` 폴백이 DB 이관(원본 `analysedAt` 보존 = `persistInsight(..., stampNow=false)`)한 뒤 **파일을 삭제**한다. DB 저장 실패 시에만 파일 잔존(다음 기동 재시도). 새 인사이트 종류 추가 시 파일 저장 금지 — `saveAiInsight(key, map)` 만 사용(코어덤프는 `__core__:`, 비교는 `__compare__:` 합성 키).
 - **deleted 가시성:** `historyPage()`/`filesPage()`는 `Authentication`으로 ROLE_ADMIN 검사. 비관리자에게 `fileDeleted=true` 응답 제외(서버 측 보안). **대시보드 Analysis Files는 모든 계정에서 deleted 항상 제외**.
-- **AES 암호화:** `util/AesEncryptor.java` AES-256-CBC HEX. CLI: `bash heap_enc.sh "평문"`, `bash heap_dec.sh "암호문"`. DB password / RAG password / API key 모두 `ENC(...)` 형식.
+- **AES 암호화:** `util/AesEncryptor.java` AES-256-CBC. CLI: `bash heap_enc.sh "평문"`, `bash heap_dec.sh "암호문"` (JAR 자동 탐색 — 버전 하드코딩 없음, `HEAP_ANALYZER_JAR` 로 override). DB password / RAG password / API key / OTP seed / SSO secret 모두 `ENC(...)` 형식. **저장 형식 3종** (2026-07-31): ① `v2`+HEX = 현재(랜덤 IV, 마커로 명확) ② HEX>64 = 마커 이전 랜덤 IV ③ HEX≤64 = 레거시 고정 IV. ⚠️ **마커가 필요한 이유** — 랜덤 IV 형식은 평문 15바이트 이하일 때 `IV(16)+1블록(16)` = 정확히 64 HEX 라 레거시와 길이가 겹치고, 고정 IV 로 오복호화해도 CBC 특성상 2번째 블록은 정상 복원 + 패딩 유효라 **예외 없이 `쓰레기 16바이트+평문`** 이 반환됐다(15자 이하 비밀번호 = 조용한 손상). 마커 없는 값의 판별 규칙은 하위 호환을 위해 그대로 유지 — **변경 금지**.
+- **`SecretSanity`** — 복호화 **결과값** 위생 검사(U+FFFD/C0/DEL/C1 결정적 4규칙, 휴리스틱 금지). "복호화 실패"를 잡는 검사는 무용지물 — 이 함정은 복호화가 **성공**한다. `describe()` 는 원문 미노출.
+- **모호 구간 자동 복구** — 마커 없는 정확히 64 HEX 는 `decrypt()` 가 양쪽 해석을 모두 시도해 위생 검사로 채택(랜덤 IV만 정상이면 자동 복구 + INFO). `decryptIfEncryptedChecked()` 는 `Decrypted` record 반환, **절대 throw 하지 않음** → 선택 기능(RAG/SSO)의 `@PostConstruct` 소프트 페일용. DB(`DataSourceConfig`)만 fail-fast 유지.
+- **`SecretValue`** — 로드 당시 암호문을 보관하고 **값이 실제로 바뀐 경우에만 재암호화**. 손상 평문의 재암호화 세탁(원본 영구 소실) 차단 + 기동 churn 제거. 암호화 실패 시 `forStorage()` 가 `null` → 호출자가 **키 자체를 생략**해 기존 저장값 보존(빈 문자열로 덮으면 시크릿 무경고 삭제). **새 시크릿 필드 추가 시 반드시 `SecretValue` + `putSecret()` 패턴 사용** — RAG 3종/SSO clientSecret 이 레퍼런스.
+- ⚠️ **파일로 시크릿을 직접 정리할 때** — Spring 이 부팅 시 읽는 건 **JAR 내부 사본**(`BOOT-INF/classes/application.properties`)이다. settings.json + 소스 properties 만 고치면 `init()` 이 옛 값을 읽어 WARN 이 남는다(직후 `applyFromSettings` 가 덮어써 동작엔 무해). **재빌드까지 필요**.
+- 회귀 방어: `AesEncryptorTest`(237, 반복 200 포함) / `SecretSanityTest`(22) / `RagConfigServiceSecretTest`(11, 세탁루프·churn) / `SettingsRestoreIsolationTest`(4) / `ResultDirectorySchemeTest`(5) / `DominatorRefsEmptyGuardTest`(5).
+- 후속 항목(LLM API 키 평문 저장, OTP rekey 도구, `HEAP_ANALYZER_ENCRYPTION_KEY` 미설정)은 `SECRET_ENCRYPTION_FOLLOWUP.md`.
 - **Dump Creation Time 파싱:** `HeapAnalysisResult.dumpCreationTime` 필드 — MAT System Overview ZIP `index.html`의 `<td>Date</td>`/`<td>Time</td>` TD 쌍을 파싱. MAT는 JVM 로케일(한국어)로 출력하므로 `"2026. 5. 29."` + `"오후 6시 18분 53초 GMT+9"` 형태. `HeapDumpAnalyzerService.parseDumpCreationTime()` 이 오전/오후 24h 변환 후 `"2026-05-29 18:18:53"` 반환. 기존 result.json에 필드 없을 경우 `reparseOverviewMeta()` 가 `dumpCreationTime == null` 조건으로 재파싱 (classLoader/gcRoot 0 조건과 OR).
 - **Leak Rule DB 마이그레이션 (Phase 4):** `leak_library_rules` (98 prefix-based: 66 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 2 보강 2026-05-31) + `leak_fallback_rules` (66 regex-based: 33 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 3) 테이블 + `LeakRuleAdminController` `/admin/leak-rules` ADMIN CRUD + `LeakSuspectAdvisor` 룰 엔진 + `LeakRuleSeeder` 부트스트랩. 코드 배포 없이 운영자가 추가/수정/우선순위 조정. `LeakRuleService.invalidate()` 로 캐시 즉시 갱신.
 

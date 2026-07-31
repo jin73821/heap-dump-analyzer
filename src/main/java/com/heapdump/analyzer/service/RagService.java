@@ -49,7 +49,12 @@ public class RagService {
         if (query == null || query.trim().isEmpty()) return "";
 
         Map<String, Object> result = search(query, null);
-        if (!Boolean.TRUE.equals(result.get("success"))) return "";
+        if (!Boolean.TRUE.equals(result.get("success"))) {
+            // 여기서 실패는 사용자에게 전혀 노출되지 않으므로(컨텍스트만 조용히 사라짐)
+            // 최소한 사유는 로그에 남긴다.
+            logger.warn("[RAG] 컨텍스트 주입 생략 — {}", result.get("error"));
+            return "";
+        }
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> hits = (List<Map<String, Object>>) result.get("hits");
@@ -247,6 +252,12 @@ public class RagService {
             result.put("error", "검색 대상 인덱스가 설정되지 않았습니다.");
             return result;
         }
+        String secretIssue = storedSecretIssue(overrides, auth);
+        if (secretIssue != null) {
+            result.put("success", false);
+            result.put("error", secretIssue);
+            return result;
+        }
 
         try {
             String searchUrl = stripTrailingSlash(url) + "/" + index + "/_search";
@@ -333,6 +344,12 @@ public class RagService {
         if (url == null || url.trim().isEmpty()) {
             result.put("success", false);
             result.put("error", "Elasticsearch URL이 설정되지 않았습니다.");
+            return result;
+        }
+        String secretIssue = storedSecretIssue(overrides, auth);
+        if (secretIssue != null) {
+            result.put("success", false);
+            result.put("error", secretIssue);
             return result;
         }
 
@@ -554,6 +571,29 @@ public class RagService {
     private static String truncate(String s, int max) {
         if (s == null) return "";
         return s.length() > max ? s.substring(0, max) + "..." : s;
+    }
+
+    /**
+     * 저장된 자격증명이 손상돼 사용할 수 없는지 검사. 사용 가능하면 null.
+     *
+     * 손상값은 {@code SecretValue.usable()} 이 빈 문자열로 막아주지만, 그러면 인증이
+     * 조용히 실패해 401 로만 보인다. 원인을 알 수 있게 진입 시점에 차단한다.
+     * overrides 로 값을 직접 넘긴 경우(연결 테스트 화면 입력)는 저장값을 안 쓰므로 통과.
+     */
+    private String storedSecretIssue(Map<String, Object> overrides, String auth) {
+        boolean hasOverride = overrides != null
+                && (overrides.get("password") != null || overrides.get("apiKey") != null);
+        if (hasOverride) return null;
+
+        if ("basic".equalsIgnoreCase(auth) && !ragConfig.isRagPasswordHealthy()) {
+            return "저장된 Elasticsearch 비밀번호가 손상되어 사용할 수 없습니다 — "
+                    + "/settings/rag 에서 재입력하세요. (" + ragConfig.getRagPasswordIssue() + ")";
+        }
+        if ("api-key".equalsIgnoreCase(auth) && !ragConfig.isRagApiKeyHealthy()) {
+            return "저장된 Elasticsearch API Key 가 손상되어 사용할 수 없습니다 — "
+                    + "/settings/rag 에서 재입력하세요. (" + ragConfig.getRagApiKeyIssue() + ")";
+        }
+        return null;
     }
 
     private static String pickStr(Map<String, Object> overrides, String key, String fallback) {

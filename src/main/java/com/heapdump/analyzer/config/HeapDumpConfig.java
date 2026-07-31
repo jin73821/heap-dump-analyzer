@@ -100,7 +100,7 @@ public class HeapDumpConfig {
     private int matMaxConcurrentProcesses;
     public int getMatMaxConcurrentProcesses() { return matMaxConcurrentProcesses; }
 
-    /** 분석 완료 후 백그라운드로 Top-N 객체 refs 를 사이드카(dominator-refs.json)에 사전계산 */
+    /** 분석 완료 후 백그라운드로 Top-N 객체 refs 를 DB(analysis_dominator_refs)에 사전계산 */
     @Value("${mat.dominator-refs.precompute:true}")
     private boolean dominatorRefsPrecompute;
     public boolean isDominatorRefsPrecompute() { return dominatorRefsPrecompute; }

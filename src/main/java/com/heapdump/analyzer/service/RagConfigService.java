@@ -1,7 +1,7 @@
 package com.heapdump.analyzer.service;
 
 import com.heapdump.analyzer.config.HeapDumpConfig;
-import com.heapdump.analyzer.util.AesEncryptor;
+import com.heapdump.analyzer.util.SecretValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -25,6 +25,9 @@ public class RagConfigService {
 
     private static final Logger logger = LoggerFactory.getLogger(RagConfigService.class);
 
+    /** 손상된 시크릿의 마스킹 표기 — 정상처럼 보이면 사용자가 문제를 인지할 수 없다. */
+    private static final String CORRUPTED_MASK = "손상됨";
+
     private final HeapDumpConfig config;
 
     // ── 기본 (7) ──────────────────────────────────────────────────
@@ -32,8 +35,8 @@ public class RagConfigService {
     private volatile String  ragElasticsearchUrl;
     private volatile String  ragAuthType;          // none | basic | api-key
     private volatile String  ragUsername;
-    private volatile String  ragPassword;          // 평문 보관 (settings.json 에는 ENC)
-    private volatile String  ragApiKey;            // 평문 보관 (settings.json 에는 ENC)
+    private final SecretValue ragPassword = SecretValue.empty();  // settings.json 에는 ENC
+    private final SecretValue ragApiKey   = SecretValue.empty();  // settings.json 에는 ENC
     private volatile String  ragIndex;
 
     // ── 검색 (6) ──────────────────────────────────────────────────
@@ -61,7 +64,7 @@ public class RagConfigService {
     // ── Embedding/kNN (8) ────────────────────────────────────────
     private volatile String  ragEmbeddingProvider;     // openai | cohere | custom
     private volatile String  ragEmbeddingApiUrl;
-    private volatile String  ragEmbeddingApiKey;       // 평문 보관 (settings.json 에는 ENC)
+    private final SecretValue ragEmbeddingApiKey = SecretValue.empty();  // settings.json 에는 ENC
     private volatile String  ragEmbeddingModel;
     private volatile int     ragEmbeddingDimension;
     private volatile int     ragEmbeddingTimeoutSeconds;
@@ -78,8 +81,8 @@ public class RagConfigService {
         this.ragElasticsearchUrl = config.getRagElasticsearchUrl();
         this.ragAuthType = config.getRagAuthType();
         this.ragUsername = config.getRagUsername();
-        this.ragPassword = AesEncryptor.decryptIfEncrypted(config.getRagPassword());
-        this.ragApiKey = AesEncryptor.decryptIfEncrypted(config.getRagApiKey());
+        adopt(ragPassword, config.getRagPassword(), "password");
+        adopt(ragApiKey, config.getRagApiKey(), "apiKey");
         this.ragIndex = config.getRagIndex();
         this.ragSslVerify = config.isRagSslVerify();
         this.ragSearchMode = config.getRagSearchMode();
@@ -99,7 +102,7 @@ public class RagConfigService {
         this.ragSemanticField       = config.getRagSemanticField();
         this.ragEmbeddingProvider = config.getRagEmbeddingProvider();
         this.ragEmbeddingApiUrl   = config.getRagEmbeddingApiUrl();
-        this.ragEmbeddingApiKey   = AesEncryptor.decryptIfEncrypted(config.getRagEmbeddingApiKey());
+        adopt(ragEmbeddingApiKey, config.getRagEmbeddingApiKey(), "embeddingApiKey");
         this.ragEmbeddingModel    = config.getRagEmbeddingModel();
         this.ragEmbeddingDimension = config.getRagEmbeddingDimension();
         this.ragEmbeddingTimeoutSeconds = config.getRagEmbeddingTimeoutSeconds();
@@ -113,8 +116,8 @@ public class RagConfigService {
     public String  getRagElasticsearchUrl() { return ragElasticsearchUrl; }
     public String  getRagAuthType()         { return ragAuthType; }
     public String  getRagUsername()         { return ragUsername; }
-    public String  getRagPassword()         { return ragPassword; }
-    public String  getRagApiKey()           { return ragApiKey; }
+    public String  getRagPassword()         { return ragPassword.usable(); }
+    public String  getRagApiKey()           { return ragApiKey.usable(); }
     public String  getRagIndex()            { return ragIndex; }
     public boolean isRagSslVerify()         { return ragSslVerify; }
     public String  getRagSearchMode()       { return ragSearchMode; }
@@ -134,34 +137,51 @@ public class RagConfigService {
     public String  getRagSemanticField()        { return ragSemanticField; }
     public String  getRagEmbeddingProvider()    { return ragEmbeddingProvider; }
     public String  getRagEmbeddingApiUrl()      { return ragEmbeddingApiUrl; }
-    public String  getRagEmbeddingApiKey()      { return ragEmbeddingApiKey; }
+    public String  getRagEmbeddingApiKey()      { return ragEmbeddingApiKey.usable(); }
     public String  getRagEmbeddingModel()       { return ragEmbeddingModel; }
     public int     getRagEmbeddingDimension()   { return ragEmbeddingDimension; }
     public int     getRagEmbeddingTimeoutSeconds() { return ragEmbeddingTimeoutSeconds; }
     public String  getRagKnnVectorField()       { return ragKnnVectorField; }
     public int     getRagKnnNumCandidates()     { return ragKnnNumCandidates; }
 
-    public boolean isRagPasswordSet()         { return ragPassword != null && !ragPassword.trim().isEmpty(); }
-    public boolean isRagApiKeySet()           { return ragApiKey != null && !ragApiKey.trim().isEmpty(); }
-    public boolean isRagEmbeddingApiKeySet()  { return ragEmbeddingApiKey != null && !ragEmbeddingApiKey.trim().isEmpty(); }
+    public boolean isRagPasswordSet()         { return ragPassword.isSet(); }
+    public boolean isRagApiKeySet()           { return ragApiKey.isSet(); }
+    public boolean isRagEmbeddingApiKeySet()  { return ragEmbeddingApiKey.isSet(); }
+
+    // 손상 상태 — 저장은 돼 있으나 복호화 결과가 훼손돼 사용할 수 없는 경우를 UI/API 에 노출한다.
+    public boolean isRagPasswordHealthy()         { return ragPassword.isHealthy(); }
+    public boolean isRagApiKeyHealthy()           { return ragApiKey.isHealthy(); }
+    public boolean isRagEmbeddingApiKeyHealthy()  { return ragEmbeddingApiKey.isHealthy(); }
+    public String  getRagPasswordIssue()          { return nullToEmpty(ragPassword.issue()); }
+    public String  getRagApiKeyIssue()            { return nullToEmpty(ragApiKey.issue()); }
+    public String  getRagEmbeddingApiKeyIssue()   { return nullToEmpty(ragEmbeddingApiKey.issue()); }
 
     public String getRagEmbeddingApiKeyMasked() {
-        if (ragEmbeddingApiKey == null || ragEmbeddingApiKey.isEmpty()) return "";
-        if (ragEmbeddingApiKey.length() < 8) return "****";
-        return ragEmbeddingApiKey.substring(0, 4) + "..." + ragEmbeddingApiKey.substring(ragEmbeddingApiKey.length() - 4);
+        return maskKey(ragEmbeddingApiKey);
     }
 
     public String getRagPasswordMasked() {
-        if (ragPassword == null || ragPassword.isEmpty()) return "";
-        if (ragPassword.length() < 4) return "****";
-        return "****" + ragPassword.substring(ragPassword.length() - 2);
+        if (!ragPassword.isHealthy()) return CORRUPTED_MASK;
+        String v = ragPassword.raw();
+        if (v.isEmpty()) return "";
+        if (v.length() < 4) return "****";
+        return "****" + v.substring(v.length() - 2);
     }
 
     public String getRagApiKeyMasked() {
-        if (ragApiKey == null || ragApiKey.isEmpty()) return "";
-        if (ragApiKey.length() < 8) return "****";
-        return ragApiKey.substring(0, 4) + "..." + ragApiKey.substring(ragApiKey.length() - 4);
+        return maskKey(ragApiKey);
     }
+
+    /** 손상값은 마스킹 대신 손상 표기 — 정상처럼 보이면 사용자가 문제를 인지할 수 없다. */
+    private static String maskKey(SecretValue secret) {
+        if (!secret.isHealthy()) return CORRUPTED_MASK;
+        String v = secret.raw();
+        if (v.isEmpty()) return "";
+        if (v.length() < 8) return "****";
+        return v.substring(0, 4) + "..." + v.substring(v.length() - 4);
+    }
+
+    private static String nullToEmpty(String s) { return s != null ? s : ""; }
 
     // ── Setter (그룹) ─────────────────────────────────────────────
 
@@ -181,8 +201,8 @@ public class RagConfigService {
         this.ragElasticsearchUrl = trimOrEmpty(url);
         this.ragAuthType = (authType == null || authType.isEmpty()) ? "none" : authType;
         this.ragUsername = trimOrEmpty(username);
-        if (password != null) this.ragPassword = password;
-        if (apiKey != null)   this.ragApiKey = apiKey;
+        if (password != null) this.ragPassword.set(password);
+        if (apiKey != null)   this.ragApiKey.set(apiKey);
         this.ragIndex = trimOrEmpty(index);
         this.ragSslVerify = sslVerify;
         this.ragSearchMode = (searchMode == null || searchMode.isEmpty()) ? "keyword" : searchMode;
@@ -215,7 +235,7 @@ public class RagConfigService {
             this.ragEmbeddingProvider = p;
         }
         if (apiUrl != null)      this.ragEmbeddingApiUrl = apiUrl.trim();
-        if (apiKey != null)      this.ragEmbeddingApiKey = apiKey;
+        if (apiKey != null)      this.ragEmbeddingApiKey.set(apiKey);
         if (model != null)       this.ragEmbeddingModel = model.trim();
         if (dimension > 0)       this.ragEmbeddingDimension = Math.min(8192, dimension);
         if (timeoutSeconds > 0)  this.ragEmbeddingTimeoutSeconds = Math.max(1, Math.min(120, timeoutSeconds));
@@ -258,10 +278,10 @@ public class RagConfigService {
             this.ragUsername = String.valueOf(saved.get("ragUsername"));
         }
         if (saved.containsKey("ragPassword")) {
-            this.ragPassword = AesEncryptor.decryptIfEncrypted(String.valueOf(saved.get("ragPassword")));
+            adopt(ragPassword, String.valueOf(saved.get("ragPassword")), "password");
         }
         if (saved.containsKey("ragApiKey")) {
-            this.ragApiKey = AesEncryptor.decryptIfEncrypted(String.valueOf(saved.get("ragApiKey")));
+            adopt(ragApiKey, String.valueOf(saved.get("ragApiKey")), "apiKey");
         }
         if (saved.containsKey("ragIndex")) {
             this.ragIndex = String.valueOf(saved.get("ragIndex"));
@@ -321,7 +341,7 @@ public class RagConfigService {
             this.ragEmbeddingApiUrl = String.valueOf(saved.get("ragEmbeddingApiUrl"));
         }
         if (saved.containsKey("ragEmbeddingApiKey")) {
-            this.ragEmbeddingApiKey = AesEncryptor.decryptIfEncrypted(String.valueOf(saved.get("ragEmbeddingApiKey")));
+            adopt(ragEmbeddingApiKey, String.valueOf(saved.get("ragEmbeddingApiKey")), "embeddingApiKey");
         }
         if (saved.containsKey("ragEmbeddingModel")) {
             this.ragEmbeddingModel = String.valueOf(saved.get("ragEmbeddingModel"));
@@ -345,8 +365,8 @@ public class RagConfigService {
         settings.put("ragElasticsearchUrl", ragElasticsearchUrl);
         settings.put("ragAuthType", ragAuthType);
         settings.put("ragUsername", ragUsername);
-        settings.put("ragPassword", encryptForStorage(ragPassword));
-        settings.put("ragApiKey", encryptForStorage(ragApiKey));
+        putSecret(settings, "ragPassword", ragPassword);
+        putSecret(settings, "ragApiKey", ragApiKey);
         settings.put("ragIndex", ragIndex);
         settings.put("ragSslVerify", ragSslVerify);
         settings.put("ragSearchMode", ragSearchMode);
@@ -366,7 +386,7 @@ public class RagConfigService {
         settings.put("ragSemanticField", ragSemanticField);
         settings.put("ragEmbeddingProvider", ragEmbeddingProvider);
         settings.put("ragEmbeddingApiUrl", ragEmbeddingApiUrl);
-        settings.put("ragEmbeddingApiKey", encryptForStorage(ragEmbeddingApiKey));
+        putSecret(settings, "ragEmbeddingApiKey", ragEmbeddingApiKey);
         settings.put("ragEmbeddingModel", ragEmbeddingModel);
         settings.put("ragEmbeddingDimension", ragEmbeddingDimension);
         settings.put("ragEmbeddingTimeoutSeconds", ragEmbeddingTimeoutSeconds);
@@ -379,8 +399,8 @@ public class RagConfigService {
         updates.put("rag.elasticsearch.url", ragElasticsearchUrl != null ? ragElasticsearchUrl : "");
         updates.put("rag.elasticsearch.auth-type", ragAuthType != null ? ragAuthType : "none");
         updates.put("rag.elasticsearch.username", ragUsername != null ? ragUsername : "");
-        updates.put("rag.elasticsearch.password", encryptForStorage(ragPassword));
-        updates.put("rag.elasticsearch.api-key", encryptForStorage(ragApiKey));
+        putSecret(updates, "rag.elasticsearch.password", ragPassword);
+        putSecret(updates, "rag.elasticsearch.api-key", ragApiKey);
         updates.put("rag.elasticsearch.index", ragIndex != null ? ragIndex : "");
         updates.put("rag.elasticsearch.ssl-verify", String.valueOf(ragSslVerify));
         updates.put("rag.search.mode", ragSearchMode != null ? ragSearchMode : "keyword");
@@ -400,7 +420,7 @@ public class RagConfigService {
         updates.put("rag.search.semantic.semantic-field", ragSemanticField != null ? ragSemanticField : "");
         updates.put("rag.embedding.provider", ragEmbeddingProvider != null ? ragEmbeddingProvider : "openai");
         updates.put("rag.embedding.api.url", ragEmbeddingApiUrl != null ? ragEmbeddingApiUrl : "");
-        updates.put("rag.embedding.api.key", encryptForStorage(ragEmbeddingApiKey));
+        putSecret(updates, "rag.embedding.api.key", ragEmbeddingApiKey);
         updates.put("rag.embedding.model", ragEmbeddingModel != null ? ragEmbeddingModel : "");
         updates.put("rag.embedding.dimension", String.valueOf(ragEmbeddingDimension));
         updates.put("rag.embedding.timeout-seconds", String.valueOf(ragEmbeddingTimeoutSeconds));
@@ -408,14 +428,28 @@ public class RagConfigService {
         updates.put("rag.search.knn.num-candidates", String.valueOf(ragKnnNumCandidates));
     }
 
-    /** 평문을 ENC(...) 형식 암호문으로 변환. 빈 값은 그대로 빈 문자열. */
-    private static String encryptForStorage(String plain) {
-        if (plain == null || plain.isEmpty()) return "";
-        try {
-            return "ENC(" + AesEncryptor.encrypt(plain) + ")";
-        } catch (Exception e) {
-            logger.warn("[Settings] AES 암호화 실패, 평문 저장 회피: {}", e.getMessage());
-            return "";
+    /**
+     * 시크릿을 저장 맵에 기록. 암호화 실패(forStorage()==null)면 <b>키 자체를 생략</b>해
+     * 기존 저장값을 보존한다 — 빈 문자열로 덮으면 시크릿이 무경고로 삭제된다.
+     */
+    private static <T> void putSecret(Map<String, T> target, String key, SecretValue secret) {
+        String stored = secret.forStorage();
+        if (stored == null) {
+            logger.error("[Settings] '{}' AES 암호화 실패 — 키를 기록하지 않고 기존 저장값을 유지합니다", key);
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        T value = (T) stored;
+        target.put(key, value);
+    }
+
+    /** 저장값을 SecretValue 에 로드하고 손상 시 경고. 예외를 던지지 않는다. */
+    private static void adopt(SecretValue target, String stored, String label) {
+        SecretValue loaded = SecretValue.load(stored);
+        target.adoptFrom(loaded);
+        if (!loaded.isHealthy()) {
+            logger.warn("[RAG] 저장된 {} 를 사용할 수 없습니다 — {} (/settings/rag 에서 재입력 필요)",
+                    label, loaded.issue());
         }
     }
 }

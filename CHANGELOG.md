@@ -1,6 +1,196 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-07-31] v2.3.2 — 버전 2.3.1 → 2.3.2
+
+**대상:** `pom.xml`, `restart.sh`/`run.sh`/`stop.sh`, `templates/fragments/banner.html`·`index.html`·`progress.html`
+
+- **버전 체크리스트 준수:** `pom.xml <version>` + JAR 명 grep 스크립트 3종(주석 라인 포함 총 11곳) + UI 표기 3곳(`banner.html` `v2.3.2 · MAT CLI` / `index.html` `v2.3.2 · MAT CLI Edition` / `progress.html` 푸터) 동시 갱신
+- `heap_enc.sh`/`heap_dec.sh` 는 JAR 자동 탐색이라 체크리스트 대상 제외 — 갱신 없이 2.3.2 JAR 로 복호화 정상 동작 확인
+- ⚠️ 예고된 함정 재현: 스크립트가 신규 JAR 명만 grep 하므로 구버전(2.3.1, PID 655187)을 자동 종료하지 못한다. 수동 `kill -15` → 포트 18080 해제 확인 후 `restart.sh` — 정상 기동(13.2s, DB 복원 23/23, `login` 200, 실행 JAR `heap-analyzer-2.3.2.jar` 확인)
+- 릴리스 내용은 아래 [2026-07-31] 항목(분석 상세·DomRefs DB 일원화 + 결과 디렉토리 파일명 스킴 전환) 참조
+
+
+## [2026-07-31] 분석 상세 결과·Dominator Refs DB 일원화 + 결과 디렉토리 파일명 스킴 전환
+
+**대상:** `model/entity/AnalysisResultDetailEntity.java`·`DominatorRefsEntity.java`(신규), `repository/AnalysisResultDetailRepository.java`·`DominatorRefsRepository.java`(신규), `service/HeapDumpAnalyzerService.java`, `service/FileManagementService.java`, `service/AiInsightManager.java`, `config/HeapDumpConfig.java`, `test/service/ResultDirectorySchemeTest.java`(신규 5건)·`DominatorRefsEmptyGuardTest.java`(신규 5건)
+
+### 점검 발단
+
+`data/` 하위 `result.json` 23건이 DB 에 저장되는지 점검한 결과 — **저장되지 않았다.** `analysis_history` 는 요약 23컬럼만 갖고, analyze 화면이 쓰는 상세(threadInfos/dominatorTreeEntries/MAT HTML 5종/componentDetailParsedMap/systemProperties 등)는 파일이 유일한 원본이었다. 정합성 자체는 양호(고아 0건, 요약값 23/23 일치)했으나 아래 2건의 실제 결함이 함께 드러났다.
+
+### 1. `dumpCreationTime` 이 result.json 에 저장되지 않던 버그
+
+`cloneWithoutLog()` 에 `setDumpCreationTime` 호출이 빠져 있어 SUCCESS 16건 전부 `"dumpCreationTime": null` 이었다. DB(`analysis_history.dump_creation_time`)에는 분석 시점 메모리 값이 정상 저장돼 화면에는 보였지만, `sanitizeCachedHtml()` 의 `|| r.getDumpCreationTime() == null` 조건이 **매 기동마다 16건 전부 System_Overview ZIP 을 재파싱**하게 만들었다(자가치유라 기능 영향은 없고 불필요 I/O 만 영구 반복).
+
+- `cloneWithoutLog()` 에 `setDumpCreationTime` 추가
+- 이관 시 `dumpCreationTime == null` 이면 `reparseOverviewMeta()` 로 **1회 백필** → 16/16 DB 값과 MATCH 확인
+- 결과: 2차 기동부터 overview 재파싱 WARN 7건 소멸, 기동 15.4s → 13.3s
+
+### 2. `.hprof` / `.hprof.gz` 가 결과 디렉토리를 공유하던 문제
+
+결과 디렉토리가 `stripExtension(filename)` 이라 분석 후 원본이 gzip 되면 `X.hprof` 와 `X.hprof.gz` 가 **analysis_history 상 별개 행이면서 결과 디렉토리는 base 하나를 공유**했다. 뒤에 실행된 분석이 앞 결과(ZIP/.index/result.json)를 덮어써 두 행 중 하나는 결과를 잃는다. 운영 실측: id 49 `jeus_admin.hprof` ↔ id 64 `jeus_admin.hprof.gz`, id 68 ↔ id 76 — 목록엔 SUCCESS 인데 진입하면 결과가 없는 행 2건.
+
+- `FileManagementService.resultDirectory()` → **확장자 포함 파일명** 그대로 사용 (`data/jeus_admin.hprof/`)
+- 구 스킴 helper `legacyResultDirectory()` 존치 — 기동 rename 마이그레이션 근거용
+- 기동 시 `migrateResultDirsToFilenameScheme()` 가 result.json 의 `filename` 필드를 근거로 rename (**DB 이관보다 반드시 먼저**). 운영 23건 전부 전환 완료
+- 디렉토리 **내부** 산출물 이름은 MAT 가 hprof base 로 생성하므로 그대로 base 기준
+- `migrateStrayArtifacts()` 는 base→디렉토리 직접 조합이 불가능해져 `findResultDirByBase()`(stripExtension 역탐색, 동일 base 다수면 최근 수정본)로 대체
+
+### 3. result.json → DB 일원화 (`analysis_result_detail` 신규 테이블)
+
+`ai_insight.json` 과 동일 정책. 목록 조회마다 수 MB LOB 를 끌고 오지 않도록 `analysis_history` 와 **별도 테이블**로 분리했다.
+
+- `analysis_result_detail(filename UNIQUE, result_json LONGTEXT, json_size, created_at, updated_at)` — 운영 23행 / 3.83MB / 최대 619,256자
+- `persistResult()` (구 `saveResultToDisk`) — 상세 JSON 은 DB, `mat.log` 는 결과 디렉토리 유지
+- `restoreResultsFromDb()` 가 기동 복원 담당 (구 `loadResultFromDir` 디스크 스캔 대체). heap 데이터 없는 SUCCESS → ERROR 보정본도 DB 에 반영
+- `getCachedResult()` 캐시 미스 폴백을 DB 조회로 전환
+- `deleteHistory()` / `clearCache()` 에서 detail 행 동반 삭제 — 특히 `clearCache()` 는 재분석 직전 호출이라 누락 시 **옛 결과가 되살아난다**. 파생 delete 는 트랜잭션이 필요해 리포지토리 메서드에 `@Transactional` 명시(clearCache 는 비트랜잭션 컨텍스트)
+- `migrateResultJsonToDb()` — **DB 저장이 확인된 경우에만** 파일 삭제(실패 시 다음 기동 재시도). 운영 23건 이관 + 23건 삭제 완료, 2차 기동에서 no-op(멱등) 확인
+- ⚠️ **data/ 디렉토리는 없어지지 않는다** — ZIP(Raw Data iframe·lazy 재추출) / `.index`(MAT lazy 쿼리) / `.threads` / `mat.log` / `dominator-refs.json` 은 계속 파일
+
+### 4. Dominator Refs 사전계산 사이드카 → DB (`analysis_dominator_refs` 신규 테이블)
+
+`data/{filename}/dominator-refs.json` 도 동일 방식으로 DB 이관. **`analysis_result_detail` 과 별도 테이블**로 둔 이유는 3번과 동일 — refs 는 Dominator Refs 조회 시점에만 필요한 lazy 데이터(항목당 35~135KB)라, 같은 행에 두면 기동 복원 `findAll()` 이 쓰지도 않을 LOB 를 매번 끌고 온다.
+
+- `analysis_dominator_refs(filename UNIQUE, refs_json LONGTEXT, address_count, json_size, …)` — 저장 JSON 구조는 사이드카와 동일(`{version, generatedAt, topN, capPerList, refs{}}`)
+- `doPrecomputeDominatorRefs()` — 중복 실행 가드 `sidecar.exists()` → `existsByFilename()`, atomic write(temp→move) → `saveDominatorRefsToDb()`
+- `loadDominatorRefsSidecar()` — 파일 `readTree` → DB `refs_json` `readTree`. 파싱/자가치유 로직은 그대로
+- **전부-빈 refs 미저장 가드를 `hasAnyRefData()` static 으로 추출**(CLAUDE.md 함정 24) + 회귀 테스트 5건. 이관 시에도 동일 적용 — 전부-빈 사이드카는 DB 에 옮기지 않고 파일만 정리(lazy 폴백 유지)
+- `deleteHistory()` / `clearCache()` 에서 refs 행 동반 삭제
+- 운영 5건 이관(20~30 주소 / 35~135KB) + 파일 5건 삭제, 재기동 no-op 확인
+
+### 5. 구 스킴이 남긴 중복 히스토리 행 정리 (운영 데이터, 코드 변경 아님)
+
+디렉토리 공유 시절에 만들어진 `.hprof` / `.hprof.gz` 쌍 2건을 정리했다. **`listFiles()` 가 `.gz` 를 벗긴 이름으로 파일을 표시**(`FileManagementService:252`)하므로, 두 행 중 **목록에 보이는 쪽은 항상 `.gz` 없는 이름**이고 `.gz` 이름 행은 `fileDeleted` 로 숨겨진다 — 어느 쪽에 결과가 붙어 있느냐에 따라 처리가 달라진다.
+
+- **id 64 `jeus_admin.hprof.gz` → 행 삭제.** 실제 파일은 id 49 `jeus_admin.hprof` 와 매칭되고 결과도 id 49 가 보유 → 순수 잔여 행
+- **id 68 ↔ 76 `jeus_admin_202600623` → id 76 결과를 id 68 이름으로 통합.** 목록에 보이는 행은 id 68 인데 결과(detail/refs)는 숨겨진 id 76 이 갖고 있어, id 68 을 지우면 덤프가 "미분석" 으로 보이고 결과는 고립된다. `analysis_result_detail`/`analysis_dominator_refs` 의 filename + 상세 JSON 선두 3필드(`filename`/`fileSize`/`originalFileSize`) + 결과 디렉토리명을 `jeus_admin_202600623.hprof` 로 이전한 뒤 id 76 삭제, id 68 의 `analyzed_at` 은 실제 결과 생성 시각(2026-07-04)으로 갱신
+  - JSON 은 `JSON_SET` 대신 **`,"lastModified"` 이후를 그대로 보존하는 CONCAT+SUBSTRING**으로 수정 — 260KB MAT HTML 을 재직렬화하며 이스케이프가 바뀔 위험 회피. `fileSize`/`originalFileSize` 를 `.gz` 크기(15,017,503)에서 실제 uncompressed 크기(122,519,834)로 교정해 `syncGzFileSize()` 가 올바르게 동작하도록 함
+- 결과: history 36 → 34행, detail 23 / refs 5, **상세 없는 SUCCESS 0건 · 고아 detail/refs 0건**. 백업: `backup/analysis_history-id64-68-20260731.sql`, `backup/analysis_history-id76-20260731.sql`
+
+### 검증
+
+기존 301건 + 신규 10건 = **311건 통과**. 운영 기동 4회: `result.json` 23/23 · 사이드카 5/5 이관 → DB 복원 23/23, 디스크 잔존 0건, 재기동 시 마이그레이션 no-op(멱등), `analysis_result_detail` ↔ `analysis_history` 고아 0건. ZIP lazy 재추출·`.threads` 로드 정상(rename 된 디렉토리 경유).
+
+**실사용 검증:** 배포 후 사용자가 `jeus_admin.hprof` 를 재분석 — `clearCache` 가 옛 detail 행 삭제 → 분석 완료 시 새 행 INSERT(`created_at 15:17:25`, 261,365자) → precompute refs 저장까지 전 경로가 운영 트래픽으로 확인됨.
+
+이관 전 원본은 `backup/result-json-backup-20260731.tar.gz`(23건) · `backup/dominator-refs-backup-20260731.tar.gz`(5건) 보존.
+
+**부수 확인:** `/opt/heapdumps` 루트에 둔 `.gz` 백업본이 기존 `migrateDumpFilesToNewDir()` 에 의해 `dumpfiles/` 로 자동 편입됨(확장자 whitelist 에 `.gz` 포함). 백업/임시 산출물은 `/opt/heapdumps` 루트에 두지 말 것.
+
+
+## [2026-07-31] AES 시크릿 조용한 손상 — 감지 · 자동복구 · 전파차단 (6계층)
+
+**대상:** `service/HeapDumpAnalyzerService.java`, `util/SecretSanity.java`(신규), `util/AesEncryptor.java`, `util/SecretValue.java`(신규), `service/RagConfigService.java`, `service/TwoFactorConfigService.java`, `service/RagService.java`, `service/TwoFactorService.java`, `config/DataSourceConfig.java`, `controller/HeapAiApiController.java`, `templates/rag-settings.html`, 테스트 3종(신규 2 + 확장 1), `SECRET_ENCRYPTION_FOLLOWUP.md`(신규)
+
+### 진단 정정 — 앞 항목의 "복구 불가" 는 오진이었음
+
+`rag.elasticsearch.password` 가 "다른 키로 암호화돼 복호화 불가"라고 기록했으나 **틀렸다.** 기본 키로 정상 복호화되며, **평문 자체가 이미 손상된 채 저장**돼 있었다. `od -c` 실측:
+
+```
+357 277 275  }  '  357 277 275  f 032 ... 357 277 275 357 277 275  t e s t - p w - 1 2 3
+└──────────── U+FFFD 등 쓰레기 15자 ──────────────────────┘ └ 원본 test-pw-123 ┘
+```
+
+**손상 경위(재현 확인):** ① `decrypt()` 가 HEX 길이로 형식 판별 → ② 랜덤 IV 형식은 평문 15바이트 이하일 때 `IV(16)+CT(16)` = 정확히 64 HEX 라 레거시와 겹침 → ③ 고정 IV 로 오복호화해도 CBC 특성상 2번째 블록이 정상 복원되고 PKCS5 패딩까지 유효해 **예외 없이** `쓰레기 16바이트 + 원문` 반환 → ④ `new String(bytes, UTF_8)` 에서 쓰레기가 **U+FFFD 로 비가역 치환** → ⑤ 그 문자열이 재암호화되어 되저장 → 손상이 굳음. 앞 항목의 v2 마커는 **신규** 암호문만 보호할 뿐 ①~⑤ 를 되돌리지 못한다.
+
+### L0. 설정 전량 리셋 지뢰 제거 (가장 위험, 독립 수정)
+
+`loadPersistedSettings()` 의 `try` 가 JSON 파싱과 복원 로직 전체(`applyFromSettings` 5개 포함)를 함께 감싸고 있어, **AES 복호화 예외가 "깨진 JSON" 으로 오인**됐다. 그 catch 는 settings.json 을 `.corrupted` 로 rename 하고 `persistSettings()` 로 **LLM/RAG/2FA/비밀번호정책/원격 설정 전량을 기본값 리셋**한다. 운영자가 `README-DEPLOY.md:483` 의 미완료 TODO 인 `HEAP_ANALYZER_ENCRYPTION_KEY` 를 설정하는 순간 전 설정이 날아가는 구조였다.
+
+- JSON 파싱만 별도 try 로 분리 — **여기서만** rename + reset
+- 복원은 `applyStep(failed, name, Runnable)` 로 **그룹별 격리**(스칼라/llm/rag/twoFactor/passwordPolicy/remote/llmEnvOverride). 한 그룹이 실패해도 나머지는 복원되고 settings.json 은 보존
+- **실패 그룹이 하나라도 있으면 `syncApplicationProperties()` 생략** — 반쪽 상태의 2차 오염 차단
+- 스칼라 복원 83줄을 `restoreScalarSettings(saved)` 로 추출
+
+### L1. 위생 검사 `SecretSanity` (신규)
+
+"복호화 실패"를 잡는 검사는 **무용지물**이다 — 이 케이스는 복호화가 성공한다. 판별자는 **결과값 자체**여야 한다. 거부 규칙은 결정적 4종만 사용(U+FFFD / C0 제어문자 / DEL / C1 제어문자). 엔트로피·길이·출력가능 비율 같은 휴리스틱은 오탐을 만들어 쓰지 않았다. 오복호화 쓰레기는 균등 랜덤 16바이트라 **미검출 확률 ≈ 1e-7**, 반대로 Base64·Base32(OTP)·한글·공백·이모지·특수문자 비밀번호는 전부 통과(오탐 0). `describe()` 는 사유·개수·첫 위치만 반환하고 **원문을 절대 노출하지 않는다**(로그/UI 유출 방지).
+
+### L2. 마커 없는 64 HEX 자동 복구 (`AesEncryptor`)
+
+- `Decrypted` record(`value`/`healthy`/`issue`/`format`/`recovered`) + `decryptIfEncryptedChecked()` — **절대 throw 하지 않음**
+- 모호 구간(마커 없는 정확히 64 HEX)은 **양쪽 해석을 모두 복호화한 뒤 위생 검사로 채택**. 레거시만 정상 → 레거시 / 랜덤 IV만 정상 → **자동 복구(INFO)** / 양쪽 정상 → 레거시(기존 동작 보존, WARN) / 양쪽 실패 → 손상 보고(ERROR)
+- `decrypt()`/`decryptIfEncrypted()` 시그니처·예외 계약 유지, 마커 없는 값의 나머지 판별 규칙도 그대로 — 이미 저장된 값의 복호화 결과가 바뀌면 안 되므로
+
+### L3. 전파 차단 + 기동 churn 제거 (`SecretValue` 신규)
+
+로드 당시의 암호문을 함께 보관하고 **사용자가 실제로 값을 바꿨을 때만 재암호화**한다.
+- 미변경 → 원본 암호문 그대로 반환 (세탁 루프 0, churn 0, 원본 보존)
+- 미변경 + 모호 형식 → **1회만 v2 로 재봉인**해 함정 영구 제거
+- 암호화 실패 → **`""` 반환 금지**. `null` 을 돌려주고 `putSecret()` 이 **키 자체를 생략**해 기존 저장값 보존 (기존 `encryptForStorage` 는 실패 시 `""` 를 반환해 시크릿을 무경고 삭제했다)
+- `usable()` 이 손상값을 빈 문자열로 막아 `RagService.applyAuth()` 에 도달하지 못하게 함
+- 적용: RAG password/apiKey/embeddingApiKey 3종 + SSO clientSecret. 중복돼 있던 `encryptForStorage` 2벌 삭제
+
+### L4. 소프트 페일 + 손상 상태 노출
+
+- `@PostConstruct` 복호화가 더 이상 앱 기동을 막지 않음(선택 기능인 RAG/SSO 때문에 전체가 죽던 문제)
+- `RagConfigService` 에 `is*Healthy()`/`get*Issue()` 6개 + 파사드 위임. **손상값 마스킹은 `손상됨`** — 기존엔 `****23` 로 정상처럼 보였다
+- GET `/api/settings/rag` 에 `passwordHealthy`/`passwordIssue`, `apiKeyHealthy`/`Issue`, `embedding.apiKeyHealthy`/`Issue`, 배지용 `secretsHealthy` 추가
+- `RagService.search()`/`testConnection()` 진입에서 저장 자격증명 손상 시 즉시 차단 + 한글 안내(그냥 두면 401 로만 보임). overrides 로 값을 직접 넘긴 경우는 통과
+- `fetchContextForLlm()` 은 실패를 조용히 삼키므로(사용자 무증상) 최소한 사유를 WARN 으로 기록
+- `TwoFactorService` OTP seed 손상 시 **fail-closed**(`INVALID` + ERROR). `NOT_ENROLLED` 로 떨어뜨리면 OTP 우회 여지가 생기므로 금지. 사용자 잘못이 아니므로 **잠금 카운트는 올리지 않음**
+- `DataSourceConfig` 는 DB 필수 의존이라 **fail-fast 유지**하되, 손상 시 `IllegalStateException` 으로 원인·조치법 노출(기존엔 HikariCP 인증 실패로만 보였다)
+
+### L5. UI — 손상 경고 + 시크릿 지우기
+
+`rag-settings.html` 이 `passwordHealthy===false` 면 빨간 경고와 사유를 표시하고 카드 헤더에 `⚠ 시크릿 손상` 배지를 띄운다. 시크릿 3종에 **"저장된 ~ 지우기" 체크박스** 추가(손상 시 강조) — 입력 필드는 로드할 때마다 비워지므로 "빈 값 = 삭제" 로 둘 수 없었고(다른 항목만 바꿔 저장할 때마다 시크릿이 지워짐), 그래서 화면에서 시크릿을 지울 방법이 아예 없었다. 서버는 기존 3상태 계약(`containsKey`/빈 문자열)을 그대로 쓰므로 **서버 변경 0**.
+
+### 테스트 — 27건 → 301건
+
+- `AesEncryptorTest` +18건: 마커 없는 랜덤 IV + 짧은 평문 복구(핵심 회귀, `@RepeatedTest(200)` 포함), 64 HEX 경계 평문 길이 전수, 진짜 레거시 64 HEX 는 여전히 레거시 채택(동점 규칙 카나리아), `decryptIfEncryptedChecked` 의 손상 보고/무예외/PLAIN 통과/`recovered` 플래그
+- `SecretSanityTest` 신규 22건: 거부(U+FFFD·C0·DEL·C1·**실측 손상 바이트열 그대로**) / 통과 10종(Base32 OTP·Base64·한글·이모지·공백 등) / 사유에 원문 미유출
+- `RagConfigServiceSecretTest` 신규 11건: **세탁 루프 차단**(손상값 로드 → `collectSettings()` 결과가 입력과 바이트 동일), **churn 제거**(2회 호출 결과 동일), 모호 형식 1회 v2 마이그레이션, 신규 저장/삭제/null 유지, 마스킹 미노출
+- `SettingsRestoreIsolationTest` 신규 4건: L0 그룹 격리(예외 미전파 + 이후 단계 계속 실행 + 실패 목록 수집)
+
+### 오염값 정리
+
+`ragPassword` 를 **빈 값으로 삭제**(`es.example.local` 플레이스홀더 + `test-pw-123` 테스트값이라 실자격증명 아님). L3 배포 후에는 손상 암호문이 보존만 되고 재암호화되지 않으므로 정리 전 배포가 안전하다.
+
+⚠️ **정리 시 실측한 함정:** Spring 이 부팅 시 읽는 것은 **JAR 내부 사본**(`BOOT-INF/classes/application.properties`)이다. settings.json 과 소스 트리 properties 만 비워도 `RagConfigService.init()` 단계에서 옛 값을 읽어 WARN 이 남는다(직후 `applyFromSettings` 가 덮어써 동작엔 영향 없음). **재빌드까지 해야** 기동 로그가 깨끗해진다.
+
+### 검증
+
+전체 테스트 **301건 통과**. 재기동 13.8s.
+① 손상 감지 WARN 출력 + 앱 정상 기동(소프트 페일) ② `settings.json.corrupted` 미생성 = L0 지뢰 미발동 ③ **재기동 2회 후 `application.properties` md5 동일 = churn 제거**(기존엔 매 기동 암호문이 바뀜) ④ 정리 후 기동 시 시크릿 WARN **0건** ⑤ **자동 복구 실기동 검증** — 마커 없는 64 HEX(`recover-me`)를 settings.json 에 주입 후 기동 → `[AES] 모호한 64 HEX 자동 복구 — 랜덤 IV 해석 채택` INFO + properties 가 `ENC(v2…)` 로 마이그레이션 + 복호화 결과 `recover-me` ⑥ 레거시 32 HEX 하위 호환(`shinhan@10`) + DB 접속 정상 ⑦ `rag-settings.html` Thymeleaf 단독 렌더 스모크(배너 스텁 + `_csrf` 스텁) 정상 + 신규 요소 8종 전부 확인(함정 #23 방어)
+
+**후속 항목은 `SECRET_ENCRYPTION_FOLLOWUP.md` 로 분리** — LLM API 키 평문 저장, OTP seed rekey 도구 부재, `HEAP_ANALYZER_ENCRYPTION_KEY` 미설정, `findExternalPropertiesFile()` 의 소스 트리 쓰기.
+
+
+## [2026-07-31] heap_enc/dec 스크립트 복구 + AES 짧은 평문 조용한 손상 버그 수정
+
+**대상:** `heap_enc.sh`, `heap_dec.sh`, `util/AesEncryptor.java`, `test/util/AesEncryptorTest.java`(신규)
+
+- **경위:** AI 인사이트 작업 중 DB 비밀번호 확인용으로 `heap_dec.sh` 실행 → `JAR 파일을 찾을 수 없습니다: target/heap-analyzer-2.0.0.jar`. 수정 후 왕복 검증하다 **암호화→복호화가 깨지는** 별개 버그를 발견.
+
+**1) 스크립트 복구 (2건 파손)**
+- **JAR 버전 하드코딩:** `heap_enc.sh`/`heap_dec.sh` 가 `heap-analyzer-2.0.0.jar` 고정 → 버전업(현재 2.3.1)마다 파손. **수정:** `ls -t target/heap-analyzer-*.jar | grep -v -- '-sources\.jar$' | head -1` 로 최신 빌드본 자동 탐색(`HEAP_ANALYZER_JAR` 환경변수로 override 가능). 버전 체크리스트 대상에서 영구 제외됨.
+- **Boot 3 launcher 클래스 이동:** Boot 3.2+ 에서 `org.springframework.boot.loader.PropertiesLauncher` → `org.springframework.boot.loader.launch.PropertiesLauncher` 로 이동했는데 스크립트는 구 경로 사용. **수정:** 신규 경로 우선 시도 → `Could not find or load main class` 감지 시 구 경로 폴백(구 Boot 2 JAR 호환). 종료코드 보존.
+
+**2) AES 짧은 평문 조용한 데이터 손상 (핵심)**
+- **증상:** `heap_enc.sh "shinhan@10"` → `heap_dec.sh <암호문>` 결과가 `쓰레기 16바이트 + shinhan@10`. **예외 없이** 잘못된 값이 반환됨.
+- **원인:** `decrypt()` 가 **HEX 길이로 형식을 판별**(`<= 64` → 레거시 고정 IV). 랜덤 IV 형식은 평문 15바이트 이하일 때 `IV(16) + 암호문 1블록(16)` = 32바이트 = **정확히 64 HEX** 라 레거시(고정 IV, 평문 16~31바이트)와 길이가 겹친다. 고정 IV 로 복호화하면 CBC 특성상 두 번째 블록(`D(c2) XOR c1`)은 IV 와 무관하게 정상 복원되고 **PKCS5 패딩까지 유효**해 예외가 안 난다.
+- **영향(잠재):** `/settings` DB 비밀번호 변경(`HeapSystemApiController:280`), RAG password/API key, SSO client secret — **15자 이하 비밀번호**를 새로 암호화하면 런타임에 깨진 값이 사용됨(DB 접속 실패 등). OTP seed(Base32 32자)는 항상 안전. 다행히 현 배포본 저장값은 128 hex / 32 hex 뿐이라 실피해 없음.
+- **수정:** `encrypt()` 가 `"v2"` 버전 마커를 부착(`v2` + HEX[IV][CT]) → 형식이 길이와 무관하게 명확. `decrypt()` 는 ① `v2` 마커 → 랜덤 IV ② 마커 없음 + HEX>64 → 랜덤 IV ③ 마커 없음 + HEX≤64 → 레거시 고정 IV. **마커 없는 기존 값의 판별 규칙은 그대로 유지**(이미 저장된 값의 복호화 결과가 바뀌면 안 됨). 랜덤 IV 경로를 `decryptRandomIv()` 로 추출.
+- **테스트 신규 19건** (`AesEncryptorTest`): 평문 길이 1~200자 왕복(64 HEX 경계 포함), v2 마커/64 HEX 겹침 구간 고정, 랜덤 IV 비결정성, 레거시 고정 IV 32·64 HEX 하위 호환, 마커 없는 랜덤 IV 하위 호환, `decryptIfEncrypted` 래퍼/평문/null, UTF-8 멀티바이트.
+- **검증:** 10자 평문 왕복 정상(`v2dfdc…` → `shinhan@10`), 기존 저장값 `ENC(682d…)`(레거시 32 hex) 정상 복호화, 전체 테스트 46건 통과, 재기동 12.8s(DB 접속 정상 = 레거시 암호문 복호화 정상).
+
+**⚠️ 별건 발견 (미수정, 조치 필요):** `rag.elasticsearch.password`(128 hex)가 **기본 키로 복호화되지 않음**. openssl 로 AES-256/AES-128 × 고정IV/랜덤IV 4가지 해석을 모두 시도했으나 전부 비출력 바이트 혼재 → 다른 `HEAP_ANALYZER_ENCRYPTION_KEY` 로 암호화됐거나 값이 손상됨(평문 복구 불가). 현재 `RagConfigService` 는 예외 없이 깨진 값을 로드한다. `ragElasticsearchUrl` 이 `es.example.local`(플레이스홀더)이라 실피해는 없으나, RAG 실연동 시 `/settings/rag` 에서 비밀번호 재입력 필요(현재 키로 재암호화됨). 본 커밋의 변경과 무관한 기존 상태(마커 없는 >64 hex 경로는 코드 동일).
+
+
+## [2026-07-31] AI 인사이트 파일 기반 저장 완전 폐기 — 레거시 ai_insight.json → DB 이관 후 제거
+
+**대상:** `service/AiInsightManager.java`
+
+- **경위:** `data/tomcat_heapdump_998/ai_insight.json` 이 남아 있어 "파일을 DB에 저장하도록 변경" 요청. 실제 조사 결과 **해당 내용은 이미 DB 에 있었음**(`ai_insights` id=2, 2026-04-13 기동 시 `migrateAiInsightsToDb()` 가 이관). 현재 AI 인사이트를 파일로 **쓰는 코드 경로는 없음**(Phase 7-5 에서 DB 전환 완료) — 남은 파일은 그 이전 잔존물. 진짜 미해결 지점은 **마이그레이션 후 파일이 영구히 남아 DB 와 이중 소스가 되는 것**이라 그쪽을 수정.
+- **마이그레이션 후 파일 제거:** `migrateAiInsightsToDb()` 가 ① DB 행 없음 → 저장 후 삭제 ② DB 행 있음 + 파일이 더 최신(`isFileNewerThanDb`, JSON `analysedAt` 비교, DB JSON 에 없으면 `analysed_at` 컬럼 폴백) → DB 갱신 후 삭제 ③ 그 외 → 이미 보존된 내용이므로 파일만 삭제. **DB 저장이 실패하면 파일을 남겨 다음 기동에서 재시도**(persist 예외가 delete 이전에 catch 로 빠짐). 이전엔 `existsByFilename` 이면 `continue` 라 파일이 계속 잔존.
+- **`loadAiInsight()` 파일 폴백도 동일:** 파일 → DB 저장 성공 후 `discardMigratedFile()` 로 제거. 이후 조회는 DB 단일 소스.
+- **원본 분석 시각 보존(데이터 정합 수정):** `saveAiInsight()` 를 `persistInsight(filename, data, stampNow)` 로 분리. 신규 분석 저장은 종전대로 `analysedAt` 을 현재 시각으로 스탬프(컨트롤러 응답 즉시 표기 유지), **레거시 파일 이관은 `stampNow=false` 로 파일의 `analysedAt` 을 그대로 유지**. 기존엔 이관 시각으로 덮어써 원래 분석 시각이 유실됐음(실제 id=2 행: 파일 2026-04-11 02:09 → DB 2026-04-13 00:01 로 변질). `analysed_at` 컬럼도 JSON `analysedAt` 에서 파생시켜 두 값이 항상 일치.
+- **기타:** 디렉토리→덤프 파일명 추정 로직을 `resolveFilename(dir)` 로 추출(result.json 우선, 빈 문자열도 폴백 처리).
+- **검증:** 빌드 + 재기동 후 기동 로그 `[AI-Insight] Legacy file removed after DB persistence: /opt/heapdumps/data/tomcat_heapdump_998/ai_insight.json (filename=tomcat_heapdump_998.hprof)` / `1 legacy ai_insight.json file(s) removed after DB persistence` 확인. `find /opt/heapdumps -name 'ai_insight*.json'` → **0 건**. DB 행(id=2, len=1499, severity=Critical) 및 전체 22 건 무손실 확인(읽기 전용 SELECT). 기동 13.5s.
+
+
 ## [2026-07-24] v2.3.1 — Heap Composition 스피너 중앙 정렬 + 버전 2.3.0→2.3.1
 
 **대상:** `templates/analyze.html`, `static/css/analyze.css`(원인 분석), `pom.xml`, `restart.sh`/`run.sh`/`stop.sh`, `templates/fragments/banner.html`·`index.html`·`progress.html`

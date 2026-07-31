@@ -32,8 +32,16 @@ public class DataSourceConfig {
         // password가 ENC(...) 형식이면 복호화
         String rawPassword = properties.getPassword();
         if (rawPassword != null && rawPassword.startsWith("ENC(") && rawPassword.endsWith(")")) {
-            String decrypted = AesEncryptor.decryptIfEncrypted(rawPassword);
-            properties.setPassword(decrypted);
+            // DB 는 필수 의존이라 fail-fast 를 유지한다. 단 복호화 결과가 손상된 경우
+            // 그대로 넘기면 HikariCP 인증 실패로만 보여 원인을 알 수 없으므로 여기서 차단한다.
+            AesEncryptor.Decrypted d = AesEncryptor.decryptIfEncryptedChecked(rawPassword);
+            if (!d.healthy()) {
+                throw new IllegalStateException(
+                        "DB 비밀번호(spring.datasource.password) 복호화 결과가 손상되었습니다 — "
+                        + d.issue() + ". `bash heap_enc.sh \"<비밀번호>\"` 로 재생성해 "
+                        + "application.properties 를 갱신한 뒤 기동하세요.");
+            }
+            properties.setPassword(d.value());
         }
         return properties.initializeDataSourceBuilder().build();
     }

@@ -614,8 +614,12 @@ public class HeapAiApiController {
         res.put("username", analyzerService.getRagUsername());
         res.put("passwordSet", analyzerService.isRagPasswordSet());
         res.put("passwordMasked", analyzerService.getRagPasswordMasked());
+        res.put("passwordHealthy", analyzerService.isRagPasswordHealthy());
+        res.put("passwordIssue", analyzerService.getRagPasswordIssue());
         res.put("apiKeySet", analyzerService.isRagApiKeySet());
         res.put("apiKeyMasked", analyzerService.getRagApiKeyMasked());
+        res.put("apiKeyHealthy", analyzerService.isRagApiKeyHealthy());
+        res.put("apiKeyIssue", analyzerService.getRagApiKeyIssue());
         res.put("index", analyzerService.getRagIndex());
         res.put("sslVerify", analyzerService.isRagSslVerify());
         res.put("searchMode", analyzerService.getRagSearchMode());
@@ -644,12 +648,19 @@ public class HeapAiApiController {
         embedding.put("apiUrl", analyzerService.getRagEmbeddingApiUrl());
         embedding.put("apiKeySet", analyzerService.isRagEmbeddingApiKeySet());
         embedding.put("apiKeyMasked", analyzerService.getRagEmbeddingApiKeyMasked());
+        embedding.put("apiKeyHealthy", analyzerService.isRagEmbeddingApiKeyHealthy());
+        embedding.put("apiKeyIssue", analyzerService.getRagEmbeddingApiKeyIssue());
         embedding.put("model", analyzerService.getRagEmbeddingModel());
         embedding.put("dimension", analyzerService.getRagEmbeddingDimension());
         embedding.put("timeoutSeconds", analyzerService.getRagEmbeddingTimeoutSeconds());
         embedding.put("vectorField", analyzerService.getRagKnnVectorField());
         embedding.put("numCandidates", analyzerService.getRagKnnNumCandidates());
         res.put("embedding", embedding);
+
+        // UI 배지용 단일 플래그 — 시크릿 3종 중 하나라도 손상이면 false
+        res.put("secretsHealthy", analyzerService.isRagPasswordHealthy()
+                && analyzerService.isRagApiKeyHealthy()
+                && analyzerService.isRagEmbeddingApiKeyHealthy());
 
         res.put("availableModes", Arrays.asList("keyword", "semantic-server", "semantic-client"));
         res.put("availableAuthTypes", Arrays.asList("none", "basic", "api-key"));

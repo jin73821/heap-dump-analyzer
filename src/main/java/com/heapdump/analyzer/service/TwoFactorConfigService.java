@@ -1,7 +1,7 @@
 package com.heapdump.analyzer.service;
 
 import com.heapdump.analyzer.config.HeapDumpConfig;
-import com.heapdump.analyzer.util.AesEncryptor;
+import com.heapdump.analyzer.util.SecretValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -47,7 +47,7 @@ public class TwoFactorConfigService {
     // ── 커스텀 SSO 연동 필드 (사내 가이드 확정 전 틀) ──
     private volatile String ssoEndpointUrl;
     private volatile String ssoClientId;
-    private volatile String ssoClientSecret;   // 평문 보관 (settings.json 에는 ENC)
+    private final SecretValue ssoClientSecret = SecretValue.empty();  // settings.json 에는 ENC
     private volatile String ssoRedirectUri;
 
     public TwoFactorConfigService(HeapDumpConfig config) {
@@ -60,7 +60,7 @@ public class TwoFactorConfigService {
         this.twoFactorAdminPolicy = normalizeAdminPolicy(config.getTwoFactorAdminPolicy());
         this.ssoEndpointUrl = config.getSsoEndpointUrl();
         this.ssoClientId = config.getSsoClientId();
-        this.ssoClientSecret = AesEncryptor.decryptIfEncrypted(config.getSsoClientSecret());
+        adoptSecret(config.getSsoClientSecret());
         this.ssoRedirectUri = config.getSsoRedirectUri();
     }
 
@@ -71,18 +71,27 @@ public class TwoFactorConfigService {
     public boolean isSsoMode()         { return MODE_SSO.equals(twoFactorMode); }
     public String  getSsoEndpointUrl() { return ssoEndpointUrl; }
     public String  getSsoClientId()    { return ssoClientId; }
-    public String  getSsoClientSecret(){ return ssoClientSecret; }
+    public String  getSsoClientSecret(){ return ssoClientSecret.usable(); }
     public String  getSsoRedirectUri() { return ssoRedirectUri; }
 
     public boolean isSsoClientSecretSet() {
-        return ssoClientSecret != null && !ssoClientSecret.trim().isEmpty();
+        return ssoClientSecret.isSet();
     }
 
-    /** SSO 연동 활성화 가능 여부 — 필수 3필드(Endpoint URL·Client ID·Client Secret) 모두 저장됨 */
+    public boolean isSsoClientSecretHealthy() { return ssoClientSecret.isHealthy(); }
+    public String  getSsoClientSecretIssue()  {
+        return ssoClientSecret.issue() != null ? ssoClientSecret.issue() : "";
+    }
+
+    /**
+     * SSO 연동 활성화 가능 여부 — 필수 3필드(Endpoint URL·Client ID·Client Secret) 모두 저장됨.
+     * 손상된 secret 으로는 활성화할 수 없다 (인증이 조용히 실패하는 것보다 낫다).
+     */
     public boolean isSsoConfigured() {
         return ssoEndpointUrl != null && !ssoEndpointUrl.trim().isEmpty()
                 && ssoClientId != null && !ssoClientId.trim().isEmpty()
-                && isSsoClientSecretSet();
+                && isSsoClientSecretSet()
+                && ssoClientSecret.isHealthy();
     }
 
     // ── 관리자 OTP 정책 ──────────────────────────────────────────
@@ -116,7 +125,7 @@ public class TwoFactorConfigService {
     public void setSsoConfig(String endpointUrl, String clientId, String clientSecret, String redirectUri) {
         this.ssoEndpointUrl = trimOrEmpty(endpointUrl);
         this.ssoClientId = trimOrEmpty(clientId);
-        if (clientSecret != null) this.ssoClientSecret = clientSecret;
+        if (clientSecret != null) this.ssoClientSecret.set(clientSecret);
         this.ssoRedirectUri = trimOrEmpty(redirectUri);
         logger.info("[TwoFactor] sso config updated: endpointUrl={}, clientId={}, redirectUri={}, secretSet={}",
                 ssoEndpointUrl, ssoClientId, ssoRedirectUri, isSsoClientSecretSet());
@@ -152,7 +161,7 @@ public class TwoFactorConfigService {
             this.ssoClientId = String.valueOf(saved.get("ssoClientId"));
         }
         if (saved.containsKey("ssoClientSecret")) {
-            this.ssoClientSecret = AesEncryptor.decryptIfEncrypted(String.valueOf(saved.get("ssoClientSecret")));
+            adoptSecret(String.valueOf(saved.get("ssoClientSecret")));
         }
         if (saved.containsKey("ssoRedirectUri")) {
             this.ssoRedirectUri = String.valueOf(saved.get("ssoRedirectUri"));
@@ -164,7 +173,7 @@ public class TwoFactorConfigService {
         settings.put("twoFactorAdminPolicy", twoFactorAdminPolicy);
         settings.put("ssoEndpointUrl", ssoEndpointUrl != null ? ssoEndpointUrl : "");
         settings.put("ssoClientId", ssoClientId != null ? ssoClientId : "");
-        settings.put("ssoClientSecret", encryptForStorage(ssoClientSecret));
+        putSecret(settings, "ssoClientSecret", ssoClientSecret);
         settings.put("ssoRedirectUri", ssoRedirectUri != null ? ssoRedirectUri : "");
     }
 
@@ -173,18 +182,32 @@ public class TwoFactorConfigService {
         updates.put("security.two-factor.admin-policy", twoFactorAdminPolicy);
         updates.put("security.sso.endpoint-url", ssoEndpointUrl != null ? ssoEndpointUrl : "");
         updates.put("security.sso.client-id", ssoClientId != null ? ssoClientId : "");
-        updates.put("security.sso.client-secret", encryptForStorage(ssoClientSecret));
+        putSecret(updates, "security.sso.client-secret", ssoClientSecret);
         updates.put("security.sso.redirect-uri", ssoRedirectUri != null ? ssoRedirectUri : "");
     }
 
-    /** 평문을 ENC(...) 형식 암호문으로 변환. 빈 값은 그대로 빈 문자열. */
-    private static String encryptForStorage(String plain) {
-        if (plain == null || plain.isEmpty()) return "";
-        try {
-            return "ENC(" + AesEncryptor.encrypt(plain) + ")";
-        } catch (Exception e) {
-            logger.warn("[Settings] AES 암호화 실패, 평문 저장 회피: {}", e.getMessage());
-            return "";
+    /**
+     * 시크릿을 저장 맵에 기록. 암호화 실패(forStorage()==null)면 <b>키 자체를 생략</b>해
+     * 기존 저장값을 보존한다 — 빈 문자열로 덮으면 시크릿이 무경고로 삭제된다.
+     */
+    private static <T> void putSecret(Map<String, T> target, String key, SecretValue secret) {
+        String stored = secret.forStorage();
+        if (stored == null) {
+            logger.error("[Settings] '{}' AES 암호화 실패 — 키를 기록하지 않고 기존 저장값을 유지합니다", key);
+            return;
+        }
+        @SuppressWarnings("unchecked")
+        T value = (T) stored;
+        target.put(key, value);
+    }
+
+    /** 저장값을 SecretValue 에 로드하고 손상 시 경고. 예외를 던지지 않는다. */
+    private void adoptSecret(String stored) {
+        SecretValue loaded = SecretValue.load(stored);
+        ssoClientSecret.adoptFrom(loaded);
+        if (!loaded.isHealthy()) {
+            logger.warn("[TwoFactor] 저장된 SSO client secret 을 사용할 수 없습니다 — {} (재입력 필요)",
+                    loaded.issue());
         }
     }
 }

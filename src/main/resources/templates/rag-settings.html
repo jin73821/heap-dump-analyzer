@@ -39,6 +39,10 @@
         .setting-row:last-child { border-bottom: none; }
         .setting-label { font-size: 13px; font-weight: 500; color: #374151; }
         .setting-desc { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
+        .setting-desc.secret-broken { color: #B91C1C; font-weight: 600; }
+        .secret-clear { display: none; font-size: 11px; color: #6B7280; margin-top: 2px; cursor: pointer; }
+        .secret-clear input { margin-right: 4px; vertical-align: middle; }
+        .secret-clear.danger { color: #B91C1C; font-weight: 600; }
         .tog { display: none; }
         .tog-track { position: relative; display: inline-block; width: 38px; height: 22px;
                      background: #D1D5DB; border-radius: 11px; cursor: pointer; transition: background .2s; }
@@ -140,6 +144,7 @@
             <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             RAG (Elasticsearch) Configuration
             <span id="ragStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">OFF</span>
+            <span id="ragSecretsBadge" style="display:none;font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5">⚠ 시크릿 손상</span>
         </div>
     </div>
 
@@ -211,6 +216,7 @@
                 <span class="s-key">Password</span>
                 <input type="password" id="ragPassword" class="input-text" placeholder="비밀번호">
                 <span id="ragPasswordHint" class="setting-desc" style="margin-top:0"></span>
+                <label id="ragPasswordClearRow" class="secret-clear"><input type="checkbox" id="ragPasswordClear" onchange="onSecretClearChange('ragPassword')"> 저장된 비밀번호 지우기</label>
             </div>
         </div>
         <div id="ragAuthApiKeyBox" style="display:none">
@@ -218,6 +224,7 @@
                 <span class="s-key">API Key</span>
                 <input type="password" id="ragApiKey" class="input-text" placeholder="API Key">
                 <span id="ragApiKeyHint" class="setting-desc" style="margin-top:0"></span>
+                <label id="ragApiKeyClearRow" class="secret-clear"><input type="checkbox" id="ragApiKeyClear" onchange="onSecretClearChange('ragApiKey')"> 저장된 API Key 지우기</label>
             </div>
         </div>
     </div>
@@ -313,6 +320,7 @@
             <span class="s-key">API Key</span>
             <input type="password" id="ragEmbApiKey" class="input-text" placeholder="API Key">
             <span id="ragEmbApiKeyHint" class="setting-desc" style="margin-top:0"></span>
+            <label id="ragEmbApiKeyClearRow" class="secret-clear"><input type="checkbox" id="ragEmbApiKeyClear" onchange="onSecretClearChange('ragEmbApiKey')"> 저장된 API Key 지우기</label>
         </div>
         <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
             <span class="s-key">Model</span>
@@ -426,6 +434,51 @@ function updateBadge(enabled) {
     }
 }
 
+// ── 시크릿 손상 표시 / 지우기 ────────────────────────────────
+// 손상값도 마스킹만 보여주면 "정상 저장됨" 으로 읽혀 사용자가 문제를 인지할 수 없다.
+function renderSecretHint(id, isSet, healthy, masked, issue, noun) {
+    var hint = document.getElementById(id + 'Hint');
+    var clearRow = document.getElementById(id + 'ClearRow');
+    var clearBox = document.getElementById(id + 'Clear');
+    var broken = !!isSet && healthy === false;
+
+    clearBox.checked = false;
+    clearRow.style.display = isSet ? 'block' : 'none';
+    clearRow.classList.toggle('danger', broken);
+    document.getElementById(id).disabled = false;
+
+    if (broken) {
+        hint.textContent = '⚠ 저장된 ' + noun + '가 손상되어 사용할 수 없습니다 — 새 값을 입력해 저장하거나 지우세요.'
+            + (issue ? ' (' + issue + ')' : '');
+        hint.classList.add('secret-broken');
+    } else {
+        hint.textContent = isSet ? '저장된 ' + noun + ' 있음 (' + (masked || '****') + ') — 변경 시에만 입력' : '';
+        hint.classList.remove('secret-broken');
+    }
+}
+
+function onSecretClearChange(id) {
+    var clearBox = document.getElementById(id + 'Clear');
+    var input = document.getElementById(id);
+    input.disabled = clearBox.checked;
+    if (clearBox.checked) input.value = '';
+}
+
+function applySecretToPayload(payload, key, id) {
+    if (document.getElementById(id + 'Clear').checked) {
+        payload[key] = '';          // 빈 문자열 = 삭제 (서버가 3상태로 해석)
+        return;
+    }
+    var v = document.getElementById(id).value;
+    if (v && v.length > 0) payload[key] = v;
+}
+
+function updateSecretsBadge(healthy) {
+    var badge = document.getElementById('ragSecretsBadge');
+    if (!badge) return;
+    badge.style.display = (healthy === false) ? 'inline-block' : 'none';
+}
+
 function loadRagSettings() {
     Common.fetchJSON('/api/settings/rag').then(function(d) {
         document.getElementById('togRagEnabled').checked = !!d.enabled;
@@ -437,10 +490,9 @@ function loadRagSettings() {
         document.getElementById('ragUsername').value = d.username || '';
         document.getElementById('ragPassword').value = '';
         document.getElementById('ragApiKey').value   = '';
-        document.getElementById('ragPasswordHint').textContent = d.passwordSet
-            ? '저장된 비밀번호 있음 (' + (d.passwordMasked || '****') + ') — 변경 시에만 입력' : '';
-        document.getElementById('ragApiKeyHint').textContent = d.apiKeySet
-            ? '저장된 키 있음 (' + (d.apiKeyMasked || '****') + ') — 변경 시에만 입력' : '';
+        renderSecretHint('ragPassword', d.passwordSet, d.passwordHealthy, d.passwordMasked, d.passwordIssue, '비밀번호');
+        renderSecretHint('ragApiKey', d.apiKeySet, d.apiKeyHealthy, d.apiKeyMasked, d.apiKeyIssue, '키');
+        updateSecretsBadge(d.secretsHealthy);
         document.getElementById('ragMode').value      = d.searchMode || 'keyword';
         document.getElementById('ragTextField').value = d.textField || 'content';
         document.getElementById('ragTopK').value      = d.topK != null ? d.topK : 3;
@@ -466,8 +518,7 @@ function loadRagSettings() {
         document.getElementById('ragEmbProvider').value = e.provider || 'openai';
         document.getElementById('ragEmbApiUrl').value   = e.apiUrl || '';
         document.getElementById('ragEmbApiKey').value   = '';
-        document.getElementById('ragEmbApiKeyHint').textContent = e.apiKeySet
-            ? '저장된 키 있음 (' + (e.apiKeyMasked || '****') + ') — 변경 시에만 입력' : '';
+        renderSecretHint('ragEmbApiKey', e.apiKeySet, e.apiKeyHealthy, e.apiKeyMasked, e.apiKeyIssue, '키');
         document.getElementById('ragEmbModel').value    = e.model || '';
         document.getElementById('ragEmbDim').value      = e.dimension != null ? e.dimension : 1536;
         document.getElementById('ragEmbTimeout').value  = e.timeoutSeconds != null ? e.timeoutSeconds : 15;
@@ -544,12 +595,11 @@ function buildConnPayload(includeSecrets) {
         knnNumCandidates:     parseInt(document.getElementById('ragKnnCandidates').value, 10) || 50
     };
     if (includeSecrets) {
-        var pw = document.getElementById('ragPassword').value;
-        var ak = document.getElementById('ragApiKey').value;
-        var ek = document.getElementById('ragEmbApiKey').value;
-        if (pw && pw.length > 0) payload.password = pw;
-        if (ak && ak.length > 0) payload.apiKey = ak;
-        if (ek && ek.length > 0) payload.embeddingApiKey = ek;
+        // 입력 필드는 로드 시 항상 비워지므로 "빈 값 = 삭제" 로 둘 수 없다
+        // (다른 항목만 바꿔 저장할 때마다 시크릿이 지워짐). 삭제는 체크박스로만.
+        applySecretToPayload(payload, 'password', 'ragPassword');
+        applySecretToPayload(payload, 'apiKey', 'ragApiKey');
+        applySecretToPayload(payload, 'embeddingApiKey', 'ragEmbApiKey');
     }
     return payload;
 }

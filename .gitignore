@@ -33,6 +33,9 @@ config/local.conf
 *.db
 *.sqlite
 
+# 운영 데이터 백업 (힙 분석 상세 / DB 행 덤프 — 저장소에 올리지 않음)
+backup/
+
 # OS 생성 파일
 .DS_Store
 Thumbs.db

@@ -74,7 +74,21 @@ public class FileManagementService {
         return new File(config.getHeapDumpDirectory(), TMP_DIR_NAME);
     }
 
+    /**
+     * 결과 디렉토리 — 확장자를 **포함한 파일명** 그대로 사용한다.
+     *
+     * 과거에는 stripExtension(base) 을 썼는데, 분석 후 원본이 gzip 되면 `X.hprof` 와 `X.hprof.gz` 가
+     * analysis_history 상 별개 행이면서 결과 디렉토리는 base 하나를 공유했다. 뒤에 실행된 분석이
+     * 앞 결과(ZIP/.index/result.json)를 덮어써 두 행 중 하나는 결과를 잃었다.
+     * 파일명 단위로 분리해 히스토리 행 ↔ 결과 디렉토리를 1:1 로 만든다.
+     * (디렉토리 **내부** 산출물 이름은 MAT 가 hprof base 로 생성하므로 여전히 base 기준.)
+     */
     public File resultDirectory(String filename) {
+        return new File(config.getDataDirectory(), new File(filename).getName());
+    }
+
+    /** 구 스킴(확장자 제거 base) 결과 디렉토리 — 기동 시 1회 마이그레이션 전용. */
+    public File legacyResultDirectory(String filename) {
         return new File(config.getDataDirectory(), stripExtension(filename));
     }
 

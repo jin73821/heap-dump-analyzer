@@ -98,7 +98,15 @@ public class TwoFactorService {
             return OtpVerification.of(OtpResult.NOT_ENROLLED);
         }
 
-        String secret = AesEncryptor.decryptIfEncrypted(user.getOtpSecret());
+        // seed 복호화 실패/손상 시 fail-closed — NOT_ENROLLED 로 떨어뜨리면 OTP 우회 여지가 생긴다.
+        // 잠금 카운트는 올리지 않는다: 사용자 잘못이 아니고, 관리자 OTP 초기화 전엔 어차피 성공할 수 없다.
+        AesEncryptor.Decrypted seed = AesEncryptor.decryptIfEncryptedChecked(user.getOtpSecret());
+        if (!seed.healthy()) {
+            logger.error("[TwoFactor] OTP seed 손상 — username={}, {} (관리자 OTP 초기화 필요)",
+                    user.getUsername(), seed.issue());
+            return OtpVerification.of(OtpResult.INVALID);
+        }
+        String secret = seed.value();
         long matchedStep = TotpUtil.verify(secret, code, TOTP_WINDOW, user.getOtpLastUsedStep());
 
         if (matchedStep >= 0) {
