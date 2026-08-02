@@ -558,6 +558,7 @@
     </div>
 </div>
 
+<script src="/js/table-grid.js?v=2026-08-02"></script>
 <script>
 function closeModal(id) {
     document.getElementById(id).classList.remove('open');
@@ -1293,76 +1294,27 @@ loadScanErrors();
 setInterval(loadScanErrors, 30000);
 
 // ── Data grid: search / filter / sort / pagination ─────────────
-var _allRows = [];
-var _filteredRows = [];
-var _pageSize = 20;
-var _currentPage = 1;
-var _sortKey = 'name';
-var _sortDir = 'asc';
-var _sortType = 'str';
+// ── 검색 + 페이지네이션 + 정렬 — TableGrid 공통 엔진(/js/table-grid.js) 위임 ──
+var _grid = TableGrid.create({
+    tbodyId: 'serverTableBody',
+    headerSelector: '.stable th.sortable',
+    pageSizeKey: 'serversPageSize',
+    defaultSort: { key: 'name', dir: 'asc', type: 'str' },
+    sortAttrPrefix: 'data-',
+    applyFilter: function() { applyFilter(); }
+});
 
 function initRows() {
-    var tbody = document.getElementById('serverTableBody');
-    if (!tbody) return;   // 서버 0건 — 데이터 그리드 미렌더
-    _allRows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
-    var saved = parseInt(localStorage.getItem('serversPageSize') || '20', 10);
-    if ([20, 30, 50, 100].indexOf(saved) !== -1) {
-        _pageSize = saved;
-        document.getElementById('pageSizeSelect').value = String(saved);
-    }
-    sortRows();
-    updateSortIndicators();
+    if (!document.getElementById('serverTableBody')) return;   // 서버 0건 — 데이터 그리드 미렌더
+    _grid.init();
     applyFilter();
-}
-
-function onHeaderSort(th) {
-    var key = th.getAttribute('data-sort-key');
-    var type = th.getAttribute('data-sort-type') || 'str';
-    if (_sortKey === key) {
-        _sortDir = (_sortDir === 'asc') ? 'desc' : 'asc';
-    } else {
-        _sortKey = key;
-        _sortType = type;
-        _sortDir = 'asc';
-    }
-    _sortType = type;
-    sortRows();
-    updateSortIndicators();
-    applyFilter();
-}
-
-function sortRows() {
-    var dir = _sortDir === 'asc' ? 1 : -1;
-    var isNum = _sortType === 'num';
-    _allRows.sort(function(a, b) {
-        var va = a.getAttribute('data-' + _sortKey) || '';
-        var vb = b.getAttribute('data-' + _sortKey) || '';
-        if (isNum) { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; return (va - vb) * dir; }
-        return va.localeCompare(vb, 'ko') * dir;
-    });
-    var tbody = document.getElementById('serverTableBody');
-    if (tbody) _allRows.forEach(function(r) { tbody.appendChild(r); });
-}
-
-function updateSortIndicators() {
-    document.querySelectorAll('.stable th.sortable').forEach(function(th) {
-        var arrow = th.querySelector('.sort-arrow');
-        if (!arrow) return;
-        if (th.getAttribute('data-sort-key') === _sortKey) {
-            th.classList.add('sort-active');
-            arrow.textContent = (_sortDir === 'asc') ? '▲' : '▼';
-        } else {
-            th.classList.remove('sort-active');
-            arrow.textContent = '▲';
-        }
-    });
 }
 
 function applyFilter() {
     var q = (document.getElementById('searchInput').value || '').toLowerCase();
     var statusF = document.getElementById('statusFilter').value;
     var autoF = document.getElementById('autoDetectFilter').value;
-    _filteredRows = _allRows.filter(function(el) {
+    _grid.setFiltered(_grid.allRows.filter(function(el) {
         if (statusF !== 'all' && el.getAttribute('data-status') !== statusF) return false;
         if (autoF !== 'all') {
             var on = el.getAttribute('data-autodetect') === 'true';
@@ -1377,84 +1329,13 @@ function applyFilter() {
             if (hay.indexOf(q) === -1) return false;
         }
         return true;
-    });
-    _currentPage = 1;
-    render();
+    }));
 }
 
 function onSearchInput() { applyFilter(); }
-
-function onPageSizeChange() {
-    _pageSize = parseInt(document.getElementById('pageSizeSelect').value, 10) || 20;
-    localStorage.setItem('serversPageSize', String(_pageSize));
-    _currentPage = 1;
-    render();
-}
-
-function gotoPage(p) {
-    var total = _filteredRows.length;
-    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
-    if (p < 1) p = 1; if (p > totalPages) p = totalPages;
-    _currentPage = p;
-    render();
-}
-
-function render() {
-    _allRows.forEach(function(el) { el.style.display = 'none'; });
-    var total = _filteredRows.length;
-    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
-    if (_currentPage > totalPages) _currentPage = totalPages;
-    var start = (_currentPage - 1) * _pageSize;
-    var end = Math.min(start + _pageSize, total);
-    for (var i = start; i < end; i++) _filteredRows[i].style.display = '';
-
-    var noMatch = document.getElementById('noMatch');
-    if (noMatch) noMatch.style.display = total === 0 ? 'block' : 'none';
-    renderPagination(total, totalPages, start, end);
-}
-
-function renderPagination(total, totalPages, start, end) {
-    var bar = document.getElementById('paginationBar');
-    if (!bar) return;
-    if (total <= _pageSize) { bar.classList.remove('show'); return; }
-    bar.classList.add('show');
-    document.getElementById('pgInfo').innerHTML =
-        '<strong>' + (total === 0 ? 0 : (start + 1)) + '–' + end + '</strong> / 전체 <strong>' + total + '</strong>건';
-
-    var list = document.getElementById('pgList');
-    list.innerHTML = '';
-    var addBtn = function(label, page, opts) {
-        opts = opts || {};
-        var b = document.createElement('button');
-        b.className = 'pg-btn' + (opts.active ? ' active' : '');
-        b.textContent = label;
-        if (opts.disabled) b.disabled = true;
-        else b.onclick = function() { gotoPage(page); };
-        list.appendChild(b);
-    };
-    var addEllipsis = function() {
-        var s = document.createElement('span');
-        s.className = 'pg-ellipsis'; s.textContent = '…';
-        list.appendChild(s);
-    };
-
-    addBtn('‹', _currentPage - 1, { disabled: _currentPage === 1 });
-
-    var pages = new Set([1, totalPages, _currentPage]);
-    for (var d = 1; d <= 2; d++) {
-        if (_currentPage - d >= 1) pages.add(_currentPage - d);
-        if (_currentPage + d <= totalPages) pages.add(_currentPage + d);
-    }
-    var sorted = Array.from(pages).sort(function(a, b) { return a - b; });
-    var prev = 0;
-    sorted.forEach(function(p) {
-        if (p - prev > 1) addEllipsis();
-        addBtn(String(p), p, { active: p === _currentPage });
-        prev = p;
-    });
-
-    addBtn('›', _currentPage + 1, { disabled: _currentPage === totalPages });
-}
+function onPageSizeChange() { _grid.onPageSizeChange(); }
+function onHeaderSort(th) { _grid.onHeaderSort(th); }
+function gotoPage(p) { _grid.gotoPage(p); }
 
 initRows();
 

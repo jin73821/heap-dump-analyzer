@@ -756,6 +756,7 @@ var DETECT_INIT = {
 /*]]>*/
 </script>
 
+<script src="/js/table-grid.js?v=2026-08-02"></script>
 <script>
 var _delFilename = '';
 function openDeleteModal(filename, fileDeleted) {
@@ -923,23 +924,19 @@ function doExportHistory() {
     }).catch(function() { alert('Failed to export history.'); });
 }
 
-// ── 검색 + 페이지네이션 + 정렬 ────────────────────────────────
-var _allRows = [];
-var _filteredRows = [];
-var _pageSize = 20;
-var _currentPage = 1;
+// ── 검색 + 페이지네이션 + 정렬 — TableGrid 공통 엔진(/js/table-grid.js) 위임 ──
 var _showDeleted = false;
-var _sortKey = 'date';   // 기본: 날짜 내림차순 (최신 → 오래된)
-var _sortDir = 'desc';
-var _sortType = 'num';
+var _grid = TableGrid.create({
+    tbodyId: 'historyTableBody',
+    headerSelector: '.htable th.sortable',
+    pageSizeKey: 'historyPageSize',
+    defaultSort: { key: 'date', dir: 'desc', type: 'num' },   // 기본: 날짜 내림차순 (최신 → 오래된)
+    sortValue: function(el, key) { return key === 'name' ? (el.getAttribute('data-name') || '') : null; },
+    applyFilter: function() { applyFilter(); },
+    onAfterRender: function() { if (_selectMode) updateSelectionCount(); }
+});
 
 function initRows() {
-    _allRows = Array.prototype.slice.call(document.querySelectorAll('#historyTableBody tr'));
-    var saved = parseInt(localStorage.getItem('historyPageSize') || '20', 10);
-    if ([20, 30, 50, 100].indexOf(saved) !== -1) {
-        _pageSize = saved;
-        document.getElementById('pageSizeSelect').value = String(saved);
-    }
     var chk = document.getElementById('showDeletedChk');
     if (chk) {
         _showDeleted = localStorage.getItem('historyShowDeleted') === 'true';
@@ -957,53 +954,8 @@ function initRows() {
         storageKey: 'history',
         onChange: function() { applyFilter(); }
     });
-    sortRows();          // 기본 정렬 적용
-    updateSortIndicators();
+    _grid.init();
     applyFilter();
-}
-
-function onHeaderSort(th) {
-    var key = th.getAttribute('data-sort-key');
-    var type = th.getAttribute('data-sort-type') || 'str';
-    if (_sortKey === key) {
-        _sortDir = (_sortDir === 'asc') ? 'desc' : 'asc';
-    } else {
-        _sortKey = key;
-        _sortType = type;
-        _sortDir = 'asc';
-    }
-    _sortType = type;
-    sortRows();
-    updateSortIndicators();
-    applyFilter();
-}
-
-function sortRows() {
-    var key = 'data-sort-' + _sortKey;
-    var dir = _sortDir === 'asc' ? 1 : -1;
-    var isNum = _sortType === 'num';
-    _allRows.sort(function(a, b) {
-        var va = (_sortKey === 'name') ? (a.getAttribute('data-name') || '') : (a.getAttribute(key) || '');
-        var vb = (_sortKey === 'name') ? (b.getAttribute('data-name') || '') : (b.getAttribute(key) || '');
-        if (isNum) { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; return (va - vb) * dir; }
-        return va.localeCompare(vb, 'ko') * dir;
-    });
-    var tbody = document.getElementById('historyTableBody');
-    if (tbody) _allRows.forEach(function(r) { tbody.appendChild(r); });
-}
-
-function updateSortIndicators() {
-    document.querySelectorAll('.htable th.sortable').forEach(function(th) {
-        var arrow = th.querySelector('.sort-arrow');
-        if (!arrow) return;
-        if (th.getAttribute('data-sort-key') === _sortKey) {
-            th.classList.add('sort-active');
-            arrow.textContent = (_sortDir === 'asc') ? '▲' : '▼';
-        } else {
-            th.classList.remove('sort-active');
-            arrow.textContent = '▲';
-        }
-    });
 }
 
 function applyFilter() {
@@ -1016,7 +968,7 @@ function applyFilter() {
     var customStart = range.start ? new Date(range.start.getFullYear(), range.start.getMonth(), range.start.getDate()).getTime() : 0;
     var customEnd = range.end ? new Date(range.end.getFullYear(), range.end.getMonth(), range.end.getDate()).getTime() + dayMs : 0;
 
-    _filteredRows = _allRows.filter(function(el) {
+    _grid.setFiltered(_grid.allRows.filter(function(el) {
         // 관리자: 토글 off일 때 deleted 행 제외
         // 단, 분석 성공(SUCCESS) 기록은 덤프 파일이 삭제되어도 계속 표시 (failed/미분석만 숨김, 2026-06-28 정책 — 뱃지 툴팁으로 안내)
         if (!_showDeleted && el.getAttribute('data-deleted') === 'true'
@@ -1034,9 +986,7 @@ function applyFilter() {
         if (customStart > 0 && ts < customStart) return false;
         if (customEnd > 0 && ts >= customEnd) return false;
         return true;
-    });
-    _currentPage = 1;
-    render();
+    }));
 }
 
 function onSearchInput() { applyFilter(); }
@@ -1051,82 +1001,9 @@ function onToggleShowDeleted() {
     localStorage.setItem('historyShowDeleted', String(_showDeleted));
     applyFilter();
 }
-
-function onPageSizeChange() {
-    _pageSize = parseInt(document.getElementById('pageSizeSelect').value, 10) || 20;
-    localStorage.setItem('historyPageSize', String(_pageSize));
-    _currentPage = 1;
-    render();
-}
-
-function gotoPage(p) {
-    var total = _filteredRows.length;
-    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
-    if (p < 1) p = 1; if (p > totalPages) p = totalPages;
-    _currentPage = p;
-    render();
-}
-
-function render() {
-    // 모든 row 숨기고, 현재 페이지 row만 표시
-    _allRows.forEach(function(el) { el.style.display = 'none'; });
-    var total = _filteredRows.length;
-    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
-    if (_currentPage > totalPages) _currentPage = totalPages;
-    var start = (_currentPage - 1) * _pageSize;
-    var end = Math.min(start + _pageSize, total);
-    for (var i = start; i < end; i++) _filteredRows[i].style.display = '';
-
-    document.getElementById('noMatch').style.display = total === 0 ? 'block' : 'none';
-    renderPagination(total, totalPages, start, end);
-    if (_selectMode) updateSelectionCount();
-}
-
-function renderPagination(total, totalPages, start, end) {
-    var bar = document.getElementById('paginationBar');
-    if (total <= _pageSize) {
-        bar.classList.remove('show');
-        return;
-    }
-    bar.classList.add('show');
-    document.getElementById('pgInfo').innerHTML =
-        '<strong>' + (total === 0 ? 0 : (start + 1)) + '–' + end + '</strong> / 전체 <strong>' + total + '</strong>건';
-
-    var list = document.getElementById('pgList');
-    list.innerHTML = '';
-    var addBtn = function(label, page, opts) {
-        opts = opts || {};
-        var b = document.createElement('button');
-        b.className = 'pg-btn' + (opts.active ? ' active' : '');
-        b.textContent = label;
-        if (opts.disabled) b.disabled = true;
-        else b.onclick = function() { gotoPage(page); };
-        list.appendChild(b);
-    };
-    var addEllipsis = function() {
-        var s = document.createElement('span');
-        s.className = 'pg-ellipsis'; s.textContent = '…';
-        list.appendChild(s);
-    };
-
-    addBtn('‹', _currentPage - 1, { disabled: _currentPage === 1 });
-
-    // 슬라이딩 윈도우 (현재 페이지 ±2)
-    var pages = new Set([1, totalPages, _currentPage]);
-    for (var d = 1; d <= 2; d++) {
-        if (_currentPage - d >= 1) pages.add(_currentPage - d);
-        if (_currentPage + d <= totalPages) pages.add(_currentPage + d);
-    }
-    var sorted = Array.from(pages).sort(function(a, b) { return a - b; });
-    var prev = 0;
-    sorted.forEach(function(p) {
-        if (p - prev > 1) addEllipsis();
-        addBtn(String(p), p, { active: p === _currentPage });
-        prev = p;
-    });
-
-    addBtn('›', _currentPage + 1, { disabled: _currentPage === totalPages });
-}
+function onPageSizeChange() { _grid.onPageSizeChange(); }
+function onHeaderSort(th) { _grid.onHeaderSort(th); }
+function gotoPage(p) { _grid.gotoPage(p); }
 
 initRows();
 </script>

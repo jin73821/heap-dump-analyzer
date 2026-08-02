@@ -1014,6 +1014,7 @@ var ALLOW_ALL_EXT    = /*[[${allowAllExtensions}]]*/ false;
 /*]]>*/
 </script>
 <script src="/js/upload-queue.js?v=2026-05-23a"></script>
+<script src="/js/table-grid.js?v=2026-08-02"></script>
 <script>
 var _delTarget = '';
 var _delIsCore = false;
@@ -1505,34 +1506,49 @@ document.getElementById('btnConfirmOthersAnalyze').onclick = function() {
 };
 
 // ── 검색 + 페이지네이션 + 정렬 ────────────────────────────────
-var _allRows = [];
 var _subrowMap = {}; // coreFilename → exec sub-row TR
-var _filteredRows = [];
-var _pageSize = 20;
-var _currentPage = 1;
 var _showDeleted = false;
-var _sortKey = 'date';   // 기본: 날짜 내림차순 (최신 → 오래된)
-var _sortDir = 'desc';
-var _sortType = 'num';
+
+// ── TableGrid 공통 엔진(/js/table-grid.js) 위임 — exec sub-row 페어링 훅 포함 ──
+var _grid = TableGrid.create({
+    tbodyId: 'fileTableBody',
+    headerSelector: '.ftable th.sortable',
+    pageSizeKey: 'filesPageSize',
+    defaultSort: { key: 'date', dir: 'desc', type: 'num' },   // 기본: 날짜 내림차순 (최신 → 오래된)
+    sortValue: function(el, key) { return key === 'name' ? (el.getAttribute('data-name') || '') : null; },
+    attachRow: function(tbody, r) {
+        tbody.appendChild(r);
+        var coreName = r.getAttribute('data-name');
+        if (coreName && _subrowMap[coreName]) tbody.appendChild(_subrowMap[coreName]);
+    },
+    onRenderStart: function() {
+        document.getElementById('fileTableBody').classList.remove('tb-loading');
+        Object.keys(_subrowMap).forEach(function(k) { _subrowMap[k].style.display = 'none'; });
+    },
+    showRow: function(row) {
+        row.style.display = '';
+        // core row가 보이면 연결된 sub-row도 표시
+        var coreName = row.getAttribute('data-name');
+        if (coreName && _subrowMap[coreName]) _subrowMap[coreName].style.display = '';
+    },
+    applyFilter: function() { applyFilter(); },
+    onAfterRender: function() { if (_selectMode) updateSelectionCount(); }
+});
 
 function initRows() {
     var allTr = Array.prototype.slice.call(document.querySelectorAll('#fileTableBody tr'));
     _subrowMap = {};
-    _allRows = [];
+    var topRows = [];
     allTr.forEach(function(tr) {
         var parentCore = tr.getAttribute('data-parent-core');
         if (parentCore) {
             _subrowMap[parentCore] = tr;
         } else {
-            _allRows.push(tr);
+            topRows.push(tr);
         }
     });
+    _grid.allRows = topRows;
     assignStableNumbers();   // 순번은 정렬/필터와 무관한 고정 식별자 — 최초 1회만 계산
-    var saved = parseInt(localStorage.getItem('filesPageSize') || '20', 10);
-    if ([20, 30, 50, 100].indexOf(saved) !== -1) {
-        _pageSize = saved;
-        document.getElementById('pageSizeSelect').value = String(saved);
-    }
     var chk = document.getElementById('showDeletedChk');
     if (chk) {
         _showDeleted = localStorage.getItem('filesShowDeleted') === 'true';
@@ -1573,47 +1589,8 @@ function initRows() {
         var table = document.getElementById('filesTable');
         if (table && _activeTab === 'others') table.classList.add('hide-ai-col');
     }
-    sortRows();
-    updateSortIndicators();
+    _grid.init(_grid.allRows);
     applyFilter();
-}
-
-function onHeaderSort(th) {
-    var key = th.getAttribute('data-sort-key');
-    var type = th.getAttribute('data-sort-type') || 'str';
-    if (_sortKey === key) {
-        _sortDir = (_sortDir === 'asc') ? 'desc' : 'asc';
-    } else {
-        _sortKey = key;
-        _sortType = type;
-        _sortDir = 'asc';
-    }
-    _sortType = type;
-    sortRows();
-    updateSortIndicators();
-    applyFilter();
-}
-
-function sortRows() {
-    var key = 'data-sort-' + _sortKey;
-    var dir = _sortDir === 'asc' ? 1 : -1;
-    var isNum = _sortType === 'num';
-    _allRows.sort(function(a, b) {
-        var va = (_sortKey === 'name') ? (a.getAttribute('data-name') || '') : (a.getAttribute(key) || '');
-        var vb = (_sortKey === 'name') ? (b.getAttribute('data-name') || '') : (b.getAttribute(key) || '');
-        if (isNum) { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; return (va - vb) * dir; }
-        return va.localeCompare(vb, 'ko') * dir;
-    });
-    var tbody = document.getElementById('fileTableBody');
-    if (tbody) {
-        _allRows.forEach(function(r) {
-            tbody.appendChild(r);
-            var coreName = r.getAttribute('data-name');
-            if (coreName && _subrowMap[coreName]) {
-                tbody.appendChild(_subrowMap[coreName]);
-            }
-        });
-    }
 }
 
 // 순번(#) = 유형 접두 + 카테고리별 "날짜 오름차순 고정 순위"(가장 오래된 파일 = 1).
@@ -1629,7 +1606,7 @@ function categoryOf(t) {
 }
 function assignStableNumbers() {
     // top-level 행 + 페어링된 exec 서브행(연결 상태)까지 모두 포함 → 연결/연결해제에도 E 순번 유지.
-    var all = _allRows.slice();
+    var all = _grid.allRows.slice();
     Object.keys(_subrowMap).forEach(function(k) { all.push(_subrowMap[k]); });
     var groups = { H: [], C: [], E: [], O: [] };
     all.forEach(function(row) {
@@ -1651,20 +1628,6 @@ function assignStableNumbers() {
                 cell.textContent = label;
             }
         });
-    });
-}
-
-function updateSortIndicators() {
-    document.querySelectorAll('.ftable th.sortable').forEach(function(th) {
-        var arrow = th.querySelector('.sort-arrow');
-        if (!arrow) return;
-        if (th.getAttribute('data-sort-key') === _sortKey) {
-            th.classList.add('sort-active');
-            arrow.textContent = (_sortDir === 'asc') ? '▲' : '▼';
-        } else {
-            th.classList.remove('sort-active');
-            arrow.textContent = '▲';
-        }
     });
 }
 
@@ -1698,7 +1661,7 @@ function applyFilter() {
     }
 
     // 탭 카운트는 탭 필터 제외, 나머지 필터 적용 후 계산
-    var tabBaseRows = _allRows.filter(function(el) {
+    var tabBaseRows = _grid.allRows.filter(function(el) {
         if (!_showDeleted && el.getAttribute('data-deleted') === 'true') return false;
         if (q) {
             var name = (el.getAttribute('data-name') || '').toLowerCase();
@@ -1721,16 +1684,14 @@ function applyFilter() {
     });
     updateTabCounts(tabBaseRows);
 
-    _filteredRows = tabBaseRows.filter(function(el) {
+    _grid.setFiltered(tabBaseRows.filter(function(el) {
         if (_activeTab === 'all') return true;
         var t = el.getAttribute('data-file-type') || 'heapdump';
         if (_activeTab === 'others')   return t === 'others';
         if (_activeTab === 'heapdump') return t === 'heapdump';
         if (_activeTab === 'coredump') return (t === 'coredump' || t === 'core' || t === 'coreexec' || t === 'exec');
         return t === _activeTab;
-    });
-    _currentPage = 1;
-    render();
+    }));
     updateMobileFilterBadge();   // 모바일 '필터' 버튼 활성 카운트 동기화 (초기 복원 포함 모든 경로)
 }
 
@@ -1798,90 +1759,9 @@ function onToggleShowDeleted() {
     applyFilter();
 }
 
-function onPageSizeChange() {
-    _pageSize = parseInt(document.getElementById('pageSizeSelect').value, 10) || 20;
-    localStorage.setItem('filesPageSize', String(_pageSize));
-    _currentPage = 1;
-    render();
-}
-
-function gotoPage(p) {
-    var total = _filteredRows.length;
-    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
-    if (p < 1) p = 1; if (p > totalPages) p = totalPages;
-    _currentPage = p;
-    render();
-}
-
-function render() {
-    document.getElementById('fileTableBody').classList.remove('tb-loading');
-    _allRows.forEach(function(el) { el.style.display = 'none'; });
-    // sub-row도 기본 숨김
-    Object.keys(_subrowMap).forEach(function(k) { _subrowMap[k].style.display = 'none'; });
-
-    var total = _filteredRows.length;
-    var totalPages = Math.max(1, Math.ceil(total / _pageSize));
-    if (_currentPage > totalPages) _currentPage = totalPages;
-    var start = (_currentPage - 1) * _pageSize;
-    var end = Math.min(start + _pageSize, total);
-    for (var i = start; i < end; i++) {
-        _filteredRows[i].style.display = '';
-        // core row가 보이면 연결된 sub-row도 표시
-        var coreName = _filteredRows[i].getAttribute('data-name');
-        if (coreName && _subrowMap[coreName]) {
-            _subrowMap[coreName].style.display = '';
-        }
-    }
-
-    document.getElementById('noMatch').style.display = total === 0 ? 'block' : 'none';
-    renderPagination(total, totalPages, start, end);
-    if (_selectMode) updateSelectionCount();
-}
-
-function renderPagination(total, totalPages, start, end) {
-    var bar = document.getElementById('paginationBar');
-    if (total <= _pageSize) {
-        bar.classList.remove('show');
-        return;
-    }
-    bar.classList.add('show');
-    document.getElementById('pgInfo').innerHTML =
-        '<strong>' + (total === 0 ? 0 : (start + 1)) + '–' + end + '</strong> / 전체 <strong>' + total + '</strong>건';
-
-    var list = document.getElementById('pgList');
-    list.innerHTML = '';
-    var addBtn = function(label, page, opts) {
-        opts = opts || {};
-        var b = document.createElement('button');
-        b.className = 'pg-btn' + (opts.active ? ' active' : '');
-        b.textContent = label;
-        if (opts.disabled) b.disabled = true;
-        else b.onclick = function() { gotoPage(page); };
-        list.appendChild(b);
-    };
-    var addEllipsis = function() {
-        var s = document.createElement('span');
-        s.className = 'pg-ellipsis'; s.textContent = '…';
-        list.appendChild(s);
-    };
-
-    addBtn('‹', _currentPage - 1, { disabled: _currentPage === 1 });
-
-    var pages = new Set([1, totalPages, _currentPage]);
-    for (var d = 1; d <= 2; d++) {
-        if (_currentPage - d >= 1) pages.add(_currentPage - d);
-        if (_currentPage + d <= totalPages) pages.add(_currentPage + d);
-    }
-    var sorted = Array.from(pages).sort(function(a, b) { return a - b; });
-    var prev = 0;
-    sorted.forEach(function(p) {
-        if (p - prev > 1) addEllipsis();
-        addBtn(String(p), p, { active: p === _currentPage });
-        prev = p;
-    });
-
-    addBtn('›', _currentPage + 1, { disabled: _currentPage === totalPages });
-}
+function onPageSizeChange() { _grid.onPageSizeChange(); }
+function onHeaderSort(th) { _grid.onHeaderSort(th); }
+function gotoPage(p) { _grid.gotoPage(p); }
 
 // ── 분석 진행 중 애니메이션 버튼 (백그라운드 진행 표시 + 진행 페이지 이동) ──
 var _trackedInProgress = new Set();
