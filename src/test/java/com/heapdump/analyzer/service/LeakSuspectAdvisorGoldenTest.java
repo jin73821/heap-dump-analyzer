@@ -196,6 +196,34 @@ class LeakSuspectAdvisorGoldenTest {
         assertNotNull(s.getAdvice());
     }
 
+    // ─── 하드코딩 룰 배열 제거 후 no-op 계약 ─────────────────────────────
+
+    @Test
+    void emptyRuleListsAreNoOp() {
+        LeakRuleService mock = Mockito.mock(LeakRuleService.class);
+        when(mock.libraryRules()).thenReturn(List.of());
+        when(mock.fallbackRules()).thenReturn(List.of());
+        LeakSuspectAdvisor.bindRuleService(mock);
+
+        LeakSuspect s = analyzed(
+                "1,234 instances of com.newrelic.agent.deps.SomeCache occupy 489,131,008 (45.6%) bytes.");
+        assertNull(s.getCategory());
+        assertNull(s.getExplanation());
+        assertNull(s.getAdvice());
+        assertNull(s.getSeverity());
+    }
+
+    @Test
+    void unboundRuleServiceIsNoOp() {
+        LeakSuspectAdvisor.bindRuleService(null);
+        LeakSuspect s = analyzed(
+                "1,234 instances of com.newrelic.agent.deps.SomeCache occupy 489,131,008 (45.6%) bytes.");
+        assertNull(s.getCategory());
+        assertNull(s.getExplanation());
+        assertNull(s.getAdvice());
+        assertNull(s.getSeverity());
+    }
+
     @Test
     void nullAndEmptyInputAreNoOp() {
         bindSeedRules();
