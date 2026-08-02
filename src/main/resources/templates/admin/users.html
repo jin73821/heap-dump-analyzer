@@ -54,7 +54,6 @@
 
         .action-btn { padding: 5px 12px; border: 1px solid #E5E7EB; border-radius: 5px;
                       background: transparent; font-size: 12px; cursor: pointer; color: #6B7280; }
-        .action-btn:hover { border-color: #93C5FD; background: #EFF6FF; color: #2563EB; }
         .action-btn.danger:hover { border-color: #FCA5A5; background: #FEF2F2; color: #EF4444; }
 
         /* Modal — @keyframes modalIn / .modal-box base 는 common.css 에서 제공. overlay 가 .4 변형이라 .modal-ov 만 인라인 유지 */
@@ -188,23 +187,16 @@
         .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
         .card:last-child { margin-bottom: 0; }
         .card-full { grid-column: 1 / -1; }
-        .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
-                      color: #6B7280; margin-bottom: 14px; padding-bottom: 8px;
-                      border-bottom: 1px solid #F3F4F6;
-                      display: flex; align-items: center; gap: 8px; }
-        .card-title svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+        
         .setting-row { display: flex; align-items: center; justify-content: space-between;
                        padding: 12px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
-        .setting-row:last-child { border-bottom: none; }
         .setting-label { font-size: 13px; font-weight: 500; color: #374151; }
         .setting-desc { font-size: 11px; color: #9CA3AF; margin-top: 2px; line-height: 1.5; }
-        .tog { display: none; }
         .tog-track { position: relative; display: inline-block; width: 38px; height: 22px;
                      background: #D1D5DB; border-radius: 11px; cursor: pointer; transition: background .2s; }
         .tog-track::after { content: ''; position: absolute; top: 3px; left: 3px;
                             width: 16px; height: 16px; background: #fff; border-radius: 50%;
                             transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
-        .tog:checked + .tog-track { background: #2563EB; }
         .tog:checked + .tog-track::after { transform: translateX(16px); }
         .heap-btn-apply { padding: 6px 14px; border: none; border-radius: 6px; background: #2563EB;
                           color: #fff; font-size: 12px; cursor: pointer; font-weight: 600; }

@@ -18,41 +18,31 @@
         .page-hdr { display: flex; align-items: center; justify-content: space-between;
                     margin-bottom: 24px; flex-wrap: wrap; gap: 8px; }
         .page-ttl { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
-        .page-ttl svg { width: 22px; height: 22px; stroke: #6B7280; fill: none; stroke-width: 2; }
         .breadcrumb { font-size: 12px; color: #9CA3AF; display: flex; align-items: center; gap: 4px; }
         .breadcrumb a { color: #6B7280; text-decoration: none; }
         .breadcrumb a:hover { color: #2563EB; text-decoration: underline; }
 
         /* ── Card ────────────────────────────────────────── */
         .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-        .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
-                      color: #6B7280; margin-bottom: 14px; padding-bottom: 8px;
-                      border-bottom: 1px solid #F3F4F6;
-                      display: flex; align-items: center; gap: 8px; }
-        .card-title svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.5; }
+        
 
         /* ── Key-value rows ──────────────────────────────── */
         .s-row { display: flex; justify-content: space-between; align-items: center;
                  padding: 10px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
-        .s-row:last-child { border-bottom: none; }
         .s-key { font-size: 13px; color: #374151; font-weight: 500; flex-shrink: 0; }
 
         /* ── Toggle switch ───────────────────────────────── */
         .setting-row { display: flex; align-items: center; justify-content: space-between;
                        padding: 12px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
-        .setting-row:last-child { border-bottom: none; }
         .setting-label { font-size: 13px; font-weight: 500; color: #374151; }
         .setting-desc { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
-        .tog { display: none; }
         .tog-track { position: relative; display: inline-block; width: 38px; height: 22px;
                      background: #D1D5DB; border-radius: 11px; cursor: pointer; transition: background .2s; }
         .tog-track::after { content: ''; position: absolute; top: 3px; left: 3px;
                             width: 16px; height: 16px; background: #fff; border-radius: 50%;
                             transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
-        .tog:checked + .tog-track { background: #2563EB; }
         .tog:checked + .tog-track::after { transform: translateX(16px); }
         /* 비-ADMIN 진입 시 ON 토글 색을 하늘색으로 (settings.html 과 동일 패턴) */
-        .container[data-is-admin="false"] .tog:checked + .tog-track { background: #7DD3FC; }
 
         /* ── Buttons ─────────────────────────────────────── */
         .btn-primary { padding: 6px 14px; border: none; border-radius: 6px; background: #2563EB;
