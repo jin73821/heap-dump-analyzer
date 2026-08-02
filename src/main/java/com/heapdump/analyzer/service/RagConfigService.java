@@ -265,99 +265,42 @@ public class RagConfigService {
     // ── Settings 영속화 hook ─────────────────────────────────────
 
     public void applyFromSettings(Map<String, Object> saved) {
-        if (saved.containsKey("ragEnabled")) {
-            this.ragEnabled = Boolean.parseBoolean(String.valueOf(saved.get("ragEnabled")));
-        }
-        if (saved.containsKey("ragElasticsearchUrl")) {
-            this.ragElasticsearchUrl = String.valueOf(saved.get("ragElasticsearchUrl"));
-        }
-        if (saved.containsKey("ragAuthType")) {
-            this.ragAuthType = String.valueOf(saved.get("ragAuthType"));
-        }
-        if (saved.containsKey("ragUsername")) {
-            this.ragUsername = String.valueOf(saved.get("ragUsername"));
-        }
-        if (saved.containsKey("ragPassword")) {
-            adopt(ragPassword, String.valueOf(saved.get("ragPassword")), "password");
-        }
-        if (saved.containsKey("ragApiKey")) {
-            adopt(ragApiKey, String.valueOf(saved.get("ragApiKey")), "apiKey");
-        }
-        if (saved.containsKey("ragIndex")) {
-            this.ragIndex = String.valueOf(saved.get("ragIndex"));
-        }
-        if (saved.containsKey("ragSslVerify")) {
-            this.ragSslVerify = Boolean.parseBoolean(String.valueOf(saved.get("ragSslVerify")));
-        }
-        if (saved.containsKey("ragSearchMode")) {
-            this.ragSearchMode = String.valueOf(saved.get("ragSearchMode"));
-        }
-        if (saved.containsKey("ragTextField")) {
-            this.ragTextField = String.valueOf(saved.get("ragTextField"));
-        }
-        if (saved.containsKey("ragTopK")) {
-            this.ragTopK = Integer.parseInt(String.valueOf(saved.get("ragTopK")));
-        }
-        if (saved.containsKey("ragMinScore")) {
-            this.ragMinScore = Double.parseDouble(String.valueOf(saved.get("ragMinScore")));
-        }
-        if (saved.containsKey("ragTimeoutSeconds")) {
-            this.ragTimeoutSeconds = Integer.parseInt(String.valueOf(saved.get("ragTimeoutSeconds")));
-        }
-        if (saved.containsKey("ragChunkingEnabled")) {
-            this.ragChunkingEnabled = Boolean.parseBoolean(String.valueOf(saved.get("ragChunkingEnabled")));
-        }
-        if (saved.containsKey("ragChunkingStrategy")) {
-            this.ragChunkingStrategy = String.valueOf(saved.get("ragChunkingStrategy"));
-        }
-        if (saved.containsKey("ragChunkingSize")) {
-            this.ragChunkingSize = Integer.parseInt(String.valueOf(saved.get("ragChunkingSize")));
-        }
-        if (saved.containsKey("ragChunkingOverlap")) {
-            this.ragChunkingOverlap = Integer.parseInt(String.valueOf(saved.get("ragChunkingOverlap")));
-        }
-        if (saved.containsKey("ragChunkingMaxChunksPerDoc")) {
-            this.ragChunkingMaxChunksPerDoc = Integer.parseInt(String.valueOf(saved.get("ragChunkingMaxChunksPerDoc")));
-        }
-        if (saved.containsKey("ragChunkingMaxTotalChars")) {
-            this.ragChunkingMaxTotalChars = Integer.parseInt(String.valueOf(saved.get("ragChunkingMaxTotalChars")));
-        }
-        if (saved.containsKey("ragSemanticQueryType")) {
-            this.ragSemanticQueryType = String.valueOf(saved.get("ragSemanticQueryType"));
-        }
-        if (saved.containsKey("ragSemanticModelId")) {
-            this.ragSemanticModelId = String.valueOf(saved.get("ragSemanticModelId"));
-        }
-        if (saved.containsKey("ragSemanticTokensField")) {
-            this.ragSemanticTokensField = String.valueOf(saved.get("ragSemanticTokensField"));
-        }
-        if (saved.containsKey("ragSemanticField")) {
-            this.ragSemanticField = String.valueOf(saved.get("ragSemanticField"));
-        }
-        if (saved.containsKey("ragEmbeddingProvider")) {
-            this.ragEmbeddingProvider = String.valueOf(saved.get("ragEmbeddingProvider"));
-        }
-        if (saved.containsKey("ragEmbeddingApiUrl")) {
-            this.ragEmbeddingApiUrl = String.valueOf(saved.get("ragEmbeddingApiUrl"));
-        }
-        if (saved.containsKey("ragEmbeddingApiKey")) {
-            adopt(ragEmbeddingApiKey, String.valueOf(saved.get("ragEmbeddingApiKey")), "embeddingApiKey");
-        }
-        if (saved.containsKey("ragEmbeddingModel")) {
-            this.ragEmbeddingModel = String.valueOf(saved.get("ragEmbeddingModel"));
-        }
-        if (saved.containsKey("ragEmbeddingDimension")) {
-            this.ragEmbeddingDimension = Integer.parseInt(String.valueOf(saved.get("ragEmbeddingDimension")));
-        }
-        if (saved.containsKey("ragEmbeddingTimeoutSeconds")) {
-            this.ragEmbeddingTimeoutSeconds = Integer.parseInt(String.valueOf(saved.get("ragEmbeddingTimeoutSeconds")));
-        }
-        if (saved.containsKey("ragKnnVectorField")) {
-            this.ragKnnVectorField = String.valueOf(saved.get("ragKnnVectorField"));
-        }
-        if (saved.containsKey("ragKnnNumCandidates")) {
-            this.ragKnnNumCandidates = Integer.parseInt(String.valueOf(saved.get("ragKnnNumCandidates")));
-        }
+        str(saved, "ragElasticsearchUrl",     v -> this.ragElasticsearchUrl = v);
+        str(saved, "ragAuthType",             v -> this.ragAuthType = v);
+        str(saved, "ragUsername",             v -> this.ragUsername = v);
+        str(saved, "ragPassword",             v -> adopt(ragPassword, v, "password"));
+        str(saved, "ragApiKey",               v -> adopt(ragApiKey, v, "apiKey"));
+        str(saved, "ragIndex",                v -> this.ragIndex = v);
+        str(saved, "ragSearchMode",           v -> this.ragSearchMode = v);
+        str(saved, "ragTextField",            v -> this.ragTextField = v);
+        str(saved, "ragChunkingStrategy",     v -> this.ragChunkingStrategy = v);
+        str(saved, "ragSemanticQueryType",    v -> this.ragSemanticQueryType = v);
+        str(saved, "ragSemanticModelId",      v -> this.ragSemanticModelId = v);
+        str(saved, "ragSemanticTokensField",  v -> this.ragSemanticTokensField = v);
+        str(saved, "ragSemanticField",        v -> this.ragSemanticField = v);
+        str(saved, "ragEmbeddingProvider",    v -> this.ragEmbeddingProvider = v);
+        str(saved, "ragEmbeddingApiUrl",      v -> this.ragEmbeddingApiUrl = v);
+        str(saved, "ragEmbeddingApiKey",      v -> adopt(ragEmbeddingApiKey, v, "embeddingApiKey"));
+        str(saved, "ragEmbeddingModel",       v -> this.ragEmbeddingModel = v);
+        str(saved, "ragKnnVectorField",       v -> this.ragKnnVectorField = v);
+        str(saved, "ragEnabled",              v -> this.ragEnabled = Boolean.parseBoolean(v));
+        str(saved, "ragSslVerify",            v -> this.ragSslVerify = Boolean.parseBoolean(v));
+        str(saved, "ragChunkingEnabled",      v -> this.ragChunkingEnabled = Boolean.parseBoolean(v));
+        str(saved, "ragTopK",                 v -> this.ragTopK = Integer.parseInt(v));
+        str(saved, "ragMinScore",             v -> this.ragMinScore = Double.parseDouble(v));
+        str(saved, "ragTimeoutSeconds",       v -> this.ragTimeoutSeconds = Integer.parseInt(v));
+        str(saved, "ragChunkingSize",         v -> this.ragChunkingSize = Integer.parseInt(v));
+        str(saved, "ragChunkingOverlap",      v -> this.ragChunkingOverlap = Integer.parseInt(v));
+        str(saved, "ragChunkingMaxChunksPerDoc", v -> this.ragChunkingMaxChunksPerDoc = Integer.parseInt(v));
+        str(saved, "ragChunkingMaxTotalChars",   v -> this.ragChunkingMaxTotalChars = Integer.parseInt(v));
+        str(saved, "ragEmbeddingDimension",   v -> this.ragEmbeddingDimension = Integer.parseInt(v));
+        str(saved, "ragEmbeddingTimeoutSeconds", v -> this.ragEmbeddingTimeoutSeconds = Integer.parseInt(v));
+        str(saved, "ragKnnNumCandidates",     v -> this.ragKnnNumCandidates = Integer.parseInt(v));
+    }
+
+    /** saved 에 key 가 있으면 String.valueOf 값으로 apply 실행 (기존 if-블록 31개와 동일 시맨틱). */
+    private static void str(Map<String, Object> saved, String key, java.util.function.Consumer<String> apply) {
+        if (saved.containsKey(key)) apply.accept(String.valueOf(saved.get(key)));
     }
 
     public void collectSettings(Map<String, Object> settings) {

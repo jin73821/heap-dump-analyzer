@@ -218,87 +218,18 @@ public class RemoteDumpService {
         }
 
         Set<String> seenPaths = new HashSet<>();
-        int successCount = 0;
-        String firstFatalError = null;
-        String firstFatalCode = null;
+        ScanAccumulator acc = new ScanAccumulator();
 
         // 힙덤프 경로 스캔
-        for (String dumpPath : heapPaths) {
-            try {
-                Map<String, Object> single = scanSinglePath(server, dumpPath);
-                if (single.containsKey("error")) {
-                    Map<String, Object> err = new HashMap<>();
-                    err.put("dumpPath", dumpPath);
-                    err.put("errorCode", single.get("errorCode"));
-                    err.put("error", single.get("error"));
-                    pathErrors.add(err);
-                    if (firstFatalError == null) {
-                        firstFatalError = (String) single.get("error");
-                        firstFatalCode = (String) single.get("errorCode");
-                    }
-                } else {
-                    successCount++;
-                    @SuppressWarnings("unchecked")
-                    List<Map<String, Object>> pathFiles = (List<Map<String, Object>>) single.get("files");
-                    for (Map<String, Object> f : pathFiles) {
-                        String p = (String) f.get("path");
-                        if (p != null && seenPaths.add(p)) {
-                            files.add(f);
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                Map<String, Object> err = new HashMap<>();
-                err.put("dumpPath", dumpPath);
-                err.put("errorCode", "SCAN_EXCEPTION");
-                err.put("error", "스캔 실패: " + e.getMessage());
-                pathErrors.add(err);
-                if (firstFatalError == null) {
-                    firstFatalError = "스캔 실패: " + e.getMessage();
-                    firstFatalCode = "SCAN_EXCEPTION";
-                }
-                logger.error("[RemoteDump] Scan failed for {} path={}: {}", server.getName(), dumpPath, e.getMessage());
-            }
-        }
-
+        scanPathList(server, heapPaths, this::scanSinglePath, "스캔 실패: ",
+                "[RemoteDump] Scan failed for {} path={}: {}", files, seenPaths, pathErrors, acc);
         // 코어파일 경로 스캔
-        for (String corePath : corePaths) {
-            try {
-                Map<String, Object> single = scanCorePath(server, corePath);
-                if (single.containsKey("error")) {
-                    Map<String, Object> err = new HashMap<>();
-                    err.put("dumpPath", corePath);
-                    err.put("errorCode", single.get("errorCode"));
-                    err.put("error", single.get("error"));
-                    pathErrors.add(err);
-                    if (firstFatalError == null) {
-                        firstFatalError = (String) single.get("error");
-                        firstFatalCode = (String) single.get("errorCode");
-                    }
-                } else {
-                    successCount++;
-                    @SuppressWarnings("unchecked")
-                    List<Map<String, Object>> pathFiles = (List<Map<String, Object>>) single.get("files");
-                    for (Map<String, Object> f : pathFiles) {
-                        String p = (String) f.get("path");
-                        if (p != null && seenPaths.add(p)) {
-                            files.add(f);
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                Map<String, Object> err = new HashMap<>();
-                err.put("dumpPath", corePath);
-                err.put("errorCode", "SCAN_EXCEPTION");
-                err.put("error", "코어파일 스캔 실패: " + e.getMessage());
-                pathErrors.add(err);
-                if (firstFatalError == null) {
-                    firstFatalError = "코어파일 스캔 실패: " + e.getMessage();
-                    firstFatalCode = "SCAN_EXCEPTION";
-                }
-                logger.error("[RemoteDump] Core scan failed for {} path={}: {}", server.getName(), corePath, e.getMessage());
-            }
-        }
+        scanPathList(server, corePaths, this::scanCorePath, "코어파일 스캔 실패: ",
+                "[RemoteDump] Core scan failed for {} path={}: {}", files, seenPaths, pathErrors, acc);
+
+        int successCount = acc.successCount;
+        String firstFatalError = acc.firstFatalError;
+        String firstFatalCode = acc.firstFatalCode;
 
         // 탐지 파일 — 수정시각(mtime) 기준 내림차순 정렬 (최신 파일 우선)
         files.sort((a, b) -> {
@@ -324,6 +255,62 @@ public class RemoteDumpService {
     }
 
     /** 힙덤프 단일 경로 스캔 — error/errorCode/files 키 반환. 상태 DB 업데이트는 호출자에서 집계. */
+    /** 경로 목록 스캔 공통 루프 — 힙/코어 경로 스캔이 완전 동일 구조라 스캐너/문구만 주입. */
+    private void scanPathList(TargetServer server, List<String> paths,
+                              PathScanner scanner,
+                              String failPrefix, String failLogFormat,
+                              List<Map<String, Object>> files, Set<String> seenPaths,
+                              List<Map<String, Object>> pathErrors, ScanAccumulator acc) {
+        for (String dumpPath : paths) {
+            try {
+                Map<String, Object> single = scanner.scan(server, dumpPath);
+                if (single.containsKey("error")) {
+                    Map<String, Object> err = new HashMap<>();
+                    err.put("dumpPath", dumpPath);
+                    err.put("errorCode", single.get("errorCode"));
+                    err.put("error", single.get("error"));
+                    pathErrors.add(err);
+                    if (acc.firstFatalError == null) {
+                        acc.firstFatalError = (String) single.get("error");
+                        acc.firstFatalCode = (String) single.get("errorCode");
+                    }
+                } else {
+                    acc.successCount++;
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> pathFiles = (List<Map<String, Object>>) single.get("files");
+                    for (Map<String, Object> f : pathFiles) {
+                        String p = (String) f.get("path");
+                        if (p != null && seenPaths.add(p)) {
+                            files.add(f);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Map<String, Object> err = new HashMap<>();
+                err.put("dumpPath", dumpPath);
+                err.put("errorCode", "SCAN_EXCEPTION");
+                err.put("error", failPrefix + e.getMessage());
+                pathErrors.add(err);
+                if (acc.firstFatalError == null) {
+                    acc.firstFatalError = failPrefix + e.getMessage();
+                    acc.firstFatalCode = "SCAN_EXCEPTION";
+                }
+                logger.error(failLogFormat, server.getName(), dumpPath, e.getMessage());
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface PathScanner {
+        Map<String, Object> scan(TargetServer server, String path) throws Exception;
+    }
+
+    private static final class ScanAccumulator {
+        int successCount;
+        String firstFatalError;
+        String firstFatalCode;
+    }
+
     private Map<String, Object> scanSinglePath(TargetServer server, String dumpPath) throws Exception {
         Map<String, Object> result = new HashMap<>();
         List<Map<String, Object>> files = new ArrayList<>();

@@ -1337,6 +1337,26 @@ public class HeapDumpAnalyzerService {
     /** OQL `_Query.zip` 의 index.html 표에서 (주소 → detailMessage) 맵을 파싱. */
     private java.util.Map<Long, String> parseOomQueryZip(File zip) {
         java.util.Map<Long, String> map = new java.util.LinkedHashMap<>();
+        java.util.regex.Pattern addrP = java.util.regex.Pattern.compile("^([0-9,]+)");
+        forEachQueryZipRow(zip, "[OOM] Failed to parse OQL query zip: {}", cells -> {
+            if (cells.size() < 2) return;
+            java.util.regex.Matcher am = addrP.matcher(cells.get(0));
+            if (!am.find()) return;               // 헤더("o.@objectAddress")/푸터("Total:") 행 제외
+            String digits = am.group(1).replace(",", "");
+            if (digits.isEmpty()) return;
+            long addr;
+            try { addr = Long.parseLong(digits); }
+            catch (NumberFormatException ex) {
+                try { addr = Long.parseUnsignedLong(digits); } catch (Exception ex2) { return; }
+            }
+            map.put(addr, cells.get(1));
+        });
+        return map;
+    }
+
+    /** `_Query.zip` 의 index.html 표를 행 단위 셀 목록(태그 제거·공백 정규화)으로 순회. 실패 시 warn 후 종료. */
+    private void forEachQueryZipRow(File zip, String warnFormat,
+                                    java.util.function.Consumer<java.util.List<String>> rowConsumer) {
         try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(zip)) {
             java.util.zip.ZipEntry idx = null;
             java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
@@ -1344,7 +1364,7 @@ public class HeapDumpAnalyzerService {
                 java.util.zip.ZipEntry e = en.nextElement();
                 if (e.getName().endsWith("index.html")) { idx = e; break; }
             }
-            if (idx == null) return map;
+            if (idx == null) return;
             String html;
             try (java.io.InputStream is = zf.getInputStream(idx)) {
                 html = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
@@ -1353,29 +1373,17 @@ public class HeapDumpAnalyzerService {
                     .compile("<tr[^>]*>(.*?)</tr>", java.util.regex.Pattern.DOTALL).matcher(html);
             java.util.regex.Pattern cellP = java.util.regex.Pattern
                     .compile("<t[dh][^>]*>(.*?)</t[dh]>", java.util.regex.Pattern.DOTALL);
-            java.util.regex.Pattern addrP = java.util.regex.Pattern.compile("^([0-9,]+)");
             while (rows.find()) {
                 java.util.List<String> cells = new java.util.ArrayList<>();
                 java.util.regex.Matcher cm = cellP.matcher(rows.group(1));
                 while (cm.find()) {
                     cells.add(cm.group(1).replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim());
                 }
-                if (cells.size() < 2) continue;
-                java.util.regex.Matcher am = addrP.matcher(cells.get(0));
-                if (!am.find()) continue;             // 헤더("o.@objectAddress")/푸터("Total:") 행 제외
-                String digits = am.group(1).replace(",", "");
-                if (digits.isEmpty()) continue;
-                long addr;
-                try { addr = Long.parseLong(digits); }
-                catch (NumberFormatException ex) {
-                    try { addr = Long.parseUnsignedLong(digits); } catch (Exception ex2) { continue; }
-                }
-                map.put(addr, cells.get(1));
+                rowConsumer.accept(cells);
             }
         } catch (Exception e) {
-            logger.warn("[OOM] Failed to parse OQL query zip: {}", e.getMessage());
+            logger.warn(warnFormat, e.getMessage());
         }
-        return map;
     }
 
     /**
@@ -1467,45 +1475,21 @@ public class HeapDumpAnalyzerService {
     /** system_properties `_Query.zip` 의 index.html 2열 표를 (key → value) 맵으로 파싱. 입력 순서 보존. */
     private java.util.Map<String, String> parseSystemPropertiesZip(File zip) {
         java.util.Map<String, String> map = new java.util.LinkedHashMap<>();
-        try (java.util.zip.ZipFile zf = new java.util.zip.ZipFile(zip)) {
-            java.util.zip.ZipEntry idx = null;
-            java.util.Enumeration<? extends java.util.zip.ZipEntry> en = zf.entries();
-            while (en.hasMoreElements()) {
-                java.util.zip.ZipEntry e = en.nextElement();
-                if (e.getName().endsWith("index.html")) { idx = e; break; }
-            }
-            if (idx == null) return map;
-            String html;
-            try (java.io.InputStream is = zf.getInputStream(idx)) {
-                html = new String(is.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
-            }
-            java.util.regex.Matcher rows = java.util.regex.Pattern
-                    .compile("<tr[^>]*>(.*?)</tr>", java.util.regex.Pattern.DOTALL).matcher(html);
-            java.util.regex.Pattern cellP = java.util.regex.Pattern
-                    .compile("<t[dh][^>]*>(.*?)</t[dh]>", java.util.regex.Pattern.DOTALL);
-            while (rows.find()) {
-                java.util.List<String> cells = new java.util.ArrayList<>();
-                java.util.regex.Matcher cm = cellP.matcher(rows.group(1));
-                while (cm.find()) {
-                    cells.add(cm.group(1).replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim());
-                }
-                // MAT system_properties 출력: 3열 [Collection | Key | Value] 플랫 테이블.
-                // 헤더행: [Collection, Key, Value], 데이터행: [java.util.Properties@0x..., key, value],
-                // 푸터행: [Total: N entries, "", ""]
-                // 2열 폴백도 허용 (MAT 버전에 따라 가능).
-                String key, value;
-                if (cells.size() >= 3) { key = cells.get(1); value = cells.get(2); }
-                else if (cells.size() == 2) { key = cells.get(0); value = cells.get(1); }
-                else continue;
-                // 헤더("Key"/"Collection")·푸터("Total:")·빈 키 제외
-                if (key.isEmpty() || key.equalsIgnoreCase("Key") || key.equalsIgnoreCase("Name")
-                        || key.equalsIgnoreCase("Collection")
-                        || key.toLowerCase().startsWith("total")) continue;
-                map.put(key, value);
-            }
-        } catch (Exception e) {
-            logger.warn("[SysProp] Failed to parse system properties zip: {}", e.getMessage());
-        }
+        forEachQueryZipRow(zip, "[SysProp] Failed to parse system properties zip: {}", cells -> {
+            // MAT system_properties 출력: 3열 [Collection | Key | Value] 플랫 테이블.
+            // 헤더행: [Collection, Key, Value], 데이터행: [java.util.Properties@0x..., key, value],
+            // 푸터행: [Total: N entries, "", ""]
+            // 2열 폴백도 허용 (MAT 버전에 따라 가능).
+            String key, value;
+            if (cells.size() >= 3) { key = cells.get(1); value = cells.get(2); }
+            else if (cells.size() == 2) { key = cells.get(0); value = cells.get(1); }
+            else return;
+            // 헤더("Key"/"Collection")·푸터("Total:")·빈 키 제외
+            if (key.isEmpty() || key.equalsIgnoreCase("Key") || key.equalsIgnoreCase("Name")
+                    || key.equalsIgnoreCase("Collection")
+                    || key.toLowerCase().startsWith("total")) return;
+            map.put(key, value);
+        });
         return map;
     }
 
@@ -1742,48 +1726,10 @@ public class HeapDumpAnalyzerService {
     /** 스칼라 설정 복원 (LLM/RAG/2FA/비밀번호정책/원격 제외, 타입 안전 처리). */
     @SuppressWarnings("unchecked")
     private void restoreScalarSettings(Map<String, Object> saved) {
-        if (saved.containsKey("keepUnreachableObjects")) {
-            Object val = saved.get("keepUnreachableObjects");
-            if (val instanceof Boolean) {
-                this.keepUnreachableObjects = (Boolean) val;
-            } else {
-                // 문자열 "true"/"false" 등 비정상 타입 대응
-                this.keepUnreachableObjects = Boolean.parseBoolean(String.valueOf(val));
-                logger.warn("[Settings] keepUnreachableObjects had unexpected type '{}', parsed as {}",
-                        val.getClass().getSimpleName(), keepUnreachableObjects);
-            }
-            logger.info("[Settings] Restored keepUnreachableObjects={}", keepUnreachableObjects);
-        }
-
-        if (saved.containsKey("compressAfterAnalysis")) {
-            Object val = saved.get("compressAfterAnalysis");
-            if (val instanceof Boolean) {
-                this.compressAfterAnalysis = (Boolean) val;
-            } else {
-                this.compressAfterAnalysis = Boolean.parseBoolean(String.valueOf(val));
-            }
-            logger.info("[Settings] Restored compressAfterAnalysis={}", compressAfterAnalysis);
-        }
-
-        if (saved.containsKey("dominatorRefsEnabled")) {
-            Object val = saved.get("dominatorRefsEnabled");
-            if (val instanceof Boolean) {
-                this.dominatorRefsEnabled = (Boolean) val;
-            } else {
-                this.dominatorRefsEnabled = Boolean.parseBoolean(String.valueOf(val));
-            }
-            logger.info("[Settings] Restored dominatorRefsEnabled={}", dominatorRefsEnabled);
-        }
-
-        if (saved.containsKey("allowAllExtensions")) {
-            Object val = saved.get("allowAllExtensions");
-            if (val instanceof Boolean) {
-                this.allowAllExtensions = (Boolean) val;
-            } else {
-                this.allowAllExtensions = Boolean.parseBoolean(String.valueOf(val));
-            }
-            logger.info("[Settings] Restored allowAllExtensions={}", allowAllExtensions);
-        }
+        restoreBool(saved, "keepUnreachableObjects", v -> this.keepUnreachableObjects = v);
+        restoreBool(saved, "compressAfterAnalysis",  v -> this.compressAfterAnalysis = v);
+        restoreBool(saved, "dominatorRefsEnabled",   v -> this.dominatorRefsEnabled = v);
+        restoreBool(saved, "allowAllExtensions",     v -> this.allowAllExtensions = v);
         // FilenameValidator 정적 플래그 동기화 — 컨트롤러 입구 검증이 토글을 인식하도록.
         com.heapdump.analyzer.util.FilenameValidator.setAllowAllExtensions(this.allowAllExtensions);
 
@@ -1825,6 +1771,22 @@ public class HeapDumpAnalyzerService {
                 logger.info("[Settings] Restored dashboardDetectDays={}", d);
             }
         }
+    }
+
+    /** boolean 스칼라 복원 — Boolean 외 타입("true"/"false" 문자열 등)은 parseBoolean 폴백 + WARN. */
+    private void restoreBool(Map<String, Object> saved, String key, java.util.function.Consumer<Boolean> apply) {
+        if (!saved.containsKey(key)) return;
+        Object val = saved.get(key);
+        boolean b;
+        if (val instanceof Boolean) {
+            b = (Boolean) val;
+        } else {
+            b = Boolean.parseBoolean(String.valueOf(val));
+            logger.warn("[Settings] {} had unexpected type '{}', parsed as {}",
+                    key, val == null ? "null" : val.getClass().getSimpleName(), b);
+        }
+        apply.accept(b);
+        logger.info("[Settings] Restored {}={}", key, b);
     }
 
     private void persistSettings() {
