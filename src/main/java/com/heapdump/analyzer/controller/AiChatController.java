@@ -9,6 +9,7 @@ import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.LlmConfigService;
 import com.heapdump.analyzer.service.RagService;
+import com.heapdump.analyzer.util.SseJson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -315,11 +316,7 @@ public class AiChatController {
 
         Optional<AiChatSession> opt = sessionRepo.findById(sessionId);
         if (opt.isEmpty() || !canAccess(opt.get(), authentication)) {
-            try {
-                emitter.send(SseEmitter.event().name("error")
-                    .data("{\"errorCode\":\"NOT_FOUND\",\"error\":\"세션을 찾을 수 없습니다.\"}"));
-                emitter.complete();
-            } catch (Exception ignored) {}
+            SseJson.sendError(emitter, "NOT_FOUND", "세션을 찾을 수 없습니다.");
             return emitter;
         }
 
@@ -331,11 +328,7 @@ public class AiChatController {
             : Collections.emptyList();
 
         if (messages == null || messages.isEmpty()) {
-            try {
-                emitter.send(SseEmitter.event().name("error")
-                    .data("{\"errorCode\":\"EMPTY_MESSAGES\",\"error\":\"메시지가 비어있습니다.\"}"));
-                emitter.complete();
-            } catch (Exception ignored) {}
+            SseJson.sendError(emitter, "EMPTY_MESSAGES", "메시지가 비어있습니다.");
             return emitter;
         }
 
@@ -343,11 +336,7 @@ public class AiChatController {
         if (!attachments.isEmpty()) {
             if (!llmConfig.isLlmFileAttachEnabled()) {
                 logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_ATTACH_DISABLED, sessionId={}", sessionId);
-                try {
-                    emitter.send(SseEmitter.event().name("error")
-                        .data("{\"errorCode\":\"FILE_ATTACH_DISABLED\",\"error\":\"파일 첨부 기능이 비활성화 상태입니다. LLM 설정에서 활성화하세요.\"}"));
-                    emitter.complete();
-                } catch (Exception ignored) {}
+                SseJson.sendError(emitter, "FILE_ATTACH_DISABLED", "파일 첨부 기능이 비활성화 상태입니다. LLM 설정에서 활성화하세요.");
                 return emitter;
             }
             boolean hasImage = false;
@@ -358,33 +347,21 @@ public class AiChatController {
                 boolean isText = isTextAttachment(mediaType, attName);
                 if (!isImage && !isText) {
                     logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_TYPE_INVALID, sessionId={}, mediaType={}, name={}", sessionId, mediaType, attName);
-                    try {
-                        emitter.send(SseEmitter.event().name("error")
-                            .data("{\"errorCode\":\"FILE_TYPE_INVALID\",\"error\":\"이미지(JPEG/PNG/GIF/WEBP) 또는 텍스트/로그 파일만 첨부 가능합니다.\"}"));
-                        emitter.complete();
-                    } catch (Exception ignored) {}
+                    SseJson.sendError(emitter, "FILE_TYPE_INVALID", "이미지(JPEG/PNG/GIF/WEBP) 또는 텍스트/로그 파일만 첨부 가능합니다.");
                     return emitter;
                 }
                 if (isImage) hasImage = true;
                 Number size = (Number) att.get("size");
                 if (size != null && size.longValue() > 5L * 1024 * 1024) {
                     logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_TOO_LARGE, sessionId={}, size={}", sessionId, size.longValue());
-                    try {
-                        emitter.send(SseEmitter.event().name("error")
-                            .data("{\"errorCode\":\"FILE_TOO_LARGE\",\"error\":\"파일 크기는 5MB 이하여야 합니다.\"}"));
-                        emitter.complete();
-                    } catch (Exception ignored) {}
+                    SseJson.sendError(emitter, "FILE_TOO_LARGE", "파일 크기는 5MB 이하여야 합니다.");
                     return emitter;
                 }
             }
             // 이미지 첨부는 Vision 지원 provider 가 필요(텍스트/로그 전용은 모든 provider 에서 본문 주입으로 처리)
             if (hasImage && !llmConfig.isFileAttachCapable()) {
                 logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_ATTACH_UNSUPPORTED(image), sessionId={}, provider={}", sessionId, llmConfig.getLlmProvider());
-                try {
-                    emitter.send(SseEmitter.event().name("error")
-                        .data("{\"errorCode\":\"FILE_ATTACH_UNSUPPORTED\",\"error\":\"현재 LLM provider가 이미지 첨부(Vision)를 지원하지 않습니다. 텍스트/로그 파일은 첨부 가능합니다.\"}"));
-                    emitter.complete();
-                } catch (Exception ignored) {}
+                SseJson.sendError(emitter, "FILE_ATTACH_UNSUPPORTED", "현재 LLM provider가 이미지 첨부(Vision)를 지원하지 않습니다. 텍스트/로그 파일은 첨부 가능합니다.");
                 return emitter;
             }
             logger.info("[AI-Chat-Attach] 첨부 파일 {}개 검증 완료 — sessionId={}, provider={}, hasImage={}", attachments.size(), sessionId, llmConfig.getLlmProvider(), hasImage);
@@ -456,13 +433,7 @@ public class AiChatController {
                     chunk -> {
                         try {
                             fullText.append(chunk);
-                            String escaped = chunk.replace("\\", "\\\\")
-                                .replace("\"", "\\\"")
-                                .replace("\n", "\\n")
-                                .replace("\r", "\\r")
-                                .replace("\t", "\\t");
-                            emitter.send(SseEmitter.event().name("chunk")
-                                .data("{\"text\":\"" + escaped + "\"}"));
+                            emitter.send(SseEmitter.event().name("chunk").data(SseJson.chunk(chunk)));
                         } catch (Exception e) {
                             logger.warn("[AI-Chat-Stream] Chunk 전송 실패 — sessionId={}", sid);
                         }
@@ -516,25 +487,12 @@ public class AiChatController {
                     },
                     (errorCode, errorMsg) -> {
                         logger.warn("[AI-Chat-Stream] LLM 에러 — sessionId={}, code={}, msg={}", sid, errorCode, errorMsg);
-                        try {
-                            String escapedMsg = errorMsg.replace("\\", "\\\\")
-                                .replace("\"", "\\\"")
-                                .replace("\n", "\\n");
-                            emitter.send(SseEmitter.event().name("error")
-                                .data("{\"errorCode\":\"" + errorCode + "\",\"error\":\"" + escapedMsg + "\"}"));
-                            emitter.complete();
-                        } catch (Exception e) {
-                            logger.warn("[AI-Chat-Stream] SSE error 이벤트 전송 실패 — sessionId={}", sid);
-                        }
+                        SseJson.sendError(emitter, errorCode, errorMsg);
                     }
                 );
             } catch (Exception e) {
                 logger.error("[AI-Chat-Stream] 스트리밍 스레드 에러 — sessionId={}, error={}", sid, e.getMessage(), e);
-                try {
-                    emitter.send(SseEmitter.event().name("error")
-                        .data("{\"errorCode\":\"INTERNAL_ERROR\",\"error\":\"" + e.getMessage() + "\"}"));
-                    emitter.complete();
-                } catch (Exception ignored) {}
+                SseJson.sendError(emitter, "INTERNAL_ERROR", e.getMessage());
             }
         }, "ai-chat-session-stream-" + System.currentTimeMillis()).start();
 

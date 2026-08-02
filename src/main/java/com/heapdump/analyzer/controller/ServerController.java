@@ -136,9 +136,7 @@ public class ServerController {
         } catch (Exception e) {
             logger.warn("[Server] action=create FAILED name='{}' host='{}' by={} error={}",
                     body.get("name"), body.get("host"), who(auth), e.getMessage());
-            result.put("success", false);
-            result.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(result);
+            return fail(e);
         }
     }
 
@@ -176,9 +174,7 @@ public class ServerController {
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             logger.warn("[Server] action=update FAILED id={} by={} error={}", id, who(auth), e.getMessage());
-            result.put("success", false);
-            result.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(result);
+            return fail(e);
         }
     }
 
@@ -198,9 +194,7 @@ public class ServerController {
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             logger.warn("[Server] action=delete FAILED id={} by={} error={}", id, who(auth), e.getMessage());
-            result.put("success", false);
-            result.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(result);
+            return fail(e);
         }
     }
 
@@ -239,9 +233,7 @@ public class ServerController {
             }
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            result.put("success", false);
-            result.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(result);
+            return fail(e);
         }
     }
 
@@ -262,9 +254,7 @@ public class ServerController {
             if (log.getErrorMessage() != null) result.put("message", log.getErrorMessage());
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            result.put("success", false);
-            result.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(result);
+            return fail(e);
         }
     }
 
@@ -652,32 +642,52 @@ public class ServerController {
         public String errorMessage;
     }
 
+    // ── 공통 헬퍼 ─────────────────────────────────────────
+
+    /** catch(Exception) 공통 실패 응답 — {success:false, message} + 400. */
+    private static ResponseEntity<Map<String, Object>> fail(Exception e) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", false);
+        result.put("message", e.getMessage());
+        return ResponseEntity.badRequest().body(result);
+    }
+
+    /** 단일 키 설정 조회 응답 — {key: value}. */
+    private static ResponseEntity<Map<String, Object>> settingResponse(String key, Object value) {
+        Map<String, Object> result = new HashMap<>();
+        result.put(key, value);
+        return ResponseEntity.ok(result);
+    }
+
+    /** 단일 키 설정 변경 — apply 후 persistRuntimeSettings, {success:true, key: readBack}. */
+    private ResponseEntity<Map<String, Object>> applySetting(String key, Runnable apply,
+                                                             java.util.function.Supplier<Object> readBack) {
+        try {
+            apply.run();
+            analyzerService.persistRuntimeSettings();
+            Map<String, Object> result = new HashMap<>();
+            result.put("success", true);
+            result.put(key, readBack.get());
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            return fail(e);
+        }
+    }
+
     // ── Scan interval ────────────────────────────────────
 
     @GetMapping("/api/servers/scan-interval")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getScanInterval() {
-        Map<String, Object> result = new HashMap<>();
-        result.put("intervalSec", remoteDumpService.getScanIntervalSec());
-        return ResponseEntity.ok(result);
+        return settingResponse("intervalSec", remoteDumpService.getScanIntervalSec());
     }
 
     @PostMapping("/api/servers/scan-interval")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setScanInterval(@RequestBody Map<String, Object> body) {
-        Map<String, Object> result = new HashMap<>();
-        try {
-            int sec = ((Number) body.get("intervalSec")).intValue();
-            remoteDumpService.setScanIntervalSec(sec);
-            analyzerService.persistRuntimeSettings();
-            result.put("success", true);
-            result.put("intervalSec", remoteDumpService.getScanIntervalSec());
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            result.put("success", false);
-            result.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(result);
-        }
+        return applySetting("intervalSec",
+                () -> remoteDumpService.setScanIntervalSec(((Number) body.get("intervalSec")).intValue()),
+                remoteDumpService::getScanIntervalSec);
     }
 
     // ── SCP temp dir ─────────────────────────────────────
@@ -685,27 +695,15 @@ public class ServerController {
     @GetMapping("/api/servers/scp-temp-dir")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getScpTempDir() {
-        Map<String, Object> result = new HashMap<>();
-        result.put("tempDir", remoteDumpService.getScpTempDir());
-        return ResponseEntity.ok(result);
+        return settingResponse("tempDir", remoteDumpService.getScpTempDir());
     }
 
     @PostMapping("/api/servers/scp-temp-dir")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setScpTempDir(@RequestBody Map<String, String> body) {
-        Map<String, Object> result = new HashMap<>();
-        try {
-            String dir = body.getOrDefault("tempDir", "/tmp");
-            remoteDumpService.setScpTempDir(dir);
-            analyzerService.persistRuntimeSettings();
-            result.put("success", true);
-            result.put("tempDir", remoteDumpService.getScpTempDir());
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            result.put("success", false);
-            result.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(result);
-        }
+        return applySetting("tempDir",
+                () -> remoteDumpService.setScpTempDir(body.getOrDefault("tempDir", "/tmp")),
+                remoteDumpService::getScpTempDir);
     }
 
     // ── SSH local user ────────────────────────────────────
@@ -713,27 +711,15 @@ public class ServerController {
     @GetMapping("/api/servers/ssh-local-user")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getSshLocalUser() {
-        Map<String, Object> result = new HashMap<>();
-        result.put("localUser", remoteDumpService.getSshLocalUser());
-        return ResponseEntity.ok(result);
+        return settingResponse("localUser", remoteDumpService.getSshLocalUser());
     }
 
     @PostMapping("/api/servers/ssh-local-user")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setSshLocalUser(@RequestBody Map<String, String> body) {
-        Map<String, Object> result = new HashMap<>();
-        try {
-            String user = body.getOrDefault("localUser", "");
-            remoteDumpService.setSshLocalUser(user);
-            analyzerService.persistRuntimeSettings();
-            result.put("success", true);
-            result.put("localUser", remoteDumpService.getSshLocalUser());
-            return ResponseEntity.ok(result);
-        } catch (Exception e) {
-            result.put("success", false);
-            result.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(result);
-        }
+        return applySetting("localUser",
+                () -> remoteDumpService.setSshLocalUser(body.getOrDefault("localUser", "")),
+                remoteDumpService::getSshLocalUser);
     }
 
     // ── Local public key ─────────────────────────────────

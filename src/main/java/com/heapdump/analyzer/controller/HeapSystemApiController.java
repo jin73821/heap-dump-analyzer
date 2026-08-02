@@ -72,55 +72,64 @@ public class HeapSystemApiController {
         this.passwordPolicyConfig = passwordPolicyConfig;
     }
 
+    // ── 공통 헬퍼 ─────────────────────────────────────────
+
+    /** boolean 토글 응답 — {key: enabled, message}. 응답 키는 엔드포인트별 고유(프런트 참조 유지). */
+    private static ResponseEntity<Map<String, Object>> toggleResponse(String key, boolean enabled, String message) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put(key, enabled);
+        resp.put("message", message);
+        return ResponseEntity.ok(resp);
+    }
+
+    /** 숫자 설정 적용 — IllegalArgumentException 시 {success:false,message}+400, 성공 시 onSuccess 가 응답 키 채움. */
+    private static ResponseEntity<Map<String, Object>> applyValidatedSetting(
+            Runnable apply, java.util.function.Consumer<Map<String, Object>> onSuccess) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        try {
+            apply.run();
+        } catch (IllegalArgumentException e) {
+            resp.put("success", false);
+            resp.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(resp);
+        }
+        resp.put("success", true);
+        onSuccess.accept(resp);
+        return ResponseEntity.ok(resp);
+    }
+
     @PostMapping("/api/settings/unreachable")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setUnreachable(@RequestParam boolean enabled) {
         analyzerService.setKeepUnreachableObjects(enabled);
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("keepUnreachableObjects", enabled);
-        resp.put("message", "Setting updated. Takes effect on next analysis.");
-        return ResponseEntity.ok(resp);
+        return toggleResponse("keepUnreachableObjects", enabled, "Setting updated. Takes effect on next analysis.");
     }
 
     @PostMapping("/api/settings/compress")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setCompressAfterAnalysis(@RequestParam boolean enabled) {
         analyzerService.setCompressAfterAnalysis(enabled);
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("compressAfterAnalysis", enabled);
-        resp.put("message", "Setting updated. Takes effect on next analysis.");
-        return ResponseEntity.ok(resp);
+        return toggleResponse("compressAfterAnalysis", enabled, "Setting updated. Takes effect on next analysis.");
     }
 
     @PostMapping("/api/settings/allow-all-extensions")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setAllowAllExtensions(@RequestParam boolean enabled) {
         analyzerService.setAllowAllExtensions(enabled);
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("allowAllExtensions", enabled);
-        resp.put("message", "확장자 제한 해제 = " + enabled + ". 다음 업로드부터 즉시 반영됩니다.");
-        return ResponseEntity.ok(resp);
+        return toggleResponse("allowAllExtensions", enabled, "확장자 제한 해제 = " + enabled + ". 다음 업로드부터 즉시 반영됩니다.");
     }
 
     @PostMapping("/api/settings/max-upload-size")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setMaxUploadSize(@RequestParam long bytes) {
-        Map<String, Object> resp = new LinkedHashMap<>();
-        try {
-            analyzerService.setMaxUploadSizeBytes(bytes);
-        } catch (IllegalArgumentException e) {
-            resp.put("success", false);
-            resp.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(resp);
-        }
         long gb = bytes / (1024L * 1024 * 1024);
-        resp.put("success", true);
-        resp.put("maxUploadSizeBytes", bytes);
-        resp.put("maxUploadSizeFormatted", FormatUtils.formatBytes(bytes));
-        resp.put("requireRestart", true);
-        resp.put("message", "최대 업로드 크기가 " + gb + " GB 로 변경되었습니다. Tomcat 멀티파트 한도는 앱 재시작 후 적용됩니다.");
-        logger.info("[Settings] Max upload size changed to {} bytes ({} GB)", bytes, gb);
-        return ResponseEntity.ok(resp);
+        return applyValidatedSetting(() -> analyzerService.setMaxUploadSizeBytes(bytes), resp -> {
+            resp.put("maxUploadSizeBytes", bytes);
+            resp.put("maxUploadSizeFormatted", FormatUtils.formatBytes(bytes));
+            resp.put("requireRestart", true);
+            resp.put("message", "최대 업로드 크기가 " + gb + " GB 로 변경되었습니다. Tomcat 멀티파트 한도는 앱 재시작 후 적용됩니다.");
+            logger.info("[Settings] Max upload size changed to {} bytes ({} GB)", bytes, gb);
+        });
     }
 
     /**
@@ -508,39 +517,25 @@ public class HeapSystemApiController {
     @PostMapping("/api/settings/session-timeout")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setSessionTimeout(@RequestParam int hours) {
-        Map<String, Object> resp = new LinkedHashMap<>();
-        try {
+        return applyValidatedSetting(() -> {
             analyzerService.setSessionTimeoutHours(hours);
             // 런타임 즉시 반영: 이후 생성되는 신규 세션에 적용
             jdbcSessionRepo.setDefaultMaxInactiveInterval(Duration.ofHours(hours));
-        } catch (IllegalArgumentException e) {
-            resp.put("success", false);
-            resp.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(resp);
-        }
-        resp.put("success", true);
-        resp.put("sessionTimeoutHours", hours);
-        resp.put("message", "세션 타임아웃이 " + hours + "시간으로 변경되었습니다. 기존 세션에는 다음 갱신 시 적용됩니다.");
-        logger.info("[Settings] Session timeout changed to {}h", hours);
-        return ResponseEntity.ok(resp);
+        }, resp -> {
+            resp.put("sessionTimeoutHours", hours);
+            resp.put("message", "세션 타임아웃이 " + hours + "시간으로 변경되었습니다. 기존 세션에는 다음 갱신 시 적용됩니다.");
+            logger.info("[Settings] Session timeout changed to {}h", hours);
+        });
     }
 
     @PostMapping("/api/settings/dashboard-detect-days")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setDashboardDetectDays(@RequestParam int days) {
-        Map<String, Object> resp = new LinkedHashMap<>();
-        try {
-            analyzerService.setDashboardDetectDays(days);
-        } catch (IllegalArgumentException e) {
-            resp.put("success", false);
-            resp.put("message", e.getMessage());
-            return ResponseEntity.badRequest().body(resp);
-        }
-        resp.put("success", true);
-        resp.put("dashboardDetectDays", days);
-        resp.put("message", "대시보드 탐지 기간이 " + days + "일로 변경되었습니다.");
-        logger.info("[Settings] Dashboard detect days changed to {}", days);
-        return ResponseEntity.ok(resp);
+        return applyValidatedSetting(() -> analyzerService.setDashboardDetectDays(days), resp -> {
+            resp.put("dashboardDetectDays", days);
+            resp.put("message", "대시보드 탐지 기간이 " + days + "일로 변경되었습니다.");
+            logger.info("[Settings] Dashboard detect days changed to {}", days);
+        });
     }
 
     @GetMapping("/api/settings")

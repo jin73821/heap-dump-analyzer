@@ -8,6 +8,7 @@ import com.heapdump.analyzer.service.LlmConfigService;
 import com.heapdump.analyzer.service.RagConfigService;
 import com.heapdump.analyzer.service.RagService;
 import com.heapdump.analyzer.util.FilenameValidator;
+import com.heapdump.analyzer.util.SseJson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -497,11 +498,7 @@ public class HeapAiApiController {
         SseEmitter emitter = new SseEmitter(config.getSseEmitterTimeoutMinutes() * 60L * 1000);
 
         if (messages == null || messages.isEmpty()) {
-            try {
-                emitter.send(SseEmitter.event().name("error")
-                    .data("{\"errorCode\":\"EMPTY_MESSAGES\",\"error\":\"메시지가 비어있습니다.\"}"));
-                emitter.complete();
-            } catch (Exception ignored) {}
+            SseJson.sendError(emitter, "EMPTY_MESSAGES", "메시지가 비어있습니다.");
             return emitter;
         }
 
@@ -534,13 +531,7 @@ public class HeapAiApiController {
                 llmConfig.callLlmChatStream(messages, finalSystemPrompt,
                     chunk -> {
                         try {
-                            String escaped = chunk.replace("\\", "\\\\")
-                                .replace("\"", "\\\"")
-                                .replace("\n", "\\n")
-                                .replace("\r", "\\r")
-                                .replace("\t", "\\t");
-                            emitter.send(SseEmitter.event().name("chunk")
-                                .data("{\"text\":\"" + escaped + "\"}"));
+                            emitter.send(SseEmitter.event().name("chunk").data(SseJson.chunk(chunk)));
                         } catch (Exception e) {
                             // 클라이언트 disconnect
                         }
@@ -552,23 +543,10 @@ public class HeapAiApiController {
                             emitter.complete();
                         } catch (Exception ignored) {}
                     },
-                    (errorCode, errorMsg) -> {
-                        try {
-                            String escapedMsg = errorMsg.replace("\\", "\\\\")
-                                .replace("\"", "\\\"")
-                                .replace("\n", "\\n");
-                            emitter.send(SseEmitter.event().name("error")
-                                .data("{\"errorCode\":\"" + errorCode + "\",\"error\":\"" + escapedMsg + "\"}"));
-                            emitter.complete();
-                        } catch (Exception ignored) {}
-                    }
+                    (errorCode, errorMsg) -> SseJson.sendError(emitter, errorCode, errorMsg)
                 );
             } catch (Exception e) {
-                try {
-                    emitter.send(SseEmitter.event().name("error")
-                        .data("{\"errorCode\":\"INTERNAL_ERROR\",\"error\":\"" + e.getMessage() + "\"}"));
-                    emitter.complete();
-                } catch (Exception ignored) {}
+                SseJson.sendError(emitter, "INTERNAL_ERROR", e.getMessage());
             }
         }, "ai-chat-stream-" + System.currentTimeMillis()).start();
 
