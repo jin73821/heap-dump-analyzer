@@ -13,6 +13,7 @@ import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.service.ComparisonHistoryService;
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.service.LlmConfigService;
 import com.heapdump.analyzer.service.HeapHistoryAggregator;
 import com.heapdump.analyzer.service.PdfReportService;
 import com.heapdump.analyzer.util.AuthUtil;
@@ -45,6 +46,7 @@ public class HeapDumpViewController {
     private static final Logger logger = LoggerFactory.getLogger(HeapDumpViewController.class);
 
     private final HeapDumpAnalyzerService analyzerService;
+    private final LlmConfigService llmConfig;
     private final HeapDumpConfig config;
     private final PdfReportService pdfReportService;
     private final HeapHistoryAggregator aggregator;
@@ -52,12 +54,14 @@ public class HeapDumpViewController {
     private final CoreDumpAnalyzerService coreDumpService;
 
     public HeapDumpViewController(HeapDumpAnalyzerService analyzerService,
+                                  LlmConfigService llmConfig,
                                   HeapDumpConfig config,
                                   PdfReportService pdfReportService,
                                   HeapHistoryAggregator aggregator,
                                   ComparisonHistoryService comparisonHistoryService,
                                   CoreDumpAnalyzerService coreDumpService) {
         this.analyzerService = analyzerService;
+        this.llmConfig = llmConfig;
         this.config = config;
         this.pdfReportService = pdfReportService;
         this.aggregator = aggregator;
@@ -734,7 +738,7 @@ public class HeapDumpViewController {
                 && !result.getDominatorTreeEntries().isEmpty();
         model.addAttribute("hasDominatorTree", hasDominatorTree);
 
-        model.addAttribute("llmChatRestoreIncludeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
+        model.addAttribute("llmChatRestoreIncludeHistory", llmConfig.isLlmChatRestoreIncludeHistory());
 
         return "analyze";
     }

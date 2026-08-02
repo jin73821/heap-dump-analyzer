@@ -1971,17 +1971,8 @@ public class HeapDumpAnalyzerService {
     public boolean isMatCliReady()                 { return config.isMatCliReady(); }
     public String  getMatCliStatusMessage()        { return config.getMatCliStatusMessage(); }
 
-    // ── LLM 설정 getter/setter — LlmConfigService 위임 ─────────────
-    public boolean isLlmEnabled()              { return llmConfig.isLlmEnabled(); }
-    public String  getLlmProvider()             { return llmConfig.getLlmProvider(); }
-    public String  getLlmApiUrl()               { return llmConfig.getLlmApiUrl(); }
-    public String  getLlmModel()                { return llmConfig.getLlmModel(); }
-    public String  getLlmApiKey()               { return llmConfig.getLlmApiKey(); }
-    public int     getLlmMaxInputTokens()       { return llmConfig.getLlmMaxInputTokens(); }
-    public int     getLlmMaxOutputTokens()      { return llmConfig.getLlmMaxOutputTokens(); }
-    public int     getLlmTimeoutConnectSeconds() { return llmConfig.getLlmTimeoutConnectSeconds(); }
-    public int     getLlmTimeoutReadSeconds()    { return llmConfig.getLlmTimeoutReadSeconds(); }
-
+    // ── LLM 설정 setter — LlmConfigService 위임 + persistSettings 부수효과.
+    //    getter 는 2026-08-02 제거: 소비처가 LlmConfigService/RagConfigService 직접 주입.
     public void setLlmEnabled(boolean enabled) {
         llmConfig.setLlmEnabled(enabled);
         persistSettings();
@@ -1998,78 +1989,23 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
-    public String getLlmApiKeyMasked() { return llmConfig.getLlmApiKeyMasked(); }
-    public boolean isLlmApiKeySet()    { return llmConfig.isLlmApiKeySet(); }
-
-    public String getLlmChatSystemPrompt() { return llmConfig.getLlmChatSystemPrompt(); }
-
     public void setLlmChatSystemPrompt(String prompt) {
         llmConfig.setLlmChatSystemPrompt(prompt);
         persistSettings();
     }
-
-    public boolean isLlmChatRestoreIncludeHistory() { return llmConfig.isLlmChatRestoreIncludeHistory(); }
 
     public void setLlmChatRestoreIncludeHistory(boolean v) {
         llmConfig.setLlmChatRestoreIncludeHistory(v);
         persistSettings();
     }
 
-    public boolean isLlmSslVerify() { return llmConfig.isLlmSslVerify(); }
-
     public void setLlmSslVerify(boolean sslVerify) {
         llmConfig.setLlmSslVerify(sslVerify);
         persistSettings();
     }
 
-    // ── RAG 설정 facade — RagConfigService 위임 (Phase 7-3) ────────
-    public boolean isRagEnabled()           { return ragConfig.isRagEnabled(); }
-    public String  getRagElasticsearchUrl() { return ragConfig.getRagElasticsearchUrl(); }
-    public String  getRagAuthType()         { return ragConfig.getRagAuthType(); }
-    public String  getRagUsername()         { return ragConfig.getRagUsername(); }
-    public String  getRagPassword()         { return ragConfig.getRagPassword(); }
-    public String  getRagApiKey()           { return ragConfig.getRagApiKey(); }
-    public String  getRagIndex()            { return ragConfig.getRagIndex(); }
-    public boolean isRagSslVerify()         { return ragConfig.isRagSslVerify(); }
-    public String  getRagSearchMode()       { return ragConfig.getRagSearchMode(); }
-    public String  getRagTextField()        { return ragConfig.getRagTextField(); }
-    public int     getRagTopK()             { return ragConfig.getRagTopK(); }
-    public double  getRagMinScore()         { return ragConfig.getRagMinScore(); }
-    public int     getRagTimeoutSeconds()   { return ragConfig.getRagTimeoutSeconds(); }
-    public boolean isRagChunkingEnabled()         { return ragConfig.isRagChunkingEnabled(); }
-    public String  getRagChunkingStrategy()       { return ragConfig.getRagChunkingStrategy(); }
-    public int     getRagChunkingSize()           { return ragConfig.getRagChunkingSize(); }
-    public int     getRagChunkingOverlap()        { return ragConfig.getRagChunkingOverlap(); }
-    public int     getRagChunkingMaxChunksPerDoc(){ return ragConfig.getRagChunkingMaxChunksPerDoc(); }
-    public int     getRagChunkingMaxTotalChars()  { return ragConfig.getRagChunkingMaxTotalChars(); }
-    public String  getRagSemanticQueryType()    { return ragConfig.getRagSemanticQueryType(); }
-    public String  getRagSemanticModelId()      { return ragConfig.getRagSemanticModelId(); }
-    public String  getRagSemanticTokensField()  { return ragConfig.getRagSemanticTokensField(); }
-    public String  getRagSemanticField()        { return ragConfig.getRagSemanticField(); }
-    public String  getRagEmbeddingProvider()    { return ragConfig.getRagEmbeddingProvider(); }
-    public String  getRagEmbeddingApiUrl()      { return ragConfig.getRagEmbeddingApiUrl(); }
-    public String  getRagEmbeddingApiKey()      { return ragConfig.getRagEmbeddingApiKey(); }
-    public String  getRagEmbeddingModel()       { return ragConfig.getRagEmbeddingModel(); }
-    public int     getRagEmbeddingDimension()   { return ragConfig.getRagEmbeddingDimension(); }
-    public int     getRagEmbeddingTimeoutSeconds() { return ragConfig.getRagEmbeddingTimeoutSeconds(); }
-    public String  getRagKnnVectorField()       { return ragConfig.getRagKnnVectorField(); }
-    public int     getRagKnnNumCandidates()     { return ragConfig.getRagKnnNumCandidates(); }
-
-    public boolean isRagPasswordSet()         { return ragConfig.isRagPasswordSet(); }
-    public boolean isRagApiKeySet()           { return ragConfig.isRagApiKeySet(); }
-    public boolean isRagEmbeddingApiKeySet()  { return ragConfig.isRagEmbeddingApiKeySet(); }
-    public String  getRagEmbeddingApiKeyMasked() { return ragConfig.getRagEmbeddingApiKeyMasked(); }
-    public String  getRagPasswordMasked()      { return ragConfig.getRagPasswordMasked(); }
-    public String  getRagApiKeyMasked()        { return ragConfig.getRagApiKeyMasked(); }
-
-    // 시크릿 손상 상태 — 저장은 돼 있으나 복호화 결과가 훼손돼 사용할 수 없는 경우
-    public boolean isRagPasswordHealthy()        { return ragConfig.isRagPasswordHealthy(); }
-    public boolean isRagApiKeyHealthy()          { return ragConfig.isRagApiKeyHealthy(); }
-    public boolean isRagEmbeddingApiKeyHealthy() { return ragConfig.isRagEmbeddingApiKeyHealthy(); }
-    public String  getRagPasswordIssue()         { return ragConfig.getRagPasswordIssue(); }
-    public String  getRagApiKeyIssue()           { return ragConfig.getRagApiKeyIssue(); }
-    public String  getRagEmbeddingApiKeyIssue()  { return ragConfig.getRagEmbeddingApiKeyIssue(); }
-
+    // ── RAG 설정 setter — RagConfigService 위임 + persistSettings 부수효과.
+    //    getter 는 2026-08-02 제거: 소비처가 RagConfigService 직접 주입.
     public void setRagEnabled(boolean enabled) {
         ragConfig.setRagEnabled(enabled);
         persistSettings();
@@ -2101,64 +2037,10 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
-    // ── AI Insight facade — AiInsightManager 위임 (Phase 7-5) ────
-
-    public void saveAiInsight(String filename, Map<String, Object> insightData) {
-        aiInsight.saveAiInsight(filename, insightData);
-    }
-
-    public Map<String, Object> loadAiInsight(String filename) {
-        return aiInsight.loadAiInsight(filename);
-    }
-
-    public boolean deleteAiInsight(String filename) {
-        return aiInsight.deleteAiInsight(filename);
-    }
-
-    // ── LLM 호출 facade — LlmConfigService 위임 (Phase 7-2) ───────
-
-    public String getDefaultApiUrl(String provider) {
-        return llmConfig.getDefaultApiUrl(provider);
-    }
-
-    /** @deprecated LlmConfigService.GENSPARK_MODELS 직접 참조 권장 */
-    public static final List<String> GENSPARK_MODELS = LlmConfigService.GENSPARK_MODELS;
-
-    public Map<String, Object> testLlmConnection() {
-        return llmConfig.testLlmConnection();
-    }
-
-    public Map<String, Object> callLlmAnalysis(String prompt) {
-        return llmConfig.callLlmAnalysis(prompt);
-    }
-
-    public Map<String, Object> callLlmChat(List<Map<String, String>> messages, String systemPrompt) {
-        return llmConfig.callLlmChat(messages, systemPrompt);
-    }
-
-    public void callLlmChatStream(List<Map<String, String>> messages, String systemPrompt,
-                                   java.util.function.Consumer<String> onChunk,
-                                   java.util.function.BiConsumer<String, Long> onDone,
-                                   java.util.function.BiConsumer<String, String> onError) {
-        llmConfig.callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError);
-    }
-
-    public void callLlmChatStream(List<Map<String, String>> messages, String systemPrompt,
-                                   List<Map<String, Object>> attachments,
-                                   java.util.function.Consumer<String> onChunk,
-                                   java.util.function.BiConsumer<String, Long> onDone,
-                                   java.util.function.BiConsumer<String, String> onError) {
-        llmConfig.callLlmChatStream(messages, systemPrompt, attachments, onChunk, onDone, onError);
-    }
-
-    public boolean isLlmFileAttachEnabled() { return llmConfig.isLlmFileAttachEnabled(); }
-
     public void setLlmFileAttachEnabled(boolean v) {
         llmConfig.setLlmFileAttachEnabled(v);
         persistSettings();
     }
-
-    public boolean isFileAttachCapable() { return llmConfig.isFileAttachCapable(); }
 
     /**
      * LLM 호출 시 prompt 에 합칠 OOM 컨텍스트 블록을 반환.

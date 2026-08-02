@@ -42,6 +42,8 @@ public class CoreDumpAnalyzerService {
     private final CoreDumpAnalysisRepository repository;
     private final ObjectMapper objectMapper;
     private final HeapDumpAnalyzerService heapFacade;
+    private final LlmConfigService llmConfig;
+    private final AiInsightManager aiInsight;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(4, r -> {
         Thread t = new Thread(r, "coredump-analyzer");
@@ -54,12 +56,16 @@ public class CoreDumpAnalyzerService {
     public CoreDumpAnalyzerService(HeapDumpConfig config,
                                    CoreDumpAnalysisRepository repository,
                                    ObjectMapper objectMapper,
-                                   HeapDumpAnalyzerService heapFacade) {
+                                   HeapDumpAnalyzerService heapFacade,
+                                   LlmConfigService llmConfig,
+                                   AiInsightManager aiInsight) {
         this.config = config;
         this.repository = repository;
         this.objectMapper = objectMapper.copy()
                 .enable(SerializationFeature.INDENT_OUTPUT);
         this.heapFacade = heapFacade;
+        this.llmConfig = llmConfig;
+        this.aiInsight = aiInsight;
     }
 
     @PreDestroy
@@ -1545,23 +1551,23 @@ public class CoreDumpAnalyzerService {
     }
 
     public boolean isLlmEnabled() {
-        return heapFacade.isLlmEnabled();
+        return llmConfig.isLlmEnabled();
     }
 
     public String getLlmProvider() {
-        return heapFacade.getLlmProvider();
+        return llmConfig.getLlmProvider();
     }
 
     public void saveAiInsight(String key, Map<String, Object> insightData) {
-        heapFacade.saveAiInsight(key, insightData);
+        aiInsight.saveAiInsight(key, insightData);
     }
 
     public Map<String, Object> loadAiInsight(String key) {
-        return heapFacade.loadAiInsight(key);
+        return aiInsight.loadAiInsight(key);
     }
 
     public boolean deleteAiInsight(String key) {
-        return heapFacade.deleteAiInsight(key);
+        return aiInsight.deleteAiInsight(key);
     }
 
     /**
@@ -1579,7 +1585,7 @@ public class CoreDumpAnalyzerService {
             return err;
         }
         String prompt = buildCrashPrompt(opt.get());
-        return heapFacade.callLlmAnalysis(prompt);
+        return llmConfig.callLlmAnalysis(prompt);
     }
 
     /** CoreDumpAnalysisResult → LLM 프롬프트(순수 JSON 응답 지시 포함). */

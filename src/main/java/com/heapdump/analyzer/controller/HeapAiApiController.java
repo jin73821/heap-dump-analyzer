@@ -1,8 +1,11 @@
 package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.config.HeapDumpConfig;
+import com.heapdump.analyzer.service.AiInsightManager;
 import com.heapdump.analyzer.service.EmbeddingService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.service.LlmConfigService;
+import com.heapdump.analyzer.service.RagConfigService;
 import com.heapdump.analyzer.service.RagService;
 import com.heapdump.analyzer.util.FilenameValidator;
 import org.slf4j.Logger;
@@ -36,15 +39,24 @@ public class HeapAiApiController {
     private static final Logger logger = LoggerFactory.getLogger(HeapAiApiController.class);
 
     private final HeapDumpAnalyzerService analyzerService;
+    private final LlmConfigService llmConfig;
+    private final RagConfigService ragConfig;
+    private final AiInsightManager aiInsight;
     private final HeapDumpConfig config;
     private final RagService ragService;
     private final EmbeddingService embeddingService;
 
     public HeapAiApiController(HeapDumpAnalyzerService analyzerService,
+                               LlmConfigService llmConfig,
+                               RagConfigService ragConfig,
+                               AiInsightManager aiInsight,
                                HeapDumpConfig config,
                                RagService ragService,
                                EmbeddingService embeddingService) {
         this.analyzerService = analyzerService;
+        this.llmConfig = llmConfig;
+        this.ragConfig = ragConfig;
+        this.aiInsight = aiInsight;
         this.config = config;
         this.ragService = ragService;
         this.embeddingService = embeddingService;
@@ -65,20 +77,20 @@ public class HeapAiApiController {
     @PostMapping("/api/llm/config")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setLlmConfig(@RequestBody Map<String, Object> body) {
-        String provider = (String) body.getOrDefault("provider", analyzerService.getLlmProvider());
+        String provider = (String) body.getOrDefault("provider", llmConfig.getLlmProvider());
         String apiUrl = (String) body.get("apiUrl");
         String model = (String) body.get("model");
         int maxIn = body.containsKey("maxInputTokens")
                 ? Integer.parseInt(String.valueOf(body.get("maxInputTokens")))
-                : analyzerService.getLlmMaxInputTokens();
+                : llmConfig.getLlmMaxInputTokens();
         int maxOut = body.containsKey("maxOutputTokens")
                 ? Integer.parseInt(String.valueOf(body.get("maxOutputTokens")))
-                : analyzerService.getLlmMaxOutputTokens();
+                : llmConfig.getLlmMaxOutputTokens();
 
         if (apiUrl == null || apiUrl.isEmpty()) {
-            apiUrl = analyzerService.getDefaultApiUrl(provider);
+            apiUrl = llmConfig.getDefaultApiUrl(provider);
         }
-        if (model == null) model = analyzerService.getLlmModel();
+        if (model == null) model = llmConfig.getLlmModel();
 
         analyzerService.setLlmConfig(provider, apiUrl, model, maxIn, maxOut);
 
@@ -92,9 +104,9 @@ public class HeapAiApiController {
         resp.put("provider", provider);
         resp.put("apiUrl", apiUrl);
         resp.put("model", model);
-        resp.put("sslVerify", analyzerService.isLlmSslVerify());
-        resp.put("fileAttachEnabled", analyzerService.isLlmFileAttachEnabled());
-        resp.put("fileAttachCapable", analyzerService.isFileAttachCapable());
+        resp.put("sslVerify", llmConfig.isLlmSslVerify());
+        resp.put("fileAttachEnabled", llmConfig.isLlmFileAttachEnabled());
+        resp.put("fileAttachCapable", llmConfig.isFileAttachCapable());
         return ResponseEntity.ok(resp);
     }
 
@@ -106,15 +118,15 @@ public class HeapAiApiController {
         analyzerService.setLlmApiKey(key.trim());
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("success", true);
-        resp.put("apiKeySet", analyzerService.isLlmApiKeySet());
-        resp.put("apiKeyMasked", analyzerService.getLlmApiKeyMasked());
+        resp.put("apiKeySet", llmConfig.isLlmApiKeySet());
+        resp.put("apiKeyMasked", llmConfig.getLlmApiKeyMasked());
         return ResponseEntity.ok(resp);
     }
 
     @PostMapping("/api/llm/test-connection")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> testLlmConnection() {
-        Map<String, Object> result = analyzerService.testLlmConnection();
+        Map<String, Object> result = llmConfig.testLlmConnection();
         return ResponseEntity.ok(result);
     }
 
@@ -152,10 +164,10 @@ public class HeapAiApiController {
         }
 
         logger.info("[AI-Insight][REQ] 분석 요청 수신 — file='{}', promptLen={} chars, save={}, provider={}",
-            filename, prompt.length(), save, analyzerService.getLlmProvider());
+            filename, prompt.length(), save, llmConfig.getLlmProvider());
 
         long reqStart = System.currentTimeMillis();
-        Map<String, Object> result = analyzerService.callLlmAnalysis(prompt);
+        Map<String, Object> result = llmConfig.callLlmAnalysis(prompt);
         long totalElapsed = System.currentTimeMillis() - reqStart;
 
         boolean success = Boolean.TRUE.equals(result.get("success"));
@@ -185,7 +197,7 @@ public class HeapAiApiController {
                 toStore.putAll(dataMap);
             }
             try {
-                analyzerService.saveAiInsight(filename, toStore);
+                aiInsight.saveAiInsight(filename, toStore);
                 result.put("saved", true);
                 result.put("savedTo", "database");
                 // saveAiInsight 가 toStore 에 스탬프한 분석 시각을 응답에 실어 신규 완료 즉시 표시
@@ -234,7 +246,7 @@ public class HeapAiApiController {
             filename, insightData.get("severity"), insightData.get("model"));
 
         try {
-            analyzerService.saveAiInsight(filename, insightData);
+            aiInsight.saveAiInsight(filename, insightData);
             logger.info("[AI-Insight][SAVE-RETRY] 수동 저장 성공 — file='{}'", filename);
             resp.put("success", true);
             resp.put("savedTo", "database");
@@ -253,7 +265,7 @@ public class HeapAiApiController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getAiInsight(@PathVariable String filename) {
         logger.debug("[AI-Insight][LOAD] 저장된 인사이트 조회 시작 — file='{}'", filename);
-        Map<String, Object> insight = analyzerService.loadAiInsight(filename);
+        Map<String, Object> insight = aiInsight.loadAiInsight(filename);
         if (insight == null) {
             logger.debug("[AI-Insight][LOAD] 저장된 인사이트 없음 — file='{}'", filename);
             Map<String, Object> notFound = new LinkedHashMap<>();
@@ -271,7 +283,7 @@ public class HeapAiApiController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> deleteAiInsight(@PathVariable String filename) {
         logger.info("[AI-Insight][DELETE] 인사이트 삭제 요청 — file='{}'", filename);
-        boolean deleted = analyzerService.deleteAiInsight(filename);
+        boolean deleted = aiInsight.deleteAiInsight(filename);
         if (deleted) {
             logger.info("[AI-Insight][DELETE] 삭제 완료 — file='{}'", filename);
         } else {
@@ -323,7 +335,7 @@ public class HeapAiApiController {
             base, target, key, prompt.length(), save);
 
         long reqStart = System.currentTimeMillis();
-        Map<String, Object> result = analyzerService.callLlmAnalysis(prompt);
+        Map<String, Object> result = llmConfig.callLlmAnalysis(prompt);
         long totalElapsed = System.currentTimeMillis() - reqStart;
 
         boolean success = Boolean.TRUE.equals(result.get("success"));
@@ -354,7 +366,7 @@ public class HeapAiApiController {
                 toStore.putAll(dataMap);
             }
             try {
-                analyzerService.saveAiInsight(key, toStore);
+                aiInsight.saveAiInsight(key, toStore);
                 result.put("saved", true);
                 result.put("savedTo", "database");
                 result.put("analysedAt", System.currentTimeMillis());
@@ -379,7 +391,7 @@ public class HeapAiApiController {
         base   = FilenameValidator.validate(base);
         target = FilenameValidator.validate(target);
         String key = compareKey(base, target);
-        Map<String, Object> insight = analyzerService.loadAiInsight(key);
+        Map<String, Object> insight = aiInsight.loadAiInsight(key);
         Map<String, Object> resp = new LinkedHashMap<>();
         if (insight == null) {
             resp.put("found", false);
@@ -403,7 +415,7 @@ public class HeapAiApiController {
         target = FilenameValidator.validate(target);
         String key = compareKey(base, target);
         logger.info("[AI-Compare][DELETE] key='{}' (base='{}', target='{}')", key, base, target);
-        boolean deleted = analyzerService.deleteAiInsight(key);
+        boolean deleted = aiInsight.deleteAiInsight(key);
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", deleted);
         res.put("base", base);
@@ -445,7 +457,7 @@ public class HeapAiApiController {
         logger.info("[AI-Chat][REQ] 채팅 요청 — file='{}', messageCount={}, contextLen={}",
             filename, messages.size(), context.length());
 
-        String systemPrompt = analyzerService.getLlmChatSystemPrompt();
+        String systemPrompt = llmConfig.getLlmChatSystemPrompt();
         if (!context.trim().isEmpty()) {
             systemPrompt += "\n\n아래는 사용자가 현재 보고 있는 힙 덤프 분석 결과입니다. "
                 + "이 데이터를 참고하여 질문에 답하세요:\n\n" + context;
@@ -461,7 +473,7 @@ public class HeapAiApiController {
             logger.info("[AI-Chat] OOM context injected: {} char(s)", oomChatSection.length());
         }
 
-        Map<String, Object> result = analyzerService.callLlmChat(messages, systemPrompt);
+        Map<String, Object> result = llmConfig.callLlmChat(messages, systemPrompt);
 
         if (Boolean.TRUE.equals(result.get("success"))) {
             logger.info("[AI-Chat][RESULT] 응답 완료 — model={}, latency={}ms",
@@ -495,7 +507,7 @@ public class HeapAiApiController {
 
         logger.info("[AI-Chat-Stream][REQ] 스트리밍 채팅 요청 — file='{}', messageCount={}", filename, messages.size());
 
-        String systemPrompt = analyzerService.getLlmChatSystemPrompt();
+        String systemPrompt = llmConfig.getLlmChatSystemPrompt();
         if (!context.trim().isEmpty()) {
             systemPrompt += "\n\n아래는 사용자가 현재 보고 있는 힙 덤프 분석 결과입니다. "
                 + "이 데이터를 참고하여 질문에 답하세요:\n\n" + context;
@@ -512,14 +524,14 @@ public class HeapAiApiController {
         }
 
         final String finalSystemPrompt = systemPrompt;
-        final String model = analyzerService.getLlmModel();
+        final String model = llmConfig.getLlmModel();
 
         new Thread(() -> {
             try {
                 emitter.send(SseEmitter.event().name("start")
                     .data("{\"model\":\"" + (model != null ? model : "") + "\"}"));
 
-                analyzerService.callLlmChatStream(messages, finalSystemPrompt,
+                llmConfig.callLlmChatStream(messages, finalSystemPrompt,
                     chunk -> {
                         try {
                             String escaped = chunk.replace("\\", "\\\\")
@@ -575,7 +587,7 @@ public class HeapAiApiController {
         analyzerService.setLlmChatSystemPrompt(prompt);
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
-        res.put("prompt", analyzerService.getLlmChatSystemPrompt());
+        res.put("prompt", llmConfig.getLlmChatSystemPrompt());
         return ResponseEntity.ok(res);
     }
 
@@ -586,7 +598,7 @@ public class HeapAiApiController {
         analyzerService.setLlmChatRestoreIncludeHistory(include);
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
-        res.put("includeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
+        res.put("includeHistory", llmConfig.isLlmChatRestoreIncludeHistory());
         return ResponseEntity.ok(res);
     }
 
@@ -594,11 +606,11 @@ public class HeapAiApiController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> setFileAttachEnabled(@RequestParam boolean enabled) {
         analyzerService.setLlmFileAttachEnabled(enabled);
-        logger.info("[LLM-Config] fileAttachEnabled={}, provider={}", enabled, analyzerService.getLlmProvider());
+        logger.info("[LLM-Config] fileAttachEnabled={}, provider={}", enabled, llmConfig.getLlmProvider());
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
-        res.put("fileAttachEnabled", analyzerService.isLlmFileAttachEnabled());
-        res.put("fileAttachCapable", analyzerService.isFileAttachCapable());
+        res.put("fileAttachEnabled", llmConfig.isLlmFileAttachEnabled());
+        res.put("fileAttachCapable", llmConfig.isFileAttachCapable());
         return ResponseEntity.ok(res);
     }
 
@@ -608,59 +620,59 @@ public class HeapAiApiController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getRagSettings() {
         Map<String, Object> res = new LinkedHashMap<>();
-        res.put("enabled", analyzerService.isRagEnabled());
-        res.put("url", analyzerService.getRagElasticsearchUrl());
-        res.put("authType", analyzerService.getRagAuthType());
-        res.put("username", analyzerService.getRagUsername());
-        res.put("passwordSet", analyzerService.isRagPasswordSet());
-        res.put("passwordMasked", analyzerService.getRagPasswordMasked());
-        res.put("passwordHealthy", analyzerService.isRagPasswordHealthy());
-        res.put("passwordIssue", analyzerService.getRagPasswordIssue());
-        res.put("apiKeySet", analyzerService.isRagApiKeySet());
-        res.put("apiKeyMasked", analyzerService.getRagApiKeyMasked());
-        res.put("apiKeyHealthy", analyzerService.isRagApiKeyHealthy());
-        res.put("apiKeyIssue", analyzerService.getRagApiKeyIssue());
-        res.put("index", analyzerService.getRagIndex());
-        res.put("sslVerify", analyzerService.isRagSslVerify());
-        res.put("searchMode", analyzerService.getRagSearchMode());
-        res.put("textField", analyzerService.getRagTextField());
-        res.put("topK", analyzerService.getRagTopK());
-        res.put("minScore", analyzerService.getRagMinScore());
-        res.put("timeoutSeconds", analyzerService.getRagTimeoutSeconds());
+        res.put("enabled", ragConfig.isRagEnabled());
+        res.put("url", ragConfig.getRagElasticsearchUrl());
+        res.put("authType", ragConfig.getRagAuthType());
+        res.put("username", ragConfig.getRagUsername());
+        res.put("passwordSet", ragConfig.isRagPasswordSet());
+        res.put("passwordMasked", ragConfig.getRagPasswordMasked());
+        res.put("passwordHealthy", ragConfig.isRagPasswordHealthy());
+        res.put("passwordIssue", ragConfig.getRagPasswordIssue());
+        res.put("apiKeySet", ragConfig.isRagApiKeySet());
+        res.put("apiKeyMasked", ragConfig.getRagApiKeyMasked());
+        res.put("apiKeyHealthy", ragConfig.isRagApiKeyHealthy());
+        res.put("apiKeyIssue", ragConfig.getRagApiKeyIssue());
+        res.put("index", ragConfig.getRagIndex());
+        res.put("sslVerify", ragConfig.isRagSslVerify());
+        res.put("searchMode", ragConfig.getRagSearchMode());
+        res.put("textField", ragConfig.getRagTextField());
+        res.put("topK", ragConfig.getRagTopK());
+        res.put("minScore", ragConfig.getRagMinScore());
+        res.put("timeoutSeconds", ragConfig.getRagTimeoutSeconds());
         Map<String, Object> chunking = new LinkedHashMap<>();
-        chunking.put("enabled", analyzerService.isRagChunkingEnabled());
-        chunking.put("strategy", analyzerService.getRagChunkingStrategy());
-        chunking.put("size", analyzerService.getRagChunkingSize());
-        chunking.put("overlap", analyzerService.getRagChunkingOverlap());
-        chunking.put("maxChunksPerDoc", analyzerService.getRagChunkingMaxChunksPerDoc());
-        chunking.put("maxTotalChars", analyzerService.getRagChunkingMaxTotalChars());
+        chunking.put("enabled", ragConfig.isRagChunkingEnabled());
+        chunking.put("strategy", ragConfig.getRagChunkingStrategy());
+        chunking.put("size", ragConfig.getRagChunkingSize());
+        chunking.put("overlap", ragConfig.getRagChunkingOverlap());
+        chunking.put("maxChunksPerDoc", ragConfig.getRagChunkingMaxChunksPerDoc());
+        chunking.put("maxTotalChars", ragConfig.getRagChunkingMaxTotalChars());
         res.put("chunking", chunking);
 
         Map<String, Object> semantic = new LinkedHashMap<>();
-        semantic.put("queryType", analyzerService.getRagSemanticQueryType());
-        semantic.put("modelId", analyzerService.getRagSemanticModelId());
-        semantic.put("tokensField", analyzerService.getRagSemanticTokensField());
-        semantic.put("semanticField", analyzerService.getRagSemanticField());
+        semantic.put("queryType", ragConfig.getRagSemanticQueryType());
+        semantic.put("modelId", ragConfig.getRagSemanticModelId());
+        semantic.put("tokensField", ragConfig.getRagSemanticTokensField());
+        semantic.put("semanticField", ragConfig.getRagSemanticField());
         res.put("semantic", semantic);
 
         Map<String, Object> embedding = new LinkedHashMap<>();
-        embedding.put("provider", analyzerService.getRagEmbeddingProvider());
-        embedding.put("apiUrl", analyzerService.getRagEmbeddingApiUrl());
-        embedding.put("apiKeySet", analyzerService.isRagEmbeddingApiKeySet());
-        embedding.put("apiKeyMasked", analyzerService.getRagEmbeddingApiKeyMasked());
-        embedding.put("apiKeyHealthy", analyzerService.isRagEmbeddingApiKeyHealthy());
-        embedding.put("apiKeyIssue", analyzerService.getRagEmbeddingApiKeyIssue());
-        embedding.put("model", analyzerService.getRagEmbeddingModel());
-        embedding.put("dimension", analyzerService.getRagEmbeddingDimension());
-        embedding.put("timeoutSeconds", analyzerService.getRagEmbeddingTimeoutSeconds());
-        embedding.put("vectorField", analyzerService.getRagKnnVectorField());
-        embedding.put("numCandidates", analyzerService.getRagKnnNumCandidates());
+        embedding.put("provider", ragConfig.getRagEmbeddingProvider());
+        embedding.put("apiUrl", ragConfig.getRagEmbeddingApiUrl());
+        embedding.put("apiKeySet", ragConfig.isRagEmbeddingApiKeySet());
+        embedding.put("apiKeyMasked", ragConfig.getRagEmbeddingApiKeyMasked());
+        embedding.put("apiKeyHealthy", ragConfig.isRagEmbeddingApiKeyHealthy());
+        embedding.put("apiKeyIssue", ragConfig.getRagEmbeddingApiKeyIssue());
+        embedding.put("model", ragConfig.getRagEmbeddingModel());
+        embedding.put("dimension", ragConfig.getRagEmbeddingDimension());
+        embedding.put("timeoutSeconds", ragConfig.getRagEmbeddingTimeoutSeconds());
+        embedding.put("vectorField", ragConfig.getRagKnnVectorField());
+        embedding.put("numCandidates", ragConfig.getRagKnnNumCandidates());
         res.put("embedding", embedding);
 
         // UI 배지용 단일 플래그 — 시크릿 3종 중 하나라도 손상이면 false
-        res.put("secretsHealthy", analyzerService.isRagPasswordHealthy()
-                && analyzerService.isRagApiKeyHealthy()
-                && analyzerService.isRagEmbeddingApiKeyHealthy());
+        res.put("secretsHealthy", ragConfig.isRagPasswordHealthy()
+                && ragConfig.isRagApiKeyHealthy()
+                && ragConfig.isRagEmbeddingApiKeyHealthy());
 
         res.put("availableModes", Arrays.asList("keyword", "semantic-server", "semantic-client"));
         res.put("availableAuthTypes", Arrays.asList("none", "basic", "api-key"));
@@ -682,12 +694,12 @@ public class HeapAiApiController {
         analyzerService.setRagChunkingConfig(enabled, strategy, size, overlap, maxPerDoc, maxTotal);
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
-        res.put("enabled", analyzerService.isRagChunkingEnabled());
-        res.put("strategy", analyzerService.getRagChunkingStrategy());
-        res.put("size", analyzerService.getRagChunkingSize());
-        res.put("overlap", analyzerService.getRagChunkingOverlap());
-        res.put("maxChunksPerDoc", analyzerService.getRagChunkingMaxChunksPerDoc());
-        res.put("maxTotalChars", analyzerService.getRagChunkingMaxTotalChars());
+        res.put("enabled", ragConfig.isRagChunkingEnabled());
+        res.put("strategy", ragConfig.getRagChunkingStrategy());
+        res.put("size", ragConfig.getRagChunkingSize());
+        res.put("overlap", ragConfig.getRagChunkingOverlap());
+        res.put("maxChunksPerDoc", ragConfig.getRagChunkingMaxChunksPerDoc());
+        res.put("maxTotalChars", ragConfig.getRagChunkingMaxTotalChars());
         return ResponseEntity.ok(res);
     }
 
@@ -698,7 +710,7 @@ public class HeapAiApiController {
         analyzerService.setRagEnabled(enabled);
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
-        res.put("enabled", analyzerService.isRagEnabled());
+        res.put("enabled", ragConfig.isRagEnabled());
         return ResponseEntity.ok(res);
     }
 
@@ -747,12 +759,12 @@ public class HeapAiApiController {
 
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
-        res.put("url", analyzerService.getRagElasticsearchUrl());
-        res.put("index", analyzerService.getRagIndex());
-        res.put("searchMode", analyzerService.getRagSearchMode());
-        res.put("passwordSet", analyzerService.isRagPasswordSet());
-        res.put("apiKeySet", analyzerService.isRagApiKeySet());
-        res.put("embeddingApiKeySet", analyzerService.isRagEmbeddingApiKeySet());
+        res.put("url", ragConfig.getRagElasticsearchUrl());
+        res.put("index", ragConfig.getRagIndex());
+        res.put("searchMode", ragConfig.getRagSearchMode());
+        res.put("passwordSet", ragConfig.isRagPasswordSet());
+        res.put("apiKeySet", ragConfig.isRagApiKeySet());
+        res.put("embeddingApiKeySet", ragConfig.isRagEmbeddingApiKeySet());
         return ResponseEntity.ok(res);
     }
 

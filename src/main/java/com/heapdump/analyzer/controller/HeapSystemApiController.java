@@ -4,6 +4,7 @@ import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.HeapDumpFile;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.service.LlmConfigService;
 import com.heapdump.analyzer.service.PasswordPolicyConfigService;
 import com.heapdump.analyzer.service.TwoFactorConfigService;
 import com.heapdump.analyzer.util.AesEncryptor;
@@ -45,6 +46,7 @@ public class HeapSystemApiController {
     private static final Pattern DB_URL_PATTERN = Pattern.compile("//([^:/]+)(?::(\\d+))?/([^?]+)");
 
     private final HeapDumpAnalyzerService analyzerService;
+    private final LlmConfigService llmConfig;
     private final HeapDumpConfig config;
     private final DataSourceProperties dataSourceProperties;
     private final DataSource dataSource;
@@ -53,6 +55,7 @@ public class HeapSystemApiController {
     private final PasswordPolicyConfigService passwordPolicyConfig;
 
     public HeapSystemApiController(HeapDumpAnalyzerService analyzerService,
+                                   LlmConfigService llmConfig,
                                    HeapDumpConfig config,
                                    DataSourceProperties dataSourceProperties,
                                    DataSource dataSource,
@@ -60,6 +63,7 @@ public class HeapSystemApiController {
                                    TwoFactorConfigService twoFactorConfig,
                                    PasswordPolicyConfigService passwordPolicyConfig) {
         this.analyzerService = analyzerService;
+        this.llmConfig = llmConfig;
         this.config = config;
         this.dataSourceProperties = dataSourceProperties;
         this.dataSource = dataSource;
@@ -615,14 +619,14 @@ public class HeapSystemApiController {
 
         // LLM 설정
         Map<String, Object> llm = new LinkedHashMap<>();
-        llm.put("enabled", analyzerService.isLlmEnabled());
-        llm.put("provider", analyzerService.getLlmProvider());
-        llm.put("apiUrl", analyzerService.getLlmApiUrl());
-        llm.put("model", analyzerService.getLlmModel());
-        llm.put("apiKeySet", analyzerService.isLlmApiKeySet());
-        llm.put("apiKeyMasked", analyzerService.getLlmApiKeyMasked());
-        llm.put("maxInputTokens", analyzerService.getLlmMaxInputTokens());
-        llm.put("maxOutputTokens", analyzerService.getLlmMaxOutputTokens());
+        llm.put("enabled", llmConfig.isLlmEnabled());
+        llm.put("provider", llmConfig.getLlmProvider());
+        llm.put("apiUrl", llmConfig.getLlmApiUrl());
+        llm.put("model", llmConfig.getLlmModel());
+        llm.put("apiKeySet", llmConfig.isLlmApiKeySet());
+        llm.put("apiKeyMasked", llmConfig.getLlmApiKeyMasked());
+        llm.put("maxInputTokens", llmConfig.getLlmMaxInputTokens());
+        llm.put("maxOutputTokens", llmConfig.getLlmMaxOutputTokens());
         llm.put("availableProviders", Arrays.asList("claude", "gpt", "genspark", "custom"));
         Map<String, List<String>> providerModels = new LinkedHashMap<>();
         providerModels.put("claude", Arrays.asList(
@@ -630,14 +634,14 @@ public class HeapSystemApiController {
                 "claude-sonnet-5", "claude-sonnet-4-6", "claude-sonnet-4-5",
                 "claude-haiku-4-5"));
         providerModels.put("gpt", Arrays.asList("gpt-4o", "gpt-4o-mini", "gpt-4-turbo"));
-        providerModels.put("genspark", com.heapdump.analyzer.service.HeapDumpAnalyzerService.GENSPARK_MODELS);
+        providerModels.put("genspark", LlmConfigService.GENSPARK_MODELS);
         providerModels.put("custom", Collections.emptyList());
         llm.put("providerModels", providerModels);
-        llm.put("chatSystemPrompt", analyzerService.getLlmChatSystemPrompt());
-        llm.put("chatRestoreIncludeHistory", analyzerService.isLlmChatRestoreIncludeHistory());
-        llm.put("sslVerify", analyzerService.isLlmSslVerify());
-        llm.put("fileAttachEnabled", analyzerService.isLlmFileAttachEnabled());
-        llm.put("fileAttachCapable", analyzerService.isFileAttachCapable());
+        llm.put("chatSystemPrompt", llmConfig.getLlmChatSystemPrompt());
+        llm.put("chatRestoreIncludeHistory", llmConfig.isLlmChatRestoreIncludeHistory());
+        llm.put("sslVerify", llmConfig.isLlmSslVerify());
+        llm.put("fileAttachEnabled", llmConfig.isLlmFileAttachEnabled());
+        llm.put("fileAttachCapable", llmConfig.isFileAttachCapable());
         settings.put("llm", llm);
 
         // Database 정보

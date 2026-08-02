@@ -7,6 +7,7 @@ import com.heapdump.analyzer.repository.AiChatMessageRepository;
 import com.heapdump.analyzer.repository.AiChatSessionRepository;
 import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.service.LlmConfigService;
 import com.heapdump.analyzer.service.RagService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,6 +31,7 @@ public class AiChatController {
     private final AiChatMessageRepository messageRepo;
     private final AnalysisHistoryRepository historyRepo;
     private final HeapDumpAnalyzerService analyzerService;
+    private final LlmConfigService llmConfig;
     private final com.heapdump.analyzer.config.HeapDumpConfig config;
     private final RagService ragService;
 
@@ -37,12 +39,14 @@ public class AiChatController {
                             AiChatMessageRepository messageRepo,
                             AnalysisHistoryRepository historyRepo,
                             HeapDumpAnalyzerService analyzerService,
+                            LlmConfigService llmConfig,
                             com.heapdump.analyzer.config.HeapDumpConfig config,
                             RagService ragService) {
         this.sessionRepo = sessionRepo;
         this.messageRepo = messageRepo;
         this.historyRepo = historyRepo;
         this.analyzerService = analyzerService;
+        this.llmConfig = llmConfig;
         this.config = config;
         this.ragService = ragService;
     }
@@ -166,7 +170,7 @@ public class AiChatController {
                     .ifPresent(h -> session.setAnalyzedAt(h.getAnalyzedAt()));
         }
         session.setTitle(title != null && !title.isEmpty() ? title : "새 채팅");
-        session.setModel(analyzerService.getLlmModel());
+        session.setModel(llmConfig.getLlmModel());
         session.setMessageCount(0);
         sessionRepo.save(session);
 
@@ -284,8 +288,8 @@ public class AiChatController {
             String autoTitle = content.length() > 40 ? content.substring(0, 40) + "..." : content;
             session.setTitle(autoTitle);
         }
-        if (analyzerService.getLlmModel() != null) {
-            session.setModel(analyzerService.getLlmModel());
+        if (llmConfig.getLlmModel() != null) {
+            session.setModel(llmConfig.getLlmModel());
         }
         sessionRepo.save(session);
 
@@ -337,7 +341,7 @@ public class AiChatController {
 
         // 파일 첨부 지원 여부 검증
         if (!attachments.isEmpty()) {
-            if (!analyzerService.isLlmFileAttachEnabled()) {
+            if (!llmConfig.isLlmFileAttachEnabled()) {
                 logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_ATTACH_DISABLED, sessionId={}", sessionId);
                 try {
                     emitter.send(SseEmitter.event().name("error")
@@ -374,8 +378,8 @@ public class AiChatController {
                 }
             }
             // 이미지 첨부는 Vision 지원 provider 가 필요(텍스트/로그 전용은 모든 provider 에서 본문 주입으로 처리)
-            if (hasImage && !analyzerService.isFileAttachCapable()) {
-                logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_ATTACH_UNSUPPORTED(image), sessionId={}, provider={}", sessionId, analyzerService.getLlmProvider());
+            if (hasImage && !llmConfig.isFileAttachCapable()) {
+                logger.warn("[AI-Chat-Attach] 첨부 거부 — FILE_ATTACH_UNSUPPORTED(image), sessionId={}, provider={}", sessionId, llmConfig.getLlmProvider());
                 try {
                     emitter.send(SseEmitter.event().name("error")
                         .data("{\"errorCode\":\"FILE_ATTACH_UNSUPPORTED\",\"error\":\"현재 LLM provider가 이미지 첨부(Vision)를 지원하지 않습니다. 텍스트/로그 파일은 첨부 가능합니다.\"}"));
@@ -383,7 +387,7 @@ public class AiChatController {
                 } catch (Exception ignored) {}
                 return emitter;
             }
-            logger.info("[AI-Chat-Attach] 첨부 파일 {}개 검증 완료 — sessionId={}, provider={}, hasImage={}", attachments.size(), sessionId, analyzerService.getLlmProvider(), hasImage);
+            logger.info("[AI-Chat-Attach] 첨부 파일 {}개 검증 완료 — sessionId={}, provider={}, hasImage={}", attachments.size(), sessionId, llmConfig.getLlmProvider(), hasImage);
         }
 
         // 마지막 user 메시지 DB 저장
@@ -415,7 +419,7 @@ public class AiChatController {
             }
         }
 
-        String systemPrompt = analyzerService.getLlmChatSystemPrompt();
+        String systemPrompt = llmConfig.getLlmChatSystemPrompt();
         if (!context.trim().isEmpty()) {
             systemPrompt += "\n\n아래는 사용자가 현재 보고 있는 힙 덤프 분석 결과입니다. "
                 + "이 데이터를 참고하여 질문에 답하세요:\n\n" + context;
@@ -437,7 +441,7 @@ public class AiChatController {
         }
 
         final String finalSystemPrompt = systemPrompt;
-        final String model = analyzerService.getLlmModel();
+        final String model = llmConfig.getLlmModel();
         final Long sid = sessionId;
         final List<Map<String, Object>> finalAttachments = attachments;
 
@@ -448,7 +452,7 @@ public class AiChatController {
 
                 StringBuilder fullText = new StringBuilder();
 
-                analyzerService.callLlmChatStream(messages, finalSystemPrompt, finalAttachments,
+                llmConfig.callLlmChatStream(messages, finalSystemPrompt, finalAttachments,
                     chunk -> {
                         try {
                             fullText.append(chunk);

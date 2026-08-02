@@ -38,7 +38,8 @@ class CoreDumpFileListTest {
         when(config.getCoreDumpDirectory()).thenReturn(tmp.toFile().getAbsolutePath());
         heapFacade = mock(HeapDumpAnalyzerService.class);
         repository = mock(CoreDumpAnalysisRepository.class);
-        service = new CoreDumpAnalyzerService(config, repository, new ObjectMapper(), heapFacade);
+        service = new CoreDumpAnalyzerService(config, repository, new ObjectMapper(), heapFacade,
+                mock(LlmConfigService.class), mock(AiInsightManager.class));
         dumpDir = service.dumpFilesDir();
         assertTrue(dumpDir.mkdirs());
     }
