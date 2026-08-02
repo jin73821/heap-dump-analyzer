@@ -434,6 +434,9 @@
 <body>
 
 <div th:replace="~{fragments/banner :: banner}"></div>
+<!-- form POST → redirect flash attribute 를 토스트로 표시 (common.js showPendingToasts) -->
+<div th:if="${success}" class="flash-data" data-type="success" th:data-msg="${success}" style="display:none"></div>
+<div th:if="${error}"   class="flash-data" data-type="error"   th:data-msg="${error}"   style="display:none"></div>
 
 <div class="topbar">
     <div class="topbar-brand">
@@ -1028,7 +1031,11 @@ document.getElementById('btnConfirmDel').onclick = function() {
         fetch('/api/core-dump/' + encodeURIComponent(_delTarget), { method: 'DELETE', headers: headers })
             .then(function(r) { return r.json(); })
             .then(function(d) {
-                if (d.status === 'ok') { closeDeleteModal(); location.reload(); }
+                if (d.status === 'ok') {
+                    closeDeleteModal();
+                    Common.flashToast('코어 덤프가 삭제되었습니다: ' + _delTarget, 'success');
+                    location.reload();
+                }
                 else alert('삭제 실패: ' + (d.message || '알 수 없는 오류'));
             })
             .catch(function(e) { alert('삭제 중 오류: ' + e.message); });
@@ -1214,24 +1221,31 @@ function submitBulkDelete() {
     var csrfToken = Common.csrfToken();
     if (csrfToken) headers[Common.csrfHeaderName()] = csrfToken;
 
+    // 비-2xx 응답은 실패로 합류 (성공처럼 조용히 reload 되는 것 방지)
+    var toJson = function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); };
     var tasks = [];
     if (liveFiles.length > 0) {
         tasks.push(fetch('/api/files/bulk-delete', {
             method: 'POST', headers: headers,
             body: JSON.stringify({ filenames: liveFiles })
-        }).then(function(r) { return r.json(); }));
+        }).then(toJson));
     }
     if (deletedFiles.length > 0) {
         tasks.push(fetch('/api/history/bulk-delete', {
             method: 'POST', headers: headers,
             body: JSON.stringify({ filenames: deletedFiles, deleteHeapDump: false })
-        }).then(function(r) { return r.json(); }));
+        }).then(toJson));
     }
     Promise.all(tasks).then(function(results) {
         closeBulkDeleteModal();
         var total = { success: 0, failed: 0, errors: [] };
         results.forEach(function(d) { total.success += (d.success || 0); total.failed += (d.failed || 0); (d.errors || []).forEach(function(e) { total.errors.push(e); }); });
-        if (total.failed > 0) alert('삭제 완료: ' + total.success + '건, 실패: ' + total.failed + '건\n' + total.errors.join('\n'));
+        if (total.failed > 0) {
+            // 부분 실패: reload 로 사라지지 않도록 alert(확인 필요) 유지
+            alert('삭제 완료: ' + total.success + '건, 실패: ' + total.failed + '건\n' + total.errors.join('\n'));
+        } else {
+            Common.flashToast('선택한 파일 ' + total.success + '건이 삭제되었습니다.', 'success');
+        }
         location.reload();
     }).catch(function(e) {
         btn.disabled = false; btn.textContent = '삭제';

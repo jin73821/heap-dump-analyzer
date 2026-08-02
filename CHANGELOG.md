@@ -1,6 +1,15 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-08-02] 삭제 성공 피드백 토스트 + 삭제 실패 처리 갭 보완
+
+**배경:** files/history/servers/comparison-history 선택삭제 검증 중 "성공 시 아무 메시지 없이 reload 되어 삭제 여부를 인지하기 어렵다"는 피드백. 점검 결과 (a) 단일 삭제(form POST)는 서버가 flash attribute(`success`/`error`)를 이미 싣는데 **files/history 템플릿이 렌더하지 않아 유실**, (b) bulk 삭제 3곳(files/history/comparison-history)은 성공 시 무언 reload + **비-2xx JSON 응답이면 실패인데도 성공처럼 조용히 reload 되는 갭**(`fetch().then(r.json())` 에 `r.ok` 미검사). servers 단일 삭제만 토스트가 있었음.
+
+- **`Common.flashToast(msg, type)` 신설** (`common.js?v=2026-08-02a`) — sessionStorage 1회성 저장 → 다음 페이지 로드 시 `showPendingToasts()` 가 `Common.toast` 로 자동 표시 후 소거. "성공 → location.reload()" 흐름의 피드백 전달용.
+- **서버 flash attribute → 토스트**: `showPendingToasts()` 가 `.flash-data[data-msg][data-type]` 마커도 스캔. files.html/history.html 배너 직후에 `th:if="${success}"`/`${error}` 마커 추가 — 단일 삭제(`/delete/{f}`, `/history/delete/{f}`, purge) redirect 의 기존 서버 메시지가 이제 표시됨 (index.html 은 기존 `.alert` 렌더 유지).
+- **bulk 삭제 3곳**: `r.ok` 검사 추가(비-2xx → catch 합류로 "일괄 삭제 실패" alert), 전건 성공 시 `flashToast('… N건이 삭제되었습니다.')`, 부분 실패는 기존 alert(사용자 확인 필요) 유지. comparison-history 단일 삭제는 reload 가 없어 `Common.toast` 즉시 표시, files 코어덤프 단일 삭제는 flashToast 후 reload.
+- 검증: 렌더 스모크 3페이지 OK + 헤드리스 픽스처(실제 common.js/css 로드)로 flashToast→reload 표시 / 1회성 소거 / 3초 자동 제거 / error 타입 / 서버 flash 마커 5케이스 PASS.
+
 ## [2026-08-02] 라인 수 절감 리팩토링 — main 소스 −3,123라인 (67,551 → 64,428, −4.6%)
 
 동작 불변(순수 리팩토링) 원칙. 커밋 8개, 버전 2.3.2 유지(산출물 JAR 명 불변). 테스트 311 → 321건(신규 골든 10) 전부 green. 고위험 영역(LlmConfigService HTTP 5메서드 통합, HeapReportApiController MAT SSE 3종 템플릿화, facade setter 이관, Lombok 도입)은 테스트 부재/운영 직결 사유로 **의도적 제외**.

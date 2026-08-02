@@ -110,6 +110,43 @@
         setTimeout(function () { t.classList.remove('show'); }, 3000);
     };
 
+    /**
+     * reload/redirect 를 넘어 전달되는 1회성 토스트 — sessionStorage 에 저장해두면
+     * 다음 페이지 로드 시 아래 showPendingToasts() 가 Common.toast 로 표시 후 제거.
+     * bulk 삭제처럼 "성공 → location.reload()" 흐름의 성공 피드백용.
+     */
+    Common.flashToast = function (msg, type) {
+        try {
+            sessionStorage.setItem('commonFlashToast', JSON.stringify({ m: msg, t: type || 'success' }));
+        } catch (e) { /* 프라이빗 모드 등 저장 불가 시 무시 — 피드백만 유실 */ }
+    };
+
+    /* 페이지 로드 시 대기 중인 토스트 표시:
+       ① sessionStorage 플래시(Common.flashToast) ② 서버 flash attribute 를 담은
+       `.flash-data[data-msg][data-type]` 마커 엘리먼트 (form POST → redirect 흐름용). */
+    function showPendingToasts() {
+        try {
+            var raw = sessionStorage.getItem('commonFlashToast');
+            if (raw) {
+                sessionStorage.removeItem('commonFlashToast');
+                var d = JSON.parse(raw);
+                if (d && d.m) Common.toast(d.m, d.t);
+            }
+        } catch (e) { /* ignore */ }
+        var els = document.querySelectorAll('.flash-data[data-msg]');
+        Array.prototype.forEach.call(els, function (el, i) {
+            var msg = el.getAttribute('data-msg');
+            if (!msg) return;
+            // 다건이면 겹침 방지를 위해 순차 표시
+            setTimeout(function () { Common.toast(msg, el.getAttribute('data-type') || 'success'); }, i * 3100);
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', showPendingToasts);
+    } else {
+        showPendingToasts();
+    }
+
     /** 바이트 사람-읽기 포맷 (FormatUtils.formatBytes JS 미러) */
     Common.formatBytes = function (bytes) {
         if (bytes == null || bytes < 0) return '-';

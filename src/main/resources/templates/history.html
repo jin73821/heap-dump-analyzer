@@ -361,6 +361,9 @@
 <body>
 
 <div th:replace="~{fragments/banner :: banner}"></div>
+<!-- form POST → redirect flash attribute 를 토스트로 표시 (common.js showPendingToasts) -->
+<div th:if="${success}" class="flash-data" data-type="success" th:data-msg="${success}" style="display:none"></div>
+<div th:if="${error}"   class="flash-data" data-type="error"   th:data-msg="${error}"   style="display:none"></div>
 
 <div class="topbar">
     <div class="topbar-brand">
@@ -816,9 +819,16 @@ function submitBulkDelete() {
     fetch('/api/history/bulk-delete', {
         method: 'POST', headers: headers,
         body: JSON.stringify({ filenames: sel, deleteHeapDump: deleteHeapDump, deleteAiChat: deleteAiChat })
-    }).then(function(r) { return r.json(); }).then(function(d) {
+    }).then(function(r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);   // 비-2xx → 실패 처리
+        return r.json();
+    }).then(function(d) {
         closeBulkDeleteModal();
-        if (d.failed > 0) alert('삭제 완료: ' + d.success + '건, 실패: ' + d.failed + '건\n' + (d.errors || []).join('\n'));
+        if (d.failed > 0) {
+            alert('삭제 완료: ' + d.success + '건, 실패: ' + d.failed + '건\n' + (d.errors || []).join('\n'));
+        } else {
+            Common.flashToast('분석 기록 ' + d.success + '건이 삭제되었습니다.', 'success');
+        }
         location.reload();
     }).catch(function(e) {
         btn.disabled = false; btn.textContent = '삭제';
