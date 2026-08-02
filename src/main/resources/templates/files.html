@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
     <title>Analysis Files — Heap Dump Analyzer</title>
     <style>
         .container { max-width: 1600px; margin: 0 auto; padding: 68px 20px 40px;
@@ -1015,6 +1015,7 @@ var ALLOW_ALL_EXT    = /*[[${allowAllExtensions}]]*/ false;
 </script>
 <script src="/js/upload-queue.js?v=2026-05-23a"></script>
 <script src="/js/table-grid.js?v=2026-08-02"></script>
+<script src="/js/select-mode.js?v=2026-08-02"></script>
 <script>
 var _delTarget = '';
 var _delIsCore = false;
@@ -1146,83 +1147,22 @@ document.getElementById('btnConfirmDl').onclick = function() {
         });
 };
 
-// ── 다중 선택 모드 ────────────────────────────────────────────
-var _selectMode = false;
-
-function toggleSelectMode() {
-    _selectMode = !_selectMode;
-    var table = document.getElementById('filesTable');
-    var btn = document.getElementById('selectModeBtn');
-    var label = document.getElementById('selectModeBtnLabel');
-    var bar = document.getElementById('selectActionBar');
-    if (!table) return;
-    if (_selectMode) {
-        table.classList.add('select-mode');
-        btn.classList.add('active');
-        label.textContent = '선택 종료';
-        bar.classList.add('show');
-        document.body.classList.add('has-select-bar');
-        updateSelectionCount();
-    } else {
-        exitSelectMode();
+// ── 다중 선택 모드 — SelectMode 공통 모듈(/js/select-mode.js) 위임 ──
+var _sel = SelectMode.create({
+    tableId: 'filesTable',
+    tbodyId: 'fileTableBody',
+    bodyClass: 'has-select-bar',
+    onCountChange: function(sel) {
+        var downloadable = sel.filter(function(c) { return c.getAttribute('data-deleted') !== 'true'; });
+        document.getElementById('saDlBtn').disabled = (downloadable.length === 0);
     }
-}
-
-function exitSelectMode() {
-    _selectMode = false;
-    var table = document.getElementById('filesTable');
-    if (table) table.classList.remove('select-mode');
-    document.getElementById('selectModeBtn').classList.remove('active');
-    document.getElementById('selectModeBtnLabel').textContent = '선택';
-    document.getElementById('selectActionBar').classList.remove('show');
-    document.body.classList.remove('has-select-bar');
-    document.querySelectorAll('.row-check').forEach(function(c) { c.checked = false; });
-    var all = document.getElementById('allCheck');
-    if (all) { all.checked = false; all.indeterminate = false; }
-}
-
-function getSelectedCheckboxes() {
-    var sel = [];
-    document.querySelectorAll('#fileTableBody tr').forEach(function(tr) {
-        if (tr.style.display === 'none') return;
-        var c = tr.querySelector('.row-check');
-        if (c && c.checked) sel.push(c);
-    });
-    return sel;
-}
-
-function updateSelectionCount() {
-    var selCheckboxes = getSelectedCheckboxes();
-    var n = selCheckboxes.length;
-    document.getElementById('saCount').textContent = n;
-    var downloadable = selCheckboxes.filter(function(c) { return c.getAttribute('data-deleted') !== 'true'; });
-    document.getElementById('saDlBtn').disabled = (downloadable.length === 0);
-    document.getElementById('saDelBtn').disabled = (n === 0);
-    var visible = [];
-    document.querySelectorAll('#fileTableBody tr').forEach(function(tr) {
-        if (tr.style.display === 'none') return;
-        var c = tr.querySelector('.row-check');
-        if (c) visible.push(c);
-    });
-    var all = document.getElementById('allCheck');
-    if (all) {
-        var checkedCount = visible.filter(function(c) { return c.checked; }).length;
-        all.checked = (visible.length > 0 && checkedCount === visible.length);
-        all.indeterminate = (checkedCount > 0 && checkedCount < visible.length);
-    }
-}
-
-function onRowCheck() { updateSelectionCount(); }
-
-function onSelectAll() {
-    var checked = document.getElementById('allCheck').checked;
-    document.querySelectorAll('#fileTableBody tr').forEach(function(tr) {
-        if (tr.style.display === 'none') return;
-        var c = tr.querySelector('.row-check');
-        if (c) c.checked = checked;
-    });
-    updateSelectionCount();
-}
+});
+function toggleSelectMode() { _sel.toggle(); }
+function exitSelectMode() { _sel.exit(); }
+function updateSelectionCount() { _sel.updateCount(); }
+function onRowCheck() { _sel.updateCount(); }
+function onSelectAll() { _sel.onSelectAll(); }
+function getSelectedCheckboxes() { return _sel.selectedChecks(); }
 
 function openBulkDownloadModal() {
     var sel = getSelectedCheckboxes();
@@ -1532,7 +1472,7 @@ var _grid = TableGrid.create({
         if (coreName && _subrowMap[coreName]) _subrowMap[coreName].style.display = '';
     },
     applyFilter: function() { applyFilter(); },
-    onAfterRender: function() { if (_selectMode) updateSelectionCount(); }
+    onAfterRender: function() { if (_sel.active) _sel.updateCount(); }
 });
 
 function initRows() {

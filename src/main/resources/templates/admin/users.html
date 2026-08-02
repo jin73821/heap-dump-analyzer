@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
     <script src="/js/calendar.js?v=2026-06-28a"></script>
     <title>User Management — Heap Dump Analyzer</title>
     <meta name="_csrf" th:content="${_csrf.token}">
@@ -805,12 +805,7 @@ function showSelfTerminateInfo() {
         '로그아웃이 필요하다면 좌측 메뉴의 <strong>Logout</strong>을 이용해 주세요.');
 }
 
-function showToast(msg, type) {
-    var t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast ' + type + ' show';
-    setTimeout(function() { t.classList.remove('show'); }, 3000);
-}
+var showToast = Common.showToast;
 
 function openCreateModal() {
     document.getElementById('cUsername').value = '';

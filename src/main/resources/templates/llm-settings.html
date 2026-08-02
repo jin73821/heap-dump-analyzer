@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
     <title>AI / LLM Settings — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }  /* LLM Settings 페이지 전용 */
@@ -62,14 +62,7 @@
                          background: #fff; font-size: 12px; cursor: pointer; font-weight: 600; color: #374151; }
         .btn-secondary:hover { background: #F3F4F6; }
 
-        /* ── Toast ───────────────────────────────────────── */
-        .toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
-                 padding: 10px 22px; border-radius: 8px; font-size: 13px; font-weight: 500;
-                 z-index: 500; animation: toastIn .3s ease; pointer-events: none; }
-        .toast-success { background: #065F46; color: #fff; }
-        .toast-error { background: #7F1D1D; color: #fff; }
-        @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -10px); }
-                             to   { opacity: 1; transform: translate(-50%, 0); } }
+        /* Toast CSS 는 common.css 로 이관 (Common.toast) */
 
         /* ── Desktop ─────────────────────────────────────── */
         @media (min-width: 1024px) {
@@ -339,14 +332,7 @@
 <!-- ── JavaScript ─────────────────────────────────────────── -->
 <script>
 // ── Toast ──────────────────────────────────────────────
-function toast(msg, type) {
-    var t = document.createElement('div');
-    t.className = 'toast toast-' + (type || 'success');
-    t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(function() { t.style.transition='opacity .4s'; t.style.opacity='0';
-        setTimeout(function(){ t.remove(); }, 400); }, 2500);
-}
+var toast = Common.toast;
 
 function selectOption(id, val) {
     var sel = document.getElementById(id);

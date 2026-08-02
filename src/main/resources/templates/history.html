@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
     <title>Analysis History — Heap Dump Analyzer</title>
     <script src="/js/lib/chart.umd.min.js"></script>
     <style>
@@ -757,6 +757,7 @@ var DETECT_INIT = {
 </script>
 
 <script src="/js/table-grid.js?v=2026-08-02"></script>
+<script src="/js/select-mode.js?v=2026-08-02"></script>
 <script>
 var _delFilename = '';
 function openDeleteModal(filename, fileDeleted) {
@@ -802,80 +803,19 @@ document.getElementById('deleteModal').addEventListener('click', function(e) {
     if (e.target === this) closeDeleteModal();
 });
 
-// ── 다중 선택 모드 ────────────────────────────────────────────
-var _selectMode = false;
-
-function toggleSelectMode() {
-    _selectMode = !_selectMode;
-    var table = document.getElementById('historyTable');
-    var btn = document.getElementById('selectModeBtn');
-    var label = document.getElementById('selectModeBtnLabel');
-    var bar = document.getElementById('selectActionBar');
-    if (!table) return;
-    if (_selectMode) {
-        table.classList.add('select-mode');
-        btn.classList.add('active');
-        label.textContent = '선택 종료';
-        bar.classList.add('show');
-        document.body.classList.add('action-bar-open');
-        updateSelectionCount();
-    } else {
-        exitSelectMode();
-    }
-}
-
-function exitSelectMode() {
-    _selectMode = false;
-    var table = document.getElementById('historyTable');
-    if (table) table.classList.remove('select-mode');
-    document.getElementById('selectModeBtn').classList.remove('active');
-    document.getElementById('selectModeBtnLabel').textContent = '선택';
-    document.getElementById('selectActionBar').classList.remove('show');
-    document.body.classList.remove('action-bar-open');
-    document.querySelectorAll('.row-check').forEach(function(c) { c.checked = false; });
-    var all = document.getElementById('allCheck');
-    if (all) { all.checked = false; all.indeterminate = false; }
-}
-
+// ── 다중 선택 모드 — SelectMode 공통 모듈(/js/select-mode.js) 위임 ──
+var _sel = SelectMode.create({
+    tableId: 'historyTable',
+    tbodyId: 'historyTableBody',
+    bodyClass: 'action-bar-open'
+});
+function toggleSelectMode() { _sel.toggle(); }
+function exitSelectMode() { _sel.exit(); }
+function updateSelectionCount() { _sel.updateCount(); }
+function onRowCheck() { _sel.updateCount(); }
+function onSelectAll() { _sel.onSelectAll(); }
 function getSelectedFilenames() {
-    var sel = [];
-    document.querySelectorAll('#historyTableBody tr').forEach(function(tr) {
-        if (tr.style.display === 'none') return; // 페이지/필터/검색 가시 행만
-        var c = tr.querySelector('.row-check');
-        if (c && c.checked) sel.push(c.value);
-    });
-    return sel;
-}
-
-function updateSelectionCount() {
-    var n = getSelectedFilenames().length;
-    document.getElementById('saCount').textContent = n;
-    document.getElementById('saDelBtn').disabled = (n === 0);
-    // all-check 상태 업데이트 (현재 페이지의 표시된 행만 기준)
-    var visible = [];
-    document.querySelectorAll('#historyTableBody tr').forEach(function(tr) {
-        if (tr.style.display === 'none') return;
-        var c = tr.querySelector('.row-check');
-        if (c) visible.push(c);
-    });
-    var all = document.getElementById('allCheck');
-    if (all) {
-        var checkedCount = visible.filter(function(c) { return c.checked; }).length;
-        all.checked = (visible.length > 0 && checkedCount === visible.length);
-        all.indeterminate = (checkedCount > 0 && checkedCount < visible.length);
-    }
-}
-
-function onRowCheck() { updateSelectionCount(); }
-
-function onSelectAll() {
-    var checked = document.getElementById('allCheck').checked;
-    document.querySelectorAll('#historyTableBody tr').forEach(function(tr) {
-        if (tr.style.display === 'none') return;
-        var c = tr.querySelector('.row-check');
-        if (c) c.checked = checked;
-    });
-    updateSelectionCount();
+    return _sel.selectedChecks().map(function(c) { return c.value; });
 }
 
 function openBulkDeleteModal() {
@@ -933,7 +873,7 @@ var _grid = TableGrid.create({
     defaultSort: { key: 'date', dir: 'desc', type: 'num' },   // 기본: 날짜 내림차순 (최신 → 오래된)
     sortValue: function(el, key) { return key === 'name' ? (el.getAttribute('data-name') || '') : null; },
     applyFilter: function() { applyFilter(); },
-    onAfterRender: function() { if (_selectMode) updateSelectionCount(); }
+    onAfterRender: function() { if (_sel.active) _sel.updateCount(); }
 });
 
 function initRows() {

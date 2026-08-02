@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
     <title>Comparison History — Heap Dump Analyzer</title>
     <style>
         .container { max-width: 1800px; margin: 0 auto; padding: 68px 20px 40px;
@@ -364,6 +364,7 @@
 </div>
 
 <script src="/js/table-grid.js?v=2026-08-02"></script>
+<script src="/js/select-mode.js?v=2026-08-02"></script>
 <script>
 // ── 검색 + 페이지네이션 + 정렬 — TableGrid 공통 엔진(/js/table-grid.js) 위임 ──
 var _showDeleted = false;
@@ -373,7 +374,7 @@ var _grid = TableGrid.create({
     pageSizeKey: 'cmpHistoryPageSize',
     defaultSort: { key: 'date', dir: 'desc', type: 'num' },
     applyFilter: function() { applyFilter(); },
-    onAfterRender: function() { if (_selectMode) updateSelectionCount(); }
+    onAfterRender: function() { if (_sel.active) _sel.updateCount(); }
 });
 
 function initRows() {
@@ -423,76 +424,20 @@ function onPageSizeChange() { _grid.onPageSizeChange(); }
 function onHeaderSort(th) { _grid.onHeaderSort(th); }
 function gotoPage(p) { _grid.gotoPage(p); }
 
-// ── 다중 선택 ────────────────────────────────────────────
-var _selectMode = false;
-function toggleSelectMode() {
-    _selectMode = !_selectMode;
-    var table = document.getElementById('cmpHistoryTable');
-    var btn = document.getElementById('selectModeBtn');
-    var label = document.getElementById('selectModeBtnLabel');
-    var bar = document.getElementById('selectActionBar');
-    if (!table) return;
-    if (_selectMode) {
-        table.classList.add('select-mode');
-        btn.classList.add('active');
-        label.textContent = '선택 종료';
-        bar.classList.add('show');
-        document.body.classList.add('action-bar-open');
-        updateSelectionCount();
-    } else {
-        exitSelectMode();
-    }
-}
-function exitSelectMode() {
-    _selectMode = false;
-    var table = document.getElementById('cmpHistoryTable');
-    if (table) table.classList.remove('select-mode');
-    document.getElementById('selectModeBtn').classList.remove('active');
-    document.getElementById('selectModeBtnLabel').textContent = '선택';
-    document.getElementById('selectActionBar').classList.remove('show');
-    document.body.classList.remove('action-bar-open');
-    document.querySelectorAll('.row-check').forEach(function(c) { c.checked = false; });
-    var all = document.getElementById('allCheck');
-    if (all) { all.checked = false; all.indeterminate = false; }
-}
+// ── 다중 선택 모드 — SelectMode 공통 모듈(/js/select-mode.js) 위임 ──
+var _sel = SelectMode.create({
+    tableId: 'cmpHistoryTable',
+    tbodyId: 'cmpHistoryTableBody',
+    bodyClass: 'action-bar-open'
+});
+function toggleSelectMode() { _sel.toggle(); }
+function exitSelectMode() { _sel.exit(); }
+function updateSelectionCount() { _sel.updateCount(); }
+function onRowCheck() { _sel.updateCount(); }
+function onSelectAll() { _sel.onSelectAll(); }
 function getSelectedIds() {
-    var sel = [];
-    document.querySelectorAll('#cmpHistoryTableBody tr').forEach(function(tr) {
-        if (tr.style.display === 'none') return;
-        var c = tr.querySelector('.row-check');
-        if (c && c.checked) {
-            var n = parseInt(c.value, 10);
-            if (!isNaN(n)) sel.push(n);
-        }
-    });
-    return sel;
-}
-function updateSelectionCount() {
-    var n = getSelectedIds().length;
-    document.getElementById('saCount').textContent = n;
-    document.getElementById('saDelBtn').disabled = (n === 0);
-    var visible = [];
-    document.querySelectorAll('#cmpHistoryTableBody tr').forEach(function(tr) {
-        if (tr.style.display === 'none') return;
-        var c = tr.querySelector('.row-check');
-        if (c) visible.push(c);
-    });
-    var all = document.getElementById('allCheck');
-    if (all) {
-        var checkedCount = visible.filter(function(c) { return c.checked; }).length;
-        all.checked = (visible.length > 0 && checkedCount === visible.length);
-        all.indeterminate = (checkedCount > 0 && checkedCount < visible.length);
-    }
-}
-function onRowCheck() { updateSelectionCount(); }
-function onSelectAll() {
-    var checked = document.getElementById('allCheck').checked;
-    document.querySelectorAll('#cmpHistoryTableBody tr').forEach(function(tr) {
-        if (tr.style.display === 'none') return;
-        var c = tr.querySelector('.row-check');
-        if (c) c.checked = checked;
-    });
-    updateSelectionCount();
+    return _sel.selectedChecks().map(function(c) { return parseInt(c.value, 10); })
+        .filter(function(n) { return !isNaN(n); });
 }
 
 function openBulkDeleteModal() {

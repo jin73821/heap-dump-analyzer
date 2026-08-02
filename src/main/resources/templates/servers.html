@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
     <title>Target Servers — Heap Dump Analyzer</title>
     <style>
         /* topbar 는 anti-wrap 확장이 있어 인라인 유지 */
@@ -565,12 +565,7 @@ function closeModal(id) {
     document.body.style.overflow = '';
 }
 
-function showToast(msg, type) {
-    var t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast ' + type + ' show';
-    setTimeout(function() { t.classList.remove('show'); }, 3000);
-}
+var showToast = Common.showToast;
 
 var _isEdit = false;
 

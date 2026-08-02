@@ -82,6 +82,34 @@
         form.appendChild(input);
     };
 
+    /**
+     * 토스트 (settings/llm-settings/rag-settings 계열) — div.toast.toast-{type} 생성 후 자동 제거.
+     * CSS 는 common.css 의 .toast/.toast-success/.toast-error/@keyframes toastIn.
+     */
+    Common.toast = function (msg, type) {
+        var t = document.createElement('div');
+        t.className = 'toast toast-' + (type || 'success');
+        t.textContent = msg;
+        document.body.appendChild(t);
+        setTimeout(function () {
+            t.style.transition = 'opacity .4s';
+            t.style.opacity = '0';
+            setTimeout(function () { t.remove(); }, 400);
+        }, 2500);
+    };
+
+    /**
+     * 토스트 (#toast 고정 엘리먼트 계열 — servers/server-detail/admin/users).
+     * 페이지가 `<div id="toast">` 와 .toast.show CSS 를 제공해야 한다.
+     */
+    Common.showToast = function (msg, type) {
+        var t = document.getElementById('toast');
+        if (!t) return;
+        t.textContent = msg;
+        t.className = 'toast ' + type + ' show';
+        setTimeout(function () { t.classList.remove('show'); }, 3000);
+    };
+
     /** 바이트 사람-읽기 포맷 (FormatUtils.formatBytes JS 미러) */
     Common.formatBytes = function (bytes) {
         if (bytes == null || bytes < 0) return '-';

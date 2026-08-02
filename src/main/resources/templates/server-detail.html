@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
     <title th:text="${server.name + ' — Heap Dump Analyzer'}">Server Detail</title>
     <style>
         .topbar-status { margin-left: 4px; flex-shrink: 0; }
@@ -384,12 +384,7 @@ var _serverId = '[[${server.id}]]';
 var _csrf = Common.csrfToken();
 var _csrfHeader = Common.csrfHeaderName();
 
-function showToast(msg, ok) {
-    var t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast show ' + (ok ? 'toast-ok' : 'toast-err');
-    setTimeout(function() { t.classList.remove('show'); }, 3000);
-}
+function showToast(msg, ok) { Common.showToast(msg, ok ? 'toast-ok' : 'toast-err'); }
 
 function testConn(id) {
     var btn = event.target;

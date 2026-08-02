@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-06-28">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
     <title>Settings — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }  /* settings 페이지 전용 override */
@@ -127,14 +127,7 @@
                       cursor: pointer; }
         .danger-btn:hover { background: #FEF2F2; border-color: #EF4444; }
 
-        /* ── Toast ───────────────────────────────────────── */
-        .toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%);
-                 padding: 10px 22px; border-radius: 8px; font-size: 13px; font-weight: 500;
-                 z-index: 500; animation: toastIn .3s ease; pointer-events: none; }
-        .toast-success { background: #065F46; color: #fff; }
-        .toast-error { background: #7F1D1D; color: #fff; }
-        @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -10px); }
-                             to   { opacity: 1; transform: translate(-50%, 0); } }
+        /* Toast CSS 는 common.css 로 이관 (Common.toast) */
 
         /* ── Confirm modal ─────────────────────────────────
            .modal-ov / @keyframes modalIn / .modal-box base 는 common.css 에서 제공.
@@ -825,14 +818,7 @@ function csrfHeaders(extra) {
 }
 
 // ── Toast ──────────────────────────────────────────────
-function toast(msg, type) {
-    var t = document.createElement('div');
-    t.className = 'toast toast-' + (type || 'success');
-    t.textContent = msg;
-    document.body.appendChild(t);
-    setTimeout(function() { t.style.transition='opacity .4s'; t.style.opacity='0';
-        setTimeout(function(){ t.remove(); }, 400); }, 2500);
-}
+var toast = Common.toast;
 
 // ── State ──────────────────────────────────────────────
 var _physMem = -1, _xmsBytes = -1, _xmxBytes = -1;
