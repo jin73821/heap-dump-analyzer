@@ -1,6 +1,74 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-08-02] 라인 수 절감 리팩토링 — main 소스 −3,123라인 (67,551 → 64,428, −4.6%)
+
+동작 불변(순수 리팩토링) 원칙. 커밋 8개, 버전 2.3.2 유지(산출물 JAR 명 불변). 테스트 311 → 321건(신규 골든 10) 전부 green. 고위험 영역(LlmConfigService HTTP 5메서드 통합, HeapReportApiController MAT SSE 3종 템플릿화, facade setter 이관, Lombok 도입)은 테스트 부재/운영 직결 사유로 **의도적 제외**.
+
+### Stage A — Java (31,014 → 28,615, −2,399)
+
+1. **`LeakSuspectAdvisor` 하드코딩 룰 배열 제거 (−788)** — `KNOWN_LIBRARIES` 66건 + `FALLBACK_RULES` 9건 코드 람다는 `leak-rules/*.json`(98+66건) → `LeakRuleSeeder` → DB 이관이 완료된 레거시 폴백(dual-path Phase 1)이었음. 파일 주석의 "Phase 2 에서 제거 예정" 계획 이행. 이제 DB 룰 단일 경로 — 룰 미매칭/미주입/전체 비활성화 시 no-op(suspect 필드 null → UI null 가드가 원문+키워드만 표시). **골든 테스트 선작성**: `LeakSuspectAdvisorGoldenTest` 10건 — JSON 시드를 `LeakRuleSeeder` 와 동일 매핑으로 mock 주입해 삭제 전후 결과 불변 검증(시드에 catch-all `.*` fallback 룰이 있어 DB 룰 활성 시 모든 텍스트가 최소 generic 카테고리를 받는 것도 골든에 명문화).
+2. **facade getter 위임 제거 (−115)** — `HeapDumpAnalyzerService` 의 LLM/RAG getter 55개 + AiInsight facade 3개 + LLM 호출 위임 6개 삭제. 소비처 5개 컨트롤러(HeapAi/HeapSystem/AiChat/CoreDump/HeapDumpView) + `CoreDumpAnalyzerService` 가 `LlmConfigService`/`RagConfigService`/`AiInsightManager` 직접 주입으로 전환. ⚠ **setter 는 `persistSettings()` 부수효과가 있어 유지** — 신규 코드도 설정 변경은 반드시 `HeapDumpAnalyzerService.setXxx()` 경유할 것.
+3. **컨트롤러 보일러플레이트 (−120)** — ServerController 설정 get/set 3쌍 `settingResponse`/`applySetting` + 동형 catch 6곳 `fail(e)`(감사 로그 원형 유지), HeapSystemApiController 토글/숫자 설정 `toggleResponse`/`applyValidatedSetting`(응답 JSON 키 이름은 파라미터로 보존), `util/SseJson` 신설(AI 채팅 SSE 수동 JSON 조립 11곳 — 이스케이프 규칙 기존과 동일 유지). LeakRuleAdminController 제네릭화·CoreDump validate 프리앰블 통합은 검토 후 **순이득 없음으로 기각**.
+4. **설정 restore 표 기반화 (−108)** — `restoreScalarSettings` boolean 4키 → `restoreBool` 헬퍼, `RagConfigService.applyFromSettings` 31필드 if-블록 → `str()` 1줄 테이블(secret 3종은 기존 adopt 경로). 함정 #25 의 `applyStep` 격리·3단 try 구조 무변경(`SettingsRestoreIsolationTest` green).
+5. **자기중복 추출 (−80)** — RemoteDumpService 힙/코어 경로 스캔 루프(20라인 완전일치) → `scanPathList`+`PathScanner`, `_Query.zip` index.html 행 순회 2벌 → `forEachQueryZipRow`.
+
+### Stage B — 프론트엔드 (HTML −1,031 / CSS −69, 신규 공통 JS +373 포함 순절감 −724)
+
+1. **`/js/table-grid.js` 신설** — files/history/servers/comparison-history 4벌 복붙(정렬 ▲▼/페이지네이션 ‹1…›/행표시 셀렉트, `renderPagination` 45라인은 바이트 동일)을 `TableGrid.create(cfg)` 로 통합. 페이지 고유 로직은 훅 주입(sortValue name 특례, attachRow/showRow — files exec sub-row 페어, applyFilter 술어, onAfterRender). 페이지는 얇은 전역 위임 함수 유지 — HTML inline onclick 무변경. server-logs 는 0-base 서버사이드라 제외.
+2. **`/js/select-mode.js` 신설** — 다중 선택 모드 3벌 통합. body 클래스는 통일하지 않고 파라미터 주입(files=`has-select-bar`, 그 외=`action-bar-open`) — CSS 무변경.
+3. **`/js/float-tooltip.js` 신설** — servers/server-detail 플로팅 툴팁 IIFE 2벌 통합(servers 판 기준 — server-detail 모바일이 토글/스크롤 dismiss 로 상향).
+4. **`Common.toast` / `Common.showToast`** — settings/llm/rag 동일 3벌+CSS 는 common 으로, `#toast` 엘리먼트 계열(servers/users 동일 + server-detail 어댑터)도 통합. main.js/upload-queue/account/cd-toast 계열은 위치·UX 가 달라 **의도적 미통합**.
+5. **인라인 CSS → common.css 이관 (157개 사본 제거, 17페이지)** — "3개 이상 페이지 바이트 동일 + 프로젝트 전체 단일 정의 셀렉터" 44규칙만 기계 추출·이관(그리드 툴바/선택/페이지네이션/설정폼/로그인). 변형 존재 셀렉터(.page-ttl/.pg-btn/.pagination-bar 등)는 cascade 누출 방지 위해 인라인 잔존. `.mbtn-*`/`.modal-*`/`.dds-*` 는 함정 #13/#17/#22 준수로 제외.
+6. **style.css 데드 룰 제거 (377 → 180)** — 소비 3페이지(compare/progress/leak-rules)+banner+전체 JS grep 으로 확정한 46개 데드 클래스 룰 삭제.
+7. **소형** — admin/users `renderReqPager`/`renderPager` 복붙 → `renderServerPager` 통합, core-dump-index.js csrf/fmtBytes·upload-queue.js escapeHtml·analyze.js `_escapeHtml`(5문자 동일) → `Common.*` 위임. login.css 신설은 4페이지 완전 동일 규칙이 10개뿐이라 취소.
+8. 캐시 무효화: common.css/common.js/style.css/analyze.js/upload-queue.js/core-dump-index.js + 신규 3파일 `?v=2026-08-02`.
+
+### 검증
+
+- `mvn test` 321건 green(A 단계마다) + 매 커밋 `mvn clean package && restart.sh` + 기동 grep.
+- SpringTemplateEngine 렌더 스모크 19페이지: 17 OK, account/server-detail 은 스텁 모델 한계(SpEL 평가 단계 — 파싱은 통과, 해당 페이지 변경은 CSS 룰 제거/JS 1줄 교체뿐).
+- 헤드리스 Chrome: TableGrid 엔진 동작 10케이스(정렬 토글/페이지 이동/검색/noMatch/행표시+localStorage) 전부 PASS, 로그인 페이지 스크린샷+컴퓨티드 스타일 실측, 인라인 핸들러↔함수 정의 전수 대조.
+- 잔여 확인 권장: 운영 계정으로 files/history/comparison-history/servers 의 정렬·페이지네이션·선택삭제 1회 클릭 스루 + 실 덤프 1건 재분석(Leak Suspects 카드 — 골든 테스트가 동일 데이터로 커버하나 실측 1회 권장).
+
+## [2026-08-02] Kubernetes 배포 패키지 리패키징 (`/opt/genspark/heapApp_k8s`)
+
+**대상:** 신규 디렉토리 `/opt/genspark/heapApp_k8s/**` (본 저장소는 이 CHANGELOG 항목 외 **변경 없음**)
+
+사내 K8s 배포를 위해 v2.3.2 를 컨테이너화. **사내 클러스터 사양(StorageClass·인그레스 컨트롤러·레지스트리 정책)을 사전 확인할 수 없어**, 특정 배포판에 의존하지 않는 표준 매니페스트 + 오프라인 반입용 이미지 tar 로 구성했다. **앱 소스는 한 줄도 고치지 않았다** — 모든 경로/설정이 `@Value("${...}")` 주입이라 properties + 환경변수만으로 컨테이너화가 가능했다.
+
+### 산출물
+
+`build/`(Dockerfile·entrypoint) · `config/application.properties`(설정 원본 단일) · `scripts/`(build-jar·build-image·verify-image·validate-manifests·save-image·sync-config·migrate-data) · `k8s/`(base·mariadb·expose + `incluster-db`/`external-db` 2 오버레이) · `docs/`(DEPLOY·SIZING·MIGRATION·OPERATIONS) · `dist/`(이미지 tar.gz)
+
+### 컨테이너화에서 실제로 걸린 지점 (조사 근거 → 대응)
+
+1. **시크릿이 JAR 에 내장** — `src/main/resources/application.properties:108` 의 평문 Anthropic 키와 `:224` 의 `ENC(...)` DB 비번이 `BOOT-INF/classes` 에 그대로 패키징된다. → `build-jar.sh` 가 원본을 임시 디렉토리로 **복사**해 properties 만 교체 후 `mvn package`(원본 저장소 불변). 빌드 후 JAR 내부 properties 를 재검사해 키/`ENC(` 잔존 시 빌드 실패. Boot 3 로더는 중첩 JAR 이 STORED 여야 해서 `jar uf` 사후 교체는 쓰지 않았다.
+2. **앱이 외부 `application.properties` 를 되쓴다** (`HeapDumpAnalyzerService.syncApplicationProperties:1872`, 탐색 순서 `:1931` = JAR 옆 → `user.dir` → `src/main/resources`). → WORKDIR 을 쓰기 가능한 `/config`(emptyDir)로 두고 ConfigMap 은 `/configmap` 에 읽기 전용 마운트 후 entrypoint 가 복사. 실제 설정 원본은 PVC 의 `settings.json` 이라 값 자체는 재시작에도 유지된다.
+3. **`mat.max-concurrent-processes=0`(자동)이 컨테이너에서 위험** — `computeMaxConcurrentMat():2195` 이 `/proc/meminfo` MemTotal 을 읽는데 이는 파드 한도가 아니라 **노드 전체 RAM**. 128GB 노드 + 4Gi 파드면 51개까지 허용된다고 판단해 MAT 을 무더기로 띄워 OOMKill. → `1` 로 명시 고정 + 사이징 공식 문서화(`파드 limit ≥ 앱 -Xmx + MAT -Xmx × 동시수 + 512Mi`).
+4. **`runuser -l sscuser`** (`RemoteDumpService:967`) 는 root + 실 OS 계정 필요. → `remote.ssh.local-user=` 빈 값이면 `bash -c` 폴백이라 비-root(uid 10001) 단일 계정으로 동작. `BatchMode=yes` + `-i` 미사용이라 키는 반드시 `~/.ssh` 에 마운트.
+5. **MAT 이 GTK 를 요구하는가** — `ldd /opt/mat/MemoryAnalyzer` 와 launcher `.so` 실측 결과 libpthread/libdl/libc 뿐. 슬림 JRE 로 충분하다고 판단했고, **100MB hprof 로 컨테이너 안에서 headless 파싱을 실증**(리포트 ZIP + `.index` 생성 확인).
+6. **MAT 이 자기 설치 디렉토리에 쓴다** (OSGi 런타임 파일 + 설정 UI 의 `writeIniJvmArg:2321` 이 `MemoryAnalyzer.ini` 수정). → 이미지에는 `/opt/mat-dist` 로 넣고 entrypoint 가 emptyDir `/opt/mat` 으로 시드 + `MAT_XMX/MAT_XMS` 를 ini 에 스탬프(선언적). `readOnlyRootFilesystem: true` 불가.
+7. **20GB 멀티파트가 `java.io.tmpdir` 에 전량 디스크 스테이징** (`multipart.location`/`server.tomcat.basedir` 미지정). → `server.tomcat.basedir` · `remote.scp.temp-dir` 를 PVC 로 이동. Ingress `proxy-body-size: 0` + 35분 SSE 대응 `proxy-read-timeout: 2400`.
+8. **replicas 1 고정 근거** — 분석 게이트 `Semaphore(1)`, 진행률/취소/큐가 인메모리, 원격 수집 `@Scheduled(10s)` 중복 실행, 기동 마이그레이션이 공유 볼륨을 파괴적으로 move/delete. → `strategy: Recreate` 동반.
+9. **actuator 없음** → probe 는 permitAll 인 `/login`(startup·readiness) · `/favicon.svg`(liveness). 기동 마이그레이션이 동기라 startupProbe 300초 예산.
+10. **프록시 뒤 로그인 리다이렉트** — `server.forward-headers-strategy` 미설정이라 TLS Ingress 뒤에서 `http://` 로 리다이렉트. → `framework` 설정.
+11. **MariaDB `max_allowed_packet`** — `analysis_result_detail.result_json` 이 LONGTEXT 수 MB 라 기본 16M 로는 저장 실패. → StatefulSet args 에 `256M`.
+12. **DB/세션 스키마는 사전 생성 불필요** — `ddl-auto=update` + `SpringSessionTableChecker` + `LeakRuleSeeder` 가 자동 처리. MariaDB 공식 이미지 env(DB+계정)만으로 충분.
+13. **한글 로케일 의존** — `parseDumpCreationTime:3537` 이 `"오후"` 를 파싱. → 이미지에 `ko_KR.UTF-8` locale + `TZ=Asia/Seoul` + `-Duser.language=ko -Duser.country=KR`.
+
+### 검증 (실측)
+
+- **이미지 20/20 PASS** (`verify-image.sh`) — ko_KR.UTF-8·KST·uid 10001 / bash·sh·ssh·which·gdb / **MAT headless 파싱**(100MB hprof → `_Leak_Suspects.zip`·`_System_Overview.zip`·`.index` 12종 생성) / ConfigMap→`/config` 시드 / **신규 MariaDB 컨테이너로 앱 기동 13초** / `/login` 200 · `/favicon.svg` 200 · `/` 302 / 평문 시크릿 부재. **운영 DB(192.168.56.9) 미접촉**
+- **매니페스트 45/45 PASS** (`validate-manifests.sh`, kustomize v5.4.3) — 두 오버레이 렌더 + replicas 1 · Recreate · 프로브 3종 · 마운트 5종 · Secret 리소스 미포함 확인
+- 이미지 724MB → 반출 `dist/heap-analyzer-2.3.2.tar.gz` 388MB (+ `mariadb-11.4.tar.gz` 110MB)
+
+### 후속 필요
+
+- `application.properties:108` 의 Anthropic API 키는 저장소에 커밋된 상태 → **폐기·재발급 필요** (K8s 이미지에는 미포함)
+- 기존 운영 데이터 이관 시 `HEAP_ANALYZER_ENCRYPTION_KEY` 주의 — 현재 미설정이라 기존 `ENC()` 는 내장 기본 시드 기반. DB 비번은 평문 env 로 우회하고 2FA `off`·RAG 빈 값이라 실질 영향 없음 (`docs/MIGRATION.md`)
+
+
 ## [2026-07-31] v2.3.2 — 버전 2.3.1 → 2.3.2
 
 **대상:** `pom.xml`, `restart.sh`/`run.sh`/`stop.sh`, `templates/fragments/banner.html`·`index.html`·`progress.html`

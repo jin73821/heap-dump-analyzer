@@ -14,7 +14,7 @@ Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
-mvn test                                 # 단위 테스트 311건 (코어덤프 리비전·파일목록 15 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5)
+mvn test                                 # 단위 테스트 321건 (코어덤프 리비전·파일목록 15 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5 / Leak 룰 골든 10)
 java -jar target/heap-analyzer-2.1.0.jar   # 버전은 pom.xml <version>과 항상 일치
 bash restart.sh                          # 운영(18080) 재기동
 ```
@@ -65,9 +65,9 @@ Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터 + 분석
 **DTOs (`model/dto/` 패키지, Phase 4B-2):** `AnalysisHistoryItem` / `DailyDetection` / `ServerSeries` / `DetectionSummaryItem` / `DetectionAggregate` / `DetectionDayFile` / `DetectionRecentItem` / `ClassDiff` / `HistogramDiff` / `SuspectDiff` / `KpiDiff` — 11 DTO. 이전엔 `HeapDumpController` inner static class 였음.
 
 **Services (Phase 4A 종합 추출, 2026-05-12):**
-- `HeapDumpAnalyzerService` (1,965 라인) — 분석 + LLM facade + **모든 런타임 설정 영속화 단일 책임**: settings.json ↔ application.properties 동기화
-- `LlmConfigService` (1,025 라인) — LLM 12 필드 + 17 getter/setter + 4 호출 메서드 (`callLlmAnalysis`/`callLlmChat`/`callLlmChatStream`/`testLlmConnection`) + `disableSslVerification` + `GENSPARK_MODELS`
-- `RagConfigService` (421 라인) — RAG 26 필드 + 32 getter + 5 그룹 setter + AES 암호화
+- `HeapDumpAnalyzerService` (3,951 라인) — 분석 + **모든 런타임 설정 영속화 단일 책임**: settings.json ↔ application.properties 동기화. ⚠ 2026-08-02 부터 **LLM/RAG/AiInsight getter facade 는 제거됨** — 조회는 `LlmConfigService`/`RagConfigService`/`AiInsightManager` 직접 주입. **setter facade 는 유지**(위임 후 `persistSettings()` 부수효과) — 설정 변경은 반드시 이 setter 경유.
+- `LlmConfigService` (1,328 라인) — LLM 12 필드 + 17 getter/setter + 4 호출 메서드 (`callLlmAnalysis`/`callLlmChat`/`callLlmChatStream`/`testLlmConnection`) + `disableSslVerification` + `GENSPARK_MODELS`
+- `RagConfigService` (398 라인) — RAG 26 필드 + 32 getter + 5 그룹 setter + AES 암호화
 - `FileManagementService` — 업로드/중복검사/디스크 I/O/gzip
 - `HeapHistoryAggregator` (585 라인, Phase 4B-2) — `buildHistory` / `aggregateDetections` / `build*Diffs` / `buildKpiDiff` / `buildAnalysisName` / `truncateLog` / `formatDuration` 등 공유 헬퍼. View/API 컨트롤러 7개에 주입.
 - `HeapAnalysisResultCache` — `ConcurrentHashMap` 캐시 + 7 facade 메서드
@@ -95,7 +95,8 @@ Thymeleaf + vanilla JS + Chart.js. 빌드 도구 없음.
 
 **공통 인프라 (Phase 5A/5B/5C — common.* 통합):**
 - `/css/common.css` — reset / body base / `.topbar*` / `.modal-ov` + `@keyframes modalIn` + `.modal-box` base / btn 색상 utility 3 그룹 (cancel `.mbtn-cancel/.btn-cancel/.sa-btn-cancel` · danger `.mbtn-del/.mbtn-danger/.btn-delete/.sa-btn-del` · primary `.mbtn-save/.mbtn-primary/.mbtn-confirm/.btn-download`) / 데이터 테이블 4 family base (`.htable/.ftable/.stable/.utable` + sortable) — 80+ 라인 공통. 페이지별 변형(opacity 변형, padding/font-size, min-width 등)은 인라인 cascade override.
-- `/js/common.js` — `window.Common` 네임스페이스: `escHtml(s)` (5문자 escape) / `csrfToken()` / `csrfHeaderName()` / `fetchJSON(url, opts)` (자동 CSRF/Content-Type, non-2xx throw, JSON 자동 파싱) / `appendCsrfToForm(form)` / `formatBytes(bytes)`. `banner.html`에서 1회 로드 → 14 페이지 자동 가용.
+- `/js/common.js` — `window.Common` 네임스페이스: `escHtml(s)` (5문자 escape) / `csrfToken()` / `csrfHeaderName()` / `fetchJSON(url, opts)` (자동 CSRF/Content-Type, non-2xx throw, JSON 자동 파싱) / `appendCsrfToForm(form)` / `formatBytes(bytes)` / `toast(msg, type)` (settings 계열 — CSS 는 common.css `.toast/.toast-success/.toast-error`) / `showToast(msg, type)` (`#toast` 고정 엘리먼트 계열 — servers/server-detail/admin-users). `banner.html`에서 1회 로드 → 14 페이지 자동 가용.
+- **페이지별 로드 공통 모듈 (banner 전역 아님, 2026-08-02):** `/js/table-grid.js`(데이터 그리드 엔진) · `/js/select-mode.js`(다중 선택 모드) · `/js/float-tooltip.js`(`[data-tooltip]` 플로팅 툴팁 — servers/server-detail). 소비 페이지의 `<script>` 태그로만 로드.
 - 캐시 무효화: `?v=YYYY-MM-DD[a-z]` 쿼리 파라미터. 모든 페이지 일괄 갱신.
 
 **페이지:** `/`(Dashboard, 멀티 업로드 큐), `/files`, `/history`, `/compare`(파라미터 없으면 picker), `/analyze/{filename}`(KPI/TopConsumers/Suspects/Histogram/Threads/AI/RawData + 플로팅 채팅 FAB), `/progress/{filename}`(SSE), `/settings`(General), `/settings/llm`, `/settings/rag`, `/ai-chat`(세션 사이드바), `/servers*`, `/admin/users`(ADMIN), `/admin/leak-rules`(ADMIN), `/comparison-history`, `/login`.
@@ -107,7 +108,7 @@ Thymeleaf + vanilla JS + Chart.js. 빌드 도구 없음.
 
 **Global Banner** (`fragments/banner.html`) — 모든 페이지에 `th:replace`로 삽입되는 좌측 고정 배너. 220px ↔ 44px 토글, `localStorage('bannerCollapsed')`. CSS 변수 `--banner-w`가 모든 페이지의 topbar `left`/container `padding-left` 제어. 모바일(≤900px) 숨김. Navigation: Dashboard / Files / History / Comparison / AI Chat / Servers(아코디언) / Settings(아코디언: General/LLM/RAG/Accounts(ADMIN)/Leak Rules(ADMIN)) / Logout. System Status는 `/api/system/status` 60초 폴링 + `localStorage` 캐시. **Banner sub-menu**: `.gb-nav-sub.open { max-height: 200px }` 공용 트랜지션. **FOUC 방지**: `<style>` 앞 인라인 스크립트가 collapsed 클래스 즉시 적용.
 
-**Files/History 공통 데이터 그리드 패턴:** 검색 + 행표시 셀렉트(20/30/50/100, localStorage) + admin "deleted 표시" 체크박스 + 다중선택 + 헤더 클릭 정렬(`data-sort-key`/`data-sort-type=num|str` ▲▼ 인디케이터, 한글 `localeCompare(s, 'ko')`) + 페이지네이션 (‹Prev / 1 … 현재±2 … 마지막 / Next›). raw 정렬값은 `<tr data-sort-*>` 직렬화 — `AnalysisHistoryItem`의 raw 바이트 필드(`sizeBytes`/`heapUsedBytes` 등) 사용. **다중 삭제 API 분리**: `/api/history/bulk-delete`(분석 기록 + 옵션 heap dump) vs `/api/files/bulk-delete`(heap dump만, 분석 기록 보존).
+**Files/History 공통 데이터 그리드 패턴 (2026-08-02 공통 엔진화):** 검색 + 행표시 셀렉트(20/30/50/100, localStorage) + admin "deleted 표시" 체크박스 + 다중선택 + 헤더 클릭 정렬(`data-sort-key`/`data-sort-type=num|str` ▲▼ 인디케이터, 한글 `localeCompare(s, 'ko')`) + 페이지네이션 (‹Prev / 1 … 현재±2 … 마지막 / Next›). **엔진은 `/js/table-grid.js`(`TableGrid.create(cfg)`) + `/js/select-mode.js`(`SelectMode.create(cfg)`) 공통 모듈** — files/history/servers/comparison-history 가 사용, 페이지는 얇은 전역 위임 함수(`gotoPage`/`onHeaderSort`/...)로 HTML inline 핸들러를 보존하고 고유 로직(필터 술어, files 의 exec sub-row 페어)은 cfg 훅으로 주입. server-logs 는 0-base 서버사이드라 미사용. 새 목록 페이지는 이 두 모듈 재사용할 것. raw 정렬값은 `<tr data-sort-*>` 직렬화 — `AnalysisHistoryItem`의 raw 바이트 필드(`sizeBytes`/`heapUsedBytes` 등) 사용. **다중 삭제 API 분리**: `/api/history/bulk-delete`(분석 기록 + 옵션 heap dump) vs `/api/files/bulk-delete`(heap dump만, 분석 기록 보존).
 
 **server-logs.html은 의도적으로 서버 사이드 페이지네이션** (transfer log는 누적형 무제한 성장). `Page<TransferLogItem>` + KPI 별도 endpoint + Export 50,000 cap. JPA `Specification` 동적 쿼리. 정렬 필드 화이트리스트. `.ltable` 은 hover `#FAFAFA` + th 직접 background 구조라 common.css 4 family base 에서 제외 (인라인 유지).
 
@@ -253,10 +254,10 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 - **모호 구간 자동 복구** — 마커 없는 정확히 64 HEX 는 `decrypt()` 가 양쪽 해석을 모두 시도해 위생 검사로 채택(랜덤 IV만 정상이면 자동 복구 + INFO). `decryptIfEncryptedChecked()` 는 `Decrypted` record 반환, **절대 throw 하지 않음** → 선택 기능(RAG/SSO)의 `@PostConstruct` 소프트 페일용. DB(`DataSourceConfig`)만 fail-fast 유지.
 - **`SecretValue`** — 로드 당시 암호문을 보관하고 **값이 실제로 바뀐 경우에만 재암호화**. 손상 평문의 재암호화 세탁(원본 영구 소실) 차단 + 기동 churn 제거. 암호화 실패 시 `forStorage()` 가 `null` → 호출자가 **키 자체를 생략**해 기존 저장값 보존(빈 문자열로 덮으면 시크릿 무경고 삭제). **새 시크릿 필드 추가 시 반드시 `SecretValue` + `putSecret()` 패턴 사용** — RAG 3종/SSO clientSecret 이 레퍼런스.
 - ⚠️ **파일로 시크릿을 직접 정리할 때** — Spring 이 부팅 시 읽는 건 **JAR 내부 사본**(`BOOT-INF/classes/application.properties`)이다. settings.json + 소스 properties 만 고치면 `init()` 이 옛 값을 읽어 WARN 이 남는다(직후 `applyFromSettings` 가 덮어써 동작엔 무해). **재빌드까지 필요**.
-- 회귀 방어: `AesEncryptorTest`(237, 반복 200 포함) / `SecretSanityTest`(22) / `RagConfigServiceSecretTest`(11, 세탁루프·churn) / `SettingsRestoreIsolationTest`(4) / `ResultDirectorySchemeTest`(5) / `DominatorRefsEmptyGuardTest`(5).
+- 회귀 방어: `AesEncryptorTest`(237, 반복 200 포함) / `SecretSanityTest`(22) / `RagConfigServiceSecretTest`(11, 세탁루프·churn) / `SettingsRestoreIsolationTest`(4) / `ResultDirectorySchemeTest`(5) / `DominatorRefsEmptyGuardTest`(5) / `LeakSuspectAdvisorGoldenTest`(10, DB 룰 경로 결과 불변).
 - 후속 항목(LLM API 키 평문 저장, OTP rekey 도구, `HEAP_ANALYZER_ENCRYPTION_KEY` 미설정)은 `SECRET_ENCRYPTION_FOLLOWUP.md`.
 - **Dump Creation Time 파싱:** `HeapAnalysisResult.dumpCreationTime` 필드 — MAT System Overview ZIP `index.html`의 `<td>Date</td>`/`<td>Time</td>` TD 쌍을 파싱. MAT는 JVM 로케일(한국어)로 출력하므로 `"2026. 5. 29."` + `"오후 6시 18분 53초 GMT+9"` 형태. `HeapDumpAnalyzerService.parseDumpCreationTime()` 이 오전/오후 24h 변환 후 `"2026-05-29 18:18:53"` 반환. 기존 result.json에 필드 없을 경우 `reparseOverviewMeta()` 가 `dumpCreationTime == null` 조건으로 재파싱 (classLoader/gcRoot 0 조건과 OR).
-- **Leak Rule DB 마이그레이션 (Phase 4):** `leak_library_rules` (98 prefix-based: 66 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 2 보강 2026-05-31) + `leak_fallback_rules` (66 regex-based: 33 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 3) 테이블 + `LeakRuleAdminController` `/admin/leak-rules` ADMIN CRUD + `LeakSuspectAdvisor` 룰 엔진 + `LeakRuleSeeder` 부트스트랩. 코드 배포 없이 운영자가 추가/수정/우선순위 조정. `LeakRuleService.invalidate()` 로 캐시 즉시 갱신.
+- **Leak Rule DB 마이그레이션 (Phase 4):** `leak_library_rules` (98 prefix-based: 66 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 2 보강 2026-05-31) + `leak_fallback_rules` (66 regex-based: 33 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 3) 테이블 + `LeakRuleAdminController` `/admin/leak-rules` ADMIN CRUD + `LeakSuspectAdvisor` 룰 엔진 + `LeakRuleSeeder` 부트스트랩. 코드 배포 없이 운영자가 추가/수정/우선순위 조정. `LeakRuleService.invalidate()` 로 캐시 즉시 갱신. **2026-08-02 하드코딩 룰 배열(dual-path 폴백 769라인) 제거 — DB 룰 단일 경로**: 룰 미매칭/서비스 미주입/전체 비활성화 시 `analyze()` no-op(suspect 필드 null → UI null 가드가 원문+키워드만 표시). 시드에 catch-all(`.*`) fallback 룰이 있어 DB 룰 활성 시엔 어떤 텍스트든 최소 generic 카테고리를 받는다. 회귀 방어 `LeakSuspectAdvisorGoldenTest`(10).
 
 ## Changelog
 
