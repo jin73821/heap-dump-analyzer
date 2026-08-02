@@ -881,15 +881,7 @@ function _renderDomRefsTable(refs, emptyMsg) {
          + '</table>';
 }
 
-function _escapeHtml(s) {
-    if (s == null) return '';
-    return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+var _escapeHtml = Common.escHtml;   // 구현 동일(5문자 escape) — common.js 위임
 
 // ── 탭 구조 헬퍼 ───────────────────────────────────────────────
 // [Incoming] [Outgoing] [Loaded Classes(CL만)] 탭 + 단일 본문 패널.

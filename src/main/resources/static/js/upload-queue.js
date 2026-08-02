@@ -53,11 +53,7 @@
         setTimeout(function() { t.style.opacity = '0'; }, 3500);
         setTimeout(function() { t.remove(); }, 4000);
     }
-    var escapeHtml = (global.Common && global.Common.escHtml) ? global.Common.escHtml : function(s) {
-        return String(s == null ? '' : s)
-            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    };
+    var escapeHtml = global.Common.escHtml;   // banner.html 이 common.js 선로드
 
     /* ── 부분 해시 (서버 중복 검사용) ── */
     function computePartialHash(file) {

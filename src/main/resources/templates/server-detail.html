@@ -377,6 +377,7 @@
 .modal-input:focus { border-color:#93C5FD; box-shadow:0 0 0 3px rgba(37,99,235,.1); }
 </style>
 
+<script src="/js/float-tooltip.js?v=2026-08-02"></script>
 <script>
 var _serverId = '[[${server.id}]]';
 var _csrf = Common.csrfToken();
@@ -521,60 +522,7 @@ function submitServer() {
     closeEditModal();
 }
 
-// ── 플로팅 툴팁 ([data-tip] 속성 공통) ──────────────────────
-(function() {
-    var tip = document.createElement('div');
-    tip.style.cssText = 'display:none;position:fixed;z-index:9999;background:#1F2937;color:#fff;' +
-        'font-size:12px;line-height:1.5;padding:7px 11px;border-radius:6px;max-width:360px;' +
-        'word-break:break-word;white-space:pre-wrap;box-shadow:0 3px 10px rgba(0,0,0,.25);pointer-events:none';
-    document.body.appendChild(tip);
-    function pos(e) {
-        var x = e.clientX + 14, y = e.clientY - 40;
-        if (x + tip.offsetWidth  > window.innerWidth  - 8) x = e.clientX - tip.offsetWidth  - 14;
-        if (y < 8)                                          y = e.clientY + 18;
-        if (y + tip.offsetHeight > window.innerHeight - 8) y = e.clientY - tip.offsetHeight - 14;
-        tip.style.left = x + 'px';
-        tip.style.top  = y + 'px';
-    }
-    document.addEventListener('mouseover', function(e) {
-        var el = e.target.closest ? e.target.closest('[data-tooltip]') : null;
-        if (!el || !el.getAttribute('data-tooltip')) { tip.style.display = 'none'; return; }
-        tip.textContent = el.getAttribute('data-tooltip');
-        tip.style.display = 'block';
-        pos(e);
-    });
-    document.addEventListener('mousemove', function(e) {
-        if (tip.style.display === 'none') return;
-        pos(e);
-    });
-    document.addEventListener('mouseout', function(e) {
-        var el = e.target.closest ? e.target.closest('[data-tooltip]') : null;
-        if (el && el.contains(e.relatedTarget)) return;
-        tip.style.display = 'none';
-    });
-    document.addEventListener('touchstart', function(e) {
-        var el = e.target.closest ? e.target.closest('[data-tooltip]') : null;
-        if (!el || !el.getAttribute('data-tooltip')) { tip.style.display = 'none'; return; }
-        tip.textContent = el.getAttribute('data-tooltip');
-        tip.style.maxWidth = Math.min(360, window.innerWidth - 16) + 'px';
-        tip.style.display = 'block';
-        requestAnimationFrame(function() {
-            var rect = el.getBoundingClientRect();
-            var tw = tip.offsetWidth, tipH = tip.offsetHeight;
-            var x = rect.left;
-            if (x + tw > window.innerWidth - 8) x = window.innerWidth - tw - 8;
-            if (x < 8) x = 8;
-            var y = rect.bottom + 8;
-            if (y + tipH > window.innerHeight - 8) y = rect.top - tipH - 8;
-            if (y < 8) y = 8;
-            tip.style.left = x + 'px';
-            tip.style.top  = y + 'px';
-        });
-    }, { passive: true });
-    document.addEventListener('touchend', function() {
-        setTimeout(function() { tip.style.display = 'none'; }, 1800);
-    }, { passive: true });
-})();
+// 플로팅 툴팁은 /js/float-tooltip.js 공통 모듈 사용 (servers 판 — 모바일 토글 dismiss)
 </script>
 
 </body>

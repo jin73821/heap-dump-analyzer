@@ -10,24 +10,14 @@
     // 프리로드 시점의 서버 페어링 — 현재 선택과 비교해 "분석 조건이 바뀌었는지" 판정
     var _originalExecPairing = null;
 
-    function csrfHeader() {
-        var meta = document.querySelector('meta[name="_csrf"]');
-        var metaH = document.querySelector('meta[name="_csrf_header"]');
-        return (meta && metaH) ? { name: metaH.content, value: meta.content } : null;
-    }
+    // banner.html 이 common.js 를 선로드 — Common.* 직접 위임
     function csrfHeaders(json) {
         var h = json ? { 'Content-Type': 'application/json' } : {};
-        var c = csrfHeader();
-        if (c) h[c.name] = c.value;
+        var t = Common.csrfToken();
+        if (t) h[Common.csrfHeaderName()] = t;
         return h;
     }
-    function fmtBytes(n) {
-        if (window.Common && Common.formatBytes) return Common.formatBytes(n);
-        if (n < 1024) return n + ' B';
-        var u = ['KB', 'MB', 'GB', 'TB'], i = -1;
-        do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
-        return n.toFixed(1) + ' ' + u[i];
-    }
+    var fmtBytes = Common.formatBytes;
 
     // ── 토스트 (alert 대체) ──────────────────────────────────────
     function toast(msg, type) {
@@ -266,8 +256,8 @@
 
         var xhr = new XMLHttpRequest();
         xhr.open('POST', '/api/core-dump/upload');
-        var c = csrfHeader();
-        if (c) xhr.setRequestHeader(c.name, c.value);
+        var csrfToken = Common.csrfToken();
+        if (csrfToken) xhr.setRequestHeader(Common.csrfHeaderName(), csrfToken);
 
         xhr.upload.onprogress = function (e) {
             if (!e.lengthComputable) return;

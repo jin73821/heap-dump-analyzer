@@ -1234,27 +1234,28 @@ function renderRequests(d) {
     renderReqPager(d.page, d.totalPages);
 }
 
-function renderReqPager(current, total) {
-    var pager = document.getElementById('reqPager');
+function renderServerPager(pagerId, fnName, current, total) {
+    var pager = document.getElementById(pagerId);
     if (total <= 1) { pager.innerHTML = ''; return; }
     var html = '';
-    html += '<button onclick="loadRequests(' + (current - 1) + ')"' + (current === 0 ? ' disabled' : '') + '>‹ 이전</button>';
+    html += '<button onclick="' + fnName + '(' + (current - 1) + ')"' + (current === 0 ? ' disabled' : '') + '>‹ 이전</button>';
     var start = Math.max(0, current - 2);
     var end = Math.min(total - 1, current + 2);
     if (start > 0) {
-        html += '<button onclick="loadRequests(0)">1</button>';
+        html += '<button onclick="' + fnName + '(0)">1</button>';
         if (start > 1) html += '<span class="ellipsis">…</span>';
     }
     for (var i = start; i <= end; i++) {
-        html += '<button class="' + (i === current ? 'active' : '') + '" onclick="loadRequests(' + i + ')">' + (i + 1) + '</button>';
+        html += '<button class="' + (i === current ? 'active' : '') + '" onclick="' + fnName + '(' + i + ')">' + (i + 1) + '</button>';
     }
     if (end < total - 1) {
         if (end < total - 2) html += '<span class="ellipsis">…</span>';
-        html += '<button onclick="loadRequests(' + (total - 1) + ')">' + total + '</button>';
+        html += '<button onclick="' + fnName + '(' + (total - 1) + ')">' + total + '</button>';
     }
-    html += '<button onclick="loadRequests(' + (current + 1) + ')"' + (current >= total - 1 ? ' disabled' : '') + '>다음 ›</button>';
+    html += '<button onclick="' + fnName + '(' + (current + 1) + ')"' + (current >= total - 1 ? ' disabled' : '') + '>다음 ›</button>';
     pager.innerHTML = html;
 }
+function renderReqPager(current, total) { renderServerPager('reqPager', 'loadRequests', current, total); }
 
 function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
 
@@ -1516,27 +1517,7 @@ function stopAutoRefresh() {
     if (_asAutoTimer) { clearInterval(_asAutoTimer); _asAutoTimer = null; }
 }
 
-function renderPager(current, total) {
-    var pager = document.getElementById('lhPager');
-    if (total <= 1) { pager.innerHTML = ''; return; }
-    var html = '';
-    html += '<button onclick="loadHistory(' + (current - 1) + ')"' + (current === 0 ? ' disabled' : '') + '>‹ 이전</button>';
-    var start = Math.max(0, current - 2);
-    var end = Math.min(total - 1, current + 2);
-    if (start > 0) {
-        html += '<button onclick="loadHistory(0)">1</button>';
-        if (start > 1) html += '<span class="ellipsis">…</span>';
-    }
-    for (var i = start; i <= end; i++) {
-        html += '<button class="' + (i === current ? 'active' : '') + '" onclick="loadHistory(' + i + ')">' + (i + 1) + '</button>';
-    }
-    if (end < total - 1) {
-        if (end < total - 2) html += '<span class="ellipsis">…</span>';
-        html += '<button onclick="loadHistory(' + (total - 1) + ')">' + total + '</button>';
-    }
-    html += '<button onclick="loadHistory(' + (current + 1) + ')"' + (current >= total - 1 ? ' disabled' : '') + '>다음 ›</button>';
-    pager.innerHTML = html;
-}
+function renderPager(current, total) { renderServerPager('lhPager', 'loadHistory', current, total); }
 
 // ══ 설정 탭: 2차인증 + 비밀번호 만료 (settings.html 에서 이동) ══
 // settings.html 는 toast() 를 쓰고 users.html 는 showToast() 를 쓰므로 alias 로 흡수
