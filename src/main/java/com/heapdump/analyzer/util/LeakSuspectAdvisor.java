@@ -70,13 +70,25 @@ public final class LeakSuspectAdvisor {
         LeakRuleService svc = ruleService;
         if (svc == null) return false;
 
-        // 0a. DB library rules (prefix)
+        // 0a. DB library rules (prefix) — 2-pass.
+        //
+        // pass 1 은 누수 주체(클래스명/축적 대상)로만 전체 룰을 훑고, 클래스로더는 pass 2 로 미룬다.
+        // 클래스로더는 "누가 로드했는가"일 뿐 누수 주체가 아닌데, 예전엔 세 필드를 동등하게 매칭해
+        // priority 가 낮은 WAS 룰이 정확한 라이브러리 룰을 가로챘다. 실제 사례:
+        //   className=com.tmax.tibero.jdbc.driver.TbConnection  (룰 priority 935 커서/Statement 누수)
+        //   classLoader=jeus.server.classloader.RootClassLoader (룰 priority 928 스레드 풀/내부 객체)
+        // → 928 이 먼저 매칭돼 Tibero JDBC 누수가 "JEUS 서버 코어" 로 설명됐다.
+        // WAS 클래스로더가 로드한 모든 서드파티 클래스에 해당하는 문제였다.
         for (LeakLibraryRule lib : svc.libraryRules()) {
-            if (matchesDbLibrary(ctx, lib.getPrefix())) {
-                suspect.setCategory(lib.getCategory());
-                suspect.setExplanation(LeakRuleTemplate.render(lib.getExplanationTpl(), toTplCtx(ctx)));
-                suspect.setAdvice(LeakRuleTemplate.render(lib.getAdviceTpl(), toTplCtx(ctx)));
-                suspect.setSeverity(pickSeverity(lib.getSeverityHint(), ctx.severity));
+            if (matchesByClass(ctx, lib.getPrefix())) {
+                applyLibraryRule(suspect, lib, ctx);
+                return true;
+            }
+        }
+        // pass 2 — 클래스명으로 못 찾았을 때만 클래스로더로 식별 (WAS 자체 객체·ClassLoader 누수 등)
+        for (LeakLibraryRule lib : svc.libraryRules()) {
+            if (matchesByClassLoader(ctx, lib.getPrefix())) {
+                applyLibraryRule(suspect, lib, ctx);
                 return true;
             }
         }
@@ -95,12 +107,26 @@ public final class LeakSuspectAdvisor {
         return false;
     }
 
-    private static boolean matchesDbLibrary(SuspectContext ctx, String prefix) {
+    /** 매칭된 library rule 을 suspect 에 반영 (pass 1·2 공통). */
+    private static void applyLibraryRule(LeakSuspect suspect, LeakLibraryRule lib, SuspectContext ctx) {
+        suspect.setCategory(lib.getCategory());
+        suspect.setExplanation(LeakRuleTemplate.render(lib.getExplanationTpl(), toTplCtx(ctx)));
+        suspect.setAdvice(LeakRuleTemplate.render(lib.getAdviceTpl(), toTplCtx(ctx)));
+        suspect.setSeverity(pickSeverity(lib.getSeverityHint(), ctx.severity));
+    }
+
+    /** pass 1 — 누수 주체(클래스명 / 메모리가 축적된 클래스) 기준 매칭. */
+    private static boolean matchesByClass(SuspectContext ctx, String prefix) {
         if (prefix == null || prefix.isEmpty()) return false;
         if (ctx.className != null && ctx.className.startsWith(prefix)) return true;
         if (ctx.accumulatorClass != null && ctx.accumulatorClass.startsWith(prefix)) return true;
-        if (ctx.classLoader != null && ctx.classLoader.startsWith(prefix)) return true;
         return false;
+    }
+
+    /** pass 2 — 클래스로더 기준 매칭. 클래스명으로 식별되지 않을 때만 쓰인다. */
+    private static boolean matchesByClassLoader(SuspectContext ctx, String prefix) {
+        if (prefix == null || prefix.isEmpty()) return false;
+        return ctx.classLoader != null && ctx.classLoader.startsWith(prefix);
     }
 
     private static String pickSeverity(String hint, String fromPercentage) {

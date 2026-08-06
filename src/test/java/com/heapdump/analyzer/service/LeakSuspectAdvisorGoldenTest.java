@@ -169,6 +169,42 @@ class LeakSuspectAdvisorGoldenTest {
         assertNotNull(s.getAdvice());
     }
 
+    // ─── 클래스로더 후순위 매칭 (2-pass) ─────────────────────────────────
+
+    /**
+     * 누수 주체는 Tibero JDBC 인데 WAS(JEUS) 클래스로더가 로드한 실제 운영 케이스.
+     * 예전에는 세 필드를 동등 매칭해 priority 가 더 낮은 jeus.server.(928)가
+     * com.tmax.tibero.jdbc.driver.(935)를 가로채 "JEUS 서버 코어" 로 오분류했다.
+     * pass 1(클래스명) → pass 2(클래스로더) 분리 후에는 Tibero 룰이 이겨야 한다.
+     */
+    @Test
+    void classLoaderDoesNotHijackClassNameRule() {
+        bindSeedRules();
+        LeakSuspect s = analyzed(
+                "One instance of com.tmax.tibero.jdbc.driver.TbConnection "
+                + "loaded by jeus.server.classloader.RootClassLoader @ 0x80018790 "
+                + "occupies 237,806,232 (12.24%) bytes. "
+                + "The memory is accumulated in one instance of java.util.LinkedList, "
+                + "loaded by <system class loader>, which occupies 237,802,928 (12.24%) bytes.");
+        assertEquals("커서/Statement 누수", s.getCategory());
+        assertTrue(s.getExplanation().contains("Tibero"), s.getExplanation());
+        assertFalse(s.getExplanation().contains("JEUS"), s.getExplanation());
+        assertNotNull(s.getAdvice());
+    }
+
+    /** 클래스명으로 식별 안 되는 경우에는 클래스로더 매칭이 그대로 살아 있어야 한다(pass 2). */
+    @Test
+    void classLoaderStillMatchesWhenClassNameUnknown() {
+        bindSeedRules();
+        LeakSuspect s = analyzed(
+                "3,000 instances of com.example.unknown.Holder "
+                + "loaded by jeus.server.classloader.RootClassLoader @ 0x1 "
+                + "occupy 209,715,200 (25.0%) bytes.");
+        assertEquals("스레드 풀/내부 객체 누적", s.getCategory());
+        assertNotNull(s.getExplanation());
+        assertNotNull(s.getAdvice());
+    }
+
     @Test
     void regexFallbackCollectionGrowth() {
         bindSeedRules();

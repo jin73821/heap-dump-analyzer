@@ -297,6 +297,9 @@ public class HeapDumpAnalyzerService {
         // 기존 결과를 DB로 마이그레이션 (한 번만 실행)
         migrateExistingResultsToDb();
 
+        // 저장된 Leak Suspects 를 _Leak_Suspects.zip 에서 재파싱 (파서/룰 수정분 소급 적용, 1회)
+        migrateSuspectsReparse(dataDir);
+
         // dump_creation_time이 DB에 없는 기존 레코드를 캐시에서 백필
         backfillDumpCreationTimeToDb();
 
@@ -319,6 +322,74 @@ public class HeapDumpAnalyzerService {
         }
         // AI 인사이트 파일 → DB 마이그레이션
         migrateAiInsightsToDb();
+    }
+
+    /**
+     * 저장된 Leak Suspects 재파싱 마이그레이션 (1회).
+     *
+     * <p>2026-08-06 이전 파서에는 세 가지 결함이 있었다:
+     * ① MAT 파이 차트 이미지맵(&lt;map&gt;/&lt;area&gt;)이 suspect 로 오인돼 가짜 항목이 섞였고,
+     * ② 등록 상한이 5 로 하드코딩돼 뒤쪽 진짜 suspect 가 잘려나갔으며,
+     * ③ 룰 매칭이 클래스로더를 클래스명과 동등 취급해 WAS 룰이 정확한 라이브러리 룰을 가로챘다.
+     * 이미 저장된 결과는 그 상태로 DB 에 남아 있다.
+     *
+     * <p>MAT 산출물 {@code _Leak_Suspects.zip} 이 결과 디렉토리에 그대로 있으므로
+     * <b>힙 재분석(30~60초) 없이 ZIP 재파싱만으로</b> 소급 교정할 수 있다.
+     * DB 원본을 로드해 leakSuspects 만 교체하고(나머지 필드 무변경) 다시 저장하며,
+     * 인메모리 캐시에도 같은 목록을 반영한다.
+     *
+     * <p>중복 실행 방지는 data/ 의 마커 파일. suspects ZIP 이 없는 기록은 건너뛰고 원본을 유지하며,
+     * 건별 실패는 warn 후 계속한다 — 한 건 때문에 기동이 막히지 않게 한다.
+     */
+    private static final String SUSPECTS_REPARSE_MARKER = ".suspects-reparse-v2";
+
+    private void migrateSuspectsReparse(File dataDir) {
+        if (dataDir == null) return;
+        File marker = new File(dataDir, SUSPECTS_REPARSE_MARKER);
+        if (marker.exists()) return;
+
+        int updated = 0, skipped = 0, failed = 0;
+        try {
+            List<AnalysisResultDetailEntity> rows = resultDetailRepository.findAll();
+            for (AnalysisResultDetailEntity row : rows) {
+                String filename = row.getFilename();
+                if (filename == null) { skipped++; continue; }
+                try {
+                    File resultDir = resultDirectory(filename);
+                    if (!resultDir.exists()) { skipped++; continue; }
+
+                    MatParseResult tmp = new MatParseResult();
+                    parser.reparseSuspects(resultDir.getAbsolutePath(), stripExtension(filename), tmp);
+                    List<LeakSuspect> fresh = tmp.getLeakSuspects();
+                    if (fresh == null || fresh.isEmpty()) { skipped++; continue; }  // ZIP 없음/파싱 실패 → 원본 유지
+
+                    HeapAnalysisResult stored = loadResultDetailFromDb(filename);
+                    if (stored == null) { skipped++; continue; }
+                    int before = stored.getLeakSuspects() == null ? 0 : stored.getLeakSuspects().size();
+                    stored.setLeakSuspects(fresh);
+                    saveResultDetailToDb(stored);
+
+                    HeapAnalysisResult cached = resultCache.get(filename);
+                    if (cached != null) cached.setLeakSuspects(fresh);
+
+                    updated++;
+                    if (before != fresh.size()) {
+                        logger.info("[Suspects Reparse] {} — {}건 → {}건", filename, before, fresh.size());
+                    }
+                } catch (Exception ex) {
+                    failed++;
+                    logger.warn("[Suspects Reparse] {} 재파싱 실패: {}", filename,
+                            ex.getMessage() != null ? ex.getMessage() : ex.getClass().getSimpleName());
+                }
+            }
+            logger.info("[Suspects Reparse] 완료 — 갱신 {}건 / 건너뜀 {}건 / 실패 {}건", updated, skipped, failed);
+            // 마커 생성 실패는 무해 (다음 기동에 다시 수행 — 멱등)
+            if (!marker.createNewFile()) {
+                logger.debug("[Suspects Reparse] 마커 파일이 이미 존재: {}", marker.getAbsolutePath());
+            }
+        } catch (Exception e) {
+            logger.warn("[Suspects Reparse] 마이그레이션 중 오류: {}", e.getMessage());
+        }
     }
 
     private void backfillDumpCreationTimeToDb() {
@@ -1595,6 +1666,25 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
+    /** Dominator Refs 사전계산 시간 예산 허용 범위(초). 60초 미만은 사실상 무의미, 30분 초과는 MAT 장기 점유. */
+    static final long DOM_PRECOMPUTE_BUDGET_MIN = 60L;
+    static final long DOM_PRECOMPUTE_BUDGET_MAX = 1800L;
+
+    /**
+     * 사전계산 시간 예산(초) 변경. 예산을 넘기면 거기까지만 저장하고 나머지는 클릭 시 lazy 조회된다.
+     * 항목당 MAT 쿼리 2회(약 6초)이므로 top-n 30 전량에는 190초 이상이 필요하다.
+     * 다음 분석부터 적용(진행 중인 사전계산에는 영향 없음).
+     */
+    public void setDominatorRefsPrecomputeBudgetSeconds(long seconds) {
+        if (seconds < DOM_PRECOMPUTE_BUDGET_MIN || seconds > DOM_PRECOMPUTE_BUDGET_MAX) {
+            throw new IllegalArgumentException(
+                    "사전계산 시간 예산은 " + DOM_PRECOMPUTE_BUDGET_MIN + "~" + DOM_PRECOMPUTE_BUDGET_MAX + "초 범위여야 합니다.");
+        }
+        config.setDominatorRefsPrecomputeBudgetSeconds(seconds);
+        logger.info("[Settings] dominator-refs precompute budget set to {}s", seconds);
+        persistSettings();
+    }
+
     // ── 로그인 2차인증 설정 facade (TwoFactorConfigService 위임 + 영속화) ──
 
     public void setTwoFactorMode(String mode) {
@@ -1751,6 +1841,23 @@ public class HeapDumpAnalyzerService {
             }
         }
 
+        if (saved.containsKey("dominatorRefsPrecomputeBudgetSeconds")) {
+            Object val = saved.get("dominatorRefsPrecomputeBudgetSeconds");
+            long sec = 0;
+            if (val instanceof Number) {
+                sec = ((Number) val).longValue();
+            } else if (val != null) {
+                try { sec = Long.parseLong(String.valueOf(val)); } catch (NumberFormatException ignored) {}
+            }
+            if (sec >= DOM_PRECOMPUTE_BUDGET_MIN && sec <= DOM_PRECOMPUTE_BUDGET_MAX) {
+                config.setDominatorRefsPrecomputeBudgetSeconds(sec);
+                logger.info("[Settings] Restored dominatorRefsPrecomputeBudgetSeconds={}", sec);
+            } else {
+                logger.warn("[Settings] Invalid dominatorRefsPrecomputeBudgetSeconds={}, keeping {}",
+                        val, config.getDominatorRefsPrecomputeBudgetSeconds());
+            }
+        }
+
         if (saved.containsKey("sessionTimeoutHours")) {
             Object val = saved.get("sessionTimeoutHours");
             int h = (val instanceof Number) ? ((Number) val).intValue() : 1;
@@ -1807,6 +1914,7 @@ public class HeapDumpAnalyzerService {
             settings.put("keepUnreachableObjects", keepUnreachableObjects);
             settings.put("compressAfterAnalysis", compressAfterAnalysis);
             settings.put("dominatorRefsEnabled", dominatorRefsEnabled);
+            settings.put("dominatorRefsPrecomputeBudgetSeconds", config.getDominatorRefsPrecomputeBudgetSeconds());
             settings.put("maxUploadSizeBytes", maxUploadSizeBytes);
             settings.put("allowAllExtensions", allowAllExtensions);
             settings.put("sessionTimeoutHours", sessionTimeoutHours);
@@ -1844,6 +1952,8 @@ public class HeapDumpAnalyzerService {
             updates.put("mat.keep.unreachable.objects", String.valueOf(keepUnreachableObjects));
             updates.put("analysis.compress-after-analysis", String.valueOf(compressAfterAnalysis));
             updates.put("mat.dominator-refs.enabled", String.valueOf(dominatorRefsEnabled));
+            updates.put("mat.dominator-refs.precompute.budget-seconds",
+                    String.valueOf(config.getDominatorRefsPrecomputeBudgetSeconds()));
             String multipartSize = formatBytesAsSpringSize(maxUploadSizeBytes);
             updates.put("spring.servlet.multipart.max-file-size", multipartSize);
             updates.put("spring.servlet.multipart.max-request-size", multipartSize);
@@ -3525,19 +3635,75 @@ public class HeapDumpAnalyzerService {
     // ── Dominator Refs 사전계산 + 사이드카 영속화 ───────────────────────────────
 
     /** 분석 완료 직후 호출. 백그라운드(직렬)로 Top-N refs 를 사이드카에 사전계산. */
+    /**
+     * Dominator Refs 사전계산 진행 상태 (파일명 → 상태). UI 표시 전용.
+     *
+     * <p>사전계산은 재분석 직후 백그라운드로 수십 초~수 분 MAT 를 도는데, 화면에는 아무 표시가
+     * 없어 사용자가 "무엇이 진행 중인지" 알 수 없었다. analyze 페이지가 폴링해 스피너·경과 시간을
+     * 띄우고 완료 시 총 소요 시간을 보여주기 위한 상태다.
+     *
+     * <p>메모리 보관 — 재기동하면 사라지지만 사전계산 자체도 재기동 시 다시 돌지 않으므로 무해하다
+     * (상태 없음 = 표시 없음). 파일당 1건이라 크기 부담도 없다.
+     */
+    public static class DomRefPrecomputeStatus {
+        /** queued | running | done | skipped | failed */
+        public volatile String state = "queued";
+        public volatile int total;          // 계산 대상 개수 (min(topN, entries))
+        public volatile int done;           // 완료 개수
+        public volatile long startedAt;     // epoch ms
+        public volatile long finishedAt;    // epoch ms (0 = 진행 중)
+        public volatile String message;     // skipped/failed 사유
+        /** 시간 예산 초과로 남은 항목을 계산하지 못하고 중단됐는가 (done &lt; total 인 정상 종료) */
+        public volatile boolean budgetExceeded;
+        /** 예산 값(초) — UI 가 "180초 예산 내 29/30" 처럼 안내하기 위해 */
+        public volatile long budgetSeconds;
+    }
+
+    private final Map<String, DomRefPrecomputeStatus> domRefPrecomputeStatus = new ConcurrentHashMap<>();
+
+    /** 사전계산 진행 상태 조회 (없으면 null). */
+    public DomRefPrecomputeStatus getDomRefPrecomputeStatus(String safe) {
+        return domRefPrecomputeStatus.get(safe);
+    }
+
+    private DomRefPrecomputeStatus precomputeStatusFor(String safe) {
+        return domRefPrecomputeStatus.computeIfAbsent(safe, k -> new DomRefPrecomputeStatus());
+    }
+
+    private void finishPrecomputeStatus(String safe, String state, String message) {
+        DomRefPrecomputeStatus st = precomputeStatusFor(safe);
+        st.state = state;
+        st.message = message;
+        st.finishedAt = System.currentTimeMillis();
+    }
+
     public void precomputeDominatorRefsAsync(String safe) {
         if (!config.isDominatorRefsPrecompute()) return;
         try {
+            // 제출 즉시 queued 로 표시 — 페이지가 executor 대기 구간도 진행 중으로 인식하게 한다
+            DomRefPrecomputeStatus st = precomputeStatusFor(safe);
+            st.state = "queued";
+            st.total = 0;
+            st.done = 0;
+            st.startedAt = System.currentTimeMillis();
+            st.finishedAt = 0;
+            st.message = null;
+            st.budgetExceeded = false;
+            st.budgetSeconds = 0;
+
             domRefPrecomputeExecutor.submit(() -> {
                 try {
                     doPrecomputeDominatorRefs(safe);
                 } catch (Exception e) {
                     logger.warn("[DomRefs] precompute failed for {}: {}", safe,
                             e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+                    finishPrecomputeStatus(safe, "failed",
+                            e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
                 }
             });
         } catch (RejectedExecutionException e) {
             logger.debug("[DomRefs] precompute submit rejected for {}", safe);
+            finishPrecomputeStatus(safe, "skipped", "실행 큐 거부");
         }
     }
 
@@ -3547,13 +3713,22 @@ public class HeapDumpAnalyzerService {
         int  topN     = Math.max(1, config.getDominatorRefsPrecomputeTopN());
         int  cap      = Math.max(1, config.getDominatorRefsPrecomputeCap());
 
+        DomRefPrecomputeStatus status = precomputeStatusFor(safe);
+
         HeapAnalysisResult r = getCachedResult(safe);
-        if (r == null || r.getDominatorTreeEntries() == null || r.getDominatorTreeEntries().isEmpty()) return;
+        if (r == null || r.getDominatorTreeEntries() == null || r.getDominatorTreeEntries().isEmpty()) {
+            finishPrecomputeStatus(safe, "skipped", "Dominator Tree 항목 없음");
+            return;
+        }
 
         File resultDir = resultDirectory(safe);
-        if (!resultDir.exists()) return;
+        if (!resultDir.exists()) {
+            finishPrecomputeStatus(safe, "skipped", "결과 디렉토리 없음");
+            return;
+        }
         if (dominatorRefsRepository.existsByFilename(safe)) {
             logger.info("[DomRefs] refs already present in DB for {}, skip precompute", safe);
+            finishPrecomputeStatus(safe, "skipped", "이미 사전계산됨");
             return;
         }
 
@@ -3561,6 +3736,7 @@ public class HeapDumpAnalyzerService {
         File sourceHprof = resolveSourceHprofIsolated(safe);
         if (sourceHprof == null) {
             logger.warn("[DomRefs] precompute skipped — hprof not found for {}", safe);
+            finishPrecomputeStatus(safe, "skipped", "원본 hprof 없음");
             return;
         }
         // 전용 해제본(.precompute.hprof)만 사후 삭제 대상. 압축 원본(dumpfiles)은 보존.
@@ -3574,6 +3750,7 @@ public class HeapDumpAnalyzerService {
             logger.warn("[DomRefs] precompute work dir setup failed for {}: {}", safe, e.getMessage());
             deleteDirectoryRecursively(workDir);
             if (privateHprof != null) privateHprof.delete();
+            finishPrecomputeStatus(safe, "failed", "작업 디렉토리 준비 실패");
             return;
         }
 
@@ -3582,11 +3759,16 @@ public class HeapDumpAnalyzerService {
         try {
             List<com.heapdump.analyzer.model.DominatorTreeEntry> entries = r.getDominatorTreeEntries();
             int limit = Math.min(topN, entries.size());
+            status.total = limit;
+            status.state = "running";
             File zip = new File(workDir, base + "_Query.zip");
             for (int i = 0; i < limit; i++) {
                 if (System.currentTimeMillis() - start > budgetMs) {
                     logger.info("[DomRefs] precompute budget({}s) exceeded for {} after {} entries",
                             config.getDominatorRefsPrecomputeBudgetSeconds(), safe, done);
+                    // 정상 종료지만 전량 계산은 아니다 — UI 가 "완료" 로 오인하지 않도록 표시
+                    status.budgetExceeded = true;
+                    status.budgetSeconds = config.getDominatorRefsPrecomputeBudgetSeconds();
                     break;
                 }
                 com.heapdump.analyzer.model.DominatorTreeEntry e = entries.get(i);
@@ -3615,6 +3797,7 @@ public class HeapDumpAnalyzerService {
                 one.put("outgoing", outgoing);
                 refsMap.put(addr, one);
                 done++;
+                status.done = done;
             }
         } finally {
             deleteDirectoryRecursively(workDir);
@@ -3629,6 +3812,7 @@ public class HeapDumpAnalyzerService {
         if (!refsMap.isEmpty() && !hasAnyRefData(refsMap)) {
             logger.warn("[DomRefs] precompute produced only empty refs for {} ({} entries) — skip save (lazy 폴백 유지)",
                     safe, done);
+            finishPrecomputeStatus(safe, "skipped", "유효한 참조를 얻지 못함 (조회 시 재시도)");
             return;
         }
 
@@ -3640,6 +3824,7 @@ public class HeapDumpAnalyzerService {
         refsData.put("refs", refsMap);
         saveDominatorRefsToDb(safe, refsData, refsMap.size());
         domRefSidecarCache.remove(safe); // 다음 조회 시 새로 로드
+        finishPrecomputeStatus(safe, "done", null);
         logger.info("[DomRefs] precompute done for {}: {} entries in {}ms",
                 safe, done, System.currentTimeMillis() - start);
     }

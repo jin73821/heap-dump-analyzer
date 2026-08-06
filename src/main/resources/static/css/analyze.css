@@ -87,6 +87,13 @@
             margin-left:auto; background:var(--danger); color:#fff; font-size:9.5px; font-weight:700;
             padding:2px 7px; border-radius:10px; text-align:center; white-space:nowrap;
         }
+        /* Dominator Tree MAT lazy 조회 진행 스피너 (사이드바 Actions 항목 우측) */
+        .nav-item .dom-nav-spinner {
+            margin-left:auto; flex-shrink:0; width:12px; height:12px; border-radius:50%;
+            border:2px solid rgba(148,163,184,.35); border-top-color:var(--primary, #2563EB);
+            animation:spin .8s linear infinite;
+        }
+        .nav-item .dom-nav-spinner[hidden] { display:none; }
 
         /* Sidebar stats */
         .sidebar-stats { display:flex; flex-direction:column; gap:6px; }
@@ -282,6 +289,32 @@
         }
         .dom-skel-sm { width:70px; margin-left:auto; flex-shrink:0; }
         @keyframes domSkel { 0% { background-position:100% 0; } 100% { background-position:0 0; } }
+
+        /* ── MAT lazy 조회 진행/완료 바 (Dominator Tree 패널 상단) ── */
+        .dom-lazy-bar {
+            display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+            margin:0 0 14px; padding:9px 13px; border-radius:9px;
+            font-size:12.5px; line-height:1.5;
+            background:#EFF6FF; border:1px solid #BFDBFE; color:#1E40AF;
+        }
+        .dom-lazy-bar[hidden] { display:none; }
+        .dom-lazy-bar.done { background:#ECFDF5; border-color:#A7F3D0; color:#065F46; }
+        .dom-lazy-bar.failed { background:#FEF2F2; border-color:#FCA5A5; color:#B91C1C; }
+        .dlb-badge {
+            flex-shrink:0; font-size:10.5px; font-weight:700; padding:2px 8px;
+            border-radius:10px; background:#2563EB; color:#fff; white-space:nowrap;
+        }
+        .dom-lazy-bar.done .dlb-badge   { background:#10B981; }
+        .dom-lazy-bar.failed .dlb-badge { background:#DC2626; }
+        .dlb-spinner {
+            flex-shrink:0; width:13px; height:13px; border-radius:50%;
+            border:2px solid #BFDBFE; border-top-color:#2563EB;
+            animation:spin .8s linear infinite;
+        }
+        .dlb-spinner[hidden] { display:none; }
+        .dlb-text { flex:1 1 180px; min-width:0; }
+        /* 숫자가 1초마다 바뀌어도 폭이 흔들리지 않도록 고정폭 숫자 */
+        .dlb-time { flex-shrink:0; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap; }
 
         /* ── retained 비례 막대 (refs 행 내) ── */
         .dom-refs-tbl td.dom-ref-bar-cell { position:relative; }

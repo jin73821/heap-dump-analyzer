@@ -377,6 +377,39 @@ public class HeapReportApiController {
                         + "style=\"opacity:0.4;cursor:not-allowed\"");
     }
 
+    /**
+     * Dominator Refs 사전계산 진행 상태 — analyze 페이지가 폴링해 스피너/경과 시간을 표시한다.
+     *
+     * <p>재분석 직후 사전계산이 백그라운드로 수십 초~수 분 MAT 를 도는데, 그동안 화면에는
+     * 아무 표시가 없었다. 행 클릭 시점의 lazy(SSE `lazy` 이벤트)와 달리 사용자 조작 없이
+     * 진행되므로 별도 폴링 엔드포인트가 필요하다.
+     *
+     * <p>상태가 없으면(사전계산 비활성/기동 후 미실행) `{"state":"none"}`.
+     */
+    @GetMapping("/api/dominator-refs/status/{filename:.+}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> dominatorRefsPrecomputeStatus(@PathVariable String filename) {
+        String safe = FilenameValidator.validate(filename);
+        Map<String, Object> res = new LinkedHashMap<>();
+        HeapDumpAnalyzerService.DomRefPrecomputeStatus st = analyzerService.getDomRefPrecomputeStatus(safe);
+        if (st == null) {
+            res.put("state", "none");
+            return ResponseEntity.ok(res);
+        }
+        res.put("state", st.state);
+        res.put("total", st.total);
+        res.put("done", st.done);
+        res.put("startedAt", st.startedAt);
+        res.put("finishedAt", st.finishedAt);
+        // 진행 중이면 현재까지, 끝났으면 총 소요 시간 (클라이언트가 시계 차이를 신경 쓰지 않도록 서버가 계산)
+        long end = st.finishedAt > 0 ? st.finishedAt : System.currentTimeMillis();
+        res.put("elapsedMs", st.startedAt > 0 ? end - st.startedAt : 0L);
+        res.put("budgetExceeded", st.budgetExceeded);
+        if (st.budgetSeconds > 0) res.put("budgetSeconds", st.budgetSeconds);
+        if (st.message != null) res.put("message", st.message);
+        return ResponseEntity.ok(res);
+    }
+
     // ── Dominator Tree 행 클릭 시점 lazy on-demand 참조 추출 (SSE 스트리밍) ─────
     // path2gc (incoming) → SSE "incoming" 이벤트 전송 → show_retained_set (outgoing)
     // → SSE "outgoing" 이벤트 전송 → SSE "done" 이벤트 → 연결 종료.
@@ -462,6 +495,11 @@ public class HeapReportApiController {
                     sendDomRefError(emitter, "결과 디렉토리 없음");
                     return;
                 }
+
+                // 여기까지 왔다면 사전계산·LRU 캐시 모두 MISS → 반드시 MAT 를 돈다(수 초~수십 초).
+                // 클라이언트가 스피너/경과 시간 표시를 시작하도록 알린다. 슬롯 대기도 체감 시간에
+                // 포함되므로 Semaphore 획득 **전에** 보낸다.
+                emitter.send(SseEmitter.event().name("lazy").data("{}"));
 
                 // 파일별 동시 MAT 쿼리 Semaphore (최대 2 클릭)
                 Semaphore sem = DOM_SEMAPHORES.computeIfAbsent(safe, k -> new Semaphore(2));

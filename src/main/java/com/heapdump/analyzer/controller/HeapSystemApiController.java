@@ -562,6 +562,21 @@ public class HeapSystemApiController {
         });
     }
 
+    /**
+     * Dominator Refs 사전계산 시간 예산(초).
+     * 항목당 MAT 쿼리 2회(약 6초)라 top-n 30 전량에는 190초 이상 필요 — 예산을 넘기면 거기까지만
+     * 저장하고 나머지는 항목 클릭 시 lazy 조회된다. 다음 분석부터 적용.
+     */
+    @PostMapping("/api/settings/dominator-precompute-budget")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setDominatorPrecomputeBudget(@RequestParam long seconds) {
+        return applyValidatedSetting(() -> analyzerService.setDominatorRefsPrecomputeBudgetSeconds(seconds), resp -> {
+            resp.put("dominatorRefsPrecomputeBudgetSeconds", seconds);
+            resp.put("message", "Dominator Refs 사전계산 시간이 " + seconds + "초로 변경되었습니다. 다음 분석부터 적용됩니다.");
+            logger.info("[Settings] Dominator refs precompute budget changed to {}s", seconds);
+        });
+    }
+
     @GetMapping("/api/settings")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getSettings() {
@@ -572,6 +587,7 @@ public class HeapSystemApiController {
         settings.put("allowAllExtensions",     analyzerService.isAllowAllExtensions());
         settings.put("sessionTimeoutHours",    analyzerService.getSessionTimeoutHours());
         settings.put("dashboardDetectDays",    analyzerService.getDashboardDetectDays());
+        settings.put("dominatorRefsPrecomputeBudgetSeconds", config.getDominatorRefsPrecomputeBudgetSeconds());
 
         long maxUploadBytes = analyzerService.getMaxUploadSizeBytes();
         settings.put("maxUploadSizeBytes",     maxUploadBytes);

@@ -14,8 +14,8 @@ Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
-mvn test                                 # 단위 테스트 321건 (코어덤프 리비전·파일목록 15 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5 / Leak 룰 골든 10)
-java -jar target/heap-analyzer-2.1.0.jar   # 버전은 pom.xml <version>과 항상 일치
+mvn test                                 # 단위 테스트 328건 (코어덤프 리비전·파일목록 15 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5 / Leak 룰 골든 12 / MAT suspects 파싱 5)
+java -jar target/heap-analyzer-2.3.3.jar   # 버전은 pom.xml <version>과 항상 일치
 bash restart.sh                          # 운영(18080) 재기동
 ```
 
@@ -86,7 +86,7 @@ Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터 + 분석
 
 **Listener:** `AuthEventListener` — 로그인 이력 기록 (아래 함정 참조).
 
-**Parser:** `MatReportParser` — Overview/Top Components/Suspects ZIP 다단계 추출. `sanitizeHtml()`/`extractBodyContent()` 두 곳에 존재 (parser, service) — 동기화 유지 필수.
+**Parser:** `MatReportParser` — Overview/Top Components/Suspects ZIP 다단계 추출. `sanitizeHtml()`/`extractBodyContent()` 두 곳에 존재 (parser, service) — 동기화 유지 필수. Suspects 섹션 추출은 **차트 이미지맵(`<map>…</map>`) 제거본**을 대상으로 하고(`MAP_BLOCK_PATTERN`), 등록 전 `isRealSuspectSection()` 로 검증한다 (함정 28). 상한은 `MAX_SUSPECTS`(20).
 
 **External:** `/opt/mat/ParseHeapDump.sh` (suspects/overview/top_components 리포트, 30분 타임아웃).
 
@@ -97,7 +97,7 @@ Thymeleaf + vanilla JS + Chart.js. 빌드 도구 없음.
 **공통 인프라 (Phase 5A/5B/5C — common.* 통합):**
 - `/css/common.css` — reset / body base / `.topbar*` / `.modal-ov` + `@keyframes modalIn` + `.modal-box` base / btn 색상 utility 3 그룹 (cancel `.mbtn-cancel/.btn-cancel/.sa-btn-cancel` · danger `.mbtn-del/.mbtn-danger/.btn-delete/.sa-btn-del` · primary `.mbtn-save/.mbtn-primary/.mbtn-confirm/.btn-download`) / 데이터 테이블 4 family base (`.htable/.ftable/.stable/.utable` + sortable) — 80+ 라인 공통. 페이지별 변형(opacity 변형, padding/font-size, min-width 등)은 인라인 cascade override.
 - `/js/common.js` — `window.Common` 네임스페이스: `escHtml(s)` (5문자 escape) / `csrfToken()` / `csrfHeaderName()` / `fetchJSON(url, opts)` (자동 CSRF/Content-Type, non-2xx throw, JSON 자동 파싱) / `appendCsrfToForm(form)` / `formatBytes(bytes)` / `toast(msg, type)` (settings 계열 — CSS 는 common.css `.toast/.toast-success/.toast-error`) / `showToast(msg, type)` (`#toast` 고정 엘리먼트 계열 — servers/server-detail/admin-users). `banner.html`에서 1회 로드 → 14 페이지 자동 가용.
-- **페이지별 로드 공통 모듈 (banner 전역 아님, 2026-08-02):** `/js/table-grid.js`(데이터 그리드 엔진) · `/js/select-mode.js`(다중 선택 모드) · `/js/float-tooltip.js`(`[data-tooltip]` 플로팅 툴팁 — servers/server-detail) · `/js/memo.js`(개인 메모장 — 저장/자동저장/창간 동기화, account·account-memo 공유). 소비 페이지의 `<script>` 태그로만 로드.
+- **페이지별 로드 공통 모듈 (banner 전역 아님, 2026-08-02):** `/js/table-grid.js`(데이터 그리드 엔진) · `/js/select-mode.js`(다중 선택 모드) · `/js/float-tooltip.js`(`[data-tooltip]` 플로팅 툴팁 — servers/server-detail/settings. 설정 항목 설명은 `.info-icon` ⓘ + `data-tooltip`, 문단 구분은 `&#10;`) · `/js/memo.js`(개인 메모장 — 저장/자동저장/창간 동기화, account·account-memo 공유). 소비 페이지의 `<script>` 태그로만 로드.
 - 캐시 무효화: `?v=YYYY-MM-DD[a-z]` 쿼리 파라미터. 모든 페이지 일괄 갱신.
 
 **페이지:** `/`(Dashboard, 멀티 업로드 큐), `/files`, `/history`, `/compare`(파라미터 없으면 picker), `/analyze/{filename}`(KPI/TopConsumers/Suspects/Histogram/Threads/AI/RawData + 플로팅 채팅 FAB), `/progress/{filename}`(SSE), `/settings`(General), `/settings/llm`, `/settings/rag`, `/ai-chat`(세션 사이드바), `/servers*`, `/admin/users`(ADMIN), `/admin/leak-rules`(ADMIN), `/comparison-history`, `/account`, `/account/memo`(메모장 새창 — 배너 없는 독립 페이지), `/login`.
@@ -234,11 +234,17 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 
 27. **AJAX 가 인증 리다이렉트를 "성공"으로 오인** — `fetch` 는 302 를 자동 추종하므로 미인증 API 호출이 `/login` HTML 을 **200** 으로 받는다. `r.ok` 만 보는 코드(`Common.fetchJSON` 포함)는 이를 성공 처리하고, 응답 객체의 필드는 전부 `undefined` 가 된다 → 저장이 안 됐는데 "저장됨" 이 뜨는 조용한 실패. 2026-08-06 에 `/api/**` 를 401 JSON 으로 바꿔 서버 측에서 차단했다(위 *세션 만료 응답 규약*). **응답 본문을 신뢰하기 전에 `success === true` 를 확인**하는 습관을 유지할 것 — `memo.js` 의 `assertSaved()` 가 2중 방어 레퍼런스. 또한 `defaultAuthenticationEntryPointFor` 를 **하나만** 등록하면 Spring 이 그것을 모든 요청의 기본 EntryPoint 로 삼아 페이지 라우트까지 401 이 되므로, 반드시 비-API 매핑과 **쌍으로** 등록한다.
 
+28. **MAT 리포트 파싱은 차트 이미지맵을 반드시 배제** — MAT Leak Suspects `index.html` 은 본문 위에 파이 차트 + `<map><area alt="Slice (a)  Problem Suspect 1: …"></map>` 을 둔다. 섹션 추출 정규식(`PROBLEM_SUSPECT_PATTERN`)은 **HTML 전체를 훑고 태그 구조를 보지 않으므로** area 의 alt 에서도 매칭이 시작돼 **차트 조각이 가짜 suspect 로 등록**된다(`stripTags()` 는 완전한 태그만 지우므로 잘린 `<area …>` 원문이 화면에 노출). 가짜 항목이 개수 상한을 잠식해 **뒤쪽 진짜 suspect 가 잘려나가는** 2차 피해까지 생긴다 — 운영 실측으로 MAT 6건이 화면 5건(진짜 3건)으로 표시된 사례. 2026-08-06 에 `MAP_BLOCK_PATTERN` 제거본에서 섹션을 찾도록 고쳤고(원본 `suspectsHtml` 은 Raw Data 탭 차트 때문에 **무변경**), `isRealSuspectSection()`(`instances of` + `occupy|occupies`)을 2차 방어로 뒀다. MAT 산출물에서 무언가를 정규식으로 뽑을 때는 **차트/이미지맵/목차 마크업이 섞이지 않는지 먼저 확인할 것**. 회귀 방어 `MatReportParserSuspectsTest`(5).
+
+29. **Leak 룰 매칭에서 classLoader 는 className 보다 후순위** — `LeakSuspectAdvisor.tryDbRules()` 는 **2-pass**다: pass 1 이 누수 주체(`className`/`accumulatorClass`)로 전체 룰을 훑고, pass 2 가 미매칭일 때만 `classLoader` 로 훑는다. 세 필드를 동등 매칭하면 **priority 가 더 낮은 WAS 룰이 정확한 라이브러리 룰을 가로챈다** — 실제 사례로 `classLoader=jeus.server.classloader.RootClassLoader`(룰 928)가 `className=com.tmax.tibero.jdbc.driver.TbConnection`(룰 935)을 이겨, Tibero JDBC 커서 누수가 "JEUS 서버 코어 워커 스레드 풀 적체"로 안내됐다. WAS 클래스로더가 로드한 **모든 서드파티 클래스**가 WAS 룰로 흡수되던 결함이다. 클래스로더 매칭 자체는 WAS 자체 객체·ClassLoader 누수 식별에 유효하므로 **제거하지 말고 순위만 유지**할 것. 회귀 방어는 `LeakSuspectAdvisorGoldenTest` 의 `classLoaderDoesNotHijackClassNameRule` / `classLoaderStillMatchesWhenClassNameUnknown`.
+
 ## Key Design Decisions
 
 - **Two-tier cache:** In-memory `ConcurrentHashMap` ← DB `analysis_result_detail.result_json` 복원(`restoreResultsFromDb`). 누락 필드(componentDetailHtmlMap/histogramHtml/threadOverviewHtml)는 ZIP에서 lazy 재추출.
 - **분석 상세 저장은 DB 단일 원본 (2026-07-31):** `persistResult()` 가 상세 JSON 을 `analysis_result_detail`(LONGTEXT)에, `mat.log` 만 결과 디렉토리에 쓴다. `analysis_history` 는 목록/집계용 요약 23컬럼 — **별도 테이블로 분리한 이유는 `findAll()` 마다 수 MB LOB 를 끌고 오지 않기 위해서**. 삭제 경로 3곳(`deleteHistory`/`clearCache`/이관 실패)에서 detail 행을 동반 처리해야 하며, 특히 `clearCache()`(재분석 직전 호출) 누락 시 **옛 결과가 되살아난다**. 파생 delete 는 트랜잭션 필수라 리포지토리 메서드에 `@Transactional` 명시(clearCache 는 비트랜잭션 컨텍스트). 레거시 `result.json` 은 기동 시 `migrateResultJsonToDb()` 가 **DB 저장 확인 후에만** 삭제(실패 시 다음 기동 재시도). ⚠️ **data/ 는 없어지지 않는다** — ZIP/`.index`/`.threads` 는 계속 파일.
-- **Dominator Refs 사전계산도 DB (`analysis_dominator_refs`, 2026-07-31):** 구 `data/{filename}/dominator-refs.json` 사이드카. `saveDominatorRefsToDb()`/`loadDominatorRefsSidecar()` 가 담당하고 저장 JSON 구조는 사이드카와 동일(`{version, generatedAt, topN, capPerList, refs{}}`). **`analysis_result_detail` 과 또 별도 테이블인 이유**: refs 는 조회 시점에만 필요한 lazy 데이터(35~135KB/건)라 같은 행에 두면 기동 복원이 쓰지도 않을 LOB 를 매번 로드한다. 전부-빈 refs 미저장 가드는 `hasAnyRefData()` static (`DominatorRefsEmptyGuardTest` 5건) — 저장·이관 양쪽에 적용. 삭제는 `deleteHistory`/`clearCache` 동반.
+- - **MAT 진행 표시는 경로가 둘 (2026-08-06):** ① **행 클릭 on-demand lazy** — `/api/dominator-refs/*` 가 사전계산·LRU 캐시를 모두 MISS 해 **실제로 MAT 를 돌 때만** `lazy` SSE 이벤트를 보낸다(슬롯 대기 포함을 위해 `Semaphore` 획득 전 전송). ② **백그라운드 사전계산** — 재분석 직후 `dom-ref-precompute` 스레드가 수십 초~수 분 도는데 사용자 조작이 없어 SSE 로는 알릴 수 없다. `DomRefPrecomputeStatus`(파일별 메모리) + `GET /api/dominator-refs/status/{filename}` 을 `analyze.js` 가 2초 폴링한다. **둘 다 같은 UI**(사이드바 Actions 우측 스피너 + 패널 상태 바)를 쓰며 `_domLazyStart`/`_domLazyEnd`/`_domPreApply`/`_domPreFinish` 가 제어하고, 클릭 lazy 가 진행 중이면 폴링은 UI 를 덮지 않는다. ⚠ **사전계산이 끝난 객체는 행을 클릭해도 sidecar-hit 이라 스피너가 뜨지 않는 것이 정상** — 재분석 후 "스피너가 안 보인다"는 대부분 이 경우다. 사전계산은 **시간 예산**(`mat.dominator-refs.precompute.budget-seconds`, 기본 300초 · Settings > MAT Configuration 에서 60~1800초 조정, 변경은 `setDominatorRefsPrecomputeBudgetSeconds()` 경유)을 넘기면 거기까지만 저장하고 중단하므로 `done < total` 이 정상적으로 발생한다 — UI 는 이를 "완료"가 아니라 **"부분 완료"** 로 구분해 표시한다(항목당 MAT 쿼리 2회 ≈ 6초라 top-n 30 전량에는 190초 이상 필요). 사이드바 스피너는 배너 탭 클론 때문에 **ID 없이 `.dom-nav-spinner` class 로만** 갱신(함정 8). 새 lazy MAT 경로에 진행 표시가 필요하면 두 패턴 중 성격에 맞는 쪽을 따를 것.
+
+**Dominator Refs 사전계산도 DB (`analysis_dominator_refs`, 2026-07-31):** 구 `data/{filename}/dominator-refs.json` 사이드카. `saveDominatorRefsToDb()`/`loadDominatorRefsSidecar()` 가 담당하고 저장 JSON 구조는 사이드카와 동일(`{version, generatedAt, topN, capPerList, refs{}}`). **`analysis_result_detail` 과 또 별도 테이블인 이유**: refs 는 조회 시점에만 필요한 lazy 데이터(35~135KB/건)라 같은 행에 두면 기동 복원이 쓰지도 않을 LOB 를 매번 로드한다. 전부-빈 refs 미저장 가드는 `hasAnyRefData()` static (`DominatorRefsEmptyGuardTest` 5건) — 저장·이관 양쪽에 적용. 삭제는 `deleteHistory`/`clearCache` 동반.
 - **결과 디렉토리 = 확장자 포함 파일명 (2026-07-31):** 구 스킴(`stripExtension`)에선 `X.hprof` 와 `X.hprof.gz` 가 히스토리 상 별개 행이면서 디렉토리는 base 하나를 공유해, 뒤 분석이 앞 결과를 덮어써 **목록엔 SUCCESS 인데 진입하면 결과가 없는 행**이 생겼다(운영 실측 2건). 기동 시 `migrateResultDirsToFilenameScheme()` 이 result.json 의 `filename` 을 근거로 rename 하므로 **DB 이관보다 반드시 먼저 실행**. base→디렉토리 역탐색이 필요하면 `findResultDirByBase()` 사용(직접 조합 금지). 회귀 방어는 `ResultDirectorySchemeTest`(5).
 - **`dumpCreationTime` 은 `cloneWithoutLog()` 에 반드시 포함:** 빠지면 저장본이 `null` 이 되고 `sanitizeCachedHtml()` 의 `|| dumpCreationTime == null` 조건이 **매 기동 System_Overview ZIP 재파싱**을 영구 반복한다(자가치유라 증상이 안 보임). 신규 필드를 `HeapAnalysisResult` 에 추가할 때 `cloneWithoutLog()` 반영 여부를 항상 확인할 것.
 - **Serial analysis with queue:** `Semaphore(1)`. `analysis.thread-pool.*` 설정 가능. `AtomicInteger queueSize` + `volatile currentAnalysisFilename`. `GET /api/queue/status` 노출.

@@ -73,6 +73,21 @@ public class MatReportParser {
     private static final Pattern PROBLEM_SUSPECT_PATTERN = Pattern.compile(
             "(?:Problem|Suspect)\\s*\\d+[^<]*<.*?>(.*?)(?=(?:Problem|Suspect)\\s*\\d+|$)",
             Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+    /*
+     * MAT Leak Suspects index.html 은 본문 위에 파이 차트 + 이미지맵을 넣는다:
+     *   <map name='chart16map'><area alt="Slice (a)  Problem Suspect 1: Retained Size: 43.3 MB" ...>...</map>
+     * PROBLEM_SUSPECT_PATTERN 은 HTML 전체를 훑으며 태그 구조를 보지 않으므로 이 area 의 alt 에서도
+     * 매칭이 시작돼 차트 조각이 suspect 로 등록된다(본문에 잘린 <area ...> 원문이 노출되고,
+     * 그 가짜 항목이 개수 상한을 먹어 뒤쪽 진짜 suspect 가 잘려나간다).
+     * → 섹션 추출 전에 map 블록을 제거한다. suspectsHtml(Raw Data 탭)에 넘기는 원본은 건드리지 않는다.
+     */
+    private static final Pattern MAP_BLOCK_PATTERN = Pattern.compile(
+            "<map\\b.*?</map>", Pattern.DOTALL | Pattern.CASE_INSENSITIVE);
+    // 진짜 suspect 본문이라면 반드시 있는 마커 — 차트/네비게이션 조각이 새어 들어오는 것을 막는 2차 방어
+    private static final Pattern SUSPECT_INSTANCES_MARKER = Pattern.compile(
+            "\\binstances?\\s+of\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern SUSPECT_OCCUPY_MARKER = Pattern.compile(
+            "\\boccup(?:y|ies)\\b", Pattern.CASE_INSENSITIVE);
     // extractCleanClassName 용
     private static final Pattern STACKTRACE_LINK_PATTERN = Pattern.compile(
             "<a\\s+href=\"(pages/[^\"]+\\.html)\"[^>]*>\\s*See\\s+stacktrace\\s*</a>",
@@ -1016,19 +1031,38 @@ public class MatReportParser {
 
     // ─── Suspects 파싱 ────────────────────────────────────────────────────────
 
+    /**
+     * suspect 등록 상한. 예전에는 5 로 하드코딩돼 MAT 가 6건 이상 낸 덤프에서 뒤쪽이 잘려나갔다
+     * (차트 오탐까지 자리를 차지하면 실제 표시는 3건까지 줄었다). MAT leakhunter 출력은 보통 10건
+     * 이하라 사실상 전수 표시이며, 이상 덤프에서 상세 JSON/화면이 폭주하는 것만 막는 안전망이다.
+     */
+    private static final int MAX_SUSPECTS = 20;
+
+    /**
+     * 진짜 suspect 본문인지 검사. MAT 는 "N instances of X ... occupy N bytes" /
+     * "One instance of X ... occupies N bytes" 형식을 반드시 포함한다.
+     * 차트 이미지맵·목차·푸터 조각이 섹션으로 새어 들어오는 것을 막는다.
+     */
+    private boolean isRealSuspectSection(String section) {
+        return SUSPECT_INSTANCES_MARKER.matcher(section).find()
+            && SUSPECT_OCCUPY_MARKER.matcher(section).find();
+    }
+
     private void parseSuspectsZip(File zip, MatParseResult result) {
         String html = extractHtmlFromZip(zip, "suspects");
         if (html == null || html.isEmpty()) return;
 
         List<LeakSuspect> suspects = new ArrayList<>();
 
-        // Problem X 섹션별 추출
-        Matcher pm = PROBLEM_SUSPECT_PATTERN.matcher(html);
+        // Problem X 섹션별 추출 — 차트 이미지맵(<map>…</map>)은 제거한 사본에서 찾는다.
+        // (원본 html 은 아래 setSuspectsHtml 에 그대로 넘겨 Raw Data 탭의 차트를 보존)
+        String sectionHtml = MAP_BLOCK_PATTERN.matcher(html).replaceAll("");
+        Matcher pm = PROBLEM_SUSPECT_PATTERN.matcher(sectionHtml);
         int idx = 1;
-        while (pm.find() && suspects.size() < 5) {
+        while (pm.find() && suspects.size() < MAX_SUSPECTS) {
             String rawSection = pm.group(1);
             String section = trimSuspectFooter(stripTags(rawSection));
-            if (section.length() > 30) {
+            if (section.length() > 30 && isRealSuspectSection(section)) {
                 LeakSuspect suspect = new LeakSuspect("Suspect #" + idx, section.substring(0, Math.min(section.length(), 2000)));
                 List<String> kws = extractKeywords(rawSection);
                 suspect.setKeywords(kws);
@@ -1047,12 +1081,12 @@ public class MatReportParser {
             }
         }
 
-        // 섹션 파싱 실패 시 전체 HTML에서 의심 패턴 추출
+        // 섹션 파싱 실패 시 전체 HTML에서 의심 패턴 추출 (여기서도 차트 이미지맵은 제외)
         if (suspects.isEmpty()) {
-            String plain = trimSuspectFooter(stripTags(html));
+            String plain = trimSuspectFooter(stripTags(sectionHtml));
             if (plain.length() > 100) {
                 LeakSuspect suspect = new LeakSuspect("Leak Analysis", plain.substring(0, Math.min(plain.length(), 2000)));
-                List<String> kws = extractKeywords(html);
+                List<String> kws = extractKeywords(sectionHtml);
                 suspect.setKeywords(kws);
                 LeakSuspectAdvisor.analyze(suspect, plain);
                 appendKeywordsToExplanation(suspect);

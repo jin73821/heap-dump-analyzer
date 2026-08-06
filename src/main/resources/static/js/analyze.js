@@ -838,7 +838,8 @@ var _classInstCache      = {}; // className → List<LoadedClassEntry> (인스�
 var _classInstAbortCtrls = {}; // className → AbortController
 
 function _closeDomDetail() {
-    if (_domAbortCtrl) { _domAbortCtrl.abort(); _domAbortCtrl = null; }
+    // 진행 중이던 lazy 조회가 있으면 표시도 함께 걷는다 (완료가 아니므로 소요시간 미표기)
+    if (_domAbortCtrl) { _domAbortCtrl.abort(); _domAbortCtrl = null; _domLazyEnd('aborted'); }
     if (_domDetailRow && _domDetailRow.parentNode) {
         var owner = _domDetailRow.previousElementSibling;
         _domDetailRow.parentNode.removeChild(_domDetailRow);
@@ -975,6 +976,189 @@ function _buildDomDetailLoadingHtml(isLoader) {
         + '</div>';
 }
 
+// ── MAT lazy 조회 진행 표시 ────────────────────────────────
+// 서버가 사전계산/LRU 캐시를 모두 MISS 해 실제로 MAT 를 도는 경우에만 'lazy' SSE 이벤트를
+// 보낸다(캐시 HIT 는 즉시 done → 스피너가 깜빡이지 않는다).
+// 사이드바 스피너는 배너 Analysis 탭으로 cloneNode 복제되므로 반드시 class 로 전부 갱신한다(함정 8).
+var _domLazyT0 = 0;
+var _domLazyTimer = null;
+
+function _domNavSpinners(show) {
+    document.querySelectorAll('.dom-nav-spinner').forEach(function(el) { el.hidden = !show; });
+}
+
+function _domFmtElapsed(ms) {
+    var sec = ms / 1000;
+    if (sec < 60) return sec.toFixed(1) + '초';
+    var m = Math.floor(sec / 60);
+    return m + '분 ' + (sec - m * 60).toFixed(0) + '초';
+}
+
+function _domLazyTick() {
+    var t = document.getElementById('domLazyTime');
+    if (t) t.textContent = _domFmtElapsed(Date.now() - _domLazyT0);
+}
+
+/** MAT lazy 조회 시작 — 사이드바 스피너 + 패널 뱃지/스피너/경과시간 */
+function _domLazyStart() {
+    if (_domLazyTimer) clearInterval(_domLazyTimer);
+    _domLazyT0 = Date.now();
+    _domNavSpinners(true);
+
+    var bar = document.getElementById('domLazyBar');
+    if (bar) {
+        bar.hidden = false;
+        bar.classList.remove('done', 'failed');
+        var badge = document.getElementById('domLazyBadge');
+        var sp    = document.getElementById('domLazySpinner');
+        var txt   = document.getElementById('domLazyText');
+        if (badge) badge.textContent = 'MAT 분석 중';
+        if (sp)  sp.hidden = false;
+        if (txt) txt.textContent = '참조 경로를 추출하고 있습니다…';
+    }
+    _domLazyTick();
+    _domLazyTimer = setInterval(_domLazyTick, 100);
+}
+
+// ── 사전계산(precompute) 진행 폴링 ──────────────────────────
+// 재분석 직후 백그라운드로 도는 사전계산은 사용자 조작 없이 수십 초~수 분 MAT 를 돈다.
+// 클릭 lazy(SSE)와 달리 스스로 알 수 없으므로 상태를 폴링해 같은 UI 에 표시한다.
+// 행 클릭 lazy 가 진행 중이면(사용자가 직접 기다리는 중) 그쪽이 우선이라 UI 를 건드리지 않는다.
+var _domPreTimer = null;
+var _domPreActive = false;
+
+function _domPrecomputePoll() {
+    Common.fetchJSON('/api/dominator-refs/status/' + encodeURIComponent(FILENAME))
+        .then(function(st) {
+            if (_domLazyTimer) return;           // 클릭 lazy 우선
+            var running = st && (st.state === 'running' || st.state === 'queued');
+            if (running) {
+                _domPreActive = true;
+                _domPreApply(st);
+                return;
+            }
+            // 진행 중이 아님 — 폴링 중이던 작업이 끝난 경우에만 완료 표시로 전환
+            if (_domPreActive) {
+                _domPreActive = false;
+                _domPreFinish(st);
+            }
+            _domPrecomputeStop();
+        })
+        .catch(function(e) {
+            // 세션 만료·네트워크 오류 시 폴링 중단 (무한 재시도 방지)
+            _domPrecomputeStop();
+            if (_domPreActive) { _domPreActive = false; _domLazyHide(); }
+        });
+}
+
+function _domPreApply(st) {
+    _domNavSpinners(true);
+    var bar = document.getElementById('domLazyBar');
+    if (!bar) return;
+    bar.hidden = false;
+    bar.classList.remove('done', 'failed');
+    var badge = document.getElementById('domLazyBadge');
+    var sp    = document.getElementById('domLazySpinner');
+    var txt   = document.getElementById('domLazyText');
+    var time  = document.getElementById('domLazyTime');
+    if (badge) badge.textContent = 'MAT 분석 중';
+    if (sp) sp.hidden = false;
+    if (txt) {
+        txt.textContent = st.state === 'queued'
+            ? '참조 사전 계산을 준비하고 있습니다…'
+            : '참조를 사전 계산하고 있습니다… (' + (st.done || 0) + '/' + (st.total || 0) + ')';
+    }
+    if (time) time.textContent = _domFmtElapsed(st.elapsedMs || 0);
+}
+
+function _domPreFinish(st) {
+    _domNavSpinners(false);
+    var bar = document.getElementById('domLazyBar');
+    if (!bar) return;
+    var badge = document.getElementById('domLazyBadge');
+    var sp    = document.getElementById('domLazySpinner');
+    var txt   = document.getElementById('domLazyText');
+    var time  = document.getElementById('domLazyTime');
+    if (sp) sp.hidden = true;
+    bar.hidden = false;
+    bar.classList.remove('done', 'failed');
+    if (st && st.state === 'failed') {
+        bar.classList.add('failed');
+        if (badge) badge.textContent = '실패';
+        if (txt) txt.textContent = '참조 사전 계산에 실패했습니다.' + (st.message ? ' (' + st.message + ')' : '');
+    } else if (st && st.state === 'skipped') {
+        bar.classList.add('done');
+        if (badge) badge.textContent = '완료';
+        if (txt) txt.textContent = '사전 계산 생략' + (st.message ? ' — ' + st.message : '') + '. 항목 클릭 시 조회합니다.';
+    } else if (st && st.budgetExceeded) {
+        // 시간 예산 내에 전량을 못 끝낸 정상 종료 — "완료" 로 표시하면 나머지가 누락된 것처럼 보인다
+        bar.classList.add('done');
+        if (badge) badge.textContent = '부분 완료';
+        if (txt) txt.textContent = '시간 예산' + (st.budgetSeconds ? '(' + st.budgetSeconds + '초)' : '')
+                + ' 내에 ' + (st.done || 0) + '/' + (st.total || 0) + '개를 사전 계산했습니다. '
+                + '나머지는 항목 클릭 시 조회합니다.';
+    } else {
+        bar.classList.add('done');
+        if (badge) badge.textContent = '완료';
+        if (txt) txt.textContent = '참조 사전 계산이 완료되었습니다.'
+                + (st && st.total ? ' (' + (st.done || 0) + '/' + st.total + ')' : '');
+    }
+    if (time) time.textContent = '총 ' + _domFmtElapsed((st && st.elapsedMs) || 0);
+}
+
+function _domPrecomputeStop() {
+    if (_domPreTimer) { clearInterval(_domPreTimer); _domPreTimer = null; }
+}
+
+/** 페이지 로드 시 1회 확인 → 진행 중이면 2초 간격 폴링 (완료되면 스스로 멈춘다) */
+function _domPrecomputeWatch() {
+    if (typeof FILENAME !== 'string' || !FILENAME) return;
+    if (!document.getElementById('domLazyBar')) return;   // Dominator Tree 패널이 없는 결과
+    _domPrecomputePoll();
+    _domPrecomputeStop();
+    _domPreTimer = setInterval(_domPrecomputePoll, 2000);
+}
+
+/** 표시 전체 제거 — MAT 를 돌지 않은 경우(캐시 HIT)에 이전 조회의 잔상이 남지 않게 한다. */
+function _domLazyHide() {
+    if (_domPreActive) return;   // 사전계산이 진행 중이면 그 표시를 유지한다
+    _domNavSpinners(false);
+    var bar = document.getElementById('domLazyBar');
+    if (bar) bar.hidden = true;
+}
+
+/**
+ * MAT lazy 조회 종료.
+ * @param state 'done' 완료(총 소요시간 표시) | 'failed' 실패 | 'aborted' 사용자가 닫음(표시 제거)
+ */
+function _domLazyEnd(state) {
+    if (!_domLazyTimer) { _domLazyHide(); return; }   // lazy 로 시작하지 않음(캐시 HIT)
+    clearInterval(_domLazyTimer);
+    _domLazyTimer = null;
+    _domNavSpinners(false);
+
+    var total = Date.now() - _domLazyT0;
+    var bar = document.getElementById('domLazyBar');
+    if (!bar) return;
+    if (state === 'aborted') { bar.hidden = true; return; }
+
+    var badge = document.getElementById('domLazyBadge');
+    var sp    = document.getElementById('domLazySpinner');
+    var txt   = document.getElementById('domLazyText');
+    var time  = document.getElementById('domLazyTime');
+    if (sp) sp.hidden = true;
+    if (state === 'failed') {
+        bar.classList.add('failed');
+        if (badge) badge.textContent = '실패';
+        if (txt)   txt.textContent = '참조 추출에 실패했습니다.';
+    } else {
+        bar.classList.add('done');
+        if (badge) badge.textContent = '완료';
+        if (txt)   txt.textContent = '참조 추출이 완료되었습니다.';
+    }
+    if (time) time.textContent = '총 ' + _domFmtElapsed(total);
+}
+
 function domRowClick(row) {
     if (!row || !row.dataset) return;
     var idx = parseInt(row.dataset.idx, 10);
@@ -1003,8 +1187,9 @@ function toggleDomDetail(row) {
     _domDetailRow = detail;
     _domOpenAddr  = addr;
 
-    // 캐시 HIT → 즉시 렌더
+    // 캐시 HIT → 즉시 렌더 (MAT 미실행 — 이전 조회의 진행/완료 표시는 걷는다)
     if (_domCache[addr]) {
+        _domLazyHide();
         td.innerHTML = _buildDomDetailHtml(_domCache[addr], false, null, isLoader);
         return;
     }
@@ -1036,9 +1221,14 @@ function toggleDomDetail(row) {
         if (_domOpenAddr !== addr) return;
         try {
             var parsed = JSON.parse(data);
-            if (event === 'waiting') {
+            if (event === 'lazy') {
+                // 캐시 MISS 확정 — 실제 MAT 조회가 시작됐다(수 초~수십 초)
+                _domLazyStart();
+            } else if (event === 'waiting') {
                 // 동시 MAT 한도(분석 진행 등)로 대기 — 스켈레톤 라벨을 대기 안내로 교체
                 var wMsg = (parsed && parsed.message) || '다른 분석 진행 중 — 잠시 대기 중...';
+                var lazyTxt = document.getElementById('domLazyText');
+                if (lazyTxt && _domLazyTimer) lazyTxt.textContent = wMsg;
                 var inW = td.querySelector('.dom-tab-incoming-body');
                 if (inW && !accumulated.incoming) inW.innerHTML = _domSkeleton(wMsg);
                 var outW = td.querySelector('.dom-tab-outgoing-body');
@@ -1056,6 +1246,7 @@ function toggleDomDetail(row) {
                 if (outEl2) outEl2.innerHTML = _renderDomRefsTable(parsed, '아웃바운드 참조 없음 (retained set)');
             } else if (event === 'done') {
                 _domCache[addr] = accumulated;
+                _domLazyEnd('done');
                 if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
             } else if (event === 'refs-error') {
                 var errMsg = parsed.error || '참조 추출 실패';
@@ -1063,6 +1254,7 @@ function toggleDomDetail(row) {
                 if (outErrEl) outErrEl.innerHTML = '<div class="dom-refs-error">' + _escapeHtml(errMsg) + '</div>';
                 var inErrEl = td.querySelector('.dom-tab-incoming-body');
                 if (inErrEl && !accumulated.incoming) inErrEl.innerHTML = '<div class="dom-refs-error">' + _escapeHtml(errMsg) + '</div>';
+                _domLazyEnd('failed');
                 if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
             }
         } catch (x) {}
@@ -1092,12 +1284,13 @@ function toggleDomDetail(row) {
             return pump();
         })
         .catch(function(e) {
-            if (e.name === 'AbortError') return;  // 사용자가 다른 행 클릭 → 정상 취소
+            if (e.name === 'AbortError') return;  // 사용자가 다른 행 클릭 → 정상 취소(_closeDomDetail 이 정리)
             if (_domOpenAddr !== addr) return;
             var outEl = td.querySelector('.dom-tab-outgoing-body');
             if (outEl) outEl.innerHTML = '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
             var inEl = td.querySelector('.dom-tab-incoming-body');
             if (inEl && !accumulated.incoming) inEl.innerHTML = '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
+            _domLazyEnd('failed');
             if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
         });
 }
@@ -4969,6 +5162,8 @@ function applyJeusChip(field, manual) {
 // ── 초기화 실행 ─────────────────────────────────────────
 if (typeof FILENAME !== 'undefined') {
     initAiPanel();
+    // 재분석 직후 백그라운드 사전계산이 돌고 있으면 진행 표시를 띄운다
+    _domPrecomputeWatch();
 }
 
 // ESC 키로 스택트레이스 모달 닫기

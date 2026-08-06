@@ -34,6 +34,13 @@
         .s-row { display: flex; justify-content: space-between; align-items: center;
                  padding: 10px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; }
         .s-key { font-size: 13px; color: #374151; font-weight: 500; flex-shrink: 0; }
+        /* 설명 툴팁용 인포 아이콘 — 실제 툴팁은 /js/float-tooltip.js ([data-tooltip]) 가 처리 */
+        .info-icon { display: inline-flex; align-items: center; margin-left: 5px;
+                     vertical-align: middle; cursor: help; }
+        .info-icon svg { width: 14px; height: 14px; stroke: #9CA3AF; fill: none;
+                         stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+                         transition: stroke .15s; }
+        .info-icon:hover svg { stroke: #2563EB; }
         .s-val { font-size: 13px; font-weight: 600; color: #1F2937; text-align: right;
                  word-break: break-all; min-width: 0; }
         .s-val-mono { font-family: 'JetBrains Mono','SF Mono','Fira Code',monospace; font-size: 12px; }
@@ -442,6 +449,22 @@
                 <div class="heap-hint">JVM 시작 시 초기 할당 메모리. -Xmx 이하로 설정해야 합니다.</div>
             </div>
             <div class="s-row">
+                <span class="s-key">Dominator Refs 사전계산 시간<span class="info-icon" data-tooltip="분석 완료 후 상위 객체의 참조를 미리 계산하는 시간 상한입니다.&#10;&#10;항목당 MAT 쿼리를 2회(path2gc + show_retained_set) 실행해 약 6초가 걸리므로, 상위 30개를 모두 계산하려면 190초 이상이 필요합니다.&#10;&#10;예산을 넘기면 거기까지만 저장하고 중단하며(화면에는 '부분 완료'로 표시), 나머지 항목은 클릭하는 시점에 조회합니다.&#10;&#10;변경은 다음 분석부터 적용됩니다."><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span></span>
+                <span class="s-val" style="display:flex;align-items:center;gap:6px">
+                    <select id="domPrecomputeBudgetSelect"
+                            style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:110px"
+                            onchange="saveDomPrecomputeBudget(this.value)">
+                        <option value="60">60초</option>
+                        <option value="120">120초</option>
+                        <option value="180">180초</option>
+                        <option value="300">300초 (권장)</option>
+                        <option value="600">600초</option>
+                        <option value="900">900초</option>
+                        <option value="1800">1800초</option>
+                    </select>
+                </span>
+            </div>
+            <div class="s-row">
                 <span class="s-key">System Physical Memory</span>
                 <span class="s-val s-val-mono" id="sPhysMem">-</span>
             </div>
@@ -796,6 +819,8 @@
 </div>
 
 <!-- ── JavaScript ─────────────────────────────────────────── -->
+<!-- [data-tooltip] 플로팅 툴팁 공통 모듈 (로드만 하면 자동 활성) -->
+<script src="/js/float-tooltip.js?v=2026-08-06"></script>
 <script>
 // ── CSRF 헤더 헬퍼 ──────────────────────────────────────
 function csrfHeaders(extra) {
@@ -883,6 +908,11 @@ function loadAllData(showToast) {
         }
 
         // Dashboard detect days
+        var dpSel = document.getElementById('domPrecomputeBudgetSelect');
+        if (dpSel && d.dominatorRefsPrecomputeBudgetSeconds != null) {
+            selectOption('domPrecomputeBudgetSelect', String(d.dominatorRefsPrecomputeBudgetSeconds));
+        }
+
         var ddSel = document.getElementById('dashboardDetectDaysSelect');
         if (ddSel && d.dashboardDetectDays != null) {
             selectOption('dashboardDetectDaysSelect', String(d.dashboardDetectDays));
@@ -1303,6 +1333,12 @@ function saveSessionTimeout(hours) {
 function saveDashboardDetectDays(days) {
     Common.fetchJSON('/api/settings/dashboard-detect-days?days=' + days, {method: 'POST'})
         .then(function(d) { toast(d.message || '대시보드 탐지 기간 변경 완료', 'success'); })
+        .catch(function(e) { toast('변경 실패: ' + e.message, 'error'); });
+}
+
+function saveDomPrecomputeBudget(seconds) {
+    Common.fetchJSON('/api/settings/dominator-precompute-budget?seconds=' + seconds, {method: 'POST'})
+        .then(function(d) { toast(d.message || '사전계산 시간 변경 완료', 'success'); })
         .catch(function(e) { toast('변경 실패: ' + e.message, 'error'); });
 }
 

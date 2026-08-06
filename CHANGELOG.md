@@ -1,6 +1,37 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-08-06] v2.3.3 — 설정 설명 툴팁 + 버전 갱신
+
+- **Settings > MAT Configuration 의 "Dominator Refs 사전계산 시간" 에 인포 아이콘(ⓘ) + hover 툴팁** — 항목 아래 `heap-hint` 로 길게 붙어 있던 설명을 라벨 우측 아이콘의 툴팁으로 옮겼다(설정 행이 짧아지고 설명은 필요할 때만 노출). 툴팁은 기존 공통 모듈 **`/js/float-tooltip.js`(`[data-tooltip]`)** 재사용 — settings.html 은 이 모듈을 쓰지 않았어서 `<script>` 로드 1줄 추가. 문단 구분은 `&#10;`(모듈이 `white-space:pre-wrap` 로 렌더). `.info-icon` 스타일(14px SVG, hover 시 `#2563EB`, `cursor:help`)은 settings.html 인라인.
+- **버전 2.3.2 → 2.3.3** — CLAUDE.md 버전 변경 체크리스트대로 `pom.xml` + `restart.sh`/`run.sh`/`stop.sh` 의 JAR grep 패턴(11곳) + UI 표기 3곳(`fragments/banner.html`·`index.html`·`progress.html`) 동시 갱신. ⚠ 체크리스트의 함정대로 **스크립트가 새 JAR 명으로만 프로세스를 grep 해 구버전(2.3.2)을 자동 종료하지 못하므로**, 빌드 후 구 프로세스를 수동 종료(SIGTERM, 1초 내 종료 확인)하고 포트 18080 이 비었음을 확인한 뒤 기동했다 — 포트 충돌 없음.
+- 검증: 헤드리스 Chrome 으로 실제 `s-row` 마크업 + 실제 `float-tooltip.js` 를 로드해 **8/8 PASS**(아이콘 렌더·라벨 우측 배치·초기 숨김·hover 표시·본문/부분완료 안내 포함·줄바꿈 반영·이탈 시 숨김). settings.html 렌더 스모크 7항목 PASS + 구 `heap-hint` 문구 제거 확인. `mvn test` 328건 green, 2.3.3 기동 13.0초 무오류.
+
+
+## [2026-08-06] Dominator Tree — MAT lazy 조회 진행 표시 (스피너·뱃지·경과 시간)
+
+**배경:** Dominator Tree 행을 클릭하면 사전계산/LRU 캐시 MISS 시 MAT 를 실제로 돌아 수 초~수십 초가 걸리는데(함정 24), 화면에는 탭 안쪽 스켈레톤만 있어 **다른 패널로 이동하면 진행 여부를 알 수 없었다**. 얼마나 걸렸는지도 남지 않았다.
+
+- **서버 — `lazy` SSE 이벤트 추가** (`HeapReportApiController.dominatorRefsSse`) — 사전계산·LRU 캐시를 모두 MISS 해 **실제로 MAT 를 도는 경우에만** 전송. 슬롯 대기도 체감 시간이므로 `Semaphore` 획득 **전에** 보낸다. 캐시 HIT 는 이 이벤트 없이 즉시 `done` → 스피너가 깜빡이지 않는다.
+- **사이드바 Actions → Dominator Tree 우측 스피너** — lazy 진행 중에만 노출, 완료 시 사라짐. ⚠ 이 사이드바는 배너 Analysis 탭으로 `cloneNode(true)` 복제되므로(함정 8) **ID 없이 `.dom-nav-spinner` class + `querySelectorAll`** 로 원본·클론을 동시 갱신한다.
+- **Dominator Tree 패널 상단 상태 바** — 진행 중: 파란 `MAT 분석 중` 뱃지 + 회전 스피너 + "참조 경로를 추출하고 있습니다…" + 0.1초 단위 경과 시간. 완료: 초록 `완료` 뱃지 + "참조 추출이 완료되었습니다." + **총 분석 시간**. 실패: 붉은 `실패` 뱃지. 슬롯 대기 중이면(`waiting` 이벤트) 안내 문구를 대기 메시지로 바꿔 표시한다.
+- **상태 정리** — 사용자가 행을 닫거나 다른 행을 클릭해 abort 되면 표시를 걷고(소요시간 미표기), 캐시 HIT 행 클릭 시에는 이전 조회의 완료 바 잔상을 제거한다(`_domLazyHide`). 경과 시간은 60초 이상이면 `1분 15초` 형식.
+- **사전계산(precompute) 진행도 같은 UI 로 표시 (후속 보완)** — 위 `lazy` 이벤트는 **행 클릭 시점의 on-demand 조회**만 덮는다. 그런데 재분석 직후에는 백그라운드 사전계산(`dom-ref-precompute` 스레드, 로그 `[MAT Lazy] Query: …`)이 상위 N개 객체의 refs 를 수십 초~수 분에 걸쳐 미리 계산하고, **그 결과로 행 클릭이 sidecar-hit 이 되어 스피너가 뜰 일이 아예 없었다**(사용자 제보로 확인). → `HeapDumpAnalyzerService.DomRefPrecomputeStatus`(state/total/done/startedAt/finishedAt, 파일별 메모리 보관)를 추가하고 `GET /api/dominator-refs/status/{filename}` 로 노출. `analyze.js` 가 페이지 진입 시 1회 + 진행 중이면 2초 간격 폴링해 같은 스피너·뱃지·경과 시간을 표시하고(진행률 `(7/20)` 포함), 완료 시 **총 소요 시간**을 남긴 뒤 폴링을 스스로 멈춘다. `queued`(executor 대기)·`skipped`(이미 사전계산됨 등 사유 표기)·`failed` 상태도 구분한다. 행 클릭 lazy 가 진행 중이면 사용자가 직접 기다리는 쪽이 우선이라 폴링은 UI 를 덮지 않는다.
+- **"완료"가 아니라 "부분 완료" (실사용 피드백)** — 운영에서 `완료 (29/30)` 이 표시돼 "1개는 어떻게 된 것이냐"는 문의. 원인은 로그대로 **시간 예산 초과**(`precompute budget(180s) exceeded ... after 29 entries`, 총 183초): 항목당 MAT 쿼리 2회(≈6.3초)라 29개에서 180초를 넘겨 30번째를 시작하지 않고 `break` 한 것 — 정상 종료지만 **전량 계산은 아닌데 "완료"로 표시돼 오해를 샀다**. `DomRefPrecomputeStatus.budgetExceeded/budgetSeconds` 를 추가해 API 로 노출하고, UI 는 **`부분 완료`** 뱃지 + "시간 예산(180초) 내에 29/30개를 사전 계산했습니다. 나머지는 항목 클릭 시 조회합니다."로 표시한다.
+- **사전계산 시간 예산 300초로 상향 + Settings 에서 조정 가능** — `mat.dominator-refs.precompute.budget-seconds` 기본값 180 → **300**(top-n 30 전량 ≈190초에 여유). `HeapDumpConfig` 에 setter 추가 + `HeapDumpAnalyzerService.setDominatorRefsPrecomputeBudgetSeconds()`(60~1800초 검증 + `persistSettings()`) + 영속화 3-hook(settings.json 복원/저장, `syncApplicationProperties` 키) + `POST /api/settings/dominator-precompute-budget`(ADMIN+CSRF — `/api/settings/**` 매처에 이미 포함) + `GET /api/settings` 노출. UI 는 **Settings > MAT Configuration** 카드에 select(60~1800초) + 계산식 안내. 다음 분석부터 적용.
+- 캐시 무효화: `analyze.css?v=2026-08-06` / `analyze.js?v=2026-08-06b`.
+- 검증: 헤드리스 Chrome + 실제 `analyze.css` 픽스처(사이드바 원본+배너 클론 재현) — **클릭 lazy 20케이스 PASS**(초기 숨김 / 스피너 2개 동시 노출 / 배경색 `#EFF6FF` / 경과 시간 실제 증가 / 완료 시 초록 `#ECFDF5`+"총 1.2초" / 실패 붉은색 / abort 숨김 / 캐시 HIT 잔상 제거 / 분 단위 포맷) + **사전계산 폴링 22케이스 PASS**(`analyze.js` 에서 함수를 그대로 추출해 주입 — queued 준비 문구 / running 진행률 `(7/20)`·경과 43.2초 / done "총 2분 8초"+폴링 자동 중단 / **부분완료 "시간 예산(180초) 내에 29/30개…"+"총 3분 3초"**(운영 실측 상황 재현) / skipped·failed 사유 표기 / none 무표시 / 클릭 lazy 우선) + settings.html 렌더 스모크(신규 select·핸들러·안내 문구 4항목 PASS). `mvn test` 328건 green, 빌드·기동 무오류, `node --check` OK.
+
+## [2026-08-06] Leak Suspects — 앱 표시가 MAT 원본과 어긋나던 3가지 결함 수정
+
+**배경:** 사내 Tibero/JEUS 덤프에서 앱 화면과 MAT 원본 리포트가 불일치한다는 제보. MAT 는 **6건**(Problem Suspect 1~6)인데 앱은 **5건**이고, 그중 앞 2건이 `Slice (c) Problem` / `Slice (e) Problem` 이라는 정체불명 항목이었으며, 설명은 Tibero JDBC 누수를 "**JEUS 서버 코어** … 워커 스레드 풀 적체"로 안내하고 있었다. 원인 3가지를 모두 코드·실측으로 특정했다.
+
+- **원인 A — 파이 차트 이미지맵이 suspect 로 오인** — MAT `index.html` 은 본문 위에 `<map><area alt="Slice (a)  Problem Suspect 1: …"></map>` 이미지맵을 둔다. `PROBLEM_SUSPECT_PATTERN` 은 HTML 전체를 훑으며 **태그 구조를 보지 않으므로** area 의 alt 에서도 매칭이 시작됐고, `stripTags()`(`<[^>]+>`)는 완전한 태그만 지우기에 잘린 `<area …>` 원문이 본문에 그대로 노출됐다. → 섹션 추출 전에 `MAP_BLOCK_PATTERN` 으로 map 블록을 제거(**원본 `suspectsHtml` 은 무변경** — Raw Data 탭 차트 보존) + 등록 직전 `isRealSuspectSection()`(`instances of` **와** `occupy|occupies` 동시 존재) 2차 검증 추가.
+- **원인 B — 등록 상한 5 하드코딩** — `suspects.size() < 5`. 가짜 2건이 앞자리를 잠식해 진짜는 3건만 남고 P4·P5·P6 이 잘려나갔다. UI 의 "5 suspect(s) detected" 는 이 잘린 수였다. → `MAX_SUSPECTS = 20` 상수화(MAT leakhunter 출력은 보통 10건 이하라 사실상 전수 표시, 이상 덤프 폭주만 차단).
+- **원인 C — 룰이 클래스로더로 매칭돼 오분류** — `matchesDbLibrary()` 가 `className`/`accumulatorClass`/`classLoader` 를 **동등하게** prefix 매칭했고, 룰은 priority 오름차순 첫 매칭이 이긴다. 그래서 `jeus.server.`(**928**)가 `com.tmax.tibero.jdbc.driver.`(**935**)를 가로챘다 — 올바른 Tibero 룰이 DB 에 있는데도 쓰이지 못했다. WAS 클래스로더가 로드한 **모든 서드파티 클래스**에 해당하던 일반 결함. → `tryDbRules()` 를 **2-pass** 로 분리: pass 1 은 누수 주체(className/accumulator)로 전체 룰 순회, pass 2 는 미매칭일 때만 classLoader 순회. 클래스로더 매칭을 없애지 않은 이유는 WAS 자체 객체·ClassLoader 누수 식별에 여전히 유효하기 때문 — 순위만 낮췄다.
+- **기존 저장 결과 소급 교정** — `migrateSuspectsReparse()` 신설(`@PostConstruct`). `data/{filename}/_Leak_Suspects.zip` 이 남아 있어 **힙 재분석(30~60초) 없이 ZIP 재파싱만으로** 교정된다. DB 원본을 로드해 `leakSuspects` 만 교체(나머지 필드 무변경) 후 저장 + 인메모리 캐시 반영. 중복 실행 방지는 `data/.suspects-reparse-v2` 마커(settings.json 3-hook 을 건드리지 않아 함정 #25 영향 없음). ZIP 없는 기록은 건너뛰고 원본 유지, 건별 실패는 warn 후 계속. ⚠ 기존 `reparseSuspects*` 두 메서드는 `size() == size()` 조건이라 **개수가 바뀌는 이번 교정에는 쓸 수 없어** 별도 경로로 구현.
+- 검증: `mvn test` **328건** green(321 → 신규 7건). 신규 `MatReportParserSuspectsTest` 5건 — MAT 형식 합성 픽스처(suspect 6건/슬라이스 7개)로 차트 오탐 0건·순서 일치·12건 미절단·상한 20·Keywords 추출 유지 확인. `LeakSuspectAdvisorGoldenTest` +2건 — Tibero+JEUS 조합이 "커서/Statement 누수"로 분류되고 설명에 "JEUS"가 없을 것, 클래스명 미식별 시 classLoader 매칭은 그대로 동작할 것. **기존 골든 10건 무변경 통과**. 운영 실측: 기동 마이그레이션이 갱신 16건/건너뜀 7건/실패 0건으로 완료됐고, `heapdump_gmadomain_2.hprof` 가 **4건 → 3건**으로 교정 — MAT 원본 `index.html` 의 `Problem Suspect` 헤딩이 정확히 3건(차트 슬라이스는 a·b·c+Remainder 4개)임을 대조해 **가짜 1건이 실제로 있었음**을 확인했다.
+
 ## [2026-08-06] 세션 만료·로그아웃 방어 — `/api/**` 401 JSON + 메모장 백업/재로그인 복구
 
 **배경:** 새창 메모장의 세션 만료 방어를 점검하던 중 **전역 수준의 조용한 실패**를 발견. `/api/**` 미인증 요청은 기본 `AuthenticationEntryPoint` 가 **302 → `/login`** 을 보내는데, 브라우저 `fetch` 는 리다이렉트를 자동 추종해 **로그인 페이지 HTML 을 200 으로** 받는다. `Common.fetchJSON` 은 `r.ok=true` 라 이를 **성공으로 처리** → 세션 만료 후 저장하면 "저장됨" 이 뜨는데 실제로는 아무것도 저장되지 않았다. 자동 저장 도입으로 유실 위험이 커진 상태였다. (익명 사용자의 CSRF 실패도 `ExceptionTranslationFilter` 가 `AccessDeniedHandler` 가 아니라 EntryPoint 로 보내므로 감지 지점은 이 한 곳이다.)

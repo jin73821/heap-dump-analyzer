@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-06-27">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-08-06">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -189,6 +189,9 @@ function loadFullErrorLog() {
         <div class="sidebar-section-title">Actions</div>
         <button type="button" class="nav-item" data-panel="dominator-tree" th:if="${hasDominatorTree}">
             <span class="nav-icon">&#127795;</span> Dominator Tree
+            <!-- MAT lazy 조회 진행 표시. 이 사이드바는 배너 Analysis 탭으로 cloneNode 복제되므로
+                 ID 를 쓰지 않고 class 로만 제어한다 (원본+클론 동시 갱신 — CLAUDE.md 함정 8) -->
+            <span class="dom-nav-spinner" title="Dominator Tree 참조 추출 중" hidden></span>
         </button>
         <button type="button" class="nav-item" data-panel="histogram" th:if="${hasHistogram}">
             <span class="nav-icon">&#9776;</span> Histogram
@@ -990,6 +993,14 @@ function loadFullErrorLog() {
     <div id="panel-dominator-tree" class="panel" th:if="${hasDominatorTree}">
         <div class="card">
             <div class="card-title"><span class="card-icon">&#127795;</span> Dominator Tree</div>
+            <!-- MAT lazy 조회 진행/완료 표시 (analyze.js 의 _domLazyStart/_domLazyEnd 가 제어).
+                 패널은 사이드바와 달리 복제되지 않으므로 ID 사용 가능. -->
+            <div class="dom-lazy-bar" id="domLazyBar" hidden>
+                <span class="dlb-badge" id="domLazyBadge">MAT 분석 중</span>
+                <span class="dlb-spinner" id="domLazySpinner"></span>
+                <span class="dlb-text" id="domLazyText">참조 경로를 추출하고 있습니다…</span>
+                <span class="dlb-time" id="domLazyTime">0.0초</span>
+            </div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
                 <p style="font-size:13px;color:var(--text-secondary);margin:0">
                     Top <strong th:text="${result.dominatorTreeEntries != null ? #lists.size(result.dominatorTreeEntries) : 0}">500</strong>
@@ -1485,7 +1496,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-08-02"></script>
+<script src="/js/analyze.js?v=2026-08-06b"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

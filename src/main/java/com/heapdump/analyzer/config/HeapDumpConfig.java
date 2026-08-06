@@ -115,10 +115,16 @@ public class HeapDumpConfig {
     private int dominatorRefsPrecomputeCap;
     public int getDominatorRefsPrecomputeCap() { return dominatorRefsPrecomputeCap; }
 
-    /** 사전계산 시간 예산(초). 초과 시 부분 저장 후 중단 */
-    @Value("${mat.dominator-refs.precompute.budget-seconds:180}")
-    private long dominatorRefsPrecomputeBudgetSeconds;
+    /**
+     * 사전계산 시간 예산(초). 초과 시 부분 저장 후 중단(나머지는 클릭 시 lazy 조회).
+     * 항목당 MAT 쿼리 2회(path2gc + show_retained_set)로 약 6초 → top-n 30 이면 190초 이상 필요.
+     * 런타임 변경은 {@code HeapDumpAnalyzerService.setDominatorRefsPrecomputeBudgetSeconds()} 경유
+     * (settings.json 영속화 부수효과 — CLAUDE.md 설정 영속화 단일 책임).
+     */
+    @Value("${mat.dominator-refs.precompute.budget-seconds:300}")
+    private volatile long dominatorRefsPrecomputeBudgetSeconds;
     public long getDominatorRefsPrecomputeBudgetSeconds() { return dominatorRefsPrecomputeBudgetSeconds; }
+    public void setDominatorRefsPrecomputeBudgetSeconds(long v) { this.dominatorRefsPrecomputeBudgetSeconds = v; }
 
     /** lazy/사전계산 워킹 디렉토리에 .index 를 symlink 연결 (false=copy, 안전 폴백) */
     @Value("${mat.dominator-refs.symlink-index:true}")
