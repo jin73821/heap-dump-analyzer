@@ -37,6 +37,7 @@ public class AccountController {
         User user = userService.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
         model.addAttribute("user", user);
+        model.addAttribute("memoAutosave", UserService.isMemoAutosaveOn(user));
         // 비밀번호 만료 정책 상태 (본인 계정 기준) — 표시 문자열은 컨트롤러에서 조립(Thymeleaf 단순화)
         boolean pwEnabled = passwordPolicy.isEnabled() && !passwordPolicy.isExempt(user);
         boolean pwExpired = passwordPolicy.isExpired(user);
@@ -55,6 +56,22 @@ public class AccountController {
         model.addAttribute("pwWarnSoon", pwWarnSoon);
         model.addAttribute("pwDaysLeft", daysLeft);
         return "account";
+    }
+
+    /**
+     * /account/memo — 개인 메모장 새창(팝업) 전용 자립형 페이지.
+     * 과거에는 about:blank 팝업에 document.write 로 마크업만 넣고 저장 로직은 부모(/account)
+     * 문서의 함수를 호출했다. 부모가 다른 페이지로 이동하면 부모 Document 와 그 JS 컨텍스트가
+     * 폐기돼 팝업의 저장이 조용히 실패했다. 이 라우트는 팝업이 자기 스크립트로
+     * /api/account/memo 를 직접 호출하게 해 opener 생존 여부와 무관하게 만든다.
+     */
+    @GetMapping("/account/memo")
+    public String accountMemoPage(Principal principal, Model model) {
+        User user = userService.findByUsername(principal.getName())
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        model.addAttribute("user", user);
+        model.addAttribute("memoAutosave", UserService.isMemoAutosaveOn(user));
+        return "account-memo";
     }
 
     // ── 비밀번호 변경 ─────────────────────────────────────────
@@ -98,6 +115,19 @@ public class AccountController {
         res.put("memo", user.getMemo() == null ? "" : user.getMemo());
         res.put("memoUpdatedAt", user.getMemoUpdatedAt());
         res.put("memoFont", user.getMemoFont() == null ? "d2coding" : user.getMemoFont());
+        res.put("memoAutosave", UserService.isMemoAutosaveOn(user));
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/api/account/memo-autosave")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> saveMemoAutosave(@RequestBody Map<String, Object> body,
+                                                                Principal principal) {
+        boolean on = Boolean.TRUE.equals(body.get("autosave")) || "true".equals(String.valueOf(body.get("autosave")));
+        userService.saveMemoAutosave(principal.getName(), on);
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        res.put("autosave", on);
         return ResponseEntity.ok(res);
     }
 

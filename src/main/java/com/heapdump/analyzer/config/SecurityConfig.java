@@ -70,7 +70,8 @@ public class SecurityConfig {
                 ).hasRole("ADMIN")
 
                 // 본인 자기서비스 — 완전 인증된 모든 사용자 (PRE_AUTH 부분 인증 차단)
-                .requestMatchers("/account", "/api/account/**").hasAnyRole("ADMIN", "USER")
+                // (/account/** — /account/memo 새창 페이지 포함)
+                .requestMatchers("/account", "/account/**", "/api/account/**").hasAnyRole("ADMIN", "USER")
 
                 // authenticated() 대신 hasAnyRole — OTP 대기(ROLE_PRE_AUTH) 상태의
                 // 다른 경로 접근을 구조적으로 차단 (모든 계정 role 은 ADMIN|USER 뿐이라 의미 동일)
@@ -95,7 +96,42 @@ public class SecurityConfig {
                 .permitAll()
             )
             // PRE_AUTH(OTP 대기) 상태로 다른 경로 접근 시 403 대신 OTP 페이지로 유도
-            .exceptionHandling(eh -> eh.accessDeniedHandler((req, res, ex) -> {
+            .exceptionHandling(eh -> eh
+                /*
+                 * /api/** 는 302 → /login 대신 401 JSON.
+                 * 기본 EntryPoint(formLogin) 는 리다이렉트를 보내는데, 브라우저 fetch 는 이를 자동 추종해
+                 * 로그인 페이지 HTML 을 200 으로 받는다 → Common.fetchJSON 이 r.ok=true 로 보고 **성공 처리**.
+                 * 세션 만료/로그아웃 후 저장이 "성공"으로 표시되고 데이터는 유실되는 조용한 실패였다.
+                 * (익명 사용자의 CSRF 실패도 ExceptionTranslationFilter 가 AccessDeniedHandler 가 아니라
+                 *  이 EntryPoint 로 보내므로 세션 만료 감지는 여기가 단일 지점이다.)
+                 */
+                .defaultAuthenticationEntryPointFor(
+                    (req, res, ex) -> writeApiError(res, HttpServletResponse.SC_UNAUTHORIZED,
+                            "SESSION_EXPIRED", "로그인 세션이 만료되었습니다. 다시 로그인해 주세요."),
+                    req -> req.getRequestURI().startsWith("/api/"))
+                /*
+                 * ⚠ 위 매핑만 등록하면 ExceptionHandlingConfigurer 가 "매핑이 하나뿐"이라는 이유로
+                 * 그것을 **모든 요청의 기본 EntryPoint** 로 써버려, 페이지 라우트(/account 등)까지
+                 * 로그인 리다이렉트 대신 401 JSON 을 받는다. 비-API 경로용 매핑을 명시적으로 함께 등록한다.
+                 */
+                .defaultAuthenticationEntryPointFor(
+                    new org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint("/login"),
+                    req -> !req.getRequestURI().startsWith("/api/"))
+                .accessDeniedHandler((req, res, ex) -> {
+                // 인증은 됐지만 거부된 API 요청도 HTML 이 아닌 JSON 으로 (호출자가 분기 가능하도록)
+                if (req.getRequestURI().startsWith("/api/")) {
+                    boolean csrf = ex instanceof org.springframework.security.web.csrf.MissingCsrfTokenException
+                                || ex instanceof org.springframework.security.web.csrf.InvalidCsrfTokenException;
+                    if (csrf) {
+                        // CSRF 토큰 소실/불일치 = 세션이 교체됐다는 신호 → 재로그인 유도
+                        writeApiError(res, HttpServletResponse.SC_UNAUTHORIZED,
+                                "SESSION_EXPIRED", "로그인 세션이 만료되었습니다. 다시 로그인해 주세요.");
+                    } else {
+                        writeApiError(res, HttpServletResponse.SC_FORBIDDEN,
+                                "FORBIDDEN", "이 작업을 수행할 권한이 없습니다.");
+                    }
+                    return;
+                }
                 Authentication a = SecurityContextHolder.getContext().getAuthentication();
                 if (a != null) {
                     boolean preAuth = a.getAuthorities().stream()
@@ -147,5 +183,21 @@ public class SecurityConfig {
             );
 
         return http.build();
+    }
+
+    /**
+     * /api/** 의 인증/인가 실패 응답 — 리다이렉트 대신 JSON.
+     * code 는 클라이언트 분기용(SESSION_EXPIRED 면 재로그인 유도), error 는 그대로 노출 가능한 한국어 메시지.
+     * 값에 따옴표/역슬래시가 없는 상수만 전달하므로 별도 escape 없이 조립한다.
+     */
+    private static void writeApiError(HttpServletResponse res, int status, String code, String message) {
+        try {
+            res.setStatus(status);
+            res.setContentType("application/json;charset=UTF-8");
+            res.setCharacterEncoding("UTF-8");
+            res.getWriter().write("{\"success\":false,\"code\":\"" + code + "\",\"error\":\"" + message + "\"}");
+        } catch (java.io.IOException ignored) {
+            // 응답이 이미 커밋된 경우 — 더 할 수 있는 일이 없다
+        }
     }
 }

@@ -87,6 +87,29 @@
         .memo-tool-btn:hover { background: #F3F4F6; border-color: #9CA3AF; }
         .memo-tool-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; }
 
+        /* 세션 만료 경고 / 미저장 백업 복구 배너 */
+        [hidden] { display: none !important; }
+        .memo-alert { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+                      margin-top: 10px; padding: 10px 12px; border-radius: 8px;
+                      font-size: 12px; font-weight: 600; line-height: 1.5; }
+        .memo-alert .grow { flex: 1 1 240px; }
+        .memo-alert button { padding: 5px 12px; font-size: 11.5px; font-weight: 600; border-radius: 6px;
+                             border: 1px solid currentColor; background: #fff; color: inherit;
+                             cursor: pointer; font-family: inherit; white-space: nowrap; }
+        .memo-alert button:hover { opacity: .8; }
+        .memo-alert.warn { background: #FEF2F2; border: 1px solid #FCA5A5; color: #B91C1C; }
+        .memo-alert.info { background: #FFFBEB; border: 1px solid #FDE68A; color: #B45309; }
+
+        /* 자동 저장 토글 — common.css 의 .tog(input 숨김) + 페이지가 .tog-track 형태 제공 */
+        .memo-autosave { display: flex; align-items: center; gap: 6px; margin-left: 4px; }
+        .memo-autosave .flabel { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .tog-track { position: relative; display: inline-block; width: 34px; height: 20px;
+                     background: #D1D5DB; border-radius: 10px; cursor: pointer; transition: background .2s; }
+        .tog-track::after { content: ''; position: absolute; top: 3px; left: 3px;
+                            width: 14px; height: 14px; background: #fff; border-radius: 50%;
+                            transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+        .tog:checked + .tog-track::after { transform: translateX(14px); }
+
         /* Modal 변형 (common.css 의 .modal-ov/.modal-box base 를 채움) */
         .modal-box { max-width: 380px; width: 90%; text-align: center; }
         .modal-box h3 { font-size: 15px; font-weight: 600; margin-bottom: 8px; color: #1F2937; }
@@ -232,6 +255,12 @@
                 <option value="system">시스템 기본</option>
             </select>
             <span class="memo-font-preview" id="memoFontPreview">한글 ABC 123</span>
+            <span class="memo-autosave">
+                <span class="flabel">자동 저장</span>
+                <input type="checkbox" class="tog" id="togAutosave" th:checked="${memoAutosave}"
+                       onchange="onAutosaveToggle(this.checked)">
+                <label class="tog-track" for="togAutosave" title="입력이 멈추면 자동으로 저장합니다"></label>
+            </span>
             <span class="memo-tool-group">
                 <button type="button" class="memo-tool-btn" onclick="copyMemo()" title="메모 내용을 클립보드에 복사">
                     <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -258,6 +287,16 @@
             <span>
                 <span id="memoCount" class="memo-count">0</span> / 10 MB <span style="color:#D1D5DB">(UTF-8 byte)</span>
             </span>
+        </div>
+        <div class="memo-alert warn" id="sessionAlert" hidden>
+            <span class="grow" id="sessionAlertMsg">⚠ 로그인 세션이 만료되어 저장하지 못했습니다. 작성 중인 내용은 이 화면에 그대로 있고, 브라우저에도 임시 보관했습니다.</span>
+            <button type="button" onclick="openLoginWindow()">다시 로그인</button>
+            <button type="button" onclick="retryAfterLogin()">로그인 완료 · 저장 재시도</button>
+        </div>
+        <div class="memo-alert info" id="restoreAlert" hidden>
+            <span class="grow">저장되지 못한 메모가 남아 있습니다 (<span id="restoreAt"></span>).</span>
+            <button type="button" onclick="restoreBackup()">복구</button>
+            <button type="button" onclick="discardBackup()">버리기</button>
         </div>
         <div id="memoMsg" class="form-err"></div>
         <div class="btn-row">
@@ -331,9 +370,11 @@
     </div>
 </div>
 
+<script src="/js/memo.js?v=2026-08-06"></script>
 <script th:inline="javascript">
 /* 계정별 저장된 메모장 폰트 (서버 영속화 — DB). 없으면 빈 문자열 → JS 에서 d2coding 폴백. */
 window.SERVER_MEMO_FONT = /*[[${user.memoFont}]]*/ '';
+window.MEMO_USERNAME    = /*[[${user.username}]]*/ '';
 </script>
 <script>
 /* ── Toast ───────────────────────────────────── */
@@ -419,12 +460,8 @@ function changePassword() {
 }
 
 /* ── 메모장 폰트 선택 ───────────────────────── */
-var MEMO_FONT_MAP = {
-    'd2coding':  "'D2Coding', monospace",
-    'jb+nanum':  "'JetBrains Mono', 'Nanum Gothic Coding', Consolas, monospace",
-    'nanum':     "'Nanum Gothic Coding', monospace",
-    'system':    "ui-monospace, monospace"
-};
+/* 폰트 정의는 /js/memo.js (Memo.FONTS) 단일 원본 — 새창과 공유 */
+var MEMO_FONT_MAP = Memo.FONTS;
 var MEMO_FONT_PREVIEW_MAP = {
     'd2coding':  'D2Coding',
     'jb+nanum':  'JetBrains Mono',
@@ -439,19 +476,10 @@ function applyMemoFont(val, persist) {
     if (box) box.style.fontFamily = ff;
     if (preview) preview.style.fontFamily = ff;
     localStorage.setItem('memoFont', val);  // 빠른 캐시 (서버가 최종 출처)
-    // 새창 폰트도 동기화
-    if (popupAlive()) {
-        try {
-            _memoPopup.ta.style.fontFamily = ff;
-            var pf = _memoPopup.win.document.getElementById('fsel');
-            if (pf && pf.value !== val) pf.value = val;
-        } catch (e) {}
-    }
-    // 계정별 서버 영속화 — 다음 접속/다른 브라우저에서도 동일 폰트 (item 3)
+    // 계정별 서버 영속화 + 새창 전파 — 사용자 액션일 때만 (초기 적용은 조용히)
     if (persist) {
-        Common.fetchJSON('/api/account/memo-font', {
-            method: 'POST', body: JSON.stringify({ font: val })
-        }).catch(function() { /* 폰트 저장 실패는 UI 동작에 영향 없으므로 조용히 무시 */ });
+        Memo.post('font', { font: val });
+        Memo.setFont(val).catch(function() { /* 폰트 저장 실패는 UI 동작에 영향 없으므로 조용히 무시 */ });
     }
 }
 
@@ -466,50 +494,30 @@ function applyMemoFont(val, persist) {
 })();
 
 /* ── 메모장 ────────────────────────────────── */
-var MEMO_MAX = 10 * 1024 * 1024;  // 10 MB (UTF-8 byte)
+var MEMO_MAX = Memo.MAX;  // 10 MB (UTF-8 byte) — /js/memo.js 단일 원본
+var memoDirty = false;
 
-/* ── 본문 ↔ 새창 저장상태 동기화 (item 2) ───────────────
-   _memoPopup = openMemoWindow() 가 채우는 { win, ta, st, refreshCnt } 핸들.
-   '미저장/저장됨' 표시와 본문 내용을 양쪽 창에서 동시에 갱신한다. */
-var _memoPopup = null;
-
-function popupAlive() {
-    try { return !!(_memoPopup && _memoPopup.win && !_memoPopup.win.closed && _memoPopup.ta); }
-    catch (e) { return false; }
-}
-
-/* 미저장(true)/저장됨(false) 표시를 본문과 새창에 동시 반영 */
+/* 미저장(true)/저장됨(false) 표시.
+   새창(/account/memo)은 별도 문서·별도 저장 경로라 DOM 을 직접 건드리지 않고
+   Memo.post 로 상태만 전파한다 (창이 닫혀 있어도 안전). */
 function setMemoSaveState(dirty) {
+    memoDirty = dirty;
     var el = document.getElementById('memoDirty');
     if (el) el.style.display = dirty ? '' : 'none';
-    if (popupAlive()) {
-        try {
-            if (dirty) { _memoPopup.st.className = 'status unsaved'; _memoPopup.st.textContent = '● 미저장'; }
-            else       { _memoPopup.st.className = 'status';         _memoPopup.st.textContent = '저장됨'; }
-        } catch (e) {}
-    }
 }
 function markMemoDirty()  { setMemoSaveState(true); }
 function clearMemoDirty() { setMemoSaveState(false); }
 
-/* 본문 textarea 입력 → 새창 내용 동기화 + 양쪽 미저장 표시 */
+/* 본문 textarea 입력 → 새창 내용 동기화 + 미저장 표시 + 자동 저장 예약 */
 function onMainMemoInput() {
     updateMemoCount();
-    if (popupAlive()) {
-        try { _memoPopup.ta.value = document.getElementById('memoBox').value; _memoPopup.refreshCnt(); } catch (e) {}
-    }
     setMemoSaveState(true);
+    Memo.post('text', { text: document.getElementById('memoBox').value });
+    memoAutosaver.schedule();
 }
 
-function utf8ByteLen(str) {
-    return new Blob([str]).size;
-}
-
-function fmtBytes(n) {
-    if (n < 1024) return n.toLocaleString() + ' B';
-    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-    return (n / (1024 * 1024)).toFixed(2) + ' MB';
-}
+function utf8ByteLen(str) { return Memo.utf8ByteLen(str); }
+function fmtBytes(n)      { return Memo.fmtBytes(n); }
 
 function updateMemoCount() {
     var v = document.getElementById('memoBox').value;
@@ -519,18 +527,70 @@ function updateMemoCount() {
     el.classList.toggle('warn', n > MEMO_MAX);
 }
 
-/* 실제 저장 (값 → API). 메인 저장 버튼과 새창 모두 공유. */
+/* 실제 저장 (값 → API). 수동 저장·자동 저장이 공유. */
 function saveMemoValue(v) {
-    if (utf8ByteLen(v) > MEMO_MAX) {
-        return Promise.reject(new Error('메모는 최대 10MB까지 저장할 수 있습니다.'));
-    }
-    return Common.fetchJSON('/api/account/memo', {
-        method: 'POST',
-        body: JSON.stringify({ memo: v })
-    }).then(function(d) {
-        document.getElementById('memoUpdatedAt').textContent = formatTs(d.memoUpdatedAt) || '—';
+    return Memo.save(v).then(function(d) {
+        document.getElementById('memoUpdatedAt').textContent = Memo.formatTs(d.memoUpdatedAt) || '—';
+        document.getElementById('sessionAlert').hidden = true;   // 재로그인 후 성공 → 경고 해제
+        Memo.clearBackup(window.MEMO_USERNAME);
+        memoAutosaver.resume();
+        Memo.post('saved', { text: v, updatedAt: d.memoUpdatedAt });
         return d;
     });
+}
+
+/* ── 세션 만료 방어 ─────────────────────────────────
+   401(SESSION_EXPIRED) 이후로는 재로그인 전까지 어떤 저장도 성공할 수 없다.
+   내용을 백업하고 자동 저장을 멈춘 뒤 재로그인 경로를 안내한다. */
+function handleSessionExpired(broadcast) {
+    Memo.backup(window.MEMO_USERNAME, document.getElementById('memoBox').value);
+    memoAutosaver.suspend();
+    setMemoSaveState(true);
+    document.getElementById('sessionAlert').hidden = false;
+    if (broadcast) Memo.post('session-expired', {});
+}
+
+function openLoginWindow() {
+    // 현재 창을 이동시키면 작성 중인 내용이 사라지므로 별도 창에서 로그인
+    window.open('/login', 'heapLoginWindow', 'width=560,height=700,resizable=yes,scrollbars=yes');
+}
+
+/* 재로그인 후 — 새 세션의 CSRF 토큰으로 meta 를 갱신하고 저장 재시도.
+   갱신하지 않으면 로그인에 성공해도 옛 토큰 때문에 저장이 계속 거부된다. */
+function retryAfterLogin() {
+    Memo.refreshCsrf().then(function(ok) {
+        if (!ok) {
+            document.getElementById('sessionAlertMsg').textContent =
+                '⚠ 아직 로그인되지 않았습니다. [다시 로그인] 으로 로그인한 뒤 다시 시도하세요.';
+            return;
+        }
+        memoAutosaver.resume();
+        saveMemo();
+    });
+}
+
+/* 지난 세션에서 저장하지 못한 내용 복구 제안 (현재 값과 다를 때만) */
+function offerBackupRestore() {
+    var b = Memo.readBackup(window.MEMO_USERNAME);
+    if (!b || typeof b.text !== 'string' || b.text === document.getElementById('memoBox').value) return;
+    document.getElementById('restoreAt').textContent = Memo.formatTs(b.at) || '이전';
+    document.getElementById('restoreAlert').hidden = false;
+}
+
+function restoreBackup() {
+    var b = Memo.readBackup(window.MEMO_USERNAME);
+    if (b && typeof b.text === 'string') {
+        document.getElementById('memoBox').value = b.text;
+        updateMemoCount();
+        setMemoSaveState(true);
+        Memo.post('text', { text: b.text });
+    }
+    document.getElementById('restoreAlert').hidden = true;
+}
+
+function discardBackup() {
+    Memo.clearBackup(window.MEMO_USERNAME);
+    document.getElementById('restoreAlert').hidden = true;
 }
 
 function saveMemo() {
@@ -539,6 +599,7 @@ function saveMemo() {
     msg.textContent = '';
     msg.className = 'form-err';
     var btn = document.getElementById('btnSaveMemo');
+    memoAutosaver.cancel();
     btn.disabled = true; btn.textContent = '저장 중...';
     saveMemoValue(v).then(function() {
         msg.className = 'form-ok';
@@ -546,23 +607,40 @@ function saveMemo() {
         toast('메모가 저장되었습니다.', 'ok');
         clearMemoDirty();
     }).catch(function(e) {
+        if (Memo.isSessionExpired(e)) {
+            msg.textContent = '로그인 세션이 만료되어 저장하지 못했습니다.';
+            handleSessionExpired(true);
+            return;
+        }
         msg.textContent = extractErrorMessage(e) || '메모 저장에 실패했습니다.';
     }).finally(function() {
         btn.disabled = false; btn.textContent = '저장';
     });
 }
 
-/* 새창에서 호출 — 본문 textarea 동기화 후 저장 */
-window.saveMemoExternal = function(v) {
-    var box = document.getElementById('memoBox');
-    box.value = v;
-    updateMemoCount();
-    return saveMemoValue(v).then(function(d) {
-        toast('메모가 저장되었습니다.', 'ok');
+/* ── 자동 저장 (계정별 토글, 새창과 상태 공유) ───────── */
+var memoAutosaver = Memo.createAutosaver({
+    getValue:  function() { return document.getElementById('memoBox').value; },
+    isEnabled: function() { return document.getElementById('togAutosave').checked; },
+    onSaved:   function(d) {
+        document.getElementById('memoUpdatedAt').textContent = Memo.formatTs(d.memoUpdatedAt) || '—';
         clearMemoDirty();
-        return d;
-    });
-};
+        Memo.post('saved', { text: document.getElementById('memoBox').value, updatedAt: d.memoUpdatedAt });
+    },
+    onError:   function(e) {
+        var msg = document.getElementById('memoMsg');
+        msg.className = 'form-err';
+        msg.textContent = (extractErrorMessage(e) || '자동 저장에 실패했습니다.') + ' — 저장 버튼으로 다시 시도하세요.';
+    },
+    onSessionExpired: function() { handleSessionExpired(true); }
+});
+
+function onAutosaveToggle(on) {
+    Memo.post('autosave', { on: on });
+    Memo.setAutosave(on).catch(function() { /* 토글 영속화 실패는 현재 창 동작에 영향 없음 */ });
+    if (on) { if (memoDirty) memoAutosaver.schedule(); }
+    else    { memoAutosaver.cancel(); }
+}
 
 /* ── 복사 ──────────────────────────────────── */
 function legacyCopy(text) {
@@ -594,138 +672,21 @@ function copyMemo() {
 }
 
 /* ── 새창에서 열기 ─────────────────────────── */
+/* 새창은 /account/memo 자립형 페이지다. 자기 문서의 스크립트로 저장 API 를 직접 호출하므로
+   이 페이지를 떠나거나 닫아도 새창의 저장·자동 저장이 계속 동작한다.
+   (과거 구현: about:blank + document.write → 저장 로직이 이 문서의 함수/DOM 에 의존해
+    My Account 를 벗어나는 순간 부모 Document 폐기와 함께 조용히 실패했다.) */
+var _memoWin = null;
+
 function openMemoWindow() {
+    if (_memoWin && !_memoWin.closed) { _memoWin.focus(); return; }  // 이미 열려 있으면 포커스만
     var box = document.getElementById('memoBox');
-    var fontSel = document.getElementById('memoFontSelect');
-    var fontVal = fontSel ? fontSel.value : 'd2coding';
-    var ff = MEMO_FONT_MAP[fontVal] || MEMO_FONT_MAP['d2coding'];
-
-    var w = window.open('', 'memoEditorWindow', 'width=960,height=760,resizable=yes,scrollbars=yes');
-    if (!w) { toast('팝업이 차단되었습니다. 팝업을 허용한 뒤 다시 시도하세요.', 'err'); return; }
-
-    // 본문 폰트 select 의 옵션을 그대로 복제 (DRY)
-    var optsHtml = '';
-    if (fontSel) {
-        for (var i = 0; i < fontSel.options.length; i++) {
-            var o = fontSel.options[i];
-            optsHtml += '<option value="' + o.value + '"' + (o.value === fontVal ? ' selected' : '') + '>' +
-                        Common.escHtml(o.text) + '</option>';
-        }
-    }
-
-    var html =
-        '<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">' +
-        '<title>개인 메모장</title>' +
-        '<link rel="stylesheet" href="/css/common.css?v=2026-08-02">' +  // @font-face (D2Coding 등) 로드
-        '<style>' +
-        '*{box-sizing:border-box}' +
-        'html,body{height:100%;margin:0}' +
-        'body{display:flex;flex-direction:column;background:#F3F4F6;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Apple SD Gothic Neo","Malgun Gothic",sans-serif}' +
-        '.bar{display:flex;align-items:center;gap:8px;padding:10px 14px;background:#fff;border-bottom:1px solid #E5E7EB;flex:0 0 auto}' +
-        '.bar .title{font-size:13px;font-weight:700;color:#374151;display:flex;align-items:center;gap:6px}' +
-        '.bar .spacer{flex:1 1 auto}' +
-        '.bar .meta{font-size:11px;color:#9CA3AF}' +
-        '.bar .meta.warn{color:#DC2626;font-weight:600}' +
-        '.bar button{padding:6px 14px;font-size:12px;font-weight:600;border:1px solid #D1D5DB;border-radius:6px;background:#fff;color:#374151;cursor:pointer}' +
-        '.bar button:hover{background:#F3F4F6;border-color:#9CA3AF}' +
-        '.bar button.primary{background:#2563EB;border-color:#2563EB;color:#fff}' +
-        '.bar button.primary:hover{background:#1D4ED8}' +
-        '.bar button:disabled{opacity:.6;cursor:default}' +
-        '.status{font-size:11px;color:#6B7280;min-width:80px;text-align:right}' +
-        '.status.unsaved{color:#D97706;font-weight:600}' +
-        '.bar .flabel{font-size:11px;color:#6B7280;white-space:nowrap}' +
-        '.bar select{padding:5px 8px;font-size:12px;color:#374151;border:1px solid #D1D5DB;border-radius:6px;background:#fff;cursor:pointer}' +
-        'textarea{flex:1 1 auto;width:100%;border:none;outline:none;resize:none;padding:18px 22px;' +
-        'font-size:14px;line-height:1.7;color:#1F2937;background:#fff}' +
-        '</style></head><body>' +
-        '<div class="bar">' +
-        '<span class="title">개인 메모장</span>' +
-        '<span class="spacer"></span>' +
-        '<span class="flabel">폰트</span>' +
-        '<select id="fsel">' + optsHtml + '</select>' +
-        '<span class="meta" id="cnt">0</span>' +
-        '<span class="status" id="st"></span>' +
-        '<button id="copyBtn" type="button">복사</button>' +
-        '<button id="saveBtn" class="primary" type="button">저장</button>' +
-        '</div>' +
-        '<textarea id="m" spellcheck="false" placeholder="자유 메모… 본인만 볼 수 있습니다."></textarea>' +
-        '</body></html>';
-
-    w.document.open();
-    w.document.write(html);
-    w.document.close();
-
-    var ta = w.document.getElementById('m');
-    var cnt = w.document.getElementById('cnt');
-    var st = w.document.getElementById('st');
-    var saveBtn = w.document.getElementById('saveBtn');
-    var copyBtn = w.document.getElementById('copyBtn');
-    var fsel = w.document.getElementById('fsel');
-
-    ta.value = box.value;
-    ta.style.fontFamily = ff;
-
-    // 폰트 변경 → 새창 textarea 적용 + 본문/localStorage 동기화
-    if (fsel) {
-        fsel.onchange = function() {
-            var val = fsel.value;
-            ta.style.fontFamily = MEMO_FONT_MAP[val] || MEMO_FONT_MAP['d2coding'];
-            if (fontSel) fontSel.value = val;
-            applyMemoFont(val, true);  // 새창에서 변경해도 서버 영속화 (item 3)
-        };
-    }
-
-    function refreshCnt() {
-        var n = utf8ByteLen(ta.value);
-        cnt.textContent = fmtBytes(n) + ' / 10 MB';
-        cnt.className = 'meta' + (n > MEMO_MAX ? ' warn' : '');
-    }
-    refreshCnt();
-
-    // 본문 ↔ 새창 동기화 핸들 등록 (item 2) + 현재 본문 미저장 상태를 새창에 즉시 반영
-    _memoPopup = { win: w, ta: ta, st: st, refreshCnt: refreshCnt };
-    setMemoSaveState(document.getElementById('memoDirty').style.display !== 'none');
-
-    // 입력 시 본문과 즉시 동기화 (창을 닫아도 내용 유지) + 양쪽 미저장 표시
-    ta.oninput = function() {
-        box.value = ta.value;
-        updateMemoCount();
-        refreshCnt();
-        setMemoSaveState(true);
-    };
-
-    saveBtn.onclick = function() {
-        saveBtn.disabled = true; saveBtn.textContent = '저장 중...';
-        st.className = 'status'; st.textContent = '';
-        window.saveMemoExternal(ta.value).then(function() {
-            st.className = 'status'; st.textContent = '저장됨';
-        }).catch(function(e) {
-            st.className = 'status'; st.textContent = (e && e.message) || '저장 실패';
-        }).finally(function() {
-            saveBtn.disabled = false; saveBtn.textContent = '저장';
-        });
-    };
-
-    copyBtn.onclick = function() {
-        var v = ta.value;
-        if (!v) { st.className = 'status'; st.textContent = '내용 없음'; return; }
-        var done = function() { st.className = 'status'; st.textContent = '복사됨'; };
-        // 새창 자체 컨텍스트의 clipboard / execCommand 사용
-        if (w.navigator.clipboard && w.navigator.clipboard.writeText) {
-            w.navigator.clipboard.writeText(v).then(done).catch(function() {
-                ta.focus(); ta.select();
-                st.className = 'status'; st.textContent = w.document.execCommand('copy') ? '복사됨' : '복사 실패';
-            });
-        } else {
-            ta.focus(); ta.select();
-            st.className = 'status'; st.textContent = w.document.execCommand('copy') ? '복사됨' : '복사 실패';
-        }
-    };
-
-    w.focus();
-    ta.focus();
-    ta.setSelectionRange(0, 0);
-    ta.scrollTop = 0;
+    // 본문에 미저장 입력이 남아 있으면 서버 저장본보다 최신 → 초안으로 인계
+    if (memoDirty) Memo.stashDraft(window.MEMO_USERNAME, box.value);
+    _memoWin = window.open('/account/memo', 'memoEditorWindow',
+                           'width=960,height=760,resizable=yes,scrollbars=yes');
+    if (!_memoWin) { toast('팝업이 차단되었습니다. 팝업을 허용한 뒤 다시 시도하세요.', 'err'); return; }
+    _memoWin.focus();
 }
 
 function openClearMemoModal()  { document.getElementById('clearMemoModal').classList.add('open'); }
@@ -733,11 +694,13 @@ function closeClearMemoModal() { document.getElementById('clearMemoModal').class
 
 function confirmClearMemo() {
     closeClearMemoModal();
+    memoAutosaver.cancel();   // 초기화 직후 대기 중이던 자동 저장이 되살리지 않도록
     Common.fetchJSON('/api/account/memo', { method: 'DELETE' }).then(function() {
         document.getElementById('memoBox').value = '';
         document.getElementById('memoUpdatedAt').textContent = '—';
         updateMemoCount();
         clearMemoDirty();
+        Memo.post('cleared', {});
         toast('메모가 초기화되었습니다.', 'ok');
     }).catch(function(e) {
         toast(extractErrorMessage(e) || '초기화에 실패했습니다.', 'err');
@@ -757,15 +720,65 @@ function extractErrorMessage(e) {
     return e.message || '';
 }
 
-function formatTs(iso) {
-    if (!iso) return '';
-    var s = String(iso);
-    // 서버는 LocalDateTime → ISO8601 (Jackson). 분 단위까지만 표시.
-    if (s.length >= 16) return s.substring(0, 10) + ' ' + s.substring(11, 16);
-    return s;
-}
+/* 서버 LocalDateTime(ISO8601) → 'yyyy-MM-dd HH:mm' — 구현은 /js/memo.js 단일 원본 */
+function formatTs(iso) { return Memo.formatTs(iso); }
+
+/* ── 새창(/account/memo)에서 온 변경 반영 ────────────────
+   새창이 열려 있지 않으면 아무 메시지도 오지 않는다(무해). */
+Memo.onMessage(function(msg) {
+    var p = msg.payload || {};
+    var box = document.getElementById('memoBox');
+    if (msg.type === 'text') {
+        box.value = p.text;
+        updateMemoCount();
+        setMemoSaveState(true);
+    } else if (msg.type === 'saved') {
+        if (typeof p.text === 'string') box.value = p.text;
+        updateMemoCount();
+        document.getElementById('memoUpdatedAt').textContent = Memo.formatTs(p.updatedAt) || '—';
+        clearMemoDirty();
+    } else if (msg.type === 'cleared') {
+        box.value = '';
+        updateMemoCount();
+        document.getElementById('memoUpdatedAt').textContent = '—';
+        clearMemoDirty();
+    } else if (msg.type === 'font') {
+        var sel = document.getElementById('memoFontSelect');
+        if (sel) sel.value = p.font;
+        applyMemoFont(p.font, false);   // 수신 값은 재전파·재저장하지 않음
+    } else if (msg.type === 'autosave') {
+        document.getElementById('togAutosave').checked = !!p.on;
+    } else if (msg.type === 'session-expired') {
+        handleSessionExpired(false);   // 새창이 먼저 감지 — 재전파하지 않음
+    }
+});
+
+/* Ctrl+S / Cmd+S 로 저장 (새창과 동일 조작) */
+document.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        saveMemo();
+    }
+});
+
+/* 페이지 이탈 시 — 자동 저장 ON 이면 대기 중인 저장을 keepalive 로 마무리,
+   OFF 면 미저장 경고. (새창은 이 페이지와 독립이므로 영향받지 않는다.) */
+window.addEventListener('beforeunload', function(e) {
+    if (!memoDirty && !memoAutosaver.pending()) return;
+    if (memoAutosaver.isSuspended()) {
+        // 세션 만료 상태 — 서버 저장이 불가능하므로 백업만 확실히 남기고 경고
+        Memo.backup(window.MEMO_USERNAME, document.getElementById('memoBox').value);
+    } else if (document.getElementById('togAutosave').checked) {
+        Memo.saveKeepalive(document.getElementById('memoBox').value);
+        return;
+    }
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+});
 
 updateMemoCount();
+offerBackupRestore();
 </script>
 
 </body>

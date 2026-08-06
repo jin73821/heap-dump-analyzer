@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- /api/account/** 는 CSRF 보호 유지 대상 — 이 두 meta 가 없으면 저장이 403 으로 실패한다 -->
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <!-- common.css: @font-face(D2Coding 등) + .tog 토글 base -->
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
+    <title>개인 메모장</title>
+    <style>
+        * { box-sizing: border-box; }
+        html, body { height: 100%; margin: 0; }
+        body { display: flex; flex-direction: column; background: #F3F4F6;
+               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                            "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; }
+
+        .bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+               padding: 10px 14px; background: #fff; border-bottom: 1px solid #E5E7EB; flex: 0 0 auto; }
+        .bar .title { font-size: 13px; font-weight: 700; color: #374151;
+                      display: flex; align-items: center; gap: 6px; }
+        .bar .title svg { width: 15px; height: 15px; stroke: #6B7280; fill: none; stroke-width: 1.8; }
+        .bar .spacer { flex: 1 1 auto; }
+        .bar .flabel { font-size: 11px; color: #6B7280; white-space: nowrap; }
+        .bar select { padding: 5px 8px; font-size: 12px; color: #374151;
+                      border: 1px solid #D1D5DB; border-radius: 6px; background: #fff; cursor: pointer; }
+        .bar button { padding: 6px 14px; font-size: 12px; font-weight: 600;
+                      border: 1px solid #D1D5DB; border-radius: 6px; background: #fff;
+                      color: #374151; cursor: pointer; font-family: inherit; }
+        .bar button:hover:not(:disabled) { background: #F3F4F6; border-color: #9CA3AF; }
+        .bar button.primary { background: #2563EB; border-color: #2563EB; color: #fff; }
+        .bar button.primary:hover:not(:disabled) { background: #1D4ED8; }
+        .bar button:disabled { opacity: .6; cursor: default; }
+
+        .meta { font-size: 11px; color: #9CA3AF; white-space: nowrap; }
+        .meta.warn { color: #DC2626; font-weight: 600; }
+        .status { font-size: 11px; color: #6B7280; min-width: 92px; text-align: right; }
+        .status.unsaved { color: #D97706; font-weight: 600; }
+        .status.err { color: #DC2626; font-weight: 600; }
+
+        /* 자동 저장 토글 — common.css 의 .tog 가 input 을 숨기고 .tog-track 이 스위치 형태 */
+        .as-wrap { display: flex; align-items: center; gap: 6px; }
+        .tog-track { position: relative; display: inline-block; width: 34px; height: 20px;
+                     background: #D1D5DB; border-radius: 10px; cursor: pointer; transition: background .2s; }
+        .tog-track::after { content: ''; position: absolute; top: 3px; left: 3px;
+                            width: 14px; height: 14px; background: #fff; border-radius: 50%;
+                            transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+        .tog:checked + .tog-track::after { transform: translateX(14px); }
+
+        /* 세션 만료 경고 / 미저장 백업 복구 배너 */
+        [hidden] { display: none !important; }
+        .alert { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+                 padding: 10px 14px; font-size: 12px; font-weight: 600; line-height: 1.5; flex: 0 0 auto; }
+        .alert .grow { flex: 1 1 240px; }
+        .alert button { padding: 5px 12px; font-size: 11.5px; font-weight: 600; border-radius: 6px;
+                        border: 1px solid currentColor; background: #fff; color: inherit;
+                        cursor: pointer; font-family: inherit; white-space: nowrap; }
+        .alert button:hover { opacity: .8; }
+        .alert.warn { background: #FEF2F2; border-bottom: 1px solid #FCA5A5; color: #B91C1C; }
+        .alert.info { background: #FFFBEB; border-bottom: 1px solid #FDE68A; color: #B45309; }
+
+        textarea { flex: 1 1 auto; width: 100%; border: none; outline: none; resize: none;
+                   padding: 18px 22px; font-size: 14px; line-height: 1.7;
+                   color: #1F2937; background: #fff; }
+
+        .savedline { flex: 0 0 auto; padding: 6px 14px; background: #fff;
+                     border-top: 1px solid #F3F4F6; font-size: 11px; color: #9CA3AF; }
+        .savedline strong { color: #6B7280; font-weight: 600; }
+
+        @media (max-width: 620px) {
+            .bar .spacer { display: none; }
+            .bar { gap: 6px; }
+            .status { min-width: 0; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="bar">
+    <span class="title">
+        <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        개인 메모장
+    </span>
+    <span class="spacer"></span>
+
+    <span class="flabel">폰트</span>
+    <select id="fontSel" onchange="onFontChange(this.value)">
+        <option value="d2coding">D2Coding</option>
+        <option value="jb+nanum">JetBrains Mono + 나눔고딕코딩</option>
+        <option value="nanum">나눔고딕코딩</option>
+        <option value="system">시스템 기본</option>
+    </select>
+
+    <span class="as-wrap">
+        <span class="flabel">자동 저장</span>
+        <input type="checkbox" class="tog" id="togAutosave" th:checked="${memoAutosave}"
+               onchange="onAutosaveToggle(this.checked)">
+        <label class="tog-track" for="togAutosave" title="입력이 멈추면 자동으로 저장합니다"></label>
+    </span>
+
+    <span class="meta" id="cnt">0 B / 10 MB</span>
+    <span class="status" id="st"></span>
+    <button id="copyBtn" type="button" onclick="copyMemo()">복사</button>
+    <button id="saveBtn" class="primary" type="button" onclick="saveNow()">저장</button>
+</div>
+
+<div class="alert warn" id="sessionAlert" hidden>
+    <span class="grow" id="sessionAlertMsg">⚠ 로그인 세션이 만료되어 저장하지 못했습니다. 작성 중인 내용은 이 창에 그대로 있고, 브라우저에도 임시 보관했습니다.</span>
+    <button type="button" onclick="openLoginWindow()">다시 로그인</button>
+    <button type="button" onclick="retryAfterLogin()">로그인 완료 · 저장 재시도</button>
+</div>
+
+<div class="alert info" id="restoreAlert" hidden>
+    <span class="grow">저장되지 못한 메모가 남아 있습니다 (<span id="restoreAt"></span>).</span>
+    <button type="button" onclick="restoreBackup()">복구</button>
+    <button type="button" onclick="discardBackup()">버리기</button>
+</div>
+
+<textarea id="memoBox" spellcheck="false" placeholder="자유 메모… 본인만 볼 수 있습니다."
+          th:text="${user.memo}" oninput="onInput()"></textarea>
+
+<div class="savedline">
+    저장 시각: <strong id="updatedAt"
+        th:text="${user.memoUpdatedAt != null} ? ${#temporals.format(user.memoUpdatedAt, 'yyyy-MM-dd HH:mm')} : '—'">—</strong>
+    <span style="margin-left:10px">Ctrl+S 로도 저장됩니다.</span>
+</div>
+
+<script src="/js/common.js?v=2026-08-06"></script>
+<script src="/js/memo.js?v=2026-08-06"></script>
+<script th:inline="javascript">
+    var MEMO_USERNAME  = /*[[${user.username}]]*/ '';
+    var MEMO_FONT_INIT = /*[[${user.memoFont}]]*/ 'd2coding';
+</script>
+<script>
+/* ── /account/memo — 자립형 새창 메모장 ───────────────────────────
+   이 페이지는 opener(/account) 의 함수를 일절 호출하지 않는다.
+   저장은 자기 컨텍스트에서 /api/account/memo 를 직접 호출하므로
+   부모 창이 이동하거나 닫혀도 계속 동작한다. */
+
+var box      = document.getElementById('memoBox');
+var cntEl    = document.getElementById('cnt');
+var stEl     = document.getElementById('st');
+var saveBtn  = document.getElementById('saveBtn');
+var fontSel  = document.getElementById('fontSel');
+var togEl    = document.getElementById('togAutosave');
+var updEl    = document.getElementById('updatedAt');
+var sessEl   = document.getElementById('sessionAlert');
+var restEl   = document.getElementById('restoreAlert');
+var dirty    = false;
+
+/* ── 초기 상태 ─────────────────────────────────────────────── */
+(function init() {
+    var f = MEMO_FONT_INIT || 'd2coding';
+    if (!Memo.FONTS[f]) f = 'd2coding';
+    fontSel.value = f;
+    box.style.fontFamily = Memo.fontFamily(f);
+
+    // 본문(/account) 에 미저장 입력이 남아 있었다면 그 값을 이어받는다 (1회성 인계)
+    var draft = Memo.takeDraft(MEMO_USERNAME);
+    if (draft !== null && draft !== box.value) {
+        box.value = draft;
+        setDirty(true);
+    } else {
+        setStatus('저장됨');
+    }
+    refreshCount();
+    offerBackupRestore();
+    box.focus();
+    box.setSelectionRange(0, 0);
+    box.scrollTop = 0;
+})();
+
+/* 지난 세션에서 저장하지 못하고 닫힌 내용이 있으면 복구 제안 (현재 내용과 다를 때만) */
+function offerBackupRestore() {
+    var b = Memo.readBackup(MEMO_USERNAME);
+    if (!b || typeof b.text !== 'string' || b.text === box.value) return;
+    document.getElementById('restoreAt').textContent = Memo.formatTs(b.at) || '이전';
+    restEl.hidden = false;
+}
+
+function restoreBackup() {
+    var b = Memo.readBackup(MEMO_USERNAME);
+    if (b && typeof b.text === 'string') {
+        box.value = b.text;
+        refreshCount();
+        setDirty(true);
+        Memo.post('text', { text: box.value });
+    }
+    restEl.hidden = true;
+}
+
+function discardBackup() {
+    Memo.clearBackup(MEMO_USERNAME);
+    restEl.hidden = true;
+}
+
+function setStatus(text, cls) {
+    stEl.className = 'status' + (cls ? ' ' + cls : '');
+    stEl.textContent = text;
+}
+
+function setDirty(v) {
+    dirty = v;
+    if (v) setStatus('● 미저장', 'unsaved');
+}
+
+function refreshCount() {
+    var n = Memo.utf8ByteLen(box.value);
+    cntEl.textContent = Memo.fmtBytes(n) + ' / 10 MB';
+    cntEl.className = 'meta' + (n > Memo.MAX ? ' warn' : '');
+}
+
+/* ── 자동 저장 ─────────────────────────────────────────────── */
+var autosaver = Memo.createAutosaver({
+    getValue:  function () { return box.value; },
+    isEnabled: function () { return togEl.checked; },
+    onStart:   function () { setStatus('저장 중...'); },
+    onSaved:   function (d) { afterSaved(d, true); },
+    onError:   function (e) { setStatus(Memo.errorMessage(e) || '자동 저장 실패', 'err'); },
+    onSessionExpired: function () { handleSessionExpired(true); }
+});
+
+function afterSaved(d, auto) {
+    dirty = false;
+    updEl.textContent = Memo.formatTs(d && d.memoUpdatedAt) || '—';
+    setStatus(auto ? '자동 저장됨' : '저장됨');
+    sessEl.hidden = true;                       // 재로그인 후 저장 성공 → 경고 해제
+    Memo.clearBackup(MEMO_USERNAME);            // 서버에 안전하게 들어갔으므로 백업 불필요
+    autosaver.resume();
+    Memo.post('saved', { text: box.value, updatedAt: d && d.memoUpdatedAt });
+}
+
+/* ── 세션 만료 방어 ─────────────────────────────────────────
+   서버가 401(SESSION_EXPIRED)로 응답하면 재로그인 전까지 어떤 저장도 성공할 수 없다.
+   내용을 브라우저에 백업하고, 자동 저장을 멈추고(무의미한 반복 요청 차단),
+   사용자에게 재로그인 경로를 제시한다. 창의 내용은 그대로 유지된다. */
+function handleSessionExpired(broadcast) {
+    Memo.backup(MEMO_USERNAME, box.value);
+    autosaver.suspend();
+    dirty = true;
+    sessEl.hidden = false;
+    setStatus('세션 만료', 'err');
+    if (broadcast) Memo.post('session-expired', {});
+}
+
+function openLoginWindow() {
+    // 현재 창을 /login 으로 이동시키면 작성 중인 내용이 사라지므로 반드시 별도 창에서 로그인
+    window.open('/login', 'heapLoginWindow', 'width=560,height=700,resizable=yes,scrollbars=yes');
+}
+
+/* 재로그인 후 — 새 세션의 CSRF 토큰을 받아 meta 를 갱신한 뒤 저장 재시도.
+   이 갱신이 없으면 로그인에 성공해도 옛 토큰 때문에 저장이 계속 거부된다. */
+function retryAfterLogin() {
+    setStatus('확인 중...');
+    Memo.refreshCsrf().then(function (ok) {
+        if (!ok) {
+            setStatus('세션 만료', 'err');
+            document.getElementById('sessionAlertMsg').textContent =
+                '⚠ 아직 로그인되지 않았습니다. [다시 로그인] 으로 로그인한 뒤 다시 시도하세요.';
+            return;
+        }
+        autosaver.resume();
+        saveNow();
+    });
+}
+
+/* ── 이벤트 ───────────────────────────────────────────────── */
+function onInput() {
+    refreshCount();
+    setDirty(true);
+    Memo.post('text', { text: box.value });
+    autosaver.schedule();
+}
+
+function saveNow() {
+    autosaver.cancel();
+    saveBtn.disabled = true;
+    setStatus('저장 중...');
+    Memo.save(box.value).then(function (d) {
+        afterSaved(d, false);
+    }).catch(function (e) {
+        if (Memo.isSessionExpired(e)) { handleSessionExpired(true); return; }
+        setStatus(Memo.errorMessage(e) || '저장 실패', 'err');
+    }).finally(function () {
+        saveBtn.disabled = false;
+    });
+}
+
+function onFontChange(val) {
+    box.style.fontFamily = Memo.fontFamily(val);
+    Memo.post('font', { font: val });
+    Memo.setFont(val).catch(function () { /* 폰트 저장 실패는 편집에 영향 없음 */ });
+}
+
+function onAutosaveToggle(on) {
+    Memo.post('autosave', { on: on });
+    Memo.setAutosave(on).catch(function () { /* 토글 영속화 실패는 현재 창 동작에 영향 없음 */ });
+    if (on && dirty) autosaver.schedule();
+    else if (!on) autosaver.cancel();
+}
+
+function copyMemo() {
+    var v = box.value;
+    if (!v) { setStatus('내용 없음'); return; }
+    var ok = function () { setStatus('복사됨'); };
+    // navigator.clipboard 는 HTTPS/localhost 전용 → execCommand 폴백
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(v).then(ok).catch(legacyCopy);
+    } else {
+        legacyCopy();
+    }
+    function legacyCopy() {
+        box.focus(); box.select();
+        setStatus(document.execCommand('copy') ? '복사됨' : '복사 실패');
+        box.setSelectionRange(box.selectionStart, box.selectionStart);
+    }
+}
+
+/* Ctrl+S / Cmd+S */
+document.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        saveNow();
+    }
+});
+
+/* ── 다른 창(/account 본문)에서 온 변경 반영 ─────────────────── */
+Memo.onMessage(function (msg) {
+    var p = msg.payload || {};
+    if (msg.type === 'text') {
+        if (document.activeElement !== box) box.value = p.text;
+        else if (box.value !== p.text) box.value = p.text;   // 편집 중 충돌은 최신 입력 우선
+        refreshCount();
+        setDirty(true);
+    } else if (msg.type === 'saved') {
+        if (typeof p.text === 'string') box.value = p.text;
+        refreshCount();
+        dirty = false;
+        updEl.textContent = Memo.formatTs(p.updatedAt) || '—';
+        setStatus('저장됨');
+    } else if (msg.type === 'cleared') {
+        box.value = '';
+        refreshCount();
+        dirty = false;
+        updEl.textContent = '—';
+        setStatus('초기화됨');
+    } else if (msg.type === 'font') {
+        fontSel.value = p.font;
+        box.style.fontFamily = Memo.fontFamily(p.font);
+    } else if (msg.type === 'autosave') {
+        togEl.checked = !!p.on;
+    } else if (msg.type === 'session-expired') {
+        handleSessionExpired(false);   // 다른 창이 먼저 감지 — 재전파하지 않음
+    }
+});
+
+/* ── 창 닫기 방어 ──────────────────────────────────────────── */
+window.addEventListener('beforeunload', function (e) {
+    if (!dirty && !autosaver.pending()) return;
+    if (autosaver.isSuspended()) {
+        // 세션 만료 상태 — 서버 저장이 불가능하므로 백업만 확실히 남기고 경고한다
+        Memo.backup(MEMO_USERNAME, box.value);
+    } else if (togEl.checked) {
+        // 자동 저장 ON — 대기 중이던 저장을 keepalive 로 마무리하고 조용히 닫는다
+        Memo.saveKeepalive(box.value);
+        return;
+    }
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+});
+</script>
+
+</body>
+</html>

@@ -57,9 +57,15 @@
         return fetch(url, opts).then(function (r) {
             if (!r.ok) {
                 return r.text().then(function (t) {
-                    var err = new Error('HTTP ' + r.status + ': ' + (t || r.statusText));
+                    // 세션 만료/로그아웃: 서버가 /api/** 에 401 + code=SESSION_EXPIRED 로 응답한다.
+                    // (페이지 라우트는 종전대로 /login 리다이렉트 — 여기 오는 건 AJAX 뿐)
+                    var expired = r.status === 401;
+                    var err = new Error(expired
+                        ? '로그인 세션이 만료되었습니다. 다시 로그인해 주세요.'
+                        : 'HTTP ' + r.status + ': ' + (t || r.statusText));
                     err.status = r.status;
                     err.body = t;
+                    if (expired) err.sessionExpired = true;
                     throw err;
                 });
             }

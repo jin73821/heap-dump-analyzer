@@ -57,6 +57,13 @@ public class User {
     @Column(name = "memo_font", length = 20)
     private String memoFont;
 
+    /**
+     * 메모장 자동 저장 토글 — 계정별 영속화(브라우저가 아닌 DB, memoFont 와 동일 정책).
+     * null = 미설정 → 기본 ON 으로 해석 (기존 계정 무중단, 유실 방지가 기본값).
+     */
+    @Column(name = "memo_autosave")
+    private Boolean memoAutosave;
+
     // ── 2차인증 (OTP) / 계정 잠금 ──
 
     /** TOTP Base32 seed — AesEncryptor ENC(...) 형식으로 암호화 저장. null = 미등록 */

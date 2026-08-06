@@ -1,6 +1,31 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-08-06] 세션 만료·로그아웃 방어 — `/api/**` 401 JSON + 메모장 백업/재로그인 복구
+
+**배경:** 새창 메모장의 세션 만료 방어를 점검하던 중 **전역 수준의 조용한 실패**를 발견. `/api/**` 미인증 요청은 기본 `AuthenticationEntryPoint` 가 **302 → `/login`** 을 보내는데, 브라우저 `fetch` 는 리다이렉트를 자동 추종해 **로그인 페이지 HTML 을 200 으로** 받는다. `Common.fetchJSON` 은 `r.ok=true` 라 이를 **성공으로 처리** → 세션 만료 후 저장하면 "저장됨" 이 뜨는데 실제로는 아무것도 저장되지 않았다. 자동 저장 도입으로 유실 위험이 커진 상태였다. (익명 사용자의 CSRF 실패도 `ExceptionTranslationFilter` 가 `AccessDeniedHandler` 가 아니라 EntryPoint 로 보내므로 감지 지점은 이 한 곳이다.)
+
+- **`SecurityConfig` — `/api/**` 는 401 JSON**: `{"success":false,"code":"SESSION_EXPIRED","error":"..."}`. 비-API 경로는 종전대로 `/login` 리다이렉트. ⚠ `defaultAuthenticationEntryPointFor` 를 **하나만** 등록하면 `ExceptionHandlingConfigurer` 가 "매핑이 1개" 라는 이유로 그것을 **모든 요청의 기본값**으로 써버려 `/account` 같은 페이지까지 401 을 받는다(실측 확인) — 비-API 용 `LoginUrlAuthenticationEntryPoint("/login")` 매핑을 **명시적으로 함께** 등록해야 한다. `accessDeniedHandler` 도 `/api/**` 면 JSON 으로 응답(CSRF 토큰 소실/불일치 → 401 SESSION_EXPIRED, 그 외 → 403 FORBIDDEN).
+- **`GET /api/csrf` 신설** (`HeapSystemApiController`) — 현재 세션의 CSRF 토큰 재발급. **재로그인하면 새 세션의 새 토큰이 발급**되므로, 열려 있던 페이지의 `<meta name="_csrf">` 는 옛 토큰이 되어 로그인에 성공해도 POST 가 계속 거부된다. 클라이언트가 이 값으로 meta 를 갱신하면 **페이지 리로드 없이** 저장을 재개할 수 있다.
+- **`Common.fetchJSON` 401 처리** — `err.sessionExpired = true` + 한국어 메시지(`HTTP 401: {raw}` 대신). 모든 페이지의 AJAX 가 세션 만료를 raw 문자열이 아닌 사람이 읽는 메시지로 표시한다. `common.js?v=2026-08-06`(banner.html + account-memo.html 2곳).
+- **메모장 방어 (본문·새창 양쪽 동일)**: 401 감지 → ① `localStorage['memoBackup:{username}']` 에 내용 백업 ② **자동 저장 자체 정지**(`autosaver.suspend()` — 재로그인 전엔 어차피 실패하므로 반복 요청·반복 경고 차단) ③ 경고 배너 + [다시 로그인](별도 창 — 현재 창을 이동시키면 작성 내용이 사라진다) + [로그인 완료 · 저장 재시도](`Memo.refreshCsrf()` → 성공 시 저장 재개) ④ 만료 상태로 창을 닫으면 `beforeunload` 가 백업만 남기고 **경고 표시**(keepalive 저장은 어차피 실패하므로 하지 않음) ⑤ 다음 방문 시 백업이 현재 값과 다르면 **복구 배너**([복구]/[버리기]). 저장 성공 시 백업 삭제 + 경고 해제 + 자동 저장 재개.
+- **`session-expired` 창 간 브로드캐스트** — 한 창이 감지하면 다른 창도 즉시 같은 상태로 전환(재전파는 하지 않음).
+- 검증: `mvn test` 321건 green / 미인증 실측 — `/api/{account/memo,csrf,system/status,history,queue/status}` 전부 **401 JSON**, `/`·`/files`·`/history`·`/settings`·`/account`·`/account/memo`·`/admin/users` 전부 **302 → /login**(Accept `text/html`·`*/*` 양쪽 동일) / 만료 세션 쿠키 + 옛 CSRF 토큰 POST → 401 SESSION_EXPIRED / 렌더 스모크 2템플릿 + `node --check` 4파일 OK.
+
+## [2026-08-06] 개인 메모장 새창 자립화 + 자동 저장 토글
+
+**배경:** "개인메모장을 새창으로 연 다음 My Account 페이지에서 벗어나면 새창의 저장이 안 된다"는 제보. 원인은 팝업이 `window.open('', 'memoEditorWindow')` + `document.write()` 로 만든 **자체 스크립트가 없는 about:blank 문서**였다는 점 — 저장 버튼 핸들러가 부모(/account) 문서의 `window.saveMemoExternal` → `saveMemoValue` → `Common.fetchJSON` + `getElementById('memoBox')` 를 참조하는 클로저라, 부모가 이동해 Document 와 JS 컨텍스트가 폐기되면 죽은 객체 참조가 된다(Firefox `dead object` TypeError, Chrome 은 DOM 조회 null). 팝업 코드가 `catch (e) {}` 로 감싸여 있어 **에러 없이 조용히** 실패했다.
+
+- **`GET /account/memo` 자립형 팝업 페이지 신설** (`AccountController.accountMemoPage` + `templates/account-memo.html`) — 팝업이 자기 문서의 스크립트로 `/api/account/memo` 를 직접 호출한다. opener 생존 여부와 완전히 무관해져 부모 창이 이동하든 닫히든 저장이 계속 동작. `/api/account/**` 는 CSRF 보호 유지 대상이라 팝업 `<head>` 에 `_csrf`/`_csrf_header` meta 2개 필수(없으면 403). `SecurityConfig` 인가 매처를 `/account` → `/account`, `/account/**` 로 확장.
+- **`/js/memo.js` 공통 모듈 신설** — `Memo.MAX/FONTS/utf8ByteLen/fmtBytes/formatTs/errorMessage` + `save`/`saveKeepalive`/`setFont`/`setAutosave` + 창 간 동기화(`post`/`onMessage`) + 초안 인계(`stashDraft`/`takeDraft`) + `createAutosaver`. `/account` 와 `/account/memo` 두 페이지가 공유(banner 전역 아님 — 소비 페이지가 `<script>` 로 직접 로드).
+- **자동 저장 토글 (계정별 영속화)** — `users.memo_autosave` 컬럼(`Boolean`, null=미설정→**기본 ON**) + `POST /api/account/memo-autosave` + `UserService.saveMemoAutosave`/`isMemoAutosaveOn`. 본문·새창 **양쪽에 토글 UI**(common.css `.tog` + 페이지 `.tog-track`)를 두고 한쪽에서 바꾸면 다른 쪽에 즉시 반영 + 서버 저장. ON 이면 마지막 입력 후 2.5초 idle 에 자동 저장(저장 중 새 입력이 오면 완료 후 1회 더 저장해 마지막 값 보장).
+- **창 간 동기화 = BroadcastChannel(`heap-memo-sync`)**, 미지원 시 localStorage `storage` 이벤트 폴백. 메시지 타입 `text`/`saved`/`font`/`autosave`/`cleared`. 자기 발신 메시지는 sender id 로 필터. **DOM 을 가로질러 건드리지 않으므로 상대 창이 죽어 있어도 안전** (기존 `_memoPopup.ta.value = ...` 방식 폐기).
+- **미저장 초안 인계** — 본문에 미저장 입력이 있는 상태로 새창을 열면 `localStorage['memoDraft:{username}']` 로 넘겨 팝업이 이어받고 즉시 제거(1회성). 계정 전환 대비로 key 에 username 포함.
+- **이탈 방어** — 양쪽 페이지 `beforeunload`: 자동 저장 ON 이면 대기 중이던 저장을 `fetch(..., {keepalive:true})` 로 마무리, OFF 면 미저장 경고. ⚠ `navigator.sendBeacon` 은 커스텀 헤더를 못 붙여 CSRF 토큰 전달이 불가하므로 **사용 불가** — keepalive fetch 여야 한다.
+- **Ctrl+S / Cmd+S 저장** 두 페이지 공통. 초기화(`DELETE`) 시 대기 중 자동 저장을 먼저 취소해 삭제 직후 되살아나지 않게 함.
+- 레거시 `document.write` 팝업 구현 135라인 + `_memoPopup`/`popupAlive`/`saveMemoExternal` 제거. `MEMO_FONT_MAP`/`MEMO_MAX`/`utf8ByteLen`/`fmtBytes`/`formatTs` 는 `Memo.*` 위임으로 축소(폰트 정의 단일 원본화).
+- 검증: `mvn clean package` + `restart.sh` 기동 14.2s 무오류 / `/account/memo` 302→/login(인가 정상) · `/js/memo.js` 200 / users SELECT 경로 실행 후 스키마 오류 없음(`memo_autosave` 컬럼 반영 확인) / SpringTemplateEngine 렌더 스모크 2템플릿 — account-memo 는 토글 checked·CSRF meta·폰트 초기값·저장시각 포맷·본문 escape 전부 PASS, account(배너 fragment 제거 셰도우)는 신규 마크업 5항목 PASS + 레거시 3심볼 부재 확인 / `node --check` 로 인라인 JS 2벌 + memo.js 문법 OK.
+
 ## [2026-08-02] 삭제 성공 피드백 토스트 + 삭제 실패 처리 갭 보완
 
 **배경:** files/history/servers/comparison-history 선택삭제 검증 중 "성공 시 아무 메시지 없이 reload 되어 삭제 여부를 인지하기 어렵다"는 피드백. 점검 결과 (a) 단일 삭제(form POST)는 서버가 flash attribute(`success`/`error`)를 이미 싣는데 **files/history 템플릿이 렌더하지 않아 유실**, (b) bulk 삭제 3곳(files/history/comparison-history)은 성공 시 무언 reload + **비-2xx JSON 응답이면 실패인데도 성공처럼 조용히 reload 되는 갭**(`fetch().then(r.json())` 에 `r.ok` 미검사). servers 단일 삭제만 토스트가 있었음.

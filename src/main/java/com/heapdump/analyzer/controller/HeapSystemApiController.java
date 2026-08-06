@@ -405,6 +405,30 @@ public class HeapSystemApiController {
         }
     }
 
+    /**
+     * 현재 세션의 CSRF 토큰 재발급 — 페이지 리로드 없이 갱신하기 위한 GET(검증 대상 아님).
+     * 세션 만료 후 다른 탭/창에서 재로그인하면 **새 세션의 토큰이 발급**되므로, 열려 있던 페이지의
+     * `<meta name="_csrf">` 는 옛 토큰이 되어 이후 모든 POST 가 계속 거부된다(작성 중이던 내용 유실).
+     * 클라이언트는 재로그인 뒤 이 값을 받아 meta 를 갱신하고 저장을 재시도한다.
+     * 미인증 상태면 SecurityConfig 의 /api/** EntryPoint 가 401 SESSION_EXPIRED 로 응답한다.
+     */
+    @GetMapping("/api/csrf")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getCsrfToken(jakarta.servlet.http.HttpServletRequest request) {
+        Object attr = request.getAttribute(org.springframework.security.web.csrf.CsrfToken.class.getName());
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (attr instanceof org.springframework.security.web.csrf.CsrfToken token) {
+            resp.put("success", true);
+            resp.put("token", token.getToken());
+            resp.put("headerName", token.getHeaderName());
+            resp.put("parameterName", token.getParameterName());
+        } else {
+            resp.put("success", false);
+            resp.put("error", "CSRF 토큰을 확인할 수 없습니다.");
+        }
+        return ResponseEntity.ok(resp);
+    }
+
     @GetMapping("/api/system/status")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getSystemStatus() {

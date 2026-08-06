@@ -270,4 +270,20 @@ public class UserService {
         user.setMemoFont(f);
         userRepository.save(user);
     }
+
+    /**
+     * 메모장 자동 저장 토글 — 계정별 영속화. 본문/새창 어느 쪽에서 바꿔도 같은 값을 공유한다.
+     * null(미설정) 은 기본 ON 으로 해석하므로 저장은 항상 명시적 true/false 로 기록.
+     */
+    public void saveMemoAutosave(String username, boolean autosave) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        user.setMemoAutosave(autosave);
+        userRepository.save(user);
+    }
+
+    /** memo_autosave 의 null(미설정) → 기본 ON 해석을 한 곳에서만 수행. */
+    public static boolean isMemoAutosaveOn(User user) {
+        return user == null || user.getMemoAutosave() == null || user.getMemoAutosave();
+    }
 }
