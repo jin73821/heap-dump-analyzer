@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-08-06">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-08-09b">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -1015,8 +1015,8 @@ function loadFullErrorLog() {
                             <th style="width:32px;text-align:center"></th>
                             <th style="width:50px;text-align:center">#</th>
                             <th>Class Name</th>
-                            <th style="width:120px;text-align:right">Shallow Heap</th>
-                            <th style="width:140px;text-align:right">Retained Heap</th>
+                            <th style="width:120px;text-align:right"><span class="dom-lgd dom-lgd-shallow"></span>Shallow Heap</th>
+                            <th style="width:140px;text-align:right"><span class="dom-lgd dom-lgd-retained"></span>Retained Heap</th>
                             <th style="width:80px;text-align:right">%</th>
                         </tr>
                     </thead>
@@ -1044,12 +1044,12 @@ function loadFullErrorLog() {
                             </td>
                             <td class="dom-bar-cell"
                                 th:title="${#numbers.formatInteger(d.shallowHeap, 1, 'COMMA') + ' bytes'}">
-                                <span class="dom-bar-fill dom-bar-shallow" th:data-val="${d.shallowHeap}"></span>
+                                <span class="dom-bar-track"><span class="dom-bar-fill dom-bar-shallow" th:data-val="${d.shallowHeap}"></span></span>
                                 <span class="dom-bar-val" th:text="${d.shallowHeapHuman}">0</span>
                             </td>
                             <td class="dom-bar-cell"
                                 th:title="${#numbers.formatInteger(d.retainedHeap, 1, 'COMMA') + ' bytes'}">
-                                <span class="dom-bar-fill dom-bar-retained" th:data-val="${d.retainedHeap}"></span>
+                                <span class="dom-bar-track"><span class="dom-bar-fill dom-bar-retained" th:data-val="${d.retainedHeap}"></span></span>
                                 <span class="dom-bar-val" th:text="${d.retainedHeapHuman}">0</span>
                             </td>
                             <td style="text-align:right;font-family:var(--mono);font-size:12px"

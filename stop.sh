@@ -1,22 +1,25 @@
-RUNNING_PIDS=$(ps -ef | grep heap-analyzer-2.3.3.jar | grep -v grep | awk '{print $2}')
-if [ -z "$RUNNING_PIDS" ]; then
-    echo "[stop] 실행 중인 프로세스가 없습니다."
+#!/bin/bash
+# ============================================================
+# stop.sh — 앱 종료 (SIGTERM 후 대기)
+# ============================================================
+# 설정값은 전부 env.sh 에 있다. 버전/경로 하드코딩 금지.
+#   예) STOP_WAIT_SECS=30 bash stop.sh
+# ============================================================
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+. "$SCRIPT_DIR/env.sh"
+
+TAG=stop
+
+if [ -z "$(app_pids)" ]; then
+    echo "[$TAG] 실행 중인 프로세스가 없습니다."
     exit 0
 fi
 
-echo "[stop] SIGTERM 전송: PID=$RUNNING_PIDS"
-ps -ef | grep heap-analyzer-2.3.3.jar | grep -v grep | awk '{print "kill -15 " $2}' | sh
+if stop_app "$TAG" "$STOP_WAIT_SECS"; then
+    exit 0
+fi
 
-# 최대 15초 대기하면서 종료 확인
-for i in $(seq 1 15); do
-    sleep 1
-    REMAINING=$(ps -ef | grep heap-analyzer-2.3.3.jar | grep -v grep | awk '{print $2}')
-    if [ -z "$REMAINING" ]; then
-        echo "[stop] 종료 완료. (${i}s)"
-        exit 0
-    fi
-done
-
-echo "[stop] 15초 내 종료되지 않음 — 남은 PID=$REMAINING"
-echo "[stop] 강제 종료가 필요하면: kill -9 $REMAINING"
+echo "[$TAG] ${STOP_WAIT_SECS}초 내 종료되지 않음 — 남은 PID=$REMAINING_PIDS"
+echo "[$TAG] 강제 종료가 필요하면: kill -9 $REMAINING_PIDS"
 exit 1

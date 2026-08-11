@@ -8,7 +8,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- common.css: @font-face(D2Coding 등) + .tog 토글 base -->
-    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-11">
     <title>개인 메모장</title>
     <style>
         * { box-sizing: border-box; }
@@ -42,6 +42,15 @@
 
         /* 자동 저장 토글 — common.css 의 .tog 가 input 을 숨기고 .tog-track 이 스위치 형태 */
         .as-wrap { display: flex; align-items: center; gap: 6px; }
+        /* 설명 툴팁용 인포 아이콘 — 실제 툴팁은 /js/krds-tooltip.js ([data-tip] 앵커드 팝오버) 가 처리.
+           settings.html·account.html 과 동일 패턴. 키보드 포커스로도 열리도록 tabindex="0" + 포커스 링 */
+        .info-icon { display: inline-flex; align-items: center; vertical-align: middle; cursor: help; }
+        .info-icon svg { width: 14px; height: 14px; stroke: #9CA3AF; fill: none;
+                         stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+                         transition: stroke .15s; }
+        .info-icon:hover svg { stroke: #2563EB; }
+        .info-icon:focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; border-radius: 50%; }
+        .info-icon:focus-visible svg { stroke: #2563EB; }
         .tog-track { position: relative; display: inline-block; width: 34px; height: 20px;
                      background: #D1D5DB; border-radius: 10px; cursor: pointer; transition: background .2s; }
         .tog-track::after { content: ''; position: absolute; top: 3px; left: 3px;
@@ -95,9 +104,13 @@
 
     <span class="as-wrap">
         <span class="flabel">자동 저장</span>
+        <!-- 툴팁 트리거 = 인포 아이콘. data-tip 문구는 Memo.autosaveTipText() 가 주입 (지연 값과 항상 일치) -->
+        <span class="info-icon" id="memoAutosaveTip" tabindex="0" aria-label="자동 저장 설명">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </span>
         <input type="checkbox" class="tog" id="togAutosave" th:checked="${memoAutosave}"
                onchange="onAutosaveToggle(this.checked)">
-        <label class="tog-track" for="togAutosave" title="입력이 멈추면 자동으로 저장합니다"></label>
+        <label class="tog-track" for="togAutosave"></label>
     </span>
 
     <span class="meta" id="cnt">0 B / 10 MB</span>
@@ -128,7 +141,9 @@
 </div>
 
 <script src="/js/common.js?v=2026-08-06"></script>
-<script src="/js/memo.js?v=2026-08-06"></script>
+<script src="/js/memo.js?v=2026-08-12"></script>
+<!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (history·settings·account 와 공유) -->
+<script src="/js/krds-tooltip.js?v=2026-08-09"></script>
 <script th:inline="javascript">
     var MEMO_USERNAME  = /*[[${user.username}]]*/ '';
     var MEMO_FONT_INIT = /*[[${user.memoFont}]]*/ 'd2coding';
@@ -156,6 +171,10 @@ var dirty    = false;
     if (!Memo.FONTS[f]) f = 'd2coding';
     fontSel.value = f;
     box.style.fontFamily = Memo.fontFamily(f);
+
+    // 툴팁 문구는 memo.js 가 실제 지연에서 생성 — 마크업에 초를 적으면 값 변경 시 조용히 어긋난다
+    var asTip = document.getElementById('memoAutosaveTip');
+    if (asTip) asTip.setAttribute('data-tip', Memo.autosaveTipText());
 
     // 본문(/account) 에 미저장 입력이 남아 있었다면 그 값을 이어받는다 (1회성 인계)
     var draft = Memo.takeDraft(MEMO_USERNAME);

@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-08-02">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-11">
     <title>My Account — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }
@@ -103,6 +103,15 @@
         /* 자동 저장 토글 — common.css 의 .tog(input 숨김) + 페이지가 .tog-track 형태 제공 */
         .memo-autosave { display: flex; align-items: center; gap: 6px; margin-left: 4px; }
         .memo-autosave .flabel { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        /* 설명 툴팁용 인포 아이콘 — 실제 툴팁은 /js/krds-tooltip.js ([data-tip] 앵커드 팝오버) 가 처리.
+           settings.html 과 동일 패턴. 키보드 포커스로도 열리도록 tabindex="0" + 포커스 링 */
+        .info-icon { display: inline-flex; align-items: center; vertical-align: middle; cursor: help; }
+        .info-icon svg { width: 14px; height: 14px; stroke: #9CA3AF; fill: none;
+                         stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+                         transition: stroke .15s; }
+        .info-icon:hover svg { stroke: #2563EB; }
+        .info-icon:focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; border-radius: 50%; }
+        .info-icon:focus-visible svg { stroke: #2563EB; }
         .tog-track { position: relative; display: inline-block; width: 34px; height: 20px;
                      background: #D1D5DB; border-radius: 10px; cursor: pointer; transition: background .2s; }
         .tog-track::after { content: ''; position: absolute; top: 3px; left: 3px;
@@ -257,9 +266,13 @@
             <span class="memo-font-preview" id="memoFontPreview">한글 ABC 123</span>
             <span class="memo-autosave">
                 <span class="flabel">자동 저장</span>
+                <!-- 툴팁 트리거 = 인포 아이콘. data-tip 문구는 Memo.autosaveTipText() 가 주입 (지연 값과 항상 일치) -->
+                <span class="info-icon" id="memoAutosaveTip" tabindex="0" aria-label="자동 저장 설명">
+                    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                </span>
                 <input type="checkbox" class="tog" id="togAutosave" th:checked="${memoAutosave}"
                        onchange="onAutosaveToggle(this.checked)">
-                <label class="tog-track" for="togAutosave" title="입력이 멈추면 자동으로 저장합니다"></label>
+                <label class="tog-track" for="togAutosave"></label>
             </span>
             <span class="memo-tool-group">
                 <button type="button" class="memo-tool-btn" onclick="copyMemo()" title="메모 내용을 클립보드에 복사">
@@ -370,7 +383,9 @@
     </div>
 </div>
 
-<script src="/js/memo.js?v=2026-08-06"></script>
+<script src="/js/memo.js?v=2026-08-12"></script>
+<!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (history·settings 와 공유, 로드만 하면 자동 활성) -->
+<script src="/js/krds-tooltip.js?v=2026-08-09"></script>
 <script th:inline="javascript">
 /* 계정별 저장된 메모장 폰트 (서버 영속화 — DB). 없으면 빈 문자열 → JS 에서 d2coding 폴백. */
 window.SERVER_MEMO_FONT = /*[[${user.memoFont}]]*/ '';
@@ -491,6 +506,12 @@ function applyMemoFont(val, persist) {
     var sel = document.getElementById('memoFontSelect');
     if (sel) sel.value = saved;
     applyMemoFont(saved, false);  // 초기 적용은 서버 저장 안 함
+})();
+
+(function initAutosaveTip() {
+    // 툴팁 문구는 memo.js 가 실제 지연에서 생성 — 마크업에 초를 적으면 값 변경 시 조용히 어긋난다
+    var tip = document.getElementById('memoAutosaveTip');
+    if (tip) tip.setAttribute('data-tip', Memo.autosaveTipText());
 })();
 
 /* ── 메모장 ────────────────────────────────── */

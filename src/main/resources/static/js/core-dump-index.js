@@ -50,20 +50,15 @@
     }
     var SEARCH_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>';
 
+    /* 분석 완료본(SUCCESS)이어도 CTA 문구는 'GDB 분석 시작' 을 그대로 둔다 —
+       파일이 선택됐다는 사실은 문구가 아니라 진한 배경색(CSS `.upload-submit-btn`)으로 표현.
+       클릭 동작은 종전대로 상태별 분기(startPreloadedAnalysis). */
     function applyCtaForStatus(status) {
         var btn = document.getElementById('uploadBtn');
         if (!btn) return;
         btn.disabled = false;
-        if (status === 'SUCCESS') {
-            setUploadLabel('결과 보기');
-            btn.classList.remove('btn-primary'); btn.classList.add('btn-soft', 'soft-success');
-        } else if (status === 'ANALYZING') {
-            setUploadLabel('진행 확인');
-            btn.classList.remove('btn-soft', 'soft-success'); btn.classList.add('btn-primary');
-        } else {
-            setUploadLabel(SEARCH_ICON + ' GDB 분석 시작');
-            btn.classList.remove('btn-soft', 'soft-success'); btn.classList.add('btn-primary');
-        }
+        btn.classList.remove('btn-soft', 'soft-success'); btn.classList.add('btn-primary');
+        setUploadLabel(status === 'ANALYZING' ? '진행 확인' : SEARCH_ICON + ' GDB 분석 시작');
     }
     function resetCta() {
         var btn = document.getElementById('uploadBtn');
@@ -85,8 +80,7 @@
         document.getElementById('coreDropZone').classList.add('has-file');
         resetCta();
         document.getElementById('uploadBtn').disabled = false;
-        document.getElementById('uploadStatus').textContent = '';
-        document.getElementById('uploadStatus').classList.remove('is-ready');
+        applyReadyStatus();
     }
 
     function onExecFileSelect(input) {
@@ -95,6 +89,24 @@
         _preloadedExecFilename = null;
         document.getElementById('execFileName').textContent = file.name;
         document.getElementById('execDropZone').classList.add('has-file');
+        applyReadyStatus();
+    }
+
+    /**
+     * 준비 완료 문구를 **현재 두 드롭존의 상태에서 다시 계산**한다.
+     * 호출 시점마다 문구를 직접 쓰면(예전 방식) 코어 선택 후 실행 파일을 고르는 순간
+     * "실행 파일 준비 완료 — 코어 파일을 함께 선택하세요" 로 덮여, 이미 고른 코어가 없는 것처럼 보였다.
+     */
+    function applyReadyStatus() {
+        var status = document.getElementById('uploadStatus');
+        if (!status) return;
+        var hasCore = document.getElementById('coreDropZone').classList.contains('has-file');
+        var hasExec = document.getElementById('execDropZone').classList.contains('has-file');
+        if (hasCore && hasExec)  status.textContent = '✓ 모든 파일 준비 완료.';
+        else if (hasCore)        status.textContent = '✓ 코어 파일 준비 완료';
+        else if (hasExec)        status.textContent = '✓ 실행 파일 준비 완료 — 코어 파일을 함께 선택하세요.';
+        else                     status.textContent = '';
+        status.classList.toggle('is-ready', hasCore || hasExec);
     }
 
     function preloadExisting(filename, execName) {
@@ -106,7 +118,6 @@
         if (coreInput) coreInput.value = '';
         document.getElementById('coreFileName').textContent = filename;
         document.getElementById('coreDropZone').classList.add('has-file');
-        var status = document.getElementById('uploadStatus');
         applyCtaForStatus(_preloadedStatus);
         if (execName) {
             _preloadedExecFilename = execName;
@@ -114,16 +125,14 @@
             if (execInput) execInput.value = '';
             document.getElementById('execFileName').textContent = execName;
             document.getElementById('execDropZone').classList.add('has-file');
-            status.textContent = '✓ 서버 파일 준비 완료 (코어 + 실행 파일)';
         } else {
             _preloadedExecFilename = null;
             var execInput2 = document.getElementById('execFileInput');
             if (execInput2) execInput2.value = '';
             document.getElementById('execFileName').textContent = '';
             document.getElementById('execDropZone').classList.remove('has-file');
-            status.textContent = '✓ 서버 파일 준비 완료';
         }
-        status.classList.add('is-ready');
+        applyReadyStatus();
     }
 
     function preloadExistingExec(execName) {
@@ -133,9 +142,7 @@
         if (execInput) execInput.value = '';
         document.getElementById('execFileName').textContent = execName;
         document.getElementById('execDropZone').classList.add('has-file');
-        var status = document.getElementById('uploadStatus');
-        status.textContent = '✓ 실행 파일 준비 완료 — 코어 파일을 함께 선택하세요.';
-        status.classList.add('is-ready');
+        applyReadyStatus();
     }
 
     /**
@@ -158,8 +165,7 @@
         document.getElementById('coreDropZone').classList.remove('has-file');
         document.getElementById('uploadBtn').disabled = true;
         resetCta();
-        var st = document.getElementById('uploadStatus');
-        st.textContent = ''; st.classList.remove('is-ready');
+        applyReadyStatus();   // 실행 파일만 남았다면 그 상태의 문구로 되돌아간다
         var errBox = document.getElementById('uploadErrorBox');
         if (errBox) errBox.classList.remove('visible');
         clearFileListSelection('coredump');
@@ -172,6 +178,7 @@
         if (execInput) execInput.value = '';
         document.getElementById('execFileName').textContent = '';
         document.getElementById('execDropZone').classList.remove('has-file');
+        applyReadyStatus();
         clearFileListSelection('exec');
     }
 
@@ -718,6 +725,7 @@
                     document.getElementById('execFileInput').files = dt.files;
                     _preloadedExecFilename = null;
                 }
+                applyReadyStatus();   // 드롭도 선택과 동일한 문구 규칙을 따른다
             });
         });
 

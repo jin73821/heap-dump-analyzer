@@ -206,7 +206,9 @@
             padding:10px 14px; text-align:left; font-size:11px; font-weight:700;
             text-transform:uppercase; letter-spacing:.05em; color:var(--text-secondary);
             background:#f9fafb; border-bottom:2px solid var(--border); cursor:pointer; white-space:nowrap;
-            user-select:none; position:sticky; top:0; z-index:1;
+            /* z-index 는 tbody 셀 내부 요소(.dom-bar-val z:1, .dom-refs-tbl th z:2)보다 반드시 커야 한다.
+               동률이면 DOM 순서상 뒤인 tbody 가 이겨 스크롤 시 값이 헤더를 뚫고 올라온다. */
+            user-select:none; position:sticky; top:0; z-index:3;
         }
         .data-table thead th:hover { color:var(--primary); }
         .data-table thead th .sort-arrow { font-size:10px; margin-left:4px; opacity:.4; }
@@ -237,16 +239,33 @@
         .data-table td.dom-bar-cell {
             position:relative; text-align:right; vertical-align:middle;
             font-family:var(--mono); font-size:12px; padding:6px 14px;
+            /* 막대/값의 z-index 경쟁을 셀 안으로 가둔다 (sticky 헤더 침범 방지) */
+            isolation:isolate;
+        }
+        /* 막대는 좌우 여백을 둔 트랙 안에서만 자란다 — Shallow 트랙의 오른쪽 끝과
+           Retained 트랙의 왼쪽 시작 사이에 항상 16px 흰 여백이 남아, 둘 다 100% 여도
+           한 덩어리로 이어져 보이지 않는다. 트랙 배경은 각 막대의 100% 지점을 드러낸다. */
+        .dom-bar-track {
+            position:absolute; left:8px; right:8px; top:50%; transform:translateY(-50%);
+            height:20px; border-radius:4px; background:#F1F3F5; overflow:hidden;
         }
         .dom-bar-fill {
-            position:absolute; left:0; top:50%; transform:translateY(-50%);
-            height:20px; width:0; border-radius:0 4px 4px 0;
-            z-index:0; transition:width .7s cubic-bezier(.22,.61,.36,1);
+            position:absolute; left:0; top:0; bottom:0; width:0;
+            border-radius:0 4px 4px 0;
+            transition:width .7s cubic-bezier(.22,.61,.36,1);
         }
-        .dom-bar-shallow { background:linear-gradient(90deg,#dbeafe 0%,#bfdbfe 100%); }
-        .dom-bar-retained { background:linear-gradient(90deg,#bfdbfe 0%,#60a5fa 100%); }
+        /* 계열색은 단색 — 그라디언트는 Shallow 끝(#bfdbfe)과 Retained 시작(#bfdbfe)이
+           같은 색이라 접합부 ΔE 0.0 으로 경계가 아예 사라졌다.
+           두 색은 dataviz 검증기 통과본: CVD ΔE 20.4(deutan)/14.7(tritan), 정상시야 21.4,
+           값 텍스트 대비 11.4:1 / 6.6:1. 흰 배경 대비는 3:1 미만이라 값 라벨 상시 노출이 필수(relief). */
+        .dom-bar-shallow  { background:#5EEAD4; }
+        .dom-bar-retained { background:#60A5FA; }
         .dom-bar-val { position:relative; z-index:1; color:var(--text); }
         .data-table tbody tr[onclick]:hover td.dom-bar-cell .dom-bar-val { color:var(--primary); }
+        /* 헤더 스와치 = 범례. 색↔컬럼 대응을 명시해 어느 막대가 어느 지표인지 색만으로 헷갈리지 않게 한다. */
+        .dom-lgd { display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; }
+        .dom-lgd-shallow  { background:#5EEAD4; }
+        .dom-lgd-retained { background:#60A5FA; }
 
         /* ── Dominator Tree disclosure (Top 50 incoming/outgoing refs) ── */
         .dom-chevron {

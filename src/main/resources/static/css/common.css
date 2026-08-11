@@ -828,7 +828,13 @@ body {
     border: 1px solid #E5E7EB; border-radius: 6px;
     background: transparent; color: #6B7280;
     cursor: pointer; text-decoration: none;
-    display: inline-block;
+    /* <button> 과 <a> 가 같은 클래스로 나란히 놓인다(history 의 Export/Dashboard).
+       button 은 UA 의 font 단축속성(400 13.333px Arial)이 line-height:normal + Arial 을 강제해
+       a(=body 상속, line-height 1.5 / Segoe UI)보다 2px 낮고 글꼴도 달랐다 → 폼 기본값을 명시 복원.
+       inline-flex 는 아이콘+텍스트 배치를 base 에서 제공(페이지 인라인 style 불필요). */
+    font-family: inherit; line-height: 1.5;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    white-space: nowrap;
 }
 .topbar-btn:hover { background: #F9FAFB; }
 

@@ -254,6 +254,22 @@
 
     // ── 자동 저장 ──────────────────────────────────────────────
 
+    /** 자동 저장 debounce 지연 (ms) — 마지막 입력 후 이만큼 조용해지면 1회 저장 */
+    Memo.AUTOSAVE_DELAY_MS = 5000;
+
+    /**
+     * '자동 저장' 인포 아이콘 툴팁 문구. AUTOSAVE_DELAY_MS 에서 만들어 두 페이지(account·account-memo)가
+     * 같은 문구를 쓰고, 지연 값을 바꿔도 안내가 따라오게 한다(문구 하드코딩 시 조용히 어긋남).
+     */
+    Memo.autosaveTipText = function () {
+        var ms = Memo.AUTOSAVE_DELAY_MS;
+        var sec = (ms % 1000 === 0) ? String(ms / 1000) : (ms / 1000).toFixed(1);
+        return '입력을 멈추면 ' + sec + '초 뒤에 자동으로 저장됩니다.\n\n'
+             + '마지막 입력에서 ' + sec + '초 동안 입력이 없을 때 1회 저장하므로, '
+             + '계속 타이핑하는 중에는 저장되지 않습니다.\n\n'
+             + '끄면 자동 저장이 멈추고 [저장] 버튼을 눌러야 저장됩니다.';
+    };
+
     /**
      * debounce 자동 저장기.
      * cfg = { getValue(), isEnabled(), delay?, onStart?, onSaved(data)?, onError(e)?, onSessionExpired(e)? }
@@ -292,7 +308,7 @@
             schedule: function () {
                 if (suspended || !cfg.isEnabled()) return;
                 if (timer) clearTimeout(timer);
-                timer = setTimeout(run, cfg.delay || 2500);
+                timer = setTimeout(run, cfg.delay || Memo.AUTOSAVE_DELAY_MS);
             },
             /** 대기 중인 저장을 즉시 실행 (토글 ON 전환·수동 저장 직전 등) */
             flush: function () {

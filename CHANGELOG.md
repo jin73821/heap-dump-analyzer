@@ -1,6 +1,114 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-08-12] History 툴바 카드 색 입힘 + 메모장 자동 저장 인포 아이콘 툴팁 · 지연 5초
+
+**요청:** ① History 툴바 카드가 너무 희다 — 색을 넣을 것. ② 개인 메모장 '자동 저장' 문구 **오른쪽에 인포 아이콘**을 두고 그 아이콘 hover 시 툴팁이 뜨도록 구조 변경. ③ 툴팁에서 "몇 분마다 한번씩 저장하는 주기 방식이 아닙니다." 문구 삭제. ④ 자동 저장 인터벌 2.5초 → 5초.
+
+- **툴바 카드 색 = files.html 기간선택 카드와 동일한 `#F9FAFB` + 테두리 `#E5E7EB`.** 흰 카드는 안에 든 흰 입력·셀렉트·버튼과 경계가 사라져 "카드"로 안 읽혔다. 1차로 연한 파랑(`#EFF6FF`)을 넣었다가, **두 목록 페이지의 필터 영역 톤을 맞추라는 후속 요청**으로 common.css `.date-filter-row`(files.html 이 그대로 쓰는 값)와 동일하게 정렬했다. 결과 표(`.panel`, 흰색)와는 여전히 층이 나뉜다. 모바일(≤640px)은 종전대로 카드 해제 유지. ⚠ common.css `.date-filter-row` 색이 바뀌면 history 툴바도 같이 맞출 것(인라인 override 라 자동 추종하지 않는다).
+- **툴팁 트리거를 래퍼 전체 → 인포 아이콘으로 축소.** 예전엔 `.memo-autosave`/`.as-wrap` 전체가 트리거라 **토글 스위치에 마우스를 올려도 설명이 떴다**(조작하려는 동작에 설명 팝오버가 끼어듦). 이제 `자동 저장` 텍스트 오른쪽의 14px `ⓘ` 아이콘(`settings.html` `.info-icon` 과 동일 패턴 — `stroke #9CA3AF` → hover/focus 시 `#2563EB`)만 트리거다. 키보드 경로는 아이콘의 `tabindex="0"` + 포커스 링으로 유지되고, `aria-label="자동 저장 설명"` 을 달았다. account.html · account-memo.html 동일 적용.
+- **툴팁 문구에서 요청 문장 삭제.** `Memo.autosaveTipText()` 가 3문단(지연 안내 / debounce 동작 / OFF 시 동작)으로 정리됐다. 문구는 여전히 `AUTOSAVE_DELAY_MS` 에서 생성하므로 지연을 바꾸면 초 표기가 자동으로 따라온다.
+- **자동 저장 지연 2500 → 5000ms.** `Memo.AUTOSAVE_DELAY_MS` 단일 상수만 수정 — 디바운서(`createAutosaver`)와 툴팁 문구가 같은 값을 쓰므로 두 페이지 모두 "5초"로 즉시 일치. 타이핑 중 저장 요청 빈도가 절반으로 줄어든다.
+- **변경 파일:** `static/js/memo.js`(상수 + 문구 1문단 제거), `templates/account.html`·`templates/account-memo.html`(인포 아이콘 마크업 + `.info-icon` CSS + `data-tip` 주입 대상 `memoAutosaveWrap`→`memoAutosaveTip`), `templates/history.html`(툴바 카드 색). 캐시 키 `memo.js?v=2026-08-12`.
+- **검증(헤드리스 Chrome, 실제 `memo.js`·`krds-tooltip.js`·`common.css` 픽스처):** 툴팁 **21/21 PASS** — `5초` 반영, 삭제 요청 문구 부재, 3문단(개행 4개) 유지, KRDS 토큰 6종 일치, 화살표가 **아이콘 중심**을 가리킴(오차 <2px), hover·키보드 focus·Esc·`aria-describedby`, JS 에러 0. **트리거 범위 실측** — 라벨 hover `false` / 아이콘 hover `true` / 스위치 hover `false`. Thymeleaf 렌더 스모크 `history` 102.6KB · `account` 78.2KB · `account-memo` 16.0KB 정상. 기동 무오류.
+- **카드 색 일치 실측:** files.html 의 실제 `<style>` + 실제 기간선택 마크업으로 만든 픽스처와 history 툴바를 같은 브라우저에서 비교 — 배경 `rgb(249,250,251)` / 테두리 `rgb(229,231,235)` / radius 10px / border-width 1px **4개 값 완전 일치**.
+
+
+## [2026-08-11] History 툴바 1행 통합(기간선택 인라인 + 카드화) + topbar 버튼 `<button>`↔`<a>` 크기 정합
+
+**요청:** ① History 검색창 가로 크기를 줄이고 그 공간에 기간선택 캘린더를 배치(모바일은 검토 후 불필요하면 무변경). ② History 모바일에서 Export·Dashboard 버튼 크기가 미묘하게 다른 것 일치. ③ (후속) 검색창이 있는 행에 카드 배경을 주고, 검색창을 늘려 **지우기↔선택 사이 여백을 메꿀 것**.
+
+- **기간선택을 툴바 행으로 끌어올렸다.** 예전엔 기간선택이 툴바 아래 **별도 회색 패널 행**이라 세로 한 줄을 더 썼고, 검색은 `.search-row { flex: 1 1 220px }` 로 남은 폭을 전부 먹어 1440px 에서 입력이 **711px** 였다. `#dateFilterRow` 를 `.table-toolbar` 안(검색 그룹 바로 뒤)으로 옮겨 **검색 + 상태 + 기간선택 + 우측 그룹이 한 행**이 되고, 표 시작 위치가 182px → **89px** 로 올라왔다.
+- **검색창 폭은 "남는 폭 흡수" 방식으로 정착(요청 ③).** 처음엔 `max-width: 380px` 로 고정했더니 기간선택의 `지우기` 와 `선택` 버튼 사이에 빈 공간이 남았다 — 상한을 없애고 `flex: 1 1 300px; min-width: 360px` 로 두어 **행의 잉여 폭을 검색창이 전부 흡수**한다. 실측 결과 1440/1600/1920px 모두 `지우기`↔`선택` 간격이 **정확히 12px(툴바 flex gap)** 이고 검색 입력은 310 / 470 / 670px 로 따라 늘어난다. `min-width` 를 300→360px 로 올린 이유는 1280px 에서 검색이 150px 까지 찌그러졌기 때문 — 지금은 266px 를 유지하고 대신 `행 표시` 가 아랫줄로 접힌다.
+- **툴바 자체를 카드로(요청 ③).** `background:#fff; border:1px solid #E5E7EB; border-radius:10px; padding:12px 14px` — 아래 표 `.panel` 과 같은 흰 surface 라 "필터 카드 + 결과 카드" 2단으로 읽힌다. `margin-bottom` 은 0 으로 두고 `.history-bottom` 의 `gap:16px` 이 두 카드 간격을 담당한다.
+- **common.css 의 `.date-filter-row` 는 건드리지 않고 페이지에서 변형**(files.html 등 다른 소비자 보호). 툴바 안에서는 회색 패널 속성(`background`/`border`/`padding`/`margin-bottom`)을 지운 인라인 컨트롤로, 모바일에서는 같은 특이도로 되돌려 패널형 유지 — CSS cascade override 규약(함정 13) 그대로.
+- **우측 그룹은 `margin-left: auto` 로 분리.** 기간선택 다음의 남는 폭을 `.select-toggle-btn` 이 흡수해 선택·deleted 표시·행 표시가 우측 정렬된다. 폭이 부족해지면(≤1024px) 기존처럼 flex-wrap 으로 아래 줄에 접힌다.
+- **모바일(≤640px)은 픽셀 단위로 종전과 동일.** 기간선택은 `order: 10` + `flex: 1 1 100%` 로 툴바의 마지막 줄에 두고, 간격도 예전 값(`.table-toolbar` margin-bottom 16 + `.history-bottom` gap 16 = 32px)에 맞춰 `margin-top: 24px`(+ 행 gap 8px)로 복원했다. 데스크톱 전용 `margin-left:auto` 와 **카드(배경·테두리·padding)도 모바일에서는 해제** — 전폭 컨트롤이라 카드 padding 이 폭을 갉아먹고, 회색 기간선택 패널이 흰 카드 안에 중첩돼 보인다. `margin-bottom:16px` 도 모바일에서만 되살려 종전 간격 유지.
+- **topbar 버튼은 `<button>` 의 UA `font` 단축속성이 원인이었다.** `.topbar-btn` 은 `font-size` 만 지정하고 `font-family`/`line-height` 는 지정하지 않았는데, 브라우저 기본 `button { font: 400 13.333px Arial }` 가 **line-height 를 normal 로, 글꼴을 Arial 로** 강제한다. 그래서 같은 클래스인데 Export(button) = **28px 높이·Arial**, Dashboard(a) = **30px 높이·Segoe UI**(상단 1px 어긋남)로 렌더됐다. common.css `.topbar-btn` 에 `font-family: inherit; line-height: 1.5` + `display: inline-flex; align-items/justify-content: center; gap: 6px; white-space: nowrap` 을 넣어 폼 요소 기본값을 명시 복원 → 두 버튼 **30px 동일**. 아이콘 정렬용이던 history.html 의 인라인 `style="display:inline-flex;…"`·`vertical-align:middle` 은 base 가 제공하므로 제거. 폭 차이(81.5 vs 102.5px)는 라벨 길이 차이라 정상.
+- **변경 파일:** `static/css/common.css`(`.topbar-btn` 6줄), `templates/history.html`(툴바 CSS 3블록 + 마크업 이동 + Export 인라인 style 제거). 캐시 키: `common.css?v=2026-08-11` **전 21 템플릿 일괄** 갱신.
+- **검증(헤드리스 Chrome — history.html 의 실제 `<style>` 과 실제 툴바 마크업을 추출해 만든 픽스처 + 실제 common.css/calendar.js):** ① **모바일 무변경 실증** — 변경 전 파일로 만든 픽스처와 좌표 비교, 640/390/360px 세 폭에서 검색·상태·선택·deleted·행표시·기간선택·range·지우기·panel **9개 요소 좌표 + 배경색 전부 완전 일치**(카드화·검색 확장 후 재실행에서도 동일). ② 데스크톱 1440/1600/1920px 에서 검색+기간선택 동일 행 + `지우기`↔`선택` 간격 12px 고정(잉여 폭 0), 검색 폭 711→310(1440) / 470(1600) / 670px(1920). ③ **캘린더 팝업 회귀** — 툴바 안으로 옮긴 뒤에도 1440/1024/390px 에서 range 박스 아래 정위치, 폭 280px 유지, 뷰포트 내부, `elementFromPoint` 로 **최상위 표시**(z-index 150) 확인, JS 에러 0. ④ topbar 실측 28px/Arial → 30px/Segoe UI, 상단 오프셋 차 1px → **0**. ⑤ Thymeleaf 렌더 스모크(SpringTemplateEngine 단독, 함정 23) — `history` 102KB / `account` 77.6KB / `account-memo` 15.4KB 정상 렌더. `mvn test` 328건 green, 기동 13.7초 무오류.
+- ⚠ `.topbar-btn` 은 **17 페이지 공용**이라 이번 수정이 전 페이지에 적용된다(나머지는 모두 `<a>` 라 렌더 결과 동일 — 높이 30px 유지). 인증이 필요한 실 페이지 최종 렌더는 미검증.
+
+
+## [2026-08-11] 메모장 자동 저장 KRDS 툴팁 + 코어 덤프 준비 완료 문구 상태 기반 재계산
+
+**요청:** ① 개인 메모장 '자동 저장' 문구에 마우스를 올리면 자동 저장 주기를 툴팁으로 표시(다른 페이지의 KRDS 디자인 적용). ② 코어 파일 선택 시 `서버 파일 준비 완료` → `코어 파일 준비 완료`. ③ 코어+실행 파일 모두 선택 시 `실행 파일 준비 완료 — 코어 파일을 함께 선택하세요.` → `모든 파일 준비 완료.`
+
+- **자동 저장은 "몇 분마다"가 아니라 debounce 였다.** `Memo.createAutosaver` 는 주기 타이머가 아니라 **마지막 입력 후 2.5초 정지 시 1회 저장**하는 디바운서다(두 페이지 모두 `delay` 미지정 = 기본값). 그래서 툴팁에 "N분마다"를 적으면 사실과 다른 안내가 된다 — 실제 동작을 그대로 설명하되, "주기 방식이 아니다"를 명시해 질문의 의도(언제 저장되나)에 답하도록 문구를 구성했다.
+- **문구는 `memo.js` 가 지연 값에서 생성.** 상수 `Memo.AUTOSAVE_DELAY_MS = 2500`(기존 매직넘버 `2500` 을 승격, `createAutosaver` 가 이 값을 fallback 으로 사용) + `Memo.autosaveTipText()` 신설. 마크업에 "2.5초"를 하드코딩하면 지연을 바꿀 때 안내만 조용히 어긋나고, 페이지가 둘(`/account`·`/account/memo`)이라 복붙 drift 도 생긴다.
+- **툴팁 구현은 `/js/krds-tooltip.js` 재사용** (history·settings 와 동일 모듈 — `[data-tip]` 앵커드 팝오버). 두 페이지 모두 `float-tooltip.js` 를 안 쓰므로 혼용 함정 없음. 트리거는 `.memo-autosave`/`.as-wrap` **래퍼 전체**(라벨+스위치 어디에 올려도 열림)이고, `common.css 의 .tog { display:none }` 때문에 체크박스가 포커스를 못 받으므로 래퍼에 `tabindex="0"` + `:focus-visible` 링을 줘 키보드 경로를 확보했다. 스위치의 네이티브 `title="입력이 멈추면 자동으로 저장합니다"` 는 **제거** — KRDS 는 title 중복 사용을 금지하고, 표시 지연·모바일 미지원이라 새 툴팁과 이중으로 뜬다.
+- **준비 완료 문구를 "그 시점에 쓰는 문자열"에서 "현재 상태에서 재계산"으로 바꿨다.** 기존엔 `preloadExisting`/`preloadExistingExec` 가 각자 문구를 직접 대입해서, **코어를 고른 뒤 실행 파일을 고르면** `실행 파일 준비 완료 — 코어 파일을 함께 선택하세요.` 가 덮어써 **이미 고른 코어가 없는 것처럼** 보였다(요청 ③ 의 실제 원인). 신설 `applyReadyStatus()` 가 두 드롭존의 `has-file` 을 읽어 결정한다 — 코어+실행 `✓ 모든 파일 준비 완료.` / 코어만 `✓ 코어 파일 준비 완료` / 실행만 `✓ 실행 파일 준비 완료 — 코어 파일을 함께 선택하세요.` / 없으면 빈 문자열.
+- **호출 지점을 6곳으로 통일:** `onCoreFileSelect`·`onExecFileSelect`(로컬 파일 선택)·`preloadExisting`·`preloadExistingExec`(서버 파일)·`clearCoreZone`·`clearExecZone`(해제) + 드롭 핸들러. 덕분에 **해제 시에도 문구가 따라온다**(예전엔 실행 파일을 빼도 "코어+실행" 문구가 남았고, 코어를 빼면 실행만 남았는데도 문구가 사라졌다). 로컬 업로드 경로도 이제 같은 문구를 쓴다(예전엔 코어를 골라도 문구가 비어 있어 서버 파일 선택과 안내가 달랐다).
+- **변경 파일:** `static/js/memo.js`(상수+문구 생성기), `templates/account.html`·`templates/account-memo.html`(래퍼 id/tabindex, title 제거, 트리거 CSS, krds-tooltip.js 로드, 초기화 시 `data-tip` 주입), `static/js/core-dump-index.js`(`applyReadyStatus` 신설 + 호출 6곳). 캐시 키: `memo.js?v=2026-08-11`, `core-dump-index.js?v=2026-08-11b`.
+- **검증(헤드리스 Chrome, 실제 `memo.js`·`krds-tooltip.js`·`core-dump-index.js`·`common.css` 를 `file://` 로 로드한 픽스처):** 툴팁 **19/19 PASS** — data-tip 주입·"2.5초" 반영·문단 4개 개행 유지, KRDS 토큰 일치(#1F2937 / #F9FAFB / 12px / radius 8px / max-width 280px / pre-wrap), 트리거 중심 화살표 정렬(오차 <2px), 위 공간 부족 시 아래 뒤집힘, hover·키보드 focus 표시, Esc 닫기, `aria-describedby` 연결, 네이티브 title 부재, JS 에러 0. 문구 상태머신 **11/11 PASS** — 코어만/코어+실행/실행 해제/전부 해제/실행만/페어링 코어 6 시나리오 + SUCCESS 코어에서도 CTA 가 `GDB 분석 시작` + 진한 파랑(`rgb(29,78,216)`) 유지. ⚠ CTA 배경 실측은 `.btn` 의 `transition: background .15s` 때문에 즉시 읽으면 **중간 보간색**(`rgb(166,188,242)`)이 나온다 — 300ms 대기 후 판정. `mvn test` 328건 green(Java 무변경), 기동 13.7초 무오류.
+- ⚠ 미검증: 인증이 필요한 `/account`·`/account/memo`·`/core-dump` 실 페이지의 최종 렌더는 확인하지 않았다(신규 Thymeleaf 표현식 없음, 함정 23 의 `[[` 미도입, JAR 패키징 마크업은 `unzip` 으로 확인).
+
+
+## [2026-08-11] 코어 덤프 업로드 카드 — 선택 상태 대비 강화 + CTA 색 농도로 상태 표현
+
+**요청:** ① 코어/실행 파일 선택 시 배경이 너무 연해 보기 어려우니 진하게. ② `GDB 분석 시작` 버튼은 기본 배경을 더 연하게 하고, 파일이 선택되면 `결과 보기` 대신 `GDB 분석 시작` 문구를 그대로 두되 색을 진하게.
+
+- **선택 완료 드롭존(`.upload-zone.has-file`)을 emerald-50 → emerald-200 으로.** 기존 `--ok-bg #ECFDF5` 는 흰 카드 위에서 거의 흰색이라 "선택됨"이 안 읽혔다. 배경 `#A7F3D0` + 테두리 `1.5px solid var(--ok-600)`(dashed → solid)로 바꿔 미선택 존(`#F8FAFF` + dashed)과 확실히 갈린다.
+- **배경을 진하게 한 만큼 내부 텍스트도 함께 내렸다.** `#A7F3D0` 위에서 기존 색들은 sub 텍스트 `--cd-text-muted #9CA3AF` 가 **대비 2.0:1** 로 사실상 안 보이고, 파일명 `--ok-700 #047857` 도 4.3:1 로 본문 기준(4.5:1) 미달이었다. has-file 한정 override — 본문/서브 `#065F46`(6.1:1), 파일명 `#064E3B`(7.6:1), 아이콘 `#047857`. 선택 해제(×) 버튼도 회색 → `--ok-600` 배경 + 흰 × (hover 는 종전대로 레드).
+- **CTA 는 문구가 아니라 색 농도로 상태를 표현하도록 변경.** 미선택(`:disabled`)은 옅은 파랑(`--pri-bg` 배경 + `--pri-500` 글자 + `--pri-border` 테두리), 선택 시 진한 파랑(`--pri-700 #1D4ED8` + 흰 글자 + 그림자, hover `#1E3A8A`). `.btn:disabled` 의 `opacity:.55` 는 옅은 배경과 겹치면 글자까지 뭉개져 `opacity:1` 로 되돌리고 농도를 색으로만 표현.
+- **`applyCtaForStatus()` — SUCCESS 분기의 `결과 보기` 라벨 + `btn-soft soft-success`(옅은 초록) 전환 제거.** 이미 분석된 코어를 선택해도 라벨은 `GDB 분석 시작` 을 유지하고 진한 파랑 그대로다(ANALYZING 의 `진행 확인` 은 유지 — 다른 상태이고 요청 대상이 아님). 3-분기가 1줄 삼항으로 줄어 클래스 juggling 도 사라졌다. ⚠ **클릭 동작은 종전과 동일** — `startPreloadedAnalysis()` 가 SUCCESS 면 기존 결과 페이지로, exec 구성이 바뀌었으면 재분석 확인 모달로 분기한다. 즉 문구는 `GDB 분석 시작` 이지만 완료본을 그대로 누르면 결과 페이지로 간다(요청대로 문구만 통일, 동작 변경 없음).
+- **변경 파일:** `static/css/core-dump.css`(업로드 존 6줄 + CTA 규칙 3개 신설), `static/js/core-dump-index.js`(`applyCtaForStatus` 14줄 → 8줄), `templates/core-dump/{index,progress,analyze}.html` 캐시 키 `?v=2026-08-11`(CSS 3곳 · JS 1곳).
+- **검증(헤드리스 Chrome + 실제 CSS `file://` 픽스처, 인증 페이지라 정적 픽스처 방식):** 계산된 스타일 실측 — 미선택 존 `rgb(248,250,255)` vs 선택 존 `rgb(167,243,208)`/테두리 `rgb(5,150,105)`, 파일명 `rgb(6,78,59)`·서브 `rgb(6,95,70)`, 버튼 disabled `rgb(239,246,255)`+`opacity 1` / enabled `rgb(29,78,216)` + 흰 글자, **양쪽 라벨 모두 `GDB 분석 시작`**. 스크린샷으로 두 상태 대비 육안 확인. 빌드 + `restart.sh` 기동 13.7초 무오류, 서빙되는 `/css/core-dump.css`·`/js/core-dump-index.js` 에 변경분 반영 확인.
+
+
+## [2026-08-10] 기동 스크립트 정비 — JAR 버전 하드코딩 제거 + 공통 설정 `env.sh` 추출
+
+**요청:** `restart.sh`/`run.sh`/`stop.sh` 에 JAR 버전이 변수로 선언되어 있지 않으니 수정하고, 그 외에 변수화되지 않은 것도 함께 정비.
+
+- **버전이 세 스크립트에 총 10곳 리터럴로 박혀 있었다.** `restart.sh` 4곳(주석 2 + JAR 경로 + grep 3회) / `run.sh` 2곳 / `stop.sh` 4곳. `pom.xml <version>` 을 올릴 때마다 전부 손으로 고쳐야 했고, 실제로 CLAUDE.md 에 "누락 시 첫 재기동에서 포트 18080 충돌" 이 함정으로 적혀 있었다.
+- **단순 변수 선언(`VERSION=2.3.3`)이 아니라 자동 탐색으로 갔다.** 변수화만 하면 "고칠 곳이 10곳→3곳" 일 뿐 버전업마다 손대야 하는 구조는 그대로다. `heap_enc.sh`/`heap_dec.sh` 가 2026-07-31 에 같은 이유로 이미 자동 탐색으로 전환돼 있어(그래서 체크리스트 대상에서 빠져 있다) **동일 패턴을 채택** — `target/heap-analyzer-*.jar` 중 최신 빌드본(`ls -t`, `-sources.jar` 제외)을 `APP_JAR` 로 잡고 파일명에서 `APP_VERSION` 을 역산한다. `HEAP_ANALYZER_JAR` 로 직접 지정도 가능.
+- **프로세스 매칭은 버전 무관 패턴으로.** 기존엔 `grep heap-analyzer-2.3.3.jar` 라 **구버전 JAR 로 떠 있는 프로세스를 stop/restart 가 못 죽여** 포트가 충돌했다(CLAUDE.md 기재 함정). `APP_PROC_PATTERN=heap-analyzer-[0-9][^[:space:]]*\.jar` 로 어떤 버전이든 잡는다. 탐색은 `pgrep -f` 우선(+`ps -eo pid=,args=` 폴백) — `ps -ef | grep | grep -v grep` 관용구는 자기 자신 제외 처리와 폭 잘림 위험이 있어 정리.
+- **신설 `env.sh` — 세 스크립트가 source 하는 단일 설정 지점.** 버전 외에도 리터럴이었던 것들을 전부 변수화: 앱 경로(`APP_HOME` 은 스크립트 위치에서 산출 — `/opt/genspark/webapp_dump` 하드코딩 제거)·`SERVER_PORT`(18080)·`LOG_DIR`/`NOHUP_LOG`/`GC_LOG`·`JVM_XMS`/`JVM_XMX`·GC 로테이션(`GC_LOG_FILE_COUNT`/`SIZE`)·`TRUSTSTORE`/`TRUSTSTORE_PASS`(`changeit`)/`TRUSTSTORE_TYPE`·대기시간 3종(`STOP_WAIT_SECS` 15 / `RESTART_STOP_WAIT_SECS` 20 / `BOOT_WAIT_SECS` 60)·기동 판정 grep 패턴 3종(`BOOT_OK`/`FAIL`/`SHUTDOWN_PATTERN`)·`JAVA_BIN`. 전부 `${VAR:-기본값}` 이라 `SERVER_PORT=18081 bash run.sh` 처럼 환경변수 override 가 된다.
+- **중복 로직도 함께 흡수.** `run.sh` 와 `restart.sh` 는 기동 + 로그 스트리밍 + 상태 판정 ~70줄이 거의 같은 사본이었고(태그 문자열만 다름), 종료 대기 루프는 `restart.sh`/`stop.sh` 에 중복이었다. `app_pids`/`require_jar`/`build_trust_opts`/`stop_app`/`start_app`/`wait_for_boot` 헬퍼로 옮겨 **run.sh 25줄 · restart.sh 27줄 · stop.sh 24줄** 로 축소(총 265줄 → 76줄 + env.sh 214줄). setsid/stdbuf/trap/disown 등 기존 주석에 남아 있던 이유 설명은 헬퍼 쪽으로 그대로 이관.
+- **부수 정리:** `restart.sh` 최상단의 죽은 주석 2줄(옛 버전 하드코딩 명령) 제거, `JVM_HEAP_OPTS` 주석의 "최대 1 GB" 오기 수정(실제 값은 `-Xmx512m`), `start_app` 에 `mkdir -p "$LOG_DIR"` 추가(로그 디렉토리 부재 시 `: > nohup.out` 실패 방지).
+- **운영 비밀값 주입 경로 신설.** README-DEPLOY 에 "restart.sh 에 `HEAP_ANALYZER_ENCRYPTION_KEY` export 수동 보강 필요" 로 적혀 있던 항목을, `env.sh` 가 있으면 자동 source 하는 **`env.local.sh`**(`.gitignore` 추가)로 대체 — 스크립트 본문 수정 없이 키·포트·힙 등을 운영 환경에서 덮어쓴다. 해당 문서 섹션과 이관 체크리스트도 갱신(`2.0.1` 하드코딩 → `<version>`, `env.sh` 필수 항목 추가).
+- **검증(실제 실행):** 변수 해석 확인(`APP_VERSION=2.3.3` 자동 역산, 실행 중 PID 정확 탐지) → **버전 무관 매칭 확인**(가짜 `heap-analyzer-9.9.9.jar` 프로세스를 띄워 실제 2.3.3 프로세스와 함께 2개 모두 탐지) → `run.sh` 중복 기동 거절(exit 1) → **`restart.sh` 전체 사이클**(구 PID 종료 → 기동 → `Started HeapAnalyzerApplication` 13.3초 → exit 0, `/login` HTTP 200) → `stop.sh`(1초 종료, exit 0) + 재실행 멱등성(미실행 시 exit 0) → `run.sh` 기동(13.9초, `/login` HTTP 200). 기동된 프로세스의 커맨드라인이 변경 전과 **완전히 동일**함을 `ps -ef` 로 대조 확인. 4개 파일 `bash -n` 문법 검사 통과.
+- ⚠ 주의: **`env.sh` 는 배포 필수 파일** — 없으면 세 스크립트 모두 동작하지 않는다. 이관 시 반드시 포함할 것(체크리스트 반영). JAR 변경은 없어 재빌드 불필요.
+
+
+## [2026-08-09] Settings — "Dominator Refs 사전계산 시간" 툴팁을 History 페이지의 KRDS 팝오버 디자인으로 통일 (+ 툴팁 모듈 추출)
+
+**요청:** 설정의 해당 툴팁을 History 페이지에 적용된 툴팁 디자인으로 변경.
+
+- **두 툴팁이 서로 다른 구현이었다.** 설정은 `/js/float-tooltip.js`(`data-tooltip`, **커서 추종형** — 마우스를 따라다니고 화살표 없음, 360px, radius 6px, hover 전용). History 는 `history.html` **인라인**에만 있던 KRDS component_08_05 팝오버(`data-tip`, 트리거에 **앵커링** + 화살표, 280px, radius 8px, 키보드·터치·Esc·aria 지원).
+- **History 판을 `/js/krds-tooltip.js` 공통 모듈로 추출.** 인라인으로만 존재해 그대로 두면 settings 로 84줄을 복붙해야 했다 — `float-tooltip.js` 가 servers/server-detail 복붙 통합으로 태어난 것과 같은 이유로 모듈화(CLAUDE.md 공통 모듈 규약). 모듈은 **CSS(`<style>`)와 싱글턴 팝오버 DOM 을 스스로 주입**해 소비 페이지는 `<script>` 한 줄이면 된다(기존 `#krdsTip` 이 있으면 재사용). `history.html` 은 인라인 CSS 11줄 + `<div id="krdsTip">` + IIFE 84줄을 제거하고 같은 모듈을 로드 — **동작·디자인 무변경**.
+- **`white-space: pre-wrap` 추가가 필수였다.** History 원본 CSS 에는 없던 속성인데, History 쪽 문구는 단문이라 무관했지만 설정 문구는 `&#10;&#10;` 로 나눈 **4문단**이라 그대로 옮겼으면 문단 구분이 전부 사라졌을 것. 모듈에 넣어 양쪽 모두 안전.
+- **settings.html:** 트리거를 `data-tooltip` → `data-tip` 으로 바꾸고 `tabindex="0"` 부여(키보드 포커스로도 열림), `.info-icon:focus-visible` 포커스 링 추가, 스크립트를 `float-tooltip.js` → `krds-tooltip.js` 로 교체. 설정 페이지의 유일한 툴팁이라 `float-tooltip.js` 는 제거(servers/server-detail 은 계속 사용).
+- **검증(헤드리스 Chrome):** **서버가 실제로 서빙하는 `/js/krds-tooltip.js`** + **JAR 패키징된 settings.html 의 `data-tip` 원문** + **실제 `common.css`** 를 그대로 써서 **24/24 PASS** — 디자인 토큰 9종 일치(#1F2937 / #F9FAFB / 12px / radius 8px / padding 8px 12px / max-width 280px / shadow .22 / keep-all / fixed+pointer-events:none), 앵커링 5종(hover 표시 · 트리거 위 배치 · 간격 8px · **화살표가 트리거 중심 정렬(140 vs 140)** · 위 공간 부족 시 아래로 뒤집힘), 4문단 렌더 4종(pre-wrap · 줄바꿈 6개 유지 · 첫 문단 일치 · 폭 280px), 접근성 6종(role/aria-hidden/aria-describedby/키보드 focus 표시/Esc 닫기+aria 정리/**History 트리거 회귀**). ⚠ 1차 실행에서 폭이 304px 로 FAIL 났는데 원인은 픽스처가 `common.css` 의 전역 `box-sizing:border-box` 리셋을 안 실은 것 — 실제 페이지 조건으로 바로잡자 280px. `mvn test` 328건 green, 기동 13.7초 무오류.
+- ⚠ 미검증: 인증이 필요한 `/settings`·`/history` 실 페이지의 최종 렌더는 확인하지 않았다(신규 Thymeleaf 표현식 없음, 함정 23 의 `[[` 미도입, JAR 패키징 마크업은 확인).
+
+
+## [2026-08-09] Dominator Tree — Shallow/Retained Heap 막대가 한 덩어리로 붙어 보이던 문제 개선
+
+**증상(제보):** Shallow Heap 2.6MB · Retained Heap 2.6MB 처럼 두 막대가 모두 길게 그려지면 **Shallow 막대가 Retained 막대에 바짝 붙어** 어디까지가 어느 지표인지 구분되지 않았다.
+
+- **원인 A — 접합부 색이 완전히 동일.** 두 막대는 그라디언트였는데 Shallow 가 `…→ #bfdbfe` 로 **끝나고** Retained 가 `#bfdbfe →…` 로 **시작**했다. 즉 컬럼 경계에서 만나는 두 픽셀이 같은 색 → dataviz 검증기 실측 **ΔE 0.0**(CVD·정상시야 양쪽 하드 FAIL). 경계가 사라져 하나의 긴 막대로 읽혔다.
+- **원인 B — 물리적 간격 0px.** `.dom-bar-fill` 이 `position:absolute; left:0` 이라 셀 **패딩 박스 전체**를 기준으로 폭을 잡았다(패딩 14px 은 무시됨). 그래서 100% 막대는 셀 오른쪽 끝까지 닿고, 옆 셀의 막대는 왼쪽 끝에서 시작 → **간격 0px 로 맞닿음**.
+- **수정 1 — 막대를 트랙 안에 가둠.** `.dom-bar-track`(`left:8px; right:8px`) 신설, 막대는 트랙 안에서만 자란다. Shallow 트랙의 오른쪽 끝과 Retained 트랙의 왼쪽 시작 사이에 **항상 16px 흰 여백**이 남아 둘 다 100% 여도 맞닿을 수 없다. 트랙 배경(`#F1F3F5`)은 각 막대의 100% 지점을 드러내 "이 막대가 자기 트랙을 꽉 채웠다"가 보인다(같은 페이지 `.pct-bar` 와 동일한 관용구).
+- **수정 2 — 그라디언트 폐기, 계열당 단색.** 그라디언트는 색이 길이에 따라 변해 정체성을 흐리고 위 접합부 충돌의 원인이었다. **Shallow `#5EEAD4`(청록) / Retained `#60A5FA`(파랑)** 단색.
+- **색 선택은 눈대중이 아니라 dataviz 검증기(`validate_palette.js`) 실행으로 결정.** 채택본은 **CVD ΔE 20.4(deutan)·14.7(tritan)**(목표 ≥8), **정상시야 ΔE 21.4**(하한 ≥15), 값 텍스트 대비 **11.4:1 / 6.6:1**(본문 4.5:1) 로 전부 통과. ⚠ **직관으로 골랐다면 틀렸을 후보들**: 파랑↔보라 계열(`#93C5FD↔#C4B5FD`, `#60A5FA↔#A78BFA`, `#2563EB↔#8B5CF6`)은 눈으로는 달라 보여도 **deutan ΔE 0.3~2.3 으로 적록색약에게는 사실상 같은 색**(하드 FAIL). 수치가 가장 좋았던 주황↔파랑(ΔE 23.7/28.7)은 이 앱의 **High 심각도(앰버)와 계열이 겹쳐** 제외했다. 흰 배경 대비는 두 색 모두 3:1 미만이라 검증기가 *relief* 를 요구하는데, 막대 위 **값 라벨이 항상 노출**되고 `%` 컬럼·툴팁·표 자체가 있어 조건 충족.
+- **수정 3 — 헤더 색 스와치(범례).** `Shallow Heap`/`Retained Heap` 헤더 좌측에 막대와 **똑같은 색**의 9px 스와치(`.dom-lgd`)를 붙여 색↔컬럼 대응을 명시. 텍스트에는 계열색을 입히지 않는다(값·라벨은 텍스트 토큰 유지).
+- 캐시 무효화: `analyze.css?v=2026-08-09` → **`?v=2026-08-09b`**(같은 날 두 번째 배포라 접미사 구분).
+- **검증(헤드리스 Chrome):** 실제 `analyze.css` + **`analyze.js` 의 `renderDomBars()` 를 원본에서 그대로 추출·주입**해(재구현 아님) 제보 케이스(양쪽 2.6MB → 둘 다 폭 100%)를 재현, **12/12 PASS** — 두 막대 실측 간격 **16px**(기존 0px) / 두 계열색 상이 / 색상값 일치 / 트랙 노출 / 막대 두께 20px(마크 규격 ≤24px) / 헤더 스와치 색 = 막대 색 / 값 라벨 상시 노출 / 값 라벨이 텍스트 토큰(`rgb(26,29,35)`). 1차 수정(sticky 헤더)도 **새 마크업에서 재검증** — 스크롤 55위치 × 42,240 지점 침범 0건. `mvn test` 328건 green, 기동 14.2초 무오류.
+- ⚠ 미검증: 실제 로그인 세션이 필요한 `/analyze/{filename}` **실 페이지 렌더는 확인하지 않았다**(인증 필요). 다만 신규 Thymeleaf 표현식이 없고(기존 `th:data-val` 을 감싸기만 함) 함정 23 의 `[[` 시퀀스도 도입하지 않았으며, JAR 내부 패키징 마크업은 확인했다.
+
+
+## [2026-08-09] Dominator Tree — 스크롤 시 Shallow/Retained Heap 값이 sticky 헤더를 뚫고 올라오던 버그 수정
+
+**증상(제보):** Dominator Tree 패널에서 표를 스크롤하면 Shallow Heap / Retained Heap **값 텍스트가 테이블 헤더와 겹쳐** 표시됐다. 막대(bar)는 정상적으로 헤더 아래로 지나갔고 값만 뚫고 올라왔다.
+
+- **원인 — z-index 동률 + 스태킹 컨텍스트 부재.** `.data-table thead th` 는 `position:sticky; z-index:1`, 값 span `.dom-bar-val` 은 `position:relative; z-index:1` 로 **같은 값**이었다. 부모 `.dom-bar-cell` 은 `position:relative` 지만 `z-index:auto` 라 **스태킹 컨텍스트를 만들지 않으므로**, 값 span 이 셀 안에 갇히지 않고 루트 컨텍스트에서 헤더와 직접 경쟁했다. z-index 가 같으면 **DOM 순서상 뒤인 tbody 가 이긴다** → 값만 헤더 위에 그려짐. 막대 `.dom-bar-fill` 은 `z-index:0` 이라 영향이 없어서 "값만 겹치는" 증상이 됐다.
+- **수정 1 — `.data-table thead th` z-index `1` → `3`** (`analyze.css`). 셀 내부 요소(`.dom-bar-val` z:1)뿐 아니라 펼침 상세 안 중첩 표의 sticky 헤더(`.dom-refs-tbl th` z:2)보다도 확실히 위가 된다 — 기존엔 중첩 표 헤더(2)가 바깥 헤더(1)를 덮을 수도 있었던 문제까지 함께 해소. 의도가 유실되지 않도록 "tbody 셀 내부 요소보다 반드시 커야 한다"는 주석을 규칙으로 남겼다.
+- **수정 2 — `.data-table td.dom-bar-cell` 에 `isolation:isolate` 추가.** 막대/값의 z-index 경쟁을 셀 안으로 가둬, 앞으로 셀 내부에 z-index 를 쓰는 요소가 추가돼도 sticky 헤더를 침범할 수 없게 한 구조적 방어. (수정 1만으로도 현 증상은 사라지지만, 셀 내부 z-index 가 3 이상으로 커지면 재발하므로 둘을 함께 적용.)
+- 캐시 무효화: `analyze.css?v=2026-08-06` → **`?v=2026-08-09`** (`analyze.html`). CSS 는 JAR 내부라 재빌드·재기동 필요.
+- **검증(헤드리스 Chrome):** 실제 `analyze.css` 를 그대로 로드한 Dominator Tree 픽스처(40행)에서 **스크롤 55개 위치 × 헤더 밴드 격자 42,240 지점**을 `elementFromPoint` 로 전수 확인 — 수정 후 **침범 0건**. 테스트 자체의 유효성을 위해 수정 전 CSS(`z-index:1` + `isolation:auto`)를 override 로 재현하니 **동일 조건에서 4,928 지점이 침범**했고 침범 요소는 전부 `SPAN.dom-bar-val` 로, 제보 증상(값만 겹침)과 정확히 일치했다. 스크린샷 대조에서도 수정 전에는 "SHALLOW HEAP" 헤더 위에 `894 KB`, "RETAINED HEAP" 위에 `1482 MB` 가 겹쳐 찍혔고 수정 후에는 헤더가 깨끗했다. `mvn test` 328건 green, 빌드·기동(13.8초) 무오류.
+
+
 ## [2026-08-06] v2.3.3 — 설정 설명 툴팁 + 버전 갱신
 
 - **Settings > MAT Configuration 의 "Dominator Refs 사전계산 시간" 에 인포 아이콘(ⓘ) + hover 툴팁** — 항목 아래 `heap-hint` 로 길게 붙어 있던 설명을 라벨 우측 아이콘의 툴팁으로 옮겼다(설정 행이 짧아지고 설명은 필요할 때만 노출). 툴팁은 기존 공통 모듈 **`/js/float-tooltip.js`(`[data-tooltip]`)** 재사용 — settings.html 은 이 모듈을 쓰지 않았어서 `<script>` 로드 1줄 추가. 문단 구분은 `&#10;`(모듈이 `white-space:pre-wrap` 로 렌더). `.info-icon` 스타일(14px SVG, hover 시 `#2563EB`, `cursor:help`)은 settings.html 인라인.

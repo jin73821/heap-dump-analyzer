@@ -150,15 +150,15 @@ Property:  ENC(682d6e43ec2ac80b8856edffc9351e61)
 > export HEAP_ANALYZER_ENCRYPTION_KEY="<32자 이상 랜덤 문자열>"
 > bash heap_enc.sh "비밀번호"
 > ```
-> 키는 `restart.sh` 또는 systemd unit 파일에 동일하게 설정해야 앱 기동 시 복호화됩니다.
+> 키는 기동 스크립트 또는 systemd unit 파일에 동일하게 설정해야 앱 기동 시 복호화됩니다.
 >
-> **`restart.sh`에 키 적용 예시** (현재 스크립트는 키를 export하지 않으므로 수동 보강 필요):
+> **기동 스크립트에 키 적용** — `env.local.sh` 를 만들면 `run.sh`/`restart.sh`/`stop.sh` 가 자동으로 읽습니다
+> (`env.sh` 가 존재 시 source). 스크립트 본문은 수정하지 마세요:
 > ```bash
-> #!/bin/bash
-> ps -ef | grep heap-analyzer-2.0.1.jar | grep -v grep | awk '{print "kill -15 " $2}' | sh;
+> # /opt/genspark/webapp_dump/env.local.sh  (.gitignore 대상)
 > export HEAP_ANALYZER_ENCRYPTION_KEY="<운영 환경 키>"
-> nohup java -jar /opt/genspark/webapp_dump/target/heap-analyzer-2.0.1.jar --server.port=18080 &
 > ```
+> 같은 파일에서 `SERVER_PORT`, `JVM_XMX`, `TRUSTSTORE_PASS` 등 `env.sh` 의 모든 변수도 덮어쓸 수 있습니다.
 > 키가 불일치하면 모든 `ENC(...)` 복호화가 실패하여 DB 연결/LLM 호출/RAG 검색이 모두 동작하지 않습니다.
 
 ---
@@ -478,9 +478,10 @@ sleep 18 && grep -E "Started HeapAnalyzerApplication|FAILED|Exception in thread"
 
 ## 8. 이관 패키지 체크리스트
 
-- [ ] `target/heap-analyzer-2.0.1.jar`
+- [ ] `target/heap-analyzer-<version>.jar` (버전은 `pom.xml <version>` 기준)
 - [ ] `src/main/resources/application.properties` (사내 환경값으로 수정 — DB URL/계정/암호화 + Session JDBC + LLM/RAG 설정)
-- [ ] `restart.sh` (`HEAP_ANALYZER_ENCRYPTION_KEY` export 추가)
+- [ ] `env.sh`, `run.sh`, `restart.sh`, `stop.sh` (**`env.sh` 필수** — 나머지 3개가 source 한다)
+- [ ] `env.local.sh` (`HEAP_ANALYZER_ENCRYPTION_KEY` 등 운영 값 export — 신규 생성)
 - [ ] `heap_enc.sh`, `heap_dec.sh`
 - [ ] `README-DEPLOY.md` (본 문서)
 - [ ] `rag-data/rag-knowledge-20260430.csv`, `rag-data/README.md` (RAG 사용 시)
