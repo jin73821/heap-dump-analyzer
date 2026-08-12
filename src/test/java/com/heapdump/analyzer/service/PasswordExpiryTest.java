@@ -38,7 +38,7 @@ class PasswordExpiryTest {
     void changeOwnPasswordResetsChangedAt() {
         UserRepository repo = mock(UserRepository.class);
         PasswordEncoder enc = mock(PasswordEncoder.class);
-        UserService svc = new UserService(repo, enc);
+        UserService svc = new UserService(repo, enc, mock(MemoHistoryService.class));
 
         LocalDateTime old = LocalDateTime.now().minusDays(80);
         User u = user(old, User.Role.USER);
@@ -62,7 +62,7 @@ class PasswordExpiryTest {
     void adminResetResetsChangedAt() {
         UserRepository repo = mock(UserRepository.class);
         PasswordEncoder enc = mock(PasswordEncoder.class);
-        UserService svc = new UserService(repo, enc);
+        UserService svc = new UserService(repo, enc, mock(MemoHistoryService.class));
 
         LocalDateTime old = LocalDateTime.now().minusDays(120);
         User u = user(old, User.Role.USER);

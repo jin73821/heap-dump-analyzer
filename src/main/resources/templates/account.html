@@ -1,20 +1,52 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<!-- 레이아웃은 계정에 저장된 값(users.account_layout)을 서버가 렌더 시점에 클래스로 내려준다.
+     클라이언트에서 적용하면 기본 배치가 한 번 그려졌다가 튄다(FOUC). -->
+<html xmlns:th="http://www.thymeleaf.org" lang="ko"
+      th:classappend="${accountLayout == 'split'} ? 'acct-split' : ''">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-08-11">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-12">
     <title>My Account — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }
         .container { max-width: 960px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
-        .page-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 22px; }
+        .page-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 22px; flex-wrap: wrap; }
         .page-ttl { font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+
+        /* ── 레이아웃 전환 세그먼트 (제목 라인 우측) ────────────── */
+        .layout-seg { margin-left: auto; display: inline-flex; border: 1px solid #D1D5DB;
+                      border-radius: 8px; overflow: hidden; background: #fff; }
+        .layout-seg button { padding: 6px 12px; font-size: 11.5px; font-weight: 600; border: none;
+                             background: #fff; color: #6B7280; cursor: pointer; font-family: inherit;
+                             line-height: 1.5; display: inline-flex; align-items: center; gap: 5px; }
+        .layout-seg button + button { border-left: 1px solid #E5E7EB; }
+        .layout-seg button:hover { background: #F9FAFB; color: #374151; }
+        .layout-seg button.on { background: #EFF6FF; color: #1D4ED8; }
+        .layout-seg svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+
+        /* ── 좌우 분할 레이아웃 ─────────────────────────────────
+           기본(stack)에서는 .acct-grid 가 평범한 블록이라 종전 렌더와 100% 동일하다.
+           split 일 때만 grid 로 전환하고, DOM 순서(계정→메모)는 그대로 둔 채 order 로 좌우를 바꾼다. */
+        html.acct-split .container { max-width: 1400px; }
+        html.acct-split .acct-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px;
+                                     gap: 16px; align-items: start; }
+        /* 좌우 분할에서는 우측 계정 카드가 짧아 좌측 아래가 통째로 비므로 입력 영역을 화면 높이에 맞춰 늘린다.
+           400px = topbar/제목/카드헤더/폰트바/메타/버튼행/여백의 합. max() 로 최소 높이는 보장. */
+        html.acct-split .memo-area { min-height: max(360px, calc(100vh - 400px)); }
+        html.acct-split .acct-grid > .card { margin-bottom: 0; }
+        html.acct-split #cardMemo    { order: 1; }   /* 좌 */
+        html.acct-split #cardAccount { order: 2; }   /* 우 */
+        /* 2단이 좁아지면 의미가 없다 — 자동으로 기본 배치(계정 위/메모 아래)로 되돌린다 */
+        @media (max-width: 1100px) {
+            html.acct-split .acct-grid { display: block; }
+            html.acct-split .acct-grid > .card { margin-bottom: 16px; }
+        }
 
         .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px;
                 padding: 20px; margin-bottom: 16px; }
@@ -43,7 +75,8 @@
         .form-hint { font-size: 11px; color: #9CA3AF; margin-top: 4px; }
         .form-err  { font-size: 12px; color: #DC2626; margin-top: 6px; min-height: 16px; }
         .form-ok   { font-size: 12px; color: #059669; margin-top: 6px; min-height: 16px; }
-        .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+        /* flex-wrap: 저장/초기화 + 우측 정렬된 '변경 이력' 3개가 좁은 폭에서 넘치지 않도록 */
+        .btn-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
         .btn {
             padding: 9px 18px; font-size: 13px; font-weight: 600; border-radius: 7px;
             border: 1px solid transparent; cursor: pointer; font-family: inherit;
@@ -197,6 +230,19 @@
             <svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             My Account
         </div>
+        <!-- 레이아웃 전환 — 선택값은 계정(users.account_layout)에 저장, 초기 적용은 <html> 클래스(서버 렌더) -->
+        <div class="layout-seg" role="group" aria-label="레이아웃 변경">
+            <button type="button" data-layout="stack" aria-pressed="true"
+                    onclick="setAccountLayout('stack')" title="계정 정보 위, 개인 메모장 아래 (기본)">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="7" rx="1"/><rect x="3" y="13" width="18" height="7" rx="1"/></svg>
+                기본
+            </button>
+            <button type="button" data-layout="split" aria-pressed="false"
+                    onclick="setAccountLayout('split')" title="개인 메모장 좌측, 계정 정보 우측">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="11" height="16" rx="1"/><rect x="16" y="4" width="5" height="16" rx="1"/></svg>
+                좌우 분할
+            </button>
+        </div>
     </div>
 
     <!-- 비밀번호 만료 임박/만료 경고 뱃지 (정책 활성 + D-7 이하일 때만 · 미설정 시 미표기) -->
@@ -207,8 +253,12 @@
         <button class="pw-alert-btn" onclick="openPwModal()">지금 변경</button>
     </div>
 
+    <!-- 두 카드를 감싸는 래퍼 — 기본 레이아웃에서는 아무 효과가 없고(그냥 블록),
+         '좌우 분할' 에서만 grid 로 전환된다. -->
+    <div class="acct-grid">
+
     <!-- ── 계정 정보 (read-only) ───────────────────────── -->
-    <div class="card">
+    <div class="card" id="cardAccount">
         <div class="card-title">
             <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             계정 정보
@@ -250,7 +300,7 @@
     </div>
 
     <!-- ── 개인 메모장 ────────────────────────────── -->
-    <div class="card">
+    <div class="card" id="cardMemo">
         <div class="card-title">
             <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             개인 메모장
@@ -307,16 +357,28 @@
             <button type="button" onclick="retryAfterLogin()">로그인 완료 · 저장 재시도</button>
         </div>
         <div class="memo-alert info" id="restoreAlert" hidden>
-            <span class="grow">저장되지 못한 메모가 남아 있습니다 (<span id="restoreAt"></span>).</span>
+            <span class="grow">저장되지 못한 메모가 남아 있습니다 (<span id="restoreAt"></span>, <span id="restoreSize"></span>).</span>
+            <button type="button" onclick="viewBackup()">내용 보기</button>
             <button type="button" onclick="restoreBackup()">복구</button>
             <button type="button" onclick="discardBackup()">버리기</button>
+        </div>
+        <div class="memo-alert info" id="undoAlert" hidden>
+            <span class="grow">백업 내용으로 복구했습니다. 복구 직전 내용(<span id="undoAt"></span>)으로 되돌릴 수 있습니다.</span>
+            <button type="button" onclick="viewUndo()">이전 내용 보기</button>
+            <button type="button" onclick="undoRestore()">복구 이전으로 되돌리기</button>
+            <button type="button" onclick="dismissUndo()">닫기</button>
         </div>
         <div id="memoMsg" class="form-err"></div>
         <div class="btn-row">
             <button id="btnSaveMemo" class="btn btn-primary" onclick="saveMemo()">저장</button>
             <button id="btnClearMemo" class="btn btn-danger" onclick="openClearMemoModal()">초기화</button>
+            <!-- 저장 라인 맨 우측 — margin-left:auto 가 앞 버튼들과 사이의 남는 폭을 모두 흡수 -->
+            <button id="btnMemoHistory" type="button" class="btn btn-secondary" style="margin-left:auto"
+                    onclick="openMemoHistory()" title="저장 직전 내용을 되돌립니다 (최근 7일)">변경 이력</button>
         </div>
     </div>
+
+    </div><!-- /.acct-grid -->
 </div>
 
 <!-- 메모 초기화 확인 모달 -->
@@ -383,7 +445,7 @@
     </div>
 </div>
 
-<script src="/js/memo.js?v=2026-08-12"></script>
+<script src="/js/memo.js?v=2026-08-12d"></script>
 <!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (history·settings 와 공유, 로드만 하면 자동 활성) -->
 <script src="/js/krds-tooltip.js?v=2026-08-09"></script>
 <script th:inline="javascript">
@@ -402,6 +464,36 @@ function toast(msg, type) {
     document.body.appendChild(t);
     setTimeout(function() { t.style.opacity = '0'; }, 3000);
     setTimeout(function() { t.remove(); }, 3500);
+}
+
+/* ── 레이아웃 전환 ─────────────────────────────
+   mode: 'stack'(기본 — 계정 정보 위 / 메모장 아래) | 'split'(메모장 좌 / 계정 정보 우)
+   선택값은 브라우저가 아니라 **계정(users.account_layout)** 에 저장한다 — memoFont 와 동일 정책이라
+   재로그인·다른 기기에서도 같은 레이아웃으로 열린다. */
+function setAccountLayout(mode, persist) {
+    var split = mode === 'split';
+    document.documentElement.classList.toggle('acct-split', split);
+
+    var btns = document.querySelectorAll('.layout-seg button');
+    for (var i = 0; i < btns.length; i++) {
+        var on = btns[i].getAttribute('data-layout') === (split ? 'split' : 'stack');
+        btns[i].classList.toggle('on', on);
+        btns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+    if (persist === false) return;
+
+    Common.fetchJSON('/api/account/layout', {
+        method: 'POST',
+        body: JSON.stringify({ layout: split ? 'split' : 'stack' })
+    }).catch(function (e) {
+        // 화면 전환은 이미 됐지만 다음 접속에는 반영되지 않는다 — 조용히 넘기면 안 된다
+        toast('레이아웃을 계정에 저장하지 못했습니다: ' + (Memo.errorMessage(e) || e.message), 'err');
+    });
+}
+
+/* 초기 버튼 상태 동기화 — 클래스 자체는 서버가 <html> 에 렌더해 두었다(FOUC 방지) */
+function initAccountLayout() {
+    setAccountLayout(document.documentElement.classList.contains('acct-split') ? 'split' : 'stack', false);
 }
 
 /* ── 비밀번호 변경 모달 ─────────────────────── */
@@ -594,17 +686,37 @@ function retryAfterLogin() {
 function offerBackupRestore() {
     var b = Memo.readBackup(window.MEMO_USERNAME);
     if (!b || typeof b.text !== 'string' || b.text === document.getElementById('memoBox').value) return;
-    document.getElementById('restoreAt').textContent = Memo.formatTs(b.at) || '이전';
+    document.getElementById('restoreAt').textContent = Memo.formatBackupTs(b.at) || '이전';
+    document.getElementById('restoreSize').textContent = Memo.fmtBytes(Memo.utf8ByteLen(b.text));
     document.getElementById('restoreAlert').hidden = false;
+}
+
+/* 무엇이 복구되는지 눈으로 확인 — 복구는 편집 중인 내용을 덮어쓰므로 확인 경로가 필요하다 */
+function viewBackup() {
+    var b = Memo.readBackup(window.MEMO_USERNAME);
+    if (!b) { document.getElementById('restoreAlert').hidden = true; return; }
+    Memo.openBackupViewer({
+        backup: b,
+        current: document.getElementById('memoBox').value,
+        onRestore: restoreBackup,
+        onDiscard: discardBackup
+    });
+}
+
+function applyMemoText(text) {
+    document.getElementById('memoBox').value = text;
+    updateMemoCount();
+    setMemoSaveState(true);
+    Memo.post('text', { text: text });
 }
 
 function restoreBackup() {
     var b = Memo.readBackup(window.MEMO_USERNAME);
     if (b && typeof b.text === 'string') {
-        document.getElementById('memoBox').value = b.text;
-        updateMemoCount();
-        setMemoSaveState(true);
-        Memo.post('text', { text: b.text });
+        // 덮기 직전 스냅샷 — 서버에는 메모 이력이 없어 이걸 남기지 않으면 되돌릴 방법이 없다
+        var undoOk = Memo.saveUndo(window.MEMO_USERNAME, document.getElementById('memoBox').value);
+        applyMemoText(b.text);
+        if (undoOk) showUndoAlert();
     }
     document.getElementById('restoreAlert').hidden = true;
 }
@@ -612,6 +724,63 @@ function restoreBackup() {
 function discardBackup() {
     Memo.clearBackup(window.MEMO_USERNAME);
     document.getElementById('restoreAlert').hidden = true;
+}
+
+/* ── 서버 변경 이력 (memo_history) ─────────────────────── */
+function setMemoMsg(text, isError) {
+    var msg = document.getElementById('memoMsg');
+    if (!msg) return;
+    msg.className = isError ? 'form-err' : 'form-ok';
+    msg.textContent = text;
+}
+
+function openMemoHistory() {
+    Memo.openHistoryViewer({
+        onRestored: function (d) {
+            var text = d.memo || '';
+            document.getElementById('memoBox').value = text;
+            updateMemoCount();
+            // 복원은 서버 저장까지 끝난 상태다 — 미저장 표시를 남기면 안 된다
+            setMemoSaveState(false);
+            document.getElementById('memoUpdatedAt').textContent = Memo.formatTs(d.memoUpdatedAt) || '—';
+            Memo.post('saved', { text: text, updatedAt: d.memoUpdatedAt });
+            setMemoMsg('선택한 시점으로 복원했습니다. 복원 직전 내용도 이력에 남아 있어 다시 되돌릴 수 있습니다.', false);
+        },
+        onError: function (e) {
+            setMemoMsg('이력 처리 실패: ' + Memo.errorMessage(e), true);
+        }
+    });
+}
+
+/* ── 복구 되돌리기 ─────────────────────────────────────── */
+function showUndoAlert() {
+    var u = Memo.readUndo(window.MEMO_USERNAME);
+    if (!u) return;
+    document.getElementById('undoAt').textContent = Memo.formatBackupTs(u.at) || '복구 직전';
+    document.getElementById('undoAlert').hidden = false;
+}
+
+function viewUndo() {
+    var u = Memo.readUndo(window.MEMO_USERNAME);
+    if (!u) { document.getElementById('undoAlert').hidden = true; return; }
+    Memo.openBackupViewer({
+        backup: u,
+        current: document.getElementById('memoBox').value,
+        onRestore: undoRestore,
+        onDiscard: dismissUndo
+    });
+}
+
+function undoRestore() {
+    var u = Memo.readUndo(window.MEMO_USERNAME);
+    if (u && typeof u.text === 'string') applyMemoText(u.text);
+    Memo.clearUndo(window.MEMO_USERNAME);
+    document.getElementById('undoAlert').hidden = true;
+}
+
+function dismissUndo() {
+    Memo.clearUndo(window.MEMO_USERNAME);
+    document.getElementById('undoAlert').hidden = true;
 }
 
 function saveMemo() {
@@ -800,6 +969,7 @@ window.addEventListener('beforeunload', function(e) {
 
 updateMemoCount();
 offerBackupRestore();
+initAccountLayout();
 </script>
 
 </body>

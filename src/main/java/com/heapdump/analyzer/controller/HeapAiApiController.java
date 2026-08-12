@@ -5,6 +5,7 @@ import com.heapdump.analyzer.service.AiInsightManager;
 import com.heapdump.analyzer.service.EmbeddingService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.LlmConfigService;
+import com.heapdump.analyzer.service.LlmRateLimitService;
 import com.heapdump.analyzer.service.RagConfigService;
 import com.heapdump.analyzer.service.RagService;
 import com.heapdump.analyzer.util.FilenameValidator;
@@ -41,6 +42,7 @@ public class HeapAiApiController {
 
     private final HeapDumpAnalyzerService analyzerService;
     private final LlmConfigService llmConfig;
+    private final LlmRateLimitService rateLimitService;
     private final RagConfigService ragConfig;
     private final AiInsightManager aiInsight;
     private final HeapDumpConfig config;
@@ -49,6 +51,7 @@ public class HeapAiApiController {
 
     public HeapAiApiController(HeapDumpAnalyzerService analyzerService,
                                LlmConfigService llmConfig,
+                               LlmRateLimitService rateLimitService,
                                RagConfigService ragConfig,
                                AiInsightManager aiInsight,
                                HeapDumpConfig config,
@@ -56,6 +59,7 @@ public class HeapAiApiController {
                                EmbeddingService embeddingService) {
         this.analyzerService = analyzerService;
         this.llmConfig = llmConfig;
+        this.rateLimitService = rateLimitService;
         this.ragConfig = ragConfig;
         this.aiInsight = aiInsight;
         this.config = config;
@@ -128,7 +132,7 @@ public class HeapAiApiController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> testLlmConnection() {
         Map<String, Object> result = llmConfig.testLlmConnection();
-        return ResponseEntity.ok(result);
+        return LlmRateLimitService.toResponse(result);
     }
 
     // ── AI 분석/인사이트 ──────────────────────────────────────────
@@ -213,7 +217,7 @@ public class HeapAiApiController {
                 result.put("retryPayload", toStore);
             }
         }
-        return ResponseEntity.ok(result);
+        return LlmRateLimitService.toResponse(result);
     }
 
     /**
@@ -381,7 +385,7 @@ public class HeapAiApiController {
         }
         result.put("base", base);
         result.put("target", target);
-        return ResponseEntity.ok(result);
+        return LlmRateLimitService.toResponse(result);
     }
 
     @GetMapping("/api/llm/compare/insight")
@@ -484,7 +488,7 @@ public class HeapAiApiController {
                 result.get("errorCode"), result.get("error"));
         }
 
-        return ResponseEntity.ok(result);
+        return LlmRateLimitService.toResponse(result);
     }
 
     @SuppressWarnings("unchecked")
@@ -523,7 +527,10 @@ public class HeapAiApiController {
         final String finalSystemPrompt = systemPrompt;
         final String model = llmConfig.getLlmModel();
 
-        new Thread(() -> {
+        // ⚠ DelegatingSecurityContextRunnable 필수 — 호출량 게이트가 SecurityContextHolder 로
+        //   사용자를 식별하는데, 맨 Runnable 로 스레드를 띄우면 컨텍스트가 전파되지 않아
+        //   모든 사용자가 "system" 버킷을 공유하게 된다.
+        new Thread(new org.springframework.security.concurrent.DelegatingSecurityContextRunnable(() -> {
             try {
                 emitter.send(SseEmitter.event().name("start")
                     .data("{\"model\":\"" + (model != null ? model : "") + "\"}"));
@@ -548,7 +555,7 @@ public class HeapAiApiController {
             } catch (Exception e) {
                 SseJson.sendError(emitter, "INTERNAL_ERROR", e.getMessage());
             }
-        }, "ai-chat-stream-" + System.currentTimeMillis()).start();
+        }), "ai-chat-stream-" + System.currentTimeMillis()).start();
 
         emitter.onTimeout(() -> {
             logger.warn("[AI-Chat-Stream] 타임아웃 — file='{}'", filename);
@@ -590,6 +597,55 @@ public class HeapAiApiController {
         res.put("fileAttachEnabled", llmConfig.isLlmFileAttachEnabled());
         res.put("fileAttachCapable", llmConfig.isFileAttachCapable());
         return ResponseEntity.ok(res);
+    }
+
+    /**
+     * LLM 호출량 제한 설정 (ADMIN + CSRF).
+     * 각 값 0 = 무제한. SecurityConfig 의 authorize/csrf 두 매처에 1:1 등록돼 있다.
+     */
+    @PostMapping("/api/llm/ratelimit")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setLlmRateLimit(
+            @RequestBody Map<String, Object> body,
+            org.springframework.security.core.Authentication authentication) {
+        boolean enabled = !Boolean.FALSE.equals(body.get("enabled"));
+        int perSecond  = intOrDefault(body.get("perSecond"),  rateLimitService.getLlmRateLimitPerSecond());
+        int perMinute  = intOrDefault(body.get("perMinute"),  rateLimitService.getLlmRateLimitPerMinute());
+        int perDay     = intOrDefault(body.get("perDay"),     rateLimitService.getLlmRateLimitPerDay());
+        int concurrent = intOrDefault(body.get("concurrent"), rateLimitService.getLlmRateLimitConcurrent());
+
+        analyzerService.setLlmRateLimit(enabled, perSecond, perMinute, perDay, concurrent);
+        logger.info("[LLM-Config] action=update-ratelimit enabled={} perSecond={} perMinute={} perDay={} concurrent={} by={}",
+                rateLimitService.isLlmRateLimitEnabled(), rateLimitService.getLlmRateLimitPerSecond(),
+                rateLimitService.getLlmRateLimitPerMinute(), rateLimitService.getLlmRateLimitPerDay(),
+                rateLimitService.getLlmRateLimitConcurrent(),
+                authentication != null ? authentication.getName() : "unknown");
+
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", true);
+        res.putAll(rateLimitView());
+        return ResponseEntity.ok(res);
+    }
+
+    /** 현재 호출량 제한 설정 — 저장 응답과 /api/settings 가 같은 형태를 쓰도록 한 곳에서 만든다. */
+    private Map<String, Object> rateLimitView() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("enabled", rateLimitService.isLlmRateLimitEnabled());
+        m.put("perSecond", rateLimitService.getLlmRateLimitPerSecond());
+        m.put("perMinute", rateLimitService.getLlmRateLimitPerMinute());
+        m.put("perDay", rateLimitService.getLlmRateLimitPerDay());
+        m.put("concurrent", rateLimitService.getLlmRateLimitConcurrent());
+        return m;
+    }
+
+    /** 숫자 파싱 실패/누락 시 현재값 유지 — 부분 저장이 다른 값을 0(무제한)으로 밀지 않도록. */
+    private static int intOrDefault(Object v, int fallback) {
+        if (v == null) return fallback;
+        try {
+            return Integer.parseInt(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 
     // ── RAG (Elasticsearch) ───────────────────────────────────────

@@ -60,12 +60,25 @@
                     // 세션 만료/로그아웃: 서버가 /api/** 에 401 + code=SESSION_EXPIRED 로 응답한다.
                     // (페이지 라우트는 종전대로 /login 리다이렉트 — 여기 오는 건 AJAX 뿐)
                     var expired = r.status === 401;
+                    // 호출량 제한: LLM 계열이 429 + errorCode=LLM_* 로 응답한다.
+                    // 본문의 한국어 안내가 원인(초당/일일/동시)을 구분하므로 그대로 노출한다.
+                    var limited = r.status === 429;
+                    var msg = null;
+                    if (limited) {
+                        try { msg = (JSON.parse(t) || {}).error; } catch (e) { /* JSON 아님 → 기본 문구 */ }
+                        if (!msg) msg = '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.';
+                    }
                     var err = new Error(expired
                         ? '로그인 세션이 만료되었습니다. 다시 로그인해 주세요.'
-                        : 'HTTP ' + r.status + ': ' + (t || r.statusText));
+                        : (limited ? msg : 'HTTP ' + r.status + ': ' + (t || r.statusText)));
                     err.status = r.status;
                     err.body = t;
                     if (expired) err.sessionExpired = true;
+                    if (limited) {
+                        err.rateLimited = true;
+                        var ra = r.headers.get('Retry-After');
+                        if (ra) err.retryAfterSeconds = parseInt(ra, 10);
+                    }
                     throw err;
                 });
             }

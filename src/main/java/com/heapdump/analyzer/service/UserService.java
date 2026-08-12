@@ -21,10 +21,14 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    /** 메모 덮어쓰기 직전 스냅샷 기록 — 의존은 단방향(MemoHistoryService 는 UserService 를 모른다). */
+    private final MemoHistoryService memoHistory;
 
-    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder) {
+    public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder,
+                       MemoHistoryService memoHistory) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
+        this.memoHistory = memoHistory;
     }
 
     @PostConstruct
@@ -235,12 +239,26 @@ public class UserService {
     }
 
     public LocalDateTime saveMemo(String username, String text) {
+        return saveMemoInternal(username, text, MemoHistoryService.REASON_SAVE);
+    }
+
+    /**
+     * 메모 저장 공통 경로. <b>덮어쓰기 직전 내용을 이력에 남긴 뒤</b> 새 값을 기록한다.
+     * 이력 기록이 실패해도 저장 자체는 진행한다 — 이력은 안전망이지 저장의 전제가 아니다.
+     */
+    private LocalDateTime saveMemoInternal(String username, String text, String reason) {
         String memo = text == null ? "" : text;
         if (memo.getBytes(StandardCharsets.UTF_8).length > MEMO_MAX_BYTES) {
             throw new IllegalArgumentException("메모는 최대 10MB까지 저장할 수 있습니다.");
         }
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
+        String previous = user.getMemo();
+        if (!memo.equals(previous == null ? "" : previous)) {
+            recordHistorySafely(username, previous, reason);
+        }
+
         user.setMemo(memo.isEmpty() ? null : memo);
         LocalDateTime now = memo.isEmpty() ? null : LocalDateTime.now();
         user.setMemoUpdatedAt(now);
@@ -251,9 +269,38 @@ public class UserService {
     public void clearMemo(String username) {
         User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        recordHistorySafely(username, user.getMemo(), MemoHistoryService.REASON_CLEAR);
         user.setMemo(null);
         user.setMemoUpdatedAt(null);
         userRepository.save(user);
+    }
+
+    /**
+     * 이력 스냅샷을 특정 시점 내용으로 되돌린다.
+     * 되돌리기 직전의 현재 내용도 이력에 남으므로 <b>복원 자체를 다시 취소</b>할 수 있다.
+     *
+     * @return 복원된 본문과 저장 시각
+     */
+    public RestoredMemo restoreMemo(String username, Long historyId) {
+        String text = memoHistory.require(username, historyId).getMemo();
+        String value = text == null ? "" : text;
+        LocalDateTime updatedAt = saveMemoInternal(username, value, MemoHistoryService.REASON_RESTORE);
+        logger.info("[UserService] 메모 이력 복원 — user={}, historyId={}, bytes={}",
+                username, historyId, value.getBytes(StandardCharsets.UTF_8).length);
+        return new RestoredMemo(value, updatedAt);
+    }
+
+    /** 복원 결과 — 컨트롤러가 본문을 그대로 화면에 반영할 수 있도록 함께 돌려준다. */
+    public record RestoredMemo(String memo, LocalDateTime memoUpdatedAt) { }
+
+    private void recordHistorySafely(String username, String previous, String reason) {
+        try {
+            memoHistory.record(username, previous, reason);
+        } catch (Exception e) {
+            // 이력 실패로 사용자의 저장을 막지 않는다 (안전망 < 본 기능)
+            logger.error("[UserService] 메모 이력 기록 실패 — user={}, reason={}, err={}: {}",
+                    username, reason, e.getClass().getSimpleName(), e.getMessage());
+        }
     }
 
     /** 메모장 폰트 설정 — 계정별 영속화(브라우저 localStorage 가 아닌 DB). 화이트리스트 검증. */
@@ -285,5 +332,32 @@ public class UserService {
     /** memo_autosave 의 null(미설정) → 기본 ON 해석을 한 곳에서만 수행. */
     public static boolean isMemoAutosaveOn(User user) {
         return user == null || user.getMemoAutosave() == null || user.getMemoAutosave();
+    }
+
+    /**
+     * My Account 레이아웃 — 계정별 영속화(브라우저 localStorage 가 아닌 DB, memoFont 와 동일 정책).
+     * 화이트리스트 밖의 값은 저장하지 않는다 — 그대로 두면 CSS 클래스로 흘러간다.
+     */
+    private static final java.util.Set<String> ALLOWED_ACCOUNT_LAYOUTS = java.util.Set.of("stack", "split");
+
+    /**
+     * null/미지원 값 → 기본 'stack' 해석을 한 곳에서만 수행.
+     * ⚠ {@code Set.of(...)} 는 {@code contains(null)} 에 NPE 를 던진다 — 컬럼이 아직 null 인
+     * 기존 계정 전원이 /account 진입에서 500 을 맞는다. null 검사를 먼저 할 것.
+     */
+    public static String accountLayoutOf(User user) {
+        String v = (user == null) ? null : user.getAccountLayout();
+        return (v != null && ALLOWED_ACCOUNT_LAYOUTS.contains(v)) ? v : "stack";
+    }
+
+    public void saveAccountLayout(String username, String layout) {
+        String v = (layout == null) ? "" : layout.trim();   // null 은 빈 문자열로 — Set.of 는 contains(null) 에 NPE
+        if (!ALLOWED_ACCOUNT_LAYOUTS.contains(v)) {
+            throw new IllegalArgumentException("지원하지 않는 레이아웃입니다: " + v);
+        }
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        user.setAccountLayout(v);
+        userRepository.save(user);
     }
 }

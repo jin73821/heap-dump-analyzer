@@ -48,6 +48,38 @@
         return s;
     };
 
+    function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+    /**
+     * 지금 시각을 <b>로컬 기준</b> 'yyyy-MM-ddTHH:mm:ss' 로 — 서버 LocalDateTime 과 같은 규약.
+     *
+     * ⚠ `new Date().toISOString()` 을 쓰면 안 된다. 그건 **UTC** 라서 `formatTs`(문자열 앞부분만
+     * 자르는 함수)로 표시하면 KST 기준 9시간 과거로 보인다 — 서버가 주는 memoUpdatedAt(로컬)과
+     * 나란히 놓이는 화면이라 사용자가 어느 시점 메모인지 오판하게 된다.
+     */
+    Memo.localTs = function () {
+        var d = new Date();
+        return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+             + 'T' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    };
+
+    /**
+     * 브라우저 보관 시각 표시용. 2026-08-12 이전에 저장된 값은 UTC ISO(`...Z`)라
+     * 그대로 자르면 9시간 어긋나므로 로컬로 환산해 보여준다(레거시 호환).
+     */
+    Memo.formatBackupTs = function (at) {
+        if (!at) return '';
+        var s = String(at);
+        if (/(Z|[+-]\d{2}:?\d{2})$/.test(s)) {
+            var d = new Date(s);
+            if (!isNaN(d.getTime())) {
+                return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+                     + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+            }
+        }
+        return Memo.formatTs(s);
+    };
+
     /** 에러 객체 → 사용자 표시 메시지 (Common.fetchJSON 은 non-2xx 를 throw + e.body 에 raw) */
     Memo.errorMessage = function (e) {
         if (!e) return '';
@@ -148,6 +180,23 @@
         } catch (e) { /* 동일 */ }
     };
 
+    // ── 변경 이력 API ──────────────────────────────────────────
+    // 서버 memo_history — 브라우저 localStorage 백업(memoBackup:*)과는 별개다.
+    // 백업은 "서버에 못 넣은 내용", 이력은 "서버에 저장됐다가 덮인 내용".
+
+    Memo.historyList = function () {
+        return Common.fetchJSON('/api/account/memo/history').then(assertSaved);
+    };
+
+    Memo.historyGet = function (id) {
+        return Common.fetchJSON('/api/account/memo/history/' + encodeURIComponent(id)).then(assertSaved);
+    };
+
+    Memo.historyRestore = function (id) {
+        return Common.fetchJSON('/api/account/memo/history/' + encodeURIComponent(id) + '/restore',
+            { method: 'POST' }).then(assertSaved);
+    };
+
     Memo.setFont = function (val) {
         return Common.fetchJSON('/api/account/memo-font', {
             method: 'POST', body: JSON.stringify({ font: val })
@@ -236,7 +285,7 @@
     Memo.backup = function (username, text) {
         try {
             localStorage.setItem(backupKey(username),
-                JSON.stringify({ text: text == null ? '' : text, at: new Date().toISOString() }));
+                JSON.stringify({ text: text == null ? '' : text, at: Memo.localTs() }));
         } catch (e) { /* 용량 초과 등 — 창에는 내용이 남아 있으므로 치명적이지 않음 */ }
     };
 
@@ -250,6 +299,400 @@
 
     Memo.clearBackup = function (username) {
         try { localStorage.removeItem(backupKey(username)); } catch (e) { /* 무시 */ }
+    };
+
+    // ── 복구 되돌리기 (undo) ────────────────────────────────────
+    // 백업 복구는 편집 중인 내용을 통째로 덮어쓴다. 서버에는 메모 이력 테이블이 없어
+    // (users.memo 단일 컬럼) 한 번 덮이면 되돌릴 방법이 없으므로, 덮기 직전 스냅샷을
+    // 브라우저에 남겨 "복구 이전으로" 되돌릴 수 있게 한다.
+
+    function undoKey(username) { return 'memoUndo:' + (username || '_'); }
+
+    Memo.saveUndo = function (username, text) {
+        try {
+            localStorage.setItem(undoKey(username),
+                JSON.stringify({ text: text == null ? '' : text, at: Memo.localTs() }));
+            return true;
+        } catch (e) { return false; }   // 용량 초과 등 — 복구 자체는 진행하되 되돌리기만 불가
+    };
+
+    /** {text, at} 또는 null. 제거하지 않는다(사용자가 되돌리기를 누를 때까지 유지). */
+    Memo.readUndo = function (username) {
+        try {
+            var v = localStorage.getItem(undoKey(username));
+            return v ? JSON.parse(v) : null;
+        } catch (e) { return null; }
+    };
+
+    Memo.clearUndo = function (username) {
+        try { localStorage.removeItem(undoKey(username)); } catch (e) { /* 무시 */ }
+    };
+
+    // ── 백업 내용 뷰어 (모달) ───────────────────────────────────
+    // "저장되지 못한 메모가 남아 있습니다" 안내만으로는 무엇이 복구되는지 알 수 없고,
+    // 복구는 편집 중인 내용을 덮어쓰므로 사용자가 눈으로 확인한 뒤 결정할 수 있어야 한다.
+    // CSS·DOM 을 스스로 주입하는 싱글턴이라 소비 페이지는 호출 한 줄이면 된다
+    // (krds-tooltip.js 와 동일 패턴 — 두 페이지에 마크업을 복붙하면 drift 가 생긴다).
+
+    /** 미리보기 렌더 상한 — 10MB 를 <pre> 에 통째로 넣으면 브라우저가 멈춘다. */
+    var PREVIEW_MAX_CHARS = 200000;
+
+    var bv = null;   // 싱글턴 DOM 참조
+
+    function injectViewerCss() {
+        if (document.getElementById('memo-bv-css')) return;
+        var css = ''
+            + '.memo-bv-ov{position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:1200;'
+            + 'display:flex;align-items:center;justify-content:center;padding:20px}'
+            + '.memo-bv-box{background:#fff;border-radius:12px;width:min(860px,100%);max-height:min(86vh,760px);'
+            + 'display:flex;flex-direction:column;box-shadow:0 18px 48px rgba(0,0,0,.25);overflow:hidden}'
+            + '.memo-bv-hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #E5E7EB}'
+            + '.memo-bv-hd h3{margin:0;font-size:15px;font-weight:700;color:#111827;flex:1 1 auto}'
+            + '.memo-bv-x{border:none;background:none;font-size:20px;line-height:1;color:#9CA3AF;cursor:pointer;padding:2px 6px}'
+            + '.memo-bv-x:hover{color:#374151}'
+            + '.memo-bv-meta{padding:10px 18px 0;font-size:11.5px;color:#6B7280}'
+            + '.memo-bv-tabs{display:flex;gap:6px;padding:10px 18px 0}'
+            + '.memo-bv-tabs button{border:1px solid #E5E7EB;background:#F9FAFB;color:#6B7280;'
+            + 'padding:6px 12px;border-radius:8px 8px 0 0;font-size:12px;font-weight:600;cursor:pointer}'
+            + '.memo-bv-tabs button.on{background:#fff;color:#1D4ED8;border-color:#BFDBFE;border-bottom-color:#fff}'
+            + '.memo-bv-tabs .sz{font-weight:400;color:#9CA3AF;margin-left:4px}'
+            + '.memo-bv-body{flex:1 1 auto;overflow:auto;margin:0 18px;padding:12px 14px;border:1px solid #E5E7EB;'
+            + 'border-radius:0 8px 8px 8px;background:#FAFAFA;font-family:\'D2Coding\',\'JetBrains Mono\',monospace;'
+            + 'font-size:12.5px;line-height:1.65;color:#111827;white-space:pre-wrap;word-break:break-word;min-height:120px}'
+            + '.memo-bv-body.empty{color:#9CA3AF;font-style:italic}'
+            + '.memo-bv-note{padding:10px 18px 0;font-size:11.5px;line-height:1.6;color:#B45309}'
+            + '.memo-bv-note.same{color:#6B7280}'
+            + '.memo-bv-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;padding:14px 18px}'
+            + '.memo-bv-btns button{padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid transparent}'
+            + '.memo-bv-btns .bv-discard{background:#fff;border-color:#FCA5A5;color:#B91C1C}'
+            + '.memo-bv-btns .bv-close{background:#fff;border-color:#D1D5DB;color:#374151}'
+            + '.memo-bv-btns .bv-restore{background:#2563EB;color:#fff}'
+            + '.memo-bv-btns button:hover{opacity:.85}'
+            + '@media(max-width:640px){.memo-bv-box{max-height:92vh}.memo-bv-btns{justify-content:stretch}'
+            + '.memo-bv-btns button{flex:1 1 auto}}';
+        var st = document.createElement('style');
+        st.id = 'memo-bv-css';
+        st.textContent = css;
+        document.head.appendChild(st);
+    }
+
+    function buildViewer() {
+        injectViewerCss();
+        var ov = document.createElement('div');
+        ov.className = 'memo-bv-ov';
+        ov.setAttribute('role', 'dialog');
+        ov.setAttribute('aria-modal', 'true');
+        ov.setAttribute('aria-label', '저장되지 못한 메모 내용');
+        ov.hidden = true;
+        ov.innerHTML = ''
+            + '<div class="memo-bv-box">'
+            +   '<div class="memo-bv-hd"><h3>저장되지 못한 메모</h3>'
+            +     '<button type="button" class="memo-bv-x" aria-label="닫기">&times;</button></div>'
+            +   '<div class="memo-bv-meta"></div>'
+            +   '<div class="memo-bv-tabs">'
+            +     '<button type="button" data-tab="backup" class="on">저장 안 된 내용<span class="sz"></span></button>'
+            +     '<button type="button" data-tab="current">현재 편집 중<span class="sz"></span></button>'
+            +   '</div>'
+            +   '<pre class="memo-bv-body"></pre>'
+            +   '<div class="memo-bv-note"></div>'
+            +   '<div class="memo-bv-btns">'
+            +     '<button type="button" class="bv-discard">버리기</button>'
+            +     '<button type="button" class="bv-close">닫기</button>'
+            +     '<button type="button" class="bv-restore">이 내용으로 복구</button>'
+            +   '</div>'
+            + '</div>';
+        document.body.appendChild(ov);
+
+        var api = {
+            ov: ov,
+            meta: ov.querySelector('.memo-bv-meta'),
+            body: ov.querySelector('.memo-bv-body'),
+            note: ov.querySelector('.memo-bv-note'),
+            tabs: ov.querySelectorAll('.memo-bv-tabs button'),
+            texts: { backup: '', current: '' },
+            cfg: {}
+        };
+
+        function close() {
+            ov.hidden = true;
+            document.removeEventListener('keydown', onKey);
+        }
+        function onKey(ev) { if (ev.key === 'Escape') close(); }
+        api.close = close;
+        api.bindEsc = function () { document.addEventListener('keydown', onKey); };
+
+        function showTab(name) {
+            for (var i = 0; i < api.tabs.length; i++) {
+                api.tabs[i].classList.toggle('on', api.tabs[i].getAttribute('data-tab') === name);
+            }
+            var t = api.texts[name] || '';
+            var truncated = t.length > PREVIEW_MAX_CHARS;
+            api.body.textContent = truncated
+                ? t.substring(0, PREVIEW_MAX_CHARS) + '\n\n… (이하 생략 — 복구하면 전체가 들어갑니다)'
+                : (t === '' ? '(내용 없음)' : t);
+            api.body.classList.toggle('empty', t === '');
+            api.body.scrollTop = 0;
+        }
+        api.showTab = showTab;
+
+        for (var i = 0; i < api.tabs.length; i++) {
+            api.tabs[i].addEventListener('click', function () {
+                showTab(this.getAttribute('data-tab'));
+            });
+        }
+        ov.querySelector('.memo-bv-x').addEventListener('click', close);
+        ov.querySelector('.bv-close').addEventListener('click', close);
+        ov.querySelector('.bv-discard').addEventListener('click', function () {
+            close();
+            if (api.cfg.onDiscard) api.cfg.onDiscard();
+        });
+        ov.querySelector('.bv-restore').addEventListener('click', function () {
+            close();
+            if (api.cfg.onRestore) api.cfg.onRestore();
+        });
+        ov.addEventListener('click', function (ev) { if (ev.target === ov) close(); });
+
+        return api;
+    }
+
+    /**
+     * 백업 내용 미리보기 모달.
+     * cfg = { backup: {text, at}, current: string, onRestore?: fn, onDiscard?: fn }
+     * 내용은 textContent 로만 넣는다(사용자 입력이 그대로 들어오므로 innerHTML 금지).
+     */
+    Memo.openBackupViewer = function (cfg) {
+        if (!cfg || !cfg.backup) return;
+        if (!bv) bv = buildViewer();
+        bv.cfg = cfg;
+
+        var bText = typeof cfg.backup.text === 'string' ? cfg.backup.text : '';
+        var cText = typeof cfg.current === 'string' ? cfg.current : '';
+        bv.texts.backup = bText;
+        bv.texts.current = cText;
+
+        bv.meta.textContent = '브라우저 임시 보관: ' + (Memo.formatBackupTs(cfg.backup.at) || '시각 미상')
+            + ' · ' + Memo.fmtBytes(Memo.utf8ByteLen(bText));
+        bv.tabs[0].querySelector('.sz').textContent = ' (' + Memo.fmtBytes(Memo.utf8ByteLen(bText)) + ')';
+        bv.tabs[1].querySelector('.sz').textContent = ' (' + Memo.fmtBytes(Memo.utf8ByteLen(cText)) + ')';
+
+        var same = bText === cText;
+        bv.note.classList.toggle('same', same);
+        bv.note.textContent = same
+            ? '현재 편집 중인 내용과 동일합니다 — 복구해도 달라지는 것이 없습니다.'
+            : '⚠ 복구하면 현재 편집 중인 내용이 이 내용으로 바뀝니다. 바꾼 뒤에도 [복구 이전으로 되돌리기] 로 취소할 수 있습니다.';
+
+        bv.showTab('backup');
+        bv.ov.hidden = false;
+        bv.bindEsc();
+        bv.ov.querySelector('.bv-restore').focus();
+    };
+
+    // ── 변경 이력 뷰어 (모달) ───────────────────────────────────
+    // 서버 memo_history 목록 + 미리보기 + 복원. 백업 뷰어와 같은 싱글턴 주입 패턴이라
+    // 소비 페이지는 Memo.openHistoryViewer(cfg) 한 줄이면 된다.
+
+    var REASON_LABEL = { save: '저장 전', restore: '복원 전', clear: '초기화 전' };
+
+    var hv = null;
+
+    function injectHistoryCss() {
+        if (document.getElementById('memo-hv-css')) return;
+        var css = ''
+            + '.memo-hv-ov{position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:1200;'
+            + 'display:flex;align-items:center;justify-content:center;padding:20px}'
+            + '.memo-hv-box{background:#fff;border-radius:12px;width:min(960px,100%);max-height:min(88vh,780px);'
+            + 'display:flex;flex-direction:column;box-shadow:0 18px 48px rgba(0,0,0,.25);overflow:hidden}'
+            + '.memo-hv-hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #E5E7EB}'
+            + '.memo-hv-hd h3{margin:0;font-size:15px;font-weight:700;color:#111827;flex:1 1 auto}'
+            + '.memo-hv-x{border:none;background:none;font-size:20px;line-height:1;color:#9CA3AF;cursor:pointer;padding:2px 6px}'
+            + '.memo-hv-x:hover{color:#374151}'
+            + '.memo-hv-note{padding:9px 18px 0;font-size:11.5px;color:#6B7280;line-height:1.6}'
+            + '.memo-hv-main{flex:1 1 auto;display:flex;gap:12px;padding:12px 18px;min-height:0}'
+            + '.memo-hv-list{flex:0 0 290px;overflow:auto;border:1px solid #E5E7EB;border-radius:8px;background:#FCFCFD}'
+            + '.memo-hv-item{padding:9px 11px;border-bottom:1px solid #F3F4F6;cursor:pointer}'
+            + '.memo-hv-item:hover{background:#F9FAFB}'
+            + '.memo-hv-item.on{background:#EFF6FF;box-shadow:inset 3px 0 0 #2563EB}'
+            + '.memo-hv-item .t{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#374151;font-weight:600}'
+            + '.memo-hv-item .g{margin-left:auto;font-weight:400;color:#9CA3AF}'
+            + '.memo-hv-item .p{margin-top:3px;font-size:11px;color:#9CA3AF;overflow:hidden;'
+            + 'text-overflow:ellipsis;white-space:nowrap}'
+            + '.memo-hv-badge{display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:700}'
+            + '.memo-hv-badge.save{background:#E0E7FF;color:#3730A3}'
+            + '.memo-hv-badge.restore{background:#FEF3C7;color:#92400E}'
+            + '.memo-hv-badge.clear{background:#FEE2E2;color:#991B1B}'
+            + '.memo-hv-body{flex:1 1 auto;overflow:auto;padding:12px 14px;border:1px solid #E5E7EB;border-radius:8px;'
+            + 'background:#FAFAFA;font-family:\'D2Coding\',\'JetBrains Mono\',monospace;font-size:12.5px;'
+            + 'line-height:1.65;color:#111827;white-space:pre-wrap;word-break:break-word;margin:0}'
+            + '.memo-hv-body.empty{color:#9CA3AF;font-style:italic}'
+            + '.memo-hv-btns{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;padding:12px 18px;'
+            + 'border-top:1px solid #F3F4F6}'
+            + '.memo-hv-btns button{padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;'
+            + 'cursor:pointer;border:1px solid transparent}'
+            + '.memo-hv-btns .hv-close{background:#fff;border-color:#D1D5DB;color:#374151}'
+            + '.memo-hv-btns .hv-restore{background:#2563EB;color:#fff}'
+            + '.memo-hv-btns .hv-restore:disabled{background:#93C5FD;cursor:not-allowed}'
+            + '.memo-hv-btns button:hover:not(:disabled){opacity:.85}'
+            + '@media(max-width:760px){.memo-hv-main{flex-direction:column}'
+            + '.memo-hv-list{flex:0 0 34%;min-height:120px}.memo-hv-btns{justify-content:stretch}'
+            + '.memo-hv-btns button{flex:1 1 auto}}';
+        var st = document.createElement('style');
+        st.id = 'memo-hv-css';
+        st.textContent = css;
+        document.head.appendChild(st);
+    }
+
+    function buildHistoryViewer() {
+        injectHistoryCss();
+        var ov = document.createElement('div');
+        ov.className = 'memo-hv-ov';
+        ov.setAttribute('role', 'dialog');
+        ov.setAttribute('aria-modal', 'true');
+        ov.setAttribute('aria-label', '메모 변경 이력');
+        ov.hidden = true;
+        ov.innerHTML = ''
+            + '<div class="memo-hv-box">'
+            +   '<div class="memo-hv-hd"><h3>메모 변경 이력</h3>'
+            +     '<button type="button" class="memo-hv-x" aria-label="닫기">&times;</button></div>'
+            +   '<div class="memo-hv-note"></div>'
+            +   '<div class="memo-hv-main">'
+            +     '<div class="memo-hv-list"></div>'
+            +     '<pre class="memo-hv-body"></pre>'
+            +   '</div>'
+            +   '<div class="memo-hv-btns">'
+            +     '<button type="button" class="hv-close">닫기</button>'
+            +     '<button type="button" class="hv-restore" disabled>이 시점으로 복원</button>'
+            +   '</div>'
+            + '</div>';
+        document.body.appendChild(ov);
+
+        var api = {
+            ov: ov,
+            note: ov.querySelector('.memo-hv-note'),
+            list: ov.querySelector('.memo-hv-list'),
+            body: ov.querySelector('.memo-hv-body'),
+            restoreBtn: ov.querySelector('.hv-restore'),
+            selectedId: null,
+            cfg: {}
+        };
+
+        function close() {
+            ov.hidden = true;
+            document.removeEventListener('keydown', onKey);
+        }
+        function onKey(ev) { if (ev.key === 'Escape') close(); }
+        api.close = close;
+        api.bindEsc = function () { document.addEventListener('keydown', onKey); };
+
+        ov.querySelector('.memo-hv-x').addEventListener('click', close);
+        ov.querySelector('.hv-close').addEventListener('click', close);
+        ov.addEventListener('click', function (ev) { if (ev.target === ov) close(); });
+
+        api.restoreBtn.addEventListener('click', function () {
+            if (api.selectedId == null) return;
+            var id = api.selectedId;
+            api.restoreBtn.disabled = true;
+            Memo.historyRestore(id).then(function (d) {
+                close();
+                if (api.cfg.onRestored) api.cfg.onRestored(d);
+            }).catch(function (e) {
+                api.restoreBtn.disabled = false;
+                if (api.cfg.onError) api.cfg.onError(e);
+            });
+        });
+
+        return api;
+    }
+
+    /** 목록 1건 렌더 — 사용자 입력(preview)은 textContent 로만 넣는다. */
+    function renderHistoryRow(item) {
+        var row = document.createElement('div');
+        row.className = 'memo-hv-item';
+        row.setAttribute('data-id', item.id);
+
+        var t = document.createElement('div');
+        t.className = 't';
+        var badge = document.createElement('span');
+        badge.className = 'memo-hv-badge ' + (REASON_LABEL[item.reason] ? item.reason : 'save');
+        badge.textContent = REASON_LABEL[item.reason] || '저장 전';
+        var when = document.createElement('span');
+        when.textContent = Memo.formatBackupTs(item.createdAt) || '';
+        var size = document.createElement('span');
+        size.className = 'g';
+        size.textContent = Memo.fmtBytes(item.byteSize || 0);
+        t.appendChild(badge);
+        t.appendChild(when);
+        t.appendChild(size);
+
+        var p = document.createElement('div');
+        p.className = 'p';
+        p.textContent = item.preview || '(내용 없음)';
+
+        row.appendChild(t);
+        row.appendChild(p);
+        return row;
+    }
+
+    /**
+     * 변경 이력 모달.
+     * cfg = { onRestored?: fn(data), onError?: fn(err) }
+     */
+    Memo.openHistoryViewer = function (cfg) {
+        if (!hv) hv = buildHistoryViewer();
+        hv.cfg = cfg || {};
+        hv.selectedId = null;
+        hv.restoreBtn.disabled = true;
+        hv.list.textContent = '';
+        hv.body.textContent = '불러오는 중…';
+        hv.body.classList.add('empty');
+        hv.note.textContent = '';
+        hv.ov.hidden = false;
+        hv.bindEsc();
+
+        Memo.historyList().then(function (d) {
+            var items = d.items || [];
+            hv.note.textContent = d.enabled === false
+                ? '변경 이력 기록이 비활성화되어 있습니다 (관리자 설정).'
+                : ('저장 직전 내용을 최근 ' + (d.retentionDays || 7) + '일 · 최대 '
+                   + (d.maxPerUser || 100) + '건까지 보관합니다. 항목을 고르면 내용을 확인할 수 있습니다.');
+
+            if (!items.length) {
+                hv.body.textContent = '보관된 이력이 없습니다.';
+                hv.body.classList.add('empty');
+                return;
+            }
+            hv.body.textContent = '왼쪽 목록에서 시점을 선택하세요.';
+            hv.body.classList.add('empty');
+
+            items.forEach(function (item) {
+                var row = renderHistoryRow(item);
+                row.addEventListener('click', function () {
+                    var rows = hv.list.querySelectorAll('.memo-hv-item');
+                    for (var i = 0; i < rows.length; i++) rows[i].classList.remove('on');
+                    row.classList.add('on');
+                    hv.selectedId = item.id;
+                    hv.restoreBtn.disabled = true;
+                    hv.body.textContent = '불러오는 중…';
+                    hv.body.classList.add('empty');
+                    Memo.historyGet(item.id).then(function (detail) {
+                        if (hv.selectedId !== item.id) return;   // 빠른 연속 클릭 — 마지막 선택만 반영
+                        var text = detail.memo || '';
+                        hv.body.textContent = text === '' ? '(내용 없음)' : text;
+                        hv.body.classList.toggle('empty', text === '');
+                        hv.body.scrollTop = 0;
+                        hv.restoreBtn.disabled = false;
+                    }).catch(function (e) {
+                        hv.body.textContent = '내용을 불러오지 못했습니다: ' + Memo.errorMessage(e);
+                        hv.body.classList.add('empty');
+                        if (hv.cfg.onError) hv.cfg.onError(e);
+                    });
+                });
+                hv.list.appendChild(row);
+            });
+        }).catch(function (e) {
+            hv.body.textContent = '이력을 불러오지 못했습니다: ' + Memo.errorMessage(e);
+            hv.body.classList.add('empty');
+            if (hv.cfg.onError) hv.cfg.onError(e);
+        });
     };
 
     // ── 자동 저장 ──────────────────────────────────────────────

@@ -2,8 +2,11 @@ package com.heapdump.analyzer.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.heapdump.analyzer.config.HeapDumpConfig;
+import com.heapdump.analyzer.util.SecretValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
@@ -27,6 +30,15 @@ import java.util.Map;
  *   - SSL 검증 토글 (사내 사설 CA 환경)
  *   - settings.json / application.properties 영속화는 호출자(HeapDumpAnalyzerService)에서 트리거 —
  *     본 클래스는 collectSettings/applyFromSettings/collectApplicationProperties 로 raw map 만 노출.
+ *
+ * <p><b>호출량 제한의 단일 초크포인트</b> (2026-08-12) — 실제로 업스트림 API 를 때리는 메서드는
+ * 전부 여기 5 곳(위 4 개 + Vision 스트리밍 overload)뿐이므로 게이트를 컨트롤러가 아니라 이 층에 둔다.
+ * 컨트롤러마다 거는 방식은 새 엔드포인트가 추가될 때 누락되기 쉽다.
+ * <b>새 LLM 호출 메서드를 추가하면 반드시 {@code acquireGate(scope)} 로 감쌀 것.</b>
+ *
+ * <p>⚠ 게이트는 {@link SecurityContextHolder} 로 호출자를 식별한다. SSE 처럼 별도 스레드에서
+ * 호출하는 경로는 스레드 spawn 시 {@code DelegatingSecurityContextRunnable} 로 감싸야 사용자별
+ * 버킷이 제대로 잡힌다 (안 감싸면 전원이 "system" 버킷을 공유한다).
  */
 @Component
 public class LlmConfigService {
@@ -49,7 +61,11 @@ public class LlmConfigService {
         "kimi-k2p5", "minimax-m2p5", "minimax-m2p7"
     );
 
+    /** 손상된 시크릿의 마스킹 표기 — 정상처럼 보이면 사용자가 문제를 인지할 수 없다. */
+    private static final String CORRUPTED_MASK = "손상됨";
+
     private final HeapDumpConfig config;
+    private final LlmRateLimitService rateLimit;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // ── 런타임 설정 (12 개 필드) ─────────────────────────────────
@@ -57,7 +73,10 @@ public class LlmConfigService {
     private volatile String  llmProvider;
     private volatile String  llmApiUrl;
     private volatile String  llmModel;
-    private volatile String  llmApiKey;
+    /** settings.json / application.properties 에는 ENC(...) 로 저장 (2026-08-12). */
+    private final SecretValue llmApiKey = SecretValue.empty();
+    /** 저장된 키가 아직 평문이면 true — 기동 시 1회 재봉인 트리거용. */
+    private volatile boolean llmApiKeyUnsealed;
     private volatile int     llmMaxInputTokens;
     private volatile int     llmMaxOutputTokens;
     private volatile int     llmTimeoutConnectSeconds;
@@ -70,8 +89,9 @@ public class LlmConfigService {
     /** Vision API를 기본 지원하는 provider 목록 */
     public static final List<String> VISION_SUPPORTED_PROVIDERS = Arrays.asList("claude", "gpt");
 
-    public LlmConfigService(HeapDumpConfig config) {
+    public LlmConfigService(HeapDumpConfig config, LlmRateLimitService rateLimit) {
         this.config = config;
+        this.rateLimit = rateLimit;
     }
 
     @PostConstruct
@@ -80,7 +100,7 @@ public class LlmConfigService {
         this.llmProvider = config.getLlmProvider();
         this.llmApiUrl = config.getLlmApiUrl();
         this.llmModel = config.getLlmModel();
-        this.llmApiKey = config.getLlmApiKey();
+        adopt(config.getLlmApiKey());
         this.llmMaxInputTokens = config.getLlmMaxInputTokens();
         this.llmMaxOutputTokens = config.getLlmMaxOutputTokens();
         this.llmTimeoutConnectSeconds = config.getLlmTimeoutConnectSeconds();
@@ -94,7 +114,27 @@ public class LlmConfigService {
     public void applyEnvOverride() {
         String envKey = System.getenv("LLM_API_KEY");
         if (envKey != null && !envKey.trim().isEmpty()) {
-            this.llmApiKey = envKey;
+            this.llmApiKey.set(envKey);
+            this.llmApiKeyUnsealed = false;   // set() 한 값은 다음 저장 때 ENC 로 봉인된다
+            logger.info("[LLM] 환경변수 LLM_API_KEY 적용 (length={})", envKey.trim().length());
+        }
+    }
+
+    /**
+     * 저장값을 SecretValue 에 로드하고 손상 시 경고. 예외를 던지지 않는다.
+     * (RagConfigService.adopt 와 동일 패턴 — 복호화 실패로 기동이 막히면 안 된다.)
+     */
+    private void adopt(String stored) {
+        SecretValue loaded = SecretValue.load(stored);
+        this.llmApiKey.adoptFrom(loaded);
+        // 값은 있는데 ENC(...) 형식이 아니면 = 레거시 평문. 다음 persist 에서 봉인 대상.
+        this.llmApiKeyUnsealed = stored != null && !stored.trim().isEmpty()
+                && !"null".equals(stored) && !(stored.startsWith("ENC(") && stored.endsWith(")"));
+        if (!loaded.isHealthy()) {
+            logger.warn("[LLM] 저장된 API 키를 사용할 수 없습니다 — {} (/settings/llm 에서 재입력 필요)",
+                    loaded.issue());
+        } else if (this.llmApiKeyUnsealed) {
+            logger.warn("[LLM] API 키가 평문으로 저장돼 있습니다 — 다음 설정 저장 시 ENC(...) 로 자동 봉인됩니다");
         }
     }
 
@@ -104,7 +144,12 @@ public class LlmConfigService {
     public String  getLlmProvider()             { return llmProvider; }
     public String  getLlmApiUrl()               { return llmApiUrl; }
     public String  getLlmModel()                { return llmModel; }
-    public String  getLlmApiKey()               { return llmApiKey; }
+    /** 런타임 소비용 — 손상값은 절대 내보내지 않는다(빈 문자열). */
+    public String  getLlmApiKey()               { return llmApiKey.usable(); }
+    public boolean isLlmApiKeyHealthy()         { return llmApiKey.isHealthy(); }
+    public String  getLlmApiKeyIssue()          { return llmApiKey.issue() != null ? llmApiKey.issue() : ""; }
+    /** 저장본이 아직 평문인지 — 기동 시 1회 재봉인 판단용. */
+    public boolean isLlmApiKeyUnsealed()        { return llmApiKeyUnsealed && llmApiKey.isSet(); }
     public int     getLlmMaxInputTokens()       { return llmMaxInputTokens; }
     public int     getLlmMaxOutputTokens()      { return llmMaxOutputTokens; }
     public int     getLlmTimeoutConnectSeconds() { return llmTimeoutConnectSeconds; }
@@ -126,17 +171,21 @@ public class LlmConfigService {
     }
 
     public void setLlmApiKey(String apiKey) {
-        this.llmApiKey = apiKey;
+        this.llmApiKey.set(apiKey);
+        this.llmApiKeyUnsealed = false;   // 새 값은 저장 시 ENC 로 봉인된다
         logger.info("[LLM] API key updated (length={})", apiKey != null ? apiKey.length() : 0);
     }
 
+    /** 손상값은 마스킹 대신 손상 표기 — 정상처럼 보이면 사용자가 문제를 인지할 수 없다. */
     public String getLlmApiKeyMasked() {
-        if (llmApiKey == null || llmApiKey.length() < 8) return "****";
-        return llmApiKey.substring(0, 7) + "..." + llmApiKey.substring(llmApiKey.length() - 4);
+        if (!llmApiKey.isHealthy()) return CORRUPTED_MASK;
+        String v = llmApiKey.raw();
+        if (v.length() < 8) return "****";
+        return v.substring(0, 7) + "..." + v.substring(v.length() - 4);
     }
 
     public boolean isLlmApiKeySet() {
-        return llmApiKey != null && !llmApiKey.trim().isEmpty();
+        return llmApiKey.isSet();
     }
 
     public String getLlmChatSystemPrompt() { return llmChatSystemPrompt; }
@@ -200,7 +249,7 @@ public class LlmConfigService {
             this.llmModel = String.valueOf(saved.get("llmModel"));
         }
         if (saved.containsKey("llmApiKey")) {
-            this.llmApiKey = String.valueOf(saved.get("llmApiKey"));
+            adopt(String.valueOf(saved.get("llmApiKey")));
         }
         if (saved.containsKey("llmMaxInputTokens")) {
             this.llmMaxInputTokens = Integer.parseInt(String.valueOf(saved.get("llmMaxInputTokens")));
@@ -237,7 +286,9 @@ public class LlmConfigService {
         settings.put("llmProvider", llmProvider);
         settings.put("llmApiUrl", llmApiUrl);
         settings.put("llmModel", llmModel);
-        settings.put("llmApiKey", llmApiKey);
+        if (putSecret(settings, "llmApiKey", llmApiKey)) {
+            llmApiKeyUnsealed = false;   // 봉인된 값이 기록됐다 — 평문 경고 해제
+        }
         settings.put("llmMaxInputTokens", llmMaxInputTokens);
         settings.put("llmMaxOutputTokens", llmMaxOutputTokens);
         settings.put("llmTimeoutConnectSeconds", llmTimeoutConnectSeconds);
@@ -254,7 +305,7 @@ public class LlmConfigService {
         updates.put("llm.provider", llmProvider != null ? llmProvider : "claude");
         updates.put("llm.api.url", llmApiUrl != null ? llmApiUrl : "");
         updates.put("llm.model", llmModel != null ? llmModel : "");
-        updates.put("llm.api.key", llmApiKey != null ? llmApiKey : "");
+        putSecret(updates, "llm.api.key", llmApiKey);
         updates.put("llm.max-input-tokens", String.valueOf(llmMaxInputTokens));
         updates.put("llm.max-output-tokens", String.valueOf(llmMaxOutputTokens));
         updates.put("llm.timeout.connect-seconds", String.valueOf(llmTimeoutConnectSeconds));
@@ -262,6 +313,77 @@ public class LlmConfigService {
         updates.put("llm.chat.restore-include-history", String.valueOf(llmChatRestoreIncludeHistory));
         updates.put("llm.ssl.verify", String.valueOf(llmSslVerify));
         updates.put("llm.file-attach.enabled", String.valueOf(llmFileAttachEnabled));
+    }
+
+    /**
+     * 시크릿을 저장 맵에 기록. 암호화 실패(forStorage()==null)면 <b>키 자체를 생략</b>해
+     * 기존 저장값을 보존한다 — 빈 문자열로 덮으면 시크릿이 무경고로 삭제된다.
+     * (RagConfigService.putSecret 과 동일 규약. 기록했으면 true.)
+     */
+    private static <T> boolean putSecret(Map<String, T> target, String key, SecretValue secret) {
+        String stored = secret.forStorage();
+        if (stored == null) {
+            logger.error("[Settings] '{}' AES 암호화 실패 — 키를 기록하지 않고 기존 저장값을 유지합니다", key);
+            return false;
+        }
+        @SuppressWarnings("unchecked")
+        T value = (T) stored;
+        target.put(key, value);
+        return true;
+    }
+
+    // ── 호출량 게이트 ─────────────────────────────────────────────
+
+    /**
+     * 호출 권한 획득. 실제 업스트림 호출 직전에 호출하고, 반환값은 <b>반드시 close</b> 해야 한다
+     * (동시 호출 슬롯이 거기서만 반납된다).
+     */
+    private LlmRateLimitService.Lease acquireGate(String scope) {
+        return rateLimit.acquire(currentUser(), scope);
+    }
+
+    /**
+     * 호출자 식별 — 사용자별 버킷 키.
+     * SecurityContext 가 없는 백그라운드 스레드는 "system" 으로 묶인다.
+     */
+    private static String currentUser() {
+        try {
+            Authentication a = SecurityContextHolder.getContext().getAuthentication();
+            if (a != null && a.getName() != null && !"anonymousUser".equals(a.getName())) {
+                return a.getName();
+            }
+        } catch (Exception ignored) {
+            // SecurityContext 미가용 — system 버킷으로 폴백
+        }
+        return LlmRateLimitService.SYSTEM_USER;
+    }
+
+    /** 사용 가능한 API 키, 미설정·손상이면 null. 손상값은 SecretValue 가 이미 차단한다. */
+    private String usableApiKey() {
+        String k = llmApiKey.usable();
+        return (k == null || k.trim().isEmpty()) ? null : k;
+    }
+
+    /**
+     * API 키를 쓸 수 없는 이유. 저장은 돼 있는데 복호화 결과가 손상된 경우와
+     * 애초에 미설정인 경우를 구분한다 — "미설정" 으로 뭉뚱그리면 원인을 못 찾는다.
+     */
+    private String apiKeyErrorMessage() {
+        if (llmApiKey.isSet() && !llmApiKey.isHealthy()) {
+            return "저장된 API 키를 복호화할 수 없습니다 (" + getLlmApiKeyIssue()
+                 + "). Settings → AI/LLM Configuration 에서 API 키를 다시 저장하세요.";
+        }
+        return "API 키가 설정되지 않았습니다";
+    }
+
+    /** 거부 Lease → 기존 호출 메서드들과 동일한 결과 맵 형태로 변환. */
+    private static Map<String, Object> rateLimitResult(LlmRateLimitService.Lease lease) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", false);
+        result.put("errorCode", lease.code());
+        result.put("error", lease.message());
+        result.put("retryAfterSeconds", lease.retryAfterSeconds());
+        return result;
     }
 
     // ── SSL 토글 헬퍼 ─────────────────────────────────────────────
@@ -322,13 +444,25 @@ public class LlmConfigService {
      * LLM 연결 테스트 — 프로바이더별 분기
      */
     public Map<String, Object> testLlmConnection() {
+        LlmRateLimitService.Lease lease = acquireGate("test-connection");
+        if (!lease.allowed()) return rateLimitResult(lease);
+        try {
+            return doTestLlmConnection();
+        } finally {
+            lease.close();
+        }
+    }
+
+    private Map<String, Object> doTestLlmConnection() {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("provider", llmProvider);
 
-        if (llmApiKey == null || llmApiKey.trim().isEmpty()) {
-            logger.warn("[LLM-Test] 연결 테스트 거부 — API 키 미설정 (provider={})", llmProvider);
+        final String apiKey = usableApiKey();
+        if (apiKey == null) {
+            logger.warn("[LLM-Test] 연결 테스트 거부 — API 키 사용 불가 (provider={}, healthy={})",
+                    llmProvider, llmApiKey.isHealthy());
             result.put("success", false);
-            result.put("error", "API 키가 설정되지 않았습니다");
+            result.put("error", apiKeyErrorMessage());
             return result;
         }
         if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) {
@@ -356,12 +490,12 @@ public class LlmConfigService {
 
             String body;
             if ("claude".equals(llmProvider)) {
-                conn.setRequestProperty("x-api-key", llmApiKey);
+                conn.setRequestProperty("x-api-key", apiKey);
                 conn.setRequestProperty("anthropic-version", "2023-06-01");
                 body = "{\"model\":\"" + llmModel + "\",\"max_tokens\":10,"
                      + "\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}";
             } else {
-                conn.setRequestProperty("Authorization", "Bearer " + llmApiKey);
+                conn.setRequestProperty("Authorization", "Bearer " + apiKey);
                 body = "{\"model\":\"" + llmModel + "\",\"max_tokens\":10,"
                      + "\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}";
             }
@@ -452,8 +586,18 @@ public class LlmConfigService {
         return result;
     }
 
-    @SuppressWarnings("unchecked")
     public Map<String, Object> callLlmAnalysis(String prompt) {
+        LlmRateLimitService.Lease lease = acquireGate("analyze");
+        if (!lease.allowed()) return rateLimitResult(lease);
+        try {
+            return doCallLlmAnalysis(prompt);
+        } finally {
+            lease.close();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> doCallLlmAnalysis(String prompt) {
         Map<String, Object> result = new LinkedHashMap<>();
 
         if (!llmEnabled) {
@@ -463,11 +607,13 @@ public class LlmConfigService {
             result.put("error", "AI 분석 기능이 비활성화 상태입니다. Settings → AI/LLM Configuration에서 활성화하세요.");
             return result;
         }
-        if (llmApiKey == null || llmApiKey.trim().isEmpty()) {
-            logger.warn("[AI-Insight][STEP] 분석 요청 거부 — API 키 미설정 (provider={})", llmProvider);
+        final String apiKey = usableApiKey();
+        if (apiKey == null) {
+            logger.warn("[AI-Insight][STEP] 분석 요청 거부 — API 키 사용 불가 (provider={}, healthy={})",
+                    llmProvider, llmApiKey.isHealthy());
             result.put("success", false);
             result.put("errorCode", "NO_API_KEY");
-            result.put("error", "API 키가 설정되지 않았습니다. Settings → AI/LLM Configuration에서 API 키를 저장하세요.");
+            result.put("error", apiKeyErrorMessage());
             return result;
         }
         if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) {
@@ -523,7 +669,7 @@ public class LlmConfigService {
 
             String body;
             if ("claude".equals(llmProvider)) {
-                conn.setRequestProperty("x-api-key", llmApiKey);
+                conn.setRequestProperty("x-api-key", apiKey);
                 conn.setRequestProperty("anthropic-version", "2023-06-01");
                 body = objectMapper.writeValueAsString(Map.of(
                     "model", llmModel,
@@ -532,7 +678,7 @@ public class LlmConfigService {
                     "messages", List.of(Map.of("role", "user", "content", prompt))
                 ));
             } else {
-                conn.setRequestProperty("Authorization", "Bearer " + llmApiKey);
+                conn.setRequestProperty("Authorization", "Bearer " + apiKey);
                 body = objectMapper.writeValueAsString(Map.of(
                     "model", llmModel,
                     "max_tokens", effectiveMaxOutputTokens,
@@ -651,8 +797,18 @@ public class LlmConfigService {
         return result;
     }
 
-    @SuppressWarnings("unchecked")
     public Map<String, Object> callLlmChat(List<Map<String, String>> messages, String systemPrompt) {
+        LlmRateLimitService.Lease lease = acquireGate("chat");
+        if (!lease.allowed()) return rateLimitResult(lease);
+        try {
+            return doCallLlmChat(messages, systemPrompt);
+        } finally {
+            lease.close();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> doCallLlmChat(List<Map<String, String>> messages, String systemPrompt) {
         Map<String, Object> result = new LinkedHashMap<>();
 
         if (!llmEnabled) {
@@ -661,10 +817,11 @@ public class LlmConfigService {
             result.put("error", "AI 분석 기능이 비활성화 상태입니다.");
             return result;
         }
-        if (llmApiKey == null || llmApiKey.trim().isEmpty()) {
+        final String apiKey = usableApiKey();
+        if (apiKey == null) {
             result.put("success", false);
             result.put("errorCode", "NO_API_KEY");
-            result.put("error", "API 키가 설정되지 않았습니다.");
+            result.put("error", apiKeyErrorMessage());
             return result;
         }
         if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) {
@@ -722,7 +879,7 @@ public class LlmConfigService {
 
             String body;
             if ("claude".equals(llmProvider)) {
-                conn.setRequestProperty("x-api-key", llmApiKey);
+                conn.setRequestProperty("x-api-key", apiKey);
                 conn.setRequestProperty("anthropic-version", "2023-06-01");
                 Map<String, Object> reqBody = new LinkedHashMap<>();
                 reqBody.put("model", llmModel);
@@ -731,7 +888,7 @@ public class LlmConfigService {
                 reqBody.put("messages", msgList);
                 body = objectMapper.writeValueAsString(reqBody);
             } else {
-                conn.setRequestProperty("Authorization", "Bearer " + llmApiKey);
+                conn.setRequestProperty("Authorization", "Bearer " + apiKey);
                 List<Map<String, Object>> allMessages = new ArrayList<>();
                 Map<String, Object> sysMsg = new LinkedHashMap<>();
                 sysMsg.put("role", "system");
@@ -830,13 +987,27 @@ public class LlmConfigService {
         return result;
     }
 
-    @SuppressWarnings("unchecked")
     public void callLlmChatStream(List<Map<String, String>> messages, String systemPrompt,
                                    java.util.function.Consumer<String> onChunk,
                                    java.util.function.BiConsumer<String, Long> onDone,
                                    java.util.function.BiConsumer<String, String> onError) {
+        LlmRateLimitService.Lease lease = acquireGate("chat-stream");
+        if (!lease.allowed()) { onError.accept(lease.code(), lease.message()); return; }
+        try {
+            doCallLlmChatStream(messages, systemPrompt, onChunk, onDone, onError);
+        } finally {
+            lease.close();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void doCallLlmChatStream(List<Map<String, String>> messages, String systemPrompt,
+                                   java.util.function.Consumer<String> onChunk,
+                                   java.util.function.BiConsumer<String, Long> onDone,
+                                   java.util.function.BiConsumer<String, String> onError) {
         if (!llmEnabled) { onError.accept("LLM_DISABLED", "AI 분석 기능이 비활성화 상태입니다."); return; }
-        if (llmApiKey == null || llmApiKey.trim().isEmpty()) { onError.accept("NO_API_KEY", "API 키가 설정되지 않았습니다."); return; }
+        final String apiKey = usableApiKey();
+        if (apiKey == null) { onError.accept("NO_API_KEY", apiKeyErrorMessage()); return; }
         if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) { onError.accept("NO_API_URL", "API URL이 설정되지 않았습니다."); return; }
 
         long startTime = System.currentTimeMillis();
@@ -887,7 +1058,7 @@ public class LlmConfigService {
             String body;
             boolean isClaude = "claude".equals(llmProvider);
             if (isClaude) {
-                conn.setRequestProperty("x-api-key", llmApiKey);
+                conn.setRequestProperty("x-api-key", apiKey);
                 conn.setRequestProperty("anthropic-version", "2023-06-01");
                 Map<String, Object> reqBody = new LinkedHashMap<>();
                 reqBody.put("model", llmModel);
@@ -897,7 +1068,7 @@ public class LlmConfigService {
                 reqBody.put("messages", msgList);
                 body = objectMapper.writeValueAsString(reqBody);
             } else {
-                conn.setRequestProperty("Authorization", "Bearer " + llmApiKey);
+                conn.setRequestProperty("Authorization", "Bearer " + apiKey);
                 List<Map<String, Object>> allMessages = new ArrayList<>();
                 Map<String, Object> sysMsg = new LinkedHashMap<>();
                 sysMsg.put("role", "system");
@@ -1041,10 +1212,26 @@ public class LlmConfigService {
             callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError);
             return;
         }
-        attachments = imageAtts; // 이하 Vision 경로는 이미지 첨부만 처리
+        // 이미지 Vision 경로 — 여기서부터 실제 업스트림 호출이므로 게이트를 건다.
+        // (위 두 위임 분기는 base overload 가 이미 게이트를 걸었다 — 중복 차감 방지)
+        LlmRateLimitService.Lease lease = acquireGate("chat-stream-vision");
+        if (!lease.allowed()) { onError.accept(lease.code(), lease.message()); return; }
+        try {
+            doVisionChatStream(messages, systemPrompt, imageAtts, onChunk, onDone, onError);
+        } finally {
+            lease.close();
+        }
+    }
 
+    /** Vision(이미지 첨부) 스트리밍 실제 구현 — 게이트는 위 overload 가 이미 획득한 상태. */
+    private void doVisionChatStream(List<Map<String, String>> messages, String systemPrompt,
+                                   List<Map<String, Object>> attachments,
+                                   java.util.function.Consumer<String> onChunk,
+                                   java.util.function.BiConsumer<String, Long> onDone,
+                                   java.util.function.BiConsumer<String, String> onError) {
         if (!llmEnabled) { onError.accept("LLM_DISABLED", "AI 분석 기능이 비활성화 상태입니다."); return; }
-        if (llmApiKey == null || llmApiKey.trim().isEmpty()) { onError.accept("NO_API_KEY", "API 키가 설정되지 않았습니다."); return; }
+        final String apiKey = usableApiKey();
+        if (apiKey == null) { onError.accept("NO_API_KEY", apiKeyErrorMessage()); return; }
         if (llmApiUrl == null || llmApiUrl.trim().isEmpty()) { onError.accept("NO_API_URL", "API URL이 설정되지 않았습니다."); return; }
 
         long startTime = System.currentTimeMillis();
@@ -1077,7 +1264,7 @@ public class LlmConfigService {
             String body;
             boolean isClaude = "claude".equals(llmProvider);
             if (isClaude) {
-                conn.setRequestProperty("x-api-key", llmApiKey);
+                conn.setRequestProperty("x-api-key", apiKey);
                 conn.setRequestProperty("anthropic-version", "2023-06-01");
                 Map<String, Object> reqBody = new LinkedHashMap<>();
                 reqBody.put("model", llmModel);
@@ -1087,7 +1274,7 @@ public class LlmConfigService {
                 reqBody.put("messages", msgList);
                 body = objectMapper.writeValueAsString(reqBody);
             } else {
-                conn.setRequestProperty("Authorization", "Bearer " + llmApiKey);
+                conn.setRequestProperty("Authorization", "Bearer " + apiKey);
                 List<Map<String, Object>> allMessages = new ArrayList<>();
                 Map<String, Object> sysMsg = new LinkedHashMap<>();
                 sysMsg.put("role", "system");

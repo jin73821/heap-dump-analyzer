@@ -5,6 +5,7 @@ import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.HeapDumpFile;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.LlmConfigService;
+import com.heapdump.analyzer.service.LlmRateLimitService;
 import com.heapdump.analyzer.service.PasswordPolicyConfigService;
 import com.heapdump.analyzer.service.TwoFactorConfigService;
 import com.heapdump.analyzer.util.AesEncryptor;
@@ -47,6 +48,7 @@ public class HeapSystemApiController {
 
     private final HeapDumpAnalyzerService analyzerService;
     private final LlmConfigService llmConfig;
+    private final LlmRateLimitService llmRateLimitService;
     private final HeapDumpConfig config;
     private final DataSourceProperties dataSourceProperties;
     private final DataSource dataSource;
@@ -56,6 +58,7 @@ public class HeapSystemApiController {
 
     public HeapSystemApiController(HeapDumpAnalyzerService analyzerService,
                                    LlmConfigService llmConfig,
+                                   LlmRateLimitService llmRateLimitService,
                                    HeapDumpConfig config,
                                    DataSourceProperties dataSourceProperties,
                                    DataSource dataSource,
@@ -64,6 +67,7 @@ public class HeapSystemApiController {
                                    PasswordPolicyConfigService passwordPolicyConfig) {
         this.analyzerService = analyzerService;
         this.llmConfig = llmConfig;
+        this.llmRateLimitService = llmRateLimitService;
         this.config = config;
         this.dataSourceProperties = dataSourceProperties;
         this.dataSource = dataSource;
@@ -660,6 +664,8 @@ public class HeapSystemApiController {
         llm.put("model", llmConfig.getLlmModel());
         llm.put("apiKeySet", llmConfig.isLlmApiKeySet());
         llm.put("apiKeyMasked", llmConfig.getLlmApiKeyMasked());
+        llm.put("apiKeyHealthy", llmConfig.isLlmApiKeyHealthy());
+        llm.put("apiKeyIssue", llmConfig.getLlmApiKeyIssue());
         llm.put("maxInputTokens", llmConfig.getLlmMaxInputTokens());
         llm.put("maxOutputTokens", llmConfig.getLlmMaxOutputTokens());
         llm.put("availableProviders", Arrays.asList("claude", "gpt", "genspark", "custom"));
@@ -677,6 +683,13 @@ public class HeapSystemApiController {
         llm.put("sslVerify", llmConfig.isLlmSslVerify());
         llm.put("fileAttachEnabled", llmConfig.isLlmFileAttachEnabled());
         llm.put("fileAttachCapable", llmConfig.isFileAttachCapable());
+        Map<String, Object> rateLimit = new LinkedHashMap<>();
+        rateLimit.put("enabled", llmRateLimitService.isLlmRateLimitEnabled());
+        rateLimit.put("perSecond", llmRateLimitService.getLlmRateLimitPerSecond());
+        rateLimit.put("perMinute", llmRateLimitService.getLlmRateLimitPerMinute());
+        rateLimit.put("perDay", llmRateLimitService.getLlmRateLimitPerDay());
+        rateLimit.put("concurrent", llmRateLimitService.getLlmRateLimitConcurrent());
+        llm.put("rateLimit", rateLimit);
         settings.put("llm", llm);
 
         // Database 정보

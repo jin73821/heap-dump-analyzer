@@ -58,6 +58,14 @@ public class User {
     private String memoFont;
 
     /**
+     * My Account 페이지 레이아웃 — {@code stack}(계정 정보 위/메모장 아래) | {@code split}(메모장 좌/계정 우).
+     * memoFont 와 같은 정책으로 <b>브라우저가 아니라 계정에</b> 저장해 재로그인·다른 기기에서도 유지된다.
+     * null(미설정)은 stack 으로 해석 — {@code UserService.accountLayoutOf(user)}.
+     */
+    @Column(name = "account_layout", length = 10)
+    private String accountLayout;
+
+    /**
      * 메모장 자동 저장 토글 — 계정별 영속화(브라우저가 아닌 DB, memoFont 와 동일 정책).
      * null = 미설정 → 기본 ON 으로 해석 (기존 계정 무중단, 유실 방지가 기본값).
      */

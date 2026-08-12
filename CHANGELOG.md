@@ -1,6 +1,143 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-08-12] My Account 레이아웃 — 분할 시 메모장 세로 확대 + 계정별 영속화
+
+**요청:** ① 좌우 분할 시 메모장 <s>가로</s> **세로** 사이즈를 늘릴 것(작업 중 정정). ② 레이아웃 선택을 **해당 계정에 저장**해 재로그인 시에도 유지할 것.
+
+- **세로를 화면 높이에 맞춰 늘렸다.** `html.acct-split .memo-area { min-height: max(360px, calc(100vh - 400px)) }` — 400px 는 topbar/제목/카드헤더/폰트바/메타/버튼행/여백의 합이다. 실측: 1440×900 에서 240 → **500px**, 1440×1080 · 1920×1080 에서 240 → **680px**, 1600×768 에서 240 → 368px. **모든 크기에서 저장 버튼 행이 스크롤 없이 화면 안에 들어온다**(하단 893/1073/761 vs 뷰포트 900/1080/768). 좌우 분할은 우측 계정 카드가 348px 로 짧아 좌측 아래가 통째로 비므로, 그 공간을 입력 영역이 가져가는 게 맞다.
+- ⚠ **가로 변경은 되돌렸다.** 정정 전 잠시 `max-width 1400→1800` + 계정 카드 `360→320` 으로 넓혔다가, 요청이 세로였음이 확인돼 원복했다. (그 과정에서 확인된 사실: `max-width` 는 padding(배너 240 + 우측 20)을 포함하므로 실제 콘텐츠는 260 을 뺀 값이다. 가로를 늘려야 할 일이 생기면 이 점을 감안할 것.)
+- **선택값을 localStorage → `users.account_layout` 컬럼으로 이관.** memoFont/memoAutosave 와 같은 정책(계정별 DB 영속화)이라 **재로그인·다른 기기·다른 브라우저에서 동일한 레이아웃**으로 열린다. `POST /api/account/layout`(본인 계정, CSRF 보호 대상인 `/api/account/**`), 값은 `stack|split` 화이트리스트 — **이 값이 그대로 CSS 클래스로 들어가므로** 검증이 필수다.
+- **FOUC 방지가 서버 렌더로 바뀌면서 더 단순해졌다.** 기존엔 `<head>` 인라인 스크립트가 localStorage 를 읽어 클래스를 붙였는데, 이제 `<html th:classappend="${accountLayout == 'split'} ? 'acct-split' : ''">` 로 **서버가 렌더 시점에** 내려준다 — 인라인 스크립트 제거. 버튼 활성 표시만 로드 후 `initAccountLayout()` 이 동기화(이때는 저장 호출 안 함).
+- **저장 실패를 조용히 넘기지 않는다.** 화면 전환은 즉시 적용되지만 POST 가 실패하면 다음 접속에 반영되지 않으므로 오류 토스트를 띄운다.
+- ⚠ **테스트가 실배포 장애를 잡았다 — `Set.of(...).contains(null)` 은 NPE.** `accountLayoutOf()` 가 `ALLOWED.contains(v)` 를 null 검사 없이 호출해, **컬럼이 아직 null 인 기존 계정 전원이 `/account` 진입에서 500** 을 맞을 상태였다(신규 컬럼이라 사실상 전 사용자). `v != null &&` 를 앞에 두어 수정. Java 의 immutable Set 은 `contains(null)` 에 NPE 를 던진다는 규약을 잊기 쉽다.
+- ⚠ **렌더 검증에서 문서 전체를 grep 하면 안 된다.** 첫 스모크 테스트가 "stack 인데 split 클래스가 붙었다"로 실패했는데, 원인은 `<style>` 안의 `html.acct-split ...` **CSS 규칙**이 문자열 매칭에 걸린 것이었다. `<html>` 여는 태그만 떼어내 검사하도록 고쳤다(`htmlTag()`).
+- **변경 파일:** `model/entity/User.java`(+`accountLayout`) · `service/UserService.java`(`accountLayoutOf`/`saveAccountLayout` + 화이트리스트) · `controller/AccountController.java`(모델 전달 + API) · `templates/account.html`(`<html th:classappend>` + head 스크립트 제거 + 세로 CSS + 서버 저장 JS).
+- **검증:** `mvn test` **377건 green**(직전 372 + 신규 5). `AccountLayoutTest`(4) — null/미지원 폴백, 허용값 통과, 트림 저장, **화이트리스트 밖 값 거부 시 `save()` 미호출**(`SPLIT`·주입 시도 문자열 포함). `AccountMemoTemplateSmokeTest` 에 서버 렌더 검증 1건 추가. 헤드리스 Chrome **26/26 PASS** — 기본/분할 배치, **세로 확대(240→500 이상)**, POST 1건의 URL·method·body, **localStorage 미사용**, 서버가 split 로 렌더한 상태 재진입 시 유지·재저장 없음, 저장 실패 토스트, ≤1100px 자동 1단, JS 에러 0. 기동 13.5초 무오류, 미인증 `/api/account/layout` 401.
+- ⚠ **미검증:** 실제 로그인 후 전환·재로그인 유지는 확인하지 못했다(계정 자격증명 없음). `users.account_layout` 컬럼은 `ddl-auto=update` 로 자동 추가된다.
+
+
+## [2026-08-12] My Account 레이아웃 전환 (기본 / 좌우 분할)
+
+**요청:** My Account 제목 라인(비밀번호 변경 버튼 위쪽)에 레이아웃 변경 버튼을 두고, ① 현재 상태 ② 개인 메모장 좌측·계정 정보 카드 우측 두 가지를 지원할 것.
+
+- **제목 라인 우측에 세그먼트 2버튼**(`기본` / `좌우 분할`) — 아이콘으로 배치를 미리 보여주고 현재 선택은 파란 배경으로 표시한다. 단일 토글 버튼도 가능했지만 **지금 어느 레이아웃인지 라벨만 보고는 알 수 없어** 2택 세그먼트로 했다(`role="group"` + `aria-pressed`).
+- **기본 레이아웃은 종전과 픽셀 단위로 동일.** 두 카드를 `.acct-grid` 로 감쌌지만 기본 상태에서는 **아무 CSS 도 걸리지 않는 평범한 블록**이라 렌더 결과가 바뀌지 않는다(실측으로 카드 폭·상하 순서 확인). grid 전환은 `html.acct-split` 일 때만.
+- **DOM 순서는 그대로 두고 `order` 로 좌우를 바꿨다.** 마크업은 계정 정보 → 메모장 순서를 유지하므로 **탭 이동 순서와 스크린리더 낭독 순서가 종전과 같고**, 좁은 화면에서 grid 를 해제하면 자연히 원래 배치로 돌아온다. `#cardMemo{order:1}` / `#cardAccount{order:2}`.
+- **분할 시 컨테이너 폭 960 → 1400px.** 960px 를 그대로 2단으로 쪼개면 메모 입력 폭이 종전보다 좁아져 오히려 손해다. 계정 정보는 읽기 전용 dl 이라 360px 고정, 남는 폭은 전부 메모장이 가진다.
+- **≤1100px 에서는 split 이어도 자동으로 1단**(`display:block` 복귀 + 카드 간격 복원). 2단을 유지하면 양쪽 다 좁아 못 쓴다. 선택값 자체는 보존되므로 넓은 화면으로 돌아오면 다시 2단이 된다.
+- **선택은 `localStorage('accountLayout')` 에 보관**하고, **FOUC 방지는 `<head>` 인라인 스크립트**가 `<style>` 적용 전에 `html.acct-split` 을 올려서 처리한다(배너 collapsed 와 동일 패턴). `DOMContentLoaded` 에서 하면 기본 배치가 한 번 그려졌다가 튄다. 버튼 활성 표시만 로드 후 `initAccountLayout()` 이 동기화.
+- **변경 파일:** `templates/account.html`(head 인라인 스크립트 + CSS 2블록 + 세그먼트 마크업 + `.acct-grid` 래퍼 + 카드 id 2개 + `setAccountLayout`/`initAccountLayout`). 서버·JS 모듈 변경 없음.
+- **검증(헤드리스 Chrome, 실제 `account.html` 의 `<style>`+마크업+실제 common.css, HTTP 서빙):** **20/20 PASS** — 세그먼트가 제목과 같은 줄·우측 / 기본에서 계정 위·메모 아래·카드 폭 동일 / 분할에서 메모 좌·계정 우·같은 줄·계정 360px / **새로고침 후 유지**(FOUC 경로) / ≤1100px 자동 1단 / 되돌리기 / JS 에러 0. ⚠ `file://` 에서는 리로드 시 localStorage 가 유지되지 않아 3건이 거짓 실패했다 — **localStorage 지속성 검증은 반드시 http 로 서빙**할 것. `mvn test` 372건 green, 기동 13.7초 무오류.
+- ⚠ **미검증:** 실제 로그인 후 화면에서의 전환은 확인하지 못했다(계정 자격증명 없음).
+
+
+## [2026-08-12] Rate Limit 카드 입력칸 우측 정렬 + 버전 2.3.3 → 2.3.4
+
+**요청:** ① Rate Limit 카드에서 입력칸이 설명 왼쪽에 있는 배치를 뒤집어, **입력칸을 우측 정렬하고 설명을 그 왼쪽**에 둘 것. ② 애플리케이션 버전 2.3.4 로 업데이트.
+
+- **행 내부 순서를 `[입력][설명]` → `[설명][입력]` 으로.** 4개 행(초당/분당/일일/동시) 모두 컨테이너에 `justify-content:flex-end` 를 주고 설명은 `text-align:right` — 설명이 길어 줄바꿈돼도 입력칸 쪽으로 붙는다. 같은 페이지의 Token Limits·Provider 카드가 이미 `[키] … [컨트롤]` 로 컨트롤을 우측에 두므로 카드 간 정렬도 함께 맞았다.
+- **입력 폭을 110px 로 통일**(종전 90/90/110/90). 폭이 제각각이면 우측 끝은 맞아도 **좌측 가장자리가 들쭉날쭉**해 4행이 정렬돼 보이지 않는다. `flex:0 0 auto` 로 축소도 막았다.
+- **후속(동일자): 토글 설명 문구를 1줄로 축약**(요청). `로그인 사용자 1인 기준으로 AI 호출 횟수를 제한합니다.` 만 남기고 스크립트 남용 경고·`HTTP 429` 안내·`OFF 로 두면 제한이 전혀 없습니다` 를 삭제했다. 4줄짜리 설명이 토글 하나를 압도해 카드 상단이 무거웠다. ⚠ 삭제된 내용 중 **OFF = 무제한**은 운영상 중요한 사실이므로 `application.properties` 주석과 본 CHANGELOG 상단 항목에만 남는다 — 화면에서는 안내하지 않는다.
+- **후속(동일자): `[Save Rate Limit]` 행도 같은 규칙으로 뒤집었다.** `[버튼][0 = 무제한 설명]` → `[설명][버튼]`. 이제 카드의 **모든 조작 요소(입력 4 + 버튼)가 같은 세로선에 우측 정렬**된다 — 버튼만 왼쪽에 남으면 시선이 한 번 되돌아간다. 실측 1080/700/400px 세 폭 모두 버튼 우측 끝 = 입력 우측 끝 = 행 우측 끝(1019 / 665 / 367)으로 일치.
+- **검증(헤드리스 Chrome, 실제 `llm-settings.html` `<style>` + 실제 카드 마크업 + 실제 common.css):** 1080/700px 에서 4개 입력의 **우측 끝이 모두 동일**(1019 / 665)하고 그 값이 **행의 우측 끝과 일치**, 좌측 가장자리도 4행 동일, 설명이 입력 왼쪽·같은 줄. 400px 에서는 설명이 윗줄로 접히고 입력칸은 여전히 우측 정렬(모바일 자연스러운 동작).
+- **버전 2.3.3 → 2.3.4.** `pom.xml` + UI 표기 3곳(`fragments/banner.html`·`index.html`·`progress.html`) + 문서(`CLAUDE.md` 실행 예시, `VERSION_SPEC.md` 3곳). **쉘 스크립트는 무수정** — `env.sh` 가 `target/heap-analyzer-*.jar` 최신본을 자동 탐색하고 프로세스 매칭도 버전 무관이라 구버전으로 떠 있어도 정상 종료된다(2026-08-10 규약). 산출물 `heap-analyzer-2.3.4.jar`(83.1MB) 기동 확인, 프로세스 1개.
+- `mvn test` 372건 green, 기동 14.2초 무오류.
+
+
+## [2026-08-12] 메모 [변경 이력] 버튼을 저장 버튼 라인 맨 우측으로 이동
+
+**요청:** 변경 이력 버튼을 저장 버튼 라인의 맨 우측으로 위치시킬 것.
+
+- **`/account`** — 상단 폰트 툴바(`.memo-tool-group`, 복사·새창에서 열기 옆)에 있던 것을 **저장 라인(`.btn-row`)** 으로 옮겼다. `[저장] [초기화] ⟵여백⟶ [변경 이력]` 배치이며 `margin-left:auto` 가 남는 폭을 전부 흡수해 **카드 우측 끝에 정렬**된다. 스타일도 같은 줄의 버튼과 맞춰 `.memo-tool-btn`(작은 아이콘 버튼) → `.btn .btn-secondary` 로 바꾸고 아이콘은 뺐다 — 저장/초기화가 텍스트 전용이라 한 줄에 아이콘 버튼만 섞이면 크기(28px vs 38px)와 톤이 어긋난다.
+- **`.btn-row` 에 `flex-wrap: wrap` 추가.** 종전엔 버튼이 2개뿐이라 필요 없었지만 3개가 되면서 좁은 폭에서 넘칠 수 있다. 실측상 390px 에서도 한 줄에 들어가지만 폰트 확대·긴 라벨 대비 안전장치로 둔다.
+- **`/account/memo`(새창)** — `.bar` 안에서 순서만 `[변경 이력] [복사] [저장]` → `[복사] [저장] [변경 이력]` 으로 바꿔 맨 우측에 뒀다.
+- **검증(헤드리스 Chrome, 실제 `account.html` 의 `<style>` + 실제 마크업 + 실제 common.css 픽스처):** `/account` 는 1100/640/390px 세 폭 모두 **저장과 같은 줄**(top 좌표 동일)이고 **변경 이력의 오른쪽 끝 = `.btn-row` 의 오른쪽 끝**(989/605/355px 정확히 일치), 초기화보다 항상 오른쪽. 새창은 1000/620px 에서 저장 버튼보다 오른쪽·같은 줄 확인. `mvn test` 372건 green, 기동 무오류. 캐시 키 `memo.js?v=2026-08-12d`.
+
+
+## [2026-08-12] 개인 메모 변경 이력(`memo_history`) 신설 — 최근 7일 보관 + 복원 UI
+
+**요청:** 최근 1주일치 메모 이력을 저장하고 테이블·복원 UI 를 만들 것. (직전 답변에서 "서버 rollback 불가 — `memo_history` 신설이 선행돼야 함" 이라고 한 항목의 착수)
+
+- **`memo_history` 테이블 신설.** 행 하나 = **덮이기 직전의 내용** 스냅샷(`username` / `memo` MEDIUMTEXT / `byte_size` / `created_at` / `reason`). `created_at` 은 <b>스냅샷을 뜬 시각</b>(= 그 내용이 다른 값으로 덮인 시각)이지 작성 시각이 아니다. 인덱스 2개(`username+created_at` 목록·상한정리용, `created_at` 만료정리용). ⚠ `@Lob` 대신 `columnDefinition="MEDIUMTEXT"` — Hibernate 6 는 `@Lob String` 을 tinytext(255)로 축소한다(함정 16).
+- **⚠ 이 기능의 급소는 보관량 통제다.** 자동 저장이 **5초 debounce** 라 타이핑을 계속하면 분당 10회 넘게 저장되고 컬럼은 최대 10MB — 매 저장마다 행을 만들면 한 사용자가 며칠 만에 수 GB 를 만든다. 3중으로 막았다: ① **최소 간격 60초**(`min-interval-seconds`) ② **사용자당 100건**(`max-per-user`, 초과분 오래된 것부터 즉시 삭제) ③ **보관 7일**(`retention-days`, 매일 03:30 `@Scheduled` 정리). 추가로 **직전 스냅샷과 내용이 같으면**, **빈 내용이면** 기록하지 않는다.
+- **다만 복원·초기화 직전 스냅샷은 간격 제한을 무시하고 항상 남긴다.** 되돌리기 수요가 확실한 시점이라, 여기서 억제하면 정작 필요한 순간의 내용을 잃는다.
+- **판정 순서에 부수효과 없음.** 억제 판정은 전부 읽기 전용이고 실제 INSERT 는 통과가 확정된 뒤에만 한다.
+- **복원은 "다시 되돌릴 수 있는" 복원.** `POST /api/account/memo/history/{id}/restore` 가 **현재 내용을 이력에 남긴 뒤**(`reason=restore`) 값을 교체하므로, 잘못 복원해도 한 번 더 되돌릴 수 있다. 복원 경로는 일반 저장(`saveMemoInternal`)을 재사용해 이력 기록·크기 검증 규칙이 갈라지지 않는다.
+- **의존은 단방향.** `UserService` → `MemoHistoryService` 만 존재한다(그 반대 없음). 복원 실행을 `MemoHistoryService` 에 두면 두 서비스가 서로를 참조해 순환이 생기므로, **이력 조회는 `MemoHistoryService`, 복원 실행은 `UserService.restoreMemo()`** 로 갈랐다.
+- **이력 기록 실패가 저장을 막지 않는다.** `recordHistorySafely()` 가 예외를 삼키고 ERROR 로그만 남긴다 — 이력은 안전망이지 저장의 전제가 아니다.
+- **소유권은 쿼리에 넣었다.** `findByIdAndUsername` 으로 조회하므로 **id 를 바꿔 넣어도 남의 스냅샷을 읽을 수 없다.** id 로 찾은 뒤 비교하는 방식은 한 곳만 빠뜨려도 개인 메모가 새어나간다. 목록/상세/복원/전체삭제 4 엔드포인트 모두 `principal.getName()` 기준.
+- **목록은 본문을 싣지 않는다.** `findSummaries` 가 `SUBSTRING(memo,1,160)` 투영만 가져오고 전문은 상세 조회에서만 읽는다 — 10MB LOB 를 목록마다 끌고 오면 안 된다(`analysis_history`↔`analysis_result_detail` 분리와 같은 이유). 미리보기는 줄바꿈을 눌러 한 줄 120자로.
+- **복원 UI:** `/account`·`/account/memo` 툴바에 **[변경 이력]** 버튼 → 좌측 목록(사유 배지 `저장 전`/`복원 전`/`초기화 전` + 시각 + 크기 + 미리보기) / 우측 본문 미리보기 → **[이 시점으로 복원]**. 선택 전에는 복원 버튼이 비활성이고, 본문은 **`textContent` 로만** 렌더한다(메모에 적어둔 HTML 이 실행되면 안 된다). `memo.js` 가 CSS·DOM 을 주입하는 싱글턴(`Memo.openHistoryViewer`)이라 두 페이지가 공유한다.
+- **복원 후 "미저장" 표시를 남기지 않는다.** 서버 저장까지 끝난 상태라 dirty 로 두면 사용자가 불필요하게 다시 저장한다 — 저장 시각 갱신 + 창간 동기화(`Memo.post('saved')`)까지 함께 처리.
+- **기동 시 테이블 가용성 점검**(`@PostConstruct`, `SpringSessionTableChecker` 와 같은 성격) — `ddl-auto=update` 로 보통 자동 생성되지만 실패하면 사용자가 [변경 이력] 을 눌러야 알게 된다. 기동을 막지 않고 로그로만 드러낸다. 실측 로그: `[MemoHistory] 이력 테이블 확인 — 보관 0건, 정책: 7일 / 사용자당 100건 / 최소간격 60초`.
+- **변경 파일:** `model/entity/MemoHistory.java`(신규) · `repository/MemoHistoryRepository.java`(신규) · `service/MemoHistoryService.java`(신규) · `model/dto/MemoHistoryItem.java`(신규) · `service/UserService.java`(이력 연결 + `restoreMemo`) · `controller/AccountController.java`(API 4) · `static/js/memo.js`(API 3 + 이력 뷰어) · `templates/account.html`·`account-memo.html`(버튼 + 소비 함수) · `application.properties`(`memo.history.*` 5키). 캐시 키 `memo.js?v=2026-08-12c`.
+- **검증:** `mvn test` **372건 green**(직전 358 + 신규 14). `MemoHistoryServiceTest`(14) — 정상 기록/빈값·중복 억제/최소 간격 폭주 방어/복원·초기화 예외/상한 축출(사용자별 격리 포함)/보관기간 정리·0=무기한/**남의 스냅샷 접근 차단**/목록 본인·최신순/미리보기 정규화·절단/전체삭제 범위. 헤드리스 Chrome **25/25 PASS**(실제 `memo.js` + fetch 스텁) — 목록·배지·정책 안내, 선택→본문, XSS 미실행, 복원 API id 일치·POST+CSRF, textarea/저장시각 반영, 미저장 표시 없음, 상세 실패 안내, 빈 목록, JS 에러 0. 기존 백업 뷰어 32/32 회귀 유지. 빌드 후 재기동 14.7초 무오류, 미인증 API 401.
+- ⚠ **미검증:** 실제 로그인 후 화면에서의 이력 누적·복원 동작은 확인하지 못했다(계정 자격증명 없음). 첫 사용 시 [변경 이력] 목록이 비어 있는 것은 정상 — **이 배포 이후의 저장부터** 스냅샷이 쌓인다(소급 이력은 만들 수 없다).
+
+
+## [2026-08-12] 미저장 메모 백업 내용 조회 + 복구 되돌리기 + 보관 시각 UTC 결함 수정
+
+**요청:** "저장되지 못한 메모가 남아 있습니다 (2026-08-06 5:15)" 문구가 뜰 때 **저장되지 않은 내용을 조회**할 수 있게 할 것. (추가 질문: admin 이 개인 메모를 복구 이전으로 rollback 할 수 있는가 → 아래 별도 절)
+
+- **문제: 무엇이 복구되는지 모르는 채로 눌러야 했다.** 배너에는 시각만 있고 [복구]/[버리기] 뿐인데, **복구는 편집 중인 내용을 통째로 덮어쓴다.** 백업이 유용한지 확인할 방법이 없어 사용자는 "복구했다가 지금 쓰던 게 날아가는" 위험과 "버렸다가 필요한 게 사라지는" 위험 중 하나를 눈 감고 골라야 했다.
+- **[내용 보기] → 미리보기 모달.** 백업 원문 전체 + 보관 시각 + 크기를 보여주고, **[저장 안 된 내용] / [현재 편집 중] 2탭**으로 무엇이 무엇으로 바뀌는지 비교한다. 두 내용이 같으면 "복구해도 달라지는 것이 없습니다", 다르면 덮어쓰기 경고를 띄운다. 모달에서 바로 [이 내용으로 복구] / [버리기] 가능. 배너에도 크기를 함께 표기.
+- **모달은 `memo.js` 가 CSS·DOM 을 스스로 주입하는 싱글턴** (`Memo.openBackupViewer(cfg)`) — 소비 페이지(`/account`·`/account/memo`)는 호출 한 줄이면 된다. 두 페이지에 마크업을 복붙하면 drift 가 생긴다(`krds-tooltip.js` 와 동일 패턴).
+- **본문은 `textContent` 로만 렌더.** 메모는 사용자 자유 입력이라 `innerHTML` 로 넣으면 자기 메모에 적어둔 HTML 조각이 실행된다. 헤드리스 실측으로 `<img src=x onerror=…>` 를 백업에 넣어도 **핸들러 미실행 + img 노드 미생성**을 확인했다.
+- **10MB 메모 방어.** `<pre>` 에 통째로 넣으면 브라우저가 멈추므로 미리보기는 20만자에서 잘라 "(이하 생략 — 복구하면 전체가 들어갑니다)" 를 붙인다. 복구 자체는 항상 전문.
+- **복구 되돌리기(undo) 추가.** 복구 직전 편집 내용을 `memoUndo:{username}` 스냅샷으로 남기고, 복구 후 "복구 이전으로 되돌리기" 배너를 띄운다([이전 내용 보기] 로 되돌릴 내용도 확인 가능). **서버에는 메모 이력이 없어**(`users.memo` 단일 컬럼) 이 스냅샷이 없으면 덮어쓴 내용은 영구 소실된다. localStorage 용량 초과로 스냅샷 저장이 실패하면 되돌리기 배너를 띄우지 않는다(있는 척하면 더 나쁘다).
+- **⚠ 보관 시각이 UTC 로 표시되던 결함 수정(요청자가 인용한 "5:15" 가 실제로는 14:15).** `Memo.backup()` 이 `new Date().toISOString()`(**UTC**)로 기록하는데, 표시 함수 `formatTs` 는 서버 `LocalDateTime`(로컬) 전용으로 문자열 앞부분만 자른다 — 그래서 KST 기준 **9시간 과거**로 보였다. 같은 화면의 "저장 시각"(서버값, 로컬)과 나란히 놓여 어느 쪽이 최신인지 오판하게 만드는 종류의 버그다. `Memo.localTs()`(로컬 기준 기록) + `Memo.formatBackupTs()`(레거시 UTC 값은 로컬로 환산해 표시)로 분리했다. **이미 저장돼 있는 기존 백업도 올바른 시각으로 보인다.**
+- **변경 파일:** `static/js/memo.js`(뷰어 모듈 + undo 3함수 + 시각 함수 2개), `templates/account.html`·`templates/account-memo.html`(배너 2종 + 소비 함수). 캐시 키 `memo.js?v=2026-08-12b`.
+- **검증:** 헤드리스 Chrome 실측 **32/32 PASS**(실제 `memo.js` 를 그대로 로드한 픽스처) — 배너 표기/크기, 모달 원문 일치, XSS 미실행, 탭 전환, Esc 닫기, 복구→undo 저장→되돌리기→스냅샷 제거, 백업은 [버리기] 전까지 보존, 동일 내용 안내, 빈 내용, 25만자 잘림, 백업 없을 때 방어, **타임존 3건**(신규 기록이 로컬 / 레거시 UTC 환산 / 신규 값 그대로), JS 에러 0. 신규 `AccountMemoTemplateSmokeTest`(2) 로 두 템플릿 렌더 확인(함정 23). `mvn test` **358건 green**, 기동 13.1초 무오류.
+- ⚠ **미검증:** 인증이 필요한 실 페이지의 최종 동작(실제 로그인 후 배너·모달 조작)은 확인하지 못했다 — 이 세션에 계정 자격증명이 없다.
+
+### admin 의 개인 메모 rollback 가능 여부 — **불가능** (구조상)
+
+- **서버에 이력이 없다.** 메모는 `users.memo` **단일 컬럼**이고 `saveMemo()` 는 덮어쓰기다. 별도 이력 테이블·감사 로그·백업 스냅샷이 없어 **어떤 시점으로도 서버에서 되돌릴 수 없다**(admin 여부와 무관).
+- **백업은 서버에 없다.** "저장되지 못한 메모" 는 **각 사용자 브라우저의 localStorage**(`memoBackup:{username}`)에만 있다. 서버는 그 존재조차 모르므로 admin 화면에서 조회·복원할 대상이 없다.
+- **정책상으로도 열지 않았다.** 메모는 `AccountController` 의 본인 자기서비스 영역이고 API 는 전부 `principal.getName()` 기준이라 타인 메모 접근 경로 자체가 없다. admin 이 남의 개인 메모를 읽는 기능은 요청 없이 만들 성질이 아니다.
+- **대신 사용자 본인이 되돌릴 수 있게 했다** — 위 undo 기능이 "복구 이전으로 rollback" 의 실질적 대응이다. 단 **복구 직후 그 브라우저에서만** 유효하다(다른 기기·다른 브라우저·localStorage 정리 시 소멸).
+- **서버 측 rollback 이 필요하다면** `memo_history` 테이블(저장 시마다 이전 값 1~N 세대 보존) + 복원 UI 가 별도 작업으로 필요하다. 10MB 컬럼이라 보존 세대 수·정리 주기 설계가 선행돼야 한다. 착수하려면 말씀 주세요.
+
+
+## [2026-08-12] LLM 호출량 제한(Rate Limit) 신설 + `llm.api.key` AES 암호화
+
+**요청:** "LLM 호출 시 이용자의 요청 및 결과 출력 횟수를 제한하고 있는가(예: 초당 요청 수 제한)" → 조사 결과 **제한이 전무**했고, 이어서 "API 키 암호화 및 설정 UI까지 포함해 작업" 지시.
+
+- **조사 결과: 서버 측 제한이 하나도 없었다.** rate limit 의존성(bucket4j/resilience4j) 없음, `HandlerInterceptor`/`OncePerRequestFilter` 구현체 0건, `/api/llm/*` 15개·`/api/ai-chat/*` 7개 어디에도 횟수 카운터·쿼터·동시 호출 상한 없음. 유일한 제동은 `ai-chat.html` 의 `_sending` 플래그와 전송 버튼 `disabled` 인데 **UI 힌트일 뿐** — `curl` 로 직접 때리면 그대로 통과한다. `LlmConfigService` 의 429 처리(`classifyHttpError`)는 **업스트림이 거절한 뒤의 사후 안내**이지 우리 쪽 제한이 아니었다. MAT 에는 `matSlots` 전역 세마포어가 있는데 LLM 에는 대응물이 없던 셈.
+- **게이트를 컨트롤러가 아니라 `LlmConfigService` 에 뒀다.** 실제로 업스트림을 때리는 지점은 `testLlmConnection`/`callLlmAnalysis`/`callLlmChat`/`callLlmChatStream`(+Vision overload) **5곳뿐**이고, 이 아래로 컨트롤러 3개(`HeapAiApiController`·`AiChatController`·`CoreDumpApiController`)와 `CoreDumpAnalyzerService` 가 모두 수렴한다. 컨트롤러마다 거는 방식은 **새 엔드포인트가 늘 때 누락**되므로 초크포인트 1곳으로 고정했다. 공개 메서드는 게이트만 잡는 얇은 wrapper 이고 본문은 `doXxx()` private 로 내렸다.
+- **Vision overload 는 이미지 경로에만 게이트.** 첨부가 없거나 텍스트 전용이면 base overload 로 위임하는데(이미 게이트됨), 거기에 또 걸면 **1회 호출에 할당량이 2번 차감**된다. 위임 early-return 뒤 이미지 경로 진입 시점에만 획득하도록 본문을 `doVisionChatStream()` 으로 분리했다.
+- **제한 축은 4개 — 초당 / 분당 / 일일 / 동시 (사용자별, 각 항목 0 = 무제한).** 기본값 `2 / 20 / 500 / 3`. 초당은 연타·스크립트 폭주, 분당은 지속 남용, 일일은 과금 총량, **동시(in-flight)는 스트리밍이 read-timeout(120초)까지 스레드를 잡는 특성상 실효성이 가장 크다.** 슬라이딩 윈도우는 회원가입 신청에 이미 쓰이던 `util/RateLimiter` 재사용(+`retryAfterMillis()` 추가 — 기록을 남기지 않는 조회 전용).
+- **판정 순서를 "부수효과 없는 검사 → 기록하는 검사" 로 배치.** `RateLimiter.isAllowed()` 는 통과 시 타임스탬프를 남기므로, 일일 한도를 **읽기 전용으로 먼저** 확인하고 일일 카운터 증가는 모든 검사를 통과한 뒤에 한다. 이렇게 하지 않으면 **분당에서 거부된 요청이 쓰지도 않은 일일 할당량을 갉아먹는다**(회귀 테스트 2건으로 고정).
+- **동시 슬롯 누수 방지가 이 구조의 급소.** 슬롯을 먼저 잡고 이후 축에서 거부되면 반드시 반납해야 하는데, **동시 한도가 0(무제한)일 때는 애초에 잡지 않았으므로 반납하면 카운터가 음수로 내려간다.** `heldSlot` 지역변수로 실제 점유 여부를 들고 다니게 했고, `Lease.close()` 는 멱등이며 `exitConcurrent` 는 0 미만으로 내려가지 않는다. 누수되면 이후 모든 호출이 영구히 `LLM_CONCURRENT_LIMIT` 이 되므로 테스트 3건을 붙였다.
+- **동시 카운터는 Semaphore 가 아니라 CAS.** 한도가 런타임에 바뀌는데(`/settings/llm` 저장) `Semaphore` 는 permit 수가 생성 시 고정이라 재생성 타이밍에 in-flight 와 어긋난다. `AtomicInteger` + compare-and-set 이면 한도 변경이 다음 판정부터 자연히 반영된다. 슬라이딩 윈도우 2종(초/분)은 한도가 생성자 인자라 `setLlmRateLimit`/`applyFromSettings` 에서 **재생성**한다 — 이걸 빠뜨리면 복원 후에도 옛 한도가 남는다(테스트 `restoredLimitsAreEffective`).
+- **⚠ SSE 스레드에 SecurityContext 전파 필수.** 게이트는 `SecurityContextHolder` 로 사용자를 식별하는데, 두 스트리밍 엔드포인트는 `new Thread(...)` 로 별도 스레드에서 LLM 을 호출한다. 맨 `Runnable` 이면 컨텍스트가 전파되지 않아 **모든 사용자가 "system" 버킷을 공유**한다(= 사실상 전역 한도). `DelegatingSecurityContextRunnable` 로 감쌌다.
+- **HTTP 응답: 호출량 거부만 429 + `Retry-After`.** `LlmRateLimitService.toResponse()` 가 `errorCode` 3종(`LLM_RATE_LIMIT`/`LLM_DAILY_LIMIT`/`LLM_CONCURRENT_LIMIT`)일 때만 429 로 바꾸고 **`LLM_DISABLED`·`NO_API_KEY` 등 기존 코드는 200 유지** — 상태 코드를 바꾸면 프런트 분기가 깨진다. 매핑 테이블을 코드 정의와 같은 클래스에 둬 드리프트를 막았다. SSE 경로는 종전대로 `error` 이벤트.
+- **`Common.fetchJSON` 이 429 를 `err.rateLimited` 로 승격** — 401(`sessionExpired`)과 동일 패턴. 본문의 한국어 안내가 원인(초당/일일/동시)을 구분하므로 `HTTP 429: {body}` 대신 **그 메시지를 그대로** 노출하고 `Retry-After` 를 `err.retryAfterSeconds` 로 실어준다.
+- **`llm.api.key` 를 평문 → `ENC(...)` 로 전환.** RAG 시크릿 3종과 동일한 `SecretValue` + `putSecret()` 규약 적용 — 값이 안 바뀌면 재암호화하지 않아(랜덤 IV churn 0) 기동마다 파일이 흔들리지 않고, 손상값은 `usable()` 이 차단해 **Authorization 헤더로 절대 나가지 않으며** 마스킹도 `손상됨` 으로 뜬다(정상처럼 보이면 사용자가 문제를 인지할 수 없다). 암호화 실패 시 `forStorage()` 가 null → **키를 아예 기록하지 않아** 기존 저장값이 보존된다.
+- **레거시 평문은 기동 시 1회 자동 봉인.** `adopt()` 가 저장본이 `ENC(...)` 형식이 아니면 `llmApiKeyUnsealed` 를 세우고, `loadPersistedSettings()` 가 복원이 **완전할 때만**(`failed.isEmpty()`) `persistSettings()` 를 불러 settings.json + application.properties 를 함께 봉인한다. 실측: 1차 기동에서 `평문 LLM API 키 감지 — 재봉인 수행` WARN 후 `llmApiKey` 가 ENC 로 전환, **2차 기동에서는 경고 없음**. ⚠ `syncApplicationProperties()` 를 중복 호출하지 않도록 분기했다(`persistSettings` 가 이미 수행).
+- **API 키 오류 메시지를 "미설정"과 "손상"으로 분리.** 저장은 돼 있는데 복호화가 깨진 경우까지 `API 키가 설정되지 않았습니다` 로 뭉뚱그리면 원인을 못 찾는다 — `apiKeyErrorMessage()` 가 손상 사유(`SecretSanity.describe`)를 붙여 안내한다.
+- **설정 UI:** `/settings/llm` 에 **Rate Limit 카드** 추가(토글 + 초당/분당/일일/동시 4 입력 + Save). 저장은 `POST /api/llm/ratelimit`(ADMIN+CSRF) 이고 **`SecurityConfig` 의 authorize·csrf-ignore 두 매처에 1:1 등록**(규약). 서버가 clamp 한 값을 응답으로 되돌려 **화면을 응답 기준으로 다시 맞춘다**(999 입력 → 50 표시). 부분 저장이 다른 값을 0(무제한)으로 밀지 않도록 파싱 실패 시 **현재값 유지**. 비-ADMIN 읽기 전용 처리는 기존 `data-is-admin` 스캐너가 자동 적용.
+- **영속화는 LLM/RAG/2FA/비밀번호정책과 동일한 3-hook** — `LlmRateLimitService.applyFromSettings/collectSettings/collectApplicationProperties` + `HeapDumpAnalyzerService` 의 `applyStep(failed, "llmRateLimit", ...)` 격리(함정 25) + setter facade `setLlmRateLimit()`.
+- **변경 파일:** `service/LlmRateLimitService.java`(신규 366라인), `util/RateLimiter.java`(+`retryAfterMillis`), `service/LlmConfigService.java`(SecretValue 전환 + 게이트 5곳 + 헬퍼), `service/HeapDumpAnalyzerService.java`(DI + 3-hook + 재봉인 트리거 + facade), `config/HeapDumpConfig.java`(+5 `@Value`), `config/SecurityConfig.java`(매처 2곳), `controller/HeapAiApiController.java`(429 매핑 3 + `/api/llm/ratelimit` + SSE 컨텍스트 전파), `controller/AiChatController.java`(SSE 컨텍스트 전파), `controller/CoreDumpApiController.java`(429 매핑), `controller/HeapSystemApiController.java`(`/api/settings` 노출), `templates/llm-settings.html`(카드+JS), `static/js/common.js`(429 처리), `application.properties`(+5 키). 캐시 키 `?v=2026-08-12` 전 21 템플릿 일괄.
+- **검증:** `mvn test` **356건 green**(기존 328 + 신규 28). 신규 `LlmRateLimitServiceTest`(15) — 축별 한도·사용자 분리·0=무제한·clamp·슬롯 반납/멱등·거부 시 타 축 미소모·3-hook 왕복·429 매핑. `LlmApiKeySecretTest`(11) — ENC 왕복·churn 0·레거시 평문 봉인·손상 차단/미세탁·마스킹. `LlmSettingsTemplateSmokeTest`(2) — **Thymeleaf 함정 23 회귀 방어**(`SpringTemplateEngine` + `JakartaServletWebApplication` mock 으로 배너 fragment 포함 전체 렌더, `</html>` 도달 확인). 빌드 후 재기동 13.4초 무오류, 미인증 `/api/llm/*` 401 JSON 유지, JAR 내부 `application.properties` 도 ENC 확인.
+- ⚠ **미검증:** 인증이 필요한 실 화면(`/settings/llm` Rate Limit 카드 조작, 실제 429 도달)은 확인하지 못했다 — 이 세션에 관리자 자격증명이 없다. 템플릿 렌더·엔드포인트 인가·게이트 로직은 각각 테스트로 덮여 있으나, **최초 배포 후 관리자 계정으로 카드 저장 1회와 연속 호출 429 를 육안 확인할 것.**
+
+
+## [2026-08-12] 프레임워크·라이브러리 버전 명세서(`VERSION_SPEC.md`) 신설
+
+**요청:** 프레임워크 및 라이브러리에 대한 버전 명세서.
+
+- **모든 버전을 실측으로 확정.** `pom.xml` 은 직접 선언 8건만 버전을 명시하고 나머지는 Spring Boot BOM(`spring-boot-starter-parent:3.5.14`)이 관리하므로, pom 만 읽으면 Spring Framework·Hibernate·Tomcat 등 **핵심 스택의 실제 버전을 알 수 없다.** `mvn -o dependency:tree` 해석 결과를 근거로 기재 — Spring Framework **6.2.18** / Security **6.5.10** / Data JPA **3.5.11** / Session JDBC **3.5.6** / Hibernate ORM **6.6.49.Final** / Thymeleaf **3.1.5.RELEASE** / Tomcat embed **10.1.54** / Jackson **2.21.2** / HikariCP **6.3.3**.
+- **외부 시스템도 명세 대상에 포함.** 라이브러리만으로는 이 앱을 재현할 수 없다 — Eclipse MAT **1.16.1**(`202501091339`, `/opt/mat/plugins` 실측) · MariaDB Server **11.2.3**(3306 핸드셰이크 배너로 조회, 자격증명 불필요) · GDB **8.2**(코어덤프) · OpenJDK **21**(빌드 타깃은 17) · Maven **3.9.9** · Rocky Linux **8.10**.
+- **프론트엔드는 서드파티가 Chart.js 4.4.0 단 하나** — `static/js/lib/chart.umd.min.js` 로컬 번들이고 템플릿·정적 리소스 전체에서 **CDN 참조 0건**(폐쇄망 전제)을 grep 으로 확인. CSS 프레임워크 없음.
+- **HTTP 계약 버전도 별도 절로 분리.** LLM 은 SDK 없이 `HttpURLConnection` 직접 호출이라 라이브러리 버전이 존재하지 않는다 — 대신 `anthropic-version: 2023-06-01` 헤더(코드 5곳 하드코딩), `/v1/messages`·`/v1/chat/completions` 엔드포인트, RAG 의 `text_expansion`/`knn` 쿼리 API 요구 조건이 사실상의 인터페이스 명세다. 사내 ES 는 설정이 플레이스홀더(`es.example.local`)라 **버전 미확인으로 명시**.
+- **업그레이드 검토 대상을 노후도 기준으로만 표기.** guava 30.1-jre(sanitizer 추이) · pdfbox 2.0.24(openhtmltopdf 1.0.10 고정) · owasp-java-html-sanitizer 20220608.1 — 셋 다 BOM 밖이라 Boot 업그레이드로 자동 갱신되지 않는다. **특정 CVE 는 단정하지 않고** 스캐너 결과로 판단하도록 단서를 달았다.
+- **변경 파일:** `VERSION_SPEC.md`(신규). 코드/빌드 영향 없음 — 문서만 추가라 재빌드 불필요.
+
+**후속 (동일자):** ① **JDK·Maven 을 명세 범위에서 제외**(요청). 실행 환경 표에서 컴파일 타깃/실행 JRE/빌드 도구 3행 + 바이트코드↔런타임 주의 문단 + 정합성 규약의 Maven 3.6.3 항목 + 부록 이력의 Java 11→17 / Maven 3.5.4→3.9.9 문구를 삭제하고, 문서 상단에 **범위 선언**을 넣어 "의도적 제외이며 누락이 아님"을 명시. 단 `mvn dependency:tree` 는 **라이브러리 버전의 산출 근거**라 §10 검증 절차로만 유지(플랫폼 버전 항목이 아님). ② **Jackson 절(§2.1) 신설** — "무슨 라이브러리냐"는 질문이 나온 지점이라 코어 프레임워크 표에 `용도` 열을 추가하고, Jackson 은 실측 사용처를 별도 표로 분리: `ObjectMapper` 직접 사용 9클래스 · `JsonNode` 트리 파싱 7클래스 · `@JsonIgnoreProperties` **14개 모델 전량** · `@JsonIgnore` 9곳 · MVC 메시지 컨버터(`@RestController` 2 + `@Controller`+메서드 `@ResponseBody` 13). ⚠ 이 앱에서 Jackson 은 단순 응답 직렬화가 아니라 **DB 저장 포맷의 스키마를 결정**한다(`analysis_result_detail`·`analysis_dominator_refs`·`ai_insights` 가 전부 JSON 컬럼) — 모델 필드 변경 시 `@JsonIgnoreProperties(ignoreUnknown = true)` 가 없으면 기존 저장분 복원이 깨지므로 정합성 규약에 항목으로 추가했다.
+
+
 ## [2026-08-12] History 툴바 카드 색 입힘 + 메모장 자동 저장 인포 아이콘 툴팁 · 지연 5초
 
 **요청:** ① History 툴바 카드가 너무 희다 — 색을 넣을 것. ② 개인 메모장 '자동 저장' 문구 **오른쪽에 인포 아이콘**을 두고 그 아이콘 hover 시 툴팁이 뜨도록 구조 변경. ③ 툴팁에서 "몇 분마다 한번씩 저장하는 주기 방식이 아닙니다." 문구 삭제. ④ 자동 저장 인터벌 2.5초 → 5초.

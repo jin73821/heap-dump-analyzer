@@ -422,7 +422,10 @@ public class AiChatController {
         final Long sid = sessionId;
         final List<Map<String, Object>> finalAttachments = attachments;
 
-        new Thread(() -> {
+        // ⚠ DelegatingSecurityContextRunnable 필수 — 호출량 게이트가 SecurityContextHolder 로
+        //   사용자를 식별하는데, 맨 Runnable 로 스레드를 띄우면 컨텍스트가 전파되지 않아
+        //   모든 사용자가 "system" 버킷을 공유하게 된다.
+        new Thread(new org.springframework.security.concurrent.DelegatingSecurityContextRunnable(() -> {
             try {
                 emitter.send(SseEmitter.event().name("start")
                     .data("{\"model\":\"" + (model != null ? model : "") + "\"}"));
@@ -494,7 +497,7 @@ public class AiChatController {
                 logger.error("[AI-Chat-Stream] 스트리밍 스레드 에러 — sessionId={}, error={}", sid, e.getMessage(), e);
                 SseJson.sendError(emitter, "INTERNAL_ERROR", e.getMessage());
             }
-        }, "ai-chat-session-stream-" + System.currentTimeMillis()).start();
+        }), "ai-chat-session-stream-" + System.currentTimeMillis()).start();
 
         emitter.onTimeout(emitter::complete);
         return emitter;

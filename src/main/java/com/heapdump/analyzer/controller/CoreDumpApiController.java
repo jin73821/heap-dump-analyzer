@@ -395,7 +395,7 @@ public class CoreDumpApiController {
             logger.warn("[CoreDump-AI] action=analyze 실패 — filename={}, errorCode={}, elapsed={}ms, by={}",
                     safe, result.get("errorCode"), elapsed, who);
         }
-        return ResponseEntity.ok(result);
+        return com.heapdump.analyzer.service.LlmRateLimitService.toResponse(result);
     }
 
     @GetMapping("/api/core-dump/{filename:.+}/ai-insight")

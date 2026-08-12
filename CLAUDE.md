@@ -14,8 +14,8 @@ Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
-mvn test                                 # 단위 테스트 328건 (코어덤프 리비전·파일목록 15 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5 / Leak 룰 골든 12 / MAT suspects 파싱 5)
-java -jar target/heap-analyzer-2.3.3.jar   # 버전은 pom.xml <version>과 항상 일치
+mvn test                                 # 단위 테스트 377건 (코어덤프 리비전·파일목록 15 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5 / Leak 룰 골든 12 / MAT suspects 파싱 5 / LLM 호출량 제한 15 / LLM API 키 암호화 11 / llm-settings 렌더 스모크 2 / account·account-memo 렌더 스모크 2 / 메모 이력 보관정책 14 / 계정 레이아웃 4)
+java -jar target/heap-analyzer-2.3.4.jar   # 버전은 pom.xml <version>과 항상 일치
 bash restart.sh                          # 운영(18080) 재기동
 ```
 
@@ -37,7 +37,7 @@ sleep 18 && grep -E "Started HeapAnalyzerApplication|FAILED|Exception in thread"
 
 ## Architecture
 
-Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터 + 분석 상세는 DB(`analysis_history` 요약, `analysis_result_detail` 상세 JSON, `analysis_dominator_refs` 사전계산 refs, `ai_insights`, `ai_chat_*`, `login_history` 등), MAT 산출물(ZIP/`.index`/`.threads`/`mat.log`)만 파일 시스템. **2026-07-31 이전의 `data/{base}/result.json`·`dominator-refs.json` 은 폐지** — 기동 시 DB 이관 후 삭제된다.
+Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터 + 분석 상세는 DB(`analysis_history` 요약, `analysis_result_detail` 상세 JSON, `analysis_dominator_refs` 사전계산 refs, `ai_insights`, `ai_chat_*`, `login_history`, `memo_history` 등), MAT 산출물(ZIP/`.index`/`.threads`/`mat.log`)만 파일 시스템. **2026-07-31 이전의 `data/{base}/result.json`·`dominator-refs.json` 은 폐지** — 기동 시 DB 이관 후 삭제된다.
 
 **디렉토리:**
 ```
@@ -58,24 +58,25 @@ Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터 + 분석
 - `HeapFileApiController` — `/api/upload`, `/api/upload/check`, `/download/*`, `/api/files/bulk-delete`
 - `HeapHistoryApiController` — `/api/history*`, `/api/history/detections*`, `/api/results/clear`, `/api/compare/data`
 - `HeapSystemApiController` — `/api/settings/*`, `/api/mat/*`, `/api/system/status`, `/api/disk/check`, `/api/settings` (전체 설정 조회)
-- `HeapAiApiController` — `/api/llm/*` (15 endpoints: enabled/config/apikey/test/analyze/insight/compare/chat/chat-stream/chat-prompt/chat-restore-mode) + `/api/settings/rag*` (7 endpoints)
-- `AccountController` — 본인 자기서비스: `/account`(계정정보/비밀번호/OTP초기화/개인 메모장), `/account/memo`(메모장 새창 전용 **자립형** 페이지), `/api/account/{password,otp-reset,memo,memo-font,memo-autosave}`
+- `HeapAiApiController` — `/api/llm/*` (16 endpoints: enabled/config/apikey/test/analyze/insight/compare/chat/chat-stream/chat-prompt/chat-restore-mode/**ratelimit**) + `/api/settings/rag*` (7 endpoints)
+- `AccountController` — 본인 자기서비스: `/account`(계정정보/비밀번호/OTP초기화/개인 메모장), `/account/memo`(메모장 새창 전용 **자립형** 페이지), `/api/account/{password,otp-reset,memo,memo-font,memo-autosave}` + **메모 변경 이력** `/api/account/memo/history{,/{id},/{id}/restore}`(소유권은 쿼리로 검증)
 - `AuthController`(`/login`), `AdminController`(`/admin/users` 5-탭: 사용자/현재접속/접속이력/계정신청/**설정**(2FA·비밀번호 만료, 2026-07-18 General 에서 이동)), `ServerController`(`/servers`, `/servers/{id}`, `/servers/logs`), `AiChatController`(`/ai-chat` 세션 기반), `LeakRuleAdminController`(`/admin/leak-rules` ADMIN CRUD), `ComparisonHistoryController`(`/comparison-history`)
 - `GlobalExceptionHandler` — `IllegalArgumentException` → JSON 400 (`/api/`/AJAX) or HTML 302 redirect (`?error=invalidFilename`)
 
 **감사 로깅 컨벤션:** 관리/변경 작업(룰 CRUD, 서버 CRUD 등)은 SLF4J 로 `[Domain] action=create|update|delete ... by={who(auth)}` 구조 로깅. `who(Authentication)` = `auth!=null ? auth.getName() : "unknown"` (각 컨트롤러 static 헬퍼). update 는 before→after diff + `fields=[변경키]`, delete 는 삭제 **전** 식별정보 캡처. `LeakRuleAdminController`(`[LeakRule]`) / `ServerController`(`[Server]`) 가 레퍼런스. **새 mutation 엔드포인트 추가 시 동일 패턴 적용.** (별도 DB 감사 테이블 아님 — 앱 로그 `logs/heapdump-analyzer.log`.)
 
-**DTOs (`model/dto/` 패키지, Phase 4B-2):** `AnalysisHistoryItem` / `DailyDetection` / `ServerSeries` / `DetectionSummaryItem` / `DetectionAggregate` / `DetectionDayFile` / `DetectionRecentItem` / `ClassDiff` / `HistogramDiff` / `SuspectDiff` / `KpiDiff` — 11 DTO. 이전엔 `HeapDumpController` inner static class 였음.
+**DTOs (`model/dto/` 패키지, Phase 4B-2):** `AnalysisHistoryItem` / `DailyDetection` / `ServerSeries` / `DetectionSummaryItem` / `DetectionAggregate` / `DetectionDayFile` / `DetectionRecentItem` / `ClassDiff` / `HistogramDiff` / `SuspectDiff` / `KpiDiff` / `MemoHistoryItem` — 12 DTO. 이전엔 `HeapDumpController` inner static class 였음.
 
 **Services (Phase 4A 종합 추출, 2026-05-12):**
 - `HeapDumpAnalyzerService` (3,951 라인) — 분석 + **모든 런타임 설정 영속화 단일 책임**: settings.json ↔ application.properties 동기화. ⚠ 2026-08-02 부터 **LLM/RAG/AiInsight getter facade 는 제거됨** — 조회는 `LlmConfigService`/`RagConfigService`/`AiInsightManager` 직접 주입. **setter facade 는 유지**(위임 후 `persistSettings()` 부수효과) — 설정 변경은 반드시 이 setter 경유.
-- `LlmConfigService` (1,328 라인) — LLM 12 필드 + 17 getter/setter + 4 호출 메서드 (`callLlmAnalysis`/`callLlmChat`/`callLlmChatStream`/`testLlmConnection`) + `disableSslVerification` + `GENSPARK_MODELS`
+- `LlmConfigService` (1,470 라인) — LLM 12 필드 + 17 getter/setter + 4 호출 메서드 (`callLlmAnalysis`/`callLlmChat`/`callLlmChatStream`/`testLlmConnection`) + `disableSslVerification` + `GENSPARK_MODELS`. API 키는 `SecretValue`, 호출 메서드 5곳은 호출량 게이트 wrapper.
+- `LlmRateLimitService` (366 라인) — LLM 호출량 제한 4 축(초당/분당/일일/동시) + `Lease`(AutoCloseable) + `toResponse()` 429 매핑 + 3-hook 영속화
 - `RagConfigService` (398 라인) — RAG 26 필드 + 32 getter + 5 그룹 setter + AES 암호화
 - `FileManagementService` — 업로드/중복검사/디스크 I/O/gzip
 - `HeapHistoryAggregator` (585 라인, Phase 4B-2) — `buildHistory` / `aggregateDetections` / `build*Diffs` / `buildKpiDiff` / `buildAnalysisName` / `truncateLog` / `formatDuration` 등 공유 헬퍼. View/API 컨트롤러 7개에 주입.
 - `HeapAnalysisResultCache` — `ConcurrentHashMap` 캐시 + 7 facade 메서드
 - `AiInsightManager` — `saveAiInsight`/`loadAiInsight`/`deleteAiInsight`/`migrateAiInsightsToDb`
-- `RagService`(ES 검색 + 청킹 + LLM 컨텍스트 주입), `EmbeddingService`(semantic-client 전용), `RemoteDumpService`(SSH/SCP), `UserService`/`CustomUserDetailsService`, `LeakRuleService`, `ComparisonHistoryService`
+- `RagService`(ES 검색 + 청킹 + LLM 컨텍스트 주입), `EmbeddingService`(semantic-client 전용), `RemoteDumpService`(SSH/SCP), `UserService`/`CustomUserDetailsService`, `LeakRuleService`, `ComparisonHistoryService`, `MemoHistoryService`(개인 메모 스냅샷 — 보관 정책 3중, 함정 34)
 
 **Utils:**
 - `AuthUtil.isAdmin(Authentication)` — static, 모든 컨트롤러 공용
@@ -99,9 +100,11 @@ Thymeleaf + vanilla JS + Chart.js. 빌드 도구 없음.
 **공통 인프라 (Phase 5A/5B/5C — common.* 통합):**
 - `/css/common.css` — reset / body base / `.topbar*` / `.modal-ov` + `@keyframes modalIn` + `.modal-box` base / btn 색상 utility 3 그룹 (cancel `.mbtn-cancel/.btn-cancel/.sa-btn-cancel` · danger `.mbtn-del/.mbtn-danger/.btn-delete/.sa-btn-del` · primary `.mbtn-save/.mbtn-primary/.mbtn-confirm/.btn-download`) / 데이터 테이블 4 family base (`.htable/.ftable/.stable/.utable` + sortable) — 80+ 라인 공통. 페이지별 변형(opacity 변형, padding/font-size, min-width 등)은 인라인 cascade override.
 - `/js/common.js` — `window.Common` 네임스페이스: `escHtml(s)` (5문자 escape) / `csrfToken()` / `csrfHeaderName()` / `fetchJSON(url, opts)` (자동 CSRF/Content-Type, non-2xx throw, JSON 자동 파싱) / `appendCsrfToForm(form)` / `formatBytes(bytes)` / `toast(msg, type)` (settings 계열 — CSS 는 common.css `.toast/.toast-success/.toast-error`) / `showToast(msg, type)` (`#toast` 고정 엘리먼트 계열 — servers/server-detail/admin-users). `banner.html`에서 1회 로드 → 14 페이지 자동 가용.
-- **페이지별 로드 공통 모듈 (banner 전역 아님, 2026-08-02):** `/js/table-grid.js`(데이터 그리드 엔진) · `/js/select-mode.js`(다중 선택 모드) · `/js/float-tooltip.js`(`[data-tooltip]` **커서 추종형** 툴팁 — servers/server-detail) · `/js/krds-tooltip.js`(`[data-tip]` **앵커드 팝오버** 툴팁, KRDS component_08_05 — history/settings) · `/js/memo.js`(개인 메모장 — 저장/자동저장/창간 동기화, account·account-memo 공유). 소비 페이지의 `<script>` 태그로만 로드.
+- **페이지별 로드 공통 모듈 (banner 전역 아님, 2026-08-02):** `/js/table-grid.js`(데이터 그리드 엔진) · `/js/select-mode.js`(다중 선택 모드) · `/js/float-tooltip.js`(`[data-tooltip]` **커서 추종형** 툴팁 — servers/server-detail) · `/js/krds-tooltip.js`(`[data-tip]` **앵커드 팝오버** 툴팁, KRDS component_08_05 — history/settings) · `/js/memo.js`(개인 메모장 — 저장/자동저장/창간 동기화 + **미저장 백업 뷰어**(`Memo.openBackupViewer`) + **복구 되돌리기**(`saveUndo`/`readUndo`/`clearUndo`) + **서버 변경 이력 뷰어**(`Memo.openHistoryViewer`) — 모달은 CSS·DOM 자체 주입 싱글턴, account·account-memo 공유). 소비 페이지의 `<script>` 태그로만 로드.
 - **툴팁은 2종 — 새로 붙일 때 성격에 맞는 쪽을 고를 것.** ① `float-tooltip.js`(`data-tooltip`): 커서를 따라다니고 최대 360px, hover 전용. 표 안 배지처럼 트리거가 작고 많은 곳에 적합. ② `krds-tooltip.js`(`data-tip`): 트리거 위 중앙에 붙고 공간 부족 시 아래로 뒤집히며 화살표가 트리거를 가리킴, 280px, hover+**키보드 focus**+터치 탭 토글+Esc/바깥클릭 닫기+`role="tooltip"`/`aria-describedby`. 설명이 길거나 접근성이 필요한 설정 항목용. **두 모듈을 한 페이지에 같이 싣지 말 것**(트리거 속성이 달라 동작은 하지만 디자인이 섞인다). krds 판은 `white-space:pre-wrap` 이라 문단 구분 `&#10;` 이 그대로 살고, CSS·싱글턴 DOM 을 스스로 주입하므로 페이지는 `<script>` 한 줄만 넣으면 된다. 키보드 접근이 필요한 트리거에는 `tabindex="0"` 필수.
 - 캐시 무효화: `?v=YYYY-MM-DD[a-z]` 쿼리 파라미터. 모든 페이지 일괄 갱신.
+
+**My Account 레이아웃 전환 (2026-08-12):** `/account` 제목 라인 우측 세그먼트로 **기본**(계정 정보 위 / 메모장 아래) ↔ **좌우 분할**(메모장 좌 / 계정 정보 우 360px, 컨테이너 1400px)을 고른다. 분할에서는 우측 카드가 짧아 좌측 아래가 비므로 입력 영역을 **`min-height: max(360px, calc(100vh - 400px))`** 로 화면 높이에 맞춰 늘린다(400 = topbar/제목/카드헤더/폰트바/메타/버튼행/여백 합 — 저장 버튼이 뷰포트 밖으로 나가지 않는 값). 선택은 **`users.account_layout` 컬럼에 계정별 저장**(memoFont 와 동일 정책, `POST /api/account/layout`, `stack|split` 화이트리스트 — 값이 그대로 CSS 클래스가 되므로 검증 필수)이라 재로그인·다른 기기에서도 유지되고, **초기 적용은 `<html th:classappend>` 서버 렌더**라 FOUC 스크립트가 필요 없다. DOM 순서는 계정→메모 그대로 두고 **`order` 로만 좌우를 바꿔** 탭 순서·낭독 순서를 보존하며, ≤1100px 에서는 grid 를 해제해 자동으로 1단이 된다(선택값은 유지). 기본 상태에서 `.acct-grid` 는 아무 CSS 도 걸리지 않는 블록이라 종전 렌더와 동일. ⚠ `max-width` 는 padding(배너 240 + 20)을 포함하므로 실제 콘텐츠 폭은 260 을 뺀 값이다.
 
 **페이지:** `/`(Dashboard, 멀티 업로드 큐), `/files`, `/history`, `/compare`(파라미터 없으면 picker), `/analyze/{filename}`(KPI/TopConsumers/Suspects/Histogram/Threads/AI/RawData + 플로팅 채팅 FAB), `/progress/{filename}`(SSE), `/settings`(General), `/settings/llm`, `/settings/rag`, `/ai-chat`(세션 사이드바), `/servers*`, `/admin/users`(ADMIN), `/admin/leak-rules`(ADMIN), `/comparison-history`, `/account`, `/account/memo`(메모장 새창 — 배너 없는 독립 페이지), `/login`.
 
@@ -128,6 +131,13 @@ Thymeleaf + vanilla JS + Chart.js. 빌드 도구 없음.
 
 **3가지 호출 방식:** `callLlmAnalysis(prompt)` 원샷 JSON / `callLlmChat(messages, systemPrompt)` 멀티턴 / `callLlmChatStream(...)` SSE (Claude `content_block_delta`, OpenAI `choices.delta.content` 파싱).
 
+**API 키는 `ENC(...)` 암호화 (2026-08-12):** `llmApiKey` 는 `SecretValue` + `putSecret()` — RAG 3종과 동일 규약(값 미변경 시 재암호화 안 함 / 손상값은 `usable()` 이 차단 + 마스킹 `손상됨` / 암호화 실패 시 키 생략). 레거시 평문은 기동 시 `adopt()` 가 감지(`isLlmApiKeyUnsealed()`) → `loadPersistedSettings()` 가 **복원 완전 시에만** `persistSettings()` 로 1회 봉인. 소비는 `usableApiKey()` 로 하고 미설정/손상 안내는 `apiKeyErrorMessage()` 가 구분한다.
+
+**호출량 제한 (`LlmRateLimitService`, 2026-08-12):** 사용자별 **초당/분당/일일/동시** 4 축, 각 **0 = 무제한**. 기본 `2/20/500/3`. 설정은 `/settings/llm` > Rate Limit 카드 (`POST /api/llm/ratelimit`, ADMIN+CSRF) 이고 영속화는 LLM/RAG/2FA 와 동일 3-hook + `setLlmRateLimit()` facade.
+- **게이트는 `LlmConfigService` 의 호출 메서드 5곳이 유일한 초크포인트** — 컨트롤러가 아니라 여기 둔 이유는 새 엔드포인트 추가 시 누락을 막기 위해서다. **새 LLM 호출 메서드를 만들면 반드시 `acquireGate(scope)` 로 감싸고 `Lease` 를 `finally` 에서 close 할 것**(동시 슬롯이 거기서만 반납된다). 공개 메서드는 wrapper, 본문은 `doXxx()` private.
+- Vision overload 는 **이미지 경로에만** 게이트(위임 분기는 base 가 이미 건다 — 중복 차감 방지).
+- 거부 코드 3종 `LLM_RATE_LIMIT`/`LLM_DAILY_LIMIT`/`LLM_CONCURRENT_LIMIT`. JSON 엔드포인트는 `LlmRateLimitService.toResponse()` 로 **429 + `Retry-After`**, SSE 는 `error` 이벤트. `LLM_DISABLED`/`NO_API_KEY` 등 기존 코드는 **200 유지**(상태 코드를 바꾸면 프런트 분기가 깨진다). 프런트는 `Common.fetchJSON` 이 `err.rateLimited`/`err.retryAfterSeconds` 로 승격.
+
 **채팅 흐름 (`analyze.html` 플로팅):** `ensureChatSession()` → `POST /api/ai-chat/sessions` → `doStreamRequest()` → `POST /api/ai-chat/sessions/{id}/stream`. user 메시지는 스트리밍 시작 전 동기 저장, assistant는 `onDone`에서 3회 재시도(500ms) 저장. `done` SSE에 `saved` 필드.
 
 **SSL 검증 토글 (`llm.ssl.verify`):** 기본 true. 사내 사설 CA 로 발급된 TLS 게이트웨이 호출 시 JVM 번들 cacerts 신뢰 못해 PKIX 에러 가능. 두 해결 경로 모두 지원:
@@ -153,7 +163,7 @@ semantic 설정 누락 시 keyword 폴백 없이 명확한 에러 (디버깅 용
 
 ## Authentication & Security
 
-Spring Security **6.5** 세션. `/login` 공개, `/admin/**` + `/api/admin/**` ADMIN 전용. **CSRF 보호 유지 (면제하지 않음)**: `/api/admin/**`, `/api/settings/**`, `/api/llm/{enabled,config,apikey,test-connection,chat-prompt,chat-restore-mode}`, `/api/servers/{scan-interval,ssh-local-user}` — 모두 `authorizeHttpRequests(auth -> auth.requestMatchers(...).hasRole("ADMIN"))` 매처와 1:1 미러링. 그 외 `/api/**` 는 CSRF 면제 (인증은 유지). **새 ADMIN mutation 추가 시 SecurityConfig 두 곳 (authorize + csrf ignore) 동시 갱신 필수**. `SecurityConfig` 는 lambda DSL + `@EnableMethodSecurity` (`@PreAuthorize` 지원) 사용 — `.and()` chain / `@EnableGlobalMethodSecurity` / `antMatchers` 미사용.
+Spring Security **6.5** 세션. `/login` 공개, `/admin/**` + `/api/admin/**` ADMIN 전용. **CSRF 보호 유지 (면제하지 않음)**: `/api/admin/**`, `/api/settings/**`, `/api/llm/{enabled,config,apikey,test-connection,chat-prompt,chat-restore-mode,file-attach,ratelimit}`, `/api/servers/{scan-interval,ssh-local-user}` — 모두 `authorizeHttpRequests(auth -> auth.requestMatchers(...).hasRole("ADMIN"))` 매처와 1:1 미러링. 그 외 `/api/**` 는 CSRF 면제 (인증은 유지). **새 ADMIN mutation 추가 시 SecurityConfig 두 곳 (authorize + csrf ignore) 동시 갱신 필수**. `SecurityConfig` 는 lambda DSL + `@EnableMethodSecurity` (`@PreAuthorize` 지원) 사용 — `.and()` chain / `@EnableGlobalMethodSecurity` / `antMatchers` 미사용.
 
 **Spring Session JDBC**: `SPRING_SESSION` / `SPRING_SESSION_ATTRIBUTES` 자동 생성. 무동작 만료 60분, cleanup cron 10분. 앱 재시작에도 로그인 유지.
 
@@ -245,6 +255,14 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 
 30. **sticky 헤더 z-index 는 셀 내부 요소보다 반드시 커야 한다 (동률이면 tbody 가 이긴다)** — `.data-table thead th` 는 `position:sticky; z-index:3`. 셀 안에서 막대 위에 값을 띄우려고 `position:relative; z-index:1` 을 준 요소(`.dom-bar-val`)가 있는데, 부모 td 가 `position:relative` 여도 **`z-index:auto` 면 스태킹 컨텍스트가 안 생겨** 그 자식이 셀에 갇히지 않고 루트에서 헤더와 직접 경쟁한다. z-index 가 같으면 DOM 순서상 뒤인 tbody 가 이겨 **스크롤 시 값이 헤더를 뚫고 올라온다**(2026-08-09 Dominator Tree Shallow/Retained Heap 실제 제보 — 막대는 `z-index:0` 이라 멀쩡하고 값만 겹쳐 원인이 헷갈린다). **셀 내부에 z-index 를 쓰면 그 td 에 `isolation:isolate` 를 함께 줘서 경쟁을 셀 안에 가둘 것.** 중첩 표(`.dom-refs-tbl th` z:2)도 바깥 헤더보다 낮아야 한다. 검증은 스크롤 위치를 훑으며 헤더 밴드 좌표에서 `elementFromPoint` 가 `thead` 를 돌려주는지 보면 확정적이다(스크린샷 눈대중보다 신뢰).
 
+31. **`new Thread(...)` 는 SecurityContext 를 전파하지 않는다 — 사용자별 정책이 전원 한 버킷으로 뭉개진다** — SSE 스트리밍 두 곳(`HeapAiApiController.aiChatStream`, `AiChatController.streamChat`)은 요청 스레드에서 SseEmitter 를 만들고 **별도 스레드**에서 LLM 을 호출한다. `SecurityContextHolder` 는 기본이 `MODE_THREADLOCAL` 이라 그 스레드에서는 `getAuthentication()` 이 null → 호출량 게이트가 전원을 `"system"` 버킷에 넣어 **사용자별 제한이 사실상 전역 제한**이 된다(에러가 안 나고 조용히 잘못 동작하는 부류). 해결은 `new Thread(new DelegatingSecurityContextRunnable(() -> {...}), name)` — 생성 시점(=요청 스레드)의 컨텍스트를 캡처해 실행 스레드에 심는다. **SSE/비동기 스레드에서 인증 주체가 필요한 로직(감사 로깅·쿼터·소유권 검사)을 돌릴 때는 항상 이 래퍼를 쓸 것.** 게이트를 서비스 층에 두면 컨트롤러가 이 사실을 잊기 쉬우므로 `LlmConfigService` 클래스 주석에도 경고를 박아뒀다.
+
+32. **슬라이딩 윈도우 한도는 "부수효과 있는 검사"를 마지막에 — 순서를 바꾸면 거부된 요청이 남의 할당량을 먹는다** — `RateLimiter.isAllowed()` 는 통과 시 타임스탬프를 **기록**한다. 그래서 여러 축(초당/분당/일일)을 순차 검사할 때 기록형 검사를 먼저 돌리면, 뒤 축에서 거부된 요청이 앞 축의 카운트를 이미 소모한 상태가 된다. `LlmRateLimitService.acquire()` 는 ① 동시(슬롯) ② **일일(읽기 전용 peek)** ③ 초당/분당(기록) ④ 통과 확정 후 일일 카운터 증가 순서다. 같은 이유로 **거부 시 앞서 잡은 동시 슬롯을 반드시 반납**해야 하는데, 동시 한도가 0(무제한)이면 애초에 잡지 않았으므로 반납하면 카운터가 음수가 된다 — 실제 점유 여부를 `heldSlot` 지역변수로 들고 다닌다. 슬롯이 누수되면 이후 **모든** 호출이 영구히 `LLM_CONCURRENT_LIMIT` 이 되므로 회귀 테스트(`LlmRateLimitServiceTest` 15건)를 반드시 유지할 것. 한도가 런타임에 바뀌는 값이라 동시 카운터는 `Semaphore`(permit 고정) 대신 **CAS `AtomicInteger`**, 윈도우 2종은 `applyFromSettings`/setter 에서 **재생성**한다(안 하면 복원 후 옛 한도가 남는다).
+
+33. **브라우저에서 만든 시각을 서버 `LocalDateTime` 용 포맷터로 표시하면 9시간 어긋난다** — `Memo.formatTs()` 는 서버가 주는 ISO 문자열(로컬 시각)의 **앞부분을 자르는** 함수다. 그런데 `Memo.backup()` 은 `new Date().toISOString()`(**UTC**)로 기록했고 같은 포맷터로 표시해, "저장되지 못한 메모가 남아 있습니다 (2026-08-06 **05:15**)" 가 실제로는 14:15 인 사태가 있었다(2026-08-12 수정). 바로 옆에 서버발 "저장 시각"(로컬)이 함께 놓이는 화면이라 **어느 쪽이 최신인지 오판**하게 만든다 — 예외도 로그도 없이 조용히 틀리는 부류. **클라이언트가 시각을 만들어 서버 시각과 나란히 보여줄 때는 `Memo.localTs()` 처럼 로컬 기준으로 기록**하고, 이미 저장된 UTC 값은 `Memo.formatBackupTs()` 처럼 오프셋 유무를 보고 환산할 것. `toISOString()` 을 표시용 문자열로 쓰지 말 것.
+
+34. **메모 이력의 보관량은 3중으로 막아야 한다 — 자동 저장이 5초 debounce 다** — `users.memo` 는 덮어쓰기 단일 컬럼이라 2026-08-12 에 `memo_history`(덮이기 직전 스냅샷)를 신설했다. 여기서 진짜 위험은 기능이 아니라 **양**이다: 메모장 자동 저장은 마지막 입력 후 5초에 1회 저장하므로 계속 타이핑하면 분당 10회 넘게 저장되고, 컬럼은 최대 10MB — 매 저장마다 행을 만들면 한 사용자가 며칠 만에 수 GB 를 만든다. `MemoHistoryService` 가 ① **최소 간격**(`min-interval-seconds`, 기본 60초) ② **사용자당 상한**(`max-per-user`, 기본 100, 초과분 즉시 축출) ③ **보관 기간**(`retention-days`, 기본 7일, 매일 03:30 정리) + 동일 내용·빈 내용 억제로 막는다. **단 복원/초기화 직전 스냅샷은 간격 제한 예외**(되돌리기 수요가 확실한 시점이라 여기서 억제하면 정작 필요한 걸 잃는다). 억제 판정은 전부 **읽기 전용**이고 INSERT 는 통과 확정 후에만 — 순서를 바꾸면 거부된 저장이 할당량을 갉아먹는다(함정 32 와 같은 계열). ⚠ 목록 조회는 `SUBSTRING` 투영으로 **본문을 빼고** 가져올 것(10MB LOB 를 목록마다 끌고 오면 안 된다). ⚠ 소유권 검증은 `findByIdAndUsername` 처럼 **쿼리에 넣을 것** — id 로 찾은 뒤 비교하는 방식은 한 곳만 빠뜨려도 개인 메모가 새어나간다. ⚠ 의존은 `UserService` → `MemoHistoryService` **단방향** 유지(복원 실행은 UserService, 이력 조회는 MemoHistoryService — 반대로 부르면 순환). 클라이언트 측 안전망(`memoBackup:*` 미저장 백업, `memoUndo:*` 복구 되돌리기)은 여전히 **브라우저 localStorage 전용**이라 서버·admin 은 접근할 수 없다.
+
 ## Key Design Decisions
 
 - **Two-tier cache:** In-memory `ConcurrentHashMap` ← DB `analysis_result_detail.result_json` 복원(`restoreResultsFromDb`). 누락 필드(componentDetailHtmlMap/histogramHtml/threadOverviewHtml)는 ZIP에서 lazy 재추출.
@@ -275,7 +293,7 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 - **`SecretValue`** — 로드 당시 암호문을 보관하고 **값이 실제로 바뀐 경우에만 재암호화**. 손상 평문의 재암호화 세탁(원본 영구 소실) 차단 + 기동 churn 제거. 암호화 실패 시 `forStorage()` 가 `null` → 호출자가 **키 자체를 생략**해 기존 저장값 보존(빈 문자열로 덮으면 시크릿 무경고 삭제). **새 시크릿 필드 추가 시 반드시 `SecretValue` + `putSecret()` 패턴 사용** — RAG 3종/SSO clientSecret 이 레퍼런스.
 - ⚠️ **파일로 시크릿을 직접 정리할 때** — Spring 이 부팅 시 읽는 건 **JAR 내부 사본**(`BOOT-INF/classes/application.properties`)이다. settings.json + 소스 properties 만 고치면 `init()` 이 옛 값을 읽어 WARN 이 남는다(직후 `applyFromSettings` 가 덮어써 동작엔 무해). **재빌드까지 필요**.
 - 회귀 방어: `AesEncryptorTest`(237, 반복 200 포함) / `SecretSanityTest`(22) / `RagConfigServiceSecretTest`(11, 세탁루프·churn) / `SettingsRestoreIsolationTest`(4) / `ResultDirectorySchemeTest`(5) / `DominatorRefsEmptyGuardTest`(5) / `LeakSuspectAdvisorGoldenTest`(10, DB 룰 경로 결과 불변).
-- 후속 항목(LLM API 키 평문 저장, OTP rekey 도구, `HEAP_ANALYZER_ENCRYPTION_KEY` 미설정)은 `SECRET_ENCRYPTION_FOLLOWUP.md`.
+- 후속 항목(OTP rekey 도구, `HEAP_ANALYZER_ENCRYPTION_KEY` 미설정)은 `SECRET_ENCRYPTION_FOLLOWUP.md`. **LLM API 키 평문 저장은 2026-08-12 해결** — `SecretValue` 전환 + 기동 시 1회 자동 봉인.
 - **Dump Creation Time 파싱:** `HeapAnalysisResult.dumpCreationTime` 필드 — MAT System Overview ZIP `index.html`의 `<td>Date</td>`/`<td>Time</td>` TD 쌍을 파싱. MAT는 JVM 로케일(한국어)로 출력하므로 `"2026. 5. 29."` + `"오후 6시 18분 53초 GMT+9"` 형태. `HeapDumpAnalyzerService.parseDumpCreationTime()` 이 오전/오후 24h 변환 후 `"2026-05-29 18:18:53"` 반환. 기존 result.json에 필드 없을 경우 `reparseOverviewMeta()` 가 `dumpCreationTime == null` 조건으로 재파싱 (classLoader/gcRoot 0 조건과 OR).
 - **Leak Rule DB 마이그레이션 (Phase 4):** `leak_library_rules` (98 prefix-based: 66 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 2 보강 2026-05-31) + `leak_fallback_rules` (66 regex-based: 33 base + WebLogic 10·Tomcat 5·JEUS 10·Oracle 5·Tibero 3) 테이블 + `LeakRuleAdminController` `/admin/leak-rules` ADMIN CRUD + `LeakSuspectAdvisor` 룰 엔진 + `LeakRuleSeeder` 부트스트랩. 코드 배포 없이 운영자가 추가/수정/우선순위 조정. `LeakRuleService.invalidate()` 로 캐시 즉시 갱신. **2026-08-02 하드코딩 룰 배열(dual-path 폴백 769라인) 제거 — DB 룰 단일 경로**: 룰 미매칭/서비스 미주입/전체 비활성화 시 `analyze()` no-op(suspect 필드 null → UI null 가드가 원문+키워드만 표시). 시드에 catch-all(`.*`) fallback 룰이 있어 DB 룰 활성 시엔 어떤 텍스트든 최소 generic 카테고리를 받는다. 회귀 방어 `LeakSuspectAdvisorGoldenTest`(10).
 

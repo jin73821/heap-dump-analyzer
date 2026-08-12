@@ -8,7 +8,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <!-- common.css: @font-face(D2Coding 등) + .tog 토글 base -->
-    <link rel="stylesheet" href="/css/common.css?v=2026-08-11">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-12">
     <title>개인 메모장</title>
     <style>
         * { box-sizing: border-box; }
@@ -117,6 +117,8 @@
     <span class="status" id="st"></span>
     <button id="copyBtn" type="button" onclick="copyMemo()">복사</button>
     <button id="saveBtn" class="primary" type="button" onclick="saveNow()">저장</button>
+    <!-- 저장 버튼 라인의 맨 우측 -->
+    <button id="historyBtn" type="button" onclick="openMemoHistory()" title="저장 직전 내용을 되돌립니다 (최근 7일)">변경 이력</button>
 </div>
 
 <div class="alert warn" id="sessionAlert" hidden>
@@ -126,9 +128,17 @@
 </div>
 
 <div class="alert info" id="restoreAlert" hidden>
-    <span class="grow">저장되지 못한 메모가 남아 있습니다 (<span id="restoreAt"></span>).</span>
+    <span class="grow">저장되지 못한 메모가 남아 있습니다 (<span id="restoreAt"></span>, <span id="restoreSize"></span>).</span>
+    <button type="button" onclick="viewBackup()">내용 보기</button>
     <button type="button" onclick="restoreBackup()">복구</button>
     <button type="button" onclick="discardBackup()">버리기</button>
+</div>
+
+<div class="alert info" id="undoAlert" hidden>
+    <span class="grow">백업 내용으로 복구했습니다. 복구 직전 내용(<span id="undoAt"></span>)으로 되돌릴 수 있습니다.</span>
+    <button type="button" onclick="viewUndo()">이전 내용 보기</button>
+    <button type="button" onclick="undoRestore()">복구 이전으로 되돌리기</button>
+    <button type="button" onclick="dismissUndo()">닫기</button>
 </div>
 
 <textarea id="memoBox" spellcheck="false" placeholder="자유 메모… 본인만 볼 수 있습니다."
@@ -140,8 +150,8 @@
     <span style="margin-left:10px">Ctrl+S 로도 저장됩니다.</span>
 </div>
 
-<script src="/js/common.js?v=2026-08-06"></script>
-<script src="/js/memo.js?v=2026-08-12"></script>
+<script src="/js/common.js?v=2026-08-12"></script>
+<script src="/js/memo.js?v=2026-08-12d"></script>
 <!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (history·settings·account 와 공유) -->
 <script src="/js/krds-tooltip.js?v=2026-08-09"></script>
 <script th:inline="javascript">
@@ -195,17 +205,37 @@ var dirty    = false;
 function offerBackupRestore() {
     var b = Memo.readBackup(MEMO_USERNAME);
     if (!b || typeof b.text !== 'string' || b.text === box.value) return;
-    document.getElementById('restoreAt').textContent = Memo.formatTs(b.at) || '이전';
+    document.getElementById('restoreAt').textContent = Memo.formatBackupTs(b.at) || '이전';
+    document.getElementById('restoreSize').textContent = Memo.fmtBytes(Memo.utf8ByteLen(b.text));
     restEl.hidden = false;
+}
+
+/* 무엇이 복구되는지 눈으로 확인 — 복구는 편집 중인 내용을 덮어쓰므로 확인 경로가 필요하다 */
+function viewBackup() {
+    var b = Memo.readBackup(MEMO_USERNAME);
+    if (!b) { restEl.hidden = true; return; }
+    Memo.openBackupViewer({
+        backup: b,
+        current: box.value,
+        onRestore: restoreBackup,
+        onDiscard: discardBackup
+    });
+}
+
+function applyMemoText(text) {
+    box.value = text;
+    refreshCount();
+    setDirty(true);
+    Memo.post('text', { text: box.value });
 }
 
 function restoreBackup() {
     var b = Memo.readBackup(MEMO_USERNAME);
     if (b && typeof b.text === 'string') {
-        box.value = b.text;
-        refreshCount();
-        setDirty(true);
-        Memo.post('text', { text: box.value });
+        // 덮기 직전 스냅샷 — 서버에는 메모 이력이 없어 이걸 남기지 않으면 되돌릴 방법이 없다
+        var undoOk = Memo.saveUndo(MEMO_USERNAME, box.value);
+        applyMemoText(b.text);
+        if (undoOk) showUndoAlert();
     }
     restEl.hidden = true;
 }
@@ -213,6 +243,59 @@ function restoreBackup() {
 function discardBackup() {
     Memo.clearBackup(MEMO_USERNAME);
     restEl.hidden = true;
+}
+
+/* ── 서버 변경 이력 (memo_history) ─────────────────────── */
+function openMemoHistory() {
+    Memo.openHistoryViewer({
+        onRestored: function (d) {
+            var text = d.memo || '';
+            box.value = text;
+            refreshCount();
+            // 복원은 서버 저장까지 끝난 상태 — 미저장 표시를 남기면 안 된다
+            dirty = false;
+            setStatus('복원됨', '');
+            updEl.textContent = Memo.formatTs(d.memoUpdatedAt) || '—';
+            Memo.post('saved', { text: text, updatedAt: d.memoUpdatedAt });
+        },
+        onError: function (e) {
+            setStatus('이력 오류', 'err');
+            console.warn('[memo-history]', Memo.errorMessage(e));
+        }
+    });
+}
+
+/* ── 복구 되돌리기 ─────────────────────────────────────── */
+var undoEl = document.getElementById('undoAlert');
+
+function showUndoAlert() {
+    var u = Memo.readUndo(MEMO_USERNAME);
+    if (!u) return;
+    document.getElementById('undoAt').textContent = Memo.formatBackupTs(u.at) || '복구 직전';
+    undoEl.hidden = false;
+}
+
+function viewUndo() {
+    var u = Memo.readUndo(MEMO_USERNAME);
+    if (!u) { undoEl.hidden = true; return; }
+    Memo.openBackupViewer({
+        backup: u,
+        current: box.value,
+        onRestore: undoRestore,
+        onDiscard: dismissUndo
+    });
+}
+
+function undoRestore() {
+    var u = Memo.readUndo(MEMO_USERNAME);
+    if (u && typeof u.text === 'string') applyMemoText(u.text);
+    Memo.clearUndo(MEMO_USERNAME);
+    undoEl.hidden = true;
+}
+
+function dismissUndo() {
+    Memo.clearUndo(MEMO_USERNAME);
+    undoEl.hidden = true;
 }
 
 function setStatus(text, cls) {

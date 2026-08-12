@@ -7,7 +7,19 @@
 
 ## 1. LLM API 키가 평문으로 디스크에 저장됨
 
-**상태:** 미해결. 문서와 코드가 불일치.
+**상태: 2026-08-12 해결.** `llmApiKey` 를 `SecretValue` + `putSecret()` 규약으로 전환했다
+(CHANGELOG `[2026-08-12] LLM 호출량 제한 … + llm.api.key AES 암호화` 참조).
+
+- 저장: settings.json / application.properties 모두 `ENC(...)`. 값 미변경 시 재암호화하지 않아 churn 0.
+- 소비: `usableApiKey()` — 손상값은 빈 문자열이라 `x-api-key`/`Authorization` 헤더로 나가지 않고,
+  마스킹은 `손상됨`, 오류 안내는 `apiKeyErrorMessage()` 가 미설정/손상을 구분한다.
+- **마이그레이션 자동화:** `adopt()` 가 `ENC(` 접두 없는 저장본을 감지(`isLlmApiKeyUnsealed()`) → 기동 시
+  `loadPersistedSettings()` 가 복원이 완전할 때만 `persistSettings()` 로 1회 봉인. 아래 ⚠ 경고가 우려한
+  "평문 유지 → 다음 저장 때 암호화" 를 기동 시점으로 앞당긴 것. 운영 실측으로 1차 기동에서 봉인 완료,
+  2차 기동에서 경고 없음을 확인했다. JAR 내부 `BOOT-INF/classes/application.properties` 도 재빌드로 반영 필요.
+- 회귀 방어: `LlmApiKeySecretTest`(11).
+
+<details><summary>당시 분석 (기록 보존)</summary>
 
 `LlmConfigService` 는 `llmApiKey` 를 **암호화하지 않는다**. `AesEncryptor` 를 import 조차 하지 않는다.
 
@@ -32,6 +44,8 @@
 > `decryptIfEncryptedChecked` 가 `PLAIN` 으로 통과시키므로 동작은 유지되고, 다음 저장 때 암호화된다.
 > 반대로 지금 상태에서 `ENC(...)` 를 직접 넣으면 **리터럴 문자열이 `x-api-key` 헤더로 전송된다**
 > (`LlmConfigService:359,526,725,890,1080`).
+
+</details>
 
 ---
 

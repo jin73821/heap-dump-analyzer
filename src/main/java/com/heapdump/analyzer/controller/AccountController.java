@@ -1,6 +1,8 @@
 package com.heapdump.analyzer.controller;
 
+import com.heapdump.analyzer.model.entity.MemoHistory;
 import com.heapdump.analyzer.model.entity.User;
+import com.heapdump.analyzer.service.MemoHistoryService;
 import com.heapdump.analyzer.service.UserService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
@@ -21,11 +23,14 @@ import java.util.Map;
 public class AccountController {
 
     private final UserService userService;
+    private final MemoHistoryService memoHistoryService;
     private final com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy;
 
     public AccountController(UserService userService,
+                            MemoHistoryService memoHistoryService,
                             com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy) {
         this.userService = userService;
+        this.memoHistoryService = memoHistoryService;
         this.passwordPolicy = passwordPolicy;
     }
 
@@ -38,6 +43,8 @@ public class AccountController {
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
         model.addAttribute("user", user);
         model.addAttribute("memoAutosave", UserService.isMemoAutosaveOn(user));
+        // 레이아웃은 서버가 렌더 시점에 <html> 클래스로 내려준다 — 클라이언트 스크립트로 적용하면 화면이 한 번 튄다
+        model.addAttribute("accountLayout", UserService.accountLayoutOf(user));
         // 비밀번호 만료 정책 상태 (본인 계정 기준) — 표시 문자열은 컨트롤러에서 조립(Thymeleaf 단순화)
         boolean pwEnabled = passwordPolicy.isEnabled() && !passwordPolicy.isExempt(user);
         boolean pwExpired = passwordPolicy.isExpired(user);
@@ -131,6 +138,18 @@ public class AccountController {
         return ResponseEntity.ok(res);
     }
 
+    /** My Account 레이아웃 저장 (본인 계정). stack | split 외의 값은 400. */
+    @PostMapping("/api/account/layout")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> saveAccountLayout(@RequestBody Map<String, String> body,
+                                                                 Principal principal) {
+        userService.saveAccountLayout(principal.getName(), body.get("layout"));
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        res.put("layout", body.get("layout"));
+        return ResponseEntity.ok(res);
+    }
+
     @PostMapping("/api/account/memo-font")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> saveMemoFont(@RequestBody Map<String, String> body,
@@ -156,6 +175,58 @@ public class AccountController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> clearMemo(Principal principal) {
         userService.clearMemo(principal.getName());
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        return ResponseEntity.ok(res);
+    }
+
+    // ── 메모 변경 이력 ───────────────────────────────────────
+    // 모든 엔드포인트가 principal 기준 본인 것만 다룬다. 소유권 검증은
+    // MemoHistoryService.require() 가 쿼리(findByIdAndUsername)로 수행하므로
+    // id 를 바꿔 넣어도 남의 스냅샷에 접근할 수 없다.
+
+    @GetMapping("/api/account/memo/history")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> memoHistoryList(Principal principal) {
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        res.put("enabled", memoHistoryService.isEnabled());
+        res.put("retentionDays", memoHistoryService.getRetentionDays());
+        res.put("maxPerUser", memoHistoryService.getMaxPerUser());
+        res.put("items", memoHistoryService.list(principal.getName()));
+        return ResponseEntity.ok(res);
+    }
+
+    @GetMapping("/api/account/memo/history/{id}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> memoHistoryDetail(@PathVariable Long id, Principal principal) {
+        MemoHistory h = memoHistoryService.require(principal.getName(), id);
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        res.put("id", h.getId());
+        res.put("memo", h.getMemo() == null ? "" : h.getMemo());
+        res.put("createdAt", h.getCreatedAt());
+        res.put("byteSize", h.getByteSize());
+        res.put("reason", h.getReason());
+        return ResponseEntity.ok(res);
+    }
+
+    /** 해당 시점으로 복원. 복원 직전 내용도 이력에 남아 다시 되돌릴 수 있다. */
+    @PostMapping("/api/account/memo/history/{id}/restore")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> memoHistoryRestore(@PathVariable Long id, Principal principal) {
+        UserService.RestoredMemo restored = userService.restoreMemo(principal.getName(), id);
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        res.put("memo", restored.memo());
+        res.put("memoUpdatedAt", restored.memoUpdatedAt());
+        return ResponseEntity.ok(res);
+    }
+
+    @DeleteMapping("/api/account/memo/history")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> memoHistoryClear(Principal principal) {
+        memoHistoryService.deleteAll(principal.getName());
         Map<String, Object> res = new HashMap<>();
         res.put("success", true);
         return ResponseEntity.ok(res);

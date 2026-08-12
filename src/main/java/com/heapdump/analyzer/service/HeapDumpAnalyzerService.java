@@ -73,6 +73,7 @@ public class HeapDumpAnalyzerService {
     private final HeapAnalysisResultCache resultCache;
     private final FileManagementService fileMgmt;
     private final LlmConfigService llmConfig;
+    private final LlmRateLimitService llmRateLimitService;
     private final RagConfigService ragConfig;
     private final TwoFactorConfigService twoFactorConfig;
     private final PasswordPolicyConfigService passwordPolicyConfig;
@@ -180,6 +181,7 @@ public class HeapDumpAnalyzerService {
                                    HeapAnalysisResultCache resultCache,
                                    FileManagementService fileMgmt,
                                    LlmConfigService llmConfig,
+                                   LlmRateLimitService llmRateLimitService,
                                    RagConfigService ragConfig,
                                    TwoFactorConfigService twoFactorConfig,
                                    PasswordPolicyConfigService passwordPolicyConfig,
@@ -199,6 +201,7 @@ public class HeapDumpAnalyzerService {
         this.resultCache = resultCache;
         this.fileMgmt = fileMgmt;
         this.llmConfig = llmConfig;
+        this.llmRateLimitService = llmRateLimitService;
         this.ragConfig = ragConfig;
         this.twoFactorConfig = twoFactorConfig;
         this.passwordPolicyConfig = passwordPolicyConfig;
@@ -1772,6 +1775,7 @@ public class HeapDumpAnalyzerService {
         List<String> failed = new ArrayList<>();
         applyStep(failed, "scalar",         () -> restoreScalarSettings(saved));
         applyStep(failed, "llm",            () -> llmConfig.applyFromSettings(saved));
+        applyStep(failed, "llmRateLimit",   () -> llmRateLimitService.applyFromSettings(saved));
         applyStep(failed, "rag",            () -> ragConfig.applyFromSettings(saved));
         applyStep(failed, "twoFactor",      () -> twoFactorConfig.applyFromSettings(saved));
         applyStep(failed, "passwordPolicy", () -> passwordPolicyConfig.applyFromSettings(saved));
@@ -1793,7 +1797,14 @@ public class HeapDumpAnalyzerService {
         // 6) application.properties 동기화 — 복원이 완전할 때만.
         //    반쪽 상태를 properties 로 내보내면 2차 오염이 된다.
         if (failed.isEmpty()) {
-            syncApplicationProperties();
+            // 레거시 평문 LLM API 키는 여기서 1회 ENC(...) 로 봉인한다.
+            // persistSettings() 가 syncApplicationProperties() 까지 수행하므로 중복 호출하지 않는다.
+            if (llmConfig.isLlmApiKeyUnsealed()) {
+                logger.warn("[Settings] 평문 LLM API 키 감지 — settings.json/application.properties 재봉인 수행");
+                persistSettings();
+            } else {
+                syncApplicationProperties();
+            }
         } else {
             logger.error("[Settings] 복원 실패 그룹 {} — application.properties 동기화 생략 (기존 값 보존)", failed);
         }
@@ -1921,6 +1932,7 @@ public class HeapDumpAnalyzerService {
             settings.put("dashboardDetectDays", dashboardDetectDays);
             // LLM/RAG/2FA/원격 설정 — 각 서비스에 위임
             llmConfig.collectSettings(settings);
+            llmRateLimitService.collectSettings(settings);
             ragConfig.collectSettings(settings);
             twoFactorConfig.collectSettings(settings);
             passwordPolicyConfig.collectSettings(settings);
@@ -1960,6 +1972,7 @@ public class HeapDumpAnalyzerService {
             updates.put("server.servlet.session.timeout", sessionTimeoutHours + "h");
             // LLM/RAG/2FA/원격 설정 — 각 서비스에 위임
             llmConfig.collectApplicationProperties(updates);
+            llmRateLimitService.collectApplicationProperties(updates);
             ragConfig.collectApplicationProperties(updates);
             twoFactorConfig.collectApplicationProperties(updates);
             passwordPolicyConfig.collectApplicationProperties(updates);
@@ -2073,6 +2086,12 @@ public class HeapDumpAnalyzerService {
 
     public void setLlmSslVerify(boolean sslVerify) {
         llmConfig.setLlmSslVerify(sslVerify);
+        persistSettings();
+    }
+
+    /** LLM 호출량 제한 — LlmRateLimitService 위임 + persistSettings 부수효과. */
+    public void setLlmRateLimit(boolean enabled, int perSecond, int perMinute, int perDay, int concurrent) {
+        llmRateLimitService.setLlmRateLimit(enabled, perSecond, perMinute, perDay, concurrent);
         persistSettings();
     }
 

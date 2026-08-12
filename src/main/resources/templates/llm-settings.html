@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-08-11">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-12">
     <title>AI / LLM Settings — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }  /* LLM Settings 페이지 전용 */
@@ -244,6 +244,70 @@
         </div>
     </div>
 
+    <!-- Rate Limit -->
+    <div class="card">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+            Rate Limit (호출량 제한)
+        </div>
+        <div class="setting-row">
+            <div>
+                <div class="setting-label">호출량 제한 사용</div>
+                <div class="setting-desc">
+                    로그인 사용자 <b>1인 기준</b>으로 AI 호출 횟수를 제한합니다.
+                </div>
+            </div>
+            <div>
+                <input type="checkbox" class="tog" id="togRateLimit">
+                <label class="tog-track" for="togRateLimit"></label>
+            </div>
+        </div>
+        <div class="s-row">
+            <span class="s-key">초당 요청 수</span>
+            <!-- 설명이 왼쪽, 입력칸이 맨 우측. 4행의 입력 폭을 110px 로 통일해 좌우 가장자리를 일직선으로 맞춘다 -->
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap">
+                <span class="setting-desc" style="margin-top:0;text-align:right">연타·스크립트 폭주 차단. 권장 2</span>
+                <input type="number" id="rlPerSecond" min="0" max="100" step="1"
+                       style="width:110px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;flex:0 0 auto">
+            </div>
+        </div>
+        <div class="s-row">
+            <span class="s-key">분당 요청 수</span>
+            <!-- 설명이 왼쪽, 입력칸이 맨 우측. 4행의 입력 폭을 110px 로 통일해 좌우 가장자리를 일직선으로 맞춘다 -->
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap">
+                <span class="setting-desc" style="margin-top:0;text-align:right">지속적인 남용 차단. 권장 20 (일반 대화는 분당 2~3회 수준)</span>
+                <input type="number" id="rlPerMinute" min="0" max="1000" step="1"
+                       style="width:110px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;flex:0 0 auto">
+            </div>
+        </div>
+        <div class="s-row">
+            <span class="s-key">일일 요청 수</span>
+            <!-- 설명이 왼쪽, 입력칸이 맨 우측. 4행의 입력 폭을 110px 로 통일해 좌우 가장자리를 일직선으로 맞춘다 -->
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap">
+                <span class="setting-desc" style="margin-top:0;text-align:right">과금 총량 상한. 자정(서버 시각) 기준 리셋. 권장 500</span>
+                <input type="number" id="rlPerDay" min="0" max="100000" step="10"
+                       style="width:110px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;flex:0 0 auto">
+            </div>
+        </div>
+        <div class="s-row">
+            <span class="s-key">동시 요청 수</span>
+            <!-- 설명이 왼쪽, 입력칸이 맨 우측. 4행의 입력 폭을 110px 로 통일해 좌우 가장자리를 일직선으로 맞춘다 -->
+            <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap">
+                <span class="setting-desc" style="margin-top:0;text-align:right">동시에 진행 중인 호출 상한. 스트리밍은 응답이 끝날 때까지 1건으로 계산. 권장 3</span>
+                <input type="number" id="rlConcurrent" min="0" max="50" step="1"
+                       style="width:110px;padding:5px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;flex:0 0 auto">
+            </div>
+        </div>
+        <div class="s-row" style="border-bottom:none">
+            <span class="s-key"></span>
+            <!-- 위 4행과 동일하게 설명이 왼쪽, 조작 요소(버튼)가 맨 우측 -->
+            <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
+                <span class="setting-desc" style="margin-top:0;text-align:right"><b>0 = 무제한</b> (해당 항목만 해제)</span>
+                <button onclick="saveRateLimit()" class="btn-primary" style="flex:0 0 auto">Save Rate Limit</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Chat System Prompt -->
     <div class="card">
         <div class="card-title">
@@ -323,6 +387,13 @@
 <script>
 // ── Toast ──────────────────────────────────────────────
 var toast = Common.toast;
+
+/** 숫자 입력 채우기 — 0 은 "무제한" 을 뜻하는 유효값이므로 null/undefined 만 기본값으로 대체. */
+function setNum(id, val, fallback) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.value = (val === null || val === undefined) ? fallback : val;
+}
 
 function selectOption(id, val) {
     var sel = document.getElementById(id);
@@ -428,6 +499,14 @@ function loadLlmSettings() {
 
         var togFileAttach = document.getElementById('togFileAttach');
         if (togFileAttach) togFileAttach.checked = !!llm.fileAttachEnabled;
+
+        var rl = llm.rateLimit || {};
+        var togRl = document.getElementById('togRateLimit');
+        if (togRl) togRl.checked = rl.enabled !== false;
+        setNum('rlPerSecond',  rl.perSecond,  2);
+        setNum('rlPerMinute',  rl.perMinute,  20);
+        setNum('rlPerDay',     rl.perDay,     500);
+        setNum('rlConcurrent', rl.concurrent, 3);
     }).catch(function(e) { toast('Failed to load settings: ' + e.message, 'error'); });
 }
 
@@ -609,6 +688,39 @@ function toggleChatRestoreMode(el) {
         toast('Save failed: ' + e.message, 'error');
     });
 }
+
+// ── Rate Limit ─────────────────────────────────────────
+function saveRateLimit() {
+    var enabled = document.getElementById('togRateLimit').checked;
+    var vals = {
+        enabled: enabled,
+        perSecond:  parseInt(document.getElementById('rlPerSecond').value, 10),
+        perMinute:  parseInt(document.getElementById('rlPerMinute').value, 10),
+        perDay:     parseInt(document.getElementById('rlPerDay').value, 10),
+        concurrent: parseInt(document.getElementById('rlConcurrent').value, 10)
+    };
+    var keys = ['perSecond', 'perMinute', 'perDay', 'concurrent'];
+    for (var i = 0; i < keys.length; i++) {
+        var v = vals[keys[i]];
+        if (isNaN(v) || v < 0) { toast('호출량 값은 0 이상의 숫자여야 합니다 (0 = 무제한)', 'error'); return; }
+    }
+    Common.fetchJSON('/api/llm/ratelimit', { method: 'POST', body: JSON.stringify(vals) })
+    .then(function(d) {
+        // 서버가 상한으로 clamp 한 값을 그대로 되돌려주므로 화면을 응답 기준으로 다시 맞춘다
+        setNum('rlPerSecond',  d.perSecond,  2);
+        setNum('rlPerMinute',  d.perMinute,  20);
+        setNum('rlPerDay',     d.perDay,     500);
+        setNum('rlConcurrent', d.concurrent, 3);
+        document.getElementById('togRateLimit').checked = d.enabled !== false;
+        toast(d.enabled
+            ? ('호출량 제한 저장됨 — 초당 ' + fmtLimit(d.perSecond) + ' / 분당 ' + fmtLimit(d.perMinute)
+               + ' / 일 ' + fmtLimit(d.perDay) + ' / 동시 ' + fmtLimit(d.concurrent))
+            : '호출량 제한 OFF — 제한 없이 호출됩니다', d.enabled ? 'success' : 'error');
+    })
+    .catch(function(e) { toast('Save failed: ' + e.message, 'error'); });
+}
+
+function fmtLimit(v) { return (v === 0 || v === null || v === undefined) ? '무제한' : v; }
 
 // ── File Attach Toggle ─────────────────────────────────
 function toggleFileAttach(el) {

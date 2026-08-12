@@ -168,6 +168,18 @@ public class HeapDumpConfig {
     @Value("${llm.ssl.verify:true}")
     private boolean llmSslVerify;
 
+    // ── LLM 호출량 제한 (사용자별, 0 = 무제한) ────────────────
+    @Value("${llm.ratelimit.enabled:true}")
+    private boolean llmRateLimitEnabled;
+    @Value("${llm.ratelimit.per-second:2}")
+    private int llmRateLimitPerSecond;
+    @Value("${llm.ratelimit.per-minute:20}")
+    private int llmRateLimitPerMinute;
+    @Value("${llm.ratelimit.per-day:500}")
+    private int llmRateLimitPerDay;
+    @Value("${llm.ratelimit.concurrent:3}")
+    private int llmRateLimitConcurrent;
+
     // ── RAG (Elasticsearch) 설정 ─────────────────────────────
     @Value("${rag.enabled:false}")
     private boolean ragEnabled;
@@ -546,6 +558,11 @@ public class HeapDumpConfig {
     public int     getLlmTimeoutConnectSeconds(){ return llmTimeoutConnectSeconds; }
     public int     getLlmTimeoutReadSeconds()   { return llmTimeoutReadSeconds; }
     public boolean isLlmSslVerify()             { return llmSslVerify; }
+    public boolean isLlmRateLimitEnabled()      { return llmRateLimitEnabled; }
+    public int     getLlmRateLimitPerSecond()   { return llmRateLimitPerSecond; }
+    public int     getLlmRateLimitPerMinute()   { return llmRateLimitPerMinute; }
+    public int     getLlmRateLimitPerDay()      { return llmRateLimitPerDay; }
+    public int     getLlmRateLimitConcurrent()  { return llmRateLimitConcurrent; }
 
     // ── RAG getters ────────────────────────────────────────────
     public boolean isRagEnabled()           { return ragEnabled; }
