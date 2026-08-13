@@ -14,8 +14,8 @@ Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
-mvn test                                 # 단위 테스트 377건 (코어덤프 리비전·파일목록 15 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5 / Leak 룰 골든 12 / MAT suspects 파싱 5 / LLM 호출량 제한 15 / LLM API 키 암호화 11 / llm-settings 렌더 스모크 2 / account·account-memo 렌더 스모크 2 / 메모 이력 보관정책 14 / 계정 레이아웃 4)
-java -jar target/heap-analyzer-2.3.4.jar   # 버전은 pom.xml <version>과 항상 일치
+mvn test                                 # 단위 테스트 381건 (정적 리소스 charset 4 / 코어덤프 리비전·파일목록 15 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5 / Leak 룰 골든 12 / MAT suspects 파싱 5 / LLM 호출량 제한 15 / LLM API 키 암호화 11 / llm-settings 렌더 스모크 2 / account·account-memo 렌더 스모크 2 / 메모 이력 보관정책 14 / 계정 레이아웃 4)
+java -jar target/heap-analyzer-2.3.5.jar   # 버전은 pom.xml <version>과 항상 일치
 bash restart.sh                          # 운영(18080) 재기동
 ```
 
@@ -262,6 +262,8 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 33. **브라우저에서 만든 시각을 서버 `LocalDateTime` 용 포맷터로 표시하면 9시간 어긋난다** — `Memo.formatTs()` 는 서버가 주는 ISO 문자열(로컬 시각)의 **앞부분을 자르는** 함수다. 그런데 `Memo.backup()` 은 `new Date().toISOString()`(**UTC**)로 기록했고 같은 포맷터로 표시해, "저장되지 못한 메모가 남아 있습니다 (2026-08-06 **05:15**)" 가 실제로는 14:15 인 사태가 있었다(2026-08-12 수정). 바로 옆에 서버발 "저장 시각"(로컬)이 함께 놓이는 화면이라 **어느 쪽이 최신인지 오판**하게 만든다 — 예외도 로그도 없이 조용히 틀리는 부류. **클라이언트가 시각을 만들어 서버 시각과 나란히 보여줄 때는 `Memo.localTs()` 처럼 로컬 기준으로 기록**하고, 이미 저장된 UTC 값은 `Memo.formatBackupTs()` 처럼 오프셋 유무를 보고 환산할 것. `toISOString()` 을 표시용 문자열로 쓰지 말 것.
 
 34. **메모 이력의 보관량은 3중으로 막아야 한다 — 자동 저장이 5초 debounce 다** — `users.memo` 는 덮어쓰기 단일 컬럼이라 2026-08-12 에 `memo_history`(덮이기 직전 스냅샷)를 신설했다. 여기서 진짜 위험은 기능이 아니라 **양**이다: 메모장 자동 저장은 마지막 입력 후 5초에 1회 저장하므로 계속 타이핑하면 분당 10회 넘게 저장되고, 컬럼은 최대 10MB — 매 저장마다 행을 만들면 한 사용자가 며칠 만에 수 GB 를 만든다. `MemoHistoryService` 가 ① **최소 간격**(`min-interval-seconds`, 기본 60초) ② **사용자당 상한**(`max-per-user`, 기본 100, 초과분 즉시 축출) ③ **보관 기간**(`retention-days`, 기본 7일, 매일 03:30 정리) + 동일 내용·빈 내용 억제로 막는다. **단 복원/초기화 직전 스냅샷은 간격 제한 예외**(되돌리기 수요가 확실한 시점이라 여기서 억제하면 정작 필요한 걸 잃는다). 억제 판정은 전부 **읽기 전용**이고 INSERT 는 통과 확정 후에만 — 순서를 바꾸면 거부된 저장이 할당량을 갉아먹는다(함정 32 와 같은 계열). ⚠ 목록 조회는 `SUBSTRING` 투영으로 **본문을 빼고** 가져올 것(10MB LOB 를 목록마다 끌고 오면 안 된다). ⚠ 소유권 검증은 `findByIdAndUsername` 처럼 **쿼리에 넣을 것** — id 로 찾은 뒤 비교하는 방식은 한 곳만 빠뜨려도 개인 메모가 새어나간다. ⚠ 의존은 `UserService` → `MemoHistoryService` **단방향** 유지(복원 실행은 UserService, 이력 조회는 MemoHistoryService — 반대로 부르면 순환). 클라이언트 측 안전망(`memoBackup:*` 미저장 백업, `memoUndo:*` 복구 되돌리기)은 여전히 **브라우저 localStorage 전용**이라 서버·admin 은 접근할 수 없다.
+
+35. **charset 을 명시하지 않은 텍스트 응답은 프록시가 라벨을 채워 넣어 한글을 깨뜨린다 — 페이지는 멀쩡하고 JS 만 깨진다** — Spring 의 `ResourceHttpRequestHandler` 는 확장자 MIME 을 `ServletContext#getMimeType()` 에서 **먼저** 찾고 Tomcat 기본 매핑은 `text/javascript` 처럼 **charset 파라미터가 없다**. 라벨이 없으면 브라우저가 HTML 문서 인코딩(UTF-8)을 스크립트에 상속시켜 직접 접속은 정상이지만, **HTTP charset 은 문서 상속보다 우선**하므로 중간 프록시가 `charset=ISO-8859-1` 을 채워 넣으면 그 값이 이겨 JS 안의 **한글 문자열 리터럴 전부**가 windows-1252 로 디코딩된다(2026-08-13 사내망 실제 제보: 업로드 모달 "업로드 준비 완료" → "ì—…ë¡œë“œ ì¤€ë¹„ ì™„ë£Œ"). Thymeleaf 페이지는 `text/html;charset=UTF-8` 을 명시하므로 **본문은 정상인데 JS 가 만든 텍스트만 깨지는 비대칭**이 나타나 원인을 파일·DB·업로드 쪽으로 오해하기 쉽다. 대응은 `StaticResourceCharsetConfig` — `addMimeMappings`(⚠ `setMimeMappings` 는 Tomcat 기본값을 통째로 교체해 woff2 등을 잃는다)로 js/mjs/css/svg/html/htm/txt 에 `;charset=UTF-8` 명시. **새 텍스트 확장자를 정적 리소스로 추가하면 여기에 등록할 것.** `ResponseEntity.contentType()` 으로 직접 지정하는 경로(예: `HeapReportApiController.guessMediaType()`)는 `StringHttpMessageConverter` 의 기본 charset 보정을 받지 못하므로 **호출부에서 직접 붙여야 한다**. 반대로 `produces` 만 선언하고 String 을 반환하면 자동으로 붙는다. `json`(RFC 8259)·SSE(`text/event-stream`)·`fetch().json()/.text()` 는 표준이 UTF-8 을 강제하므로 대상 아님. 깨진 문자열의 디코더 특정은 `s.encode('utf-8').decode(enc)` 를 후보 인코딩으로 돌려 제보 문자열과 대조하면 확정적이다(`—`/`“`/`€` 가 보이면 latin-1 이 아니라 **windows-1252**). 회귀 방어 `StaticResourceCharsetConfigTest`(4).
 
 ## Key Design Decisions
 

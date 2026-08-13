@@ -3,8 +3,8 @@
 | 항목 | 값 |
 |---|---|
 | 대상 시스템 | Heap Dump Analyzer (`com.heapdump:heap-analyzer`) |
-| 애플리케이션 버전 | **2.3.4** (`pom.xml <version>`) |
-| 산출물 | `target/heap-analyzer-2.3.4.jar` (fat JAR, 약 83 MB) |
+| 애플리케이션 버전 | **2.3.5** (`pom.xml <version>`) |
+| 산출물 | `target/heap-analyzer-2.3.5.jar` (fat JAR, 약 83 MB) |
 | 기준일 | 2026-08-12 |
 | 산출 근거 | `pom.xml`, `mvn -o dependency:tree` 실측, 운영 호스트 실측 |
 
@@ -214,7 +214,7 @@ BOM 밖에 있어 Boot 업그레이드만으로는 갱신되지 않고, 릴리�
 
 ```bash
 # 애플리케이션 버전
-grep -m1 "<version>" pom.xml                     # 2.3.4 (parent 다음 블록)
+grep -m1 "<version>" pom.xml                     # 2.3.5 (parent 다음 블록)
 
 # 전체 의존성 트리 (직접 + 전이, scope 포함)
 mvn -o dependency:tree

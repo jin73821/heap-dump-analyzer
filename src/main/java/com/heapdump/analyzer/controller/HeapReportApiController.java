@@ -360,13 +360,16 @@ public class HeapReportApiController {
 
     private MediaType guessMediaType(String path) {
         String lower = path.toLowerCase();
-        if (lower.endsWith(".html") || lower.endsWith(".htm")) return MediaType.TEXT_HTML;
+        // charset 명시 필수 — 생략하면 프록시가 ISO-8859-1 을 채워 넣어 iframe 안 한글이 깨진다
+        // (StaticResourceCharsetConfig 주석 참조). ResponseEntity.contentType() 으로 직접 지정하면
+        // StringHttpMessageConverter 의 기본 charset 보정이 적용되지 않으므로 여기서 붙여야 한다.
+        if (lower.endsWith(".html") || lower.endsWith(".htm")) return new MediaType("text", "html", StandardCharsets.UTF_8);
         if (lower.endsWith(".css")) return new MediaType("text", "css", StandardCharsets.UTF_8);
         if (lower.endsWith(".js")) return new MediaType("application", "javascript", StandardCharsets.UTF_8);
         if (lower.endsWith(".png")) return MediaType.IMAGE_PNG;
         if (lower.endsWith(".gif")) return MediaType.IMAGE_GIF;
         if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return MediaType.IMAGE_JPEG;
-        if (lower.endsWith(".svg")) return new MediaType("image", "svg+xml");
+        if (lower.endsWith(".svg")) return new MediaType("image", "svg+xml", StandardCharsets.UTF_8);
         return MediaType.APPLICATION_OCTET_STREAM;
     }
 

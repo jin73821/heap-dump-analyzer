@@ -1,6 +1,25 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-08-13] 사내망 프록시 경유 시 업로드 모달 한글 깨짐 — 정적 리소스 charset 명시 + 버전 2.3.4 → 2.3.5
+
+**요청:** 사내망에서 프록시 서버를 경유해 접속한 뒤 파일 업로드 시 모달의 글자가 깨진다(제보 화면: `<h3 …>ì—…ë¡œë“œ ì¤€ë¹„ ì™„ë£Œ</h3>`). 점검할 것.
+
+- **원인은 정적 JS 응답에 charset 라벨이 없었던 것.** 깨진 문자열을 역산하니 `"업로드 준비 완료".encode('utf-8').decode('cp1252')` 가 제보 문자열과 **바이트 단위로 완전 일치**했다(`latin-1` 은 불일치 — `—`/`“`/`€` 는 windows-1252 만이 가지는 C1 영역 매핑이라, 브라우저가 `ISO-8859-1` 라벨에 실제로 적용하는 디코더가 windows-1252 임을 특정할 수 있었다). 즉 UTF-8 로 저장된 `/js/upload-queue.js` 를 브라우저가 windows-1252 로 디코딩한 것이고, **파일·DB·업로드 처리와는 무관**하다.
+- **왜 직접 접속에서는 정상인가.** 서버는 `Content-Type: text/javascript`(charset 없음)로 응답했다. 라벨이 없으면 브라우저는 HTML 문서 인코딩(UTF-8)을 스크립트에 상속시키므로 직접 접속은 정상이다. 그런데 **HTTP charset 은 문서 인코딩 상속보다 우선**하므로, 라벨 없는 응답에 중간 프록시가 `charset=ISO-8859-1` 을 채워 넣으면 그 값이 이겨 JS 안의 한글 리터럴이 전부 깨진다. **페이지 본문(Thymeleaf, `text/html;charset=UTF-8` 명시)은 멀쩡한데 JS 가 만든 모달 텍스트만 깨지는** 비대칭이 정확히 이 구조에서 나온다.
+- **헤드리스 Chrome 으로 프록시 상황을 재현해 인과관계를 확정했다.** `<meta charset=utf-8>` 문서 + 한글을 DOM 에 쓰는 UTF-8 스크립트를 4가지 헤더로 서빙: charset 없음 → **정상**(문서 상속, 수정 전 직접 접속), `charset=ISO-8859-1` → **`ì—…ë¡œë“œ ì¤€ë¹„ ì™„ë£Œ` 재현**(제보와 일치), `charset=UTF-8` → 정상(수정 후), BOM+`ISO-8859-1` → 정상(BOM 이 라벨을 이김).
+- **수정: 서버가 charset 을 명시해 프록시가 채워 넣을 여지를 없앤다.** `StaticResourceCharsetConfig` 신설 — `WebServerFactoryCustomizer` 로 `js`/`mjs`/`css`/`svg`/`html`/`htm`/`txt` MIME 에 `;charset=UTF-8` 을 붙인다. Spring 의 `ResourceHttpRequestHandler` 가 확장자 MIME 을 **`ServletContext#getMimeType()` 에서 먼저** 찾기 때문에 이 지점이 유효한 유일한 초크포인트다(`spring.mvc.contentnegotiation.media-types` 는 ServletContext 매핑이 없을 때만 참조되므로 듣지 않는다).
+- ⚠ **`setMimeMappings` 가 아니라 `addMimeMappings`.** 전자는 매핑을 통째로 교체해 Tomcat 기본값(woff2 폰트 97개 등)을 잃는다. 후자는 기존 위에 덮어쓴다. 회귀 테스트가 이 차이를 지킨다.
+- **`json` 은 의도적으로 제외** — RFC 8259 가 `application/json` 에 charset 파라미터를 금지하고 항상 UTF-8 로 규정한다. 같은 이유로 **SSE(`text/event-stream`)와 `fetch().json()/.text()` 는 표준이 UTF-8 디코딩을 강제**하므로 이 문제의 영향권 밖이다(추가 조치 불필요).
+- **MAT 리포트 ZIP 서빙도 같은 결함이 있어 함께 고쳤다.** `HeapReportApiController.guessMediaType()` 이 `.html` 을 charset 없는 `MediaType.TEXT_HTML` 로 돌려줬다 — Raw Data 탭 iframe 이 같은 방식으로 깨질 수 있는 경로다(같은 메서드의 `.css`/`.js` 는 이미 charset 이 있었다). `.svg` 도 함께 붙였다. `ResponseEntity.contentType()` 으로 직접 지정하면 `StringHttpMessageConverter` 의 기본 charset 보정이 적용되지 않으므로 호출부에서 붙여야 한다.
+- **`text/plain` 엔드포인트는 조치 불필요**(`/analyze/log/*`, `/report/*/thread-stacks`) — `produces` 만 선언하고 본문을 String 으로 반환하므로 `StringHttpMessageConverter` 가 `server.servlet.encoding.charset`(기본 UTF-8)을 자동으로 붙인다.
+- **변경 파일:** `config/StaticResourceCharsetConfig.java`(신설) · `controller/HeapReportApiController.java`(`guessMediaType` html/svg charset) · `test/config/StaticResourceCharsetConfigTest.java`(신설).
+- **검증:** 재기동 후 실측 헤더 — `/js/upload-queue.js`·`/js/analyze.js` → `text/javascript;charset=UTF-8`, `/css/common.css`·`/css/core-dump.css` → `text/css;charset=UTF-8`, `/favicon.svg` → `image/svg+xml;charset=UTF-8`, `/login` → 종전 `text/html;charset=UTF-8` 유지. `mvn test` **381건 green**(직전 377 + 신규 4: charset 명시 / js 매핑 정확값 / json charset 없음 / 기본 매핑 보존). 기동 13.4초 무오류.
+- ⚠ **미검증(환경 접근 불가):** 실제 사내 프록시 경유 화면. 프록시가 charset 을 **채워 넣는** 유형이면 이 수정으로 해결되고, **이미 있는 charset 까지 교체하는** 유형이면 헤더로는 막을 수 없다. 후자 판별법: DevTools > Network > `upload-queue.js` > Response Headers 의 `Content-Type` 이 `charset=UTF-8` 인데도 깨지면 교체형이며, 그 경우 대응은 JS 파일 선두 **UTF-8 BOM**(위 재현 실험에서 잘못된 라벨을 이기는 것이 확인됨) 또는 프록시 정책 예외 등록이다. `charset` 이 여전히 없거나 다른 값이면 프록시가 옛 응답을 캐시한 것이므로 `?v=` 갱신·프록시 캐시 퍼지로 해결한다.
+- ⚠ **CSS 의 한글은 대부분 주석이라 시각적 피해가 없었지만**, `core-dump.css` 의 `content: 'GDB 출력 대기 중…'` 한 건은 실제로 렌더링되는 문자열이라 CSS 도 대상에 포함했다. JS 쪽 한글은 15개 파일 1,283줄에 걸쳐 있어 `\uXXXX` 이스케이프 회피는 비현실적이다.
+- **버전 2.3.4 → 2.3.5.** `pom.xml` + UI 표기 3곳(`fragments/banner.html`·`index.html`·`progress.html`) + 문서(`CLAUDE.md` 실행 예시, `VERSION_SPEC.md` 3곳). **쉘 스크립트는 무수정** — `env.sh` 가 `target/heap-analyzer-*.jar` 최신본을 자동 탐색하고 프로세스 매칭도 버전 무관이라 구버전(2.3.4)으로 떠 있던 프로세스도 정상 종료됐다(2026-08-10 규약, 실측 확인). ⚠ `VERSION_SPEC.md:99` 의 `error_prone_annotations 2.3.4` 는 **의존성 버전이라 무관** — 일괄 치환 시 건드리지 않도록 주의. 산출물 `heap-analyzer-2.3.5.jar`(83.1MB) 기동 확인, 프로세스 1개, 구 JAR 제거.
+
+
 ## [2026-08-12] My Account 레이아웃 — 분할 시 메모장 세로 확대 + 계정별 영속화
 
 **요청:** ① 좌우 분할 시 메모장 <s>가로</s> **세로** 사이즈를 늘릴 것(작업 중 정정). ② 레이아웃 선택을 **해당 계정에 저장**해 재로그인 시에도 유지할 것.
