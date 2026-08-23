@@ -1595,6 +1595,8 @@
 
         // 브라우저 닫기 / 새로고침 / 주소창 이동 — 브라우저 표준 confirm
         window.addEventListener('beforeunload', function(e) {
+            // 세션 만료로 자동 이동 중이면 경고 생략 — 사용자가 '취소'하면 자동 로그아웃이 무산된다.
+            if (window.SessionTimeout && window.SessionTimeout.isExpiring()) return;
             if (!_cmpAiInFlight) return;
             e.preventDefault();
             e.returnValue = ''; // Chrome/Edge/Firefox 호환 (커스텀 메시지는 표시 안 됨)
@@ -1605,6 +1607,10 @@
         // (팝업 '취소' 시 네비게이션은 없는데 스피너만 남아 무한 회전 — banner.html 참조)
         if (typeof registerUnloadGuard === 'function') {
             registerUnloadGuard(function() { return _cmpAiInFlight; });
+        }
+        // LLM 비교 분석 진행 중에는 세션을 유지한다 (사용자 입력 없이 수 분 걸린다).
+        if (window.SessionTimeout) {
+            window.SessionTimeout.registerActivityGuard(function() { return _cmpAiInFlight; });
         }
 
         // 앱 내 anchor 클릭 가로채기 (배너 navigation, topbar, modal close 등)

@@ -1280,9 +1280,10 @@ function loadScanErrors() {
     }).catch(function() {});
 }
 
-// 30초마다 에러 상태 갱신
+// 30초마다 에러 상태 갱신 — 유휴 시 자동 정지(세션 무동작 만료를 막지 않도록)
 loadScanErrors();
-setInterval(loadScanErrors, 30000);
+if (window.SessionTimeout) window.SessionTimeout.managedInterval(loadScanErrors, 30000);
+else setInterval(loadScanErrors, 30000);
 
 // ── Data grid: search / filter / sort / pagination ─────────────
 // ── 검색 + 페이지네이션 + 정렬 — TableGrid 공통 엔진(/js/table-grid.js) 위임 ──

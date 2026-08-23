@@ -624,6 +624,12 @@
         if (typeof global.registerUnloadGuard === 'function') {
             global.registerUnloadGuard(function() { return _uploading; });
         }
+        // 세션 유휴 타이머에 "작업 진행 중"을 알린다. ⚠ 업로드 XHR 은 요청 진입 시 1회만
+        // LAST_ACCESS_TIME 을 갱신하므로, 이걸 등록하지 않으면 1시간 넘는 업로드가 도중에 401 로 죽는다
+        // (SessionTimeout 이 5분 주기로 /api/session/keepalive 를 대신 쳐준다).
+        if (global.SessionTimeout) {
+            global.SessionTimeout.registerActivityGuard(function() { return _uploading; });
+        }
     }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

@@ -1507,14 +1507,18 @@ function toggleAutoRefresh() {
     var on = document.getElementById('asAutoRefresh').checked;
     if (on) {
         loadActive();
-        _asAutoTimer = setInterval(loadActive, 10000);
+        /* 10초 주기라 켜둔 채 자리를 비우면 배너 폴링보다 6배 빠르게 세션을 살려둔다.
+           managedInterval 이 유휴 시 스스로 멈춘다. */
+        _asAutoTimer = window.SessionTimeout
+            ? window.SessionTimeout.managedInterval(loadActive, 10000)
+            : { stop: (function() { var t = setInterval(loadActive, 10000); return function() { clearInterval(t); }; })() };
     } else {
         stopAutoRefresh();
     }
 }
 
 function stopAutoRefresh() {
-    if (_asAutoTimer) { clearInterval(_asAutoTimer); _asAutoTimer = null; }
+    if (_asAutoTimer) { _asAutoTimer.stop(); _asAutoTimer = null; }
 }
 
 function renderPager(current, total) { renderServerPager('lhPager', 'loadHistory', current, total); }

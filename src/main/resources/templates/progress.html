@@ -1518,6 +1518,12 @@
         analysisRunning = false;
     }
 
+    // 분석은 30분 넘게 걸릴 수 있고 그동안 사용자 입력이 전혀 없다. SSE 는 요청 진입 시 1회만
+    // LAST_ACCESS_TIME 을 갱신하므로 이 선언이 없으면 진행 화면을 보고 있는데 세션이 만료된다.
+    if (window.SessionTimeout) {
+        window.SessionTimeout.registerActivityGuard(function() { return analysisRunning; });
+    }
+
     // ── 분석 전 힙 메모리 사전 체크 ────────────────────
     function checkHeapAndStart() {
         // 이미 백그라운드로 분석이 진행 중인 파일에 재진입한 경우:

@@ -433,6 +433,36 @@ public class HeapSystemApiController {
         return ResponseEntity.ok(resp);
     }
 
+    /**
+     * 세션 keep-alive (2026-08-23) — 진행 중인 작업이 있는 동안 세션을 살려두기 위한 최소 요청.
+     *
+     * <p><b>왜 필요한가.</b> {@code LAST_ACCESS_TIME} 은 요청이 필터에 진입할 때 한 번 찍히고 commit 때
+     * 저장된다. 즉 90분짜리 XHR 업로드나 35분짜리 MAT SSE({@code sse.emitter.timeout.minutes})는
+     * <b>시작 시 1회만</b> 세션을 갱신한다. 지금까지는 배너의 60초 폴링이 이걸 완전히 가려주고 있었는데,
+     * 유휴 시 폴링을 멈추도록 바꾸면 장시간 작업이 도중에 401 로 죽는다.
+     * 그래서 {@code session-timeout.js} 의 활동 가드가 5분 주기로 이 엔드포인트를 친다.
+     *
+     * <p>{@code /api/system/status} 를 재사용하지 않는 이유: 그쪽은 디스크 stat 과 JVM 계측을 하므로
+     * keep-alive 치고는 비싸고, 무엇보다 접속 로그에서 <b>목적이 드러나는 고유 URI</b>가 필요하다
+     * (이 기능을 만들게 한 버그 자체가 access.log 분석으로 진단됐다).
+     *
+     * <p>인가는 {@code anyRequest().hasAnyRole("ADMIN","USER")} 에 걸리므로 SecurityConfig 변경 불필요.
+     * GET 이라 CSRF 대상도 아니다. 미인증이면 EntryPoint 가 401 SESSION_EXPIRED 를 준다.
+     */
+    @GetMapping("/api/session/keepalive")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> sessionKeepAlive(jakarta.servlet.http.HttpServletRequest request) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        jakarta.servlet.http.HttpSession session = request.getSession(false);
+        // 클라이언트가 만료 간격을 자가 교정할 수 있도록 세션의 실제 값을 돌려준다
+        // (관리자가 타임아웃을 바꿔도 기존 세션은 옛 값을 유지 — SessionModelAdvice 주석 참조).
+        resp.put("timeoutSeconds", session != null && session.getMaxInactiveInterval() > 0
+                ? session.getMaxInactiveInterval()
+                : SessionModelAdvice.DEFAULT_TIMEOUT_SECONDS);
+        return ResponseEntity.ok(resp);
+    }
+
     @GetMapping("/api/system/status")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> getSystemStatus() {

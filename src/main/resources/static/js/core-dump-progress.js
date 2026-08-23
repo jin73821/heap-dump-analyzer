@@ -188,6 +188,15 @@
 
     // ── SSE (백오프 재연결) ─────────────────────────────────────
     var reconnectAttempt = 0, MAX_RECONNECT = 3, evtSource = null;
+    /* GDB 분석 중에는 사용자 입력이 없다 — 세션 유휴 타이머에 진행 중임을 알린다
+       (SSE 는 요청 진입 시 1회만 LAST_ACCESS_TIME 을 갱신하므로 이게 없으면 분석 중 만료된다).
+       ⚠ evtSource 는 close() 후에도 null 이 되지 않으므로 그걸 조건으로 쓰면 안 된다 —
+       분석이 끝나도 가드가 영구히 참이 돼 세션이 안 끊긴다(지금 고치는 버그와 같은 결과). */
+    var analysisLive = true;
+    function endAnalysisLive() { analysisLive = false; }
+    if (window.SessionTimeout) {
+        window.SessionTimeout.registerActivityGuard(function() { return analysisLive; });
+    }
     function startSSE() {
         evtSource = new EventSource(SSE_URL);
 
@@ -215,13 +224,13 @@
             if (d.logLine) appendLog(d.logLine);
 
             if (status === 'COMPLETED') {
-                evtSource.close();
+                evtSource.close(); endAnalysisLive();
                 setStep('file', 'done'); setStep('gdb', 'done'); setStep('parse', 'done'); setStep('save', 'done', '저장 완료');
                 setProgress(100, '분석 완료!', 'done', '분석 완료', false);
                 showComplete(d.resultUrl || RESULT_URL);
             }
             if (status === 'ERROR') {
-                evtSource.close();
+                evtSource.close(); endAnalysisLive();
                 showError(d.errorMessage || '알 수 없는 오류가 발생했습니다.', null);
             }
         });
@@ -235,6 +244,7 @@
                 setTimeout(startSSE, 800 * reconnectAttempt);
             } else {
                 stopElapsed();
+                endAnalysisLive();   // 재연결 소진 — 더는 진행 중이 아니므로 세션 가드 해제
                 setTimeout(probeCompletion, 1200);
             }
         };

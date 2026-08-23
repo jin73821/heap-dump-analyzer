@@ -1740,7 +1740,10 @@ function pollInProgress() {
 
 initRows();
 pollInProgress();
-setInterval(pollInProgress, 5000);
+/* 유휴 시 스스로 멈춘다 — 5초 폴링을 방치하면 인증 세션이 영구히 갱신돼 무동작 만료가 오지 않는다.
+   (모듈 미로드 시 종전 동작 폴백) */
+if (window.SessionTimeout) window.SessionTimeout.managedInterval(pollInProgress, 5000);
+else setInterval(pollInProgress, 5000);
 </script>
 
 </body>

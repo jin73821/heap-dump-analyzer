@@ -151,6 +151,9 @@
 </div>
 
 <script src="/js/common.js?v=2026-08-12"></script>
+<!-- 이 페이지는 배너가 없다(자립형 새창 — 함정 26). 세션 만료 시간과 타이머 모듈을 직접 실어야 한다. -->
+<script th:inline="javascript">window.SESSION_TIMEOUT_SECONDS = [[${sessionTimeoutSeconds}]];</script>
+<script src="/js/session-timeout.js?v=2026-08-23"></script>
 <script src="/js/memo.js?v=2026-08-12d"></script>
 <!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (history·settings·account 와 공유) -->
 <script src="/js/krds-tooltip.js?v=2026-08-09"></script>
@@ -458,8 +461,24 @@ Memo.onMessage(function (msg) {
     }
 });
 
+/* 세션 만료 시: 작성 중인 내용이 있으면 이 창은 이동시키지 않고 백업 + 안내 배너로 처리한다.
+   저장할 게 없으면 false 라 평범하게 로그인 페이지로 이동한다. */
+function memoWillWarnOnLeave() {
+    if (!dirty && !autosaver.pending()) return false;
+    if (autosaver.isSuspended()) return true;
+    return !togEl.checked;
+}
+if (window.SessionTimeout) {
+    window.SessionTimeout.registerNavigationBlock(memoWillWarnOnLeave);
+    window.SessionTimeout.onExpire(function () {
+        if (memoWillWarnOnLeave()) handleSessionExpired(true);
+    });
+}
+
 /* ── 창 닫기 방어 ──────────────────────────────────────────── */
 window.addEventListener('beforeunload', function (e) {
+    // 세션 만료로 자동 이동 중이면 경고하지 않는다 — '취소' 하면 자동 로그아웃이 무산된다.
+    if (window.SessionTimeout && window.SessionTimeout.isExpiring()) return;
     if (!dirty && !autosaver.pending()) return;
     if (autosaver.isSuspended()) {
         // 세션 만료 상태 — 서버 저장이 불가능하므로 백업만 확실히 남기고 경고한다

@@ -961,9 +961,23 @@ function memoWillWarnOnLeave() {
 }
 if (typeof registerUnloadGuard === 'function') registerUnloadGuard(memoWillWarnOnLeave);
 
+/* 세션 만료 시: 작성 중인 내용이 있으면 이 탭은 이동시키지 않고 백업 + 안내 배너로 처리한다
+   (CLAUDE.md 세션 만료 규약 — 강제 리다이렉트는 작성 중이던 메모를 날린다).
+   ⚠ 활동 가드(registerActivityGuard)로 등록하면 안 된다. '미저장 텍스트 있음' 은 무기한 조건이라
+   메모 한 글자 쳐두고 자리를 비우면 세션이 영원히 안 끊긴다 — 지금 고치는 버그와 같은 결과다.
+   저장할 게 없으면 false 라서 평범하게 로그인 페이지로 이동한다. */
+if (window.SessionTimeout) {
+    window.SessionTimeout.registerNavigationBlock(memoWillWarnOnLeave);
+    window.SessionTimeout.onExpire(function() {
+        if (memoWillWarnOnLeave()) handleSessionExpired(true);
+    });
+}
+
 /* 페이지 이탈 시 — 자동 저장 ON 이면 대기 중인 저장을 keepalive 로 마무리,
    OFF 면 미저장 경고. (새창은 이 페이지와 독립이므로 영향받지 않는다.) */
 window.addEventListener('beforeunload', function(e) {
+    // 세션 만료로 자동 이동 중이면 경고하지 않는다 — '취소' 하면 자동 로그아웃이 무산된다.
+    if (window.SessionTimeout && window.SessionTimeout.isExpiring()) return;
     if (!memoDirty && !memoAutosaver.pending()) return;
     if (memoAutosaver.isSuspended()) {
         // 세션 만료 상태 — 서버 저장이 불가능하므로 백업만 확실히 남기고 경고

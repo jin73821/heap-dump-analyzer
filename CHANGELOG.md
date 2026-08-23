@@ -1,5 +1,76 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-08-23] 세션 무동작 만료가 영원히 오지 않던 문제 — 배경 폴링 게이트 + 유휴 타이머 신설
+
+**제보:** 세션 타임아웃이 1시간인데, 브라우저를 로그인 상태로 두고 아무 조작 없이 2시간이 지나도 페이지가 그대로다. 만료되면 자동으로 로그인 페이지로 이동해야 한다.
+
+### 원인 — 서버가 아니라 클라이언트 문제였다
+
+`fragments/banner.html:531` 의 `setInterval(fetchBannerStatus, 60000)` 이 IIFE 안에서 **무조건** 등록되고 어디서도 해제되지 않았다. `fetchBannerStatus` 는 **인증이 필요한** `/api/system/status` 를 치는데, Spring Session JDBC 는 요청마다 `SPRING_SESSION.LAST_ACCESS_TIME` 을 갱신한다. 배너는 20개 템플릿에 삽입되므로 **탭 하나만 열려 있어도 무동작 만료에 영원히 도달하지 못했다.**
+
+운영 접속 로그(`logs/access/access.log`)로 확정한 증거 2건:
+- 완전 유휴 25분(02:20~02:45) 동안 들어온 요청은 `/api/system/status` **25건이 전부** — 정확히 60초 간격, 모두 200
+- 브라우저를 닫아 폴링이 끊긴 **13시간 뒤** 첫 요청(15:56:44)은 `GET /` → **302 → /login**
+
+즉 **서버측 만료는 처음부터 정상 동작하고 있었다.** 같은 성격의 폴러가 2개 더 있었다 — `files.html`(5초 `/api/queue/status`), `servers.html`(30초 `/api/servers/scan-errors`), 그리고 켜두면 배너보다 6배 빠른 `admin/users.html`(10초 `/api/admin/active-sessions`).
+
+### 부수 결함 — 만료 감지 코드가 죽어 있었다
+
+`banner.html:818-822` 은 `r.redirected` 로 302 를 기다렸으나 `SecurityConfig:109-112` 는 `/api/**` 에 **401 JSON** 을 준다. 그래서 `location.href='/login?expired=true'` 는 **도달 불가능한 죽은 코드**였고, 대신 401 본문 `{"success":false,"code":"SESSION_EXPIRED"}` 가 `applyBannerStatus()` 로 흘러들어가 MAT "Not Ready"·Disk 0% 같은 가짜 상태를 그렸으며 `saveStatusCache()` 가 그 쓰레기를 `localStorage` 에 심어 **이후 모든 페이지 로드에서 되살아났다**. 반면 `/login?expired=true` 의 서버측 처리(`AuthController:21,35` + `login.html:142` + replaceState 정리)는 **이미 완비**돼 있어 살아 있는 호출자만 만들면 됐다.
+
+### 1) 신규 `static/js/session-timeout.js` (`window.SessionTimeout`)
+
+"사용자가 실제로 얼마나 유휴했는가"를 판정하는 단일 지점. 배너에서 1회 로드(20개 페이지) + 배너가 없는 `account-memo.html` 이 직접 로드(함정 26).
+
+- **활동 이벤트**: `mousedown`/`keydown`/`wheel`/`touchstart`/`touchmove`/`input`/`change`. ⚠ **`mousemove` 와 `scroll` 은 의도적으로 제외** — mousemove 는 책상 진동·마우스 지글러로 세션을 되살려 이 버그를 그대로 재현하고, scroll 은 **프로그램적 스크롤에도 발화**해(progress.html 의 로그 자동 스크롤, `memo.js:434` 의 `scrollTop`) 방치된 진행 페이지를 불멸로 만든다.
+- **경과 시간은 `Date.now() - lastActivityAt`** 으로만 계산하고 틱 수를 세지 않는다 — 숨은 탭 타이머는 분당 1회로 throttle 되고 절전 중에는 아예 안 돈다. `visibilitychange`/`focus`/`pageshow` 에서 즉시 재평가하므로 절전에서 깨면 바로 만료된다.
+- **탭 간 공유**는 `localStorage['heapSessionState']`(출처) + `BroadcastChannel('heap-session-sync')`(즉시 통지) + `storage` 이벤트 폴백. `memo.js` 의 `heap-memo-sync` 는 2개 페이지 전용이라 **재사용하지 않고 분리**했다.
+- **페이지 이동도 활동으로 기록** — 링크 클릭은 mousedown 으로 잡히지만 뒤로/앞으로·주소 직접 입력은 아무 이벤트도 남기지 않는다. 이 앱에 주기적 자동 새로고침이 없어서 안전하다(`location.reload()` 는 전부 CRUD 성공 뒤 1회성).
+- **경고 모달은 CSS·DOM 자체 주입 싱글턴**(`memo.js`/`krds-tooltip.js` 패턴). `common.css` 의 `.mbtn-*` 를 쓰지 않는데, 형태 규칙이 없어서(함정 17)만이 아니라 **`analyze`/`compare`/`progress`/`leak-rules` 4개 페이지는 `common.css` 자체를 로드하지 않아 색상조차 없기** 때문이다(`compare.html:237` 의 "색상은 common.css 에서 제공" 주석은 사실과 다르다). 배너 fragment 안에 두지 않은 것도 의도 — ai-chat/analyze 가 배너를 `cloneNode` 해 id 가 중복된다(함정 8).
+
+### 2) 배경 폴러 게이트 — 서버 세션도 실제로 만료되게
+
+`SessionTimeout.managedInterval(fn, ms)` 이 `setInterval` 을 대체한다. **유휴 2분 초과 또는 숨은 탭이면 실행을 건너뛰고**, 조건이 회복되면 즉시 1회 실행 후 주기를 재개한다(복귀 직후 낡은 값을 안 보이도록). 적용: `banner.html`(60초) · `files.html`(5초) · `servers.html`(30초) · `admin/users.html`(10초). 자체 정지 로직이 이미 올바른 `index.html`·`analyze.js` 는 건드리지 않았다.
+
+### 3) ⚠ 진행 중 작업 예외 — 이번 변경의 최대 회귀 위험
+
+`LAST_ACCESS_TIME` 은 요청이 필터에 **진입할 때 1회** 찍힌다. 즉 90분짜리 XHR 업로드나 35분짜리 MAT SSE 는 **시작할 때 한 번만** 세션을 갱신한다. 지금까지 장시간 업로드가 멀쩡했던 건 순전히 배너 폴링 덕이었으므로, **폴링만 끄면 잠재 버그가 실제 버그로 바뀐다.**
+
+→ `registerActivityGuard(fn)` 로 진행 중 작업을 선언하면 유휴 타이머가 멈추고, 모듈이 **5분 주기로 신규 `GET /api/session/keepalive`** 를 대신 친다. 등록: `upload-queue.js`(`_uploading`) · `analyze.js`(`_aiAnalysisInProgress`) · `compare.html`(`_cmpAiInFlight`) · `ai-chat.html`(`_sending`) · `progress.html`(`analysisRunning`) · `core-dump-progress.js`(신규 `analysisLive`).
+
+- `core-dump-progress.js` 는 `evtSource` 가 `close()` 후에도 null 이 되지 않아 그걸 조건으로 쓰면 분석이 끝나도 가드가 영구히 참이 된다 → 전용 `analysisLive` 플래그를 두고 **종료 3경로**(COMPLETED / ERROR / 재연결 소진)에서 해제.
+- **런어웨이 백스톱 8시간** — 가드가 그 이상 붙들면 무시하고 정상 만료로 돌아간다. 실제로 그럴 수 있는 경로가 있다: `progress.html:1497` 의 SSE `onerror` 는 HEAD 응답이 `!ok` 이면 `showComplete` 도 `.catch` 도 타지 않아 `analysisRunning` 이 true 로 남는다.
+- ⚠ `account.html` 의 `memoWillWarnOnLeave`(배너 unload guard)는 **활동 가드로 등록하지 않았다.** "미저장 텍스트 있음" 은 무기한 조건이라 메모 한 글자 쳐두고 자리를 비우면 세션이 영원히 안 끊긴다 — 지금 고치는 버그와 같은 결과다. 이 구분이 설계의 핵심.
+
+### 4) 만료 실행과 `beforeunload` 함정
+
+만료 순서: ① `onExpire` 훅(메모 백업) → ② **이동 차단 술어 검사** → ③ 이탈 경고 무력화 → ④ 오염된 `bannerStatusCache` 제거 → ⑤ `POST /logout`(CSRF) → ⑥ `location.replace('/login?expired=true')`(watchdog 1.5초, `pageshow`/bfcache 재이동 포함).
+
+⚠ `location.replace` 도 `beforeunload` 를 발화시킨다. 경고가 뜨면 사용자가 '취소'해 **자동 이동이 통째로 무산**되고 함정 36 대로 스피너가 남는다. `upload-queue.js` 는 프로퍼티 대입형이라 `window.onbeforeunload = null` 로 지워지지만, `addEventListener` 형(`analyze.js`·`compare.html`·`account.html`·`account-memo.html` 4곳)은 외부에서 제거할 수 없어 **각 핸들러 첫 줄에 `SessionTimeout.isExpiring()` 조기 반환**을 넣었다. 배너에는 `disableUnloadGuards()` 를 추가했는데 이건 **스피너 예약만** 막는다(네이티브 다이얼로그는 못 막는다 — 주석 명시).
+
+### 5) 미저장 메모는 이동시키지 않는다 (CLAUDE.md 세션 만료 규약 유지)
+
+`registerNavigationBlock(fn)` — 만료는 정상적으로 일어나되 **이 탭만 화면을 유지**한다(세션을 연장하지는 않는다). `account.html`·`account-memo.html` 이 `memoWillWarnOnLeave` 를 등록해, 작성 중 내용이 있으면 기존 `handleSessionExpired()` 흐름(localStorage 백업 → autosaver suspend → `#sessionAlert` → 팝업 재로그인 → `Memo.refreshCsrf()` → 재개)으로 가고, **저장할 게 없으면 평범하게 로그인 페이지로 이동**한다.
+
+### 6) 401 안전망 (2차 방어선)
+
+배너 폴링이 401/403 을 받으면 `SessionTimeout.notifyExpired()` 로 같은 만료 흐름을 탄다 — 앱 재시작·관리자의 세션 강제 종료·JS 오류로 타이머가 죽은 경우를 덮는다. 응답 검증도 강화: 상태코드 + `content-type: application/json` + **필드 존재 검사**(`d.matCliReady`). `/api/system/status` 응답에는 `success` 필드가 없어 `memo.js` 의 `assertSaved` 식 검사를 쓸 수 없다.
+
+### 7) 만료 시간은 하드코딩하지 않는다
+
+신규 `SessionModelAdvice`(`@ControllerAdvice`)가 `@ModelAttribute("sessionTimeoutSeconds")` 로 **`HttpSession.getMaxInactiveInterval()`** 을 전 모델에 노출하고, 배너/메모창이 `window.SESSION_TIMEOUT_SECONDS` 로 전달한다.
+
+설정값(`HeapDumpAnalyzerService.getSessionTimeoutHours()`)이 아니라 **세션에서 직접 읽는 이유**: `POST /api/settings/session-timeout` 의 `setDefaultMaxInactiveInterval()` 은 **신규 세션에만** 적용되고 `SPRING_SESSION.MAX_INACTIVE_INTERVAL` 은 행별 값이다. 설정값을 내려보내면 1시간일 때 로그인한 사용자가 관리자의 6시간 변경 후 경고도 못 띄운 채 401 을 맞는다. 세션에서 읽으면 이 불일치가 **구조적으로 사라진다**. `<meta>` 가 아니라 인라인 스크립트인 이유는 배너 fragment 가 `<head>` 가 아니라 `<body>` 최상단에 삽입되기 때문(`analyze.html` 의 모델 변수 노출 관례와 동일).
+
+### 검증
+
+- `mvn test` **444건 통과**(기존 439 + 신규 `SessionTimeoutTemplateSmokeTest` 5). 실제 `SpringTemplateEngine` 렌더로 모듈 로드·변수 주입·폴링 게이트·401 분기·로그인 페이지 제외를 단언하고, `SessionModelAdvice` 는 세션 유무/0값/7200초 케이스를 직접 단언한다(함정 23 방어로 `endsWith("</html>")` 포함).
+- 모듈 로직을 Node 스텁으로 실행해 3경로 확인: **일반 페이지** → `/logout` POST + `/login?expired=true` 이동 / **미저장 메모** → 백업 훅 실행 + **이동 없음** / **깨끗한 메모 페이지** → 평범하게 이동. 폴링 게이트도 활동 직후 `true` → 5분 유휴 `false` 확인.
+- 빌드+재기동 후 `Started HeapAnalyzerApplication` 정상(14.3s). `GET /js/session-timeout.js` 200, `GET /api/session/keepalive` 미인증 시 401 SESSION_EXPIRED.
+
+**대상:** 신규 `static/js/session-timeout.js`·`controller/SessionModelAdvice.java`·`test/SessionTimeoutTemplateSmokeTest.java`, 수정 `HeapSystemApiController`(keepalive)·`fragments/banner.html`·`account.html`·`account-memo.html`·`files.html`·`servers.html`·`progress.html`·`compare.html`·`ai-chat.html`·`admin/users.html`·`static/js/{upload-queue,analyze,core-dump-progress}.js`. **버전 무변경**(v2.3.7).
+
+
 
 ## [2026-08-23] 코어덤프 — 인쇄 리포트 조치 칸 제거 + 크래시 히어로 2열 재설계
 

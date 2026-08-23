@@ -3493,6 +3493,10 @@ var _aiUnsavedPayload     = null;   // 자동 저장 실패 시 보관해둔 인
 
 // ── [4] 브라우저 이탈 경고 (새로고침/탭닫기/주소직접입력) ─────────
 window.addEventListener('beforeunload', function(e) {
+    // 세션 만료로 자동 이동하는 중이면 경고를 띄우지 않는다 — 사용자가 '취소'하면 자동 로그아웃이
+    // 통째로 무산된다(그리고 함정 36 대로 스피너가 남는다). addEventListener 로 등록된 핸들러는
+    // 외부에서 제거할 수 없어 이렇게 스스로 빠져야 한다.
+    if (window.SessionTimeout && window.SessionTimeout.isExpiring()) return;
     if (_aiAnalysisInProgress) {
         var msg = 'AI 분석이 진행 중입니다. 페이지를 벗어나면 분석이 중단될 수 있습니다.';
         e.preventDefault();
@@ -3505,6 +3509,10 @@ window.addEventListener('beforeunload', function(e) {
 // (팝업을 '취소'로 닫으면 네비게이션은 없는데 예약된 스피너만 남아 무한 회전 — banner.html 참조)
 if (typeof registerUnloadGuard === 'function') {
     registerUnloadGuard(function() { return _aiAnalysisInProgress; });
+}
+// LLM 스트리밍은 수 분 걸리는데 그동안 사용자 입력이 없다 — 활동으로 선언해 만료를 막는다.
+if (window.SessionTimeout) {
+    window.SessionTimeout.registerActivityGuard(function() { return _aiAnalysisInProgress; });
 }
 
 // ── [4] SPA 링크 이탈 가로채기 (a 태그 클릭) ───────────────────

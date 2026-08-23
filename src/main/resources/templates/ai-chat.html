@@ -317,6 +317,11 @@ var _activeSessionId = null;
 var _messages = [];
 var _sending = false;
 var _model = '';
+/* LLM 응답 스트리밍은 수 분 걸리는데 그동안 사용자 입력이 없다 — 세션 유휴 타이머에 알린다.
+   (스트리밍 요청도 진입 시 1회만 LAST_ACCESS_TIME 을 갱신한다) */
+if (window.SessionTimeout) {
+    window.SessionTimeout.registerActivityGuard(function() { return _sending; });
+}
 var _renamePending = null;
 var _attachedFiles = [];
 
