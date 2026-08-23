@@ -58,20 +58,116 @@
         });
     }
 
-    // ── 탭 전환 (aria + hash) ────────────────────────────────────
-    var TAB_NAMES = ['bt', 'threads', 'registers', 'libs', 'raw'];
-    function switchTab(name, e) {
-        if (e && e.preventDefault) { /* 링크에서 호출 시 기본 이동 방지는 호출부 담당 */ }
-        document.querySelectorAll('.cd-tab-panel').forEach(function (el) { el.classList.remove('active'); });
-        var panel = document.getElementById('tab-' + name);
-        if (panel) panel.classList.add('active');
-        document.querySelectorAll('.cd-tab-btn').forEach(function (b) {
-            var on = b.getAttribute('onclick') || '';
-            var match = on.indexOf("'" + name + "'") >= 0;
-            b.classList.toggle('active', match);
-            b.setAttribute('aria-selected', match ? 'true' : 'false');
+    // ── 탭 전환 (data-tab + aria + hash) ─────────────────────────
+    // 버튼 매칭은 data-tab 속성 기반 — onclick 문자열 검사(구현 취약)에서 전환.
+    // 전역 switchTab(name) 시그니처는 유지(요약 스트립 "스택 트레이스 보기" 링크가 호출).
+    var TAB_NAMES = ['summary', 'bt', 'threads', 'registers', 'libs', 'raw', 'report'];
+    function switchTab(name) {
+        if (TAB_NAMES.indexOf(name) < 0) name = 'summary';
+        document.querySelectorAll('.cd-tab-panel').forEach(function (el) {
+            el.classList.toggle('active', el.id === 'tab-' + name);
         });
-        if (window.history && history.replaceState) history.replaceState(null, '', '#' + name);
+        document.querySelectorAll('.cd-tab-btn').forEach(function (b) {
+            var on = b.dataset.tab === name;
+            b.classList.toggle('active', on);
+            b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
+        if (name === 'report') initReportTab();   // 최초 1회 lazy — iframe src 미설정 시에만 로드
+        if (window.history && history.replaceState && location.hash !== '#' + name) {
+            history.replaceState(null, '', '#' + name);
+        }
+    }
+
+    // ── 리포트 탭: PDF 미리보기 (힙덤프 analyze.js loadPdfReportPanel 이식) ──
+    // 첫 진입 시 미리보기 모드('pdf' | 'html')를 결정해 iframe src 설정:
+    //   모바일(≤900px) / pdfViewerEnabled=false → 'html' (/print-html)
+    //   그 외 → 'pdf' (/print-pdf?mode=inline) + 4초 내 load 미발생 시 'html' 자동 전환.
+    // 리비전 조회 중이면 CORE_CURRENT_REV 를 ?rev= 로 전달해 보존본 리포트를 만든다.
+    var _pdfMode = null;      // 'pdf' | 'html'
+    var _pdfLoadTimer = null;
+    var _pdfZoom = 100;       // HTML 미리보기 줌 % (50~200)
+
+    function corePdfUrl(mode) {
+        var url = '/core-dump/analyze/' + encodeURIComponent(FN)
+                + (mode === 'pdf' ? '/print-pdf?mode=inline' : '/print-html');
+        if (typeof CORE_CURRENT_REV !== 'undefined' && CORE_CURRENT_REV) {
+            url += (url.indexOf('?') >= 0 ? '&' : '?') + 'rev=' + encodeURIComponent(CORE_CURRENT_REV);
+        }
+        return url;
+    }
+    // HTML 모드 전용 확대/축소 — same-origin iframe 내부 .report 시트에 CSS zoom 적용
+    function applyCorePdfZoom() {
+        var label = document.getElementById('cdPdfZoomLabel');
+        if (label) label.textContent = _pdfZoom + '%';
+        var iframe = document.getElementById('cdPdfIframe');
+        try {
+            var rep = iframe && iframe.contentDocument && iframe.contentDocument.querySelector('.report');
+            if (rep) rep.style.zoom = (_pdfZoom / 100);
+        } catch (e) { /* iframe 미로드 등 — 다음 load 시 재적용 */ }
+    }
+    function adjustCorePdfZoom(delta) {
+        _pdfZoom = Math.min(200, Math.max(50, _pdfZoom + delta));
+        applyCorePdfZoom();
+    }
+    function resetCorePdfZoom() { _pdfZoom = 100; applyCorePdfZoom(); }
+
+    function setCorePdfMode(mode, isAutoFallback) {
+        var iframe = document.getElementById('cdPdfIframe');
+        var toggle = document.getElementById('cdPdfToggleBtn');
+        var notice = document.getElementById('cdPdfNotice');
+        var fb     = document.getElementById('cdPdfFallback');
+        var zoom   = document.getElementById('cdPdfZoomCtrl');
+        if (!iframe || !FN) return;
+
+        if (_pdfLoadTimer) { clearTimeout(_pdfLoadTimer); _pdfLoadTimer = null; }
+        _pdfMode = mode;
+        if (fb) fb.style.display = 'none';
+
+        iframe.src = corePdfUrl(mode);
+
+        if (toggle) {
+            toggle.style.display = 'inline-flex';
+            toggle.querySelector('span').textContent = (mode === 'pdf' ? 'HTML로 보기' : 'PDF로 보기');
+        }
+        if (zoom) zoom.style.display = (mode === 'html' ? 'flex' : 'none');   // PDF 모드는 뷰어 자체 줌 사용
+        if (notice) notice.style.display = (isAutoFallback ? 'flex' : 'none');
+
+        if (mode === 'pdf') {
+            // PDF 인라인은 일부 브라우저에서 load 이벤트가 발생 안 함 → 4초 내 미발생 시 HTML 자동 전환.
+            var loaded = false;
+            var onLoad = function () { loaded = true; iframe.removeEventListener('load', onLoad); };
+            iframe.addEventListener('load', onLoad);
+            _pdfLoadTimer = setTimeout(function () {
+                _pdfLoadTimer = null;
+                if (!loaded && _pdfMode === 'pdf') setCorePdfMode('html', true);
+            }, 4000);
+        } else {
+            var htmlLoaded = false;
+            var onHtmlLoad = function () {
+                htmlLoaded = true;
+                iframe.removeEventListener('load', onHtmlLoad);
+                applyCorePdfZoom();   // 재로드 시 현재 줌 배율 재적용
+            };
+            iframe.addEventListener('load', onHtmlLoad);
+            setTimeout(function () { if (!htmlLoaded && fb) fb.style.display = 'flex'; }, 4000);
+        }
+    }
+    function toggleCorePdfPreview() {
+        setCorePdfMode(_pdfMode === 'pdf' ? 'html' : 'pdf', false);
+    }
+    function initReportTab() {
+        var iframe = document.getElementById('cdPdfIframe');
+        if (!iframe || !FN) return;
+        if (iframe.getAttribute('src')) return;   // 이미 로드됨 (함정 6 — !iframe.src 금지)
+        if (window.matchMedia('(max-width: 900px)').matches) {
+            setCorePdfMode('html', false);        // 모바일은 PDF 인라인 미지원 회피 (설정 문제 아님 → 배너 없음)
+            return;
+        }
+        // 사전 감지: 브라우저가 PDF 인라인 뷰어를 제공하지 않음 (설정/정책/미내장)
+        var viewerOff = (navigator.pdfViewerEnabled === false) ||
+                        (navigator.pdfViewerEnabled === undefined &&
+                         navigator.mimeTypes && !navigator.mimeTypes['application/pdf']);
+        setCorePdfMode(viewerOff ? 'html' : 'pdf', viewerOff);
     }
 
     // ── 스레드 아코디언 ──────────────────────────────────────────
@@ -326,6 +422,158 @@
             .catch(function (e) { toast('삭제 중 오류: ' + (e && e.message ? e.message : e), 'danger'); });
     }
 
+    // ════════════════ 라이브러리 번들 (sysroot) 모달 ════════════════
+    // 별도 서버 분석 심볼 정확도 복원 — 원격 수집(collect-libs) / tar.gz 업로드 / 삭제.
+    // 에러 응답 body(code/message) 검사가 필요해 Common.fetchJSON 미사용 (함정 14).
+    function csrfHeaders(extra) {
+        var h = extra || {};
+        var meta = document.querySelector('meta[name="_csrf"]');
+        var metaH = document.querySelector('meta[name="_csrf_header"]');
+        if (meta && metaH) h[metaH.content] = meta.content;
+        return h;
+    }
+    function fmtBytes(b) {
+        return (window.Common && Common.formatBytes) ? Common.formatBytes(b) : b + ' B';
+    }
+    function _libsErr(msg) {
+        var el = document.getElementById('libsModalErr');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.classList.toggle('visible', !!msg);
+    }
+    function _libsResult(msg) {
+        var el = document.getElementById('libsModalResult');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.style.display = msg ? '' : 'none';
+    }
+    function _renderLibsStatus(d) {
+        var st = document.getElementById('libsModalStatus');
+        var collectBtn = document.getElementById('libsCollectBtn');
+        var delBtn = document.getElementById('libsDeleteBtn');
+        if (st) {
+            if (d.present) {
+                st.innerHTML = '<span class="libs-status-on">&#10003; 번들 있음</span> — '
+                    + '<span class="mono">' + d.fileCount + '개 파일 · ' + fmtBytes(d.totalBytes) + '</span>'
+                    + '<br>재분석하면 이 번들이 sysroot 로 적용됩니다.';
+            } else {
+                st.innerHTML = '<span class="libs-status-off">번들 없음</span> — 현재 분석은 분석 서버 로컬 라이브러리로 심볼을 해석합니다.';
+            }
+            if (d.collectable && d.originServerName) {
+                st.innerHTML += '<br>출처 서버: <span class="mono">'
+                    + (window.Common ? Common.escHtml(d.originServerName) : d.originServerName) + '</span> (전송 이력 기반)';
+            } else {
+                st.innerHTML += '<br>출처 서버를 전송 이력에서 찾을 수 없어 원격 수집은 불가합니다 — tar.gz 수동 업로드를 사용하세요.';
+            }
+        }
+        if (collectBtn) collectBtn.style.display = d.collectable ? '' : 'none';
+        if (delBtn) delBtn.style.display = d.present ? '' : 'none';
+    }
+    function refreshLibsStatus() {
+        return fetch('/api/core-dump/' + encodeURIComponent(FN) + '/libs', { credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) { if (d.status === 'ok') _renderLibsStatus(d); return d; });
+    }
+    function openLibsModal() {
+        _libsErr(''); _libsResult('');
+        var re = document.getElementById('libsReanalyzeBtn');
+        if (re) re.style.display = 'none';
+        var m = document.getElementById('libsModal');
+        if (m) m.classList.add('open');
+        refreshLibsStatus().catch(function () {
+            var st = document.getElementById('libsModalStatus');
+            if (st) st.textContent = '상태를 불러오지 못했습니다.';
+        });
+    }
+    function closeLibsModal() {
+        var m = document.getElementById('libsModal');
+        if (m) m.classList.remove('open');
+    }
+    function _libsSuccess(summary) {
+        _libsResult(summary + ' 재분석하면 번들이 적용됩니다.');
+        var re = document.getElementById('libsReanalyzeBtn');
+        if (re) re.style.display = '';
+        refreshLibsStatus().catch(function () {});
+    }
+    function collectLibs(btn) {
+        _libsErr(''); _libsResult('');
+        btn.disabled = true;
+        var orig = btn.innerHTML;
+        btn.textContent = '수집 중… (수 분 소요될 수 있음)';
+        fetch('/api/core-dump/' + encodeURIComponent(FN) + '/collect-libs',
+              { method: 'POST', headers: csrfHeaders(), credentials: 'same-origin' })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+            .then(function (res) {
+                btn.disabled = false; btn.innerHTML = orig;
+                var d = res.d || {};
+                if (res.ok && d.status === 'ok') {
+                    var msg = d.serverName + ' 에서 ' + d.collected + '/' + d.requested
+                        + '개 수집 (' + fmtBytes(d.totalBytes) + ').';
+                    if (d.missing && d.missing.length) {
+                        msg += ' 누락 ' + d.missing.length + '건: ' + d.missing.slice(0, 3).join(', ')
+                            + (d.missing.length > 3 ? ' 외' : '');
+                    }
+                    _libsSuccess(msg);
+                } else {
+                    _libsErr((d.message || '라이브러리 수집에 실패했습니다.') + (d.code ? ' [' + d.code + ']' : ''));
+                }
+            })
+            .catch(function (e) {
+                btn.disabled = false; btn.innerHTML = orig;
+                _libsErr('수집 중 오류: ' + (e && e.message ? e.message : e));
+            });
+    }
+    // 형식 제약 없음 — 아카이브(tar/tar.gz/tgz/tar.bz2/tar.xz/zip)와 개별 .so 파일 모두,
+    // 여러 개 동시 선택 가능. 서버가 매직 바이트로 판정한다.
+    function uploadLibsBundle(input) {
+        var files = input.files ? Array.prototype.slice.call(input.files) : [];
+        input.value = '';
+        if (!files.length) return;
+        _libsErr(''); _libsResult('');
+        var label = input.closest('label');
+        var origLabel = label ? label.innerHTML : null;
+        if (label) label.textContent = '업로드 중… (' + files.length + '개)';
+        var fd = new FormData();
+        files.forEach(function (f) { fd.append('bundleFile', f); });
+        // multipart — Content-Type 은 브라우저가 boundary 포함으로 설정 (수동 지정 금지)
+        fetch('/api/core-dump/' + encodeURIComponent(FN) + '/libs',
+              { method: 'POST', headers: csrfHeaders(), credentials: 'same-origin', body: fd })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+            .then(function (res) {
+                if (label && origLabel) label.innerHTML = origLabel;
+                var d = res.d || {};
+                if (res.ok && d.status === 'ok') {
+                    var kinds = [];
+                    if (d.archives > 0) kinds.push('아카이브 ' + d.archives + '건');
+                    if (d.singles > 0) kinds.push('개별 파일 ' + d.singles + '건');
+                    var msg = '업로드 완료' + (kinds.length ? ' (' + kinds.join(' · ') + ')' : '')
+                        + ' — 번들에 ' + d.extracted + '개 파일 반영 (' + fmtBytes(d.totalBytes) + ').';
+                    if (d.skippedLinks > 0) msg += ' 링크 엔트리 ' + d.skippedLinks + '건은 건너뜀.';
+                    _libsSuccess(msg);
+                } else {
+                    _libsErr(d.message || '번들 업로드에 실패했습니다.');
+                }
+            })
+            .catch(function (e) {
+                if (label && origLabel) label.innerHTML = origLabel;
+                _libsErr('업로드 중 오류: ' + (e && e.message ? e.message : e));
+            });
+    }
+    function deleteLibsBundle(btn) {
+        if (!confirm('라이브러리 번들을 삭제하시겠습니까?\n삭제 후 재분석하면 분석 서버 로컬 라이브러리로 되돌아갑니다.')) return;
+        _libsErr(''); _libsResult('');
+        btn.disabled = true;
+        fetch('/api/core-dump/' + encodeURIComponent(FN) + '/libs',
+              { method: 'DELETE', headers: csrfHeaders(), credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                btn.disabled = false;
+                if (d.status === 'ok') { _libsResult('번들을 삭제했습니다.'); refreshLibsStatus(); }
+                else _libsErr(d.message || '삭제에 실패했습니다.');
+            })
+            .catch(function (e) { btn.disabled = false; _libsErr('삭제 중 오류: ' + (e && e.message ? e.message : e)); });
+    }
+
     // ── 초기화 ───────────────────────────────────────────────────
     document.addEventListener('DOMContentLoaded', function () {
         initRevisionSelect();
@@ -353,13 +601,26 @@
         buildRegisters();
         loadCoreAiInsight();
 
-        // 해시 딥링크 탭 복원
+        // 탭 버튼 클릭 (data-tab) + 뒤로가기/앞으로가기 해시 복원
+        // (switchTab 의 replaceState 는 hashchange 를 발화하지 않으므로 루프 없음)
+        document.querySelectorAll('.cd-tab-btn').forEach(function (b) {
+            b.addEventListener('click', function () { switchTab(this.dataset.tab); });
+        });
+        window.addEventListener('hashchange', function () {
+            var h = (location.hash || '').replace('#', '');
+            if (TAB_NAMES.indexOf(h) >= 0) switchTab(h);
+        });
+
+        // 해시 딥링크 탭 복원 (없으면 마크업 기본 = 요약)
         var hash = (location.hash || '').replace('#', '');
         if (TAB_NAMES.indexOf(hash) >= 0) switchTab(hash);
     });
 
     window.reanalyzeThis = reanalyzeThis;
     window.switchTab = switchTab;
+    window.adjustCorePdfZoom = adjustCorePdfZoom;
+    window.resetCorePdfZoom = resetCorePdfZoom;
+    window.toggleCorePdfPreview = toggleCorePdfPreview;
     window.toggleThread = toggleThread;
     window.toggleFrame = toggleFrame;
     window.toggleGarbageFrames = toggleGarbageFrames;
@@ -368,4 +629,9 @@
     window.copyRaw = copyRaw;
     window.startCoreAiAnalysis = startCoreAiAnalysis;
     window.deleteCoreAiInsight = deleteCoreAiInsight;
+    window.openLibsModal = openLibsModal;
+    window.closeLibsModal = closeLibsModal;
+    window.collectLibs = collectLibs;
+    window.uploadLibsBundle = uploadLibsBundle;
+    window.deleteLibsBundle = deleteLibsBundle;
 })();

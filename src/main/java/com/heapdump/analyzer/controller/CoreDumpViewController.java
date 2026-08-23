@@ -4,6 +4,7 @@ import com.heapdump.analyzer.model.CoreDumpAnalysisResult;
 import com.heapdump.analyzer.model.dto.CoreDumpRevision;
 import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
+import com.heapdump.analyzer.service.CoreDumpPdfReportService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
@@ -23,9 +24,12 @@ public class CoreDumpViewController {
     private static final Logger logger = LoggerFactory.getLogger(CoreDumpViewController.class);
 
     private final CoreDumpAnalyzerService analyzerService;
+    private final CoreDumpPdfReportService pdfReportService;
 
-    public CoreDumpViewController(CoreDumpAnalyzerService analyzerService) {
+    public CoreDumpViewController(CoreDumpAnalyzerService analyzerService,
+                                  CoreDumpPdfReportService pdfReportService) {
         this.analyzerService = analyzerService;
+        this.pdfReportService = pdfReportService;
     }
 
     @GetMapping
@@ -94,5 +98,32 @@ public class CoreDumpViewController {
         model.addAttribute("revisions", revisions);
         model.addAttribute("currentRevision", viewingRevision ? rev : null);
         return "core-dump/analyze";
+    }
+
+    /**
+     * PDF 리포트의 HTML 미리보기 — print-pdf 와 동일한 모델로 같은 인쇄 템플릿을 렌더한다
+     * (힙덤프 /analyze/{fn}/print-html 과 1:1 대칭). 리포트 불가 상태면 결과 페이지로 리다이렉트.
+     */
+    @GetMapping("/analyze/{filename:.+}/print-html")
+    public String printHtml(@PathVariable String filename,
+                            @RequestParam(value = "rev", required = false) String rev,
+                            Model model) {
+        String safe = analyzerService.validateCoreDumpFilename(filename);
+        boolean viewingRevision = rev != null && !rev.isBlank();
+        Optional<CoreDumpAnalysisResult> resultOpt;
+        try {
+            resultOpt = viewingRevision
+                    ? analyzerService.loadRevisionResult(safe, rev)
+                    : analyzerService.loadResult(safe);
+        } catch (IllegalArgumentException e) {
+            return "redirect:/core-dump/analyze/" + safe;
+        }
+        CoreDumpAnalysisResult result = resultOpt.orElse(null);
+        if (result == null || !CoreDumpApiController.isReportable(result)) {
+            return "redirect:/core-dump/analyze/" + safe;
+        }
+        pdfReportService.buildCorePrintModel(safe, viewingRevision ? rev : null, result)
+                .forEach(model::addAttribute);
+        return "core-dump/analyze-print";
     }
 }

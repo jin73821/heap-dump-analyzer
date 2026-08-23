@@ -617,7 +617,14 @@
         }
     }
 
-    function init() { bindZone('uploadZone', 'fileInput'); }
+    function init() {
+        bindZone('uploadZone', 'fileInput');
+        // 업로드 중 이탈 경고(onbeforeunload)를 배너에 알린다 — 경고 팝업을 '취소'로 닫았을 때
+        // 페이지 로딩 스피너가 무한 회전하지 않도록 (banner.html registerUnloadGuard 참조).
+        if (typeof global.registerUnloadGuard === 'function') {
+            global.registerUnloadGuard(function() { return _uploading; });
+        }
+    }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
     else init();

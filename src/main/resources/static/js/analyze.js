@@ -3501,6 +3501,12 @@ window.addEventListener('beforeunload', function(e) {
     }
 });
 
+// 배너 페이지 로딩 스피너 가드 — 경고 팝업이 뜰 조건이면 스피너 예약을 건너뛴다.
+// (팝업을 '취소'로 닫으면 네비게이션은 없는데 예약된 스피너만 남아 무한 회전 — banner.html 참조)
+if (typeof registerUnloadGuard === 'function') {
+    registerUnloadGuard(function() { return _aiAnalysisInProgress; });
+}
+
 // ── [4] SPA 링크 이탈 가로채기 (a 태그 클릭) ───────────────────
 document.addEventListener('click', function(e) {
     if (!_aiAnalysisInProgress) return;

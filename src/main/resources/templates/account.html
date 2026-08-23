@@ -951,6 +951,16 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
+/* 이탈 시 경고 팝업이 뜰 조건 — 아래 beforeunload 핸들러와 **같은 판정**이어야 한다.
+   배너의 페이지 로딩 스피너는 이 가드가 true 면 예약 자체를 건너뛴다. 어긋나면
+   경고 팝업을 '취소'로 닫았을 때 스피너가 무한 회전한다 (banner.html registerUnloadGuard 참조). */
+function memoWillWarnOnLeave() {
+    if (!memoDirty && !memoAutosaver.pending()) return false;      // 저장할 것 없음
+    if (memoAutosaver.isSuspended()) return true;                  // 세션 만료 — 서버 저장 불가라 경고
+    return !document.getElementById('togAutosave').checked;        // 자동 저장 ON 이면 keepalive 로 조용히 마무리
+}
+if (typeof registerUnloadGuard === 'function') registerUnloadGuard(memoWillWarnOnLeave);
+
 /* 페이지 이탈 시 — 자동 저장 ON 이면 대기 중인 저장을 keepalive 로 마무리,
    OFF 면 미저장 경고. (새창은 이 페이지와 독립이므로 영향받지 않는다.) */
 window.addEventListener('beforeunload', function(e) {

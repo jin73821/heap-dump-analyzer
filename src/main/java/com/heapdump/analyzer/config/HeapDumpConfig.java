@@ -318,7 +318,7 @@ public class HeapDumpConfig {
     private void initCoreDumpDirectory() {
         logger.info("[Config] Core dump directory: {}", coreDumpDirectory);
         try {
-            for (String sub : new String[]{"", "dumpfiles", "data", "tmp"}) {
+            for (String sub : new String[]{"", "dumpfiles", "data", "tmp", "sysroots"}) {
                 Path p = sub.isEmpty() ? Paths.get(coreDumpDirectory)
                                        : Paths.get(coreDumpDirectory, sub);
                 if (!Files.exists(p)) {

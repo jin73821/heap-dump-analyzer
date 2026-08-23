@@ -44,6 +44,7 @@ public class CoreDumpAnalyzerService {
     private final HeapDumpAnalyzerService heapFacade;
     private final LlmConfigService llmConfig;
     private final AiInsightManager aiInsight;
+    private final CoreDumpSysrootService sysrootService;
 
     private final ExecutorService executor = Executors.newFixedThreadPool(4, r -> {
         Thread t = new Thread(r, "coredump-analyzer");
@@ -58,7 +59,8 @@ public class CoreDumpAnalyzerService {
                                    ObjectMapper objectMapper,
                                    HeapDumpAnalyzerService heapFacade,
                                    LlmConfigService llmConfig,
-                                   AiInsightManager aiInsight) {
+                                   AiInsightManager aiInsight,
+                                   CoreDumpSysrootService sysrootService) {
         this.config = config;
         this.repository = repository;
         this.objectMapper = objectMapper.copy()
@@ -66,6 +68,7 @@ public class CoreDumpAnalyzerService {
         this.heapFacade = heapFacade;
         this.llmConfig = llmConfig;
         this.aiInsight = aiInsight;
+        this.sysrootService = sysrootService;
     }
 
     @PreDestroy
@@ -411,6 +414,8 @@ public class CoreDumpAnalyzerService {
         deleteQuietly(dumpFile);
         // 데이터 디렉토리 삭제
         deleteDirectoryQuietly(dataDir(filename));
+        // sysroot 라이브러리 번들 동반 삭제 (exec 와 동일한 입력물 시맨틱 — 이력만 삭제 시에는 보존)
+        sysrootService.deleteBundle(filename);
         // DB 플래그
         repository.findByFilename(filename).ifPresent(e -> {
             e.setFileDeleted(true);
@@ -521,13 +526,28 @@ public class CoreDumpAnalyzerService {
                 Files.copy(execFile.toPath(), execCopy.toPath(), StandardCopyOption.REPLACE_EXISTING);
             }
 
-            // 5. GDB 실행
+            // 5. GDB 실행 — sysroot 라이브러리 번들이 있으면 원본 서버 라이브러리로 심볼 해석
+            File sysrootDir = sysrootService.activeSysrootDir(filename);
+            String solibSearchPath = sysrootDir != null ? sysrootService.solibSearchPath(sysrootDir) : null;
+            if (sysrootDir != null) {
+                logger.info("[CoreDump] sysroot 번들 적용: {} ({}개 파일)",
+                        sysrootDir.getAbsolutePath(), sysrootService.countFiles(sysrootDir));
+            }
             sendProgress(emitter, AnalysisProgress.step(filename, 15, "GDB 실행 중..."));
-            String rawOutput = runGdb(coreCopy, execCopy, emitter, filename);
+            String rawOutput = runGdb(coreCopy, execCopy, sysrootDir, solibSearchPath, emitter, filename);
 
             // 6. 출력 파싱
             sendProgress(emitter, AnalysisProgress.step(filename, 85, "GDB 출력 파싱 중..."));
             CoreDumpAnalysisResult result = parseGdbOutput(rawOutput, filename, executableName);
+            result.setSysrootUsed(sysrootDir != null);
+            if (sysrootDir != null) {
+                result.setSysrootPath(sysrootDir.getAbsolutePath());
+                result.setSysrootFileCount(sysrootService.countFiles(sysrootDir));
+            }
+            // sysroot 관점 신뢰도 경고 (assessAnalysisQuality 의 qualityWarnings 에 덧붙임 —
+            // 파서·품질판정 본체는 무변경. 원격 출처 판정은 전송 로그 역추적)
+            sysrootService.appendSysrootQualityWarnings(result,
+                    sysrootService.findOriginServer(filename).isPresent());
             result.setAnalysisTimeMs(System.currentTimeMillis() - startTime);
             result.setAnalyzedAt(LocalDateTime.now().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME));
             result.setCoreDumpTime(LocalDateTime.ofInstant(
@@ -626,9 +646,10 @@ public class CoreDumpAnalyzerService {
 
     // ── GDB 실행 ──────────────────────────────────────────────────
 
-    private String runGdb(File corePath, File execPath, SseEmitter emitter, String filename)
+    private String runGdb(File corePath, File execPath, File sysrootDir, String solibSearchPath,
+                          SseEmitter emitter, String filename)
             throws Exception {
-        List<String> cmd = buildGdbCommand(corePath, execPath);
+        List<String> cmd = buildGdbCommand(corePath, execPath, sysrootDir, solibSearchPath);
         logger.info("[CoreDump] GDB 명령: {}", String.join(" ", cmd));
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
@@ -683,12 +704,29 @@ public class CoreDumpAnalyzerService {
     // --batch 모드는 (gdb) 프롬프트를 출력하지 않으므로 echo 마커로 섹션 경계를 표시
     private static final String SECTION_PREFIX = "===SECTION:";
 
-    private List<String> buildGdbCommand(File corePath, File execPath) {
+    // package-private — CoreDumpSysrootCommandTest 골든 검증 대상
+    List<String> buildGdbCommand(File corePath, File execPath, File sysrootDir, String solibSearchPath) {
         String gdb = config.getGdbCliPath();
         List<String> cmd = new ArrayList<>();
         cmd.add(gdb);
         cmd.add("--batch");
         cmd.add("--nx");
+
+        // sysroot 번들 — 반드시 -iex(파일 로드 전 실행). positional <exec> <core> 는 -ex 보다
+        // 먼저 로드되므로 -ex 로 주면 초기 solib 해석이 분석 서버 로컬 경로로 한 번 수행된 뒤
+        // 재해석된다(잘못된 빌드가 있으면 초기 출력 오염 — COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md
+        // 케이스 D-2 실증). 코어 단독(-ex core-file) 분기에서도 -iex 선행은 무해.
+        if (sysrootDir != null) {
+            cmd.add("-iex");
+            cmd.add("set sysroot " + sysrootDir.getAbsolutePath());
+            // 번들 디렉토리들을 basename 탐색 경로로도 등록 — 원경로를 모르는 개별 업로드나
+            // 구조 없이 압축된 아카이브를 찾아준다. ⚠ sysroot 와 **함께** 줄 때만 유효하다
+            // (sysroot 없이 주면 gdb 가 분석 서버 로컬 원경로 파일을 먼저 찾아 무효 — 케이스 F).
+            if (solibSearchPath != null && !solibSearchPath.isEmpty()) {
+                cmd.add("-iex");
+                cmd.add("set solib-search-path " + solibSearchPath);
+            }
+        }
 
         // 코어 단독/실행파일 페어링 모두 동일한 리치 명령 세트를 실행한다.
         // (레지스터·공유 라이브러리·bt full·메모리 매핑·크래시 디스어셈블리는 코어에 이미

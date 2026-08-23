@@ -8,9 +8,10 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>코어 덤프 분석 결과 - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-08-12}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-08-12}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-08-23d}">
 </head>
-<body>
+<!-- cd-analyze: 넓은 화면 전용 규칙(컨테이너 확장·요약 2열)의 스코프 — index/progress 는 제외 -->
+<body class="cd-analyze">
 
 <div th:replace="~{fragments/banner :: banner}"></div>
 
@@ -28,6 +29,9 @@
         <span class="cd-step is-current"><span class="cd-step-dot"></span><span class="cd-step-label">결과</span></span>
     </nav>
     <div class="topbar-right">
+        <!-- 라이브러리 번들(sysroot) — 별도 서버 분석 심볼 정확도 복원. 리비전 조회 중엔 숨김 -->
+        <button th:if="${entity != null and currentRevision == null}" class="btn btn-ghost btn-sm"
+                onclick="openLibsModal()">&#128218; 라이브러리 번들</button>
         <!-- 재분석은 현재 결과에 대해서만 — 보존된 리비전을 보는 중엔 숨김 -->
         <button th:if="${entity != null and currentRevision == null}" class="btn btn-ghost btn-sm"
                 th:data-filename="${entity.filename}" onclick="reanalyzeThis(this)">&#8635; 재분석</button>
@@ -93,6 +97,27 @@
             </div>
         </div>
 
+        <!-- 탭 네비게이션 (요약 포함 — 페이지 상단 고정) -->
+        <div class="cd-tabs-bar" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
+        <div class="cd-tabs" role="tablist">
+            <button class="cd-tab-btn active" role="tab" aria-selected="true" id="tabbtn-summary" aria-controls="tab-summary" data-tab="summary">요약</button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" id="tabbtn-bt" aria-controls="tab-bt" data-tab="bt">스택 트레이스
+                <span class="tab-count" th:if="${result.mainBacktrace != null}" th:text="${#lists.size(result.mainBacktrace)}"></span></button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" id="tabbtn-threads" aria-controls="tab-threads" data-tab="threads">스레드
+                <span class="tab-count" th:if="${result.allThreads != null}" th:text="${#lists.size(result.allThreads)}"></span></button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" id="tabbtn-registers" aria-controls="tab-registers" data-tab="registers">레지스터
+                <span class="tab-count" th:if="${result.registers != null}" th:text="${#maps.size(result.registers)}"></span></button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" id="tabbtn-libs" aria-controls="tab-libs" data-tab="libs">공유 라이브러리
+                <span class="tab-count" th:if="${result.sharedLibraries != null}" th:text="${#lists.size(result.sharedLibraries)}"></span></button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" id="tabbtn-raw" aria-controls="tab-raw" data-tab="raw">Raw 출력</button>
+            <button class="cd-tab-btn" role="tab" aria-selected="false" id="tabbtn-report" aria-controls="tab-report" data-tab="report">리포트</button>
+        </div>
+        </div>
+
+        <!-- 탭: 요약 (크래시 히어로[원인·위치 통합] / 덤프 메타 / AI / 콜 체인) -->
+        <div class="cd-tab-panel active" id="tab-summary" role="tabpanel" aria-labelledby="tabbtn-summary"
+             th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
+
         <!-- ★ 크래시 히어로 v2 -->
         <div th:if="${result != null and result.crashSignal != null and result.mainBacktrace != null and !#lists.isEmpty(result.mainBacktrace)}"
              th:with="frame0=${result.mainBacktrace[0]}, f0Resolved=${result.mainBacktrace[0].quality == null or result.mainBacktrace[0].quality == 'RESOLVED'}"
@@ -100,101 +125,120 @@
              th:classappend="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? ''
                             : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? 'hero-warn' : 'hero-neutral')">
 
-            <div class="crash-hero-icon-col">
-                <div class="crash-hero-icon-wrap">
-                    <span class="crash-hero-icon-glyph"
-                          th:text="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? '&#128683;'
-                                   : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? '&#9888;' : '&#8505;')"></span>
+            <!-- 좌: 크래시 정체성 (시그널 헤드 → 함수 → 발생 위치 → 소스 웰) -->
+            <div class="hero-main">
+                <div class="hero-sig-head">
+                    <div class="crash-hero-icon-wrap">
+                        <span class="crash-hero-icon-glyph"
+                              th:text="${result.crashSignal == 'SIGSEGV' or result.crashSignal == 'SIGBUS' or result.crashSignal == 'SIGILL'} ? '&#128683;'
+                                       : (${result.crashSignal == 'SIGABRT' or result.crashSignal == 'SIGFPE'} ? '&#9888;' : '&#8505;')"></span>
+                    </div>
+                    <div class="hero-sig-text">
+                        <div class="crash-hero-signal-chip" th:text="${result.crashSignal}"></div>
+                        <div class="crash-hero-eyebrow"
+                             th:text="${f0Resolved} ? '크래시 발생 지점 · FRAME #0' : '크래시 발생 지점 · FRAME #0 — 심볼 없음'"></div>
+                    </div>
                 </div>
-                <div class="crash-hero-signal-chip" th:text="${result.crashSignal}"></div>
-            </div>
 
-            <div class="crash-hero-body">
-                <div class="crash-hero-eyebrow">
-                    <span th:text="${f0Resolved} ? '크래시 발생 지점 · FRAME #0' : '크래시 발생 지점 · FRAME #0 — 심볼 없음'"></span>
-                    <span class="hero-sigdesc" th:if="${result.signalDescription != null}"
-                          th:text="' · ' + ${result.signalDescription}" th:title="${result.signalDescription}"></span>
-                </div>
                 <div class="crash-hero-func" th:text="${frame0.function != null} ? ${frame0.function} : '??'"></div>
 
-                <div class="crash-hero-location" th:if="${frame0.location != null}">
-                    <span class="crash-hero-loc-label">at</span>
-                    <span class="crash-hero-loc-value" th:text="${frame0.location}"></span>
-                </div>
-                <div class="crash-hero-lib-info" th:if="${frame0.location == null and frame0.library != null}">
-                    <span class="crash-hero-lib-label">from</span>
-                    <span class="crash-hero-lib-value" th:text="${frame0.library}"></span>
-                </div>
-                <div class="crash-hero-addr" th:if="${frame0.address != null}" th:text="${frame0.address}"></div>
-
-                <!-- 메타 칩: 발생 시각 · 실행 파일 -->
-                <div class="crash-hero-metachips"
-                     th:if="${result.coreDumpTime != null or result.executableName != null}">
-                    <span class="hero-metachip" th:if="${result.coreDumpTime != null}">
-                        발생 <span class="hmc-val" th:text="${result.coreDumpTime}"></span>
+                <!-- 위치·주소는 한 줄로 (종전 3블록 → 1행) -->
+                <div class="hero-place" th:if="${frame0.location != null or frame0.library != null or frame0.address != null}">
+                    <span class="hero-place-item" th:if="${frame0.location != null}">
+                        <span class="crash-hero-loc-label">at</span>
+                        <span class="crash-hero-loc-value" th:text="${frame0.location}"></span>
                     </span>
-                    <span class="hero-metachip" th:if="${result.executableName != null}">
-                        실행 파일 <span class="hmc-val" th:text="${result.executableName}"></span>
+                    <span class="hero-place-item" th:if="${frame0.location == null and frame0.library != null}">
+                        <span class="crash-hero-lib-label">from</span>
+                        <span class="crash-hero-lib-value" th:text="${frame0.library}"></span>
                     </span>
+                    <span class="crash-hero-addr" th:if="${frame0.address != null}" th:text="${frame0.address}"></span>
                 </div>
 
-                <!-- 해석 힌트 통합 dl -->
-                <div class="crash-hero-hints"
-                     th:if="${(!f0Resolved and result.firstResolvedFrame != null) or result.selfRaisedSignal or result.faultingModule != null}">
-                    <div class="hero-hint-row" th:if="${!f0Resolved and result.firstResolvedFrame != null}">
-                        <span class="hero-hint-dt">최근접 심볼</span>
-                        <span class="hero-hint-dd">
-                            <span th:text="'#' + ${result.firstResolvedFrame.frameNumber} + ' ' + ${result.firstResolvedFrame.function}"></span>
-                            <span th:if="${result.firstResolvedFrame.location != null}" th:text="' at ' + ${result.firstResolvedFrame.location}"></span>
-                            <span th:if="${result.firstResolvedFrame.location == null and result.firstResolvedFrame.library != null}" th:text="' from ' + ${result.firstResolvedFrame.library}"></span>
-                        </span>
-                    </div>
-                    <div class="hero-hint-row" th:if="${result.selfRaisedSignal}">
-                        <span class="hero-hint-dt">self-raise</span>
-                        <span class="hero-hint-dd">최상단 <code>raise()/abort()</code> 는 시그널 핸들러의 자체-재raise 로, 실제 결함 지점이 아닙니다.</span>
-                    </div>
-                    <div class="hero-hint-row" th:if="${result.faultingModule != null}">
-                        <span class="hero-hint-dt">결함 모듈</span>
-                        <span class="hero-hint-dd">
-                            <span th:text="${result.faultingModule}"></span>
-                            <span class="hero-hint-vendor" th:if="${result.faultingModuleVendor != null}" th:text="${result.faultingModuleVendor}"></span>
-                            <span class="hero-hint-nosym" th:if="${result.faultingModuleHasSymbols != null and !result.faultingModuleHasSymbols}">심볼 없음</span>
-                        </span>
-                    </div>
-                </div>
-
-                <!-- 크래시 지점 소스 (코드 웰) -->
+                <!-- 크래시 지점 소스 (코드 웰) — id 는 core-dump-analyze.js 계약 -->
                 <div id="heroSource" th:if="${frame0.location != null}" class="hero-source"></div>
-
-                <!-- 신뢰도 푸터 칩 + 디스클로저 -->
-                <details th:if="${result.analysisConfidence != null}"
-                         class="hero-confidence"
-                         th:classappend="${result.analysisConfidence == 'LOW'} ? 'cdc-low'
-                                        : (${result.analysisConfidence == 'MEDIUM'} ? 'cdc-medium' : 'cdc-high')"
-                         th:attr="open=${(result.analysisConfidence == 'LOW' or result.guidanceKind != null)} ? 'open' : null">
-                    <summary class="hero-conf-chip">
-                        <span class="hero-conf-dots"><i></i><i></i><i></i></span>
-                        <span th:text="'신뢰도 ' + (${result.analysisConfidence == 'LOW'} ? '낮음' : (${result.analysisConfidence == 'MEDIUM'} ? '보통' : '높음'))"></span>
-                        <span class="hero-conf-stat" th:text="'심볼 ' + ${result.resolvedFrameCount} + '/' + ${result.totalFrameCount}"></span>
-                    </summary>
-                    <div class="hero-conf-detail">
-                        <ul th:if="${result.qualityWarnings != null and !#lists.isEmpty(result.qualityWarnings)}">
-                            <li th:each="w : ${result.qualityWarnings}" th:text="${w}"></li>
-                        </ul>
-                        <div class="hero-conf-guide" th:if="${result.guidanceKind == 'THIRDPARTY_STRIPPED'}">
-                            &#128161; 애플리케이션 실행 파일 페어링은 <strong>정상</strong>입니다. 결함은 서드파티 라이브러리
-                            <strong th:text="${result.faultingModule}">lib</strong><span th:if="${result.faultingModuleVendor != null}" th:text="' (' + ${result.faultingModuleVendor} + ')'"></span> 내부에서 발생했으며,
-                            해당 라이브러리에 심볼이 없어 콜스택 해석이 제한됩니다. <strong>해당 벤더의 debuginfo 확보</strong> 후 재분석하거나 벤더 측 이슈로 에스컬레이션하세요.
-                        </div>
-                        <div class="hero-conf-guide" th:if="${result.guidanceKind == 'EXEC_MISSING'}">
-                            &#128161; 실행 파일 없이 코어 단독으로 분석되었습니다. 정확한 콜스택을 위해 코어 생성 시점의 <strong>동일 실행 파일</strong>을 페어링한 후 재분석하세요.
-                        </div>
-                        <div class="hero-conf-guide" th:if="${result.guidanceKind == 'APP_STRIPPED' or (result.guidanceKind == null and result.analysisConfidence != 'HIGH')}">
-                            &#128161; 정확한 분석을 위해 코어 생성 시점의 <strong>stripped 되지 않은 동일 실행 파일</strong>을 페어링하거나 디버그 심볼(debuginfo)을 설치한 후 재분석하세요.
-                        </div>
-                    </div>
-                </details>
             </div>
+
+            <!-- 우: 팩트 레일 — 구 메타칩 + 팩트 바 + 해석 힌트를 라벨→값 한 벌로 통합 -->
+            <div class="hero-rail">
+                <div class="hero-rail-row">
+                    <span class="hero-rail-dt">원인</span>
+                    <span class="hero-rail-dd" th:if="${result.signalDescription != null}" th:text="${result.signalDescription}"></span>
+                    <span class="hero-rail-dd is-empty" th:if="${result.signalDescription == null}"
+                          th:text="${result.crashSignal} + ' — 상세 원인 미식별'"></span>
+                </div>
+                <div class="hero-rail-row">
+                    <span class="hero-rail-dt">위치</span>
+                    <span class="hero-rail-dd mono" th:if="${result.firstResolvedFrame != null and result.firstResolvedFrame.location != null}"
+                          th:text="${result.firstResolvedFrame.location}"></span>
+                    <span class="hero-rail-dd mono" th:if="${(result.firstResolvedFrame == null or result.firstResolvedFrame.location == null) and frame0.location != null}"
+                          th:text="${frame0.location}"></span>
+                    <span class="hero-rail-dd is-empty" th:if="${(result.firstResolvedFrame == null or result.firstResolvedFrame.location == null) and frame0.location == null}">심볼 없음 — debuginfo 필요</span>
+                </div>
+                <div class="hero-rail-row" th:if="${result.faultingModule != null}">
+                    <span class="hero-rail-dt">결함 모듈</span>
+                    <span class="hero-rail-dd mono">
+                        <span th:text="${result.faultingModule}"></span>
+                        <span class="hero-rail-vendor" th:if="${result.faultingModuleVendor != null}" th:text="${result.faultingModuleVendor}"></span>
+                        <span class="hero-rail-nosym" th:if="${result.faultingModuleHasSymbols != null and !result.faultingModuleHasSymbols}">심볼 없음</span>
+                    </span>
+                </div>
+                <div class="hero-rail-row" th:if="${!f0Resolved and result.firstResolvedFrame != null}">
+                    <span class="hero-rail-dt">최근접 심볼</span>
+                    <span class="hero-rail-dd mono">
+                        <span th:text="'#' + ${result.firstResolvedFrame.frameNumber} + ' ' + ${result.firstResolvedFrame.function}"></span>
+                        <span th:if="${result.firstResolvedFrame.location != null}" th:text="' at ' + ${result.firstResolvedFrame.location}"></span>
+                        <span th:if="${result.firstResolvedFrame.location == null and result.firstResolvedFrame.library != null}" th:text="' from ' + ${result.firstResolvedFrame.library}"></span>
+                    </span>
+                </div>
+                <div class="hero-rail-row" th:if="${result.selfRaisedSignal}">
+                    <span class="hero-rail-dt">self-raise</span>
+                    <span class="hero-rail-dd">최상단 <code>raise()/abort()</code> 는 시그널 핸들러의 자체-재raise 로, 실제 결함 지점이 아닙니다.</span>
+                </div>
+                <div class="hero-rail-row" th:if="${result.coreDumpTime != null}">
+                    <span class="hero-rail-dt">발생 시각</span>
+                    <span class="hero-rail-dd mono" th:text="${result.coreDumpTime}"></span>
+                </div>
+                <div class="hero-rail-row" th:if="${result.executableName != null}">
+                    <span class="hero-rail-dt">실행 파일</span>
+                    <span class="hero-rail-dd mono" th:text="${result.executableName}"></span>
+                </div>
+                <div class="hero-rail-row rail-ok" th:if="${result.sysrootUsed}"
+                     title="원본 서버 라이브러리 번들(sysroot)로 심볼을 해석한 분석입니다">
+                    <span class="hero-rail-dt">번들</span>
+                    <span class="hero-rail-dd mono" th:text="${result.sysrootFileCount} + '개 적용'"></span>
+                </div>
+                <a class="hero-fact-link" href="#" onclick="switchTab('bt', event); return false;">스택 트레이스 보기 →</a>
+            </div>
+
+            <!-- 신뢰도 칩 + 디스클로저 — 좌열 2행 (레일이 우열 전 행을 span) -->
+            <details th:if="${result.analysisConfidence != null}"
+                     class="hero-confidence"
+                     th:classappend="${result.analysisConfidence == 'LOW'} ? 'cdc-low'
+                                    : (${result.analysisConfidence == 'MEDIUM'} ? 'cdc-medium' : 'cdc-high')"
+                     th:attr="open=${(result.analysisConfidence == 'LOW' or result.guidanceKind != null)} ? 'open' : null">
+                <summary class="hero-conf-chip">
+                    <span class="hero-conf-dots"><i></i><i></i><i></i></span>
+                    <span th:text="'신뢰도 ' + (${result.analysisConfidence == 'LOW'} ? '낮음' : (${result.analysisConfidence == 'MEDIUM'} ? '보통' : '높음'))"></span>
+                    <span class="hero-conf-stat" th:text="'심볼 ' + ${result.resolvedFrameCount} + '/' + ${result.totalFrameCount}"></span>
+                </summary>
+                <div class="hero-conf-detail">
+                    <ul th:if="${result.qualityWarnings != null and !#lists.isEmpty(result.qualityWarnings)}">
+                        <li th:each="w : ${result.qualityWarnings}" th:text="${w}"></li>
+                    </ul>
+                    <div class="hero-conf-guide" th:if="${result.guidanceKind == 'THIRDPARTY_STRIPPED'}">
+                        &#128161; 애플리케이션 실행 파일 페어링은 <strong>정상</strong>입니다. 결함은 서드파티 라이브러리
+                        <strong th:text="${result.faultingModule}">lib</strong><span th:if="${result.faultingModuleVendor != null}" th:text="' (' + ${result.faultingModuleVendor} + ')'"></span> 내부에서 발생했으며,
+                        해당 라이브러리에 심볼이 없어 콜스택 해석이 제한됩니다. <strong>해당 벤더의 debuginfo 확보</strong> 후 재분석하거나 벤더 측 이슈로 에스컬레이션하세요.
+                    </div>
+                    <div class="hero-conf-guide" th:if="${result.guidanceKind == 'EXEC_MISSING'}">
+                        &#128161; 실행 파일 없이 코어 단독으로 분석되었습니다. 정확한 콜스택을 위해 코어 생성 시점의 <strong>동일 실행 파일</strong>을 페어링한 후 재분석하세요.
+                    </div>
+                    <div class="hero-conf-guide" th:if="${result.guidanceKind == 'APP_STRIPPED' or (result.guidanceKind == null and result.analysisConfidence != 'HIGH')}">
+                        &#128161; 정확한 분석을 위해 코어 생성 시점의 <strong>stripped 되지 않은 동일 실행 파일</strong>을 페어링하거나 디버그 심볼(debuginfo)을 설치한 후 재분석하세요.
+                    </div>
+                </div>
+            </details>
         </div>
 
         <!-- 시그널은 있으나 스택 없음 — fallback 배너 -->
@@ -211,33 +255,33 @@
             </div>
         </div>
 
-        <!-- ★ 요약 스트립 (원인 → 위치 → 조치) -->
-        <div th:if="${result != null and result.crashSignal != null and result.mainBacktrace != null and !#lists.isEmpty(result.mainBacktrace)}"
-             th:with="frame0=${result.mainBacktrace[0]}"
-             class="crash-summary">
-            <div class="summary-cell">
-                <span class="summary-label">원인 · WHY</span>
-                <span class="summary-value mono" th:text="${result.crashSignal}"></span>
-                <span class="summary-value is-empty" th:if="${result.faultingModule == null and result.signalDescription != null}" th:text="${result.signalDescription}"></span>
-                <span class="summary-value" th:if="${result.faultingModule != null}" th:text="'결함 모듈: ' + ${result.faultingModule}"></span>
-            </div>
-            <div class="summary-cell">
-                <span class="summary-label">위치 · WHERE</span>
-                <span class="summary-value mono" th:if="${result.firstResolvedFrame != null and result.firstResolvedFrame.location != null}"
-                      th:text="${result.firstResolvedFrame.location}"></span>
-                <span class="summary-value mono" th:if="${(result.firstResolvedFrame == null or result.firstResolvedFrame.location == null) and frame0.location != null}"
-                      th:text="${frame0.location}"></span>
-                <span class="summary-value is-empty" th:if="${(result.firstResolvedFrame == null or result.firstResolvedFrame.location == null) and frame0.location == null}">심볼 없음 — debuginfo 필요</span>
-                <a class="summary-link" href="#" onclick="switchTab('bt', event); return false;">스택 트레이스 보기 →</a>
-            </div>
-            <div class="summary-cell cell-fix">
-                <span class="summary-label">조치 · FIX</span>
-                <span class="summary-value" th:if="${result.guidanceKind == 'EXEC_MISSING'}">실행 파일을 페어링하면 정확도가 올라갑니다.</span>
-                <span class="summary-value" th:if="${result.guidanceKind == 'THIRDPARTY_STRIPPED'}">벤더 debuginfo 확보 후 재분석하세요.</span>
-                <span class="summary-value" th:if="${result.guidanceKind != 'EXEC_MISSING' and result.guidanceKind != 'THIRDPARTY_STRIPPED'}">AI 크래시 분석으로 근본 원인을 진단하세요.</span>
-                <button type="button" class="btn btn-primary btn-sm" onclick="document.getElementById('cdaPanel').scrollIntoView({behavior:'smooth',block:'center'})">AI 분석으로 이동</button>
+        <!-- 덤프 메타 정보 (요약 탭 상시 노출 — 프로그램/실행 파일/발생 시각/GDB/분석 완료/번들) -->
+        <div class="content-card" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
+            <div class="content-card-title">덤프 메타 정보</div>
+            <div class="meta-dl">
+                <div th:if="${result.coreProgramName != null}"
+                     th:with="fullCmd=${result.coreProgramName}, execPath=${#strings.contains(fullCmd, ' ') ? #strings.substringBefore(fullCmd, ' ') : fullCmd}, basename=${#strings.contains(execPath, '/') ? execPath.substring(execPath.lastIndexOf('/') + 1) : execPath}">
+                    <div class="meta-dt">프로그램명</div>
+                    <div class="meta-dd mono" th:text="${basename}"></div>
+                    <div class="meta-sub" th:if="${#strings.contains(execPath, '/')}" th:text="${execPath}"></div>
+                </div>
+                <div th:if="${result.executableName != null}"><div class="meta-dt">실행 파일</div><div class="meta-dd mono" th:text="${result.executableName}"></div></div>
+                <div th:if="${result.coreDumpTime != null}"><div class="meta-dt">발생 시각</div><div class="meta-dd" th:text="${result.coreDumpTime}"></div></div>
+                <div th:if="${result.gdbVersion != null}"><div class="meta-dt">GDB 버전</div><div class="meta-dd mono" th:text="${result.gdbVersion}"></div></div>
+                <div th:if="${result.analyzedAt != null}"><div class="meta-dt">분석 완료</div><div class="meta-dd" th:text="${result.analyzedAt}"></div><div class="meta-sub" th:if="${result.analysisTimeMs != null}" th:text="${result.analysisTimeMs} + ' ms'"></div></div>
+                <div th:if="${result.executableName == null and result.filename != null}"><div class="meta-dt">코어 파일</div><div class="meta-dd mono" th:text="${result.filename}"></div></div>
+                <div th:if="${result.sysrootUsed}"><div class="meta-dt">라이브러리 번들</div><div class="meta-dd mono" th:text="${result.sysrootPath}"></div><div class="meta-sub" th:text="${result.sysrootFileCount} + '개 파일 (sysroot)'"></div></div>
             </div>
         </div>
+
+        <!-- 에러 경고 배너 (분석은 됐으나 일부 경고) — 넓은 화면 2열 배치 앞에 배치해 항상 전폭 -->
+        <div th:if="${result != null and result.errorMessage != null and !#strings.isEmpty(result.errorMessage) and result.crashSignal != null}"
+             class="callout rail-warn" style="margin-bottom:16px;">
+            <div class="callout-body">&#9888; <strong>분석 경고:</strong> <span th:text="${result.errorMessage}"></span></div>
+        </div>
+
+        <!-- 2열 배치 존 (≥1400px: AI 좌 · 콜 체인 우 / 그 미만: 세로 스택) -->
+        <div class="cd-sum-cols">
 
         <!-- ★ AI 크래시 분석 패널 -->
         <div th:if="${result != null and result.crashSignal != null}" class="content-card cda-panel" id="cdaPanel">
@@ -295,12 +339,6 @@
             </div>
         </div>
 
-        <!-- 에러 경고 배너 (분석은 됐으나 일부 경고) -->
-        <div th:if="${result != null and result.errorMessage != null and !#strings.isEmpty(result.errorMessage) and result.crashSignal != null}"
-             class="callout rail-warn" style="margin-bottom:16px;">
-            <div class="callout-body">&#9888; <strong>분석 경고:</strong> <span th:text="${result.errorMessage}"></span></div>
-        </div>
-
         <!-- ★ 크래시 콜 체인 (compact, 최대 6) -->
         <div th:if="${result != null and result.mainBacktrace != null and #lists.size(result.mainBacktrace) > 1
                      and (result.crashSignal != null or result.errorMessage == null)}"
@@ -342,23 +380,17 @@
             </div>
         </div>
 
-        <!-- 탭 네비게이션 -->
-        <div class="cd-tabs-bar" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
-        <div class="cd-tabs" role="tablist">
-            <button class="cd-tab-btn active" role="tab" aria-selected="true" onclick="switchTab('bt', event)">스택 트레이스
-                <span class="tab-count" th:if="${result.mainBacktrace != null}" th:text="${#lists.size(result.mainBacktrace)}"></span></button>
-            <button class="cd-tab-btn" role="tab" aria-selected="false" onclick="switchTab('threads', event)">스레드
-                <span class="tab-count" th:if="${result.allThreads != null}" th:text="${#lists.size(result.allThreads)}"></span></button>
-            <button class="cd-tab-btn" role="tab" aria-selected="false" onclick="switchTab('registers', event)">레지스터
-                <span class="tab-count" th:if="${result.registers != null}" th:text="${#maps.size(result.registers)}"></span></button>
-            <button class="cd-tab-btn" role="tab" aria-selected="false" onclick="switchTab('libs', event)">공유 라이브러리
-                <span class="tab-count" th:if="${result.sharedLibraries != null}" th:text="${#lists.size(result.sharedLibraries)}"></span></button>
-            <button class="cd-tab-btn" role="tab" aria-selected="false" onclick="switchTab('raw', event)">Raw 출력</button>
-        </div>
-        </div>
+        </div><!-- /cd-sum-cols -->
+
+            <!-- 빈 상태: 시그널 미식별(성공) — 히어로/요약 스트립이 모두 미렌더되는 케이스 안내 -->
+            <div th:if="${result.crashSignal == null}" class="content-card">
+                <div class="empty-msg">크래시 시그널이 식별되지 않았습니다 — Raw 출력 탭에서 GDB 원본 출력을 확인하세요.</div>
+            </div>
+
+        </div><!-- /tab-summary -->
 
         <!-- 탭: 스택 트레이스 -->
-        <div class="cd-tab-panel active" id="tab-bt"
+        <div class="cd-tab-panel" id="tab-bt" role="tabpanel" aria-labelledby="tabbtn-bt"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card"
                  th:with="garbageCount=${result.mainBacktrace != null ? #lists.size(result.mainBacktrace.?[quality == 'GARBAGE']) : 0}">
@@ -432,7 +464,7 @@
         </div>
 
         <!-- 탭: 스레드 -->
-        <div class="cd-tab-panel" id="tab-threads"
+        <div class="cd-tab-panel" id="tab-threads" role="tabpanel" aria-labelledby="tabbtn-threads"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
                 <div class="content-card-title">전체 스레드
@@ -504,7 +536,7 @@
         </div>
 
         <!-- 탭: 레지스터 -->
-        <div class="cd-tab-panel" id="tab-registers"
+        <div class="cd-tab-panel" id="tab-registers" role="tabpanel" aria-labelledby="tabbtn-registers"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
                 <div class="content-card-title">CPU 레지스터
@@ -522,7 +554,7 @@
         </div>
 
         <!-- 탭: 공유 라이브러리 -->
-        <div class="cd-tab-panel" id="tab-libs"
+        <div class="cd-tab-panel" id="tab-libs" role="tabpanel" aria-labelledby="tabbtn-libs"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card"
                  th:with="loadedLibs=${result.sharedLibraries != null ? #lists.size(result.sharedLibraries.?[symsRead != null and #strings.startsWith(symsRead, 'Yes')]) : 0}">
@@ -553,7 +585,7 @@
         </div>
 
         <!-- 탭: Raw 출력 -->
-        <div class="cd-tab-panel" id="tab-raw"
+        <div class="cd-tab-panel" id="tab-raw" role="tabpanel" aria-labelledby="tabbtn-raw"
              th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
             <div class="content-card">
                 <div class="content-card-title">GDB Raw 출력
@@ -566,30 +598,77 @@
             </div>
         </div>
 
-        <!-- 덤프 메타 정보 (최하단, 접기) -->
-        <details class="content-card" th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}"
-                 style="padding:0;">
-            <summary style="padding:16px 24px;cursor:pointer;font-size:13px;font-weight:600;color:#374151;list-style:none;">
-                덤프 메타 정보
-            </summary>
-            <div style="padding:0 24px 20px;">
-                <div class="meta-dl">
-                    <div th:if="${result.coreProgramName != null}"
-                         th:with="fullCmd=${result.coreProgramName}, execPath=${#strings.contains(fullCmd, ' ') ? #strings.substringBefore(fullCmd, ' ') : fullCmd}, basename=${#strings.contains(execPath, '/') ? execPath.substring(execPath.lastIndexOf('/') + 1) : execPath}">
-                        <div class="meta-dt">프로그램명</div>
-                        <div class="meta-dd mono" th:text="${basename}"></div>
-                        <div class="meta-sub" th:if="${#strings.contains(execPath, '/')}" th:text="${execPath}"></div>
+        <!-- 탭: 리포트 (PDF 미리보기 + 다운로드 — 힙덤프 PDF Report 패널 대응) -->
+        <div class="cd-tab-panel" id="tab-report" role="tabpanel" aria-labelledby="tabbtn-report"
+             th:if="${result != null and (result.crashSignal != null or result.errorMessage == null)}">
+            <div class="content-card cd-report-card">
+                <div class="content-card-title cd-report-head">
+                    <span>&#128196; PDF 리포트 미리보기</span>
+                    <div class="cd-report-actions">
+                        <div id="cdPdfZoomCtrl" class="cd-report-zoom" style="display:none;">
+                            <button type="button" onclick="adjustCorePdfZoom(-10)" title="축소">&minus;</button>
+                            <button type="button" id="cdPdfZoomLabel" onclick="resetCorePdfZoom()" title="100%로 재설정">100%</button>
+                            <button type="button" onclick="adjustCorePdfZoom(10)" title="확대">+</button>
+                        </div>
+                        <button id="cdPdfToggleBtn" type="button" class="btn btn-dark btn-sm" style="display:none;"
+                                onclick="toggleCorePdfPreview()"><span>HTML로 보기</span></button>
+                        <a id="cdPdfDownloadBtn" class="btn btn-primary btn-sm" download
+                           th:href="@{/core-dump/analyze/{fn}/print-pdf(fn=${filename}, mode='download', rev=${currentRevision})}">&#8595; PDF 다운로드</a>
                     </div>
-                    <div th:if="${result.executableName != null}"><div class="meta-dt">실행 파일</div><div class="meta-dd mono" th:text="${result.executableName}"></div></div>
-                    <div th:if="${result.coreDumpTime != null}"><div class="meta-dt">발생 시각</div><div class="meta-dd" th:text="${result.coreDumpTime}"></div></div>
-                    <div th:if="${result.gdbVersion != null}"><div class="meta-dt">GDB 버전</div><div class="meta-dd mono" th:text="${result.gdbVersion}"></div></div>
-                    <div th:if="${result.analyzedAt != null}"><div class="meta-dt">분석 완료</div><div class="meta-dd" th:text="${result.analyzedAt}"></div><div class="meta-sub" th:if="${result.analysisTimeMs != null}" th:text="${result.analysisTimeMs} + ' ms'"></div></div>
-                    <div th:if="${result.executableName == null and result.filename != null}"><div class="meta-dt">코어 파일</div><div class="meta-dd mono" th:text="${result.filename}"></div></div>
+                </div>
+                <div id="cdPdfNotice" class="cd-report-notice" style="display:none;">
+                    <span>&#9888;&#65039;</span>
+                    <span class="cd-report-notice-msg">브라우저 설정으로 PDF 미리보기를 사용할 수 없어 <strong>HTML 미리보기</strong>로 표시합니다. PDF 파일은 <strong>PDF 다운로드</strong> 버튼을 이용해 주세요.</span>
+                    <button type="button" onclick="this.parentElement.style.display='none'">&times;</button>
+                </div>
+                <div class="cd-report-frame-wrap">
+                    <iframe id="cdPdfIframe" referrerpolicy="no-referrer" title="PDF 리포트 미리보기"></iframe>
+                    <div id="cdPdfFallback" class="cd-report-fallback">
+                        브라우저에서 PDF 미리보기를 표시할 수 없습니다.<br>
+                        상단의 <strong>PDF 다운로드</strong> 버튼을 사용해 주세요.
+                    </div>
                 </div>
             </div>
-        </details>
+        </div>
 
     </div><!-- error == null -->
+</div>
+
+<!-- 라이브러리 번들(sysroot) 모달 — 원격 수집 / tar.gz 업로드 / 삭제 -->
+<div id="libsModal" class="modal-ov" onclick="if(event.target===this)closeLibsModal()">
+    <div class="modal-box">
+        <div class="modal-title">&#128218; 라이브러리 번들 (sysroot)</div>
+        <span class="modal-filename" th:text="${filename}"></span>
+        <div class="modal-desc">
+            원본 서버의 공유 라이브러리(.so)를 담은 번들입니다. 번들이 있으면 재분석 시
+            GDB 가 분석 서버 로컬 라이브러리 대신 번들을 사용해 <strong>원본 서버와 동일한 심볼 정확도</strong>를 냅니다.
+            (버전이 다른 라이브러리는 경고 없이 잘못된 함수명을 만들 수 있습니다.)
+        </div>
+        <div id="libsModalStatus" class="libs-status">상태 확인 중…</div>
+        <div id="libsModalResult" class="libs-result" style="display:none;"></div>
+        <div class="libs-actions">
+            <button type="button" id="libsCollectBtn" class="mbtn-primary" style="display:none;"
+                    onclick="collectLibs(this)">&#8595; 원격 서버에서 수집</button>
+            <label class="mbtn-save libs-upload-label" for="libsBundleFile">&#8613; 파일 업로드
+                <input type="file" id="libsBundleFile" multiple onchange="uploadLibsBundle(this)">
+            </label>
+            <button type="button" id="libsDeleteBtn" class="mbtn-del" style="display:none;"
+                    onclick="deleteLibsBundle(this)">번들 삭제</button>
+        </div>
+        <div class="libs-hint">
+            압축 번들(<span class="mono">tar · tar.gz · tgz · tar.bz2 · tar.xz · zip</span>)과
+            <strong>개별 라이브러리 파일</strong>(<span class="mono">.so</span> 등)을 모두 올릴 수 있고,
+            여러 개를 한 번에 선택해도 됩니다. 형식은 확장자가 아니라 파일 내용으로 판별합니다.
+            업로드분은 기존 번들에 <strong>추가</strong>되며(같은 경로는 덮어씀), 처음부터 다시 구성하려면
+            '번들 삭제' 후 올리세요. 원본 경로를 모르는 개별 파일도 파일명으로 탐색됩니다.
+        </div>
+        <div class="modal-btns">
+            <button type="button" id="libsReanalyzeBtn" class="mbtn-confirm" style="display:none;"
+                    th:data-filename="${filename}" onclick="reanalyzeThis(this)">&#8635; 지금 재분석</button>
+            <button type="button" class="mbtn-cancel" onclick="closeLibsModal()">닫기</button>
+        </div>
+        <div class="modal-err" id="libsModalErr"></div>
+    </div>
 </div>
 
 <div class="cd-toast-wrap" id="cdToastWrap"></div>
@@ -598,11 +677,12 @@
 <script th:inline="javascript">
     var CORE_FILENAME = /*[[${filename}]]*/ '';
     var CORE_HAS_RESULT = /*[[${result != null and result.crashSignal != null}]]*/ false;
+    var CORE_CURRENT_REV = /*[[${currentRevision}]]*/ null;
 </script>
 <script th:if="${result != null and result.registers != null}" th:inline="javascript">
     var REGISTERS = /*[[${result.registers}]]*/ {};
 </script>
-<script th:src="@{/js/core-dump-analyze.js?v=2026-08-02}"></script>
+<script th:src="@{/js/core-dump-analyze.js?v=2026-08-23a}"></script>
 
 </body>
 </html>

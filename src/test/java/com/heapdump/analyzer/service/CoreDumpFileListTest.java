@@ -39,7 +39,8 @@ class CoreDumpFileListTest {
         heapFacade = mock(HeapDumpAnalyzerService.class);
         repository = mock(CoreDumpAnalysisRepository.class);
         service = new CoreDumpAnalyzerService(config, repository, new ObjectMapper(), heapFacade,
-                mock(LlmConfigService.class), mock(AiInsightManager.class));
+                mock(LlmConfigService.class), mock(AiInsightManager.class),
+                mock(CoreDumpSysrootService.class));
         dumpDir = service.dumpFilesDir();
         assertTrue(dumpDir.mkdirs());
     }

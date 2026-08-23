@@ -769,6 +769,66 @@ public class RemoteDumpService {
         return base + "_" + second + "_" + count + ext;
     }
 
+    // ── 코어 sysroot 라이브러리 번들 수집 ──────────────────────
+
+    /** 원격 tar 스트리밍 타임아웃 — 라이브러리 번들은 통상 수십~수백 MB. */
+    private static final int LIB_TAR_TIMEOUT_SEC = 600;
+
+    /**
+     * 검증된 원격 절대경로 목록을 단일 `tar -czh` 스트림으로 수신해 로컬 임시 tar.gz 파일로 저장.
+     * -h(dereference): 코어 링크맵이 기록한 경로(예: /lib64/libc.so.6 심볼릭 링크)를 일반 파일로
+     * 실체화해야 gdb 의 sysroot 조회가 그 경로에서 파일을 찾는다. 댕글링 링크·권한 부족 파일은
+     * --ignore-failed-read 로 건너뛴다(누락분은 호출자가 해제 후 대조해 보고).
+     * 2-phase 패턴: sscuser(wrapWithLocalUser) 가 scpTempDir 에 수신 → 호출자가 해제 후 임시 파일 삭제.
+     *
+     * ⚠ absPaths 는 호출자가 화이트리스트 정규식으로 검증한 경로만 넘겨야 한다
+     *   (코어의 gdb 출력 유래 = 신뢰 불가 입력 — 명령 주입 방지).
+     */
+    public File fetchRemoteLibBundle(TargetServer server, List<String> absPaths) throws Exception {
+        if (absPaths == null || absPaths.isEmpty())
+            throw new IllegalArgumentException("수집할 라이브러리 경로가 없습니다.");
+
+        StringBuilder rels = new StringBuilder();
+        for (String p : absPaths) {
+            if (!p.startsWith("/") || p.contains("'"))
+                throw new IllegalArgumentException("유효하지 않은 원격 경로: " + p);
+            rels.append(" '").append(p.substring(1)).append('\'');
+        }
+        // -C / 후 상대경로로 아카이브 → 해제 시 절대경로 미러 구조가 그대로 재현된다.
+        String remoteCmd = "tar -czhf - --ignore-failed-read -C /" + rels;
+
+        File tempFile = new File(scpTempDir,
+                "heapdump_libs_" + java.util.UUID.randomUUID().toString().substring(0, 8) + ".tar.gz");
+        String localCmd = buildSshCommandString(server, remoteCmd)
+                + " > '" + tempFile.getAbsolutePath() + "'";
+
+        ProcessResult pr = executeCommand(wrapWithLocalUser(localCmd), LIB_TAR_TIMEOUT_SEC);
+        // tar 는 일부 파일 소실 시에도 2 를 반환하지만 아카이브 자체는 유효 — gzip 매직으로 실질 판정
+        boolean archiveOk = tempFile.exists() && tempFile.length() > 2 && hasGzipMagic(tempFile);
+        if (!archiveOk || pr.exitCode > 2) {
+            cleanupTempFile(tempFile);
+            String err = cleanSshError(pr.stderr);
+            if (err.isEmpty()) err = "라이브러리 번들 수신 실패 (exit " + pr.exitCode + ")";
+            throw new RuntimeException(err);
+        }
+        if (pr.exitCode != 0) {
+            logger.warn("[RemoteDump] Lib bundle partial (exit {}): server={}, stderr={}",
+                    pr.exitCode, server.getName(), cleanSshError(pr.stderr));
+        }
+        logger.info("[RemoteDump] Lib bundle received: server={}, paths={}, size={}bytes",
+                server.getName(), absPaths.size(), tempFile.length());
+        return tempFile;
+    }
+
+    private static boolean hasGzipMagic(File f) {
+        try (InputStream in = new java.io.FileInputStream(f)) {
+            int b1 = in.read(), b2 = in.read();
+            return b1 == 0x1f && b2 == 0x8b;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     /** SSH `stat -c %s` 로 원격 파일 크기 조회. 실패 시 -1. */
     private long fetchRemoteFileSize(TargetServer server, String remoteFilePath) {
         try {
@@ -925,15 +985,18 @@ public class RemoteDumpService {
     // ── Private helpers ──────────────────────────────────────
 
     private String[] buildSshCommand(TargetServer server, String remoteCommand) {
-        // SSH 원격 명령을 큰따옴표로 감싸서 로컬 셸 해석 방지
-        String sshCmd = "ssh"
+        return wrapWithLocalUser(buildSshCommandString(server, remoteCommand));
+    }
+
+    /** SSH 원격 명령 문자열 조립 (wrapWithLocalUser 이전 단계). 원격 명령은 큰따옴표로 감싸 로컬 셸 해석 방지. */
+    private String buildSshCommandString(TargetServer server, String remoteCommand) {
+        return "ssh"
                 + " -o StrictHostKeyChecking=no"
                 + " -o ConnectTimeout=10"
                 + " -o BatchMode=yes"
                 + " -p " + server.getPort()
                 + " " + server.getSshUser() + "@" + server.getHost()
                 + " \"" + remoteCommand.replace("\"", "\\\"") + "\"";
-        return wrapWithLocalUser(sshCmd);
     }
 
     private String[] buildScpCommand(TargetServer server, String remotePath, String localPath) {

@@ -128,6 +128,22 @@ class AccountMemoTemplateSmokeTest {
     }
 
     @Test
+    @DisplayName("이탈 경고 가드가 배너 스피너에 등록된다 (팝업 '취소' 시 무한 스피너 방지)")
+    void unloadGuardIsWiredToBannerSpinner() {
+        String html = render("account", memoModel());   // 배너 fragment 가 인라인된 최종 문서
+
+        // 배너 쪽 — 가드 등록 API + 스피너 예약 게이트가 살아 있어야 한다
+        assertTrue(html.contains("function registerUnloadGuard"), "배너에 가드 등록 API 가 없다");
+        assertTrue(html.contains("if (willPromptUnload()) return;"),
+                "스피너를 예약할 때 가드를 확인하지 않는다 — 경고 팝업 취소 시 무한 회전한다");
+
+        // 페이지 쪽 — beforeunload 경고 조건을 같은 함수로 등록해야 둘이 어긋나지 않는다
+        assertTrue(html.contains("function memoWillWarnOnLeave"), "경고 조건 함수가 없다");
+        assertTrue(html.contains("registerUnloadGuard(memoWillWarnOnLeave)"),
+                "경고 조건을 배너에 등록하지 않았다");
+    }
+
+    @Test
     @DisplayName("/account/memo 새창 페이지가 렌더된다 (자체 CSRF meta 포함)")
     void accountMemoRenders() {
         String html = render("account-memo", memoModel());

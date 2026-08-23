@@ -60,9 +60,18 @@ public class PdfReportService {
      * 분석 결과를 A4 세로 1페이지 PDF 바이트로 렌더링.
      */
     public byte[] renderPrintPdf(String filename, HeapAnalysisResult result) throws IOException {
+        return renderPdf("analyze-print", buildPrintModel(filename, result));
+    }
+
+    /**
+     * 임의 인쇄 템플릿 + 모델 → A4 PDF 바이트 (Pretendard 임베딩 포함 공용 렌더 코어).
+     * 힙덤프(analyze-print)와 코어덤프(core-dump/analyze-print) 리포트가 공유한다.
+     * 템플릿 제약: OpenHTMLtoPDF 는 flex/grid/인라인 SVG 미지원 — display:table 기반으로 작성할 것.
+     */
+    public byte[] renderPdf(String templateName, Map<String, Object> model) throws IOException {
         Context ctx = new Context();
-        buildPrintModel(filename, result).forEach(ctx::setVariable);
-        String html = templateEngine.process("analyze-print", ctx);
+        model.forEach(ctx::setVariable);
+        String html = templateEngine.process(templateName, ctx);
 
         try (ByteArrayOutputStream os = new ByteArrayOutputStream()) {
             PdfRendererBuilder b = new PdfRendererBuilder();
@@ -196,14 +205,16 @@ public class PdfReportService {
         return (v == null || v.isNull()) ? null : v.asText();
     }
 
-    private static String clip(String s, int max) {
+    /** package-private — CoreDumpPdfReportService 등 인쇄 모델 빌더가 공유. */
+    static String clip(String s, int max) {
         if (s == null) return null;
         s = s.trim();
         if (s.length() <= max) return s;
         return s.substring(0, max - 1) + "…";
     }
 
-    private static <T> List<T> limit(List<T> src, int max) {
+    /** package-private — CoreDumpPdfReportService 등 인쇄 모델 빌더가 공유. */
+    static <T> List<T> limit(List<T> src, int max) {
         if (src == null || src.isEmpty()) return new ArrayList<>();
         if (src.size() <= max) return src;
         return new ArrayList<>(src.subList(0, max));

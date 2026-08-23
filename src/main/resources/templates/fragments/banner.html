@@ -276,7 +276,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         </div>
         <div class="gb-header-text">
             <div class="gb-header-title">Heap Dump Analyzer</div>
-            <div class="gb-header-sub">v2.3.5 · MAT CLI</div>
+            <div class="gb-header-sub">v2.3.7 · MAT CLI</div>
         </div>
     </a>
 
@@ -498,13 +498,17 @@ var _GB_INTERVAL = 60000; // 1분
         if (e.persisted) hidePageLoading();
     });
 
-    // 이탈 경고 팝업(beforeunload)을 '취소/머무르기'로 닫으면 네비게이션이 일어나지 않는데
-    // 그 사이 schedulePageLoading 타이머가 스피너를 띄워 무한 회전으로 남는다.
-    // 팝업 취소 시 창이 포커스를 되찾으므로(=같은 페이지에 잔류) 스피너를 제거한다.
+    // 다른 탭/창에 다녀오는 사이 스피너가 남았으면 제거 (bfcache 아닌 복귀 경로)
     window.addEventListener('focus', hidePageLoading);
     window.addEventListener('visibilitychange', function() {
         if (!document.hidden) hidePageLoading();
     });
+
+    // 2차 방어 — 등록되지 않은 이탈 경고/브라우저 차이로 스피너가 남는 경우.
+    // 사용자가 이 페이지를 다시 조작한다는 건 이탈이 취소됐다는 뜻이므로 스피너를 내린다.
+    window.addEventListener('pagehide', function() { _gbUnloading = true; });
+    document.addEventListener('keydown', onUserStillHere, true);
+    document.addEventListener('mousedown', onUserStillHere, true);
 
     // 로드 완료 후 transition 복원
     requestAnimationFrame(function() {
@@ -528,19 +532,47 @@ var _GB_INTERVAL = 60000; // 1분
 })();
 
 /* ── 페이지 로딩 스피너 ─────────────────────── */
-var _GB_LOADING_DELAY_MS = 100; // 100ms 안에 페이지 전환되면 스피너 미표시 (flash 방지)
+var _GB_LOADING_DELAY_MS = 100;   // 100ms 안에 페이지 전환되면 스피너 미표시 (flash 방지)
+var _GB_LOADING_MAX_MS   = 30000; // 어떤 경우에도 이 시간을 넘겨 회전하지 않는다 (최후 방어)
 var _gbLoadingTimer = null;
+var _gbLoadingCap   = null;
+var _gbUnloading    = false;      // pagehide 이후에는 사용자 조작 신호를 무시
+
+/* ── 이탈 경고(beforeunload) 가드 ───────────────────────────────
+   경고 팝업을 '취소'로 닫으면 네비게이션이 취소되는데, 클릭 시점에 예약해 둔 스피너
+   타이머는 팝업이 닫힌 직후 그대로 발화해 무한 회전으로 남는다(팝업이 떠 있는 동안
+   렌더러가 멈춰 타이머가 밀렸다가 해제와 함께 실행됨). 팝업 취소는 focus /
+   visibilitychange 를 발생시키지 않아 사후 신호로 잡을 수 없다 — Chrome 128 실측.
+   → 경고를 띄울 수 있는 페이지가 그 조건을 등록하면 스피너 예약 자체를 건너뛴다.
+   등록 조건은 해당 페이지 beforeunload 핸들러의 경고 조건과 반드시 일치해야 한다. */
+var _gbUnloadGuards = [];
+function registerUnloadGuard(fn) {
+    if (typeof fn === 'function') _gbUnloadGuards.push(fn);
+}
+function willPromptUnload() {
+    for (var i = 0; i < _gbUnloadGuards.length; i++) {
+        try { if (_gbUnloadGuards[i]()) return true; } catch (err) { /* 가드 오류는 무시 */ }
+    }
+    return false;
+}
+function onUserStillHere() {
+    if (_gbUnloading) return;
+    hidePageLoading();
+}
 function showPageLoading() {
     var el = document.getElementById('gbPageLoading');
     if (el) el.classList.add('show');
+    if (!_gbLoadingCap) _gbLoadingCap = setTimeout(hidePageLoading, _GB_LOADING_MAX_MS);
 }
 function hidePageLoading() {
     if (_gbLoadingTimer) { clearTimeout(_gbLoadingTimer); _gbLoadingTimer = null; }
+    if (_gbLoadingCap)   { clearTimeout(_gbLoadingCap);   _gbLoadingCap   = null; }
     var el = document.getElementById('gbPageLoading');
     if (el) el.classList.remove('show');
 }
 function schedulePageLoading() {
     if (_gbLoadingTimer) return;
+    if (willPromptUnload()) return;   // 이탈 경고 팝업 예정 — 취소 시 스피너가 남는다
     _gbLoadingTimer = setTimeout(function() {
         _gbLoadingTimer = null;
         showPageLoading();

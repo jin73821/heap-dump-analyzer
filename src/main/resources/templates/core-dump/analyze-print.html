@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8" />
+    <title>Core Dump Crash Report</title>
+    <style>
+        /* 내용이 길면 여러 페이지로 흐름. 페이지 번호는 @page 하단 중앙 마진 박스에 표기.
+           print 경로 제약: OpenHTMLtoPDF 는 flex/grid/인라인 SVG 미지원 — display:table 전용 (힙 analyze-print 와 동일). */
+        @page {
+            size: A4 portrait; margin: 12mm;
+            @bottom-center {
+                content: "Core Dump Analyzer  ·  " counter(page) " / " counter(pages);
+                font-size: 7pt; color: #9CA3AF;
+            }
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            font-family: 'Pretendard', sans-serif;
+            font-size: 9pt; line-height: 1.35; color: #111827;
+        }
+        .report { width: 186mm; position: relative; }
+
+        /* 페이지 분할 제어 — 제목 고아 방지 + 원자 블록 분할 금지 (긴 AI 박스는 흐름 허용) */
+        .sec-title { page-break-after: avoid; }
+        table.tt tr { page-break-inside: avoid; }
+        .kpi-grid, .env-grid, .sum-grid { page-break-inside: avoid; }
+        .fault-box, .warn-box { page-break-inside: avoid; }
+
+        /* Header */
+        .hdr { display: table; width: 100%; height: 18mm; border-bottom: 0.6mm solid #1F2937; padding-bottom: 2.5mm; }
+        .hdr .l { display: table-cell; vertical-align: middle; width: 60%; }
+        .hdr .r { display: table-cell; vertical-align: middle; text-align: right; font-size: 8pt; color: #4B5563; line-height: 1.5; }
+        .hdr h1 { font-size: 14pt; font-weight: 700; color: #111827; }
+        .hdr .sub { font-size: 8pt; color: #6B7280; margin-top: 1mm; word-break: break-all; }
+        .hdr .r .meta-l { color: #9CA3AF; display: inline-block; width: 18mm; }
+        .rev-badge { display: inline-block; font-size: 7pt; font-weight: 700; color: #92400E;
+                     background: #FEF3C7; border: 0.2mm solid #FDE68A; border-radius: 1mm;
+                     padding: 0.3mm 1.5mm; margin-left: 1.5mm; }
+
+        /* Section title */
+        .sec-title { font-size: 10pt; font-weight: 700; color: #1F2937; margin: 3mm 0 1.4mm 0; }
+        .sec-note { font-weight: 400; color: #6B7280; font-size: 8pt; }
+
+        /* Environment info strip (실행 파일 / 프로그램 / 라이브러리 번들 / GDB) */
+        .env-grid { display: table; width: 100%; border-collapse: separate; border-spacing: 1.4mm 0; }
+        .env-cell { display: table-cell; width: 25%; border: 0.3mm solid #E5E7EB; border-left: 1mm solid #64748B; border-radius: 1.5mm; padding: 1.3mm 2.2mm; vertical-align: middle; }
+        .env-label { font-size: 6.5pt; color: #6B7280; font-weight: 700; letter-spacing: 0.3pt; text-transform: uppercase; }
+        .env-value { font-size: 9pt; font-weight: 700; margin-top: 0.3mm; color: #111827; word-break: break-all; line-height: 1.15; }
+        .env-value.na { color: #9CA3AF; font-weight: 400; }
+
+        /* KPI Cards — 라벨+값 한 줄 배치 (세로 공간 절약, 힙과 동일 골격) */
+        .kpi-grid { display: table; width: 100%; height: 14mm; border-collapse: separate; border-spacing: 1.4mm 1.4mm; }
+        .kpi-row { display: table-row; }
+        .kpi { display: table-cell; width: 33.33%; border: 0.3mm solid #E5E7EB; border-radius: 1.5mm; padding: 1.5mm 3mm; vertical-align: middle; }
+        .kpi .label { display: inline; font-size: 7.5pt; color: #6B7280; font-weight: 700; letter-spacing: 0.3pt; text-transform: uppercase; }
+        .kpi .value { display: inline; font-size: 11.5pt; font-weight: 700; color: #111827; margin-left: 1.6mm; }
+        .kpi.k-blue   { border-left: 1.2mm solid #3B82F6; }
+        .kpi.k-orange { border-left: 1.2mm solid #F59E0B; }
+        .kpi.k-green  { border-left: 1.2mm solid #10B981; }
+        .kpi.k-purple { border-left: 1.2mm solid #8B5CF6; }
+        .kpi.k-cyan   { border-left: 1.2mm solid #06B6D4; }
+        .kpi.k-red    { border-left: 1.2mm solid #DC2626; }
+        .kpi.k-gray   { border-left: 1.2mm solid #9CA3AF; }
+
+        /* 크래시 요약 2열 (원인 → 위치 — 화면 히어로 팩트 레일 미러) */
+        .sum-grid { display: table; width: 100%; border-collapse: separate; border-spacing: 1.4mm 0; }
+        .sum-cell { display: table-cell; width: 50%; border: 0.3mm solid #E5E7EB; border-radius: 1.5mm; padding: 1.5mm 2.5mm; vertical-align: top; }
+        .sum-cell.why   { border-top: 1mm solid #DC2626; }
+        .sum-cell.where { border-top: 1mm solid #2563EB; }
+        .sum-label { font-size: 6.5pt; color: #6B7280; font-weight: 700; letter-spacing: 0.3pt; text-transform: uppercase; }
+        .sum-value { font-size: 8.5pt; font-weight: 700; margin-top: 0.5mm; color: #111827; word-break: break-all; line-height: 1.3; }
+        .sum-sub { font-size: 7.5pt; color: #6B7280; margin-top: 0.5mm; line-height: 1.3; word-break: break-all; }
+        .sum-value.na { color: #9CA3AF; font-weight: 400; }
+
+        /* 콜 체인 테이블 */
+        table.tt { width: 100%; border-collapse: collapse; font-size: 8pt; }
+        table.tt th { background: #F3F4F6; color: #374151; font-weight: 700; text-align: left; padding: 1.5mm 2mm; border-bottom: 0.3mm solid #D1D5DB; font-size: 7.5pt; }
+        table.tt td { padding: 1.5mm 2mm; border-bottom: 0.15mm solid #E5E7EB; vertical-align: top; }
+        table.tt td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+        table.tt td.cls { max-width: 80mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'Pretendard', monospace; font-size: 7.8pt; }
+        table.tt td.place { max-width: 62mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'Pretendard', monospace; font-size: 7.5pt; color: #4B5563; }
+        table.tt tr.empty td { color: #9CA3AF; text-align: center; padding: 4mm 2mm; }
+        .tt-foot { font-size: 7.3pt; color: #9CA3AF; margin-top: 0.8mm; }
+        .ct { display: inline-block; font-size: 6.8pt; font-weight: 700; padding: 0.2mm 1.4mm; border-radius: 0.7mm; }
+        .ct-crash { background: #DC2626; color: #ffffff; }
+        .ct-src   { background: #DBEAFE; color: #1D4ED8; }
+        .ct-sym   { background: #F3F4F6; color: #374151; }
+        .ct-unsym { background: #FEF3C7; color: #92400E; }
+
+        /* 결함 모듈 박스 (힙 oom-box 골격 차용) */
+        .fault-box { border: 0.2mm solid #FECACA; border-left: 1.2mm solid #DC2626;
+                     border-radius: 1mm; padding: 1.4mm 2.5mm; margin-top: 1mm; }
+        .fault-box-head { font-size: 8.5pt; font-weight: 700; color: #DC2626; margin-bottom: 0.6mm; }
+        .fault-badge { display: inline-block; background: #DC2626; color: #ffffff; font-size: 7pt;
+                       padding: 0.2mm 1.2mm; border-radius: 0.7mm; margin-right: 1mm; }
+        .fault-vendor { display: inline-block; font-size: 7pt; color: #6B7280; background: #F3F4F6;
+                        border-radius: 0.7mm; padding: 0.2mm 1.2mm; margin-left: 1mm; font-weight: 400; }
+        .fault-nosym { display: inline-block; font-size: 7pt; color: #92400E; background: #FEF3C7;
+                       border-radius: 0.7mm; padding: 0.2mm 1.2mm; margin-left: 1mm; font-weight: 700; }
+        .fault-box-body { font-size: 7.8pt; color: #374151; line-height: 1.3; margin-top: 0.5mm; }
+
+        /* 품질 경고 */
+        .warn-box { border: 0.2mm solid #FDE68A; border-left: 1.2mm solid #F59E0B;
+                    border-radius: 1mm; padding: 1.4mm 2.5mm; margin-top: 1mm; }
+        .warn-box ul { margin: 0; padding-left: 4mm; }
+        .warn-box li { font-size: 7.8pt; color: #374151; line-height: 1.35; }
+        .warn-more { font-size: 7.3pt; color: #9CA3AF; margin-top: 0.5mm; }
+
+        /* AI box (힙 ai-box 골격 + rootCause 행 추가. severity 색상은 함정 22 팔레트와 동일값) */
+        .ai-box { border: 0.2mm solid #E5E7EB; border-radius: 1.5mm; padding: 1.8mm 3mm; }
+        .ai-row1 { font-size: 7.3pt; color: #6B7280; margin-bottom: 0.6mm; }
+        .ai-sev { display: inline-block; font-size: 7.3pt; font-weight: 700; padding: 0.4mm 1.8mm; border-radius: 1mm; color: #ffffff; margin-right: 2mm; }
+        .ai-sev.critical { background: #DC2626; }
+        .ai-sev.high     { background: #CA8A04; }
+        .ai-sev.medium   { background: #16A34A; }
+        .ai-sev.low      { background: #2563EB; }
+        .ai-sev.unknown  { background: #9CA3AF; }
+        .ai-summary { font-size: 8pt; color: #1F2937; line-height: 1.28; margin-top: 0.6mm; }
+        .ai-reco { font-size: 7.7pt; color: #374151; margin-top: 1mm; line-height: 1.25; }
+        .ai-reco strong { color: #1F2937; }
+        .ai-note { font-size: 7pt; color: #9CA3AF; margin-top: 1mm; }
+        .empty-box { font-size: 8pt; color: #9CA3AF; text-align: center; padding: 4mm; border: 0.2mm dashed #D1D5DB; border-radius: 1mm; }
+
+        /* 푸터: @page @bottom-center 가 매 페이지 하단에 앱명·페이지 번호 렌더 (본문 흐름 요소 없음) */
+
+        /* ────────────────────────────────────────────────────────────
+           Screen-only 데스크톱 문서 뷰 규칙 (≥901px).
+           OpenHTMLtoPDF는 기본 print 미디어를 사용하므로 PDF 렌더에 영향 없음.
+           ──────────────────────────────────────────────────────────── */
+        @media screen and (min-width: 901px) {
+            html, body { background: #F3F4F6; }
+            body { padding: 32px 16px; }
+            .report {
+                width: 210mm; max-width: 100%;
+                min-height: 297mm; height: auto; overflow: visible;
+                padding: 12mm;
+                margin: 0 auto;
+                background: #fff;
+                border: 1px solid #E5E7EB;
+                border-radius: 2px;
+                box-shadow: 0 2px 8px rgba(0,0,0,.10), 0 8px 24px rgba(0,0,0,.08);
+            }
+        }
+
+        /* ────────────────────────────────────────────────────────────
+           Screen-only 모바일 가독성 규칙 (≤900px) — /print-html iframe 미리보기 전용.
+           ──────────────────────────────────────────────────────────── */
+        @media screen and (max-width: 900px) {
+            html, body { font-size: 14px; line-height: 1.45; background: #fff; }
+            body { padding: 14px; }
+            .report { width: 100%; max-width: 100%; height: auto; overflow: visible; }
+
+            .hdr { display: block; height: auto; padding-bottom: 12px; margin-bottom: 8px; border-bottom-width: 1px; }
+            .hdr .l, .hdr .r { display: block; width: 100%; text-align: left; }
+            .hdr h1 { font-size: 18px; }
+            .hdr .sub { font-size: 12px; margin-top: 4px; }
+            .hdr .r { margin-top: 10px; font-size: 12px; line-height: 1.7; }
+            .hdr .r .meta-l { width: 72px; }
+            .rev-badge { font-size: 11px; padding: 2px 6px; border-radius: 3px; border-width: 1px; }
+
+            .sec-title { font-size: 15px; margin: 18px 0 8px 0; }
+            .sec-note { font-size: 12px; }
+
+            .env-grid, .sum-grid { display: flex; flex-wrap: wrap; gap: 8px; border-spacing: 0; margin-bottom: 10px; }
+            .env-cell, .sum-cell { flex: 1 1 calc(50% - 8px); display: block; width: auto; min-width: 0; padding: 8px 12px; border-width: 1px; border-radius: 6px; }
+            .env-cell { border-left-width: 4px; }
+            .sum-cell.why, .sum-cell.where { border-top-width: 4px; }
+            .env-label, .sum-label { font-size: 11px; }
+            .env-value, .sum-value { font-size: 14px; margin-top: 2px; }
+            .sum-sub { font-size: 12px; margin-top: 4px; }
+
+            .kpi-grid { display: flex; flex-wrap: wrap; gap: 8px; height: auto; border-spacing: 0; }
+            .kpi-row { display: contents; }
+            .kpi { flex: 1 1 calc(50% - 8px); display: block; width: auto; min-width: 0; padding: 10px 12px; border-width: 1px; border-radius: 6px; }
+            .kpi.k-blue, .kpi.k-orange, .kpi.k-green,
+            .kpi.k-purple, .kpi.k-cyan, .kpi.k-red, .kpi.k-gray { border-left-width: 4px; }
+            .kpi .label { font-size: 12px; }
+            .kpi .value { font-size: 15px; margin-left: 6px; }
+
+            table.tt { font-size: 12px; table-layout: auto; }
+            table.tt th { font-size: 11px; padding: 6px 8px; }
+            table.tt td { padding: 6px 8px; }
+            table.tt th[style], table.tt td[style] { width: auto !important; }
+            table.tt td.cls, table.tt td.place { max-width: none; white-space: normal; word-break: break-all; font-size: 12px; }
+            .tt-foot { font-size: 11px; margin-top: 6px; }
+            .ct { font-size: 11px; padding: 2px 6px; border-radius: 3px; }
+
+            .fault-box, .warn-box { padding: 8px 12px; border-radius: 6px; border-width: 1px; border-left-width: 4px; }
+            .fault-box-head { font-size: 13px; }
+            .fault-box-body { font-size: 12px; line-height: 1.45; margin-top: 4px; }
+            .fault-badge, .fault-vendor, .fault-nosym { font-size: 11px; padding: 2px 6px; border-radius: 3px; }
+            .warn-box li { font-size: 12px; line-height: 1.45; }
+            .warn-more { font-size: 11px; }
+
+            .ai-box { padding: 10px 12px; border-radius: 6px; border-width: 1px; }
+            .ai-row1 { font-size: 11px; margin-bottom: 4px; }
+            .ai-sev { font-size: 11px; padding: 2px 6px; border-radius: 3px; margin-right: 6px; }
+            .ai-summary { font-size: 13px; line-height: 1.45; margin-top: 4px; }
+            .ai-reco { font-size: 12px; line-height: 1.45; margin-top: 6px; }
+            .ai-note { font-size: 11px; }
+
+            .empty-box { font-size: 12px; padding: 14px; border-radius: 6px; }
+        }
+    </style>
+</head>
+<body>
+<div class="report">
+
+    <!-- Header -->
+    <div class="hdr">
+        <div class="l">
+            <h1>Core Dump Crash Report</h1>
+            <div class="sub">
+                <span th:text="${filename}">core.12345</span>
+                <span class="rev-badge" th:if="${revLabel != null}" th:text="'보존 리비전 · ' + ${revLabel}">rev</span>
+            </div>
+        </div>
+        <div class="r">
+            <div th:if="${analyzedAtText != null}"><span class="meta-l">분석 일시</span><span th:text="${analyzedAtText}">-</span></div>
+            <div><span class="meta-l">소요 시간</span><span th:text="${analysisTimeSec} + ' s'">-</span></div>
+            <div th:if="${result.coreDumpTime != null}"><span class="meta-l">발생 시각</span><span th:text="${result.coreDumpTime}">-</span></div>
+            <div th:if="${ai != null and ai.model != null}">
+                <span class="meta-l">AI 모델</span><span th:text="${ai.model}">-</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- 주요 지표 & 환경 -->
+    <div class="sec-title">주요 지표 &amp; 환경 (Key Metrics &amp; Environment)</div>
+    <div class="env-grid">
+        <div class="env-cell">
+            <div class="env-label">Executable</div>
+            <div th:if="${result.executableName != null}" class="env-value" th:text="${result.executableName}">app</div>
+            <div th:if="${result.executableName == null}" class="env-value na">페어링 없음</div>
+        </div>
+        <div class="env-cell">
+            <div class="env-label">Program</div>
+            <div th:if="${programBasename != null}" class="env-value" th:text="${programBasename}">app</div>
+            <div th:if="${programBasename == null}" class="env-value na">미확인</div>
+        </div>
+        <div class="env-cell">
+            <div class="env-label">Library Bundle</div>
+            <div th:if="${result.sysrootUsed}" class="env-value" th:text="'sysroot ' + ${result.sysrootFileCount} + '개 적용'">sysroot</div>
+            <div th:if="${!result.sysrootUsed}" class="env-value na">미사용</div>
+        </div>
+        <div class="env-cell">
+            <div class="env-label">GDB</div>
+            <div th:if="${gdbVersionShort != null}" class="env-value" th:text="${gdbVersionShort}">gdb</div>
+            <div th:if="${gdbVersionShort == null}" class="env-value na">미확인</div>
+        </div>
+    </div>
+    <div class="kpi-grid">
+        <div class="kpi-row">
+            <div class="kpi k-red">
+                <div class="label">Signal</div>
+                <div th:if="${result.crashSignal != null}" class="value" th:text="${result.crashSignal}">-</div>
+                <div th:if="${result.crashSignal == null}" class="value" style="color:#9CA3AF;">미식별</div>
+            </div>
+            <div class="kpi"
+                 th:classappend="${confidenceLevel == 'high'} ? 'k-green' : (${confidenceLevel == 'medium'} ? 'k-orange' : (${confidenceLevel == 'low'} ? 'k-red' : 'k-gray'))">
+                <div class="label">신뢰도</div>
+                <div th:if="${confidenceLabel != null}" class="value" th:text="${confidenceLabel}">-</div>
+                <div th:if="${confidenceLabel == null}" class="value" style="color:#9CA3AF;">미확인</div>
+            </div>
+            <div class="kpi k-blue">
+                <div class="label">심볼 해석</div>
+                <div class="value" th:text="${symbolStat}">-</div>
+            </div>
+        </div>
+        <div class="kpi-row">
+            <div class="kpi k-purple">
+                <div class="label">Threads</div>
+                <div class="value" th:text="${threadCount}">0</div>
+            </div>
+            <div class="kpi k-cyan">
+                <div class="label">Libraries</div>
+                <div class="value" th:text="${libSymCount} + ' / ' + ${libCount} + ' 심볼'">-</div>
+            </div>
+            <div class="kpi k-orange">
+                <div class="label">Frames</div>
+                <div class="value" th:text="${totalFrames}">0</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 크래시 요약 (원인 → 위치) — 조치 칸은 2026-08-23 제거, 결함 모듈 박스의 안내가 대신한다 -->
+    <div class="sec-title">크래시 요약 (Why &#8594; Where)</div>
+    <div class="sum-grid">
+        <div class="sum-cell why">
+            <div class="sum-label">원인 &#183; Why</div>
+            <div th:if="${result.crashSignal != null}" class="sum-value" th:text="${result.crashSignal}">-</div>
+            <div th:if="${result.crashSignal == null}" class="sum-value na">시그널 미식별</div>
+            <div class="sum-sub" th:if="${result.signalDescription != null}" th:text="${result.signalDescription}">-</div>
+            <div class="sum-sub" th:if="${result.faultingModule != null}" th:text="'결함 모듈: ' + ${result.faultingModule}">-</div>
+        </div>
+        <div class="sum-cell where">
+            <div class="sum-label">위치 &#183; Where</div>
+            <div th:if="${whereText != null}" class="sum-value" th:text="${whereText}">-</div>
+            <div th:if="${whereText == null}" class="sum-value na">심볼 없음 &#8212; debuginfo 필요</div>
+            <div class="sum-sub" th:if="${frame0 != null and frame0.function != null}" th:text="'FRAME #0: ' + ${frame0.function}">-</div>
+        </div>
+    </div>
+
+    <!-- 크래시 콜 체인 -->
+    <div class="sec-title">크래시 콜 체인 (Call Chain)
+        <span class="sec-note" th:if="${totalFrames > 0}" th:text="' · 전체 ' + ${totalFrames} + ' 프레임 중 노이즈 제외 상위 ' + ${#lists.size(chainRows)} + '건'"></span>
+    </div>
+    <table class="tt">
+        <thead>
+        <tr>
+            <th style="width: 9mm;">#</th>
+            <th>함수</th>
+            <th style="width: 64mm;">위치 / 라이브러리</th>
+            <th style="width: 14mm;">구분</th>
+        </tr>
+        </thead>
+        <tbody th:if="${chainRows != null and !chainRows.isEmpty()}">
+        <tr th:each="row : ${chainRows}">
+            <td class="num" th:text="${row.num}">#0</td>
+            <td class="cls" th:text="${row.func}">main</td>
+            <td class="place" th:text="${row.place}">-</td>
+            <td><span class="ct" th:classappend="'ct-' + ${row.cls}" th:text="${row.tag}">CRASH</span></td>
+        </tr>
+        </tbody>
+        <tbody th:if="${chainRows == null or chainRows.isEmpty()}">
+        <tr class="empty"><td colspan="4">식별 가능한 프레임 없음 &#8212; 백트레이스 전체가 노이즈/심볼 없음</td></tr>
+        </tbody>
+    </table>
+    <div class="tt-foot" th:if="${hiddenFrameCount > 0}"
+         th:text="'추가 프레임 ' + ${hiddenFrameCount} + '개 생략' + (${garbageCount > 0} ? ' (노이즈 ' + ${garbageCount} + '개 포함)' : '') + ' — 웹 화면 스택 트레이스 탭 참조'"></div>
+
+    <!-- 결함 모듈 (귀속된 경우만 렌더) -->
+    <div th:if="${result.faultingModule != null}">
+        <div class="sec-title">결함 모듈 (Faulting Module)</div>
+        <div class="fault-box">
+            <div class="fault-box-head">
+                <span class="fault-badge">&#9888; FAULT</span>
+                <span th:text="${result.faultingModule}">lib.so</span>
+                <span class="fault-vendor" th:if="${result.faultingModuleVendor != null}" th:text="${result.faultingModuleVendor}">vendor</span>
+                <span class="fault-nosym" th:if="${result.faultingModuleHasSymbols != null and !result.faultingModuleHasSymbols}">심볼 없음</span>
+            </div>
+            <div class="fault-box-body" th:if="${guidanceText != null}" th:text="${guidanceText}">-</div>
+            <div class="fault-box-body" th:if="${result.selfRaisedSignal}">
+                최상단 raise()/abort() 는 시그널 핸들러의 자체-재raise 로, 실제 결함 지점이 아닙니다.
+            </div>
+        </div>
+    </div>
+
+    <!-- 품질 경고 (있을 때만 렌더) -->
+    <div th:if="${qualityWarnings != null and !qualityWarnings.isEmpty()}">
+        <div class="sec-title">분석 품질 경고 (Quality Warnings)</div>
+        <div class="warn-box">
+            <ul>
+                <li th:each="w : ${qualityWarnings}" th:text="${w}">warning</li>
+            </ul>
+            <div class="warn-more" th:if="${warningOverflow > 0}" th:text="'외 ' + ${warningOverflow} + '건 — 웹 화면 신뢰도 상세 참조'"></div>
+        </div>
+    </div>
+
+    <!-- AI 크래시 분석 요약 -->
+    <div class="sec-title">AI 크래시 분석 요약 (AI Crash Insights)</div>
+    <div class="ai-box" th:if="${ai != null}">
+        <div class="ai-row1">
+            <span class="ai-sev"
+                  th:classappend="${ai.severity != null ? ai.severity.toLowerCase() : 'unknown'}"
+                  th:text="${ai.severity != null ? ai.severity.toUpperCase() : 'UNKNOWN'}">SEVERITY</span>
+            <span th:if="${ai.model != null}" th:text="'Model: ' + ${ai.model}">Model</span>
+        </div>
+        <div class="ai-summary"
+             th:if="${ai.summary != null and !ai.summary.isEmpty()}"
+             th:text="${ai.summary}">summary</div>
+        <div class="ai-summary"
+             th:if="${ai.summary == null or ai.summary.isEmpty()}"
+             style="color:#9CA3AF;">요약 데이터 없음</div>
+        <div class="ai-reco" th:if="${ai.rootCause != null and !ai.rootCause.isEmpty()}">
+            <strong>근본 원인 &#183;</strong> <span th:text="${ai.rootCause}">rootCause</span>
+        </div>
+        <div class="ai-reco" th:if="${ai.recommendations != null and !ai.recommendations.isEmpty()}">
+            <strong>권장 조치 &#183;</strong> <span th:text="${ai.recommendations}">recommendations</span>
+        </div>
+        <div class="ai-note" th:if="${revLabel != null}">
+            &#8251; AI 분석은 리비전과 무관하게 이 코어 파일의 최신 저장본입니다.
+        </div>
+    </div>
+    <div class="empty-box" th:if="${ai == null}">AI 크래시 분석 미실행 &#8212; 웹 화면 요약 탭에서 실행할 수 있습니다</div>
+
+    <!-- 페이지 하단 푸터(앱명 · 페이지 번호)는 @page @bottom-center 가 매 페이지에 렌더 -->
+
+</div>
+</body>
+</html>

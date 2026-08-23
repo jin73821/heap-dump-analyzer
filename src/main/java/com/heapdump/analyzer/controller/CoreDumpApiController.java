@@ -1,13 +1,18 @@
 package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.config.HeapDumpConfig;
+import com.heapdump.analyzer.model.CoreDumpAnalysisResult;
 import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
+import com.heapdump.analyzer.model.entity.TargetServer;
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
+import com.heapdump.analyzer.service.CoreDumpPdfReportService;
+import com.heapdump.analyzer.service.CoreDumpSysrootService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -15,6 +20,8 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.File;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.Principal;
@@ -27,10 +34,17 @@ public class CoreDumpApiController {
     private static final Logger logger = LoggerFactory.getLogger(CoreDumpApiController.class);
 
     private final CoreDumpAnalyzerService analyzerService;
+    private final CoreDumpSysrootService sysrootService;
+    private final CoreDumpPdfReportService pdfReportService;
     private final HeapDumpConfig config;
 
-    public CoreDumpApiController(CoreDumpAnalyzerService analyzerService, HeapDumpConfig config) {
+    public CoreDumpApiController(CoreDumpAnalyzerService analyzerService,
+                                 CoreDumpSysrootService sysrootService,
+                                 CoreDumpPdfReportService pdfReportService,
+                                 HeapDumpConfig config) {
         this.analyzerService = analyzerService;
+        this.sysrootService = sysrootService;
+        this.pdfReportService = pdfReportService;
         this.config = config;
     }
 
@@ -113,6 +127,61 @@ public class CoreDumpApiController {
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .contentLength(file.length())
                 .body(new FileSystemResource(file));
+    }
+
+    // ── PDF 크래시 리포트 ─────────────────────────────────────────
+    // 힙덤프 HeapReportApiController.downloadPrintPdf 와 1:1 대칭.
+    // mode=download(기본) → attachment, mode=inline → 리포트 탭 iframe 미리보기용.
+    // rev 가 있으면 보존된 과거 리비전으로 리포트 생성 (blank = 현재 결과).
+
+    @GetMapping("/core-dump/analyze/{filename:.+}/print-pdf")
+    public ResponseEntity<byte[]> printPdf(
+            @PathVariable String filename,
+            @RequestParam(name = "mode", defaultValue = "download") String mode,
+            @RequestParam(name = "rev", required = false) String rev) {
+        try {
+            String safe = analyzerService.validateCoreDumpFilename(filename);
+            boolean viewingRevision = rev != null && !rev.isBlank();
+            Optional<CoreDumpAnalysisResult> resultOpt = viewingRevision
+                    ? analyzerService.loadRevisionResult(safe, rev)
+                    : analyzerService.loadResult(safe);
+            CoreDumpAnalysisResult result = resultOpt.orElse(null);
+            // 성공 판정은 결과 화면 탭 렌더 가드와 동일 — GDB 파일 인식 실패(시그널 없음 + 오류만)면 404
+            if (result == null || !isReportable(result)) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            }
+
+            String revLabel = viewingRevision ? rev : null;
+            byte[] pdf = pdfReportService.renderCorePdf(safe, revLabel, result);
+
+            // 코어는 확장자가 임의(.core / core.12345 / 임의명)라 힙식 확장자 제거 정규식 부적합 — .core 접미사만 제거
+            String base = safe.replaceAll("\\.core$", "");
+            if (viewingRevision) base += "-" + rev;
+            base += "-crash-report.pdf";
+            String ascii = base.replaceAll("[^\\x20-\\x7E]", "_");
+            String utf8 = URLEncoder.encode(base, StandardCharsets.UTF_8).replace("+", "%20");
+
+            String disposition = "inline".equalsIgnoreCase(mode) ? "inline" : "attachment";
+
+            HttpHeaders h = new HttpHeaders();
+            h.setContentType(MediaType.APPLICATION_PDF);
+            h.add(HttpHeaders.CONTENT_DISPOSITION,
+                    disposition + "; filename=\"" + ascii + "\"; filename*=UTF-8''" + utf8);
+            h.setCacheControl("no-store");
+            h.add("X-Content-Type-Options", "nosniff");
+            return new ResponseEntity<>(pdf, h, HttpStatus.OK);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+        } catch (Exception e) {
+            logger.error("[CoreDump-PDF] PDF 생성 실패 (filename={}): {}", filename, e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /** 리포트 생성 가능 판정 — 결과 화면 탭 가드 {@code crashSignal != null or errorMessage == null} 와 동일. */
+    static boolean isReportable(CoreDumpAnalysisResult result) {
+        return result.getCrashSignal() != null
+                || result.getErrorMessage() == null || result.getErrorMessage().isEmpty();
     }
 
     // ── SSE 분석 진행 스트림 ──────────────────────────────────────
@@ -327,6 +396,155 @@ public class CoreDumpApiController {
             return ResponseEntity.internalServerError().body(
                     Map.of("status", "error", "message", "페어링 해제 실패: " + e.getMessage()));
         }
+    }
+
+    // ── sysroot 라이브러리 번들 (별도 서버 분석 심볼 정확도 복원) ──
+    // 원격 출처 코어는 출처 서버에서 tar 스트리밍 자동 수집, 그 외는 tar.gz 수동 업로드.
+    // 번들 존재 시 재분석이 -iex "set sysroot" 로 원본 서버 라이브러리를 사용한다.
+
+    @GetMapping("/api/core-dump/{filename:.+}/libs")
+    public ResponseEntity<Map<String, Object>> getLibBundleStatus(@PathVariable String filename) {
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", e.getMessage()));
+        }
+        CoreDumpSysrootService.SysrootStatus st = sysrootService.status(safe);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", "ok");
+        body.put("present", st.present());
+        body.put("fileCount", st.fileCount());
+        body.put("totalBytes", st.totalBytes());
+        body.put("collectable", st.collectable());
+        body.put("originServerName", st.originServerName());
+        return ResponseEntity.ok(body);
+    }
+
+    @PostMapping("/api/core-dump/{filename:.+}/collect-libs")
+    public ResponseEntity<Map<String, Object>> collectLibBundle(@PathVariable String filename,
+                                                                Principal principal) {
+        String who = principal != null ? principal.getName() : "unknown";
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", e.getMessage()));
+        }
+
+        Optional<CoreDumpAnalysisResult> resultOpt = analyzerService.loadResult(safe);
+        if (resultOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "code", "NO_RESULT",
+                    "message", "분석 결과가 없습니다 — 라이브러리 목록은 1차 분석 결과에서 얻으므로 먼저 분석을 수행하세요."));
+        }
+        Optional<TargetServer> originOpt = sysrootService.findOriginServer(safe);
+        if (originOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "code", "NO_ORIGIN",
+                    "message", "이 코어의 출처 서버를 전송 이력에서 찾을 수 없습니다 — 수동 업로드(tar.gz)를 사용하세요."));
+        }
+
+        try {
+            CoreDumpSysrootService.CollectResult r =
+                    sysrootService.collectFromOrigin(originOpt.get(), safe, resultOpt.get());
+            logger.info("[CoreDump] action=collect-libs server={} filename={} collected={}/{} bytes={} by={}",
+                    r.serverName(), safe, r.collected(), r.requested(), r.totalBytes(), who);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("status", "ok");
+            body.put("serverName", r.serverName());
+            body.put("requested", r.requested());
+            body.put("collected", r.collected());
+            body.put("missing", r.missing());
+            body.put("totalBytes", r.totalBytes());
+            return ResponseEntity.ok(body);
+        } catch (IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "code", "NO_RESULT",
+                    "message", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("[CoreDump] action=collect-libs 실패: filename={}, by={}, reason={}",
+                    safe, who, e.getMessage(), e);
+            return ResponseEntity.internalServerError().body(Map.of("status", "error", "code", "SSH_FAIL",
+                    "message", "라이브러리 수집 실패: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 라이브러리 번들 업로드 — **형식 제약 없음**. 아카이브(tar/tar.gz/tgz/tar.bz2/tar.xz/zip)는
+     * 해제하고, 그 외 파일은 개별 라이브러리(.so 등)로 번들에 담는다(매직 바이트로 판정 — 확장자 무관).
+     * 여러 파일을 한 번에 올릴 수 있고, 기존 번들에 **병합**된다.
+     */
+    @PostMapping("/api/core-dump/{filename:.+}/libs")
+    public ResponseEntity<Map<String, Object>> uploadLibBundle(
+            @PathVariable String filename,
+            @RequestParam("bundleFile") MultipartFile[] bundleFile,
+            Principal principal) {
+        String who = principal != null ? principal.getName() : "unknown";
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", e.getMessage()));
+        }
+        List<MultipartFile> uploads = bundleFile == null ? List.of()
+                : Arrays.stream(bundleFile).filter(f -> f != null && !f.isEmpty()).toList();
+        if (uploads.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error",
+                    "message", "업로드할 파일(bundleFile)이 필요합니다."));
+        }
+
+        List<File> temps = new ArrayList<>();
+        try {
+            analyzerService.tmpDir().mkdirs();
+            List<CoreDumpSysrootService.UploadItem> items = new ArrayList<>();
+            for (MultipartFile mf : uploads) {
+                File temp = new File(analyzerService.tmpDir(),
+                        "libs_upload_" + UUID.randomUUID().toString().substring(0, 8) + ".bin");
+                temps.add(temp);
+                mf.transferTo(temp);
+                items.add(new CoreDumpSysrootService.UploadItem(temp, mf.getOriginalFilename()));
+            }
+            CoreDumpSysrootService.UploadResult r = sysrootService.ingestUploads(items, safe);
+            logger.info("[CoreDump] action=upload-libs filename={} files={} archives={} singles={} "
+                            + "extracted={} skippedLinks={} bytes={} by={}",
+                    safe, uploads.size(), r.archives(), r.singles(),
+                    r.extracted(), r.skippedLinks(), r.totalBytes(), who);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("status", "ok");
+            body.put("extracted", r.extracted());
+            body.put("skippedLinks", r.skippedLinks());
+            body.put("totalBytes", r.totalBytes());
+            body.put("archives", r.archives());
+            body.put("singles", r.singles());
+            return ResponseEntity.ok(body);
+        } catch (java.io.IOException e) {
+            logger.warn("[CoreDump] action=upload-libs 실패: filename={}, by={}, reason={}",
+                    safe, who, e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("status", "error",
+                    "message", "번들 처리 실패: " + e.getMessage()));
+        } catch (Exception e) {
+            logger.error("[CoreDump] action=upload-libs 오류: filename={}, by={}", safe, who, e);
+            return ResponseEntity.internalServerError().body(Map.of("status", "error",
+                    "message", "번들 업로드 중 오류가 발생했습니다: " + e.getMessage()));
+        } finally {
+            for (File t : temps) {
+                if (t.exists() && !t.delete())
+                    logger.warn("[CoreDump] 번들 업로드 임시 파일 삭제 실패: {}", t.getAbsolutePath());
+            }
+        }
+    }
+
+    @DeleteMapping("/api/core-dump/{filename:.+}/libs")
+    public ResponseEntity<Map<String, Object>> deleteLibBundle(@PathVariable String filename,
+                                                               Principal principal) {
+        String who = principal != null ? principal.getName() : "unknown";
+        String safe;
+        try {
+            safe = analyzerService.validateCoreDumpFilename(filename);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", e.getMessage()));
+        }
+        sysrootService.deleteBundle(safe);
+        logger.info("[CoreDump] action=delete-libs filename={} by={}", safe, who);
+        return ResponseEntity.ok(Map.of("status", "ok", "filename", safe));
     }
 
     // ── AI 크래시 분석 ────────────────────────────────────────────

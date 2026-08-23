@@ -463,6 +463,53 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
 }
 #reanalyzeModal .modal-err.visible { display: block; }
 
+/* 라이브러리 번들(sysroot) 모달 — analyze 페이지 */
+#libsModal .modal-box { padding: 26px 26px 22px; border-radius: 14px; width: 480px; max-width: 94vw; }
+#libsModal .modal-title { font-size: 16px; font-weight: 700; color: var(--cd-text); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+#libsModal .modal-filename {
+    font-family: var(--font-mono); font-size: 12px; color: var(--cd-text-3);
+    background: var(--cd-surface-sub); border: 1px solid var(--cd-border); border-radius: var(--r-sm);
+    padding: 5px 10px; word-break: break-all; margin-bottom: var(--sp-3); display: block;
+}
+#libsModal .modal-desc { font-size: 13px; color: var(--cd-text-2); line-height: 1.6; margin-bottom: var(--sp-3); }
+#libsModal .libs-status {
+    font-size: 12px; color: var(--cd-text-2); line-height: 1.7;
+    padding: 12px 14px; border-radius: var(--r-md); margin-bottom: var(--sp-3);
+    background: var(--cd-surface-sub); border: 1px solid var(--cd-border);
+}
+#libsModal .libs-status .libs-status-on { color: var(--ok-700); font-weight: 700; }
+#libsModal .libs-status .libs-status-off { color: var(--cd-text-muted); font-weight: 600; }
+#libsModal .libs-status .mono { font-family: var(--font-mono); }
+#libsModal .libs-result {
+    font-size: 12px; color: var(--pri-700); line-height: 1.6;
+    padding: 10px 12px; border-radius: var(--r-md); margin-bottom: var(--sp-3);
+    background: var(--pri-bg); border: 1px solid var(--pri-border); box-shadow: inset 3px 0 0 var(--pri-600);
+    word-break: break-all;
+}
+#libsModal .libs-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-3); }
+#libsModal .libs-hint {
+    font-size: 11.5px; color: var(--cd-text-3); line-height: 1.7;
+    padding: 10px 12px; border-radius: var(--r-md); margin-bottom: var(--sp-5);
+    background: var(--cd-surface-sub); border: 1px solid var(--cd-border);
+}
+#libsModal .libs-hint .mono { font-family: var(--font-mono); color: var(--cd-text-2); }
+#libsModal .libs-actions .mbtn-primary,
+#libsModal .libs-actions .mbtn-save,
+#libsModal .libs-actions .mbtn-del,
+#libsModal .modal-btns button {
+    padding: 9px 18px; border-radius: var(--r-md); font-size: 13px; font-weight: 600;
+    border: none; cursor: pointer; transition: background .15s;
+}
+#libsModal .libs-actions button:disabled { opacity: .55; cursor: default; }
+#libsModal .libs-upload-label { display: inline-flex; align-items: center; }
+#libsModal .libs-upload-label input[type=file] { display: none; }
+#libsModal .modal-btns { display: flex; justify-content: flex-end; gap: var(--sp-2); flex-wrap: wrap; }
+#libsModal .modal-err {
+    display: none; margin-top: var(--sp-3); padding: 9px 12px; border-radius: var(--r-md);
+    font-size: 12px; color: var(--dn-700); background: var(--dn-bg); border: 1px solid var(--dn-border);
+}
+#libsModal .modal-err.visible { display: block; }
+
 /* ── 15. 오류 카드 ───────────────────────────────────────────────────────── */
 .error-card {
     background: var(--dn-bg); border: 1px solid var(--dn-border); box-shadow: inset 3px 0 0 var(--dn-600);
@@ -474,7 +521,10 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
 .error-card-actions { margin-top: var(--sp-5); display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 
 /* ── 16. 메타 (dl 리스트) ────────────────────────────────────────────────── */
-.meta-dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 1px; background: var(--cd-border); border: 1px solid var(--cd-border); border-radius: var(--r-md); overflow: hidden; }
+/* ⚠ auto-fit (auto-fill 아님) — 배경(cd-border)이 곧 셀 구분선이라 빈 트랙이 남으면
+   회색 빈 칸으로 보인다. auto-fit 은 빈 트랙을 접어 항목들이 폭을 나눠 갖는다.
+   요약 탭 상시 노출 + 넓은 화면 전폭이 되며 드러난 문제(2026-08-23). */
+.meta-dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--cd-border); border: 1px solid var(--cd-border); border-radius: var(--r-md); overflow: hidden; }
 .meta-dl > div { background: var(--cd-surface); padding: 12px 16px; }
 .meta-dt { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--cd-text-3); font-weight: 600; margin-bottom: 4px; }
 .meta-dd { font-size: 13px; font-weight: 600; color: var(--cd-text); word-break: break-all; }
@@ -489,8 +539,20 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
 /* 시그널 톤별 파스텔 배경 — 흰색 카드 대신 심각도가 배경에서도 읽히도록.
    위쪽은 파스텔, 아래로 갈수록 흰색에 수렴시켜 내부 코드 웰/힌트 박스와 자연스럽게 연결.
    border-left(상태 레일)는 border-color 이후에 선언해 진한 시그널 색 유지. */
+/* 레이아웃: 좌열 = .hero-main(1행) + .hero-confidence(2행), 우열 = .hero-rail(두 행 span).
+   종전엔 짧은 텍스트 블록 9개를 폭 1140~1360px 카드에 세로로만 쌓아 우측이 통째로 비었다.
+   ⚠ `grid-template-rows: auto auto` 를 지우지 말 것 — 명시 행이 없으면 레일의 `grid-row: 1 / -1` 에서
+     `-1` 이 1번 라인으로 풀려 span 1 이 되고, 1행이 레일 높이만큼 늘어나 소스 웰 아래에
+     죽은 여백이 생긴다(실측 172px). 소스 웰은 JS fetch 실패 시 비므로 이 경우가 드물지 않다.
+   ⚠ row-gap 은 0 — 신뢰도가 미렌더(analysisConfidence == null)일 때 빈 2행의 gap 이 남는다.
+     행 간격은 .hero-confidence 의 margin-top 이 담당한다.
+   ⚠ 열 내부 간격은 자식별 margin 이 아니라 flex gap 단일 소스로 준다 — 블록을 더할 때 마진을 새로 붙이지 말 것. */
 .crash-hero {
-    display: flex; gap: var(--sp-6); align-items: flex-start; padding: var(--sp-6);
+    display: grid;
+    grid-template-columns: minmax(0, 1.75fr) minmax(270px, .75fr);
+    grid-template-rows: auto auto;
+    gap: 0 var(--sp-6); align-items: start;
+    padding: var(--sp-5) var(--sp-6);
     background: linear-gradient(160deg, var(--dn-bg) 0%, #FFF7F6 55%, var(--cd-surface) 100%);
     border-color: var(--dn-border);
     border-left: 4px solid var(--dn-600);
@@ -506,43 +568,53 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
     border-left-color: var(--cd-border-strong);
 }
 .crash-hero .crash-hero-icon-wrap { box-shadow: inset 0 0 0 1px rgba(255,255,255,.6); }
-.crash-hero-icon-col { display: flex; flex-direction: column; align-items: center; gap: 10px; flex-shrink: 0; }
-.crash-hero-icon-wrap { width: 52px; height: 52px; border-radius: var(--r-lg); display: flex; align-items: center; justify-content: center; background: var(--sev-critical-bg); color: var(--dn-600); }
+.crash-hero-icon-wrap { width: 40px; height: 40px; flex-shrink: 0; border-radius: var(--r-md); display: flex; align-items: center; justify-content: center; background: var(--sev-critical-bg); color: var(--dn-600); }
 .crash-hero.hero-warn    .crash-hero-icon-wrap { background: var(--sev-high-bg); color: var(--wn-700); }
 .crash-hero.hero-neutral .crash-hero-icon-wrap { background: var(--cd-divider); color: var(--cd-text-3); }
-.crash-hero-icon-glyph { font-size: 26px; line-height: 1; }
-.crash-hero-signal-chip { background: var(--dn-600); color: #fff; border-radius: var(--r-sm); padding: 3px 10px; font-size: 12px; font-weight: 800; font-family: var(--font-mono); letter-spacing: .04em; white-space: nowrap; }
+.crash-hero-icon-glyph { font-size: 21px; line-height: 1; }
+.crash-hero-signal-chip { display: inline-block; background: var(--dn-600); color: #fff; border-radius: var(--r-sm); padding: 2px 9px; font-size: 12px; font-weight: 800; font-family: var(--font-mono); letter-spacing: .04em; white-space: nowrap; }
 .crash-hero.hero-warn    .crash-hero-signal-chip { background: var(--wn-600); }
 .crash-hero.hero-neutral .crash-hero-signal-chip { background: var(--cd-text-3); }
 
-.crash-hero-body { flex: 1 1 0; min-width: 0; }
-.crash-hero-eyebrow { font-size: 11px; font-weight: 700; color: var(--cd-text-3); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
-.crash-hero-eyebrow .hero-sigdesc { color: var(--cd-text-muted); font-weight: 600; text-transform: none; letter-spacing: 0; }
-.crash-hero-func { font-size: 20px; font-weight: 800; color: var(--cd-text); font-family: var(--font-mono); word-break: break-all; line-height: 1.3; margin-bottom: var(--sp-2); }
-.crash-hero-location, .crash-hero-lib-info { display: flex; align-items: baseline; gap: 6px; margin-bottom: 5px; flex-wrap: wrap; }
+/* 좌: 크래시 정체성 */
+.hero-main { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.hero-sig-head { display: flex; align-items: center; gap: 10px; }
+.hero-sig-text { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.crash-hero-eyebrow { font-size: 11px; font-weight: 700; color: var(--cd-text-3); text-transform: uppercase; letter-spacing: .06em; }
+.crash-hero-func { font-size: 20px; font-weight: 800; color: var(--cd-text); font-family: var(--font-mono); word-break: break-all; line-height: 1.3; }
+/* 위치 + 주소를 한 줄에 — 종전 3블록(location/lib/addr) 세로 스택 대체 */
+.hero-place { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.hero-place-item { display: inline-flex; align-items: baseline; gap: 6px; min-width: 0; }
 .crash-hero-loc-label, .crash-hero-lib-label { font-size: 11px; color: var(--cd-text-muted); font-weight: 600; text-transform: uppercase; flex-shrink: 0; }
 .crash-hero-loc-value { font-size: 14px; font-weight: 700; color: var(--role-user); font-family: var(--font-mono); word-break: break-all; }
 .crash-hero-lib-value { font-size: 13px; color: var(--role-lib); font-family: var(--font-mono); word-break: break-all; }
 .crash-hero-addr { font-size: 12px; color: var(--cd-text-3); font-family: var(--font-mono); }
-/* 히어로 메타 칩 */
-.crash-hero-metachips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.hero-metachip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: var(--r-pill); font-size: 11px; font-weight: 600; background: var(--cd-surface-sub); border: 1px solid var(--cd-border); color: var(--cd-text-2); }
-.hero-metachip .hmc-val { font-family: var(--font-mono); color: var(--cd-text); }
-/* 해석 힌트 통합 dl */
-.crash-hero-hints { margin-top: var(--sp-3); background: var(--cd-surface); border: 1px solid var(--cd-divider); border-radius: var(--r-md); padding: 10px 14px; }
-.hero-hint-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; padding: 4px 0; }
-.hero-hint-row + .hero-hint-row { border-top: 1px solid var(--cd-divider); }
-.hero-hint-dt { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--cd-text-3); flex-shrink: 0; min-width: 92px; }
-.hero-hint-dd { font-size: 13px; font-family: var(--font-mono); color: var(--cd-text-2); word-break: break-all; }
-.hero-hint-dd code { background: rgba(0,0,0,.05); padding: 1px 5px; border-radius: 4px; }
-.hero-hint-vendor { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 5px; background: var(--sev-high-bg); color: #92400E; }
-.hero-hint-nosym  { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 5px; background: var(--cd-divider); color: var(--cd-text-3); }
 
-/* 히어로 소스 (코드 웰) */
-.hero-source { margin-top: var(--sp-3); min-height: 44px; }
+/* 우: 팩트 레일 — 구 메타칩 + 원인·위치 팩트 바 + 해석 힌트 3개 컴포넌트를 라벨→값 한 벌로 통합.
+   셋 다 성격이 "라벨 → 값" 이라 박스를 나눌 이유가 없었고, 나눠 둔 탓에 패딩·테두리·마진이 3중으로 들었다. */
+.hero-rail { grid-column: 2; grid-row: 1 / -1; min-width: 0; display: flex; flex-direction: column; background: var(--cd-surface); border: 1px solid var(--cd-divider); border-radius: var(--r-md); padding: 2px 14px 10px; }
+.hero-rail-row { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 7px 0; }
+.hero-rail-row + .hero-rail-row { border-top: 1px solid var(--cd-divider); }
+.hero-rail-dt { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; color: var(--cd-text-3); }
+.hero-rail-dd { font-size: 13px; font-weight: 600; color: var(--cd-text); line-height: 1.5; word-break: break-word; }
+.hero-rail-dd.mono { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--cd-text-2); word-break: break-all; }
+.hero-rail-dd.is-empty { color: var(--cd-text-muted); font-weight: 400; }
+.hero-rail-dd code { background: rgba(0,0,0,.05); padding: 1px 5px; border-radius: 4px; font-family: var(--font-mono); }
+/* sysroot 번들 적용 표시 — 원본 서버 라이브러리로 심볼 해석된 결과임을 구분 */
+.hero-rail-row.rail-ok .hero-rail-dt,
+.hero-rail-row.rail-ok .hero-rail-dd { color: var(--ok-700); }
+/* 벤더/심볼 배지 — 레일 외에 스택 트레이스 탭 프레임 카드도 .hero-hint-vendor 로 쓴다 (셀렉터 둘 다 유지할 것) */
+.hero-rail-vendor, .hero-hint-vendor { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 5px; background: var(--sev-high-bg); color: #92400E; font-family: var(--font-sans); }
+.hero-rail-nosym,  .hero-hint-nosym  { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 5px; background: var(--cd-divider); color: var(--cd-text-3); font-family: var(--font-sans); }
+.hero-fact-link { font-size: 12px; color: var(--pri-600); text-decoration: none; font-weight: 600; align-self: flex-start; margin-top: 9px; }
+.hero-fact-link:hover { text-decoration: underline; }
 
-/* 신뢰도 푸터 칩 + 디스클로저 */
-.hero-confidence { margin-top: var(--sp-3); border-top: 1px solid var(--cd-divider); padding-top: var(--sp-3); }
+/* 히어로 소스 (코드 웰) — ⚠ min-height 금지: JS fetch 실패 시 빈 구멍이 남는다 (부모 gap 이 간격 담당) */
+.hero-source { min-width: 0; }
+.hero-source:empty { display: none; }
+
+/* 신뢰도 칩 + 디스클로저 — 좌열 2행 (row-gap 이 0 이라 margin-top 이 행 간격 담당) */
+.hero-confidence { grid-column: 1; min-width: 0; border-top: 1px solid var(--cd-divider); margin-top: var(--sp-4); padding-top: var(--sp-3); }
 .hero-conf-chip { display: inline-flex; align-items: center; gap: 8px; height: 24px; padding: 0 12px; border-radius: var(--r-pill); font-size: 12px; font-weight: 600; cursor: pointer; background: var(--cd-surface-sub); border: 1px solid var(--cd-border); color: var(--cd-text-2); list-style: none; }
 .hero-conf-chip::-webkit-details-marker { display: none; }
 .hero-conf-dots { display: inline-flex; gap: 3px; }
@@ -565,18 +637,6 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
 .signal-banner-sig { font-size: 18px; font-weight: 800; font-family: var(--font-mono); color: var(--cd-text); }
 .signal-banner-desc { font-size: 13px; color: var(--cd-text-3); margin-top: 2px; }
 
-/* ── 요약 스트립 (원인 → 위치 → 조치) ───────────────────────────────────── */
-.crash-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-3); margin-bottom: var(--sp-5); }
-.summary-cell { background: var(--cd-surface-sub); border: 1px solid var(--cd-border); border-radius: var(--r-lg); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
-.summary-cell.cell-fix { background: var(--pri-bg); border-color: var(--pri-border); }
-.summary-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--cd-text-3); }
-.summary-value { font-size: 13px; font-weight: 600; color: var(--cd-text); word-break: break-word; line-height: 1.5; }
-.summary-value.mono { font-family: var(--font-mono); }
-.summary-value.is-empty { color: var(--cd-text-muted); font-weight: 400; }
-.summary-cell .btn { margin-top: auto; align-self: flex-start; }
-.summary-link { font-size: 12px; color: var(--pri-600); text-decoration: none; font-weight: 600; align-self: flex-start; }
-.summary-link:hover { text-decoration: underline; }
-@media (max-width: 600px) { .crash-summary { grid-template-columns: 1fr; } }
 
 /* ── 콜 체인 타임라인 ────────────────────────────────────────────────────── */
 .callchain-card { padding: var(--sp-5) var(--sp-6); }
@@ -755,18 +815,80 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
 .cda-error-code { font-size: 11px; font-weight: 700; color: var(--cd-text-muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
 .cda-error-msg { font-size: 14px; color: #7F1D1D; line-height: 1.7; word-break: break-word; }
 
+/* ── 리포트 탭 (PDF 미리보기 — 힙덤프 PDF Report 패널 대응) ─────────────── */
+.cd-report-card { padding: 0; overflow: hidden; }
+.cd-report-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 16px 24px; margin-bottom: 0; border-bottom: 1px solid var(--cd-divider);
+}
+.cd-report-actions { display: flex; align-items: center; gap: 8px; }
+.cd-report-zoom {
+    display: flex; align-items: center; gap: 2px; padding: 2px;
+    background: var(--cd-surface-sub); border: 1px solid var(--cd-border); border-radius: 6px;
+}
+.cd-report-zoom button {
+    display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    background: var(--cd-surface); color: var(--cd-text-2); font-size: 15px; font-weight: 700;
+    border: 1px solid var(--cd-border); border-radius: 4px; cursor: pointer; line-height: 1;
+}
+.cd-report-zoom button#cdPdfZoomLabel {
+    min-width: 46px; background: none; border: none;
+    font-size: 11.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.cd-report-notice {
+    display: flex; align-items: flex-start; gap: 8px; padding: 10px 24px;
+    background: #FEF3C7; color: #92400E; font-size: 12px; line-height: 1.5;
+    border-bottom: 1px solid #FDE68A;
+}
+.cd-report-notice-msg { flex: 1 1 auto; min-width: 0; }
+.cd-report-notice button {
+    flex-shrink: 0; background: none; border: none; color: #92400E;
+    font-size: 14px; cursor: pointer; padding: 0; line-height: 1;
+}
+.cd-report-frame-wrap { position: relative; background: #525659; }
+.cd-report-frame-wrap iframe { width: 100%; min-height: 80vh; border: none; display: block; background: #fff; }
+.cd-report-fallback {
+    display: none; position: absolute; inset: 0; align-items: center; justify-content: center;
+    color: #E5E7EB; font-size: 13px; text-align: center; line-height: 1.6; padding: 24px;
+}
+
+/* ── 넓은 화면: 요약 카드 2열 (≥1400px) ─────────────────────────────────────
+ * 기본은 세로 스택(1열) — 좁은 화면·모바일은 종전 그대로다. 뷰포트가 충분히 넓을 때만
+ * 컨테이너를 넓히고 AI 패널(좌)·콜 체인(우)을 나란히 놓아 세로 스크롤을 줄인다.
+ * ⚠ 2열은 `.cd-sum-cols` 안에서만 — 히어로/요약 스트립/경고/메타 카드는 전폭이 옳다
+ *   (요약 스트립은 이미 3열 그리드, 메타는 auto-fill 그리드라 넓을수록 열이 늘어난다).
+ * ⚠ 래퍼가 flex 라 자식이 하나만 렌더돼도(콜 체인 없는 짧은 스택 등) 자동으로 전폭을 쓴다 —
+ *   grid 고정 2열이면 빈 칸이 남는다.
+ * ⚠ `.cd-page` max-width 는 padding(배너 220 + 20)을 포함하므로 실제 콘텐츠 폭은 240 을 뺀 값.
+ *   1400px 미만은 콘텐츠가 ~1140px 이하라 2열이 좁아져 적용하지 않는다. */
+@media (min-width: 1400px) {
+    body.cd-analyze .cd-page { max-width: 1600px; }
+    body.cd-analyze .cd-sum-cols {
+        display: flex; align-items: flex-start; gap: var(--sp-4);
+    }
+    body.cd-analyze .cd-sum-cols > * { flex: 1 1 0; min-width: 0; }
+}
+
 /* ── 반응형 ──────────────────────────────────────────────────────────────── */
-@media (max-width: 1200px) {
-    .crash-hero { flex-wrap: wrap; }
+/* 히어로 2열 해제 — 콘텐츠 폭은 뷰포트 − 240(배너+패딩) 이라 1024px 아래는 레일이 너무 좁다.
+   ⚠ 레일의 명시 배치(grid-column/grid-row)를 함께 풀어야 DOM 순서(정체성 → 팩트 → 신뢰도)대로 흐른다 */
+@media (max-width: 1023px) {
+    .crash-hero { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; row-gap: var(--sp-4); }
+    .crash-hero > .hero-rail { grid-column: auto; grid-row: auto; }
+    .crash-hero > .hero-confidence { grid-column: auto; margin-top: 0; }
+}
+@media (max-width: 900px) {
+    /* 탭 7개(요약~리포트)는 601~900px 에서 2줄로 랩되므로 한 줄 가로 스크롤로 유지 */
+    .cd-tabs { overflow-x: auto; flex-wrap: nowrap; max-width: 100%; }
 }
 @media (max-width: 600px) {
-    .crash-hero { flex-direction: column; gap: var(--sp-4); padding: 18px 16px; }
-    .crash-hero-icon-col { flex-direction: row; align-items: center; gap: 12px; }
+    .crash-hero { gap: var(--sp-3); padding: 16px; }
     .crash-hero-func { font-size: 16px; }
+    /* 라벨 76px 고정 열은 좁은 폭에서 값을 짓눌러 세로로 쌓는다 */
+    .hero-rail-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
     .cda-head-actions { margin-left: 0; width: 100%; }
     .cda-sev-meta { margin-left: 0; text-align: left; }
     .garbage-toggle-bar { flex-direction: column; align-items: flex-start; }
-    .cd-tabs { overflow-x: auto; flex-wrap: nowrap; }
 }
 @media (hover: none) {
     .row-action-hidden { opacity: 1 !important; }

@@ -43,4 +43,9 @@ public class CoreDumpAnalysisResult {
     private boolean selfRaisedSignal;        // 최상단이 raise/abort 등 시그널 자체-재raise 여부
     // 신뢰도 가이드 종류: EXEC_MISSING | THIRDPARTY_STRIPPED | APP_STRIPPED | OK
     private String guidanceKind;
+
+    // ── sysroot 라이브러리 번들 (별도 서버 분석 심볼 정확도 — COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md) ──
+    private boolean sysrootUsed;             // 이 분석이 sysroot 번들과 함께 수행됐는지
+    private String sysrootPath;              // 사용된 번들 디렉토리 절대경로 (미사용 시 null)
+    private int sysrootFileCount;            // 번들 내 파일 수 (미사용 시 0)
 }

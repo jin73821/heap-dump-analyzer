@@ -1,6 +1,197 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
 
+## [2026-08-23] 코어덤프 — 인쇄 리포트 조치 칸 제거 + 크래시 히어로 2열 재설계
+
+**요청:** ① 조치·FIX 카드가 리포트(PDF/HTML)에서도 삭제되어야 한다 ② 요약 탭 "크래시 발생 지점" 카드의 여백이 너무 많다 — 내부 컴포넌트를 어울리게 재배치하고 현대적으로 스타일을 재정의.
+
+### 1) 인쇄 리포트 — 크래시 요약 3열 → 2열
+
+앞선 작업에서 화면만 고쳐 리포트가 어긋나 있었다. `analyze-print.html` 의 `조치 · Fix` 셀을 제거하고 `.sum-cell { width: 33.33% → 50% }` 로 **원인·위치를 균등 분할**했다(셀 공용 규칙이라 한 줄 수정으로 두 칸 모두 적용). 죽은 `.sum-cell.fix` 규칙과 모바일 미디어쿼리의 `.fix` 셀렉터도 정리. 조치 안내 자체가 사라지는 건 아니다 — 화면과 동일하게 **결함 모듈 박스의 `guidanceText`** 가 guidanceKind 별 상세 안내를 계속 맡는다.
+
+- **Java 데드코드 제거:** `CoreDumpPdfReportService.fixText(String)` + `m.put("fixText", …)` 삭제. ⚠ 이름이 비슷한 **`guidanceText(...)` 는 별개 키이고 살아 있다**(결함 모듈 박스 소비) — 함께 지우면 리포트의 조치 안내가 통째로 없어진다.
+- 모델 단언 2건(`CoreDumpPdfReportServiceTest`)을 `assertNull(fixText)` 로 뒤집어 재도입을 막았다.
+
+### 2) 크래시 히어로 — 좌(정체성)/우(팩트 레일) 2열 재설계
+
+여백의 원인은 스타일이 아니라 **구조**였다: `.crash-hero-body` 가 폭 1140~1360px 카드 안에서 짧은 좌측 정렬 블록 9개를 세로로만 쌓고(각자 `margin-top` 10~12px, 순수 간격만 ~58px) 우측 절반은 통째로 비어 있었다.
+
+- **3개 컴포넌트를 레일 하나로 통합** — `.crash-hero-metachips`(발생/실행 파일/번들) + `.hero-facts`(원인·위치 2열 카드) + `.crash-hero-hints`(최근접 심볼/self-raise/결함 모듈) 는 전부 "라벨 → 값" 이라 박스를 나눌 이유가 없었다. `.hero-rail` 단일 dl(헤어라인 구분 행 8종 + 스택 트레이스 링크)로 합쳐 **테두리·패딩·마진 3중 중복을 제거**했다. 값 산출 조건식·문구·`title` 툴팁은 그대로 이식(로직 변경 0).
+- **좌열은 크래시 정체성** — 아이콘 타일 52→40px 로 줄여 시그널 칩·eyebrow 와 **한 줄**(`.hero-sig-head`)로 묶고, 종전 3블록이던 `at {location}` / `from {library}` / 주소를 **한 행**(`.hero-place`)으로 합쳤다. 그 아래 함수명 → 소스 코드 웰 순.
+- **간격은 컨테이너 gap 단일 소스** — 자식별 `margin-top` 을 전부 제거. 실측 히어로 높이 ~510px → ~380px.
+- **`.hero-source { min-height: 44px }` 삭제** — JS 소스 fetch 가 실패하거나 라인 정보가 없으면 **빈 44px 구멍**이 남던 버그. `:empty` 시 숨김도 추가.
+- **⚠ 레이아웃 함정 2건**(주석으로 CSS 에 박아둠):
+  - 신뢰도 디스클로저를 우열 레일과 나란한 그리드 형제로 두려면 레일이 두 행을 span 해야 하는데, **`grid-template-rows` 없이 `grid-row: 1 / -1` 은 동작하지 않는다** — `-1` 이 1번 라인으로 풀려 span 1 이 되고 1행이 레일 높이만큼 늘어나 **소스 웰 아래 172px 죽은 여백**이 생긴다(실측). `grid-template-rows: auto auto` 명시로 해결.
+  - `row-gap` 은 **0** 이어야 한다 — `analysisConfidence == null` 로 신뢰도가 미렌더되면 빈 2행의 gap 만 남는다. 행 간격은 `.hero-confidence` 의 `margin-top` 이 담당.
+- **반응형** — flex 전제였던 기존 규칙(`@media 1200px { flex-wrap }`, `600px { flex-direction: column }`)을 grid 기준으로 다시 썼다. **≤1023px 1열**(콘텐츠 폭 = 뷰포트 − 240 이라 그 아래는 레일이 좁다)이며 이때 레일의 명시 배치를 함께 풀어 **DOM 순서(정체성 → 팩트 → 신뢰도)** 로 흐르게 했다 — 안 풀면 신뢰도가 팩트보다 위로 올라간다. ≤600px 은 레일 라벨을 값 위로 쌓는다.
+
+### 검증
+
+- `mvn test` **439건 전부 통과**. `CoreDumpPrintTemplateSmokeTest` 에 계약 단언 추가: 히어로 경계 안 `hero-main` → `hero-rail` → `hero-confidence` 순서, 구 컴포넌트(`hero-metachip`/`crash-hero-hints`/`hero-facts`) 부재, `id="heroSource"` 존치(JS 계약), 인쇄본 `조치 &#183; Fix` 부재 + `.sum-cell` 50%.
+  - ⚠ 단언 문자열 함정 3건을 실패로 확인 후 좁혔다: `"조치"` 단독 검사는 **AI 요약의 "권장 조치"(정상)** 를 잡고, `"33.33%"` 단독 검사는 **KPI 3열(`.kpi`)** 을 잡는다. 또 정적 텍스트의 `&#183;` 를 Thymeleaf 는 디코드하지 않아 화면(`조치 · FIX`, U+00B7)과 인쇄본(`조치 &#183; Fix`)은 **서로를 못 잡는다** — 인쇄용 단언을 따로 둔 이유.
+- **시각 확인**: 실제 `SpringTemplateEngine` 렌더본을 헤드리스 Chrome 으로 **1600/1200/900/600px** 캡처. 풀 케이스(결함 모듈·벤더·sysroot·경고 6건)와 최소 케이스(소스 웰 없음·레일 2행)를 모두 확인 — 죽은 여백 0, 1열 전환 순서 정상.
+- 빌드+재기동 후 `Started HeapAnalyzerApplication` 정상(13.2s). 캐시버스팅 `core-dump.css?v=2026-08-23d`(analyze/index/progress 3파일 — 마크업과 CSS 가 원자적이라 필수).
+
+**대상:** `templates/core-dump/analyze.html`, `templates/core-dump/analyze-print.html`, `static/css/core-dump.css`, `service/CoreDumpPdfReportService.java`, `core-dump/index.html`·`progress.html`(css v), `test/CoreDumpPrintTemplateSmokeTest.java`, `test/service/CoreDumpPdfReportServiceTest.java`. **버전 무변경**(v2.3.7 — UI 재배치).
+
+
+## [2026-08-23] 코어덤프 요약 탭 정리 — 원인·위치를 히어로에 통합 / 조치 카드 제거 / 덤프 메타 상단 이동
+
+**요청:** 코어파일 분석 완료 페이지의 요약 탭에서 ① 원인·위치 카드를 상단 "크래시 발생 지점"(히어로) 카드에 통합 ② 조치 카드 삭제 ③ 원인·위치·조치 카드가 있던 자리로 덤프 메타 정보 카드 이동.
+
+요약 탭은 히어로 → 3열 요약 스트립(원인·위치·조치) → AI/콜 체인 → 덤프 메타 순이었다. 스트립의 원인·위치는 **히어로가 이미 담고 있는 값을 카드 하나 건너뛰어 다시 보여주는** 구조라(시그널 칩·`at {location}` 라인) 화면만 길어졌고, 조치 카드는 바로 아래 AI 크래시 분석 패널·히어로 신뢰도 디스클로저와 안내가 겹쳤다. 스트립을 걷어내고 그 자리를 실사용 빈도가 높은 덤프 메타가 차지하도록 재배치했다.
+
+- **원인·위치 → 히어로 내부 팩트 바(`.hero-facts`)로 통합** — 히어로 본문의 메타칩 아래, 해석 힌트 dl **위**에 2열 팩트 바를 넣어 `원인 · WHY` / `위치 · WHERE` 라벨과 값을 유지했다(값 산출 규칙은 스트립과 동일 — 위치는 `firstResolvedFrame.location` → `frame0.location` → "심볼 없음 — debuginfo 필요" 순, "스택 트레이스 보기 →" 링크도 그대로 이동). 카드가 하나로 합쳐진 만큼 **같은 카드 안 중복 표기 2건은 정리**했다: ① 시그널 설명(`signalDescription`)은 종전 eyebrow 꼬리표(`· Segmentation fault`)에서 떼어내 WHY 값이 소유 ② 결함 모듈은 바로 아래 해석 힌트 dl 이 벤더·"심볼 없음" 배지까지 붙여 렌더하므로 WHY 에서는 표기하지 않는다(설명·모듈 모두 없을 때만 `{시그널} — 상세 원인 미식별` 폴백).
+- **조치 · FIX 카드 삭제** — 문구 3종(실행 파일 페어링/벤더 debuginfo/AI 분석 유도)은 모두 히어로 신뢰도 디스클로저의 `hero-conf-guide`(guidanceKind 별 상세 안내)와 AI 패널 자체가 더 구체적으로 커버한다. 전용 스타일 `.crash-summary`/`.summary-*`/`.cell-fix` 는 다른 소비처가 없어 CSS 에서 함께 제거하고 `.hero-facts` 규칙으로 대체(≤600px 1열 랩 유지).
+- **덤프 메타 정보 카드를 스트립 자리로 이동** — 히어로 직후·2열 래퍼(`.cd-sum-cols`) **앞**. 전폭이 유지되므로 `.meta-dl` 의 `auto-fit` 그리드가 넓은 화면에서 열을 최대로 펼치는 이점도 그대로다. 분석 경고 배너는 종전대로 래퍼 앞(전폭)이며 메타 카드 **뒤**에 온다. 요약 탭 최하단에는 시그널 미식별 안내 카드만 남는다.
+- **회귀 방어** — `CoreDumpPrintTemplateSmokeTest.analyzeRendersWithSummaryTab` 에 위치 계약 4종 추가: 팩트 바가 히어로 본문 경계 안(`crash-hero-body` ~ 시그널 배너 주석 사이), `원인 · WHY`/`위치 · WHERE` 존치, `crash-summary`·`조치 · FIX` 부재, 덤프 메타가 **히어로 뒤 & 2열 래퍼 앞**. 인쇄 템플릿(`core-dump/analyze-print.html`)의 3열 크래시 요약은 A4 리포트 고유 레이아웃이라 **무변경**(화면 스트립과 별개 마크업).
+
+**검증:** 코어덤프 관련 41건 통과(`CoreDumpPrintTemplateSmokeTest` 5 / `CoreDumpPdfReportServiceTest` 6 / `CoreDumpReportEndpointTest` 7 / `CoreDumpSysrootCommandTest` 8 / `CoreDumpFileListTest` 7 / `CoreDumpRevisionTest` 8). 실제 SpringTemplateEngine 렌더본으로 히어로 내부 배치·중복 제거·메타 카드 위치를 눈으로 확인. 빌드+재기동 후 `Started HeapAnalyzerApplication` 정상. 캐시버스팅 `core-dump.css?v=2026-08-23c`(analyze/index/progress 3파일 일괄).
+
+**대상:** `templates/core-dump/analyze.html`, `static/css/core-dump.css`, `templates/core-dump/index.html`·`progress.html`(css v), `test/CoreDumpPrintTemplateSmokeTest.java`.
+
+
+## [2026-08-23] 코어덤프 결과 화면 탭 재편(요약 탭 신설) + PDF 크래시 리포트 (v2.3.7)
+
+**요청:** 코어파일 분석 결과 화면 고도화 — ① 화면 상단을 Summary 를 포함한 탭 구조로 재편 ② 힙덤프 PDF 리포팅 로직을 참고한 리포팅 기능 추가(미리보기 탭 + 요약형 A4 1~2페이지).
+
+### 1) 탭 구조 재편 — "요약" 탭 신설, 탭바를 페이지 상단으로
+
+종전 화면은 히어로/요약 스트립/AI/콜 체인이 세로로 길게 나열되고 그 **아래**에 5탭이 붙는 하이브리드였다. 탭바를 리비전 바·GDB 실패 카드 바로 아래로 올리고, 상단 세로 나열부 전체(크래시 히어로 v2 · 시그널 배너 · 요약 스트립 · AI 크래시 분석 패널 · 경고 배너 · 콜 체인)를 **`#tab-summary` 패널로 래핑**해 7탭 구조로 만들었다: `요약 / 스택 트레이스 / 스레드 / 레지스터 / 공유 라이브러리 / Raw 출력 / 리포트` — 기본 활성은 요약.
+
+- **switchTab 을 data-tab 위임으로 전환** — 종전엔 버튼 매칭을 `getAttribute('onclick')` 문자열 검사로 해 마크업 변경에 취약했다. 버튼은 `data-tab` + `id="tabbtn-*"` + `aria-controls`, 바인딩은 `addEventListener`, 여기에 **`hashchange` 리스너**를 더해 뒤로가기/앞으로가기로도 탭이 복원된다(`replaceState` 는 hashchange 를 발화하지 않아 루프 없음). 기존 해시 딥링크(`#bt` 등)는 그대로 동작하고, 전역 `switchTab(name)` 시그니처는 유지(요약 스트립 "스택 트레이스 보기 →" 링크가 호출).
+- **오류 케이스 가드 불변** — 탭바·전 패널의 `th:if="result != null and (crashSignal != null or errorMessage == null)"` 가드를 그대로 유지해 결과 없음/GDB 인식 실패 화면은 종전과 동일. 시그널 미식별(성공) 케이스는 요약 패널이 텅 비므로 "Raw 출력 탭 참조" 안내 카드를 추가.
+- **초기화 로직 무변경** — 히어로 소스 자동 로드/`buildRegisters`/AI 인사이트 로드는 숨김 패널에도 DOM 이 존재하므로 셀렉터 그대로 동작(display:none 은 querySelector 에 영향 없음).
+- **덤프 메타 정보를 요약 탭으로 이동 + 상시 노출** — 종전엔 탭 **바깥 최하단**에 접힌 `<details>`(클릭해야 열림)라 정작 자주 보는 값(프로그램명·GDB 버전·분석 완료 시각·라이브러리 번들 경로)이 한 번도 안 펼쳐진 채 묻혔다. 요약 패널 끝으로 옮기고 일반 `content-card` + `.meta-dl` 그리드로 **항상 보이게** 했다(인라인 style 로 흉내내던 details 헤더 제거 → 다른 카드와 같은 `content-card-title` 규격). 히어로 메타칩(발생 시각·실행 파일·sysroot)과 중복되는 항목이 있지만, 칩은 요약 문맥·메타 카드는 전체 목록이라 역할이 다르다. 시그널 미식별 케이스에서도 렌더되므로 "왜 분석이 비었는지"를 GDB 버전·분석 시각과 함께 볼 수 있다.
+- **모바일** — 탭이 7개로 늘어 `.cd-tabs { overflow-x:auto; flex-wrap:nowrap }` 규칙을 600px → **900px 블록으로 이동**(601~900px 2줄 랩 방지, 한 줄 가로 스크롤). 접근성으로 전 패널에 `role="tabpanel"`+`aria-labelledby` 부여.
+- **넓은 화면 요약 카드 2열 (≥1400px)** — 기본은 종전대로 세로 스택 1열이고, 뷰포트가 넓을 때만 컨테이너를 `max-width: 1600px` 로 넓히고 **AI 패널(좌) · 콜 체인(우)** 을 나란히 놓아 세로 스크롤을 줄인다. 2열은 `.cd-sum-cols` 래퍼 **안에서만** — 히어로·요약 스트립·경고 배너·메타 카드는 전폭이 옳다(요약 스트립은 이미 3열 그리드, 메타는 auto-fit 그리드라 넓을수록 열이 늘어난다). ⚠ 래퍼를 **grid 고정 2열이 아니라 flex(`flex:1 1 0`)** 로 둔 이유: 콜 체인이 없는 짧은 스택(프레임 1개 이하)에서는 AI 패널이 자동으로 전폭을 쓴다 — 고정 2열이면 빈 칸이 남는다. 분석 경고 배너는 래퍼 **앞**으로 옮겨(종전엔 AI 패널과 콜 체인 사이) 항상 전폭으로 먼저 읽히게 했다. 스코프는 `body.cd-analyze` — 같은 CSS 를 쓰는 index/progress 페이지는 영향 없다. ⚠ `.cd-page` max-width 는 padding(배너 220+20)을 포함하므로 실제 콘텐츠 폭은 240 을 뺀 값이다.
+- **메타 그리드 빈 칸 수정** — `.meta-dl` 이 `repeat(auto-fill, ...)` 이라 항목 수가 열 수에 안 맞으면 **빈 트랙이 회색 칸**으로 남았다(배경 `cd-border` 가 곧 셀 구분선이라 빈 칸이 그대로 보인다). 접힌 details 안에 있을 땐 안 보였지만 요약 상시 노출 + 전폭이 되며 드러나, **`auto-fit`** 으로 바꿔 빈 트랙을 접고 항목들이 폭을 나눠 갖게 했다.
+
+### 2) PDF 크래시 리포트 — 힙덤프 PDF 파이프라인 재사용
+
+- **공용 렌더 코어 승격:** `PdfReportService.renderPdf(templateName, model)` — Pretendard 임베딩 + `PdfRendererBuilder` 블록을 공용 메서드로 추출(힙 `renderPrintPdf` 는 이에 위임, 시그니처 불변 → 힙 경로 회귀 0). `clip`/`limit` 은 package-private 로 완화해 공유.
+- **`CoreDumpPdfReportService` 신규:** `buildCorePrintModel(filename, revLabel, result)` 가 파생 값 전부(콜 체인 GARBAGE 제외 상위 8행 `ChainRow` 사전 계산 · 신뢰도 한국어 라벨 · `resolved/total` 심볼 통계 · 라이브러리 심볼 로드 수 · 프로그램 basename · guidanceKind→한국어 조치 문구 · 품질 경고 5건 클립)을 Java 에서 계산 — 인쇄 템플릿의 SpEL 을 최소화(함정 11/23 리스크 축소). AI 인사이트는 `ai_insights` 합성 키(`__core__:`) 의 **top-level Map** 을 `CoreAiSummaryDto` 로 매핑(힙의 `parseInsight` 는 엔티티 JSON 구조라 재사용 불가) — 조회 실패는 소프트 페일(ai=null → "미실행" 표기).
+- **인쇄 템플릿 `templates/core-dump/analyze-print.html` 신규:** 힙 `analyze-print.html` 골격 복사(A4 12mm `@page` + 페이지 번호 마진 박스, mm/pt 치수, **display:table 전용** — OpenHTMLtoPDF flex/grid/SVG 미지원, script 0개라 PDF/HTML 미리보기 겸용). 섹션: 헤더(파일명+리비전 배지/분석·발생 시각/AI 모델) → 환경 4열(실행 파일·프로그램·sysroot 번들·GDB) → KPI 3×2(시그널·신뢰도·심볼 해석·스레드·라이브러리·프레임) → 크래시 요약 3열(원인→위치→조치, 화면 요약 스트립 미러) → 콜 체인 표 8행+생략 각주 → 결함 모듈 박스 → 품질 경고 → AI 요약(severity 색상은 함정 22 팔레트 동일값).
+- **엔드포인트 (힙과 1:1 대칭):** `GET /core-dump/analyze/{fn}/print-pdf?mode=download|inline&rev=` (`CoreDumpApiController`) — attachment/inline 분기, ASCII+RFC5987 이중 파일명(`.core` 접미사만 제거 + `-crash-report.pdf`, rev 시 `-{rev}` 삽입), no-store/nosniff. `GET /core-dump/analyze/{fn}/print-html?rev=` (`CoreDumpViewController`) — 같은 모델로 같은 템플릿을 HTML 렌더. 성공 판정은 화면 탭 가드와 동일(`isReportable`), GDB 인식 실패는 404/리다이렉트. **rev 지원** — 보존 리비전으로도 리포트 생성(blank=현재), AI 는 최신 저장본임을 각주로 명시. SecurityConfig 무변경(GET + 세션 인증 자동 커버).
+- **리포트 탭 UI:** `#tab-report` = 툴바(PDF↔HTML 토글 + HTML 줌 50~200% + 다운로드 앵커) + iframe. 힙 `loadPdfReportPanel` 로직 이식 — 모바일(≤900px)/`pdfViewerEnabled=false` 는 HTML 모드, PDF 모드는 4초 내 load 미발생 시 HTML 자동 폴백+안내 배너. 탭 첫 진입 시에만 로드(lazy, `!iframe.getAttribute('src')` 가드 — 함정 6). 다운로드는 서버 `Content-Disposition: attachment` 보장이라 순수 앵커(함정 19 blob 불필요). 리비전 조회 중엔 `CORE_CURRENT_REV` 를 `?rev=` 로 전달.
+
+### 검증
+
+- `mvn test` **439건 전부 통과** (기존 421 + 신규 18: `CoreDumpPdfReportServiceTest` 6 — 콜 체인 필터·AI Map 매핑·소프트 페일·빈 결과·place 폴백·rev 라벨 / `CoreDumpPrintTemplateSmokeTest` 5 — 인쇄 템플릿 풀·최소 렌더, **PDF 바이트 `%PDF` 스모크**(XHTML 정합성+폰트 로드), analyze.html 탭 개편 렌더 + 오류 모델 탭바 미렌더 — 함정 23 방어 / `CoreDumpReportEndpointTest` 7 — standalone MockMvc 로 라우팅·Content-Disposition 파일명 규칙·mode/rev 분기·404/400·`/analyze/{fn}` 과 `/print-html` 경로 공존).
+- 빌드+재기동 후 `Started HeapAnalyzerApplication` 정상(13.2s, v2.3.7 JAR — 신규 빈 와이어링 포함), 무인증 `print-pdf`/`print-html` → 302 `/login`(인증 게이트 정상), `/js/core-dump-analyze.js?v=2026-08-23a` → 200 `text/javascript;charset=UTF-8`(함정 35 charset 유지).
+- 캐시버스팅: `core-dump.css`/`core-dump-analyze.js` `?v=2026-08-23a` (JS 는 data-tab 마크업과 원자적 — 옛 캐시 JS 로는 새 탭이 안 움직인다).
+
+**대상:** `templates/core-dump/analyze.html`, `templates/core-dump/analyze-print.html`(신규), `static/js/core-dump-analyze.js`, `static/css/core-dump.css`, `service/CoreDumpPdfReportService.java`(신규), `service/PdfReportService.java`, `controller/CoreDumpApiController.java`, `controller/CoreDumpViewController.java`, `pom.xml`(2.3.7), `fragments/banner.html`·`index.html`·`progress.html`(버전 표기), `core-dump/index.html`·`core-dump/progress.html`(css v), 테스트 3클래스 신규(`CoreDumpPdfReportServiceTest`/`CoreDumpPrintTemplateSmokeTest`/`CoreDumpReportEndpointTest`).
+
+
+## [2026-08-22] 라이브러리 번들 업로드 형식 제약 해제 + 요약 스트립의 중복 버튼 제거
+
+**요청:** ① 라이브러리 번들(sysroot) 업로드에서 tar.gz 이 아닌 다른 파일도 올릴 수 있어야 한다 ② 조치·FIX 카드의 "AI 분석으로 이동" 버튼은 바로 아래에 AI 크래시 분석 카드가 있어 불필요하다.
+
+### 1) 업로드 형식 제약 해제 — 아카이브 6종 + 개별 라이브러리 파일
+
+직전 구현은 `.tar.gz`/`.tgz`/`.tar` **확장자만** 통과시켰다. 확장자 검사는 두 방향으로 틀린다 — 이름이 `.so` 인 tar 를 거부하고, 이름만 `.tar` 인 아무 파일이나 통과시킨다. **매직 바이트 판정으로 전환**하고 받아들이는 종류를 넓혔다.
+
+- **아카이브** — tar / tar.gz / tgz / tar.bz2 / tar.xz / **zip**. gzip·bzip2·xz 는 먼저 풀고 **내용물을 재판정**하므로 `libfoo.so.gz`(압축된 단일 라이브러리)도 정상 처리된다(`.gz`/`.bz2`/`.xz`/`.Z` 접미사를 떼고 저장).
+- **개별 라이브러리 파일** — 아카이브가 아니면 `.so` 등 개별 파일로 보고 번들 루트에 basename 으로 저장. 업로드 이름의 경로 성분은 제거한다(`../../etc/passwd` → `passwd`).
+- **여러 파일 동시 업로드** — `MultipartFile[]` + `<input multiple>`. 아카이브와 개별 파일을 섞어도 된다.
+- **병합(additive) 시맨틱** — 업로드분은 기존 번들에 추가되고 같은 경로만 덮어쓴다(이전엔 통째 교체라 개별 파일을 하나 더 올리면 앞의 것이 사라졌다). 처음부터 다시 구성하려면 '번들 삭제' 후 업로드. 원격 수집은 출처 서버의 완전한 스냅샷이므로 **교체 유지**.
+
+**개별 파일이 실제로 심볼 해석에 쓰이려면 sysroot 만으로는 부족하다** — sysroot 는 "sysroot + 코어에 기록된 절대경로"가 실존할 때만 맞는다. 그래서 `set solib-search-path`(번들 안에서 **파일을 직접 담고 있는 디렉토리 목록**)를 함께 준다. 실측(검증 문서 케이스 F): 미러 구조 없이 `libcrashy.so` 하나만 둔 번들로도 원경로의 잘못된 빌드를 제치고 정확한 심볼이 복원됐다. ⚠ **`solib-search-path` 단독은 무효** — sysroot 없이 주면 gdb 가 코어에 기록된 원경로 파일을 먼저 찾아버린다(케이스 F-2). 두 옵션은 반드시 함께.
+
+- 가드는 그대로 유지·확장: zip-slip / 링크·디바이스 엔트리 스킵 / 용량·엔트리 상한(다중 업로드는 **요청 전체 누적**으로 계산) / 압축 해제 단계에도 용량 상한(압축 폭탄) / staging 검증 후 병합이라 **실패 시 기존 번들 무손상**.
+- ⚠ **zip 의 symlink 는 `ZipArchiveInputStream`(스트리밍)으로는 식별 불가** — external attributes 가 중앙 디렉토리에만 있어 `isUnixSymlink()` 가 항상 false 다. 중앙 디렉토리를 읽는 `ZipFile` 로 전환했다(파일 생성은 어느 쪽이든 일반 파일이라 탈출 위험은 없지만, 링크 본문이 라이브러리 이름의 쓰레기 파일로 남는 것을 막는다). 테스트가 이 차이를 잡아냈다.
+- **의존성:** `org.tukaani:xz:1.9` 추가 (commons-compress 의 xz 지원은 이 라이브러리가 있어야 동작 — 로컬 .m2 실존 확인).
+- **API:** `POST /api/core-dump/{f}/libs` 가 `MultipartFile[]` 수용, 확장자 검사 제거, 응답에 `archives`/`singles` 추가. 감사 로그에 `files`/`archives`/`singles` 포함.
+- **UI:** 버튼 라벨 "tar.gz 업로드" → **"파일 업로드"**(`accept` 제거 + `multiple`), 모달에 수용 형식·병합 정책 안내(`.libs-hint`) 추가, 결과 메시지에 아카이브/개별 건수 표기.
+
+### 2) 요약 스트립 "AI 분석으로 이동" 버튼 제거
+
+`crash-summary` 의 조치·FIX 셀에 있던 버튼(`cdaPanel` 로 `scrollIntoView`)이 **바로 아래 카드로 스크롤할 뿐**이라 중복이었다. 버튼과 전용 CSS 규칙(`.summary-cell .btn` — 이 버튼 전용이라 사용처 소멸)을 제거하고, 안내 문구를 "**아래** AI 크래시 분석으로 근본 원인을 진단하세요."로 다듬어 위치를 문장으로 알려준다.
+
+**대상:** `service/CoreDumpSysrootService.java`(형식 판정·병합·solib-search-path·zip), `service/CoreDumpAnalyzerService.java`(`buildGdbCommand` 4번째 인자), `controller/CoreDumpApiController.java`, `templates/core-dump/analyze.html`, `static/js/core-dump-analyze.js`, `static/css/core-dump.css`, `pom.xml`, `COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md`(케이스 F 추가), 테스트 2클래스 갱신 + `CoreDumpSysrootUploadTest` 신규.
+
+**검증:** `mvn test` **421건 green**(401 + 신규 20: 업로드 형식·병합 14 / zip 가드 2 / solib-search-path argv 3 / 이름 헬퍼 1). **실기 gdb 검증** — 앱이 만드는 argv 그대로(8 섹션 + sysroot + solib-search-path) 실행해 flat 번들 파일 1개만으로 `lib_crash_here` 정확 해석·exit 0 확인. 빌드 + `restart.sh` 무오류. 캐시 키 `core-dump.css`·`core-dump-analyze.js` `?v=2026-08-22a`. **버전 변경 없음**(2.3.6 — 같은 날 릴리스의 후속 보완).
+
+
+## [2026-08-22] 코어덤프 별도 서버 분석 정확도 검증 + sysroot 라이브러리 번들 지원 — 버전 2.3.5 → 2.3.6
+
+**요청:** 코어파일 분석 로직 고도화. 원격 서버에서 직접 분석하지 않고 분석기 서버에서 분석해도 정확도에 문제가 없는지 검증(환경변수·라이브러리 등이 필요한가?), 그 결과를 근거로 고도화 구현.
+
+### 1) 검증 실험 (통제 실험 — `COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md` 신규)
+
+커스텀 `.so` 내부에서 SIGSEGV 하는 픽스처(v1=크래시 당시 빌드 / v2=코드 시프트 재컴파일, build-id 상이)로 라이브러리 파일 상태만 바꿔가며 동일 코어를 비교:
+
+- **환경변수 — 불필요 (확정).** 크래시 프로세스 env 는 코어 메모리에 포함(`strings core | grep 마커` 실존), GDB 를 `env -i` 로 돌려도 백트레이스 완전 동일.
+- **라이브러리 없음** → `Syms Read=No` + `??` + 명시적 warning. 현행 품질 경고가 커버하는 정직한 실패.
+- ⚠ **같은 경로에 다른 빌드** → gdb 8.2 는 build-id 검증 없이 **경고 0건으로 가짜 함수명·가짜 인자값·가짜 소스라인**을 출력 (`lib_crash_here` → `__do_global_dtors_aux`, 콜러가 `totally_different_fn (x=0)` 으로 둔갑). `Syms Read=Yes` 라 신뢰돼 보임 — **"없는" 경우보다 "다른 버전이 있는" 경우가 위험**하다 (예: RHEL7 glibc 2.17 코어를 Rocky8 glibc 2.28 분석기에서 열 때 `/lib64/libc.so.6`).
+- **sysroot 번들**(`-iex "set sysroot"`, 절대경로 미러) → 정확도 완전 복원. 호스트에 잘못된 빌드가 남아 있어도 sysroot 우선. 단 번들에 없는 라이브러리는 **호스트 폴백 상실**(`No`) → 전체 수집 원칙 필요.
+- `-ex` 후행 순서는 solib 재해석으로 후행 명령은 복구되지만 초기 출력이 오염 → **`-iex` 채택**. 코어 단독(exec 미페어링)은 링크맵 접근 불가라 sysroot 무관 전부 `??` → exec 페어링이 전제조건(기존 EXEC_MISSING 안내 유효).
+- **결론:** exec 페어링 + 라이브러리 번들이 갖춰지면 별도 서버 분석은 원본 서버 직접 분석과 동일 정확도. 환경변수·OS 설정 불필요.
+
+### 2) sysroot 라이브러리 번들 구현
+
+- **저장 레이아웃:** `{coredump.directory}/sysroots/{coreFilename}/` 절대경로 미러 (기동 시 자동 생성 — `HeapDumpConfig.initCoreDumpDirectory`). 입력물 시맨틱 = exec 동일: "이력만 삭제" 시 보존, 코어 삭제 시 동반 삭제. 리비전 이관과 무관.
+- **`CoreDumpAnalyzerService.buildGdbCommand(core, exec, sysrootDir)`** — 번들 존재 시 `--nx` 직후 `-iex "set sysroot …"` (positional/`-ex core-file` 양 분기 공통, 테스트를 위해 package-private). `runAnalysis()` 가 `activeSysrootDir()` 해석 → 결과에 `sysrootUsed`/`sysrootPath`/`sysrootFileCount` 3필드 기록(구 result.json 은 Jackson 기본값 하위 호환).
+- **`CoreDumpSysrootService` 신규 (서비스 분리 — CoreDumpAnalyzerService 1,775줄 비대화 방지, 단방향 의존):**
+  - `findOriginServer()` — 전송 로그(`filename`+SUCCESS) 역추적. `dump_transfer_log` 에 fileType 이 없어 힙덤프와 동명 충돌 시 오귀속 가능 → **로그 fileSize 와 코어 실물 크기 대조** 후 최신 채택.
+  - `listRequiredLibraryPaths()` — result 의 sharedLibraries ∪ proc mappings 중 `.so`/`ld-*`, `/SYSV`·`(deleted)` 제외, **화이트리스트 정규식(`^/[A-Za-z0-9._+/-]+$`) 불통과는 제외**(코어 gdb 출력 유래 = 신뢰 불가 입력 — 원격 tar 명령 주입 차단).
+  - `collectFromOrigin()` — 출처 서버에서 `tar -czhf - --ignore-failed-read -C /` 단일 스트림 수집(`RemoteDumpService.fetchRemoteLibBundle` 신규, 2-phase sscuser + `wrapWithLocalUser` 재사용, 타임아웃 600초, gzip 매직 실질 판정). **`-h`(dereference)** 로 `/lib64/libc.so.6` 같은 심볼릭 링크를 일반 파일로 실체화(gdb sysroot 조회 경로 일치 + 해제 가드 단순화). staging 해제 후 교체라 실패 시 기존 번들 무손상. 요청 vs 실물 대조로 `missing[]` 보고.
+  - `extractBundleSafely()` — commons-compress 기반 tar/tar.gz 안전 해제 가드 4종: zip-slip(절대경로·`..`·NUL + normalize) / 링크·디바이스 엔트리 스킵 / **실복사 바이트 1GB·엔트리 2,000 상한**(초과 시 중단+부분물 삭제) / 일반 파일·디렉토리만 생성. ⚠ **`TarArchiveEntry.isFile()` 은 symlink 에도 true** — 특수 타입 명시 배제를 먼저 해야 한다(테스트가 실제로 잡아낸 버그).
+  - `appendSysrootQualityWarnings()` — 기존 `qualityWarnings` 에 덧붙임(파서·품질판정·신뢰도 등급 본체 무변경): ① 원격 출처 + 미번들 + `Syms Read=Yes` → "분석 서버 로컬 라이브러리로 해석 — 버전 불일치 시 경고 없이 잘못된 함수명 가능, 번들 수집 권장" (검증 케이스 C 근거 — gdb 가 침묵하므로 앱이 대신 경고) ② 번들 사용 + `No` 잔존 → "번들에 없는 라이브러리 N건 — 보완 수집 권장". 수동 업로드(비원격) 코어는 ① 미발동.
+- **API 4종 (`CoreDumpApiController`, 일반 사용자 등급 — 기존 코어덤프 mutation 과 동일, SecurityConfig 무변경):** `GET/POST/DELETE /api/core-dump/{f}/libs`(상태/tar.gz 업로드/삭제) + `POST /api/core-dump/{f}/collect-libs`(원격 수집 — 400 `NO_RESULT`/`NO_ORIGIN`, 500 `SSH_FAIL`). 감사 로깅 `[CoreDump] action=collect-libs|upload-libs|delete-libs ... by={who}`. 수집·업로드는 동기+스피너(동기 SCP 10분 선례) — SSE 진행표시는 후속 개선 여지.
+- **UI (analyze 페이지 단일 진입 — 번들 필요성은 1차 분석 경고를 보고 판명되므로 index 3번째 존 대신 exec 사후첨부 패턴):** topbar "라이브러리 번들" 버튼 → `#libsModal`(상태/원격 수집(출처 서버명 표기)/tar.gz 업로드/삭제/성공 시 "지금 재분석"), 히어로 메타칩 "라이브러리 번들 N개 적용"(ok 계열), 덤프 메타 정보에 번들 경로. 신설 경고문은 기존 qualityWarnings 렌더로 자동 표출(템플릿 무변경).
+- **의존성:** `commons-compress:1.27.1` + **`commons-io:2.16.1` 직접 의존 고정** — compress 1.27 은 commons-io 2.16+ 의 `FileTimes` API 를 요구하는데 타 의존성이 구버전을 전이시켜 `NoSuchMethodError` 발생(로컬 .m2 실존 확인, 오프라인 빌드 안전).
+- **범위 제외:** `autoDetectAndTransfer()` 의 exec 자동 전송 공백(실행파일은 수동 "실행파일 전송" 버튼만) — 오탐 시 잘못된 페어링 자동 확정 위험 + 본 과제와 독립적이라 후속 항목으로만 기록.
+
+**대상:** `service/CoreDumpSysrootService.java`(신규 380여줄), `service/CoreDumpAnalyzerService.java`, `service/RemoteDumpService.java`(`buildSshCommandString` 추출 + `fetchRemoteLibBundle`), `controller/CoreDumpApiController.java`, `model/CoreDumpAnalysisResult.java`, `config/HeapDumpConfig.java`, `templates/core-dump/analyze.html`, `static/js/core-dump-analyze.js`, `static/css/core-dump.css`, `pom.xml`, 테스트 3클래스 신규, `COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md`(신규). (모달 상태는 열릴 때 `GET /libs` 로 조회하므로 View 컨트롤러는 무변경.)
+
+**컨벤션:** #4 모달 버튼 `data-*`+onclick / #13 common.css base 재정의 없이 `#libsModal` 변형만 / #14 에러 body 검사 필요라 fetchJSON 미사용(plain fetch) / #17 `#libsModal` 버튼 형태 규칙 동반 / #23 신규 `[[` 없음 / #32 계열(가드 검사 후 쓰기, staging 교체) / 캐시 키 `core-dump.css`·`core-dump-analyze.js` `?v=2026-08-22`(3 페이지) / 버전 표기 3곳(banner/index/progress).
+
+**검증:**
+- `mvn test` **401건 green** (382 + 신규 19: buildGdbCommand 골든 5 — sysroot 무/유 × exec 유/무 + `-iex` 위치 / tar 해제 가드 6 — 정상·gzip·traversal·symlink·용량·엔트리 상한 / 경고·경로 산출 8). 빌드 + `restart.sh` 기동 13.4초 무오류, `/opt/coredumps/sysroots` 자동 생성 확인, 신규 JS/CSS `?v=2026-08-22` 200 서빙.
+- **운영 argv 전체 세트 실기 검증** — `buildGdbCommand` 와 동일한 argv(8 섹션 + `-iex` sysroot)로 실제 gdb 8.2 실행: 라이브 경로에 **잘못된 빌드(v2)가 있어도** sysroot 번들(v1)이 이겨 `lib_crash_here` 정확 해석, 섹션 마커 8/8, exit 0.
+- **잔여 리스크:** 인증 페이지라 `/core-dump/analyze` 실렌더·collect-libs 원격 e2e 는 미실행(신규 Thymeleaf 표현식은 기존 패턴 조합, 원격 수집은 단위 검증 + SSH/tar 경로는 기존 2-phase 재사용) — 로그인 후 ① 코어 업로드·분석 → 경고 확인 ② 번들 업로드 → 재분석 → 배지·심볼 복원 ③ Target Servers 코어로 원격 수집 버튼 육안 확인 권장.
+
+
+## [2026-08-19] 미저장 메모 이탈 경고 팝업을 '취소'로 닫으면 페이지 로딩 스피너 무한 회전 — 근본 수정
+
+**제보:** `/account` 개인 메모장에서 미저장 상태로 다른 페이지로 이동하면 이탈 경고 팝업이 뜨는데, 거기서 **취소(머무르기)** 를 누르면 화면 중앙 "페이지 로딩 중..." 스피너가 사라지지 않고 무한히 돈다.
+
+**원인:** 2026-05-30 에 같은 증상을 `progress.html` 에서 고치며 넣은 `window.focus` / `visibilitychange` 신호가 **실제로는 발화하지 않는다**. 팝업이 떠 있는 동안 렌더러가 멈춰(탭-모달) 클릭 시점에 예약된 100ms 스피너 타이머가 밀렸다가 팝업이 닫히는 순간 그대로 발화하는데, 그 뒤로 스피너를 내려 줄 이벤트가 오지 않는다. Chrome 128 + CDP 실측(`Page.handleJavaScriptDialog{accept:false}`) 로그: `schedule@2114 → beforeunload@2115 → show@3124`, **focus·visibilitychange 이벤트 0건**. 즉 종전 수정은 신호 자체가 없어 무효였고, 이번 제보는 그 사실이 메모장에서 드러난 것이다.
+
+**수정 방향 — 사후 감지 대신 사전 회피.** 팝업 취소 여부를 나중에 알아낼 신뢰 가능한 신호가 없으므로(취소든 이동이든 렌더러 재개·타이머 발화·JS 실행이 모두 동일하다), **경고를 띄울 페이지가 그 조건을 미리 등록**하면 배너가 스피너 예약 자체를 건너뛰도록 뒤집었다.
+
+- **`fragments/banner.html`** — `registerUnloadGuard(fn)` 등록 API + `willPromptUnload()` 게이트 추가. `schedulePageLoading()` 첫 줄에서 가드가 true 면 **예약하지 않는다**(클릭·submit·모바일 지연 네비게이션 3경로 공통 진입점이라 여기 한 곳이면 충분). 가드 예외는 삼켜 네비게이션을 막지 않는다.
+  - 2차 방어 2종 — ① 스피너 표시 후 사용자가 **키 입력/마우스 다운** 하면 제거(현재 페이지를 다시 조작한다 = 이탈이 취소됐다는 뜻. `pagehide` 이후는 무시) ② 표시 시간 상한 `_GB_LOADING_MAX_MS = 30000` — 미등록 경고나 브라우저 차이로 새는 경로가 있어도 30초 뒤 자동 해제. 무한 회전은 이제 구조적으로 불가능하다.
+  - 기존 `focus`/`visibilitychange` 는 **다른 탭에 다녀온 뒤 잔상 제거** 용도로만 남기고 주석을 사실에 맞게 고쳤다(팝업 취소 신호라는 설명은 오해를 재생산한다).
+- **`account.html`** — `memoWillWarnOnLeave()` 를 신설해 `beforeunload` 경고 조건과 배너 가드가 **같은 판정**을 쓰게 했다: 저장할 것 없음 → false / 세션 만료(자동 저장 suspend) → true(백업 후 경고) / 자동 저장 ON → false(keepalive 로 조용히 마무리) / 그 외 → true. 두 곳이 어긋나면 같은 버그가 재발하므로 주석으로 못박음.
+- **동일 패턴 확산** — `upload-queue.js`(업로드 진행 중 `_uploading`) · `analyze.js`(AI 분석 중 `_aiAnalysisInProgress`) · `compare.html`(AI 비교 중 `_cmpAiInFlight`) 3곳도 가드 등록. analyze/compare 는 capture 단계 클릭 가로채기가 있어 링크 경로는 이미 안전했지만 **form submit 경로는 무방비**였다.
+- **캐시 무효화** — `analyze.js?v=2026-08-19` · `upload-queue.js?v=2026-08-19`.
+
+**검증:**
+- **헤드리스 Chrome 128 + CDP 5케이스 AS-IS/TO-BE 비교** (배너의 실제 인라인 JS 를 템플릿에서 추출해 픽스처에 그대로 주입 — 재작성본이 아닌 배포 코드를 검증). AS-IS: C1 `spin=true`(재현) / C4 `spin=true` / C5 상한 없음 → **FAIL**. TO-BE: C1 미저장 이탈→취소 시 스피너 미표시·페이지 잔류 / C2 정상 이동(2초 지연 페이지)에서는 스피너 **정상 표시** / C3 keydown 2차 방어 / C4 가드 true 면 예약 없음 / C5 상한 30초 → **5/5 PASS**. (스피너 표시 여부는 문서가 파기돼도 남도록 `localStorage` 기록으로 확인.)
+- **회귀 방어 테스트 추가** — `AccountMemoTemplateSmokeTest.unloadGuardIsWiredToBannerSpinner`: 배너 fragment 가 인라인된 최종 렌더 결과에서 `registerUnloadGuard` 정의·`willPromptUnload()` 게이트·`memoWillWarnOnLeave` 등록 4항목 확인. 배너나 페이지 한쪽만 고쳐도 실패한다. `mvn test` **382건 green**(381 → +1), 빌드·기동 무오류(13.9초).
+
+**버전 변경 없음** (2.3.5 유지 — 동작 수정만).
+
+
+## [2026-08-17] Kubernetes 배포 패키지 2.3.2 → 2.3.5 갱신 (`/opt/genspark/heapApp_k8s`)
+
+**요청:** `heapApp_k8s` 가 최신 앱 버전으로 구성되어 있는지 확인하고 갱신할 것.
+
+**대상:** `/opt/genspark/heapApp_k8s/**` (본 저장소는 이 CHANGELOG 항목 외 **변경 없음**)
+
+- **패키지가 2026-08-02 생성 시점의 2.3.2 에 고정돼 있었다.** 이후 릴리스된 v2.3.3(Leak Suspects MAT 원본 일치) · v2.3.4(LLM 호출량 제한·API 키 암호화·개인 메모 이력·My Account 레이아웃) · v2.3.5(정적 리소스 charset 명시)가 전혀 반영되지 않은 상태였다. 운영(18080)은 이미 2.3.5 로 기동 중이라 **컨테이너 배포본만 3 버전 뒤처져 있었다.**
+- **버전 표기 하드코딩 6 파일 갱신** — `k8s/base/deployment.yaml`(`image:`) · `k8s/overlays/{external-db,incluster-db}/kustomization.yaml`(`newTag`) · `README.md`(4곳) · `docs/DEPLOY.md`(5곳) · `build/Dockerfile`(주석 예시). **스크립트는 무수정** — `scripts/common.sh` 가 `pom.xml` 의 `heap-analyzer` artifactId 직후 `<version>` 을 파싱해 JAR 명·이미지 태그·tar 파일명을 자동으로 맞춘다(parent 인 spring-boot 3.5.14 와 혼동되지 않게 artifactId 를 앵커로 쓴다). ⚠ **kustomize `newTag` 3곳만 수동**이라 버전 올릴 때 여기를 빠뜨리면 이미지는 새것인데 파드는 옛 태그를 당긴다.
+- **v2.3.4 신규 설정 키 2 그룹이 `config/application.properties` 에 누락돼 있었다.** `llm.ratelimit.*`(5키) · `memo.history.*`(5키). 코드에 `@Value` 기본값이 있어 동작 자체는 정상이지만, 이 파일이 **이미지 내장 properties 와 ConfigMap 의 단일 원본**이라 운영자가 값을 조정할 지점이 사라진다. 컨테이너 맥락 주석 2건을 덧붙였다 — ① 호출량 카운터는 파드 메모리에 있으므로 **레플리카를 늘리면 실효 한도가 배수로 늘어난다**(기본 배포 replicas=1) ② 메모 스냅샷은 PVC 가 아니라 **DB(`memo_history`)에 쌓이므로 DB 용량 산정에 포함**해야 한다.
+- **DB 스키마는 추가 조치 불필요** — `spring.jpa.hibernate.ddl-auto=update` 라 v2.3.4 의 `memo_history` 테이블과 `users.account_layout` 컬럼이 기동 시 자동 생성된다.
+- **`build/entrypoint.sh` 도 무수정** — 2026-08-10 의 `env.sh` 통합은 베어메탈 기동 스크립트(`run.sh`/`restart.sh`/`stop.sh`) 전용이고 컨테이너는 entrypoint 경로라 무관하다.
+- **재빌드·검증 실측:** `scripts/build-image.sh` (JAR 재빌드 → 시크릿 잔존 검사 통과 → `sync-config.sh` 로 ConfigMap 257 라인 재생성 → 이미지 724MB) / `scripts/verify-image.sh` **PASS=20 FAIL=0**(로케일 ko_KR·TZ KST·비-root uid 10001 / gdb·ssh·bash / **MAT headless 파싱 성공** / 신규 MariaDB 컨테이너 E2E — 기동 20초, `/login` 200, 평문 시크릿 없음) / `scripts/validate-manifests.sh` **PASS=45 FAIL=0**(양 오버레이 렌더 이미지 `heap-analyzer:2.3.5` 확인).
+- **반출본 재생성:** `dist/heap-analyzer-2.3.5.tar.gz`(388M, sha256 `5211c029…`) + `SHA256SUMS.txt` 재생성. 구 `heap-analyzer-2.3.2.tar.gz` 는 **삭제**했다(`save-image.sh` 가 `dist/*.tar.gz` 전부를 해시하므로 남겨두면 체크섬 목록과 문서의 2.3.5 표기가 어긋난다). `mariadb-11.4.tar.gz` 는 변경 없음(체크섬 `01573703…` 동일). podman 로컬 이미지 `heap-analyzer:2.3.2` 는 롤백용으로 **남겨 뒀다** — 필요 없으면 `podman rmi heap-analyzer:2.3.2` (724MB 회수, `/` 파티션 89% 사용 중).
+- ⚠ **`BUILD_DIR` 을 지정하려면 디렉토리를 먼저 만들어야 한다** — `build-jar.sh` 는 미지정 시 `mktemp -d` 로 만드는 것을 전제하므로, 환경변수로 넘긴 경로가 없으면 `cp: ... 디렉터리가 아닙니다` 로 실패한다(이번에 `/var/tmp` 여유 부족을 피해 `/opt` 로 옮기다 겪음).
+
+
 ## [2026-08-13] 사내망 프록시 경유 시 업로드 모달 한글 깨짐 — 정적 리소스 charset 명시 + 버전 2.3.4 → 2.3.5
 
 **요청:** 사내망에서 프록시 서버를 경유해 접속한 뒤 파일 업로드 시 모달의 글자가 깨진다(제보 화면: `<h3 …>ì—…ë¡œë“œ ì¤€ë¹„ ì™„ë£Œ</h3>`). 점검할 것.

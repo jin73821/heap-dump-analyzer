@@ -41,7 +41,8 @@ class CoreDumpRevisionTest {
                 new ObjectMapper(),
                 mock(HeapDumpAnalyzerService.class),
                 mock(LlmConfigService.class),
-                mock(AiInsightManager.class));
+                mock(AiInsightManager.class),
+                mock(CoreDumpSysrootService.class));
     }
 
     /** data/{core}/ 에 result.json + gdb_output.txt 를 심는다. */
