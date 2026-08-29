@@ -199,18 +199,24 @@ class CoreDumpPrintTemplateSmokeTest {
                 "탭 버튼에 data-tab 속성이 없다");
         assertTrue(html.contains("CORE_CURRENT_REV"), "리비전 글로벌 주입이 없다");
 
-        // 넓은 화면 2열 배치 — AI 패널과 콜 체인이 같은 열 래퍼 안에 있어야 flex 2열이 성립한다
+        // 넓은 화면 2열 배치 — 좌열(.cd-sum-main)에 본문 카드 전부, 우열에 AI 패널 단독 (2026-08-26)
         assertTrue(html.contains("class=\"cd-analyze\""), "body 스코프 클래스가 없다 (컨테이너 확장 규칙 미적용)");
         int colsOpen = html.indexOf("class=\"cd-sum-cols\"");
         int colsClose = html.indexOf("<!-- /cd-sum-cols -->");
         assertTrue(colsOpen > 0 && colsClose > colsOpen, "2열 래퍼(cd-sum-cols)가 없다");
+        int mainOpen = html.indexOf("class=\"cd-sum-main\"");
+        int mainClose = html.indexOf("<!-- /cd-sum-main -->");
+        assertTrue(mainOpen > colsOpen && mainClose > mainOpen && mainClose < colsClose,
+                "좌열 래퍼(cd-sum-main)가 2열 래퍼 안에 없다");
         int aiAt = html.indexOf("id=\"cdaPanel\"");
         int chainAt = html.indexOf("callchain-card");
-        assertTrue(aiAt > colsOpen && aiAt < colsClose, "AI 패널이 2열 래퍼 밖에 있다");
-        assertTrue(chainAt > colsOpen && chainAt < colsClose, "콜 체인이 2열 래퍼 밖에 있다");
-        // 분석 경고 배너는 래퍼 앞(전폭) — 열 안에 들어가면 한쪽 열에 갇힌다
+        // AI 패널은 좌열 밖 + 래퍼 안 = 우측 열. 좌열 안으로 들어가면 세로로 쌓여 우측이 빈다
+        assertTrue(aiAt > mainClose && aiAt < colsClose, "AI 패널이 우측 열(cd-sum-main 뒤)에 없다");
+        assertTrue(chainAt > mainOpen && chainAt < mainClose, "콜 체인이 좌열 안에 없다");
+        assertTrue(chainAt < aiAt, "콜 체인이 AI 패널보다 뒤에 있다 (AI 가 맨 우측이 아니다)");
+        // 분석 경고 배너는 좌열 상단 — 콜 체인보다 앞이어야 전폭 배너 성격이 유지된다
         int warnAt = html.indexOf("분석 경고:");
-        assertTrue(warnAt > 0 && warnAt < colsOpen, "분석 경고 배너가 2열 래퍼 안에 있다");
+        assertTrue(warnAt > mainOpen && warnAt < chainAt, "분석 경고 배너가 좌열 상단(콜 체인 앞)에 없다");
 
         // 히어로 = 좌(정체성) / 우(팩트 레일) 2열 + 하단 전폭(신뢰도) — 2026-08-23 재설계
         int heroAt = html.indexOf("card--hero crash-hero");
@@ -240,9 +246,9 @@ class CoreDumpPrintTemplateSmokeTest {
         assertFalse(html.contains("<details class=\"content-card\""), "메타 정보가 접힌 details 로 남아 있다");
         assertTrue(html.contains("meta-dl"), "메타 dl 그리드가 없다");
         assertTrue(html.contains("GDB 버전") && html.contains("분석 완료"), "메타 항목이 누락됐다");
-        // 메타 카드는 구 요약 스트립 자리 — 히어로 바로 아래, 2열 래퍼보다 앞(전폭)
+        // 메타 카드는 구 요약 스트립 자리 — 좌열 안에서 히어로 바로 아래, 콜 체인보다 앞
         assertTrue(metaAt > heroEnd, "덤프 메타 카드가 히어로보다 앞에 있다");
-        assertTrue(metaAt < colsOpen, "덤프 메타 카드가 2열 래퍼 안/뒤에 있다 (구 요약 스트립 자리로 못 옮겨졌다)");
+        assertTrue(metaAt > mainOpen && metaAt < chainAt, "덤프 메타 카드가 좌열 히어로~콜 체인 사이에 없다");
 
         assertTrue(html.trim().endsWith("</html>"), "문서 끝까지 렌더되지 않았다 (파싱 중단 의심)");
     }

@@ -94,6 +94,12 @@ public final class MiddlewareDetector {
         }
         public String displayName() { return displayName; }
         public String category()    { return category; }
+        // 아래 3개는 RAG 지식 익스포트가 읽는다 — 감지 규칙과 색인 문서가 같은 상수를 보게 해
+        // "어떤 마커로 WAS 를 판정하는가" 를 문서와 코드가 따로 관리하지 않도록 한다.
+        // 방어적 복사: 배열은 가변이므로 clone() 으로 내부 상태 노출을 막는다.
+        public String[] prefixes()        { return prefixes.clone(); }
+        public String[] sysPropMarkers()  { return sysPropMarkers.clone(); }
+        public String[] versionPropKeys() { return versionPropKeys.clone(); }
     }
 
     /** 감지 결과. {@link #vendor} 가 null 이면 미식별. */

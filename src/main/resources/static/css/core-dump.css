@@ -852,13 +852,21 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
     color: #E5E7EB; font-size: 13px; text-align: center; line-height: 1.6; padding: 24px;
 }
 
-/* ── 넓은 화면: 요약 카드 2열 (≥1400px) ─────────────────────────────────────
+/* ── 넓은 화면: 요약 본문(좌) + AI 사이드(우) 2열 (≥1400px) ─────────────────
  * 기본은 세로 스택(1열) — 좁은 화면·모바일은 종전 그대로다. 뷰포트가 충분히 넓을 때만
- * 컨테이너를 넓히고 AI 패널(좌)·콜 체인(우)을 나란히 놓아 세로 스크롤을 줄인다.
- * ⚠ 2열은 `.cd-sum-cols` 안에서만 — 히어로/요약 스트립/경고/메타 카드는 전폭이 옳다
- *   (요약 스트립은 이미 3열 그리드, 메타는 auto-fill 그리드라 넓을수록 열이 늘어난다).
- * ⚠ 래퍼가 flex 라 자식이 하나만 렌더돼도(콜 체인 없는 짧은 스택 등) 자동으로 전폭을 쓴다 —
- *   grid 고정 2열이면 빈 칸이 남는다.
+ * 컨테이너를 넓히고 `.cd-sum-main`(히어로·메타·경고·콜 체인)을 좌, AI 크래시 분석 패널을
+ * 우측 사이드로 나란히 놓는다(2026-08-26 — 종전엔 AI 좌 · 콜 체인 우였고 히어로/메타는 전폭).
+ * ⚠ 사이드는 `.cda-panel` **자체**가 `.cd-sum-cols` 의 직계 자식이어야 한다. 별도 래퍼 div 로
+ *   감싸면 AI 가 미렌더(crashSignal == null)일 때 빈 래퍼가 flex-basis 만큼 자리를 먹는다.
+ * ⚠ 래퍼가 flex 라 좌열만 렌더돼도 자동으로 전폭을 쓴다 — grid 고정 2열이면 빈 칸이 남는다.
+ * ⚠ 좌열 폭이 히어로 내부 2열(`minmax(0,1.75fr) minmax(270px,.75fr)`)을 다시 나누므로 사이드는
+ *   `flex: 0 1 37%` (grow 0) 로 **폭을 묶어 둔다**. 사이드를 `1 1 0`(=50%)으로 되돌리면 1400px
+ *   뷰포트에서 히어로 좌열이 ~300px 로 짓눌려 함수명이 글자 단위로 쪼개진다. px 고정이 아니라
+ *   % 인 이유는 1400~1600px 구간에서 좌열이 함께 자라야 하기 때문(1400 → 사이드 429·히어로
+ *   본문 ~373px, 1600 → 사이드 503·히어로 본문 ~499px).
+ *   ⚠ 이 값을 올리면 줄어드는 건 사이드 옆이 아니라 **히어로 본문**이다(레일 270px 는 고정).
+ *   40% 를 넘기면 1400px 에서 본문이 340px 아래로 떨어져 `crash-hero-func`(20px 모노)가
+ *   두 줄로 접힌다 — 올릴 때는 1400px 스크린샷으로 히어로부터 확인할 것.
  * ⚠ `.cd-page` max-width 는 padding(배너 220 + 20)을 포함하므로 실제 콘텐츠 폭은 240 을 뺀 값.
  *   1400px 미만은 콘텐츠가 ~1140px 이하라 2열이 좁아져 적용하지 않는다. */
 @media (min-width: 1400px) {
@@ -866,7 +874,10 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
     body.cd-analyze .cd-sum-cols {
         display: flex; align-items: flex-start; gap: var(--sp-4);
     }
-    body.cd-analyze .cd-sum-cols > * { flex: 1 1 0; min-width: 0; }
+    body.cd-analyze .cd-sum-cols > .cd-sum-main { flex: 1 1 0; min-width: 0; }
+    body.cd-analyze .cd-sum-cols > .cda-panel   { flex: 0 1 37%; min-width: 0; }
+    /* 좌열 마지막 카드의 margin-bottom 이 2열 하단에 빈 줄로 남는다 */
+    body.cd-analyze .cd-sum-main > :last-child { margin-bottom: 0; }
 }
 
 /* ── 반응형 ──────────────────────────────────────────────────────────────── */

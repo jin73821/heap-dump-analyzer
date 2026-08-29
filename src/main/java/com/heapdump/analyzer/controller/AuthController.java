@@ -32,7 +32,7 @@ public class AuthController {
             model.addAttribute("logoutMessage", "로그아웃 되었습니다.");
         }
         if (expired != null) {
-            model.addAttribute("expiredMessage", "세션이 만료되어 자동으로 로그아웃 되었습니다. 다시 로그인해 주세요.");
+            model.addAttribute("expiredMessage", "세션이 만료되어 자동으로 로그아웃 되었습니다.\n다시 로그인해 주세요.");
         }
         if (ssoNotice != null) {
             model.addAttribute("logoutMessage", "SSO 연동은 사내 가이드 확인 후 제공 예정입니다. ID/PW 로그인을 이용해 주세요.");

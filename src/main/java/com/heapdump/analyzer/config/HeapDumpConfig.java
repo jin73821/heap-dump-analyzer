@@ -249,6 +249,32 @@ public class HeapDumpConfig {
     @Value("${rag.chunking.max-total-chars:6000}")
     private int ragChunkingMaxTotalChars;
 
+    // ── Phase 3 — Chroma 벡터 DB (searchMode=chroma) ────────────
+    // ⚠ 여기 @Value 를 빠뜨리면 RagConfigService.init() 이 아무것도 시드하지 못해
+    //   재기동 시 application.properties 왕복이 통째로 죽는다. 설정 동기화 지점은
+    //   applyFromSettings/collectSettings/collectApplicationProperties 3곳이 아니라
+    //   여기와 init() 을 포함해 5곳이다.
+    @Value("${rag.chroma.url:http://127.0.0.1:8000}")
+    private String ragChromaUrl;
+    @Value("${rag.chroma.api-path:/api/v2}")
+    private String ragChromaApiPath;
+    @Value("${rag.chroma.tenant:default_tenant}")
+    private String ragChromaTenant;
+    @Value("${rag.chroma.database:default_database}")
+    private String ragChromaDatabase;
+    @Value("${rag.chroma.collection:heap-knowledge-base}")
+    private String ragChromaCollection;
+    @Value("${rag.chroma.auth-type:none}")
+    private String ragChromaAuthType;
+    @Value("${rag.chroma.token:}")
+    private String ragChromaToken;
+    @Value("${rag.chroma.space:cosine}")
+    private String ragChromaSpace;
+    @Value("${rag.chroma.timeout-seconds:15}")
+    private int ragChromaTimeoutSeconds;
+    @Value("${rag.chroma.ssl-verify:true}")
+    private boolean ragChromaSslVerify;
+
     // ── 로그인 2차인증 설정 ─────────────────────────────────────
     @Value("${security.two-factor.mode:off}")
     private String twoFactorMode;
@@ -592,6 +618,18 @@ public class HeapDumpConfig {
     public int     getRagEmbeddingTimeoutSeconds() { return ragEmbeddingTimeoutSeconds; }
     public String  getRagKnnVectorField()       { return ragKnnVectorField; }
     public int     getRagKnnNumCandidates()     { return ragKnnNumCandidates; }
+
+    // Phase 3 — Chroma
+    public String  getRagChromaUrl()            { return ragChromaUrl; }
+    public String  getRagChromaApiPath()        { return ragChromaApiPath; }
+    public String  getRagChromaTenant()         { return ragChromaTenant; }
+    public String  getRagChromaDatabase()       { return ragChromaDatabase; }
+    public String  getRagChromaCollection()     { return ragChromaCollection; }
+    public String  getRagChromaAuthType()       { return ragChromaAuthType; }
+    public String  getRagChromaToken()          { return ragChromaToken; }
+    public String  getRagChromaSpace()          { return ragChromaSpace; }
+    public int     getRagChromaTimeoutSeconds() { return ragChromaTimeoutSeconds; }
+    public boolean isRagChromaSslVerify()       { return ragChromaSslVerify; }
 
     public boolean isRagChunkingEnabled()        { return ragChunkingEnabled; }
     public String  getRagChunkingStrategy()       { return ragChunkingStrategy; }

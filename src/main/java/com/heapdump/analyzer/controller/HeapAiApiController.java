@@ -2,6 +2,8 @@ package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.service.AiInsightManager;
+import com.heapdump.analyzer.service.ChromaSearchService;
+import com.heapdump.analyzer.service.RagKnowledgeExportService;
 import com.heapdump.analyzer.service.EmbeddingService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.LlmConfigService;
@@ -48,6 +50,8 @@ public class HeapAiApiController {
     private final HeapDumpConfig config;
     private final RagService ragService;
     private final EmbeddingService embeddingService;
+    private final ChromaSearchService chromaSearchService;
+    private final RagKnowledgeExportService knowledgeExport;
 
     public HeapAiApiController(HeapDumpAnalyzerService analyzerService,
                                LlmConfigService llmConfig,
@@ -56,7 +60,9 @@ public class HeapAiApiController {
                                AiInsightManager aiInsight,
                                HeapDumpConfig config,
                                RagService ragService,
-                               EmbeddingService embeddingService) {
+                               EmbeddingService embeddingService,
+                               ChromaSearchService chromaSearchService,
+                               RagKnowledgeExportService knowledgeExport) {
         this.analyzerService = analyzerService;
         this.llmConfig = llmConfig;
         this.rateLimitService = rateLimitService;
@@ -65,6 +71,8 @@ public class HeapAiApiController {
         this.config = config;
         this.ragService = ragService;
         this.embeddingService = embeddingService;
+        this.chromaSearchService = chromaSearchService;
+        this.knowledgeExport = knowledgeExport;
     }
 
     // ── LLM 기본 설정/연결 ────────────────────────────────────────
@@ -703,16 +711,38 @@ public class HeapAiApiController {
         embedding.put("numCandidates", ragConfig.getRagKnnNumCandidates());
         res.put("embedding", embedding);
 
-        // UI 배지용 단일 플래그 — 시크릿 3종 중 하나라도 손상이면 false
+        Map<String, Object> chroma = new LinkedHashMap<>();
+        chroma.put("url", ragConfig.getRagChromaUrl());
+        chroma.put("apiPath", ragConfig.getRagChromaApiPath());
+        chroma.put("tenant", ragConfig.getRagChromaTenant());
+        chroma.put("database", ragConfig.getRagChromaDatabase());
+        chroma.put("collection", ragConfig.getRagChromaCollection());
+        chroma.put("authType", ragConfig.getRagChromaAuthType());
+        chroma.put("tokenSet", ragConfig.isRagChromaTokenSet());
+        chroma.put("tokenMasked", ragConfig.getRagChromaTokenMasked());
+        chroma.put("tokenHealthy", ragConfig.isRagChromaTokenHealthy());
+        chroma.put("tokenIssue", ragConfig.getRagChromaTokenIssue());
+        chroma.put("space", ragConfig.getRagChromaSpace());
+        chroma.put("timeoutSeconds", ragConfig.getRagChromaTimeoutSeconds());
+        chroma.put("sslVerify", ragConfig.isRagChromaSslVerify());
+        res.put("chroma", chroma);
+
+        // UI 배지용 단일 플래그 — 시크릿 4종 중 하나라도 손상이면 false
+        // ⚠ 시크릿을 추가하면 여기도 반드시 늘릴 것 — 빠뜨리면 손상 토큰이 배지에 안 잡힌다.
         res.put("secretsHealthy", ragConfig.isRagPasswordHealthy()
                 && ragConfig.isRagApiKeyHealthy()
-                && ragConfig.isRagEmbeddingApiKeyHealthy());
+                && ragConfig.isRagEmbeddingApiKeyHealthy()
+                && ragConfig.isRagChromaTokenHealthy());
 
-        res.put("availableModes", Arrays.asList("keyword", "semantic-server", "semantic-client"));
+        // 모드 목록의 단일 출처는 RagConfigService.AVAILABLE_MODES 다 —
+        // 여기에 리터럴을 다시 적으면 setter 화이트리스트와 조용히 갈라진다.
+        res.put("availableModes", RagConfigService.AVAILABLE_MODES);
         res.put("availableAuthTypes", Arrays.asList("none", "basic", "api-key"));
         res.put("availableChunkingStrategies", Arrays.asList("fixed", "paragraph", "sentence"));
         res.put("availableSemanticQueryTypes", Arrays.asList("text_expansion", "semantic"));
-        res.put("availableEmbeddingProviders", Arrays.asList("openai", "cohere", "custom"));
+        res.put("availableEmbeddingProviders", Arrays.asList("openai", "cohere", "custom", "local-onnx"));
+        res.put("availableChromaAuthTypes", Arrays.asList("none", "token", "basic"));
+        res.put("availableChromaSpaces", Arrays.asList("cosine", "l2", "ip"));
         return ResponseEntity.ok(res);
     }
 
@@ -791,6 +821,24 @@ public class HeapAiApiController {
                     embDim, embTimeout, knnVectorField, knnCandidates);
         }
 
+        String chUrl        = body.containsKey("chromaUrl")        ? (String) body.get("chromaUrl")        : null;
+        String chApiPath    = body.containsKey("chromaApiPath")    ? (String) body.get("chromaApiPath")    : null;
+        String chTenant     = body.containsKey("chromaTenant")     ? (String) body.get("chromaTenant")     : null;
+        String chDatabase   = body.containsKey("chromaDatabase")   ? (String) body.get("chromaDatabase")   : null;
+        String chCollection = body.containsKey("chromaCollection") ? (String) body.get("chromaCollection") : null;
+        String chAuthType   = body.containsKey("chromaAuthType")   ? (String) body.get("chromaAuthType")   : null;
+        // password/apiKey 와 동일한 3상태 — 키 없음=유지 / ""=삭제 / 값=교체
+        String chToken      = body.containsKey("chromaToken")      ? (String) body.get("chromaToken")      : null;
+        String chSpace      = body.containsKey("chromaSpace")      ? (String) body.get("chromaSpace")      : null;
+        int    chTimeout    = body.containsKey("chromaTimeoutSeconds") ? parseInt(body.get("chromaTimeoutSeconds"), -1) : -1;
+        if (chUrl != null || chApiPath != null || chTenant != null || chDatabase != null
+                || chCollection != null || chAuthType != null || chToken != null
+                || chSpace != null || chTimeout > 0 || body.containsKey("chromaSslVerify")) {
+            boolean chSsl = !Boolean.FALSE.equals(body.get("chromaSslVerify"));
+            analyzerService.setRagChromaConfig(chUrl, chApiPath, chTenant, chDatabase, chCollection,
+                    chAuthType, chToken, chSpace, chTimeout, chSsl);
+        }
+
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
         res.put("url", ragConfig.getRagElasticsearchUrl());
@@ -799,7 +847,47 @@ public class HeapAiApiController {
         res.put("passwordSet", ragConfig.isRagPasswordSet());
         res.put("apiKeySet", ragConfig.isRagApiKeySet());
         res.put("embeddingApiKeySet", ragConfig.isRagEmbeddingApiKeySet());
+        res.put("chromaTokenSet", ragConfig.isRagChromaTokenSet());
         return ResponseEntity.ok(res);
+    }
+
+    /**
+     * Chroma 연결 테스트. 기존 /api/settings/rag/test 와 합치지 않는 이유는
+     * 그쪽이 ES {@code _cluster/health} + 인덱스 HEAD 전용이고, ES 와 Chroma 를
+     * 병행 운용하는 것이 요구사항이기 때문이다(합치면 ES 테스트가 망가진다).
+     *
+     * <p>인가는 SecurityConfig 의 {@code POST /api/settings/**} → ADMIN 패턴이
+     * 이미 덮는다. 경로를 옮기면 인가가 조용히 풀리므로 주의.
+     */
+    /**
+     * 앱 코드 안에만 있는 진단 지식을 RAG 색인용 문서로 내보낸다.
+     * 색인기(`/opt/chroma/app/run-index.sh --sources app`)가 이 응답을 그대로 upsert 한다.
+     *
+     * <p>⚠ 경로가 {@code /api/admin/**} 아래인 것이 인가의 전부다 — SecurityConfig 의
+     * {@code .requestMatchers("/admin/**", "/api/admin/**").hasRole("ADMIN")} 이 덮는다.
+     * {@code /api/rag/...} 같은 곳으로 옮기면 {@code anyRequest()} 가 USER 까지 허용하므로
+     * 일반 사용자에게 열린다. GET 이라 CSRF 는 대상이 아니다.
+     */
+    @GetMapping("/api/admin/rag/knowledge-export")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> exportKnowledge() {
+        List<Map<String, Object>> docs = knowledgeExport.export();
+        Map<String, Object> res = new LinkedHashMap<>();
+        res.put("success", true);
+        res.put("count", docs.size());
+        res.put("docs", docs);
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/api/settings/rag/chroma/test")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> testChromaConnection(
+            @RequestBody(required = false) Map<String, Object> body) {
+        Map<String, Object> overrides = (body == null) ? new LinkedHashMap<>() : body;
+        // 토큰이 빈 문자열이면 저장된 값으로 폴백 — 임베딩 테스트와 동일 규약
+        Object t = overrides.get("chromaToken");
+        if (t == null || String.valueOf(t).trim().isEmpty()) overrides.remove("chromaToken");
+        return ResponseEntity.ok(chromaSearchService.testConnection(overrides));
     }
 
     @PostMapping("/api/settings/rag/test")

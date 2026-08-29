@@ -24,6 +24,10 @@ dist/
 .project
 .classpath
 
+# Claude Code 로컬 설정 — 승인한 셸 명령이 인자까지 그대로 기록된다.
+# 명령 인자에 자격증명이 섞이는 경우가 있고 이 저장소는 public 이므로 커밋 금지.
+.claude/
+
 # 환경 설정 파일 (민감 정보 포함 가능)
 .env
 env.local.sh

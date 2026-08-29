@@ -66,10 +66,13 @@ public class EmbeddingService {
         if (url == null || url.trim().isEmpty()) {
             throw new IllegalStateException("Embedding API URL이 설정되지 않았습니다");
         }
-        if (apiKey == null || apiKey.trim().isEmpty()) {
+        // local-onnx 는 사내 사이드카(127.0.0.1:8001)이고 모델을 서버가 소유하므로
+        // API Key 도 model 도 필요 없다.
+        boolean localOnnx = "local-onnx".equalsIgnoreCase(provider);
+        if (!localOnnx && (apiKey == null || apiKey.trim().isEmpty())) {
             throw new IllegalStateException("Embedding API Key가 설정되지 않았습니다");
         }
-        if (model == null || model.trim().isEmpty()) {
+        if (!localOnnx && (model == null || model.trim().isEmpty())) {
             throw new IllegalStateException("Embedding 모델이 설정되지 않았습니다");
         }
 
@@ -95,7 +98,15 @@ public class EmbeddingService {
                 throw new RuntimeException("Embedding API 호출 실패 (HTTP " + code + "): " + truncate(response, 200));
             }
 
-            return parseEmbedding(provider, response);
+            float[] vec = parseEmbedding(provider, response);
+            // ⚠ 이 설정은 지금까지 저장·표시만 되고 실제로는 한 번도 쓰이지 않았다.
+            //   차원이 어긋나면 Chroma 는 400, ES kNN 은 난해한 오류를 내므로 여기서 먼저 잡는다.
+            int expected = pickInt(overrides, "dimension", ragConfig.getRagEmbeddingDimension());
+            if (expected > 0 && vec.length != expected) {
+                throw new IllegalStateException("임베딩 차원 불일치 — 설정 " + expected
+                        + " / 실제 " + vec.length + " (provider=" + provider + ")");
+            }
+            return vec;
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -128,6 +139,15 @@ public class EmbeddingService {
 
     private String buildRequestBody(String provider, String model, String text) throws Exception {
         Map<String, Object> body = new LinkedHashMap<>();
+        if ("local-onnx".equalsIgnoreCase(provider)) {
+            // 사이드카 계약: {"text": ..., "input_type": "query"|"document"}
+            // ⚠ input_type 은 항상 query 다 — 이 앱은 색인을 하지 않는다(색인은 indexer.py).
+            //   색인/질의 접두사가 어긋나면 에러 없이 검색 품질만 조용히 무너지므로,
+            //   접두사 지식은 전부 사이드카에 가둬 두고 여기서는 의도만 밝힌다.
+            body.put("text", text);
+            body.put("input_type", "query");
+            return objectMapper.writeValueAsString(body);
+        }
         body.put("model", model);
         if ("cohere".equalsIgnoreCase(provider)) {
             body.put("texts", Collections.singletonList(text));
@@ -144,7 +164,11 @@ public class EmbeddingService {
         Map<String, Object> json = objectMapper.readValue(responseBody, Map.class);
         List<? extends Number> vec = null;
 
-        if ("cohere".equalsIgnoreCase(provider)) {
+        if ("local-onnx".equalsIgnoreCase(provider)) {
+            // {embedding: [...]}
+            Object emb = json.get("embedding");
+            if (emb instanceof List) vec = (List<Number>) emb;
+        } else if ("cohere".equalsIgnoreCase(provider)) {
             // {embeddings: [[...]]}
             Object emb = json.get("embeddings");
             if (emb instanceof List && !((List<?>) emb).isEmpty()) {
@@ -194,6 +218,7 @@ public class EmbeddingService {
     }
 
     private void applyAuth(HttpURLConnection conn, String provider, String apiKey) {
+        if ("local-onnx".equalsIgnoreCase(provider)) return;   // 로컬 사이드카 — 인증 없음
         if ("cohere".equalsIgnoreCase(provider)) {
             conn.setRequestProperty("Authorization", "Bearer " + apiKey);
         } else {

@@ -71,6 +71,20 @@ public class RagConfigService {
     private volatile String  ragKnnVectorField;
     private volatile int     ragKnnNumCandidates;
 
+    // ── Chroma 벡터 DB (10) — searchMode=chroma ───────────────────
+    // Chroma 서버는 임베딩을 하지 않는다(REST /query 는 query_embeddings 만 받는다).
+    // 질의 임베딩은 EmbeddingService(provider=local-onnx)가 사이드카에서 받아온다.
+    private volatile String  ragChromaUrl;
+    private volatile String  ragChromaApiPath;      // v1→v2 파괴 변경 대비로 설정화
+    private volatile String  ragChromaTenant;
+    private volatile String  ragChromaDatabase;
+    private volatile String  ragChromaCollection;
+    private volatile String  ragChromaAuthType;     // none | token | basic
+    private final SecretValue ragChromaToken = SecretValue.empty();   // settings.json 에는 ENC
+    private volatile String  ragChromaSpace;        // cosine | l2 | ip — distance→score 변환식을 결정
+    private volatile int     ragChromaTimeoutSeconds;
+    private volatile boolean ragChromaSslVerify;
+
     public RagConfigService(HeapDumpConfig config) {
         this.config = config;
     }
@@ -108,6 +122,16 @@ public class RagConfigService {
         this.ragEmbeddingTimeoutSeconds = config.getRagEmbeddingTimeoutSeconds();
         this.ragKnnVectorField    = config.getRagKnnVectorField();
         this.ragKnnNumCandidates  = config.getRagKnnNumCandidates();
+        this.ragChromaUrl        = config.getRagChromaUrl();
+        this.ragChromaApiPath    = config.getRagChromaApiPath();
+        this.ragChromaTenant     = config.getRagChromaTenant();
+        this.ragChromaDatabase   = config.getRagChromaDatabase();
+        this.ragChromaCollection = config.getRagChromaCollection();
+        this.ragChromaAuthType   = config.getRagChromaAuthType();
+        adopt(ragChromaToken, config.getRagChromaToken(), "chromaToken");
+        this.ragChromaSpace      = config.getRagChromaSpace();
+        this.ragChromaTimeoutSeconds = config.getRagChromaTimeoutSeconds();
+        this.ragChromaSslVerify  = config.isRagChromaSslVerify();
     }
 
     // ── Getter ────────────────────────────────────────────────────
@@ -143,10 +167,21 @@ public class RagConfigService {
     public int     getRagEmbeddingTimeoutSeconds() { return ragEmbeddingTimeoutSeconds; }
     public String  getRagKnnVectorField()       { return ragKnnVectorField; }
     public int     getRagKnnNumCandidates()     { return ragKnnNumCandidates; }
+    public String  getRagChromaUrl()            { return ragChromaUrl; }
+    public String  getRagChromaApiPath()        { return ragChromaApiPath; }
+    public String  getRagChromaTenant()         { return ragChromaTenant; }
+    public String  getRagChromaDatabase()       { return ragChromaDatabase; }
+    public String  getRagChromaCollection()     { return ragChromaCollection; }
+    public String  getRagChromaAuthType()       { return ragChromaAuthType; }
+    public String  getRagChromaToken()          { return ragChromaToken.usable(); }
+    public String  getRagChromaSpace()          { return ragChromaSpace; }
+    public int     getRagChromaTimeoutSeconds() { return ragChromaTimeoutSeconds; }
+    public boolean isRagChromaSslVerify()       { return ragChromaSslVerify; }
 
     public boolean isRagPasswordSet()         { return ragPassword.isSet(); }
     public boolean isRagApiKeySet()           { return ragApiKey.isSet(); }
     public boolean isRagEmbeddingApiKeySet()  { return ragEmbeddingApiKey.isSet(); }
+    public boolean isRagChromaTokenSet()      { return ragChromaToken.isSet(); }
 
     // 손상 상태 — 저장은 돼 있으나 복호화 결과가 훼손돼 사용할 수 없는 경우를 UI/API 에 노출한다.
     public boolean isRagPasswordHealthy()         { return ragPassword.isHealthy(); }
@@ -155,6 +190,9 @@ public class RagConfigService {
     public String  getRagPasswordIssue()          { return nullToEmpty(ragPassword.issue()); }
     public String  getRagApiKeyIssue()            { return nullToEmpty(ragApiKey.issue()); }
     public String  getRagEmbeddingApiKeyIssue()   { return nullToEmpty(ragEmbeddingApiKey.issue()); }
+    public boolean isRagChromaTokenHealthy()      { return ragChromaToken.isHealthy(); }
+    public String  getRagChromaTokenIssue()       { return nullToEmpty(ragChromaToken.issue()); }
+    public String  getRagChromaTokenMasked()      { return maskKey(ragChromaToken); }
 
     public String getRagEmbeddingApiKeyMasked() {
         return maskKey(ragEmbeddingApiKey);
@@ -205,7 +243,10 @@ public class RagConfigService {
         if (apiKey != null)   this.ragApiKey.set(apiKey);
         this.ragIndex = trimOrEmpty(index);
         this.ragSslVerify = sslVerify;
-        this.ragSearchMode = (searchMode == null || searchMode.isEmpty()) ? "keyword" : searchMode;
+        // ⚠ 화이트리스트 필수 — 종전엔 검증이 없어 오타("chrome")가 저장되면
+        //   buildQueryBody 의 default: 가 조용히 BM25 를 돌렸다. 모드가 4개가 되면서
+        //   이 위험이 실질화되므로 미지값은 keyword 로 되돌린다.
+        this.ragSearchMode = normalizeSearchMode(searchMode);
         this.ragTextField = (textField == null || textField.isEmpty()) ? "content" : textField;
         this.ragTopK = Math.max(1, Math.min(20, topK));
         this.ragMinScore = Math.max(0.0, minScore);
@@ -231,7 +272,8 @@ public class RagConfigService {
                                       int dimension, int timeoutSeconds, String vectorField, int numCandidates) {
         if (provider != null) {
             String p = provider.trim().toLowerCase();
-            if (!p.equals("openai") && !p.equals("cohere") && !p.equals("custom")) p = "openai";
+            if (!p.equals("openai") && !p.equals("cohere") && !p.equals("custom")
+                    && !p.equals("local-onnx")) p = "openai";
             this.ragEmbeddingProvider = p;
         }
         if (apiUrl != null)      this.ragEmbeddingApiUrl = apiUrl.trim();
@@ -243,6 +285,37 @@ public class RagConfigService {
         if (numCandidates > 0)   this.ragKnnNumCandidates = Math.max(1, Math.min(10000, numCandidates));
         logger.info("[RAG] semantic-client config updated: provider={}, model={}, dim={}, vectorField={}, numCandidates={}",
                 ragEmbeddingProvider, ragEmbeddingModel, ragEmbeddingDimension, ragKnnVectorField, ragKnnNumCandidates);
+    }
+
+    /**
+     * Chroma 설정. token 은 기존 시크릿 3종과 동일한 3상태 시맨틱 —
+     * null=유지 / ""=삭제 / 그 외=교체.
+     */
+    public void setRagChromaConfig(String url, String apiPath, String tenant, String database,
+                                   String collection, String authType, String token,
+                                   String space, int timeoutSeconds, boolean sslVerify) {
+        if (url != null)        this.ragChromaUrl = url.trim();
+        if (apiPath != null)    this.ragChromaApiPath = apiPath.trim().isEmpty() ? "/api/v2" : apiPath.trim();
+        if (tenant != null)     this.ragChromaTenant = tenant.trim().isEmpty() ? "default_tenant" : tenant.trim();
+        if (database != null)   this.ragChromaDatabase = database.trim().isEmpty() ? "default_database" : database.trim();
+        if (collection != null) this.ragChromaCollection = collection.trim();
+        if (authType != null) {
+            String a = authType.trim().toLowerCase();
+            if (!a.equals("none") && !a.equals("token") && !a.equals("basic")) a = "none";
+            this.ragChromaAuthType = a;
+        }
+        if (token != null) this.ragChromaToken.set(token);
+        if (space != null) {
+            // ⚠ 화이트리스트 필수 — 이 값이 distance→score 변환식을 고른다.
+            //   오타가 들어오면 스코어 방향이 뒤집혀 최악 문서가 최상위로 올라온다.
+            String sp = space.trim().toLowerCase();
+            if (!sp.equals("cosine") && !sp.equals("l2") && !sp.equals("ip")) sp = "cosine";
+            this.ragChromaSpace = sp;
+        }
+        if (timeoutSeconds > 0) this.ragChromaTimeoutSeconds = Math.max(1, Math.min(120, timeoutSeconds));
+        this.ragChromaSslVerify = sslVerify;
+        logger.info("[RAG] chroma config updated: url={}, collection={}, space={}, auth={}, tokenSet={}",
+                ragChromaUrl, ragChromaCollection, ragChromaSpace, ragChromaAuthType, ragChromaToken.isSet());
     }
 
     public void setRagChunkingConfig(boolean enabled, String strategy, int size, int overlap,
@@ -260,6 +333,16 @@ public class RagConfigService {
                 ragChunkingMaxChunksPerDoc, ragChunkingMaxTotalChars);
     }
 
+    /** 지원 검색 모드. 컨트롤러의 availableModes 와 이 목록이 유일한 출처다. */
+    public static final java.util.List<String> AVAILABLE_MODES =
+            java.util.List.of("keyword", "semantic-server", "semantic-client", "chroma");
+
+    static String normalizeSearchMode(String mode) {
+        if (mode == null) return "keyword";
+        String m = mode.trim().toLowerCase();
+        return AVAILABLE_MODES.contains(m) ? m : "keyword";
+    }
+
     private static String trimOrEmpty(String s) { return s == null ? "" : s.trim(); }
 
     // ── Settings 영속화 hook ─────────────────────────────────────
@@ -271,7 +354,7 @@ public class RagConfigService {
         str(saved, "ragPassword",             v -> adopt(ragPassword, v, "password"));
         str(saved, "ragApiKey",               v -> adopt(ragApiKey, v, "apiKey"));
         str(saved, "ragIndex",                v -> this.ragIndex = v);
-        str(saved, "ragSearchMode",           v -> this.ragSearchMode = v);
+        str(saved, "ragSearchMode",           v -> this.ragSearchMode = normalizeSearchMode(v));
         str(saved, "ragTextField",            v -> this.ragTextField = v);
         str(saved, "ragChunkingStrategy",     v -> this.ragChunkingStrategy = v);
         str(saved, "ragSemanticQueryType",    v -> this.ragSemanticQueryType = v);
@@ -296,6 +379,16 @@ public class RagConfigService {
         str(saved, "ragEmbeddingDimension",   v -> this.ragEmbeddingDimension = Integer.parseInt(v));
         str(saved, "ragEmbeddingTimeoutSeconds", v -> this.ragEmbeddingTimeoutSeconds = Integer.parseInt(v));
         str(saved, "ragKnnNumCandidates",     v -> this.ragKnnNumCandidates = Integer.parseInt(v));
+        str(saved, "ragChromaUrl",            v -> this.ragChromaUrl = v);
+        str(saved, "ragChromaApiPath",        v -> this.ragChromaApiPath = v);
+        str(saved, "ragChromaTenant",         v -> this.ragChromaTenant = v);
+        str(saved, "ragChromaDatabase",       v -> this.ragChromaDatabase = v);
+        str(saved, "ragChromaCollection",     v -> this.ragChromaCollection = v);
+        str(saved, "ragChromaAuthType",       v -> this.ragChromaAuthType = v);
+        str(saved, "ragChromaToken",          v -> adopt(this.ragChromaToken, v, "chromaToken"));
+        str(saved, "ragChromaSpace",          v -> this.ragChromaSpace = v);
+        str(saved, "ragChromaTimeoutSeconds", v -> this.ragChromaTimeoutSeconds = Integer.parseInt(v));
+        str(saved, "ragChromaSslVerify",      v -> this.ragChromaSslVerify = Boolean.parseBoolean(v));
     }
 
     /** saved 에 key 가 있으면 String.valueOf 값으로 apply 실행 (기존 if-블록 31개와 동일 시맨틱). */
@@ -335,6 +428,16 @@ public class RagConfigService {
         settings.put("ragEmbeddingTimeoutSeconds", ragEmbeddingTimeoutSeconds);
         settings.put("ragKnnVectorField", ragKnnVectorField);
         settings.put("ragKnnNumCandidates", ragKnnNumCandidates);
+        settings.put("ragChromaUrl", ragChromaUrl);
+        settings.put("ragChromaApiPath", ragChromaApiPath);
+        settings.put("ragChromaTenant", ragChromaTenant);
+        settings.put("ragChromaDatabase", ragChromaDatabase);
+        settings.put("ragChromaCollection", ragChromaCollection);
+        settings.put("ragChromaAuthType", ragChromaAuthType);
+        putSecret(settings, "ragChromaToken", ragChromaToken);
+        settings.put("ragChromaSpace", ragChromaSpace);
+        settings.put("ragChromaTimeoutSeconds", ragChromaTimeoutSeconds);
+        settings.put("ragChromaSslVerify", ragChromaSslVerify);
     }
 
     public void collectApplicationProperties(Map<String, String> updates) {
@@ -369,6 +472,16 @@ public class RagConfigService {
         updates.put("rag.embedding.timeout-seconds", String.valueOf(ragEmbeddingTimeoutSeconds));
         updates.put("rag.search.knn.vector-field", ragKnnVectorField != null ? ragKnnVectorField : "embedding");
         updates.put("rag.search.knn.num-candidates", String.valueOf(ragKnnNumCandidates));
+        updates.put("rag.chroma.url", ragChromaUrl != null ? ragChromaUrl : "");
+        updates.put("rag.chroma.api-path", ragChromaApiPath != null ? ragChromaApiPath : "/api/v2");
+        updates.put("rag.chroma.tenant", ragChromaTenant != null ? ragChromaTenant : "default_tenant");
+        updates.put("rag.chroma.database", ragChromaDatabase != null ? ragChromaDatabase : "default_database");
+        updates.put("rag.chroma.collection", ragChromaCollection != null ? ragChromaCollection : "");
+        updates.put("rag.chroma.auth-type", ragChromaAuthType != null ? ragChromaAuthType : "none");
+        putSecret(updates, "rag.chroma.token", ragChromaToken);
+        updates.put("rag.chroma.space", ragChromaSpace != null ? ragChromaSpace : "cosine");
+        updates.put("rag.chroma.timeout-seconds", String.valueOf(ragChromaTimeoutSeconds));
+        updates.put("rag.chroma.ssl-verify", String.valueOf(ragChromaSslVerify));
     }
 
     /**

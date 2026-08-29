@@ -39,6 +39,8 @@
         .msg-info { background: #EFF6FF; border: 1px solid #BFDBFE; color: #2563EB;
                     padding: 10px 14px; border-radius: 8px; font-size: 13px;
                     margin-bottom: 16px; text-align: center; }
+        /* 메시지 문자열의 개행(\n)을 그대로 줄바꿈으로 렌더 (th:text 이스케이프 유지) */
+        .msg-multiline { white-space: pre-line; line-height: 1.5; }
         .form-remember { display: flex; align-items: center; gap: 8px; margin: 4px 0 4px;
                          font-size: 13px; color: #374151; cursor: pointer;
                          user-select: none; }
@@ -139,7 +141,7 @@
     <div th:if="${disabledMessage}" class="msg-disabled" th:text="${disabledMessage}"></div>
     <div th:if="${errorMessage}" class="msg-error" th:text="${errorMessage}"></div>
     <div th:if="${logoutMessage}" class="msg-info" th:text="${logoutMessage}"></div>
-    <div th:if="${expiredMessage}" class="msg-disabled" th:text="${expiredMessage}"></div>
+    <div th:if="${expiredMessage}" class="msg-disabled msg-multiline" th:text="${expiredMessage}"></div>
 
     <form th:action="@{/login}" method="post" id="loginForm">
         <div class="form-group">

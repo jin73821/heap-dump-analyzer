@@ -18,6 +18,7 @@ import com.heapdump.analyzer.repository.AnalysisResultDetailRepository;
 import com.heapdump.analyzer.repository.DominatorRefsRepository;
 import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.TargetServerRepository;
+import com.heapdump.analyzer.util.MatErrorHint;
 import com.heapdump.analyzer.util.FormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -2122,6 +2123,14 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
+    public void setRagChromaConfig(String url, String apiPath, String tenant, String database,
+                                   String collection, String authType, String token,
+                                   String space, int timeoutSeconds, boolean sslVerify) {
+        ragConfig.setRagChromaConfig(url, apiPath, tenant, database, collection,
+                authType, token, space, timeoutSeconds, sslVerify);
+        persistSettings();
+    }
+
     public void setRagChunkingConfig(boolean enabled, String strategy, int size, int overlap,
                                      int maxChunksPerDoc, int maxTotalChars) {
         ragConfig.setRagChunkingConfig(enabled, strategy, size, overlap, maxChunksPerDoc, maxTotalChars);
@@ -4116,31 +4125,19 @@ public class HeapDumpAnalyzerService {
      * MAT CLI 출력에서 핵심 에러 힌트를 추출합니다.
      * OutOfMemoryError, SnapshotException, 권한 오류 등 주요 패턴을 감지합니다.
      */
+    /**
+     * MAT 실패 출력 → 한국어 안내. 패턴·문구는 {@link MatErrorHint} 가 소유한다
+     * (같은 상수를 RAG 지식 색인도 읽어 화면 문구와 답변 용어를 일치시킨다).
+     */
     private String extractMatErrorHint(String matOutput) {
         if (matOutput == null || matOutput.isEmpty()) return "";
 
         String lower = matOutput.toLowerCase();
+        MatErrorHint hint = MatErrorHint.match(lower);
+        if (hint != null) return hint.hint();
 
-        if (lower.contains("outofmemoryerror") || lower.contains("java.lang.outofmemory")) {
-            return "Java OutOfMemoryError — MAT 실행에 더 많은 힙 메모리가 필요합니다. "
-                    + "MemoryAnalyzer.ini의 -Xmx 값을 늘려주세요.";
-        }
-        if (lower.contains("snapshotexception") || lower.contains("error opening heap dump")) {
-            return "힙 덤프 파일이 손상되었거나 지원하지 않는 형식입니다. "
-                    + "유효한 HPROF/PHD 형식인지 확인하세요.";
-        }
-        if (lower.contains("permission denied") || lower.contains("access denied")) {
-            return "파일 또는 디렉토리 접근 권한이 부족합니다. 파일 권한을 확인하세요.";
-        }
-        if (lower.contains("no such file") || lower.contains("file not found")
-                || lower.contains("cannot find")) {
-            return "파일을 찾을 수 없습니다. 경로가 올바른지 확인하세요.";
-        }
-        if (lower.contains("disk full") || lower.contains("no space left")) {
-            return "디스크 공간이 부족합니다. 불필요한 파일을 정리한 후 다시 시도하세요.";
-        }
         if (lower.contains("exception") || lower.contains("error")) {
-            // 마지막 Exception/Error 라인 추출
+            // 알려진 패턴에 안 걸리면 마지막 Exception/Error 라인을 그대로 보여준다.
             String[] lines = matOutput.split("\n");
             for (int i = lines.length - 1; i >= 0; i--) {
                 String line = lines[i].trim();

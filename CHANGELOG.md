@@ -1,5 +1,249 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-08-29] RAG 평가셋 42건 + 회귀 게이트 — Recall@10 0.881 기준선 확립
+
+**요청:** 검색 품질을 수치로 방어할 것(위 항목의 후속).
+
+### 왜 필요한가
+
+지식만 넣고 끝내면 **좋아졌는지 알 수 없다.** 실제로 이 프로젝트에서 모델을 바꾸며 1위 적중이 4/10 → 7/10 으로 움직였는데, 그 판단이 표본 10개 눈대중이었다. 임베딩 모델·청킹·top-k 를 만질 때마다 근거가 필요하다.
+
+### 구축물
+
+- **`rag-data/eval/queries.jsonl` (42건)** — 문서에서 질문을 **유도**해 정답을 구성상 확정했다(제목을 베끼지 않고 운영자가 쓸 법한 표현으로 작성). 소스별 분포: `oom_kind` 8 / `csv` 8 / `leak_lib` 7 / `core_warn` 6 / `mat_hint` 5 / `leak_fb` 5 / `vendor` 3.
+- **`/opt/chroma/app/evaluate.py`** — Recall@k / MRR. 청크를 origin 단위로 접어 판정하고, **정답 id 가 컬렉션에 없으면 먼저 경고**한다(오타 하나로 점수가 조용히 깎이는 걸 막는다). `--min-recall` 로 회귀 게이트(미달 시 exit 1).
+- **`rag-data/eval/BASELINE.md`** — 기준선과 해석 주의사항.
+
+### 기준선 (834청크 / 365 문서)
+
+| k | Recall@1 | Recall@k | MRR |
+|---:|---:|---:|---:|
+| 3 | 0.476 | 0.690 | 0.583 |
+| 5 | 0.476 | 0.786 | 0.606 |
+| **10** | 0.476 | **0.881** | 0.620 |
+| 20 | 0.476 | 0.929 | 0.623 |
+
+**`rag.search.top-k` 권장 10.** 이후 수확 체감이고 MRR 은 k=8 부터 평평하다. 청크가 350자라 10건이어도 3,500자로 컨텍스트 예산(8,000자)에 여유가 있다 — 청크를 작게 만든 것이 top-k 를 키울 여유를 만들어 줬다. UI 힌트에 근거와 함께 넣었다.
+
+**⚠ Recall@1 0.476 을 품질 저하로 읽지 말 것.** e5 는 코사인 값이 0.86~0.91 좁은 띠에 몰려서, 한 도메인에 365 문서면 상위 후보 간 차이가 0.01 안팎이다(실측: `vendor:WEBLOGIC` 이 6위인데 1위와 **0.0113** 차이). RAG 는 상위 k 건을 프롬프트에 넣으므로 **Recall@k 가 실질 지표**다. Recall@1 을 올리려면 리랭커가 필요한데 이 서버 RAM 으로는 무리다.
+
+### 함께 고친 청킹 버그
+
+문단 경계만 보고 자르면 제목 줄 다음 문단이 한도를 넘는 순간 **제목만 담긴 32자 고아 청크**가 생긴다. 정보가 없는데 제목이라 제목성 질의에 잘 걸려 정작 내용 있는 문서를 밀어낸다(실측: "DirectByteBuffer 가 회수되지 않습니다" 에 32자 제목 청크가 1위, 정확한 178자 설명 문서는 5위 밖). `MIN_CHUNK=150` 으로 짧은 조각을 앞뒤에 합쳤고, 초장문단 분할 시에도 제목을 첫 조각에 합친다. `mat_hint` 2/5→4/5, `oom_kind` 5/8→7/8.
+
+### 평가셋의 한계 (해석 시 감안)
+
+42건 전부 작성자가 문서에서 유도한 질문이라 실제 운영자 어휘 분포와는 다르다. 정답을 문서 1건으로 좁게 잡아 Recall@1 을 과소평가한다(여러 문서가 타당한 답인 경우가 많다). 계획은 `ai_chat` 에서 실제 질문을 뽑으려 했으나 쓸 만한 것이 22건이고 난이도가 낮아 약했다 — **실제 운영 질의가 쌓이면 교체할 것.**
+
+**변경 파일:** `rag-data/eval/{queries.jsonl,BASELINE.md}`(신규), `/opt/chroma/app/{evaluate.py,indexer.py}`, `templates/rag-settings.html`(Top-K 힌트)
+
+
+## [2026-08-29] RAG 임베딩 모델 교체 (패러프레이즈 → 검색 전용) + 지식 익스포터 + 색인 청킹
+
+**요청:** 코드 상수에만 있어 색인되지 않던 진단 지식을 채울 것(위 항목의 후속).
+
+### 결과부터 — 검색 1위 적중 4/10 → 7/10
+
+지식을 채우는 것만으로는 해결되지 않았다. 33건을 색인해도 여전히 대화체 문서가 상위를 독식했고, 파고들자 **모델 선택이 틀렸다**는 게 드러났다.
+
+### ⚠⚠ 패러프레이즈 모델은 RAG 에 쓸 수 없다
+
+`paraphrase-multilingual-MiniLM-L12-v2` → **`intfloat/multilingual-e5-small`** 로 교체했다. 이름 그대로 **패러프레이즈(대칭) 모델**은 "두 문장이 같은 말인가"를 재는데, RAG 는 **질문 → 문서의 비대칭 검색**이다. 다른 과업이다.
+
+질의 "코어덤프에서 SIGSEGV가 났는데 심볼이 안 보입니다" 기준:
+
+| 문서 | MiniLM | e5 |
+|---|---:|---:|
+| 정답 — 디버그 심볼 없음 | 0.0925 | **0.8430** |
+| 정답 — 공유 라이브러리 없음 | 0.0432 | **0.8176** |
+| 오답 — 잡담 만능 문서 | 0.0418 | 0.8085 |
+| 오답 — 캐시 누수 | **0.0652** ← 정답보다 위 | 0.7747 |
+
+MiniLM 은 오답이 정답보다 위였다. 반면 짧은 구절끼리는 `"심볼이 안 보입니다" ↔ "디버그 심볼 없음" = 0.937` 로 멀쩡했다 — **한국어를 못하는 게 아니라 과업이 다른 것**이다. 모델을 고를 때 "한국어 성능"이 아니라 **학습 목표가 retrieval 인지**를 볼 것.
+
+**딸려오는 것 3가지**
+- **접두사 필수** — 색인 `passage: ` / 질의 `query: `. 어긋나면 에러 없이 품질만 무너지므로 `app/embedder.py` 의 `PREFIXES` 한 곳에 가뒀다.
+- **점수 분포가 다르다** — 패러프레이즈 0.0~0.6 vs e5 **0.80~0.94**. 직전 항목이 권장했던 `min-similarity 0.45` 는 e5 에서 **무필터**가 된다. 재측정: 도메인 밖 0.81~0.85 / 도메인 안 0.87~0.94 → **경계 0.86**. UI 힌트와 `ChromaSearchService` 주석에 근거와 함께 박아 뒀다.
+- **양자화본 파일명에 속지 말 것** — e5-small 은 `model_qint8_avx512_vnni.onnx` 하나뿐이라 AVX512 미지원 CPU 에서 못 쓴다고 판단하기 쉽다. **파일명은 최적 하드웨어 힌트일 뿐 실행 요건이 아니다** — 이 CPU(Zen 2/AVX2)에서 정상 동작하고 fp32 와 순위가 같다(RSS 542MB vs 1148MB). 직접 양자화하려다 `quantize_dynamic` 이 가용 2.0GB 에서도 OOM 으로 죽었다(449MB 모델에 3GB+ 필요). 배포된 양자화본을 먼저 시험할 것.
+
+### 색인 시점 청킹이 없었다
+
+`RagService.chunkText` 는 **post-retrieval 전용**이다(검색 결과를 LLM 에 넣기 전 절단). 색인 시점 청킹은 별개인데 빠져 있었고, 긴 문서는 mean pooling 이 벡터를 도메인 평균으로 끌어당겨 **정답 문장을 품고도 검색되지 않았다**. 350자/overlap 60 으로 분할(365 → 838청크).
+
+### Q&A 는 질문을 임베딩하면 안 된다
+
+사용자 질의도 질문이라 **질문끼리의 유사도가 내용 관련성을 압도한다**. "서비스에 어떠한 영향을 미칩니까?" 하나가 SIGSEGV·MAT·JEUS 질의를 전부 가져갔다(0.711). 지식은 답변에 있으므로 답변만 색인하고 질문은 메타로만 둔다. 같은 이유로 **청크마다 제목을 반복해 얹지 말 것** — 제목이 질문이면 짧은 청크를 지배한다(넣었다가 0.445→0.711 로 오히려 나빠져 되돌렸다).
+
+### 지식 익스포터
+
+- **`RagKnowledgeExportService`(신규)** — `OomDetector.OomKind` 11 / `MatErrorHint` 5 / `MiddlewareDetector.Vendor` 8 / 코어덤프 지식 9 = 33건. enum 을 직접 읽어 코드 변경을 재색인만으로 따라간다.
+- **`MatErrorHint`(신규 enum)** — `extractMatErrorHint()` 안의 문구 6개를 꺼냈다. 화면 안내와 RAG 답변이 같은 상수를 본다. ⚠ **선언 순서 = 매칭 우선순위**(원본이 if-else 사슬).
+- `MiddlewareDetector.Vendor` 접근자 3개 추가(방어적 복사).
+- **`GET /api/admin/rag/knowledge-export`** + CLI 진입점. HTTP 는 ADMIN 인증이 필요해 색인기가 쓰기 어려우므로 `heap_dec.sh` 방식의 CLI 를 함께 뒀다.
+
+### 검증
+
+테스트 **466건 통과**. 라이브 통합 확인: 컬렉션 838건, "Tibero JDBC 커서 누수" 질의에 Tibero 문서 3건 0.930/0.919/0.919(교체 전 0.593). MAT OOM 0.936 / Metaspace 0.912 / JEUS 세션 0.900 / 코어덤프 실행파일 0.875 로, 직전 항목에서 실패했던 질의들이 정답을 찾는다.
+
+남은 3건(SIGSEGV 심볼·GC 지연·WAS 식별)은 코퍼스가 아니라 질의 성격 문제로, 정답이 2~3위에 있거나 앱 사용법 질문이다.
+
+**변경 파일:** `service/RagKnowledgeExportService.java`(신규), `util/MatErrorHint.java`(신규), `service/HeapDumpAnalyzerService.java`, `util/MiddlewareDetector.java`, `controller/HeapAiApiController.java`, `templates/rag-settings.html`, `service/ChromaSearchService.java`(주석), `/opt/chroma/app/{embedder,sources,indexer}.py`, `/opt/chroma/env.sh`, `chroma-embed.service`
+
+
+## [2026-08-29] Chroma 벡터 DB RAG — 4번째 검색 모드 추가 + 지식베이스 332청크 구축
+
+**요청:** Chroma DB 로 벡터DB·RAG 를 구축할 것. 설치 스토리지 용량을 산정하고, RAG 용 지식·학습 데이터도 구축할 것.
+
+### 배경 — RAG 가 켜진 채로 아무것도 하지 않고 있었다
+
+`rag.enabled=true` 인데 `rag.elasticsearch.url` 이 플레이스홀더(`https://es.example.local:9200`)였다. `fetchContextForLlm()` 은 어떤 실패든 삼키고 빈 문자열을 돌려주는 계약이라, **매 호출마다 조용히 아무 컨텍스트도 주입하지 않는 상태**가 지속됐다(로그에 RAG 기록 0건). 원인은 `RagService` 에 **색인 코드가 0줄**이라는 데 있다 — `RAG_PHASE2_PLAN.md` 가 "사내 ES 운영팀이 색인해 둔 것"을 전제로 설계됐고 그 전제가 충족되지 않았다. Chroma 도입의 실질은 **색인 주권을 앱이 갖는 것**이다.
+
+### 인프라 (`/opt/chroma`, 앱 외부)
+
+- `chroma.service` (127.0.0.1:8000, `MemoryMax=400M`) + `chroma-embed.service` (127.0.0.1:8001, `MemoryMax=700M`) — systemd. 앱은 `env.sh`+nohup 관례를 쓰지만 여기서 갈라선 이유는 **cgroup 메모리 상한**이다. available RAM 이 1.4~1.8G 뿐이고 Java(18080)·tomcat·MariaDB 가 동거해, 상한 없이는 폭주 시 기존 서비스가 밀려난다. nohup 으로는 걸 수 없다.
+- `/opt/chroma/env.sh` — 경로·포트·버전 핀·모델 지정 단일 지점(전 변수 `${VAR:-기본값}`).
+- `chromadb==1.5.9` / `onnxruntime==1.19.2` / `pysqlite3-binary==0.5.4.post2` (`requirements.lock` 83개 고정).
+- 임베딩: `paraphrase-multilingual-MiniLM-L12-v2` **ONNX int8 384차원**. 저장소가 사전 양자화본을 제공해 변환 작업(optimum·torch ~1GB)이 불필요했다.
+- 색인 파이프라인 `app/{embedder,sources,indexer,embed_server}.py` + `run-index.sh`.
+
+### 앱 변경 — `chroma` 검색 모드
+
+- **`ChromaSearchService`(신규)** — v2 REST 호출 + 응답 정규화. `RagService.search()` 진입부에서 분기하고 기존 ES 본문은 `searchElasticsearch()` 로 이름만 바꿨다. `fetchContextForLlm(String)→String` 계약과 호출처 3곳은 **무변경**.
+- `RagConfigService` — Chroma 10필드 + 시크릿 4번째(`ragChromaToken`) + `setRagChromaConfig()`. `HeapDumpConfig` `@Value` 10개, 파사드, `application.properties` 10키.
+- `EmbeddingService` — `local-onnx` provider(키·모델 불필요, 헤더 없음) + **`ragEmbeddingDimension` 실제 검증**. 이 설정은 그동안 저장·표시만 되고 한 번도 쓰이지 않았다.
+- `HeapAiApiController` — `chroma` 서브맵, `availableModes` 를 `RagConfigService.AVAILABLE_MODES` 단일 출처로 교체, `POST /api/settings/rag/chroma/test` 신규, `secretsHealthy` 4종으로 확장.
+- `rag-settings.html` — Chroma 카드, 모드별 Min Score 힌트, 연결 테스트 버튼.
+- `SecurityConfig` **무변경** — 신규 엔드포인트가 기존 `POST /api/settings/**` → ADMIN 패턴에 이미 포함된다.
+
+### 함께 고친 기존 결함 3건
+
+- **`setRagConfig` 가 `searchMode` 를 전혀 화이트리스트하지 않았다.** 오타(`chrome`)가 저장되면 `buildQueryBody` 의 `default:` 가 조용히 BM25 를 돌렸다. 모드가 4개가 되며 실질화되어 `normalizeSearchMode()` 를 도입했다(setter·`applyFromSettings` 양쪽).
+- **`fetchContextForLlm` 이 결과 0건일 때 로그를 남기지 않았다.** `success=false` 만 warn 하고 있어 "검색은 성공했는데 minScore 때문에 0건"이 완전히 무음이었다. mode/topK/minScore 를 포함한 INFO 를 추가했다.
+- `EmbeddingService.openConnection(url, true)` SSL 하드코딩은 이번 범위 밖이라 그대로 두되, HTTP 헬퍼 8개를 package-private static 으로 열어 `ChromaSearchService` 가 재사용하도록 했다(세 번째 복제 방지). `HttpJsonClient` 정식 추출은 TODO.
+
+### ⚠ 스코어 방향 역전
+
+ES 는 `_score` 가 클수록, Chroma 는 `distance` 가 작을수록 좋다. `toScore()` 가 space 별로 "클수록 좋음"으로 변환해 기존 `minScore` 규약을 유지한다(cosine `1-d` / l2 `1/(1+d)` / ip `-d`). **space 를 잘못 잡으면 최악 문서가 최상위로 올라오는데 에러도 로그도 없다.** 그래서 ① `setRagChromaConfig` 가 space 를 화이트리스트하고 ② UUID 해석 시점에 컬렉션의 실제 `hnsw:space` 를 읽어 불일치 시 WARN 후 실제값을 채택하며 ③ 테스트가 score 단조 비증가를 단언한다.
+
+### 지식·학습 데이터
+
+**332청크** — leak 룰 164(DB, HTML·템플릿 DSL 평탄화) / CSV 84 / leak_suspect 30 / ai_insight 22 / ai_chat 22 / analysis_error 7 / crash_summary 3.
+
+- **`rag-knowledge-20260430.csv` 84행 전부가 파싱 불가 상태였다.** `tags` 가 인용 없이 콤마를 포함해 헤더 8컬럼 대비 데이터가 11~16필드로 읽혔고(정상 8컬럼 행 **0건**), 표준 파서로는 `tags="OOM"`, `source="G1GC"`, `severity="JDK11"` 이 됐다. 앞 4컬럼은 `content` 가 인용돼 정확하고 뒤 3컬럼은 끝에서 세면 되므로 결정적 복구가 가능하다 — `rag-data/tools/fix_knowledge_csv.py` 가 84/84 복구 후 왕복 검증까지 assert 한다(`rag-knowledge-v2.csv`, 9번째 컬럼 `synthetic` 추가).
+- **troubleshooting 11건은 전부 가상 사례**다(`README.md:54` 명시). 색인은 하되 `synthetic=true` 로 표시하고 검색 시 기본 제외한다 — 그대로 두면 RAG 가 허구를 근거로 답한다.
+- **`ai_chat` 이 RAG 를 오염시키고 있었다.** 31쌍 중 9쌍이 잡담("오늘 날씨를 알려줘" 4회, "안녕하세요" 2회, "hi", "아 망했어")인데, 진짜 문제는 답변이다 — 잡담에 대한 정형 답변이 "메모리 누수/JVM 튜닝/OutOfMemoryError" 능력 메뉴를 나열해 **어떤 도메인 질의에나 걸리는 만능 문서**가 됐다. 실측으로 "SIGSEGV 심볼", "MAT OOM" 질의의 상위 3건을 전부 차지해 leak 룰을 밀어냈다. `sources._chat_pair_useful()` 로 걸러낸다. ⚠ 정형문 마커는 **답변 앞 300자에서만** 찾는다 — 충실한 답변도 말미에 "공유해주시면" 같은 맺음말을 붙이므로 전체를 훑으면 좋은 답변까지 버려진다(실제로 "gc 튜닝 가이드 줘"의 답변이 그렇게 제외됐다가 복원).
+- `analysis_result_detail` 은 23건에 3.9MB 지만 `leakSuspects` 는 총 30개뿐이다. 통째로 벡터화하면 HTML 3.9MB 를 넣고 쓸모 있는 건 30청크였을 것 — 추출 규칙이 중요한 이유.
+- 마스킹은 `sources.mask()` 단일 함수(IP·이메일·홈 경로·JDBC 호스트).
+
+### 스토리지 실측
+
+| 항목 | 추정 | 실측 |
+|---|---:|---:|
+| venv (chromadb + 전체 의존) | 500~700 MB | **424 MB** |
+| ONNX int8 모델 + tokenizer | 126 MB | **122 MB** |
+| 설치 피크 (pip 캐시 포함) | ~1.9 GB | **536 MB** |
+| 벡터 데이터 (332청크) | — | **4.07 MB** (12.6 KB/청크) |
+| 상주 합계 | ~0.7 GB | **556 MB** |
+
+청크당 비용이 추정(6KB)의 2배인 이유는 문서 평균이 400자 가정이었으나 실제 633자였기 때문이다(`ai_chat` 2,664자). 15,000청크로 외삽해도 184MB 라 총량은 여전히 작다.
+
+⚠ **`/` 파티션 보호가 필수다.** pip 기본 캐시(`~/.cache/pip`)와 `/tmp` 가 둘 다 `/`(여유 2.2G, 88%)에 있어 그대로 설치하면 임시파일이 `/` 를 채워 MariaDB·httpd·Java 앱이 함께 위험해진다. `TMPDIR`/`PIP_CACHE_DIR` 을 `/opt/chroma` 로 돌려 설치 전후 `/` 무변동을 확인했다.
+
+⚠ **`chroma utils vacuum` 은 없는 명령이다** — 1.5.9(Rust 재작성)에서는 최상위 `chroma vacuum --path`. 실측 회수율 23%(5.92→4.57MB). 재색인(`--reset`)은 `data/{uuid}/` 를 176KB 씩 남기는데, **디렉토리 이름은 컬렉션 ID 가 아니라 세그먼트 ID** 라 컬렉션 목록과 대조해 지우면 살아있는 세그먼트를 지운다. 반드시 `chroma.sqlite3` 의 `segments` 테이블로 판정할 것.
+
+### 검증
+
+전체 단위 테스트 **466건 통과**(444 + 신규 22, 라이브 3건은 기본 skip).
+
+- `ChromaSearchServiceTest`(8) — distance→score 변환, **score 단조 비증가**(부호 오류 탐지), `documents:null` 폴백, 빈 결과 안전성. ⚠ Chroma 는 `include` 에서 빠진 필드를 빈 배열이 아니라 **null** 로 준다(실측 확인).
+- `RagChromaConfigTest`(9) — **리플렉션 스윕**으로 모든 volatile 필드가 `collectSettings` 에 있는지 + 두 훅의 항목 수 정합성을 단언한다. RAG 설정은 `@Value`→`init()`→`applyFromSettings`→`collectSettings`→`collectApplicationProperties` **5곳**을 동시에 고쳐야 살고, 하나라도 빠지면 예외 없이 값만 유실된다(기존 31필드까지 소급 보호).
+- `RagSettingsTemplateSmokeTest`(2) — 707줄짜리 이 템플릿에 그동안 스모크가 없었다. 함정 23(Thymeleaf `[[`)은 카드 추가 같은 편집에서 정확히 터지고 증상이 빈 화면이라 정적 검증으로는 못 잡는다.
+- `ChromaLiveIntegrationTest`(3, `-Dchroma.live=true` 로만 실행) — 실제 배선 확인. 실행 결과: 컬렉션 332건/space=cosine, "Tibero JDBC 커서 누수" 질의에 Tibero 문서 3건이 0.593/0.553/0.544 내림차순, synthetic 제외 동작.
+
+**검색 품질 기준선**: G1GC OOM·Tibero 누수·WebLogic 풀 고갈은 0.56~0.65 로 정확. JEUS 세션·SIGSEGV 심볼·MAT OOM 은 0.36~0.62 로 무관한 문서가 잡히는데, **셋 다 해당 지식이 Java 코드 상수에만 있어 아직 색인되지 않은 것**이다(코어덤프 품질 경고 11건, MAT 에러 힌트 7건). 검색 엔진이 아니라 코퍼스 구멍임이 실증됐다 — 지식 익스포터가 후속 과제.
+
+**롤백**: `rag.search.mode=keyword` 로 되돌리면 `search()` 진입 분기에 걸리지 않아 즉시 종전 ES 경로로 복귀한다. `rag.enabled=false` 면 `fetchContextForLlm` 이 첫 줄에서 `""` 를 반환한다. 두 서비스를 내려도 앱은 영향받지 않는다(연결 실패 시에도 `""`, 예외 미전파). ⚠ 단 `ragEmbeddingProvider` 는 semantic-client 와 **공유**하므로, chroma→semantic-client 로 되돌리면 `local-onnx`/384차원이 남아 ES kNN 이 깨진다 — 모드만 되돌려서는 임베딩 설정이 복구되지 않는다(신규 차원 검증이 명확한 메시지를 준다).
+
+**변경 파일:** `service/ChromaSearchService.java`(신규 335줄), `service/{RagService,RagConfigService,EmbeddingService,HeapDumpAnalyzerService}.java`, `config/HeapDumpConfig.java`, `controller/HeapAiApiController.java`, `templates/rag-settings.html`, `resources/application.properties`, `rag-data/{rag-knowledge-v2.csv,tools/fix_knowledge_csv.py}`, 테스트 4개
+
+
+## [2026-08-26] 코어덤프 결과 요약 탭 — AI 크래시 분석을 맨 우측 열로 이동
+
+**요청:** 코어파일 분석 완료 페이지에서 AI 크래시 분석 카드를 맨 우측으로 옮겨, 크래시 발생 지점(히어로)·크래시 콜 체인 카드의 우측에 놓을 것.
+
+### 변경
+
+- `templates/core-dump/analyze.html` — 요약 탭 2열 구조 재편. `.cd-sum-cols` 여는 위치를 히어로 **앞**으로 끌어올리고 좌열 래퍼 `.cd-sum-main` 을 신설해 **히어로 → 덤프 메타 → 경고 배너 → 콜 체인**을 담았다. AI 패널(`#cdaPanel`)은 좌열 밖·래퍼 안, 즉 DOM 상 콜 체인 **뒤**로 이동해 우측 열이 된다. 카드 마크업 자체는 무변경(잘라 붙이기만) — 이동한 블록의 `th:if` 조건도 그대로다.
+- `static/css/core-dump.css` — `@media (min-width: 1400px)` 규칙을 `> *` 일괄 `flex: 1 1 0`(=50:50) 에서 좌 `.cd-sum-main { flex: 1 1 0 }` · 우 `.cda-panel { flex: 0 1 37% }` 로 분리. 좌열 마지막 카드의 `margin-bottom` 제거 규칙 추가. 캐시 키 `?v=2026-08-23d` → `?v=2026-08-26b` (코어덤프 3 템플릿 일괄).
+- `CoreDumpPrintTemplateSmokeTest` — 배치 계약 검증을 새 구조로 갱신(좌열 래퍼 존재 / AI 는 좌열 뒤·래퍼 안 / 콜 체인·메타·경고는 좌열 안 / 콜 체인 < AI 순서).
+
+### 폭을 50:50 이 아니라 37% 로 묶은 이유
+
+좌열이 히어로 내부 2열(`minmax(0,1.75fr) minmax(270px,.75fr)`)을 **다시** 나눈다. 종전 2열은 AI·콜 체인 둘 다 단순 카드라 50:50 이 맞았지만, 히어로가 좌열로 들어온 지금 50:50 이면 1400px 뷰포트에서 히어로 좌열이 약 300px 로 짓눌려 함수명이 글자 단위로 쪼개진다(레일 `min-width: 270px` 는 안 줄어든다). 사이드를 `flex: 0 1 37%`(grow 0) 로 두면 1400px 에서 사이드 429·히어로 본문 약 373px, 1600px 에서 503·499px 로 좌열이 함께 자란다. px 고정이면 이 구간에서 좌열만 커져 사이드가 상대적으로 야위어 보인다.
+
+이 값을 올릴 때 줄어드는 건 사이드 옆 여백이 아니라 **히어로 본문**이다. 40% 를 넘기면 1400px 에서 본문이 340px 아래로 떨어져 `crash-hero-func`(20px 모노)가 두 줄로 접히므로, 조정 시 1400px 스크린샷으로 히어로부터 확인한다.
+
+사이드를 별도 래퍼 div 로 감싸지 않고 `.cda-panel` 자체를 `.cd-sum-cols` 직계 자식으로 둔 것도 의도적이다 — AI 패널은 `crashSignal == null` 이면 미렌더인데, 빈 래퍼가 남으면 flex-basis 만큼 우측이 빈 채로 자리를 먹는다. 래퍼가 flex 라 좌열만 렌더돼도 자동으로 전폭을 쓴다(grid 고정 2열이면 빈 칸이 남는다 — 종전 주석의 이유가 그대로 유효).
+
+`.cd-sum-main` 은 1400px 미만에서 아무 CSS 도 걸리지 않는 평범한 블록이라 좁은 화면·모바일 렌더는 종전과 동일하다. 단 1열로 접혔을 때의 카드 순서는 **AI 가 콜 체인 앞 → 맨 뒤**로 바뀐다(DOM 순서 = 시각 순서 유지).
+
+**검증:** 전체 단위 테스트 444건 통과(`CoreDumpPrintTemplateSmokeTest` 5건 포함). SpringTemplateEngine 단독 렌더본을 헤드리스 Chrome 으로 1600/1400/1300px 촬영해 ① 1600·1400 에서 AI 가 히어로~콜 체인 우측 단일 열 ② 1300 에서 종전대로 세로 1열 ③ 히어로 내부 2열이 좌열 안에서 유지되고 폭 37% 에서도 `crash_here` 가 한 줄로 남음을 확인.
+
+**변경 파일:** `templates/core-dump/analyze.html`(구조 재배치 +4줄), `static/css/core-dump.css`(2열 규칙), `templates/core-dump/{analyze,index,progress}.html`(캐시 키), `CoreDumpPrintTemplateSmokeTest.java`
+
+
+## [2026-08-24] 세션 만료 안내 문구 2줄 렌더 — `th:text` 이스케이프를 유지한 채 개행
+
+**요청:** 로그인 화면의 "세션이 만료되어 자동으로 로그아웃 되었습니다. 다시 로그인해 주세요." 를 문장 단위로 2줄로 표시.
+
+### 변경
+
+- `AuthController.loginPage()` — `expiredMessage` 문자열의 문장 사이 공백을 `\n` 으로 교체.
+- `templates/login.html` — 만료 배너 div 에 `msg-multiline` 클래스 추가 + 인라인 CSS `.msg-multiline { white-space: pre-line; line-height: 1.5; }` 신설.
+
+`<br>` + `th:utext` 대신 **`\n` + `white-space: pre-line`** 을 쓴 이유는 `th:text` 의 HTML 이스케이프를 그대로 유지하기 위해서다(같은 슬롯에 다른 메시지가 들어와도 마크업 주입 여지가 없다). `pre-line` 은 개행만 보존하고 공백 접기·자동 줄바꿈은 유지하므로 모바일 좁은 폭에서도 기존처럼 자연스럽게 재줄바꿈된다. CSS 는 `login.html` 인라인이라 `?v=` 캐시 키 갱신 대상이 아니다.
+
+배경색·테두리는 `msg-disabled` 를 그대로 쓰고 `msg-multiline` 은 개행 규칙만 얹는 형태라, 다른 메시지 3종(`msg-error`/`msg-info`/`msg-disabled`) 은 영향 없음.
+
+**검증:** `GET /login?expired=1` 응답 본문에 실제 개행이 포함된 `<div class="msg-disabled msg-multiline">…되었습니다.\n다시 로그인해 주세요.</div>` 확인.
+
+**변경 파일:** `AuthController.java`(1줄), `templates/login.html`(+2줄)
+
+
+## [2026-08-24] `https://park1v.mooo.com:18080` ERR_SSL_PROTOCOL_ERROR — 옆 서비스가 심은 HSTS 가 18080 까지 끌고 갔다
+
+**제보:** `https://park1v.mooo.com:18080/` 접속 시 ERR_SSL_PROTOCOL_ERROR. `http://` 로 바꿔도 **동일 증상**.
+
+### 원인 — 앱·서버 설정은 무관, 브라우저가 스킴을 바꿔 보내고 있었다
+
+heap-analyzer 는 처음부터 **평문 HTTP 커넥터**다(`application.properties` 에 `server.ssl.*` 없음, `certs/` 부재). 그런데 `http://` 로 쳐도 실패한 게 핵심 단서였다 — 접속 로그(`logs/access/access.log`)상 사용자 IP 의 오늘 요청은 **전부 `"-" 400`**(TLS ClientHello 를 HTTP 로 파싱 실패해 요청라인이 빈 값)이고 **평문 요청은 0건**이었다.
+
+범인은 **전날(2026-08-23 16:0x) Apache 에 추가된 `/infoscale/` 리버스 프록시**다. 그 블록이 `RequestHeader set X-Forwarded-Proto "https"` 를 넣어 백엔드(127.0.0.1:8090, Spring Security)가 요청을 secure 로 판정 → `Strict-Transport-Security: max-age=31536000 ; includeSubDomains` 를 응답했다. 같은 요청을 경유만 바꿔 찍으면 확정적이다:
+
+| 경로 | Strict-Transport-Security |
+|---|---|
+| 백엔드 직접 `http://127.0.0.1:8090/infoscale/` | 없음 |
+| Apache 경유 `https://park1v.mooo.com/infoscale/` | `max-age=31536000 ; includeSubDomains` |
+
+**HSTS 는 RFC 6797 §8.3 상 "호스트" 단위이고 포트를 구분하지 않는다.** 그래서 사용자가 `https://park1v.mooo.com/infoscale/` 를 한 번 열자 브라우저가 호스트 전체에 1년치를 등록했고, 이후 `http://park1v.mooo.com:18080/` 입력이 내부적으로 `https://park1v.mooo.com:18080/` 로 업그레이드(307 Internal Redirect)돼 평문 커넥터를 때렸다. **앱은 물론 Apache 의 다른 프록시(`/guac`·`/zabbix`·`/vuln/`)도 HSTS 를 안 보낸다 — `/infoscale/` 단독 범인.**
+
+### 조치 — `<Location /infoscale/>` 에서 HSTS 무력화 (`/etc/httpd/conf.d/ssl.conf`)
+
+```apache
+Header unset Strict-Transport-Security          # 백엔드가 headers_out 에 넣은 것 제거
+Header always unset Strict-Transport-Security   # err_headers_out 쪽도 제거
+Header always set Strict-Transport-Security "max-age=0"
+```
+
+`max-age=0` 을 **덮어쓰는** 이유는, 이미 1년치가 박힌 브라우저는 이 페이지를 다시 방문해야 등록이 해제되기 때문이다(단순 `unset` 만 하면 기존 등록은 1년간 그대로 남는다). unset 2줄을 함께 둔 건 `always`(err_headers_out)와 기본(headers_out) 테이블이 **동시에 실려 헤더가 2개로 중복 출력되는** 것을 막기 위해서다 — 검증에서 헤더 개수 1 확인.
+
+검증: `/infoscale/` 302·`/infoscale/login` 200 모두 `Strict-Transport-Security: max-age=0` 단일 헤더, `/` 200 · `/heap/login` 200 · `/guac` 302 · 평문 `http://127.0.0.1:18080/login` 200 정상. (`/zabbix` 503 은 백엔드 `zabbmg1t:88` 자체 불통 — 본 변경과 무관한 기존 상태.)
+
+백업: `/etc/httpd/conf.d/ssl.conf.bak.20260824-0017-hsts-off`
+
+⚠ **후속(수 주 뒤):** 해제가 충분히 퍼지면 `Header always set ... "max-age=0"` 줄을 지우고 unset 2줄만 남길 것(설정 파일에 TODO 주석으로 명시). ⚠ **트레이드오프:** infoscale 은 이제 HTTPS 강제를 잃는다. 애초에 정공법은 18080 에 TLS 를 붙이거나(`server.ssl.*` + Let's Encrypt PKCS12) Apache 에 전용 HTTPS vhost 를 두어 HSTS 를 유지하는 쪽이다 — 향후 필요 시 재검토. ⚠ **같은 호스트에 평문 포트와 HTTPS 서비스를 섞어 두는 한 이 충돌은 언제든 재발한다** — 새 프록시 백엔드를 붙일 때 그 백엔드가 HSTS 를 보내는지 먼저 확인할 것.
+
+
 ## [2026-08-23] 세션 무동작 만료가 영원히 오지 않던 문제 — 배경 폴링 게이트 + 유휴 타이머 신설
 
 **제보:** 세션 타임아웃이 1시간인데, 브라우저를 로그인 상태로 두고 아무 조작 없이 2시간이 지나도 페이지가 그대로다. 만료되면 자동으로 로그인 페이지로 이동해야 한다.

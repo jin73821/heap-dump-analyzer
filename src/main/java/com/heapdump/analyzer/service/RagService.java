@@ -32,10 +32,13 @@ public class RagService {
 
     private final RagConfigService ragConfig;
     private final EmbeddingService embeddingService;
+    private final ChromaSearchService chromaSearchService;
 
-    public RagService(RagConfigService ragConfig, EmbeddingService embeddingService) {
+    public RagService(RagConfigService ragConfig, EmbeddingService embeddingService,
+                      ChromaSearchService chromaSearchService) {
         this.ragConfig = ragConfig;
         this.embeddingService = embeddingService;
+        this.chromaSearchService = chromaSearchService;
     }
 
     /**
@@ -58,7 +61,14 @@ public class RagService {
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> hits = (List<Map<String, Object>>) result.get("hits");
-        if (hits == null || hits.isEmpty()) return "";
+        if (hits == null || hits.isEmpty()) {
+            // 검색은 성공했는데 결과가 0건인 경우는 지금까지 완전히 무음이었다.
+            // minScore 가 모드에 맞지 않으면(예: BM25 용 2.0 을 코사인 모드에 그대로 사용)
+            // 컨텍스트가 조용히 사라지므로 판단 근거를 남긴다.
+            logger.info("[RAG] 검색 결과 0건 — mode={}, topK={}, minScore={} (컨텍스트 미주입)",
+                    ragConfig.getRagSearchMode(), ragConfig.getRagTopK(), ragConfig.getRagMinScore());
+            return "";
+        }
 
         boolean chunking = ragConfig.isRagChunkingEnabled();
         int maxTotalChars = ragConfig.getRagChunkingMaxTotalChars();
@@ -226,7 +236,25 @@ public class RagService {
      * @return success/hits/error 등 키를 포함한 결과 맵
      */
     @SuppressWarnings("unchecked")
+    /**
+     * 검색 백엔드 라우팅. chroma 모드만 다른 서비스로 넘기고 나머지는 종전 ES 경로다.
+     *
+     * <p>여기서 갈라야 하는 이유 — Chroma 는 URL 형태({@code /{index}/_search} vs
+     * {@code /api/v2/.../{uuid}/query}), 인증 헤더, 응답 구조, 스코어 방향이 모두
+     * 달라서 {@code buildQueryBody} switch 확장으로는 처리할 수 없다.
+     *
+     * <p>{@code rag.search.mode} 를 keyword 로 되돌리면 이 분기에 걸리지 않아
+     * 즉시 종전 동작으로 복귀한다.
+     */
     public Map<String, Object> search(String query, Map<String, Object> overrides) {
+        String backend = pickStr(overrides, "searchMode", ragConfig.getRagSearchMode());
+        if ("chroma".equalsIgnoreCase(backend)) {
+            return chromaSearchService.search(query, overrides);
+        }
+        return searchElasticsearch(query, overrides);
+    }
+
+    private Map<String, Object> searchElasticsearch(String query, Map<String, Object> overrides) {
         Map<String, Object> result = new LinkedHashMap<>();
 
         String url    = pickStr(overrides, "url",    ragConfig.getRagElasticsearchUrl());
@@ -510,7 +538,9 @@ public class RagService {
         }
     }
 
-    private HttpURLConnection openConnection(String urlStr, boolean sslVerify) throws Exception {
+    // package-private static — ChromaSearchService 가 재사용한다(HTTP 코드 3중 복제 방지).
+    // TODO: EmbeddingService 까지 묶어 HttpJsonClient 로 정식 추출(계획 단계 1).
+    static HttpURLConnection openConnection(String urlStr, boolean sslVerify) throws Exception {
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         if (!sslVerify && conn instanceof HttpsURLConnection) {
@@ -519,7 +549,7 @@ public class RagService {
         return conn;
     }
 
-    private void disableSslVerification(HttpsURLConnection conn) throws Exception {
+    private static void disableSslVerification(HttpsURLConnection conn) throws Exception {
         TrustManager[] trustAll = new TrustManager[]{ new X509TrustManager() {
             public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
             public void checkClientTrusted(X509Certificate[] c, String s) {}
@@ -554,7 +584,7 @@ public class RagService {
         }
     }
 
-    private static String readStream(InputStream is) throws Exception {
+    static String readStream(InputStream is) throws Exception {
         if (is == null) return "";
         StringBuilder sb = new StringBuilder();
         try (BufferedReader br = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
@@ -564,7 +594,7 @@ public class RagService {
         return sb.toString();
     }
 
-    private static String stripTrailingSlash(String s) {
+    static String stripTrailingSlash(String s) {
         return s.endsWith("/") ? s.substring(0, s.length() - 1) : s;
     }
 
@@ -596,25 +626,25 @@ public class RagService {
         return null;
     }
 
-    private static String pickStr(Map<String, Object> overrides, String key, String fallback) {
+    static String pickStr(Map<String, Object> overrides, String key, String fallback) {
         if (overrides == null) return fallback;
         Object v = overrides.get(key);
         return v == null ? fallback : String.valueOf(v);
     }
 
-    private static int pickInt(Map<String, Object> overrides, String key, int fallback) {
+    static int pickInt(Map<String, Object> overrides, String key, int fallback) {
         if (overrides == null || overrides.get(key) == null) return fallback;
         try { return Integer.parseInt(String.valueOf(overrides.get(key))); }
         catch (Exception e) { return fallback; }
     }
 
-    private static double pickDouble(Map<String, Object> overrides, String key, double fallback) {
+    static double pickDouble(Map<String, Object> overrides, String key, double fallback) {
         if (overrides == null || overrides.get(key) == null) return fallback;
         try { return Double.parseDouble(String.valueOf(overrides.get(key))); }
         catch (Exception e) { return fallback; }
     }
 
-    private static boolean pickBool(Map<String, Object> overrides, String key, boolean fallback) {
+    static boolean pickBool(Map<String, Object> overrides, String key, boolean fallback) {
         if (overrides == null || overrides.get(key) == null) return fallback;
         return Boolean.parseBoolean(String.valueOf(overrides.get(key)));
     }

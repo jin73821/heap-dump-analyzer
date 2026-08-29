@@ -225,19 +225,28 @@
                 <option value="keyword">keyword (BM25)</option>
                 <option value="semantic-server">semantic-server (ES inference)</option>
                 <option value="semantic-client">semantic-client (앱측 임베딩 + kNN)</option>
+                <option value="chroma">chroma (로컬 벡터 DB)</option>
             </select>
         </div>
         <div class="s-row">
             <span class="s-key">Text Field</span>
             <input type="text" id="ragTextField" class="input-num" style="text-align:left;font-family:'JetBrains Mono',monospace" placeholder="content">
         </div>
-        <div class="s-row">
-            <span class="s-key">Top-K (검색 결과 개수)</span>
-            <input type="number" id="ragTopK" class="input-num" min="1" max="20" value="3">
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:4px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <span class="s-key">Top-K (검색 결과 개수)</span>
+                <input type="number" id="ragTopK" class="input-num" min="1" max="20" value="3">
+            </div>
+            <!-- 모드별 권장값이 다르다. onRagModeChange() 가 갱신한다. -->
+            <span id="topKHint" class="setting-desc" style="margin-top:0"></span>
         </div>
-        <div class="s-row">
-            <span class="s-key">Min Score (최소 점수, 0=필터 없음)</span>
-            <input type="number" id="ragMinScore" class="input-num" step="0.1" min="0" value="0">
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:4px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <span class="s-key">Min Score (최소 점수, 0=필터 없음)</span>
+                <input type="number" id="ragMinScore" class="input-num" step="0.1" min="0" value="0">
+            </div>
+            <!-- 모드마다 점수 스케일이 달라 같은 값의 의미가 바뀐다. onRagModeChange() 가 갱신한다. -->
+            <span id="minScoreHint" class="setting-desc" style="margin-top:0"></span>
         </div>
         <div class="s-row">
             <span class="s-key">Timeout (초)</span>
@@ -294,6 +303,7 @@
                 <option value="openai">openai</option>
                 <option value="cohere">cohere</option>
                 <option value="custom">custom (OpenAI 호환)</option>
+                <option value="local-onnx">local-onnx (로컬 사이드카)</option>
             </select>
         </div>
         <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
@@ -333,6 +343,69 @@
     </div>
 
     <!-- Chunking -->
+    <div class="card" id="cardChroma" style="display:none">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg>
+            Chroma (로컬 벡터 DB)
+        </div>
+        <div class="info-banner" style="margin-bottom:12px">
+            로컬 Chroma 서버에서 벡터 검색합니다. <strong>Chroma 서버는 임베딩을 하지 않으므로</strong>
+            위 Embedding 설정(provider <code>local-onnx</code>)으로 질의 벡터를 만든 뒤 조회합니다.
+            색인은 앱이 아니라 <code>/opt/chroma/app/run-index.sh</code> 가 담당합니다.
+        </div>
+        <div class="s-row">
+            <span class="s-key">Server URL</span>
+            <input type="text" id="chromaUrl" class="input-text" placeholder="http://127.0.0.1:8000">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Collection</span>
+            <input type="text" id="chromaCollection" class="input-text" placeholder="heap-knowledge-base">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Distance Space</span>
+            <select id="chromaSpace" class="input-sel">
+                <option value="cosine">cosine (권장)</option>
+                <option value="l2">l2</option>
+                <option value="ip">ip (내적)</option>
+            </select>
+        </div>
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">Auth</span>
+            <select id="chromaAuth" class="input-sel" onchange="onChromaAuthChange()">
+                <option value="none">none</option>
+                <option value="token">token (x-chroma-token)</option>
+                <option value="basic">basic</option>
+            </select>
+        </div>
+        <div class="s-row" id="chromaTokenBox" style="display:none;flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">Token</span>
+            <input type="password" id="chromaToken" class="input-text" placeholder="Token">
+            <span id="chromaTokenHint" class="setting-desc" style="margin-top:0"></span>
+            <label id="chromaTokenClearRow" class="secret-clear"><input type="checkbox" id="chromaTokenClear" onchange="onSecretClearChange('chromaToken')"> 저장된 Token 지우기</label>
+        </div>
+        <div class="s-row">
+            <span class="s-key">API Path</span>
+            <input type="text" id="chromaApiPath" class="input-num" style="text-align:left;font-family:'JetBrains Mono',monospace" placeholder="/api/v2">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Tenant / Database</span>
+            <input type="text" id="chromaTenant" class="input-num" style="text-align:left" placeholder="default_tenant">
+            <input type="text" id="chromaDatabase" class="input-num" style="text-align:left" placeholder="default_database">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Timeout (초)</span>
+            <input type="number" id="chromaTimeout" class="input-num" min="1" max="120" placeholder="15">
+        </div>
+        <div class="s-row">
+            <span class="s-key">TLS 검증</span>
+            <label class="tog"><input type="checkbox" id="chromaSslVerify" checked><span></span></label>
+        </div>
+        <div style="margin-top:12px">
+            <button type="button" class="btn-test" onclick="testChromaConn()">Chroma 연결 테스트</button>
+            <div id="chromaTestResult" class="test-result"></div>
+        </div>
+    </div>
+
     <div class="card">
         <div class="card-title">
             <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -502,7 +575,21 @@ function loadRagSettings() {
         document.getElementById('ragKnnField').value    = e.vectorField || 'embedding';
         document.getElementById('ragKnnCandidates').value = e.numCandidates != null ? e.numCandidates : 50;
 
+        var ch = d.chroma || {};
+        document.getElementById('chromaUrl').value        = ch.url || '';
+        document.getElementById('chromaCollection').value = ch.collection || '';
+        document.getElementById('chromaSpace').value      = ch.space || 'cosine';
+        document.getElementById('chromaAuth').value       = ch.authType || 'none';
+        document.getElementById('chromaToken').value      = '';
+        renderSecretHint('chromaToken', ch.tokenSet, ch.tokenHealthy, ch.tokenMasked, ch.tokenIssue, '토큰');
+        document.getElementById('chromaApiPath').value    = ch.apiPath || '/api/v2';
+        document.getElementById('chromaTenant').value     = ch.tenant || 'default_tenant';
+        document.getElementById('chromaDatabase').value   = ch.database || 'default_database';
+        document.getElementById('chromaTimeout').value    = ch.timeoutSeconds != null ? ch.timeoutSeconds : 15;
+        document.getElementById('chromaSslVerify').checked = ch.sslVerify !== false;
+
         onRagAuthChange();
+        onChromaAuthChange();
         onRagModeChange();
         onSemanticQueryTypeChange();
     }).catch(function(e) { toast('설정 로드 실패: ' + e.message, 'error'); });
@@ -511,7 +598,38 @@ function loadRagSettings() {
 function onRagModeChange() {
     var mode = document.getElementById('ragMode').value;
     document.getElementById('cardSemanticServer').style.display = (mode === 'semantic-server') ? 'block' : 'none';
-    document.getElementById('cardSemanticClient').style.display = (mode === 'semantic-client') ? 'block' : 'none';
+    // chroma 도 질의 임베딩이 필요해 Embedding 카드를 함께 보여준다
+    // (Chroma 서버는 임베딩을 하지 않는다 — /query 는 query_embeddings 만 받는다).
+    document.getElementById('cardSemanticClient').style.display =
+        (mode === 'semantic-client' || mode === 'chroma') ? 'block' : 'none';
+    document.getElementById('cardChroma').style.display = (mode === 'chroma') ? 'block' : 'none';
+
+    // Min Score 의 의미가 모드마다 다르다 — BM25 점수와 코사인 유사도는 스케일이 다르므로
+    // 값을 그대로 두고 모드만 바꾸면 조용히 0건이 되거나 무필터가 된다.
+    var hint = document.getElementById('minScoreHint');
+    if (hint) {
+        // ⚠ 임계값은 임베딩 모델에 따라 완전히 다르다. e5 계열은 코사인 값이
+        //    0.80~0.94 에 몰려서(패러프레이즈 모델의 0.0~0.6 과 다르다) 0.45 를 걸면 무필터가 된다.
+        //    실측: 도메인 밖 질의 0.81~0.85 / 도메인 안 0.87~0.94 → 경계는 0.86.
+        //    모델을 바꾸면 이 값을 반드시 다시 재라(도메인 밖 질의 몇 개면 충분하다).
+        hint.textContent = (mode === 'chroma')
+            ? '코사인 유사도 하한 (0~1). 현재 임베딩 모델(e5) 기준 0.86 권장 — 모델을 바꾸면 다시 측정할 것.'
+            : 'BM25 점수 하한. 0 이면 미적용.';
+    }
+    var tkHint = document.getElementById('topKHint');
+    if (tkHint) {
+        // 평가셋 42건 실측(e5-small, 350자 청크): Recall@3 0.690 / @5 0.786 / @8 0.857 /
+        // @10 0.881 / @15 0.905. k=10 이후 수확 체감이고 MRR 은 k=8 부터 평평하다.
+        // 청크가 350자라 10건을 넣어도 3,500자뿐이라 컨텍스트 예산에도 여유가 있다.
+        tkHint.textContent = (mode === 'chroma')
+            ? '벡터 검색은 점수 차이가 작아 k 가 클수록 유리하다 — 평가셋 실측 기준 10 권장 (k=5 는 0.786, k=10 은 0.881).'
+            : '';
+    }
+}
+
+function onChromaAuthChange() {
+    var a = document.getElementById('chromaAuth').value;
+    document.getElementById('chromaTokenBox').style.display = (a === 'none') ? 'none' : 'flex';
 }
 
 function onSemanticQueryTypeChange() {
@@ -569,7 +687,17 @@ function buildConnPayload(includeSecrets) {
         embeddingDimension:   parseInt(document.getElementById('ragEmbDim').value, 10) || 1536,
         embeddingTimeoutSeconds: parseInt(document.getElementById('ragEmbTimeout').value, 10) || 15,
         knnVectorField:       document.getElementById('ragKnnField').value.trim() || 'embedding',
-        knnNumCandidates:     parseInt(document.getElementById('ragKnnCandidates').value, 10) || 50
+        knnNumCandidates:     parseInt(document.getElementById('ragKnnCandidates').value, 10) || 50,
+        // Phase 3 — Chroma
+        chromaUrl:        document.getElementById('chromaUrl').value.trim(),
+        chromaCollection: document.getElementById('chromaCollection').value.trim(),
+        chromaSpace:      document.getElementById('chromaSpace').value,
+        chromaAuthType:   document.getElementById('chromaAuth').value,
+        chromaApiPath:    document.getElementById('chromaApiPath').value.trim() || '/api/v2',
+        chromaTenant:     document.getElementById('chromaTenant').value.trim() || 'default_tenant',
+        chromaDatabase:   document.getElementById('chromaDatabase').value.trim() || 'default_database',
+        chromaTimeoutSeconds: parseInt(document.getElementById('chromaTimeout').value, 10) || 15,
+        chromaSslVerify:  document.getElementById('chromaSslVerify').checked
     };
     if (includeSecrets) {
         // 입력 필드는 로드 시 항상 비워지므로 "빈 값 = 삭제" 로 둘 수 없다
@@ -577,6 +705,7 @@ function buildConnPayload(includeSecrets) {
         applySecretToPayload(payload, 'password', 'ragPassword');
         applySecretToPayload(payload, 'apiKey', 'ragApiKey');
         applySecretToPayload(payload, 'embeddingApiKey', 'ragEmbApiKey');
+        applySecretToPayload(payload, 'chromaToken', 'chromaToken');
     }
     return payload;
 }
@@ -611,6 +740,43 @@ function testEmbeddingConn() {
     });
 }
 
+function testChromaConn() {
+    var tk = document.getElementById('chromaToken').value;
+    var payload = {
+        chromaUrl:        document.getElementById('chromaUrl').value.trim(),
+        chromaCollection: document.getElementById('chromaCollection').value.trim(),
+        chromaApiPath:    document.getElementById('chromaApiPath').value.trim() || '/api/v2',
+        chromaTenant:     document.getElementById('chromaTenant').value.trim() || 'default_tenant',
+        chromaDatabase:   document.getElementById('chromaDatabase').value.trim() || 'default_database',
+        chromaAuthType:   document.getElementById('chromaAuth').value,
+        chromaSslVerify:  document.getElementById('chromaSslVerify').checked,
+        chromaTimeoutSeconds: parseInt(document.getElementById('chromaTimeout').value, 10) || 15
+    };
+    if (tk && tk.length > 0) payload.chromaToken = tk;   // 비어있으면 저장된 토큰 사용
+    var resBox = document.getElementById('chromaTestResult');
+    resBox.className = 'test-result busy';
+    resBox.textContent = 'Chroma 연결 확인 중...';
+    fetch('/api/settings/rag/chroma/test', {
+        method: 'POST', headers: getCsrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+    }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.success) {
+            resBox.className = 'test-result ok';
+            var msg = '\u2713 연결 성공 — API v' + (d.apiVersion || '?');
+            if (d.count != null) msg += ', 문서 ' + d.count + '건';
+            if (d.space) msg += ', space: ' + d.space;
+            if (d.warning) msg += ' \u26a0 ' + d.warning;
+            resBox.textContent = msg;
+        } else {
+            resBox.className = 'test-result err';
+            resBox.textContent = '\u2717 ' + (d.error || '연결 실패');
+        }
+    }).catch(function(e){
+        resBox.className = 'test-result err';
+        resBox.textContent = '\u2717 요청 실패: ' + e.message;
+    });
+}
+
 function buildChunkingPayload() {
     return {
         enabled:  document.getElementById('togChunkingEnabled').checked,
@@ -624,7 +790,13 @@ function buildChunkingPayload() {
 
 function saveRagAll() {
     var connPayload = buildConnPayload(true);
-    if (!connPayload.url) { toast('Elasticsearch URL을 입력하세요', 'error'); return; }
+    // chroma 모드는 ES 를 쓰지 않으므로 ES URL 을 요구하지 않는다.
+    if (connPayload.searchMode === 'chroma') {
+        if (!connPayload.chromaUrl)        { toast('Chroma Server URL을 입력하세요', 'error'); return; }
+        if (!connPayload.chromaCollection) { toast('Chroma Collection을 입력하세요', 'error'); return; }
+    } else if (!connPayload.url) {
+        toast('Elasticsearch URL을 입력하세요', 'error'); return;
+    }
     var chunkPayload = buildChunkingPayload();
     if (chunkPayload.overlap >= chunkPayload.size) {
         toast('Overlap은 Chunk Size보다 작아야 합니다', 'error');
