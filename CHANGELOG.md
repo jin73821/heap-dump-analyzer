@@ -1056,7 +1056,7 @@ Header always set Strict-Transport-Security "max-age=0"
 ### 검증
 
 전체 테스트 **301건 통과**. 재기동 13.8s.
-① 손상 감지 WARN 출력 + 앱 정상 기동(소프트 페일) ② `settings.json.corrupted` 미생성 = L0 지뢰 미발동 ③ **재기동 2회 후 `application.properties` md5 동일 = churn 제거**(기존엔 매 기동 암호문이 바뀜) ④ 정리 후 기동 시 시크릿 WARN **0건** ⑤ **자동 복구 실기동 검증** — 마커 없는 64 HEX(`recover-me`)를 settings.json 에 주입 후 기동 → `[AES] 모호한 64 HEX 자동 복구 — 랜덤 IV 해석 채택` INFO + properties 가 `ENC(v2…)` 로 마이그레이션 + 복호화 결과 `recover-me` ⑥ 레거시 32 HEX 하위 호환(`shinhan@10`) + DB 접속 정상 ⑦ `rag-settings.html` Thymeleaf 단독 렌더 스모크(배너 스텁 + `_csrf` 스텁) 정상 + 신규 요소 8종 전부 확인(함정 #23 방어)
+① 손상 감지 WARN 출력 + 앱 정상 기동(소프트 페일) ② `settings.json.corrupted` 미생성 = L0 지뢰 미발동 ③ **재기동 2회 후 `application.properties` md5 동일 = churn 제거**(기존엔 매 기동 암호문이 바뀜) ④ 정리 후 기동 시 시크릿 WARN **0건** ⑤ **자동 복구 실기동 검증** — 마커 없는 64 HEX(`recover-me`)를 settings.json 에 주입 후 기동 → `[AES] 모호한 64 HEX 자동 복구 — 랜덤 IV 해석 채택` INFO + properties 가 `ENC(v2…)` 로 마이그레이션 + 복호화 결과 `recover-me` ⑥ 레거시 32 HEX 하위 호환(`<REDACTED>`) + DB 접속 정상 ⑦ `rag-settings.html` Thymeleaf 단독 렌더 스모크(배너 스텁 + `_csrf` 스텁) 정상 + 신규 요소 8종 전부 확인(함정 #23 방어)
 
 **후속 항목은 `SECRET_ENCRYPTION_FOLLOWUP.md` 로 분리** — LLM API 키 평문 저장, OTP seed rekey 도구 부재, `HEAP_ANALYZER_ENCRYPTION_KEY` 미설정, `findExternalPropertiesFile()` 의 소스 트리 쓰기.
 
@@ -1072,12 +1072,12 @@ Header always set Strict-Transport-Security "max-age=0"
 - **Boot 3 launcher 클래스 이동:** Boot 3.2+ 에서 `org.springframework.boot.loader.PropertiesLauncher` → `org.springframework.boot.loader.launch.PropertiesLauncher` 로 이동했는데 스크립트는 구 경로 사용. **수정:** 신규 경로 우선 시도 → `Could not find or load main class` 감지 시 구 경로 폴백(구 Boot 2 JAR 호환). 종료코드 보존.
 
 **2) AES 짧은 평문 조용한 데이터 손상 (핵심)**
-- **증상:** `heap_enc.sh "shinhan@10"` → `heap_dec.sh <암호문>` 결과가 `쓰레기 16바이트 + shinhan@10`. **예외 없이** 잘못된 값이 반환됨.
+- **증상:** `heap_enc.sh "<평문>"` → `heap_dec.sh <암호문>` 결과가 `쓰레기 16바이트 + <평문>`. **예외 없이** 잘못된 값이 반환됨.
 - **원인:** `decrypt()` 가 **HEX 길이로 형식을 판별**(`<= 64` → 레거시 고정 IV). 랜덤 IV 형식은 평문 15바이트 이하일 때 `IV(16) + 암호문 1블록(16)` = 32바이트 = **정확히 64 HEX** 라 레거시(고정 IV, 평문 16~31바이트)와 길이가 겹친다. 고정 IV 로 복호화하면 CBC 특성상 두 번째 블록(`D(c2) XOR c1`)은 IV 와 무관하게 정상 복원되고 **PKCS5 패딩까지 유효**해 예외가 안 난다.
 - **영향(잠재):** `/settings` DB 비밀번호 변경(`HeapSystemApiController:280`), RAG password/API key, SSO client secret — **15자 이하 비밀번호**를 새로 암호화하면 런타임에 깨진 값이 사용됨(DB 접속 실패 등). OTP seed(Base32 32자)는 항상 안전. 다행히 현 배포본 저장값은 128 hex / 32 hex 뿐이라 실피해 없음.
 - **수정:** `encrypt()` 가 `"v2"` 버전 마커를 부착(`v2` + HEX[IV][CT]) → 형식이 길이와 무관하게 명확. `decrypt()` 는 ① `v2` 마커 → 랜덤 IV ② 마커 없음 + HEX>64 → 랜덤 IV ③ 마커 없음 + HEX≤64 → 레거시 고정 IV. **마커 없는 기존 값의 판별 규칙은 그대로 유지**(이미 저장된 값의 복호화 결과가 바뀌면 안 됨). 랜덤 IV 경로를 `decryptRandomIv()` 로 추출.
 - **테스트 신규 19건** (`AesEncryptorTest`): 평문 길이 1~200자 왕복(64 HEX 경계 포함), v2 마커/64 HEX 겹침 구간 고정, 랜덤 IV 비결정성, 레거시 고정 IV 32·64 HEX 하위 호환, 마커 없는 랜덤 IV 하위 호환, `decryptIfEncrypted` 래퍼/평문/null, UTF-8 멀티바이트.
-- **검증:** 10자 평문 왕복 정상(`v2dfdc…` → `shinhan@10`), 기존 저장값 `ENC(682d…)`(레거시 32 hex) 정상 복호화, 전체 테스트 46건 통과, 재기동 12.8s(DB 접속 정상 = 레거시 암호문 복호화 정상).
+- **검증:** 10자 평문 왕복 정상(`v2dfdc…` → `<평문>`), 기존 저장값 `ENC(682d…)`(레거시 32 hex) 정상 복호화, 전체 테스트 46건 통과, 재기동 12.8s(DB 접속 정상 = 레거시 암호문 복호화 정상).
 
 **⚠️ 별건 발견 (미수정, 조치 필요):** `rag.elasticsearch.password`(128 hex)가 **기본 키로 복호화되지 않음**. openssl 로 AES-256/AES-128 × 고정IV/랜덤IV 4가지 해석을 모두 시도했으나 전부 비출력 바이트 혼재 → 다른 `HEAP_ANALYZER_ENCRYPTION_KEY` 로 암호화됐거나 값이 손상됨(평문 복구 불가). 현재 `RagConfigService` 는 예외 없이 깨진 값을 로드한다. `ragElasticsearchUrl` 이 `es.example.local`(플레이스홀더)이라 실피해는 없으나, RAG 실연동 시 `/settings/rag` 에서 비밀번호 재입력 필요(현재 키로 재암호화됨). 본 커밋의 변경과 무관한 기존 상태(마커 없는 >64 hex 경로는 코드 동일).
 

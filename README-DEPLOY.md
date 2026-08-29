@@ -141,8 +141,8 @@ bash heap_enc.sh "변경하세요_StrongPassword!"
 출력 예시:
 ```
 Plain:     변경하세요_StrongPassword!
-Encrypted: 682d6e43ec2ac80b8856edffc9351e61
-Property:  ENC(682d6e43ec2ac80b8856edffc9351e61)
+Encrypted: <암호문>
+Property:  ENC(<암호문>)
 ```
 
 > **암호화 키 설정 (권장)**: 기본 키는 운영에 부적합합니다. 환경변수로 별도 키를 지정하세요.
@@ -173,7 +173,7 @@ Property:  ENC(682d6e43ec2ac80b8856edffc9351e61)
 # ── MariaDB ──────────────────────────────────────────────────
 spring.datasource.url=jdbc:mariadb://<DB서버IP>:3306/HEAPDB?useUnicode=true&characterEncoding=utf8mb4&serverTimezone=Asia/Seoul
 spring.datasource.username=heap_user
-spring.datasource.password=ENC(682d6e43ec2ac80b8856edffc9351e61)
+spring.datasource.password=ENC(<암호문>)
 spring.datasource.driver-class-name=org.mariadb.jdbc.Driver
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MariaDB103Dialect
@@ -315,7 +315,7 @@ mysql -u heap_user -p HEAPDB -e "SELECT PRINCIPAL_NAME, FROM_UNIXTIME(LAST_ACCES
 
 기본 관리자 계정이 자동 생성됩니다 (`UserService.initDefaultAdmin()`):
 - ID: `admin`
-- PW: `shinhan@10` → **이관 후 즉시 변경**
+- PW: `<초기 비밀번호>` → **이관 후 즉시 변경**
 - 변경 경로: 로그인 → `/admin/users` (ADMIN 전용)
 
 ---
@@ -402,7 +402,7 @@ sleep 18 && grep -E "Started HeapAnalyzerApplication|FAILED|Exception in thread"
   /opt/genspark/webapp_dump/logs/heapdump-analyzer.log | tail -3
 ```
 
-기동 성공 시 `http://<서버IP>:18080` 접속 → 로그인 페이지(admin/shinhan@10).
+기동 성공 시 `http://<서버IP>:18080` 접속 → 로그인 페이지(admin/<초기 비밀번호>).
 
 ---
 

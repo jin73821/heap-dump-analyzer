@@ -8,11 +8,11 @@
 #   bash heap_dec.sh "ENC(암호화된 문자열)"
 #
 # 예시:
-#   bash heap_dec.sh "n8cFXzF2gULZrTFBeoAo6g=="
-#   bash heap_dec.sh "ENC(n8cFXzF2gULZrTFBeoAo6g==)"
+#   bash heap_dec.sh "<암호문>"
+#   bash heap_dec.sh "ENC(<암호문>)"
 #
 # 출력:
-#   Decrypted: shinhan@10
+#   Decrypted: <평문 비밀번호>
 #
 # ============================================================
 

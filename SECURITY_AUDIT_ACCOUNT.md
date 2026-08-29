@@ -48,7 +48,7 @@
 - `UserService.deleteUser()`에서 admin 계정 삭제 차단 로직 존재
 
 ### 2.6 DB 비밀번호 암호화 저장
-- `application.properties`에 `ENC(682d6e43ec2ac80b8856edffc9351e61)` 형식으로 암호화 저장
+- `application.properties`에 `ENC(<암호문>)` 형식으로 암호화 저장
 - `DataSourceConfig`에서 `AesEncryptor.decryptIfEncrypted()`로 런타임 복호화
 
 ---
@@ -131,12 +131,12 @@ public static String encrypt(String plainText) {
 @PostConstruct
 public void initDefaultAdmin() {
     if (!userRepository.existsByUsername("admin")) {
-        admin.setPassword(passwordEncoder.encode("shinhan@10"));  // 하드코딩
+        admin.setPassword(passwordEncoder.encode("<REDACTED>"));  // 하드코딩
     }
 }
 ```
 
-**위험:** 소스코드를 아는 누구나 초기 관리자 계정(`admin` / `shinhan@10`)으로 로그인 가능. 배포 후 비밀번호를 변경하지 않으면 지속적인 위험.
+**위험:** 소스코드를 아는 누구나 초기 관리자 계정(`admin` / `<REDACTED>`)으로 로그인 가능. 배포 후 비밀번호를 변경하지 않으면 지속적인 위험.
 
 **개선 방안 (택 1):**
 

@@ -7,16 +7,16 @@
 #   bash heap_enc.sh "암호화할 평문"
 #
 # 예시:
-#   bash heap_enc.sh "shinhan@10"
+#   bash heap_enc.sh "<평문 비밀번호>"
 #   bash heap_enc.sh "my_secret_password"
 #
 # 출력:
-#   Plain:     shinhan@10
-#   Encrypted: n8cFXzF2gULZrTFBeoAo6g==
-#   Property:  ENC(n8cFXzF2gULZrTFBeoAo6g==)
+#   Plain:     <평문 비밀번호>
+#   Encrypted: <암호문>
+#   Property:  ENC(<암호문>)
 #
 # application.properties에 적용:
-#   spring.datasource.password=ENC(n8cFXzF2gULZrTFBeoAo6g==)
+#   spring.datasource.password=ENC(<암호문>)
 #
 # ============================================================
 

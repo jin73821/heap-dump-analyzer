@@ -254,7 +254,7 @@ mvn clean package -DskipTests \
 
 | 항목 | PR 1 | PR 2 | PR 3 | PR 4 | PR 5 |
 |---|:---:|:---:|:---:|:---:|:---:|
-| 로그인 (admin/shinhan@10) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 로그인 (admin/<REDACTED>) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `/` 대시보드 KPI/차트 | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `/files` 정렬·검색·삭제 | ✓ | | | ✓ | |
 | `/history` 정렬·삭제 | ✓ | | | ✓ | ✓ |
