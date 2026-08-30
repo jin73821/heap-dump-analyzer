@@ -222,7 +222,6 @@
             .topbar { padding: 0 14px; }
             .topbar-btn { padding: 5px 8px; }
             .page-hdr { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
-            .page-stats { gap: 12px; flex-wrap: wrap; }
             .tabs { display: flex; margin-bottom: 14px; gap: 4px; width: 100%; }
             .tab-btn { flex: 1 1 0; padding: 10px 8px; font-size: 13px;
                        justify-content: center; }
@@ -338,10 +337,6 @@
     <div class="page-hdr">
         <div class="page-ttl">Leak Suspect 룰 관리</div>
         <div class="page-hdr-right">
-            <div class="page-stats">
-                <div class="page-stat">라이브러리 룰: <strong id="libCountChip" th:text="${libraryCount}">0</strong></div>
-                <div class="page-stat">Fallback 룰: <strong id="fbCountChip" th:text="${fallbackCount}">0</strong></div>
-            </div>
             <button type="button" class="btn-secondary" onclick="openBulkSettings()" title="룰 일괄 설정 (전체 사용설정/사용해제/삭제)">&#9881; 설정</button>
         </div>
     </div>
@@ -730,7 +725,6 @@ var _libPageSize = 20;
 function loadLibrary() {
     fetch('/api/admin/leak-rules/library').then(function(r){ return r.json(); }).then(function(rows) {
         _libRules = rows || [];
-        document.getElementById('libCountChip').textContent = _libRules.length;
         document.getElementById('libCountTab').textContent = _libRules.length;
         renderLibrary();
     });
@@ -808,7 +802,6 @@ var _fbPageSize = 20;
 function loadFallback() {
     fetch('/api/admin/leak-rules/fallback').then(function(r){ return r.json(); }).then(function(rows) {
         _fbRules = rows || [];
-        document.getElementById('fbCountChip').textContent = _fbRules.length;
         document.getElementById('fbCountTab').textContent = _fbRules.length;
         renderFallback();
     });

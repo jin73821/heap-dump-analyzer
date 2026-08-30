@@ -87,6 +87,28 @@ class LlmSettingsTemplateSmokeTest {
     }
 
     @Test
+    @DisplayName("Save Config / Test Connection 은 같은 높이로 렌더된다")
+    void actionButtonsShareOneSizeRule() {
+        Map<String, Object> model = new LinkedHashMap<>();
+        model.put("_csrf", new CsrfStub());
+        model.put("isAdmin", true);
+
+        String html = render("llm-settings", model);
+
+        // rag-settings 와 같은 결함이 여기도 있었다 — border 가 secondary 에만 있어 2px 차이.
+        // 두 설정 화면이 나란히 쓰이므로 규약도 같이 유지한다.
+        assertTrue(html.contains(".btn-primary, .btn-secondary {"),
+                "버튼 치수 규칙이 한 곳에 모여 있지 않다");
+        assertTrue(html.contains("border: 1px solid transparent"),
+                ".btn-primary 에 1px transparent border 가 없다 — secondary 만 2px 커진다");
+        assertTrue(html.matches("(?s).*<button[^>]*btn-act[^>]*>Save Config</button>.*")
+                && html.matches("(?s).*<button[^>]*btn-act[^>]*>Test Connection</button>.*"),
+                "액션 버튼이 공통 .btn-act 를 쓰지 않는다");
+        assertFalse(html.contains("style=\"padding:8px 20px;font-size:13px\""),
+                "인라인 치수가 남아 있다");
+    }
+
+    @Test
     @DisplayName("비-ADMIN 렌더도 파싱된다 (읽기 전용 배너 경로)")
     void llmSettingsRendersForNonAdmin() {
         Map<String, Object> model = new LinkedHashMap<>();

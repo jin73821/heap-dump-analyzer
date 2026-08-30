@@ -102,18 +102,41 @@
     };
 
     /**
+     * 살아 있는 토스트를 세로로 다시 쌓는다.
+     *
+     * ⚠ common.css 의 `.toast` 는 `position: fixed; top: 70px` **고정 좌표**라, 두 개가 동시에
+     *   뜨면 같은 자리에 정확히 포개져 글자가 겹쳐 읽힌다(2026-08-29 제보 — Save All 의
+     *   "저장 완료" 와 경고 문구). CSS 대신 여기서 top 을 계산하는 이유는 common.css 를 바꾸면
+     *   14개 페이지의 `?v=` 캐시 키를 모두 갱신해야 하기 때문이다.
+     *
+     * ⚠ `.toast-stack` 마커로 이 계열만 센다 — {@link Common.showToast} 의 `#toast` 고정
+     *   엘리먼트(servers/server-detail/admin-users)도 `.toast` 클래스를 쓰므로, 두 계열을 함께
+     *   쓰는 페이지가 생기면 좌표 계산이 어긋난다.
+     */
+    function restackToasts() {
+        var live = document.querySelectorAll('.toast-stack');
+        var top = 70;
+        for (var i = 0; i < live.length; i++) {
+            live[i].style.top = top + 'px';
+            top += live[i].offsetHeight + 8;
+        }
+    }
+
+    /**
      * 토스트 (settings/llm-settings/rag-settings 계열) — div.toast.toast-{type} 생성 후 자동 제거.
      * CSS 는 common.css 의 .toast/.toast-success/.toast-error/@keyframes toastIn.
+     * 동시에 여러 개가 뜨면 위에서부터 세로로 쌓인다(restackToasts).
      */
     Common.toast = function (msg, type) {
         var t = document.createElement('div');
-        t.className = 'toast toast-' + (type || 'success');
+        t.className = 'toast toast-stack toast-' + (type || 'success');
         t.textContent = msg;
         document.body.appendChild(t);
+        restackToasts();
         setTimeout(function () {
             t.style.transition = 'opacity .4s';
             t.style.opacity = '0';
-            setTimeout(function () { t.remove(); }, 400);
+            setTimeout(function () { t.remove(); restackToasts(); }, 400);
         }, 2500);
     };
 
@@ -156,7 +179,8 @@
         Array.prototype.forEach.call(els, function (el, i) {
             var msg = el.getAttribute('data-msg');
             if (!msg) return;
-            // 다건이면 겹침 방지를 위해 순차 표시
+            // 스택 지원(2026-08-29) 후로는 겹치지 않지만, 다건 플래시는 순차로 읽는 편이
+            // 이해하기 쉬워 지연을 유지한다.
             setTimeout(function () { Common.toast(msg, el.getAttribute('data-type') || 'success'); }, i * 3100);
         });
     }

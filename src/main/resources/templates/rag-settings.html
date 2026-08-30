@@ -51,15 +51,27 @@
                      min-width: 100px; text-align: right; }
         .input-sel { padding: 5px 10px; border: 1px solid #D1D5DB; border-radius: 6px; font-size: 13px; }
 
-        .btn-primary { padding: 6px 14px; border: none; border-radius: 6px; background: #2563EB;
-                       color: #fff; font-size: 12px; cursor: pointer; font-weight: 600; }
+        /* 형태(치수)는 3종 공통, 색만 개별 — 높이가 어긋나던 두 원인을 여기서 잠근다.
+           ⚠ ① border 를 .btn-secondary 에만 주면 그 버튼만 2px 높다(실측 31 vs 33).
+                 채움 버튼도 1px transparent 를 둬서 박스 모델을 맞춘다.
+              ② line-height 를 지정하지 않으면 라벨에 한글이 섞였을 때 fallback 폰트의
+                 큰 행상자가 그대로 높이가 된다 — "Test Connection (Chroma + 임베딩)" 은
+                 라틴 전용 라벨보다 4px 높았다(실측 35). 고정 line-height 로 봉인.
+              ③ button 은 폰트를 상속하지 않아 기본값이 Arial 이었다 — font-family: inherit. */
+        .btn-primary, .btn-secondary, .btn-success {
+            box-sizing: border-box; padding: 6px 14px; border: 1px solid transparent;
+            border-radius: 6px; font-family: inherit; font-size: 12px; line-height: 18px;
+            font-weight: 600; cursor: pointer;
+        }
+        .btn-primary { background: #2563EB; color: #fff; }
         .btn-primary:hover { background: #1D4ED8; }
-        .btn-secondary { padding: 6px 14px; border: 1px solid #D1D5DB; border-radius: 6px;
-                         background: #fff; font-size: 12px; cursor: pointer; font-weight: 600; color: #374151; }
+        .btn-secondary { border-color: #D1D5DB; background: #fff; color: #374151; }
         .btn-secondary:hover { background: #F3F4F6; }
-        .btn-success { padding: 6px 14px; border: none; border-radius: 6px; background: #059669;
-                       color: #fff; font-size: 12px; cursor: pointer; font-weight: 600; }
+        .btn-success { background: #059669; color: #fff; }
         .btn-success:hover { background: #047857; }
+        /* Save & Test 액션 바 — 인라인 style 대신 클래스 하나로 치수를 모은다.
+           min-width 로 짧은 라벨(Reload)도 세트로 읽히게 한다. */
+        .btn-act { padding: 8px 20px; font-size: 13px; min-width: 108px; }
 
         .info-banner { font-size: 12px; color: #6B7280; padding: 10px 14px; background: #F9FAFB;
                        border-radius: 6px; border: 1px solid #E5E7EB; margin-bottom: 16px; line-height: 1.6; }
@@ -68,6 +80,56 @@
         .test-result.ok   { background: #D1FAE5; color: #065F46; border: 1px solid #A7F3D0; display: block; }
         .test-result.err  { background: #FEE2E2; color: #991B1B; border: 1px solid #FECACA; display: block; }
         .test-result.busy { background: #FEF3C7; color: #92400E; border: 1px solid #FDE68A; display: block; }
+
+        /* 카드 제목 옆 모드 배지 — "이 카드가 현재 검색 모드에서 쓰이는가" */
+        .mode-badge { display: none; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 8px;
+                      background: #F3F4F6; color: #6B7280; border: 1px solid #E5E7EB; white-space: nowrap;
+                      font-family: inherit; }
+        .mode-badge.show { display: inline-block; }
+        .mode-badge.active { background: #DBEAFE; color: #1D4ED8; border-color: #93C5FD; }
+        .mode-badge.err { background: #FEE2E2; color: #B91C1C; border-color: #FCA5A5; }
+        /* Chroma 연동 상태 패널 */
+        .st-val { font-size: 12px; color: #374151; font-family: 'JetBrains Mono','SF Mono',monospace;
+                  text-align: right; min-width: 0; word-break: break-all; display: flex; align-items: center;
+                  gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+        .st-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #9CA3AF; flex-shrink: 0; }
+        .st-dot.ok { background: #059669; }
+        .st-dot.err { background: #DC2626; }
+        .st-dot.na { background: #D1D5DB; }
+        .st-warn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+        .st-warn-list li { font-size: 12px; padding: 6px 10px; border-radius: 6px; line-height: 1.5;
+                           background: #F3F4F6; color: #4B5563; border: 1px solid #E5E7EB; }
+        .st-warn-list li.error { background: #FEE2E2; color: #991B1B; border-color: #FECACA; }
+        .st-warn-list li.warn  { background: #FEF3C7; color: #92400E; border-color: #FDE68A; }
+        .st-warn-list li.ok    { background: #D1FAE5; color: #065F46; border-color: #A7F3D0; }
+        .st-warn-list li code { font-family: 'JetBrains Mono','SF Mono',monospace; font-size: 11px; }
+
+        /* 검색 모드 선택 — 4개를 한눈에. select 는 값 보관용으로 숨겨져 있다. */
+        .mode-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 4px; }
+        .mode-opt { display: flex; align-items: flex-start; gap: 8px; padding: 10px 12px; cursor: pointer;
+                    border: 1px solid #E5E7EB; border-radius: 8px; background: #fff; transition: border-color .15s, background .15s; }
+        .mode-opt:hover { background: #F9FAFB; }
+        .mode-opt input { margin: 2px 0 0; flex-shrink: 0; width: 15px; height: 15px; accent-color: #2563EB; }
+        .mode-opt-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .mode-opt-name { font-size: 13px; font-weight: 600; color: #1F2937;
+                         font-family: 'JetBrains Mono','SF Mono',monospace; }
+        .mode-opt-desc { font-size: 11px; color: #6B7280; line-height: 1.5; }
+        /* :has() 대신 JS 가 .selected 를 토글한다 — 사내 브라우저 버전을 가정하지 않는다. */
+        .mode-opt.selected { border-color: #2563EB; background: #EFF6FF; }
+        .mode-opt.selected .mode-opt-name { color: #1D4ED8; }
+        .backend-summary { gap: 10px; flex-wrap: wrap; border-bottom: none; padding-bottom: 0; }
+        .backend-summary .st-val { flex: 1 1 auto; }
+        .backend-summary .st-val.ok  { color: #065F46; }
+        .backend-summary .st-val.warn { color: #92400E; }
+        .backend-summary .st-val.err { color: #991B1B; }
+
+        /* 2열 — 넓은 화면에서만. 카드가 모드에 따라 빠지면 남은 카드가 재배치된다.
+           ⚠ grid 고정 2열이 아니라 flex 여야 한다: 한 카드만 남을 때 전폭을 쓰도록. */
+        @media (min-width: 1400px) {
+            .container { max-width: 1500px; }
+            .rag-cols { display: flex; flex-wrap: wrap; gap: 20px; align-items: stretch; }
+            .rag-cols > .card { flex: 1 1 calc(50% - 10px); min-width: 0; margin-bottom: 0; }
+        }
 
         /* Toast CSS 는 common.css 로 이관 (Common.toast) */
 
@@ -126,14 +188,14 @@
     <div class="page-hdr">
         <div class="page-ttl">
             <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            RAG (Elasticsearch) Configuration
+            RAG Configuration
             <span id="ragStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">OFF</span>
             <span id="ragSecretsBadge" style="display:none;font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:#FEE2E2;color:#B91C1C;border:1px solid #FCA5A5">⚠ 시크릿 손상</span>
         </div>
     </div>
 
     <div class="info-banner">
-        <strong>Phase 2:</strong> 세 가지 검색 모드를 지원합니다 — <code>keyword</code>(BM25, 추가 설정 불필요) / <code>semantic-server</code>(ES 서버측 임베딩, ELSER 또는 semantic_text 필드 필요) / <code>semantic-client</code>(앱이 임베딩 API 호출 후 kNN 쿼리). 모드를 변경하면 아래 해당 설정 카드가 나타납니다.
+        LLM 채팅에 주입할 사내 지식베이스 검색을 설정합니다. <strong>검색 모드가 페이지 전체를 결정</strong>합니다 — 선택한 모드에 필요한 설정만 아래에 표시되고, 나머지 백엔드 설정은 값이 보존된 채 숨겨집니다.
     </div>
 
     <!-- Enable / Disable -->
@@ -145,7 +207,7 @@
         <div class="setting-row" style="border-bottom:none">
             <div>
                 <div class="setting-label">Enable RAG</div>
-                <div class="setting-desc">활성화 시 LLM 채팅 응답에 사내 ES 검색 결과를 컨텍스트로 자동 주입합니다.</div>
+                <div class="setting-desc">활성화 시 LLM 채팅 응답에 사내 지식베이스(ES 또는 Chroma) 검색 결과를 컨텍스트로 자동 주입합니다.</div>
             </div>
             <div>
                 <input type="checkbox" class="tog" id="togRagEnabled" onchange="toggleRagEnabled(this)">
@@ -154,11 +216,84 @@
         </div>
     </div>
 
-    <!-- Connection -->
-    <div class="card">
+    <!-- 검색 모드 — 페이지 전체를 지배하므로 최상단 전폭. 아래 카드들의 표시 여부가 여기서 결정된다. -->
+    <div class="card" id="cardSearchMode">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            검색 모드
+        </div>
+        <!-- 값 보관은 select 가 계속 담당한다(기존 JS 계약 buildConnPayload 등이 .value 를 읽는다).
+             라디오는 표시·키보드 조작용이고 onModeRadioChange 가 select 로 값을 넘긴다. -->
+        <select id="ragMode" onchange="onRagModeChange()" style="display:none">
+            <option value="keyword">keyword (BM25)</option>
+            <option value="semantic-server">semantic-server (ES inference)</option>
+            <option value="semantic-client">semantic-client (앱측 임베딩 + kNN)</option>
+            <option value="chroma">chroma (로컬 벡터 DB)</option>
+        </select>
+        <div class="mode-grid" role="radiogroup" aria-label="검색 모드">
+            <label class="mode-opt">
+                <input type="radio" name="ragModeRadio" id="modeKeyword" value="keyword" onchange="onModeRadioChange(this)">
+                <span class="mode-opt-body">
+                    <span class="mode-opt-name">keyword</span>
+                    <span class="mode-opt-desc">Elasticsearch BM25 전문 검색 — 추가 설정 불필요</span>
+                </span>
+            </label>
+            <label class="mode-opt">
+                <input type="radio" name="ragModeRadio" id="modeSemServer" value="semantic-server" onchange="onModeRadioChange(this)">
+                <span class="mode-opt-body">
+                    <span class="mode-opt-name">semantic-server</span>
+                    <span class="mode-opt-desc">ES 서버측 임베딩 — ELSER 또는 semantic_text 필드 필요</span>
+                </span>
+            </label>
+            <label class="mode-opt">
+                <input type="radio" name="ragModeRadio" id="modeSemClient" value="semantic-client" onchange="onModeRadioChange(this)">
+                <span class="mode-opt-body">
+                    <span class="mode-opt-name">semantic-client</span>
+                    <span class="mode-opt-desc">앱이 임베딩 API 호출 후 ES kNN 쿼리</span>
+                </span>
+            </label>
+            <label class="mode-opt">
+                <input type="radio" name="ragModeRadio" id="modeChroma" value="chroma" onchange="onModeRadioChange(this)">
+                <span class="mode-opt-body">
+                    <span class="mode-opt-name">chroma</span>
+                    <span class="mode-opt-desc" id="modeDescChroma">로컬 Chroma 벡터 DB + 임베딩 사이드카</span>
+                </span>
+            </label>
+        </div>
+
+        <!-- Top-K / Min Score 는 모든 모드가 쓰는 공용 파라미터 -->
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:4px;margin-top:6px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <span class="s-key">Top-K (검색 결과 개수)</span>
+                <input type="number" id="ragTopK" class="input-num" min="1" max="20" value="3">
+            </div>
+            <!-- 모드별 권장값이 다르다. onRagModeChange() 가 갱신한다. -->
+            <span id="topKHint" class="setting-desc" style="margin-top:0"></span>
+        </div>
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:4px">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <span class="s-key">Min Score (최소 점수, 0=필터 없음)</span>
+                <input type="number" id="ragMinScore" class="input-num" step="0.1" min="0" value="0">
+            </div>
+            <!-- 모드마다 점수 스케일이 달라 같은 값의 의미가 바뀐다. onRagModeChange() 가 갱신한다. -->
+            <span id="minScoreHint" class="setting-desc" style="margin-top:0"></span>
+        </div>
+
+        <!-- ES 계열 모드일 때만 — Chroma 를 숨겨도 "준비돼 있다"는 사실은 남긴다(발견성). -->
+        <div class="s-row backend-summary" id="backendSummaryRow" style="display:none">
+            <span id="backendSummary" class="st-val" style="justify-content:flex-start;text-align:left">Chroma 상태 확인 중…</span>
+            <button type="button" id="chromaPeekBtn" class="btn-secondary refresh-btn" onclick="toggleChromaPeek()">Chroma 설정 보기</button>
+        </div>
+    </div>
+
+    <!-- 2열 래퍼: ≥1400px 에서만 좌우 배치. 모드에 따라 카드가 빠지면 남은 카드가 자동 재배치된다. -->
+    <div class="rag-cols">
+
+    <!-- Elasticsearch 연결 — ES 계열 모드 전용 -->
+    <div class="card" id="cardEsConnection">
         <div class="card-title">
             <svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
-            Connection
+            Elasticsearch 연결
         </div>
         <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
             <span class="s-key">Elasticsearch URL</span>
@@ -169,6 +304,14 @@
             <input type="text" id="ragIndex" class="input-text" placeholder="heap-knowledge-base">
         </div>
         <div class="s-row">
+            <span class="s-key">Text Field</span>
+            <input type="text" id="ragTextField" class="input-num" style="text-align:left;font-family:'JetBrains Mono',monospace" placeholder="content">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Timeout (초)</span>
+            <input type="number" id="ragTimeout" class="input-num" min="1" max="60" value="10">
+        </div>
+        <div class="s-row">
             <span class="s-key">SSL Verify</span>
             <div style="display:flex;align-items:center;gap:8px">
                 <input type="checkbox" id="ragSslVerify" style="width:16px;height:16px">
@@ -177,11 +320,11 @@
         </div>
     </div>
 
-    <!-- Authentication -->
-    <div class="card">
+    <!-- Elasticsearch 인증 — ES 계열 모드 전용 -->
+    <div class="card" id="cardEsAuth">
         <div class="card-title">
             <svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            Authentication
+            Elasticsearch 인증
         </div>
         <div class="s-row">
             <span class="s-key">Auth Type</span>
@@ -210,47 +353,6 @@
                 <span id="ragApiKeyHint" class="setting-desc" style="margin-top:0"></span>
                 <label id="ragApiKeyClearRow" class="secret-clear"><input type="checkbox" id="ragApiKeyClear" onchange="onSecretClearChange('ragApiKey')"> 저장된 API Key 지우기</label>
             </div>
-        </div>
-    </div>
-
-    <!-- Search -->
-    <div class="card">
-        <div class="card-title">
-            <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            Search
-        </div>
-        <div class="s-row">
-            <span class="s-key">Search Mode</span>
-            <select id="ragMode" class="input-sel" onchange="onRagModeChange()">
-                <option value="keyword">keyword (BM25)</option>
-                <option value="semantic-server">semantic-server (ES inference)</option>
-                <option value="semantic-client">semantic-client (앱측 임베딩 + kNN)</option>
-                <option value="chroma">chroma (로컬 벡터 DB)</option>
-            </select>
-        </div>
-        <div class="s-row">
-            <span class="s-key">Text Field</span>
-            <input type="text" id="ragTextField" class="input-num" style="text-align:left;font-family:'JetBrains Mono',monospace" placeholder="content">
-        </div>
-        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:4px">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-                <span class="s-key">Top-K (검색 결과 개수)</span>
-                <input type="number" id="ragTopK" class="input-num" min="1" max="20" value="3">
-            </div>
-            <!-- 모드별 권장값이 다르다. onRagModeChange() 가 갱신한다. -->
-            <span id="topKHint" class="setting-desc" style="margin-top:0"></span>
-        </div>
-        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:4px">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-                <span class="s-key">Min Score (최소 점수, 0=필터 없음)</span>
-                <input type="number" id="ragMinScore" class="input-num" step="0.1" min="0" value="0">
-            </div>
-            <!-- 모드마다 점수 스케일이 달라 같은 값의 의미가 바뀐다. onRagModeChange() 가 갱신한다. -->
-            <span id="minScoreHint" class="setting-desc" style="margin-top:0"></span>
-        </div>
-        <div class="s-row">
-            <span class="s-key">Timeout (초)</span>
-            <input type="number" id="ragTimeout" class="input-num" min="1" max="60" value="10">
         </div>
     </div>
 
@@ -288,65 +390,37 @@
         </div>
     </div>
 
-    <!-- Phase 2: semantic-client (Embedding API) -->
-    <div class="card" id="cardSemanticClient" style="display:none">
-        <div class="card-title">
-            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-            Semantic — Client-side (Embedding API + kNN)
+    <!-- Chroma 연동 상태 (읽기 전용) — 저장된 설정 기준 실시간 점검. 폴링 없음(함정 38). -->
+    <div class="card" id="cardChromaStatus">
+        <div class="card-title" style="justify-content:space-between;flex-wrap:wrap">
+            <span style="display:flex;align-items:center;gap:8px;min-width:0">
+                <svg viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                Chroma 연동 상태
+                <span id="chromaStatusBadge" class="mode-badge"></span>
+            </span>
+            <button type="button" id="chromaStatusRefresh" class="btn-secondary refresh-btn" onclick="loadChromaStatus()">새로고침</button>
         </div>
         <div class="info-banner" style="margin-bottom:12px">
-            앱이 외부 임베딩 API로 쿼리 벡터를 생성한 뒤 ES <code>kNN</code> 쿼리로 검색합니다. <strong>색인 시 사용한 모델과 동일한 모델·차원</strong>을 사용해야 합니다.
+            <strong>저장된 설정</strong> 기준으로 Chroma 서버·컬렉션·임베딩 사이드카를 점검합니다 (폼의 미저장 값은 반영되지 않음 — 그건 아래 연결 테스트 버튼이 봅니다).
+            색인은 앱이 아니라 <code>/opt/chroma/app/run-index.sh</code> 가 외부에서 수행합니다.
         </div>
-        <div class="s-row">
-            <span class="s-key">Provider</span>
-            <select id="ragEmbProvider" class="input-sel">
-                <option value="openai">openai</option>
-                <option value="cohere">cohere</option>
-                <option value="custom">custom (OpenAI 호환)</option>
-                <option value="local-onnx">local-onnx (로컬 사이드카)</option>
-            </select>
-        </div>
+        <div class="s-row"><span class="s-key">검색 모드</span><span id="cstMode" class="st-val">—</span></div>
+        <div class="s-row"><span class="s-key">Chroma 서버</span><span id="cstServer" class="st-val">—</span></div>
+        <div class="s-row"><span class="s-key">컬렉션</span><span id="cstCollection" class="st-val">—</span></div>
+        <div class="s-row"><span class="s-key">임베딩 사이드카</span><span id="cstEmbedding" class="st-val">—</span></div>
         <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
-            <span class="s-key">API URL</span>
-            <input type="text" id="ragEmbApiUrl" class="input-text" placeholder="https://api.openai.com/v1/embeddings">
+            <span class="s-key">점검 결과 <span id="cstCheckedAt" class="setting-desc" style="display:inline;margin:0 0 0 6px;font-weight:400"></span></span>
+            <ul id="cstWarnings" class="st-warn-list"><li>확인 중…</li></ul>
         </div>
-        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
-            <span class="s-key">API Key</span>
-            <input type="password" id="ragEmbApiKey" class="input-text" placeholder="API Key">
-            <span id="ragEmbApiKeyHint" class="setting-desc" style="margin-top:0"></span>
-            <label id="ragEmbApiKeyClearRow" class="secret-clear"><input type="checkbox" id="ragEmbApiKeyClear" onchange="onSecretClearChange('ragEmbApiKey')"> 저장된 API Key 지우기</label>
-        </div>
-        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
-            <span class="s-key">Model</span>
-            <input type="text" id="ragEmbModel" class="input-text" placeholder="text-embedding-3-small">
-        </div>
-        <div class="s-row">
-            <span class="s-key">Dimension (벡터 차원)</span>
-            <input type="number" id="ragEmbDim" class="input-num" min="1" max="8192" value="1536">
-        </div>
-        <div class="s-row">
-            <span class="s-key">Embedding Timeout (초)</span>
-            <input type="number" id="ragEmbTimeout" class="input-num" min="1" max="120" value="15">
-        </div>
-        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
-            <span class="s-key">kNN Vector Field</span>
-            <input type="text" id="ragKnnField" class="input-text" placeholder="embedding">
-        </div>
-        <div class="s-row">
-            <span class="s-key">kNN Num Candidates</span>
-            <input type="number" id="ragKnnCandidates" class="input-num" min="1" max="10000" value="50">
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
-            <button type="button" onclick="testEmbeddingConn()" class="btn-success" style="padding:6px 14px;font-size:12px">Test Embedding API</button>
-        </div>
-        <div id="embTestResult" class="test-result"></div>
+        <div id="chromaStatusError" class="test-result"></div>
     </div>
 
-    <!-- Chunking -->
-    <div class="card" id="cardChroma" style="display:none">
+    <!-- Chroma 설정 — chroma 모드 또는 '설정 보기' 미리보기에서 표시. -->
+    <div class="card" id="cardChroma">
         <div class="card-title">
             <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5"/><path d="M3 12c0 1.7 4 3 9 3s9-1.3 9-3"/></svg>
             Chroma (로컬 벡터 DB)
+            <span id="chromaModeBadge" class="mode-badge"></span>
         </div>
         <div class="info-banner" style="margin-bottom:12px">
             로컬 Chroma 서버에서 벡터 검색합니다. <strong>Chroma 서버는 임베딩을 하지 않으므로</strong>
@@ -398,21 +472,88 @@
         </div>
         <div class="s-row">
             <span class="s-key">TLS 검증</span>
-            <label class="tog"><input type="checkbox" id="chromaSslVerify" checked><span></span></label>
+            <div>
+                <input type="checkbox" class="tog" id="chromaSslVerify" checked>
+                <label class="tog-track" for="chromaSslVerify"></label>
+            </div>
         </div>
         <div style="margin-top:12px">
-            <button type="button" class="btn-test" onclick="testChromaConn()">Chroma 연결 테스트</button>
+            <button type="button" class="btn-success" onclick="testChromaConn()">Chroma 연결 테스트</button>
             <div id="chromaTestResult" class="test-result"></div>
         </div>
     </div>
 
-    <div class="card">
+    <!-- Phase 2: semantic-client (Embedding API) -->
+    <!-- Embedding — semantic-client(ES kNN) 와 chroma 가 공유. 모드에 맞을 때만 표시. -->
+    <div class="card" id="cardSemanticClient">
+        <div class="card-title">
+            <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            Embedding
+            <span id="embModeBadge" class="mode-badge"></span>
+        </div>
+        <div class="info-banner" style="margin-bottom:12px">
+            앱이 임베딩 API로 쿼리 벡터를 생성합니다 — <code>semantic-client</code> 는 그 벡터로 ES <code>kNN</code> 쿼리를, <code>chroma</code> 는 Chroma <code>/query</code> 를 호출합니다. <strong>색인 시 사용한 모델과 동일한 모델·차원</strong>을 사용해야 합니다. Chroma 컬렉션은 로컬 사이드카(<code>local-onnx</code>, e5-small 384차원)로 색인돼 있습니다.
+        </div>
+        <div class="s-row">
+            <span class="s-key">Provider</span>
+            <select id="ragEmbProvider" class="input-sel" onchange="onEmbProviderChange()">
+                <option value="openai">openai</option>
+                <option value="cohere">cohere</option>
+                <option value="custom">custom (OpenAI 호환)</option>
+                <option value="local-onnx">local-onnx (로컬 사이드카)</option>
+            </select>
+        </div>
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">API URL</span>
+            <input type="text" id="ragEmbApiUrl" class="input-text" placeholder="https://api.openai.com/v1/embeddings">
+        </div>
+        <div class="s-row" id="ragEmbApiKeyRow" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">API Key</span>
+            <input type="password" id="ragEmbApiKey" class="input-text" placeholder="API Key">
+            <span id="ragEmbApiKeyHint" class="setting-desc" style="margin-top:0"></span>
+            <label id="ragEmbApiKeyClearRow" class="secret-clear"><input type="checkbox" id="ragEmbApiKeyClear" onchange="onSecretClearChange('ragEmbApiKey')"> 저장된 API Key 지우기</label>
+        </div>
+        <div class="s-row" id="ragEmbModelRow" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">Model</span>
+            <input type="text" id="ragEmbModel" class="input-text" placeholder="text-embedding-3-small">
+        </div>
+        <div class="s-row">
+            <span class="s-key">Dimension (벡터 차원)</span>
+            <input type="number" id="ragEmbDim" class="input-num" min="1" max="8192" value="1536">
+        </div>
+        <div class="s-row" id="embSidecarHintRow" style="display:none;flex-direction:column;align-items:stretch;gap:8px">
+            <span id="embSidecarHint" class="setting-desc" style="margin-top:0;line-height:1.6"></span>
+            <div><button type="button" id="embSidecarFillBtn" class="btn-secondary" onclick="fillSidecarDefaults()">사이드카 기본값 채우기</button></div>
+        </div>
+        <div class="s-row">
+            <span class="s-key">Embedding Timeout (초)</span>
+            <input type="number" id="ragEmbTimeout" class="input-num" min="1" max="120" value="15">
+        </div>
+        <!-- ES kNN 전용 — semantic-client 에서만 표시 -->
+        <div id="embKnnBox">
+        <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
+            <span class="s-key">kNN Vector Field</span>
+            <input type="text" id="ragKnnField" class="input-text" placeholder="embedding">
+        </div>
+        <div class="s-row">
+            <span class="s-key">kNN Num Candidates</span>
+            <input type="number" id="ragKnnCandidates" class="input-num" min="1" max="10000" value="50">
+        </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px">
+            <button type="button" onclick="testEmbeddingConn()" class="btn-success">Test Embedding API</button>
+        </div>
+        <div id="embTestResult" class="test-result"></div>
+    </div>
+
+    <!-- Chunking — 모든 모드 공용 -->
+    <div class="card" id="cardChunking">
         <div class="card-title">
             <svg viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
             Chunking (검색 결과 청킹)
         </div>
         <div class="info-banner" style="margin-bottom:12px">
-            ES가 반환한 긴 본문을 작은 청크로 잘라 LLM 컨텍스트에 주입합니다. LLM 토큰 한도/응답 품질을 안정시킵니다.
+            검색 백엔드(ES/Chroma)가 반환한 긴 본문을 작은 청크로 잘라 LLM 컨텍스트에 주입합니다. LLM 토큰 한도/응답 품질을 안정시킵니다.
         </div>
         <div class="setting-row">
             <div>
@@ -450,12 +591,14 @@
         </div>
     </div>
 
-    <!-- Save & Test -->
+    </div><!-- /.rag-cols -->
+
+    <!-- Save & Test — 전폭 -->
     <div class="card">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button onclick="saveRagAll()" class="btn-primary" style="padding:8px 20px;font-size:13px">Save All</button>
-            <button onclick="testRagConn()" class="btn-success" style="padding:8px 20px;font-size:13px">Test Connection</button>
-            <button onclick="loadRagSettings()" class="btn-secondary" style="padding:8px 20px;font-size:13px">Reload</button>
+            <button onclick="saveRagAll()" class="btn-primary btn-act">Save All</button>
+            <button id="ragTestBtn" onclick="testRagConn()" class="btn-success btn-act">Test Connection</button>
+            <button onclick="loadRagSettings()" class="btn-secondary btn-act">Reload</button>
         </div>
         <div id="ragTestResult" class="test-result"></div>
     </div>
@@ -464,6 +607,10 @@
 
 <script>
 var toast = Common.toast;
+
+// local-onnx 사이드카 기본값 — GET /api/settings/rag 의 embedding.localOnnxDefaultUrl/localOnnxDimension 로 채워진다.
+// 서버(EmbeddingService 상수)가 단일 출처이므로 여기에 리터럴을 적지 않는다.
+var _localOnnxDefaults = { url: '', dimension: 0 };
 
 function getCsrfHeaders(base) {
     var h = base || {};
@@ -565,6 +712,8 @@ function loadRagSettings() {
 
         // Phase 2 — semantic-client
         var e = d.embedding || {};
+        if (e.localOnnxDefaultUrl) _localOnnxDefaults.url = e.localOnnxDefaultUrl;
+        if (e.localOnnxDimension)  _localOnnxDefaults.dimension = e.localOnnxDimension;
         document.getElementById('ragEmbProvider').value = e.provider || 'openai';
         document.getElementById('ragEmbApiUrl').value   = e.apiUrl || '';
         document.getElementById('ragEmbApiKey').value   = '';
@@ -592,17 +741,236 @@ function loadRagSettings() {
         onChromaAuthChange();
         onRagModeChange();
         onSemanticQueryTypeChange();
+        onEmbProviderChange();
     }).catch(function(e) { toast('설정 로드 실패: ' + e.message, 'error'); });
+}
+
+// ── Chroma 연동 상태 패널 ───────────────────────────────────
+// 저장된 설정 기준 실시간 점검. 로드 1회 + 새로고침 + 저장 성공 후 1회 — 주기 폴링은 두지 않는다
+// (함정 38: 인증 필요한 배경 폴러는 무동작 세션 만료를 영구히 무력화한다).
+var _chromaStatusBusy = false;
+
+function _setBadge(id, text, cls) {
+    var b = document.getElementById(id);
+    if (!b) return;
+    b.textContent = text || '';
+    b.className = 'mode-badge' + (text ? ' show' : '') + (cls ? ' ' + cls : '');
+}
+
+function _dot(cls) { return '<span class="st-dot ' + cls + '"></span>'; }
+
+function _fmtUptime(sec) {
+    if (sec == null || isNaN(sec)) return '';
+    var s = Math.floor(sec);
+    var d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
+}
+
+function loadChromaStatus() {
+    if (_chromaStatusBusy) return;
+    _chromaStatusBusy = true;
+    var btn = document.getElementById('chromaStatusRefresh');
+    var errBox = document.getElementById('chromaStatusError');
+    if (btn) btn.disabled = true;
+    errBox.className = 'test-result';
+    _setBadge('chromaStatusBadge', '점검 중…', '');
+    Common.fetchJSON('/api/settings/rag/chroma/status').then(function(d) {
+        renderChromaStatus(d);
+    }).catch(function(e) {
+        _setBadge('chromaStatusBadge', '점검 실패', 'err');
+        errBox.className = 'test-result err';
+        errBox.textContent = '\u2717 연동 상태 조회 실패: ' + (e.sessionExpired ? e.message : (e.message || e));
+    }).then(function() {
+        _chromaStatusBusy = false;
+        if (btn) btn.disabled = false;
+    });
+}
+
+function renderChromaStatus(d) {
+    var esc = Common.escHtml;
+    var chroma = d.chroma || {};
+    var emb = d.embedding || {};
+    var sidecar = emb.sidecar || null;
+    var warnings = Array.isArray(d.warnings) ? d.warnings : [];
+    var hasError = warnings.some(function(w) { return w.level === 'error'; });
+
+    // 배지: 사용 중 / 현재 미사용 — 경고가 error 면 빨강
+    if (d.chromaActive) {
+        _setBadge('chromaStatusBadge', hasError ? '사용 중 — 오류' : '사용 중', hasError ? 'err' : 'active');
+    } else {
+        _setBadge('chromaStatusBadge', '현재 미사용 — Search Mode 가 ' + (d.searchMode || '?'), hasError ? 'err' : '');
+    }
+
+    document.getElementById('cstMode').innerHTML =
+        esc(d.searchMode || '?') + (d.ragEnabled ? '' : ' <span style="color:#B91C1C">(RAG OFF)</span>');
+
+    if (chroma.success) {
+        document.getElementById('cstServer').innerHTML = _dot('ok') + 'API v' + esc(chroma.apiVersion || '?')
+            + ' · ' + esc(chroma.url || '');
+        var idShort = chroma.collectionId ? String(chroma.collectionId).substring(0, 8) : '';
+        var parts = [];
+        parts.push(esc(chroma.collectionName || '?') + (idShort ? ' (' + esc(idShort) + '…)' : ''));
+        if (chroma.count != null) parts.push(esc(String(chroma.count)) + '건');
+        if (chroma.space) parts.push('space ' + esc(chroma.space));
+        if (chroma.dimension != null) parts.push('dim ' + esc(String(chroma.dimension)));
+        document.getElementById('cstCollection').innerHTML = _dot('ok') + parts.join(' · ');
+    } else {
+        document.getElementById('cstServer').innerHTML = _dot('err') + esc(chroma.url || '(URL 미설정)')
+            + ' — ' + esc(chroma.error || '연결 실패');
+        document.getElementById('cstCollection').innerHTML = _dot('na') + '확인 불가';
+    }
+
+    if (!emb.isLocalOnnx) {
+        document.getElementById('cstEmbedding').innerHTML = _dot('na') + 'provider ' + esc(emb.provider || '?')
+            + ' — 사이드카 미사용 (local-onnx 아님)';
+    } else if (sidecar && sidecar.success) {
+        var sp = [];
+        sp.push(esc(sidecar.model || '?'));
+        if (sidecar.dimension != null) sp.push('dim ' + esc(String(sidecar.dimension)));
+        if (sidecar.maxBatch != null) sp.push('batch ' + esc(String(sidecar.maxBatch)));
+        if (sidecar.maxConcurrency != null) sp.push('concurrency ' + esc(String(sidecar.maxConcurrency)));
+        var up = _fmtUptime(sidecar.uptimeSeconds);
+        if (up) sp.push('up ' + esc(up));
+        document.getElementById('cstEmbedding').innerHTML = _dot('ok') + sp.join(' · ');
+    } else {
+        document.getElementById('cstEmbedding').innerHTML = _dot('err') + esc((sidecar && sidecar.healthUrl) || emb.apiUrl || '(URL 미설정)')
+            + ' — ' + esc((sidecar && sidecar.error) || '연결 실패');
+    }
+
+    var ul = document.getElementById('cstWarnings');
+    if (warnings.length === 0) {
+        ul.innerHTML = '<li class="ok">\u2713 이상 없음 — Chroma 서버·컬렉션·사이드카·설정이 서로 맞습니다.</li>';
+    } else {
+        ul.innerHTML = warnings.map(function(w) {
+            var lv = (w.level === 'error' || w.level === 'warn') ? w.level : 'info';
+            var mark = lv === 'error' ? '\u2717 ' : (lv === 'warn' ? '\u26a0 ' : '\u2139 ');
+            return '<li class="' + lv + '">' + mark + esc(w.message || w.code || '') + '</li>';
+        }).join('');
+    }
+    var at = document.getElementById('cstCheckedAt');
+    if (at) at.textContent = d.checkedAt ? '(' + String(d.checkedAt).replace('T', ' ') + ' 기준)' : '';
+
+    // 모드 선택 카드의 chroma 설명 + ES 모드에서 보이는 요약 줄
+    var cnt = (chroma.success && chroma.count != null) ? (chroma.count + '건 색인됨') : null;
+    var desc = document.getElementById('modeDescChroma');
+    if (desc) desc.textContent = '로컬 Chroma 벡터 DB + 임베딩 사이드카' + (cnt ? ' — ' + cnt : '');
+    var sum = document.getElementById('backendSummary');
+    if (sum) {
+        var cls, txt;
+        // 요약 줄은 제목만 — 상세("A — B" 의 B)는 Chroma 연동 상태 패널에서 본다.
+        var headOf = function(m) { return String(m || '').split(' \u2014 ')[0]; };
+        if (!chroma.success) {
+            cls = 'err'; txt = '\u2717 Chroma 서버 미연결 — ' + headOf(chroma.error || '확인 필요');
+        } else if (hasError) {
+            var first = warnings.filter(function(w){ return w.level === 'error'; })[0];
+            cls = 'err'; txt = '\u2717 Chroma 설정 오류 ' + warnings.filter(function(w){ return w.level === 'error'; }).length
+                + '건 — ' + headOf(first && first.message);
+        } else {
+            var warnOnly = warnings.filter(function(w){ return w.level === 'warn'; });
+            if (warnOnly.length > 0) {
+                cls = 'warn'; txt = '\u26a0 Chroma 전환 전 확인 ' + warnOnly.length + '건 — ' + headOf(warnOnly[0].message);
+            } else {
+                cls = 'ok';
+                txt = '\u2713 Chroma 연동 준비됨' + (cnt ? ' — ' + cnt : '')
+                    + (chroma.space ? ' \u00b7 ' + chroma.space : '')
+                    + (chroma.dimension != null ? ' \u00b7 dim ' + chroma.dimension : '');
+            }
+        }
+        sum.className = 'st-val ' + cls;
+        sum.textContent = txt;
+    }
+    if (d.error) {
+        var errBox = document.getElementById('chromaStatusError');
+        errBox.className = 'test-result err';
+        errBox.textContent = '\u2717 ' + d.error;
+    }
+}
+
+// ── Embedding provider 별 표시 (순수 표시 함수 — 값을 바꾸지 않는다) ──
+// loadRagSettings 끝에서도 불리므로 여기서 값을 채우면 저장값을 변조하게 된다.
+// 기본값 채우기는 사용자가 누르는 버튼(fillSidecarDefaults)으로만.
+function onEmbProviderChange() {
+    var local = document.getElementById('ragEmbProvider').value === 'local-onnx';
+    document.getElementById('ragEmbApiKeyRow').style.display = local ? 'none' : 'flex';
+    document.getElementById('ragEmbModelRow').style.display  = local ? 'none' : 'flex';
+    document.getElementById('embSidecarHintRow').style.display = local ? 'flex' : 'none';
+    document.getElementById('ragEmbApiUrl').placeholder =
+        local ? (_localOnnxDefaults.url || 'http://127.0.0.1:8001/embed') : 'https://api.openai.com/v1/embeddings';
+    if (local) {
+        document.getElementById('embSidecarHint').textContent =
+            '로컬 사이드카 계약 — API URL ' + (_localOnnxDefaults.url || '(로드 중)') + ', Dimension '
+            + (_localOnnxDefaults.dimension || '?') + ' (multilingual-e5-small). '
+            + 'API Key·Model 은 사이드카가 소유하므로 사용하지 않습니다. 값이 다르면 아래 버튼으로 채운 뒤 Save All 하세요.';
+    }
+}
+
+function fillSidecarDefaults() {
+    if (!_localOnnxDefaults.url) { toast('설정을 아직 불러오지 못했습니다 — Reload 후 다시 시도하세요', 'error'); return; }
+    document.getElementById('ragEmbProvider').value = 'local-onnx';
+    document.getElementById('ragEmbApiUrl').value = _localOnnxDefaults.url;
+    document.getElementById('ragEmbDim').value = _localOnnxDefaults.dimension;
+    onEmbProviderChange();
+    toast('사이드카 기본값을 채웠습니다 — Save All 로 저장하세요', 'success');
+}
+
+// Chroma 설정 "미리보기" — ES 계열 모드에서 모드를 바꾸지 않고 Chroma 카드를 잠깐 펼친다.
+// 모드를 바꾸면 항상 접힌다(펼친 채로 잊어버려 "왜 안 쓰이지" 하는 혼란 방지).
+var _chromaPeek = false;
+
+function onModeRadioChange(el) {
+    document.getElementById('ragMode').value = el.value;
+    _chromaPeek = false;
+    onRagModeChange();
+}
+
+function toggleChromaPeek() {
+    _chromaPeek = !_chromaPeek;
+    onRagModeChange();
+}
+
+function _show(id, on) {
+    var el = document.getElementById(id);
+    if (el) el.style.display = on ? '' : 'none';   // '' = 카드 기본 display (2열에서는 flex item)
 }
 
 function onRagModeChange() {
     var mode = document.getElementById('ragMode').value;
-    document.getElementById('cardSemanticServer').style.display = (mode === 'semantic-server') ? 'block' : 'none';
-    // chroma 도 질의 임베딩이 필요해 Embedding 카드를 함께 보여준다
-    // (Chroma 서버는 임베딩을 하지 않는다 — /query 는 query_embeddings 만 받는다).
-    document.getElementById('cardSemanticClient').style.display =
-        (mode === 'semantic-client' || mode === 'chroma') ? 'block' : 'none';
-    document.getElementById('cardChroma').style.display = (mode === 'chroma') ? 'block' : 'none';
+    var isChroma = (mode === 'chroma');
+    var isEs = !isChroma;          // keyword / semantic-server / semantic-client 는 모두 ES 백엔드
+
+    // 라디오 동기화 (loadRagSettings 가 select 만 세팅하는 경로 포함)
+    var radios = document.querySelectorAll('input[name="ragModeRadio"]');
+    for (var i = 0; i < radios.length; i++) {
+        var on = (radios[i].value === mode);
+        radios[i].checked = on;
+        var box = radios[i].parentNode;
+        if (box && box.classList) box.classList.toggle('selected', on);
+    }
+
+    // 모드에 맞는 백엔드 카드만 — ES 를 고르면 Chroma 가, Chroma 를 고르면 ES 가 사라진다.
+    // (값은 DOM 에 그대로 남아 있으므로 저장·복원에는 영향이 없다.)
+    _show('cardEsConnection', isEs);
+    _show('cardEsAuth', isEs);
+    _show('cardSemanticServer', mode === 'semantic-server');
+    _show('cardSemanticClient', mode === 'semantic-client' || isChroma);
+    _show('embKnnBox', mode === 'semantic-client');
+    var showChroma = isChroma || _chromaPeek;
+    _show('cardChromaStatus', showChroma);
+    _show('cardChroma', showChroma);
+
+    _setBadge('embModeBadge', isChroma ? 'Chroma 질의 임베딩' : (mode === 'semantic-client' ? 'ES kNN 질의 임베딩' : ''),
+              isChroma ? 'active' : '');
+    _setBadge('chromaModeBadge', (!isChroma && _chromaPeek) ? '미리보기 — 현재 모드에서 미사용' : '', '');
+
+    // ES 모드에서도 Chroma 가 준비돼 있다는 사실은 한 줄로 남긴다(발견성).
+    _show('backendSummaryRow', isEs);
+    var peekBtn = document.getElementById('chromaPeekBtn');
+    if (peekBtn) peekBtn.textContent = _chromaPeek ? 'Chroma 설정 접기' : 'Chroma 설정 보기';
+
+    var testBtn = document.getElementById('ragTestBtn');
+    if (testBtn) testBtn.textContent = isChroma ? 'Test Connection (Chroma + 임베딩)' : 'Test Connection (Elasticsearch)';
 
     // Min Score 의 의미가 모드마다 다르다 — BM25 점수와 코사인 유사도는 스케일이 다르므로
     // 값을 그대로 두고 모드만 바꾸면 조용히 0건이 되거나 무필터가 된다.
@@ -710,15 +1078,45 @@ function buildConnPayload(includeSecrets) {
     return payload;
 }
 
-function testEmbeddingConn() {
+function buildEmbeddingTestPayload() {
     var ek = document.getElementById('ragEmbApiKey').value;
     var payload = {
         provider: document.getElementById('ragEmbProvider').value,
         apiUrl:   document.getElementById('ragEmbApiUrl').value.trim(),
         model:    document.getElementById('ragEmbModel').value.trim(),
+        // 폼의 차원으로 서버 검증(EmbeddingService '차원 불일치')이 돌게 한다 — 저장 전 값 검증
+        dimension: parseInt(document.getElementById('ragEmbDim').value, 10) || 0,
         timeoutSeconds: parseInt(document.getElementById('ragEmbTimeout').value, 10) || 15
     };
     if (ek && ek.length > 0) payload.apiKey = ek; // 비어있으면 저장 키 사용
+    return payload;
+}
+
+function buildChromaTestPayload() {
+    var tk = document.getElementById('chromaToken').value;
+    var payload = {
+        chromaUrl:        document.getElementById('chromaUrl').value.trim(),
+        chromaCollection: document.getElementById('chromaCollection').value.trim(),
+        chromaApiPath:    document.getElementById('chromaApiPath').value.trim() || '/api/v2',
+        chromaTenant:     document.getElementById('chromaTenant').value.trim() || 'default_tenant',
+        chromaDatabase:   document.getElementById('chromaDatabase').value.trim() || 'default_database',
+        chromaAuthType:   document.getElementById('chromaAuth').value,
+        chromaSslVerify:  document.getElementById('chromaSslVerify').checked,
+        chromaTimeoutSeconds: parseInt(document.getElementById('chromaTimeout').value, 10) || 15
+    };
+    if (tk && tk.length > 0) payload.chromaToken = tk;   // 비어있으면 저장된 토큰 사용
+    return payload;
+}
+
+function _postJSON(url, payload) {
+    return fetch(url, {
+        method: 'POST', headers: getCsrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(payload)
+    }).then(function(r){ return r.json(); });
+}
+
+function testEmbeddingConn() {
+    var payload = buildEmbeddingTestPayload();
     var resBox = document.getElementById('embTestResult');
     resBox.className = 'test-result busy';
     resBox.textContent = '임베딩 API 호출 중...';
@@ -741,18 +1139,7 @@ function testEmbeddingConn() {
 }
 
 function testChromaConn() {
-    var tk = document.getElementById('chromaToken').value;
-    var payload = {
-        chromaUrl:        document.getElementById('chromaUrl').value.trim(),
-        chromaCollection: document.getElementById('chromaCollection').value.trim(),
-        chromaApiPath:    document.getElementById('chromaApiPath').value.trim() || '/api/v2',
-        chromaTenant:     document.getElementById('chromaTenant').value.trim() || 'default_tenant',
-        chromaDatabase:   document.getElementById('chromaDatabase').value.trim() || 'default_database',
-        chromaAuthType:   document.getElementById('chromaAuth').value,
-        chromaSslVerify:  document.getElementById('chromaSslVerify').checked,
-        chromaTimeoutSeconds: parseInt(document.getElementById('chromaTimeout').value, 10) || 15
-    };
-    if (tk && tk.length > 0) payload.chromaToken = tk;   // 비어있으면 저장된 토큰 사용
+    var payload = buildChromaTestPayload();
     var resBox = document.getElementById('chromaTestResult');
     resBox.className = 'test-result busy';
     resBox.textContent = 'Chroma 연결 확인 중...';
@@ -765,6 +1152,7 @@ function testChromaConn() {
             var msg = '\u2713 연결 성공 — API v' + (d.apiVersion || '?');
             if (d.count != null) msg += ', 문서 ' + d.count + '건';
             if (d.space) msg += ', space: ' + d.space;
+            if (d.dimension != null) msg += ', dim: ' + d.dimension;
             if (d.warning) msg += ' \u26a0 ' + d.warning;
             resBox.textContent = msg;
         } else {
@@ -815,14 +1203,62 @@ function saveRagAll() {
         });
     }).then(function(r){ return r.json(); }).then(function(d){
         if (!d.success) throw new Error('청킹 설정 저장 실패');
-        toast('RAG 설정 저장 완료', 'success');
+        // 저장은 막지 않되(사용자가 단계적으로 바꾸는 중일 수 있다) 이 조합으로는 검색이 실패한다.
+        // ⚠ 별도 토스트로 띄우지 말 것 — 완료 메시지와 같은 좌표에 떠서 글자가 겹친다(2026-08-29 제보).
+        //   상세 진단은 아래 loadChromaStatus() 가 요약 줄·상태 패널에 남긴다.
+        var embMismatch = (connPayload.searchMode === 'chroma' && connPayload.embeddingProvider !== 'local-onnx');
+        toast(embMismatch
+                ? 'RAG 설정 저장 완료 — 단, Embedding provider 가 ' + connPayload.embeddingProvider
+                  + ' 라 Chroma 질의 임베딩이 실패합니다'
+                : 'RAG 설정 저장 완료',
+              embMismatch ? 'error' : 'success');
         loadRagSettings();
+        loadChromaStatus();   // 저장된 설정 기준 패널 — 저장 직후 1회 갱신
     }).catch(function(e){ toast('저장 실패: ' + e.message, 'error'); });
 }
 
+// chroma 모드의 "Test Connection" — Chroma 서버 + 임베딩 사이드카를 폼 값으로 함께 검증한다.
+// ES 전용 /api/settings/rag/test 와 서버에서 합치지 않는다(ES·Chroma 병행 운용 요구).
+function testChromaStack(resBox) {
+    resBox.className = 'test-result busy';
+    resBox.textContent = 'Chroma + 임베딩 연결 테스트 중...';
+    Promise.all([
+        _postJSON('/api/settings/rag/chroma/test', buildChromaTestPayload()),
+        _postJSON('/api/settings/rag/embedding/test', buildEmbeddingTestPayload())
+    ]).then(function(rs) {
+        var c = rs[0] || {}, e = rs[1] || {};
+        var lines = [];
+        if (c.success) {
+            var m = 'Chroma \u2713 API v' + (c.apiVersion || '?');
+            if (c.count != null) m += ', ' + c.count + '건';
+            if (c.space) m += ', space ' + c.space;
+            if (c.dimension != null) m += ', dim ' + c.dimension;
+            if (c.warning) m += ' \u26a0 ' + c.warning;
+            lines.push(m);
+        } else {
+            lines.push('Chroma \u2717 ' + (c.error || '연결 실패'));
+        }
+        if (e.success) {
+            lines.push('임베딩 \u2713 ' + (e.provider || '?') + ' dim ' + (e.dimension || 0));
+        } else {
+            lines.push('임베딩 \u2717 ' + (e.error || '호출 실패'));
+        }
+        if (c.success && e.success && c.dimension != null && e.dimension != null && c.dimension !== e.dimension) {
+            lines.push('\u26a0 차원 불일치 — 컬렉션 ' + c.dimension + ' / 임베딩 ' + e.dimension + ' (색인 모델과 질의 모델이 다릅니다)');
+        }
+        resBox.className = 'test-result ' + ((c.success && e.success) ? 'ok' : 'err');
+        resBox.textContent = lines.join('  |  ');
+    }).catch(function(err) {
+        resBox.className = 'test-result err';
+        resBox.textContent = '\u2717 요청 실패: ' + err.message;
+    });
+}
+
 function testRagConn() {
-    var payload = buildConnPayload(true);
     var resBox = document.getElementById('ragTestResult');
+    // 결함 ③ 수정: chroma 모드에서 ES 를 검사하던 문제 — Chroma + 사이드카를 대신 검사한다.
+    if (document.getElementById('ragMode').value === 'chroma') { testChromaStack(resBox); return; }
+    var payload = buildConnPayload(true);
     resBox.className = 'test-result busy';
     resBox.textContent = '연결 테스트 중...';
     fetch('/api/settings/rag/test', {
@@ -846,7 +1282,10 @@ function testRagConn() {
     });
 }
 
-document.addEventListener('DOMContentLoaded', loadRagSettings);
+document.addEventListener('DOMContentLoaded', function() {
+    loadRagSettings();
+    loadChromaStatus();
+});
 
 // ── 비-ADMIN 읽기 전용 처리 ──
 (function() {

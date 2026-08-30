@@ -27,6 +27,13 @@ import java.util.*;
  * - cohere : POST {url} {model, texts:[]}         → embeddings[0][]
  * - custom : OpenAI 호환 스펙 가정
  *
+ * - local-onnx : POST {url} {text, input_type:"query"} → embedding[]   (사내 사이드카, 인증·모델 없음)
+ *
+ * <p>local-onnx 사이드카 계약(2026-08-29): 임베딩은 {@code POST .../embed}, 상태는 {@code GET .../health}
+ * ({@code {status, model, dimension, max_length, prefixes, uptime_seconds, max_batch, max_concurrency}}).
+ * 기본 주소·차원은 {@link #LOCAL_ONNX_DEFAULT_URL}/{@link #LOCAL_ONNX_DIMENSION} 한 곳에 두고
+ * 설정 화면은 {@code GET /api/settings/rag} 로 받아 쓴다 — JS 에 리터럴을 다시 적지 말 것.
+ *
  * API Key는 HeapDumpAnalyzerService에 평문 보관, settings.json에는 ENC(...) AES 암호화.
  */
 @Service
@@ -34,6 +41,11 @@ public class EmbeddingService {
 
     private static final Logger logger = LoggerFactory.getLogger(EmbeddingService.class);
     private final ObjectMapper objectMapper = new ObjectMapper();
+
+    /** local-onnx 사이드카 기본 임베딩 URL (chroma-embed.service, 127.0.0.1 전용). */
+    public static final String LOCAL_ONNX_DEFAULT_URL = "http://127.0.0.1:8001/embed";
+    /** 사이드카 모델(multilingual-e5-small)의 출력 차원. 컬렉션도 이 차원으로 만들어져 있다. */
+    public static final int LOCAL_ONNX_DIMENSION = 384;
 
     private final RagConfigService ragConfig;
 
@@ -133,6 +145,75 @@ public class EmbeddingService {
             result.put("error", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
             return result;
         }
+    }
+
+    // ── local-onnx 사이드카 상태 ─────────────────────────────
+
+    /**
+     * {@code .../embed} → {@code .../health}. 사이드카 계약이 두 경로를 같은 루트에 두므로
+     * 임베딩 URL 에서 유도한다. 끝이 {@code /embed} 가 아니면 <b>추측하지 않고</b> null —
+     * 엉뚱한 서버의 {@code /health} 를 두드리면 "정상"으로 오판할 수 있다.
+     */
+    static String healthUrlFor(String embedUrl) {
+        if (embedUrl == null) return null;
+        String u = embedUrl.trim();
+        while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+        if (!u.endsWith("/embed")) return null;
+        return u.substring(0, u.length() - "/embed".length()) + "/health";
+    }
+
+    /**
+     * 사이드카 {@code GET /health}. <b>절대 throw 하지 않는다</b> — 설정 화면의 상태 패널이
+     * 페이지 로드마다 부르므로, 사이드카가 죽어 있어도 {@code success:false} 로 조용히 돌아와야 한다.
+     *
+     * @param timeoutSec 연결·읽기 타임아웃(초). 상태 패널은 짧게(≤5초) 준다.
+     */
+    public Map<String, Object> sidecarHealth(String embedUrl, int timeoutSec) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        String healthUrl = healthUrlFor(embedUrl);
+        result.put("healthUrl", healthUrl);
+        if (healthUrl == null) {
+            result.put("success", false);
+            result.put("error", "Embedding API URL 이 /embed 로 끝나지 않아 health 경로를 유도할 수 없습니다: "
+                    + (embedUrl == null ? "(미설정)" : embedUrl));
+            return result;
+        }
+        try {
+            HttpURLConnection conn = openConnection(healthUrl, true);
+            conn.setRequestMethod("GET");
+            int ms = Math.max(1, timeoutSec) * 1000;
+            conn.setConnectTimeout(ms);
+            conn.setReadTimeout(ms);
+            conn.setRequestProperty("Accept", "application/json");
+            int code = conn.getResponseCode();
+            String body = readStream(code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream());
+            if (code < 200 || code >= 300) {
+                result.put("success", false);
+                result.put("error", "HTTP " + code + (body.isEmpty() ? "" : " — " + truncate(body, 200)));
+                return result;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> json = objectMapper.readValue(body, Map.class);
+            result.put("success", true);
+            result.put("status", json.get("status"));
+            result.put("model", json.get("model"));
+            result.put("dimension", asInt(json.get("dimension")));
+            result.put("maxLength", asInt(json.get("max_length")));
+            result.put("maxBatch", asInt(json.get("max_batch")));
+            result.put("maxConcurrency", asInt(json.get("max_concurrency")));
+            Object up = json.get("uptime_seconds");
+            result.put("uptimeSeconds", up instanceof Number ? ((Number) up).doubleValue() : null);
+            return result;
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("error", "[" + e.getClass().getSimpleName() + "] "
+                    + (e.getMessage() == null ? "" : e.getMessage()));
+            return result;
+        }
+    }
+
+    private static Integer asInt(Object v) {
+        return v instanceof Number ? ((Number) v).intValue() : null;
     }
 
     // ── 내부 ──────────────────────────────────────────────

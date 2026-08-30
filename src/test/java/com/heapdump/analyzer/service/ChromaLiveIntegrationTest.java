@@ -108,4 +108,31 @@ class ChromaLiveIntegrationTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("연동 상태 집계 — 컬렉션 차원 384·문서 수·사이드카 차원 384, 정상 상태면 경고 0건")
+    @SuppressWarnings("unchecked")
+    void integrationStatusLive() {
+        Map<String, Object> r = wire().integrationStatus();
+        System.out.println("[live] integrationStatus = " + r);
+        assertTrue((Boolean) r.get("success"));
+        assertTrue((Boolean) r.get("chromaActive"));
+
+        Map<String, Object> chroma = (Map<String, Object>) r.get("chroma");
+        assertTrue((Boolean) chroma.get("success"), "Chroma 미도달: " + chroma.get("error"));
+        assertEquals(384, chroma.get("dimension"));
+        assertEquals("cosine", chroma.get("space"));
+        assertTrue(((Number) chroma.get("count")).longValue() > 0);
+
+        Map<String, Object> emb = (Map<String, Object>) r.get("embedding");
+        Map<String, Object> sidecar = (Map<String, Object>) emb.get("sidecar");
+        assertNotNull(sidecar, "local-onnx 인데 사이드카를 두드리지 않았다");
+        assertTrue((Boolean) sidecar.get("success"), "사이드카 미도달: " + sidecar.get("error"));
+        assertEquals(384, sidecar.get("dimension"));
+
+        List<Map<String, Object>> warnings = (List<Map<String, Object>>) r.get("warnings");
+        assertTrue(warnings.isEmpty(), "정상 배선인데 경고가 있다: " + warnings);
+        // USER 도 읽는 응답 — 토큰이 새면 안 된다
+        assertFalse(String.valueOf(r).toLowerCase().contains("token"));
+    }
 }

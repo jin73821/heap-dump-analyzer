@@ -45,12 +45,18 @@
         /* 비-ADMIN 진입 시 ON 토글 색을 하늘색으로 (settings.html 과 동일 패턴) */
 
         /* ── Buttons ─────────────────────────────────────── */
-        .btn-primary { padding: 6px 14px; border: none; border-radius: 6px; background: #2563EB;
-                       color: #fff; font-size: 12px; cursor: pointer; font-weight: 600; }
+        /* 치수는 공통, 색만 개별 — rag-settings.html 과 동일 규약(이유는 그쪽 주석 참조).
+           border 를 secondary 에만 주면 2px, line-height 를 안 주면 한글 라벨이 4px 더 높다. */
+        .btn-primary, .btn-secondary {
+            box-sizing: border-box; padding: 6px 14px; border: 1px solid transparent;
+            border-radius: 6px; font-family: inherit; font-size: 12px; line-height: 18px;
+            font-weight: 600; cursor: pointer;
+        }
+        .btn-primary { background: #2563EB; color: #fff; }
         .btn-primary:hover { background: #1D4ED8; }
-        .btn-secondary { padding: 6px 14px; border: 1px solid #D1D5DB; border-radius: 6px;
-                         background: #fff; font-size: 12px; cursor: pointer; font-weight: 600; color: #374151; }
+        .btn-secondary { border-color: #D1D5DB; background: #fff; color: #374151; }
         .btn-secondary:hover { background: #F3F4F6; }
+        .btn-act { padding: 8px 20px; font-size: 13px; min-width: 108px; }
 
         /* Toast CSS 는 common.css 로 이관 (Common.toast) */
 
@@ -375,8 +381,8 @@
     <!-- Save & Test -->
     <div class="card">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <button onclick="saveLlmConfig()" class="btn-primary" style="padding:8px 20px;font-size:13px">Save Config</button>
-            <button onclick="testLlmConnection(this)" class="btn-secondary" style="padding:8px 20px;font-size:13px">Test Connection</button>
+            <button onclick="saveLlmConfig()" class="btn-primary btn-act">Save Config</button>
+            <button onclick="testLlmConnection(this)" class="btn-secondary btn-act">Test Connection</button>
         </div>
         <div id="llmTestResult" style="margin-top:10px;font-size:13.5px;line-height:1.5;display:none"></div>
     </div>

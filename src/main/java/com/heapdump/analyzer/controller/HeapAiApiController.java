@@ -709,6 +709,9 @@ public class HeapAiApiController {
         embedding.put("timeoutSeconds", ragConfig.getRagEmbeddingTimeoutSeconds());
         embedding.put("vectorField", ragConfig.getRagKnnVectorField());
         embedding.put("numCandidates", ragConfig.getRagKnnNumCandidates());
+        // 사이드카 기본값의 단일 출처 — 설정 화면 "사이드카 기본값 채우기" 가 이 값을 쓴다(JS 리터럴 금지).
+        embedding.put("localOnnxDefaultUrl", EmbeddingService.LOCAL_ONNX_DEFAULT_URL);
+        embedding.put("localOnnxDimension", EmbeddingService.LOCAL_ONNX_DIMENSION);
         res.put("embedding", embedding);
 
         Map<String, Object> chroma = new LinkedHashMap<>();
@@ -852,14 +855,6 @@ public class HeapAiApiController {
     }
 
     /**
-     * Chroma 연결 테스트. 기존 /api/settings/rag/test 와 합치지 않는 이유는
-     * 그쪽이 ES {@code _cluster/health} + 인덱스 HEAD 전용이고, ES 와 Chroma 를
-     * 병행 운용하는 것이 요구사항이기 때문이다(합치면 ES 테스트가 망가진다).
-     *
-     * <p>인가는 SecurityConfig 의 {@code POST /api/settings/**} → ADMIN 패턴이
-     * 이미 덮는다. 경로를 옮기면 인가가 조용히 풀리므로 주의.
-     */
-    /**
      * 앱 코드 안에만 있는 진단 지식을 RAG 색인용 문서로 내보낸다.
      * 색인기(`/opt/chroma/app/run-index.sh --sources app`)가 이 응답을 그대로 upsert 한다.
      *
@@ -879,6 +874,29 @@ public class HeapAiApiController {
         return ResponseEntity.ok(res);
     }
 
+    /**
+     * Chroma 연동 상태 (읽기 전용). 설정 화면의 "Chroma 연동 상태" 패널이 로드 시 1회 + 새로고침 시 부른다.
+     *
+     * <p>GET 이라 CSRF 대상이 아니고 USER 도 읽는다 — 페이지 자체가 USER 열람 가능하기 때문.
+     * 그래서 {@link ChromaSearchService#integrationStatus()} 는 토큰·시크릿을 싣지 않는다.
+     * 저장된 설정만 본다(폼의 미저장 값은 아래 연결 테스트가 담당). 프로브 타임아웃은
+     * min(설정, 5초) — 서비스가 죽어 있어도 페이지 로드가 15초씩 멈추지 않도록.
+     * 주기 폴링은 없다(함정 38 — 배경 폴러가 세션 만료를 무력화한다).
+     */
+    @GetMapping("/api/settings/rag/chroma/status")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> chromaIntegrationStatus() {
+        return ResponseEntity.ok(chromaSearchService.integrationStatus());
+    }
+
+    /**
+     * Chroma 연결 테스트. 기존 /api/settings/rag/test 와 합치지 않는 이유는
+     * 그쪽이 ES {@code _cluster/health} + 인덱스 HEAD 전용이고, ES 와 Chroma 를
+     * 병행 운용하는 것이 요구사항이기 때문이다(합치면 ES 테스트가 망가진다).
+     *
+     * <p>인가는 SecurityConfig 의 {@code POST /api/settings/**} → ADMIN 패턴이
+     * 이미 덮는다. 경로를 옮기면 인가가 조용히 풀리므로 주의.
+     */
     @PostMapping("/api/settings/rag/chroma/test")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> testChromaConnection(

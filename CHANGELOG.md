@@ -1,5 +1,255 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-08-30] 설정 화면 액션 버튼 크기 불일치 + Leak Rules 헤더 중복 카운트 제거
+
+**계기:** 사용자 제보 2건 — ① `/settings/rag` 의 Save All / Test Connection / Reload 버튼 크기가 서로 다르다 ② `/admin/leak-rules` 헤더의 `라이브러리 룰: 98 / Fallback 룰: 66` 라인이 아무 디자인 없이 글자만 찍힌다(탭 버튼에 이미 갯수가 있으니 삭제).
+
+### 버튼 높이가 31 / 35 / 33 px 로 제각각이었다 (`rag-settings.html`, `llm-settings.html`)
+
+헤드리스 Chrome 실측:
+
+| 버튼 | 클래스 | 높이 | 원인 |
+|---|---|---:|---|
+| Save All | `.btn-primary` | 31px | 기준 |
+| Test Connection (Chroma + 임베딩) | `.btn-success` | **35px** | 라벨의 **한글** — line-height 미지정이라 fallback 폰트의 큰 행상자가 그대로 높이가 됐다 |
+| Reload | `.btn-secondary` | **33px** | `border: 1px` 이 **이 클래스에만** 있어 위아래 2px |
+
+즉 원인이 둘이고 서로 무관하다. 한쪽만 고치면 여전히 어긋난다. 게다가 Test Connection 라벨은 모드에 따라 런타임에 바뀌므로(`Test Connection (Elasticsearch)` ↔ `(Chroma + 임베딩)`) **모드를 바꾸는 순간 높이가 변하는** 상태였다.
+
+**조치** — 3종 버튼의 **형태 규칙을 한 선언으로 통합**하고 색만 개별로 남겼다:
+- `border: 1px solid transparent` 를 채움 버튼(primary/success)에도 부여 → 박스 모델 일치
+- `line-height: 18px` 고정 → 라틴/한글 라벨이 같은 높이
+- `font-family: inherit` → button 은 폰트를 상속하지 않아 기본값이 Arial 이었다(본문은 Segoe UI)
+- 액션 바 3개의 인라인 `style="padding:8px 20px;font-size:13px"` 를 `.btn-act` 클래스로 이관(+`min-width:108px`) — 치수가 두 곳으로 갈라지지 않게
+
+**실측 결과:** 세 버튼 모두 **36px**, 한글 라벨 포함해도 동일.
+
+`llm-settings.html` 에 **동일한 결함**(Save Config 31 / Test Connection 33)이 있어 같은 규약으로 함께 정리했다. 두 화면이 나란히 쓰이는 형제 페이지라 한쪽만 고치면 어긋난다.
+
+### Leak Rules 페이지 헤더의 중복 카운트 라인 제거 (`leak-rules.html`)
+
+`/admin/leak-rules` 헤더에 `라이브러리 룰: 98 / Fallback 룰: 66` 두 줄이 있었는데, **`.page-stat`·`.page-stats` 는 어디에도 CSS 가 없어**(style.css·인라인 모두 미정의) 스타일 없는 맨 텍스트로 찍히고 있었다. 게다가 바로 아래 탭 버튼의 `.tab-count` 배지가 **같은 숫자를 이미 보여준다** — 중복이라 삭제했다.
+
+⚠ 마크업만 지우면 안 된다. `loadLibrary()`/`loadFallback()` 이 `getElementById('libCountChip').textContent = …` 로 이 엘리먼트를 직접 갱신하고 있어, 엘리먼트가 사라지면 **`null.textContent` TypeError 가 그 자리에서 터져 뒤따르는 `renderLibrary()` 가 아예 실행되지 않는다**(표가 빈 채로 남고 콘솔에만 에러). 마크업·JS 참조 2줄·죽은 모바일 CSS 를 함께 제거했다. 갱신은 `.tab-count` 쪽만 남는다.
+
+> 같은 날 진행했던 `/admin/leak-rules` **표** 가독성 개선(카테고리 그룹 칩·행 액센트·prefix 분리·정규식 대안 칩)은 **사용자 판단으로 전량 원복**했다. 조사해 둔 사실만 남긴다: `severity_hint` 는 164건(98+66) **전부 NULL** 이고 `category` 는 자유 문자열 **83종**이다.
+
+### 회귀 방어
+
+`RagSettingsTemplateSmokeTest` +1 / `LlmSettingsTemplateSmokeTest` +1 — 버튼 치수 규칙이 한 선언에 모여 있는지, 인라인 치수가 되살아나지 않았는지.
+
+**변경 파일:** `templates/rag-settings.html`, `templates/llm-settings.html`, `templates/leak-rules.html`, `test/.../RagSettingsTemplateSmokeTest.java`, `test/.../LlmSettingsTemplateSmokeTest.java`. 테스트 487 → **489**건.
+
+## [2026-08-29] RAG 답변 품질 — 과거 대화가 정답을 밀어내고 수치를 오염시키던 문제
+
+**계기:** 첫 RAG 연동 답변("메모리 누수의 흔한 원인은?")을 점검하다 발견. 답변이 **한 문서 안에서 byte[] 에 대해 모순된 두 수치**를 제시했다 — `byte[] × 347개 (74.45 MB)` 와 `byte[] 17,574개 (16.18 MB)`, 둘 다 "현재 힙 덤프 수치"라고.
+
+### 원인 — 다른 분석 건의 수치가 "현재 덤프"로 둔갑
+
+수치의 출처를 전부 대조했다:
+
+| 답변의 수치 | 실제 출처 | 판정 |
+|---|---|---|
+| `OomGenerator`, `347개`, `25.96 MB`, `74.45 MB` | oom-test.hprof 분석 결과(`25,960,936 bytes` 등) | 정확한 인용 |
+| `17,574개`, `16.18 MB` | **RAG 로 주입된 과거 대화**(`ai_chat:17#2`) | **다른 건의 수치** |
+
+세션에 바인딩된 덤프 분석 결과와 RAG 자료가 시스템 프롬프트에 **나란히** 붙는데, 자료 쪽에 "이건 다른 건입니다"라는 표시가 없었다. 모델 입장에선 구분할 근거가 없다.
+
+### 실측 — `ai_chat` 이 검색 슬롯의 39.5% 를 차지하며 정답을 밀어냈다
+
+평가셋 42건으로 측정했다:
+
+| | Recall@10 | Recall@5 | 1위가 ai_chat |
+|---|---:|---:|---:|
+| 현행(ai_chat 포함) | 0.857 | 0.786 | 6/42건 |
+| **ai_chat 제외** | **0.952** | **0.905** | — |
+| 변화 | **+0.095** | **+0.119** | |
+
+상위 10건의 소스 분포에서 `ai_chat` 이 **166/420 슬롯(39.5%)** 으로 1위였다. 정제된 지식(`csv` 10.0%, `leak_fb` 8.8%, `mat_hint` 2.9%)이 대화 로그에 밀리고 있었다. 함정 42가 경고한 현상이 품질 수치로 확인된 셈이다.
+
+### 조치 3건
+
+1. **RAG 컨텍스트 헤더에 출처 경계 명시** (`RagService.fetchContextForLlm`) — "⚠ 이 자료는 **다른 분석 건**의 사례·수치일 수 있습니다. 여기 나온 수치·클래스명·파일명을 현재 분석 대상의 것으로 단정하지 마세요. … 현재 덤프의 수치는 위의 분석 결과 섹션만 근거로 삼으세요."
+2. **검색 파라미터 조정** — `Min Score 0.5 → 0.86`, `Top-K 5 → 10`. 0.5 는 BM25 시절 값이라 코사인에서는 사실상 무필터였다(실측: "오늘 날씨 알려줘" 에도 5건 전부 통과, 0.86 이면 0건). Top-K 는 평가셋 근거(@5 0.786 → @10 0.881).
+3. **`ai_chat` 을 검색에서 제외** (`ChromaSearchService.EXCLUDED_SOURCE_TYPES`) — **색인은 보존하고 검색에서만 뺀다.** 되돌리려면 목록에서 지우기만 하면 되고 재색인이 필요 없다. `where` 절은 조건이 2개 이상이면 `$and` 로 묶어야 한다(단일 맵에 두 키를 넣으면 Chroma 가 하나만 적용한다) — `searchFilter()` 정적 순수 함수로 분리했다.
+
+### 효과 — 같은 질문의 주입 자료
+
+```
+변경 전 (topK 5 · 0.5 · ai_chat 포함)      변경 후 (topK 10 · 0.86 · ai_chat 제외)
+  0.884 csv:leak-2026-001                    0.884 csv:leak-2026-001
+  0.877 leak_fb:6                            0.877 leak_fb:6
+  0.874 ai_chat:1#0        ← 과거 대화       0.867 ai_insight:18#4
+  0.874 ai_chat:37#11      ← 과거 대화       0.866 leak_suspect:9-1#0
+  0.872 ai_chat:17#2       ← 17,574 출처     0.866 ai_insight:6#0  … (총 10건, 전부 정제 지식)
+```
+
+사고의 직접 원인이던 `ai_chat:17#2` 가 사라졌고, 주입 자료가 전부 정제된 진단 지식으로 바뀌었다.
+
+### 검증
+
+- `mvn test` **487건 통과**(신규 `searchFilter` 2건 — `$and` 결합, `$ne` 연산자 방향, synthetic·ai_chat 제외 존치). ⚠ `$eq` 로 뒤집히면 **제외 대상만 검색되는** 조용한 대형 사고라 연산자까지 단언한다.
+- 설정 반영은 앱 정지 → `settings.json` 수정 → 기동 순서로 적용(실행 중 수정은 앱이 덮어쓸 수 있다). 기동 14.5초, 설정 복원 경고 없음.
+- 부수 확인: 답변의 이모지·마크다운은 DB 에 정상 저장돼 있다(`utf8mb4`, 🥇/📚 온전). 조회 도구의 연결 charset 때문에 `?` 로 보였을 뿐이다.
+
+**변경 파일:** `service/{RagService,ChromaSearchService}.java`, `ChromaSearchServiceTest`, `/opt/heapdumps/data/settings.json`(운영 설정), `CLAUDE.md`
+
+
+## [2026-08-29] 토스트 겹침 수정 — 동시 표시 시 세로 스택 + RAG 저장 피드백 단일화
+
+**제보:** "Save All 클릭 시 RAG 저장 완료 문구와 주의 문구가 겹쳐서 표시됩니다."
+
+### 원인 — CSS 고정 좌표 + 매번 새 div
+
+`common.css` 의 `.toast` 는 `position: fixed; top: 70px; left: 50%` **고정 좌표**인데 `Common.toast` 는 호출될 때마다 새 `div` 를 만들어 body 에 붙인다. 두 개가 동시에 뜨면 **정확히 같은 자리에 포개져** 글자가 겹쳐 읽힌다. 예외도 로그도 없고 스크린샷 없이는 눈에 띄지 않는 부류다.
+
+이 겹침은 이미 알려져 있었지만 근본 해결 대신 한 자리에서만 우회하고 있었다 — `showPendingToasts()` 의 `.flash-data` 다건 경로가 `i * 3100` 지연으로 순차 표시한다("다건이면 겹침 방지를 위해 순차 표시").
+
+### 수정
+
+- **`Common.toast` 세로 스택** — `restackToasts()` 가 살아 있는 토스트를 세어 `top` 을 다시 계산한다. 생성 직후와 **제거 직후 양쪽**에서 호출한다(제거 쪽을 빠뜨리면 앞 토스트가 사라진 뒤 뒤 토스트가 공중에 뜬 채 남는다).
+  - **CSS 를 고치지 않은 이유**: `common.css` 를 바꾸면 14개 페이지의 `?v=` 캐시 키를 전부 갱신해야 한다. JS 에서 좌표만 계산하면 무효화 범위가 `common.js` 를 로드하는 2곳(`banner.html`·`account-memo.html`)으로 좁아진다 → `?v=2026-08-29`.
+  - **`.toast-stack` 마커로 이 계열만 센다** — `Common.showToast` 의 `#toast` 고정 엘리먼트(servers/server-detail/admin-users)도 `.toast` 클래스를 쓰므로, `.toast` 전체를 세면 두 계열을 함께 쓰는 페이지에서 좌표가 어긋난다.
+  - `.flash-data` 다건 지연은 유지했다 — 이제 겹치지 않지만 순차로 읽는 편이 이해하기 쉽다. 주석을 그 사실에 맞게 고쳤다.
+- **RAG 저장 피드백 단일화** — `saveRagAll()` 이 저장 **전** 경고 토스트(`주의: chroma 모드인데…`)를 띄우고 저장 **후** 완료 토스트를 또 띄우고 있었다. 게다가 같은 내용이 저장 직후 `loadChromaStatus()` 로 요약 줄·상태 패널에도 뜨므로 3중이었다. 경고를 **완료 메시지에 합쳐** 한 번만 알리고(`RAG 설정 저장 완료 — 단, Embedding provider 가 openai 라 Chroma 질의 임베딩이 실패합니다`, type=error) 상세 진단은 상태 패널이 이어받는다.
+
+### 검증
+
+- 헤드리스 Chrome 으로 실제 `common.js`·`common.css` 를 로드해 좌표 실측: 3개 동시 표시 시 `top 60/108/156` 으로 **겹침 0**, 앞의 하나를 제거하면 나머지가 `60/108/156` 으로 재배치되고 겹침 0.
+- 신규 `CommonToastStackTest`(4) — 마커 클래스, 생성·제거 양쪽 재배치 호출, `.toast-stack` 셀렉터(showToast 계열과 분리), CSS 전제(`.toast` 고정 top)와 마커 무스타일, 두 템플릿의 캐시 키 동기화. CSS·JS 상호작용이라 어느 한쪽만 보면 드러나지 않으므로 양쪽에 앵커를 박았다.
+- `rag-settings` 스모크에 "경고를 별도 토스트로 띄우지 않는다" 단언 추가.
+
+**변경 파일:** `static/js/common.js`, `templates/{fragments/banner,account-memo}.html`(캐시 키), `templates/rag-settings.html`, `CommonToastStackTest`(신규)/`RagSettingsTemplateSmokeTest`
+
+
+## [2026-08-29] RAG 설정 화면 2차 — 모드 중심 재구성 + 넓은 화면 2열, Chroma 선택 시 ES 숨김
+
+**요청:** ① 페이지가 길어졌으니 프론트 디자인 개편 ② "ElasticSearch 는 사내망에서 쓰려던 벡터 DB 다 — Chroma 선택 시 ElasticSearch 가 표시되지 않아야 한다."
+
+### 결과 — 4.9화면 → 2.3화면
+
+| 모드 | 종전 | 1400px(2열) | 1200px(1열) |
+|---|---:|---:|---:|
+| keyword | 4,002px (4.9화면) | **1,834px (2.3)** | 2,238px (2.8) |
+| semantic-server | 4,002px | 1,854px (2.3) | 2,606px (3.2) |
+| semantic-client | 4,002px | 2,126px (2.6) | 2,975px (3.7) |
+| chroma | 4,002px | 2,343px (2.9) | 3,278px (4.0) |
+
+### 모드 중심 재구성 — 검색 모드가 페이지를 지배한다
+
+종전에는 카드 9개가 성격과 무관하게 세로로 나열되고, Search Mode 는 4번째 카드 안 셀렉트 하나에 묻혀 있었다. 실제로는 **모드가 나머지 설정의 의미를 전부 결정**하므로 구조를 그 사실에 맞췄다.
+
+- **`검색 모드` 카드를 최상단 전폭으로 신설** — 4개 모드를 라디오 카드로 한눈에(각 모드 설명 한 줄, chroma 는 실시간 색인 건수 `— 834건 색인됨`을 붙인다). 모든 모드가 쓰는 **Top-K / Min Score 를 여기로 이동**(모드별 권장값 힌트도 함께). ⚠ 값 보관은 기존 `<select id="ragMode">` 가 계속 담당한다(숨김) — `buildConnPayload` 등이 `.value` 를 읽는 계약을 깨지 않기 위해서다. 라디오는 표시·키보드 조작용이고 `onModeRadioChange()` 가 select 로 값을 넘긴다. ⚠ `<label>` 이 input 을 감싸므로 `for` 속성은 제거했다(중첩 + for 를 함께 두면 클릭이 두 번 전달된다).
+- **모드에 맞는 백엔드 카드만 표시(양방향)** — chroma 를 고르면 ES 카드(연결·인증·Semantic-server·kNN 행)가 사라지고, ES 계열을 고르면 Chroma 카드(연동 상태·설정)가 사라진다. **값은 DOM 에 그대로 남아 저장·복원에 영향이 없다.** 가시성 제어는 `_show()` 한 곳으로 모았다 — 개별 `style.display` 조작이 흩어지면 모드 배제가 샌다.
+- **ES 전용 필드를 ES 카드로 이동** — `Text Field`·`Timeout` 은 `searchElasticsearch()` 만 쓰는데 공용 Search 카드에 있었다. `Connection` → **`Elasticsearch 연결`**(URL/Index/TextField/Timeout/SSL), `Authentication` → **`Elasticsearch 인증`** 으로 이름도 명확히 했다.
+- **Chroma 를 숨겨도 발견성은 남긴다** — ES 모드에서는 모드 카드 하단에 한 줄 요약이 뜬다(`✓ Chroma 연동 준비됨 — 834건 색인 · cosine · dim 384` / 문제가 있으면 `⚠ Chroma 전환 전 확인 2건 — 질의 임베딩 불가`). 옆의 **`Chroma 설정 보기`** 버튼은 모드를 바꾸지 않고 Chroma 카드를 잠깐 펼친다(배지 `미리보기 — 현재 모드에서 미사용`). 모드를 바꾸면 항상 접힌다 — 펼친 채로 잊어버려 "왜 안 쓰이지" 하는 혼란을 막는다.
+- Embedding 카드는 `semantic-client`·`chroma` 공용이라 제목을 `Embedding` 으로 줄이고 배지가 맥락을 준다(`ES kNN 질의 임베딩` / `Chroma 질의 임베딩`).
+
+### 2열 레이아웃 (≥1400px)
+
+컨테이너 `max-width` 1080→1500px, 백엔드 카드들을 `.rag-cols` 로 감싸 `@media (min-width:1400px)` 에서만 2열. **grid 고정 2열이 아니라 flex-wrap** 이다 — 모드에 따라 카드가 빠질 때 남은 한 장이 전폭을 쓰도록(코어덤프 요약 탭과 같은 이유). 그 미만 폭에서는 래퍼가 평범한 block 이라 종전과 동일한 1열이다. DOM 순서를 `ES연결·ES인증 → Semantic-server → Chroma상태·Chroma설정 → Embedding → Chunking` 으로 두어, 각 모드에서 짝이 자연스럽게 맞는다(chroma: `상태|설정` / `Embedding|Chunking`).
+
+### 검증
+
+- 헤드리스 Chrome 으로 **4개 모드 × 2개 폭** 전수 확인: 카드 가시성(ES↔Chroma 상호 배제), 높이, 요약 줄 문구·색, 미리보기 토글 왕복, 라디오 클릭 경로, JS 오류 0.
+- `mvn test` 481건 통과. 스모크에 구조 회귀 단언 추가(검색 모드 카드·ES 카드 id·`.rag-cols`·라디오 4종·값 보관 select 존치·요약 줄·`_show()` 경유).
+
+**변경 파일:** `templates/rag-settings.html`(카드 재배치·CSS·JS), `RagSettingsTemplateSmokeTest`
+
+
+## [2026-08-29] RAG 설정 화면 — Chroma 연동 항목 상시 표시 + 실시간 연동 상태 패널 + 결함 4건 수정
+
+**요청:** "RAG Configuration 페이지에 Chroma 와 연동하는 항목들을 볼 수 있도록 구현할 것."
+
+### 원인 — 카드는 있었지만 운영 모드에선 한 번도 보이지 않았다
+
+Chroma 설정 카드(`#cardChroma`)는 같은 날 앞서 추가돼 있었다. 그런데 `onRagModeChange()` 가 Search Mode 가 `chroma` 일 때만 `style.display` 로 꺼내 주는 구조였고, 운영 저장값은 `ragSearchMode=keyword` 다. 페이지를 열면 Chroma 항목이 **하나도 없고** 제목·안내문도 "RAG (Elasticsearch) Configuration / 세 가지 검색 모드" 그대로였다 — 기능이 없는 게 아니라 **드러나지 않는** 문제였다.
+
+### 결정 — 항상 표시 + 저장 설정 기준 실시간 점검
+
+- **Chroma 카드·Embedding 카드를 모드와 무관하게 항상 표시**하고, 제목 옆 배지(`#chromaModeBadge`/`#embModeBadge`)로 "현재 모드에서 쓰이는가"를 알린다. Embedding 카드까지 항상 보이는 이유: Chroma 카드 배너가 "위 Embedding 설정(local-onnx)"을 가리키고, 상태 패널이 임베딩 상태를 항상 보고하므로 숨기면 참조가 끊긴다. ES kNN 전용 2행만 `#embKnnBox` 로 감싸 `semantic-client` 에서만 보인다. `#cardSemanticServer` 는 ES 전용이라 모드 구동 유지.
+- **`Chroma 연동 상태` 패널(`#cardChromaStatus`) 신설** — `GET /api/settings/rag/chroma/status` 가 저장 설정 기준으로 Chroma 서버(API 버전·URL)·컬렉션(이름·UUID·청크 수·hnsw space·차원)·임베딩 사이드카(model·dim·max_batch·concurrency·uptime)를 점검하고 정합성 경고 목록을 돌려준다. **폴링 없음** — 로드 1회 + 새로고침 버튼 + 저장 성공 후 1회(함정 38). 프로브 타임아웃은 `min(설정, 5초)` 라 서비스가 죽어 있어도 페이지가 15초씩 멈추지 않는다. 응답은 항상 200 + 컴포넌트별 `success:false` 이고 **토큰·authType 값은 싣지 않는다**(USER 도 읽는 GET).
+- 정합성 경고(`ChromaSearchService.integrationWarnings`, 순수 함수) 10종: `MODE_NOT_CHROMA`(info) / `RAG_DISABLED` / `CHROMA_UNREACHABLE` / `PROVIDER_NOT_LOCAL_ONNX` / `SIDECAR_UNREACHABLE` / `CONFIG_DIM_MISMATCH` / `COLLECTION_DIM_MISMATCH` / `COLLECTION_DIM_VS_CONFIG` / `SPACE_MISMATCH` / `COLLECTION_EMPTY`. chroma 모드가 아니면 대부분 `warn` 으로 강등한다 — 지금 안 쓰는 경로의 문제로 keyword 운영자가 매번 빨간 배지를 보면 안 된다. 단 **차원 불일치는 모드 무관 `error`**: 그 상태로 chroma 로 전환하는 순간 반드시 실패한다.
+- 컬렉션 JSON 의 `dimension`(실측 384)을 이제 읽는다 — 종전 `resolveCollectionId` 는 버리고 있었다. `readSpace/readDimension` 정적 순수 함수로 분리하고 `dimensionCache` 추가, `/chroma/test` 응답에도 `dimension` 포함.
+- `EmbeddingService.sidecarHealth(embedUrl, timeout)` + `healthUrlFor()` — `.../embed` → `.../health` 로 **유도만** 하고 `/embed` 로 끝나지 않으면 null(엉뚱한 서버의 `/health` 를 두드려 "정상" 오판 금지). 절대 throw 하지 않는다.
+- local-onnx 기본값의 단일 출처를 `EmbeddingService.LOCAL_ONNX_DEFAULT_URL`(`http://127.0.0.1:8001/embed`)/`LOCAL_ONNX_DIMENSION`(384)로 두고 `GET /api/settings/rag` 의 `embedding.localOnnxDefaultUrl/localOnnxDimension` 로 UI 에 전달한다 — JS 에 리터럴을 다시 적지 않는다.
+
+### 함께 고친 결함 4건 (조사에서 발견)
+
+1. **TLS 검증 토글이 화면에서 안 보였다** — `<label class="tog">…` 마크업이 `common.css .tog{display:none}` 에 걸려 컨트롤 전체가 사라졌다(값은 `checked` 기본으로 실려 저장은 됐다 — 조용히 조작 불가). 페이지 다른 토글과 같은 `input.tog + label.tog-track` 로 교정.
+2. **"Chroma 연결 테스트" 버튼이 미정의 `btn-test`** → 브라우저 기본 버튼. `btn-success` 로.
+3. **하단 Test Connection 이 chroma 모드에서도 ES 만 검사** — `RagService.testConnection` 은 모드를 안 본다. 서버 병합은 ES·Chroma 병행 운용 때문에 금지(기존 주석)라 **클라이언트에서 라우팅**: chroma 모드면 `/chroma/test` + `/embedding/test` 를 폼 값으로 `Promise.all` 하고 합산 표시(컬렉션·임베딩 차원이 다르면 ⚠). 버튼 라벨도 모드에 따라 "(Chroma + 임베딩)"/"(Elasticsearch)". 임베딩 테스트 페이로드에 폼의 `dimension` 을 실어 서버 차원 검증이 저장 전 값 기준으로 돌게 했다.
+4. **provider `local-onnx` 안내 부재** — Key/Model 칸이 그대로고 URL placeholder 는 openai, 차원 기본 1536 이라 오설정을 유발했다(현재 저장값이 정확히 openai/1536 이라 chroma 전환 시 그대로 실패). `onEmbProviderChange()` 가 Key/Model 행을 숨기고 사이드카 계약 힌트를 보이며, **`사이드카 기본값 채우기` 버튼**이 URL·차원을 채운다. 자동 프리필은 두지 않았다 — 표시 함수가 `loadRagSettings()` 끝에서도 불리므로 값을 건드리면 저장값을 변조한다.
+
+문구: 제목 "RAG Configuration", 안내문 네 가지 모드, `application.properties` 모드 주석에 `chroma` 추가, 잘못 붙어 있던 `<!-- Chunking -->` 주석·`exportKnowledge` 위의 고아 Chroma javadoc 정리.
+
+### 검증
+
+- `mvn test` **481건 통과**(신규: `integrationWarnings`·`readSpace/readDimension` 10, `EmbeddingServiceTest` 4, 스모크 단언 확장). `-Dchroma.live=true` 라이브 통합에 `integrationStatusLive` 추가 — 실서비스 대상 `count=834 / dimension=384 / space=cosine / sidecar dim=384 / warnings=[]` 실측.
+- 헤드리스 Chrome 정적 픽스처(fetch 스텁 = 실측 JSON): keyword 모드에서 세 카드 모두 표시, TLS track `offsetWidth>0`, 배지 "현재 미사용 — Search Mode 가 keyword", 상태 행 렌더, 경고 3건(info/warn/warn), 연결 테스트 버튼 초록(`rgb(5,150,105)`), local-onnx 선택 시 Key/Model 숨김 + 채우기 버튼이 `http://127.0.0.1:8001/embed`/384 채움, chroma 모드 전환 시 배지 "사용 중" + 버튼 라벨 전환, JS 오류 0.
+- 상태 API 는 인증 세션이 필요해 curl 로는 못 봤다 — 브라우저에서 `/settings/rag` 를 열어 확인할 것. 현재 운영 설정(keyword/openai/1536)에서 기대 경고: `MODE_NOT_CHROMA`·`PROVIDER_NOT_LOCAL_ONNX`·`COLLECTION_DIM_VS_CONFIG`(컬렉션 384 ≠ 설정 1536).
+
+**변경 파일:** `service/{ChromaSearchService,EmbeddingService}.java`, `controller/HeapAiApiController.java`, `templates/rag-settings.html`, `resources/application.properties`(주석), 테스트 `RagSettingsTemplateSmokeTest`/`ChromaSearchServiceTest`/`ChromaLiveIntegrationTest`(확장) + `EmbeddingServiceTest`(신규), `CLAUDE.md`
+
+
+## [2026-08-29] 임베딩 사이드카 메모리 한도 검증 — 900M 은 적절, 진짜 구멍은 동시성 무제한
+
+**요청:** `chroma-embed.service` 의 `MemoryMax=900M` 이 적절한지 확인할 것.
+
+### 결론 — 한도는 적절했고, 막아야 할 것은 다른 곳에 있었다
+
+cgroup `memory.max_usage_in_bytes`(커널이 추적하는 실피크)로 단계별 측정했다. **추정이 아니라 실측이다.**
+
+| 시나리오 | cgroup peak | 한도(900M) 대비 |
+|---|---:|---:|
+| 기동 직후(모델 로드) | 656MB | 73% |
+| 유휴 상주 | 445MB | 49% |
+| 배치 32 (`INDEX_BATCH` 기본) | 511MB | 57% |
+| 배치 128 | 715MB | 79% |
+| 동시 8 × 배치 32 | 834MB | 93% |
+| **동시 16 × 배치 32** | **900MB (한도 도달)** | 100% |
+
+건당 증가는 정확히 선형(**2.11MB/건**)이라 상한만 정하면 최대치가 결정된다. 한도 도달 시에도 **프로세스는 죽지 않았다** — `failcnt` 28,525 · swap 203MB 를 쓰며 커널이 회수로 흡수했고 16건 전부 성공했다. 대신 정상 2.25초가 **42초(19배)** 가 됐다. **메모리 한도는 "죽지 않게"만 해줄 뿐 감속은 못 막는다** — 이것이 이번 조사의 핵심이다.
+
+### ⚠ cgroup 은 RSS 가 아니라 RSS + page cache 를 센다
+
+유닛 파일 주석의 "기동 피크 537MB" 는 **RSS 기준**이었다. cgroup 기준 재측정은 **656MB**(RSS 437 + 캐시 126 — ONNX 113MB 를 읽으며 생긴 캐시)다. 캐시는 압박 시 먼저 버려지므로 실해는 없지만, **RSS 감각으로 한도를 잡으면 그 126MB 만큼 빠듯해진다.** 종전 `MemoryHigh=650M` 은 기동 피크 656MB 보다 낮아 **재기동할 때마다 순간적으로 넘고 있었다**(경계 6MB). → **700M 으로 상향.**
+
+### 진짜 구멍 — `/embed` 에 배치 상한도 동시성 제한도 없었다
+
+`embedder.embed()` 에 락이 없고 FastAPI 의 sync 엔드포인트는 threadpool 에서 **병렬 실행**되므로, 동시 요청이 그대로 메모리 배수가 된다(16건이 모두 42초로 끝난 것이 병렬 증거 — 순차라면 마지막만 늦다). 세 가지를 앱에서 가뒀다:
+
+- `MAX_BATCH=64` — 초과 시 400. 무제한 배치가 한도를 뚫는 유일한 경로였다.
+- `MAX_CONCURRENCY=2` — `EMBED_THREADS=2`(intra_op) 라 동시 2건이면 이미 4코어를 다 쓴다. Java(18080)·MAT·tomcat 과 CPU 를 다투므로 늘리지 말 것.
+- `ACQUIRE_TIMEOUT=30` → 503 + `Retry-After`. **무한 대기로 두면 세마포어가 큐를 무한정 쌓고** 타임아웃이 클라이언트(`EmbeddingService` readTimeout)에서만 터진다. 서버가 먼저 거절해야 대기열이 감긴다. RAG 실패는 `fetchContextForLlm` 이 빈 컨텍스트로 흡수한다.
+
+⚠ 두 검사는 기존 `try` **밖**에 둔다 — 안에 두면 말미의 `except Exception` 이 `HTTPException` 을 되잡아 400/503 을 500 으로 재포장한다.
+
+### 효과 — 동일 부하 재현
+
+| | 적용 전 | 적용 후 |
+|---|---:|---:|
+| peak | 900MB (한도 도달) | **572MB** (64%) |
+| failcnt | 28,525 | **0** |
+| swap | 203MB | **0** |
+| 전체 소요 | 42초 | **24초** |
+| 개별 응답 | 전부 42초 | 3.1s→23.9s 계단식 |
+
+메모리를 36% 줄이면서 **처리 시간도 43% 빨라졌다**(경합 제거). 먼저 들어온 요청은 3초에 끝난다 — 적용 전에는 모두가 42초를 기다렸다.
+
+### 실운영 부하는 이보다 훨씬 낮다 (해석 시 감안)
+
+- **색인기는 사이드카를 거치지 않는다** — `indexer.py` 가 `embedder` 를 직접 import 하는 별도 프로세스라 cgroup 밖이다. 위 배치 시나리오는 실제로는 발생하지 않는다.
+- **Java 는 단건만 보낸다** — `EmbeddingService.embed(String text, …)` 가 `{"text": …}` 하나씩. 배치 API 를 쓰지 않는다.
+- 게다가 현재 `rag.search.mode=keyword` 라 사이드카는 아직 앱 트래픽을 받지 않는다.
+
+즉 **900M 의 하한을 정하는 것은 부하가 아니라 기동 피크(656MB)** 다. 낮추면 기동 중에 죽으므로 유지한다.
+
+검색 품질 회귀 없음 — `evaluate.py --k 10` 재실행 **Recall@10 0.881**(기준선 동일, `embedder.py` 무변경).
+
+**변경 파일:** `/opt/chroma/app/embed_server.py`(배치·동시성 게이트, `/health` 에 설정 노출), `/etc/systemd/system/chroma-embed.service`(`MemoryHigh` 650M→700M + 실측 주석 갱신). 백업: 각 `*.bak-20260829`.
+
+
 ## [2026-08-29] RAG 평가셋 42건 + 회귀 게이트 — Recall@10 0.881 기준선 확립
 
 **요청:** 검색 품질을 수치로 방어할 것(위 항목의 후속).
