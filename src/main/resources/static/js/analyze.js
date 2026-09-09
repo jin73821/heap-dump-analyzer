@@ -1,3 +1,8 @@
+// ── 삼킨 예외 기록 (2026-09-09 정적분석 04.02 조치) ────
+//    common.js 는 banner.html 이 이 파일보다 먼저 싣는다. 없으면 조용히 no-op.
+function _azIgnored(where, e) { if (window.Common) window.Common.logIgnored('[Analyze] ' + where, e); }
+function _azFailed(where, e)  { if (window.Common) window.Common.logError('[Analyze] ' + where, e); }
+
 // ── 사이드바 nav-item 위임 핸들러 ──────────────────────
 // 인라인 onclick 대신 data-panel/data-action 속성 + 위임 리스너 사용.
 // 원본 + 배너 클론 양쪽 모두 단일 핸들러로 처리, 부모 페이지 이탈 가능성 차단.
@@ -59,7 +64,10 @@ function applyPdfHtmlZoom() {
         var rep = iframe && iframe.contentDocument &&
                   iframe.contentDocument.querySelector('.report');
         if (rep) rep.style.zoom = (_pdfHtmlZoom / 100);
-    } catch (e) { /* iframe 미로드 등 — 다음 load 시 재적용 */ }
+    } catch (e) {
+        /* iframe 미로드 등 — 다음 load 이벤트에서 재적용된다 */
+        _azIgnored('PDF 미리보기 확대 적용 보류(iframe 미로드)', e);
+    }
 }
 function adjustPdfHtmlZoom(delta) {
     _pdfHtmlZoom = Math.min(200, Math.max(50, _pdfHtmlZoom + delta));
@@ -202,7 +210,10 @@ function showPanel(name, btn) {
                 try {
                     var doc = iframe.contentDocument || iframe.contentWindow.document;
                     activateClassLinksInIframe(doc);
-                } catch(e) {}
+                } catch (e) {
+                    // 링크 활성화 실패 = iframe 안 클래스명 클릭이 동작하지 않는다. 조용히 넘기면 안 된다.
+                    _azFailed('Raw Data iframe 내 클래스 링크 활성화 실패', e);
+                }
             });
             iframe.src = iframe.getAttribute('data-src');
         }
@@ -1257,7 +1268,18 @@ function toggleDomDetail(row) {
                 _domLazyEnd('failed');
                 if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
             }
-        } catch (x) {}
+        } catch (x) {
+            // 예전엔 여기서 전부 삼켜, 파싱·렌더가 깨지면 _domLazyEnd 가 호출되지 않아
+            // 스켈레톤이 영원히 돌았다(사용자에게는 "아직 조회 중"으로 보인다).
+            _azFailed('참조 조회 응답 처리 실패 — event=' + event, x);
+            var failMsg = '<div class="dom-refs-error">참조 정보를 표시하지 못했습니다. 다시 시도해 주세요.</div>';
+            var inFail = td.querySelector('.dom-tab-incoming-body');
+            if (inFail && !accumulated.incoming) inFail.innerHTML = failMsg;
+            var outFail = td.querySelector('.dom-tab-outgoing-body');
+            if (outFail && !accumulated.outgoing) outFail.innerHTML = failMsg;
+            _domLazyEnd('failed');
+            if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
+        }
     }
 
     fetch(url, { credentials: 'same-origin', signal: ctrl.signal })
@@ -1539,7 +1561,14 @@ function toggleClassInstances(row) {
                 currentTd.innerHTML = '<div class="dom-refs-error">' + _escapeHtml((parsed && parsed.error) || '조회 실패') + '</div>';
                 delete _classInstAbortCtrls[className];
             }
-        } catch (x) {}
+        } catch (x) {
+            // 삼키면 스피너가 남은 채 멈춘다 — 실패를 화면에 드러내고 정리한다.
+            _azFailed('클래스 인스턴스 응답 처리 실패 — event=' + event + ', class=' + className, x);
+            var failTd = instRow.querySelector('td');
+            if (failTd) failTd.innerHTML =
+                '<div class="dom-refs-error">인스턴스 목록을 표시하지 못했습니다. 다시 시도해 주세요.</div>';
+            delete _classInstAbortCtrls[className];
+        }
     }
 
     fetch(url, { credentials: 'same-origin', signal: ctrl.signal })
@@ -1634,7 +1663,14 @@ function loadClassLoaderClasses(btn) {
                     '<div class="dom-refs-error">' + _escapeHtml((parsed && parsed.error) || '조회 실패') + '</div>';
                 if (_clAbortCtrl === ctrl) _clAbortCtrl = null;
             }
-        } catch (x) {}
+        } catch (x) {
+            // 위와 같은 이유 — 조용히 멈추지 않게 오류를 표시하고 컨트롤러를 정리한다.
+            _azFailed('클래스로더 로드 클래스 응답 처리 실패 — event=' + event, x);
+            var clFail = detailRow.querySelector('.dom-cl-body');
+            if (clFail) clFail.innerHTML =
+                '<div class="dom-refs-error">로드된 클래스 목록을 표시하지 못했습니다. 다시 시도해 주세요.</div>';
+            if (_clAbortCtrl === ctrl) _clAbortCtrl = null;
+        }
     }
 
     fetch(url, { credentials: 'same-origin', signal: ctrl.signal })
@@ -3376,7 +3412,8 @@ function fallbackCopy(text) {
     document.body.appendChild(ta);
     ta.select();
     var ok = false;
-    try { ok = document.execCommand('copy'); } catch(e) {}
+    try { ok = document.execCommand('copy'); }
+    catch (e) { _azIgnored('execCommand 복사 폴백 실패', e); }
     document.body.removeChild(ta);
     return ok;
 }
@@ -3596,7 +3633,10 @@ function initAiPanel() {
             var msg = document.getElementById('aiDisabledMsg');
             if (msg) { msg.style.removeProperty('display'); msg.style.display = 'block'; }
         }
-    }).catch(function(){});
+    }).catch(function (e) {
+        // 설정 조회 실패 — AI 패널은 기본(활성) 상태로 둔다.
+        _azIgnored('AI 패널 초기화용 설정 조회 실패 — 기본 상태 유지', e);
+    });
 
     // [1] 저장된 AI 인사이트 자동 로드
     var _ovLoading = document.getElementById('ovAiInsightLoading');
@@ -3753,7 +3793,10 @@ function startAiAnalysis() {
             if (llm.provider === 'custom' && llm.sslVerify === false) {
                 costWarn.style.display = 'none';
             }
-        }).catch(function() {});
+        }).catch(function (e) {
+            // 조회 실패 시 비용 경고는 그대로 노출(안전한 쪽).
+            _azIgnored('비용 경고 판단용 설정 조회 실패 — 경고를 유지한다', e);
+        });
     }
     document.getElementById('aiConfirmModal').classList.add('open');
 }
@@ -4751,7 +4794,8 @@ function doStreamRequest(typing, attachments) {
                     _aiChatMessages.pop();
                 }
             } catch (e) {
-                // JSON 파싱 실패 무시
+                // 여기서 삼키는 건 개별 SSE 프레임 하나뿐 — 스트림은 계속 읽는다.
+                _azIgnored('AI 채팅 SSE 프레임 파싱 실패 — 해당 프레임만 건너뛴다', e);
             }
         }
 

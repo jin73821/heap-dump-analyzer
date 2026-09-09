@@ -22,7 +22,21 @@
         .breadcrumb a:hover { color: #2563EB; text-decoration: underline; }
 
         .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-        
+
+        /* ── RAG OFF 잠금 ──────────────────────────────────────────────
+           RAG 가 비활성이면 Enable 카드만 남기고 설정 패널의 나머지 카드를 통째로 잠근다.
+           ⚠ 개별 input 의 disabled 를 만지지 않는다 — 시크릿 '지우기' 체크(onSecretClearChange)와
+             비-ADMIN 읽기 전용 IIFE 가 이미 그 속성을 소유하고 있어, 다시 켤 때 그 상태를 덮어쓴다.
+           ⚠ 잠금 클래스는 카드마다가 아니라 #panel-config 한 곳에 붙인다 — 초기값을 서버가
+             렌더할 수 있어야 로드 중 "잠깐 편집 가능해 보이는" 깜빡임이 없다(JS 는 토글만).
+           키보드·스크린리더 차단은 카드 단위 inert 가 담당하고, 여기 pointer-events 는
+           inert 미지원 브라우저용 폴백이다. */
+        #panel-config.rag-off .card:not(#cardRagEnable) { opacity: .55; background: #FAFAFA; pointer-events: none; }
+        .rag-off-hint { display: none; margin-top: 12px; padding: 10px 12px; border-radius: 8px;
+                        background: #FEF9C3; border: 1px solid #FDE047; color: #713F12;
+                        font-size: 12px; line-height: 1.5; }
+        #panel-config.rag-off .rag-off-hint { display: block; }
+
 
         .s-row { display: flex; justify-content: space-between; align-items: center;
                  padding: 10px 0; border-bottom: 1px solid #F3F4F6; gap: 12px; flex-wrap: wrap; }
@@ -49,6 +63,10 @@
         .input-text:focus { outline: none; border-color: #2563EB; box-shadow: 0 0 0 2px rgba(37,99,235,.15); }
         .input-num { padding: 5px 10px; border: 1px solid #D1D5DB; border-radius: 6px; font-size: 13px;
                      min-width: 100px; text-align: right; }
+        /* ⚠ number 입력의 기본 폭은 브라우저가 `max` 자릿수로 정한다 — max 가 없는 필드 하나(Min Score)만
+           텍스트 입력 기본폭(198px)으로 렌더돼 옆 필드(100px)의 두 배였다. 폭을 명시해 max 유무와 무관하게 맞춘다.
+           `.input-num` 은 텍스트 입력에도 쓰이므로 type=number 로 한정한다(텍스트는 152~198px 유지). */
+        .input-num[type="number"] { width: 100px; }
         .input-sel { padding: 5px 10px; border: 1px solid #D1D5DB; border-radius: 6px; font-size: 13px; }
 
         /* 형태(치수)는 3종 공통, 색만 개별 — 높이가 어긋나던 두 원인을 여기서 잠근다.
@@ -92,10 +110,34 @@
         .st-val { font-size: 12px; color: #374151; font-family: 'JetBrains Mono','SF Mono',monospace;
                   text-align: right; min-width: 0; word-break: break-all; display: flex; align-items: center;
                   gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+        /* 값이 4~5개 붙는 행(컬렉션·임베딩 사이드카)은 한 줄에 몰아넣지 않는다 — 이름 줄 + 속성 칩 줄로 분리.
+           ⚠ .st-val 은 `word-break: break-all` 이라 속성을 한 문자열로 이어 붙이면 줄바꿈이
+              토큰 한가운데서 일어난다(`concurr / ency 2`). 각 속성을 칩(불가분 단위)으로 만들면
+              줄바꿈이 항상 속성 경계에서만 생긴다. */
+        .st-val.st-multi { flex-direction: column; align-items: flex-end; gap: 5px; }
+        .st-line { display: flex; align-items: center; gap: 6px; justify-content: flex-end;
+                   flex-wrap: wrap; min-width: 0; word-break: break-all; }
+        .st-id { color: #9CA3AF; font-size: 11px; }
+        .st-facts { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+        .st-fact { font-size: 11px; line-height: 1.7; padding: 0 7px; border-radius: 5px;
+                   background: #F3F4F6; color: #374151; white-space: nowrap; }
+        .st-fact .k { color: #9CA3AF; margin-right: 4px; }
+        .st-note { font-size: 11px; color: #B91C1C; text-align: right; word-break: break-all;
+                   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        .st-note.dim { color: #6B7280; }
         .st-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #9CA3AF; flex-shrink: 0; }
         .st-dot.ok { background: #059669; }
         .st-dot.err { background: #DC2626; }
         .st-dot.na { background: #D1D5DB; }
+        /* 연동 상태 행의 상태 라벨 — 색 점 대신 글자(정상/비정상/미확인/미사용)로 말한다(2026-09-05).
+           점은 범례가 없고 색각 이상·흑백 인쇄에서 구분되지 않았다. 색은 .st-warn-list 와 같은 계열. */
+        .st-stat { display: inline-block; font-size: 11px; font-weight: 600; line-height: 1.7; padding: 0 7px;
+                   border-radius: 5px; white-space: nowrap; flex-shrink: 0;
+                   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+                   background: #F3F4F6; color: #6B7280; }
+        .st-stat.ok  { background: #D1FAE5; color: #065F46; }
+        .st-stat.err { background: #FEE2E2; color: #991B1B; }
+        .st-stat.na  { background: #F3F4F6; color: #6B7280; }
         .st-warn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
         .st-warn-list li { font-size: 12px; padding: 6px 10px; border-radius: 6px; line-height: 1.5;
                            background: #F3F4F6; color: #4B5563; border: 1px solid #E5E7EB; }
@@ -149,6 +191,10 @@
             .s-key { flex-shrink: 1; min-width: 0; }
             .card { padding: 16px 14px; }
             .page-ttl { font-size: 18px; }
+            /* 좁은 화면에서는 common.css 의 24px padding 이 본문 폭을 크게 잠식한다. */
+            .modal-box { padding: 18px 16px; max-height: 92vh; }
+            .modal-title { font-size: 15px; margin-bottom: 10px; }
+            .modal-btns button { padding: 8px 14px; }
         }
         @media (max-width: 400px) {
             .container { padding: 58px 8px 24px; }
@@ -156,6 +202,163 @@
             .s-key { font-size: 12px; }
             .setting-label { font-size: 13px; }
         }
+
+        /* ── 탭 (admin/users.html 과 같은 클래스명 — 나중에 공용으로 뽑기 쉽도록) ── */
+        .tabs { display: flex; gap: 4px; border-bottom: 1px solid #E5E7EB; margin-bottom: 18px; }
+        .tab { padding: 10px 18px; border: none; background: transparent; cursor: pointer;
+               font-size: 13px; font-weight: 600; color: #6B7280; border-bottom: 2px solid transparent;
+               margin-bottom: -1px; font-family: inherit; line-height: 18px; }
+        .tab:hover { color: #2563EB; }
+        .tab.active { color: #2563EB; border-bottom-color: #2563EB; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+        .tab-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px;
+                     background: #DBEAFE; color: #1D4ED8; font-size: 10px; font-weight: 700; }
+
+        /* ── 코퍼스 표 ── */
+        .corpus-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+        .corpus-bar .spacer { flex: 1 1 auto; }
+        .ctable { width: 100%; border-collapse: collapse; font-size: 12px; }
+        .ctable th { text-align: left; padding: 8px 6px; border-bottom: 1px solid #E5E7EB;
+                     color: #6B7280; font-weight: 600; white-space: nowrap; }
+        .ctable td { padding: 7px 6px; border-bottom: 1px solid #F3F4F6; color: #374151; vertical-align: top; }
+        .ctable tr:hover td { background: #FAFAFA; }
+        .ctable .num { text-align: right; font-variant-numeric: tabular-nums; }
+        .ctable .mono { font-family: 'JetBrains Mono','SF Mono',monospace; font-size: 11px; color: #6B7280; }
+        .ctable .linkish { color: #2563EB; cursor: pointer; }
+        .ctable .linkish:hover { text-decoration: underline; }
+        .cbadge { display: inline-block; padding: 1px 7px; border-radius: 5px; font-size: 10px; font-weight: 700; }
+        .cbadge.off  { background: #F3F4F6; color: #6B7280; }
+        .cbadge.syn  { background: #FEF3C7; color: #92400E; }
+        .cbadge.warn { background: #FEE2E2; color: #B91C1C; }
+        .corpus-empty { padding: 22px; text-align: center; color: #9CA3AF; font-size: 12px; }
+
+        /* ── 색인 실행 진행 ── */
+        .idx-progress { margin-top: 10px; padding: 10px 12px; background: #F9FAFB;
+                        border: 1px solid #E5E7EB; border-radius: 8px; }
+        .idx-head { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700; }
+        /* 진행 스피너 — analyze.css 의 `.dom-nav-spinner` 와 같은 형태(2px 링 + 상단만 강조).
+           ⚠ `@keyframes` 는 common.css 에 없다(각 페이지가 자기 것을 갖는다) — 이름을 접두사로 격리한다.
+           ⚠ 도는 건 queued/running 일 때뿐이다. 끝난 작업 옆에서 도는 스피너는 거짓말이고,
+              폴링이 멈춘 뒤에도 돌면 "아직 진행 중" 으로 읽혀 사용자가 기다리게 된다. */
+        .idx-spin { flex-shrink: 0; width: 12px; height: 12px; border-radius: 50%;
+                    border: 2px solid rgba(148,163,184,.35); border-top-color: #2563EB;
+                    animation: idx-spin .8s linear infinite; }
+        .idx-spin[hidden] { display: none; }
+        @keyframes idx-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .idx-bar { height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden; margin: 6px 0; }
+        .idx-bar > span { display: block; height: 100%; background: #2563EB; width: 0; transition: width .3s; }
+        .idx-tail { max-height: 120px; overflow: auto; font-family: 'JetBrains Mono','SF Mono',monospace;
+                    font-size: 11px; color: #6B7280; white-space: pre-wrap; margin-top: 6px; }
+        .imp-list { max-height: 160px; overflow: auto; border: 1px solid #E5E7EB; border-radius: 6px;
+                    padding: 8px; font-size: 12px; }
+
+        /* ── 모달 (가져오기 / 색인 실행 / 문서 미리보기) ─────────────────────────
+           common.css 가 주는 것은 `.modal-ov`(오버레이·중앙정렬) · `@keyframes modalIn` ·
+           `.modal-box` base(흰 배경/radius/padding/그림자) · `.mbtn-*` **색상**뿐이다.
+           그래서 이 세 가지가 빠져 있으면 모달이 통째로 민짜로 뜬다 — 실제로 그 상태였다:
+             ① `.modal-title` / `.modal-body` / `.modal-btns` 는 이 페이지 어디에도 정의가 없어
+                제목이 본문과 같은 크기로 나오고 버튼줄이 좌측 정렬로 붙어버렸다.
+             ② `.mbtn-*` 는 색상 전용이라 형태(padding/border/radius/font)를 페이지가 주지 않으면
+                **브라우저 기본 버튼**으로 렌더된다(함정 17). `.btn-primary` 계열과 달리
+                `font-family: inherit` 도 없어 라벨이 Arial 로 튀었다.
+           `.modal-box` 에 width 를 주는 것도 필수다 — 없으면 인라인 `max-width` 가 상한으로만
+           동작해 박스가 내용물(파일 입력 한 줄) 폭으로 쪼그라든다. */
+        .modal-box { width: 92%; box-sizing: border-box; max-height: 88vh;
+                     display: flex; flex-direction: column; animation: modalIn .2s ease; }
+        .modal-title { flex-shrink: 0; font-size: 16px; font-weight: 700; color: #1F2937;
+                       line-height: 1.4; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+        /* 본문만 스크롤 — 긴 검사 결과에서도 제목·버튼줄은 자리를 지킨다. */
+        .modal-body { flex: 1 1 auto; min-height: 0; overflow-y: auto;
+                      font-size: 13px; color: #4B5563; line-height: 1.7; margin-bottom: 18px; }
+        /* `.s-row` 의 밑줄이 마지막 줄에 남으면 버튼줄 위로 이중선이 보인다. */
+        .modal-body > .s-row:last-child { border-bottom: none; padding-bottom: 0; }
+        .modal-btns { flex-shrink: 0; display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+        .modal-btns button { font-family: inherit; font-size: 13px; line-height: 18px;
+                             padding: 8px 18px; border: 1px solid transparent; border-radius: 7px;
+                             font-weight: 600; cursor: pointer; }
+        /* 가져오기 모달의 '가져오기' 는 검사 전까지 disabled 다 — 색만 있으면 눌리는 버튼으로 보인다. */
+        .modal-btns button:disabled { opacity: .5; cursor: not-allowed; }
+        /* 색상(.mbtn-cancel / .mbtn-save / .mbtn-confirm)은 common.css 에서 제공 */
+
+        /* ── 모달 안 선택지 — 카드형 라디오/체크박스 ─────────────────────────
+           기본 라디오·체크박스는 12px 라벨 옆의 점 하나뿐이라, 무엇을 고르는지가 라벨 길이에만
+           달려 있고 선택 상태도 점 하나로만 드러난다(색인 대상 4종·중복 처리 2종이 그 상태였다).
+           최상단 `검색 모드` 카드(.mode-opt)와 **같은 언어**로 이름/설명을 나누고 선택을 면으로 보인다.
+           ⚠ :has() 대신 JS(syncOptCards)가 `.selected` 를 토글한다 — .mode-opt 와 같은 이유로
+              사내 브라우저 버전을 가정하지 않는다.
+           ⚠ 카드 전체가 `<label>` 이라 어디를 눌러도 선택된다 — 클릭 표적이 점에서 카드로 커진다. */
+        .opt-list { display: flex; flex-direction: column; gap: 8px; }
+        .opt-card { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; cursor: pointer;
+                    border: 1px solid #E5E7EB; border-radius: 8px; background: #fff;
+                    transition: border-color .15s, background .15s; }
+        .opt-card:hover { background: #F9FAFB; }
+        .opt-card input { margin: 2px 0 0; flex-shrink: 0; width: 15px; height: 15px; accent-color: #2563EB; }
+        .opt-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .opt-name { font-size: 13px; font-weight: 600; color: #1F2937;
+                    display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .opt-name code { font-family: 'JetBrains Mono','SF Mono',monospace; font-size: 11px;
+                         background: #F3F4F6; padding: 1px 5px; border-radius: 4px; color: #4B5563; }
+        .opt-desc { font-size: 11px; color: #6B7280; line-height: 1.5; }
+        .opt-badge { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 8px;
+                     background: #F3F4F6; color: #6B7280; white-space: nowrap; }
+        .opt-card.selected { border-color: #2563EB; background: #EFF6FF; }
+        .opt-card.selected .opt-name { color: #1D4ED8; }
+        .opt-card.selected .opt-badge { background: #DBEAFE; color: #1D4ED8; }
+        /* 파괴적 선택지(전체 재색인)는 켠 순간 빨강으로 — 경고 문구가 아래 펼쳐지기 전에 색이 먼저 말한다. */
+        .opt-card.danger input { accent-color: #DC2626; }
+        .opt-card.danger.selected { border-color: #DC2626; background: #FEF2F2; }
+        .opt-card.danger.selected .opt-name { color: #B91C1C; }
+        .opt-card.danger.selected .opt-badge { background: #FEE2E2; color: #B91C1C; }
+
+        /* ── 파일 선택 (가져오기) ─────────────────────────────────────────
+           기본 `<input type=file>` 은 UA 버튼 하나 + "선택된 파일 없음" 이라 ① 어떤 형식을 받는지
+           ② 지금 무엇이 몇 개 걸려 있는지 ③ 하나만 빼려면 어떻게 하는지가 전부 안 보인다.
+           (여러 개를 고른 뒤 하나를 빼려면 처음부터 다시 골라야 했다.)
+           끌어다 놓기 + 파일 칩 목록으로 바꾼다 — 세 모달 중 유일하게 UA 위젯이 남아 있던 자리다.
+           ⚠ 드롭 경로는 `accept` 필터를 **우회**하므로 확장자 검사를 JS 가 직접 해야 한다
+              (안 하면 지식 탭에 .csv 를 끌어다 놓는 게 조용히 통과된다). */
+        .vis-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+                      overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%);
+                      white-space: nowrap; border: 0; }
+        .dropzone { display: flex; flex-direction: column; align-items: center; gap: 6px;
+                    padding: 22px 16px; text-align: center; cursor: pointer;
+                    border: 1.5px dashed #D1D5DB; border-radius: 10px; background: #FAFAFA;
+                    transition: border-color .15s, background .15s, padding .15s; }
+        .dropzone:hover { border-color: #93C5FD; background: #F5F9FF; }
+        .dropzone.over  { border-color: #2563EB; background: #EFF6FF; }
+        /* 파일이 걸리면 목록이 아래에 붙으므로 존은 한 발 물러선다. */
+        .dropzone.has-files { padding: 12px 16px; }
+        .dropzone.has-files .dz-icon { display: none; }
+        /* 시각적 숨김이라 포커스 링을 라벨이 대신 그린다(인접 형제 — 마크업 순서 유지 필수). */
+        #impFiles:focus-visible + .dropzone { border-color: #2563EB; box-shadow: 0 0 0 3px rgba(37,99,235,.15); }
+        .dz-icon { width: 26px; height: 26px; stroke: #9CA3AF; fill: none; stroke-width: 1.6;
+                   stroke-linecap: round; stroke-linejoin: round; }
+        .dropzone:hover .dz-icon, .dropzone.over .dz-icon { stroke: #2563EB; }
+        .dz-main { font-size: 13px; font-weight: 600; color: #374151; }
+        .dz-main u { color: #2563EB; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+        .dz-sub { font-size: 11px; color: #9CA3AF; line-height: 1.5; }
+        .dz-count { font-size: 11px; font-weight: 700; color: #1D4ED8; margin-left: 6px; }
+        .dz-files { display: flex; flex-wrap: wrap; gap: 6px; max-height: 132px; overflow-y: auto; }
+        .dz-file { display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+                   padding: 4px 4px 4px 10px; border: 1px solid #E5E7EB; border-radius: 999px;
+                   background: #fff; font-size: 11px; color: #374151; }
+        .dz-file-name { font-family: 'JetBrains Mono','SF Mono',monospace;
+                        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+        .dz-file-size { color: #9CA3AF; white-space: nowrap; }
+        .dz-file-x { flex-shrink: 0; width: 18px; height: 18px; padding: 0; border: none;
+                     border-radius: 50%; background: #F3F4F6; color: #6B7280;
+                     font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer; }
+        .dz-file-x:hover { background: #FEE2E2; color: #B91C1C; }
+
+        /* ── 내보내기 요약 ── 몇 건을 받는지가 첫 줄에서 읽혀야 한다. */
+        .exp-sum { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+                   padding: 14px 16px; margin-bottom: 14px;
+                   border: 1px solid #E5E7EB; border-radius: 10px; background: #F9FAFB; }
+        .exp-num { font-size: 30px; font-weight: 800; line-height: 1; color: #1D4ED8;
+                   font-variant-numeric: tabular-nums; }
+        .exp-unit { font-size: 13px; font-weight: 600; color: #374151; }
+        .exp-facts { display: flex; flex-wrap: wrap; gap: 4px; margin-left: auto; justify-content: flex-end; }
     </style>
 </head>
 <body>
@@ -194,12 +397,20 @@
         </div>
     </div>
 
-    <div class="info-banner">
-        LLM 채팅에 주입할 사내 지식베이스 검색을 설정합니다. <strong>검색 모드가 페이지 전체를 결정</strong>합니다 — 선택한 모드에 필요한 설정만 아래에 표시되고, 나머지 백엔드 설정은 값이 보존된 채 숨겨집니다.
+    <div class="tabs" role="tablist">
+        <button type="button" class="tab active" data-tab="config"    onclick="ragSwitchTab('config')">설정</button>
+        <button type="button" class="tab"        data-tab="knowledge" onclick="ragSwitchTab('knowledge')">지식 현황</button>
+        <button type="button" class="tab"        data-tab="learning"  onclick="ragSwitchTab('learning')">학습 현황</button>
     </div>
 
-    <!-- Enable / Disable -->
-    <div class="card">
+    <!-- 설정 패널 — 기존 카드를 감싸기만 했다. 안쪽은 손대지 않는다(스모크 테스트가 .rag-cols 와 그 종료 주석을 단언). -->
+    <div class="tab-panel active" id="panel-config" th:classappend="${ragEnabled} ? '' : 'rag-off'">
+    <div class="info-banner">
+        LLM 채팅에 주입할 사내 지식베이스 검색을 설정합니다.
+    </div>
+
+    <!-- Enable / Disable — 이 카드만 OFF 잠금에서 제외된다(id 로 식별). -->
+    <div class="card" id="cardRagEnable">
         <div class="card-title">
             <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
             Enable RAG
@@ -213,6 +424,10 @@
                 <input type="checkbox" class="tog" id="togRagEnabled" onchange="toggleRagEnabled(this)">
                 <label class="tog-track" for="togRagEnabled"></label>
             </div>
+        </div>
+        <!-- 아래 카드가 잠긴 이유를 명시한다 — 없으면 "화면이 고장났다"로 읽힌다. -->
+        <div class="rag-off-hint" id="ragOffHint">
+            RAG 가 <strong>비활성</strong> 상태라 아래 설정 카드가 모두 잠겨 있습니다 &mdash; 값을 변경하려면 먼저 위 토글을 켜세요.
         </div>
     </div>
 
@@ -406,8 +621,8 @@
         </div>
         <div class="s-row"><span class="s-key">검색 모드</span><span id="cstMode" class="st-val">—</span></div>
         <div class="s-row"><span class="s-key">Chroma 서버</span><span id="cstServer" class="st-val">—</span></div>
-        <div class="s-row"><span class="s-key">컬렉션</span><span id="cstCollection" class="st-val">—</span></div>
-        <div class="s-row"><span class="s-key">임베딩 사이드카</span><span id="cstEmbedding" class="st-val">—</span></div>
+        <div class="s-row"><span class="s-key">컬렉션</span><span id="cstCollection" class="st-val st-multi">—</span></div>
+        <div class="s-row"><span class="s-key">임베딩 사이드카</span><span id="cstEmbedding" class="st-val st-multi">—</span></div>
         <div class="s-row" style="flex-direction:column;align-items:stretch;gap:6px">
             <span class="s-key">점검 결과 <span id="cstCheckedAt" class="setting-desc" style="display:inline;margin:0 0 0 6px;font-weight:400"></span></span>
             <ul id="cstWarnings" class="st-warn-list"><li>확인 중…</li></ul>
@@ -517,6 +732,12 @@
             <span class="s-key">Model</span>
             <input type="text" id="ragEmbModel" class="input-text" placeholder="text-embedding-3-small">
         </div>
+        <!-- local-onnx 전용 Model 표시. 입력이 아니라 읽기 전용인 이유: 이 provider 에서는 앱이 model 을
+             전송하지 않아(사이드카가 소유) 편집 가능한 칸을 두면 값을 바꿔도 아무 일이 안 일어난다. -->
+        <div class="s-row" id="ragEmbModelLocalRow" style="display:none">
+            <span class="s-key">Model</span>
+            <span id="ragEmbModelLocal" class="st-val">—</span>
+        </div>
         <div class="s-row">
             <span class="s-key">Dimension (벡터 차원)</span>
             <input type="number" id="ragEmbDim" class="input-num" min="1" max="8192" value="1536">
@@ -602,7 +823,272 @@
         </div>
         <div id="ragTestResult" class="test-result"></div>
     </div>
+    </div><!-- /#panel-config -->
 
+    <!-- ── 지식 현황 ─────────────────────────────────── -->
+    <div class="tab-panel" id="panel-knowledge">
+        <div class="card">
+            <div class="card-title" style="justify-content:space-between;flex-wrap:wrap">
+                <span style="display:flex;align-items:center;gap:8px;min-width:0">
+                    <svg viewBox="0 0 24 24"><path d="M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z"/></svg>
+                    색인 현황
+                    <span id="idxTotalBadge" class="mode-badge"></span>
+                </span>
+                <span style="display:flex;gap:6px">
+                    <button type="button" class="btn-secondary refresh-btn" onclick="loadIndexStatus()">새로고침</button>
+                    <button type="button" class="btn-primary" onclick="openIndexRunModal()">색인 실행</button>
+                </span>
+            </div>
+            <div class="info-banner" style="margin-bottom:12px">
+                색인은 앱이 직접 하지 않고 <code>/opt/chroma/app/run-index.sh</code> 를 실행합니다 — 가져오기 후 색인해야 검색에 반영됩니다.
+                삭제한 문서의 청크는 <strong>전체 재색인(--reset)</strong> 전까지 남습니다.
+                본문은 색인 시점에만 마스킹되며 DB·내보내기 파일에는 원문이 남습니다.
+            </div>
+            <div style="overflow-x:auto">
+                <table class="ctable" id="idxTable">
+                    <thead><tr>
+                        <th>source_type</th><th class="num">청크</th><th class="num">문서</th>
+                        <th class="num">DB 행</th><th class="num">미색인</th><th class="num">고아</th><th>검색</th>
+                    </tr></thead>
+                    <tbody><tr><td colspan="7" class="corpus-empty">확인 중…</td></tr></tbody>
+                </table>
+            </div>
+            <div id="idxProgress" class="idx-progress" style="display:none">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+                    <strong class="idx-head" aria-live="polite">
+                        <span class="idx-spin" id="idxSpin" aria-hidden="true" hidden></span>
+                        <span id="idxState">실행 중</span>
+                    </strong>
+                    <button type="button" class="btn-secondary" id="idxCancelBtn" onclick="cancelIndexRun()" hidden>취소</button>
+                </div>
+                <div class="idx-bar"><span id="idxBarFill"></span></div>
+                <div id="idxCount" class="setting-desc" style="margin-top:0"></div>
+                <div id="idxTail" class="idx-tail"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title" style="justify-content:space-between;flex-wrap:wrap">
+                <span style="display:flex;align-items:center;gap:8px">
+                    <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+                    등록 문서 <span id="kbCountBadge" class="tab-badge">0</span>
+                </span>
+                <span class="corpus-bar" style="margin-bottom:0">
+                    <button type="button" class="btn-primary" onclick="openImportModal('knowledge')">가져오기</button>
+                    <button type="button" class="btn-secondary ro-allowed" onclick="openExportModal('knowledge')">내보내기</button>
+                    <button type="button" class="btn-secondary" onclick="deleteSelected('knowledge')">선택 삭제</button>
+                </span>
+            </div>
+            <div style="overflow-x:auto">
+                <table class="ctable" id="kbTable">
+                    <thead><tr>
+                        <th style="width:28px"><input type="checkbox" onclick="toggleAll('kb', this.checked)"></th>
+                        <th>제목</th><th>origin_id</th><th>카테고리</th><th>심각도</th>
+                        <th class="num">글자수</th><th>사용</th><th>수정</th>
+                    </tr></thead>
+                    <tbody><tr><td colspan="8" class="corpus-empty">불러오는 중…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 학습 현황 ─────────────────────────────────── -->
+    <div class="tab-panel" id="panel-learning">
+        <div class="card">
+            <div class="card-title" style="justify-content:space-between;flex-wrap:wrap">
+                <span style="display:flex;align-items:center;gap:8px">
+                    <svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+                    학습 코퍼스 <span id="lnCountBadge" class="tab-badge">0</span>
+                </span>
+                <span class="corpus-bar" style="margin-bottom:0">
+                    <button type="button" class="btn-primary" onclick="openImportModal('learning')">가져오기</button>
+                    <button type="button" class="btn-secondary ro-allowed" onclick="openExportModal('learning')">내보내기 (CSV)</button>
+                    <button type="button" class="btn-secondary" onclick="deleteSelected('learning')">선택 삭제</button>
+                </span>
+            </div>
+            <div class="info-banner" style="margin-bottom:12px">
+                CSV 9컬럼(<code>id,category,title,content,tags,source,severity,created_at,synthetic</code>)을 그대로 주고받습니다.
+                <strong>id 는 검색 문서 식별자</strong>라 바꾸면 평가셋 기준이 깨집니다. <code>synthetic</code> 행은 검색에서 제외됩니다.
+            </div>
+            <div id="lnSummary" class="setting-desc" style="margin:0 0 10px"></div>
+            <div style="overflow-x:auto">
+                <table class="ctable" id="lnTable">
+                    <thead><tr>
+                        <th style="width:28px"><input type="checkbox" onclick="toggleAll('ln', this.checked)"></th>
+                        <th>id</th><th>제목</th><th>카테고리</th><th>심각도</th>
+                        <th class="num">글자수</th><th>작성일</th><th>가상</th>
+                    </tr></thead>
+                    <tbody><tr><td colspan="8" class="corpus-empty">불러오는 중…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ── 가져오기 모달 (두 탭 공용) ───────────────────── -->
+<div class="modal-ov" id="impModal" style="display:none">
+    <div class="modal-box" style="max-width:760px">
+        <div class="modal-title" id="impTitle">가져오기</div>
+        <div class="modal-body">
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:8px">
+                <span class="s-key">파일 선택 <span class="dz-count" id="impPicked"></span></span>
+                <!-- ⚠ 실제 input 은 `display:none` 이 아니라 **시각적 숨김**이다 — display:none 이면
+                     키보드 포커스를 받지 못해 라벨까지 탭으로 도달할 수 없다(파일 선택 자체가 막힌다). -->
+                <input type="file" id="impFiles" class="vis-hidden" multiple onchange="onImportPicked()">
+                <label class="dropzone" id="impDrop" for="impFiles">
+                    <svg class="dz-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <path d="M7 10l5-5 5 5"/><path d="M12 5v12"/>
+                    </svg>
+                    <span class="dz-main" id="impDropMain">파일을 끌어다 놓거나 <u>클릭해 선택</u></span>
+                    <span class="dz-sub" id="impFileHint"></span>
+                </label>
+                <div class="dz-files" id="impFileList"></div>
+            </div>
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:8px">
+                <span class="s-key">중복 처리</span>
+                <div class="opt-list" role="radiogroup" aria-label="중복 처리">
+                    <label class="opt-card selected">
+                        <input type="radio" name="impDup" value="skip" checked onchange="syncOptCards(this)">
+                        <span class="opt-body">
+                            <span class="opt-name">건너뛰기 <span class="opt-badge">기본</span></span>
+                            <span class="opt-desc">이미 있는 문서는 그대로 두고 새 문서만 추가합니다.</span>
+                        </span>
+                    </label>
+                    <label class="opt-card">
+                        <input type="radio" name="impDup" value="overwrite" onchange="syncOptCards(this)">
+                        <span class="opt-body">
+                            <span class="opt-name">덮어쓰기</span>
+                            <span class="opt-desc">같은 문서로 판정되면 올린 파일 내용으로 교체합니다 — 기존 본문은 남지 않습니다.</span>
+                        </span>
+                    </label>
+                </div>
+                <span class="setting-desc" style="margin-top:0">현재 DB 상태 기준으로 서버가 최종 판정합니다 (내용 해시 + 제목).</span>
+            </div>
+            <div id="impResult" class="imp-list" style="display:none"></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="closeImportModal()">닫기</button>
+            <button type="button" class="mbtn-save" id="impCheckBtn" onclick="runImport(true)">검사</button>
+            <button type="button" class="mbtn-confirm" id="impApplyBtn" onclick="runImport(false)" disabled>가져오기</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── 색인 실행 모달 ───────────────────────────────── -->
+<div class="modal-ov" id="idxModal" style="display:none">
+    <div class="modal-box" style="max-width:560px">
+        <div class="modal-title">색인 실행</div>
+        <div class="modal-body">
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:8px">
+                <span class="s-key">대상</span>
+                <div class="opt-list" role="radiogroup" aria-label="색인 대상">
+                    <label class="opt-card selected">
+                        <input type="radio" name="idxSrc" value="csv,user_docs" checked onchange="syncOptCards(this)">
+                        <span class="opt-body">
+                            <span class="opt-name">관리 대상만 (학습 + 지식) <span class="opt-badge">권장</span>
+                                <span class="opt-badge" id="idxBadgeBoth">–</span></span>
+                            <span class="opt-desc">이 화면에서 관리하는 문서만 다시 읽습니다 — 가장 빠르고 안전합니다.</span>
+                        </span>
+                    </label>
+                    <label class="opt-card">
+                        <input type="radio" name="idxSrc" value="user_docs" onchange="syncOptCards(this)">
+                        <span class="opt-body">
+                            <span class="opt-name">지식만 <span class="opt-badge" id="idxBadgeKb">–</span></span>
+                            <span class="opt-desc">지식 현황 탭의 .md 문서(<code>user_doc:*</code>)만 색인합니다.</span>
+                        </span>
+                    </label>
+                    <label class="opt-card">
+                        <input type="radio" name="idxSrc" value="csv" onchange="syncOptCards(this)">
+                        <span class="opt-body">
+                            <span class="opt-name">학습만 <span class="opt-badge" id="idxBadgeLn">–</span></span>
+                            <span class="opt-desc">학습 현황 탭의 CSV 행(<code>csv:*</code>)만 색인합니다.</span>
+                        </span>
+                    </label>
+                    <label class="opt-card">
+                        <input type="radio" name="idxSrc" value="all" onchange="syncOptCards(this)">
+                        <span class="opt-body">
+                            <span class="opt-name">전체 <span class="opt-badge">느림</span></span>
+                            <span class="opt-desc">코드 상수·Leak 룰·분석 결과까지 모든 소스를 다시 읽습니다.</span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+            <div class="s-row" style="flex-direction:column;align-items:stretch;gap:8px">
+                <label class="opt-card danger" id="idxResetCard">
+                    <input type="checkbox" id="idxReset" onchange="onResetToggle()">
+                    <span class="opt-body">
+                        <span class="opt-name">전체 재색인 <code>--reset</code></span>
+                        <span class="opt-desc">컬렉션을 지우고 처음부터 다시 만듭니다 — 삭제한 문서의 잔존 청크를 없애는 유일한 방법입니다.</span>
+                    </span>
+                </label>
+                <div id="idxResetWarn" class="test-result err" style="display:none">
+                    재색인이 끝날 때까지 검색이 비거나 일부만 동작합니다 — 도중 실패하면 그 상태로 남습니다.
+                    사용이 적은 시간대에 실행하세요.
+                </div>
+            </div>
+            <div id="idxBusyWarn" class="test-result" style="display:none"></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="closeIndexRunModal()">취소</button>
+            <button type="button" class="mbtn-confirm" onclick="startIndexRun()">실행</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── 내보내기 확인 (두 탭 공용) ────────────────────
+     내보내기는 되돌릴 수 없는 작업은 아니지만 **무엇이 몇 건 나가는지**를 모른 채 파일이 떨어지면
+     (지식은 선택 여부에 따라 .md/.zip 이 갈리고, 학습은 선택과 무관하게 전량이 나간다)
+     받은 파일을 열어 보기 전까지 확인할 방법이 없다. 다운로드 전에 건수·형식을 먼저 보인다. -->
+<div class="modal-ov" id="expModal" style="display:none">
+    <div class="modal-box" style="max-width:560px">
+        <div class="modal-title" id="expTitle">내보내기</div>
+        <div class="modal-body">
+            <div class="exp-sum">
+                <span class="exp-num" id="expCount">0</span>
+                <span class="exp-unit" id="expUnit">건</span>
+                <span class="exp-facts st-facts" id="expFacts"></span>
+            </div>
+            <div class="s-row" id="expScopeRow" style="flex-direction:column;align-items:stretch;gap:8px;display:none">
+                <span class="s-key">범위</span>
+                <div class="opt-list" role="radiogroup" aria-label="내보내기 범위">
+                    <label class="opt-card selected" id="expCardSel">
+                        <input type="radio" name="expScope" value="selected" checked onchange="onExportScopeChange(this)">
+                        <span class="opt-body">
+                            <span class="opt-name">선택한 문서 <span class="opt-badge" id="expBadgeSel">0건</span></span>
+                            <span class="opt-desc">표에서 체크한 문서만 내보냅니다.</span>
+                        </span>
+                    </label>
+                    <label class="opt-card" id="expCardAll">
+                        <input type="radio" name="expScope" value="all" onchange="onExportScopeChange(this)">
+                        <span class="opt-body">
+                            <span class="opt-name">전체 <span class="opt-badge" id="expBadgeAll">0건</span></span>
+                            <span class="opt-desc">등록된 문서를 전부 내보냅니다.</span>
+                        </span>
+                    </label>
+                </div>
+            </div>
+            <div class="info-banner" id="expNote" style="margin-bottom:0"></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="closeExportModal()">취소</button>
+            <button type="button" class="mbtn-confirm ro-allowed" id="expGoBtn" onclick="confirmExport()">다운로드</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── 문서 본문 미리보기 ───────────────────────────── -->
+<div class="modal-ov" id="docModal" style="display:none">
+    <div class="modal-box" style="max-width:820px">
+        <div class="modal-title" id="docModalTitle">문서</div>
+        <div class="modal-body">
+            <pre id="docModalBody" style="white-space:pre-wrap;font-size:12px;max-height:60vh;overflow:auto;margin:0"></pre>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="document.getElementById('docModal').style.display='none'">닫기</button>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -610,7 +1096,9 @@ var toast = Common.toast;
 
 // local-onnx 사이드카 기본값 — GET /api/settings/rag 의 embedding.localOnnxDefaultUrl/localOnnxDimension 로 채워진다.
 // 서버(EmbeddingService 상수)가 단일 출처이므로 여기에 리터럴을 적지 않는다.
-var _localOnnxDefaults = { url: '', dimension: 0 };
+var _localOnnxDefaults = { url: '', dimension: 0, model: '' };
+// 사이드카 /health 가 보고한 실제 모델명 — 상태 패널 응답에서 채운다(문서상 기본값보다 우선).
+var _sidecarModel = '';
 
 function getCsrfHeaders(base) {
     var h = base || {};
@@ -628,6 +1116,24 @@ function updateBadge(enabled) {
     } else {
         badge.textContent = 'OFF';
         badge.style.background = '#F3F4F6'; badge.style.color = '#9CA3AF'; badge.style.borderColor = '#E5E7EB';
+    }
+}
+
+// ── RAG OFF 잠금 ────────────────────────────────────────────
+// 비활성 상태에서는 Enable 카드만 살리고 설정 패널의 나머지 카드를 통째로 잠근다.
+// ⚠ 개별 input.disabled 를 만지지 않는다 — 시크릿 '지우기' 체크(onSecretClearChange)와
+//   비-ADMIN 읽기 전용 IIFE 가 이미 그 속성을 소유하고 있어, 다시 켤 때 그 상태를 지워 버린다.
+//   대신 카드 단위 inert 로 클릭·포커스·스크린리더 접근을 한 번에 막고(미지원 브라우저는
+//   .card-off 의 pointer-events 폴백), 시각적 잠금은 CSS 가 담당한다.
+// 지식/학습 탭은 대상이 아니다 — 코퍼스 관리·색인은 검색 모드 활성 여부와 무관하다.
+function applyRagEnabledState(enabled) {
+    var panel = document.getElementById('panel-config');
+    if (!panel) return;
+    panel.classList.toggle('rag-off', !enabled);     // 시각 잠금 + 마우스 차단(초기값은 서버 렌더)
+    var cards = panel.querySelectorAll('.card');
+    for (var i = 0; i < cards.length; i++) {
+        if (cards[i].id === 'cardRagEnable') continue;   // 토글 자신은 항상 살아 있어야 한다
+        cards[i].toggleAttribute('inert', !enabled);     // 키보드 포커스·스크린리더 차단
     }
 }
 
@@ -680,6 +1186,7 @@ function loadRagSettings() {
     Common.fetchJSON('/api/settings/rag').then(function(d) {
         document.getElementById('togRagEnabled').checked = !!d.enabled;
         updateBadge(d.enabled);
+        applyRagEnabledState(!!d.enabled);
         document.getElementById('ragUrl').value      = d.url || '';
         document.getElementById('ragIndex').value    = d.index || '';
         document.getElementById('ragSslVerify').checked = d.sslVerify !== false;
@@ -714,6 +1221,7 @@ function loadRagSettings() {
         var e = d.embedding || {};
         if (e.localOnnxDefaultUrl) _localOnnxDefaults.url = e.localOnnxDefaultUrl;
         if (e.localOnnxDimension)  _localOnnxDefaults.dimension = e.localOnnxDimension;
+        if (e.localOnnxModel)      _localOnnxDefaults.model = e.localOnnxModel;
         document.getElementById('ragEmbProvider').value = e.provider || 'openai';
         document.getElementById('ragEmbApiUrl').value   = e.apiUrl || '';
         document.getElementById('ragEmbApiKey').value   = '';
@@ -757,7 +1265,26 @@ function _setBadge(id, text, cls) {
     b.className = 'mode-badge' + (text ? ' show' : '') + (cls ? ' ' + cls : '');
 }
 
+/* 색 점 — 이제 Embedding 카드의 Model 출처(실측/기본값) 표시에만 쓴다. 연동 상태 패널은 _stat. */
 function _dot(cls) { return '<span class="st-dot ' + cls + '"></span>'; }
+
+/* 연동 상태 라벨(2026-09-05) — 색 점 대신 글자로 정상/비정상을 말한다.
+   셋째 상태(na)는 뜻이 둘이라 호출부가 라벨을 준다: 상류가 죽어 확인하지 못한 것(미확인)과
+   애초에 대상이 아닌 것(미사용)은 다른 말이고, 같은 회색 점으로는 구분할 수 없었다. */
+function _stat(cls, label) {
+    var text = label || (cls === 'ok' ? '정상' : (cls === 'err' ? '비정상' : '미확인'));
+    return '<span class="st-stat ' + cls + '">' + text + '</span>';
+}
+
+/* 속성 칩 하나. k 는 코드 상수, v 는 서버 값이라 여기서 escape 한다(호출부에서 중복 escape 금지). */
+function _fact(k, v) {
+    return '<span class="st-fact"><span class="k">' + k + '</span>' + Common.escHtml(String(v)) + '</span>';
+}
+/* 이름 줄(1행) + 속성 칩 줄(2행). facts 가 비면 이름 줄만 남는다. */
+function _stMulti(line, facts) {
+    return '<span class="st-line">' + line + '</span>'
+         + ((facts && facts.length) ? '<span class="st-facts">' + facts.join('') + '</span>' : '');
+}
 
 function _fmtUptime(sec) {
     if (sec == null || isNaN(sec)) return '';
@@ -806,37 +1333,60 @@ function renderChromaStatus(d) {
     document.getElementById('cstMode').innerHTML =
         esc(d.searchMode || '?') + (d.ragEnabled ? '' : ' <span style="color:#B91C1C">(RAG OFF)</span>');
 
-    if (chroma.success) {
-        document.getElementById('cstServer').innerHTML = _dot('ok') + 'API v' + esc(chroma.apiVersion || '?')
-            + ' · ' + esc(chroma.url || '');
-        var idShort = chroma.collectionId ? String(chroma.collectionId).substring(0, 8) : '';
-        var parts = [];
-        parts.push(esc(chroma.collectionName || '?') + (idShort ? ' (' + esc(idShort) + '…)' : ''));
-        if (chroma.count != null) parts.push(esc(String(chroma.count)) + '건');
-        if (chroma.space) parts.push('space ' + esc(chroma.space));
-        if (chroma.dimension != null) parts.push('dim ' + esc(String(chroma.dimension)));
-        document.getElementById('cstCollection').innerHTML = _dot('ok') + parts.join(' · ');
+    // 서버 도달 여부는 apiVersion 으로 본다 — /version 이 성공한 뒤 컬렉션 조회에서 실패하면
+    // success 는 false 지만 apiVersion 은 남는다(testConnection 의 fail() 은 앞서 넣은 값을 지우지 않는다).
+    // 이걸 안 보면 컬렉션이 없을 뿐인데 서버 행이 '비정상' 으로 찍혀 엉뚱한 곳(프로세스)을 점검하게 된다.
+    var serverUp = chroma.success || !!chroma.apiVersion;
+    var serverLine = 'API v' + esc(chroma.apiVersion || '?') + ' · ' + esc(chroma.url || '');
+    var colEl = document.getElementById('cstCollection');
+    if (serverUp) {
+        document.getElementById('cstServer').innerHTML = _stat('ok') + serverLine;
     } else {
-        document.getElementById('cstServer').innerHTML = _dot('err') + esc(chroma.url || '(URL 미설정)')
+        document.getElementById('cstServer').innerHTML = _stat('err') + esc(chroma.url || '(URL 미설정)')
             + ' — ' + esc(chroma.error || '연결 실패');
-        document.getElementById('cstCollection').innerHTML = _dot('na') + '확인 불가';
+    }
+    if (chroma.success && chroma.collectionName) {
+        var idShort = chroma.collectionId ? String(chroma.collectionId).substring(0, 8) : '';
+        // 1행 = 컬렉션 정체성(이름 + 짧은 UUID), 2행 = 속성 칩. 한 줄에 4개를 몰아넣지 않는다.
+        var cf = [];
+        if (chroma.count != null)     cf.push(_fact('청크', String(chroma.count) + '건'));
+        if (chroma.space)             cf.push(_fact('space', chroma.space));
+        if (chroma.dimension != null) cf.push(_fact('dim', String(chroma.dimension)));
+        colEl.innerHTML = _stMulti(
+            _stat('ok') + esc(chroma.collectionName)
+                + (idShort ? ' <span class="st-id">' + esc(idShort) + '…</span>' : ''), cf);
+    } else if (chroma.success) {
+        // 서버는 살아 있는데 컬렉션 이름이 비어 점검을 건너뛴 경우 — '정상' 으로 찍으면 거짓이다.
+        colEl.innerHTML = _stMulti(_stat('na', '미설정') + '컬렉션 이름이 비어 있습니다', null);
+    } else if (serverUp) {
+        colEl.innerHTML = _stMulti(_stat('err') + esc(chroma.configuredCollection || '(컬렉션 미설정)'), null)
+            + '<span class="st-note">' + esc(chroma.error || '컬렉션 조회 실패') + '</span>';
+    } else {
+        colEl.innerHTML = _stMulti(_stat('na', '미확인') + '서버 미연결 — 컬렉션을 점검하지 못했습니다', null);
     }
 
     if (!emb.isLocalOnnx) {
-        document.getElementById('cstEmbedding').innerHTML = _dot('na') + 'provider ' + esc(emb.provider || '?')
-            + ' — 사이드카 미사용 (local-onnx 아님)';
+        document.getElementById('cstEmbedding').innerHTML =
+            _stMulti(_stat('na', '미사용') + 'provider ' + esc(emb.provider || '?'), null)
+            + '<span class="st-note dim">사이드카 미사용 (local-onnx 아님)</span>';
     } else if (sidecar && sidecar.success) {
-        var sp = [];
-        sp.push(esc(sidecar.model || '?'));
-        if (sidecar.dimension != null) sp.push('dim ' + esc(String(sidecar.dimension)));
-        if (sidecar.maxBatch != null) sp.push('batch ' + esc(String(sidecar.maxBatch)));
-        if (sidecar.maxConcurrency != null) sp.push('concurrency ' + esc(String(sidecar.maxConcurrency)));
+        // 사이드카가 실제로 싣고 있는 모델명 — Embedding 카드의 Model 표시도 이 값을 쓴다.
+        _sidecarModel = sidecar.model || '';
+        renderLocalOnnxModel();
+        // 1행 = 모델명, 2행 = 속성 칩(dim/batch/concurrency/가동).
+        var sf = [];
+        if (sidecar.dimension != null)      sf.push(_fact('dim', String(sidecar.dimension)));
+        if (sidecar.maxBatch != null)       sf.push(_fact('batch', String(sidecar.maxBatch)));
+        if (sidecar.maxConcurrency != null) sf.push(_fact('concurrency', String(sidecar.maxConcurrency)));
         var up = _fmtUptime(sidecar.uptimeSeconds);
-        if (up) sp.push('up ' + esc(up));
-        document.getElementById('cstEmbedding').innerHTML = _dot('ok') + sp.join(' · ');
+        if (up) sf.push(_fact('가동', up));
+        document.getElementById('cstEmbedding').innerHTML =
+            _stMulti(_stat('ok') + esc(sidecar.model || '?'), sf);
     } else {
-        document.getElementById('cstEmbedding').innerHTML = _dot('err') + esc((sidecar && sidecar.healthUrl) || emb.apiUrl || '(URL 미설정)')
-            + ' — ' + esc((sidecar && sidecar.error) || '연결 실패');
+        // 실패 줄이 가장 길다(URL + 에러 메시지) — 여기야말로 줄을 나눠야 읽힌다.
+        document.getElementById('cstEmbedding').innerHTML =
+            _stMulti(_stat('err') + esc((sidecar && sidecar.healthUrl) || emb.apiUrl || '(URL 미설정)'), null)
+            + '<span class="st-note">' + esc((sidecar && sidecar.error) || '연결 실패') + '</span>';
     }
 
     var ul = document.getElementById('cstWarnings');
@@ -894,15 +1444,37 @@ function renderChromaStatus(d) {
 function onEmbProviderChange() {
     var local = document.getElementById('ragEmbProvider').value === 'local-onnx';
     document.getElementById('ragEmbApiKeyRow').style.display = local ? 'none' : 'flex';
+    // 편집 가능한 Model 입력은 감추고, 대신 읽기 전용 표시 행을 보여준다.
     document.getElementById('ragEmbModelRow').style.display  = local ? 'none' : 'flex';
+    document.getElementById('ragEmbModelLocalRow').style.display = local ? 'flex' : 'none';
     document.getElementById('embSidecarHintRow').style.display = local ? 'flex' : 'none';
     document.getElementById('ragEmbApiUrl').placeholder =
         local ? (_localOnnxDefaults.url || 'http://127.0.0.1:8001/embed') : 'https://api.openai.com/v1/embeddings';
     if (local) {
         document.getElementById('embSidecarHint').textContent =
             '로컬 사이드카 계약 — API URL ' + (_localOnnxDefaults.url || '(로드 중)') + ', Dimension '
-            + (_localOnnxDefaults.dimension || '?') + ' (multilingual-e5-small). '
-            + 'API Key·Model 은 사이드카가 소유하므로 사용하지 않습니다. 값이 다르면 아래 버튼으로 채운 뒤 Save All 하세요.';
+            + (_localOnnxDefaults.dimension || '?') + ', Model ' + (_sidecarModel || _localOnnxDefaults.model || '?') + '. '
+            + 'API Key·Model 은 사이드카가 소유하므로 앱이 전송하지 않습니다. 값이 다르면 아래 버튼으로 채운 뒤 Save All 하세요.';
+    }
+    renderLocalOnnxModel();
+}
+
+/**
+ * local-onnx 의 Model 표시. 실측(사이드카 /health) > 문서상 기본값 순으로 쓰고 출처를 함께 밝힌다
+ * — 둘을 구분하지 않으면 사이드카가 다른 모델을 싣고 있어도 화면은 계속 맞는 것처럼 보인다.
+ */
+function renderLocalOnnxModel() {
+    var el = document.getElementById('ragEmbModelLocal');
+    if (!el) return;
+    var live = _sidecarModel, def = _localOnnxDefaults.model;
+    if (live) {
+        el.innerHTML = _dot('ok') + Common.escHtml(live)
+            + '<span class="st-id">사이드카 실측</span>';
+    } else if (def) {
+        el.innerHTML = _dot('na') + Common.escHtml(def)
+            + '<span class="st-id">기본값 — 사이드카 미확인</span>';
+    } else {
+        el.textContent = '—';
     }
 }
 
@@ -1012,22 +1584,81 @@ function onRagAuthChange() {
     document.getElementById('ragAuthApiKeyBox').style.display = (auth === 'api-key') ? 'block' : 'none';
 }
 
+/*
+ * 서버가 준 한국어 메시지를 살린다.
+ * Common.fetchJSON 은 401(세션 만료)·429(호출량 제한)만 사람이 읽을 문구를 만들어 주고,
+ * 그 밖의 상태 코드는 'HTTP 403: {"success":false,...}' 처럼 **JSON 원문을 그대로** 메시지에
+ * 넣는다(함정 14). 서버는 /api/** 오류를 {success,code,error} 3필드로 통일해 주므로
+ * body 에서 error 를 꺼내 쓰는 게 항상 낫다.
+ */
+function serverErrMsg(e, fallback) {
+    if (!e) return fallback;
+    if (e.sessionExpired || e.rateLimited) return e.message;   // 이미 한국어 안내
+    if (e.body) {
+        try {
+            var b = JSON.parse(e.body);
+            if (b && b.error) return b.error;
+        } catch (ignore) {
+            /* JSON 이 아니면(프록시 오류 페이지 등) 아래 상태 코드 폴백을 쓴다 */
+            Common.logIgnored('[RAG] 오류 응답 본문이 JSON 이 아님 — 상태 코드 문구로 대체', ignore);
+        }
+    }
+    if (e.status) return httpMsg(e.status, fallback);
+    return e.message || fallback;                              // 네트워크 단절 등
+}
+
+/* 본문이 없거나 JSON 이 아닐 때 쓰는 상태 코드별 한국어 문구.
+   원문(HTML 오류 페이지·스택)을 토스트에 그대로 붓지 않기 위한 마지막 방어선이다. */
+function httpMsg(status, fallback) {
+    if (status === 401) return '로그인 세션이 만료되었습니다. 다시 로그인해 주세요.';
+    if (status === 403) return '이 작업을 수행할 권한이 없습니다.';
+    if (status === 413) return '파일이 너무 큽니다 — 업로드 한도를 초과했습니다.';
+    if (status === 502 || status === 503 || status === 504) return '서버에 연결하지 못했습니다 (HTTP ' + status + ')';
+    return (fallback || '요청을 처리하지 못했습니다') + ' (HTTP ' + status + ')';
+}
+
+/* multipart·수동 fetch 경로 전용 — `r.json()` 은 응답이 JSON 이 아니면 SyntaxError 를 던져
+   화면에 "Unexpected token '<'" 가 뜬다(프록시 오류 페이지·톰캣 HTML 이 실제 사례).
+   본문을 텍스트로 받아 안전하게 파싱하고, 우리 계약({success,error})으로 정규화한다. */
+function readJsonSafe(r) {
+    return r.text().then(function(t) {
+        var d = null;
+        try { d = t ? JSON.parse(t) : null; }
+        catch (ignore) { Common.logIgnored('[RAG] 응답이 JSON 이 아님(HTML 오류 페이지 등) — 아래에서 대체', ignore); }
+        if (!d || typeof d !== 'object') {
+            d = { success: r.ok };
+            if (!r.ok) d.error = httpMsg(r.status, null);
+        } else if (!r.ok && !d.error) {
+            d.error = d.message || httpMsg(r.status, null);   // Spring 기본 오류 JSON 등
+        }
+        if (!r.ok) d.success = false;
+        return { status: r.status, ok: r.ok, d: d };
+    });
+}
+
 function toggleRagEnabled(el) {
     var enabled = el.checked;
-    fetch('/api/settings/rag/enabled', {
-        method: 'POST', headers: getCsrfHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ enabled: enabled })
-    }).then(function(r){ return r.json(); }).then(function(d){
-        if (d.success) {
-            toast('RAG ' + (d.enabled ? '활성화' : '비활성화'), 'success');
-            updateBadge(d.enabled);
+    // ⚠ 원시 fetch 를 쓰면 401 세션 만료가 그냥 '변경 실패'로 보인다 — 재로그인이 필요하다는
+    //   사실이 사라진다(함정 27). Common.fetchJSON 이 401/429 를 분류해 준다.
+    Common.fetchJSON('/api/settings/rag/enabled', {
+        method: 'POST', body: JSON.stringify({ enabled: enabled })
+    }).then(function(d){
+        if (!d.success) throw new Error(d.error || '변경 실패');
+        // 배지·잠금·토글은 셋 다 **서버가 돌려준 값**을 본다 — 요청값을 쓰면 서버 판정과
+        // 갈라졌을 때 화면만 바뀐 채로 남는다.
+        el.checked = !!d.enabled;
+        updateBadge(d.enabled);
+        applyRagEnabledState(!!d.enabled);
+        if (d.persisted === false) {
+            // 적용은 됐다(토글을 되돌리지 않는다). 다만 재기동하면 사라진다는 것을 알려야 한다.
+            toast(d.warning || 'RAG 변경은 적용됐지만 설정 파일에 저장하지 못했습니다', 'error');
         } else {
-            el.checked = !enabled;
-            toast('변경 실패', 'error');
+            toast('RAG ' + (d.enabled ? '활성화' : '비활성화'), 'success');
         }
     }).catch(function(e){
-        el.checked = !enabled;
-        toast('요청 실패: ' + e.message, 'error');
+        el.checked = !enabled;              // 서버가 바꾸지 않았으니 토글을 되돌린다
+        applyRagEnabledState(el.checked);
+        toast(serverErrMsg(e, 'RAG 설정 변경 실패'), 'error');
     });
 }
 
@@ -1282,10 +1913,758 @@ function testRagConn() {
     });
 }
 
+
+/* ══════════════════════════════════════════════════════════════
+   탭 · 코퍼스 · 색인 실행
+   ⚠ 이 블록 어디에도 여는 대괄호 2연속을 쓰지 말 것(주석 포함) — Thymeleaf 가
+     인라인 표현식으로 해석해 템플릿 파싱이 깨지고 화면이 빈 채로 뜬다(함정 23).
+   ⚠ 배경 타이머를 직접 만들지 말 것 — SessionTimeout.managedInterval 경유(함정 38).
+     (스모크 테스트가 이 스크립트에 타이머 API 리터럴이 있는지까지 검사한다)
+   ══════════════════════════════════════════════════════════════ */
+
+var _tabLoaded = { knowledge: false, learning: false };
+var _kbItems = [], _lnItems = [];
+var _kbLoaded = false, _lnLoaded = false;   // 목록이 실제로 **도착**했는가 (실패/미조회와 0건을 구분)
+var _impKind = 'knowledge', _impChecked = false;
+var _idxTimer = null, _idxRunning = false;
+
+(function initTabs() {
+    var TABS = ['config', 'knowledge', 'learning'];
+    function activate(id) {
+        if (TABS.indexOf(id) < 0) id = 'config';
+        document.querySelectorAll('.tab').forEach(function(b) {
+            b.classList.toggle('active', b.getAttribute('data-tab') === id);
+        });
+        document.querySelectorAll('.tab-panel').forEach(function(p) {
+            p.classList.toggle('active', p.id === 'panel-' + id);
+        });
+        // 최초 진입 시 1회만 — 이후 갱신은 각 탭의 버튼이 한다(폴링 없음).
+        if (id === 'knowledge' && !_tabLoaded.knowledge) { _tabLoaded.knowledge = true; loadIndexStatus(); loadKnowledgeTab(); }
+        if (id === 'learning'  && !_tabLoaded.learning)  { _tabLoaded.learning  = true; loadLearningTab(); }
+    }
+    window.ragSwitchTab = function(id) {
+        if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
+        activate(id);
+    };
+    window.addEventListener('hashchange', function() {
+        activate((location.hash || '').replace('#', ''));
+    });
+    document.addEventListener('DOMContentLoaded', function() {
+        activate(((location.hash || '').replace('#', '')) || 'config');
+    });
+})();
+
+/* ── 색인 현황 ─────────────────────────────────────── */
+
+function loadIndexStatus() {
+    var tb = document.querySelector('#idxTable tbody');
+    Common.fetchJSON('/api/settings/rag/index-status').then(function(d) {
+        if (d.error) {
+            tb.innerHTML = '<tr><td colspan="7" class="corpus-empty">' + Common.escHtml(d.error) + '</td></tr>';
+            _setBadge('idxTotalBadge', '확인 불가', 'err');
+            return;
+        }
+        var rows = d.sources || [];
+        if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="7" class="corpus-empty">색인된 문서가 없습니다</td></tr>';
+        } else {
+            tb.innerHTML = rows.map(function(r) {
+                var managed = r.managed === true;
+                var un = managed && r.unindexed > 0
+                    ? '<span class="cbadge warn">' + r.unindexed + '</span>' : (managed ? '0' : '—');
+                var orp = managed && r.orphans > 0
+                    ? '<span class="cbadge warn">' + r.orphans + '</span>' : (managed ? '0' : '—');
+                var use = r.excluded ? '<span class="cbadge off">검색 제외</span>' : '사용';
+                if (r.syntheticChunks > 0) use += ' <span class="cbadge syn">가상 ' + r.syntheticChunks + '</span>';
+                return '<tr><td class="mono">' + Common.escHtml(r.sourceType) + '</td>'
+                     + '<td class="num">' + r.chunks + '</td>'
+                     + '<td class="num">' + r.docs + '</td>'
+                     + '<td class="num">' + (managed ? r.dbRows : '—') + '</td>'
+                     + '<td class="num">' + un + '</td>'
+                     + '<td class="num">' + orp + '</td>'
+                     + '<td>' + use + '</td></tr>';
+            }).join('');
+        }
+        var txt = (d.totalChunks != null ? d.totalChunks + '청크' : '') + (d.partial ? ' (일부만 집계됨)' : '');
+        _setBadge('idxTotalBadge', txt, d.partial ? 'err' : 'active');
+    }).catch(function(e) {
+        var msg = serverErrMsg(e, '색인 현황을 불러오지 못했습니다');
+        tb.innerHTML = '<tr><td colspan="7" class="corpus-empty">조회 실패: ' + Common.escHtml(msg) + '</td></tr>';
+        toast(msg, 'error');
+    });
+}
+
+/* ── 지식 목록 ─────────────────────────────────────── */
+
+function loadKnowledgeTab() {
+    var tb = document.querySelector('#kbTable tbody');
+    return Common.fetchJSON('/api/settings/rag/knowledge/docs').then(function(d) {
+        _kbItems = d.items || [];
+        _kbLoaded = true;
+        document.getElementById('kbCountBadge').textContent = _kbItems.length;
+        if (!_kbItems.length) {
+            tb.innerHTML = '<tr><td colspan="8" class="corpus-empty">등록된 문서가 없습니다 — 가져오기로 .md 파일을 올리세요</td></tr>';
+            return;
+        }
+        tb.innerHTML = _kbItems.map(function(it) {
+            return '<tr><td><input type="checkbox" class="kb-chk" value="' + it.id + '"></td>'
+                 + '<td><span class="linkish" onclick="openDoc(' + it.id + ')">' + Common.escHtml(it.title || '') + '</span>'
+                 + (it.synthetic ? ' <span class="cbadge syn">가상</span>' : '') + '</td>'
+                 + '<td class="mono">' + Common.escHtml(it.originId || '') + '</td>'
+                 + '<td>' + Common.escHtml(it.category || '') + '</td>'
+                 + '<td>' + Common.escHtml(it.severity || '') + '</td>'
+                 + '<td class="num">' + (it.chars || 0) + '</td>'
+                 + '<td>' + (it.enabled ? '사용' : '<span class="cbadge off">해제</span>') + '</td>'
+                 + '<td class="mono">' + Common.escHtml(it.updatedAt || '') + '</td></tr>';
+        }).join('');
+    }).catch(function(e) {
+        var msg = serverErrMsg(e, '지식 목록을 불러오지 못했습니다');
+        tb.innerHTML = '<tr><td colspan="8" class="corpus-empty">조회 실패: ' + Common.escHtml(msg) + '</td></tr>';
+        toast(msg, 'error');
+    });
+}
+
+/* ── 학습 목록 ─────────────────────────────────────── */
+
+function loadLearningTab() {
+    var tb = document.querySelector('#lnTable tbody');
+    return Common.fetchJSON('/api/settings/rag/learning/docs').then(function(d) {
+        _lnItems = d.items || [];
+        _lnLoaded = true;
+        document.getElementById('lnCountBadge').textContent = _lnItems.length;
+        var cat = d.byCategory || {}, sev = d.bySeverity || {};
+        var parts = [];
+        Object.keys(cat).forEach(function(k) { parts.push(Common.escHtml(k) + ' ' + cat[k]); });
+        var sevParts = [];
+        Object.keys(sev).forEach(function(k) { sevParts.push(Common.escHtml(k) + ' ' + sev[k]); });
+        document.getElementById('lnSummary').innerHTML = _lnItems.length
+            ? ('총 ' + _lnItems.length + '행 · 가상 ' + (d.syntheticCount || 0) + '건<br>카테고리: '
+               + parts.join(' / ') + '<br>심각도: ' + sevParts.join(' / '))
+            : '';
+        if (!_lnItems.length) {
+            tb.innerHTML = '<tr><td colspan="8" class="corpus-empty">학습 데이터가 없습니다 — 가져오기로 CSV 를 올리세요</td></tr>';
+            return;
+        }
+        tb.innerHTML = _lnItems.map(function(it) {
+            return '<tr><td><input type="checkbox" class="ln-chk" value="' + it.id + '"></td>'
+                 + '<td class="mono">' + Common.escHtml(it.docId || '') + '</td>'
+                 + '<td>' + Common.escHtml(it.title || '') + '</td>'
+                 + '<td>' + Common.escHtml(it.category || '') + '</td>'
+                 + '<td>' + Common.escHtml(it.severity || '') + '</td>'
+                 + '<td class="num">' + (it.chars || 0) + '</td>'
+                 + '<td class="mono">' + Common.escHtml(it.docDate || '') + '</td>'
+                 + '<td>' + (it.synthetic ? '<span class="cbadge syn">검색 제외</span>' : '') + '</td></tr>';
+        }).join('');
+    }).catch(function(e) {
+        var msg = serverErrMsg(e, '학습 목록을 불러오지 못했습니다');
+        tb.innerHTML = '<tr><td colspan="8" class="corpus-empty">조회 실패: ' + Common.escHtml(msg) + '</td></tr>';
+        toast(msg, 'error');
+    });
+}
+
+function toggleAll(kind, on) {
+    document.querySelectorAll('.' + kind + '-chk').forEach(function(c) { c.checked = on; });
+}
+
+function selectedIds(kind) {
+    var out = [];
+    document.querySelectorAll('.' + kind + '-chk').forEach(function(c) { if (c.checked) out.push(parseInt(c.value, 10)); });
+    return out;
+}
+
+function openDoc(id) {
+    Common.fetchJSON('/api/settings/rag/knowledge/docs/' + id).then(function(d) {
+        document.getElementById('docModalTitle').textContent = d.title || '문서';
+        document.getElementById('docModalBody').textContent = d.content || '';
+        document.getElementById('docModal').style.display = 'flex';
+    }).catch(function(e) { toast(serverErrMsg(e, '본문을 불러오지 못했습니다'), 'error'); });
+}
+
+/* ── 카드형 선택지 ───────────────────────────────────
+   `.opt-card` 는 :has() 없이 JS 로 `.selected` 를 토글한다(.mode-opt 와 동일 정책).
+   ⚠ 라디오는 **같은 name 의 형제까지** 갱신해야 이전 선택이 풀린다 — 클릭된 것만 켜면 둘 다 켜 보인다. */
+function syncOptCards(input) {
+    var group = input.name
+        ? document.querySelectorAll('input[name="' + input.name + '"]')
+        : [input];
+    for (var i = 0; i < group.length; i++) {
+        var card = group[i].closest ? group[i].closest('.opt-card') : null;
+        if (card) card.classList.toggle('selected', group[i].checked);
+    }
+}
+
+/* ── 내보내기 (blob — 함정 19) ───────────────────────── */
+
+/** 성공하면 true, 실패하면 false 로 resolve — 호출부가 완료 토스트/모달 닫기를 판단한다. */
+function blobDownload(url, fallbackName) {
+    return fetch(url, { credentials: 'same-origin' }).then(function(r) {
+        /* ⚠ 'HTTP 404' 로 뭉개지 말 것 — 서버는 "내보낼 문서가 없습니다"·세션 만료 안내를
+           본문에 담아 보낸다. 실패 본문을 읽어 그대로 보여준다. */
+        if (!r.ok) {
+            return readJsonSafe(r).then(function(res) {
+                throw new Error(res.d.error || httpMsg(r.status, '내보내기 실패'));
+            });
+        }
+        var cd = r.headers.get('Content-Disposition') || '';
+        var m = /filename\*?=(?:UTF-8'')?["']?([^"';]+)/i.exec(cd);
+        var fname = m ? decodeURIComponent(m[1]) : fallbackName;
+        return r.blob().then(function(b) { return { blob: b, fname: fname }; });
+    }).then(function(res) {
+        var u = URL.createObjectURL(res.blob);
+        var a = document.createElement('a');
+        a.href = u; a.download = res.fname; a.style.display = 'none';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function() { URL.revokeObjectURL(u); }, 1000);
+        return true;
+    }).catch(function(e) { toast('내보내기 실패 — ' + (e.message || e), 'error'); return false; });
+}
+
+/* ── 내보내기 확인 모달 ───────────────────────────────
+   건수는 서버에 다시 묻지 않고 **화면에 이미 있는 목록**(_kbItems/_lnItems)에서 센다 —
+   사용자가 보고 있는 표와 어긋나지 않는 것이 정확한 최신값보다 중요하다(어긋나면 어느 쪽도 못 믿는다). */
+var _expKind = 'knowledge';
+
+function _expChip(k, v) {
+    return '<span class="st-fact"><span class="k">' + Common.escHtml(k) + '</span>' + Common.escHtml(v) + '</span>';
+}
+
+function openExportModal(kind) {
+    _expKind = kind;
+    var isKb = (kind === 'knowledge');
+    var items = isKb ? _kbItems : _lnItems;
+    if (!items || !items.length) {
+        toast(isKb ? '내보낼 문서가 없습니다' : '내보낼 학습 데이터가 없습니다', 'error');
+        return;
+    }
+    document.getElementById('expTitle').textContent = (isKb ? '지식 문서' : '학습 데이터') + ' 내보내기';
+
+    var selCount = isKb ? selectedIds('kb').length : 0;
+    var scopeRow = document.getElementById('expScopeRow');
+    // 선택이 있을 때만 범위를 묻는다 — 선택이 없으면 고를 게 하나뿐이라 카드가 소음이 된다.
+    scopeRow.style.display = (isKb && selCount > 0) ? 'flex' : 'none';
+    if (isKb && selCount > 0) {
+        document.getElementById('expBadgeSel').textContent = selCount + '건';
+        document.getElementById('expBadgeAll').textContent = _kbItems.length + '건';
+        var sel = document.querySelector('input[name="expScope"][value="selected"]');
+        sel.checked = true;
+        syncOptCards(sel);
+    }
+
+    document.getElementById('expNote').innerHTML = isKb
+        ? '1건이면 <code>.md</code>, 여러 건이면 <code>.zip</code> 으로 내려받습니다 — 가져오기가 같은 zip 을 그대로 받으므로 왕복이 성립합니다.'
+        : 'CSV 9컬럼 원본을 <strong>그대로</strong> 내보냅니다. 원본과 바이트 동일해야 DB 전환이 안전한지 판정할 수 있어 <strong>선택한 행만 내보내는 기능은 없습니다</strong>.';
+
+    updateExportSummary();
+    document.getElementById('expModal').style.display = 'flex';
+}
+
+function closeExportModal() { document.getElementById('expModal').style.display = 'none'; }
+
+function onExportScopeChange(input) { syncOptCards(input); updateExportSummary(); }
+
+/** 현재 범위 선택에 맞춰 건수·형식·부가 정보를 다시 계산한다. */
+function updateExportSummary() {
+    var isKb = (_expKind === 'knowledge');
+    var items;
+    if (!isKb) {
+        items = _lnItems;
+    } else if (_expScope() === 'selected') {
+        var ids = {};
+        selectedIds('kb').forEach(function(id) { ids[id] = true; });
+        items = _kbItems.filter(function(it) { return ids[it.id]; });
+    } else {
+        items = _kbItems;
+    }
+
+    var chars = 0, syn = 0, off = 0;
+    items.forEach(function(it) {
+        chars += (it.chars || 0);
+        if (it.synthetic) syn++;
+        if (isKb && it.enabled === false) off++;
+    });
+
+    document.getElementById('expCount').textContent = items.length.toLocaleString();
+    document.getElementById('expUnit').textContent = isKb ? '건의 문서' : '행의 학습 데이터';
+
+    var facts = [_expChip('형식', isKb ? (items.length === 1 ? '.md' : '.zip') : '.csv')];
+    facts.push(_expChip('본문', chars.toLocaleString() + '자'));
+    if (syn) facts.push(_expChip('가상', syn + (isKb ? '건' : '행')));
+    if (off) facts.push(_expChip('해제', off + '건'));
+    document.getElementById('expFacts').innerHTML = facts.join('');
+
+    var go = document.getElementById('expGoBtn');
+    go.disabled = (items.length === 0);
+    _expCount = items.length;
+}
+
+var _expCount = 0;
+
+function _expScope() {
+    var r = document.querySelector('input[name="expScope"]:checked');
+    return (r && document.getElementById('expScopeRow').style.display !== 'none') ? r.value : 'all';
+}
+
+function confirmExport() {
+    var isKb = (_expKind === 'knowledge');
+    var n = _expCount;
+    var url, fallback;
+    if (isKb) {
+        var q = (_expScope() === 'selected') ? ('?ids=' + selectedIds('kb').join(',')) : '';
+        url = '/api/settings/rag/knowledge/export' + q;
+        fallback = (n === 1) ? 'rag-knowledge.md' : 'rag-knowledge.zip';
+    } else {
+        url = '/api/settings/rag/learning/export';
+        fallback = 'rag-learning.csv';
+    }
+
+    // 큰 CSV 는 준비에 시간이 걸린다 — 모달을 먼저 닫으면 아무 일도 안 일어난 것처럼 보인다.
+    var go = document.getElementById('expGoBtn');
+    go.disabled = true; go.textContent = '준비 중…';
+    blobDownload(url, fallback).then(function(ok) {
+        go.disabled = false; go.textContent = '다운로드';
+        if (!ok) return;                      // 실패 토스트는 blobDownload 가 이미 띄웠다
+        closeExportModal();
+        toast(n.toLocaleString() + (isKb ? '건' : '행') + ' 내보내기를 시작했습니다', 'success');
+    });
+}
+
+/* ── 삭제 ─────────────────────────────────────────── */
+
+function deleteSelected(kind) {
+    var ids = selectedIds(kind === 'learning' ? 'ln' : 'kb');
+    if (!ids.length) { toast('삭제할 항목을 선택하세요', 'error'); return; }
+    if (!confirm(ids.length + '건을 삭제합니다.\n\n삭제해도 이미 색인된 청크는 Chroma 에 남습니다.\n'
+               + '완전히 제거하려면 색인 실행에서 "전체 재색인(--reset)" 을 해야 합니다.\n\n계속할까요?')) return;
+    Common.fetchJSON('/api/settings/rag/' + kind + '/delete', {
+        method: 'POST', body: JSON.stringify({ ids: ids })
+    }).then(function(d) {
+        if (d.success !== true) { toast(d.error || '삭제 실패', 'error'); return; }
+        toast(d.deleted + '건 삭제했습니다 — 색인 반영은 재색인이 필요합니다', 'success');
+        if (kind === 'learning') loadLearningTab(); else loadKnowledgeTab();
+        loadIndexStatus();
+    }).catch(function(e) { toast(serverErrMsg(e, '삭제 실패'), 'error'); });
+}
+
+/* ── 가져오기 ─────────────────────────────────────── */
+
+/* 현재 모드가 받는 확장자 — `accept` 속성과 드롭 검사가 **같은 출처**를 봐야 어긋나지 않는다. */
+var _impAccept = [];
+
+function openImportModal(kind) {
+    _impKind = kind;
+    _impChecked = false;
+    document.getElementById('impTitle').textContent = (kind === 'learning' ? '학습 데이터' : '지식 문서') + ' 가져오기';
+    var input = document.getElementById('impFiles');
+    input.value = '';
+    _impPrev = [];
+    _impAccept = (kind === 'learning') ? ['.csv'] : ['.md', '.markdown', '.zip'];
+    input.setAttribute('accept', _impAccept.join(','));
+    document.getElementById('impFileHint').textContent = kind === 'learning'
+        ? 'CSV 9컬럼 형식 · 여러 파일을 한 번에 올릴 수 있습니다.'
+        : '.md 여러 개 또는 내보낸 .zip 을 그대로 · 여러 파일 가능';
+    document.getElementById('impResult').style.display = 'none';
+    document.getElementById('impApplyBtn').disabled = true;
+    onImportFilesChosen();                       // 칩 목록·개수 초기화
+    document.getElementById('impModal').style.display = 'flex';
+}
+
+function closeImportModal() { document.getElementById('impModal').style.display = 'none'; }
+
+/* ── 파일 선택 (끌어다 놓기 + 개별 제외) ─────────────────
+   FileList 는 읽기 전용이라 항목을 못 뺀다 — DataTransfer 로 새로 만들어 input.files 에 대입한다.
+   그래야 runImport 가 종전대로 `input.files` 만 보면 되고 선택 경로가 갈리지 않는다.
+   ⚠ 미지원 브라우저(구 Safari 등)에서는 생성자가 던진다 → 개별 제외 대신 전체 해제로 물러난다. */
+function _newDataTransfer() {
+    try { return new DataTransfer(); } catch (e) { return null; }
+}
+
+function _impExtOk(name) {
+    var lower = String(name || '').toLowerCase();
+    for (var i = 0; i < _impAccept.length; i++) if (lower.endsWith(_impAccept[i])) return true;
+    return false;
+}
+
+/* 파일 목록은 **누적**이 기본이다 — 파일 선택창은 고를 때마다 목록을 교체하므로,
+   .md 를 여러 번에 나눠 고르면 앞서 고른 게 조용히 사라졌다. 직전 선택을 들고 있다가 합친다.
+   `_impPrev` 가 그 직전 상태이고, 실제 전송원(runImport)은 종전대로 `input.files` 하나뿐이다. */
+var _impPrev = [];
+
+/** base + incoming 을 합친 FileList 를 만든다. DataTransfer 미지원이면 null(호출부가 네이티브 동작으로 물러난다).
+ *  ⚠ 같은 이름은 **last-wins 로 교체**한다 — 서버의 파일 내 중복 정책과 같은 규칙이다.
+ *     `이름+크기+수정시각` 을 키로 쓰면 파일을 고친 뒤 다시 고를 때 같은 이름 두 장이 쌓이고,
+ *     이름만 보고 **건너뛰면** 고친 내용 대신 옛 파일이 조용히 올라간다(둘 다 나쁘다). */
+function _impMerge(base, incoming) {
+    var dt = _newDataTransfer();
+    if (!dt) return null;
+    var list = base.slice(), at = {}, rejected = 0, added = 0, replaced = 0, i, f, key, prev;
+    for (i = 0; i < list.length; i++) at[list[i].name.toLowerCase()] = i;
+    for (i = 0; i < incoming.length; i++) {
+        f = incoming.item ? incoming.item(i) : incoming[i];
+        // ⚠ 드롭은 accept 필터를 우회하고, 선택창도 "모든 파일"로 바꿀 수 있다 — 여기서 막지 않으면
+        //    지식 탭에 .csv 가 조용히 들어간다(서버가 거르지만 그건 검사 단계에서야 드러난다).
+        if (!_impExtOk(f.name)) { rejected++; continue; }
+        key = f.name.toLowerCase();
+        if (at[key] !== undefined) {
+            prev = list[at[key]];
+            if (prev.size !== f.size || prev.lastModified !== f.lastModified) replaced++;
+            list[at[key]] = f;
+        } else {
+            at[key] = list.length; list.push(f); added++;
+        }
+    }
+    for (i = 0; i < list.length; i++) dt.items.add(list[i]);
+    return { files: dt.files, rejected: rejected, added: added, replaced: replaced };
+}
+
+function _impApply(res) {
+    if (!res) { onImportFilesChosen(); return; }          // 미지원 브라우저: 네이티브 선택 그대로
+    document.getElementById('impFiles').files = res.files;
+    if (res.rejected)        toast(_impAccept.join(', ') + ' 만 올릴 수 있습니다 — ' + res.rejected + '개 제외', 'error');
+    else if (res.replaced)   toast('같은 이름 ' + res.replaced + '개를 새로 고른 파일로 바꿨습니다', 'success');
+    else if (!res.added)     toast('이미 선택한 파일입니다', 'error');
+    onImportFilesChosen();
+}
+
+/** 파일 선택창 onchange — 새로 고른 목록을 직전 선택에 누적한다(드롭과 동작을 맞춘다). */
+function onImportPicked() {
+    _impApply(_impMerge(_impPrev, document.getElementById('impFiles').files));
+}
+
+/** 끌어다 놓기 */
+function addImportFiles(list) {
+    var res = _impMerge(_impPrev, list);
+    if (!res) { toast('이 브라우저는 끌어다 놓기를 지원하지 않습니다 — 클릭해 선택하세요', 'error'); return; }
+    _impApply(res);
+}
+
+function removeImportFile(idx) {
+    var rest = _impPrev.slice(0, idx).concat(_impPrev.slice(idx + 1));
+    var res = _impMerge(rest, []);
+    if (!res) { document.getElementById('impFiles').value = ''; onImportFilesChosen(); return; }  // 개별 제외 불가 → 전체 해제
+    document.getElementById('impFiles').files = res.files;
+    onImportFilesChosen();
+}
+
+function onImportFilesChosen() {
+    _impChecked = false;
+    document.getElementById('impApplyBtn').disabled = true;
+    // 파일 구성이 바뀌면 앞선 검사 결과는 그 파일들에 대한 판정이 아니다 — 남겨 두면 오독을 부른다.
+    document.getElementById('impResult').style.display = 'none';
+
+    var files = document.getElementById('impFiles').files;
+    var html = '', total = 0;
+    for (var i = 0; i < files.length; i++) {
+        var f = files.item(i);
+        total += f.size;
+        html += '<span class="dz-file">'
+              + '<span class="dz-file-name" title="' + Common.escHtml(f.name) + '">' + Common.escHtml(f.name) + '</span>'
+              + '<span class="dz-file-size">' + Common.formatBytes(f.size) + '</span>'
+              + '<button type="button" class="dz-file-x" onclick="removeImportFile(' + i + ')"'
+              + ' aria-label="' + Common.escHtml(f.name) + ' 제외" title="제외">\u00d7</button>'
+              + '</span>';
+    }
+    document.getElementById('impFileList').innerHTML = html;
+    document.getElementById('impPicked').textContent =
+        files.length ? (files.length + '개 · ' + Common.formatBytes(total)) : '';
+    document.getElementById('impDrop').classList.toggle('has-files', files.length > 0);
+    // 이미 걸린 게 있으면 다음 동작은 "선택"이 아니라 "추가"다 — 선택창도 누적으로 동작하므로 문구를 맞춘다.
+    document.getElementById('impDropMain').innerHTML = files.length
+        ? '파일을 더 끌어다 놓거나 <u>클릭해 추가</u>'
+        : '파일을 끌어다 놓거나 <u>클릭해 선택</u>';
+
+    _impPrev = [];                               // 다음 선택이 누적할 기준점
+    for (var k = 0; k < files.length; k++) _impPrev.push(files.item(k));
+}
+
+/* 모달 **전체**를 드롭 표적으로 둔다 — 점선 밖에 놓쳐도 받아 준다.
+   ⚠ preventDefault 를 빼면 브라우저가 그 파일로 페이지를 이동시켜 작성 중이던 선택이 통째로 날아간다.
+   ⚠ dragleave 는 자식 위를 지날 때마다 발화하므로 깊이를 세지 않으면 테두리가 깜빡인다. */
+(function wireImportDropzone() {
+    var modal = document.getElementById('impModal');
+    var zone = document.getElementById('impDrop');
+    if (!modal || !zone) return;
+    var depth = 0;
+    modal.addEventListener('dragenter', function(e) { e.preventDefault(); depth++; zone.classList.add('over'); });
+    modal.addEventListener('dragover',  function(e) { e.preventDefault(); });
+    modal.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        if (--depth <= 0) { depth = 0; zone.classList.remove('over'); }
+    });
+    modal.addEventListener('drop', function(e) {
+        e.preventDefault();
+        depth = 0; zone.classList.remove('over');
+        var f = e.dataTransfer && e.dataTransfer.files;
+        if (f && f.length) addImportFiles(f);
+    });
+})();
+
+function runImport(dryRun) {
+    var files = document.getElementById('impFiles').files;
+    if (!files || !files.length) { toast('파일을 선택하세요', 'error'); return; }
+    if (!dryRun && !_impChecked) { toast('먼저 검사를 실행하세요', 'error'); return; }
+
+    var dup = 'skip';
+    document.querySelectorAll('input[name="impDup"]').forEach(function(r) { if (r.checked) dup = r.value; });
+
+    var fd = new FormData();
+    for (var i = 0; i < files.length; i++) fd.append('files', files.item(i));
+    fd.append('onDuplicate', dup);
+    fd.append('dryRun', dryRun ? 'true' : 'false');
+
+    var box = document.getElementById('impResult');
+    box.style.display = 'block';
+    box.textContent = dryRun ? '검사 중…' : '가져오는 중…';
+
+    /* ⚠ multipart + CSRF — Common.fetchJSON 을 쓸 수 없고 Content-Type 을 손대면 boundary 가 깨진다. */
+    fetch('/api/settings/rag/' + _impKind + '/import', {
+        method: 'POST', headers: getCsrfHeaders(), credentials: 'same-origin', body: fd
+    }).then(readJsonSafe).then(function(res) {
+        // 우리 계약이 아닌 응답(프록시 HTML·Spring 기본 오류)이면 결과표를 그리지 않는다 —
+        // "문서 0 · 신규 0" 헤더가 '정상 검사 결과'로 오해된다.
+        if (!res.d.files) {
+            box.innerHTML = '<div style="color:#B91C1C">' + Common.escHtml(res.d.error || httpMsg(res.status, '요청 실패')) + '</div>';
+            _impChecked = false;
+            document.getElementById('impApplyBtn').disabled = true;
+            return;
+        }
+        renderImportResult(res.d);
+        if (res.d.success !== true) { _impChecked = false; document.getElementById('impApplyBtn').disabled = true; return; }
+        if (dryRun) {
+            _impChecked = true;
+            document.getElementById('impApplyBtn').disabled = false;
+        } else {
+            var t = res.d.totals || {};
+            toast('추가 ' + (t.inserted || 0) + ' / 갱신 ' + (t.updated || 0) + ' / 건너뜀 ' + (t.skipped || 0), 'success');
+            closeImportModal();
+            if (_impKind === 'learning') loadLearningTab(); else loadKnowledgeTab();
+            loadIndexStatus();
+            offerIndexAfterImport(_impKind, t);
+        }
+    }).catch(function(e) {
+        box.textContent = '요청 실패: ' + serverErrMsg(e, '가져오기를 처리하지 못했습니다');
+    });
+}
+
+function renderImportResult(d) {
+    var box = document.getElementById('impResult');
+    var t = d.totals || {};
+    var head = '<div style="margin-bottom:6px"><strong>' + (d.dryRun ? '검사 결과' : '적용 결과') + '</strong> — '
+             + '문서 ' + (t.parsed || 0) + ' · 신규 ' + (t.new || 0)
+             + ' · 중복(id ' + (t.dupId || 0) + ' / 내용 ' + (t.dupContent || 0) + ' / 제목 ' + (t.dupTitle || 0) + ')'
+             + (t.intraDup ? ' · 파일내중복 ' + t.intraDup : '') + '</div>';
+    var rows = (d.files || []).map(function(f) {
+        var line = '<div style="margin-top:4px"><span class="mono">' + Common.escHtml(f.filename) + '</span> — '
+                 + (f.ok ? (f.docs + '건') : '<span style="color:#B91C1C">오류</span>');
+        if (f.errors && f.errors.length) {
+            var shown = f.errors.slice(0, 5).map(function(e) {
+                return '<div style="color:#B91C1C;padding-left:10px">#' + e.row + ': ' + Common.escHtml(e.error) + '</div>';
+            }).join('');
+            line += shown + (f.errors.length > 5 ? '<div style="padding-left:10px">외 ' + (f.errors.length - 5) + '건</div>' : '');
+        }
+        // 복구는 조용히 하면 안 된다 — 무엇을 손댔는지 보여야 사용자가 결과를 믿거나 의심할 수 있다.
+        if (f.shifted) {
+            line += '<div style="color:#92400E;padding-left:10px">밀린 컬럼 ' + f.shifted
+                  + '행 복구 (tags 에 인용 없는 콤마 — 뒤 컬럼 기준으로 재정렬)</div>';
+        }
+        if (f.quoteFixed) {
+            line += '<div style="color:#92400E;padding-left:10px">CSV 가 아닌 역슬래시 이스케이프(\\") 를 정규 표기로 바꿔 재파싱했습니다</div>';
+        }
+        if (f.syntheticInferred) {
+            line += '<div style="color:#92400E;padding-left:10px">synthetic 컬럼 없음 — source 의 \'예시\' 표기로 '
+                  + f.syntheticInferred + '행을 가상 사례(검색 제외)로 표시</div>';
+        }
+        var dups = (f.records || []).filter(function(r) { return r.status !== 'NEW'; });
+        if (dups.length) {
+            line += dups.slice(0, 5).map(function(r) {
+                return '<div style="color:#92400E;padding-left:10px">' + Common.escHtml(r.key) + ' — ' + r.flags.join(', ') + '</div>';
+            }).join('');
+            if (dups.length > 5) line += '<div style="padding-left:10px">외 ' + (dups.length - 5) + '건 중복</div>';
+        }
+        return line + '</div>';
+    }).join('');
+    box.innerHTML = head + rows + (d.error ? '<div style="color:#B91C1C;margin-top:6px">' + Common.escHtml(d.error) + '</div>' : '');
+}
+
+/* 가져오기 직후 색인 여부를 묻는다 — 색인해야 검색에 반영된다. */
+function offerIndexAfterImport(kind, totals) {
+    var changed = (totals.inserted || 0) + (totals.updated || 0);
+    if (changed <= 0) return;
+    var src = (kind === 'learning') ? 'csv' : 'user_docs';
+    if (confirm('가져오기 완료 — 추가 ' + (totals.inserted || 0) + '건 / 갱신 ' + (totals.updated || 0) + '건\n\n'
+              + '지금 색인할까요? 색인해야 검색에 반영됩니다.')) {
+        ragSwitchTab('knowledge');
+        doIndexRun(src, false);
+    }
+}
+
+/* ── 색인 실행 ─────────────────────────────────────── */
+
+function openIndexRunModal() {
+    document.getElementById('idxReset').checked = false;
+    onResetToggle();                                     // 카드 색·경고문을 함께 되돌린다
+    // 대상 카드의 건수 배지 — "무엇을 몇 건 색인하는지"를 고르기 전에 보인다.
+    // ⚠ 이 모달은 지식 탭에서만 열리므로 _lnItems 는 아직 비어 있을 수 있다("학습 0행"은 거짓말이 된다).
+    //    안 불러왔으면 지금 불러오고, 도착하면 배지를 다시 그린다.
+    _renderIdxBadges();
+    if (!_lnLoaded) {
+        _tabLoaded.learning = true;                      // 탭에 들어가도 다시 안 부르게
+        loadLearningTab().then(_renderIdxBadges);        // 실패해도 플래그가 안 켜져 '–' 가 유지된다
+    }
+    var busy = document.getElementById('idxBusyWarn');
+    busy.style.display = 'none';
+    /* 분석이 돌고 있으면 메모리가 빠듯해질 수 있다 — 차단이 아니라 경고(판단은 운영자 몫). */
+    fetch('/api/queue/status', { credentials: 'same-origin' })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(q) {
+            if (q && (q.queueSize > 0 || q.currentAnalysis)) {
+                busy.textContent = '⚠ 힙 분석이 진행 중입니다 — 색인기가 모델을 따로 올리므로 메모리가 빠듯할 수 있습니다.';
+                // .test-result 는 base 만으로는 배경·테두리가 없어 평범한 문단으로 보인다 — 경고색을 붙인다.
+                busy.className = 'test-result busy';
+                busy.style.display = 'block';
+            }
+        }).catch(function (e) {
+            /* 큐 조회 실패 — 경고를 못 띄울 뿐 색인 실행 자체는 가능하다 */
+            Common.logIgnored('[RAG] 분석 큐 상태 조회 실패 — 메모리 경고 생략', e);
+        });
+    document.getElementById('idxModal').style.display = 'flex';
+}
+
+function closeIndexRunModal() { document.getElementById('idxModal').style.display = 'none'; }
+
+/** 목록이 아직 없으면 0 이 아니라 '–' — 0 은 "없다"로 읽혀 잘못된 판단을 부른다. */
+function _renderIdxBadges() {
+    var kb = _kbLoaded ? (_kbItems || []).length : null;
+    var ln = _lnLoaded ? (_lnItems || []).length : null;
+    document.getElementById('idxBadgeBoth').textContent =
+        '지식 ' + (kb === null ? '–' : kb) + ' · 학습 ' + (ln === null ? '–' : ln);
+    document.getElementById('idxBadgeKb').textContent = (kb === null ? '–' : kb + '건');
+    document.getElementById('idxBadgeLn').textContent = (ln === null ? '–' : ln + '행');
+}
+
+function onResetToggle() {
+    var box = document.getElementById('idxReset');
+    syncOptCards(box);                       // 카드가 빨강으로 — 경고문보다 색이 먼저 보인다
+    document.getElementById('idxResetWarn').style.display = box.checked ? 'block' : 'none';
+}
+
+function startIndexRun() {
+    var src = 'csv,user_docs';
+    document.querySelectorAll('input[name="idxSrc"]').forEach(function(r) { if (r.checked) src = r.value; });
+    var reset = document.getElementById('idxReset').checked;
+    if (reset && !confirm('전체 재색인은 컬렉션을 지우고 다시 만듭니다.\n도중 실패하면 검색이 비는 구간이 생깁니다.\n\n정말 진행할까요?')) return;
+    closeIndexRunModal();
+    doIndexRun(src, reset);
+}
+
+function doIndexRun(sources, reset) {
+    fetch('/api/settings/rag/index/run', {
+        method: 'POST',
+        headers: getCsrfHeaders({ 'Content-Type': 'application/json' }),
+        credentials: 'same-origin',
+        body: JSON.stringify({ sources: sources, reset: reset })
+    }).then(readJsonSafe).then(function(res) {
+        if (res.status === 409) { toast(res.d.error || '색인이 이미 실행 중입니다', 'error'); }
+        else if (res.d.success !== true) {
+            toast(res.d.error || httpMsg(res.status, '색인 시작 실패'), 'error');
+            return;
+        }
+        else { toast('색인을 시작했습니다', 'success'); }
+        startIndexPolling();
+    }).catch(function(e) { toast(serverErrMsg(e, '색인 시작 실패'), 'error'); });
+}
+
+function cancelIndexRun() {
+    if (!confirm('실행 중인 색인을 취소할까요?')) return;
+    fetch('/api/settings/rag/index/cancel', {
+        method: 'POST', headers: getCsrfHeaders(), credentials: 'same-origin'
+    }).then(readJsonSafe)
+      .then(function(res) {
+          var d = res.d;
+          toast(d.cancelled ? '취소했습니다' : (d.error || httpMsg(res.status, '실행 중인 색인이 없습니다')),
+                d.cancelled ? 'success' : 'error');
+      })
+      .catch(function(e) { toast(serverErrMsg(e, '색인 취소 실패'), 'error'); });
+}
+
+var _idxPollFail = 0;   // 연속 폴링 실패 횟수(1회 끊김은 무시)
+
+function startIndexPolling() {
+    if (_idxTimer) return;
+    _idxRunning = true;
+    _idxPollFail = 0;
+    /* ⚠ 색인 중에는 세션이 만료되면 안 된다 — 끝나는 작업이라 활동 가드가 적절하다(함정 38). */
+    if (window.SessionTimeout && window.SessionTimeout.registerActivityGuard) {
+        window.SessionTimeout.registerActivityGuard(function() { return _idxRunning; });
+    }
+    pollIndexRun();
+    if (window.SessionTimeout && window.SessionTimeout.managedInterval) {
+        _idxTimer = window.SessionTimeout.managedInterval(pollIndexRun, 2000);
+    }
+}
+
+function stopIndexPolling() {
+    _idxRunning = false;
+    if (_idxTimer && _idxTimer.stop) _idxTimer.stop();
+    _idxTimer = null;
+}
+
+/* 진행 중 판정은 한 곳에서만 한다 — 폴링 종료와 스피너 표시가 갈리면
+   폴링이 멈춘 뒤에도 스피너가 영원히 도는 화면이 된다. */
+function _idxActive(d) { return !!d && (d.state === 'running' || d.state === 'queued'); }
+
+function pollIndexRun() {
+    Common.fetchJSON('/api/settings/rag/index/status').then(function(d) {
+        _idxPollFail = 0;
+        renderIndexRun(d);
+        var active = _idxActive(d);
+        _idxRunning = active;
+        if (!active) { stopIndexPolling(); loadIndexStatus(); }
+    }).catch(function(e) {
+        /* 조용히 멈추면 스피너가 마지막 상태로 굳어 "아직 도는 중"으로 읽힌다 —
+           색인은 서버에서 계속 돌 수도 있으므로 '진행 표시를 잃었다'고 말해야 한다.
+           일시적 끊김(1회)은 다음 폴링에서 회복될 수 있으니 2회 연속일 때 알린다. */
+        if (++_idxPollFail < 2) return;
+        stopIndexPolling();
+        var msg = serverErrMsg(e, '색인 진행 상태를 가져오지 못했습니다');
+        var cnt = document.getElementById('idxCount');
+        if (cnt) cnt.textContent = '진행 표시 중단 — ' + msg + ' (색인은 서버에서 계속될 수 있습니다)';
+        var sp = document.getElementById('idxSpin');          // 진행 스피너(_idxActive 와 짝)
+        if (sp) sp.hidden = true;
+        var cb = document.getElementById('idxCancelBtn');
+        if (cb) cb.hidden = true;
+        toast(msg, 'error');
+    });
+}
+
+function renderIndexRun(d) {
+    var box = document.getElementById('idxProgress');
+    if (!d || d.state === 'none') { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    var labels = { queued: '대기 중', running: '색인 중', done: '완료', failed: '실패', cancelled: '취소됨', timeout: '시간 초과' };
+    var secs = Math.round((d.elapsedMs || 0) / 1000);
+    // 끝나면 스피너를 멈추고 취소 버튼도 거둔다 — 끝난 작업은 취소할 대상이 없다.
+    var active = _idxActive(d);
+    document.getElementById('idxSpin').hidden = !active;
+    document.getElementById('idxCancelBtn').hidden = !active;
+    document.getElementById('idxState').textContent =
+        (labels[d.state] || d.state) + ' · ' + (d.sources || '') + (d.reset ? ' (--reset)' : '') + ' · ' + secs + '초';
+    var pct = d.total > 0 ? Math.round(d.done / d.total * 100) : (d.state === 'done' ? 100 : 0);
+    document.getElementById('idxBarFill').style.width = pct + '%';
+    document.getElementById('idxCount').textContent =
+        (d.total > 0 ? ('색인 ' + d.done + '/' + d.total + ' (' + pct + '%)') : '') + (d.message ? '  ' + d.message : '');
+    document.getElementById('idxTail').textContent = (d.tail || []).slice(-12).join('\n');
+}
+
 document.addEventListener('DOMContentLoaded', function() {
+    // 서버가 렌더한 잠금 상태를 inert 에도 즉시 반영한다 — /api/settings/rag 응답을 기다리면
+    // 그 사이 키보드로 잠긴 카드에 들어갈 수 있다.
+    applyRagEnabledState(!document.getElementById('panel-config').classList.contains('rag-off'));
     loadRagSettings();
     loadChromaStatus();
 });
+
+/* 실행 중인 색인이 있으면 페이지를 새로 열어도 진행 상태가 보여야 한다. */
+document.addEventListener('DOMContentLoaded', function() { pollIndexRun(); });
 
 // ── 비-ADMIN 읽기 전용 처리 ──
 (function() {
@@ -1298,6 +2677,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         container.querySelectorAll('button').forEach(function(btn) {
             if (btn.classList.contains('refresh-btn')) return;
+            if (btn.classList.contains('tab')) return;         // 탭 전환은 읽기 동작
+            if (btn.classList.contains('ro-allowed')) return;  // 내보내기 등 GET 전용
             if (btn.closest('#readOnlyBanner')) return;
             btn.disabled = true;
             btn.style.cursor = 'not-allowed';

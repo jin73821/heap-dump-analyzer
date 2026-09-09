@@ -4,20 +4,26 @@
 <div th:fragment="banner">
 
 <!-- 공통 헬퍼 (window.Common) — 페이지 인라인 스크립트보다 먼저 로드 -->
-<script src="/js/common.js?v=2026-08-29"></script>
+<script src="/js/common.js?v=2026-09-09"></script>
 <!-- 세션 무동작 만료 시간(초). SessionModelAdvice 가 HttpSession.getMaxInactiveInterval() 에서 채운다 —
      설정값이 아니라 **이 세션의 실제 값**이라 관리자가 타임아웃을 바꿔도 어긋나지 않는다.
      meta 가 아니라 인라인 스크립트인 이유: 이 fragment 는 <head> 가 아니라 <body> 최상단에 삽입된다. -->
 <script th:inline="javascript">window.SESSION_TIMEOUT_SECONDS = [[${sessionTimeoutSeconds}]];</script>
 <!-- 세션 유휴 타이머 (window.SessionTimeout) — 폴링 게이트·경고 모달·자동 로그아웃 -->
-<script src="/js/session-timeout.js?v=2026-08-23"></script>
+<script src="/js/session-timeout.js?v=2026-09-09"></script>
 <!-- KRDS 캘린더 위젯 (window.Calendar) — 기간 범위 선택용 공통 라이브러리 -->
 <script src="/js/calendar.js?v=2026-06-28a"></script>
 
 <script>
-/* 렌더링 전 즉시 실행 — 접힌 상태 깜빡임 방지 */
-if (localStorage.getItem('bannerCollapsed') === 'true') {
-    document.body.classList.add('banner-collapsed');
+/* 렌더링 전 즉시 실행 — 접힌 상태 깜빡임 방지.
+   ⚠ localStorage 접근은 프라이빗 모드·사이트 데이터 차단 환경에서 throw 한다.
+      방어가 없으면 여기서 죽어 아래 배너 스크립트 전체가 실행되지 않는다 (2026-09-09 보강). */
+try {
+    if (localStorage.getItem('bannerCollapsed') === 'true') {
+        document.body.classList.add('banner-collapsed');
+    }
+} catch (e) {
+    if (window.Common) window.Common.logIgnored('[Banner] 접힘 상태 복원 실패(localStorage 차단)', e);
 }
 document.body.classList.add('banner-no-transition');
 </script>
@@ -282,7 +288,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         </div>
         <div class="gb-header-text">
             <div class="gb-header-title">Heap Dump Analyzer</div>
-            <div class="gb-header-sub">v2.3.7 · MAT CLI</div>
+            <div class="gb-header-sub">v2.4.1 · MAT CLI</div>
         </div>
     </a>
 
@@ -567,7 +573,11 @@ var _gbGuardsDisabled = false;
 function willPromptUnload() {
     if (_gbGuardsDisabled) return false;
     for (var i = 0; i < _gbUnloadGuards.length; i++) {
-        try { if (_gbUnloadGuards[i]()) return true; } catch (err) { /* 가드 오류는 무시 */ }
+        try { if (_gbUnloadGuards[i]()) return true; }
+        catch (err) {
+            /* 가드가 깨져도 스피너 예약은 정상 진행 — 다만 조용히 넘기지는 않는다 */
+            if (window.Common) window.Common.logError('[Banner] 이탈 경고 가드 실행 실패', err);
+        }
     }
     return false;
 }
@@ -826,7 +836,10 @@ function loadStatusCache() {
 function saveStatusCache(d) {
     try {
         localStorage.setItem(_GB_CACHE_KEY, JSON.stringify({ ts: Date.now(), data: d }));
-    } catch(e) {}
+    } catch (e) {
+        /* 저장 실패 — 다음 로드에서 캐시 없이 폴링으로 채운다 */
+        if (window.Common) window.Common.logIgnored('[Banner] 시스템 상태 캐시 저장 실패(localStorage 차단)', e);
+    }
 }
 function getCacheAge() {
     try {

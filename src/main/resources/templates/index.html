@@ -203,9 +203,26 @@
         .more-link:hover { text-decoration: underline; }
         /* ── Detection Status Panel ──────────── */
         .detect-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
-        .detect-card { padding: 12px; border-radius: 8px; border: 1px solid #E5E7EB; background: #F9FAFB; text-align: center; min-width: 0; }
+        /* 라벨 숨김 판정 기준이 뷰포트가 아니라 카드 폭이라 카드 자체를 컨테이너로 선언한다 (아래 @container). */
+        .detect-card { padding: 12px; border-radius: 8px; border: 1px solid #E5E7EB; background: #F9FAFB; text-align: center; min-width: 0;
+                       container-type: inline-size; container-name: detcard; }
         .detect-card-val { font-size: 20px; font-weight: 700; line-height: 1.2; }
-        .detect-card-lbl { font-size: 10px; color: #9CA3AF; text-transform: uppercase; letter-spacing: .04em; margin-top: 2px; }
+        .detect-card-lbl { font-size: 10px; color: #9CA3AF; text-transform: uppercase; letter-spacing: .04em; margin-top: 2px;
+                           /* CRITICAL/MEDIUM 은 공백이 없어 줄바꿈이 안 된다 — 좁아지면 카드 밖으로 삐져나가 옆 카드를 침범한다.
+                              아래 @container 가 아예 감추지만, 컨테이너 쿼리 미지원 브라우저에서도 최소한 말줄임으로 끝나게 한다. */
+                           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* 카드가 좁아지면 심각도 라벨(Critical/High/Medium/Low)을 화면에서 감춘다 — 숫자와 카드 색이 의미를 유지한다.
+           기준이 뷰포트가 아니라 **카드 폭**이라 미디어 쿼리로는 못 잡는다: 배너를 접으면(220→44px) 같은 뷰포트에서
+           카드가 22px 넓어져 임계 뷰포트가 ~1300px 에서 ~1105px 로 밀린다(실측). 실제 판정은 카드 폭이어야 맞다.
+           ⚠ 컨테이너 쿼리의 길이는 **테두리 상자가 아니라 콘텐츠 상자** 기준이다 — 카드 폭 90px ≈ 콘텐츠 64px
+           (패딩 12+12 + 테두리 1+1). border-box 감각으로 값을 잡으면 아직 넉넉한 카드에서도 라벨이 사라진다.
+           임계값 64px = 가장 긴 라벨 CRITICAL(50px) + 폰트 편차 여유 14px. 카드 폭으로는 약 90px.
+           ≤900px(1열 패널)·≤480px(2열 그리드)에서는 카드가 99~199px 라 라벨이 그대로 보인다 — 미디어 쿼리 예외가 필요 없다.
+           display:none 이 아니라 시각적 숨김이라 스크린리더는 계속 '3 Critical' 로 읽는다(숫자만 남으면 의미가 사라진다). */
+        @container detcard (max-width: 64px) {
+            .detect-card-lbl { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+                               overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+        }
         .dc-critical { border-color: #FCA5A5; background: #FEF2F2; }
         .dc-critical .detect-card-val { color: #DC2626; }
         .dc-high { border-color: #FDBA74; background: #FFF7ED; }
@@ -602,7 +619,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.3.7 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.4.1 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -864,19 +881,19 @@
                 </div>
                 <div th:if="${hasDetections}">
                     <div class="detect-summary">
-                        <div class="detect-card dc-critical">
+                        <div class="detect-card dc-critical" title="Critical">
                             <div class="detect-card-val" th:text="${criticalCount}">0</div>
                             <div class="detect-card-lbl">Critical</div>
                         </div>
-                        <div class="detect-card dc-high">
+                        <div class="detect-card dc-high" title="High">
                             <div class="detect-card-val" th:text="${highCount}">0</div>
                             <div class="detect-card-lbl">High</div>
                         </div>
-                        <div class="detect-card dc-medium">
+                        <div class="detect-card dc-medium" title="Medium">
                             <div class="detect-card-val" th:text="${mediumCount}">0</div>
                             <div class="detect-card-lbl">Medium</div>
                         </div>
-                        <div class="detect-card dc-low">
+                        <div class="detect-card dc-low" title="Low">
                             <div class="detect-card-val" th:text="${lowCount}">0</div>
                             <div class="detect-card-lbl">Low</div>
                         </div>
@@ -1178,7 +1195,10 @@ function closeDeleteModal() {
 function saveSetting(k,v) {
     localStorage.setItem(k,v);
     if (k==='keepUnreachable')
-        fetch('/api/settings/unreachable?enabled='+v,{method:'POST'}).catch(()=>{});
+        fetch('/api/settings/unreachable?enabled='+v,{method:'POST'}).catch(function (e) {
+            /* 서버 반영 실패 — 화면은 '저장됨'으로 보이므로 반드시 남긴다 */
+            if (window.Common) Common.logError('[Settings] keepUnreachable 서버 반영 실패', e);
+        });
     toast('Setting saved','success');
 }
 

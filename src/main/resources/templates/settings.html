@@ -984,7 +984,9 @@ function loadAllData(showToast) {
         document.getElementById('sPhysMem').textContent =
             h.physicalMemoryFormatted && h.physicalMemoryFormatted !== 'unknown'
                 ? h.physicalMemoryFormatted : '-';
-    }).catch(function(){});
+    }).catch(function (e) {
+        if (window.Common) Common.logIgnored('[Settings] 물리 메모리 조회 실패', e);
+    });
 }
 
 function parseMemStr(s) {
@@ -1266,7 +1268,9 @@ function loadScpTempDir() {
     fetch('/api/servers/scp-temp-dir').then(function(r){ return r.json(); }).then(function(d) {
         var inp = document.getElementById('scpTempDirInput');
         if (inp && d.tempDir != null) inp.value = d.tempDir;
-    }).catch(function(){});
+    }).catch(function (e) {
+        if (window.Common) Common.logIgnored('[Settings] SCP 임시 경로 조회 실패', e);
+    });
 }
 
 function saveScpTempDir() {
@@ -1285,7 +1289,9 @@ function loadSshLocalUser() {
     fetch('/api/servers/ssh-local-user').then(function(r){ return r.json(); }).then(function(d) {
         var inp = document.getElementById('sshLocalUserInput');
         if (inp && d.localUser != null) inp.value = d.localUser;
-    }).catch(function(){});
+    }).catch(function (e) {
+        if (window.Common) Common.logIgnored('[Settings] SSH 로컬 계정 조회 실패', e);
+    });
 }
 
 function saveSshLocalUser() {
@@ -1314,7 +1320,9 @@ function loadScanInterval() {
             sel.appendChild(opt);
             sel.value = val;
         }
-    }).catch(function(){});
+    }).catch(function (e) {
+        if (window.Common) Common.logIgnored('[Settings] 스캔 주기 조회 실패', e);
+    });
 }
 
 function saveScanInterval(val) {

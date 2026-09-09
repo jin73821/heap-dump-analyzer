@@ -992,13 +992,19 @@ initRows();
         try {
             localStorage.setItem('historyDetectDays', String(_detDays));
             localStorage.setItem('historyDetectGroup', _detGroup);
-        } catch (e) { /* private mode */ }
+        } catch (e) {
+            /* 프라이빗 모드 등 — 다음 방문 시 기본값으로 시작한다 */
+            if (window.Common) Common.logIgnored('[History] 탐지 현황 설정 저장 실패(localStorage 차단)', e);
+        }
         try {
             var url = new URL(location.href);
             url.searchParams.set('days', String(_detDays));
             url.searchParams.set('groupBy', _detGroup);
             history.replaceState({}, '', url.toString());
-        } catch (e) { /* old browser */ }
+        } catch (e) {
+            /* 구형 브라우저 — 주소창에 조건이 반영되지 않을 뿐 화면은 정상이다 */
+            if (window.Common) Common.logIgnored('[History] 주소 파라미터 동기화 실패(URL/history 미지원)', e);
+        }
     }
 
     function updateControls() {

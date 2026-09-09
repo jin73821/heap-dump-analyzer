@@ -144,6 +144,45 @@ class AccountMemoTemplateSmokeTest {
     }
 
     @Test
+    @DisplayName("메모장 툴 버튼은 바가 좁아지면 아이콘만 남는다 (라벨 개행 방지)")
+    void memoToolLabelsCollapseIntoIconsOnNarrowBar() {
+        String html = render("account", memoModel());
+
+        // 라벨은 감출 수 있도록 span 으로 분리돼 있어야 한다 (텍스트 노드는 CSS 로 못 감춘다)
+        assertTrue(html.contains("<span class=\"memo-tool-txt\">복사</span>"), "복사 라벨이 span 이 아니다");
+        assertTrue(html.contains("<span class=\"memo-tool-txt\">새창에서 열기</span>"), "새창 라벨이 span 이 아니다");
+        // 아이콘만 남았을 때 접근성 이름이 사라지지 않도록 aria-label 이 있어야 한다
+        assertTrue(html.contains("aria-label=\"복사\""), "복사 버튼에 aria-label 이 없다");
+        assertTrue(html.contains("aria-label=\"새창에서 열기\""), "새창 버튼에 aria-label 이 없다");
+
+        // 판정 기준은 뷰포트가 아니라 바(카드) 폭이다 — 좌우 분할에서는 넓은 창에서도 카드가 좁다.
+        // 미디어 쿼리로 되돌리면 split 레이아웃(뷰포트 1101~1300px)에서 다시 개행된다.
+        assertTrue(html.contains("container-type: inline-size") && html.contains("container-name: memobar"),
+                "폰트 바가 컨테이너로 선언되지 않았다 — @container 가 아무 폭에서도 적용되지 않는다");
+        int mediaAt = html.indexOf("@media (min-width: 641px)");
+        int containerAt = html.indexOf("@container memobar (max-width: 580px)");
+        assertTrue(containerAt > 0, "라벨 숨김 컨테이너 쿼리가 없다");
+        assertTrue(html.indexOf(".memo-tool-txt { display: none; }", containerAt) > containerAt,
+                "컨테이너 쿼리 안에서 라벨을 감추지 않는다");
+        // ≤640px 모바일 분기는 버튼이 전폭 50:50 이라 라벨이 그대로 들어간다 — 숨김 규칙이 거기까지 내려가면 안 된다
+        assertTrue(mediaAt > 0 && mediaAt < containerAt,
+                "라벨 숨김이 min-width:641px 밖에 있다 — 모바일 전폭 버튼까지 아이콘만 남는다");
+    }
+
+    @Test
+    @DisplayName("폰트 미리보기(한글 ABC 123)는 마크업·CSS·JS 어디에도 남지 않는다")
+    void fontPreviewIsFullyRemoved() {
+        String html = render("account", memoModel());
+
+        assertFalse(html.contains("한글 ABC 123"), "미리보기 문구가 남아 있다");
+        assertFalse(html.contains("memoFontPreview"), "미리보기 엘리먼트/JS 참조가 남아 있다");
+        assertFalse(html.contains("memo-font-preview"), "미리보기 CSS 클래스가 남아 있다");
+        // 폰트 선택 자체는 그대로 동작해야 한다 (미리보기만 제거)
+        assertTrue(html.contains("id=\"memoFontSelect\"") && html.contains("applyMemoFont"),
+                "폰트 선택 기능까지 지워졌다");
+    }
+
+    @Test
     @DisplayName("/account/memo 새창 페이지가 렌더된다 (자체 CSRF meta 포함)")
     void accountMemoRenders() {
         String html = render("account-memo", memoModel());

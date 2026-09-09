@@ -46,6 +46,12 @@ public class EmbeddingService {
     public static final String LOCAL_ONNX_DEFAULT_URL = "http://127.0.0.1:8001/embed";
     /** 사이드카 모델(multilingual-e5-small)의 출력 차원. 컬렉션도 이 차원으로 만들어져 있다. */
     public static final int LOCAL_ONNX_DIMENSION = 384;
+    /**
+     * 사이드카가 싣고 있는 모델의 <b>문서상 기본값</b>. 진짜 출처는 사이드카 {@code /health} 의
+     * {@code model} 이고 이 상수는 그것을 아직 못 읽었을 때만 쓴다 — 설정 화면이 "기본값"과
+     * "실측"을 구분해 표시한다. 모델을 바꾸면(embedder.py) 이 값도 함께 고칠 것.
+     */
+    public static final String LOCAL_ONNX_MODEL = "multilingual-e5-small";
 
     private final RagConfigService ragConfig;
 
@@ -135,10 +141,22 @@ public class EmbeddingService {
         Map<String, Object> result = new LinkedHashMap<>();
         try {
             float[] vec = embed("test", overrides);
+            String provider = pickStr(overrides, "provider", ragConfig.getRagEmbeddingProvider());
             result.put("success", true);
             result.put("dimension", vec != null ? vec.length : 0);
-            result.put("provider", pickStr(overrides, "provider", ragConfig.getRagEmbeddingProvider()));
-            result.put("model", pickStr(overrides, "model", ragConfig.getRagEmbeddingModel()));
+            result.put("provider", provider);
+            // ⚠ local-onnx 는 모델을 사이드카가 소유한다 — 저장된 model 필드(다른 provider 용으로 남아 있는
+            //    'text-embedding-3-small' 등)를 그대로 돌려주면 실제와 다른 이름이 결과에 찍힌다.
+            //    /health 로 실측값을 읽고, 읽지 못하면 이름을 지어내지 말고 미확인으로 둔다.
+            if ("local-onnx".equalsIgnoreCase(provider)) {
+                Map<String, Object> health = sidecarHealth(
+                        pickStr(overrides, "apiUrl", ragConfig.getRagEmbeddingApiUrl()),
+                        pickInt(overrides, "timeoutSeconds", ragConfig.getRagEmbeddingTimeoutSeconds()));
+                Object m = Boolean.TRUE.equals(health.get("success")) ? health.get("model") : null;
+                result.put("model", m != null ? m : "(사이드카 미확인)");
+            } else {
+                result.put("model", pickStr(overrides, "model", ragConfig.getRagEmbeddingModel()));
+            }
             return result;
         } catch (Exception e) {
             result.put("success", false);

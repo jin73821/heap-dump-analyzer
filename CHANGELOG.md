@@ -1,5 +1,1106 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-09] 정적분석 지적 조치 — 빈 catch 블록 82건 (조용한 실패 제거)
+
+**요청:** 사내 정적분석 결과(SRM20260902-0223, 1차점검 2026-09-08)로 `04.02. 오류 상황 대응 부재`
+"빈 catch 블록" **47건**(위험도 보통·조치권고)이 접수됨. 조치 계획 수립 후 실행.
+
+### 무엇이 잘못돼 있었나
+
+전수 조사 결과 지적분의 1.7배인 **82건**이었고, 단순 로그 누락이 아니라 실제 결함이 섞여 있었다.
+
+| # | 위치 | 증상 | 왜 위험한가 |
+|---|---|---|---|
+| 1 | `analyze.js` 3곳 (Dominator Refs·클래스 인스턴스·클래스로더) | SSE 핸들러 **본문 전체**를 `catch (x) {}` 로 감쌈 | 파싱·렌더가 깨지면 `_domLazyEnd()` 가 안 불려 **스켈레톤이 영원히 돈다** — 사용자에게는 "아직 조회 중"으로 보인다 |
+| 2 | `core-dump-index.js:280` | 업로드 응답 파싱 실패를 삼키고 진행 | **`/core-dump/progress/undefined`** 로 이동 |
+| 3 | `session-timeout.js:397` | 만료 훅(**작성 중 메모의 백업 지점**) 실패가 무음 | 함정 38 이 "이동보다 먼저 돌려야 보존된다"고 못 박은 지점인데, 실패해도 아무도 모른다 |
+| 4 | `index.html:1198` | `keepUnreachable` 서버 반영 실패를 삼킴 | 화면엔 "Setting saved" 토스트가 뜬다 |
+| 5 | `fragments/banner.html` FOUC 스크립트 | localStorage 접근에 **try 자체가 없음** | 사이트 데이터 차단 환경에서 throw 하면 **이후 배너 스크립트 전체가 죽는다** |
+| 6 | `leak-rules.html:313-320` | 저장값 `'true'` 를 `'1'` 과 비교 + 클래스를 `documentElement` 에 부착 | 한 번도 발화한 적 없는 **죽은 코드** (배너 CSS 는 `body.banner-collapsed`) |
+
+도구가 잡지 못한 것도 있었다 — **템플릿 인라인 `try/catch` 11건**(도구는 6건만 지적)과
+**빈 Promise `.catch()` 24건**(체커 규칙 밖). 성격이 같아 함께 정리했다.
+
+### 고친 내용
+
+**등급별 차등** — 형식적으로 로그만 붙이면 스켈레톤이 도는 증상은 그대로 남는다.
+
+- **A급 8건**: catch 범위를 좁히고 실패 경로를 복구(진행 표시 종료·오류 표시·이동 중단) + `console.warn/error`.
+- **B급 73건**: 정당한 폴백은 로직 유지 + 진단 로그 1줄(`console.debug` — 브라우저 기본 로그 레벨에서 숨겨져
+  운영 콘솔을 오염시키지 않는다).
+- **C급 2건**: `leak-rules.html` 죽은 FOUC 스크립트 **제거**, `banner.html` FOUC 스크립트 **방어 보강**.
+
+**공용 헬퍼** `Common.logIgnored(tag, e)` / `Common.logError(tag, e)` 를 `common.js` 에 추가했다.
+두 함수는 `typeof` 가드만 써서 **자기 자신이 절대 던지지 않는다** — 헬퍼 안에 try 를 두면 그 catch 가
+다시 빈 블록이 되는 순환에 빠진다. 각 모듈은 상단에 얇은 지역 래퍼(`ignored()`/`failed()`)를 두어
+82곳에서 `window.Common &&` 가드를 반복하지 않는다.
+
+⚠ **`/login`·`/login/otp`·`/login/otp/setup` 3개 페이지와 `<head>` 선행 스크립트는 인라인 처리**했다 —
+인증 전 화면에 스크립트를 새로 싣지 않기 위해서다(`leak-rules.html` 의 head 스크립트는 애초에
+`common.js`(body 최상단)보다 먼저 실행돼 헬퍼를 쓸 수도 없다).
+
+**재발 방지** `EmptyCatchGuardTest` 신규(2건) — `static/js/**.js`(외부 `lib/` 제외)와 `templates/**.html`
+인라인 스크립트를 스캔해 빈 catch 0건을 단언한다. 문자열·주석·정규식 리터럴을 공백으로 지우는 스캐너를
+거치므로 `'http://…'` 를 주석으로 오인하지 않고, **스캐너 자체를 검증하는 테스트**(12개 형태)를 함께 뒀다
+— 스캐너가 조용히 망가지면 가드 테스트가 무의미하게 통과하기 때문이다.
+
+### 검증
+
+| 경로 | 결과 |
+|---|---|
+| 조치 전/후 스캔 | 82건 → **0건** |
+| 단위 테스트 | **589건 전건 통과** (587 → 589) |
+| JS 구문 | 수정 JS 6종 `node --check` 통과, 템플릿 인라인 26블록 `vm.Script` 통과 |
+| Thymeleaf 위험 | 신규 `[[` 도입 0건 (함정 23) |
+| 빌드·기동 | `mvn clean package` 성공 → `Started HeapAnalyzerApplication in 16.397 seconds` |
+| 서빙 실측 | `/js/common.js` 헬퍼 2종 노출 · `/login` 인라인 로그 3곳 반영 · `charset=UTF-8` 유지 |
+
+캐시 무효화: 변경한 6개 JS 의 `?v=` 를 `2026-09-09` 로 갱신(참조 9곳 전부).
+`CommonToastStackTest` 의 캐시 키 단언도 함께 갱신했다.
+
+### 부수 발견 (미조치 — 별도 판단)
+
+- `templates/admin/users.html:8` 이 `<head>` 에서 `calendar.js` 를 로드하는데 body 의 배너 fragment 가
+  같은 파일을 또 로드한다(이중 로드·이중 초기화). 이번 지적과 무관해 손대지 않았다.
+
+**변경 파일:** `static/js/{common,session-timeout,memo,analyze,core-dump-analyze,core-dump-index}.js` ·
+`templates/{login,login-otp,login-otp-setup,leak-rules,history,account,account-memo,ai-chat,rag-settings,server-logs,servers,files,index,progress,settings}.html` ·
+`templates/fragments/banner.html` · `templates/admin/users.html` · `templates/{analyze,core-dump/analyze,core-dump/index}.html` ·
+`src/test/java/com/heapdump/analyzer/{EmptyCatchGuardTest,CommonToastStackTest}.java` · `SECURITY_AUDIT_EMPTY_CATCH.md`(신규)
+
+---
+
+## [2026-09-06] 폐쇄망 k8s 패키지 — 시작 시 설치 방식(k3s / kubeadm) 분기점 추가
+
+**요청:** 스크립트 처음 실행 시 k8s 로 설치할지 k3s 로 설치할지 묻는 분기점 추가.
+
+### 변경
+
+종전에는 메뉴에서 **1) 점검** 또는 **2) 설치** 를 고른 뒤에야 방식을 물었다. 방식에 따라 필요한
+RPM·환경 조건·설치 절차가 전부 다르므로, **스크립트 시작 시 한 번** 묻고 이후 모든 작업이 그 방식으로
+동작하게 바꿨다.
+
+```
+실행 → [방식 선택: 1) k3s  2) kubeadm  q) 종료]  ← 신규
+     → 작업 메뉴 (1점검 / 2설치 / 3삭제 / 4cgroup / m방식변경 / q종료)
+```
+
+- 선택 화면은 판단 근거를 함께 보여준다(산출물 수·control plane 메모리·제거 난이도·사내 정책 기준).
+  **"두 방식 모두 Kubernetes 이고 실제 버전도 같다"**(k3s v1.34.11+k3s1 = Kubernetes v1.34.11)를
+  명시 — 이전에 실제로 나온 질문이다.
+- 선택한 방식은 **헤더에 상시 표시**(`설치 방식 : kubeadm (v1.34.11)`)되고 메뉴 문구도
+  `2) 설치   kubeadm 설치` 로 바뀐다.
+- 재시작 없이 바꿀 수 있게 **`m) 방식 변경`** 추가.
+- **3) 삭제는 방식 무관**(k3s/kubeadm 자동 감지) — 메뉴에 그렇게 표기.
+
+### 검증 (Rocky 8.10 빌드 머신 + aibank01d RHEL 8.10)
+
+| 경로 | 결과 |
+|---|---|
+| 시작 → q | 방식 선택 화면에서 바로 종료 |
+| 시작 → 1) k3s | 헤더 `설치 방식: k3s (v1.34.11+k3s1)` |
+| 시작 → 2) kubeadm → 1) 점검 | **모드 재질문 없이** 바로 kubeadm 점검 실행 |
+| 시작 → 1 → m → 2 | 헤더·메뉴 문구가 kubeadm 으로 전환 |
+
+aibank01d 시스템 무변경 유지 확인.
+
+**변경 파일:** `k8s_install/k8s_install.sh` · `k8s_install/README.md`
+
+---
+
+## [2026-09-06] 폐쇄망 k8s 패키지 — 단일 진입점 + 대화형 메뉴 + RPM 설치 상태표
+
+**요청:** scripts/ 아래 스크립트가 너무 많아 사용자가 헷갈린다. 한 개만 실행하면 되도록 개선.
+y/N 대화형 + 번호로 점검/설치/삭제. 점검·설치 시 각 RPM 의 설치 여부와 **결국 무엇만 설치되는지** 표시.
+
+### 구조 — 실행할 것은 하나
+
+```
+k8s_install.sh    ← 타깃에서 실행하는 유일한 스크립트 (sudo)
+build-bundle.sh   ← 빌드 머신에서 실행하는 유일한 스크립트 (인터넷 필요)
+env.sh            설정 단일 지점
+lib/              내부 모듈 12개 — 직접 실행하지 않음 (헤더에 명시)
+```
+
+`scripts/` → `lib/` 로 옮겨 "실행할 것"이 아님을 이름으로 드러냈다. 내부 모듈의 `# 사용:` 주석은
+전부 `# 호출: k8s_install.sh → N) …` 로 바꿔, 코드를 읽는 사람도 진입점을 알 수 있게 했다.
+
+### 메뉴 (번호 + y/N)
+
+```
+ 1) 점검      환경·번들·RPM 상태 확인 (시스템 변경 없음)
+ 2) 설치      Kubernetes 설치
+ 3) 삭제      설치된 Kubernetes 제거
+ 4) cgroup v2 전환   (Kubernetes 1.35+ 를 쓸 때만 · 재부팅 필요)
+ q) 종료
+```
+
+설치는 `점검 → (FAIL 시 경고 + y/N) → 설치 조건 요약 → y/N` 2단 확인. **기본값은 N** 이라
+Enter 를 잘못 쳐도 진행되지 않는다. 헤더에 호스트·OS·cgroup·SELinux·버전·GPG/SHA 정책을 함께 보여준다.
+
+### RPM 설치 상태표 (신규 `lib/rpm-status.sh`)
+
+번들 RPM 은 NEVRA 를 직접 읽어 현재 시스템과 대조하고, base 의존성은 타깃 저장소 조달 가능성을 본다.
+상태 구분은 참고 스크립트(`offline_xrdp_install.sh`)의 관례를 따랐다.
+
+| STATUS | 뜻 | SOURCE |
+|---|---|---|
+| `INSTALLED` | 같은 버전 설치됨 — 건드리지 않음 | `번들` / `OS` |
+| `DIFFERENT VERSION` | 다른 버전 설치됨 (현재 버전 함께 표시) | `번들` |
+| `NOT INSTALLED` | 설치 대상 | `번들` / `OS저장소` |
+| `MISSING` | 어디에도 없음 — RHEL 미디어 반입 필요 | `반입필요` |
+
+마지막에 **"▶ 이번에 설치되는 RPM"** 을 `[번들에서]` / `[OS 저장소에서]` 로 나눠 나열한다.
+
+### 검증 (aibank01d = RHEL 8.10, 시스템 무변경)
+
+| 경로 | 결과 |
+|---|---|
+| 1) 점검 → kubeadm | RPM 9행 표시. **번들 5개 미설치 + conntrack-tools·socat OS저장소 / ethtool·iproute-tc 설치됨** |
+| 1) 점검 → k3s | **RPM 0건** + 이유 설명(단일 바이너리 내장, SELinux Disabled 라 정책 RPM 불필요) |
+| 2) 설치 → N | 점검 FAIL 경고 → 확인 → `[취소] 설치하지 않았습니다` |
+| 2) 설치 → 점검 통과(MIN_DISK_GB=5) → N | 설치 조건 요약 표시 후 취소 |
+| 3) 삭제 (미설치 상태) | `설치된 Kubernetes 가 없습니다` |
+
+Rocky 빌드 머신과 RHEL 타깃에서 **표가 서로 다르게** 나오는 것까지 확인했다(Rocky 는 socat 설치됨,
+RHEL 은 미설치) — 표가 실제 시스템 상태를 읽고 있다는 증거다. 설치 흔적 0건 재확인.
+
+### 부수 수정
+
+- `</dev/tty` 고정 → `ask()` 헬퍼로 tty 없으면 stdin 폴백. 고정이면 파이프 실행이 즉시 죽어 자동 점검이 불가능했다.
+- 한글 라벨 정렬: `printf %-Ns` 는 **바이트**로 패딩해 "설치 대상"(12바이트/8칸)이 어긋난다 →
+  `wc -L` 로 표시 폭을 재는 `row()` 헬퍼.
+- 비대화형에서 `clear` 가 로그를 지우던 문제 → `[ -t 1 ]` 조건부.
+
+**변경 파일:** `k8s_install.sh`(신규) · `build-bundle.sh`(신규) · `lib/rpm-status.sh`(신규) ·
+`scripts/`→`lib/` 이동 + 주석 갱신 · `env.sh` · `README.md` · `docs/*.md`
+
+---
+
+## [2026-09-06] 폐쇄망 k8s 패키지 — 무결성 검증 정책 명시 (GPG / SHA256)
+
+**질문:** "gpg와 SHA 검증을 합니까? 해당 검증은 패스하는 것이 오류가 덜 날 것 같습니다."
+
+### 확인 결과 — 전제 하나가 사실과 달랐다
+
+| | 실태 |
+|---|---|
+| **GPG** | **이미 전부 꺼져 있었다** — `DNF_OFFLINE_OPTS` 의 `--nogpgcheck` + fetch 스크립트 2곳. 추가 조치 불필요 |
+| **SHA256** | **설치를 막지 않는다** — `install-k3s.sh`/`install-kubeadm.sh` 에 `sha256sum` 호출이 0건. `verify-bundle.sh` 라는 **별도 선택 단계**에만 있다 |
+
+즉 "SHA 때문에 설치가 실패한다"는 상황은 구조적으로 생기지 않는다. 나머지 두 곳
+(`fetch-k3s.sh` 의 k3s 공식 체크섬 대조, `fetch-all.sh` 의 생성)은 **빌드 머신 전용**이다.
+
+### 그래도 넣은 것
+
+SHA 를 유지하길 권한 이유: 927MB 매체 반입이 폐쇄망의 유일한 경로이고, 손상되면 SHA 없이는
+`Exec format error`·이미지 import 실패·dnf 오류처럼 **원인을 알기 어려운 형태**로 드러난다.
+참고 스크립트(`offline_xrdp_install.sh`)도 SHA256SUMS 가 있으면 검사한다.
+
+다만 SHA 가 **헛오류**를 내는 경우가 하나 있다 — 번들을 의도적으로 고친 뒤 체크섬을 재생성하지
+않은 경우(손상과 구분 불가). 그래서:
+
+- `SKIP_SHA256=true` 스위치 (`env.sh`) — 끄면 `[SKIP]` + 경고 1줄
+- 불일치 시 **원인 2가지와 각각의 조치**를 출력하고 실패한 파일명까지 표시
+- `scripts/refresh-checksums.sh` 신규 — 의도적 수정 후 재생성용.
+  ⚠ 손상 의심 시 쓰면 손상된 내용으로 체크섬을 다시 만들어 검증을 무의미하게 만든다는 경고 포함
+- `README.md` 에 검증 정책 표 추가
+
+### 검증
+
+빌드 머신·aibank01d(RHEL 8.10) 양쪽에서 3가지 경로 확인:
+① 기본 SHA 켜짐 → `20/20 PASS` ② `SKIP_SHA256=true` → `[SKIP]` + 경고, `FAIL=0`
+③ 파일 변조 → 불일치 감지 + 원인/조치 안내 + 실패 파일명 출력 (복원 후 재통과 확인)
+
+**변경 파일:** `k8s_install/{env.sh,scripts/verify-bundle.sh,scripts/refresh-checksums.sh(신규),README.md}`
+
+---
+
+## [2026-09-05] 폐쇄망 k8s 패키지 — RHEL 8.10 실측 검증 + vendor 오염 수정 (aibank01d)
+
+**요청:** aibank01d(RHEL 8.10)에서 검증. `/root/k8s_offline` 에서 진행. `/root/xrdp-offline/offline_xrdp_install.sh` 참고.
+
+### 참고 스크립트가 알려준 결함 — Rocky vendor RPM 8개
+
+`offline_xrdp_install.sh` 는 오프라인 RPM 설치에서 **`"RHEL에 Rocky 패키지 설치 차단"`**,
+**`"기존 RHEL 패키지 교체 차단"`** 을 명시적으로 검사한다. 그 기준으로 내 번들을 보니 실제로
+**Rocky vendor RPM 8개**가 들어 있었다 — `conntrack-tools`·`socat`·`ethtool`·`iproute-tc`·
+`container-selinux`·`libnetfilter_{queue,cthelper,cttimeout}`.
+
+빌드 머신이 Rocky 8.10 이라 RPM 의존성 해석은 정확했지만, **base OS 패키지까지 받아 오니 vendor 가
+Rocky** 가 됐다. 그대로 RHEL 타깃에 설치하면 RHEL 패키지를 Rocky 것으로 교체하게 된다.
+
+**수정:**
+- `fetch-kubeadm.sh` 에서 `--resolve` 제거 → k8s RPM 5개(vendor `obs://…isv:kubernetes`)만 수집.
+  배포판 vendor 가 섞이면 **수집 단계에서 즉시 실패**하는 가드 추가.
+- `fetch-k3s.sh` 에서 `container-selinux` 수집 제거 (k3s-selinux 는 vendor `(none)` 이라 유지).
+- base 의존성은 `env.sh` 의 `BASE_DEPS_{KUBEADM,K3S}` 로 **데이터 선언**하고 **타깃의 RHEL 미디어**에서 조달.
+  `preflight` 가 `installed / available / missing` 3-state 로 판정하고 없는 것만 이름을 찍는다.
+  ⚠ SELinux 가 꺼져 있으면 `container-selinux` 는 아예 불필요 → SKIP.
+- `verify-bundle.sh`·`preflight.sh` 에 vendor 가드 추가(`find_distro_vendor_rpms`).
+
+### 참고 스크립트에서 채택한 관례 2가지
+
+- **`--disableplugin=subscription-manager`** — 미등록 RHEL 에서 구독 플러그인이 매 dnf 호출마다
+  "소비자 ID를 읽을 수 없습니다" 오류를 낸다. `env.sh` 의 `DNF_OFFLINE_OPTS` 로 통일.
+- **`--setopt=tsflags=test`** — 트랜잭션을 실제로 구성해 검사만 한다. 종전 `--assumeno` 보다 확실.
+
+### 검증 (aibank01d = RHEL 8.10 Ootpa · cgroup v1 · SELinux Disabled · 4코어/3.6GB)
+
+전송 927MB(rsync 9.8초) → `/root/k8s_offline`.
+
+| 검사 | 결과 |
+|---|---|
+| `verify-bundle.sh` | **20/20 PASS** |
+| SHA256 27개 | 전송 무손상 |
+| vendor 가드 | 배포판 vendor RPM **0건** |
+| **dnf 트랜잭션 검사** | **통과 — Install 5 Packages (284MB)** |
+| `preflight.sh` | **15 PASS / 1 FAIL** |
+| cgroup v1 ↔ v1.34 | 정상 — 버전 고정 판단이 실제 타깃에서 확인됨 |
+| SELinux Disabled → container-selinux | 불필요로 정확히 SKIP |
+
+**Rocky 8.10 번들이 RHEL 8.10 에서 기존 OS 패키지를 건드리지 않고 의존성이 풀린다**는 것이 실증됐다.
+유일한 FAIL 은 `/var` 6GB < 기준 20GB(힙 분석기 포함 기준) — k3s 만이면 3GB 로 충분(`MIN_DISK_GB=5`).
+
+### 설치는 보류 (사용자 결정)
+
+aibank01d 는 **VCS 클러스터 + Tibero DB 운영 노드**였다 — `had`(244MB)·`gab.service`·
+VxVM shared DG 3개(`aibank01vg`·`heydb01dvg`·`heydb02dvg`)·`tbsvr` 다수·Java(570MB), 가용 메모리 580MB.
+또한 말씀하신 조건(32GB·폐쇄망)과 달리 **3.6GB·인터넷 연결됨**이었다. 사실을 보고하고 확인받아 보류.
+**시스템 무변경 확인 완료** — k8s 바이너리·RPM·`/etc/kubernetes`·`/var/lib/rancher`·cni 인터페이스 전부 0건,
+`/root/k8s_offline` 파일 배치만 남음.
+
+**미검증:** 실제 클러스터 기동(kubelet·CNI·파드 스케줄링)은 진짜 타깃(32GB 폐쇄망)에서 확인 필요.
+
+**변경 파일:** `k8s_install/{env.sh,scripts/{common,fetch-k3s,fetch-kubeadm,verify-bundle,preflight,install-k3s,install-kubeadm}.sh,README.md,docs/OFFLINE-INSTALL.md}` · `CLAUDE.md`
+
+---
+
+## [2026-09-05] 폐쇄망 Kubernetes 설치 패키지 (`/opt/genspark/k8s_install`)
+
+**요청:** 사내망 32GB RHEL 8.10 서버(인터넷 없음)에 k8s 설치. 설치 패키지와 스크립트를 새 경로에 작성.
+
+### 버전을 v1.34 로 고정한 이유 (이 패키지의 핵심 판단)
+
+| Kubernetes | cgroup v1 노드 |
+|---|---|
+| ~ v1.34 | 정상 |
+| v1.35 | 기본 비활성화 (`FailCgroupV1: false` 필요) |
+| **v1.36 ~** | **완전 제거 — kubelet 이 초기화 검사에서 hard stop, 아예 기동 안 함** |
+
+**RHEL/Rocky 8 은 cgroup v1 이 기본**이다(9 부터 v2). 그런데 k3s `stable` 채널은 현재
+**v1.36.4+k3s1** 이라, 최신을 받아 RHEL 8.10 에 설치하면 **kubelet 이 뜨지 않는다.**
+그래서 k3s `v1.34.11+k3s1` / kubeadm `1.34.11` 로 고정했다 — 타깃을 그대로 두고 설치할 수 있는
+마지막 라인이다. 판정은 `env.sh` 의 `CGROUP_V1_MAX_MINOR=34` 한 곳에 있고 preflight·설치 스크립트가
+같은 함수(`cgroup_version_compatible`)를 재사용한다. 최신을 쓰려면 `enable-cgroup-v2.sh` 로 전환 후 재수집.
+
+### 구성 (928MB)
+
+| | 크기 | 내용 |
+|---|---|---|
+| `bundle/k3s/` | 259MB | k3s 바이너리·air-gap 이미지·install.sh·k3s-selinux RPM |
+| `bundle/kubeadm/rpms/` | 54MB | kubelet·kubeadm·kubectl·cri-tools·kubernetes-cni + 의존성 14개 |
+| `bundle/kubeadm/runtime/` | 97MB | containerd 2.3.5 · runc 1.5.1 · CNI plugins 1.9.1 |
+| `bundle/kubeadm/images/` | 519MB | control plane 7 + flannel 2 |
+
+스크립트 10종: `fetch-{all,k3s,kubeadm}` / `verify-bundle` / `preflight` /
+`install-{k3s,kubeadm}` / `enable-cgroup-v2` / `uninstall` / `common`. 설정은 `env.sh` 단일 지점.
+
+### 설계 판단 4가지
+
+1. **k3s 를 권장 경로로.** containerd 를 바이너리에 내장해 런타임 버전 스큐가 없고 산출물이 4개뿐이다.
+   kubeadm 도 완비했지만 부품이 27개라 폐쇄망 실패 지점이 많다.
+2. **kubeadm 경로는 CRI-O 가 아니라 containerd 정적 배포본.** `pkgs.k8s.io` 의 cri-o stable 은
+   **v1.32 까지만** 공개돼 있어(v1.33+ 는 403) kubeadm 1.34 와 2 마이너 차이가 난다.
+3. **RPM 은 `--resolve` 만 쓰고 `--alldeps` 금지.** `--alldeps` 는 glibc·systemd·bash 까지 170개
+   (119MB)를 끌어오는데, 폐쇄망에서 설치하면 **타깃 base OS 가 의도치 않게 업그레이드**된다.
+   대신 최소 RHEL 8 에 없을 수 있는 것만 명시(conntrack-tools·socat·ethtool·iproute-tc·container-selinux) → 14개 54MB.
+4. **최종 안전망은 타깃에서의 dnf 모의 설치.** 번들 RPM 은 빌드 머신 기준 `--resolve` 라 타깃이 더
+   최소 설치면 빠질 수 있다. `verify-bundle.sh` 가 **설치 전에** 누락 패키지 이름을 찍어 준다.
+
+### 빌드 중 잡은 실제 결함 4건
+
+| # | 결함 | 영향 |
+|---|---|---|
+| 1 | `dnf download` 가 저장소의 aarch64 를 선택 | "does not have a compatible architecture" 로 수집 실패 → `.x86_64` 명시 |
+| 2 | `dnf --repo` 와 `--disablerepo` 동시 사용 | dnf 4 는 인자 충돌로 거부. **`install-kubeadm.sh` 에도 같은 패턴이 있어 타깃 설치가 실패했을 것** |
+| 3 | `--repofrompath` 가 repodata 를 요구 | 폐쇄망 타깃에 createrepo_c 보장 없음 → **RPM 파일 직접 설치**로 전환 |
+| 4 | dnf 성공 판정이 영어 출력 가정 | 한국어 로케일에서 "종속성이 해결되었습니다"를 못 읽어 **통과한 검사를 실패로 오판** → `LC_ALL=C` 고정 |
+
+3·4 는 `k3s-selinux` 를 HTML 스크래핑으로 받으려다 실패한 건(디렉토리 목록 비활성)과 함께
+모두 빌드 중 실측으로 드러났다.
+
+### 검증 (Rocky 8.10 · cgroup v1 · dnf 4 · podman 4.9.4)
+
+`verify-bundle.sh` **21/21 PASS** — 체크섬 36개 일치 · RPM 7종 존재 · 런타임 4종 · 이미지 9개 ·
+**타깃 기준 의존성 모의 설치 통과**(Install 9 / Upgrade 2). 추가로 이미지 tar 적재 확인(`podman load`),
+k3s 바이너리 실행 확인(`v1.34.11+k3s1`), air-gap 묶음 OCI 레이아웃 71항목, `preflight.sh` 판정 정상
+(cgroup v1↔v1.34 호환 PASS, /var 3GB 부족 FAIL 을 정확히 검출), **타깃용 4개 스크립트에 네트워크 호출 0건** 감사.
+
+**한계:** 이 호스트에 클러스터가 없어 **실제 kubelet 기동·CNI·파드 스케줄링은 미검증.**
+타깃에서 `preflight.sh` → `install-k3s.sh` 로 확인해야 한다.
+
+**변경 파일:** `/opt/genspark/k8s_install/**` (신규) · `CLAUDE.md`
+
+---
+
+## [2026-09-05] Kubernetes 전환 패키지 재작성 — Chroma RAG 스택 포함, RHEL 8.10/9.6 (`/opt/genspark/heapApp_k8s`)
+
+**요청:** k8s 전환 진행. Chroma 포함. RHEL 8.10 / 9.6 모두 동작. 기존 이력(2.3.5 패키지)은 지워도 무관.
+
+### 설계 결정 3가지
+
+1. **이미지 1개 통합**(`heap-analyzer:2.4.1`, 1.31GB — 앱+MAT+gdb+python venv+e5 모델+색인기). 나누지 못하는 이유:
+   색인기 `sources.py` 가 **앱 JAR 을 `java -cp` 로 직접 실행**해 코드 상수 지식(OomDetector/MatErrorHint/…)을 뽑는다.
+   Python·Java·JAR 이 한 파일시스템에 있어야 하고, 그래야 "색인 실행" 버튼(`RagIndexRunner`→`run-index.sh`)이 **Java 변경 없이** 동작한다.
+   이미지의 `/app/target/heap-analyzer-<ver>.jar` 심볼릭 링크가 `sources.py` 의 glob 계약을 맞춘다.
+2. **Chroma 2개는 앱 Pod 의 사이드카**(`chroma` :8000 / `embed` :8001, 같은 이미지·다른 command, **127.0.0.1 바인딩**).
+   앱 설정(`rag.chroma.url` 등)이 호스트와 동일하고 Service·인증·NetworkPolicy 가 필요 없다. 대가: kubelet 의 httpGet 프로브는
+   Pod IP 로 접속해 loopback 에 닿지 않으므로 **프로브는 `exec curl`**(이미지에 curl 추가). 데이터는 PVC `chroma-data`(5Gi).
+   호스트 systemd 유닛의 MemoryMax 400M/900M → limits 512Mi/1Gi, Restart=on-failure → restartPolicy, health 대기 → startupProbe.
+3. **색인기 임베딩은 사이드카에 위임**(`EMBED_REMOTE_URL`, app 컨테이너 env 만) — 앱 컨테이너(JVM+MAT 기준 4Gi)에서 ONNX(~540MB)를
+   또 싣지 않는다. `embedder.py` 에 원격 모드 추가(기본 OFF, 호스트 in-process 동작 무영향 — 벡터 동일성 실측 cos=1.000000, Δ=0).
+   `embed_server.py`·`chroma-entrypoint.sh` 가 그 변수를 지워 **자기위임 무한 루프**를 구조적으로 차단.
+
+### 변경 내용
+
+| 영역 | 내용 |
+|---|---|
+| `/opt/chroma/app` (호스트 원본, 하위 호환) | `embedder.py` 원격 모드(`EMBED_REMOTE_URL`/`_TIMEOUT`/`_BATCH`) · `embed_server.py` import 전 변수 pop · `indexer.py` `HEAPDB_PORT` (기본 3306). 백업 `*.bak-20260905` |
+| `build/Dockerfile` | temurin 21-jre-jammy + python3.10 venv(`requirements.lock`) + e5 모델 + `/opt/chroma/app` + MAT + gdb + curl. `ARG APP_VERSION` 으로 JAR 링크. ENV 로 색인기 기본값(APP_DIR/RAG_CSV/RAG_EVAL/CHROMA_*) |
+| `build/chroma-entrypoint.sh` | 역할 4종 `server`(VACUUM_ON_START 지원) / `embed`(unset EMBED_REMOTE_URL) / `index` / `evaluate` |
+| `build/run-index.sh` (컨테이너판) | JAR 복호화 대신 `SPRING_DATASOURCE_URL/USERNAME/PASSWORD` → `HEAPDB_*` 유도(쿼리스트링 선제거, 포트 생략 처리) |
+| `build/entrypoint.sh` | `/config/logs` 생성(`logging.dir`), `EMBED_REMOTE_URL` 미설정 경고 |
+| `config/application.properties` | RAG 기본 = `chroma`/`local-onnx`/384/top-k 10/min-score 0.86, `rag.chroma.*` 10키, `rag.index.*` 3키, `logging.dir=/config/logs`, ES 키는 빈 값 |
+| `k8s/base/deployment.yaml` | 컨테이너 3개(app envFrom / chroma·embed 명시 env), exec 프로브 3종, chroma-data·chroma-tmp·embed-tmp 볼륨, Recreate 사유에 Chroma 단일 writer 추가 |
+| `k8s/base/pvc.yaml` / `configmap-env.yaml` | `chroma-data` 5Gi PVC · 색인기 배선 env(CHROMA_HOST/PORT/COLLECTION, EMBED_REMOTE_URL, RAG_CSV, APP_DIR) |
+| `scripts/build-image.sh` | Chroma 컨텍스트 준비(app/*.py·lock·모델·CSV·평가셋), 원격 모드 존재 검사, **잠금 완화 1건**(`click==8.1.8`→`>=8.2.1,<9`: typer 0.23.2 의 python≥3.10 조건부 의존 — 첫 빌드가 정확히 여기서 실패) |
+| `scripts/verify-image.sh` | **podman pod**(k8s Pod 처럼 netns 공유)에 MariaDB+chroma+embed+app → 색인 실행 → 벡터 검색 → 로그인 후 `/api/settings/rag/chroma/status` 검증. 빈 포트 자동 선택(18081 점유돼 있었다) |
+| `scripts/validate-manifests.sh` | 사이드카 컨테이너·PVC·exec 프로브·127.0.0.1 바인딩·EMBED_REMOTE_URL 배선·embed 컨테이너 상속 금지·limit ≥900Mi 검사. ⚠ kustomize 렌더는 **맵 키를 알파벳순 정렬**해 `- name:` 이 `name:` 으로 밀린다 — 고정 패턴 grep 이 오탐했다 |
+| `scripts/save-image.sh` / `migrate-data.sh` | `--format docker-archive` 고정(podman 4.9/5.x·docker·containerd 공통) · Chroma 데이터 export/import 추가 |
+| `docs/COMPATIBILITY.md` (신규) | RHEL 8.10↔9.6: podman 4.9/5.x, cgroup v1/v2, SELinux hostPath `container_file_t`, CRI-O/containerd/k3s 반입 명령, k8s 1.31+ cgroup v1 deprecation |
+| `docs/SIZING/OPERATIONS/MIGRATION/DEPLOY.md`, `README.md` | 사이드카 사이징(Pod limits 합계 5.5Gi), RAG 운영 절(최초 색인·상태·평가·vacuum·트러블슈팅), Chroma 이관, 체크리스트 |
+
+### 검증 (Rocky 8.10 · podman 4.9.4 · cgroup v1)
+
+- `build-image.sh`: 2회차 성공(1회차는 위 click 충돌). 1.31GB.
+- `verify-image.sh` **34/34**: 로케일·gdb·Chroma import(3.10.12/1.5.9/1.19.2)·지식 익스포트 CLI·**MAT headless 파싱**·pod 기동(app 14s)·
+  사이드카 health·**색인 427청크(60초, 사이드카 위임)**·**벡터 검색 score 0.894**·**앱 연동 상태 API 정상/경고 0**.
+- `validate-manifests.sh` **69/69**(2 overlays).
+- 실행 중 호스트 Chroma 스택은 메모리 때문에 `stop_chroma_all.sh` 로 내렸다가 `run_chroma_all.sh` 로 복구(현재 정상).
+
+**한계:** 이 호스트에 kubectl/클러스터가 없어 **실제 k8s 적용은 미검증** — PVC/fsGroup/Ingress 는 `docs/DEPLOY.md §7` 체크리스트.
+
+**변경 파일:** `/opt/genspark/heapApp_k8s/**`(재작성) · `/opt/chroma/app/{embedder,embed_server,indexer}.py` · `CLAUDE.md`(k8s 절)
+
+---
+
+## [2026-09-05] Chroma 연동 상태 — 색 점 → 정상/비정상 글자 라벨
+
+**요청:** `/settings/rag` Chroma 연동 상태 카드의 서버·컬렉션·임베딩 사이드카 행에서 초록/빨강 원형 점 대신
+정상/비정상으로 표기.
+
+### 변경
+
+| 행 | 종전 | 지금 |
+|---|---|---|
+| Chroma 서버 | ● 초록/빨강 | **정상** / **비정상** |
+| 컬렉션 | ● 초록/회색("확인 불가") | **정상** / **비정상**(서버는 살아 있는데 컬렉션 조회 실패) / **미확인**(서버 미연결) / **미설정**(이름 비어 있음) |
+| 임베딩 사이드카 | ● 초록/빨강/회색 | **정상** / **비정상** / **미사용**(local-onnx 아님) |
+
+`_dot(cls)` 대신 `_stat(cls, label)` → `<span class="st-stat ok|err|na">글자</span>`. 색은 점검 결과 목록
+(`.st-warn-list li.ok/.error`)과 같은 계열이라 카드 안에서 색 언어가 하나로 맞는다. `nowrap` 필수 —
+`.st-line` 이 `break-all` 이라 없으면 `비정` / `상` 으로 잘린다.
+
+### 라벨을 붙이면서 드러난 오표기 하나
+
+종전 코드는 `chroma.success` 하나로 서버·컬렉션 두 행을 함께 판정했다. 그런데 `testConnection()` 은
+`/version` 이 성공하면 `success:true`+`apiVersion` 을 넣고 **그 뒤** 컬렉션을 조회하며, 거기서 실패하면
+`fail()` 이 `success:false` 로 덮되 **`apiVersion` 은 지우지 않는다.** 즉 컬렉션이 없을 뿐인데
+화면은 **서버 행을 빨갛게** 찍고 "Chroma 연결 실패: …404…" 를 서버 줄에 붙였다 — 점일 때는 대충
+넘어갔지만 글자로 "비정상" 이라 쓰는 순간 거짓 진술이 된다. 이제 서버 도달 여부는 `apiVersion` 으로
+가르고, 그 경우 컬렉션 행이 비정상 + 설정된 이름(`configuredCollection`, 백엔드 1줄 추가)과 오류를 보인다.
+
+회색 상태도 뜻이 둘이었다 — 상류가 죽어 확인하지 못한 것과 애초에 대상이 아닌 것. 같은 회색 점으로는
+구분할 수 없어 라벨을 호출부가 준다(`미확인` / `미사용`).
+
+**손대지 않은 것:** Embedding 카드 Model 행의 점(`renderLocalOnnxModel`)은 상태가 아니라 **출처**
+(사이드카 실측 / 기본값) 표시이고 이미 글자 라벨이 옆에 있어 그대로 둔다. `.st-dot` CSS 는 그래서 남는다.
+
+**검증:** `RagSettingsTemplateSmokeTest` 21건(신규 `chromaStatusRowsUseTextLabelsNotDots` — `_stat`
+정상/비정상 라벨·CSS 3종·nowrap·`renderChromaStatus` 본문에 `_dot(` 부재·`apiVersion` 분기·
+`configuredCollection`·미확인/미사용 구분) + `ChromaSearchServiceTest` 20건 통과. 빌드 후 재기동.
+
+**변경 파일:** `templates/rag-settings.html`(CSS `.st-stat` + `_stat()` + `renderChromaStatus` 분기) ·
+`service/ChromaSearchService.java`(`configuredCollection` 1줄) · `RagSettingsTemplateSmokeTest.java`(+1) ·
+`CLAUDE.md`
+
+---
+
+## [2026-09-05] Chroma RAG 스택 기동/종료 스크립트 6종 (`/opt/chroma`)
+
+**요청:** `/opt/chroma` 에 `run_chroma.sh` · `run_chroma_embed.sh` · `run_chroma_all.sh` ·
+`stop_chroma.sh` · `stop_chroma_embed.sh` · `stop_chroma_all.sh` 작성.
+
+### systemctl 래퍼로 만든 이유 (직접 실행하지 않음)
+
+앱의 `run.sh`/`stop.sh` 는 `nohup` 으로 JVM 을 직접 띄우지만, **Chroma 스택은 그러면 안 된다.**
+두 유닛의 cgroup 메모리 상한(`chroma` 400M / `chroma-embed` 900M·high 700M)이 장식이 아니라
+이 호스트의 실질적 방어선이기 때문이다 — 가용 RAM 1.4~1.8G 에 Java(18080)·tomcat·MariaDB 가
+동거하고, `chroma-embed` 는 기동 피크만 cgroup 기준 656MB(RSS 437 + ONNX 읽기로 생긴 캐시 126)다.
+`nohup` 으로는 이 상한을 걸 수 없고(유닛 파일 주석이 **systemd 를 쓰는 유일한 이유**로 이걸 명시한다),
+게다가 `Restart=on-failure` 로 살아나는 systemd 인스턴스와 포트 8000/8001 을 다투게 된다.
+그래서 6개 스크립트는 전부 `systemctl start|stop` 을 감싸는 **얇은 래퍼**다.
+
+### 구조 — 설정·로직은 `env.sh` 단일 지점
+
+앱 `env.sh` 관례를 그대로 따랐다. 스크립트 본문에는 리터럴이 없고, 유닛명·health URL·대기 시간과
+헬퍼 7종(`require_root` / `require_unit` / `start_unit` / `stop_unit` / `wait_health` / `wait_down` /
+`svc_report`)이 전부 `/opt/chroma/env.sh` 에 있다. 모든 값은 `${VAR:-기본값}` 이라
+`CHROMA_PORT=9999 bash run_chroma.sh` 처럼 override 된다.
+
+- **기동 요청과 health 대기를 분리**했다. `run_chroma_all.sh` 가 둘을 먼저 띄운 뒤 함께 기다려야
+  사이드카의 모델 로드(tokenizer.json 291MB 전개 + ONNX 세션 209MB)가 직렬로 더해지지 않는다.
+- **정지는 기동의 역순**(사이드카 먼저). 검색은 사이드카에서 질의를 임베딩한 뒤 Chroma 를 호출하므로,
+  저장소를 먼저 내리면 그 사이 요청이 임베딩까지 마치고 나서 실패한다.
+- `systemctl stop` 은 동기지만 **포트가 실제로 풀렸는지는 별개**라 `wait_down` 이 health URL 로 확인한다.
+- 정지 스크립트는 유닛이 `enabled` 라 **재부팅 시 자동 기동됨을 명시 출력**한다(영구 중지는 `disable`).
+
+### 검증 (9종, 전부 통과)
+
+| # | 시나리오 | 결과 |
+|---|---|---|
+| 1 | 실행 중 상태에서 `run` (멱등성) | "이미 실행 중" + health 확인, exit 0 |
+| 2 | `run_chroma_all` 둘 다 실행 중 | 동일, exit 0 |
+| 3 | `stop_chroma_all` | 8000/8001 리스너 소멸 확인 |
+| 4 | 정지 상태에서 `stop` 재실행 (멱등성) | "이미 정지 상태", exit 0 |
+| 5 | `run_chroma_all` 복구 | **3.4초** 만에 양쪽 health 응답 |
+| 6 | `stop/run_chroma_embed` 단독 | 사이드카만 재기동, chroma heartbeat 무영향 |
+| 7 | 비-root 실행 | `require_root` 가 차단, **서비스 무변경** 확인 |
+| 8 | 없는 유닛(`CHROMA_SERVICE=nonexistent`) | `require_unit` 이 안내 후 exit 1 |
+| 9 | 환경변수 override | `CHROMA_PORT=9999` → health URL 반영 |
+
+기능 확인: 재기동 후 `/embed` 384차원 정상 응답, 컬렉션 `heap-knowledge-base`(31bbdd69…) 무손상.
+`run-index.sh` 가 `set -euo pipefail` 로 `env.sh` 를 source 하므로 추가분이 그 아래에서도
+안전한지 별도 확인했다.
+
+**변경 파일:** `/opt/chroma/env.sh`(+헬퍼 섹션, 백업 `env.sh.bak-20260905`) ·
+`run_chroma.sh` · `run_chroma_embed.sh` · `run_chroma_all.sh` ·
+`stop_chroma.sh` · `stop_chroma_embed.sh` · `stop_chroma_all.sh` (신규 6개, 755)
+
+---
+
+## [2026-09-02] 버전 2.3.7 → 2.4.1
+
+`pom.xml <version>` + UI 표기 3곳(`fragments/banner.html` · `index.html` · `progress.html`) + `CLAUDE.md`
+실행 예시. 체크리스트대로 **쉘 스크립트는 손대지 않았다** — `env.sh` 가 `target/heap-analyzer-*.jar`
+최신본을 자동 탐색하고 프로세스 매칭도 버전 무관 패턴이라 구버전으로 떠 있던 프로세스도 정상 종료된다.
+
+빌드 `heap-analyzer-2.4.1.jar` · 재기동 13.9초 · 전체 586건 통과.
+
+---
+
+## [2026-09-02] 지식·학습 현황 탭 — 예외의 JSON 계약화 + 내보내기 감사 로그 + 실패 표기 9경로
+
+**점검 요청:** 지식 현황·학습 현황(버튼 포함)의 로깅과 예외 발생 시 error 표기 점검.
+
+### 점검 결과
+
+로깅은 **가져오기 적용·삭제·사용토글·색인 실행/취소**가 이미 `by=` 까지 남기고 있었다(`RagIndexRunner` 는
+run/cancel/done/error/timeout 전부). 빠진 건 **내보내기**와 **모든 실패 경로**였고, 예외 처리는 아예 없었다.
+
+| # | 증상 | 결과 |
+|---|---|---|
+| 1 | 컨트롤러에 try/catch 0건 | DB·ZIP 오류가 **Spring 기본 500**({timestamp,status,error,path})으로 나가 화면이 찾는 한국어 `error` 가 없었다 |
+| 2 | 내보내기 로그 없음 | **사내 지식·학습 코퍼스 전량이 파일로 나가는 동작**에 감사 기록이 0건 (`exportKnowledge` 는 `Authentication` 파라미터조차 없었다) |
+| 3 | 400 거부에 로그 없음 | "왜 안 되냐"를 재현으로만 풀어야 했다 |
+| 4 | `blobDownload` 가 `throw new Error('HTTP ' + r.status)` | 서버가 보낸 "내보낼 문서가 없습니다"·세션 만료 안내를 버리고 **"내보내기 실패: HTTP 404"** |
+| 5 | 목록·본문·삭제가 `e.message` 원문 | 401 만 한국어, 403/500 은 **`HTTP 500: {JSON 원문}`** 이 표 안에 떴다 |
+| 6 | `runImport`/`doIndexRun`/`cancelIndexRun` 이 `r.json()` 직접 호출 | 비-JSON 응답(프록시 HTML·톰캣 오류)에 **"Unexpected token '<'"** |
+| 7 | `pollIndexRun` 의 catch 가 `stopIndexPolling()` 뿐 | 진행 표시가 **아무 말 없이** 멈추고 스피너가 마지막 상태로 굳었다 |
+
+### 고친 내용
+
+**서버 — 예외를 계약으로** `RagCorpusController` 에 컨트롤러 스코프 핸들러 2개.
+`IllegalArgumentException` → 400, 그 외 → 500 `{success:false, code:"RAG_CORPUS_ERROR", error}`(예외 유형까지만
+노출, 스택·SQL 은 로그에만). ⚠ **`Exception` 핸들러만 두면 Spring 이 이미 상태 코드를 정해 둔 요청 오류
+(파라미터 누락·본문 파싱 실패·multipart 오류)까지 500 이 된다** — 실제로 "파일 없이 import" 가 400 → 500 으로
+바뀌어 기존 테스트가 잡아냈다. Spring 6 의 그 예외들은 `ErrorResponse` 를 구현하므로 **상태 코드는 존중하고
+본문만 우리 계약으로** 바꾼다.
+
+**서버 — 로깅** 내보내기 `action=export kind=… scope=all|selected format=md|zip|csv docs=… bytes=… by=…`,
+거부 `action=rejected … reason=…`, 검사 `action=import-check … parsed=… by=…`, 가져오기 거부
+`action=import … rejected badFiles=… by=…`. 지식 내보내기의 "대상 없음" 404 도 **평문 → JSON** 으로 바꿨다
+(평문이면 화면엔 "HTTP 404" 로만 보인다).
+
+**화면 — 공용 헬퍼 2개**
+- `httpMsg(status, fallback)` — 401/403/413/502·503·504 한국어 문구. 본문이 없거나 JSON 이 아닐 때의 마지막 방어선.
+- `readJsonSafe(r)` — `r.json()` 은 비-JSON 에 SyntaxError 를 던지므로 텍스트로 받아 안전 파싱하고
+  `{success,error}` 로 정규화. multipart(가져오기)·수동 fetch(색인 실행/취소)가 사용.
+
+9개 실패 경로를 **실제 `common.js` 를 태운** 헤드리스 Chrome 픽스처로 실측:
+
+| 경로 | 표시되는 문구 |
+|---|---|
+| 목록 DB 오류(500) | 조회 실패: 요청을 처리하지 못했습니다 (DataAccessResourceFailureException): DB 연결 끊김 |
+| 본문 열기(404) | 문서를 찾을 수 없습니다 |
+| 삭제(403) | 이 작업을 수행할 권한이 없습니다. |
+| 지식 내보내기(404) | 내보내기 실패 — 내보낼 문서가 없습니다 |
+| 학습 내보내기(401) | 내보내기 실패 — 로그인 세션이 만료되었습니다. 다시 로그인해 주세요. |
+| 가져오기(502 HTML) | 서버에 연결하지 못했습니다 (HTTP 502) — 결과표는 그리지 않는다 |
+| 색인 시작(500 HTML) | 요청을 처리하지 못했습니다 (HTTP 500) |
+| 색인 취소(대상 없음) | 실행 중인 색인이 없습니다 |
+| 진행 폴링 끊김 | 진행 표시 중단 — … (색인은 서버에서 계속될 수 있습니다) + 스피너·취소 버튼 정리 |
+
+⚠ 가져오기는 우리 계약이 아닌 응답이면 **결과표를 그리지 않는다** — "문서 0 · 신규 0" 헤더가 정상 검사 결과로
+오해된다. ⚠ 폴링 실패는 **2회 연속**일 때만 알린다(일시적 끊김은 다음 폴링에서 회복).
+
+### 검증
+
+`RagCorpusEndpointTest` 8 → 13(예외 500 계약 2·4xx 보존 1·400 유지 1·JSON 404 1 추가),
+`RagSettingsTemplateSmokeTest` 19 → 20. 전체 **586건 통과**(580 → 586), 빌드·재기동 정상.
+
+**파일:** `controller/RagCorpusController.java`, `templates/rag-settings.html`,
+`test/.../controller/RagCorpusEndpointTest.java`, `test/.../RagSettingsTemplateSmokeTest.java`
+
+---
+
+## [2026-09-02] RAG 활성/비활성 — 감사 로깅 `by=` + 프론트 에러 표기 + 조용한 실패 3종 제거
+
+**점검 요청:** "RAG enable/disable 시 로깅 설정과 프론트 에러 표기가 구현돼 있는지".
+결과는 **로깅 반쪽 · 에러 표기 사실상 없음** 이었고, 아래 4건을 모두 고쳤다.
+
+### 무엇이 잘못돼 있었나
+
+| # | 증상 | 왜 위험한가 |
+|---|---|---|
+| 1 | `[RAG] enabled=true/false` 만 남고 **`by=` 없음** | "누가 RAG 를 껐나"를 추적할 수 없다. 감사 로깅 컨벤션 위반 |
+| 2 | 프론트가 `d.error` 를 버리고 **'변경 실패' 고정 문구** | 서버는 401 에 "로그인 세션이 만료되었습니다"를 주는데 화면엔 '변경 실패' — 재로그인이 필요하다는 사실이 사라진다 |
+| 3 | `persistSettings()` 가 IOException 을 **삼킴** | settings.json 기록이 실패해도 `success:true` → 토스트는 "활성화", **재기동하면 값이 사라진다** |
+| 4 | `Boolean.TRUE.equals(body.get("enabled"))` | `enabled` 키가 없으면 400 이 아니라 **조용히 false(=비활성화)**. 잘못된 요청 하나가 RAG 를 끈다 |
+
+### 고친 내용
+
+**① 감사 로그** — `HeapAiApiController` 에 `who(Authentication)` 헬퍼를 두고(다른 4개 컨트롤러와 동일)
+`[RAG] action=toggle enabled=false->true persisted=true by=admin` 형식으로 **행위자 + 전→후 + 저장 여부**를
+남긴다. 거부(400)는 WARN, 예외는 ERROR(스택 포함). 서비스 계층의 `[RAG] enabled=` 값 로그는 다른 RAG
+setter 5종과 형태를 맞추기 위해 그대로 둔다.
+
+**② 프론트 에러 표기** — 토글을 원시 `fetch` → **`Common.fetchJSON`** 으로 전환(401/429 분류를 받는다) 하고,
+`serverErrMsg(e, fallback)` 가 서버의 `{success,code,error}` 3필드에서 한국어 메시지를 꺼낸다.
+⚠ `Common.fetchJSON` 은 **401·429 만** 사람이 읽을 문구를 만들고 나머지는 `HTTP 403: {JSON 원문}` 이므로
+(함정 14) body 파싱이 필요하다. JSON 이 아니면(프록시 오류 페이지) 원문 대신 `… (HTTP 502)` 로 떨어진다.
+
+**③ 저장 실패를 정직하게** — `persistSettings()` 가 `boolean` 을 반환하고(기존 호출자는 무시해도 종전 동작),
+`setRagEnabled()` 가 그 값을 전달한다. 저장 실패는 **`success:false` 가 아니라 `persisted:false` + 경고**다 —
+메모리에는 이미 반영됐으므로 실패로 처리하면 화면이 토글을 되돌려 **서버 상태와 어긋난다**. 프론트는 토글을
+그대로 둔 채 "재기동하면 이전 값으로 돌아갑니다" 를 error 스타일로 띄운다.
+⚠ `persistSettings()` 는 여전히 **예외를 던지지 않는다** — 기동 경로(레거시 봉인·손상 복구)에서도 호출돼
+던지면 앱이 뜨지 않는다.
+
+**④ 입력 검증** — `enabled` 가 boolean 이 아니면(누락·문자열 `"false"` 포함) **400 `INVALID_REQUEST`**.
+
+### 검증
+
+- 헤드리스 Chrome(128) — **실제 `common.js` 를 태운** 픽스처로 6개 응답 시나리오 실측:
+
+  | 응답 | 표시되는 문구 | 토글 |
+  |---|---|---|
+  | 401 SESSION_EXPIRED | 로그인 세션이 만료되었습니다. 다시 로그인해 주세요. | 되돌림 |
+  | 403 FORBIDDEN | 이 작업을 수행할 권한이 없습니다. | 되돌림 |
+  | 400 INVALID_REQUEST | enabled 값(true/false)이 필요합니다. | 되돌림 |
+  | 502 HTML(비-JSON) | RAG 설정 변경 실패 (HTTP 502) | 되돌림 |
+  | 200 persisted=false | 변경은 즉시 적용됐지만 설정 파일에 저장하지 못했습니다 — … | **유지**(서버와 일치) |
+  | 200 정상 | RAG 비활성화 | 유지 |
+
+- `RagEnabledEndpointTest` 신규 5건(standalone MockMvc) + `RagSettingsTemplateSmokeTest` +1(19건).
+- 전체 **580건 통과**(574 → 580), 빌드·재기동 정상. 운영 401 응답 실측 확인.
+
+### 남은 것 (미적용 — 별도 판단 필요)
+
+`persistSettings()` 의 boolean 배선은 **RAG 토글에만** 연결했다. 나머지 설정 저장 경로(Save All·청킹·LLM·
+2FA 등 30여 곳)는 여전히 저장 실패 시 "저장 완료"로 보인다 — 같은 한 줄 배선으로 확장 가능하다.
+
+**파일:** `controller/HeapAiApiController.java`, `service/HeapDumpAnalyzerService.java`,
+`templates/rag-settings.html`, `test/.../controller/RagEnabledEndpointTest.java`(신규),
+`test/.../RagSettingsTemplateSmokeTest.java`
+
+---
+
+## [2026-09-02] RAG 비활성 시 설정 카드 전체 잠금 (/settings/rag)
+
+**요청:** RAG Configuration 에서 RAG 를 Disable 하면 아래 카드들의 입력 박스를 모두 비활성화.
+
+### 무엇이 문제였나
+
+`Enable RAG` 를 꺼도 아래 카드(검색 모드 / Elasticsearch 연결·인증 / Semantic-server /
+Chroma 상태·설정 / Embedding / Chunking / Save & Test)는 그대로 편집 가능했다. 꺼진 기능의
+설정을 만지고 저장까지 되니, 화면만 봐서는 지금 이 값들이 동작에 쓰이는지 알 수 없었다.
+
+### 구현 — 카드마다가 아니라 패널 한 곳에 잠금 클래스
+
+- **CSS**: `#panel-config.rag-off .card:not(#cardRagEnable)` → `opacity .55` + `pointer-events: none`.
+  Enable 카드만 제외한다(아니면 다시 켤 방법이 없다).
+- **초기 상태는 서버 렌더**: `HeapDumpViewController.ragSettingsPage()` 가 `ragEnabled` 를 모델에
+  넣고 템플릿이 `th:classappend` 로 `rag-off` 를 붙인다. JS 로만 잠그면 `/api/settings/rag` 응답이
+  올 때까지 **편집 가능한 화면이 잠깐 보인다**.
+- **키보드·스크린리더는 `inert`**: `applyRagEnabledState()` 가 카드마다 `inert` 를 토글한다
+  (CSS `pointer-events` 는 마우스만 막고 Tab 이동은 못 막는다). `DOMContentLoaded` 에서 서버가
+  렌더한 클래스를 읽어 즉시 반영하므로 설정 로드 응답을 기다리지 않는다.
+- **안내 문구**: 잠긴 이유를 Enable 카드 아래 `#ragOffHint` 로 표시(없으면 "화면이 고장났다"로 읽힌다).
+- 토글 요청이 **실패해 되돌아간 경우에도** 잠금이 토글을 따라간다(`applyRagEnabledState(el.checked)`).
+
+⚠ **개별 `input.disabled` 은 건드리지 않았다.** 그 속성은 이미 임자가 둘이다 — 시크릿 '지우기'
+체크(`onSecretClearChange`)와 비-ADMIN 읽기 전용 IIFE. RAG 를 다시 켤 때 일괄 `disabled = false`
+로 풀면 그 두 상태를 조용히 지운다(지우기 체크한 시크릿 칸이 되살아나고, USER 에게 입력칸이 열린다).
+
+지식/학습 탭은 대상이 아니다 — 코퍼스 관리·색인은 검색 모드 활성 여부와 무관하다.
+
+### 검증
+
+- 헤드리스 Chrome(128) 실측 — OFF: 잠긴 카드 `pointer-events: none` / `opacity 0.55`,
+  잠긴 입력칸 `focus()` 거부(활성 요소 빈 값), Enable 토글은 `pointer-events: auto` + 포커스 정상,
+  안내 문구 표시. ON: 잠금 없음(`opacity 1`, `inert` 없음, 안내 숨김).
+- `RagSettingsTemplateSmokeTest` +2 (16 → 18) — 서버 렌더 잠금 / 활성 시 미잠금.
+- 전체 574건 통과(572 → 574), 빌드·재기동 정상.
+
+**파일:** `templates/rag-settings.html`, `controller/HeapDumpViewController.java`,
+`test/.../RagSettingsTemplateSmokeTest.java`
+
+---
+
+## [2026-08-31] 학습 코퍼스 204행 색인 + 🔴 평가 스크립트가 운영과 다른 검색을 재고 있던 문제
+
+**작업:** `rag-knowledge-20260430.csv` 가져오기 → 색인 실행(`학습만`) → 점검.
+
+### 결과 (정상)
+
+| | 값 |
+|---|---|
+| `rag_learning_doc` | 204행 · 고유 id 204 · `sort_order` 1~204 · synthetic 11 · 최장 773자 |
+| 색인 로그 | `학습 원천: DB(204행)` → 204문서 → **292청크**, 오류 0 |
+| 컬렉션 | 834 → **956청크** (`csv` 170 → 292) |
+| 고아 청크 | 없음(기록 292 = 현재 292) |
+
+`RAG_CSV_SOURCE` 가 의도대로 `file` → `db` 로 넘어갔다(파일 84행이었다면 170청크였을 것).
+
+### 🔴 점검 중 드러난 진짜 문제 — 평가 하네스가 앱과 다른 필터를 쓰고 있었다
+
+색인 후 평가에서 Recall@10 이 0.881 → **0.833** 으로 떨어져 `--min-recall 0.85` 게이트를 넘지 못했다.
+실패 질의의 상위 결과를 열어 보니 **`ai_chat` 청크가 상위권을 차지**하고 있었다 —
+그런데 앱은 `ChromaSearchService.EXCLUDED_SOURCE_TYPES` 로 `ai_chat` 을 검색에서 **빼고 있다**.
+
+`evaluate.py` 는 `where={"synthetic": {"$ne": True}}` 만 걸었다. 즉 **운영이 실제로 하지 않는 검색을 재고
+있었고, 그 숫자가 기준선(0.881)이었다.** 코퍼스·모델·청킹을 바꿀 때마다 이 값을 근거로 판단해 왔으므로
+가장 위험한 종류의 결함이다 — 예외도 로그도 없고, 숫자는 그럴듯하다.
+
+앱과 같은 필터(`$and` 로 `synthetic` + `source_type != ai_chat`)로 고치고 `--no-exclude` 로 옛 방식도
+재볼 수 있게 남겼다. 같은 컬렉션에서 차이가 크다:
+
+| 필터 | Recall@1 | Recall@10 | MRR |
+|---|---:|---:|---:|
+| 앱과 동일 | 0.548 | **0.929** | 0.687 |
+| 제외 없음(옛 방식) | 0.429 | 0.833 | 0.582 |
+
+⚠ `EXCLUDED_SOURCE_TYPES` 가 Java·Python 양쪽에 손으로 맞춘 사본으로 존재한다. 한쪽만 고치면 재발한다 —
+양쪽 파일에 경고를 박았다.
+
+### 코퍼스 증가의 실제 영향
+
+앱 기준 **Recall@10 0.929**(게이트 통과). 소스별로 `csv` 8/8 유지, `vendor` 2/3→3/3, `leak_lib` 6/7→7/7,
+`core_warn` 5/6→6/6 으로 오히려 올랐다. 남은 실패 3건은 전부 `leak_fb`(정규식 폴백 룰)이고, 밀어낸 문서가
+오답이라 보기 어렵다(Finalizer→`leak_fb:12`, 스레드 증가→`oom_kind:NATIVE_THREAD`, byte[]→`ai_insight:11`)
+— BASELINE 이 스스로 적어 둔 "정답을 1건으로 좁게 잡았다" 한계가 그대로 드러난 자리다.
+
+⚠ **평가셋 42건에는 새로 들어온 120행을 정답으로 하는 질의가 하나도 없다.** 같은 도메인 문서가 늘면
+상위 슬롯 경쟁이 심해져 밀어내기(손실)는 측정되는데 이득은 측정되지 않는다. 코퍼스를 늘릴 때는
+**그 코퍼스를 겨냥한 질의도 함께** 넣어야 판정이 성립한다.
+
+`rag-data/eval/BASELINE.md` 를 새 기준선(2026-08-31 · 0.929)으로 갱신하고, 이전 표는
+"운영과 다른 필터로 잰 값"이라고 명시해 두었다.
+
+## [2026-08-31] 색인 진행 스피너 + 완료 시 취소 버튼 정리
+
+**요청:** 색인 실행 중 "색인 중" 글자 왼쪽에 스피너를 표시하고, 완료되면 취소 버튼을 감출 것.
+
+**대상 파일:** `templates/rag-settings.html`, `RagSettingsTemplateSmokeTest.java`(+1건)
+
+- `.idx-spin` — `analyze.css` 의 `.dom-nav-spinner` 와 같은 형태(12px · 2px 링 · 상단만 파랑). ⚠ `@keyframes` 는 common.css 에 없어 각 페이지가 자기 것을 가져야 한다 — 이름을 `idx-spin` 으로 접두사 격리했다(core-dump.css 의 `cd-spin` 과 같은 규약).
+- 취소 버튼은 `queued`/`running` 에서만 보인다. 끝난 작업은 취소할 대상이 없는데 버튼이 남아 있으면 눌러 볼 여지를 남긴다.
+
+**⚠ 활성 판정을 한 곳으로 모았다.** 종전에는 `pollIndexRun` 이 `d.state === 'running' || d.state === 'queued'` 를 자체적으로 계산했다. 스피너 표시가 같은 식을 따로 들고 있으면 상태가 하나만 추가돼도 갈라져 **폴링이 멈춘 뒤에도 스피너가 영원히 도는** 화면이 된다("아직 진행 중"으로 읽혀 사용자가 기다린다). `_idxActive(d)` 하나를 폴링과 렌더가 함께 쓴다.
+
+**검증:** 헤드리스 Chrome 에서 6개 상태(`queued`/`running`/`done`/`failed`/`cancelled`/`timeout`/`none`)에 대해 스피너·취소 버튼 표시를 13개 단언으로 확인, 실행 중/완료 두 화면 렌더 대조. 회귀 방어 1건 추가 — 총 572건 통과.
+
+## [2026-08-31] 2026-04-30 내보내기 CSV 를 손대지 않고 그대로 가져오기
+
+**요청:** `rag-knowledge-20260430.csv` **기준으로** 가져오기가 되어야 한다 — 오프라인 스크립트로 먼저 고치는 워크플로는 안 된다.
+
+**대상 파일:** `RagCorpusService`(복구 로직), `RagCorpusController`(복구 사실 노출), `rag-settings.html`(검사 결과 표시), `RagCorpusImportTest`(+7건), `tools/fix_knowledge_csv.py`(경고 + 인자화)
+
+### 파일에 있던 결함은 하나가 아니라 셋
+
+업로드본은 **204행**(기존 git 84행의 상위집합, 신규 120행)이고 결함이 세 겹이었다.
+
+1. **`tags` 인용 없는 콤마** — 헤더 8컬럼 대비 데이터가 11~16필드. 정상 행 0건.
+2. **`synthetic` 컬럼 없음** — 9컬럼 현행 형식보다 한 세대 이전.
+3. 🔴 **역슬래시 이스케이프(`\"`)** — `SELECT * FROM \"java\..*Map\"` 한 줄 때문에 그 따옴표가 필드를 거기서 끝내 **본문이 5조각으로 갈라졌다.**
+
+### 복구를 앱 가져오기로 옮겼다
+
+헤더가 형식을 말해 주므로 9컬럼/8컬럼을 구분해 읽고, 밀린 행은 **앞 4컬럼 + 뒤 (cols−5)컬럼 고정, 사이 전부가 tags** 규칙으로 되돌린다. 컬럼 위치가 두 형식에서 같아(`source`=5·`severity`=6·`created_at`=7) 꼬리 개수만 다르게 세면 된다. `synthetic` 은 `source` 의 `(예시 — 실제 사례로 교체 필요)` 표기로 판정한다 — 추정이 아니라 **작성자가 남긴 기록**을 읽는 것이고, 오탐은 검색에서 빠질 뿐이지만 놓치면 RAG 가 허구를 근거로 답한다.
+
+**추측으로 고치지 않는다**가 설계의 핵심이다. 복구한 자리의 `severity` 가 enum 이고 `created_at` 이 날짜여야만 채택한다 — 정렬이 맞았다는 증거다. 하나라도 어긋나면 진짜 깨진 행이므로 포기하고 오류로 보고한다(메시지도 "자동 복구를 시도했지만 중단했습니다"로 바꿔, 복구 기능이 있다는 사실 자체가 보이게 했다).
+
+### 개발 중 실제로 밟은 함정 2가지
+
+1. 🔴 **길이 가드가 없으면 조용히 오배치된다.** `title` 에 인용 없는 콤마가 있으면 밀림이 4컬럼 **앞에서** 시작해 본문이 tags 자리로 오는데, 뒤에서 세는 규칙 특성상 severity·날짜 검증은 **그대로 통과한다.** 진짜 태그는 `OOM`·`G1GC` 같은 짧은 토큰이고 본문은 수백 자라, `MAX_TAG_FIELD = 60` 이 유일한 방어선이다.
+2. 🔴 **역슬래시 정규화를 "오류가 있을 때만" 하면 안 된다.** 처음엔 복구 불가 행이 남을 때만 재파싱했는데, **본문이 짧으면** 쪼개진 조각이 전부 60자 미만이라 밀림 복구가 "성공"하고 **본문이 tags 에 접힌 채 조용히 통과**한다(테스트로 이 경로를 실제로 밟았다). `\"` 는 올바른 CSV 에 존재할 수 없는 표기이므로 **항상 먼저 정규화**하고, 악화되지 않을 때 채택한다.
+   ⚠ 단 **뒤 문자가 `"`·`,`·개행·EOF 면 손대지 않는다.** 같은 파일에 `\""` 형태가 따로 있는데 이건 역슬래시가 **본문**(셸 예제)이고 뒤의 `""` 는 정상 CSV 이스케이프다 — 일괄 치환했다면 멀쩡한 행을 깨뜨렸다.
+
+복구·추론·정규화는 전부 검사 결과 화면에 표시한다. **조용히 고치지 않는다** — 무엇을 손댔는지 보여야 사용자가 결과를 믿거나 의심할 수 있다.
+
+### 검증 — 오프라인 스크립트보다 정확하다
+
+실제 파일로 **204행 전부 복구, 오류 0건, 가상 11건**. 파이썬 도구 산출물과 203행이 일치하고, 다른 1행(`mat-oql-002`)은 **앱 쪽이 맞다**: 도구는 역슬래시 이스케이프를 몰라 content 570→**449자로 자르고** 나머지 121자를 tags 에 접어 넣었다(tags 149자). 앱은 content 570자 · tags `MAT,OQL,SQL,Subquery,UNION` 26자로 정확하다. 그래서 임시로 만들었던 `rag-knowledge-v3.csv` 는 **삭제**했고, 도구 docstring 에 이 한계를 명시했다(하드코딩된 src/dst 때문에 그냥 실행하면 `rag-knowledge-v2.csv` 를 덮어써 골든 테스트와 색인기 기본 경로를 함께 깨뜨리던 것도 인자 필수로 바꿨다).
+
+회귀 방어 7건 추가 — 레거시 8컬럼 복구 / synthetic 추론 / 정렬 증거 없으면 거부 / 길이 가드 / 현행 9컬럼 무영향 / 역슬래시 정규화와 본문 역슬래시 보존 / **실제 파일 회귀**. 총 571건 통과.
+
+## [2026-08-31] 가져오기 모달의 파일 선택을 드롭존으로
+
+**요청:** 학습 데이터 가져오기 모달의 **파일 선택**에도 디자인을 추가. (가져오기 모달은 지식·학습 공용이라 형식 안내만 탭에 따라 바뀐다.)
+
+### 왜 — 기본 `<input type=file>` 이 가리던 것 3가지
+
+세 모달 중 유일하게 UA 위젯이 그대로 남아 있던 자리였다. `파일 선택 | 선택된 파일 없음` 한 줄로는 ① 어떤 형식을 받는지 ② 지금 무엇이 몇 개 걸려 있는지 ③ 하나만 빼려면 어떻게 하는지가 전부 보이지 않았다. 특히 ③ — 여러 개를 고른 뒤 하나를 빼려면 **처음부터 다시** 골라야 했고, 나눠서 고르면 앞서 고른 게 **조용히 사라졌다**(선택창은 목록을 교체한다).
+
+### 무엇을
+
+- **드롭존**(`.dropzone`): 점선 박스 + 업로드 아이콘 + 형식 안내. 끌어다 놓기 지원, 파일이 걸리면 아이콘을 접고 안내문이 `클릭해 선택` → `클릭해 추가` 로 바뀐다
+- **파일 칩 목록**(`.dz-file`): 이름·크기 + `×` 개별 제외. 제목줄에는 `3개 · 61.4 KB` 합계
+- **누적 선택**: 선택창 경로도 직전 선택(`_impPrev`)에 합친다 — 드롭과 동작이 같아진다
+- 파일 구성이 바뀌면 **앞선 검사 결과를 감춘다**(그 파일들에 대한 판정이 아닌데 남아 있으면 오독을 부른다)
+
+### 이 UI 를 붙이면서 새로 생긴 함정 4가지 (전부 조용히 틀리는 부류)
+
+1. 🔴 **드롭은 `accept` 필터를 우회한다.** 선택창은 걸러 주지만 끌어다 놓기는 무엇이든 들어온다 — 지식 탭에 `.csv` 를 놓는 게 그대로 통과했다. `_impExtOk()` 가 JS 로 검사하고, 목록은 `accept` 속성과 **같은 출처**(`_impAccept`)를 쓴다.
+2. 🔴 **드롭 기본동작을 막지 않으면 브라우저가 그 파일로 페이지를 이동**시킨다 — 고르던 선택이 통째로 날아간다. 점선 밖에 놓쳐도 받도록 **모달 전체**를 표적으로 삼고 `preventDefault`. `dragleave` 는 자식 위를 지날 때마다 발화하므로 깊이를 세지 않으면 테두리가 깜빡인다.
+3. 🔴 **입력을 `display:none` 으로 감추면 포커스를 못 받아** 키보드로 파일 선택에 도달할 수 없다 → **시각적 숨김**(`clip-path`). 포커스 링은 인접 형제(`#impFiles:focus-visible + .dropzone`)가 그리므로 입력 → 라벨 순서를 바꾸면 깨진다.
+4. 🔴 **중복 판정 키를 잘못 고르면 둘 다 나쁘다.** `이름+크기+수정시각` 이면 파일을 고친 뒤 다시 고를 때 같은 이름 두 장이 쌓이고, `이름만 보고 건너뛰기` 면 **고친 내용 대신 옛 파일이 조용히 올라간다**. 서버의 파일 내 중복 정책과 같은 **last-wins 교체**로 맞췄다(교체 시 토스트로 알림).
+
+`FileList` 는 읽기 전용이라 누적·개별 제외는 `DataTransfer` 로 새 목록을 만들어 `input.files` 에 대입한다 — 그래야 전송원이 종전대로 `input.files` **하나**로 유지된다(미지원 브라우저는 네이티브 동작으로 후퇴).
+
+### 검증
+
+헤드리스 Chrome 에서 실제 `File`/`DataTransfer` 로 **20개 시나리오** 통과 — 누적 선택 / 같은 파일 재선택 무시 / 고친 파일 last-wins 교체 / 드롭 확장자 거절 / 개별 제외 / 칩·개수 렌더 / 검사결과 무효화 / 탭 전환 시 accept·초기화. 회귀 방어 1건 추가(드롭존 배선·시각적 숨김·포커스 링 인접 형제·드롭 확장자 검사·preventDefault·개별 제외·누적·last-wins) — `RagSettingsTemplateSmokeTest` 15건 통과(총 564건).
+
+## [2026-08-31] 내보내기 확인 모달 + 모달 선택지 카드화
+
+**요청:** ① 내보내기 버튼을 누르면 **몇 건을 내보내는지** 보여 주는 다운로드 모달 ② 색인 실행·가져오기 모달의 라디오·체크박스가 너무 단조롭다.
+
+**대상 파일:** `templates/rag-settings.html`, `RagSettingsTemplateSmokeTest.java`(+3건), `CLAUDE.md`
+
+### ① 내보내기 확인 모달 (`#expModal`)
+
+종전에는 버튼을 누르면 곧장 파일이 떨어졌다. 그런데 **무엇이 몇 건 나가는지 알 방법이 없었다** — 지식은 표에서 체크했는지에 따라 `.md`(1건)/`.zip`(여러 건)이 갈리고, 학습 CSV 는 체크와 **무관하게 전량**이 나간다. 받은 파일을 열어 보기 전에는 확인이 불가능했고, 특히 학습 쪽은 "선택한 행만 나갔겠지"라고 오해하기 딱 좋았다.
+
+모달은 큰 숫자 하나(건수)와 칩(형식 / 총 본문 글자수 / 가상 / 해제)을 먼저 보여 준다.
+- **지식**: 선택이 있으면 `선택한 N건` ↔ `전체 M건` 범위를 카드로 고르게 하고, 고를 때마다 건수·형식(`.md`↔`.zip`)이 즉시 다시 계산된다. 선택이 없으면 고를 게 하나뿐이라 범위 카드를 아예 감춘다.
+- **학습**: CSV 는 원본과 **바이트 동일**해야 DB 전환이 안전한지 판정할 수 있어(→ `sort_order` 가 있는 이유) 부분 내보내기를 지원하지 않는다. 모달이 그 사실을 명시한다 — 기능을 추가하는 대신 **오해를 없앴다**.
+
+건수는 **서버에 다시 묻지 않고 화면에 이미 있는 목록에서 센다.** 정확한 최신값보다 *사용자가 보고 있는 표와 일치하는 것*이 중요하다 — 어긋나면 어느 쪽도 믿을 수 없게 된다.
+
+곁다리로 `blobDownload()` 가 성공 여부를 `true`/`false` 로 resolve 하도록 고쳤다. 종전에는 성공·실패 모두 `undefined` 라 호출부가 구분할 수 없었다(실패해도 완료 토스트가 뜰 구조). 준비 중에는 버튼을 잠그고 라벨을 바꾼다 — 큰 CSV 는 응답까지 시간이 걸려서, 모달을 먼저 닫으면 아무 일도 안 일어난 것처럼 보인다.
+
+⚠ 모달은 `.container` **밖**에 있어 비-ADMIN 읽기전용 IIFE 가 닿지 않는다 → 다운로드 버튼에 `ro-allowed` 를 붙여 USER 도 내보낼 수 있게 유지(가져오기·색인 모달은 반대로 트리거 버튼이 잠겨 열리지 않는다).
+
+### ② 라디오·체크박스 카드화 (`.opt-card`)
+
+기본 라디오는 12px 라벨 옆의 점 하나뿐이라, 무엇을 고르는지가 라벨 길이에만 달려 있고 선택 상태도 점으로만 드러났다. 최상단 `검색 모드` 카드(`.mode-opt`)와 **같은 언어**로 통일했다 — 이름/설명 분리, 선택을 테두리+배경 면으로 표시, 카드 전체가 `<label>` 이라 클릭 표적이 점에서 카드로 커진다.
+
+| 그룹 | 개선 |
+|---|---|
+| 중복 처리(가져오기) | `건너뛰기`/`덮어쓰기` 에 "무슨 일이 벌어지는지" 한 줄 설명 추가 |
+| 색인 대상 | 4종 각각 설명 + **현재 건수 배지**(`지식 12 · 학습 84`) + `권장`/`느림` 배지 |
+| 전체 재색인 | **위험 카드**(`.opt-card.danger`) — 켜는 순간 빨강으로 바뀐다. 경고문이 펼쳐지기 전에 색이 먼저 말한다 |
+| 내보내기 범위 | 위 ①의 `선택/전체` |
+
+`:has()` 대신 `syncOptCards()` 가 `.selected` 를 토글한다(`.mode-opt` 와 같은 정책 — 사내 브라우저 버전을 가정하지 않는다). ⚠ 라디오는 **같은 `name` 의 형제까지** 갱신해야 이전 선택이 풀린다(클릭된 것만 켜면 두 장이 동시에 선택돼 보인다).
+
+⚠ **색인 대상 배지는 목록이 도착하기 전엔 `0` 이 아니라 `–` 다.** 이 모달은 지식 탭에서만 열리므로 학습 목록은 아직 안 불러왔을 수 있는데, `학습 0행` 은 "없다"로 읽혀 잘못된 판단(전체 재색인 선택)을 부른다. `_kbLoaded`/`_lnLoaded` 로 *미조회/실패* 와 *0건* 을 구분하고, 안 불러왔으면 모달이 보충 조회한 뒤 배지를 다시 그린다. 이를 위해 두 목록 로더가 프라미스를 반환하도록 바꿨다.
+
+재색인 경고문은 카드 설명과 겹치던 부분을 덜어내고 **감수할 위험**(끝날 때까지 검색이 비거나 일부만 동작 / 도중 실패하면 그 상태로 남음)만 남겼다.
+
+### 검증
+
+정적 픽스처 + 헤드리스 Chrome 으로 세 모달의 선택/위험/요약 상태를 렌더 확인, 추출한 인라인 스크립트 1,309줄 `node --check` 통과. 회귀 방어 3건 추가(내보내기 모달 경유·`ro-allowed`·성공 판정 / 카드형 선택지 3그룹·형제 동기화·위험 카드 / 배지의 미조회 구분) — `RagSettingsTemplateSmokeTest` 14건 통과(총 563건).
+
+## [2026-08-31] 지식·학습 현황 탭의 모달 3종이 CSS 없이 뜨던 결함 수정
+
+**제보:** `/settings/rag` 의 지식 현황·학습 현황에서 버튼으로 여는 모달에 CSS 가 적용돼 있지 않다.
+
+**대상 파일:** `templates/rag-settings.html` (모달 CSS 추가 + `#idxBusyWarn` 경고색), `RagSettingsTemplateSmokeTest.java` (+1건), `CLAUDE.md` (함정 17 확장)
+
+### 원인 — 마크업이 아니라 CSS 가 통째로 없었다
+
+`가져오기`(impModal) / `색인 실행`(idxModal) / `문서 미리보기`(docModal) 세 모달이 쓰는 골격 클래스에 **정의가 하나도 없었다.** common.css 가 제공하는 건 거기까지가 아니기 때문이다:
+
+| 클래스 | common.css | 실제 렌더 |
+|---|---|---|
+| `.modal-ov` / `@keyframes modalIn` | ✅ 오버레이·중앙정렬 | 정상 |
+| `.modal-box` | ✅ 흰 배경·radius·padding·그림자 (**width 없음**) | 인라인 `max-width` 가 상한으로만 동작해 **내용물 폭으로 쪼그라듦** |
+| `.modal-title` / `.modal-body` / `.modal-btns` | ❌ **없음** | 제목이 본문과 같은 크기, 버튼줄 좌측 정렬 |
+| `.mbtn-cancel/.mbtn-save/.mbtn-confirm` | ✅ **색상만** (함정 17) | 형태 규칙이 없어 **브라우저 기본 버튼**(Arial·padding 없음) |
+
+`.modal-title` 계열은 common.css 에 있어 본 적이 없다 — settings/history/files 등 **각 페이지가 자기 인라인 `<style>` 에 따로 정의해 온 관습**이라, 다른 페이지에서 마크업만 가져오면 그대로 재발한다. 렌더는 성공하고 예외도 로그도 없어 **화면을 봐야만** 드러나는 부류다.
+
+### 수정
+
+`rag-settings.html` 인라인 `<style>` 에 페이지 고유 골격을 추가했다.
+- `.modal-box`: `width: 92%` (인라인 `max-width` 760/560/820px 가 의미를 갖는다) + `max-height: 88vh` + **flex column** — 본문만 스크롤하고 제목·버튼줄은 자리를 지킨다(검사 결과가 길어져도 `가져오기` 버튼이 화면 밖으로 밀리지 않는다)
+- `.modal-title` / `.modal-body` — 16px 700 제목, 13px 본문. `.modal-body > .s-row:last-child` 는 밑줄 제거(버튼줄 위 이중선)
+- `.modal-btns button` — `font-family: inherit` 포함 형태 규칙(색은 그대로 common.css `.mbtn-*`)
+- `.modal-btns button:disabled { opacity:.5 }` — 검사 전 `가져오기` 는 disabled 인데 색상만 있으면 눌리는 버튼으로 보였다
+- ≤768px: padding 축소(`24px` 는 좁은 화면에서 본문 폭을 크게 잠식)
+- 곁다리: 색인 실행 모달의 "힙 분석 진행 중" 경고가 `.test-result` **base 만** 걸려 배경·테두리 없는 평범한 문단이었다 → `busy`(앰버) 부여
+
+### 검증
+
+수정 전/후 픽스처를 헤드리스 Chrome 으로 렌더해 대조했다 — 수정 전은 기본 버튼 3개가 좌측에 다닥다닥 붙고 박스가 내용물 폭으로 줄어든 상태가 그대로 재현됐다.
+
+회귀 방어 `RagSettingsTemplateSmokeTest.modalSkeletonClassesAreStyled` — 골격 3종이 **마크업에 있으면 스타일도 있는지**를 짝으로 검사하고, `.modal-btns button` 형태 규칙 / `:disabled` / `.modal-box` width 를 각각 앵커로 박았다. 테스트 11건 통과(총 560건).
+
+## [2026-08-30] RAG Configuration 탭 — 지식·학습 현황 조회 + Import/Export + 화면에서 색인 실행
+
+**요청:** `/settings/rag` 에 탭을 추가해 지식 현황·학습 현황을 조회하고, ① import/export ② 지식은 md·학습은 csv ③ 다중 파일 업로드 ④ 중복 검사. 추가로 **색인 수동 실행 버튼**과 **import 후 색인 여부 확인 절차**.
+
+### 구조
+
+| 탭 | 내용 |
+|---|---|
+| 설정 | 기존 카드 전부(감싸기만 했다 — 안쪽 무변경) |
+| 지식 현황 | Chroma **실측 색인 현황**(source_type 별 청크·문서·미색인·고아) + 등록 md 문서 목록 + 색인 실행 |
+| 학습 현황 | 9컬럼 코퍼스 목록·분포 + CSV import/export |
+
+저장은 신규 테이블 2개(`rag_knowledge_doc` / `rag_learning_doc`), 색인은 기존대로 외부 스크립트가 수행한다 — **앱은 Chroma 에 쓰지 않는다**(청킹·e5 접두사·마스킹 단일 출처 유지).
+
+### 조사에서 드러나 설계를 바꾼 사실 4가지
+
+1. **CSV 는 id 정렬이 아니다** (`oom-…→leak-…→java-spring-…`). 바이트 동일 export 를 하려면 **`sort_order` 컬럼이 필수**다. `CsvCodecGoldenTest` 가 실제 84행 파일을 파싱→재작성해 **바이트 동일**을 영구 고정한다.
+2. 🔴 **`synthetic` 이 `bit(1)` 로 생성되고 pymysql 은 이를 `bytes` 로 돌려준다.** `bool(b'\x00')` 은 **True** 라 그대로 썼다면 **모든 문서가 가상 사례로 잡혀 검색에서 통째로 빠졌을** 것이다 — 예외도 로그도 없다. `sources._b()` 가 bytes 를 따로 처리하고 8케이스로 실측 확인했다.
+3. **`SecurityConfig` 의 ADMIN 매처는 `HttpMethod.POST` 한정**이라 `@DeleteMapping` 으로 만들면 USER 가 삭제할 수 있다 → **변경은 전부 POST**.
+4. **`indexer.py` 진행 출력이 `\r` 로만 끝나** 줄 단위 리더가 끝날 때까지 아무것도 못 읽는다 → 비-TTY 일 때 개행으로 찍도록 고쳤다(진행률 표시의 전제).
+
+### 중복 검사
+
+**내용 SHA-256 + 제목** 두 축을 따로 본다. 본문만 해싱하므로 "제목만 바꾼 같은 글"은 `DUP_CONTENT`, "다른 글에 같은 제목"은 `DUP_TITLE` 로 직교하게 잡힌다. 우선순위는 `DUP_ID > DUP_CONTENT > DUP_TITLE` 이되 걸린 플래그는 전부 보여 준다.
+⚠ 해시 전 **정규화**(BOM 제거·CRLF→LF·줄끝 공백)가 핵심이다 — 없으면 Windows 왕복마다 같은 문서가 "신규"로 들어온다.
+
+가져오기는 **단일 엔드포인트 + `dryRun`** 이다. 검사와 적용이 같은 코드 경로를 타야 판정이 어긋나지 않는다. 오류가 하나라도 있으면 **0건 반영**(부분 적용 금지), 파일 내 중복은 last-wins 로 접어 `intraDup` 으로 보고한다. 중복 처리는 **건너뛰기(기본)/덮어쓰기** 를 사용자가 고른다.
+
+### 색인 실행 (신규)
+
+지식 현황 탭의 `색인 실행` 버튼이 `run-index.sh` 를 자식 프로세스로 띄운다.
+- ⚠ **인자 배열 + 화이트리스트**(`csv`/`user_docs`/`csv,user_docs`/`all`) — 앱이 root 라 셸 조립은 곧 무제한 주입이다
+- ⚠ 출력 리더는 **전용 daemon 스레드**(함정 9), 종료는 **자식부터**(`bash → python` 이라 부모만 죽이면 파이썬이 남는다), 전용 단일 스레드 executor(분석 풀 차용 금지)
+- 단일 실행 보장(재요청 **409**), 15분 타임아웃, 취소 버튼, 전체 로그는 `logs/rag-index-*.log` + 상태에는 마지막 200줄
+- 진행은 **SSE 가 아니라 2초 폴링** — 색인은 전역 작업이라 페이지를 떠나거나 다시 열어도 진행이 보여야 한다. `SessionTimeout.managedInterval` 경유 + 실행 중에만 `registerActivityGuard`(함정 38)
+- **`RAG_CSV_SOURCE` 를 앱이 판단해 넘긴다** — `rag_learning_doc` 이 비었으면 `file`, 있으면 `db`. 빈 테이블로 색인해 기존 170청크를 낡게 만드는 사고를 구조적으로 막는다
+- **import 성공 직후 "지금 색인할까요?"** 를 묻고, 방금 가져온 탭에 해당하는 소스만 돌린다
+
+### 검증
+
+- 신규 테스트 **63건** (`CsvCodec` 11 / `MarkdownDocCodec` 11 / `RagDocHash` 7 / 가져오기 판정 12 / 색인 실행기 6 / source_type 집계 4 / 엔드포인트 8 / rag-settings 스모크 +4) → `mvn test` **559건 통과**
+- 기존 rag-settings 스모크 6건은 **수정 없이** 통과 — 설정 카드를 옮기지 않고 감싸기만 했다는 증거
+- 테이블 생성 실측: `content` 가 `text`(tinytext 아님 — 함정 16), `doc_id` UNIQUE, 해시·제목·순서 인덱스
+- 색인기 회귀 없음: 패치 후 `--stats` 가 **834청크 그대로**, `synthetic 22건` 유지
+  ⚠ 계획 단계의 "synthetic 203건" 은 **키 보유 수**였고 실제 `True` 는 **22건**이다 — 회귀 탐지선은 22
+
+### 남은 전환 절차 (운영자 실행)
+
+기존 코퍼스를 DB 로 옮기는 것은 **아직 하지 않았다**(기본값 `RAG_CSV_SOURCE=file` 이라 현재 동작은 종전과 100% 동일):
+① 학습 탭에서 `rag-knowledge-v2.csv` 가져오기(검사 84/신규 84 확인) → ② 내보내기 후 원본과 `diff` **완전 일치** ← go/no-go → ③ 색인 실행(`csv`) 후 `csv 170청크` 확인 → ④ `evaluate.py --k 10 --min-recall 0.85` → ⑤ 그 뒤에야 `env.sh` 의 `RAG_CSV_SOURCE=db` 영구화. `rag-knowledge-v2.csv` 는 diff 기준·롤백 경로라 **영구 보존**.
+
+**변경 파일:** 신규 `model/entity/{RagLearningDoc,RagKnowledgeDoc}` · `repository/*2` · `service/{RagCorpusService,RagIndexRunner}` · `controller/RagCorpusController` · `util/{CsvCodec,MarkdownDocCodec,RagDocHash,RagZipCodec}` · 테스트 7종
+수정 `templates/rag-settings.html` · `service/ChromaSearchService`(집계 2메서드) · `controller/ServerController`(`csvCell` 위임) · `/opt/chroma/app/{sources,indexer}.py` · `/opt/chroma/env.sh` (백업 `*.bak-20260830`)
+
+## [2026-08-30] Embedding 카드 — local-onnx 선택 시 Model 표시(읽기 전용)
+
+**요청:** "Provider local-onnx 선택 시 Model 도 같이 표시."
+
+### 편집 칸이 아니라 읽기 전용으로 만든 이유
+
+`local-onnx` 는 앱이 `model` 을 **전송하지 않는다** — 사이드카(`chroma-embed.service` → `embedder.py`)가 모델을 소유하고, `EmbeddingService` 도 이 provider 에서는 모델 검증을 건너뛴다. 그래서 종전에는 Model 행을 아예 감췄는데, 그렇다고 입력 칸을 되살리면 **값을 바꿔도 아무 일이 일어나지 않는** 칸이 생긴다. 읽기 전용 표시 행(`#ragEmbModelLocalRow`)을 따로 두고 편집 칸(`#ragEmbModelRow`)은 계속 감춘다.
+
+### 무엇을 보여주는가 — 실측 우선, 출처 명시
+
+| 상황 | 표시 |
+|---|---|
+| 사이드카 응답을 받은 경우 | ● `multilingual-e5-small` <span>사이드카 실측</span> |
+| 아직 못 받은 경우(저장 provider 가 local-onnx 가 아니거나 사이드카 down) | ○ `multilingual-e5-small` <span>기본값 — 사이드카 미확인</span> |
+
+실측값은 이미 연동 상태 패널이 받아오는 `/health` 의 `model` 을 재사용한다(추가 요청 없음). **둘을 구분하지 않으면 사이드카가 다른 모델을 싣고 있어도 화면은 계속 맞는 것처럼 보인다.**
+
+### 함께 고친 것 — 이름이 두 곳에서 갈라지고 있었다
+
+1. **JS 리터럴 제거**: 사이드카 힌트 문구에 `(multilingual-e5-small)` 가 **하드코딩**돼 있었다(문서 규칙 위반 — local-onnx 기본값의 단일 출처는 `EmbeddingService`). `LOCAL_ONNX_MODEL` 상수를 추가해 `GET /api/settings/rag` 의 `embedding.localOnnxModel` 로 내려보낸다.
+2. **연결 테스트 결과의 모델명 오표시**: `EmbeddingService.testConnection()` 이 provider 와 무관하게 저장된 `model` 필드를 그대로 돌려줘, local-onnx 로 테스트해도 다른 provider 용으로 남아 있던 `text-embedding-3-small` 이 찍혔다. 이제 local-onnx 면 `/health` 실측값을 쓰고, 못 읽으면 이름을 지어내지 않고 `(사이드카 미확인)` 으로 둔다.
+
+### 검증
+
+정적 픽스처로 3상태(local-onnx 실측 / local-onnx 미확인 / openai) 확인 — 읽기 전용 행 `flex`·편집 칸 `none`, openai 는 반대, 표시 문구·출처 라벨 일치, 스크린샷 육안 확인. 실제 사이드카 `/health` 는 `multilingual-e5-small` 로 응답(실측). `RagSettingsTemplateSmokeTest` +1(읽기 전용 행 존치·토글 방향·실측 우선·**JS 모델명 리터럴 부활 방지**). 테스트 495 → **496**건.
+
+**변경 파일:** `service/EmbeddingService.java`, `controller/HeapAiApiController.java`, `templates/rag-settings.html`, `test/.../RagSettingsTemplateSmokeTest.java`
+
+## [2026-08-30] Chroma 연동 상태 — 컬렉션·사이드카 행을 이름 줄 + 속성 칩 줄로 분리
+
+**제보:** "`heap-knowledge-base (31bbdd69…) · 834건 · space cosine · dim 384` 이 한 라인에 너무 많이 표시됩니다. 사이드카도 마찬가지."
+
+### 한 줄에 5개를 이어 붙이면 줄바꿈이 토큰 한가운데서 일어난다
+
+두 행은 값들을 ` · ` 로 이어 붙인 **문자열 하나**였고, 값 칸(`.st-val`)은 `word-break: break-all` 이다. 그래서 좁아지면 속성 경계가 아니라 글자 사이에서 접혔다(`concurr` / `ency 2`). 밀도와 줄바꿈 품질이 동시에 나빴다.
+
+### 조치 — 2행 구조(정체성 / 속성)
+
+| 행 | 1행 | 2행(칩) |
+|---|---|---|
+| 컬렉션 | `heap-knowledge-base 31bbdd69…` | `청크 834건` `space cosine` `dim 384` |
+| 임베딩 사이드카 | `multilingual-e5-small` | `dim 384` `batch 64` `concurrency 2` `가동 15h 28m` |
+
+- 각 속성을 **칩(`.st-fact`, `white-space: nowrap`)** 으로 만들어 **줄바꿈이 속성 경계에서만** 일어나게 했다. 칩 안의 흐린 라벨(`space`)과 값(`cosine`)이 분리돼 스캔이 쉽다.
+- 값 칸에 `.st-multi`(세로 flex)를 더해 정체성과 속성을 다른 줄에 둔다. 행 높이는 21→42px 로 늘지만 두 행뿐이라 패널 전체는 21px 증가에 그친다.
+- **실패 경로가 가장 길다** — 사이드카 미연결 시 `URL — 에러메시지` 가 한 줄이었다. 이제 1행 URL / 2행 빨간 메시지(`.st-note`)로 나뉜다. `local-onnx` 아님 안내도 동일 구조.
+- `up 15h 28m` → `가동 15h 28m`, `834건` → `청크 834건` 으로 라벨을 붙였다(나머지 `space`·`dim`·`batch`·`concurrency` 는 설정 키와 이름을 맞추려고 그대로 둔다).
+- `Chroma 서버` 행(`API v2 · URL`)은 값이 2개뿐이라 그대로 뒀다.
+
+### 검증
+
+정적 픽스처(실측 JSON + 실제 CSS·렌더 함수)로 정상/사이드카 실패/`local-onnx` 아님 3경로 × 1500·1100·700·500px 확인 — 칩 개수(컬렉션 3, 사이드카 4), 행 높이 42px, **가로 넘침 0건**(`scrollWidth == viewport`), 스크린샷 육안 확인. `RagSettingsTemplateSmokeTest` +1(다단 구조·헬퍼·칩 nowrap·옛 한 줄 결합 부활 방지). 테스트 494 → **495**건.
+
+**변경 파일:** `templates/rag-settings.html`, `test/.../RagSettingsTemplateSmokeTest.java`
+
+## [2026-08-30] RAG 설정 — Min Score 입력칸만 두 배로 넓던 문제
+
+**제보:** "Min Score 입력박스 좌우 크기가 너무 큽니다. Top-K 와 동일하게."
+
+### 원인은 CSS 가 아니라 브라우저 기본값 — `max` 자릿수가 폭을 정한다
+
+두 입력은 같은 클래스(`.input-num`)에 인라인 스타일도 없는데 실측 폭이 **Top-K 100px / Min Score 198px** 였다. `number` 입력의 기본 폭을 브라우저가 **`max` 속성의 자릿수**로 산정하기 때문이다 — 페이지의 number 입력 13개 중 `max` 가 없는 건 `ragMinScore` 하나뿐이라 그것만 텍스트 입력 기본폭(198px)으로 렌더됐다. `.input-num` 의 `min-width: 100px` 은 하한만 정하므로 이 경우를 막지 못한다.
+
+| 필드 | max | 폭(수정 전) |
+|---|---|---:|
+| ragTopK | 20 | 100px |
+| **ragMinScore** | **없음** | **198px** |
+| 나머지 number 10개 | 60~50000 | 100px |
+
+### 조치
+
+```css
+.input-num[type="number"] { width: 100px; }
+```
+
+- `max` 유무와 무관하게 폭이 고정된다. 실측 결과 **다른 number 필드 12개는 이미 100px 이라 변화 없음**(모두 min-width 하한에 걸려 있었다).
+- ⚠ **`type=number` 로 한정**한다 — `.input-num` 은 텍스트 입력에도 쓰여(`chromaDatabase`·`chromaTenant` 198px, `ragTextField`·`chromaApiPath` 152px) 전체에 폭을 걸면 `default_database` 가 잘린다. 실측으로 텍스트 4개는 종전 폭 유지 확인.
+- `max` 를 새로 붙이는 대신 폭을 명시한 이유: Min Score 의 상한은 모드마다 다르다(코사인 0~1 / BM25 수십). 없는 상한을 만들면 값 입력이 막힌다.
+- `/settings/llm` 에는 `max` 없는 number 입력이 없어 같은 결함이 없다(확인함).
+
+### 검증
+
+헤드리스 Chrome 으로 `.input-num` 15개 전수 실측 — Min Score 198→**100px**(Top-K 와 동일), 나머지 14개 무변화. `RagSettingsTemplateSmokeTest` +1(폭 명시 존치 + type 한정이 살아 있는지). 테스트 493 → **494**건.
+
+**변경 파일:** `templates/rag-settings.html`, `test/.../RagSettingsTemplateSmokeTest.java`
+
+## [2026-08-30] RAG 설정 페이지 안내 문구 축약
+
+`/settings/rag` 상단 `info-banner` 에서 모드 동작 설명(`검색 모드가 페이지 전체를 결정합니다 — … 값이 보존된 채 숨겨집니다`)을 제거하고 **"LLM 채팅에 주입할 사내 지식베이스 검색을 설정합니다."** 한 문장만 남겼다. 모드 카드가 화면에서 같은 사실을 이미 보여준다(선택한 모드의 백엔드만 표시 + ES 모드의 Chroma 요약 줄).
+
+**변경 파일:** `templates/rag-settings.html`. 스모크 3건 통과(문구를 단언하는 테스트는 없었다).
+
+## [2026-08-30] 대시보드 탐지 현황 KPI — 카드가 좁아지면 심각도 라벨 숨김
+
+**요청:** "대시보드 탐지현황 KPI 카드들의 Critical/High/Medium/Low 문구를 브라우저 크기가 작아지면 표시하지 않도록."
+
+### 조사에서 드러난 것 — 단순히 좁아 보이는 게 아니라 **옆 카드를 침범**하고 있었다
+
+`CRITICAL`·`MEDIUM` 은 공백이 없는 한 단어라 **줄바꿈 기회가 없다.** 그래서 카드가 좁아져도 접히지 않고 그대로 카드 밖으로 흘러나간다(카드에 `overflow` 지정도 없었다). 헤드리스 Chrome 실측 — 글자 폭 vs 카드 콘텐츠 폭:
+
+| 뷰포트 | 카드 | 칸 | CRITICAL(50px) | 결과 |
+|---:|---:|---:|---|---|
+| 1440px | 92 | 66 | 여유 16px | 정상 |
+| 1330px | 78 | 52 | 여유 2px | 아슬아슬 |
+| 1300px | 75 | 49 | **1px 초과** | 침범 시작 |
+| 1200px | 62 | 36 | **14px 초과** | 옆 카드와 겹침 |
+| 1100px | 50 | 24 | **27px 초과** | 두 칸 건너까지 |
+
+### 미디어 쿼리로 고치면 절반만 맞는다 — 배너 접힘이 임계점을 176px 옮긴다
+
+카드 폭은 뷰포트가 아니라 `배너(220 또는 44px) + 사이드바 300px + 2열 패널`의 잔여 폭이다. 배너를 접으면 같은 뷰포트에서 카드가 22px 넓어져 **침범 시작 뷰포트가 ~1300px 에서 ~1105px 로 밀린다**(실측). 그래서 카드 자체를 컨테이너로 선언하고 컨테이너 쿼리로 판정한다.
+
+```css
+.detect-card { … container-type: inline-size; container-name: detcard; }
+@container detcard (max-width: 64px) {
+    .detect-card-lbl { position: absolute; width: 1px; height: 1px; … clip-path: inset(50%); }
+}
+```
+
+- ⚠ **컨테이너 쿼리의 길이는 테두리 상자가 아니라 콘텐츠 상자 기준이다.** 처음 `max-width: 88px`(카드 폭 감각)로 잡았더니 카드 112px(칸 86px, 여유 36px)에서도 라벨이 사라졌다. 카드 폭 90px ≈ 콘텐츠 64px(패딩 12+12 + 테두리 1+1).
+- **임계값 64px** = CRITICAL(50px) + 폰트 편차 여유 14px. 라벨이 보이는 최소 카드는 92px(여유 16px)이고, 그 아래부터 숨긴다 — 침범이 시작되던 87px 보다 한 칸 앞이다.
+- **`display: none` 이 아니라 시각적 숨김**이다. 숫자만 남으면 "3"이 무엇의 3인지 알 수 없어 스크린리더에는 라벨을 남긴다. 마우스 사용자를 위해 카드에 `title="Critical"` 을 붙였다.
+- **미디어 쿼리 예외가 필요 없다** — ≤900px(패널 1열, 카드 174~199px)·≤480px(2열 그리드, 카드 99px)에서는 카드가 넉넉해 라벨이 그대로 보인다. 카드 폭으로 판정하니 배치가 바뀌어도 자동으로 맞는다.
+- 컨테이너 쿼리 미지원 브라우저용 2차 방어로 `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` 를 라벨에 줬다 — 최소한 말줄임으로 끝나고 옆 카드를 침범하지 않는다.
+
+### 검증
+
+- 배너 펼침 17폭 × 접힘 6폭 실측: **글자 넘침 0건**, 라벨 표시 구간의 최소 여유 16px, 숨김 구간에서 스크린리더 노출 유지(`display:none` 아님) 확인. 1600/1280/1100px 스크린샷 육안 확인.
+- 신규 `DashboardDetectSummaryTest`(2) — **index.html 첫 렌더 스모크**(종전 커버리지 0)로 KPI 카드 4종·`title`·문서 끝까지 렌더를 확인하고, 컨테이너 선언·임계값·시각적 숨김·말줄임 폴백을 단언한다. 테스트 491 → **493**건.
+
+**변경 파일:** `templates/index.html`, `test/.../DashboardDetectSummaryTest.java`(신규), `CLAUDE.md`
+
+## [2026-08-30] 메모장 툴 버튼 라벨 개행 — 좁아지면 아이콘만 + 폰트 미리보기 제거
+
+**제보 2건:** ① "개인 메모장의 복사, 새창에서 열기 버튼이 브라우저 창이 작아질 경우 개행되어 표시됩니다 — 그럴 경우 문구를 지우고 로고만 보이도록" ② "`한글 ABC 123` 표시는 이제 불필요하니 삭제".
+
+### 원인은 뷰포트가 아니라 **카드 폭**이다 — 미디어 쿼리로는 못 잡는다
+
+헤드리스 Chrome 실측(폰트 바 높이 / 버튼 높이):
+
+| 레이아웃 | 뷰포트 | 메모 카드 | 폰트 바 | 버튼 |
+|---|---:|---:|---:|---|
+| 기본(stack) | 720px | 680 | 638×27 | 정상 |
+| 기본(stack) | 660px | 620 | 578×**43** | 라벨 2줄 |
+| **좌우 분할** | **1300px** | 664 | 622×27 | 정상 |
+| **좌우 분할** | **1200px** | 564 | 522×**60** | 라벨 2줄 |
+| **좌우 분할** | **1101px** | 465 | 423×**109** | 라벨 2줄 + 바 3줄 |
+
+좌우 분할 레이아웃에서는 **뷰포트가 1101~1300px 로 넓어도** 메모 카드가 465~564px 로 좁아 개행된다(우측 계정 카드 360px 고정). 즉 `@media (max-width: …)` 로 고치면 제보된 상황의 절반만 잡힌다. 그래서 폰트 바를 `container-type: inline-size; container-name: memobar` 로 선언하고 **컨테이너 쿼리**로 판정한다.
+
+```css
+@media (min-width: 641px) {
+    @container memobar (max-width: 580px) {
+        .memo-tool-txt { display: none; }      /* 라벨만 감추고 아이콘은 남긴다 */
+        .memo-tool-btn { padding: 5px 9px; }
+    }
+}
+```
+
+- **임계값 580px** = 실측 개행 시작점(522~542px)에 폰트 메트릭 편차 여유를 더한 값. 측정이 리눅스 폴백 폰트라 한글 폰트가 다른 환경에서는 개행이 더 일찍 시작될 수 있다.
+- **≤640px 모바일 분기는 제외**한다 — 거기서는 버튼이 이미 전폭 50:50 이라 라벨이 한 줄에 들어간다(실측 라벨 높이 18px = 1줄). `@media (min-width: 641px)` 로 감싸 숨김 규칙이 모바일까지 내려가지 않게 했다.
+- 라벨은 텍스트 노드라 CSS 로 감출 수 없어 **`<span class="memo-tool-txt">` 로 분리**했고, 아이콘만 남았을 때 접근성 이름이 사라지지 않도록 **두 버튼에 `aria-label` 추가**(종전에는 이름이 라벨 텍스트에서 왔다).
+- 컨테이너 쿼리 미지원 브라우저에서는 **종전 동작(개행) 그대로** — 기능 손실 없는 점진적 향상이다.
+
+### 폰트 미리보기 `한글 ABC 123` 제거
+
+마크업(`#memoFontPreview`) · CSS 2곳(`.memo-font-preview` + 모바일 숨김) · JS 갱신 2줄 + **한 번도 쓰이지 않던 `MEMO_FONT_PREVIEW_MAP`**(정의만 있고 참조 0) 까지 함께 지웠다. 폰트 선택 자체는 그대로다.
+
+부수 효과로 바에 ~68px 여유가 생겨 **기본 레이아웃에서는 640px 초과 구간에서 개행이 아예 사라졌다**(종전 660~700px 구간이 개행). 아이콘 전환이 실제로 필요한 곳은 좌우 분할 + 좁은 창 조합이다.
+
+### 검증
+
+- 헤드리스 Chrome 으로 **기본 12폭 × 분할 11폭** 전수 실측: 라벨 표시 구간에서 개행 0건, 숨김 구간에서 바 1줄 유지(26px), 모바일 전폭 버튼은 라벨 유지. 스크린샷 4종(넓은 기본 / 좁은 분할 / 좁은 기본 / 모바일) 육안 확인.
+- `AccountMemoTemplateSmokeTest` +2 — 라벨 span·aria-label 존재, 컨테이너 선언, `@container` 안의 숨김 규칙, **숨김이 `min-width:641px` 안에 있는지**(모바일 침범 방지), 미리보기 잔존 0. 테스트 489 → **491**건.
+
+**변경 파일:** `templates/account.html`, `test/.../AccountMemoTemplateSmokeTest.java`, `CLAUDE.md`
+
 ## [2026-08-30] 설정 화면 액션 버튼 크기 불일치 + Leak Rules 헤더 중복 카운트 제거
 
 **계기:** 사용자 제보 2건 — ① `/settings/rag` 의 Save All / Test Connection / Reload 버튼 크기가 서로 다르다 ② `/admin/leak-rules` 헤더의 `라이브러리 룰: 98 / Fallback 룰: 66` 라인이 아무 디자인 없이 글자만 찍힌다(탭 버튼에 이미 갯수가 있으니 삭제).

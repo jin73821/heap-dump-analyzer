@@ -1094,14 +1094,21 @@ function transferFile(btn, callback) {
                 // 총량 미상 — indeterminate 유지하고 받은 양만 표시
                 label.textContent = fmtMB(bytes) + ' 전송 중...';
             }
-        } catch (e) {}
+        } catch (e) {
+            // 진행률 프레임 하나만 건너뛴다 — 다음 프레임이 곧 갱신한다.
+            if (window.Common) Common.logIgnored('[Server] 전송 진행률 프레임 처리 실패', e);
+        }
     });
 
     es.addEventListener('done', function(ev) {
         doneReceived = true;
         es.close();
         var d = {};
-        try { d = JSON.parse(ev.data); } catch (e) {}
+        try { d = JSON.parse(ev.data); }
+        catch (e) {
+            // 완료 프레임을 못 읽으면 아래에서 '실패'로 표시된다 — 실제 결과와 다를 수 있어 반드시 남긴다.
+            if (window.Common) Common.logError('[Server] 전송 완료 프레임 파싱 실패 — 결과를 확인할 수 없다', e);
+        }
         if (d.success) {
             fill.classList.remove('indeterminate');
             fill.className = 'transfer-bar-fill done';
@@ -1277,7 +1284,10 @@ function loadScanErrors() {
         }
         panel.innerHTML = html;
         panel.style.display = 'block';
-    }).catch(function() {});
+    }).catch(function (e) {
+        // 스캔 오류 패널은 부가 정보 — 실패해도 목록 화면은 그대로 쓴다.
+        if (window.Common) Common.logIgnored('[Server] 스캔 오류 현황 조회 실패', e);
+    });
 }
 
 // 30초마다 에러 상태 갱신 — 유휴 시 자동 정지(세션 무동작 만료를 막지 않도록)

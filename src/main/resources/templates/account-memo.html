@@ -150,11 +150,11 @@
     <span style="margin-left:10px">Ctrl+S 로도 저장됩니다.</span>
 </div>
 
-<script src="/js/common.js?v=2026-08-29"></script>
+<script src="/js/common.js?v=2026-09-09"></script>
 <!-- 이 페이지는 배너가 없다(자립형 새창 — 함정 26). 세션 만료 시간과 타이머 모듈을 직접 실어야 한다. -->
 <script th:inline="javascript">window.SESSION_TIMEOUT_SECONDS = [[${sessionTimeoutSeconds}]];</script>
-<script src="/js/session-timeout.js?v=2026-08-23"></script>
-<script src="/js/memo.js?v=2026-08-12d"></script>
+<script src="/js/session-timeout.js?v=2026-09-09"></script>
+<script src="/js/memo.js?v=2026-09-09"></script>
 <!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (history·settings·account 와 공유) -->
 <script src="/js/krds-tooltip.js?v=2026-08-09"></script>
 <script th:inline="javascript">
@@ -396,12 +396,18 @@ function saveNow() {
 function onFontChange(val) {
     box.style.fontFamily = Memo.fontFamily(val);
     Memo.post('font', { font: val });
-    Memo.setFont(val).catch(function () { /* 폰트 저장 실패는 편집에 영향 없음 */ });
+    Memo.setFont(val).catch(function (e) {
+        /* 폰트 저장 실패는 편집에 영향 없음 */
+        if (window.Common) Common.logIgnored('[Memo] 메모장 폰트 저장 실패', e);
+    });
 }
 
 function onAutosaveToggle(on) {
     Memo.post('autosave', { on: on });
-    Memo.setAutosave(on).catch(function () { /* 토글 영속화 실패는 현재 창 동작에 영향 없음 */ });
+    Memo.setAutosave(on).catch(function (e) {
+        /* 토글 영속화 실패는 현재 창 동작에 영향 없음 */
+        if (window.Common) Common.logIgnored('[Memo] 자동 저장 설정 저장 실패', e);
+    });
     if (on && dirty) autosaver.schedule();
     else if (!on) autosaver.cancel();
 }

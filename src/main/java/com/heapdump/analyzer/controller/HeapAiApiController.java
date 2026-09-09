@@ -14,8 +14,10 @@ import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.SseJson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -712,6 +714,7 @@ public class HeapAiApiController {
         // 사이드카 기본값의 단일 출처 — 설정 화면 "사이드카 기본값 채우기" 가 이 값을 쓴다(JS 리터럴 금지).
         embedding.put("localOnnxDefaultUrl", EmbeddingService.LOCAL_ONNX_DEFAULT_URL);
         embedding.put("localOnnxDimension", EmbeddingService.LOCAL_ONNX_DIMENSION);
+        embedding.put("localOnnxModel", EmbeddingService.LOCAL_ONNX_MODEL);
         res.put("embedding", embedding);
 
         Map<String, Object> chroma = new LinkedHashMap<>();
@@ -770,15 +773,66 @@ public class HeapAiApiController {
         return ResponseEntity.ok(res);
     }
 
+    /**
+     * RAG 활성/비활성 토글. <b>실패를 실패라고 말하는 것</b>이 이 엔드포인트의 계약이다.
+     *
+     * <ul>
+     *   <li>{@code enabled} 누락/형식 오류 → <b>400</b>. 종전에는 {@code Boolean.TRUE.equals(null)}
+     *       이 false 라 <b>잘못된 요청 하나가 조용히 RAG 를 껐다.</b></li>
+     *   <li>설정 파일 기록 실패 → 200 이되 {@code persisted=false} + 경고 문구. 메모리에는 이미
+     *       반영됐으므로 {@code success=false} 로 돌리면 화면이 토글을 되돌려 <b>서버 상태와 어긋난다</b>.</li>
+     *   <li>감사 로그는 {@code by=} 를 반드시 남긴다 — "누가 RAG 를 껐나"를 추적할 수 있어야 한다.</li>
+     * </ul>
+     */
     @PostMapping("/api/settings/rag/enabled")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> setRagEnabled(@RequestBody Map<String, Object> body) {
-        boolean enabled = Boolean.TRUE.equals(body.get("enabled"));
-        analyzerService.setRagEnabled(enabled);
+    public ResponseEntity<Map<String, Object>> setRagEnabled(@RequestBody(required = false) Map<String, Object> body,
+                                                             Authentication authentication) {
+        Object raw = (body == null) ? null : body.get("enabled");
+        if (!(raw instanceof Boolean)) {
+            logger.warn("[RAG] action=toggle rejected reason=invalid-enabled raw={} by={}", raw, who(authentication));
+            return ResponseEntity.badRequest()
+                    .body(ragError("INVALID_REQUEST", "enabled 값(true/false)이 필요합니다."));
+        }
+        boolean requested = (Boolean) raw;
+        boolean before = ragConfig.isRagEnabled();
+
+        boolean persisted;
+        try {
+            persisted = analyzerService.setRagEnabled(requested);
+        } catch (RuntimeException e) {
+            logger.error("[RAG] action=toggle failed enabled={}->{} by={}",
+                    before, requested, who(authentication), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ragError("RAG_TOGGLE_FAILED", "RAG 설정을 변경하지 못했습니다: " + e.getMessage()));
+        }
+
+        boolean after = ragConfig.isRagEnabled();
+        logger.info("[RAG] action=toggle enabled={}->{} persisted={} by={}",
+                before, after, persisted, who(authentication));
+
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
-        res.put("enabled", ragConfig.isRagEnabled());
+        res.put("enabled", after);
+        res.put("persisted", persisted);
+        if (!persisted) {
+            // 로그에만 남기면 사용자는 저장된 줄 안다 — 재기동 때 되돌아간다는 사실을 화면에 알린다.
+            logger.error("[RAG] action=toggle 저장 실패 — 메모리에는 적용됨(enabled={}) / settings.json 기록 실패", after);
+            res.put("warning", "변경은 즉시 적용됐지만 설정 파일에 저장하지 못했습니다 — 재기동하면 이전 값으로 돌아갑니다.");
+        }
         return ResponseEntity.ok(res);
+    }
+
+    /** 감사 로그의 행위자. 컨벤션상 모든 mutation 로그에 {@code by=} 로 붙는다. */
+    private static String who(Authentication auth) { return auth != null ? auth.getName() : "unknown"; }
+
+    /** 오류 응답 3필드({@code success}/{@code code}/{@code error}) — SecurityConfig 의 API 오류와 같은 모양. */
+    private static Map<String, Object> ragError(String code, String message) {
+        Map<String, Object> err = new LinkedHashMap<>();
+        err.put("success", false);
+        err.put("code", code);
+        err.put("error", message);
+        return err;
     }
 
     @PostMapping("/api/settings/rag")

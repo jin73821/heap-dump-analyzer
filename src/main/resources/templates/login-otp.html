@@ -94,7 +94,10 @@
         if (window.history && window.history.replaceState && location.search.indexOf('error') >= 0) {
             window.history.replaceState({}, document.title, location.pathname);
         }
-    } catch (e) { /* 구형 브라우저 무시 */ }
+    } catch (e) {
+        /* 구형 브라우저 — 주소창에 파라미터가 남을 뿐 인증에는 지장이 없다 */
+        if (window.console && console.debug) console.debug('[LoginOtp] 주소 정리 실패(history 미지원):', e.message || e);
+    }
 })();
 
 (function () {

@@ -6,6 +6,11 @@
 
     var FN = typeof CORE_FILENAME !== 'undefined' ? CORE_FILENAME : '';
 
+    /* 삼킨 예외 기록 (2026-09-09) — Common 이 없으면 no-op */
+    var TAG = '[CoreDump]';
+    function ignored(where, e) { if (window.Common) window.Common.logIgnored(TAG + ' ' + where, e); }
+    function failed(where, e)  { if (window.Common) window.Common.logError(TAG + ' ' + where, e); }
+
     // ── 토스트 ───────────────────────────────────────────────────
     function toast(msg, type) {
         var wrap = document.getElementById('cdToastWrap');
@@ -103,7 +108,10 @@
         try {
             var rep = iframe && iframe.contentDocument && iframe.contentDocument.querySelector('.report');
             if (rep) rep.style.zoom = (_pdfZoom / 100);
-        } catch (e) { /* iframe 미로드 등 — 다음 load 시 재적용 */ }
+        } catch (e) {
+            /* iframe 미로드 등 — 다음 load 이벤트에서 재적용된다 */
+            ignored('PDF 미리보기 확대 적용 보류(iframe 미로드)', e);
+        }
     }
     function adjustCorePdfZoom(delta) {
         _pdfZoom = Math.min(200, Math.max(50, _pdfZoom + delta));
@@ -206,7 +214,8 @@
     }
     function setFrameDensity(mode, btn) {
         applyFrameDensity(mode);
-        try { localStorage.setItem('cdFrameDensity', mode); } catch (e) {}
+        try { localStorage.setItem('cdFrameDensity', mode); }
+        catch (e) { ignored('프레임 밀도 저장 실패(localStorage 차단)', e); }
     }
 
     // ── 소스 코드 뷰어 ───────────────────────────────────────────
@@ -226,7 +235,10 @@
         fetch('/api/core-dump/' + encodeURIComponent(FN) + '/source?location=' + encodeURIComponent(location) + '&context=6')
             .then(function (r) { return r.json(); })
             .then(function (d) { if (!d.error) container.innerHTML = '<div class="code-surface">' + renderSourceView(d) + '</div>'; })
-            .catch(function () {});
+            .catch(function (e) {
+                // 소스 자동 로드는 부가 기능 — 실패해도 화면은 그대로 둔다.
+                ignored('크래시 지점 소스 자동 로드 실패', e);
+            });
     }
     function loadFrameSource(btn) {
         var location = btn.dataset.location;
@@ -392,7 +404,10 @@
         if (!FN || typeof CORE_HAS_RESULT === 'undefined' || !CORE_HAS_RESULT || !window.Common) return;
         Common.fetchJSON('/api/core-dump/' + encodeURIComponent(FN) + '/ai-insight')
             .then(function (d) { if (d && d.found) renderCoreAiResult(d); })
-            .catch(function () {});
+            .catch(function (e) {
+                // 저장된 인사이트가 없거나 조회 실패 — 분석 시작 버튼은 그대로 쓸 수 있다.
+                ignored('저장된 코어 AI 인사이트 조회 실패', e);
+            });
     }
     function startCoreAiAnalysis() {
         if (!FN) { toast('파일명을 확인할 수 없습니다.', 'danger'); return; }
@@ -493,7 +508,10 @@
         _libsResult(summary + ' 재분석하면 번들이 적용됩니다.');
         var re = document.getElementById('libsReanalyzeBtn');
         if (re) re.style.display = '';
-        refreshLibsStatus().catch(function () {});
+        refreshLibsStatus().catch(function (e) {
+            // 번들 상태 갱신 실패 — 위 성공 메시지는 이미 표시했으므로 화면은 유지한다.
+            failed('라이브러리 번들 상태 갱신 실패 — 표시된 상태가 최신이 아닐 수 있다', e);
+        });
     }
     function collectLibs(btn) {
         _libsErr(''); _libsResult('');
@@ -580,7 +598,8 @@
 
         // 프레임 밀도 복원
         var savedDensity = 'default';
-        try { savedDensity = localStorage.getItem('cdFrameDensity') || 'default'; } catch (e) {}
+        try { savedDensity = localStorage.getItem('cdFrameDensity') || 'default'; }
+        catch (e) { ignored('프레임 밀도 복원 실패(localStorage 차단) — 기본값 사용', e); }
         if (savedDensity === 'compact') applyFrameDensity('compact');
 
         // Frame #0 locals 자동 확장

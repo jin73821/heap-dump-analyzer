@@ -4,6 +4,11 @@
 (function () {
     'use strict';
 
+    /* 삼킨 예외 기록 (2026-09-09) — Common 이 없으면 no-op */
+    var TAG = '[CoreDumpUpload]';
+    function ignored(where, e) { if (window.Common) window.Common.logIgnored(TAG + ' ' + where, e); }
+    function failed(where, e)  { if (window.Common) window.Common.logError(TAG + ' ' + where, e); }
+
     var _preloadedFilename = null;
     var _preloadedExecFilename = null;
     var _preloadedStatus = null;
@@ -274,17 +279,26 @@
         };
         xhr.onload = function () {
             if (xhr.status >= 200 && xhr.status < 300) {
+                var d = null;
+                try { d = JSON.parse(xhr.responseText); }
+                catch (e) {
+                    // 예전엔 삼키고 진행해 /core-dump/progress/undefined 로 이동했다.
+                    failed('업로드 응답 파싱 실패 — 이동하지 않는다', e);
+                }
+                if (!d || !d.filename) {
+                    uploadFailed('업로드는 끝났지만 서버 응답을 해석하지 못했습니다. 목록에서 상태를 확인해 주세요.');
+                    return;
+                }
                 if (fill) fill.style.width = '100%';
                 setUploadLabel('분석 진행 확인 →');
-                var d = {};
-                try { d = JSON.parse(xhr.responseText); } catch (e) {}
                 statusEl.textContent = '업로드 완료! 분석 페이지로 이동합니다...';
                 setTimeout(function () {
                     window.location.href = '/core-dump/progress/' + encodeURIComponent(d.filename);
                 }, 400);
             } else {
                 var msg = '서버 오류 (' + xhr.status + ')';
-                try { msg = JSON.parse(xhr.responseText).message || msg; } catch (e) {}
+                try { msg = JSON.parse(xhr.responseText).message || msg; }
+                catch (e) { ignored('오류 응답이 JSON 이 아님 — HTTP 상태 문구를 쓴다', e); }
                 uploadFailed(msg);
             }
         };

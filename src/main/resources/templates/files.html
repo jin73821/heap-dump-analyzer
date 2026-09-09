@@ -1735,7 +1735,10 @@ function pollInProgress() {
     fetch('/api/queue/status', { credentials: 'same-origin' })
         .then(function(r) { return r.json(); })
         .then(function(d) { applyInProgress(d.inProgressFiles || []); })
-        .catch(function() {});
+        .catch(function (e) {
+            /* 진행 중 표시 갱신 실패 — 다음 폴링에서 복구된다 */
+            if (window.Common) Common.logIgnored('[Files] 분석 진행 상태 조회 실패', e);
+        });
 }
 
 initRows();

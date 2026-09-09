@@ -14,6 +14,11 @@
     var Memo = {};
     window.Memo = Memo;
 
+    /* 삼킨 예외 기록 (2026-09-09) — common.js 가 없으면 no-op.
+       account.html·account-memo.html 모두 common.js 를 먼저 싣는다. */
+    var TAG = '[Memo]';
+    function ignored(where, e) { if (window.Common) window.Common.logIgnored(TAG + ' ' + where, e); }
+
     /** 저장 한도 — UserService.MEMO_MAX_BYTES 미러 */
     Memo.MAX = 10 * 1024 * 1024;
 
@@ -87,7 +92,10 @@
             try {
                 var j = JSON.parse(e.body);
                 if (j && (j.error || j.message)) return j.error || j.message;
-            } catch (_) { /* raw text */ }
+            } catch (_) {
+                /* JSON 이 아니면(프록시 오류 페이지 등) 원문을 그대로 보여준다 */
+                ignored('오류 응답 본문이 JSON 이 아님 — 원문 노출', _);
+            }
             return e.body;
         }
         return e.message || '';
@@ -176,8 +184,13 @@
                 credentials: 'same-origin',
                 keepalive: true,
                 body: JSON.stringify({ memo: v })
-            }).catch(function () { /* 이탈 중이라 UI 표시 불가 — 조용히 무시 */ });
-        } catch (e) { /* 동일 */ }
+            }).catch(function (e) {
+                /* 이탈 중이라 UI 표시가 불가능 — 기록만 남긴다 */
+                ignored('이탈 시 메모 저장 요청 실패', e);
+            });
+        } catch (e) {
+            ignored('이탈 시 메모 저장 호출 실패', e);
+        }
     };
 
     // ── 변경 이력 API ──────────────────────────────────────────
@@ -225,7 +238,11 @@
     function dispatch(msg) {
         if (!msg || msg.sender === SENDER) return;
         for (var i = 0; i < listeners.length; i++) {
-            try { listeners[i](msg); } catch (e) { /* 한 리스너 실패가 나머지를 막지 않도록 */ }
+            try { listeners[i](msg); }
+            catch (e) {
+                /* 한 리스너 실패가 나머지를 막지 않도록 격리 */
+                if (window.Common) window.Common.logError(TAG + ' 창간 메시지 리스너 실패 — type=' + msg.type, e);
+            }
         }
     }
 
@@ -235,7 +252,8 @@
     // BroadcastChannel 미지원 브라우저 폴백 — storage 이벤트는 '다른 창'에서만 발생
     window.addEventListener('storage', function (ev) {
         if (ev.key !== LS_KEY || !ev.newValue) return;
-        try { dispatch(JSON.parse(ev.newValue)); } catch (e) { /* 손상 값 무시 */ }
+        try { dispatch(JSON.parse(ev.newValue)); }
+        catch (e) { ignored('storage 폴백 메시지 파싱 실패(손상 값)', e); }
     });
 
     /**
@@ -245,12 +263,16 @@
     Memo.post = function (type, payload) {
         var msg = { sender: SENDER, type: type, payload: payload };
         if (bc) {
-            try { bc.postMessage(msg); return; } catch (e) { /* 폴백으로 */ }
+            try { bc.postMessage(msg); return; }
+            catch (e) { ignored('BroadcastChannel 전송 실패 — storage 폴백 사용', e); }
         }
         try {
             localStorage.setItem(LS_KEY, JSON.stringify(msg));
             localStorage.removeItem(LS_KEY);   // 다음 동일 값 전송도 이벤트가 발생하도록 정리
-        } catch (e) { /* 스토리지 불가 환경 — 동기화 없이 각자 동작 */ }
+        } catch (e) {
+            /* 스토리지 불가 환경 — 창간 동기화 없이 각자 동작한다 */
+            ignored('storage 폴백 전송 실패(localStorage 차단) — type=' + type, e);
+        }
     };
 
     Memo.onMessage = function (fn) { listeners.push(fn); };
@@ -263,7 +285,7 @@
 
     Memo.stashDraft = function (username, text) {
         try { localStorage.setItem(draftKey(username), text == null ? '' : text); }
-        catch (e) { /* 저장 실패 시 새창은 서버 저장본으로 시작 */ }
+        catch (e) { ignored('초안 인계 저장 실패 — 새 창은 서버 저장본으로 시작한다', e); }
     };
 
     /** 초안을 읽고 즉시 제거 (1회성 인계). 없으면 null. */
@@ -286,7 +308,10 @@
         try {
             localStorage.setItem(backupKey(username),
                 JSON.stringify({ text: text == null ? '' : text, at: Memo.localTs() }));
-        } catch (e) { /* 용량 초과 등 — 창에는 내용이 남아 있으므로 치명적이지 않음 */ }
+        } catch (e) {
+            /* 용량 초과 등 — 창에는 내용이 남아 있어 치명적이지는 않다 */
+            if (window.Common) window.Common.logError(TAG + ' 미저장 메모 백업 실패 — 창을 닫으면 내용이 사라진다', e);
+        }
     };
 
     /** 백업을 읽되 제거하지는 않는다 (복구 여부는 사용자가 선택). {text, at} 또는 null */
@@ -298,7 +323,8 @@
     };
 
     Memo.clearBackup = function (username) {
-        try { localStorage.removeItem(backupKey(username)); } catch (e) { /* 무시 */ }
+        try { localStorage.removeItem(backupKey(username)); }
+        catch (e) { ignored('백업 삭제 실패(localStorage 차단)', e); }
     };
 
     // ── 복구 되돌리기 (undo) ────────────────────────────────────
@@ -325,7 +351,8 @@
     };
 
     Memo.clearUndo = function (username) {
-        try { localStorage.removeItem(undoKey(username)); } catch (e) { /* 무시 */ }
+        try { localStorage.removeItem(undoKey(username)); }
+        catch (e) { ignored('되돌리기 데이터 삭제 실패(localStorage 차단)', e); }
     };
 
     // ── 백업 내용 뷰어 (모달) ───────────────────────────────────

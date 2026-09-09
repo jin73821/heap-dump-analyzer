@@ -606,12 +606,9 @@ public class ServerController {
         return sw.toString();
     }
 
+    /** RFC 4180 이스케이프. 규칙은 {@link com.heapdump.analyzer.util.CsvCodec#cell} 단일 출처에 있다. */
     private static String csvCell(Object v) {
-        if (v == null) return "";
-        String s = String.valueOf(v);
-        boolean needsQuote = s.indexOf(',') >= 0 || s.indexOf('"') >= 0 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0;
-        if (!needsQuote) return s;
-        return "\"" + s.replace("\"", "\"\"") + "\"";
+        return com.heapdump.analyzer.util.CsvCodec.cell(v);
     }
 
     private String renderJson(List<TransferLogItem> items) {

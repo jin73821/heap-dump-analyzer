@@ -42,6 +42,12 @@
 
     if (global.SessionTimeout) return;   // 싱글턴 — 중복 로드 방어
 
+    /* 삼킨 예외 기록 (2026-09-09) — Common 이 없으면 조용히 no-op.
+       common.js 는 banner.html·account-memo.html 에서 이 파일보다 먼저 로드된다. */
+    var TAG = '[SessionTimeout]';
+    function ignored(where, e) { if (global.Common) global.Common.logIgnored(TAG + ' ' + where, e); }
+    function failed(where, e)  { if (global.Common) global.Common.logError(TAG + ' ' + where, e); }
+
     /* ── 튜너블 ──────────────────────────────────────────── */
     var WARN_BEFORE_MS            = 60000;   // 만료 몇 ms 전에 경고 모달을 띄우는가
     var IDLE_POLL_STOP_MS         = 120000;  // 이만큼 유휴하면 배경 폴러 정지 (서버 세션도 만료되게)
@@ -90,7 +96,10 @@
                 var s = JSON.parse(raw);
                 if (s && s.v === 1) return s;
             }
-        } catch (e) { /* 프라이빗 모드 등 — 탭 로컬 폴백 */ }
+        } catch (e) {
+            /* 프라이빗 모드 등 — 탭 로컬 폴백 */
+            ignored('상태 복원 실패(localStorage 차단) — 탭 로컬 폴백', e);
+        }
         if (!_memState) _memState = freshState();
         return _memState;
     }
@@ -102,19 +111,22 @@
 
     function writeState(s) {
         _memState = s;
-        try { global.localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch (e) { /* 폴백 유지 */ }
+        try { global.localStorage.setItem(LS_KEY, JSON.stringify(s)); }
+        catch (e) { ignored('상태 저장 실패(localStorage 차단) — 탭 로컬 폴백 유지', e); }
     }
 
     function clearState() {
         _memState = null;
-        try { global.localStorage.removeItem(LS_KEY); } catch (e) { }
+        try { global.localStorage.removeItem(LS_KEY); }
+        catch (e) { ignored('상태 삭제 실패(localStorage 차단)', e); }
     }
 
     function post(type, extra) {
         if (!_bc) return;
         var msg = { type: type, at: now() };
         if (extra) for (var k in extra) if (extra.hasOwnProperty(k)) msg[k] = extra[k];
-        try { _bc.postMessage(msg); } catch (e) { /* 채널 닫힘 무시 */ }
+        try { _bc.postMessage(msg); }
+        catch (e) { ignored('탭 간 통지 실패(채널 닫힘) — type=' + type, e); }
     }
 
     /* ── 활동 기록 ───────────────────────────────────────── */
@@ -159,14 +171,16 @@
     ST.hasActiveWork = function () {
         var any = false;
         for (var i = 0; i < _guards.length; i++) {
-            try { if (_guards[i]()) { any = true; break; } } catch (e) { /* 가드 오류는 없는 셈 */ }
+            try { if (_guards[i]()) { any = true; break; } }
+            catch (e) { failed('활동 가드 실행 실패 — 진행 중 작업이 없는 것으로 간주한다', e); }
         }
         if (!any) { _guardHoldSince = 0; _guardWarned = false; return false; }
         if (!_guardHoldSince) _guardHoldSince = now();
         if (now() - _guardHoldSince > GUARD_MAX_HOLD_MS) {
             if (!_guardWarned) {
                 _guardWarned = true;
-                try { global.console.warn('[SessionTimeout] 진행 중 작업 가드가 8시간을 넘겨 무시합니다.'); } catch (e) { }
+                /* console 자체가 없는 환경 — 더 할 수 있는 일이 없다 */
+                try { global.console.warn(TAG + ' 진행 중 작업 가드가 8시간을 넘겨 무시합니다.'); } catch (e) { return false; }
             }
             return false;
         }
@@ -192,7 +206,8 @@
             if (!_navBlocks.length) return true;
         }
         for (var i = 0; i < _navBlocks.length; i++) {
-            try { if (_navBlocks[i]()) return true; } catch (e) { /* 오류는 차단 아님 */ }
+            try { if (_navBlocks[i]()) return true; }
+            catch (e) { failed('이동 차단 술어 실행 실패 — 차단하지 않는다', e); }
         }
         return false;
     }
@@ -231,7 +246,8 @@
         var timer = global.setInterval(function () {
             if (!ST.shouldPoll()) { ran = false; return; }
             if (!ran) { ran = true; }
-            try { fn(); } catch (e) { /* 호출자 오류 격리 */ }
+            try { fn(); }
+            catch (e) { failed('주기 실행 콜백 실패 — 폴링은 계속한다', e); }
             ST.noteServerTouch();
         }, ms);
         var handle = {
@@ -243,7 +259,8 @@
 
     function stopAllManaged() {
         for (var i = 0; i < _managed.length; i++) {
-            try { _managed[i].stop(); } catch (e) { }
+            try { _managed[i].stop(); }
+            catch (e) { ignored('관리 폴러 정지 실패', e); }
         }
     }
 
@@ -343,7 +360,8 @@
         var ov = buildModal();
         ov.classList.add('open');
         // 포커스를 연장 버튼에 둬서 Enter/Space 로 바로 연장할 수 있게 한다
-        try { ov.querySelector('.sto-extend').focus(); } catch (e) { }
+        try { ov.querySelector('.sto-extend').focus(); }
+        catch (e) { ignored('경고 모달 연장 버튼 포커스 실패', e); }
         retick(TICK_WARN_MS);
     }
 
@@ -388,13 +406,16 @@
             var s = readState();
             s.expiredAt = now();
             writeState(s);
-        } catch (e) { }
+        } catch (e) {
+            ignored('만료 시각 공유 상태 기록 실패(localStorage 차단)', e);
+        }
         post('expired', { reason: reason });
 
         // 2) 만료 훅 — 메모 페이지는 여기서 localStorage 백업을 남긴다.
         //    이동보다 **먼저** 돌려야 작성 중이던 내용이 보존된다.
         for (var i = 0; i < _expireHooks.length; i++) {
-            try { _expireHooks[i](reason); } catch (e) { }
+            try { _expireHooks[i](reason); }
+            catch (e) { failed('만료 훅 실행 실패 — 작성 중이던 내용이 백업되지 않았을 수 있다', e); }
         }
 
         hideWarn();
@@ -410,23 +431,30 @@
         //    그러면 자동 이동이 통째로 무산된다(게다가 함정 36 대로 스피너가 남는다).
         //    프로퍼티 대입형(upload-queue.js:466)은 여기서 지워지지만, addEventListener 형은
         //    외부에서 제거할 수 없어 각 핸들러가 isExpiring() 을 보고 스스로 빠져야 한다.
-        try { global.onbeforeunload = null; } catch (e) { }
+        try { global.onbeforeunload = null; }
+        catch (e) { ignored('onbeforeunload 해제 실패', e); }
         if (typeof global.disableUnloadGuards === 'function') {
-            try { global.disableUnloadGuards(); } catch (e) { }
+            try { global.disableUnloadGuards(); }
+            catch (e) { ignored('페이지 이탈 가드 해제 실패', e); }
         }
-        try { global.localStorage.removeItem(BANNER_CACHE_KEY); } catch (e) { }
+        try { global.localStorage.removeItem(BANNER_CACHE_KEY); }
+        catch (e) { ignored('배너 상태 캐시 삭제 실패(localStorage 차단)', e); }
 
         // 5) 로그아웃 후 이동. 응답을 기다리되 watchdog 으로 반드시 이동한다.
         var token = null, header = 'X-CSRF-TOKEN';
         try {
             if (global.Common) { token = global.Common.csrfToken(); header = global.Common.csrfHeaderName(); }
-        } catch (e) { }
+        } catch (e) {
+            ignored('CSRF 토큰 조회 실패 — 토큰 없이 로그아웃을 시도한다', e);
+        }
         var opts = { method: 'POST', credentials: 'same-origin', keepalive: true, redirect: 'manual' };
         if (token) { opts.headers = {}; opts.headers[header] = token; }
 
         global.setTimeout(navigate, NAV_WATCHDOG_MS);
         try {
-            global.fetch(LOGOUT_URL, opts).catch(function () { }).then(navigate);
+            global.fetch(LOGOUT_URL, opts)
+                .catch(function (e) { ignored('로그아웃 요청 실패 — 이동은 그대로 진행한다', e); })
+                .then(navigate);
         } catch (e) { navigate(); }
     };
 
@@ -496,7 +524,8 @@
         s.lastActivityAt = now();
         writeState(s);
 
-        try { _bc = new global.BroadcastChannel(BC_NAME); } catch (e) { _bc = null; }
+        try { _bc = new global.BroadcastChannel(BC_NAME); }
+        catch (e) { _bc = null; ignored('BroadcastChannel 미지원 — 탭 간 동기화 없이 동작한다', e); }
         if (_bc) {
             _bc.onmessage = function (ev) {
                 var d = ev && ev.data;

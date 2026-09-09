@@ -775,7 +775,11 @@ function fallbackCopy(text) {
     var ta = document.createElement('textarea');
     ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); flashCopied(); } catch(_) {}
+    try { document.execCommand('copy'); flashCopied(); }
+    catch (_) {
+        /* 복사 폴백까지 실패 — 사용자가 직접 선택해 복사해야 한다 */
+        if (window.Common) Common.logError('[ServerLogs] 클립보드 복사 폴백 실패', _);
+    }
     document.body.removeChild(ta);
 }
 function flashCopied() {

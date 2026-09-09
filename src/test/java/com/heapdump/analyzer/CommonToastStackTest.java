@@ -74,7 +74,7 @@ class CommonToastStackTest {
         // 캐시 키가 갈라지면 한 페이지만 옛 common.js 를 받아 겹침이 남는다.
         String banner = resource("/templates/fragments/banner.html");
         String memo = resource("/templates/account-memo.html");
-        String key = "/js/common.js?v=2026-08-29";
+        String key = "/js/common.js?v=2026-09-09";
         assertTrue(banner.contains(key), "banner.html 의 common.js 캐시 키가 갱신되지 않았다");
         assertTrue(memo.contains(key), "account-memo.html 의 common.js 캐시 키가 갱신되지 않았다");
     }

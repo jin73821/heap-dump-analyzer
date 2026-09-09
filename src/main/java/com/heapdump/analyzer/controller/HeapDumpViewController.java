@@ -15,6 +15,7 @@ import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.LlmConfigService;
 import com.heapdump.analyzer.service.HeapHistoryAggregator;
+import com.heapdump.analyzer.service.RagConfigService;
 import com.heapdump.analyzer.service.PdfReportService;
 import com.heapdump.analyzer.util.AuthUtil;
 import com.heapdump.analyzer.util.FilenameValidator;
@@ -52,6 +53,7 @@ public class HeapDumpViewController {
     private final HeapHistoryAggregator aggregator;
     private final ComparisonHistoryService comparisonHistoryService;
     private final CoreDumpAnalyzerService coreDumpService;
+    private final RagConfigService ragConfig;
 
     public HeapDumpViewController(HeapDumpAnalyzerService analyzerService,
                                   LlmConfigService llmConfig,
@@ -59,7 +61,8 @@ public class HeapDumpViewController {
                                   PdfReportService pdfReportService,
                                   HeapHistoryAggregator aggregator,
                                   ComparisonHistoryService comparisonHistoryService,
-                                  CoreDumpAnalyzerService coreDumpService) {
+                                  CoreDumpAnalyzerService coreDumpService,
+                                  RagConfigService ragConfig) {
         this.analyzerService = analyzerService;
         this.llmConfig = llmConfig;
         this.config = config;
@@ -67,6 +70,7 @@ public class HeapDumpViewController {
         this.aggregator = aggregator;
         this.comparisonHistoryService = comparisonHistoryService;
         this.coreDumpService = coreDumpService;
+        this.ragConfig = ragConfig;
     }
 
     // ── 메인 페이지 ──────────────────────────────────────────────
@@ -483,6 +487,9 @@ public class HeapDumpViewController {
     @GetMapping("/settings/rag")
     public String ragSettingsPage(Model model, Authentication authentication) {
         model.addAttribute("isAdmin", AuthUtil.isAdmin(authentication));
+        // RAG OFF 면 설정 카드가 잠긴 채로 렌더돼야 한다 — JS 로만 잠그면 /api/settings/rag
+        // 응답이 올 때까지 편집 가능한 화면이 잠깐 보인다.
+        model.addAttribute("ragEnabled", ragConfig.isRagEnabled());
         return "rag-settings";
     }
 

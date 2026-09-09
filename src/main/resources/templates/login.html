@@ -219,7 +219,10 @@
                     || location.search.indexOf('expired') >= 0 || location.search.indexOf('ssoNotice') >= 0)) {
             window.history.replaceState({}, document.title, location.pathname);
         }
-    } catch (e) { /* 구형 브라우저 무시 */ }
+    } catch (e) {
+        /* 구형 브라우저 — 주소창에 파라미터가 남을 뿐 로그인에는 지장이 없다 */
+        if (window.console && console.debug) console.debug('[Login] 주소 정리 실패(history 미지원):', e.message || e);
+    }
 })();
 
 (function () {
@@ -240,7 +243,10 @@
                 passwordEl.focus();
             }
         }
-    } catch (e) { /* localStorage 비활성/차단 환경 무시 */ }
+    } catch (e) {
+        /* localStorage 차단 환경 — 아이디 기억 기능만 동작하지 않는다 */
+        if (window.console && console.debug) console.debug('[Login] 저장된 아이디 복원 실패:', e.message || e);
+    }
 
     formEl.addEventListener('submit', function () {
         try {
@@ -249,7 +255,10 @@
             } else {
                 localStorage.removeItem(STORAGE_KEY);
             }
-        } catch (e) { /* 저장 실패해도 로그인은 진행 */ }
+        } catch (e) {
+            /* 저장에 실패해도 로그인 자체는 그대로 진행한다 */
+            if (window.console && console.debug) console.debug('[Login] 아이디 기억 저장 실패:', e.message || e);
+        }
 
         var btn = formEl.querySelector('button[type="submit"]');
         if (btn) btn.classList.add('loading');

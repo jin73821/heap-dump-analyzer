@@ -13,7 +13,9 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -302,6 +304,8 @@ public class ChromaSearchService {
             chroma.put("url", ragConfig.getRagChromaUrl());
             chroma.put("apiVersion", t.get("apiVersion"));
             chroma.put("collectionName", t.get("collectionName"));
+            // 컬렉션 조회에 실패하면 collectionName 이 비므로 화면이 "무엇을 못 찾았는지" 말할 수 있게 설정값을 따로 싣는다.
+            chroma.put("configuredCollection", ragConfig.getRagChromaCollection());
             chroma.put("collectionId", t.get("collectionId"));
             Long count = parseLong(t.get("count"));
             chroma.put("count", count);
@@ -424,6 +428,113 @@ public class ChromaSearchService {
         w.put("level", level);
         w.put("message", message);
         return w;
+    }
+
+    // ── 색인 현황 (source_type 별 집계) ────────────────────────────
+
+    /** 한 번에 끌어올 메타데이터 상한. 실측 834청크 기준 217KB / 50~140ms 라 1회 호출로 충분하다. */
+    static final int STATS_MAX_ITEMS = 20_000;
+
+    /**
+     * 컬렉션 전체 메타를 1회 조회해 {@code source_type} 별로 집계한다.
+     * {@code indexer.py --stats} 와 같은 값을 화면에서 보기 위한 것이다.
+     *
+     * <p>실패해도 예외를 던지지 않는다 — 상태 패널과 같은 계약으로 본문에 {@code error} 를 담는다.
+     */
+    public Map<String, Object> sourceTypeStats() {
+        Map<String, Object> res = new LinkedHashMap<>();
+        try {
+            String url = ragConfig.getRagChromaUrl();
+            String collection = ragConfig.getRagChromaCollection();
+            if (url == null || url.isBlank() || collection == null || collection.isBlank()) {
+                res.put("success", false);
+                res.put("error", "Chroma URL 또는 컬렉션이 설정되지 않았습니다");
+                return res;
+            }
+            int timeoutSec = Math.min(Math.max(1, ragConfig.getRagChromaTimeoutSeconds()), STATUS_PROBE_MAX_SECONDS);
+            String authType = ragConfig.getRagChromaAuthType();
+            String token = ragConfig.getRagChromaToken();
+            boolean sslVerify = ragConfig.isRagChromaSslVerify();
+            String base = base(url, ragConfig.getRagChromaApiPath(),
+                    ragConfig.getRagChromaTenant(), ragConfig.getRagChromaDatabase());
+            String key = base + "|" + collection;
+            String id = resolveCollectionId(base, collection, key, authType, token, sslVerify, timeoutSec);
+
+            // ⚠ count 를 먼저 읽는다 — 상한을 넘으면 집계가 조용히 과소보고되므로 partial 로 알린다.
+            long total = 0L;
+            try {
+                total = Long.parseLong(get(base + "/collections/" + enc(id) + "/count",
+                        authType, token, sslVerify, timeoutSec).trim());
+            } catch (Exception ignore) { /* count 실패는 치명적이지 않다 */ }
+
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("include", List.of("metadatas"));
+            body.put("limit", STATS_MAX_ITEMS);
+            String raw = post(base + "/collections/" + enc(id) + "/get",
+                    mapper.writeValueAsString(body), authType, token, sslVerify, timeoutSec);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> json = mapper.readValue(raw, Map.class);
+
+            Map<String, Object> agg = aggregateSourceTypes(json);
+            res.putAll(agg);
+            res.put("success", true);
+            res.put("collection", collection);
+            res.put("totalChunks", total > 0 ? total : agg.get("scanned"));
+            res.put("partial", total > STATS_MAX_ITEMS);
+        } catch (Exception e) {
+            logger.warn("[Chroma] 색인 현황 집계 실패: {}", e.toString());
+            res.put("success", false);
+            res.put("error", "색인 현황 조회 실패: " + e.getMessage());
+        }
+        return res;
+    }
+
+    /**
+     * {@code /get} 응답 → source_type 별 집계. <b>순수 함수</b>(테스트 경계).
+     *
+     * <p>{@code docs} 는 청크 id 의 {@code #n} 접미사를 떼고 센 <b>문서 수</b>다 — 청크 수만
+     * 보여주면 "834건" 이 문서 수로 오해된다(실제 문서는 365건).
+     */
+    static Map<String, Object> aggregateSourceTypes(Map<String, Object> getResponse) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        List<?> ids = getResponse.get("ids") instanceof List ? (List<?>) getResponse.get("ids") : List.of();
+        List<?> metas = getResponse.get("metadatas") instanceof List ? (List<?>) getResponse.get("metadatas") : List.of();
+
+        Map<String, Integer> chunks = new LinkedHashMap<>();
+        Map<String, Integer> synthetic = new LinkedHashMap<>();
+        Map<String, Set<String>> docIds = new LinkedHashMap<>();
+
+        for (int i = 0; i < metas.size(); i++) {
+            Object mo = metas.get(i);
+            if (!(mo instanceof Map)) continue;
+            @SuppressWarnings("unchecked")
+            Map<String, Object> m = (Map<String, Object>) mo;
+            String st = m.get("source_type") == null ? "(미상)" : String.valueOf(m.get("source_type"));
+            chunks.merge(st, 1, Integer::sum);
+            if (Boolean.TRUE.equals(m.get("synthetic"))) synthetic.merge(st, 1, Integer::sum);
+
+            String rawId = i < ids.size() && ids.get(i) != null ? String.valueOf(ids.get(i)) : null;
+            String origin = rawId == null ? String.valueOf(m.get("origin_id"))
+                    : (rawId.contains("#") ? rawId.substring(0, rawId.lastIndexOf('#')) : rawId);
+            docIds.computeIfAbsent(st, k -> new LinkedHashSet<>()).add(origin);
+        }
+
+        List<Map<String, Object>> sources = new ArrayList<>();
+        chunks.entrySet().stream()
+                .sorted((a, b) -> Integer.compare(b.getValue(), a.getValue()))
+                .forEach(e -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("sourceType", e.getKey());
+                    row.put("chunks", e.getValue());
+                    row.put("docs", docIds.getOrDefault(e.getKey(), Set.of()).size());
+                    row.put("syntheticChunks", synthetic.getOrDefault(e.getKey(), 0));
+                    row.put("excluded", EXCLUDED_SOURCE_TYPES.contains(e.getKey()));
+                    sources.add(row);
+                });
+        out.put("sources", sources);
+        out.put("scanned", metas.size());
+        out.put("syntheticTotal", synthetic.values().stream().mapToInt(Integer::intValue).sum());
+        return out;
     }
 
     private static Long parseLong(Object v) {

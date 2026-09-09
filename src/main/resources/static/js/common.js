@@ -12,6 +12,32 @@
 
     var Common = global.Common || {};
 
+    /*
+     * 삼킨 예외를 남기는 두 헬퍼 (2026-09-09 정적분석 04.02 조치).
+     *
+     * 빈 catch 는 "정상 폴백"과 "조용한 실패"를 구분할 수 없게 만든다 —
+     * 최소한 무엇을 흡수했는지는 남긴다. 두 함수 모두 **스스로 throw 하지 않도록**
+     * typeof 가드만 쓴다(내부에 try 를 두면 그 catch 가 다시 빈 블록이 된다).
+     *
+     *   logIgnored — 기능적으로 정당한 폴백(스토리지 차단·구형 브라우저 등).
+     *                console.debug 라 브라우저 기본 로그 레벨에서는 보이지 않는다.
+     *   logError   — 흡수했지만 알려야 하는 오류. console.warn.
+     */
+    Common.logIgnored = function (tag, e) {
+        if (global.console && global.console.debug) {
+            global.console.debug(tag + ' 예외를 폴백 처리:', (e && e.message) || e);
+        }
+    };
+
+    Common.logError = function (tag, e) {
+        if (global.console && global.console.warn) {
+            global.console.warn(tag + ' 오류:', (e && e.message) || e);
+        }
+    };
+
+    /* common.js 자신은 Common 이 아직 완성되기 전에도 쓰므로 지역 별칭을 둔다. */
+    function ignored(where, e) { Common.logIgnored('[Common] ' + where, e); }
+
     /**
      * HTML 이스케이프 — `&`, `<`, `>`, `"`, `'` 를 안전한 문자 참조로 변환.
      * null/undefined 는 빈 문자열로 처리.
@@ -65,7 +91,8 @@
                     var limited = r.status === 429;
                     var msg = null;
                     if (limited) {
-                        try { msg = (JSON.parse(t) || {}).error; } catch (e) { /* JSON 아님 → 기본 문구 */ }
+                        try { msg = (JSON.parse(t) || {}).error; }
+                        catch (e) { ignored('429 응답 본문 파싱 — JSON 아님, 기본 문구 사용', e); }
                         if (!msg) msg = '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.';
                     }
                     var err = new Error(expired
@@ -160,7 +187,10 @@
     Common.flashToast = function (msg, type) {
         try {
             sessionStorage.setItem('commonFlashToast', JSON.stringify({ m: msg, t: type || 'success' }));
-        } catch (e) { /* 프라이빗 모드 등 저장 불가 시 무시 — 피드백만 유실 */ }
+        } catch (e) {
+            /* 프라이빗 모드 등 저장 불가 — 피드백만 유실되고 동작은 계속된다 */
+            ignored('flashToast 저장 실패(sessionStorage 차단)', e);
+        }
     };
 
     /* 페이지 로드 시 대기 중인 토스트 표시:
@@ -174,7 +204,9 @@
                 var d = JSON.parse(raw);
                 if (d && d.m) Common.toast(d.m, d.t);
             }
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+            ignored('대기 중 토스트 복원 실패(sessionStorage 차단·손상 값)', e);
+        }
         var els = document.querySelectorAll('.flash-data[data-msg]');
         Array.prototype.forEach.call(els, function (el, i) {
             var msg = el.getAttribute('data-msg');

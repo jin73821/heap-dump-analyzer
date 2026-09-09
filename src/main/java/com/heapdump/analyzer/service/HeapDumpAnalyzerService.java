@@ -1908,8 +1908,20 @@ public class HeapDumpAnalyzerService {
         logger.info("[Settings] Restored {}={}", key, b);
     }
 
-    private void persistSettings() {
+    /**
+     * 런타임 설정을 settings.json 에 기록하고 application.properties 를 동기화한다.
+     *
+     * <p>⚠ <b>실패해도 예외를 던지지 않는다</b> — 기동 경로(loadPersistedSettings 의 레거시 봉인·
+     * 손상 복구)에서도 호출되기 때문에 여기서 던지면 앱이 뜨지 않는다. 대신 성공 여부를 돌려주어
+     * 호출자가 "메모리에는 반영됐지만 재기동하면 사라진다"는 사실을 사용자에게 알릴 수 있게 한다
+     * (2026-09-02 — 종전에는 IOException 을 삼켜 화면에 '저장 완료'가 떴다).
+     * 반환값을 무시하는 기존 호출자는 종전과 동일하게 동작한다.
+     *
+     * @return settings.json 에 실제로 기록됐으면 true
+     */
+    private boolean persistSettings() {
         File file = getSettingsFile();
+        boolean persisted = false;
         try {
             // data 디렉토리가 없으면 생성
             File parentDir = file.getParentFile();
@@ -1918,7 +1930,7 @@ public class HeapDumpAnalyzerService {
                     logger.info("[Settings] Created data directory: {}", parentDir.getAbsolutePath());
                 } else {
                     logger.error("[Settings] Failed to create data directory: {}", parentDir.getAbsolutePath());
-                    return;
+                    return false;
                 }
             }
 
@@ -1939,6 +1951,7 @@ public class HeapDumpAnalyzerService {
             passwordPolicyConfig.collectSettings(settings);
             remoteDumpService.collectSettings(settings);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
+            persisted = true;
             logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
         } catch (IOException e) {
             logger.error("[Settings] Failed to persist settings: {}", e.getMessage());
@@ -1946,6 +1959,7 @@ public class HeapDumpAnalyzerService {
 
         // application.properties도 동기화
         syncApplicationProperties();
+        return persisted;
     }
 
     /**
@@ -2098,9 +2112,10 @@ public class HeapDumpAnalyzerService {
 
     // ── RAG 설정 setter — RagConfigService 위임 + persistSettings 부수효과.
     //    getter 는 2026-08-02 제거: 소비처가 RagConfigService 직접 주입.
-    public void setRagEnabled(boolean enabled) {
+    /** @return settings.json 기록 성공 여부 — false 면 재기동 시 이전 값으로 돌아간다. */
+    public boolean setRagEnabled(boolean enabled) {
         ragConfig.setRagEnabled(enabled);
-        persistSettings();
+        return persistSettings();
     }
 
     public void setRagConfig(String url, String authType, String username,
