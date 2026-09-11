@@ -2,10 +2,10 @@ package com.heapdump.analyzer.config;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
+import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.MimeMappings;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
-import org.springframework.boot.web.servlet.server.ConfigurableServletWebServerFactory;
+import org.springframework.boot.web.server.servlet.ConfigurableServletWebServerFactory;
 import org.springframework.http.MediaType;
 
 import java.nio.charset.StandardCharsets;
@@ -35,7 +35,8 @@ class StaticResourceCharsetConfigTest {
                 new StaticResourceCharsetConfig().staticResourceCharsetCustomizer();
         TomcatServletWebServerFactory factory = new TomcatServletWebServerFactory();
         customizer.customize(factory);
-        return factory.getMimeMappings();
+        // Boot 4: 매핑은 팩토리가 아니라 ServletWebServerSettings 가 보유한다
+        return factory.getSettings().getMimeMappings();
     }
 
     // ── charset 명시 ────────────────────────────────────────────

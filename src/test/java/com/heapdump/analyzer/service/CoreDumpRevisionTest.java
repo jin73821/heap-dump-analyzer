@@ -1,6 +1,6 @@
 package com.heapdump.analyzer.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.CoreDumpAnalysisResult;
 import com.heapdump.analyzer.model.dto.CoreDumpRevision;

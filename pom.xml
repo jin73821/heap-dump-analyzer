@@ -8,26 +8,52 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.14</version>
+        <!-- 4.1.x = OSS 지원 라인 (2027-07-31). Spring 7.0.9 / Security 7.1.1 / Data 4.1.1 /
+             Session 4.1.1 / Hibernate 7.4 / Jackson 3.1.5 (BOOT4_MIGRATION_PLAN.md) -->
+        <version>4.1.1</version>
         <relativePath/>
     </parent>
 
     <groupId>com.heapdump</groupId>
     <artifactId>heap-analyzer</artifactId>
-    <version>2.4.1</version>
+    <version>2.5.0</version>
     <name>heap-analyzer</name>
     <description>Java Heap Dump Analyzer powered by Eclipse MAT CLI</description>
 
     <properties>
         <java.version>17</java.version>
+
+        <!-- ── 오픈소스 취약점 조치용 BOM 오버라이드 (SECURITY_AUDIT_OSS_CVE.md) ──
+             ⚠ 전부 CVE / 점검 기준 조치 목적이다. 지우면 Boot BOM 관리값으로 내려간다.
+             Boot 를 올릴 때는 BOM 관리값이 아래 이상인지 확인한 뒤에만 제거할 것.
+             ⚠ Boot 4 에서 `jackson-bom.version` 은 Jackson 3 BOM 이다 — 2.x 값을 넣으면 안 된다. -->
+        <!-- Tomcat: Boot 4.1.1 BOM 은 11.0.24. Central 최신 11.0.25 로 고정 -->
+        <tomcat.version>11.0.25</tomcat.version>
+        <!-- Logback: 점검 기준 1.6.2 이상 (Boot 4.1 BOM 은 1.5.38) -->
+        <logback.version>1.6.3</logback.version>
     </properties>
 
     <dependencies>
 
-        <!-- Spring Boot Web (MVC + Embedded Tomcat) -->
+        <!-- Spring Boot Web MVC (+ Embedded Tomcat, Jackson 3) — Boot 4 에서 starter-web → starter-webmvc -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
+        </dependency>
+
+        <!-- 로깅 스타터를 직접 선언 — log4j-to-slf4j 브리지를 빼기 위해서다.
+             이 브리지가 log4j-api 를 끌어오는데(CVE-2026-49844, 점검 기준 3.0.0-beta2 = 프리릴리스),
+             앱·의존성 어디서도 Log4j2 API 를 쓰지 않으므로 컴포넌트 자체를 제거한다.
+             ⚠ 여러 스타터가 전이로 끌어오므로 직접 선언(최근접 노드)이어야 exclusion 이 확실히 적용된다. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-logging</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-to-slf4j</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- Thymeleaf 템플릿 엔진 -->
@@ -43,18 +69,13 @@
             <optional>true</optional>
         </dependency>
 
-        <!-- OWASP Java HTML Sanitizer (XSS 방어) -->
+        <!-- OWASP Java HTML Sanitizer (XSS 방어).
+             20240325.1 부터 guava 대신 java8/java10-shim 사용 → guava(CVE-2023-2976/CVE-2020-8908) 제거.
+             점검 도구의 "최신 r239" 는 구 googlecode SVN 리비전 명명이며 날짜형 버전이 더 최신이다 -->
         <dependency>
             <groupId>com.googlecode.owasp-java-html-sanitizer</groupId>
             <artifactId>owasp-java-html-sanitizer</artifactId>
-            <version>20220608.1</version>
-        </dependency>
-
-        <!-- commons-io (FileUtils 등 유틸리티) -->
-        <dependency>
-            <groupId>commons-io</groupId>
-            <artifactId>commons-io</artifactId>
-            <version>2.15.1</version>
+            <version>20260313.1</version>
         </dependency>
 
         <!-- Spring Data JPA -->
@@ -76,10 +97,12 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- Spring Session JDBC (MariaDB에 세션 영속화) -->
+        <!-- Spring Session JDBC (MariaDB에 세션 영속화).
+             ⚠ Boot 4 는 자동설정이 spring-boot-session-jdbc 모듈로 분리됐다 — spring-session-jdbc 만 두면
+             자동설정이 없어 세션이 조용히 메모리(Tomcat) 세션으로 떨어진다. 반드시 스타터를 쓸 것 -->
         <dependency>
-            <groupId>org.springframework.session</groupId>
-            <artifactId>spring-session-jdbc</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-session-jdbc</artifactId>
         </dependency>
 
         <!-- Thymeleaf Spring Security extras -->
@@ -124,7 +147,8 @@
             <artifactId>commons-compress</artifactId>
             <version>1.27.1</version>
         </dependency>
-        <!-- commons-compress 1.27 은 commons-io 2.16+ 의 FileTimes API 를 요구 —
+        <!-- commons-io (FileUtils 등 유틸리티).
+             commons-compress 1.27 은 commons-io 2.16+ 의 FileTimes API 를 요구 —
              타 의존성이 구버전을 전이시켜 NoSuchMethodError 가 나므로 직접 의존으로 버전 고정 -->
         <dependency>
             <groupId>commons-io</groupId>

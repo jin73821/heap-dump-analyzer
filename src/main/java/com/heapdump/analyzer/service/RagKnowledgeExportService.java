@@ -139,7 +139,7 @@ public class RagKnowledgeExportService {
         List<Map<String, Object>> docs = new RagKnowledgeExportService().export();
         // stdout 은 JSON 전용이다 — 진단 메시지는 stderr 로 보낸다(색인기가 그대로 파싱한다).
         System.err.println("[RagKnowledgeExport] " + docs.size() + " docs");
-        System.out.println(new com.fasterxml.jackson.databind.ObjectMapper()
+        System.out.println(new tools.jackson.databind.ObjectMapper()
                 .writeValueAsString(docs));
     }
 

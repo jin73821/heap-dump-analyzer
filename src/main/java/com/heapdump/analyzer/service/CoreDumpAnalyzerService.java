@@ -1,7 +1,7 @@
 package com.heapdump.analyzer.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.SerializationFeature;
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.*;
 import com.heapdump.analyzer.model.dto.AnalysisHistoryItem;
@@ -63,8 +63,8 @@ public class CoreDumpAnalyzerService {
                                    CoreDumpSysrootService sysrootService) {
         this.config = config;
         this.repository = repository;
-        this.objectMapper = objectMapper.copy()
-                .enable(SerializationFeature.INDENT_OUTPUT);
+        this.objectMapper = objectMapper.rebuild()
+                .enable(SerializationFeature.INDENT_OUTPUT).build();
         this.heapFacade = heapFacade;
         this.llmConfig = llmConfig;
         this.aiInsight = aiInsight;

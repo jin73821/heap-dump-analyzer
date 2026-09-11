@@ -1,5 +1,105 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-11] v2.5.0 Java 17 / 21 호환성 검증 (코드 변경 없음)
+
+**요청:** Boot 4.1 로 올린 앱이 Java 17 과 21 에서 정상 동작하는지 검증한다.
+서버에 JDK 17 이 없어 Temurin 17.0.20.1 / 21.0.12.1 tarball 을 임시 경로에서 썼다(시스템 alternatives 무변경). 설치본 JDK 21(21+35)도 함께 검증했다.
+
+| 검증 | 결과 |
+|---|---|
+| 바이트코드 | 앱 · 로더 · 라이브러리 108 jar 전부 major ≤ 61 (Java 17) |
+| JDK 내부 API | `sun.misc.Signal` · `sun.misc.Unsafe`(objenesis) 뿐 — `jdk.unsupported` 로 17/21 개방 |
+| 빌드 + 테스트 | JDK 17 / 21 최신 / 21 설치본 각각 **589 통과, 실패 0** (사본 빌드의 추가 skip 2건은 `rag-data/` 미복사 탓 — 재실행으로 30건 통과 확인) |
+| 기동 | 세 런타임 모두 약 15초 기동 · 결과 23건 복원 · 신규 WARN/ERROR 0 · 스모크 정상 |
+
+운영은 원래 런타임(`/usr/lib/jvm/jdk-21`)으로 되돌렸다.
+⚠ 설치본 JDK 21 은 2023-09 GA(21+35)라 보안 패치가 누락돼 있다. 21.0.12 로 올리는 것을 권장한다(앱 변경 불필요). 상세는 `BOOT4_MIGRATION_PLAN.md` 0.1절.
+
+## [2026-09-11] Spring Boot 4.1 전환 — 오픈소스 취약점 조치 2단계 — v2.5.0
+
+**요청:** 1단계(v2.4.2)에 이어 Boot·Framework 를 OSS 지원 버전으로 전환한다. 이로써 점검표(`CVSS.txt`) 전 컴포넌트를 기재 최신 이상으로 만든다.
+Boot 3.5 · Framework 6.2 는 2026-06-30 에 OSS 지원이 끝났고, 전환 대상인 Boot 4.1 은 2027-07-31 까지 지원된다. 절차와 결과는 `BOOT4_MIGRATION_PLAN.md` 에 있다.
+
+### 버전
+Boot 3.5.16 → **4.1.1**, 그에 따라 아래가 함께 올라갔다.
+
+| 컴포넌트 | 전 | 후 |
+|---|---|---|
+| Spring Framework | 6.2.19 | 7.0.9 |
+| Spring Security | 6.5.11 | 7.1.1 |
+| Spring Data | 3.5.13 | 4.1.1 |
+| Spring Session | 3.5.7 | 4.1.1 |
+| Hibernate | 6.6.53 | 7.4.5 |
+| Tomcat | 10.1.59 | 11.0.25 (BOM 11.0.24 → 오버라이드) |
+| Jackson | 2.22.2 | 3.1.5 (`tools.jackson`) |
+
+- Logback 1.6.3 오버라이드는 유지한다(Boot 4.1 BOM 은 1.5.38).
+- commons-lang3 오버라이드는 삭제했다(BOM 관리값이 이미 3.20.0).
+
+### 코드
+- **Jackson 3 이관 (15파일):**
+  - import `com.fasterxml.jackson.databind/core.type` → `tools.jackson.*`. 어노테이션 패키지는 Jackson 3 에서도 그대로라 모델 DTO 14개는 무변경.
+  - `JsonNode.fields()` → `properties()` (Dominator refs 로드)
+  - `CoreDumpAnalyzerService` 의 `objectMapper.copy().enable(..)` → `rebuild().enable(..).build()`
+  - `persistSettings()` 의 `catch (IOException)` → `catch (JacksonException)`. Jackson 3 는 I/O 실패도 unchecked 로 감싼다. 이 메서드가 던지지 않는다는 계약은 그대로다.
+- **Boot 4 모듈화 패키지 이동:**
+  - `DataSourceProperties` → `boot.jdbc.autoconfigure`
+  - `MultipartProperties` → `boot.servlet.autoconfigure`
+  - `ConfigurableServletWebServerFactory` → `boot.web.server.servlet`
+  - `TomcatServletWebServerFactory` → `boot.tomcat.servlet`
+  - 테스트는 MIME 매핑을 `factory.getSettings().getMimeMappings()` 로 조회한다.
+- **스타터 교체:**
+  - `spring-boot-starter-web` → `-webmvc`
+  - `spring-session-jdbc` → `spring-boot-starter-session-jdbc`. ⚠ Boot 4 는 세션 자동설정이 별도 모듈이다. 라이브러리만 두면 JDBC 세션이 조용히 꺼진다.
+- **설정 키:**
+  - `spring.session.store-type` 삭제(Boot 3 에서 이미 무효)
+  - `logging.file.max-size/max-history` → `logging.logback.rollingpolicy.max-file-size/max-history`
+  - 전환 기간에 `spring-boot-properties-migrator` 로 이름이 바뀐 키를 탐지한 뒤 의존성을 제거했다.
+- 버전 표기 2.5.0 (`banner.html`·`index.html`·`progress.html`)
+
+### 검증
+- **점검표 18개 항목:** 전부 기재 최신 이상 또는 부재(Jackson 2.x·guava·log4j-api 부재)
+- **테스트:** `mvn test` **589건 통과** (4 skip)
+- **Hibernate 7 DDL:** 사전 검토에서 **0건**. `SchemaMigrator` 로 스크립트만 추출하고 DB 에는 실행하지 않았다. 양성 대조군으로 추출기 동작을 확인했다. 기동 로그에서도 실행 0건.
+- **Jackson 3 역호환:** 운영 DB 의 Jackson 2 JSON 전량(23/5/22건) 역직렬화 성공
+- **세션:** 기존 세션 8/8 역직렬화 성공 → **TRUNCATE 없이 전환**(재로그인 강제 없음)
+- **기동·서빙:** 약 15초 · 결과 23건 복원 · charset·401 JSON·302·CSRF·SAMEORIGIN 정상 · 신규 세션 JDBC 저장
+- **백업:** `/opt/genspark/backup/boot4-20260911/` (mysqldump + 2.4.2 JAR + 설정)
+
+## [2026-09-11] 오픈소스 라이브러리 취약점 조치 1단계 — v2.4.2
+
+**요청:** 사내 점검 결과 `CVSS.txt`(59건 / 고유 CVE 53개 / 17종, 최고 9.8)를 **점검표 기재 "최신 버전" 이상**으로 조치하는 것.
+Boot·Framework 는 OSS 지원 버전으로 전환한다(2단계). 보고서는 `SECURITY_AUDIT_OSS_CVE.md`, 2단계 계획은 `BOOT4_MIGRATION_PLAN.md`.
+
+### 변경 (`pom.xml`)
+
+| 컴포넌트 | 전 | 후 | 수단 |
+|---|---|---|---|
+| Spring Boot (→ Framework 6.2.19 / Security 6.5.11 / Data 3.5.13) | 3.5.14 | **3.5.16** | parent (3.5 최종 OSS) |
+| Tomcat embed | 10.1.54 | **10.1.59** | `tomcat.version` |
+| Jackson | 2.21.2 | **2.22.2** | `jackson-bom.version` |
+| Logback | 1.5.32 | **1.6.3** | `logback.version` |
+| commons-lang3 | 3.17.0 | **3.20.0** | `commons-lang3.version` |
+| OWASP HTML Sanitizer | 20220608.1 | **20260313.1** | 직접 의존 |
+| log4j-api / log4j-to-slf4j | 2.24.3 | **제거** | 로깅 스타터 직접 선언 + exclusion |
+| guava | 30.1-jre | **제거** | sanitizer 20240325.1+ 는 guava 의존 없음 |
+
+- log4j-api 는 버전을 올리지 않고 **뺐다.** 점검표 기준 3.0.0-beta2 가 프리릴리스이고, 앱·의존성 어디에서도 Log4j2 API 를 쓰지 않는다.
+- Tomcat 은 최소 수정판(10.1.56)보다 높은 10.1.59 로 올렸다. 점검표 밖의 CVE-2026-65182(Important)까지 막기 위해서다.
+- `commons-io` 중복 선언(2.15.1)을 삭제했다(해석 결과 불변).
+- 버전 표기 `banner.html`·`index.html`·`progress.html` 을 2.4.2 로 갱신했다. `CLAUDE.md` 개요에 BOM 오버라이드 주의사항을 추가했다.
+
+### 남은 것 (2단계)
+Tomcat 11 / Spring 7 / Security 7.1 / Data 4.1 / Boot 4.1 은 Boot 4 없이는 올릴 수 없다. 해당 CVE 는 1단계에서 이미 해소됐지만 "기재 최신" 기준에는 미달이다.
+Boot 3.5 · Framework 6.2 는 2026-06-30 에 OSS 지원이 끝났으므로 Boot 4.1 전환을 별도로 진행한다(`BOOT4_MIGRATION_PLAN.md`).
+
+### 검증
+- CVE 53개 영향 범위 기계 대조: **잔여 0개**
+- `mvn test`: **589건 통과** (4 skip)
+- sanitizer: 운영 MAT HTML 1,291개의 조치 전/후 출력 **차이 0건**
+- 기동: `Started HeapAnalyzerApplication in 15.064 seconds`
+- 서빙: 401 JSON·302·charset=UTF-8·SAMEORIGIN 정상
+
 ## [2026-09-09] 정적분석 지적 조치 — 빈 catch 블록 82건 (조용한 실패 제거)
 
 **요청:** 사내 정적분석 결과(SRM20260902-0223, 1차점검 2026-09-08)로 `04.02. 오류 상황 대응 부재`

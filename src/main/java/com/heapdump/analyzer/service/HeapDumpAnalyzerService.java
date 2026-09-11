@@ -1,6 +1,6 @@
 package com.heapdump.analyzer.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.*;
 import com.heapdump.analyzer.model.entity.AiInsightEntity;
@@ -22,7 +22,7 @@ import com.heapdump.analyzer.util.MatErrorHint;
 import com.heapdump.analyzer.util.FormatUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.web.servlet.MultipartProperties;
+import org.springframework.boot.servlet.autoconfigure.MultipartProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -693,7 +693,7 @@ public class HeapDumpAnalyzerService {
             try {
                 if (!dominatorRefsRepository.existsByFilename(filename)) {
                     Map<String, Object> data = objectMapper.readValue(sidecar,
-                            new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
+                            new tools.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
                     Object refs = data.get("refs");
                     @SuppressWarnings("unchecked")
                     Map<String, Object> refsMap = (refs instanceof Map)
@@ -1953,7 +1953,9 @@ public class HeapDumpAnalyzerService {
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             persisted = true;
             logger.info("[Settings] Persisted settings to {}", file.getAbsolutePath());
-        } catch (IOException e) {
+        } catch (tools.jackson.core.JacksonException e) {
+            // Jackson 3 는 쓰기 I/O 실패도 unchecked JacksonException(JacksonIOException) 으로 감싼다.
+            // 이 메서드는 기동 경로에서도 불리므로 던지지 않고 persisted=false 로만 알린다(종전 IOException 계약 유지).
             logger.error("[Settings] Failed to persist settings: {}", e.getMessage());
         }
 
@@ -3932,17 +3934,17 @@ public class HeapDumpAnalyzerService {
                 .map(DominatorRefsEntity::getRefsJson).orElse(null);
         if (refsJson == null) return null; // computeIfAbsent: null → 미저장(다음 호출 재시도)
         try {
-            com.fasterxml.jackson.databind.JsonNode root = objectMapper.readTree(refsJson);
-            com.fasterxml.jackson.databind.JsonNode refs = root.get("refs");
+            tools.jackson.databind.JsonNode root = objectMapper.readTree(refsJson);
+            tools.jackson.databind.JsonNode refs = root.get("refs");
             if (refs == null || !refs.isObject()) return Collections.emptyMap();
-            com.fasterxml.jackson.core.type.TypeReference<List<com.heapdump.analyzer.model.DominatorRefEntry>> listType =
-                    new com.fasterxml.jackson.core.type.TypeReference<List<com.heapdump.analyzer.model.DominatorRefEntry>>() {};
+            tools.jackson.core.type.TypeReference<List<com.heapdump.analyzer.model.DominatorRefEntry>> listType =
+                    new tools.jackson.core.type.TypeReference<List<com.heapdump.analyzer.model.DominatorRefEntry>>() {};
             Map<String, Map<String, List<com.heapdump.analyzer.model.DominatorRefEntry>>> out = new HashMap<>();
-            Iterator<Map.Entry<String, com.fasterxml.jackson.databind.JsonNode>> it = refs.fields();
+            Iterator<Map.Entry<String, tools.jackson.databind.JsonNode>> it = refs.properties().iterator();
             boolean anyData = false;
             while (it.hasNext()) {
-                Map.Entry<String, com.fasterxml.jackson.databind.JsonNode> en = it.next();
-                com.fasterxml.jackson.databind.JsonNode node = en.getValue();
+                Map.Entry<String, tools.jackson.databind.JsonNode> en = it.next();
+                tools.jackson.databind.JsonNode node = en.getValue();
                 List<com.heapdump.analyzer.model.DominatorRefEntry> in =
                         node.has("incoming") ? objectMapper.convertValue(node.get("incoming"), listType) : null;
                 List<com.heapdump.analyzer.model.DominatorRefEntry> outv =

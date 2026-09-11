@@ -613,7 +613,7 @@ public class ServerController {
 
     private String renderJson(List<TransferLogItem> items) {
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper()
+            return new tools.jackson.databind.ObjectMapper()
                     .writerWithDefaultPrettyPrinter()
                     .writeValueAsString(items);
         } catch (Exception e) {

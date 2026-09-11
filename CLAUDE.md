@@ -8,14 +8,25 @@ Always respond in Korean (한국어). Code and technical identifiers remain in E
 
 ## Project Overview
 
-Java Spring Boot **3.5.14** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse MAT CLI로 .hprof/.bin/.dump 분석. MariaDB(`192.168.56.9:3306/HEAPDB`) + Spring Security **6.5** 세션 기반. Hibernate **6.6** + jakarta 네임스페이스 (jakarta.persistence/servlet/annotation/transaction). 2026-05-19 Boot 2.7→3.5 마이그레이션 완료 — 상세는 `BOOT3_MIGRATION_PLAN.md` 참조.
+Java Spring Boot **4.1.1** + Java **17** (런타임 OpenJDK 21) 웹앱. Eclipse MAT CLI로 .hprof/.bin/.dump 분석. MariaDB(`192.168.56.9:3306/HEAPDB`) + Spring Security **7.1** 세션 기반(Spring Session **4.1** JDBC). Spring Framework **7.0** · Hibernate **7.4** · Tomcat **11** · **Jackson 3**(`tools.jackson.*`) + jakarta 네임스페이스. 이력: 2026-05-19 Boot 2.7→3.5(`BOOT3_MIGRATION_PLAN.md`), **2026-09-11 Boot 3.5→4.1**(`BOOT4_MIGRATION_PLAN.md` — 사내 CVSS 점검 조치 2단계).
+
+**오픈소스 취약점 조치 (2026-09-11, `SECURITY_AUDIT_OSS_CVE.md`):** 기준은 **사내 점검표에 기재된 "최신 버전" 이상**이다(최소 수정 버전이 아니다).
+- `pom.xml` `<properties>` 의 BOM 오버라이드 2종 — `tomcat.version` 11.0.25 / `logback.version` 1.6.3 — 은 **점검 기준 충족용**이다. 지우면 Boot 관리값(11.0.24 / 1.5.38)으로 내려간다.
+- ⚠ Boot 4 에서 `jackson-bom.version` 은 **Jackson 3 BOM** 이다. 2.x 값을 넣으면 안 된다.
+- `spring-boot-starter-logging` 직접 선언 + `log4j-to-slf4j` exclusion 은 **log4j-api 를 의도적으로 제거**한 것이다(앱은 Log4j2 API 미사용).
+- OWASP sanitizer 20260313.1 은 guava 를 끌어오지 않는다. **guava·log4j-api·Jackson 2 databind 를 다시 들이는 의존성을 추가하지 말 것.**
+- **새 JSON 코드는 `tools.jackson.databind.*` 로 작성**한다. `com.fasterxml.jackson.annotation.*` 만 그대로다.
+  - 예외는 unchecked `JacksonException` 이다. Jackson 호출만 감싼 `catch (IOException)` 은 컴파일 오류가 난다.
+  - `JsonNode.fields()` 는 없어졌고 `properties()` 를 쓴다.
+  - 매퍼는 불변이라 설정 변경은 `rebuild()…build()` 로 한다.
+- Spring Session 은 **`spring-boot-starter-session-jdbc`** 가 있어야 자동설정된다. `spring-session-jdbc` 만 두면 조용히 메모리 세션으로 떨어진다.
 
 ## Build & Run
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
 mvn test                                 # 단위 테스트 589건 (라이브 4건은 기본 skip) (**빈 catch 가드 2**(전 JS·템플릿 스캔 + 스캐너 자체 검증) / 세션 유휴 만료 배선 5 / 정적 리소스 charset 4 / 코어덤프 리비전·파일목록 15 / 코어덤프 sysroot(gdb 명령 골든·아카이브 해제 가드·경고·업로드 형식) 39 / 코어덤프 PDF 리포트(모델 빌더 6 + 인쇄·결과화면 렌더/PDF 바이트 스모크 5 + 엔드포인트 MockMvc 7) 18 / 원격전송 중복명 6 / 비밀번호 만료 6 / 시크릿 암호화 270 / 설정 복원 격리 4 / 결과 디렉토리 스킴 5 / DomRefs 전부-빈 가드 5 / Leak 룰 골든 12 / MAT suspects 파싱 5 / LLM 호출량 제한 15 / LLM API 키 암호화 11 / llm-settings 렌더 스모크 3(액션 버튼 치수 포함) / account·account-memo 렌더 스모크 6(툴 버튼 라벨 축약·폰트 미리보기 제거 포함) / 대시보드 탐지 KPI 렌더·라벨 숨김 2 / 메모 이력 보관정책 14 / 계정 레이아웃 4 / Chroma 응답 정규화·스코어 변환·컬렉션 메타 파싱·연동 정합성 경고·검색 제외 필터 20 / 임베딩 사이드카 health 4 / Chroma 설정 5곳 동기화 9 / rag-settings 렌더 스모크 21(모드 중심 구조·**연동 상태 글자 라벨** 1·**RAG OFF 잠금** 2·**토글 에러 표기** 1·**코퍼스 실패 표기** 1·결함 회귀·액션 버튼 치수·숫자 입력 폭·연동 상태 다단 표시·local-onnx Model 표시·탭 3종·가져오기 2단계·읽기전용 예외·**모달 골격 CSS**·**내보내기 확인 모달**·**카드형 선택지**·**배지 미조회 구분**·**파일 드롭존**·**색인 진행 스피너**·`[[` 부재) / RAG 토글 계약 5(400 검증·persisted 보고·500 한국어) / RAG 코퍼스(CSV 코덱 11·Markdown 코덱 11·문서 해시 7·가져오기 판정 19(레거시 8컬럼·밀림 복구·역슬래시 이스케이프·실제 파일 회귀 포함)·색인 실행기 6·source_type 집계 4·엔드포인트 13(예외 JSON 계약·4xx 보존 포함)) 71 / 토스트 스택 4 / Chroma 라이브 통합 4(기본 skip, `-Dchroma.live=true`))
-java -jar target/heap-analyzer-2.4.1.jar   # 버전은 pom.xml <version>과 항상 일치
+java -jar target/heap-analyzer-2.5.0.jar   # 버전은 pom.xml <version>과 항상 일치
 bash restart.sh                          # 운영(18080) 재기동
 ```
 
@@ -304,6 +315,8 @@ Common.fetchJSON(url, { method: 'POST', body: JSON.stringify(...) })
 43. **RAG 임베딩은 "한국어를 잘하는 모델"이 아니라 "검색용으로 학습된 모델"을 골라야 한다** — `paraphrase-multilingual-MiniLM-L12-v2` 로 시작했다가 `intfloat/multilingual-e5-small` 로 교체했다. 이름 그대로 **패러프레이즈(대칭) 모델**은 "두 문장이 같은 말인가"를 재는데, RAG 는 **질문 → 문서의 비대칭 검색**이라 과업 자체가 다르다. 실측(질의 "코어덤프에서 SIGSEGV가 났는데 심볼이 안 보입니다"): MiniLM 은 정답 0.0925 / **오답 0.0652 가 다른 정답 0.0432 보다 위** 였고, e5 는 정답 0.843·0.818 이 오답 0.809·0.775 보다 확실히 위였다. 결정적인 건 **MiniLM 도 짧은 구절끼리는 멀쩡했다는 점**이다(`"심볼이 안 보입니다" ↔ "디버그 심볼 없음" = 0.937`) — 한국어를 못하는 게 아니라 과업이 달랐던 것이라, "한국어 성능"만 보고 고르면 이 함정에 그대로 빠진다. 모델 이름에 `paraphrase`·`similarity` 가 있으면 RAG 용이 아니다. ⚠ **e5 계열은 접두사가 필수**다(색인 `passage: ` / 질의 `query: `) — 어긋나면 에러 없이 품질만 무너지므로 `/opt/chroma/app/embedder.py` 의 `PREFIXES` 한 곳에 가둔다. ⚠ **점수 분포가 모델마다 다르다** — 패러프레이즈 0.0~0.6 / e5 **0.80~0.94**. 같은 `min-score` 숫자가 모델을 바꾸면 무필터가 되거나 전부 걸린다. e5 기준 경계는 **0.86**(도메인 밖 질의 0.81~0.85 / 안 0.87~0.94 실측)이고, 모델 교체 시 도메인 밖 질의 몇 개로 반드시 재측정할 것. ⚠ 양자화본 파일명(`model_qint8_avx512_vnni.onnx`)은 **최적 하드웨어 힌트일 뿐 실행 요건이 아니다** — AVX2 CPU 에서 정상 동작하고 fp32 와 순위가 같다(RSS 542MB vs 1148MB). 직접 양자화는 `quantize_dynamic` 이 449MB 모델에 3GB+ 를 써서 가용 2.0GB 에서도 OOM 으로 죽으니, 배포된 양자화본을 먼저 시험할 것.
 
 44. **색인 시점 청킹은 post-retrieval 청킹과 별개다 — 없으면 정답을 품은 문서가 검색되지 않는다** — `RagService.chunkText` 는 **검색 결과를 LLM 에 넣기 전** 자르는 용도이고(`rag.chunking.*`), 색인 시점 청킹은 색인기가 따로 해야 한다. 이게 없으면 mean pooling 이 긴 문서의 벡터를 도메인 평균 쪽으로 끌어당겨, **정답 문장을 그대로 품고 있어도 유사도가 바닥**이 된다(실측: 같은 질의에 대해 짧은 구절 0.937 → 그 문장이 든 400자 문서 0.088). 잘 검색되던 leak 룰이 286~361자였던 건 우연이 아니다. `/opt/chroma/app/indexer.py` 가 350자/overlap 60 으로 분할한다 — **청크 길이는 모델에 맞춰야 하므로 모델을 바꾸면 함께 재조정**할 것. ⚠ **Q&A 를 색인할 때 질문을 임베딩에 넣지 말 것** — 사용자 질의도 질문이라 질문끼리의 유사도가 내용 관련성을 압도한다. 범용 질문 하나("서비스에 어떠한 영향을 미칩니까?")가 SIGSEGV·MAT·JEUS 질의를 전부 가져갔다(0.711). 답변만 색인하고 질문은 메타로 둔다. ⚠ 같은 이유로 **청크마다 제목을 반복해 얹지 말 것** — 제목이 라벨이면 도움이 되지만 질문·문장이면 짧은 청크를 지배한다(넣었다가 0.445→0.711 로 나빠져 되돌렸다).
+
+45. **`restart.sh`/`stop.sh` 는 JAR 파일명을 인자로 가진 모든 프로세스를 죽인다 — 호출한 셸도 예외가 아니다** — `env.sh` 의 `app_pids()` 는 `pgrep -f "$APP_PROC_PATTERN"`(`heap-analyzer-[0-9]…\.jar`)으로 **명령줄 전체**를 매칭한다. 그래서 `HEAP_ANALYZER_JAR=/…/heap-analyzer-2.4.2.jar bash heap_dec.sh …` 처럼 JAR 경로가 든 명령과 `bash restart.sh` 를 **한 셸 명령줄**에서 실행하면, `stop_app` 이 그 셸에도 SIGTERM 을 보내 셸이 exit 144 로 죽는다(2026-09-11 실측). 앱 재기동 자체는 끝까지 진행되므로 "명령이 실패했다"로 오인하기 쉽다. `tail -f …/heap-analyzer-x.jar.log` 같은 무관한 프로세스도 같은 이유로 맞을 수 있다. **재기동은 JAR 이름이 없는 단독 명령으로 실행할 것.** 근본 수정(패턴에 `java` 실행 파일 조건 추가)은 운영 스크립트 변경이라 보류 중이다.
 
 ## Key Design Decisions
 

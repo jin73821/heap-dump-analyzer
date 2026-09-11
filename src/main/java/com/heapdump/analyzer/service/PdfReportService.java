@@ -1,7 +1,7 @@
 package com.heapdump.analyzer.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.LeakSuspect;
 import com.heapdump.analyzer.model.MemoryObject;

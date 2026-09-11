@@ -1,0 +1,119 @@
+번호	CVSS 점수	CVE ID	CWE	라이브러리 컴포넌트	검출 버전	최신 버전	탐지 위치
+점수	버전	개수	설명
+1	9.8	CVSS v3	CVE-2026-41293	CWE-20	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+2	9.8	CVSS v3	CVE-2026-43512	CWE-592	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+3	9.1	CVSS v3	CVE-2026-43515	CWE-285	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+4	9.1	CVSS v3	CVE-2026-53434	CWE-390	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+5	9.1	CVSS v3	CVE-2026-55276	CWE-670	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+6	8.7	CVSS v4	CVE-2026-68494	CWE-770	Jackson-core
+(com.fasterxml.jackson.core:jackson-core)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-core-2.21.2.jar
+7	8.1	CVSS v3	CVE-2026-54512	CWE-502,
+CWE-184	jackson-databind
+(com.fasterxml.jackson.core:jackson-databind)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-databind-2.21.2.jar
+8	8.1	CVSS v3	CVE-2026-54513	CWE-184	jackson-databind
+(com.fasterxml.jackson.core:jackson-databind)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-databind-2.21.2.jar
+9	8.1	CVSS v3	CVE-2026-41855	CWE-502	Spring Web
+(org.springframework:spring-web)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-web-6.2.18.jar
+10	7.5	CVSS v3	CVE-2026-41284	CWE-770	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+11	7.5	CVSS v3	CVE-2026-43513	CWE-178	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+12	7.5	CVSS v3	CVE-2026-41850	CWE-407	Spring Expression Language (SpEL)
+(org.springframework:spring-expression)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-expression-6.2.18.jar
+13	7.5	CVSS v3	CVE-2026-41695	CWE-400	Spring Data Core
+(org.springframework.data:spring-data-commons)	3.5.11	4.1.0	1	BOOT-INF/lib/spring-data-commons-3.5.11.jar
+14	7.5	CVSS v3	CVE-2026-41716	CWE-770	Spring Data Core
+(org.springframework.data:spring-data-commons)	3.5.11	4.1.0	1	BOOT-INF/lib/spring-data-commons-3.5.11.jar
+15	7.5	CVSS v3	CVE-2026-41842	CWE-400	Spring Web MVC
+(org.springframework:spring-webmvc)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-webmvc-6.2.18.jar
+16	7.3	CVSS v3	CVE-2026-42498	CWE-200	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+17	7.3	CVSS v3	CVE-2026-53404	CWE-670	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+18	7.3	CVSS v3	CVE-2026-42498	CWE-200	tomcat-embed-websocket
+(org.apache.tomcat.embed:tomcat-embed-websocket)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-websocket-10.1.54.jar
+19	7.1	CVSS v3	CVE-2026-41845	CWE-79	Spring Web
+(org.springframework:spring-web)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-web-6.2.18.jar
+20	7.1	CVSS v3	CVE-2026-41845	CWE-79	Spring Web MVC
+(org.springframework:spring-webmvc)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-webmvc-6.2.18.jar
+21	7.0	CVSS v4	CVE-2026-13006	CWE-20	Logback Core Module
+(ch.qos.logback:logback-core)	1.5.32	1.6.2	1	BOOT-INF/lib/logback-core-1.5.32.jar
+22	6.8	CVSS v3	CVE-2026-47838	CWE-287	org.springframework.security:spring-security-web	6.5.10	7.1.0	1	BOOT-INF/lib/spring-security-web-6.5.10.jar
+23	6.8	CVSS v3	CVE-2026-47838	CWE-287	org.springframework.security:spring-security-config	6.5.10	7.1.0	1	BOOT-INF/lib/spring-security-config-6.5.10.jar
+24	6.5	CVSS v3	CVE-2026-54518	CWE-863	jackson-databind
+(com.fasterxml.jackson.core:jackson-databind)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-databind-2.21.2.jar
+25	6.5	CVSS v3	CVE-2026-59888	CWE-915	jackson-databind
+(com.fasterxml.jackson.core:jackson-databind)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-databind-2.21.2.jar
+26	6.5	CVSS v3	CVE-2026-59889	CWE-863	jackson-databind
+(com.fasterxml.jackson.core:jackson-databind)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-databind-2.21.2.jar
+27	6.5	CVSS v3	CVE-2026-55955	CWE-287	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+28	6.5	CVSS v3	CVE-2026-55956	CWE-285	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+29	6.3	CVSS v4	CVE-2026-49844	CWE-116	Apache Log4j API
+(org.apache.logging.log4j:log4j-api)	2.24.3	3.0.0-beta2	1	BOOT-INF/lib/log4j-api-2.24.3.jar
+30	6.1	CVSS v3	CVE-2026-41706	CWE-601	org.springframework.security:spring-security-web	6.5.10	7.1.0	1	BOOT-INF/lib/spring-security-web-6.5.10.jar
+31	5.9	CVSS v3	CVE-2026-41840	CWE-401	Spring Web
+(org.springframework:spring-web)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-web-6.2.18.jar
+32	5.9	CVSS v3	CVE-2026-41711	CWE-400	Spring Data Core
+(org.springframework.data:spring-data-commons)	3.5.11	4.1.0	1	BOOT-INF/lib/spring-data-commons-3.5.11.jar
+33	5.9	CVSS v3	CVE-2026-41721	CWE-400	Spring Data Core
+(org.springframework.data:spring-data-commons)	3.5.11	4.1.0	1	BOOT-INF/lib/spring-data-commons-3.5.11.jar
+34	5.9	CVSS v3	CVE-2026-41841	CWE-524	Spring Web MVC
+(org.springframework:spring-webmvc)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-webmvc-6.2.18.jar
+35	5.9	CVSS v3	CVE-2026-41843	CWE-22	Spring Web MVC
+(org.springframework:spring-webmvc)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-webmvc-6.2.18.jar
+36	5.9	CVSS v3	CVE-2026-41846	CWE-79	Spring Web MVC
+(org.springframework:spring-webmvc)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-webmvc-6.2.18.jar
+37	5.5	CVSS v3	CVE-2023-2976	CWE-552	Guava: Google Core Libraries for Java
+(com.google.guava:guava)	30.1-jre	33.6.0-jre	1	BOOT-INF/lib/guava-30.1-jre.jar
+38	5.3	CVSS v3	CVE-2026-54514	CWE-918	jackson-databind
+(com.fasterxml.jackson.core:jackson-databind)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-databind-2.21.2.jar
+39	5.3	CVSS v3	CVE-2026-54515	CWE-915	jackson-databind
+(com.fasterxml.jackson.core:jackson-databind)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-databind-2.21.2.jar
+40	5.3	CVSS v3	CVE-2026-54516	CWE-915	jackson-databind
+(com.fasterxml.jackson.core:jackson-databind)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-databind-2.21.2.jar
+41	5.3	CVSS v3	CVE-2026-54517	CWE-863	jackson-databind
+(com.fasterxml.jackson.core:jackson-databind)	2.21.2	2.22.1	1	BOOT-INF/lib/jackson-databind-2.21.2.jar
+42	5.3	CVSS v3	CVE-2026-41853	CWE-444	Spring Web
+(org.springframework:spring-web)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-web-6.2.18.jar
+43	5.3	CVSS v3	CVE-2026-41001	CWE-377	spring-boot-autoconfigure
+(org.springframework.boot:spring-boot-autoconfigure)	3.5.14	4.1.0	1	BOOT-INF/lib/spring-boot-autoconfigure-3.5.14.jar
+44	5.3	CVSS v3	CVE-2025-48924	CWE-674	Apache Commons Lang
+(org.apache.commons:commons-lang3)	3.17.0	3.20.0	1	BOOT-INF/lib/commons-lang3-3.17.0.jar
+45	5.3	CVSS v3	CVE-2026-41851	CWE-770	Spring Expression Language (SpEL)
+(org.springframework:spring-expression)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-expression-6.2.18.jar
+46	5.3	CVSS v3	CVE-2026-41851	CWE-770	Spring Core
+(org.springframework:spring-core)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-core-6.2.18.jar
+47	5.3	CVSS v3	CVE-2026-41853	CWE-444	Spring Web MVC
+(org.springframework:spring-webmvc)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-webmvc-6.2.18.jar
+48	5.0	CVSS v3	CVE-2026-40992	CWE-295	spring-boot-autoconfigure
+(org.springframework.boot:spring-boot-autoconfigure)	3.5.14	4.1.0	1	BOOT-INF/lib/spring-boot-autoconfigure-3.5.14.jar
+49	4.2	CVSS v3	CVE-2026-41839	CWE-384	Spring Web
+(org.springframework:spring-web)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-web-6.2.18.jar
+50	4.2	CVSS v3	CVE-2026-41854	CWE-918	Spring Web
+(org.springframework:spring-web)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-web-6.2.18.jar
+51	4.2	CVSS v3	CVE-2026-41844	CWE-601	Spring Web MVC
+(org.springframework:spring-webmvc)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-webmvc-6.2.18.jar
+52	3.7	CVSS v3	CVE-2026-43514	CWE-208	tomcat-embed-core
+(org.apache.tomcat.embed:tomcat-embed-core)	10.1.54	11.0.24	1	BOOT-INF/lib/tomcat-embed-core-10.1.54.jar
+53	3.7	CVSS v3	CVE-2026-41852	CWE-863	Spring Expression Language (SpEL)
+(org.springframework:spring-expression)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-expression-6.2.18.jar
+54	3.7	CVSS v3	CVE-2026-41848	CWE-1333	Spring Core
+(org.springframework:spring-core)	6.2.18	7.0.8	1	BOOT-INF/lib/spring-core-6.2.18.jar
+55	3.3	CVSS v3	CVE-2020-8908	CWE-378	Guava: Google Core Libraries for Java
+(com.google.guava:guava)	30.1-jre	33.6.0-jre	1	BOOT-INF/lib/guava-30.1-jre.jar
+56	2.9	CVSS v4	CVE-2026-9828	CWE-502	Logback Classic Module
+(ch.qos.logback:logback-classic)	1.5.32	1.6.2	1	BOOT-INF/lib/logback-classic-1.5.32.jar
+57	2.9	CVSS v4	CVE-2026-10532	CWE-502	Logback Core Module
+(ch.qos.logback:logback-core)	1.5.32	1.6.2	1	BOOT-INF/lib/logback-core-1.5.32.jar
+58	2.9	CVSS v4	CVE-2026-9828	CWE-502	Logback Core Module
+(ch.qos.logback:logback-core)	1.5.32	1.6.2	1	BOOT-INF/lib/logback-core-1.5.32.jar
+59	2.6	CVSS v2	CVE-2011-4457	CWE-200	OWASP Java HTML Sanitizer
+(com.googlecode.owasp-java-html-sanitizer:owasp-java-html-sanitizer)	20220608.1	r239	2	META-INF/maven/com.heapdump/heap-analyzer/pom.xml
+BOOT-INF/lib/owasp-java-html-sanitizer-20220608.1.jar
