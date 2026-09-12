@@ -1,5 +1,96 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-13] 비밀번호 반복 실패 계정 잠금 정책 — 관리자 설정 가능 (v2.5.1 유지)
+
+**요청:** 사용자가 비밀번호를 10회 이상 틀리면 사용자 목록에서 상태가 "잠금"으로 표시되게 하고, 관리자가 횟수와 기능 사용 여부를 설정할 수 있게 한다.
+
+**배경:** 종전에는 **비밀번호를 몇 번 틀려도 잠기지 않았다.** `users.account_locked` 를 세우는 경로는 `TwoFactorService.verifyOtp` 하나뿐이었고(OTP 10회 연속 실패, `OTP_MAX_FAIL` 고정 상수), 1차(ID/PW) 실패는 `AuthEventListener.onFailure` 가 `login_history` 에 사유만 남기고 끝났다. Spring Security 기본에도 실패 횟수 잠금은 없다. 그래서 "10회 틀리면 잠김" 은 화면 문구(`/admin/users` 설정 탭의 OTP 안내)에만 존재하는 상태였다.
+
+**설계 — 잠금 상태는 OTP 와 공유, 사유만 분리:**
+- `users.account_locked`/`locked_at` 을 **그대로 재사용**한다. `CustomUserDetailsService` 의 `accountNonLocked` 매핑 → `LockedException` → `/login?error=locked` 흐름과 관리자 화면의 `잠김` 배지·상태 필터·`잠금해제` 버튼·해제 API 가 전부 무변경으로 동작한다.
+- 대신 `users.lock_reason`(`OTP`|`PASSWORD`) 을 신설해 사유를 구분한다. **null 은 도입 이전의 잠금**이므로 표시 계층이 OTP 로 해석한다(기존 잠긴 계정이 "비밀번호 실패"로 잘못 표시되지 않게). `TwoFactorService` 도 신규 OTP 잠금 시 사유를 명시적으로 기록한다.
+- `users.password_fail_count` 신설 — OTP 카운트와 별개 축(2차인증 단계와 1차 단계는 서로 리셋하면 안 된다).
+
+**정책 설정 (`AccountLockPolicyConfigService`, 3필드):** `lockout-enabled`(기본 **false** — 종전 동작 보존) / `lockout-threshold`(기본 10, 1~100) / `lockout-admin-exempt`(기본 true, 관리자 자기 잠금 방지). LLM/RAG/2FA/비밀번호만료와 **동일 3-hook 영속화** + `HeapDumpConfig` `@Value` + `init()` = 함정 40 의 5곳 전부 배선. 임계 횟수는 정책을 끌 때도 함께 저장한다(껐다 켜도 관리자가 정한 값이 남도록).
+
+**실행 (`LoginAttemptService`):** 설정 보관과 분리(OTP 의 `TwoFactorConfigService`/`TwoFactorService` 와 같은 구조). `AuthEventListener` 가 유일한 호출처다.
+- 실패: 정책 OFF·미존재 계정·관리자 예외·이미 잠김이면 no-op. 그 외에는 `incrementPasswordFailCount`(원자 증가 — 여러 브라우저 동시 시도 시 카운트 유실 방지, OTP 와 같은 패턴) 후 임계 도달 시 잠금.
+- 성공: 카운트 리셋. **`InteractiveAuthenticationSuccessEvent` 의 OTP early-return 보다 앞**에서 호출한다 — 이 이벤트는 OTP 모드에서도 1차 통과 시점에 발행되고 그때 비밀번호는 이미 맞았다. 뒤에 두면 **OTP 모드에서 카운트가 영원히 리셋되지 않아** 오타가 며칠에 걸쳐 누적돼 잠긴다. 카운트가 0 이면 UPDATE 를 보내지 않는다(로그인마다 불필요한 쓰기 방지).
+- 정책이 꺼져 있어도 성공 시에는 리셋한다 — 껐다 켜는 사이 남은 옛 카운트로 즉시 잠기는 것을 막는다.
+- `login_history` 사유가 상태를 말한다: `(남은 시도 N회)` → `(비밀번호 N회 연속 실패 — 계정 잠금)` → 이후 시도는 `잠긴 계정 (비밀번호 반복 실패)`.
+- **DB 쓰기 실패는 리스너에서 흡수**(경고 로그). 흘리면 "비밀번호가 틀렸다"가 500 화면으로 바뀐다 — 잠기지 않는 쪽으로 열리는 실패라 조용히 넘기지 않고 `[LockPolicy]` 경고를 남긴다.
+
+**관리자 설정 UI (`/admin/users` > 설정 탭, Password Expiry Policy 아래):** `Account Lockout Policy` 카드 — 기능 토글 / 임계 횟수(숫자 + 적용) / 관리자 예외 토글 + 현재 상태 문구. 초기값은 `data-*` **서버 렌더**(JS 가 별도 GET 을 하지 않는다 — 끊기면 화면은 멀쩡한데 토글이 늘 기본값으로 보이고 그대로 저장하면 정책이 조용히 되돌아간다). 저장은 `POST /api/settings/account-lockout?enabled=&threshold=&adminExempt=` — `/api/settings/**` 매처에 이미 포함돼 **ADMIN + CSRF 자동 적용**(SecurityConfig 변경 없음). 감사 로그 `[LockPolicy] action=update before=…/…회/… after=… by={who}`.
+
+**표시 변경:** 목록의 `잠김` 배지 title 에 사유·시각(`잠금 사유: 비밀번호 반복 실패 · 잠금 시각: …`), 잠금 해제 모달이 사유를 행에서 받아 표시, `unlockUser` 는 **두 카운트(OTP·비밀번호)와 사유를 모두 리셋**(한쪽만 리셋하면 해제 직후 남은 카운트로 한두 번 만에 재잠금), 비밀번호 변경(본인·관리자 초기화) 시에도 카운트 리셋. 로그인 화면 잠금 문구는 `(OTP 반복 실패)` → `(반복 인증 실패)` 로 중립화(사유 두 갈래 + 미인증 화면에 사유 비노출).
+
+**변경 파일:** 신규 `service/AccountLockPolicyConfigService.java`·`service/LoginAttemptService.java` / 수정 `model/entity/User.java`(+2 컬럼·사유 상수 2)·`repository/UserRepository.java`(+2 쿼리)·`listener/AuthEventListener.java`·`service/UserService.java`·`service/TwoFactorService.java`·`service/HeapDumpAnalyzerService.java`(facade setter + 3-hook)·`config/HeapDumpConfig.java`·`controller/HeapSystemApiController.java`·`controller/AdminController.java`·`controller/AuthController.java`·`templates/admin/users.html`·`application.properties`.
+
+**검증:**
+- 신규 `AccountLockoutPolicyTest`(18) — 정규화·3-hook 왕복·properties 키 3종·손상값 무시 / 정책 OFF no-op·임계 미도달 카운트·임계 도달 잠금·임계 1회 경계·관리자 예외 ON/OFF·미존재 계정·이미 잠김·성공 리셋·0 일 때 쓰기 생략·정책 OFF 에서도 성공 리셋·사유 문구 3분기 / `unlockUser` 두 카운트 리셋.
+- 신규 `AdminUsersTemplateSmokeTest`(3) — admin/users.html 첫 렌더 스모크(함정 23 `[[` 방어) + 잠금 정책 초기값 서버 렌더 + 해제 모달 사유 자리. 테스트 633 → 654.
+- **운영 실측 E2E**(임시 계정 `zz_locktest` 1건 생성 → 검증 후 users·login_history·SPRING_SESSION 행 삭제, 임계 3 으로 임시 기동): 오답 3회에 `account_locked=1`·`lock_reason=PASSWORD`·`password_fail_count=3` 기록, **4회째는 올바른 비밀번호인데도** `/login?error=locked`. 이력 사유 4건이 `남은 시도 2회 → 1회 → 계정 잠금 → 잠긴 계정 (비밀번호 반복 실패)` 순서로 남음. OTP 모드에서 오답 2회(카운트 2) 후 정답 로그인 시 `/login/otp/setup` 유도와 함께 카운트 0 리셋 확인(1차 성공 시점 리셋 배선 실증). `users.lock_reason`·`password_fail_count` 컬럼 ddl-auto 자동 생성 `SHOW COLUMNS` 실측.
+
+## [2026-09-12] JVM Heap 칩 — 출처·신뢰도·수집 시각을 ⓘ 툴팁으로 이동 (v2.5.1 유지)
+
+**요청:** JVM Heap 배지의 `자동 수집`·`재기동 후` 와 수집된 시각을 인포메이션 아이콘 툴팁으로 구현한다.
+
+**배경:** 출처·신뢰도가 칩 안 글자 배지 2~3개로 붙어 칩이 길어졌고, **수집 시각은 화면에 아예 없었다**(AI 분석 모달 힌트 문구에만 있었다). 플래그의 뜻(`재기동 후` = 덤프 이후 기동된 프로세스의 설정)은 네이티브 `title` 에 숨어 hover 로만 보였다.
+
+**변경:**
+- `JvmHeapInfoService.toView` 가 **`tipText` 를 만들어 내려보낸다** — 값·출처·수집 시각(pid) / 플래그(라벨 — 뜻) / 안내 / `JVM 옵션` 4단락, 줄바꿈 `\n`(krds 팝오버가 `pre-wrap`). **서버가 유일한 출처인 이유**: 칩은 편집·후보 선택·재수집마다 `renderJvmChip` 이 다시 그리므로 문구를 양쪽에서 조립하면 예외 없이 갈라진다. 수동 입력이면 수집 시각 줄을 만들지 않는다(그 값은 `updateManual` 이 지운다 — 남기면 거짓 정보).
+- `analyze.html`: 배지 3종 → `.info-icon`(ⓘ, feather info SVG) + `th:attr="data-tip=${jvmHeap.tipText}"`, `tabindex="0"` + `aria-label`(아이콘만 남아 접근성 이름이 사라지므로 필수). `/js/krds-tooltip.js` 로드 추가([data-tip] 앵커드 팝오버 — settings·history·account 와 공유). ⚠ **칩의 네이티브 `title` 제거** — ⓘ 위에서 조상 `title` 이 팝오버와 함께 떠 겹친다(KRDS: title 중복 금지). 옵션 문구는 툴팁 마지막 단락으로 이동.
+- `analyze.js`: `_jvmInfoIcon(tip)` 이 같은 구조를 DOM 으로 만들고 `setAttribute('data-tip', …)` 로 문구를 심는다(줄바꿈·인용 이스케이프 불필요). krds 모듈이 document 위임이라 재렌더된 엘리먼트도 핸들러 등록 없이 동작한다. 사용하지 않게 된 `esc`·`chip` 지역변수 제거.
+- **`후보 N` 배지는 남긴다** — 정보가 아니라 조치(목록에서 선택)가 필요한 경고다. 설명만 `title` → `data-tip` 으로 통일.
+- 캐시 키 `analyze.js ?v=2026-09-12`(`analyze.css` 무변경 — 칩 CSS 는 템플릿 인라인 `<style>`).
+
+**검증:** `JvmHeapInfoServiceTest.tipTextCarriesSourceFlagsAndCapturedAt`(auto/수동/미지정 3경로) + `JvmChipTemplateSmokeTest`(ⓘ·tabindex·aria-label·`출처:`·`수집 시각:` 렌더, `jvm-flag-src` 부재, 칩 여는 태그에 title 없음, 후보 배지 `data-tip`) + 신규 `krdsTooltipModuleIsLoadedAndNotMixed`(float-tooltip 혼재 금지). 테스트 631 → 633.
+
+## [2026-09-11] 원격 덤프 전송 실패 수정 — SCP 원격 경로 인용 회귀 (v2.5.1 유지)
+
+**증상:** v2.5.1 배포 직후 aibank01d 에서 `/tmp/heap_dump_11410.hprof` 전송이 두 번 모두 `protocol error: filename does not match request` 로 실패했다(전송 이력 56·57). 원경로와 무관하게 **모든 SCP 전송**이 같은 이유로 실패하는 상태였다.
+
+**원인:** 같은 날 v2.5.1 의 보안 조치가 원격 경로를 `'"path"'` 로 감쌌다. 로컬 셸은 바깥 작은따옴표만 벗기므로 scp 가 `host:"/tmp/…hprof"` 처럼 **따옴표가 글자로 남은 인자**를 받는다. 원격 셸은 그 따옴표를 벗겨 파일을 보내지만, OpenSSH 8.0+ scp 클라이언트는(CVE-2019-6111 대응) 서버가 돌려준 파일명을 자기가 받은 인자의 basename(`heap_dump_11410.hprof"`)과 `fnmatch` 로 비교해 거부한다. 재현(원격 `/etc/hostname` → `/dev/null`): v2.5.1 형태 실패 / v2.5.0 이전 `:"path"` 성공 / `-T` 추가 성공. 골든 테스트는 문자열만 고정했고 라이브 프로브는 ssh 수집 경로만 탔기 때문에 놓쳤다.
+
+**수정 (`RemoteDumpService.scpCommandString`):** 원격 층을 따옴표 대신 **역슬래시 이스케이프**(`escapeForRemoteShell` — 허용 목록 `[A-Za-z0-9/._-+:@%,=]`·비ASCII 밖의 ASCII 앞에 `\`)로 인용하고, 로컬 층은 v2.5.0 이전처럼 큰따옴표로 감싼다. 원격 셸은 `\ ` 를 공백으로 풀고 `fnmatch` 도 역슬래시를 이스케이프로 해석하므로 두 쪽이 같은 이름을 본다. 평범한 경로는 v2.5.0 이전과 같은 문자열이다. 로컬 큰따옴표 안에서 역슬래시가 특별해지는 `$`·백틱·`"`·`\` 는 `validateRemotePath` 가 거르고, 이 메서드도 같은 검사를 다시 돌린다(단독 호출 방어). `-T`(파일명 검사 끄기)는 보안 검사를 약화하므로 쓰지 않았다. 버전은 2.5.1 유지.
+
+**검증:**
+- 신규 회귀 테스트 `RemoteDumpPathGuardTest.shellLayersAgreeOnFilename` — 로컬 bash → 원격 sh → scp 파일명 검사 3단계를 실제 셸로 흉내 내, 공백·작은따옴표·`~`·`^`·한글 경로에서 "원격 셸이 푼 경로 = 원래 경로"와 "파일명 검사 통과"를 단언한다. `simulationReproducesQuotedArgumentFailure` 는 최초 v2.5.1 형태가 실측과 같이 떨어짐을 보여 시뮬레이션 자체의 유효성을 고정한다. 가드 테스트 3→7, 전체 627→631.
+- aibank01d 실전송(리포지토리 목·scratchpad 저장, DB 미기록 일회성 프로브): `/tmp/heap_dump_11410.hprof` 56,725,390바이트 SUCCESS(1.7초) + JVM 수집 `Xms 512m / Xmx 1g`(pid 710585, **재기동 후** — 덤프를 뜬 pid 11410 은 이미 없고 덤프 이후 기동된 프로세스라 플래그가 붙는 것이 정상), 공백 경로 `/usr/share/alsa/…/Librem 5.conf` SUCCESS. 작은따옴표 경로는 원격에 해당 파일이 없어 셸 시뮬레이션으로만 검증.
+
+## [2026-09-11] 원격 덤프 전송 시 JVM -Xms/-Xmx 자동 수집 — v2.5.1
+
+**요청:** 덤프 파일을 원격 서버에서 전송할 때 그 JVM 의 -Xms/-Xmx 정보까지 같이 가져오는 방법을 고안·구현한다.
+
+**배경:** hprof 에는 JVM 힙 옵션이 없고 MAT System Properties 에도 `-Xmx` 는 나오지 않는다(표준 sysprop 이 아님). 그래서 AI 분석 모달의 Xms/Xmx 는 매번 손으로 넣었고 어디에도 저장되지 않았다. SSH 전송 시점에는 이미 원격 서버에 접속해 있으므로 **같은 접속으로 그 서버의 java 프로세스에서 읽어 저장**한다.
+
+**수집 방식(`util/JvmHeapCapture`, 순수 static):**
+- 원격 스크립트는 사용자 입력 0 인 **상수**(POSIX sh)이고 **base64 로 감싸** 보낸다 — 로컬 `bash -c "ssh … \"…\""` → 원격 sh 의 3중 인용을 지나며 `$p`·`$(…)` 가 로컬에서 먼저 확장되는 문제를 인용 규칙과 무관하게 피한다(`buildRemoteCommand`).
+- **`ps -o args` 가 아니라 `/proc/<pid>/cmdline`** 을 읽는다 — ps 는 폭 절단(80열)·공백 인자 토큰화 불가·`etimes` 가 procps 3.3+ 전용. pid/user/`etime=` 만 ps 로 얻고 인자는 NUL→US(`\037`) 로 받아 정확히 토큰화한다. `environ` 에서 `JAVA_TOOL_OPTIONS/_JAVA_OPTIONS/JDK_JAVA_OPTIONS` 만 읽고(권한 없으면 `env-unknown`), `cgroup` 으로 컨테이너를 판정한다.
+- 파싱 규칙: **마지막 지정이 이긴다**(JVM 규칙). 우선순위 `JAVA_TOOL_OPTIONS` < `JDK_JAVA_OPTIONS` < 명령줄 < `_JAVA_OPTIONS`. `-Xms/-Xmx`·`-XX:(Initial|Max)HeapSize`·`-XX:MaxRAMPercentage`(MemTotal 환산, `ergonomic`)·미지정이면 MemTotal/4(`estimated`). **컨테이너면 추정하지 않는다**(분모가 cgroup 한도라 틀린 값). `@argfile` 은 `argfile` 플래그.
+- **보안:** 저장·표시 옵션은 allow-list(`STORED_OPTION`) 통과분뿐. `-D` 는 매칭 키(`jeus.server.name`·`jeus.domain.name`·`jeus.home`·`weblogic.Name`·`catalina.base/home`·`user.dir`, JEUS 위치 인자 `-server/-domain`) 값만 남기고 `-Ddb.password=`·`-javaagent:…=key`·`-agentlib:jdwp`·`-XX:OnOutOfMemoryError=` 는 **파싱 즉시 폐기**(raw 명령줄은 어떤 로그에도 남기지 않음). 회귀 테스트가 JSON 에 그 값이 없음을 문자열 검색으로 단언한다.
+- 매칭 우선순위: ① 파일명 `java_pid<pid>`(`.gz`·리네임 통과) = pid — 프로세스 시작이 덤프 시각보다 뒤면 pid 재사용 가능성으로 **약한 근거로 강등** + `restarted` ② `-XX:HeapDumpPath`/cwd 가 덤프 디렉토리(유일할 때) ③ (분석 후) sysProps 마커 일치·`sun.java.command` 첫 토큰 = mainClass(유일할 때) ④ 약한 pid ⑤ 후보 1개 ⑥ 후보 다수지만 xmx 전부 동일 → 값 확정 + `ambiguous-pid` ⑦ 미확정(후보 보관 → 화면 선택).
+
+**저장:**
+- `dump_transfer_log.jvm_info` TEXT — 전송 시점 캡처(후보 전부 + 매칭 + MemTotal, 60KB 상한·초과 시 단계 축소). 힙 전송에서만 채우고 코어는 null.
+- `analysis_history` 8 컬럼: `jvm_xms_bytes`·`jvm_xmx_bytes`·`jvm_heap_source`(**누가 정했나** auto/selected/manual)·`jvm_heap_flags`(**얼마나 믿을 만한가** estimated/ergonomic/restarted/env/env-unknown/argfile/container/ambiguous-pid 콤마 목록)·`jvm_options`(allow-list, 2000자)·`jvm_pid`·`jvm_captured_at`·`jvm_info`(최신 캡처 사본 — 후보 모달·재수집용). ddl-auto=update 로 자동 생성 확인(운영 DB `SHOW COLUMNS` 실측).
+- 흐름: `RemoteDumpService.transferFile` SCP 성공 직후 `captureJvmInfo`(20초 상한, 실패해도 전송 SUCCESS, **서버당 5분 캐시**로 자동 탐지 다중 전송 시 SSH 1회) → 분석 완료 `saveAnalysisToDb` 가 `JvmHeapInfoService.reconcile` 로 sysProps·hprof 생성 시각으로 재매칭해 복사. **manual/selected 는 재분석이 덮지 않는다**(`mayOverwrite` 한 곳). 재수집(⟳)은 사용자가 누른 것이라 덮되 후보 다수면 값은 두고 후보만 갱신.
+
+**API(`HeapHistoryApiController`, `/hostname`·`/jeus` 와 같은 정책 — 인증 필요·CSRF 면제·USER 허용, SecurityConfig 무변경):** `GET /api/history/{fn}/jvm-heap`(뷰+후보) · `POST …/jvm-heap` `{xms,xmx}`(수동, 둘 다 비면 초기화, `-Xms>-Xmx`·`abc` 는 400) / `{select:n}`(후보 선택) · `POST …/jvm-heap/recollect`(출처 서버 재수집 — `NO_ORIGIN`/`SSH_FAIL`/`BUSY`(409)/`needsSelection`). `/api/history` 항목에 `jvmXmsBytes/jvmXmxBytes/jvmHeapSource`. 전송 SSE `done`·POST 응답에 `jvm{status,xms,xmx,pid,flagLabels,candidateCount}`. 감사 로그 `[JvmHeap] action=update|select|recollect|reconcile … by=`.
+
+**화면:**
+- analyze Overview 배지열에 **JVM Heap 칩**(`Xms 2g / Xmx 8g` + 출처·신뢰도 **글자 배지** + ✎ 인라인 편집(입력 2개) + ☰ 후보 선택 모달(pid·user·main·Xms/Xmx·기동시각·마커·자동매칭/덤프이후기동 태그) + ⟳ 재수집). 서버 렌더 + `renderJvmChip(view)` 가 같은 구조를 다시 그린다.
+- Total Heap KPI 아래 `/ Xmx 8g (74%)` 서브라벨(퍼센트는 Java 계산). AI 분석 모달의 Xms/Xmx 입력이 비어 있으면 수집값 **프리필** + 출처 안내 문구(사용자가 고친 값은 건드리지 않음). PDF 환경 스트립 4셀→5셀 `JVM Heap`. `/servers` 전송 완료 라벨에 `· JVM -Xms512m -Xmx1g (pid 11410)` / `· JVM 후보 N개` / `· JVM 미수집`.
+- 캐시 키 `analyze.css/js ?v=2026-09-11`.
+
+**부수 보안 조치 — SCP 원격 경로 인용(`RemoteDumpService`):** `buildScpCommand` 가 USER 권한 사용자 입력인 `remotePath` 를 이스케이프 없이 `bash -c`/`runuser -c` 문자열에 넣고 있었다(`"`·`$(…)` 포함 시 로컬 sscuser 로 명령 실행 가능. `fetchRemoteFileSize` 는 이미 `'\''` 이스케이프 — 비대칭). `transferFile` 진입에서 `validateRemotePath`(절대경로·제어문자·셸 메타문자·`..` 거부) + heap/core 는 `isUnderConfiguredPaths`(등록 덤프 경로 하위, coreexec 는 실행파일이라 예외)로 거르고, `scpCommandString` 은 원격 층을 역슬래시 이스케이프로 조립한다(이 항목 최초 배포본의 따옴표 인용 `'"path"'` 는 모든 전송을 실패시켜 같은 날 교체 — 위 항목 참조).
+
+**검증:** `mvn test` 589→**627**(캡처 유틸 26 · 정보 서비스 7 · 원격 경로 가드 3 · 인쇄 스모크 1 · 칩 템플릿 스모크 1). 운영 재기동 15.6s 정상, `SHOW COLUMNS` 로 9 컬럼 생성 확인. **실서버 라이브 프로브**(aibank01d 192.168.56.11, `runuser -l sscuser` → ssh root → base64 스크립트): 841ms 에 후보 1개 pid 11410 `Xms 512m / Xmx 1g` 매칭(`single`), 2차 호출 캐시 2ms. 이 호스트(java 4개: -jar·JDK_JAVA_OPTIONS 환경변수·etime 3형식)에서 스크립트 출력 형식 실측. JeusServer1(192.168.56.8)은 No route 라 JEUS 실전송은 미검증 — 다음 전송 때 `/servers` 완료 라벨과 `[JvmHeap] capture` 로그로 확인할 것.
+
+**한계(코드 주석·CLAUDE.md 함정 46):** 이미 종료돼 재기동도 안 된 JVM, `hidepid=2`(후보 0 + 보이는 프로세스 <30 이면 "목록 제한" 안내), 다른 계정 프로세스의 environ, `@argfile` 내용은 볼 수 없다. jcmd attach 는 euid 일치 필요·세이프포인트 유발·JRE 부재 위험이라 제외(향후 서버별 opt-in 후보).
+
+**변경 파일:** 신규 `util/JvmHeapCapture.java`·`service/JvmHeapInfoService.java`·테스트 5종 / `RemoteDumpService`·`HeapDumpAnalyzerService`(5-arg `saveAnalysisToDb`)·`HeapHistoryApiController`·`ServerController`·`HeapDumpViewController`·`PdfReportService`·`HeapHistoryAggregator`·`AnalysisHistoryItem`·엔티티 2종 / `analyze.html`·`analyze.js`·`analyze.css`·`analyze-print.html`·`servers.html` / `pom.xml` 2.5.1 + 배너·index·progress 표기.
+
 ## [2026-09-11] v2.5.0 Java 17 / 21 호환성 검증 (코드 변경 없음)
 
 **요청:** Boot 4.1 로 올린 앱이 Java 17 과 21 에서 정상 동작하는지 검증한다.

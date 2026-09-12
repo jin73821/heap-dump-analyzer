@@ -79,6 +79,36 @@ public class AnalysisHistoryEntity {
     @Column(name = "uploaded_by", length = 50)
     private String uploadedBy;
 
+    // ── JVM 힙 설정 (2026-09-11) — 원격 전송 시 수집한 -Xms/-Xmx 의 "현재 진실".
+    // hprof 에는 이 값이 없어 원격 서버 프로세스에서 읽는다. source 는 "누가 정했나"(auto/selected/manual),
+    // flags 는 "얼마나 믿을 만한가"(estimated/restarted/container… 콤마 목록 — 화면 글자 배지). manual/selected 는
+    // 재분석·재수집이 덮지 않는다(JvmHeapInfoService.mayOverwrite). saveAnalysisToDb 는 이 필드를 무조건 덮지 않는다.
+    @Column(name = "jvm_xms_bytes")
+    private Long jvmXmsBytes;
+
+    @Column(name = "jvm_xmx_bytes")
+    private Long jvmXmxBytes;
+
+    @Column(name = "jvm_heap_source", length = 20)
+    private String jvmHeapSource;
+
+    @Column(name = "jvm_heap_flags", length = 120)
+    private String jvmHeapFlags;
+
+    /** allow-list 통과 JVM 옵션(공백 join, 2000자 절단) — 칩 툴팁·PDF 용. */
+    @Column(name = "jvm_options", length = 2000)
+    private String jvmOptions;
+
+    @Column(name = "jvm_pid")
+    private Integer jvmPid;
+
+    @Column(name = "jvm_captured_at")
+    private LocalDateTime jvmCapturedAt;
+
+    /** 최신 캡처 사본(JSON) — 후보 선택 모달·재수집용. 분석 시 전송 로그에서 복사, 재수집 시 교체. */
+    @Column(name = "jvm_info", columnDefinition = "TEXT")
+    private String jvmInfo;
+
     @Column(name = "analyzed_at")
     private LocalDateTime analyzedAt;
 

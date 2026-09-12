@@ -47,6 +47,9 @@ public class PdfReportService {
     private final AiInsightRepository aiInsightRepository;
     private final HeapDumpAnalyzerService analyzerService;
     private final ObjectMapper jsonMapper = new ObjectMapper();
+    /** JVM 힙 설정 한 줄(환경 스트립). 필드 주입 — 테스트가 3-인자 생성자를 직접 부르므로 null 가드. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private JvmHeapInfoService jvmHeapInfoService;
 
     public PdfReportService(TemplateEngine templateEngine,
                             AiInsightRepository aiInsightRepository,
@@ -114,6 +117,8 @@ public class PdfReportService {
         String jeusDomainManual = analyzerService.getAnalysisJeusDomain(filename);
         m.put("jeusInstance", !jeusInstanceManual.isEmpty() ? jeusInstanceManual : jeusInstanceAuto);
         m.put("jeusDomain", !jeusDomainManual.isEmpty() ? jeusDomainManual : jeusDomainAuto);
+        // JVM Heap: 원격 전송 시 수집한 -Xms/-Xmx (출처·신뢰도 라벨 포함) — 문자열로 완성해 넘긴다(템플릿 계산 금지)
+        m.put("jvmHeapLabel", jvmHeapInfoService != null ? jvmHeapInfoService.label(filename) : "미지정");
 
         long usedPct = result.getTotalHeapSize() > 0
                 ? Math.round(100.0 * result.getUsedHeapSize() / result.getTotalHeapSize())

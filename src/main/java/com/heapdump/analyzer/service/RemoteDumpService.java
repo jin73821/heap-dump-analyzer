@@ -6,6 +6,7 @@ import com.heapdump.analyzer.model.entity.TargetServer;
 import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.TargetServerRepository;
+import com.heapdump.analyzer.util.JvmHeapCapture;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -31,6 +32,10 @@ public class RemoteDumpService {
     private static final Logger logger = LoggerFactory.getLogger(RemoteDumpService.class);
     private static final int SSH_TIMEOUT_SEC = 30;
     private static final int SCP_TIMEOUT_SEC = 600; // 10분
+    /** JVM 힙 설정 수집(ps + /proc 읽기) — 짧은 스크립트라 20초면 충분. 실패해도 전송 결과에는 영향 없음. */
+    private static final int JVM_CAPTURE_TIMEOUT_SEC = 20;
+    /** 자동 탐지가 파일 여러 개를 직렬 전송할 때 서버당 SSH 를 반복하지 않기 위한 캡처 재사용 창. */
+    private static final long JVM_CAPTURE_CACHE_MS = 5 * 60 * 1000L;
 
     private final TargetServerRepository serverRepository;
     private final DumpTransferLogRepository transferLogRepository;
@@ -49,6 +54,10 @@ public class RemoteDumpService {
 
     // 마지막 자동 스캔 에러 기록 (서버 ID → 에러 메시지)
     private final Map<Long, String> lastAutoScanErrors = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // 서버별 JVM 캡처 캐시 (서버 ID → 최근 캡처). 매칭은 파일마다 다시 하므로 후보 목록만 재사용한다.
+    private record CachedJvmCapture(long atMillis, JvmHeapCapture.Capture capture) {}
+    private final Map<Long, CachedJvmCapture> jvmCaptureCache = new java.util.concurrent.ConcurrentHashMap<>();
 
     public RemoteDumpService(TargetServerRepository serverRepository,
                              DumpTransferLogRepository transferLogRepository,
@@ -664,6 +673,11 @@ public class RemoteDumpService {
     public DumpTransferLog transferFile(TargetServer server, String remoteFilePath,
                                         String fileType, String targetFilename,
                                         TransferProgressListener listener) {
+        // 원격 경로는 사용자 입력(/api/servers/{id}/transfer, /transfer/stream)이며 셸 문자열에 실린다 — 문자 검사 + 설정 경로 하위 검사.
+        validateRemotePath(remoteFilePath);
+        if (!"coreexec".equals(fileType) && !isUnderConfiguredPaths(server, remoteFilePath, fileType)) {
+            throw new IllegalArgumentException("원격 경로가 서버에 설정된 덤프 경로 밖입니다: " + remoteFilePath);
+        }
         // 원격 원본명 — rename 후에도 변하지 않는 식별자 (scan transferred 판정 키)
         final String remoteFilename = new File(remoteFilePath).getName();
         String filename = (targetFilename != null && !targetFilename.isBlank())
@@ -725,6 +739,8 @@ public class RemoteDumpService {
                 log.setCompletedAt(LocalDateTime.now());
                 logger.info("[RemoteDump] Transfer success: {} from {} ({}bytes)",
                         filename, server.getName(), localFile.length());
+                // 힙 전송이면 같은 접속으로 그 서버의 JVM 힙 설정(-Xms/-Xmx)을 수집해 둔다 — 실패해도 전송은 SUCCESS.
+                if (!toCoreDir) log.setJvmInfo(captureJvmInfo(server, remoteFilePath));
             } else {
                 cleanupTempFile(tempFile);
                 String errorMsg = cleanSshError(pr.stderr);
@@ -827,6 +843,95 @@ public class RemoteDumpService {
         } catch (IOException e) {
             return false;
         }
+    }
+
+    // ── JVM 힙 설정 수집 (2026-09-11) ─────────────────────────────
+
+    /**
+     * 원격 서버 java 프로세스의 -Xms/-Xmx 를 수집해 JSON(JvmHeapCapture.Capture)으로 돌려준다.
+     * 스크립트는 고정 상수이고 remotePath 는 base64 안에 실려 로컬 셸을 거치지 않는다. 절대 던지지 않는다.
+     * @param remoteFilePath 방금 전송한 덤프 경로(있으면 원격 mtime 도 같은 왕복에서 얻어 매칭에 쓴다). null 이면 후보 수집만.
+     */
+    public String captureJvmInfo(TargetServer server, String remoteFilePath) {
+        JvmHeapCapture.Capture cap = null;
+        try {
+            CachedJvmCapture cached = server.getId() == null ? null : jvmCaptureCache.get(server.getId());
+            if (cached != null && System.currentTimeMillis() - cached.atMillis() < JVM_CAPTURE_CACHE_MS) {
+                cap = cached.capture();
+                logger.debug("[JvmHeap] capture cache hit server={}", server.getName());
+            } else {
+                String[] cmd = buildSshCommand(server, JvmHeapCapture.buildRemoteCommand(remoteFilePath));
+                ProcessResult pr = executeCommand(cmd, JVM_CAPTURE_TIMEOUT_SEC);
+                cap = JvmHeapCapture.parseOutput(pr.stdout, System.currentTimeMillis() / 1000L);
+                if (pr.exitCode != 0 || cap.truncated()) {
+                    String err = cleanSshError(pr.stderr);
+                    logger.warn("[JvmHeap] capture incomplete server={} exit={} truncated={} — {}",
+                            server.getName(), pr.exitCode, cap.truncated(), err.isEmpty() ? "(stderr 없음)" : err);
+                }
+                if (server.getId() != null && !cap.truncated()) {
+                    // 캐시에는 mtime 을 빼고 넣는다 — 다른 파일에 그 mtime 이 붙으면 재기동 판정이 틀린다.
+                    jvmCaptureCache.put(server.getId(), new CachedJvmCapture(System.currentTimeMillis(),
+                            new JvmHeapCapture.Capture(cap.schema(), cap.capturedAtEpoch(), cap.remoteNowEpoch(),
+                                    cap.memTotal(), cap.memAvailable(), cap.procVisible(), false, null,
+                                    cap.candidates(), null, null, java.util.List.of(), cap.note())));
+                }
+            }
+            String remoteName = remoteFilePath == null ? null : new File(remoteFilePath).getName();
+            JvmHeapCapture.Match m = JvmHeapCapture.match(cap, remoteName, JvmHeapCapture.dirOf(remoteFilePath), null, null);
+            cap = cap.withMatch(m);
+            JvmHeapCapture.Candidate hit = cap.matched();
+            logger.info("[JvmHeap] capture server={} file={} candidates={} matched={} reason={} xmx={} flags={}",
+                    server.getName(), remoteName, cap.candidates().size(),
+                    hit == null ? "-" : "pid " + hit.pid(), m.reason(),
+                    hit == null ? "-" : JvmHeapCapture.formatSizeOrNull(hit.xmxBytes()), m.flags());
+            return JvmHeapCapture.toJson(cap);
+        } catch (Exception e) {
+            logger.warn("[JvmHeap] capture failed server={} — {}", server.getName(), e.getMessage());
+            JvmHeapCapture.Capture failed = new JvmHeapCapture.Capture(JvmHeapCapture.SCHEMA,
+                    System.currentTimeMillis() / 1000L, null, 0, 0, -1, true, null,
+                    java.util.List.of(), null, null, java.util.List.of(), "수집 실패: " + e.getMessage());
+            return JvmHeapCapture.toJson(failed);
+        }
+    }
+
+    /** 테스트·재기동 없이 캐시를 비울 때. */
+    public void clearJvmCaptureCache() {
+        jvmCaptureCache.clear();
+    }
+
+    // ── 원격 경로 검증 ──────────────────────────────────────────
+
+    /** 셸 문자열(로컬 bash -c → scp → 원격 셸)에 실리는 경로에서 허용하지 않는 문자. */
+    private static final java.util.regex.Pattern REMOTE_PATH_FORBIDDEN =
+            java.util.regex.Pattern.compile("[\\x00-\\x1f\\x7f\"\\\\$`;|&<>(){}\\[\\]*?!#]");
+
+    /**
+     * 원격 경로 문자 검사 — 절대경로, 제어문자·셸 메타문자·{@code ..} 세그먼트 금지.
+     * 원격 경로는 USER 권한 사용자 입력이라 여기서 거르지 않으면 {@code $(…)} 가 로컬 sscuser 로 실행된다(2026-09-11 수정).
+     */
+    static void validateRemotePath(String remotePath) {
+        if (remotePath == null || remotePath.isBlank()) throw new IllegalArgumentException("원격 경로가 비어 있습니다");
+        if (!remotePath.startsWith("/")) throw new IllegalArgumentException("원격 경로는 절대경로여야 합니다: " + remotePath);
+        if (REMOTE_PATH_FORBIDDEN.matcher(remotePath).find()) {
+            throw new IllegalArgumentException("원격 경로에 허용되지 않는 문자가 있습니다: " + remotePath);
+        }
+        for (String seg : remotePath.split("/")) {
+            if (seg.equals("..")) throw new IllegalArgumentException("원격 경로에 상위 디렉토리 참조가 있습니다: " + remotePath);
+        }
+        if (remotePath.length() > 1000) throw new IllegalArgumentException("원격 경로가 너무 깁니다");
+    }
+
+    /** heap/core 전송은 서버에 등록된 덤프 경로 하위여야 한다(코어 실행파일 페어링은 예외 — 호출자가 건너뜀). */
+    static boolean isUnderConfiguredPaths(TargetServer server, String remotePath, String fileType) {
+        java.util.List<String> roots = "core".equals(fileType) ? server.getCoreDumpPaths() : server.getDumpPaths();
+        if (roots == null) return false;
+        for (String root : roots) {
+            String r = root.trim();
+            while (r.length() > 1 && r.endsWith("/")) r = r.substring(0, r.length() - 1);
+            if (r.isEmpty()) continue;
+            if (remotePath.startsWith(r.equals("/") ? "/" : r + "/")) return true;
+        }
+        return false;
     }
 
     /** SSH `stat -c %s` 로 원격 파일 크기 조회. 실패 시 -1. */
@@ -1000,14 +1105,47 @@ public class RemoteDumpService {
     }
 
     private String[] buildScpCommand(TargetServer server, String remotePath, String localPath) {
-        String scpCmd = "scp"
+        return wrapWithLocalUser(scpCommandString(server, remotePath, localPath));
+    }
+
+    /**
+     * scp 명령 문자열. 원격 경로는 세 곳을 지난다 — ① 로컬 {@code bash -c}(runuser) ② 원격 사용자 셸({@code scp -f <src>})
+     * ③ scp 클라이언트의 파일명 검사. ③ 이 함정이다: OpenSSH 8.0+ 의 scp 는 (CVE-2019-6111 대응) 서버가 돌려준 파일명을
+     * <b>①을 지난 뒤 자기가 받은 인자</b>의 basename 과 {@code fnmatch} 로 비교한다. 그래서 인자에 따옴표가 글자로 남으면
+     * ({@code '"path"'} 형태 — 2026-09-11 v2.5.1 최초 배포본) 원격 셸이 벗긴 이름과 달라져
+     * {@code protocol error: filename does not match request} 로 전송이 전부 실패한다.
+     *
+     * <p>그래서 원격 층은 따옴표가 아니라 <b>역슬래시 이스케이프</b>로 인용한다. 원격 셸은 {@code \ } 를 공백으로 풀고,
+     * {@code fnmatch} 도 역슬래시를 이스케이프로 해석하므로 두 쪽이 같은 이름을 본다. 로컬 층은 큰따옴표로 감싸는데,
+     * 큰따옴표 안에서 역슬래시가 특별한 경우({@code $ ` " \} 앞)는 {@link #validateRemotePath} 가 그 문자들을 미리 거르므로
+     * 생기지 않는다 — 이 메서드도 같은 검사를 다시 돌려 단독 호출 시에도 안전하다.
+     */
+    static String scpCommandString(TargetServer server, String remotePath, String localPath) {
+        validateRemotePath(remotePath);
+        return "scp"
                 + " -o StrictHostKeyChecking=no"
                 + " -o ConnectTimeout=10"
                 + " -o BatchMode=yes"
                 + " -P " + server.getPort()
-                + " " + server.getSshUser() + "@" + server.getHost() + ":\"" + remotePath + "\""
-                + " " + localPath;
-        return wrapWithLocalUser(scpCmd);
+                + " " + server.getSshUser() + "@" + server.getHost() + ":\"" + escapeForRemoteShell(remotePath) + "\""
+                + " '" + localPath.replace("'", "'\\''") + "'";
+    }
+
+    /**
+     * 원격 셸이 해석할 수 있는 ASCII 문자(공백·작은따옴표·{@code ~}·{@code ^} 등)를 역슬래시로 이스케이프한다.
+     * 안전 집합 밖이면 무조건 이스케이프(허용 목록 방식). 비ASCII(한글 파일명)는 셸 특수문자가 아니라 그대로 둔다.
+     * 호출 전제: {@link #validateRemotePath} 통과 — {@code $ ` " \} 와 제어문자가 없어야 로컬 큰따옴표 층에서 의미가 바뀌지 않는다.
+     */
+    static String escapeForRemoteShell(String path) {
+        StringBuilder sb = new StringBuilder(path.length() + 8);
+        for (int i = 0; i < path.length(); i++) {
+            char c = path.charAt(i);
+            boolean safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                    || "/._-+:@%,=".indexOf(c) >= 0 || c >= 0x80;
+            if (!safe) sb.append('\\');
+            sb.append(c);
+        }
+        return sb.toString();
     }
 
     /**

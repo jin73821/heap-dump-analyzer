@@ -21,6 +21,9 @@ public class AnalysisHistoryItem {
     private String  formattedOriginalSize;
     private String  formattedCompressedSize;
     private String  serverName;
+    private Long    jvmXmsBytes;      // 원격 전송 시 수집한 -Xms (null=미지정)
+    private Long    jvmXmxBytes;      // 원격 전송 시 수집한 -Xmx
+    private String  jvmHeapSource;    // auto|selected|manual
     private boolean hasAiInsight;
     private String  aiInsightSeverity;
     private long    analyzedAtEpoch;
@@ -79,6 +82,12 @@ public class AnalysisHistoryItem {
     public void    setAnalyzedAtEpoch(long v) { analyzedAtEpoch = v; }
     public String  getDumpCreationTime() { return dumpCreationTime; }
     public void    setDumpCreationTime(String v) { dumpCreationTime = v; }
+    public Long    getJvmXmsBytes()   { return jvmXmsBytes; }
+    public void    setJvmXmsBytes(Long v)     { jvmXmsBytes = v; }
+    public Long    getJvmXmxBytes()   { return jvmXmxBytes; }
+    public void    setJvmXmxBytes(Long v)     { jvmXmxBytes = v; }
+    public String  getJvmHeapSource() { return jvmHeapSource; }
+    public void    setJvmHeapSource(String v) { jvmHeapSource = v; }
     public String  getFileType()         { return fileType; }
     public void    setFileType(String v)          { fileType = v; }
     public boolean isHasExec()           { return hasExec; }

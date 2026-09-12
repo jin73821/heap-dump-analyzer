@@ -54,6 +54,7 @@ public class HeapDumpViewController {
     private final ComparisonHistoryService comparisonHistoryService;
     private final CoreDumpAnalyzerService coreDumpService;
     private final RagConfigService ragConfig;
+    private final com.heapdump.analyzer.service.JvmHeapInfoService jvmHeapInfoService;
 
     public HeapDumpViewController(HeapDumpAnalyzerService analyzerService,
                                   LlmConfigService llmConfig,
@@ -62,7 +63,9 @@ public class HeapDumpViewController {
                                   HeapHistoryAggregator aggregator,
                                   ComparisonHistoryService comparisonHistoryService,
                                   CoreDumpAnalyzerService coreDumpService,
-                                  RagConfigService ragConfig) {
+                                  RagConfigService ragConfig,
+                                  com.heapdump.analyzer.service.JvmHeapInfoService jvmHeapInfoService) {
+        this.jvmHeapInfoService = jvmHeapInfoService;
         this.analyzerService = analyzerService;
         this.llmConfig = llmConfig;
         this.config = config;
@@ -721,6 +724,10 @@ public class HeapDumpViewController {
 
         // 덤프 출처 호스트명 — SSH 전송 시 자동 기록(server_name), 수동 업로드는 빈 값(편집 가능)
         model.addAttribute("hostname", analyzerService.getAnalysisServerName(filename));
+
+        // JVM 힙 설정(-Xms/-Xmx) — 원격 전송 시 자동 수집 + 수동/후보 선택/재수집 (2026-09-11). 빈 뷰도 Map 이라 null 가드 불필요.
+        model.addAttribute("jvmHeap", jvmHeapInfoService.view(filename,
+                result.getTotalHeapSize() > 0 ? result.getTotalHeapSize() : null));
 
         // JEUS Instance/Domain — System Properties(jeus.server.name/jeus.domain.name) 자동 식별 + 수동 편집.
         // 수동 편집값이 있으면 우선, 없으면 자동 식별값으로 폴백. 둘 다 없으면 빈 값(미지정, 편집 가능).

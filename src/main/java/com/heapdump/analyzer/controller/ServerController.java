@@ -252,6 +252,7 @@ public class ServerController {
             result.put("filename", log.getFilename());
             result.put("status", log.getTransferStatus());
             if (log.getErrorMessage() != null) result.put("message", log.getErrorMessage());
+            if (log.getJvmInfo() != null) result.put("jvm", com.heapdump.analyzer.service.JvmHeapInfoService.summaryForClient(log.getJvmInfo()));
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return fail(e);
@@ -326,6 +327,8 @@ public class ServerController {
                 done.put("status", log.getTransferStatus());
                 done.put("fileSize", log.getFileSize());
                 if (log.getErrorMessage() != null) done.put("message", log.getErrorMessage());
+                // 전송 직후 수집한 JVM 힙 설정 요약(값·개수만) — 완료 라벨에 표시
+                if (log.getJvmInfo() != null) done.put("jvm", com.heapdump.analyzer.service.JvmHeapInfoService.summaryForClient(log.getJvmInfo()));
                 try {
                     emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
                             .event().name("done").data(done));

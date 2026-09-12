@@ -98,6 +98,9 @@ public class HeapHistoryAggregator {
             item.setHeapUsedBytes(e.getUsedHeapSize() != null ? e.getUsedHeapSize() : 0);
             item.setServerName(e.getServerName());
             item.setDumpCreationTime(e.getDumpCreationTime());
+            item.setJvmXmsBytes(e.getJvmXmsBytes());
+            item.setJvmXmxBytes(e.getJvmXmxBytes());
+            item.setJvmHeapSource(e.getJvmHeapSource());
             item.setAnalyzedAtEpoch(e.getAnalyzedAt() != null
                     ? e.getAnalyzedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
                     : 0);

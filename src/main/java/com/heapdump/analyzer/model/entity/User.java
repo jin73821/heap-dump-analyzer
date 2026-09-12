@@ -74,6 +74,11 @@ public class User {
 
     // ── 2차인증 (OTP) / 계정 잠금 ──
 
+    /** 잠금 사유: OTP 코드 반복 실패 */
+    public static final String LOCK_REASON_OTP = "OTP";
+    /** 잠금 사유: 비밀번호(1차 인증) 반복 실패 */
+    public static final String LOCK_REASON_PASSWORD = "PASSWORD";
+
     /** TOTP Base32 seed — AesEncryptor ENC(...) 형식으로 암호화 저장. null = 미등록 */
     @Column(name = "otp_secret", length = 512)
     private String otpSecret;
@@ -89,12 +94,24 @@ public class User {
     @Column(name = "otp_last_used_step")
     private Long otpLastUsedStep;
 
-    /** OTP 반복 실패 잠금 상태 (enabled 비활성화와 별개) */
+    /** 반복 실패 잠금 상태 (enabled 비활성화와 별개). 사유는 lockReason 참조 */
     @Column(name = "account_locked", nullable = false)
     private boolean accountLocked = false;
 
     @Column(name = "locked_at")
     private LocalDateTime lockedAt;
+
+    /**
+     * 잠금 사유 — {@link #LOCK_REASON_OTP} | {@link #LOCK_REASON_PASSWORD}.
+     * null = 사유 미기록. 비밀번호 잠금 도입(2026-09-13) 이전의 잠금은 전부 OTP 실패였으므로
+     * 표시 계층은 null 을 OTP 로 해석한다.
+     */
+    @Column(name = "lock_reason", length = 20)
+    private String lockReason;
+
+    /** 비밀번호(1차 인증) 연속 실패 횟수 — 정책 임계 도달 시 accountLocked. 성공 시 0 리셋 */
+    @Column(name = "password_fail_count", nullable = false)
+    private int passwordFailCount = 0;
 
     public enum Role {
         ADMIN, USER

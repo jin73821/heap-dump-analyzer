@@ -3,6 +3,7 @@ package com.heapdump.analyzer.controller;
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.HeapDumpFile;
+import com.heapdump.analyzer.service.AccountLockPolicyConfigService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.LlmConfigService;
 import com.heapdump.analyzer.service.LlmRateLimitService;
@@ -55,6 +56,7 @@ public class HeapSystemApiController {
     private final org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo;
     private final TwoFactorConfigService twoFactorConfig;
     private final PasswordPolicyConfigService passwordPolicyConfig;
+    private final AccountLockPolicyConfigService accountLockPolicyConfig;
 
     public HeapSystemApiController(HeapDumpAnalyzerService analyzerService,
                                    LlmConfigService llmConfig,
@@ -64,7 +66,8 @@ public class HeapSystemApiController {
                                    DataSource dataSource,
                                    org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo,
                                    TwoFactorConfigService twoFactorConfig,
-                                   PasswordPolicyConfigService passwordPolicyConfig) {
+                                   PasswordPolicyConfigService passwordPolicyConfig,
+                                   AccountLockPolicyConfigService accountLockPolicyConfig) {
         this.analyzerService = analyzerService;
         this.llmConfig = llmConfig;
         this.llmRateLimitService = llmRateLimitService;
@@ -74,6 +77,7 @@ public class HeapSystemApiController {
         this.jdbcSessionRepo = jdbcSessionRepo;
         this.twoFactorConfig = twoFactorConfig;
         this.passwordPolicyConfig = passwordPolicyConfig;
+        this.accountLockPolicyConfig = accountLockPolicyConfig;
     }
 
     // ── 공통 헬퍼 ─────────────────────────────────────────
@@ -243,6 +247,45 @@ public class HeapSystemApiController {
         resp.put("message", passwordPolicyConfig.isEnabled()
                 ? "비밀번호 만료 정책이 " + passwordPolicyConfig.getPasswordExpiryDays() + "일로 설정되었습니다. 다음 로그인부터 적용됩니다."
                 : "비밀번호 만료 정책이 비활성화되었습니다.");
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * 비밀번호 반복 실패 계정 잠금 정책 변경 (사용 여부 + 임계 횟수 + 관리자 예외).
+     * /api/settings/** 이므로 ADMIN + CSRF 보호 자동 적용.
+     *
+     * 임계 횟수는 정책을 끌 때도 함께 저장한다 — 껐다 켜도 관리자가 정한 값이 남아 있도록.
+     */
+    @PostMapping("/api/settings/account-lockout")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setAccountLockPolicy(
+            @RequestParam boolean enabled,
+            @RequestParam int threshold,
+            @RequestParam boolean adminExempt,
+            org.springframework.security.core.Authentication auth) {
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (threshold < AccountLockPolicyConfigService.MIN_THRESHOLD
+                || threshold > AccountLockPolicyConfigService.MAX_THRESHOLD) {
+            resp.put("success", false);
+            resp.put("message", "잠금 임계 횟수는 " + AccountLockPolicyConfigService.MIN_THRESHOLD
+                    + "~" + AccountLockPolicyConfigService.MAX_THRESHOLD + "회 사이여야 합니다.");
+            return ResponseEntity.badRequest().body(resp);
+        }
+        boolean beforeEnabled = accountLockPolicyConfig.isEnabled();
+        int beforeThreshold = accountLockPolicyConfig.getThreshold();
+        boolean beforeExempt = accountLockPolicyConfig.isAdminExempt();
+        analyzerService.setAccountLockPolicy(enabled, threshold, adminExempt);
+        logger.info("[LockPolicy] action=update before={}/{}회/{} after={}/{}회/{} by={}",
+                beforeEnabled, beforeThreshold, beforeExempt,
+                accountLockPolicyConfig.isEnabled(), accountLockPolicyConfig.getThreshold(),
+                accountLockPolicyConfig.isAdminExempt(), auth != null ? auth.getName() : "unknown");
+        resp.put("success", true);
+        resp.put("enabled", accountLockPolicyConfig.isEnabled());
+        resp.put("threshold", accountLockPolicyConfig.getThreshold());
+        resp.put("adminExempt", accountLockPolicyConfig.isAdminExempt());
+        resp.put("message", accountLockPolicyConfig.isEnabled()
+                ? "비밀번호 " + accountLockPolicyConfig.getThreshold() + "회 연속 실패 시 계정이 잠기도록 설정되었습니다."
+                : "비밀번호 반복 실패 잠금이 비활성화되었습니다.");
         return ResponseEntity.ok(resp);
     }
 

@@ -38,7 +38,7 @@
 
         /* Environment info strip (HOST / Middleware / Instance / Domain) */
         .env-grid { display: table; width: 100%; border-collapse: separate; border-spacing: 1.4mm 0; }
-        .env-cell { display: table-cell; width: 25%; border: 0.3mm solid #E5E7EB; border-left: 1mm solid #64748B; border-radius: 1.5mm; padding: 1.3mm 2.2mm; vertical-align: middle; }
+        .env-cell { display: table-cell; width: 20%; border: 0.3mm solid #E5E7EB; border-left: 1mm solid #64748B; border-radius: 1.5mm; padding: 1.3mm 2.2mm; vertical-align: middle; }
         .env-label { font-size: 6.5pt; color: #6B7280; font-weight: 700; letter-spacing: 0.3pt; text-transform: uppercase; }
         .env-value { font-size: 9pt; font-weight: 700; margin-top: 0.3mm; color: #111827; word-break: break-all; line-height: 1.15; }
         .env-value.na { color: #9CA3AF; font-weight: 400; }
@@ -246,6 +246,11 @@
             <div class="env-label">Domain</div>
             <div th:if="${jeusDomain != null and !jeusDomain.isEmpty()}" class="env-value" th:text="${jeusDomain}">domain1</div>
             <div th:unless="${jeusDomain != null and !jeusDomain.isEmpty()}" class="env-value na">미지정</div>
+        </div>
+        <div class="env-cell">
+            <div class="env-label">JVM Heap</div>
+            <div th:if="${jvmHeapLabel != null and jvmHeapLabel != '미지정'}" class="env-value" th:text="${jvmHeapLabel}">Xms 2g / Xmx 8g (자동 수집)</div>
+            <div th:unless="${jvmHeapLabel != null and jvmHeapLabel != '미지정'}" class="env-value na">미지정</div>
         </div>
     </div>
     <div class="kpi-grid">

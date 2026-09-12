@@ -71,6 +71,9 @@ public class HeapDumpAnalyzerService {
     private final AiChatMessageRepository aiChatMessageRepository;
     private final DumpTransferLogRepository transferLogRepository;
     private final TargetServerRepository targetServerRepository;
+    /** JVM 힙 설정 확정(전송 캡처 → analysis_history). 필드 주입 — 생성자 인자 15개에 더 얹지 않는다. null 가드 있음. */
+    @org.springframework.beans.factory.annotation.Autowired
+    private JvmHeapInfoService jvmHeapInfoService;
     private final HeapAnalysisResultCache resultCache;
     private final FileManagementService fileMgmt;
     private final LlmConfigService llmConfig;
@@ -78,6 +81,7 @@ public class HeapDumpAnalyzerService {
     private final RagConfigService ragConfig;
     private final TwoFactorConfigService twoFactorConfig;
     private final PasswordPolicyConfigService passwordPolicyConfig;
+    private final AccountLockPolicyConfigService accountLockPolicyConfig;
     private final RemoteDumpService remoteDumpService;
     private final AiInsightManager aiInsight;
 
@@ -186,6 +190,7 @@ public class HeapDumpAnalyzerService {
                                    RagConfigService ragConfig,
                                    TwoFactorConfigService twoFactorConfig,
                                    PasswordPolicyConfigService passwordPolicyConfig,
+                                   AccountLockPolicyConfigService accountLockPolicyConfig,
                                    RemoteDumpService remoteDumpService,
                                    AiInsightManager aiInsight,
                                    MultipartProperties multipartProperties) {
@@ -206,6 +211,7 @@ public class HeapDumpAnalyzerService {
         this.ragConfig = ragConfig;
         this.twoFactorConfig = twoFactorConfig;
         this.passwordPolicyConfig = passwordPolicyConfig;
+        this.accountLockPolicyConfig = accountLockPolicyConfig;
         this.remoteDumpService = remoteDumpService;
         this.aiInsight = aiInsight;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
@@ -1713,6 +1719,13 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
+    // ── 비밀번호 반복 실패 잠금 정책 facade (AccountLockPolicyConfigService 위임 + 영속화) ──
+
+    public void setAccountLockPolicy(boolean enabled, int threshold, boolean adminExempt) {
+        accountLockPolicyConfig.setAccountLockPolicy(enabled, threshold, adminExempt);
+        persistSettings();
+    }
+
     // ── 런타임 설정 영속화 (settings.json) ─────────────────────────
 
     /**
@@ -1780,6 +1793,7 @@ public class HeapDumpAnalyzerService {
         applyStep(failed, "rag",            () -> ragConfig.applyFromSettings(saved));
         applyStep(failed, "twoFactor",      () -> twoFactorConfig.applyFromSettings(saved));
         applyStep(failed, "passwordPolicy", () -> passwordPolicyConfig.applyFromSettings(saved));
+        applyStep(failed, "accountLock",    () -> accountLockPolicyConfig.applyFromSettings(saved));
         applyStep(failed, "remote",         () -> remoteDumpService.applyFromSettings(saved));
 
         if (ragConfig.isRagEnabled()) {
@@ -1949,6 +1963,7 @@ public class HeapDumpAnalyzerService {
             ragConfig.collectSettings(settings);
             twoFactorConfig.collectSettings(settings);
             passwordPolicyConfig.collectSettings(settings);
+            accountLockPolicyConfig.collectSettings(settings);
             remoteDumpService.collectSettings(settings);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             persisted = true;
@@ -1993,6 +2008,7 @@ public class HeapDumpAnalyzerService {
             ragConfig.collectApplicationProperties(updates);
             twoFactorConfig.collectApplicationProperties(updates);
             passwordPolicyConfig.collectApplicationProperties(updates);
+            accountLockPolicyConfig.collectApplicationProperties(updates);
             remoteDumpService.collectApplicationProperties(updates);
             List<String> newLines = new ArrayList<>();
             for (String line : lines) {
@@ -3229,6 +3245,7 @@ public class HeapDumpAnalyzerService {
         // 전송 로그에서 서버 정보를 자동 조회
         Long serverId = null;
         String serverName = null;
+        JvmHeapInfoService.Resolution jvm = null;
         try {
             List<DumpTransferLog> logs = transferLogRepository
                     .findByFilenameAndTransferStatusOrderByCompletedAtDesc(result.getFilename(), "SUCCESS");
@@ -3239,14 +3256,22 @@ public class HeapDumpAnalyzerService {
                 if (serverOpt.isPresent()) {
                     serverName = serverOpt.get().getName();
                 }
+                // 전송 시 캡처한 JVM 힙 설정을 sysProps·hprof 생성 시각으로 재매칭 (2026-09-11)
+                if (jvmHeapInfoService != null) jvm = jvmHeapInfoService.reconcile(log, result);
             }
         } catch (Exception e) {
             logger.debug("[DB] Failed to lookup transfer log for {}: {}", result.getFilename(), e.getMessage());
         }
-        saveAnalysisToDb(result, serverId, serverName, null);
+        saveAnalysisToDb(result, serverId, serverName, null, jvm);
     }
 
     public void saveAnalysisToDb(HeapAnalysisResult result, Long serverId, String serverName, String uploadedBy) {
+        saveAnalysisToDb(result, serverId, serverName, uploadedBy, null);
+    }
+
+    /** @param jvm 전송 캡처 재매칭 결과(없으면 null) — manual/selected 는 덮지 않는다(JvmHeapInfoService.apply) */
+    public void saveAnalysisToDb(HeapAnalysisResult result, Long serverId, String serverName, String uploadedBy,
+                                 JvmHeapInfoService.Resolution jvm) {
         try {
             AnalysisHistoryEntity existing = analysisHistoryRepository.findByFilename(result.getFilename()).orElse(null);
             AnalysisHistoryEntity entity = existing != null ? existing : new AnalysisHistoryEntity();
@@ -3272,6 +3297,15 @@ public class HeapDumpAnalyzerService {
             if (serverId != null) entity.setServerId(serverId);
             if (serverName != null) entity.setServerName(serverName);
             if (uploadedBy != null) entity.setUploadedBy(uploadedBy);
+            if (jvm != null && jvmHeapInfoService != null) {
+                jvmHeapInfoService.apply(entity, jvm);
+                if (jvm.matched() && jvmHeapInfoService.mayOverwrite(entity)) {
+                    logger.info("[JvmHeap] action=reconcile file={} reason={} xms={} xmx={} flags={}",
+                            result.getFilename(), jvm.reason(),
+                            com.heapdump.analyzer.util.JvmHeapCapture.formatSizeOrNull(jvm.xms()),
+                            com.heapdump.analyzer.util.JvmHeapCapture.formatSizeOrNull(jvm.xmx()), jvm.flags());
+                }
+            }
             if (!preserveAnalyzedAt) {
                 entity.setAnalyzedAt(java.time.LocalDateTime.now());
             }

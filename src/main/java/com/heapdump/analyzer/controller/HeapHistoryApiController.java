@@ -8,6 +8,7 @@ import com.heapdump.analyzer.model.dto.DetectionAggregate;
 import com.heapdump.analyzer.model.dto.DetectionDayFile;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapHistoryAggregator;
+import com.heapdump.analyzer.service.JvmHeapInfoService;
 import com.heapdump.analyzer.util.AuthUtil;
 import com.heapdump.analyzer.util.FilenameValidator;
 import org.slf4j.Logger;
@@ -41,11 +42,18 @@ public class HeapHistoryApiController {
 
     private final HeapDumpAnalyzerService analyzerService;
     private final HeapHistoryAggregator aggregator;
+    private final JvmHeapInfoService jvmHeapInfoService;
 
     public HeapHistoryApiController(HeapDumpAnalyzerService analyzerService,
-                                    HeapHistoryAggregator aggregator) {
+                                    HeapHistoryAggregator aggregator,
+                                    JvmHeapInfoService jvmHeapInfoService) {
         this.analyzerService = analyzerService;
         this.aggregator = aggregator;
+        this.jvmHeapInfoService = jvmHeapInfoService;
+    }
+
+    private static String who(Authentication auth) {
+        return auth != null ? auth.getName() : "unknown";
     }
 
     @PostMapping("/api/history/bulk-delete")
@@ -132,6 +140,94 @@ public class HeapHistoryApiController {
         return ResponseEntity.ok(resp);
     }
 
+    // ── JVM 힙 설정(-Xms/-Xmx) — 원격 전송 시 자동 수집 + 수동/후보 선택/재수집 (2026-09-11) ──
+    // 인증 필요·CSRF 면제(/api/**)·USER 허용 — /hostname·/jeus 와 같은 정책(자기 덤프 메타 편집).
+
+    /** used heap(=analyze 화면 Total Heap) — Xmx 대비 % 계산용. 결과 캐시에 없으면 null. */
+    private Long usedHeapOf(String filename) {
+        HeapAnalysisResult r = analyzerService.getCachedResult(filename);
+        return r != null && r.getTotalHeapSize() > 0 ? r.getTotalHeapSize() : null;
+    }
+
+    @GetMapping("/api/history/{filename:.+}/jvm-heap")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> getJvmHeap(
+            @org.springframework.web.bind.annotation.PathVariable String filename) {
+        String safe = FilenameValidator.validate(filename);
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("success", true);
+        resp.put("view", jvmHeapInfoService.view(safe, usedHeapOf(safe)));
+        resp.put("candidates", jvmHeapInfoService.candidates(safe));
+        return ResponseEntity.ok(resp);
+    }
+
+    /**
+     * body {@code {xms, xmx}} → 수동 입력(둘 다 비면 초기화) / body {@code {select: n}} → 후보 선택.
+     * 잘못된 표기·범위 밖 인덱스는 IllegalArgumentException → GlobalExceptionHandler 400 JSON.
+     */
+    @PostMapping("/api/history/{filename:.+}/jvm-heap")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> updateJvmHeap(
+            @org.springframework.web.bind.annotation.PathVariable String filename,
+            @RequestBody Map<String, Object> body, Authentication auth) {
+        String safe = FilenameValidator.validate(filename);
+        Map<String, Object> view;
+        String action;
+        if (body.get("select") != null) {
+            int idx;
+            try { idx = Integer.parseInt(body.get("select").toString().trim()); }
+            catch (NumberFormatException e) { throw new IllegalArgumentException("select 는 정수여야 합니다"); }
+            view = jvmHeapInfoService.selectCandidate(safe, idx, usedHeapOf(safe));
+            action = "select";
+        } else {
+            String xms = body.get("xms") == null ? "" : body.get("xms").toString();
+            String xmx = body.get("xmx") == null ? "" : body.get("xmx").toString();
+            view = jvmHeapInfoService.updateManual(safe, xms, xmx, usedHeapOf(safe));
+            action = "update";
+        }
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (view == null) {
+            resp.put("success", false);
+            resp.put("error", "분석 이력 레코드를 찾을 수 없습니다: " + safe);
+            return ResponseEntity.status(404).body(resp);
+        }
+        logger.info("[JvmHeap] action={} file={} xms={} xmx={} source={} by={}",
+                action, safe, view.get("xms"), view.get("xmx"), view.get("source"), who(auth));
+        resp.put("success", true);
+        resp.put("view", view);
+        return ResponseEntity.ok(resp);
+    }
+
+    /** 출처 서버에서 재수집. 후보가 여럿이면 {@code needsSelection:true + candidates}. */
+    @PostMapping("/api/history/{filename:.+}/jvm-heap/recollect")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> recollectJvmHeap(
+            @org.springframework.web.bind.annotation.PathVariable String filename, Authentication auth) {
+        String safe = FilenameValidator.validate(filename);
+        HeapAnalysisResult r = analyzerService.getCachedResult(safe);
+        JvmHeapInfoService.RecollectResult rr = jvmHeapInfoService.recollect(safe,
+                r != null ? r.getSystemProperties() : null,
+                r != null ? r.getDumpCreationTime() : null,
+                usedHeapOf(safe));
+        Map<String, Object> resp = new LinkedHashMap<>();
+        if (rr.code() != null) {
+            logger.info("[JvmHeap] action=recollect file={} result={} by={}", safe, rr.code(), who(auth));
+            resp.put("success", false);
+            resp.put("code", rr.code());
+            resp.put("error", rr.error());
+            if (rr.view() != null) resp.put("view", rr.view());
+            int status = "NOT_FOUND".equals(rr.code()) ? 404 : "BUSY".equals(rr.code()) ? 409 : 200;
+            return ResponseEntity.status(status).body(resp);
+        }
+        logger.info("[JvmHeap] action=recollect file={} needsSelection={} xms={} xmx={} by={}",
+                safe, rr.needsSelection(), rr.view().get("xms"), rr.view().get("xmx"), who(auth));
+        resp.put("success", true);
+        resp.put("needsSelection", rr.needsSelection());
+        resp.put("view", rr.view());
+        if (rr.candidates() != null) resp.put("candidates", rr.candidates());
+        return ResponseEntity.ok(resp);
+    }
+
     @GetMapping("/api/history")
     @ResponseBody
     public ResponseEntity<List<Map<String, Object>>> getHistory() {
@@ -148,6 +244,9 @@ public class HeapHistoryApiController {
             item.put("fileDeleted",      h.isFileDeleted());
             item.put("serverName",       h.getServerName());
             item.put("dumpCreationTime", h.getDumpCreationTime());
+            item.put("jvmXmsBytes",      h.getJvmXmsBytes());
+            item.put("jvmXmxBytes",      h.getJvmXmxBytes());
+            item.put("jvmHeapSource",    h.getJvmHeapSource());
             if (!"NOT_ANALYZED".equals(h.getStatus())) {
                 item.put("suspectCount",   h.getSuspectCount());
                 item.put("analysisTime",   h.getAnalysisTime());

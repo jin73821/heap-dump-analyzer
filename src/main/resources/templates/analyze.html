@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-08-09b">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-09-11">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -503,6 +503,7 @@ function loadFullErrorLog() {
                         <input type="text" id="aiJvmXmx" placeholder="예: 4g, 8192m" style="width:100%;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;box-sizing:border-box">
                     </div>
                 </div>
+                <div id="aiJvmHint" style="display:none;font-size:12px;color:#1D4ED8;margin-top:8px;line-height:1.5"></div>
             </div>
             <div style="background:#FEF3C7;border-left:4px solid #F59E0B;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:13px;color:#92400E;line-height:1.6">
                 <div style="font-weight:700;margin-bottom:4px">&#9888; 주의 사항</div>
@@ -549,6 +550,22 @@ function loadFullErrorLog() {
                 border-radius:8px;font-weight:600}
             .host-chip-save{background:#4338ca;color:#fff}
             .host-chip-cancel{background:#e2e8f0;color:#475569}
+            /* JVM Heap 칩 — 출처·신뢰도·수집 시각은 ⓘ 툴팁이 담당(글자 배지 3종에서 이동, 2026-09-12).
+               남은 배지는 '후보 N' 하나뿐이다 — 정보가 아니라 조치가 필요한 경고라서 툴팁에 접지 않는다. */
+            .jvm-flags{display:inline-flex;gap:4px;flex-wrap:wrap;align-items:center}
+            .jvm-flag{padding:1px 7px;border-radius:10px;background:#e2e8f0;color:#475569;font-weight:600;font-size:11px;white-space:nowrap}
+            .jvm-flag-warn{background:#fef3c7;color:#92400e}
+            .jvm-flag-warn[data-tip]{cursor:help}
+            .jvm-flag-warn[data-tip]:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
+            /* ⓘ 툴팁 트리거 — 팝오버 본체 CSS·JS 는 /js/krds-tooltip.js 가 자립 제공 (settings·account 와 동일 패턴) */
+            .info-icon{display:inline-flex;align-items:center;vertical-align:middle;cursor:help}
+            .info-icon svg{width:14px;height:14px;stroke:#94a3b8;fill:none;stroke-width:2;
+                stroke-linecap:round;stroke-linejoin:round;transition:stroke .15s}
+            .info-icon:hover svg{stroke:#2563eb}
+            .info-icon:focus-visible{outline:2px solid #2563eb;outline-offset:2px;border-radius:50%}
+            .info-icon:focus-visible svg{stroke:#2563eb}
+            .jvm-chip-input{width:78px}
+            .jvm-chip-sep{color:#94a3b8;font-size:12px}
         </style>
         <div class="overview-badge-row">
             <div class="host-chip" title="덤프 출처 호스트명 — SSH 전송 시 자동 기록, 수동 업로드는 직접 입력 (연필 클릭)">
@@ -591,6 +608,37 @@ function loadFullErrorLog() {
                       th:text="${jeusDomain == null or jeusDomain.isEmpty()} ? '미지정' : ${jeusDomain}">domain1</span>
                 <button type="button" class="host-chip-edit"
                         onclick="startJeusEdit('domain')" title="Domain 편집">&#9998;</button>
+            </div>
+            <!-- JVM Heap 칩 (-Xms/-Xmx) — 원격 전송 시 ps+/proc 자동 수집, 수동 편집·후보 선택·재수집.
+                 JS 는 renderJvmChip 이 같은 구조를 다시 그린다.
+                 출처·신뢰도·수집 시각은 ⓘ 툴팁(data-tip)이 담당하고 문구는 서버(jvmHeap.tipText)가 만든다.
+                 ⚠ 칩의 네이티브 title 은 제거했다 — ⓘ 위에 커서를 올리면 조상의 title 이 팝오버와 함께 떠 겹친다
+                 (KRDS: title 속성 중복 사용 금지). 옵션 문구는 툴팁 마지막 단락으로 옮겼다. -->
+            <div class="host-chip jvm-chip" id="jvmChip">
+                <span class="host-chip-icon">&#9881;</span>
+                <span class="host-chip-label">JVM Heap</span>
+                <span class="host-chip-name" id="jvmChipName"
+                      th:classappend="${jvmHeap.hasValue} ? '' : ' host-chip-empty'"
+                      th:text="${jvmHeap.hasValue} ? ('Xms ' + (${jvmHeap.xms} ?: '-') + ' / Xmx ' + (${jvmHeap.xmx} ?: '-')) : '미지정'">Xms 2g / Xmx 8g</span>
+                <span class="jvm-flags" id="jvmChipFlags">
+                    <span class="info-icon" id="jvmChipInfo" tabindex="0" role="img"
+                          aria-label="JVM 힙 설정 상세 — 출처·신뢰도·수집 시각"
+                          th:attr="data-tip=${jvmHeap.tipText}"
+                          data-tip="JVM 힙 설정 — Xms 2g / Xmx 8g">
+                        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    </span>
+                    <span class="jvm-flag jvm-flag-warn" th:if="${jvmHeap.ambiguous}" tabindex="0"
+                          th:text="'후보 ' + ${jvmHeap.candidateCount}"
+                          data-tip="java 프로세스가 여러 개라 자동 확정하지 못했습니다 — 목록(&#9776;)에서 고르세요.">후보 2</span>
+                </span>
+                <button type="button" class="host-chip-edit" id="jvmChipEdit"
+                        onclick="startJvmEdit()" title="JVM 힙 설정 편집">&#9998;</button>
+                <button type="button" class="host-chip-edit" id="jvmChipPick"
+                        onclick="openJvmCandidateModal()" title="수집된 후보 프로세스에서 선택"
+                        th:style="${jvmHeap.candidateCount > 1} ? '' : 'display:none'">&#9776;</button>
+                <button type="button" class="host-chip-edit" id="jvmChipRecollect"
+                        onclick="recollectJvm()" title="출처 서버에서 다시 수집"
+                        th:style="${jvmHeap.recollectable} ? '' : 'display:none'">&#8635;</button>
             </div>
         </div>
 
@@ -715,6 +763,9 @@ function loadFullErrorLog() {
                         <div class="kpi-info">
                             <div class="kpi-value" th:text="${result.formattedTotalHeapSize}">-</div>
                             <div class="kpi-label">Total Heap</div>
+                            <div class="kpi-sub" id="kpiXmxSub" title="MAT used heap 의 -Xmx 대비 비율"
+                                 th:style="${jvmHeap.xmx != null} ? '' : 'display:none'"
+                                 th:text="${jvmHeap.xmx != null} ? ('/ Xmx ' + ${jvmHeap.xmx} + (${jvmHeap.usedPctOfXmx} != null ? (' (' + ${jvmHeap.usedPctOfXmx} + '%)') : '')) : ''">/ Xmx 8g (74%)</div>
                         </div>
                     </div>
                     <div class="kpi-item">
@@ -1383,6 +1434,24 @@ function loadFullErrorLog() {
 </div>
 
 <!-- ── 재분석 확인 모달 ── -->
+<!-- ── JVM 후보 프로세스 선택 모달 (원격 java 프로세스가 여럿이라 덤프 주인 미확정일 때) ── -->
+<div class="modal-overlay" id="jvmPickModal" onclick="if(event.target===this)closeJvmPickModal()">
+    <div class="modal-box" style="max-width:660px">
+        <div class="modal-header">
+            <div class="modal-icon" style="background:#eef2ff;color:#4338ca">&#9881;</div>
+            <div class="modal-title">JVM 프로세스 선택</div>
+        </div>
+        <div class="modal-body">
+            원격 서버에 java 프로세스가 여러 개라 덤프의 주인을 확정하지 못했습니다. 이 덤프를 만든 프로세스를 고르세요.
+            <div class="jvm-pick-list" id="jvmPickList"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="modal-btn modal-btn-cancel" onclick="closeJvmPickModal()">취소</button>
+            <button class="modal-btn modal-btn-primary" id="jvmPickConfirm" onclick="confirmJvmPick()" disabled>선택</button>
+        </div>
+    </div>
+</div>
+
 <div class="modal-overlay" id="reanalyzeModal" onclick="if(event.target===this)closeReanalyzeModal()">
     <div class="modal-box">
         <div class="modal-header">
@@ -1491,12 +1560,16 @@ var OBJ_PCTS      = /*[[${topObjPcts}]]*/ [];
 var THREAD_STACKS  = /*[[${threadStacks}]]*/ [];
 var JEUS_INSTANCE_AUTO = /*[[${jeusInstanceAuto}]]*/ '';
 var JEUS_DOMAIN_AUTO   = /*[[${jeusDomainAuto}]]*/ '';
+var JVM_HEAP           = /*[[${jvmHeap}]]*/ {};
 var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ true;
 /*]]>*/
 </script>
 </th:block>
 
-<script src="/js/analyze.js?v=2026-09-09"></script>
+<!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (settings·history·account 와 공유, 로드만 하면 자동 활성).
+     ⚠ float-tooltip.js([data-tooltip] 커서 추종형)와 한 페이지에 같이 싣지 말 것 — 동작은 하지만 디자인이 섞인다. -->
+<script src="/js/krds-tooltip.js?v=2026-08-09"></script>
+<script src="/js/analyze.js?v=2026-09-12"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

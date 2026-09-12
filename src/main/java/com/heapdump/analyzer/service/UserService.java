@@ -151,6 +151,7 @@ public class UserService {
         validatePassword(newPassword);
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setPasswordChangedAt(LocalDateTime.now());   // 관리자 초기화 → 만료 카운트 리셋
+        user.setPasswordFailCount(0);                     // 새 비밀번호 → 반복 실패 누적도 리셋
         userRepository.save(user);
     }
 
@@ -163,15 +164,20 @@ public class UserService {
         userRepository.deleteById(id);
     }
 
-    // ── 2차인증 (OTP) 잠금 관리 ────────────────────────────────────
+    // ── 계정 잠금 관리 (OTP 반복 실패 / 비밀번호 반복 실패 공통) ────
 
-    /** OTP 반복 실패로 잠긴 계정 해제 (실패 카운트 리셋 포함) */
+    /**
+     * 잠긴 계정 해제. 사유(OTP·비밀번호)와 무관하게 두 실패 카운트를 모두 리셋한다 —
+     * 한쪽만 리셋하면 해제 직후 남은 카운트 때문에 한두 번 만에 다시 잠긴다.
+     */
     public User unlockUser(Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
         user.setAccountLocked(false);
         user.setLockedAt(null);
+        user.setLockReason(null);
         user.setOtpFailCount(0);
+        user.setPasswordFailCount(0);
         return userRepository.save(user);
     }
 
@@ -204,6 +210,7 @@ public class UserService {
         }
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setPasswordChangedAt(LocalDateTime.now());   // 만료 카운트 리셋 (강제 변경 포함)
+        user.setPasswordFailCount(0);                     // 새 비밀번호 → 반복 실패 누적도 리셋
         userRepository.save(user);
         logger.info("[UserService] 비밀번호 변경 (self): {}", username);
     }

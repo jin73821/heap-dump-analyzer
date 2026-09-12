@@ -3798,6 +3798,7 @@ function startAiAnalysis() {
             _azIgnored('비용 경고 판단용 설정 조회 실패 — 경고를 유지한다', e);
         });
     }
+    prefillAiJvm();
     document.getElementById('aiConfirmModal').classList.add('open');
 }
 
@@ -5130,6 +5131,248 @@ function saveHostEdit(value, done) {
         .catch(function(e) {
             alert('호스트명 저장 실패: ' + (e && e.message ? e.message : e));
             if (done) done();
+        });
+}
+
+// ── JVM Heap 칩 (-Xms/-Xmx) ─────────────────────────────────
+// 원격 전송 시 ps+/proc 로 자동 수집(analysis_history.jvm_*), 수동 편집·후보 선택·재수집.
+// 서버 렌더와 같은 구조를 renderJvmChip 이 다시 그리고, AI 모달 프리필·KPI 서브라벨도 여기서 함께 갱신한다.
+function _jvmView() { return (typeof JVM_HEAP !== 'undefined' && JVM_HEAP) ? JVM_HEAP : {}; }
+
+// ⓘ 툴팁 트리거 — 서버 렌더(analyze.html)와 같은 클래스·구조. 실제 팝오버는 krds-tooltip.js 가 [data-tip] 을
+// document 위임으로 처리하므로 이렇게 나중에 만든 엘리먼트에도 핸들러 등록 없이 그대로 동작한다.
+// 문구는 서버가 만든 v.tipText 를 setAttribute 로 그대로 심는다(줄바꿈·인용 이스케이프 불필요).
+function _jvmInfoIcon(tip) {
+    var el = document.createElement('span');
+    el.className = 'info-icon';
+    el.id = 'jvmChipInfo';
+    el.tabIndex = 0;
+    el.setAttribute('role', 'img');
+    el.setAttribute('aria-label', 'JVM 힙 설정 상세 — 출처·신뢰도·수집 시각');
+    el.setAttribute('data-tip', tip);
+    el.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/>'
+        + '<line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';
+    return el;
+}
+
+function renderJvmChip(view) {
+    JVM_HEAP = view || {};
+    var v = _jvmView();
+    var nameEl = document.getElementById('jvmChipName');
+    var flagsEl = document.getElementById('jvmChipFlags');
+    if (nameEl) {
+        if (v.hasValue) {
+            nameEl.textContent = 'Xms ' + (v.xms || '-') + ' / Xmx ' + (v.xmx || '-');
+            nameEl.classList.remove('host-chip-empty');
+        } else {
+            nameEl.textContent = '미지정';
+            nameEl.classList.add('host-chip-empty');
+        }
+    }
+    if (flagsEl) {
+        // 출처(자동 수집)·신뢰도(재기동 후 등)·수집 시각은 ⓘ 툴팁 하나로 모았다 — 배지로 흩어 놓으면 칩이 길어지고
+        // 수집 시각은 놓을 자리가 없었다. '후보 N' 만 배지로 남긴다(조치가 필요한 경고).
+        flagsEl.innerHTML = '';
+        if (v.tipText) flagsEl.appendChild(_jvmInfoIcon(v.tipText));
+        if (v.ambiguous) {
+            var warn = document.createElement('span');
+            warn.className = 'jvm-flag jvm-flag-warn';
+            warn.tabIndex = 0;
+            warn.textContent = '후보 ' + v.candidateCount;
+            warn.setAttribute('data-tip', 'java 프로세스가 여러 개라 자동 확정하지 못했습니다 — 목록(☰)에서 고르세요.');
+            flagsEl.appendChild(warn);
+        }
+    }
+    var pick = document.getElementById('jvmChipPick');
+    if (pick) pick.style.display = (v.candidateCount > 1) ? '' : 'none';
+    var rec = document.getElementById('jvmChipRecollect');
+    if (rec) rec.style.display = v.recollectable ? '' : 'none';
+    var sub = document.getElementById('kpiXmxSub');
+    if (sub) {
+        if (v.xmx) {
+            sub.textContent = '/ Xmx ' + v.xmx + (v.usedPctOfXmx != null ? ' (' + v.usedPctOfXmx + '%)' : '');
+            sub.style.display = '';
+        } else {
+            sub.style.display = 'none';
+        }
+    }
+}
+
+// AI 분석 모달의 Xms/Xmx 입력이 비어 있으면 수집값으로 채운다(사용자가 지우거나 고친 값은 건드리지 않는다).
+function prefillAiJvm() {
+    var v = _jvmView();
+    var xmsEl = document.getElementById('aiJvmXms');
+    var xmxEl = document.getElementById('aiJvmXmx');
+    var hint = document.getElementById('aiJvmHint');
+    if (!xmsEl || !xmxEl) return;
+    var filled = false;
+    if (v.xms && !xmsEl.value.trim()) { xmsEl.value = v.xms; filled = true; }
+    if (v.xmx && !xmxEl.value.trim()) { xmxEl.value = v.xmx; filled = true; }
+    if (hint) {
+        if (v.hasValue) {
+            var tags = [];
+            if (v.sourceLabel) tags.push(v.sourceLabel);
+            (v.flagLabels || []).forEach(function(f) { tags.push(f.label); });
+            hint.textContent = (filled ? '위 값은 ' : '저장된 값: ') + 'Xms ' + (v.xms || '-') + ' / Xmx ' + (v.xmx || '-')
+                + (tags.length ? ' (' + tags.join(' · ') + ')' : '')
+                + (v.pid ? ' · pid ' + v.pid : '') + (v.capturedAtShort ? ' · ' + v.capturedAtShort + ' 수집' : '')
+                + ' — 다르면 고쳐서 분석하세요.';
+            hint.style.display = '';
+        } else {
+            hint.style.display = 'none';
+        }
+    }
+}
+
+function startJvmEdit() {
+    var chip = document.getElementById('jvmChip');
+    if (!chip || chip.querySelector('.host-chip-input')) return; // 이미 편집 중
+    var v = _jvmView();
+    var nameEl = document.getElementById('jvmChipName');
+    var flagsEl = document.getElementById('jvmChipFlags');
+    var btns = ['jvmChipEdit', 'jvmChipPick', 'jvmChipRecollect'].map(function(id) { return document.getElementById(id); });
+    if (!nameEl) return;
+    nameEl.style.display = 'none';
+    if (flagsEl) flagsEl.style.display = 'none';
+    btns.forEach(function(b) { if (b) b.dataset.prevDisplay = b.style.display; if (b) b.style.display = 'none'; });
+
+    function mk(ph, val) {
+        var i = document.createElement('input');
+        i.type = 'text'; i.className = 'host-chip-input jvm-chip-input'; i.maxLength = 16;
+        i.placeholder = ph; i.value = val || '';
+        return i;
+    }
+    var xms = mk('Xms 예: 2g', v.xms);
+    var sep = document.createElement('span'); sep.className = 'jvm-chip-sep'; sep.textContent = '/';
+    var xmx = mk('Xmx 예: 8g', v.xmx);
+    var save = document.createElement('button'); save.type = 'button'; save.className = 'host-chip-save'; save.textContent = '저장';
+    var cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'host-chip-cancel'; cancel.textContent = '취소';
+
+    function cleanup() {
+        [xms, sep, xmx, save, cancel].forEach(function(el) { el.remove(); });
+        nameEl.style.display = '';
+        if (flagsEl) flagsEl.style.display = '';
+        btns.forEach(function(b) { if (b) b.style.display = b.dataset.prevDisplay || ''; });
+    }
+    cancel.onclick = cleanup;
+    save.onclick = function() { saveJvmEdit(xms.value, xmx.value, cleanup); };
+    [xms, xmx].forEach(function(i) {
+        i.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); save.onclick(); }
+            else if (e.key === 'Escape') { cleanup(); }
+        });
+    });
+    chip.appendChild(xms); chip.appendChild(sep); chip.appendChild(xmx); chip.appendChild(save); chip.appendChild(cancel);
+    xms.focus(); xms.select();
+}
+
+// 400/404 응답의 {success,error} 를 사람이 읽을 문구로 (함정 14 — fetchJSON 은 JSON 원문을 메시지에 그대로 담는다)
+function _jvmErrMsg(e, fallback) {
+    try {
+        if (e && e.body) { var d = JSON.parse(e.body); if (d && d.error) return d.error; }
+    } catch (pe) { _azIgnored('JVM 오류 본문 파싱 실패 — 원문 메시지 사용', pe); }
+    return (e && e.message) ? e.message : fallback;
+}
+
+function saveJvmEdit(xms, xmx, done) {
+    Common.fetchJSON('/api/history/' + encodeURIComponent(FILENAME) + '/jvm-heap',
+            { method: 'POST', body: JSON.stringify({ xms: (xms || '').trim(), xmx: (xmx || '').trim() }) })
+        .then(function(d) {
+            if (d && d.success && d.view) renderJvmChip(d.view);
+            if (done) done();
+        })
+        .catch(function(e) {
+            alert('JVM 힙 설정 저장 실패: ' + _jvmErrMsg(e, '알 수 없는 오류'));
+            if (done) done();
+        });
+}
+
+var _jvmPickIndex = null;
+function openJvmCandidateModal(candidates) {
+    var modal = document.getElementById('jvmPickModal');
+    var list = document.getElementById('jvmPickList');
+    if (!modal || !list) return;
+    _jvmPickIndex = null;
+    var confirm = document.getElementById('jvmPickConfirm');
+    if (confirm) confirm.disabled = true;
+    function render(cs) {
+        var esc = window.Common ? Common.escHtml : function(x) { return String(x); };
+        if (!cs || !cs.length) { list.innerHTML = '<div style="color:#94a3b8;padding:8px 0">수집된 후보가 없습니다. 재수집(⟳) 하거나 직접 입력하세요.</div>'; return; }
+        var h = '';
+        cs.forEach(function(c) {
+            var tags = '';
+            if (c.matched) tags += '<span class="jvm-pick-tag hit">자동 매칭</span>';
+            if (c.restarted) tags += '<span class="jvm-pick-tag warn">덤프 이후 기동</span>';
+            (c.flagLabels || []).forEach(function(f) { tags += '<span class="jvm-pick-tag">' + esc(f) + '</span>'; });
+            var markers = '';
+            if (c.markers) Object.keys(c.markers).forEach(function(k) { markers += '<span>' + esc(k) + '=<b>' + esc(c.markers[k]) + '</b></span>'; });
+            h += '<label class="jvm-pick-row" data-index="' + esc(c.index) + '">'
+               + '<input type="radio" name="jvmPick" value="' + esc(c.index) + '">'
+               + '<div style="min-width:0;flex:1">'
+               + '<div class="jvm-pick-main">pid ' + esc(c.pid) + ' · ' + esc(c.user || '?') + ' · ' + esc(c.mainClass || '(main 미확인)') + '</div>'
+               + '<div class="jvm-pick-meta"><span>Xms <b>' + esc(c.xms || '-') + '</b></span><span>Xmx <b>' + esc(c.xmx || '-') + '</b></span>'
+               + (c.startedAt ? '<span>기동 <b>' + esc(c.startedAt) + '</b></span>' : '') + markers + '</div>'
+               + (tags ? '<div class="jvm-pick-meta">' + tags + '</div>' : '')
+               + '</div></label>';
+        });
+        list.innerHTML = h;
+        list.querySelectorAll('.jvm-pick-row').forEach(function(row) {
+            row.addEventListener('change', function() {
+                _jvmPickIndex = parseInt(row.dataset.index, 10);
+                list.querySelectorAll('.jvm-pick-row').forEach(function(r) { r.classList.toggle('selected', r === row); });
+                if (confirm) confirm.disabled = false;
+            });
+        });
+    }
+    if (candidates) {
+        render(candidates);
+        modal.classList.add('open');
+        return;
+    }
+    list.innerHTML = '<div style="color:#94a3b8;padding:8px 0">후보를 불러오는 중…</div>';
+    modal.classList.add('open');
+    Common.fetchJSON('/api/history/' + encodeURIComponent(FILENAME) + '/jvm-heap')
+        .then(function(d) { render(d && d.candidates ? d.candidates : []); })
+        .catch(function(e) { list.innerHTML = '<div style="color:#dc2626;padding:8px 0">후보 조회 실패: ' + (window.Common ? Common.escHtml(_jvmErrMsg(e, '')) : '') + '</div>'; });
+}
+
+function closeJvmPickModal() {
+    var modal = document.getElementById('jvmPickModal');
+    if (modal) modal.classList.remove('open');
+}
+
+function confirmJvmPick() {
+    if (_jvmPickIndex === null) return;
+    var btn = document.getElementById('jvmPickConfirm');
+    if (btn) btn.disabled = true;
+    Common.fetchJSON('/api/history/' + encodeURIComponent(FILENAME) + '/jvm-heap',
+            { method: 'POST', body: JSON.stringify({ select: _jvmPickIndex }) })
+        .then(function(d) {
+            if (d && d.success && d.view) renderJvmChip(d.view);
+            closeJvmPickModal();
+        })
+        .catch(function(e) {
+            alert('후보 선택 실패: ' + _jvmErrMsg(e, '알 수 없는 오류'));
+            if (btn) btn.disabled = false;
+        });
+}
+
+function recollectJvm() {
+    var btn = document.getElementById('jvmChipRecollect');
+    if (btn && btn.disabled) return;
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    function restore() { if (btn) { btn.disabled = false; btn.innerHTML = '&#8635;'; } }
+    Common.fetchJSON('/api/history/' + encodeURIComponent(FILENAME) + '/jvm-heap/recollect', { method: 'POST' })
+        .then(function(d) {
+            restore();
+            if (!d) return;
+            if (d.view) renderJvmChip(d.view);
+            if (!d.success) { alert('재수집 실패: ' + (d.error || d.code || '')); return; }
+            if (d.needsSelection) openJvmCandidateModal(d.candidates || []);
+        })
+        .catch(function(e) {
+            restore();
+            alert('재수집 실패: ' + _jvmErrMsg(e, '알 수 없는 오류'));
         });
 }
 

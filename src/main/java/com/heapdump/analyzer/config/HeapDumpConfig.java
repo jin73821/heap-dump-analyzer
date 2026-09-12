@@ -297,6 +297,17 @@ public class HeapDumpConfig {
     @Value("${security.password.expiry-admin-exempt:true}")
     private boolean passwordExpiryAdminExempt;
 
+    // ── 비밀번호 반복 실패 계정 잠금 정책 (AccountLockPolicyConfigService 시드) ──
+
+    @Value("${security.password.lockout-enabled:false}")
+    private boolean accountLockoutEnabled;
+
+    @Value("${security.password.lockout-threshold:10}")
+    private int accountLockoutThreshold;
+
+    @Value("${security.password.lockout-admin-exempt:true}")
+    private boolean accountLockoutAdminExempt;
+
     // ── 코어 덤프 설정 ──────────────────────────────────────────
     @Value("${coredump.directory:/opt/coredumps}")
     private String coreDumpDirectory;
@@ -647,4 +658,7 @@ public class HeapDumpConfig {
     public String  getSsoRedirectUri()  { return ssoRedirectUri; }
     public int     getPasswordExpiryDays()        { return passwordExpiryDays; }
     public boolean isPasswordExpiryAdminExempt()  { return passwordExpiryAdminExempt; }
+    public boolean isAccountLockoutEnabled()      { return accountLockoutEnabled; }
+    public int     getAccountLockoutThreshold()   { return accountLockoutThreshold; }
+    public boolean isAccountLockoutAdminExempt()  { return accountLockoutAdminExempt; }
 }

@@ -47,6 +47,7 @@ public class AdminController {
     private final JdbcTemplate jdbcTemplate;
     private final com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy;
     private final com.heapdump.analyzer.service.TwoFactorConfigService twoFactorConfig;
+    private final com.heapdump.analyzer.service.AccountLockPolicyConfigService accountLockPolicy;
 
     @Autowired(required = false)
     private FindByIndexNameSessionRepository<? extends Session> sessionRepository;
@@ -55,12 +56,14 @@ public class AdminController {
                            LoginHistoryRepository loginHistoryRepository,
                            JdbcTemplate jdbcTemplate,
                            com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy,
-                           com.heapdump.analyzer.service.TwoFactorConfigService twoFactorConfig) {
+                           com.heapdump.analyzer.service.TwoFactorConfigService twoFactorConfig,
+                           com.heapdump.analyzer.service.AccountLockPolicyConfigService accountLockPolicy) {
         this.userService = userService;
         this.loginHistoryRepository = loginHistoryRepository;
         this.jdbcTemplate = jdbcTemplate;
         this.passwordPolicy = passwordPolicy;
         this.twoFactorConfig = twoFactorConfig;
+        this.accountLockPolicy = accountLockPolicy;
     }
 
     @GetMapping("/admin/users")
@@ -75,6 +78,9 @@ public class AdminController {
         model.addAttribute("ssoClientSecretSet", twoFactorConfig.isSsoClientSecretSet());
         model.addAttribute("passwordExpiryDays", passwordPolicy.getPasswordExpiryDays());
         model.addAttribute("passwordExpiryAdminExempt", passwordPolicy.isAdminExempt());
+        model.addAttribute("accountLockoutEnabled", accountLockPolicy.isEnabled());
+        model.addAttribute("accountLockoutThreshold", accountLockPolicy.getThreshold());
+        model.addAttribute("accountLockoutAdminExempt", accountLockPolicy.isAdminExempt());
         return "admin/users";
     }
 
@@ -96,6 +102,11 @@ public class AdminController {
                     ? u.getLockedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : null);
             m.put("otpEnrolled", u.getOtpSecret() != null && !u.getOtpSecret().isEmpty());
             m.put("otpFailCount", u.getOtpFailCount());
+            m.put("passwordFailCount", u.getPasswordFailCount());
+            // 잠금 사유 — null 은 비밀번호 잠금 도입 이전의 잠금이므로 OTP 로 해석
+            m.put("lockReason", u.isAccountLocked()
+                    ? (u.getLockReason() != null ? u.getLockReason() : User.LOCK_REASON_OTP)
+                    : null);
             // 비밀번호 만료 정책 상태 (정책 비활성/예외면 null·false)
             m.put("passwordExpired", passwordPolicy.isExpired(u));
             Long daysLeft = passwordPolicy.daysUntilExpiry(u);
@@ -169,7 +180,7 @@ public class AdminController {
         }
     }
 
-    /** OTP 반복 실패 잠금 해제 */
+    /** 반복 실패 잠금 해제 (OTP·비밀번호 공통 — 두 카운트 모두 리셋) */
     @PostMapping("/api/admin/users/{id}/unlock")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> unlockUser(@PathVariable Long id,

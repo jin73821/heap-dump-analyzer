@@ -134,6 +134,7 @@ public class TwoFactorService {
         if (failCount >= TwoFactorConfigService.OTP_MAX_FAIL) {
             fresh.setAccountLocked(true);
             fresh.setLockedAt(LocalDateTime.now());
+            fresh.setLockReason(User.LOCK_REASON_OTP);   // 비밀번호 잠금과 구분 (관리자 화면 표시·해제 안내용)
             userRepository.save(fresh);
             historyRecorder.recordFailure(username,
                     "OTP " + TwoFactorConfigService.OTP_MAX_FAIL + "회 연속 실패 — 계정 잠금", req);

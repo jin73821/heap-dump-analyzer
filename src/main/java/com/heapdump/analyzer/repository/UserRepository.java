@@ -19,4 +19,17 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("update User u set u.otpFailCount = u.otpFailCount + 1 where u.id = :id")
     int incrementOtpFailCount(@Param("id") Long id);
+
+    /**
+     * 비밀번호 실패 카운트 원자 증가 (여러 브라우저/스크립트 동시 시도 시 카운트 유실 방지).
+     * OTP 쪽과 동일 패턴 — 증가 직후 재조회가 stale 엔티티를 반환하지 않도록 clearAutomatically.
+     */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update User u set u.passwordFailCount = u.passwordFailCount + 1 where u.id = :id")
+    int incrementPasswordFailCount(@Param("id") Long id);
+
+    /** 비밀번호 실패 카운트 리셋 (로그인 성공 경로 — 엔티티 전체 save 없이 한 컬럼만 건드린다) */
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("update User u set u.passwordFailCount = 0 where u.id = :id")
+    int resetPasswordFailCount(@Param("id") Long id);
 }

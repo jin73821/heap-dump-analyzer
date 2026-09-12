@@ -1115,6 +1115,15 @@ function transferFile(btn, callback) {
             fill.style.width = '100%';
             var sizeStr = d.fileSize ? ' (' + fmtMB(d.fileSize) + ')' : '';
             label.textContent = '완료' + sizeStr;
+            // 전송 직후 수집한 JVM 힙 설정(-Xms/-Xmx) — 힙 전송에서만 온다. 후보가 여럿이면 분석 화면에서 고른다.
+            if (d.jvm && d.jvm.status === 'collected') {
+                label.textContent += ' · JVM' + (d.jvm.xms ? ' -Xms' + d.jvm.xms : '') + (d.jvm.xmx ? ' -Xmx' + d.jvm.xmx : '')
+                    + (d.jvm.pid ? ' (pid ' + d.jvm.pid + ')' : '');
+            } else if (d.jvm && d.jvm.status === 'ambiguous') {
+                label.textContent += ' · JVM 후보 ' + d.jvm.candidateCount + '개 (분석 화면에서 선택)';
+            } else if (d.jvm) {
+                label.textContent += ' · JVM 미수집';
+            }
             label.style.color = '#059669';
             showToast((d.filename || '파일') + ' 전송 완료', 'success');
             // 페이지 재렌더 시 상태 유지 — _scanFiles 의 해당 코어/힙 파일을 transferred 로 마킹

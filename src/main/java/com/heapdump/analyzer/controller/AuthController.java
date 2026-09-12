@@ -24,7 +24,7 @@ public class AuthController {
         if ("disabled".equals(error)) {
             model.addAttribute("disabledMessage", "비활성화된 계정입니다. 관리자에게 문의하세요.");
         } else if ("locked".equals(error)) {
-            model.addAttribute("disabledMessage", "계정이 잠겼습니다 (OTP 반복 실패). 관리자에게 잠금 해제를 문의하세요.");
+            model.addAttribute("disabledMessage", "계정이 잠겼습니다 (반복 인증 실패). 관리자에게 잠금 해제를 문의하세요.");
         } else if (error != null) {
             model.addAttribute("errorMessage", "아이디 또는 비밀번호가 올바르지 않습니다.");
         }

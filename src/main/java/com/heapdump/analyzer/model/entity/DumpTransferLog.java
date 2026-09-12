@@ -45,4 +45,12 @@ public class DumpTransferLog {
 
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
+
+    /**
+     * 전송 직후 원격 서버에서 수집한 JVM 힙 설정 스냅샷(JSON, {@code JvmHeapCapture.Capture}) — 전송 시점 기록이라 불변.
+     * 후보 프로세스 전부 + 매칭 결과 + MemTotal. 힙 전송에서만 채워지고 코어 전송은 null.
+     * 255 초과가 확실하므로 TEXT 명시(함정 16). 저장 내용은 allow-list 옵션·매칭 마커뿐이라 자격증명이 들어오지 않는다.
+     */
+    @Column(name = "jvm_info", columnDefinition = "TEXT")
+    private String jvmInfo;
 }
