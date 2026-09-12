@@ -17,6 +17,13 @@
  *   onRenderStart / showRow(row) / onAfterRender  렌더 훅
  *   pageSizeSelectId('pageSizeSelect') noMatchId('noMatch')
  *   paginationBarId('paginationBar') pgInfoId('pgInfo') pgListId('pgList')
+ *   pageSizes        행표시 허용값 (기본 [20,30,50,100]) / defaultPageSize (기본 20)
+ *   detach           true = 현재 페이지의 tr 만 tbody 에 붙인다 (2026-09-13, analyze 의 500행 표용).
+ *                    나머지 행은 allRows 배열에만 존재하므로 `querySelectorAll('#tbody tr')` 로 전량을
+ *                    훑는 코드는 grid.allRows 를 봐야 한다. 정렬은 배열만 바꾸고(DOM 재부착 없음),
+ *                    렌더는 slice 를 DocumentFragment 로 한 번에 replaceChildren 한다 — display 토글
+ *                    방식(기본)과 달리 안 보이는 행이 레이아웃·스타일 계산에 들어가지 않는다.
+ *                    showRow 훅은 detach 에서 무시된다(행이 곧 DOM 에 있는 것이 표시).
  */
 (function() {
     'use strict';
@@ -35,16 +42,23 @@
                 sortType: cfg.defaultSort ? (cfg.defaultSort.type || 'str') : 'str'
             };
             var attrPrefix = cfg.sortAttrPrefix || 'data-sort-';
+            var pageSizes = cfg.pageSizes || [20, 30, 50, 100];
+            var detach = !!cfg.detach;
+            g.pageSize = cfg.defaultPageSize || 20;
 
             /* rows 미지정 시 tbody 의 전체 tr 수집. 행표시 셀렉트 localStorage 복원 + 기본 정렬. */
             g.init = function(rows) {
                 g.allRows = rows || Array.prototype.slice.call(
                     document.querySelectorAll('#' + cfg.tbodyId + ' tr'));
-                var saved = parseInt(localStorage.getItem(cfg.pageSizeKey) || '20', 10);
-                if ([20, 30, 50, 100].indexOf(saved) !== -1) {
+                var saved = parseInt(localStorage.getItem(cfg.pageSizeKey) || String(g.pageSize), 10);
+                if (pageSizes.indexOf(saved) !== -1) {
                     g.pageSize = saved;
                     var sel = byId(cfg.pageSizeSelectId || 'pageSizeSelect');
                     if (sel) sel.value = String(saved);
+                }
+                if (detach) {
+                    var tb0 = byId(cfg.tbodyId);
+                    if (tb0) tb0.replaceChildren();   // 행은 allRows 에만 — render() 가 페이지 슬라이스를 붙인다
                 }
                 g.sortRows();
                 g.updateSortIndicators();
@@ -67,6 +81,7 @@
                     if (isNum) { va = parseFloat(va) || 0; vb = parseFloat(vb) || 0; return (va - vb) * dir; }
                     return va.localeCompare(vb, 'ko') * dir;
                 });
+                if (detach) return;   // 배열 순서가 곧 표시 순서 — DOM 재부착 불필요
                 var tbody = byId(cfg.tbodyId);
                 if (tbody) g.allRows.forEach(function(r) {
                     if (cfg.attachRow) cfg.attachRow(tbody, r);
@@ -112,7 +127,8 @@
 
             g.onPageSizeChange = function() {
                 var sel = byId(cfg.pageSizeSelectId || 'pageSizeSelect');
-                g.pageSize = parseInt(sel.value, 10) || 20;
+                g.pageSize = parseInt(sel.value, 10) || (cfg.defaultPageSize || 20);
+                if (pageSizes.indexOf(g.pageSize) === -1) g.pageSize = cfg.defaultPageSize || 20;
                 localStorage.setItem(cfg.pageSizeKey, String(g.pageSize));
                 g.currentPage = 1;
                 g.render();
@@ -127,15 +143,22 @@
 
             g.render = function() {
                 if (cfg.onRenderStart) cfg.onRenderStart();
-                g.allRows.forEach(function(el) { el.style.display = 'none'; });
+                if (!detach) g.allRows.forEach(function(el) { el.style.display = 'none'; });
                 var total = g.filteredRows.length;
                 var totalPages = Math.max(1, Math.ceil(total / g.pageSize));
                 if (g.currentPage > totalPages) g.currentPage = totalPages;
                 var start = (g.currentPage - 1) * g.pageSize;
                 var end = Math.min(start + g.pageSize, total);
-                for (var i = start; i < end; i++) {
-                    if (cfg.showRow) cfg.showRow(g.filteredRows[i]);
-                    else g.filteredRows[i].style.display = '';
+                if (detach) {
+                    var frag = document.createDocumentFragment();
+                    for (var d = start; d < end; d++) frag.appendChild(g.filteredRows[d]);
+                    var tb = byId(cfg.tbodyId);
+                    if (tb) tb.replaceChildren(frag);
+                } else {
+                    for (var i = start; i < end; i++) {
+                        if (cfg.showRow) cfg.showRow(g.filteredRows[i]);
+                        else g.filteredRows[i].style.display = '';
+                    }
                 }
                 var noMatch = byId(cfg.noMatchId || 'noMatch');
                 if (noMatch) noMatch.style.display = total === 0 ? 'block' : 'none';

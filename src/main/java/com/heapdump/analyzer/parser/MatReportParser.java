@@ -1647,6 +1647,22 @@ public class MatReportParser {
 
     // ─── Histogram 파싱 ─────────────────────────────────────────────────────────
 
+    /** {@link #parseHistogramQueryZip(File)} 결과 — 엔트리 + "Total: N of M entries" 의 M(없으면 0). */
+    public record HistogramParse(List<HistogramEntry> entries, int totalClasses) {}
+
+    /**
+     * MAT {@code histogram} 단독 쿼리 {@code _Query.zip}(index.html: Class Name | Objects | Shallow Heap | Retained Heap)
+     * 파싱. Overview 의 class_histogram 페이지와 표 구조가 같아 {@link #parseHistogramEntries} 를 그대로 재사용한다.
+     * 클래스 수가 limit 미만이면 푸터가 "Total: N entries"(of 없음)라 totalClasses 는 0 — 호출자가 Overview 총계를 유지한다.
+     */
+    public HistogramParse parseHistogramQueryZip(File zip) {
+        String html = extractHtmlFromZip(zip, "dominator_tree_query");   // index.html 우선 분기 재사용
+        if (html == null || html.isEmpty()) return new HistogramParse(List.of(), 0);
+        MatParseResult tmp = new MatParseResult();
+        parseHistogramEntries(html, tmp);
+        return new HistogramParse(tmp.getHistogramEntries(), tmp.getTotalHistogramClasses());
+    }
+
     /**
      * Histogram HTML 테이블에서 엔트리를 추출합니다.
      */
@@ -1690,8 +1706,9 @@ public class MatReportParser {
                 long objectCount = parseLong(digitsOnly(cells.get(1)));
                 long shallowHeap = parseLong(digitsOnly(cells.get(2)));
 
-                // retainedHeap: ">= NNN" 형식 처리
-                String retainedRaw = cells.get(3).trim();
+                // retainedHeap: ">= NNN" 형식 처리. MAT HTML 은 "&gt;= NNN" 으로 이스케이프돼 있어
+                // 디코딩하지 않으면 HistogramEntry.getRetainedHeapHuman 의 ≥ 접두가 영영 붙지 않았다(2026-09-13 수정).
+                String retainedRaw = cells.get(3).trim().replace("&gt;", ">");
                 String retainedDisplay = retainedRaw;
                 long retainedHeap = parseLong(digitsOnly(retainedRaw));
 

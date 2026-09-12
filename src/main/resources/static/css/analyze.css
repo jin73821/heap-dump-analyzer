@@ -230,6 +230,72 @@
         }
         .class-name-cell .pkg { color:var(--text-secondary); }
 
+        /* ── Dense 변형 (Dominator Tree / Histogram 전용, 2026-09-13) — 행 높이 ~26px ──
+           .data-table 공통 base(Top Consumers/Threads/SysProps 공유)는 손대지 않는다.
+           table-layout:fixed 라 열 폭은 thead 의 width 가 정하고 Class Name 이 잔여를 가져가
+           긴 FQCN 이 줄바꿈 대신 말줄임된다(전체 이름은 td title). 막대 셀 3+3+14=20 < 26 이라
+           막대가 행 높이를 밀지 않는다. */
+        .data-table.dense { table-layout:fixed; }
+        .data-table.dense thead th { padding:6px 10px; font-size:10.5px; }
+        .data-table.dense tbody td {
+            padding:4px 10px; font-size:12px; line-height:1.3;
+            font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden;
+        }
+        .data-table.dense .rank-num { font-size:12px; }
+        /* 이름은 인라인 블록 — 블록이면 앞의 CL 배지(span)가 제 줄을 차지해 그 행만 2줄(40px)이 된다(실측) */
+        .data-table.dense .class-name-cell {
+            display:inline-block; max-width:100%; vertical-align:middle;
+            font-size:12px; line-height:1.3; word-break:normal;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        }
+        .data-table.dense .cl-badge { vertical-align:middle; margin-right:4px; }
+        .data-table.dense .cl-badge + .class-name-cell { max-width:calc(100% - 26px); }
+        .data-table.dense td.dom-bar-cell { padding:3px 10px; }
+        .data-table.dense .dom-bar-track { height:14px; left:6px; right:6px; }
+        .data-table.dense .dom-bar-val { font-size:11px; }
+        .data-table.dense .cl-badge { font-size:8px; padding:0 3px; }
+        .data-table.dense .dom-chevron { font-size:9px; }
+        /* table-grid.js 는 정렬 헤더에 .sort-active 를 준다(.sorted 는 다른 표의 sortTable 용) */
+        .data-table thead th.sort-active .sort-arrow { opacity:1; color:var(--primary); }
+
+        /* ── 표 툴바 · 프레임 · 페이지네이션 — files/history 의 .pagination-bar 와 같은 모양.
+           analyze.html 은 common.css 를 싣지 않으므로 여기에 둔다(함정 13). ── */
+        .tbl-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+        .tbl-toolbar-info { font-size:13px; color:var(--text-secondary); margin:0; }
+        .tbl-toolbar-ctl { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .tbl-toolbar-ctl .table-search { width:220px; }
+        .page-size-wrap { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+        .page-size-label { font-size:12px; color:#6B7280; white-space:nowrap; }
+        .page-size-select {
+            padding:6px 26px 6px 10px; font-size:12px; border:1px solid #E5E7EB; border-radius:8px;
+            background:#fff; color:#1F2937; cursor:pointer; outline:none; appearance:none; -webkit-appearance:none;
+            font-family:inherit;
+            background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+            background-repeat:no-repeat; background-position:right 9px center;
+        }
+        .page-size-select:focus { border-color:var(--primary); }
+        .tbl-frame { border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+        /* sticky 헤더는 이 스크롤 컨테이너 기준 — 페이지네이션 바는 밖(아래)에 둬 스크롤로 사라지지 않는다 */
+        .tbl-scroll { max-height:min(760px, calc(100vh - 240px)); overflow:auto; }
+        .pagination-bar {
+            display:none; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
+            padding:8px 12px; border-top:1px solid #E5E7EB; background:#FAFBFC;
+        }
+        .pagination-bar.show { display:flex; }
+        .pg-info { font-size:12px; color:#6B7280; }
+        .pg-info strong { color:#1F2937; }
+        .pg-list { display:flex; gap:4px; align-items:center; flex-wrap:wrap; }
+        .pg-btn {
+            min-width:28px; height:28px; padding:0 8px; border:1px solid #E5E7EB; border-radius:6px;
+            background:#fff; color:#374151; font-size:12px; font-family:inherit; cursor:pointer;
+            display:inline-flex; align-items:center; justify-content:center; font-variant-numeric:tabular-nums;
+        }
+        .pg-btn:hover:not(:disabled):not(.active) { background:#F3F4F6; border-color:#D1D5DB; }
+        .pg-btn.active { background:var(--primary); color:#fff; border-color:var(--primary); cursor:default; }
+        .pg-btn:disabled { color:#D1D5DB; cursor:not-allowed; background:#F9FAFB; }
+        .pg-ellipsis { padding:0 4px; color:#9CA3AF; font-size:12px; }
+        .no-match { text-align:center; padding:24px; color:#9CA3AF; font-size:13px; display:none; }
+
         .pct-bar-wrap { display:flex; align-items:center; gap:8px; }
         .pct-bar { flex:1; height:18px; background:#f3f4f6; border-radius:9px; overflow:hidden; }
         .pct-bar-fill { height:100%; border-radius:9px; transition:width .8s ease; min-width:2px; }
@@ -274,28 +340,29 @@
         }
         .dom-row.dom-open .dom-chevron { transform:rotate(90deg); color:var(--primary); }
         .dom-row.dom-open { background:#F8FAFC; }
-        .dom-detail-row td { background:#FAFBFC; padding:14px 18px; border-top:1px dashed #E5E7EB; }
+        /* 드로어 셀: dense 의 nowrap/overflow:hidden 을 되돌리고, 중첩 sticky th(z:2)·막대 값(z:1)의
+           z-index 경쟁을 셀 안에 가둔다(함정 30 — 바깥 sticky thead z:3 을 뚫지 못하게). */
+        .dom-detail-row td, .data-table.dense .dom-detail-row td {
+            background:#FAFBFC; padding:10px 14px; border-top:1px dashed #E5E7EB;
+            isolation:isolate; white-space:normal; overflow:visible;
+        }
         .dom-refs-wrap { display:block; }
 
-        /* ── 탭 전환 구조 ── */
-        .dom-tabs { display:flex; gap:4px; border-bottom:2px solid #E5E7EB; margin-bottom:0; }
-        .dom-tab-btn {
-            appearance:none; border:none; background:transparent; cursor:pointer;
-            padding:8px 16px; font-size:12px; font-weight:600; color:#6B7280;
-            border-bottom:2px solid transparent; margin-bottom:-2px;
-            border-radius:6px 6px 0 0; transition:color .15s, background .15s, border-color .15s;
-            white-space:nowrap;
+        /* ── 2단 드로어 (2026-09-13): 좌 Incoming · 우 Outgoing · (CL 행) 하단 전폭 Loaded Classes.
+           종전 탭 3개(번갈아 눌러야 보임)를 대체. <1100px 는 1열로 쌓인다. ── */
+        .dom-drawer { display:grid; grid-template-columns:1fr; gap:12px; }
+        @media (min-width:1100px) { .dom-drawer { grid-template-columns:1fr 1fr; } }
+        .dom-drawer-col {
+            min-width:0; background:#fff; border:1px solid #E5E7EB; border-radius:8px;
+            display:flex; flex-direction:column;
         }
-        .dom-tab-btn:hover { color:var(--primary); background:#F3F4F6; }
-        .dom-tab-btn.active { color:var(--primary); border-bottom-color:var(--primary); background:#fff; }
-        .dom-tab-body { max-height:420px; overflow:auto; padding-top:12px; }
-        .dom-tab-panel { display:none; }
-        .dom-tab-panel.active { display:block; animation:domTabIn .18s ease; }
-        @keyframes domTabIn { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:none; } }
-        .dom-tab-desc {
-            font-size:11px; color:#6B7280; margin:0 0 10px;
-            letter-spacing:.2px; line-height:1.5;
-        }
+        .dom-drawer-hd { display:flex; align-items:baseline; gap:8px; padding:7px 10px; border-bottom:1px solid #EEF0F3; flex-wrap:wrap; }
+        .dom-drawer-title { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.5px; color:#374151; }
+        .dom-drawer-cnt { font-size:11px; color:var(--primary); font-variant-numeric:tabular-nums; }
+        .dom-drawer-cnt:empty { display:none; }
+        .dom-drawer-desc { font-size:11px; color:#6B7280; flex-basis:100%; line-height:1.4; }
+        .dom-drawer-body { max-height:320px; overflow:auto; padding:6px; }
+        .dom-cl-section .dom-drawer-body { max-height:440px; }
 
         /* ── 로딩 스켈레톤 ── */
         .dom-skel-wrap { padding:4px 2px; }
@@ -357,6 +424,11 @@
         .dom-refs-tbl tr:last-child td { border-bottom:none; }
         .dom-refs-tbl td.dom-refs-num { text-align:right; font-family:var(--mono); color:#374151; white-space:nowrap; }
         .dom-refs-tbl code { font-family:var(--mono); font-size:11px; color:#9CA3AF; }
+        /* 드로어 안 표는 조밀하게 — 클래스명은 말줄임(max-width:0 트릭) + title */
+        .dom-refs-tbl.dense th { padding:4px 6px; font-size:10.5px; }
+        .dom-refs-tbl.dense td { padding:3px 6px; font-size:11.5px; line-height:1.3; white-space:nowrap; vertical-align:middle; }
+        .dom-refs-tbl.dense td.dom-ref-cls-cell { overflow:hidden; text-overflow:ellipsis; max-width:0; }
+        .dom-refs-tbl.dense code { font-size:10px; }
         .dom-refs-empty { padding:10px; color:#9CA3AF; font-size:12px; font-style:italic; text-align:center;
                           background:#fff; border:1px dashed #E5E7EB; border-radius:6px; }
         .dom-refs-loading { padding:14px; color:#6B7280; font-size:13px; text-align:center;
@@ -370,11 +442,6 @@
             vertical-align:-3px; margin-right:4px;
         }
         @keyframes dom-spin { to { transform: rotate(360deg); } }
-        @media (max-width: 900px) {
-            .dom-tabs { flex-wrap:wrap; }
-            .dom-tab-btn { padding:7px 11px; font-size:11px; }
-            .dom-tab-body { max-height:none; }
-        }
         /* ── ClassLoader 배지 & 로드 클래스 섹션 ── */
         .cl-badge {
             display:inline-block; font-size:9px; font-weight:700;
@@ -412,14 +479,11 @@
         .cl-sort-th:hover { background:#E9D5FF !important; }
         .cl-sort-active { color:#6D28D9; }
         .cl-sort-icon { font-size:9px; margin-left:2px; }
-        /* 추가 조회 버튼 */
-        .cl-more-wrap { text-align:center; margin-top:6px; }
-        .cl-more-btn {
-            display:inline-block; padding:5px 18px; font-size:12px;
-            background:#F3F0FF; color:#6D28D9; border:1px solid #C4B5FD;
-            border-radius:6px; cursor:pointer; transition:background .15s;
-        }
-        .cl-more-btn:hover { background:#EDE9FE; }
+        /* 드로어 안 Loaded Classes 페이지 번호 페이저(종전 "추가 조회" append 대체) */
+        .cl-pager { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; margin-top:6px; }
+        .cl-pager-info { font-size:11px; color:#6B7280; }
+        .cl-pager .page-size-select { padding:3px 22px 3px 8px; font-size:11px; background-position:right 7px center; }
+        .cl-pager .pg-btn { min-width:24px; height:24px; font-size:11px; }
 
         /* ── Leak Suspects ────────────────────────── */
         .suspect-list { display:flex; flex-direction:column; gap:14px; }
@@ -948,6 +1012,11 @@
             .data-table tbody td { font-size:15px; padding:12px 16px; }
             .rank-num { font-size:15px; }
             .class-name-cell { font-size:14px; }
+            /* dense 표는 데스크톱 확대 오버라이드에서 제외 — 조밀함이 목적 */
+            .data-table.dense thead th { font-size:11px; padding:6px 10px; }
+            .data-table.dense tbody td { font-size:12px; padding:4px 10px; }
+            .data-table.dense td.dom-bar-cell { padding:3px 10px; }
+            .data-table.dense .rank-num, .data-table.dense .class-name-cell { font-size:12px; }
             .pct-bar-text { font-size:13px; }
             .suspect-title-text { font-size:16px; }
             .suspect-body { font-size:15px; }

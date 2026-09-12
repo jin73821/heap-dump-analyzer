@@ -7,7 +7,7 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
-    <link rel="stylesheet" href="/css/analyze.css?v=2026-09-11">
+    <link rel="stylesheet" href="/css/analyze.css?v=2026-09-13">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -1052,62 +1052,82 @@ function loadFullErrorLog() {
                 <span class="dlb-text" id="domLazyText">참조 경로를 추출하고 있습니다…</span>
                 <span class="dlb-time" id="domLazyTime">0.0초</span>
             </div>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                <p style="font-size:13px;color:var(--text-secondary);margin:0">
+            <div class="tbl-toolbar">
+                <p class="tbl-toolbar-info">
                     Top <strong th:text="${result.dominatorTreeEntries != null ? #lists.size(result.dominatorTreeEntries) : 0}">500</strong>
                     dominator objects by retained heap
                 </p>
-                <input type="text" class="table-search" id="domTreeSearch" placeholder="Search class name..." oninput="filterDomTree()" style="width:220px">
+                <div class="tbl-toolbar-ctl">
+                    <label class="page-size-wrap"><span class="page-size-label">행 표시</span>
+                        <select class="page-size-select" id="domPageSize" onchange="onDomPageSizeChange()" aria-label="페이지당 행 수">
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                        </select>
+                    </label>
+                    <input type="text" class="table-search" id="domTreeSearch" placeholder="Search class name..." oninput="filterDomTree()" aria-label="클래스명 검색">
+                </div>
             </div>
-            <div style="max-height:700px;overflow:auto;border:1px solid var(--border);border-radius:8px">
-                <table class="data-table" id="domTreeTable">
-                    <thead>
-                        <tr>
-                            <th style="width:32px;text-align:center"></th>
-                            <th style="width:50px;text-align:center">#</th>
-                            <th>Class Name</th>
-                            <th style="width:120px;text-align:right"><span class="dom-lgd dom-lgd-shallow"></span>Shallow Heap</th>
-                            <th style="width:140px;text-align:right"><span class="dom-lgd dom-lgd-retained"></span>Retained Heap</th>
-                            <th style="width:80px;text-align:right">%</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr class="dom-row" th:each="d,s : ${result.dominatorTreeEntries}"
-                            th:data-class="${d.className}"
-                            th:data-address="${d.objectAddress}"
-                            th:data-retained="${d.retainedHeap}"
-                            th:data-shallow="${d.shallowHeap}"
-                            th:data-idx="${s.index}"
-                            th:data-is-loader="${d.classLoader}"
-                            onclick="domRowClick(this)"
-                            style="cursor:pointer"
-                            th:title="${s.index &lt; 50} ? 'inbound/outbound 참조 펼치기' : '클릭하여 상세 보기'">
-                            <td style="text-align:center;color:#9CA3AF">
-                                <span th:if="${s.index &lt; 50}" class="dom-chevron">&#9654;</span>
-                            </td>
-                            <td style="text-align:center"><span class="rank-num" th:text="${s.count}">1</span></td>
-                            <td>
-                                <span th:if="${d.classLoader}" class="cl-badge" title="ClassLoader — 로드 클래스 목록 조회 가능">CL</span>
-                                <div class="class-name-cell" th:text="${d.className}"
-                                     th:title="${d.objectAddress}"
-                                     onclick="event.stopPropagation();showComponentDetail(this.parentNode.parentNode.dataset['class'])"
-                                     style="cursor:pointer">-</div>
-                            </td>
-                            <td class="dom-bar-cell"
-                                th:title="${#numbers.formatInteger(d.shallowHeap, 1, 'COMMA') + ' bytes'}">
-                                <span class="dom-bar-track"><span class="dom-bar-fill dom-bar-shallow" th:data-val="${d.shallowHeap}"></span></span>
-                                <span class="dom-bar-val" th:text="${d.shallowHeapHuman}">0</span>
-                            </td>
-                            <td class="dom-bar-cell"
-                                th:title="${#numbers.formatInteger(d.retainedHeap, 1, 'COMMA') + ' bytes'}">
-                                <span class="dom-bar-track"><span class="dom-bar-fill dom-bar-retained" th:data-val="${d.retainedHeap}"></span></span>
-                                <span class="dom-bar-val" th:text="${d.retainedHeapHuman}">0</span>
-                            </td>
-                            <td style="text-align:right;font-family:var(--mono);font-size:12px"
-                                th:text="${#numbers.formatDecimal(d.percentOfHeap, 1, 2) + '%'}">0%</td>
-                        </tr>
-                    </tbody>
-                </table>
+            <!-- dense 표 + table-grid.js detach 페이지네이션(현재 페이지 tr 만 tbody 에 존재). 정렬값은 행의 data-* 그대로.
+                 data-idx 는 retained 원래 순위 — 정렬해도 불변이라 idx<50 참조 펼치기 규칙이 정렬과 무관하게 일관된다. -->
+            <div class="tbl-frame">
+                <div class="tbl-scroll">
+                    <table class="data-table dense" id="domTreeTable">
+                        <thead>
+                            <tr>
+                                <th style="width:28px;text-align:center"></th>
+                                <th style="width:52px;text-align:center" data-sort-key="idx" data-sort-type="num" onclick="onDomHeaderSort(this)"
+                                    title="Retained Heap 기준 원래 순위 — 다른 열로 정렬해도 유지됩니다">#<span class="sort-arrow">&#9650;</span></th>
+                                <th data-sort-key="class" data-sort-type="str" onclick="onDomHeaderSort(this)">Class Name<span class="sort-arrow">&#9650;</span></th>
+                                <th style="width:120px;text-align:right" data-sort-key="shallow" data-sort-type="num" onclick="onDomHeaderSort(this)"><span class="dom-lgd dom-lgd-shallow"></span>Shallow Heap<span class="sort-arrow">&#9650;</span></th>
+                                <th style="width:140px;text-align:right" data-sort-key="retained" data-sort-type="num" onclick="onDomHeaderSort(this)"><span class="dom-lgd dom-lgd-retained"></span>Retained Heap<span class="sort-arrow">&#9650;</span></th>
+                                <th style="width:72px;text-align:right" data-sort-key="pct" data-sort-type="num" onclick="onDomHeaderSort(this)">%<span class="sort-arrow">&#9650;</span></th>
+                            </tr>
+                        </thead>
+                        <tbody id="domTreeBody">
+                            <tr class="dom-row" th:each="d,s : ${result.dominatorTreeEntries}"
+                                th:data-class="${d.className}"
+                                th:data-address="${d.objectAddress}"
+                                th:data-retained="${d.retainedHeap}"
+                                th:data-shallow="${d.shallowHeap}"
+                                th:data-pct="${d.percentOfHeap}"
+                                th:data-idx="${s.index}"
+                                th:data-is-loader="${d.classLoader}"
+                                onclick="domRowClick(this)"
+                                style="cursor:pointer"
+                                th:title="${s.index &lt; 50} ? '행 클릭: inbound/outbound 참조 펼치기 · 이름 클릭: 상세 보기' : '클릭하여 상세 보기'">
+                                <td style="text-align:center;color:#9CA3AF">
+                                    <span th:if="${s.index &lt; 50}" class="dom-chevron">&#9654;</span>
+                                </td>
+                                <td style="text-align:center"><span class="rank-num" th:text="${s.count}">1</span></td>
+                                <td th:title="${d.className + ' @ ' + d.objectAddress}">
+                                    <span th:if="${d.classLoader}" class="cl-badge" title="ClassLoader — 로드 클래스 목록 조회 가능">CL</span>
+                                    <div class="class-name-cell" th:text="${d.className}"
+                                         onclick="event.stopPropagation();showComponentDetail(this.parentNode.parentNode.dataset['class'])"
+                                         style="cursor:pointer">-</div>
+                                </td>
+                                <td class="dom-bar-cell"
+                                    th:title="${#numbers.formatInteger(d.shallowHeap, 1, 'COMMA') + ' bytes'}">
+                                    <span class="dom-bar-track"><span class="dom-bar-fill dom-bar-shallow" th:data-val="${d.shallowHeap}"></span></span>
+                                    <span class="dom-bar-val" th:text="${d.shallowHeapHuman}">0</span>
+                                </td>
+                                <td class="dom-bar-cell"
+                                    th:title="${#numbers.formatInteger(d.retainedHeap, 1, 'COMMA') + ' bytes'}">
+                                    <span class="dom-bar-track"><span class="dom-bar-fill dom-bar-retained" th:data-val="${d.retainedHeap}"></span></span>
+                                    <span class="dom-bar-val" th:text="${d.retainedHeapHuman}">0</span>
+                                </td>
+                                <td style="text-align:right;font-family:var(--mono)"
+                                    th:text="${#numbers.formatDecimal(d.percentOfHeap, 1, 2) + '%'}">0%</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="no-match" id="domNoMatch">검색 결과가 없습니다.</div>
+                <div class="pagination-bar" id="domPaginationBar">
+                    <div class="pg-info" id="domPgInfo">-</div>
+                    <div class="pg-list" id="domPgList"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -1116,37 +1136,55 @@ function loadFullErrorLog() {
     <div id="panel-histogram" class="panel" th:if="${hasHistogram}">
         <div class="card">
             <div class="card-title"><span class="card-icon">&#9776;</span> Class Histogram</div>
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                <p style="font-size:13px;color:var(--text-secondary);margin:0">
+            <div class="tbl-toolbar">
+                <p class="tbl-toolbar-info">
                     Top <span th:text="${histogramEntries != null ? #lists.size(histogramEntries) : 0}">25</span> classes
                     by memory usage
                     <span th:if="${totalHistogramClasses > 0}">
                         (out of <strong th:text="${#numbers.formatInteger(totalHistogramClasses, 1, 'COMMA')}">25,086</strong> total classes)
                     </span>
                 </p>
-                <input type="text" class="table-search" id="histSearch" placeholder="Search class name..." oninput="filterHistogram()" style="width:220px">
+                <div class="tbl-toolbar-ctl">
+                    <label class="page-size-wrap"><span class="page-size-label">행 표시</span>
+                        <select class="page-size-select" id="histPageSize" onchange="onHistPageSizeChange()" aria-label="페이지당 행 수">
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                        </select>
+                    </label>
+                    <input type="text" class="table-search" id="histSearch" placeholder="Search class name..." oninput="filterHistogram()" aria-label="클래스명 검색">
+                </div>
             </div>
-            <div style="max-height:600px;overflow:auto;border:1px solid var(--border);border-radius:8px">
-                <table class="data-table" id="histogramTable">
-                    <thead>
-                        <tr>
-                            <th style="width:50px;text-align:center">#</th>
-                            <th>Class Name</th>
-                            <th style="width:100px;text-align:right">Objects</th>
-                            <th style="width:120px;text-align:right">Shallow Heap</th>
-                            <th style="width:140px;text-align:right">Retained Heap</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr th:each="h,s : ${histogramEntries}" th:data-class="${h.className}" th:data-retained="${h.retainedHeap}" th:data-shallow="${h.shallowHeap}" th:data-objects="${h.objectCount}" onclick="showComponentDetail(this.dataset['class'])" style="cursor:pointer" title="클릭하여 상세 보기">
-                            <td style="text-align:center"><span class="rank-num" th:text="${s.count}">1</span></td>
-                            <td><div class="class-name-cell" th:text="${h.className}">-</div></td>
-                            <td style="text-align:right;font-family:var(--mono);font-size:12px" th:text="${#numbers.formatInteger(h.objectCount, 1, 'COMMA')}">0</td>
-                            <td style="text-align:right;font-family:var(--mono);font-size:12px" th:title="${#numbers.formatInteger(h.shallowHeap, 1, 'COMMA') + ' bytes'}" th:text="${h.shallowHeapHuman}">0</td>
-                            <td style="text-align:right;font-family:var(--mono);font-size:12px" th:title="${h.retainedHeapDisplay + ' bytes'}" th:text="${h.retainedHeapHuman}">0</td>
-                        </tr>
-                    </tbody>
-                </table>
+            <!-- 열 순서(rank/name/objects/shallow/retained)는 analyze.js findClassInHistogram 의 셀 인덱스 계약 — 바꾸지 말 것 -->
+            <div class="tbl-frame">
+                <div class="tbl-scroll">
+                    <table class="data-table dense" id="histogramTable">
+                        <thead>
+                            <tr>
+                                <th style="width:52px;text-align:center" data-sort-key="idx" data-sort-type="num" onclick="onHistHeaderSort(this)"
+                                    title="Retained Heap 기준 원래 순위 — 다른 열로 정렬해도 유지됩니다">#<span class="sort-arrow">&#9650;</span></th>
+                                <th data-sort-key="class" data-sort-type="str" onclick="onHistHeaderSort(this)">Class Name<span class="sort-arrow">&#9650;</span></th>
+                                <th style="width:100px;text-align:right" data-sort-key="objects" data-sort-type="num" onclick="onHistHeaderSort(this)">Objects<span class="sort-arrow">&#9650;</span></th>
+                                <th style="width:120px;text-align:right" data-sort-key="shallow" data-sort-type="num" onclick="onHistHeaderSort(this)">Shallow Heap<span class="sort-arrow">&#9650;</span></th>
+                                <th style="width:140px;text-align:right" data-sort-key="retained" data-sort-type="num" onclick="onHistHeaderSort(this)">Retained Heap<span class="sort-arrow">&#9650;</span></th>
+                            </tr>
+                        </thead>
+                        <tbody id="histogramBody">
+                            <tr th:each="h,s : ${histogramEntries}" th:data-class="${h.className}" th:data-retained="${h.retainedHeap}" th:data-shallow="${h.shallowHeap}" th:data-objects="${h.objectCount}" th:data-idx="${s.index}" onclick="showComponentDetail(this.dataset['class'])" style="cursor:pointer" title="클릭하여 상세 보기">
+                                <td style="text-align:center"><span class="rank-num" th:text="${s.count}">1</span></td>
+                                <td th:title="${h.className}"><div class="class-name-cell" th:text="${h.className}">-</div></td>
+                                <td style="text-align:right;font-family:var(--mono)" th:text="${#numbers.formatInteger(h.objectCount, 1, 'COMMA')}">0</td>
+                                <td style="text-align:right;font-family:var(--mono)" th:title="${#numbers.formatInteger(h.shallowHeap, 1, 'COMMA') + ' bytes'}" th:text="${h.shallowHeapHuman}">0</td>
+                                <td style="text-align:right;font-family:var(--mono)" th:title="${h.retainedHeapDisplay + ' bytes'}" th:text="${h.retainedHeapHuman}">0</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="no-match" id="histNoMatch">검색 결과가 없습니다.</div>
+                <div class="pagination-bar" id="histPaginationBar">
+                    <div class="pg-info" id="histPgInfo">-</div>
+                    <div class="pg-list" id="histPgList"></div>
+                </div>
             </div>
         </div>
     </div>
@@ -1569,7 +1607,8 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 <!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (settings·history·account 와 공유, 로드만 하면 자동 활성).
      ⚠ float-tooltip.js([data-tooltip] 커서 추종형)와 한 페이지에 같이 싣지 말 것 — 동작은 하지만 디자인이 섞인다. -->
 <script src="/js/krds-tooltip.js?v=2026-08-09"></script>
-<script src="/js/analyze.js?v=2026-09-12"></script>
+<script src="/js/table-grid.js?v=2026-09-13"></script>
+<script src="/js/analyze.js?v=2026-09-13"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

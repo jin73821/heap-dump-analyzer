@@ -131,6 +131,14 @@ public class HeapDumpConfig {
     private boolean dominatorRefsSymlinkIndex;
     public boolean isDominatorRefsSymlinkIndex() { return dominatorRefsSymlinkIndex; }
 
+    /**
+     * 분석 파이프라인에서 MAT {@code histogram} 단독 쿼리(query.xml limit 500)로 Class Histogram 을
+     * 500행으로 확장 (false = Overview 리포트의 25행 유지). 런타임 변경 대상 아님(settings.json 미영속).
+     */
+    @Value("${mat.histogram.wide-query.enabled:true}")
+    private boolean histogramWideQueryEnabled;
+    public boolean isHistogramWideQueryEnabled() { return histogramWideQueryEnabled; }
+
     /** SSH/SCP 로컬 실행 계정 (runuser 로 전환). 비어있으면 현재 프로세스 계정 */
     @Value("${remote.ssh.local-user:}")
     private String sshLocalUser;

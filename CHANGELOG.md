@@ -1,5 +1,35 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-13] Dominator Tree / Class Histogram 조밀 표 + 페이지 번호 페이지네이션 + 2단 참조 드로어 + Histogram 500행 (v2.5.1 유지)
+
+**요청:** 두 표의 행이 너무 높아 한 화면에 정보가 적게 보인다 — 밀도를 높이고, 페이지네이션 시 브라우저 부하를 줄이고, Incoming/Outgoing/Loaded Classes 상세 화면도 개편한다. (결정: 상세는 행 아래 **2단 드로어** / **페이지 번호** 방식 / Histogram 도 함께 / Histogram 원천 **500행 확장** / 밀도는 **두 표에만**)
+
+**배경(실측):**
+- 행 높이 40~48px — `td padding:10px`, ≥1200px 데스크톱 오버라이드(`12px 16px; 15px`), 긴 FQCN 이 `word-break:break-all` 로 2~3줄. 700px 박스에 15행 남짓.
+- Dominator Tree 500행이 **통째로 서버 렌더**되고 검색은 키 입력마다 500행 `textContent` 비교, 패널 진입마다 500개 막대에 0.7s 트랜지션.
+- 상세는 탭 3개(Incoming/Outgoing/Loaded Classes)를 번갈아 눌러야 보였고, Loaded Classes 는 "추가 조회" 가 DOM 을 계속 늘렸다. SSE 리더가 3벌 복붙(각 ~40줄).
+- **Histogram 은 25행뿐이었다** — MAT overview 리포트 `class_histogram` 의 기본 한도(`Total: 25 of 25,086 entries`). Dominator Tree 는 `-command=` 쿼리 리포트(`query.xml` limit 500)라 500행. 그대로면 Histogram 페이지네이션은 무의미했다.
+
+**변경:**
+1. **Histogram 500행 (백엔드).** 분석 흐름의 `enrichSystemProperties` 직후(tmp 덤프·인덱스 존재 구간) `enrichWideHistogram()` 이 격리 디렉토리 `tmp/histq-{base}-*` 에서 `histogram` 단독 쿼리를 1회 돌린다(`linkMatInputs` 로 index symlink + mtime 정렬, `runMatSingleQuery` 5-인자 오버로드로 리포트 옵션 전달, `matSlots` 게이트 경유). 결과 `_Query.zip` 은 `MatReportParser.parseHistogramQueryZip()`(기존 `parseHistogramEntries` 재사용)으로 읽어 **기존보다 많을 때만** 교체한다. 실패·타임아웃(180s)·취소는 Overview 25행 유지 + WARN — 분석 상태는 절대 바꾸지 않는다. 킬 스위치 `mat.histogram.wide-query.enabled`(기본 true). 복원 재추출(`reparseActions`)은 건수가 줄지 않을 때만 덮어써 500행이 25행으로 되돌아가지 않는다.
+   - ⚠ MAT 옵션 두 개가 **필수**다: `-derived_data_column=_default_=APPROXIMATE`(Retained 열) + `-sort_column=#3`(retained 정렬). 실측으로 전자를 빼면 열이 3개뿐이라 `#3` 정렬이 `IndexOutOfBoundsException: Index 3 out of bounds for length 3` 으로 MAT 자체가 죽고, 후자를 빼면 shallow 정렬이라 Overview 와 다른 Top-N 집합이 나온다. `ParseHeapDump` 는 `-key=value` 인자를 모든 리포트 Spec 옵션으로 넣는다(`-command=` 가 이미 그 경로).
+   - ⚠ 산출물 이름이 항상 `{base}_Query.zip` 이라 결과 디렉토리의 dominator 쿼리 ZIP 과 겹친다 — 격리 디렉토리에서만 실행한다.
+   - 기존 분석 건은 재분석 전까지 25행(툴바 "Top N classes" 가 목록 크기를 그대로 보여 자기 설명적). 25행 건과 500행 건의 비교(`buildHistogramDiffs`)는 "신규 클래스" 가 많이 잡힌다 — 재분석이 해법.
+   - 부수 수정: 파서가 `&gt;=` 엔티티를 디코딩하지 않아 `HistogramEntry.getRetainedHeapHuman()` 의 `≥` 접두가 Overview 경로에서도 한 번도 붙지 않던 기존 결함을 고쳤다.
+2. **밀도 (`analyze.css` `.data-table.dense`, 두 표에만).** `table-layout:fixed` + td `4px 10px / 12px / line-height 1.3 / nowrap / tabular-nums`, 이름 셀은 **인라인 블록 + 말줄임**(전체 이름은 td `title`), 막대 트랙 20→14px, ≥1200px 오버라이드에서 dense 제외. 행 높이 **40.2 → 26.6px**(헤드리스 실측, CL 배지 행 포함 — 이름 div 가 블록이면 배지가 제 줄을 차지해 그 행만 40px 가 되므로 인라인 블록 + `calc(100% - 26px)`). `.data-table` 공통 base 와 Top Consumers/Threads/SysProps 표는 무변경.
+3. **페이지 번호 페이지네이션 (`table-grid.js` `detach` 모드).** 공통 엔진에 opt-in `detach`(+`pageSizes`/`defaultPageSize`)를 추가 — **현재 페이지의 tr 만 tbody 에 붙이고**(`DocumentFragment` → `replaceChildren`) 정렬은 배열만 바꾼다. 기본 display 토글 경로는 무변경(files/history/servers/comparison-history 무영향, `?v=` 만 갱신). analyze 는 Dominator(25/50/100/200, 기본 50, `analyzeDomPageSize`)·Histogram(25/50/100, `analyzeHistPageSize`) 두 그리드 + 헤더 정렬(`data-sort-key` — 행의 `data-*` 그대로, `%` 용 `data-pct`·순위용 `data-idx` 추가) + 검색은 `data-class` 소문자 키 1회 선계산 + 150ms debounce. 막대 척도는 전량 기준 1회 계산(페이지가 바뀌어도 고정), 폭 적용은 현재 페이지만. 페이지·정렬·검색 변경 시 드로어를 먼저 닫는다(`onRenderStart:_closeDomDetail`). `data-idx` 는 원래 retained 순위라 정렬해도 `idx<50` 참조 펼치기 규칙이 일관된다. ⚠ 현재 페이지 밖의 행은 DOM 에 없다 — `findClassInHistogram` 이 `_histGrid.allRows` 를 보도록 바꿨다(셀 인덱스 계약 rank/name/objects/shallow/retained 는 유지).
+4. **2단 드로어.** 탭 3개 → `.dom-drawer`(grid, ≥1100px 2열): 좌 Incoming · 우 Outgoing(각자 헤더 제목·건수 배지·설명 + 320px 스크롤 본문), CL 행이면 하단 전폭 Loaded Classes. 채우기는 `_domFill(scope, which, html, count)` 한 곳(건수 배지는 서버 상한 50 도달 시 `(상한)`). 중첩 표 `.dom-refs-tbl.dense`(클래스명 말줄임 + title). `.dom-detail-row td` 에 `isolation:isolate` — 중첩 sticky th(z:2)가 바깥 sticky thead(z:3)를 뚫지 못한다(함정 30, 드로어 연 채 스크롤 실측 `elementFromPoint → thead`).
+5. **Loaded Classes 페이지 번호 페이저.** `_clCache[addr] = {classes,total,sortCol,sortDir,page,pageSize}` 상태 하나로 정렬·페이지(25/50)·크기 변경을 캐시 배열에서 다시 그린다. "추가 조회"(`clShowMore`, DOM append)와 DOM 정렬 폴백 제거. 인스턴스 서브행 표도 dense.
+6. **SSE 리더 단일화 `_sseStream(url, signal, onEvent, onNetError)`.** 3벌(~120줄)을 하나로. 헬퍼는 `onEvent` 를 감싸지 않고 호출자가 좁은 try/catch 로 렌더 실패를 화면에 드러내며 진행 표시를 정리한다(넓게 삼키면 스켈레톤 무한 회전 — 종전 규약 유지). `AbortError` 는 `_azIgnored`. 드로어가 닫혀 DOM 에서 빠진 서브행에는 그리지 않는다(`isConnected` 가드).
+
+**변경 파일:** `config/HeapDumpConfig.java` · `application.properties` · `service/HeapDumpAnalyzerService.java`(`runMatSingleQuery` 오버로드·`enrichWideHistogram`·호출부·`reparseActions` 가드) · `parser/MatReportParser.java`(`HistogramParse`/`parseHistogramQueryZip`·`&gt;` 디코딩) · `static/js/table-grid.js`(detach) · `static/js/analyze.js` · `static/css/analyze.css` · `templates/analyze.html`(두 패널 + `table-grid.js` 로드 + `?v=2026-09-13`) · files/history/servers/comparison-history.html(`table-grid.js ?v=`).
+
+**검증:**
+- MAT CLI 수동 실행(oom-test, 인덱스 재사용): 옵션 2개 포함 **4.03s / RSS 270MB**, 4열·1행 `byte[]`(Overview 와 동일)·`Total: 500 of 619 entries`. `-derived_data_column` 제외 시 MAT 실패 재현(옵션 유효성 확정).
+- 운영 E2E(임시 ADMIN 계정 → 로그인 → `oom-test.hprof` 재분석 → 계정·세션·이력 삭제 확인): 로그 `[Histogram] 확장 완료 500행 (이전 25행, 총 666 클래스) 2818ms`, DB `JSON_LENGTH(result_json,'$.histogramEntries')=500`, `result_json` 239KB.
+- 헤드리스 픽스처(실제 analyze.css/analyze.js/table-grid.js + 생성 500행, 1400px·1000px): 페이지 행 50/500, 행 높이 **26.6px**(CL 행·일반 행·50행째 동일, 종전 40.2), 헤더 정렬 asc/desc·복귀, 드로어 grid 2열(1000px 에선 1열)·건수 배지 `3건/0건`, sticky 헤더 OK, 페이지 이동 시 드로어 닫힘, 검색 71건/무결과 안내, Histogram 50/500 + `findClassInHistogram` 이 마지막(500번째) 행을 찾음, JS 오류 0.
+- 신규 `DomHistTemplateSmokeTest`(3) + `MatReportParserHistogramQueryTest`(3). JS 러너가 없어 detach 모드는 `EmptyCatchGuardTest` + 위 픽스처로 검증. 테스트 654 → 660.
+
 ## [2026-09-13] 비밀번호 반복 실패 계정 잠금 정책 — 관리자 설정 가능 (v2.5.1 유지)
 
 **요청:** 사용자가 비밀번호를 10회 이상 틀리면 사용자 목록에서 상태가 "잠금"으로 표시되게 하고, 관리자가 횟수와 기능 사용 여부를 설정할 수 있게 한다.

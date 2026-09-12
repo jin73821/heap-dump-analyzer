@@ -797,46 +797,140 @@ function filterTable() {
     });
 }
 
-// ── Histogram Filter ──────────────────────────────────
-function filterHistogram() {
-    var q = document.getElementById('histSearch').value.toLowerCase();
-    document.querySelectorAll('#histogramTable tbody tr').forEach(function(r) {
-        r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
-    });
+// ── Histogram / Dominator Tree 표 — table-grid.js detach 페이지네이션 (2026-09-13) ──
+// 현재 페이지의 tr 만 tbody 에 있다. 전량은 grid.allRows 에만 존재하므로 `querySelectorAll('#tbl tbody tr')`
+// 로 훑는 코드는 grid.allRows 를 봐야 한다(findClassInHistogram 이 사례). 검색은 data-class 소문자 키를
+// 1회 선계산해 150ms debounce 로 비교한다 — 종전엔 키 입력마다 500행 textContent 를 만들어 비교했다.
+var _domGrid = null, _histGrid = null;
+var _domFilterT = null, _histFilterT = null;
+
+function _gridPrimeKeys(grid) {
+    grid.allRows.forEach(function(r) { r._key = (r.dataset['class'] || '').toLowerCase(); });
+}
+function _gridFiltered(grid, inputId) {
+    var el = document.getElementById(inputId);
+    var q = el ? el.value.trim().toLowerCase() : '';
+    if (!q) return grid.allRows.slice();
+    return grid.allRows.filter(function(r) { return r._key.indexOf(q) >= 0; });
 }
 
-// ── Dominator Tree inline bar chart ───────────────────────────────────
-// 각 컬럼(shallow/retained)의 최대값을 100%로 잡아 막대 너비를 산정.
-// idempotent — 패널 진입 시마다 호출 가능.
-function renderDomBars() {
-    var fills = document.querySelectorAll('#domTreeTable .dom-bar-fill');
-    if (!fills.length) return;
-    var maxShallow = 0, maxRetained = 0;
-    fills.forEach(function(el) {
-        var v = parseFloat(el.getAttribute('data-val')) || 0;
-        if (el.classList.contains('dom-bar-retained')) {
-            if (v > maxRetained) maxRetained = v;
-        } else {
-            if (v > maxShallow) maxShallow = v;
-        }
+function initHistGrid() {
+    if (typeof TableGrid === 'undefined' || !document.getElementById('histogramBody')) return;
+    _histGrid = TableGrid.create({
+        tbodyId: 'histogramBody', headerSelector: '#histogramTable th[data-sort-key]',
+        pageSizeKey: 'analyzeHistPageSize', pageSizes: [25, 50, 100], defaultPageSize: 50,
+        detach: true, sortAttrPrefix: 'data-',
+        defaultSort: { key: 'retained', dir: 'desc', type: 'num' },
+        applyFilter: _histApply,
+        pageSizeSelectId: 'histPageSize', paginationBarId: 'histPaginationBar',
+        pgInfoId: 'histPgInfo', pgListId: 'histPgList', noMatchId: 'histNoMatch'
     });
-    fills.forEach(function(el) {
+    _histGrid.init();
+    _gridPrimeKeys(_histGrid);
+    _histApply();
+}
+function _histApply() { if (_histGrid) _histGrid.setFiltered(_gridFiltered(_histGrid, 'histSearch')); }
+function filterHistogram() {
+    if (!_histGrid) return;
+    clearTimeout(_histFilterT);
+    _histFilterT = setTimeout(_histApply, 150);
+}
+function onHistHeaderSort(th) { if (_histGrid) _histGrid.onHeaderSort(th); }
+function onHistPageSizeChange() { if (_histGrid) _histGrid.onPageSizeChange(); }
+
+// ── Dominator Tree inline bar chart ───────────────────────────────────
+// 척도(각 컬럼 최대값)는 전량 기준으로 1회만 계산해 페이지가 바뀌어도 막대 길이가 흔들리지 않는다.
+// 폭 적용은 현재 페이지(tbody 에 붙은 행)에만 — 종전엔 패널 진입마다 500개에 트랜지션이 돌았다.
+var _domBarMax = null;
+function renderDomBars() {
+    var rows = _domGrid ? _domGrid.allRows
+                        : Array.prototype.slice.call(document.querySelectorAll('#domTreeTable tbody tr.dom-row'));
+    if (!rows.length) return;
+    if (!_domBarMax) {
+        var ms = 0, mr = 0;
+        rows.forEach(function(r) {
+            var sv = parseFloat(r.dataset.shallow) || 0, rv = parseFloat(r.dataset.retained) || 0;
+            if (sv > ms) ms = sv;
+            if (rv > mr) mr = rv;
+        });
+        _domBarMax = { shallow: ms, retained: mr };
+    }
+    document.querySelectorAll('#domTreeTable .dom-bar-fill').forEach(function(el) {
         var v = parseFloat(el.getAttribute('data-val')) || 0;
-        var max = el.classList.contains('dom-bar-retained') ? maxRetained : maxShallow;
+        var max = el.classList.contains('dom-bar-retained') ? _domBarMax.retained : _domBarMax.shallow;
         var pct = max > 0 ? (v / max) * 100 : 0;
-        // 0이 아닌 값은 최소 2% 보장 (시각적 가시성)
-        if (v > 0 && pct < 2) pct = 2;
+        if (v > 0 && pct < 2) pct = 2;   // 0이 아닌 값은 최소 2% 보장 (시각적 가시성)
         el.style.width = pct + '%';
     });
 }
 
-// ── Dominator Tree Filter + Disclosure (lazy on-demand) ───────────────
-function filterDomTree() {
-    var q = document.getElementById('domTreeSearch').value.toLowerCase();
-    _closeDomDetail();
-    document.querySelectorAll('#domTreeTable tbody tr.dom-row').forEach(function(r) {
-        r.style.display = r.textContent.toLowerCase().indexOf(q) >= 0 ? '' : 'none';
+// ── Dominator Tree 그리드 + Filter ────────────────────────────────────
+function initDomGrid() {
+    if (typeof TableGrid === 'undefined' || !document.getElementById('domTreeBody')) return;
+    _domGrid = TableGrid.create({
+        tbodyId: 'domTreeBody', headerSelector: '#domTreeTable th[data-sort-key]',
+        pageSizeKey: 'analyzeDomPageSize', pageSizes: [25, 50, 100, 200], defaultPageSize: 50,
+        detach: true, sortAttrPrefix: 'data-',
+        defaultSort: { key: 'retained', dir: 'desc', type: 'num' },
+        applyFilter: _domApply,
+        // 페이지·정렬·검색이 바뀌면 열린 드로어를 먼저 닫는다 — detail tr 이 allRows 밖에서 떠돌지 않게
+        onRenderStart: _closeDomDetail,
+        onAfterRender: renderDomBars,
+        pageSizeSelectId: 'domPageSize', paginationBarId: 'domPaginationBar',
+        pgInfoId: 'domPgInfo', pgListId: 'domPgList', noMatchId: 'domNoMatch'
     });
+    _domGrid.init();
+    _gridPrimeKeys(_domGrid);
+    _domApply();
+}
+function _domApply() { if (_domGrid) _domGrid.setFiltered(_gridFiltered(_domGrid, 'domTreeSearch')); }
+function filterDomTree() {
+    if (!_domGrid) return;
+    clearTimeout(_domFilterT);
+    _domFilterT = setTimeout(_domApply, 150);
+}
+function onDomHeaderSort(th) { if (_domGrid) _domGrid.onHeaderSort(th); }
+function onDomPageSizeChange() { if (_domGrid) _domGrid.onPageSizeChange(); }
+
+// ── fetch 기반 SSE 리더 (2026-09-13) — dominator-refs / class-instances / classloader-classes 공용 ──
+// EventSource 대신 fetch+reader 를 쓰는 이유: 행을 바꿔 누르면 AbortController 로 즉시 끊어야 해서.
+// onEvent(name, parsed, parseErr): data 줄마다 호출 (JSON 실패 시 parsed=null, parseErr 세팅).
+// onNetError(err): HTTP !ok / 네트워크 실패. AbortError 는 호출자의 취소이므로 전달하지 않는다.
+// ⚠ 헬퍼는 onEvent 를 감싸지 않는다 — 각 호출자가 좁은 try/catch 로 렌더 실패를 화면에 드러내고
+//   진행 표시를 정리해야 한다(넓게 감싸 삼키면 스켈레톤이 영원히 돈다).
+function _sseStream(url, signal, onEvent, onNetError) {
+    var buf = '', ev = '';
+    function line(l) {
+        if (l.indexOf('event:') === 0) { ev = l.substring(6).trim(); return; }
+        if (l.indexOf('data:') !== 0) return;
+        var raw = l.substring(5).trim(), name = ev;
+        ev = '';
+        var parsed = null, perr = null;
+        try { parsed = JSON.parse(raw); } catch (pe) { perr = pe; }
+        onEvent(name, parsed, perr);
+    }
+    return fetch(url, { credentials: 'same-origin', signal: signal })
+        .then(function(r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            var reader = r.body.getReader(), dec = new TextDecoder();
+            return (function pump() {
+                return reader.read().then(function(res) {
+                    if (res.done) {
+                        if (buf.trim()) buf.split('\n').forEach(line);
+                        return;
+                    }
+                    buf += dec.decode(res.value, { stream: true });
+                    var lines = buf.split('\n');
+                    buf = lines.pop();
+                    lines.forEach(line);
+                    return pump();
+                });
+            })();
+        })
+        .catch(function(e) {
+            if (e && e.name === 'AbortError') { _azIgnored('SSE 취소(사용자 조작) ' + url, e); return; }
+            onNetError(e);
+        });
 }
 
 var _domDetailRow = null;
@@ -879,7 +973,8 @@ function _renderDomRefsTable(refs, emptyMsg) {
         var rh   = _escapeHtml(r.retainedHeapHuman || '');
         var pct  = maxR > 0 ? Math.max(2, ((r.retainedHeap || 0) / maxR) * 100) : 0;
         rows += '<tr>'
-              + '<td>' + cls + (addr ? ' <code>@ ' + addr + '</code>' : '') + '</td>'
+              + '<td class="dom-ref-cls-cell" title="' + cls + (addr ? ' @ ' + addr : '') + '">'
+              +   cls + (addr ? ' <code>@ ' + addr + '</code>' : '') + '</td>'
               + '<td class="dom-refs-num">' + sh + '</td>'
               + '<td class="dom-refs-num dom-ref-bar-cell">'
               +   '<span class="dom-ref-bar" style="width:' + pct.toFixed(1) + '%"></span>'
@@ -887,27 +982,19 @@ function _renderDomRefsTable(refs, emptyMsg) {
               + '</td>'
               + '</tr>';
     }
-    return '<table class="dom-refs-tbl">'
-         + '<thead><tr><th>Class @ Address</th><th style="width:90px;text-align:right">Shallow</th><th style="width:120px;text-align:right">Retained</th></tr></thead>'
+    return '<table class="dom-refs-tbl dense">'
+         + '<thead><tr><th>Class @ Address</th><th style="width:84px;text-align:right">Shallow</th><th style="width:110px;text-align:right">Retained</th></tr></thead>'
          + '<tbody>' + rows + '</tbody>'
          + '</table>';
 }
 
 var _escapeHtml = Common.escHtml;   // 구현 동일(5문자 escape) — common.js 위임
 
-// ── 탭 구조 헬퍼 ───────────────────────────────────────────────
-// [Incoming] [Outgoing] [Loaded Classes(CL만)] 탭 + 단일 본문 패널.
-function _domTabBar(isLoader) {
-    var tabs = '<div class="dom-tabs">'
-        + '<button class="dom-tab-btn active" data-tab="incoming" onclick="switchDomTab(this)">&#8592; Incoming</button>'
-        + '<button class="dom-tab-btn" data-tab="outgoing" onclick="switchDomTab(this)">&#8594; Outgoing</button>';
-    if (isLoader) {
-        tabs += '<button class="dom-tab-btn" data-tab="classes" onclick="switchDomTab(this)">&#128218; Loaded Classes</button>';
-    }
-    return tabs + '</div>';
-}
+// ── 2단 드로어 (2026-09-13) — 좌 Incoming · 우 Outgoing · CL 행이면 하단 전폭 Loaded Classes ──
+// 종전 탭 3개(번갈아 눌러야 보임)를 대체. 본문 채우기는 _domFill 한 곳이 담당하고 헤더 건수 배지도 같이 찍는다.
+var _DOM_REF_CAP = 50;   // 서버 incoming/outgoing 각 목록 상한(HeapReportApiController) — 도달 시 "(상한)" 표기
 
-// 로딩 스켈레톤 (탭별 회색 펄스 행)
+// 로딩 스켈레톤 (회색 펄스 행)
 function _domSkeleton(label) {
     var widths = [62, 48, 70, 40, 55];
     var rows = '';
@@ -922,69 +1009,45 @@ function _domSkeleton(label) {
          + rows + '</div>';
 }
 
-function _domClPanelHtml() {
-    return '<div class="dom-tab-panel" data-tab="classes">'
-        +    '<div class="dom-tab-desc">&#128218; 이 ClassLoader 가 정의한 Java 클래스 목록</div>'
-        +    '<div class="dom-cl-body">'
-        +      '<button class="dom-cl-load-btn" onclick="loadClassLoaderClasses(this)">목록 조회</button>'
-        +    '</div>'
-        +  '</div>';
+function _domDrawerSection(which, title, desc, bodyHtml, extraCls) {
+    return '<section class="dom-drawer-col' + (extraCls ? ' ' + extraCls : '') + '" data-col="' + which + '">'
+        +    '<header class="dom-drawer-hd">'
+        +      '<span class="dom-drawer-title">' + title + '</span>'
+        +      '<span class="dom-drawer-cnt"></span>'
+        +      '<span class="dom-drawer-desc">' + desc + '</span>'
+        +    '</header>'
+        +    '<div class="dom-drawer-body dom-' + which + '-body">' + bodyHtml + '</div>'
+        +  '</section>';
 }
 
-// 탭 전환 (querySelector 사용 — 규약 일관, 클론 충돌 방지)
-function switchDomTab(btn) {
-    var tab  = btn.dataset.tab;
-    var wrap = btn.closest('.dom-refs-wrap');
-    if (!wrap) return;
-    wrap.querySelectorAll('.dom-tab-btn').forEach(function(b) {
-        b.classList.toggle('active', b === btn);
-    });
-    wrap.querySelectorAll('.dom-tab-panel').forEach(function(p) {
-        p.classList.toggle('active', p.dataset.tab === tab);
-    });
-}
-
-function _buildDomDetailHtml(data, loading, err, isLoader) {
-    if (loading) {
-        return _buildDomDetailLoadingHtml(isLoader);
+function _buildDomDrawerHtml(isLoader) {
+    var h = '<div class="dom-refs-wrap"><div class="dom-drawer">'
+        + _domDrawerSection('in', '&#8592; Incoming', 'GC Root 참조 경로 — 이 객체가 살아있는 이유',
+                            _domSkeleton('path2gc 참조 경로 조회 중...'))
+        + _domDrawerSection('out', '&#8594; Outgoing', 'Retained Set — 이 객체가 보유(dominate)하는 객체, 클래스별 집계',
+                            _domSkeleton('retained set 조회 중...'));
+    if (isLoader) {
+        h += _domDrawerSection('cl', '&#128218; Loaded Classes', '이 ClassLoader 가 정의한 Java 클래스 목록 (MAT OQL, 최대 90초)',
+                               '<button class="dom-cl-load-btn" onclick="loadClassLoaderClasses(this)">목록 조회</button>',
+                               'dom-cl-section');
     }
-    if (err) {
-        return '<div class="dom-refs-error">' + _escapeHtml(err) + '</div>';
-    }
-    var inHtml  = _renderDomRefsTable(data ? data.incoming : null, '인바운드 참조 없음 (GC root 경로)');
-    var outHtml = _renderDomRefsTable(data ? data.outgoing : null, '아웃바운드 참조 없음 (retained set)');
-    return '<div class="dom-refs-wrap">'
-        + _domTabBar(isLoader)
-        + '<div class="dom-tab-body">'
-        +   '<div class="dom-tab-panel active" data-tab="incoming">'
-        +     '<div class="dom-tab-desc">&#8592; GC Root 참조 경로 — 이 객체가 살아있는 이유</div>'
-        +     '<div class="dom-tab-incoming-body">' + inHtml + '</div>'
-        +   '</div>'
-        +   '<div class="dom-tab-panel" data-tab="outgoing">'
-        +     '<div class="dom-tab-desc">&#8594; Retained Set — 이 객체가 보유(dominate)하는 객체, 클래스별 집계</div>'
-        +     '<div class="dom-tab-outgoing-body">' + outHtml + '</div>'
-        +   '</div>'
-        +   (isLoader ? _domClPanelHtml() : '')
-        + '</div>'
-        + '</div>';
+    return h + '</div></div>';
 }
 
-// SSE 점진적 로딩용 — incoming/outgoing 탭 본문을 독립적으로 업데이트 가능한 구조
-function _buildDomDetailLoadingHtml(isLoader) {
-    return '<div class="dom-refs-wrap">'
-        + _domTabBar(isLoader)
-        + '<div class="dom-tab-body">'
-        +   '<div class="dom-tab-panel active" data-tab="incoming">'
-        +     '<div class="dom-tab-desc">&#8592; GC Root 참조 경로 — 이 객체가 살아있는 이유</div>'
-        +     '<div class="dom-tab-incoming-body">' + _domSkeleton('path2gc 참조 경로 조회 중...') + '</div>'
-        +   '</div>'
-        +   '<div class="dom-tab-panel" data-tab="outgoing">'
-        +     '<div class="dom-tab-desc">&#8594; Retained Set — 이 객체가 보유(dominate)하는 객체, 클래스별 집계</div>'
-        +     '<div class="dom-tab-outgoing-body">' + _domSkeleton('retained set 조회 중...') + '</div>'
-        +   '</div>'
-        +   (isLoader ? _domClPanelHtml() : '')
-        + '</div>'
-        + '</div>';
+function _domCountLabel(n, cap) {
+    return n.toLocaleString() + '건' + (cap && n >= cap ? ' (상한)' : '');
+}
+
+/** 드로어 한 칸 채우기 — which: 'in'|'out'|'cl'. count 가 숫자면 헤더 건수 배지 갱신, 아니면 비움. */
+function _domFill(scope, which, html, count) {
+    var body = scope.querySelector('.dom-' + which + '-body');
+    if (body) body.innerHTML = html;
+    var cnt = scope.querySelector('.dom-drawer-col[data-col="' + which + '"] .dom-drawer-cnt');
+    if (cnt) cnt.textContent = (typeof count === 'number') ? _domCountLabel(count, which === 'cl' ? 0 : _DOM_REF_CAP) : '';
+}
+
+function _domErrorHtml(msg) {
+    return '<div class="dom-refs-error">' + _escapeHtml(msg) + '</div>';
 }
 
 // ── MAT lazy 조회 진행 표시 ────────────────────────────────
@@ -1198,40 +1261,47 @@ function toggleDomDetail(row) {
     _domDetailRow = detail;
     _domOpenAddr  = addr;
 
+    td.innerHTML = _buildDomDrawerHtml(isLoader);
+    var accumulated = {};
+    function fillIn(list) {
+        accumulated.incoming = list;
+        _domFill(td, 'in', _renderDomRefsTable(list, '인바운드 참조 없음 (GC root 경로)'), (list || []).length);
+    }
+    function fillOut(list) {
+        accumulated.outgoing = list;
+        _domFill(td, 'out', _renderDomRefsTable(list, '아웃바운드 참조 없음 (retained set)'), (list || []).length);
+    }
+
     // 캐시 HIT → 즉시 렌더 (MAT 미실행 — 이전 조회의 진행/완료 표시는 걷는다)
     if (_domCache[addr]) {
         _domLazyHide();
-        td.innerHTML = _buildDomDetailHtml(_domCache[addr], false, null, isLoader);
+        fillIn(_domCache[addr].incoming);
+        fillOut(_domCache[addr].outgoing);
         return;
     }
 
-    // SSE 점진적 로딩: incoming 테이블을 먼저 보여주고 outgoing은 추후 업데이트
-    td.innerHTML = _buildDomDetailLoadingHtml(isLoader);
-
     var url = '/api/dominator-refs/' + encodeURIComponent(FILENAME)
             + '?address=' + encodeURIComponent(addr);
-
     var ctrl = new AbortController();
     _domAbortCtrl = ctrl;
 
-    var accumulated = {};
-    var sseBuffer = '';
-    var sseCurrentEvent = '';
-
-    function processSseLine(line) {
-        if (line.indexOf('event:') === 0) {
-            sseCurrentEvent = line.substring(6).trim();
-        } else if (line.indexOf('data:') === 0) {
-            var data = line.substring(5).trim();
-            handleSseEvent(sseCurrentEvent, data);
-            sseCurrentEvent = '';
-        }
+    function release() { if (_domAbortCtrl === ctrl) _domAbortCtrl = null; }
+    // 아직 채워지지 않은 칸에 오류를 보이고 진행 표시를 닫는다 — 어느 경로로 실패하든 스켈레톤이 남지 않게
+    function failBoth(msg) {
+        if (!accumulated.incoming) _domFill(td, 'in', _domErrorHtml(msg), null);
+        if (!accumulated.outgoing) _domFill(td, 'out', _domErrorHtml(msg), null);
+        _domLazyEnd('failed');
+        release();
     }
 
-    function handleSseEvent(event, data) {
+    _sseStream(url, ctrl.signal, function(event, parsed, perr) {
         if (_domOpenAddr !== addr) return;
+        if (perr) {
+            _azFailed('참조 조회 응답 파싱 실패 — event=' + event, perr);
+            failBoth('참조 정보를 표시하지 못했습니다. 다시 시도해 주세요.');
+            return;
+        }
         try {
-            var parsed = JSON.parse(data);
             if (event === 'lazy') {
                 // 캐시 MISS 확정 — 실제 MAT 조회가 시작됐다(수 초~수십 초)
                 _domLazyStart();
@@ -1240,100 +1310,48 @@ function toggleDomDetail(row) {
                 var wMsg = (parsed && parsed.message) || '다른 분석 진행 중 — 잠시 대기 중...';
                 var lazyTxt = document.getElementById('domLazyText');
                 if (lazyTxt && _domLazyTimer) lazyTxt.textContent = wMsg;
-                var inW = td.querySelector('.dom-tab-incoming-body');
-                if (inW && !accumulated.incoming) inW.innerHTML = _domSkeleton(wMsg);
-                var outW = td.querySelector('.dom-tab-outgoing-body');
-                if (outW && !accumulated.outgoing) outW.innerHTML = _domSkeleton(wMsg);
+                if (!accumulated.incoming) _domFill(td, 'in', _domSkeleton(wMsg), null);
+                if (!accumulated.outgoing) _domFill(td, 'out', _domSkeleton(wMsg), null);
             } else if (event === 'incoming') {
-                accumulated.incoming = parsed;
-                var inEl = td.querySelector('.dom-tab-incoming-body');
-                if (inEl) inEl.innerHTML = _renderDomRefsTable(parsed, '인바운드 참조 없음 (GC root 경로)');
-                // outgoing 은 병렬 진행 중 — 스켈레톤 유지(아직 안 왔으면)
-                var outEl = td.querySelector('.dom-tab-outgoing-body');
-                if (outEl && !accumulated.outgoing) outEl.innerHTML = _domSkeleton('retained set 조회 중...');
+                fillIn(parsed || []);
             } else if (event === 'outgoing') {
-                accumulated.outgoing = parsed;
-                var outEl2 = td.querySelector('.dom-tab-outgoing-body');
-                if (outEl2) outEl2.innerHTML = _renderDomRefsTable(parsed, '아웃바운드 참조 없음 (retained set)');
+                fillOut(parsed || []);
             } else if (event === 'done') {
                 _domCache[addr] = accumulated;
                 _domLazyEnd('done');
-                if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
+                release();
             } else if (event === 'refs-error') {
-                var errMsg = parsed.error || '참조 추출 실패';
-                var outErrEl = td.querySelector('.dom-tab-outgoing-body');
-                if (outErrEl) outErrEl.innerHTML = '<div class="dom-refs-error">' + _escapeHtml(errMsg) + '</div>';
-                var inErrEl = td.querySelector('.dom-tab-incoming-body');
-                if (inErrEl && !accumulated.incoming) inErrEl.innerHTML = '<div class="dom-refs-error">' + _escapeHtml(errMsg) + '</div>';
-                _domLazyEnd('failed');
-                if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
+                failBoth((parsed && parsed.error) || '참조 추출 실패');
             }
         } catch (x) {
-            // 예전엔 여기서 전부 삼켜, 파싱·렌더가 깨지면 _domLazyEnd 가 호출되지 않아
-            // 스켈레톤이 영원히 돌았다(사용자에게는 "아직 조회 중"으로 보인다).
+            // 렌더가 깨져도 _domLazyEnd 를 불러야 스켈레톤이 영원히 돌지 않는다
             _azFailed('참조 조회 응답 처리 실패 — event=' + event, x);
-            var failMsg = '<div class="dom-refs-error">참조 정보를 표시하지 못했습니다. 다시 시도해 주세요.</div>';
-            var inFail = td.querySelector('.dom-tab-incoming-body');
-            if (inFail && !accumulated.incoming) inFail.innerHTML = failMsg;
-            var outFail = td.querySelector('.dom-tab-outgoing-body');
-            if (outFail && !accumulated.outgoing) outFail.innerHTML = failMsg;
-            _domLazyEnd('failed');
-            if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
+            failBoth('참조 정보를 표시하지 못했습니다. 다시 시도해 주세요.');
         }
-    }
-
-    fetch(url, { credentials: 'same-origin', signal: ctrl.signal })
-        .then(function(response) {
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            var reader = response.body.getReader();
-            var decoder = new TextDecoder();
-
-            function pump() {
-                return reader.read().then(function(result) {
-                    if (result.done) {
-                        if (sseBuffer.trim()) {
-                            sseBuffer.split('\n').forEach(function(l) { processSseLine(l); });
-                        }
-                        return;
-                    }
-                    sseBuffer += decoder.decode(result.value, { stream: true });
-                    var lines = sseBuffer.split('\n');
-                    sseBuffer = lines.pop();
-                    lines.forEach(function(l) { processSseLine(l); });
-                    return pump();
-                });
-            }
-            return pump();
-        })
-        .catch(function(e) {
-            if (e.name === 'AbortError') return;  // 사용자가 다른 행 클릭 → 정상 취소(_closeDomDetail 이 정리)
-            if (_domOpenAddr !== addr) return;
-            var outEl = td.querySelector('.dom-tab-outgoing-body');
-            if (outEl) outEl.innerHTML = '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
-            var inEl = td.querySelector('.dom-tab-incoming-body');
-            if (inEl && !accumulated.incoming) inEl.innerHTML = '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
-            _domLazyEnd('failed');
-            if (_domAbortCtrl === ctrl) _domAbortCtrl = null;
-        });
+    }, function(e) {
+        if (_domOpenAddr !== addr) return;
+        failBoth('네트워크 오류: ' + e.message);
+    });
 }
 
-// ── ClassLoader 로드 클래스 목록 조회 ─────────────────────────────────────────
+// ── ClassLoader 로드 클래스 목록 — 드로어 안 페이지 번호 페이저 (2026-09-13, 종전 "추가 조회" append 대체) ──
+// 상태는 _clCache[addr] = { classes, total, sortCol, sortDir, page, pageSize } 하나. 정렬·페이지·크기 변경은
+// 캐시 배열에서 다시 그린다(열린 인스턴스 서브행은 함께 닫힌다).
 
-var _CL_PAGE_SIZE = 25;
+var _CL_PAGE_SIZES = [25, 50];
 
 function _buildClRows(sorted, start, end) {
     var rows = '';
     var limit = Math.min(end, sorted.length);
     for (var i = start; i < limit; i++) {
         var c = sorted[i];
-        var cn = c.className || '-';
-        rows += '<tr class="cl-class-row" data-classname="' + _escapeHtml(cn) + '"'
+        var cn = _escapeHtml(c.className || '-');
+        rows += '<tr class="cl-class-row" data-classname="' + cn + '"'
               + ' data-shallow="' + (c.shallowHeap || 0) + '"'
               + ' data-retained="' + (c.retainedHeap || 0) + '"'
               + ' onclick="toggleClassInstances(this)">'
-              + '<td class="cl-name-cell">'
-              + '<span class="cl-chev">&#9658;</span> '
-              + _escapeHtml(cn) + '</td>'
+              + '<td class="cl-name-cell dom-ref-cls-cell" title="' + cn + '">'
+              + '<span class="cl-chev">&#9658;</span> ' + cn + '</td>'
               + '<td class="dom-refs-num">' + _escapeHtml(c.shallowHeapHuman || '') + '</td>'
               + '<td class="dom-refs-num">' + _escapeHtml(c.retainedHeapHuman || '') + '</td>'
               + '</tr>';
@@ -1349,125 +1367,100 @@ function _clSortArray(classes, col, dir) {
     });
 }
 
-function _renderClassLoaderTable(classes, total, addr) {
-    if (!classes || classes.length === 0) {
+function _clPagerHtml(st, addr, totalPages) {
+    var a = ' data-addr="' + _escapeHtml(addr) + '"';
+    var from = (st.page - 1) * st.pageSize + 1;
+    var to = Math.min(st.page * st.pageSize, st.classes.length);
+    function btn(label, page, active, disabled) {
+        return '<button type="button" class="pg-btn' + (active ? ' active' : '') + '"' + (disabled ? ' disabled' : '')
+             + a + ' data-page="' + page + '" onclick="clGotoPage(this)">' + label + '</button>';
+    }
+    var h = '<div class="cl-pager">'
+          + '<span class="cl-pager-info"><strong>' + from + '–' + to + '</strong> / ' + st.classes.length.toLocaleString() + '건</span>'
+          + '<div class="pg-list">' + btn('&#8249;', st.page - 1, false, st.page <= 1);
+    // 슬라이딩 윈도우 (현재 ±2) — table-grid.js 와 같은 모양
+    var pages = [1, totalPages, st.page];
+    for (var d = 1; d <= 2; d++) { pages.push(st.page - d); pages.push(st.page + d); }
+    pages = pages.filter(function(p, i, arr) { return p >= 1 && p <= totalPages && arr.indexOf(p) === i; })
+                 .sort(function(x, y) { return x - y; });
+    var prev = 0;
+    pages.forEach(function(p) {
+        if (p - prev > 1) h += '<span class="pg-ellipsis">…</span>';
+        h += btn(String(p), p, p === st.page, false);
+        prev = p;
+    });
+    h += btn('&#8250;', st.page + 1, false, st.page >= totalPages) + '</div>'
+       + '<label class="page-size-wrap"><span class="page-size-label">행 표시</span>'
+       + '<select class="page-size-select"' + a + ' onchange="clPageSize(this)" aria-label="페이지당 행 수">'
+       + _CL_PAGE_SIZES.map(function(n) { return '<option value="' + n + '"' + (n === st.pageSize ? ' selected' : '') + '>' + n + '</option>'; }).join('')
+       + '</select></label></div>';
+    return h;
+}
+
+function _renderClassLoaderTable(addr) {
+    var st = _clCache[addr];
+    if (!st || !st.classes || st.classes.length === 0) {
         return '<div class="dom-refs-empty">로드된 클래스 없음</div>';
     }
-    var sorted = _clSortArray(classes, 'retained', 'desc');
-    var shown  = Math.min(_CL_PAGE_SIZE, sorted.length);
+    var sorted = _clSortArray(st.classes, st.sortCol, st.sortDir);
+    var totalPages = Math.max(1, Math.ceil(sorted.length / st.pageSize));
+    if (st.page > totalPages) st.page = totalPages;
+    if (st.page < 1) st.page = 1;
+    var start = (st.page - 1) * st.pageSize;
+    var end = Math.min(start + st.pageSize, sorted.length);
 
-    var countLabel = classes.length + '개 클래스';
-    if (total > 0 && total > classes.length) {
-        countLabel += ' (전체 ' + Number(total).toLocaleString() + '개 중)';
+    var countLabel = st.classes.length.toLocaleString() + '개 클래스';
+    if (st.total > 0 && st.total > st.classes.length) {
+        countLabel += ' (전체 ' + Number(st.total).toLocaleString() + '개 중 상위)';
     }
-
-    var addrAttr = addr ? ' data-addr="' + _escapeHtml(addr) + '"' : '';
-    var moreHtml = '';
-    if (sorted.length > shown) {
-        var remaining = sorted.length - shown;
-        moreHtml = '<div class="cl-more-wrap">'
-            + '<button class="cl-more-btn" data-offset="' + shown + '"'
-            + addrAttr + ' onclick="clShowMore(this)">'
-            + '추가 조회 (<strong>' + remaining.toLocaleString() + '</strong>개 더)'
-            + '</button></div>';
+    var a = ' data-addr="' + _escapeHtml(addr) + '"';
+    function th(col, label, w) {
+        var active = st.sortCol === col;
+        return '<th class="cl-sort-th' + (active ? ' cl-sort-active' : '') + '"'
+             + ' style="width:' + w + 'px;text-align:right;cursor:pointer;user-select:none"'
+             + ' data-col="' + col + '"' + a + ' onclick="sortClTable(this)">' + label
+             + ' <span class="cl-sort-icon">' + (active ? (st.sortDir === 'desc' ? '&#9660;' : '&#9650;') : '') + '</span></th>';
     }
-
-    return '<div style="font-size:11px;color:#6B7280;margin-bottom:6px">' + countLabel + ' — 행 클릭 시 인스턴스 조회</div>'
-         + '<table class="dom-refs-tbl cl-class-tbl"' + addrAttr + '>'
-         + '<thead><tr><th>Class Name</th>'
-         + '<th class="cl-sort-th" style="width:90px;text-align:right;cursor:pointer;user-select:none" data-col="shallow" data-dir="none" onclick="sortClTable(this)">Shallow <span class="cl-sort-icon"></span></th>'
-         + '<th class="cl-sort-th cl-sort-active" style="width:100px;text-align:right;cursor:pointer;user-select:none" data-col="retained" data-dir="desc" onclick="sortClTable(this)">Retained <span class="cl-sort-icon">&#9660;</span></th></tr></thead>'
-         + '<tbody>' + _buildClRows(sorted, 0, shown) + '</tbody>'
+    return '<div class="cl-inst-count">' + countLabel + ' — 행 클릭 시 인스턴스 조회</div>'
+         + '<table class="dom-refs-tbl dense cl-class-tbl"' + a + '>'
+         + '<thead><tr><th>Class Name</th>' + th('shallow', 'Shallow', 84) + th('retained', 'Retained', 100) + '</tr></thead>'
+         + '<tbody>' + _buildClRows(sorted, start, end) + '</tbody>'
          + '</table>'
-         + moreHtml;
+         + (sorted.length > _CL_PAGE_SIZES[0] ? _clPagerHtml(st, addr, totalPages) : '');
+}
+
+function _clRerender(addr) {
+    if (!_clCache[addr]) return;
+    var tbl = document.querySelector('.cl-class-tbl[data-addr="' + addr + '"]');   // addr 는 0x 16진수 — 이스케이프 불필요
+    var body = tbl ? tbl.closest('.dom-cl-body') : null;
+    if (body) body.innerHTML = _renderClassLoaderTable(addr);
 }
 
 function sortClTable(th) {
-    var table = th.closest('table');
-    if (!table) return;
+    var addr = th.dataset.addr, st = _clCache[addr];
+    if (!st) return;
     var col = th.dataset.col;
-    var dir = th.dataset.dir === 'desc' ? 'asc' : 'desc';
-
-    table.querySelectorAll('.cl-sort-th').forEach(function(t) {
-        t.dataset.dir = 'none';
-        t.classList.remove('cl-sort-active');
-        var icon = t.querySelector('.cl-sort-icon');
-        if (icon) icon.innerHTML = '';
-    });
-    th.dataset.dir = dir;
-    th.classList.add('cl-sort-active');
-    var icon = th.querySelector('.cl-sort-icon');
-    if (icon) icon.innerHTML = dir === 'desc' ? '&#9660;' : '&#9650;';
-
-    var tbody = table.querySelector('tbody');
-    if (!tbody) return;
-
-    // 캐시에서 전체 데이터 재정렬 후 첫 페이지만 표시
-    var addr = table.dataset.addr;
-    if (addr && _clCache[addr]) {
-        var sorted = _clSortArray(_clCache[addr].classes, col, dir);
-        tbody.innerHTML = _buildClRows(sorted, 0, Math.min(_CL_PAGE_SIZE, sorted.length));
-
-        // "추가 조회" 버튼 갱신
-        var wrap = table.nextElementSibling;
-        if (wrap && wrap.classList.contains('cl-more-wrap')) {
-            if (sorted.length > _CL_PAGE_SIZE) {
-                var btn = wrap.querySelector('.cl-more-btn');
-                if (btn) {
-                    btn.dataset.offset = _CL_PAGE_SIZE;
-                    btn.innerHTML = '추가 조회 (<strong>' + (sorted.length - _CL_PAGE_SIZE).toLocaleString() + '</strong>개 더)';
-                }
-            } else {
-                wrap.parentNode.removeChild(wrap);
-            }
-        }
-        return;
-    }
-
-    // 캐시 없을 때 DOM 정렬 폴백 (열려있는 인스턴스 서브행 먼저 닫기)
-    tbody.querySelectorAll('tr.cl-inst-row').forEach(function(r) { r.parentNode.removeChild(r); });
-    tbody.querySelectorAll('tr.cl-class-row.expanded').forEach(function(r) { r.classList.remove('expanded'); });
-    var rows = Array.from(tbody.querySelectorAll('tr.cl-class-row'));
-    rows.sort(function(a, b) {
-        var aVal = parseFloat(a.dataset[col]) || 0;
-        var bVal = parseFloat(b.dataset[col]) || 0;
-        return dir === 'desc' ? bVal - aVal : aVal - bVal;
-    });
-    rows.forEach(function(r) { tbody.appendChild(r); });
+    st.sortDir = (st.sortCol === col && st.sortDir === 'desc') ? 'asc' : 'desc';
+    st.sortCol = col;
+    st.page = 1;
+    _clRerender(addr);
 }
 
-function clShowMore(btn) {
-    var addr = btn.dataset.addr;
-    if (!addr || !_clCache[addr]) return;
+function clGotoPage(btn) {
+    var st = _clCache[btn.dataset.addr];
+    var p = parseInt(btn.dataset.page, 10);
+    if (!st || !p) return;
+    st.page = p;
+    _clRerender(btn.dataset.addr);
+}
 
-    var wrap = btn.closest('.cl-more-wrap');
-    var table = wrap ? wrap.previousElementSibling : null;
-    if (!table || !table.classList.contains('cl-class-tbl')) return;
-
-    var activeTh = table.querySelector('.cl-sort-th.cl-sort-active');
-    var col = activeTh ? activeTh.dataset.col : 'retained';
-    var dir = activeTh ? activeTh.dataset.dir : 'desc';
-    var sorted = _clSortArray(_clCache[addr].classes, col, dir);
-
-    var offset    = parseInt(btn.dataset.offset) || _CL_PAGE_SIZE;
-    var newOffset = Math.min(offset + _CL_PAGE_SIZE, sorted.length);
-
-    // 열려있는 인스턴스 서브행 닫기
-    var tbody = table.querySelector('tbody');
-    tbody.querySelectorAll('tr.cl-inst-row').forEach(function(r) { r.parentNode.removeChild(r); });
-    tbody.querySelectorAll('tr.cl-class-row.expanded').forEach(function(r) { r.classList.remove('expanded'); });
-
-    // 새 행 추가
-    var tmp = document.createElement('tbody');
-    tmp.innerHTML = _buildClRows(sorted, offset, newOffset);
-    Array.from(tmp.querySelectorAll('tr')).forEach(function(r) { tbody.appendChild(r); });
-
-    if (newOffset >= sorted.length) {
-        wrap.parentNode.removeChild(wrap);
-    } else {
-        btn.dataset.offset = newOffset;
-        btn.innerHTML = '추가 조회 (<strong>' + (sorted.length - newOffset).toLocaleString() + '</strong>개 더)';
-    }
+function clPageSize(sel) {
+    var st = _clCache[sel.dataset.addr];
+    var n = parseInt(sel.value, 10);
+    if (!st || _CL_PAGE_SIZES.indexOf(n) === -1) return;
+    st.pageSize = n;
+    st.page = 1;
+    _clRerender(sel.dataset.addr);
 }
 
 function _renderInstanceTable(instances) {
@@ -1484,9 +1477,9 @@ function _renderInstanceTable(instances) {
               + '</tr>';
     }
     return '<div class="cl-inst-count">' + instances.length + '개 인스턴스 (최대 200)</div>'
-         + '<table class="dom-refs-tbl cl-inst-tbl"><thead>'
+         + '<table class="dom-refs-tbl dense cl-inst-tbl"><thead>'
          + '<tr><th>Object Address</th>'
-         + '<th style="width:90px;text-align:right">Shallow</th>'
+         + '<th style="width:84px;text-align:right">Shallow</th>'
          + '<th style="width:100px;text-align:right">Retained</th></tr>'
          + '</thead><tbody>' + rows + '</tbody></table>';
 }
@@ -1503,7 +1496,6 @@ function toggleClassInstances(row) {
         row.classList.remove('expanded');
         return;
     }
-
     row.classList.add('expanded');
 
     // 서브 행 삽입
@@ -1522,82 +1514,50 @@ function toggleClassInstances(row) {
     }
 
     // 진행 중인 요청 취소
-    if (_classInstAbortCtrls[className]) {
-        _classInstAbortCtrls[className].abort();
-    }
+    if (_classInstAbortCtrls[className]) _classInstAbortCtrls[className].abort();
     var ctrl = new AbortController();
     _classInstAbortCtrls[className] = ctrl;
 
     var url = '/api/class-instances/' + encodeURIComponent(FILENAME)
             + '?className=' + encodeURIComponent(className);
 
-    var sseBuffer = '';
-    var sseEvent  = '';
+    function release() { if (_classInstAbortCtrls[className] === ctrl) delete _classInstAbortCtrls[className]; }
+    // 드로어가 닫혀(재렌더) 서브행이 DOM 에서 빠졌으면 더 그리지 않는다
+    function cell() { return instRow.isConnected ? instRow.querySelector('td') : null; }
 
-    function processSseLine(line) {
-        if (line.indexOf('event:') === 0) {
-            sseEvent = line.substring(6).trim();
-        } else if (line.indexOf('data:') === 0) {
-            var data = line.substring(5).trim();
-            handleInstSseEvent(sseEvent, data);
-            sseEvent = '';
+    _sseStream(url, ctrl.signal, function(event, parsed, perr) {
+        var c = cell();
+        if (!c) return;
+        if (perr) {
+            _azFailed('클래스 인스턴스 응답 파싱 실패 — event=' + event + ', class=' + className, perr);
+            c.innerHTML = _domErrorHtml('인스턴스 목록을 표시하지 못했습니다. 다시 시도해 주세요.');
+            release();
+            return;
         }
-    }
-
-    function handleInstSseEvent(event, data) {
         try {
-            var parsed = JSON.parse(data);
-            var currentTd = instRow.querySelector('td');
-            if (!currentTd) return;
             if (event === 'inst-waiting') {
-                currentTd.innerHTML = '<span class="dom-spinner"></span> '
+                c.innerHTML = '<span class="dom-spinner"></span> '
                     + _escapeHtml((parsed && parsed.message) || '다른 분석 진행 중 — 잠시 대기 중...');
             } else if (event === 'instances') {
-                _classInstCache[className] = parsed;
-                currentTd.innerHTML = _renderInstanceTable(parsed);
+                _classInstCache[className] = parsed || [];
+                c.innerHTML = _renderInstanceTable(parsed || []);
             } else if (event === 'done') {
-                delete _classInstAbortCtrls[className];
+                release();
             } else if (event === 'inst-error') {
-                currentTd.innerHTML = '<div class="dom-refs-error">' + _escapeHtml((parsed && parsed.error) || '조회 실패') + '</div>';
-                delete _classInstAbortCtrls[className];
+                c.innerHTML = _domErrorHtml((parsed && parsed.error) || '조회 실패');
+                release();
             }
         } catch (x) {
             // 삼키면 스피너가 남은 채 멈춘다 — 실패를 화면에 드러내고 정리한다.
             _azFailed('클래스 인스턴스 응답 처리 실패 — event=' + event + ', class=' + className, x);
-            var failTd = instRow.querySelector('td');
-            if (failTd) failTd.innerHTML =
-                '<div class="dom-refs-error">인스턴스 목록을 표시하지 못했습니다. 다시 시도해 주세요.</div>';
-            delete _classInstAbortCtrls[className];
+            c.innerHTML = _domErrorHtml('인스턴스 목록을 표시하지 못했습니다. 다시 시도해 주세요.');
+            release();
         }
-    }
-
-    fetch(url, { credentials: 'same-origin', signal: ctrl.signal })
-        .then(function(response) {
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            var reader  = response.body.getReader();
-            var decoder = new TextDecoder();
-            function pump() {
-                return reader.read().then(function(result) {
-                    if (result.done) {
-                        if (sseBuffer.trim()) sseBuffer.split('\n').forEach(function(l) { processSseLine(l); });
-                        return;
-                    }
-                    sseBuffer += decoder.decode(result.value, { stream: true });
-                    var lines = sseBuffer.split('\n');
-                    sseBuffer = lines.pop();
-                    lines.forEach(function(l) { processSseLine(l); });
-                    return pump();
-                });
-            }
-            return pump();
-        })
-        .catch(function(e) {
-            if (e.name === 'AbortError') return;
-            var currentTd = instRow.querySelector('td');
-            if (currentTd) currentTd.innerHTML =
-                '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
-            delete _classInstAbortCtrls[className];
-        });
+    }, function(e) {
+        var c = cell();
+        if (c) c.innerHTML = _domErrorHtml('네트워크 오류: ' + e.message);
+        release();
+    });
 }
 
 function loadClassLoaderClasses(btn) {
@@ -1607,14 +1567,12 @@ function loadClassLoaderClasses(btn) {
     var ownerRow = detailRow.previousElementSibling;
     var addr = ownerRow ? ownerRow.dataset.address : _domOpenAddr;
     if (!addr) return;
-
     var clBody = btn.closest('.dom-cl-body');
     if (!clBody) return;
 
     // 캐시 HIT → 즉시 렌더
     if (_clCache[addr]) {
-        var cached = _clCache[addr];
-        clBody.innerHTML = _renderClassLoaderTable(cached.classes, cached.total, addr);
+        _domFill(detailRow, 'cl', _renderClassLoaderTable(addr), _clCache[addr].classes.length);
         return;
     }
 
@@ -1628,78 +1586,45 @@ function loadClassLoaderClasses(btn) {
     var url = '/api/classloader-classes/' + encodeURIComponent(FILENAME)
             + '?address=' + encodeURIComponent(addr);
 
-    var sseBuffer = '';
-    var sseCurrentEvent = '';
+    function release() { if (_clAbortCtrl === ctrl) _clAbortCtrl = null; }
+    function body() { return detailRow.isConnected ? detailRow.querySelector('.dom-cl-body') : null; }
 
-    function processSseLine(line) {
-        if (line.indexOf('event:') === 0) {
-            sseCurrentEvent = line.substring(6).trim();
-        } else if (line.indexOf('data:') === 0) {
-            var data = line.substring(5).trim();
-            handleClSseEvent(sseCurrentEvent, data);
-            sseCurrentEvent = '';
+    _sseStream(url, ctrl.signal, function(event, parsed, perr) {
+        var b = body();
+        if (!b) return;
+        if (perr) {
+            _azFailed('클래스로더 로드 클래스 응답 파싱 실패 — event=' + event, perr);
+            b.innerHTML = _domErrorHtml('로드된 클래스 목록을 표시하지 못했습니다. 다시 시도해 주세요.');
+            release();
+            return;
         }
-    }
-
-    function handleClSseEvent(event, data) {
         try {
-            var parsed = JSON.parse(data);
             if (event === 'cl-waiting') {
-                var clW = detailRow.querySelector('.dom-cl-body');
-                if (clW) clW.innerHTML = '<span class="dom-spinner"></span> '
+                b.innerHTML = '<span class="dom-spinner"></span> '
                     + _escapeHtml((parsed && parsed.message) || '다른 분석 진행 중 — 잠시 대기 중...');
             } else if (event === 'classes') {
                 // payload: { classes: [...], total: N }
-                var classList = parsed.classes || [];
-                var totalCount = parsed.total || -1;
-                _clCache[addr] = { classes: classList, total: totalCount };
-                var currentClBody = detailRow.querySelector('.dom-cl-body');
-                if (currentClBody) currentClBody.innerHTML = _renderClassLoaderTable(classList, totalCount, addr);
+                var list = (parsed && parsed.classes) || [];
+                _clCache[addr] = { classes: list, total: (parsed && parsed.total) || -1,
+                                   sortCol: 'retained', sortDir: 'desc', page: 1, pageSize: _CL_PAGE_SIZES[0] };
+                _domFill(detailRow, 'cl', _renderClassLoaderTable(addr), list.length);
             } else if (event === 'done') {
-                if (_clAbortCtrl === ctrl) _clAbortCtrl = null;
+                release();
             } else if (event === 'cl-error') {
-                var currentClBody2 = detailRow.querySelector('.dom-cl-body');
-                if (currentClBody2) currentClBody2.innerHTML =
-                    '<div class="dom-refs-error">' + _escapeHtml((parsed && parsed.error) || '조회 실패') + '</div>';
-                if (_clAbortCtrl === ctrl) _clAbortCtrl = null;
+                b.innerHTML = _domErrorHtml((parsed && parsed.error) || '조회 실패');
+                release();
             }
         } catch (x) {
-            // 위와 같은 이유 — 조용히 멈추지 않게 오류를 표시하고 컨트롤러를 정리한다.
+            // 조용히 멈추지 않게 오류를 표시하고 컨트롤러를 정리한다.
             _azFailed('클래스로더 로드 클래스 응답 처리 실패 — event=' + event, x);
-            var clFail = detailRow.querySelector('.dom-cl-body');
-            if (clFail) clFail.innerHTML =
-                '<div class="dom-refs-error">로드된 클래스 목록을 표시하지 못했습니다. 다시 시도해 주세요.</div>';
-            if (_clAbortCtrl === ctrl) _clAbortCtrl = null;
+            b.innerHTML = _domErrorHtml('로드된 클래스 목록을 표시하지 못했습니다. 다시 시도해 주세요.');
+            release();
         }
-    }
-
-    fetch(url, { credentials: 'same-origin', signal: ctrl.signal })
-        .then(function(response) {
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            var reader = response.body.getReader();
-            var decoder = new TextDecoder();
-            function pump() {
-                return reader.read().then(function(result) {
-                    if (result.done) {
-                        if (sseBuffer.trim()) sseBuffer.split('\n').forEach(function(l) { processSseLine(l); });
-                        return;
-                    }
-                    sseBuffer += decoder.decode(result.value, { stream: true });
-                    var lines = sseBuffer.split('\n');
-                    sseBuffer = lines.pop();
-                    lines.forEach(function(l) { processSseLine(l); });
-                    return pump();
-                });
-            }
-            return pump();
-        })
-        .catch(function(e) {
-            if (e.name === 'AbortError') return;
-            var currentClBody3 = detailRow.querySelector('.dom-cl-body');
-            if (currentClBody3) currentClBody3.innerHTML =
-                '<div class="dom-refs-error">네트워크 오류: ' + _escapeHtml(e.message) + '</div>';
-            if (_clAbortCtrl === ctrl) _clAbortCtrl = null;
-        });
+    }, function(e) {
+        var b = body();
+        if (b) b.innerHTML = _domErrorHtml('네트워크 오류: ' + e.message);
+        release();
+    });
 }
 
 // ── OOM 배너 → 행 스크롤 + flash ─────────────────────
@@ -2004,11 +1929,13 @@ function loadRawComponentDetail(className, idx) {
 
 // Histogram 테이블에서 클래스명으로 정보 검색
 function findClassInHistogram(className) {
-    var rows = document.querySelectorAll('#histogramTable tbody tr');
+    // detach 페이지네이션 — 현재 페이지 밖의 행은 DOM 에 없으므로 그리드의 전량 배열을 본다
+    var rows = _histGrid ? _histGrid.allRows
+                         : Array.prototype.slice.call(document.querySelectorAll('#histogramTable tbody tr'));
     for (var i = 0; i < rows.length; i++) {
         var cells = rows[i].querySelectorAll('td');
         if (cells.length >= 5) {
-            var cn = (cells[1].textContent || '').trim();
+            var cn = (rows[i].dataset['class'] || cells[1].textContent || '').trim();
             if (cn === className) {
                 return {
                     rank: (cells[0].textContent || '').trim(),
@@ -5461,6 +5388,9 @@ function applyJeusChip(field, manual) {
 }
 
 // ── 초기화 실행 ─────────────────────────────────────────
+// Dominator Tree / Histogram 그리드 (패널이 없으면 각자 no-op)
+initDomGrid();
+initHistGrid();
 if (typeof FILENAME !== 'undefined') {
     initAiPanel();
     // 재분석 직후 백그라운드 사전계산이 돌고 있으면 진행 표시를 띄운다

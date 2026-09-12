@@ -1023,8 +1023,12 @@ public class HeapDumpAnalyzerService {
             parser.reparseActions(resultDir.getAbsolutePath(), baseName, tmp);
             if (tmp.getHistogramHtml() != null && !tmp.getHistogramHtml().isEmpty()) {
                 r.setHistogramHtml(tmp.getHistogramHtml());
-                r.setHistogramEntries(tmp.getHistogramEntries());
-                r.setTotalHistogramClasses(tmp.getTotalHistogramClasses());
+                // Overview 재추출은 25행뿐 — 확장 쿼리로 얻은 500행을 줄이지 않는다(2026-09-13)
+                int existing = r.getHistogramEntries() == null ? 0 : r.getHistogramEntries().size();
+                if (tmp.getHistogramEntries().size() >= existing) {
+                    r.setHistogramEntries(tmp.getHistogramEntries());
+                    r.setTotalHistogramClasses(tmp.getTotalHistogramClasses());
+                }
             }
             if (tmp.getThreadOverviewHtml() != null && !tmp.getThreadOverviewHtml().isEmpty()) {
                 r.setThreadOverviewHtml(tmp.getThreadOverviewHtml());
@@ -1550,6 +1554,59 @@ public class HeapDumpAnalyzerService {
                     result != null ? result.getFilename() : "?", e.getMessage());
         } finally {
             if (qdir != null) { try { deleteDirectoryRecursively(qdir); } catch (Exception ignore) {} }
+        }
+    }
+
+    // ── Class Histogram 500행 확장 ───────────────────────────────────────────────
+
+    /** histogram 단독 쿼리 타임아웃. reopen ~4초 + histogram(인덱스 기반) — 대형 덤프 여유 포함. */
+    private static final long HISTOGRAM_QUERY_TIMEOUT_SECONDS = 180L;
+
+    /**
+     * Overview 리포트의 class_histogram 은 MAT 기본 한도 25행뿐이다. 분석 직후(tmp 덤프·인덱스 존재 구간)
+     * 격리 디렉토리에서 {@code histogram} 단독 쿼리(query.xml limit 500)를 1회 더 돌려 500행으로 바꾼다.
+     *
+     * <p>⚠ 결과 ZIP 이름이 항상 {@code {base}_Query.zip} 이라 결과 디렉토리의 dominator 쿼리 ZIP 과 겹친다 —
+     * 반드시 {@code tmp/histq-*} 격리 디렉토리에서 실행한다. 리포트 옵션 두 개는 필수: 없으면 Retained 열이 없고
+     * (열 3개 → {@code -sort_column=#3} 이 범위 밖으로 MAT 자체가 실패) 정렬이 shallow 라 Overview 와 Top-N 이 다르다.
+     *
+     * <p>실패·타임아웃·결과 축소 시 Overview 25행을 그대로 두고 WARN 만 남긴다 — 분석 상태는 절대 바꾸지 않는다.
+     * 취소(인터럽트)는 플래그를 되살려 바깥 흐름에 넘긴다.
+     */
+    private void enrichWideHistogram(HeapAnalysisResult result, File dumpFile, File resultDir, String base) {
+        if (!config.isHistogramWideQueryEnabled()) return;
+        File qdir = new File(tmpDirectory(), "histq-" + base + "-" + System.nanoTime());
+        long t0 = System.currentTimeMillis();
+        try {
+            Files.createDirectories(qdir.toPath());
+            File workHprof = linkMatInputs(qdir, resultDir, dumpFile, base);   // index symlink + mtime 정렬(함정 24)
+            runMatSingleQuery(workHprof.getAbsolutePath(), qdir, "histogram", HISTOGRAM_QUERY_TIMEOUT_SECONDS,
+                    List.of("-derived_data_column=_default_=APPROXIMATE", "-sort_column=#3"));
+            File zip = new File(qdir, base + "_Query.zip");
+            if (!zip.exists()) {
+                logger.warn("[Histogram] 확장 쿼리 ZIP 없음 — Overview 행 유지: {}", result.getFilename());
+                return;
+            }
+            MatReportParser.HistogramParse hp = parser.parseHistogramQueryZip(zip);
+            int before = result.getHistogramEntries() == null ? 0 : result.getHistogramEntries().size();
+            if (hp.entries().size() > before) {
+                result.setHistogramEntries(hp.entries());
+                if (hp.totalClasses() > 0) result.setTotalHistogramClasses(hp.totalClasses());
+                logger.info("[Histogram] 확장 완료 {}행 (이전 {}행, 총 {} 클래스) {}ms — {}",
+                        hp.entries().size(), before, result.getTotalHistogramClasses(),
+                        System.currentTimeMillis() - t0, result.getFilename());
+            } else {
+                logger.warn("[Histogram] 확장 결과가 더 작음({} <= {}) — Overview 행 유지: {}",
+                        hp.entries().size(), before, result.getFilename());
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            logger.info("[Histogram] 취소 감지 — 확장 쿼리 중단: {}", result.getFilename());
+        } catch (Exception e) {
+            logger.warn("[Histogram] 확장 쿼리 실패 — Overview 행 유지: {} ({})", result.getFilename(), msgOf(e));
+        } finally {
+            try { deleteDirectoryRecursively(qdir); }
+            catch (Exception ce) { logger.debug("[Histogram] 작업 디렉토리 정리 실패: {}", msgOf(ce)); }
         }
     }
 
@@ -2861,6 +2918,10 @@ public class HeapDumpAnalyzerService {
                 sendProgress(emitter, AnalysisProgress.parsing(safe, 99, "System Properties 추출 중..."));
                 enrichSystemProperties(result, dumpFile, resultDir);
 
+                // Class Histogram 500행 확장 (Overview 는 25행). tmp 덤프·인덱스가 아직 있는 구간에서 1회.
+                sendProgress(emitter, AnalysisProgress.parsing(safe, 99, "Class Histogram 확장 조회 중 (최대 500 클래스)..."));
+                enrichWideHistogram(result, dumpFile, resultDir, base);
+
                 // Heap 데이터가 없으면 분석 실패로 처리
                 boolean hasHeapData = result.getTotalHeapSize() > 0 || result.getUsedHeapSize() > 0;
                 if (!hasHeapData) {
@@ -3176,11 +3237,23 @@ public class HeapDumpAnalyzerService {
      */
     public String runMatSingleQuery(String dumpPath, File workDir, String queryWithArgs, long timeoutSeconds)
             throws IOException, InterruptedException {
+        return runMatSingleQuery(dumpPath, workDir, queryWithArgs, timeoutSeconds, java.util.Collections.emptyList());
+    }
+
+    /**
+     * @param extraOptions MAT 리포트 옵션({@code -key=value}). {@code -command=} 앞에 그대로 삽입된다 —
+     *                     ParseHeapDump 는 {@code -key=value} 인자를 모든 리포트 Spec 파라미터로 넣는다
+     *                     (예: {@code -derived_data_column=_default_=APPROXIMATE}, {@code -sort_column=#3}).
+     */
+    public String runMatSingleQuery(String dumpPath, File workDir, String queryWithArgs, long timeoutSeconds,
+                                    List<String> extraOptions)
+            throws IOException, InterruptedException {
         List<String> cmd = new ArrayList<>();
         cmd.add("sh");
         cmd.add(config.getMatCliPath());
         cmd.add(dumpPath);
         if (keepUnreachableObjects) cmd.add("-keep_unreachable_objects");
+        if (extraOptions != null) cmd.addAll(extraOptions);
         cmd.add("-command=" + queryWithArgs);
         cmd.add("org.eclipse.mat.api:query");
         logger.info("[MAT Lazy] Query: {} (workDir={})", queryWithArgs, workDir.getName());
