@@ -88,6 +88,7 @@ public class AdminController {
     @ResponseBody
     public ResponseEntity<List<Map<String, Object>>> listUsers() {
         List<Map<String, Object>> result = new ArrayList<>();
+        Map<String, Object[]> lastLogins = lastSuccessfulLogins();
         for (User u : userService.findAll()) {
             Map<String, Object> m = new HashMap<>();
             m.put("id", u.getId());
@@ -116,9 +117,40 @@ public class AdminController {
                     ? pExpiresAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : null);
             m.put("passwordChangedAt", u.getPasswordChangedAt() != null
                     ? u.getPasswordChangedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : null);
+            // 최근 접속 = 마지막 로그인 성공(login_history). 기록이 없으면 null — 화면은 '기록 없음'
+            Object[] last = lastLogins.get(u.getUsername());
+            LocalDateTime lastAt = last != null ? toLocalDateTime(last[1]) : null;
+            m.put("lastLoginAt", lastAt != null ? lastAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : null);
+            m.put("lastLoginIp", lastAt != null && last[2] != null ? String.valueOf(last[2]) : null);
             result.add(m);
         }
         return ResponseEntity.ok(result);
+    }
+
+    /**
+     * 사용자명 → [username, login_at, ip]. 조회 실패는 목록 전체를 막지 않는다(최근 접속만 비워서 보여준다).
+     */
+    Map<String, Object[]> lastSuccessfulLogins() {
+        Map<String, Object[]> out = new HashMap<>();
+        try {
+            for (Object[] row : loginHistoryRepository.findLastSuccessfulLogins()) {
+                if (row == null || row.length < 3 || row[0] == null) continue;
+                out.putIfAbsent(String.valueOf(row[0]), row);   // 같은 시각 중복 행은 첫 행만
+            }
+        } catch (Exception e) {
+            logger.warn("[Admin] 최근 접속 집계 실패 — 사용자 목록은 최근 접속 없이 표시: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /** 네이티브 쿼리의 DATETIME 은 드라이버·Hibernate 버전에 따라 Timestamp 또는 LocalDateTime 으로 온다. */
+    static LocalDateTime toLocalDateTime(Object v) {
+        if (v == null) return null;
+        if (v instanceof LocalDateTime) return (LocalDateTime) v;
+        if (v instanceof java.sql.Timestamp) return ((java.sql.Timestamp) v).toLocalDateTime();
+        if (v instanceof java.time.OffsetDateTime) return ((java.time.OffsetDateTime) v).toLocalDateTime();
+        if (v instanceof java.util.Date) return LocalDateTime.ofInstant(((java.util.Date) v).toInstant(), ZoneId.systemDefault());
+        return null;
     }
 
     @PostMapping("/api/admin/users")

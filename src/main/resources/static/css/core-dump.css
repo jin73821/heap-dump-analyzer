@@ -1069,6 +1069,12 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
 /* 이력 테이블 */
 .hi-controls { display: flex; align-items: center; gap: 8px; margin-bottom: var(--sp-3); flex-wrap: wrap; }
 .hi-controls .cd-input { flex: 1 1 180px; min-width: 0; }
+/* 업로드일 기간 필터 — 박스·팝업 스타일은 common.css 의 캘린더 위젯(Files 와 공용). 여기서는 배치와 높이만 맞춘다 */
+.hi-date { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.hi-date-lbl { font-size: 12px; font-weight: 600; color: var(--cd-text-2); white-space: nowrap; }
+.hi-date .calendar-range { border-color: var(--cd-border-strong); border-radius: var(--r-md); }
+.hi-date .cal-text { padding: 8px 6px; }
+.hi-date .date-clear-btn-row { padding: 8px 12px; border-color: var(--cd-border-strong); border-radius: var(--r-md); font-family: inherit; }
 @keyframes cd-pulse-bg { 0%,100% { background: var(--pri-bg); } 50% { background: #F5F9FF; } }
 .hi-table-wrap { overflow-x: auto; }
 .hi-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -1106,6 +1112,11 @@ body { background: var(--cd-bg); color: var(--cd-text); font-family: var(--font-
 }
 @media (max-width: 760px) {
     .hi-table th.hi-hide-sm, .hi-table td.hi-hide-sm { display: none; }
+    /* 검색 한 줄 / 기간 한 줄 — 날짜 박스가 남은 폭을 채우고 '지우기' 는 같은 줄에 고정 (files.html 모바일 규칙과 같은 의도) */
+    .hi-date { flex: 1 1 100%; min-width: 0; }
+    .hi-date .calendar-range { flex: 1 1 auto; min-width: 0; }
+    .hi-date .cal-text { flex: 1 1 0; width: auto; min-width: 0; padding: 8px 2px; font-size: 12px; }
+    .hi-date .date-clear-btn-row { flex: 0 0 auto; }
     .upload-grid { grid-template-columns: 1fr; }
 }
 

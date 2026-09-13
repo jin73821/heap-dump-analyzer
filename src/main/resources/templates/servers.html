@@ -91,59 +91,7 @@
         .action-btn.scan:hover { background: #047857; }
         .action-btn.danger:hover { border-color: #FCA5A5; background: #FEF2F2; color: #EF4444; }
 
-        /* Scan result panel */
-        .scan-panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px;
-                      padding: 16px; margin-top: 16px; display: none; }
-        .scan-panel.open { display: block; }
-        .scan-title { font-size: 14px; font-weight: 700; margin-bottom: 12px;
-                      display: flex; align-items: center; justify-content: space-between; }
-        .scan-file { display: flex; align-items: center; gap: 10px; padding: 8px 0;
-                     border-bottom: 1px solid #F3F4F6; font-size: 13px; }
-        .scan-file:last-child { border-bottom: none; }
-        .scan-transferred { color: #9CA3AF; }
-        .badge-core { font-size:10px;padding:2px 6px;border-radius:4px;background:#FEF3C7;color:#92400E;font-weight:700;flex-shrink:0; }
-        .badge-heap { font-size:10px;padding:2px 6px;border-radius:4px;background:#DBEAFE;color:#1E40AF;font-weight:700;flex-shrink:0; }
-        .exec-info { font-size:11px;color:#6B7280;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0; }
-        .exec-warn { font-size:11px;color:#D97706;flex-shrink:0; }
-        .btn-transfer { padding: 4px 10px; border: 1px solid #2563EB; border-radius: 5px;
-                        background: #2563EB; color: #fff; font-size: 11px; cursor: pointer; }
-        .btn-transfer:hover { background: #1D4ED8; }
-        .btn-transfer:disabled { background: #9CA3AF; border-color: #9CA3AF; cursor: default; }
-        /* 실행파일(execfn) 전송 버튼 — 코어/힙 전송과 구분되는 보라색 */
-        .btn-exec-transfer { background: #7C3AED; border-color: #7C3AED; }
-        .btn-exec-transfer:hover { background: #6D28D9; }
-        .exec-cmd { font-size:11px;color:#9CA3AF;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0; }
-        .exec-label { font-size:11px;color:#6B7280;flex-shrink:0;font-weight:600; }
-        /* 스캔 경과시간 / 지연 인디케이터 */
-        .scan-elapsed { font-size:12px;color:#6B7280;text-align:center;padding:14px 12px; }
-        .scan-elapsed .se-spin { display:inline-block;width:14px;height:14px;border:2px solid #E5E7EB;
-                        border-top-color:#2563EB;border-radius:50%;animation:seSpin .8s linear infinite;vertical-align:-2px;margin-right:8px; }
-        @keyframes seSpin { to { transform: rotate(360deg); } }
-        .scan-elapsed .se-slow { display:block;margin-top:8px;color:#D97706;font-size:11px; }
-        /* 스캔 결과 페이지네이션 */
-        .scan-pagination { display:flex;align-items:center;justify-content:center;gap:6px;
-                        flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid #F3F4F6; }
-        .scan-pagination button { min-width:30px;padding:4px 8px;border:1px solid #E5E7EB;border-radius:5px;
-                        background:#fff;color:#374151;font-size:12px;cursor:pointer; }
-        .scan-pagination button:hover:not(:disabled) { background:#F3F4F6; }
-        .scan-pagination button.active { background:#2563EB;border-color:#2563EB;color:#fff;font-weight:700; }
-        .scan-pagination button:disabled { color:#D1D5DB;cursor:default; }
-        .scan-pagination .sp-info { font-size:11px;color:#9CA3AF;margin:0 6px; }
-        .transfer-progress { display: inline-flex; align-items: center; gap: 8px; min-width: 260px; }
-        .transfer-bar { width: 140px; height: 8px; background: #E5E7EB; border-radius: 4px; overflow: hidden; }
-        .transfer-bar-fill { height: 100%; border-radius: 4px; background: #2563EB;
-                             width: 0; transition: width 0.25s ease; }
-        .transfer-bar-fill.indeterminate { width: 100%;
-                             animation: transferPulse 1.5s ease-in-out infinite; }
-        .transfer-bar-fill.done { background: #059669; animation: none; width: 100%; }
-        .transfer-bar-fill.fail { background: #EF4444; animation: none; width: 100%; }
-        .transfer-label { font-size: 11px; color: #4B5563; white-space: nowrap;
-                          font-variant-numeric: tabular-nums; }
-        @keyframes transferPulse {
-            0% { opacity: .4; transform: scaleX(.3); transform-origin: left; }
-            50% { opacity: 1; transform: scaleX(1); transform-origin: left; }
-            100% { opacity: .4; transform: scaleX(.3); transform-origin: right; }
-        }
+        /* 스캔 결과 패널 CSS 는 /js/server-scan.js 가 주입한다 (server-detail.html 과 공유) */
 
         /* Modal */
         .modal-ov { display: none; position: fixed; inset: 0; z-index: 200;
@@ -217,11 +165,6 @@
             }
             .modal-btns { gap: 8px; }
             .modal-btns button { flex: 1 1 0; padding: 11px 10px; }
-            /* 스캔 패널 모바일 처리 */
-            .scan-file { flex-wrap: wrap; }
-            .scan-title { flex-wrap: wrap; gap: 8px; }
-            .transfer-progress { min-width: 0; flex: 1 1 100%; }
-            .transfer-bar { flex: 1; width: auto; min-width: 60px; }
             /* 패널 평탄화 (카드 레이아웃용) */
             .panel { background: transparent; border: none; border-radius: 0; overflow: visible; box-shadow: none; }
             /* 테이블 카드 변환 */
@@ -283,7 +226,6 @@
             .btn-pubkey  { font-size: 14px; padding: 9px 18px; }
             .action-btn { font-size: 13px; padding: 6px 14px; }
             .badge { font-size: 12px; }
-            .scan-file { font-size: 14px; padding: 10px 0; }
         }
     </style>
 </head>
@@ -439,17 +381,8 @@
     <!-- Auto-scan errors -->
     <div id="scanErrorsPanel" style="display:none;margin-bottom:16px"></div>
 
-    <!-- Scan results -->
-    <div class="scan-panel" id="scanPanel">
-        <div class="scan-title">
-            <span><span id="scanServerName"></span> — Remote Dump Files</span>
-            <div style="display:flex;gap:6px;align-items:center">
-                <button class="btn-transfer" id="btnTransferAll" style="display:none;font-size:11px;padding:4px 12px" onclick="transferAll()">현재 페이지 전송</button>
-                <button class="action-btn" onclick="closeScanPanel()" style="font-size:12px">&times; 닫기</button>
-            </div>
-        </div>
-        <div id="scanResults"></div>
-    </div>
+    <!-- Scan results — 내용은 /js/server-scan.js 가 그린다 -->
+    <div id="scanPanel"></div>
 </div>
 
 <div id="toast" class="toast"></div>
@@ -555,6 +488,8 @@
 </div>
 
 <script src="/js/table-grid.js?v=2026-09-13"></script>
+<script src="/js/analyze-confirm.js?v=2026-09-14"></script>
+<script src="/js/server-scan.js?v=2026-09-13"></script>
 <script>
 function closeModal(id) {
     document.getElementById(id).classList.remove('open');
@@ -809,32 +744,14 @@ function testConn(id) {
     }).catch(function() { showToast('요청 실패', 'error'); });
 }
 
-var _scanServerId = null;
-var _scanFiles = [];          // 현재 스캔 결과(시간 내림차순, 백엔드 정렬)
-var _scanPage = 0;            // 0-base 페이지
-var _scanPageSize = 20;       // 페이지당 파일 수
-var _scanElapsedTimer = null; // 스캔 경과시간 인디케이터
-
-function startScanElapsed() {
-    var el = document.getElementById('scanResults');
-    var t0 = Date.now();
-    function tick() {
-        var sec = Math.floor((Date.now() - t0) / 1000);
-        var slow = sec >= 8
-            ? '<span class="se-slow">⏳ 대용량 디렉터리(예: /tmp, /var/crash) 스캔은 시간이 걸릴 수 있습니다. 잠시만 기다려 주세요…</span>'
-            : '';
-        el.innerHTML = '<div class="scan-elapsed"><span class="se-spin"></span>스캔 중… ' + sec + '초 경과' + slow + '</div>';
-    }
-    tick();
-    stopScanElapsed();
-    _scanElapsedTimer = setInterval(tick, 1000);
-}
-function stopScanElapsed() {
-    if (_scanElapsedTimer) { clearInterval(_scanElapsedTimer); _scanElapsedTimer = null; }
-}
+// ── 스캔 결과 패널 — /js/server-scan.js 공통 모듈 (server-detail.html 과 공유) ──
+var _scanPanel = ServerScan.create({
+    panel: document.getElementById('scanPanel'),
+    toast: function(msg, ok) { showToast(msg, ok ? 'success' : 'error'); },
+    onStatus: function(id, status, errMsg) { updateStatusBadge(id, status, errMsg); }
+});
 
 function scanServer(id, name) {
-    _scanServerId = id;
     var scanPanel = document.getElementById('scanPanel');
     // 모바일(640px 이하): 해당 서버 카드(tr) 다음으로 스캔 패널 이동
     if (window.innerWidth <= 640) {
@@ -843,359 +760,7 @@ function scanServer(id, name) {
             row.parentNode.insertBefore(scanPanel, row.nextSibling);
         }
     }
-    document.getElementById('scanServerName').textContent = name;
-    startScanElapsed();
-    scanPanel.classList.add('open');
-    setTimeout(function() { scanPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, 80);
-
-    fetch('/api/servers/' + id + '/scan', { method: 'POST' })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        stopScanElapsed();
-        var html = '';
-        // 일부 경로 실패 — pathErrors 배너 (전체 성공이 아닐 때)
-        if (d.pathErrors && d.pathErrors.length > 0 && !d.error) {
-            html += '<div style="background:#FFFBEB;border:1px solid #FDE68A;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#92400E;line-height:1.5">'
-                  + '<strong style="display:block;margin-bottom:6px">일부 경로 스캔 실패 (' + d.pathErrors.length + '개)</strong>';
-            for (var pi = 0; pi < d.pathErrors.length; pi++) {
-                var pe = d.pathErrors[pi];
-                html += '<div style="margin-bottom:2px"><code style="font-family:monospace">' + escHtml(pe.dumpPath) + '</code> — ' + escHtml(pe.error || '') + '</div>';
-            }
-            html += '</div>';
-        }
-        // 에러 배너 — errorCode 별로 시각 분리
-        if (d.error) {
-            var code = d.errorCode || 'SSH_ERROR';
-            var isPathIssue = (code === 'DUMP_PATH_NOT_FOUND' || code === 'DUMP_PATH_NOT_READABLE');
-            var title, bg, border, color;
-            if (code === 'DUMP_PATH_NOT_FOUND') {
-                title = '덤프 경로 없음';
-                bg = '#FFFBEB'; border = '#FDE68A'; color = '#92400E';
-            } else if (code === 'DUMP_PATH_NOT_READABLE') {
-                title = '덤프 경로 권한 없음';
-                bg = '#FFFBEB'; border = '#FDE68A'; color = '#92400E';
-            } else {
-                title = 'SSH/SCP Error';
-                bg = '#FEF2F2'; border = '#FECACA'; color = '#991B1B';
-            }
-            html += '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:' + color + ';line-height:1.5">'
-                  + '<strong style="display:block;margin-bottom:4px">[' + escHtml(code) + '] ' + escHtml(title) + '</strong>'
-                  + escHtml(d.error)
-                  + (isPathIssue ? '<div style="margin-top:6px;font-size:11px;opacity:.85">서버 상세에서 dump path 또는 SSH 계정 권한을 확인해 주세요.</div>' : '')
-                  + '</div>';
-            updateStatusBadge(id, 'FAIL', d.error);
-        } else {
-            updateStatusBadge(id, 'OK');
-        }
-
-        // 파일 목록은 별도 컨테이너(#scanFileList)에서 페이지네이션 렌더
-        html += '<div id="scanFileList"></div>';
-        document.getElementById('scanResults').innerHTML = html;
-
-        _scanFiles = (d.files || []);
-        _scanPage = 0;
-        if (_scanFiles.length > 0) {
-            renderScanPage();
-        } else if (!d.error) {
-            document.getElementById('scanFileList').innerHTML =
-                '<div style="padding:12px;color:#9CA3AF;text-align:center">덤프 파일이 없습니다.</div>';
-        }
-
-        // 미전송 파일 2개 이상이면 "현재 페이지 전송" 버튼 표시
-        var untransferred = _scanFiles.filter(function(f) { return !f.transferred; });
-        var btnAll = document.getElementById('btnTransferAll');
-        if (btnAll) btnAll.style.display = untransferred.length >= 2 ? '' : 'none';
-        if (!d.success && !d.error) {
-            document.getElementById('scanResults').innerHTML =
-                '<div style="padding:12px;color:#EF4444;text-align:center">' + escHtml(d.message || '스캔 실패') + '</div>';
-        }
-    }).catch(function() {
-        stopScanElapsed();
-        document.getElementById('scanResults').innerHTML =
-            '<div style="padding:12px;color:#EF4444;text-align:center">요청 실패</div>';
-    });
-}
-
-function parseLsDate(s) {
-    if (!s) return '';
-    // 백엔드 find -printf 는 "YYYY-MM-DD HH:MM" (정렬가능) 형식 → 그대로 표시
-    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s;
-    // 레거시 "Mon DD time|year" 형식 폴백
-    var MONTHS = {Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',
-                  Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
-    var parts = s.trim().split(/\s+/);
-    if (parts.length < 3) return s;
-    var mon = MONTHS[parts[0]] || '??';
-    var day = parts[1].length === 1 ? '0' + parts[1] : parts[1];
-    var third = parts[2];
-    if (third.indexOf(':') >= 0) {
-        return new Date().getFullYear() + '-' + mon + '-' + day + ' ' + third;
-    }
-    return third + '-' + mon + '-' + day;
-}
-
-// 한 파일 row 렌더 (시간 내림차순으로 이미 정렬된 _scanFiles 의 단일 항목)
-function renderScanFileRow(f) {
-    var isCore = f.fileType === 'core';
-    // 다중 경로일 때 출처 경로를 작은 태그로 표시 (그룹 헤더 대신 행 단위)
-    var showSrc = _scanDistinctPaths > 1 && f.sourceDumpPath;
-    var html = '<div class="scan-file" style="flex-wrap:wrap">';
-    html += '<span style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden">'
-          + (isCore ? '<span class="badge-core">CORE</span>' : '')
-          + '<span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(f.filename) + '</span>'
-          + (f.date ? '<span style="font-size:12px;color:#9CA3AF;flex-shrink:0;white-space:nowrap">' + escHtml(parseLsDate(f.date)) + '</span>' : '')
-          + '</span>';
-    html += '<span style="color:#6B7280;font-size:12px;flex-shrink:0">' + escHtml(f.formattedSize) + '</span>';
-    if (f.transferred && f.analyzed) {
-        html += '<span style="font-size:11px;color:#059669;font-weight:600">전송됨(분석완료)</span>';
-    } else if (f.transferred) {
-        html += '<span class="scan-transferred" style="font-size:11px">전송됨</span>';
-    } else {
-        html += '<button class="btn-transfer" data-path="' + escAttr(f.path) + '" data-file-type="' + escAttr(f.fileType || 'heap') + '" onclick="transferFile(this)">전송</button>';
-    }
-    if (showSrc) {
-        html += '<span style="flex:1 1 100%;font-size:10px;color:#9CA3AF;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">↳ ' + escHtml(f.sourceDumpPath) + '</span>';
-    }
-    // 코어파일: 실행파일(execfn) + 전송버튼 / 실행명령(from, 참고) / 경고 — 두 번째 줄
-    if (isCore && (f.executablePath || f.executableCommand || f.executableWarning)) {
-        if (f.executablePath) {
-            html += '<div style="flex:1 1 100%;display:flex;align-items:center;gap:8px;padding-top:4px;margin-top:2px;border-top:1px dashed #F3F4F6">'
-                  + '<span class="exec-label">실행파일:</span>'
-                  + '<span class="exec-info" title="' + escAttr(f.executablePath) + '">' + escHtml(f.executablePath) + '</span>';
-            // 코어가 전송된 경우에만 페어링 전송 가능
-            if (f.transferred) {
-                html += '<button class="btn-transfer btn-exec-transfer" data-path="' + escAttr(f.executablePath)
-                      + '" data-file-type="coreexec" data-pair-core="' + escAttr(f.filename)
-                      + '" onclick="transferFile(this)">실행파일 전송</button>';
-            } else {
-                html += '<span class="exec-warn" title="코어파일 전송 후 실행파일을 페어링 전송할 수 있습니다">코어 전송 후 가능</span>';
-            }
-            html += '</div>';
-        }
-        if (f.executableCommand) {
-            html += '<div style="flex:1 1 100%;display:flex;align-items:center;gap:8px;padding-top:2px">'
-                  + '<span class="exec-label">실행명령(참고):</span>'
-                  + '<span class="exec-cmd" title="' + escAttr(f.executableCommand) + '">' + escHtml(f.executableCommand) + '</span>'
-                  + '</div>';
-        }
-        if (f.executableWarning) {
-            html += '<div style="flex:1 1 100%;padding-top:2px"><span class="exec-warn">⚠ ' + escHtml(f.executableWarning) + '</span></div>';
-        }
-    }
-    html += '</div>';
-    return html;
-}
-
-var _scanDistinctPaths = 1;
-// 현재 페이지(_scanPage) 렌더 + 페이지네이션 컨트롤
-function renderScanPage() {
-    var container = document.getElementById('scanFileList');
-    if (!container) return;
-    var total = _scanFiles.length;
-    var pageCount = Math.max(1, Math.ceil(total / _scanPageSize));
-    if (_scanPage >= pageCount) _scanPage = pageCount - 1;
-    if (_scanPage < 0) _scanPage = 0;
-
-    // 출처 경로 distinct 수 (행 단위 출처 태그 표시 판단)
-    var pathSet = {};
-    for (var i = 0; i < total; i++) { if (_scanFiles[i].sourceDumpPath) pathSet[_scanFiles[i].sourceDumpPath] = 1; }
-    _scanDistinctPaths = Object.keys(pathSet).length;
-
-    var start = _scanPage * _scanPageSize;
-    var end = Math.min(start + _scanPageSize, total);
-    var html = '';
-    for (var j = start; j < end; j++) html += renderScanFileRow(_scanFiles[j]);
-
-    // 페이지네이션 (2페이지 이상일 때만)
-    if (pageCount > 1) {
-        html += '<div class="scan-pagination">';
-        html += '<button onclick="gotoScanPage(' + (_scanPage - 1) + ')"' + (_scanPage === 0 ? ' disabled' : '') + '>‹</button>';
-        var win = 2;
-        var from = Math.max(0, _scanPage - win), to = Math.min(pageCount - 1, _scanPage + win);
-        if (from > 0) {
-            html += '<button onclick="gotoScanPage(0)">1</button>';
-            if (from > 1) html += '<span class="sp-info">…</span>';
-        }
-        for (var p = from; p <= to; p++) {
-            html += '<button class="' + (p === _scanPage ? 'active' : '') + '" onclick="gotoScanPage(' + p + ')">' + (p + 1) + '</button>';
-        }
-        if (to < pageCount - 1) {
-            if (to < pageCount - 2) html += '<span class="sp-info">…</span>';
-            html += '<button onclick="gotoScanPage(' + (pageCount - 1) + ')">' + pageCount + '</button>';
-        }
-        html += '<button onclick="gotoScanPage(' + (_scanPage + 1) + ')"' + (_scanPage === pageCount - 1 ? ' disabled' : '') + '>›</button>';
-        html += '<span class="sp-info">' + (start + 1) + '–' + end + ' / 총 ' + total + '개</span>';
-        html += '</div>';
-    } else {
-        html += '<div class="scan-pagination"><span class="sp-info">총 ' + total + '개</span></div>';
-    }
-    container.innerHTML = html;
-}
-
-function gotoScanPage(p) {
-    _scanPage = p;
-    renderScanPage();
-    var panel = document.getElementById('scanPanel');
-    if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-function fmtMB(bytes) {
-    if (bytes == null || bytes < 0) return '–';
-    var mb = bytes / (1024 * 1024);
-    if (mb >= 1024) return (mb / 1024).toFixed(2) + ' GB';
-    return mb.toFixed(1) + ' MB';
-}
-
-function transferFile(btn, callback) {
-    var path = btn.getAttribute('data-path');
-    var fileType = btn.getAttribute('data-file-type') || 'heap';
-    var pairCore = btn.getAttribute('data-pair-core');
-    var parent = btn.parentNode;
-
-    // 버튼을 진행바로 교체
-    btn.style.display = 'none';
-    var prevErr = parent.querySelector('.transfer-err');
-    if (prevErr) prevErr.remove();
-    var prog = document.createElement('div');
-    prog.className = 'transfer-progress';
-    prog.innerHTML = '<div class="transfer-bar"><div class="transfer-bar-fill indeterminate"></div></div>'
-                   + '<span class="transfer-label">전송 시작 중...</span>';
-    parent.appendChild(prog);
-    var fill = prog.querySelector('.transfer-bar-fill');
-    var label = prog.querySelector('.transfer-label');
-
-    var url = '/api/servers/' + _scanServerId + '/transfer/stream?remotePath=' + encodeURIComponent(path) + '&fileType=' + encodeURIComponent(fileType);
-    if (pairCore) url += '&pairCore=' + encodeURIComponent(pairCore);
-    var es;
-    try { es = new EventSource(url); }
-    catch (e) {
-        fill.className = 'transfer-bar-fill fail';
-        label.textContent = '연결 실패';
-        btn.style.display = ''; btn.disabled = false; btn.textContent = '재시도';
-        showToast('전송 스트림 열기 실패', 'error');
-        if (callback) callback();
-        return;
-    }
-
-    var doneReceived = false;
-
-    es.addEventListener('progress', function(ev) {
-        try {
-            var d = JSON.parse(ev.data);
-            var bytes = (d.bytes != null) ? d.bytes : 0;
-            var total = (d.total != null) ? d.total : -1;
-            if (total > 0) {
-                fill.classList.remove('indeterminate');
-                var pct = Math.max(0, Math.min(100, (bytes / total) * 100));
-                fill.style.width = pct.toFixed(1) + '%';
-                label.textContent = fmtMB(bytes) + ' / ' + fmtMB(total)
-                                  + ' (' + pct.toFixed(1) + '%)';
-            } else {
-                // 총량 미상 — indeterminate 유지하고 받은 양만 표시
-                label.textContent = fmtMB(bytes) + ' 전송 중...';
-            }
-        } catch (e) {
-            // 진행률 프레임 하나만 건너뛴다 — 다음 프레임이 곧 갱신한다.
-            if (window.Common) Common.logIgnored('[Server] 전송 진행률 프레임 처리 실패', e);
-        }
-    });
-
-    es.addEventListener('done', function(ev) {
-        doneReceived = true;
-        es.close();
-        var d = {};
-        try { d = JSON.parse(ev.data); }
-        catch (e) {
-            // 완료 프레임을 못 읽으면 아래에서 '실패'로 표시된다 — 실제 결과와 다를 수 있어 반드시 남긴다.
-            if (window.Common) Common.logError('[Server] 전송 완료 프레임 파싱 실패 — 결과를 확인할 수 없다', e);
-        }
-        if (d.success) {
-            fill.classList.remove('indeterminate');
-            fill.className = 'transfer-bar-fill done';
-            fill.style.width = '100%';
-            var sizeStr = d.fileSize ? ' (' + fmtMB(d.fileSize) + ')' : '';
-            label.textContent = '완료' + sizeStr;
-            // 전송 직후 수집한 JVM 힙 설정(-Xms/-Xmx) — 힙 전송에서만 온다. 후보가 여럿이면 분석 화면에서 고른다.
-            if (d.jvm && d.jvm.status === 'collected') {
-                label.textContent += ' · JVM' + (d.jvm.xms ? ' -Xms' + d.jvm.xms : '') + (d.jvm.xmx ? ' -Xmx' + d.jvm.xmx : '')
-                    + (d.jvm.pid ? ' (pid ' + d.jvm.pid + ')' : '');
-            } else if (d.jvm && d.jvm.status === 'ambiguous') {
-                label.textContent += ' · JVM 후보 ' + d.jvm.candidateCount + '개 (분석 화면에서 선택)';
-            } else if (d.jvm) {
-                label.textContent += ' · JVM 미수집';
-            }
-            label.style.color = '#059669';
-            showToast((d.filename || '파일') + ' 전송 완료', 'success');
-            // 페이지 재렌더 시 상태 유지 — _scanFiles 의 해당 코어/힙 파일을 transferred 로 마킹
-            if (fileType !== 'coreexec') {
-                var tf = null;
-                for (var si = 0; si < _scanFiles.length; si++) {
-                    if (_scanFiles[si].path === path) { _scanFiles[si].transferred = true; tf = _scanFiles[si]; break; }
-                }
-                // 코어파일 전송 완료 → 연결된 실행파일 전송 버튼이 재스캔 없이 즉시 나타나도록 해당 행만 재렌더
-                // ('전송됨' 상태 + 실행파일 전송 버튼 반영). 다른 행/전송 중 항목엔 영향 없음.
-                if (tf && fileType === 'core' && tf.executablePath && parent && parent.parentNode) {
-                    var tmpRow = document.createElement('div');
-                    tmpRow.innerHTML = renderScanFileRow(tf);
-                    var newRow = tmpRow.firstChild;
-                    if (newRow) parent.parentNode.replaceChild(newRow, parent);
-                }
-            }
-        } else {
-            fill.classList.remove('indeterminate');
-            fill.className = 'transfer-bar-fill fail';
-            label.textContent = '실패';
-            label.style.color = '#EF4444';
-            var errEl = document.createElement('div');
-            errEl.className = 'transfer-err';
-            errEl.style.cssText = 'font-size:11px;color:#DC2626;margin-top:4px;max-width:300px;word-break:break-all';
-            errEl.textContent = d.message || '전송 실패';
-            parent.appendChild(errEl);
-            btn.style.display = '';
-            btn.disabled = false;
-            btn.textContent = '재시도';
-            showToast('SCP Transfer Failed: ' + (d.message || ''), 'error');
-        }
-        if (callback) callback();
-    });
-
-    es.onerror = function() {
-        if (doneReceived) return; // 정상 종료 후 재연결 차단을 위한 onerror — 무시
-        es.close();
-        fill.classList.remove('indeterminate');
-        fill.className = 'transfer-bar-fill fail';
-        label.textContent = '연결 오류';
-        label.style.color = '#EF4444';
-        btn.style.display = '';
-        btn.disabled = false;
-        btn.textContent = '재시도';
-        showToast('전송 스트림 오류', 'error');
-        if (callback) callback();
-    };
-}
-
-function transferAll() {
-    // 현재 페이지의 코어/힙 전송 버튼만 (실행파일 전송 btn-exec-transfer 제외)
-    var all = document.querySelectorAll('#scanResults .btn-transfer:not(:disabled)');
-    var btns = Array.prototype.filter.call(all, function(b) { return !b.classList.contains('btn-exec-transfer'); });
-    if (btns.length === 0) { showToast('전송할 파일이 없습니다.', 'error'); return; }
-    var allBtn = document.getElementById('btnTransferAll');
-    if (allBtn) { allBtn.disabled = true; allBtn.textContent = '전송 중...'; }
-    // 순차 전송
-    var queue = Array.prototype.slice.call(btns);
-    function next() {
-        if (queue.length === 0) {
-            if (allBtn) { allBtn.textContent = '완료'; allBtn.style.background = '#059669'; allBtn.style.borderColor = '#059669'; }
-            return;
-        }
-        var btn = queue.shift();
-        transferFile(btn, next);
-    }
-    next();
-}
-
-function closeScanPanel() {
-    document.getElementById('scanPanel').classList.remove('open');
+    _scanPanel.scan(id, name);
 }
 
 function updateStatusBadge(serverId, status, errMsg) {
@@ -1272,7 +837,6 @@ function copyPubkey() {
 
 // escHtml → Common.escHtml (common.js). 기존 textContent 버전은 `"` `'` 미처리 → Common 은 5 문자 escape 로 강화.
 var escHtml = Common.escHtml;
-function escAttr(s) { return s.replace(/"/g, '&quot;').replace(/'/g, '&#39;'); }
 
 // ── Auto-scan errors ──────────────────────────────────
 function loadScanErrors() {

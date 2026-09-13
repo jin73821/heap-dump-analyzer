@@ -390,6 +390,8 @@ public class RemoteDumpService {
                                 && analysisHistoryRepository.existsByFilename(matchedLocalFilename);
                         fileInfo.put("transferred", transferred);
                         fileInfo.put("analyzed", analyzed);
+                        // 로컬 파일명 — 원격 원본명과 다를 수 있다(중복명 전송). 스캔 패널의 '분석 시작'이 이 이름으로 이동한다.
+                        if (matchedLocalFilename != null) fileInfo.put("localFilename", matchedLocalFilename);
                         fileInfo.put("sourceDumpPath", dumpPath);
                         fileInfo.put("fileType", "heap");
                         files.add(fileInfo);
@@ -459,18 +461,20 @@ public class RemoteDumpService {
                         List<DumpTransferLog> succLogs = transferLogRepository
                                 .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
                                         server.getId(), filename, size, "SUCCESS");
-                        boolean transferred = false;
+                        String matchedLocalFilename = null;
                         for (DumpTransferLog sl : succLogs) {
                             String local = sl.getFilename();
                             if (local == null) continue;
                             if (new File(localCoreDir, local).exists()
                                     || new File(localHeapDir, local).exists()
                                     || new File(localHeapDir, local + ".gz").exists()) {
-                                transferred = true;
+                                matchedLocalFilename = local;
                                 break;
                             }
                         }
+                        boolean transferred = matchedLocalFilename != null;
                         fileInfo.put("transferred", transferred);
+                        if (matchedLocalFilename != null) fileInfo.put("localFilename", matchedLocalFilename);
                         fileInfo.put("analyzed", false);
                         fileInfo.put("sourceDumpPath", corePath);
                         fileInfo.put("fileType", "core");

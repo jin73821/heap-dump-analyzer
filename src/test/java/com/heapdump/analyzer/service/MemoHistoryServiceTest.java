@@ -107,8 +107,25 @@ class MemoHistoryServiceTest {
         }
 
         @Override
-        public void deleteByUsername(String username) {
+        public int deleteAllOwnedBy(String username) {
+            int before = rows.size();
             rows.removeIf(r -> r.getUsername().equals(username));
+            return before - rows.size();
+        }
+
+        @Override
+        public List<Object[]> findMetaOwnedBy(Long id, String username) {
+            return rows.stream()
+                    .filter(r -> r.getId().equals(id) && r.getUsername().equals(username))
+                    .map(r -> new Object[]{r.getCreatedAt(), r.getByteSize(), r.getReason()})
+                    .collect(Collectors.toList());
+        }
+
+        @Override
+        public int deleteOwnedBy(Long id, String username) {
+            int before = rows.size();
+            rows.removeIf(r -> r.getId().equals(id) && r.getUsername().equals(username));
+            return before - rows.size();
         }
 
         // ── 미사용 JpaRepository 메서드 ────────────────────────────
@@ -323,14 +340,56 @@ class MemoHistoryServiceTest {
     }
 
     @Test
-    @DisplayName("전체 삭제는 본인 것만 지운다")
+    @DisplayName("전체 삭제는 본인 것만 지우고 삭제 건수를 돌려준다")
     void deleteAllIsScopedToUser() {
-        svc.record("alice", "a", MemoHistoryService.REASON_SAVE);
+        svc.record("alice", "a1", MemoHistoryService.REASON_SAVE);
+        svc.record("alice", "a2", MemoHistoryService.REASON_SAVE);
         svc.record("bob", "b", MemoHistoryService.REASON_SAVE);
 
-        svc.deleteAll("alice");
+        assertEquals(2, svc.deleteAll("alice"));
 
         assertEquals(0, svc.count("alice"));
         assertEquals(1, svc.count("bob"));
+    }
+
+    @Test
+    @DisplayName("개별 삭제 — 선택한 시점만 지우고 남은 건수를 돌려준다")
+    void deleteSingleSnapshot() {
+        svc.record("alice", "v1", MemoHistoryService.REASON_SAVE);
+        svc.record("alice", "v2", MemoHistoryService.REASON_SAVE);
+        svc.record("alice", "v3", MemoHistoryService.REASON_SAVE);
+        Long middle = repo.rows.stream().filter(r -> "v2".equals(r.getMemo())).findFirst().orElseThrow().getId();
+
+        assertEquals(2, svc.delete("alice", middle));
+
+        List<String> kept = repo.rows.stream().map(MemoHistory::getMemo).sorted().collect(Collectors.toList());
+        assertEquals(List.of("v1", "v3"), kept);
+        assertThrows(IllegalArgumentException.class, () -> svc.delete("alice", middle),
+                "이미 지운 시점을 다시 지우면 성공으로 보고하면 안 된다(다른 창에서 먼저 삭제한 경우)");
+    }
+
+    @Test
+    @DisplayName("다른 사용자의 스냅샷은 개별 삭제할 수 없다")
+    void cannotDeleteOthersSnapshot() {
+        svc.record("alice", "앨리스의 메모", MemoHistoryService.REASON_SAVE);
+        Long id = repo.rows.get(0).getId();
+
+        assertThrows(IllegalArgumentException.class, () -> svc.delete("bob", id),
+                "id 만 알면 남의 이력을 지울 수 있으면 안 된다");
+        assertThrows(IllegalArgumentException.class, () -> svc.delete("bob", null));
+        assertEquals(1, svc.count("alice"), "거부된 삭제가 행을 건드렸다");
+    }
+
+    @Test
+    @DisplayName("이력을 지워도 억제 판정은 남은 최신 스냅샷 기준으로 이어진다")
+    void recordAfterDeletingLatestComparesWithRemaining() {
+        svc.record("alice", "v1", MemoHistoryService.REASON_SAVE);
+        svc.record("alice", "v2", MemoHistoryService.REASON_SAVE);
+        Long latest = repo.rows.stream().filter(r -> "v2".equals(r.getMemo())).findFirst().orElseThrow().getId();
+        svc.delete("alice", latest);
+
+        // 지운 v2 와 같은 내용이 다시 덮여도 '직전과 동일' 로 억제되면 안 된다 — 직전은 이제 v1 이다
+        assertTrue(svc.record("alice", "v2", MemoHistoryService.REASON_SAVE));
+        assertFalse(svc.record("alice", "v2", MemoHistoryService.REASON_SAVE));
     }
 }

@@ -231,6 +231,10 @@ public class ServerController {
             if (scanResult.containsKey("dumpPath")) {
                 result.put("dumpPath", scanResult.get("dumpPath"));
             }
+            // 일부 경로만 실패한 경우의 경로별 오류 — 화면이 '일부 경로 스캔 실패' 배너로 보여준다(종전엔 전달 누락).
+            if (scanResult.containsKey("pathErrors")) {
+                result.put("pathErrors", scanResult.get("pathErrors"));
+            }
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             return fail(e);

@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>코어 덤프 분석 - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-08-12}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-08-26b}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-14}">
 </head>
 <body>
 
@@ -194,6 +194,22 @@
         <div th:if="${!#lists.isEmpty(history)}">
             <div class="hi-controls">
                 <input type="text" id="hiSearch" class="cd-input" placeholder="파일명 검색..." autocomplete="off">
+                <!-- 기간 필터 — Files 와 같은 KRDS 캘린더 위젯(calendar.js, 배너 전역 로드 + common.css 스타일).
+                     기준은 표의 '업로드' 일시(createdAt). 페이지당 인스턴스 1개라 이 페이지에서 Calendar.attach 는 여기뿐이어야 한다 -->
+                <div class="hi-date" role="group" aria-labelledby="hiDateLbl">
+                    <span class="hi-date-lbl" id="hiDateLbl">업로드일</span>
+                    <div class="calendar-range">
+                        <input type="text" class="cal-text" id="hiDateStart" placeholder="시작일" readonly aria-label="업로드 시작일">
+                        <span class="calendar-input-sep">~</span>
+                        <input type="text" class="cal-text" id="hiDateEnd" placeholder="종료일" readonly aria-label="업로드 종료일">
+                        <button type="button" class="form-btn-datepicker" onclick="Calendar.open()" aria-label="달력 열기">
+                            <span class="sr-only">달력 열기</span>
+                            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                        </button>
+                        <div class="krds-calendar-area" id="hiCalArea"></div>
+                    </div>
+                    <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()" title="기간 지우기">지우기</button>
+                </div>
             </div>
             <div class="hi-table-wrap">
                 <table class="hi-table" id="hiTable">
@@ -278,7 +294,7 @@
                     </tbody>
                 </table>
             </div>
-            <div class="cd-file-noresult" id="hiNoResult">검색 결과가 없습니다.</div>
+            <div class="cd-file-noresult" id="hiNoResult">조건에 맞는 분석 이력이 없습니다.</div>
             <div class="cd-pg" id="hiPg">
                 <div class="cd-pg-list" id="hiPgList"></div>
                 <div class="cd-pg-info" id="hiPgInfo"></div>
@@ -337,7 +353,7 @@
 
 <div class="cd-toast-wrap" id="cdToastWrap"></div>
 
-<script th:src="@{/js/core-dump-index.js?v=2026-09-09}"></script>
+<script th:src="@{/js/core-dump-index.js?v=2026-09-14}"></script>
 
 </body>
 </html>

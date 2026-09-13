@@ -182,9 +182,29 @@ public class MemoHistoryService {
         return repository.countByUsername(username);
     }
 
-    public void deleteAll(String username) {
-        repository.deleteByUsername(username);
-        logger.info("[MemoHistory] action=clear-history user={}", username);
+    /**
+     * 개별 삭제 — 소유권은 삭제 쿼리 조건으로 검증한다(남의 id 면 0건 → 예외).
+     * 감사 로그용 식별정보는 삭제 <b>전</b>에 본문 없이 캡처한다.
+     *
+     * @return 삭제 후 남은 건수
+     */
+    public long delete(String username, Long id) {
+        List<Object[]> meta = id == null ? List.of() : repository.findMetaOwnedBy(id, username);
+        if (meta.isEmpty()) throw new IllegalArgumentException("이력을 찾을 수 없습니다.");
+        int deleted = repository.deleteOwnedBy(id, username);
+        if (deleted == 0) throw new IllegalArgumentException("이력을 찾을 수 없습니다.");   // 그 사이 다른 창에서 삭제
+        Object[] m = meta.get(0);
+        long remaining = repository.countByUsername(username);
+        logger.info("[MemoHistory] action=delete id={} createdAt={} bytes={} reason={} remaining={} by={}",
+                id, m[0], m[1], m[2], remaining, username);
+        return remaining;
+    }
+
+    /** 전체 삭제 — 본인 것만. @return 삭제한 건수 */
+    public int deleteAll(String username) {
+        int deleted = repository.deleteAllOwnedBy(username);
+        logger.info("[MemoHistory] action=clear-history deleted={} by={}", deleted, username);
+        return deleted;
     }
 
     // ── 보관기간 정리 ─────────────────────────────────────────────

@@ -224,7 +224,8 @@
         </div>
         <div class="info-actions">
             <button class="action-btn" th:data-id="${server.id}" onclick="testConn(this.dataset.id)">연결 테스트</button>
-            <button class="action-btn scan" th:data-id="${server.id}" onclick="scanServer(this.dataset.id)">스캔</button>
+            <button class="action-btn scan" th:data-id="${server.id}" th:data-name="${server.name}"
+                    onclick="scanServer(this, this.dataset.id, this.dataset.name)">스캔</button>
             <button class="action-btn"
                     th:data-id="${server.id}" th:data-name="${server.name}"
                     th:data-host="${server.host}" th:data-port="${server.port}"
@@ -233,6 +234,9 @@
                     onclick="openEditModal(this.dataset)">수정</button>
         </div>
     </div>
+
+    <!-- ── 스캔 결과 (원격 덤프 파일 목록) — 내용은 /js/server-scan.js 가 그린다 ── -->
+    <div id="scanPanel"></div>
 
     <!-- ── 분석 이력 ──────────────────────────────────── -->
     <div class="sec-hdr">
@@ -378,6 +382,8 @@
 </style>
 
 <script src="/js/float-tooltip.js?v=2026-08-02"></script>
+<script src="/js/analyze-confirm.js?v=2026-09-14"></script>
+<script src="/js/server-scan.js?v=2026-09-13"></script>
 <script>
 var _serverId = '[[${server.id}]]';
 var _csrf = Common.csrfToken();
@@ -406,25 +412,19 @@ function testConn(id) {
     });
 }
 
-function scanServer(id) {
-    var btn = event.target;
+// ── 스캔 — 종전엔 'N개 파일 발견' 토스트만 띄우고 목록을 보여주지 않았다.
+//    Target Servers 와 같은 결과 패널(/js/server-scan.js)로 파일 목록·전송·분석 시작을 제공한다.
+var _scanPanel = ServerScan.create({
+    panel: document.getElementById('scanPanel'),
+    toast: showToast
+});
+
+function scanServer(btn, id, name) {
     btn.disabled = true; btn.textContent = '스캔 중...';
-    fetch('/api/servers/' + id + '/scan', {
-        method: 'POST', headers: { [_csrfHeader]: _csrf }
-    })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-        if (d.success) {
-            var count = d.count || 0;
-            showToast('스캔 완료: ' + count + '개 파일 발견', true);
-        } else {
-            showToast('스캔 실패: ' + (d.error || d.message || ''), false);
-        }
+    _scanPanel.scan(id, name).then(function(d) {
         btn.disabled = false; btn.textContent = '스캔';
-    })
-    .catch(function(e) {
-        showToast('오류: ' + e.message, false);
-        btn.disabled = false; btn.textContent = '스캔';
+        if (d && d.success) showToast('스캔 완료: ' + (d.count || 0) + '개 파일 발견', true);
+        else if (d) showToast('스캔 실패: ' + (d.error || d.message || ''), false);
     });
 }
 

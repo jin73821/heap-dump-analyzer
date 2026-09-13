@@ -56,6 +56,56 @@
                       background: transparent; font-size: 12px; cursor: pointer; color: #6B7280; }
         .action-btn.danger:hover { border-color: #FCA5A5; background: #FEF2F2; color: #EF4444; }
 
+        /* ── 사용자 목록 조밀 표 + 작업 버튼 (2026-09-14) ─────────────────────────────
+           종전 문제: 버튼 간격 0(테두리 맞붙음) · font 미상속(라벨 Arial) · 행마다 버튼 3~5개라 '삭제' 위치가
+           행마다 달라 오클릭 위험 · 1100px 에서 두 줄로 접혀 행 높이 불균일 · 위험 동작이 hover 전엔 구분 안 됨 ·
+           포커스 표시 없음. → 자주 쓰는 [수정][비밀번호] 고정 + 드문·위험 동작은 [⋯] 메뉴, 오른쪽 정렬이라
+           잠김 행에만 붙는 [잠금해제] 가 나머지 버튼 위치를 밀지 않는다.
+           ⚠ 다른 탭(현재 접속/접속 이력/계정 신청)의 .utable·.action-btn 은 건드리지 않도록 #panel-users 로 가둔다
+           (≥1024px 의 .utable 15px 확대 규칙보다 id 선택자가 이긴다). */
+        #panel-users .utable { font-size: 13px; }
+        #panel-users .utable th { padding: 7px 10px; font-size: 11px; }
+        #panel-users .utable td { padding: 5px 10px; line-height: 1.35; white-space: nowrap; }
+        #panel-users .utable th.u-act-h, #panel-users .utable td.u-act-cell { text-align: right; width: 1%; }
+        #panel-users .badge { font-size: 11px; padding: 1px 7px; line-height: 16px; }
+        .u-id { color: #9CA3AF; font-variant-numeric: tabular-nums; }
+        .u-name { font-weight: 600; color: #111827; }
+        .u-dn { color: #4B5563; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+        .u-badges { display: inline-flex; flex-wrap: nowrap; gap: 3px; vertical-align: middle; }
+        .u-ts { font-size: 12px; color: #374151; font-variant-numeric: tabular-nums; }
+        .u-ts .rel { margin-left: 6px; font-size: 11px; color: #9CA3AF; }
+        .u-ts .rel.recent { color: #059669; }
+        .u-ts.none { color: #9CA3AF; }
+        .u-acts { display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; }
+        .ubtn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 26px; padding: 0 9px;
+                border: 1px solid #D1D5DB; border-radius: 6px; background: #fff; color: #374151;
+                font-family: inherit; font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer;
+                transition: background .12s, border-color .12s, color .12s; }
+        .ubtn svg { width: 13px; height: 13px; flex-shrink: 0; }
+        .ubtn:hover { background: #F3F4F6; border-color: #9CA3AF; color: #111827; }
+        .ubtn:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
+        .ubtn.warn { background: #FFFBEB; border-color: #FCD34D; color: #92400E; }
+        .ubtn.warn:hover { background: #FEF3C7; border-color: #F59E0B; color: #78350F; }
+        .ubtn.icon { width: 26px; padding: 0; color: #6B7280; }
+        .ubtn[aria-expanded="true"] { background: #EFF6FF; border-color: #93C5FD; color: #1D4ED8; }
+        /* 더보기 메뉴 — .table-scroll(overflow-x:auto) 가 absolute 메뉴를 잘라 먹으므로 body 직속 fixed 싱글턴 */
+        .u-menu { position: fixed; z-index: 250; min-width: 176px; padding: 4px; background: #fff;
+                  border: 1px solid #E5E7EB; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.14); }
+        .u-menu[hidden] { display: none; }
+        .u-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border: 0;
+                         border-radius: 5px; background: none; font-family: inherit; font-size: 12.5px; color: #374151;
+                         text-align: left; cursor: pointer; white-space: nowrap; }
+        .u-menu button svg { width: 14px; height: 14px; flex-shrink: 0; color: #9CA3AF; }
+        .u-menu button:hover:not(:disabled), .u-menu button:focus-visible { background: #F3F4F6; outline: none; }
+        .u-menu button:disabled { color: #C4C9D1; cursor: not-allowed; }
+        .u-menu button:disabled svg { color: #D1D5DB; }
+        .u-menu button.danger { color: #B91C1C; }
+        .u-menu button.danger svg { color: #DC2626; }
+        .u-menu button.danger:hover:not(:disabled), .u-menu button.danger:focus-visible { background: #FEF2F2; }
+        .u-menu button.danger:disabled, .u-menu button.danger:disabled svg { color: #E5B4B4; }
+        .u-menu .hint { margin-left: auto; padding-left: 12px; font-size: 11px; color: #9CA3AF; }
+        .u-menu .sep { height: 1px; margin: 4px 2px; background: #F3F4F6; }
+
         /* Modal — @keyframes modalIn / .modal-box base 는 common.css 에서 제공. overlay 가 .4 변형이라 .modal-ov 만 인라인 유지 */
         .modal-ov { background: rgba(0,0,0,.4); }
         .modal-box { width: 90%; max-width: 440px; animation: modalIn .2s ease; }
@@ -138,6 +188,7 @@
             .topbar { left: 0; }
             .container { padding-left: 20px; padding-right: 14px; }
             .utable { min-width: 760px; }
+            #panel-users .utable { min-width: 960px; }
             #panel-active .utable { min-width: 920px; }
             #panel-history .utable { min-width: 760px; }
             #panel-requests .utable { min-width: 1040px; }
@@ -285,13 +336,14 @@
                         <th>이름</th>
                         <th>역할</th>
                         <th>상태</th>
+                        <th title="마지막 로그인 성공 시각 (접속 이력 기준)">최근 접속</th>
                         <th>생성일</th>
-                        <th>작업</th>
+                        <th class="u-act-h">작업</th>
                     </tr>
                 </thead>
                 <!-- 행은 loadUsers()(/api/admin/users) 가 JS 로 채운다 — 서버 렌더 단일화(필터 정합성 보장) -->
-                <tbody>
-                    <tr><td colspan="7" class="lh-empty">불러오는 중&hellip;</td></tr>
+                <tbody id="userBody">
+                    <tr><td colspan="8" class="lh-empty">불러오는 중&hellip;</td></tr>
                 </tbody>
             </table>
           </div>
@@ -1016,6 +1068,7 @@ function submitOtpReset() {
 
 // ── 탭 전환 ─────────────────────────────────────────────────
 function switchTab(name) {
+    closeUserMenu(false);
     document.querySelectorAll('.tab').forEach(function(t) {
         t.classList.toggle('active', t.dataset.tab === name);
     });
@@ -1080,7 +1133,7 @@ function filterAndRenderUsers() {
 
     var body = document.querySelector('#panel-users tbody');
     if (filtered.length === 0) {
-        body.innerHTML = '<tr><td colspan="7" class="lh-empty">'
+        body.innerHTML = '<tr><td colspan="8" class="lh-empty">'
             + (_allUsers.length === 0 ? '등록된 사용자가 없습니다.' : '조건에 맞는 사용자가 없습니다.')
             + '</td></tr>';
     } else {
@@ -1104,6 +1157,7 @@ function resetUserFilters() {
 function loadUsers() {
     var body = document.querySelector('#panel-users tbody');
     if (!body) return;
+    closeUserMenu();
     Common.fetchJSON('/api/admin/users')
         .then(function(list) {
             _allUsers = list || [];
@@ -1111,15 +1165,47 @@ function loadUsers() {
         })
         .catch(function(e) {
             _allUsers = [];
-            body.innerHTML = '<tr><td colspan="7" class="lh-empty">불러오기 실패: ' + escHtml(e.message) + '</td></tr>';
+            body.innerHTML = '<tr><td colspan="8" class="lh-empty">불러오기 실패: ' + escHtml(e.message) + '</td></tr>';
         });
+}
+
+var UICON = {
+    unlock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.9-.7"/></svg>',
+    more:   '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><circle cx="3.5" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="12.5" cy="8" r="1.4"/></svg>',
+    otp:    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/><path d="M7 12h2"/></svg>',
+    trash:  '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4"/></svg>'
+};
+
+/** 'yyyy-MM-dd HH:mm'(서버 로컬) → 달력 기준 상대 표기. 오늘/어제/N일 전/N개월 전/N년 전. */
+function relativeDay(ts) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(ts || '');
+    if (!m) return { text: '', recent: false };
+    var then = new Date(+m[1], +m[2] - 1, +m[3]);
+    var now = new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var days = Math.round((today - then) / 86400000);
+    if (days <= 0) return { text: '오늘', recent: true };
+    if (days === 1) return { text: '어제', recent: true };
+    if (days < 30) return { text: days + '일 전', recent: days < 7 };
+    if (days < 365) return { text: Math.floor(days / 30) + '개월 전', recent: false };
+    return { text: Math.floor(days / 365) + '년 전', recent: false };
+}
+
+function renderLastLogin(u) {
+    if (!u.lastLoginAt) return '<span class="u-ts none" title="로그인 성공 기록이 없습니다">기록 없음</span>';
+    var rel = relativeDay(u.lastLoginAt);
+    var tip = '마지막 로그인 성공: ' + u.lastLoginAt + (rel.text ? ' (' + rel.text + ')' : '')
+        + (u.lastLoginIp ? ' · IP ' + u.lastLoginIp : '');
+    return '<span class="u-ts" title="' + escAttr(tip) + '">' + escHtml(u.lastLoginAt)
+        + (rel.text ? '<span class="rel' + (rel.recent ? ' recent' : '') + '">' + rel.text + '</span>' : '') + '</span>';
 }
 
 function renderUsers(list) {
     var body = document.querySelector('#panel-users tbody');
     if (!body) return;
+    closeUserMenu();
     if (!list || list.length === 0) {
-        body.innerHTML = '<tr><td colspan="7" class="lh-empty">등록된 사용자가 없습니다.</td></tr>';
+        body.innerHTML = '<tr><td colspan="8" class="lh-empty">등록된 사용자가 없습니다.</td></tr>';
         return;
     }
     var html = '';
@@ -1149,46 +1235,149 @@ function renderUsers(list) {
                 + '>만료 D-' + u.passwordExpiresInDays + '</span>';
         }
         var dn = u.displayName || '';
-        var extraBtns = '';
+        var created = u.createdAt || '';
+        var label = escAttr(u.username);
+        // 작업: 오른쪽 정렬 고정 순서 — [잠금해제(잠김 행만)] [수정] [비밀번호] [⋯]
+        var acts = '';
         if (u.locked) {
-            extraBtns += '<button class="action-btn"' +
-                ' data-id="' + u.id + '" data-username="' + escHtml(u.username) + '"' +
-                ' data-reason="' + escHtml(u.lockReason || '') + '"' +
-                ' onclick="openUnlockModal(this.dataset.id, this.dataset.username, this.dataset.reason)">잠금해제</button>';
+            acts += '<button type="button" class="ubtn warn" data-act="unlock" data-id="' + u.id + '"'
+                + ' aria-label="' + label + ' 잠금 해제">' + UICON.unlock + '잠금해제</button>';
         }
-        if (u.otpEnrolled) {
-            extraBtns += '<button class="action-btn"' +
-                ' data-id="' + u.id + '" data-username="' + escHtml(u.username) + '"' +
-                ' onclick="openOtpResetModal(this.dataset.id, this.dataset.username)">OTP 초기화</button>';
-        }
+        acts += '<button type="button" class="ubtn" data-act="edit" data-id="' + u.id + '" aria-label="' + label + ' 정보 수정">수정</button>'
+            + '<button type="button" class="ubtn" data-act="password" data-id="' + u.id + '" aria-label="' + label + ' 비밀번호 재설정">비밀번호</button>'
+            + '<button type="button" class="ubtn icon" data-act="more" data-id="' + u.id + '" aria-haspopup="menu" aria-expanded="false"'
+            + ' aria-label="' + label + ' 추가 작업" title="추가 작업 (OTP 초기화 · 삭제)">' + UICON.more + '</button>';
         html += '<tr>' +
-            '<td>' + u.id + '</td>' +
-            '<td style="font-weight:600">' + escHtml(u.username) + '</td>' +
-            '<td>' + (dn ? escHtml(dn) : '-') + '</td>' +
+            '<td class="u-id">' + u.id + '</td>' +
+            '<td class="u-name">' + escHtml(u.username) + '</td>' +
+            '<td class="u-dn"' + (dn ? ' title="' + escAttr(dn) + '"' : '') + '>' + (dn ? escHtml(dn) : '-') + '</td>' +
             '<td>' + roleBadge + '</td>' +
-            '<td>' + statusBadge + '</td>' +
-            '<td>' + (u.createdAt || '-') + '</td>' +
-            '<td>' +
-                '<button class="action-btn"' +
-                    ' data-id="' + u.id + '"' +
-                    ' data-username="' + escHtml(u.username) + '"' +
-                    ' data-displayname="' + escHtml(dn) + '"' +
-                    ' data-role="' + u.role + '"' +
-                    ' data-enabled="' + u.enabled + '"' +
-                    ' onclick="openEditModal(this.dataset)">수정</button>' +
-                '<button class="action-btn" data-id="' + u.id + '"' +
-                    ' onclick="openResetPwModal(this.dataset.id)">비밀번호</button>' +
-                extraBtns +
-                '<button class="action-btn danger"' +
-                    ' data-id="' + u.id + '"' +
-                    ' data-username="' + escHtml(u.username) + '"' +
-                    ' data-admin="' + (u.username === 'admin') + '"' +
-                    ' onclick="onDeleteUserClick(this.dataset)">삭제</button>' +
-            '</td>' +
+            '<td><span class="u-badges">' + statusBadge + '</span></td>' +
+            '<td>' + renderLastLogin(u) + '</td>' +
+            '<td><span class="u-ts"' + (created ? ' title="' + escAttr(created) + '"' : '') + '>'
+                + (created ? escHtml(created.substring(0, 10)) : '-') + '</span></td>' +
+            '<td class="u-act-cell"><div class="u-acts">' + acts + '</div></td>' +
             '</tr>';
     }
     body.innerHTML = html;
 }
+
+function findUser(id) {
+    for (var i = 0; i < _allUsers.length; i++) if (String(_allUsers[i].id) === String(id)) return _allUsers[i];
+    return null;
+}
+
+/** 행 버튼·메뉴 항목 공통 실행 — 기존 모달 함수에 그대로 위임한다. */
+function runUserAction(act, u) {
+    if (!u) return;
+    if (act === 'edit') {
+        openEditModal({ id: String(u.id), username: u.username, displayname: u.displayName || '',
+                        role: u.role, enabled: String(u.enabled) });
+    } else if (act === 'password') {
+        openResetPwModal(String(u.id));
+    } else if (act === 'unlock') {
+        openUnlockModal(String(u.id), u.username, u.lockReason || '');
+    } else if (act === 'otp-reset') {
+        openOtpResetModal(String(u.id), u.username);
+    } else if (act === 'delete') {
+        onDeleteUserClick({ id: String(u.id), username: u.username, admin: String(u.username === 'admin') });
+    }
+}
+
+// ── 더보기(⋯) 메뉴 — 싱글턴, fixed 배치 ──────────────────────
+var _userMenu = null, _userMenuBtn = null;
+
+function ensureUserMenu() {
+    if (_userMenu) return _userMenu;
+    _userMenu = document.createElement('div');
+    _userMenu.className = 'u-menu';
+    _userMenu.id = 'userActionMenu';
+    _userMenu.setAttribute('role', 'menu');
+    _userMenu.hidden = true;
+    document.body.appendChild(_userMenu);
+    _userMenu.addEventListener('click', function(e) {
+        var item = e.target.closest ? e.target.closest('button[data-act]') : null;
+        if (!item || item.disabled) return;
+        var u = findUser(item.getAttribute('data-id'));
+        var act = item.getAttribute('data-act');
+        closeUserMenu(false);   // 모달이 포커스를 가져가도록 트리거로 되돌리지 않는다
+        runUserAction(act, u);
+    });
+    _userMenu.addEventListener('keydown', function(e) {
+        var items = Array.prototype.filter.call(_userMenu.querySelectorAll('button'), function(b) { return !b.disabled; });
+        var idx = items.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown') { e.preventDefault(); if (items.length) items[(idx + 1) % items.length].focus(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); if (items.length) items[(idx - 1 + items.length) % items.length].focus(); }
+        else if (e.key === 'Home') { e.preventDefault(); if (items.length) items[0].focus(); }
+        else if (e.key === 'End') { e.preventDefault(); if (items.length) items[items.length - 1].focus(); }
+        else if (e.key === 'Escape') { e.preventDefault(); closeUserMenu(true); }
+        else if (e.key === 'Tab') { closeUserMenu(false); }
+    });
+    return _userMenu;
+}
+
+function openUserMenu(btn, u) {
+    var menu = ensureUserMenu();
+    if (_userMenuBtn === btn && !menu.hidden) { closeUserMenu(true); return; }
+    closeUserMenu(false);
+    var isDefaultAdmin = u.username === 'admin';
+    menu.innerHTML =
+        '<button type="button" role="menuitem" data-act="otp-reset" data-id="' + u.id + '"'
+            + (u.otpEnrolled ? '' : ' disabled title="OTP 를 등록하지 않은 계정입니다"') + '>'
+            + UICON.otp + 'OTP 초기화' + (u.otpEnrolled ? '' : '<span class="hint">미등록</span>') + '</button>'
+        + '<div class="sep" role="separator"></div>'
+        + '<button type="button" role="menuitem" class="danger" data-act="delete" data-id="' + u.id + '"'
+            + (isDefaultAdmin ? ' disabled title="시스템 운영을 위해 기본 관리자 계정은 삭제할 수 없습니다"' : '') + '>'
+            + UICON.trash + '계정 삭제' + (isDefaultAdmin ? '<span class="hint">보호 계정</span>' : '') + '</button>';
+    menu.hidden = false;
+    _userMenuBtn = btn;
+    btn.setAttribute('aria-expanded', 'true');
+
+    // 위치: 버튼 아래 오른쪽 맞춤, 공간이 없으면 위로
+    var r = btn.getBoundingClientRect();
+    var mw = menu.offsetWidth, mh = menu.offsetHeight;
+    var left = Math.max(8, Math.min(r.right - mw, window.innerWidth - mw - 8));
+    var top = r.bottom + 4;
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, r.top - mh - 4);
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+
+    var first = menu.querySelector('button:not(:disabled)');
+    if (first) first.focus();
+}
+
+function closeUserMenu(returnFocus) {
+    if (!_userMenu || _userMenu.hidden) return;
+    _userMenu.hidden = true;
+    var btn = _userMenuBtn;
+    _userMenuBtn = null;
+    if (btn) {
+        btn.setAttribute('aria-expanded', 'false');
+        if (returnFocus && document.contains(btn)) btn.focus();
+    }
+}
+
+(function bindUserTable() {
+    var body = document.getElementById('userBody');
+    if (!body) return;
+    body.addEventListener('click', function(e) {
+        var btn = e.target.closest ? e.target.closest('button[data-act]') : null;
+        if (!btn) return;
+        var u = findUser(btn.getAttribute('data-id'));
+        if (!u) return;
+        var act = btn.getAttribute('data-act');
+        if (act === 'more') openUserMenu(btn, u);
+        else runUserAction(act, u);
+    });
+    // 바깥 클릭 · 스크롤(표 가로 스크롤 포함) · 리사이즈 시 닫는다 — fixed 메뉴가 버튼과 떨어져 떠 있지 않게
+    document.addEventListener('mousedown', function(e) {
+        if (!_userMenu || _userMenu.hidden) return;
+        if (_userMenu.contains(e.target) || (_userMenuBtn && _userMenuBtn.contains(e.target))) return;
+        closeUserMenu(false);
+    });
+    window.addEventListener('scroll', function() { closeUserMenu(false); }, true);
+    window.addEventListener('resize', function() { closeUserMenu(false); });
+})();
 
 // ── 계정 신청 ───────────────────────────────────────────────
 var _reqPage = 0;

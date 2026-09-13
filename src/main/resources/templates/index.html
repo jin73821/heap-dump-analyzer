@@ -685,16 +685,13 @@
                        th:href="@{/analyze/result/{f}(f=${file.name})}" class="fb e" title="View Error">
                         <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                     </a>
-                    <!-- Analyze: 미분석 (Others 경고 모달) -->
-                    <a th:if="${!analyzedFiles.contains(file.name) and !errorFiles.contains(file.name) and othersFiles.contains(file.name)}"
-                       href="#" class="fb p" title="Analyze"
+                    <!-- Analyze: 미분석 — 분석 시작 확인 모달(/js/analyze-confirm.js). Others 는 같은 모달에 경고 블록이 붙는다 -->
+                    <a th:if="${!analyzedFiles.contains(file.name) and !errorFiles.contains(file.name)}"
+                       th:href="@{/analyze/{f}(f=${file.name})}" class="fb p" title="Analyze"
                        th:data-filename="${file.name}"
-                       onclick="confirmOthersAnalyze(this.dataset.filename); return false;">
-                        <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
-                    </a>
-                    <!-- Analyze: 미분석 (일반) -->
-                    <a th:if="${!analyzedFiles.contains(file.name) and !errorFiles.contains(file.name) and !othersFiles.contains(file.name)}"
-                       th:href="@{/analyze/{f}(f=${file.name})}" class="fb p" title="Analyze">
+                       th:data-kind="${othersFiles.contains(file.name) ? 'others' : 'heap'}"
+                       th:data-size="${file.compressed ? file.formattedOriginalSize + ' (GZ ' + file.formattedCompressedSize + ')' : file.formattedSize}"
+                       onclick="return window.AnalyzeConfirm ? AnalyzeConfirm.fromLink(this) : true;">
                         <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                     </a>
                     <a href="#" class="fb dl-btn" title="Download"
@@ -959,25 +956,6 @@
     </div>
 </div>
 
-<!-- Others 분석 경고 모달 -->
-<div class="modal-ov" id="othersAnalyzeModal" onclick="if(event.target===this)closeOthersAnalyzeModal()">
-    <div class="modal" style="width:400px">
-        <div class="modal-ttl">분석 시작 확인</div>
-        <div class="modal-desc">
-            <strong id="othersAnalyzeFilename"></strong>은(는) <strong>기타(Others)</strong> 유형으로 분류된 파일입니다.<br><br>
-            표준 힙 덤프 형식(.hprof/.bin/.dump)이 아닌 경우 Eclipse MAT이 분석을 지원하지 않을 수 있으며,
-            분석 실패 또는 부정확한 결과가 반환될 수 있습니다.
-        </div>
-        <div style="background:#fffbeb;border-radius:8px;padding:10px 14px;margin-bottom:16px;border-left:4px solid #D97706;font-size:13px;color:#92400e">
-            ⚠ 계속하면 분석이 시작됩니다.
-        </div>
-        <div class="modal-footer">
-            <button class="btn-s" onclick="closeOthersAnalyzeModal()">취소</button>
-            <button class="btn-p" id="btnDashConfirmOthersAnalyze">분석 시작</button>
-        </div>
-    </div>
-</div>
-
 <!-- 파일 삭제 확인 모달 -->
 <div class="modal-ov" id="deleteModal" onclick="if(event.target===this)closeDeleteModal()">
     <div class="modal">
@@ -1016,6 +994,7 @@ var DASHBOARD_DETECT_DAYS = /*[[${dashboardDetectDays}]]*/ 14;
 /*]]>*/
 </script>
 <script src="/js/upload-queue.js?v=2026-08-19"></script>
+<script src="/js/analyze-confirm.js?v=2026-09-14"></script>
 <script>
 /* ── Daily Detections Chart (서버별 stacked bar) ─────────── */
 (function(){
@@ -1160,22 +1139,7 @@ var DASHBOARD_DETECT_DAYS = /*[[${dashboardDetectDays}]]*/ 14;
 /* 업로드 큐/모달/중복검사 로직은 /js/upload-queue.js 에서 로드 (페이지 하단). */
 const uploadForm = document.getElementById('uploadForm');
 
-// ── Others 분석 경고 ─────────────────────────────────────────
-var _dashOthersTarget = '';
-function confirmOthersAnalyze(filename) {
-    _dashOthersTarget = filename;
-    document.getElementById('othersAnalyzeFilename').textContent = filename;
-    document.getElementById('othersAnalyzeModal').classList.add('open');
-}
-function closeOthersAnalyzeModal() {
-    document.getElementById('othersAnalyzeModal').classList.remove('open');
-    _dashOthersTarget = '';
-}
-document.getElementById('btnDashConfirmOthersAnalyze').onclick = function() {
-    if (_dashOthersTarget) {
-        window.location.href = '/analyze/' + encodeURIComponent(_dashOthersTarget);
-    }
-};
+// 분석 시작 확인(Others 경고 포함)은 /js/analyze-confirm.js 공통 모달 — Analyze 버튼의 onclick 에서 연다.
 
 function showDeleteModal(filename, url) {
     document.getElementById('delModalFilename').textContent = filename;

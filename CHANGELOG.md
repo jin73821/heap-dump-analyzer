@@ -1,5 +1,116 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-14] 코어 덤프 분석 이력 — 업로드일 기간 캘린더 필터 (v2.5.1 유지)
+
+**요청:** 코어파일 분석 이력에 캘린더를 추가한다. 캘린더는 Files 의 것을 사용한다.
+
+**변경:**
+- `templates/core-dump/index.html` — 분석 이력 검색줄(`.hi-controls`)에 Files 와 같은 KRDS 캘린더 위젯 마크업(`calendar-range` + `cal-text` 2개 + 달력 버튼 + `krds-calendar-area` + `지우기`)을 추가. 라벨 `업로드일` — 기준은 표의 '업로드' 일시(`createdAt`, 없으면 분석 시각). 결과 없음 문구 "조건에 맞는 분석 이력이 없습니다."
+- `static/js/core-dump-index.js` `initHistory()` — `Calendar.attach({hiDateStart, hiDateEnd, hiCalArea, storageKey:'coreHistory'})` 를 **첫 render 전에** 붙여 localStorage 에 남은 기간이 초기 목록에 반영되게 했다. 필터는 행의 `data-uploaded`(ISO `2026-09-13T10:05:23`) 앞 10자를 `yyyy-MM-dd` 문자열 비교(하루 단위, 종료일 포함)하고 파일명 검색·정렬·페이지네이션과 함께 적용, 변경 시 1페이지로. 기간을 골랐는데 날짜가 없는 행은 제외. `calendar.js` 가 없으면 필터 없이 종전 동작.
+- 위젯 동작은 Files 와 동일(`calendar.js` 는 배너가 전역 로드, 스타일은 common.css) — 시작일만 고르고 확인하면 그 **하루**로 확정, `지우기`, 새로고침 시 복원. ⚠ `calendar.js` 는 페이지당 인스턴스 1개라 이 페이지의 `Calendar.attach` 는 이력 필터 한 곳뿐이어야 한다.
+- `static/css/core-dump.css` — `.hi-date`(라벨·박스·지우기 높이와 테두리를 `.cd-input` 에 맞춤), ≤760px 에서 검색 한 줄 / 기간 한 줄(날짜 박스가 남은 폭을 채우고 지우기는 같은 줄). `core-dump.css?v=2026-09-14`(index/progress/analyze), `core-dump-index.js?v=2026-09-14`.
+
+**검증:**
+- 실제 템플릿을 SpringTemplateEngine 으로 렌더한 문서를 헤드리스로 띄워(실제 common.css·core-dump.css·calendar.js·core-dump-index.js) 14항목 PASS — 초기 3건, 달력 열기, 09-10~09-13 선택 → 2 / 3건(종료일 23:59:59·시작 00:00:00 포함), localStorage 저장, 검색+기간 동시 적용, 지우기 → 전체, 하루만 선택, 결과 없음 안내, 새로고침 복원(입력·건수). 1400px·500px 스크린샷.
+- 신규 `CoreDumpHistoryCalendarSmokeTest`(1) — 캘린더 마크업·id 와 JS `attach` 인자 일치, `data-uploaded` ISO 렌더, 이 페이지 `Calendar.attach` 1곳, calendar.js 로드. 테스트 676 → 677 전체 통과. 운영 재기동 후 배포본 반영 확인.
+
+## [2026-09-14] Accounts 사용자 목록 — 조밀 표 + 최근 접속 열 + 작업 버튼 재디자인 (v2.5.1 유지)
+
+**요청:** `/admin/users` 사용자 목록 탭의 표 밀도를 높이고, 최근 접속 일자 열을 추가하고, 작업 버튼의 디자인 문제를 확인해 재디자인한다.
+
+**작업 버튼 문제점(종전 화면 헤드리스 실측):**
+1. 버튼 사이 간격 0 — `inline-block` 버튼을 공백 없이 이어 붙여 테두리가 맞붙었다.
+2. `font-family` 미상속 — `button` 은 폰트를 상속하지 않아 라벨이 Arial 로 렌더됐다(`OTP 초기화` 가 본문과 다른 글꼴).
+3. 행마다 버튼이 3~5개(잠금해제·OTP 초기화가 조건부)라 **`삭제` 위치가 행마다 달랐다** — 같은 x 좌표를 기대하고 누르면 다른 동작(오클릭 위험).
+4. 1100px 뷰포트에서 버튼이 두 줄로 접혀 행 높이가 불균일(삭제만 둘째 줄).
+5. 위험 동작(삭제)이 hover 전에는 일반 버튼과 구분되지 않았고, 조치가 필요한 상태 동작(잠금해제)도 일반 버튼과 같았다. 포커스 표시 없음.
+6. 기본 관리자(admin) 행에도 `삭제` 가 활성으로 보였다(누르면 안내 모달).
+- 부수: 상태 배지도 간격 없이 붙어 있었고, 이름·생성일이 좁은 폭에서 글자 단위로 줄바꿈됐다(`관리\n자`, `2026-04-01\n10:00`).
+
+**변경 — 작업 버튼 (`templates/admin/users.html`):**
+- 오른쪽 정렬 고정 순서 `[잠금해제] [수정] [비밀번호] [⋯]`. 오른쪽 정렬이라 잠김 행에만 붙는 `잠금해제` 가 나머지 버튼 위치를 밀지 않는다 — 5행 실측 수정·더보기 x 좌표 전부 동일.
+- `.ubtn` 한 규칙: 높이 26px·간격 4px·`font-family: inherit`·hover/`:focus-visible`. `잠금해제` 는 앰버 경고 스타일 + 자물쇠 아이콘(해결이 필요한 상태 동작), `⋯` 은 26px 아이콘 버튼(`aria-haspopup="menu"`/`aria-expanded`).
+- 드물거나 위험한 동작은 **더보기 메뉴**로: `OTP 초기화`(미등록이면 비활성 + `미등록`) / 구분선 / `계정 삭제`(빨강, 기본 관리자면 비활성 + `보호 계정`). 메뉴는 `.table-scroll`(overflow-x) 에 잘리지 않도록 body 직속 **fixed 싱글턴**, 버튼 아래 오른쪽 맞춤·공간 부족 시 위로. 키보드 ↑↓/Home/End/Esc(버튼으로 포커스 복귀)/Tab, 바깥 클릭·스크롤(표 가로 스크롤 포함)·리사이즈·탭 전환·목록 재렌더 시 닫힘.
+- 인라인 `onclick` + data 속성 나열 대신 `#userBody` 이벤트 위임 → `_allUsers` 에서 사용자를 찾아 기존 모달 함수(`openEditModal`/`openResetPwModal`/`openUnlockModal`/`openOtpResetModal`/`onDeleteUserClick`)에 그대로 위임.
+
+**변경 — 조밀 표:** `#panel-users` 로 범위를 가둔 규칙(다른 탭 표 무변경, ≥1024px 의 `.utable` 15px 확대보다 id 선택자가 우선) — td `5px 10px / 13px / nowrap`, th `7px 10px`, 배지 `1px 7px / 11px` + `gap 3px`, ID 회색, 이름 최대 160px 말줄임(+title), 생성일은 날짜만(전체 시각은 title). ≤900px 가로 스크롤 최소 폭 960px. **행 높이 약 54px → 37px**(5행 전부 동일).
+
+**변경 — 최근 접속 열:**
+- `/api/admin/users` 에 `lastLoginAt`(yyyy-MM-dd HH:mm)·`lastLoginIp`. 원천은 `login_history` 의 **마지막 로그인 성공**(실패는 제외). 사용자마다 조회하면 N+1 이라 `LoginHistoryRepository.findLastSuccessfulLogins()`(사용자명별 `MAX(login_at)` 파생 테이블 JOIN, 네이티브) 1회로 붙인다. 같은 시각 성공 행이 둘이면 첫 행. 네이티브 DATETIME 이 `Timestamp`/`LocalDateTime` 어느 쪽으로 와도 같은 문자열(`toLocalDateTime`). 집계가 실패해도 목록은 나오고 최근 접속만 비운다(WARN).
+- 화면: `2026-09-10 14:22` + 상대 표기(`오늘`/`어제`/`N일 전`(7일 미만 초록)/`N개월 전`/`N년 전`), title 에 IP. 성공 기록이 없으면 회색 `기록 없음`.
+
+**검증:**
+- 임시 MariaDB 11.4 컨테이너(운영 DB 미사용)에 `login_history` 동일 스키마로 집계 SQL 실행 — 실패 기록 무시·성공 기록 없는 사용자 제외·동시각 중복 2행 확인, EXPLAIN 상 status/username 인덱스 사용.
+- 헤드리스 픽스처(실제 users.html 의 CSS·렌더 JS 추출, 1400/1100px) 33항목 PASS — 8열·상대 표기·기록 없음·IP 툴팁·생성일 날짜만, 행 높이 균일(37px), 고정 버튼 x 좌표 행간 동일, 잠금해제 잠김 행만, 버튼 폰트 상속·간격 4px·높이 동일, 각 동작 위임, 메뉴 열림·aria-expanded·첫 항목 포커스·위치·↓ 이동·Esc 복귀·admin 삭제 비활성·OTP 미등록 비활성·바깥 클릭/재클릭/리사이즈 닫힘. 종전·변경 스크린샷 비교.
+- `AdminUsersTemplateSmokeTest` +1(헤더·colspan 8·범위 가둔 조밀 규칙·버튼 폰트 상속·fixed 메뉴·보호 계정) · 신규 `AdminUsersLastLoginTest`(3, standalone MockMvc — 매핑·중복 첫 행·집계 1회·실패 시 목록 유지·DATETIME 변환). 테스트 672 → 676 전체 통과. 운영 재기동 확인.
+
+## [2026-09-14] 메모 변경 이력 고도화 — 저장 시점 개별·전체 삭제 + 현재 메모 대비 줄 단위 변경점 표시(토글) (v2.5.1 유지)
+
+**요청:** ① 각 메모 저장 시점의 개별 삭제·전체 삭제 ② 현재 메모와 과거 메모의 변경점을 줄에 색을 칠해 구분하고, 토글 키로 켜고 끌 수 있게 한다.
+
+**배경:** 이력 창(`Memo.openHistoryViewer`)은 목록·미리보기·복원만 있었다. 전체 삭제 API(`DELETE /api/account/memo/history`)는 이미 있었지만 화면에서 부를 곳이 없었고, 그마저 파생 delete(`deleteByUsername`)라 **행마다 최대 10MB 본문 엔티티를 먼저 로드한 뒤 한 건씩 지우는** 구조였다. 미리보기는 과거 본문만 보여줘 무엇이 달라졌는지 눈으로 대조해야 했다.
+
+**변경 — 백엔드:**
+- `DELETE /api/account/memo/history/{id}` 신규 → `{success, deleted:1, remaining}`. 소유권은 **삭제 쿼리 WHERE 조건**(`deleteOwnedBy(id, username)`)으로 검증하고, 남의 id·없는 id·이미 지운 id 는 `IllegalArgumentException` → 400 JSON(성공으로 보고하지 않음 — 다른 창에서 먼저 지운 경우 포함). 감사 로그용 식별정보(시각·크기·사유)는 삭제 **전** 본문 없이 투영 조회(`findMetaOwnedBy`) — `[MemoHistory] action=delete id= createdAt= bytes= reason= remaining= by=`.
+- 전체 삭제는 벌크 JPQL `deleteAllOwnedBy` 로 교체(엔티티 로드 없음), 응답에 `deleted` 건수. 로그 `[MemoHistory] action=clear-history deleted= by=`.
+- 현재 메모(`users.memo`)에는 영향 없음. `/api/account/**` 는 CSRF 보호 유지 대상이라 `Common.fetchJSON` 이 토큰을 싣는다(SecurityConfig 변경 불필요).
+
+**변경 — `static/js/memo.js` 이력 창:**
+1. **삭제.** 목록 행마다 휴지통 버튼(행 선택으로 번지지 않음, 행 포커스 시 `Delete` 키도 동작), 하단 좌측 `전체 삭제`. 확인은 중첩 모달 대신 **모달 하단 확인 바**(대상 행 빨간 강조 + "시각 · 사유 · 크기 시점을 삭제합니다. 되돌릴 수 없습니다. (현재 메모는 그대로 유지)", 기본 포커스 `취소`, Esc 는 확인만 취소하고 창은 유지). 실패 시 서버 문구 + `다시 시도`, 행은 남긴다. 성공 시 행 제거·보관 건수 갱신, 선택 중이던 행이면 미리보기·복원 버튼 초기화, 0건이면 `전체 삭제` 비활성. `cfg.onDeleted({all, deleted, remaining})` 콜백 추가.
+2. **변경점 표시.** 미리보기 위 도구줄에 스위치 `변경점 표시` + 단축키 **`D`**(한글 입력 상태에서도 동작하도록 `ev.code === 'KeyD'` 도 확인, 입력 칸·삭제 확인 중에는 무시). 켜면 선택 시점 → **현재 편집 중인 메모**(미저장 입력 포함, 페이지가 `cfg.getCurrent` 로 넘김) 줄 비교: 이 시점에만 있는 줄 = 빨강 배경 + `−`, 현재 메모에만 있는 줄 = 초록 배경 + `+`, 같은 줄은 무색. 부호는 `::before` 라 복사에 섞이지 않고, 색만으로 구분하지 않는다(색각·흑백). 통계 `현재 메모 대비 +N −M 줄`/`현재 메모와 동일합니다` + 범례, 첫 변경 줄로 자동 스크롤. 끄면 종전처럼 해당 시점 원문. 상태는 `localStorage('memoHistoryDiff')` 에 기억(기본 켜짐), 토글 시 재조회 없이 캐시된 본문으로 다시 그린다. `getCurrent` 가 없으면 스위치 비활성.
+3. **비교 알고리즘 `Memo.diffLines(before, after)`.** CRLF 정규화 → 공통 앞/뒤 줄 제거 → 가운데만 Myers O(ND). 10MB 메모 대비 상한: 편집 거리 2000(trace 메모리 ∝ D²)·1.5초, 넘으면 가운데를 통째 삭제+추가로 표시(정확하지만 최소는 아님, 통계에 `변경이 많아 간략 비교`). 렌더는 20,000줄까지 + 생략 안내, 줄은 `textContent` 로만.
+- 페이지: `account.html`·`account-memo.html` 이 `getCurrent` 전달, 버튼 title "비교·복원·삭제", `memo.js?v=2026-09-14`.
+
+**검증:**
+- node 무작위 검증 3,005건 — 결과 연산에서 원본 두 텍스트가 정확히 복원되고, 소규모 입력은 LCS 최적 편집 수와 일치(빈 문자열·CRLF 포함). 20만 줄 동일 52ms / 20만 줄 소수 수정 33ms / 전혀 다른 6만 줄은 간략 비교로 106ms.
+- 헤드리스 픽스처(실제 common.js·memo.js, fetch 스텁) 40항목 PASS — 목록·건수, diff 줄 분류(`− 서버 점검 예정` / `+ 서버 점검 완료`·`+ 추가 줄`)·통계·범례, D(한글 `ㅇ`/영문)·스위치 토글과 설정 기억, 본문 HTML 이스케이프, 개별 삭제 확인 바(문구·강조·취소 포커스·행 선택 미전파·Esc)·DELETE 호출·건수 갱신·선택 유지, 실패 문구·재시도, 선택 행 삭제 시 초기화, 전체 삭제·비활성, getCurrent 없음 시 토글 비활성. 1280px 스크린샷(diff·확인 바).
+- `MemoHistoryServiceTest` +3(개별 삭제·남의 스냅샷 삭제 거부·삭제 후 억제 판정 연속성, 전체 삭제 건수) · 신규 `MemoHistoryDeleteEndpointTest`(4, standalone MockMvc — 응답 모양·400 JSON·전체 삭제 분리·페이지 배선 계약). 테스트 665 → 672 전체 통과. 운영 재기동 후 배포본 반영·미인증 DELETE 401 확인.
+
+## [2026-09-14] 분석 시작 확인 — 힙 덤프 확장자가 아닌 파일은 진행 여부를 되묻는다 (v2.5.1 유지)
+
+**요청:** 힙 덤프 확장자가 아닌 파일의 분석을 시작하면, 분석 시작 확인 창에서 "덤프 파일 확장자가 아닌데 분석을 진행할 것인지" 묻는 문구를 보여준다.
+
+**배경:** 직전 변경의 확인 모달은 `kind:'others'` 일 때만 경고했다. 그런데 유형은 확장자가 아니라 분류로 정해진다 — Files 의 '파일 분류'에서 확장자 없는 파일을 heapdump 로 분류하면 `kind=heap` 으로 와서 경고가 빠지고, 원격 스캔은 `*.gz` 전체를 힙으로 가져온다. 경고 문구도 설명만 있고 진행 여부를 묻지 않았다.
+
+**변경 (`static/js/analyze-confirm.js`):**
+- 파일명으로 판정하는 `hasHeapDumpExtension` — `/\.(hprof|bin|dump|dmp)(\.gz)?$/i`(업로드 큐·`FilenameValidator` 목록과 동일, 대소문자 무시). ⚠ **단독 `.gz` 는 인정하지 않는다** — 서버 `hasRecognizedHeapDumpExtension` 은 `.gz` 만으로 통과시키지만 `logs.tar.gz` 도 걸리므로 확인 창에서는 속을 모르는 압축 파일도 되묻는다(경고일 뿐 차단은 아니다).
+- 유형과 무관하게(코어 제외 — 코어는 원래 확장자가 없다) 확장자가 아니면 경고 블록을 대기열 안내 **위에** 띄운다: 파일명 + "힙 덤프 파일 확장자가 아닙니다(목록)" + 위험 설명 + **"덤프 파일 확장자가 아닌데 분석을 진행하시겠습니까?"**. Others 유형이면 앞에 분류 안내를 덧붙인다(종전 Others 문구 흡수).
+- 확인 버튼 문구 `그래도 분석 시작`, 헤더 아이콘 앰버, **기본 포커스를 '취소'로**(Enter 한 번으로 진행되지 않게). 정상 확장자로 다시 열면 전부 원복.
+- `?v=2026-09-14` 로 캐시 키 갱신(servers/server-detail/index/files).
+
+**검증:** 헤드리스 픽스처 26항목 PASS — 판정표(`a.hprof`·`A.HPROF`·`.bin`·`.dump`·`.dmp`·`.hprof.gz`·`.dmp.gz` 인정 / `VIOM_Service_Summary.zip`·`logs.tar.gz`·`x.gz`·`mystery`·`a.hprof.bak`·`a.txt` 경고), heap 유형 비-덤프 파일 경고·질문 문구·버튼 문구·취소 포커스, Others 경고, 정상 파일 원복, 코어 미경고, 파일명 HTML 이스케이프. `AnalyzeConfirmTemplateSmokeTest` +1(판정식·경고 조건·질문 문구·포커스 소스 계약). 테스트 664 → 665 전체 통과, 운영 재기동 후 배포본에서 문구 확인.
+
+## [2026-09-14] 원격 덤프 '분석 시작' 버튼 + 분석 시작 확인 모달 공통화 + 서버 정보 페이지 스캔 목록 미표시 수정 (v2.5.1 유지)
+
+**요청:** ① Target Servers 에서 스캔된 덤프 파일을 전송하면 분석 시작 버튼과 확인 모달을 제공한다 ② Files·Dashboard 에서 업로드한 덤프의 분석을 시작할 때도 같은 확인 모달을 띄운다 ③ 서버 정보 페이지(`/servers/{id}`)에서 스캔하면 덤프 파일이 발견돼도 알림만 뜨고 목록이 나오지 않는다.
+
+**배경:**
+- 원격 덤프는 전송까지만 됐고, 분석하려면 Files 로 이동해 같은 파일을 다시 찾아야 했다.
+- Dashboard/Files 의 Analyze 버튼은 `href="/analyze/{f}"` 로 **즉시 이동 = 즉시 분석 시작**이었다. 분석은 `Semaphore(1)` 직렬이라 잘못 누르면 다른 사람의 대기 순서가 밀린다. Others 유형만 페이지별 경고 모달(index/files 에 각 한 벌)이 있었다.
+- 서버 정보 페이지의 `scanServer()` 는 응답의 `files` 를 쓰지 않고 `스캔 완료: N개 파일 발견` 토스트만 띄웠다 — 스캔 결과 패널은 `servers.html` 인라인에만 있었다.
+- 부수 발견: `/api/servers/{id}/scan` 이 서비스의 `pathErrors`(일부 경로만 실패)를 응답에 옮기지 않아, 화면의 '일부 경로 스캔 실패' 배너 코드가 한 번도 동작하지 않았다.
+
+**변경:**
+1. **`/js/analyze-confirm.js` (신규, `AnalyzeConfirm.open/close/fromLink`).** 분석 시작 확인 모달 — 파일명·유형(힙/코어/기타)·크기·출처 서버 + **분석 대기열 상태**(`/api/queue/status`: 바로 시작 / 현재 X 분석 중 · 대기 N건 / 이미 분석 중이면 버튼이 '진행 화면 보기'로 바뀜, 조회 실패해도 시작은 막지 않음). `kind:'others'` 는 종전 Others 경고 문구를 경고 블록으로 보여준다. 코어는 GDB 실행기라 힙 대기열을 표시하지 않고 `/core-dump/progress/{f}` 로 이동. CSS·DOM 자체 주입 싱글턴(`.ac-` 네임스페이스 — 페이지마다 모달 골격 정의가 달라 공용 클래스에 기대지 않음, 함정 17), Esc·바깥 클릭 닫기, 포커스 트랩·복원, 이중 클릭 차단, bfcache 복원 시 자동 닫힘, ≤640px 바텀시트.
+2. **`/js/server-scan.js` (신규, `ServerScan.create({panel,toast,onStatus})`).** `servers.html` 인라인 스캔 패널(스캔 경과 표시·경로 오류 배너·페이지네이션·SSE 전송 진행바·현재 페이지 전송·코어 실행파일 페어링 전송)을 추출. 생성 HTML 은 inline onclick 대신 `data-act` + 패널 단위 이벤트 위임. 추가 동작:
+   - 전송 성공 행을 상태에서 다시 그려 `완료 (크기) · JVM …` 라벨 옆에 **분석 시작** 버튼(초록)을 붙인다. 스캔 시점에 이미 전송돼 있던 미분석 파일에도 붙는다. 버튼은 원격 원본명이 아니라 **로컬 파일명**(`localFilename`/전송 응답 `filename` — 중복명 전송 시 다름)으로 모달을 연다.
+   - 코어 행의 분석 시작은 실행파일이 이 화면에서 전송되지 않았으면 '함수명이 ?? 로 표시될 수 있음' 안내를 모달에 싣는다(함정 37).
+   - 전송 중 페이지를 넘겼다 돌아와도 행이 '전송 중…'으로 남고 완료 시 갱신된다(종전엔 다시 '전송' 버튼이 떠 중복 전송 가능). 전송 중 다른 서버를 재스캔하면 옛 전송 결과가 새 목록의 같은 경로 행을 고쳐 그리지 않는다(`scanSeq` 세대 가드).
+   - 응답은 텍스트로 받아 안전 파싱(함정 14) — 401 은 '세션 만료' 문구.
+   - SCP 전송 SSE 는 진입 시 1회만 세션을 갱신하므로 전송 중을 `SessionTimeout.registerActivityGuard` 로 선언(함정 38).
+   - ≤640px 에서 상태(라벨+버튼)를 다음 줄로 내려 파일명이 0 폭으로 짓눌리지 않게 했다.
+3. **servers.html** — 인라인 스캔 CSS·JS(~390줄) 제거, 모듈 호출 + 모바일 패널 이동·상태 배지 갱신만 남김.
+4. **server-detail.html** — 서버 정보 카드 아래 스캔 결과 패널 추가, `스캔` 버튼이 패널을 그린다(버튼 '스캔 중...' 표시·완료 토스트 유지). ⚠ 전송 후 아래 '전송 이력' 표는 새로고침해야 갱신된다(종전과 동일).
+5. **index.html / files.html** — 미분석 Analyze 버튼(힙·Others/Exec)이 `AnalyzeConfirm.fromLink(this)` 로 모달을 연다. href 는 유지해 모듈 미로드 시에도 버튼이 먹통이 되지 않는다. 페이지별 `othersAnalyzeModal` 마크업·JS 제거(공통 모달로 통합). Files 의 코어 덤프 버튼은 분석 설정 화면(`/core-dump?file=`, 자체 시작 버튼 보유)으로 가는 링크라 그대로 뒀다.
+6. **백엔드** — `RemoteDumpService.scanHeapPath/scanCorePath` 가 전송된 파일의 `localFilename` 을 응답에 싣고, `ServerController.scanServer` 가 `pathErrors` 를 전달한다.
+
+**변경 파일:** `static/js/analyze-confirm.js`(신규) · `static/js/server-scan.js`(신규) · `templates/servers.html` · `templates/server-detail.html` · `templates/index.html` · `templates/files.html` · `service/RemoteDumpService.java` · `controller/ServerController.java` · 테스트 `AnalyzeConfirmTemplateSmokeTest`(신규 4).
+
+**검증:**
+- 헤드리스 픽스처(실제 common.js + 두 모듈, fetch/EventSource 스텁) 23항목 PASS — 스캔 4행 렌더·경로 오류 배너·기존 전송 미분석 행 분석 시작 2개·전송 완료 후 행 교체(라벨 `완료 (1.20 GB) · JVM -Xmx4g (pid 99)` + 분석 시작)·모달 로컬 파일명/출처 서버/대기열 문구·Esc 닫힘·코어 유형(대기열 숨김, 실행파일 안내)·Others 경고·이미 분석 중 문구. 1280px·500px 스크린샷으로 모달·패널·바텀시트 확인.
+- 신규 `AnalyzeConfirmTemplateSmokeTest`(4): index 실렌더(미분석 3건 onclick·kind heap/others·GZ 크기·Others 모달 부재), files 소스 계약, server-detail 실렌더(패널 호스트·스크립트 순서), servers 인라인 구현 부재. 테스트 660 → 664 전체 통과.
+- 운영 재기동 후 `/js/analyze-confirm.js`·`/js/server-scan.js` 200 `text/javascript;charset=UTF-8`, 기동 오류 없음.
+
 ## [2026-09-13] Dominator Tree / Class Histogram 조밀 표 + 페이지 번호 페이지네이션 + 2단 참조 드로어 + Histogram 500행 (v2.5.1 유지)
 
 **요청:** 두 표의 행이 너무 높아 한 화면에 정보가 적게 보인다 — 밀도를 높이고, 페이지네이션 시 브라우저 부하를 줄이고, Incoming/Outgoing/Loaded Classes 상세 화면도 개편한다. (결정: 상세는 행 아래 **2단 드로어** / **페이지 번호** 방식 / Histogram 도 함께 / Histogram 원천 **500행 확장** / 밀도는 **두 표에만**)

@@ -118,7 +118,7 @@
     <button id="copyBtn" type="button" onclick="copyMemo()">복사</button>
     <button id="saveBtn" class="primary" type="button" onclick="saveNow()">저장</button>
     <!-- 저장 버튼 라인의 맨 우측 -->
-    <button id="historyBtn" type="button" onclick="openMemoHistory()" title="저장 직전 내용을 되돌립니다 (최근 7일)">변경 이력</button>
+    <button id="historyBtn" type="button" onclick="openMemoHistory()" title="저장 직전 내용을 비교·복원·삭제합니다 (최근 7일)">변경 이력</button>
 </div>
 
 <div class="alert warn" id="sessionAlert" hidden>
@@ -154,7 +154,7 @@
 <!-- 이 페이지는 배너가 없다(자립형 새창 — 함정 26). 세션 만료 시간과 타이머 모듈을 직접 실어야 한다. -->
 <script th:inline="javascript">window.SESSION_TIMEOUT_SECONDS = [[${sessionTimeoutSeconds}]];</script>
 <script src="/js/session-timeout.js?v=2026-09-09"></script>
-<script src="/js/memo.js?v=2026-09-09"></script>
+<script src="/js/memo.js?v=2026-09-14"></script>
 <!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (history·settings·account 와 공유) -->
 <script src="/js/krds-tooltip.js?v=2026-08-09"></script>
 <script th:inline="javascript">
@@ -251,6 +251,8 @@ function discardBackup() {
 /* ── 서버 변경 이력 (memo_history) ─────────────────────── */
 function openMemoHistory() {
     Memo.openHistoryViewer({
+        // 변경점 표시의 비교 기준 — 서버 저장본이 아니라 지금 편집 중인 내용(미저장 입력 포함)
+        getCurrent: function () { return box.value; },
         onRestored: function (d) {
             var text = d.memo || '';
             box.value = text;

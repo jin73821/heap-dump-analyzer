@@ -631,11 +631,27 @@
         var pgInfo = document.getElementById('hiPgInfo');
         var PAGE = 20, cur = 1, TOTAL = rows.length;
         var sortKey = null, sortDir = 1;
+        // 업로드일 기간 필터 — Files 와 같은 calendar.js 위젯. 배너가 전역 로드하지만 없으면 필터 없이 동작
+        var hasCal = !!(window.Calendar && document.getElementById('hiCalArea'));
+
+        function pad2(n) { return (n < 10 ? '0' : '') + n; }
+        function dayKey(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
 
         function filtered() {
             var q = search ? search.value.trim().toLowerCase() : '';
+            var range = hasCal ? window.Calendar.getRange() : {};
+            var from = range.start ? dayKey(range.start) : '';
+            var to = range.end ? dayKey(range.end) : '';
             var f = rows.filter(function (r) {
-                return !q || (r.dataset.fname || '').toLowerCase().indexOf(q) !== -1;
+                if (q && (r.dataset.fname || '').toLowerCase().indexOf(q) === -1) return false;
+                if (from || to) {
+                    // data-uploaded 는 LocalDateTime ISO('2026-09-13T10:05:23') — 날짜 부분 문자열 비교로 충분(하루 단위, 종료일 포함)
+                    var d = (r.dataset.uploaded || r.dataset.analyzed || '').substring(0, 10);
+                    if (!d) return false;   // 기간을 골랐는데 날짜가 없는 행은 기간 안이라고 볼 근거가 없다
+                    if (from && d < from) return false;
+                    if (to && d > to) return false;
+                }
+                return true;
             });
             if (sortKey) {
                 f = f.slice().sort(function (a, b) {
@@ -662,6 +678,15 @@
             renderPg(pgBar, pgList, pgInfo, total, pages, start, end, PAGE, cur, function (p) { cur = p; render(); });
         }
         if (search) search.addEventListener('input', function () { cur = 1; render(); });
+        if (hasCal) {
+            // 첫 render() 전에 붙여야 localStorage 에 남은 기간이 초기 목록에 반영된다
+            window.Calendar.attach({
+                startInputId: 'hiDateStart', endInputId: 'hiDateEnd',
+                areaId: 'hiCalArea',
+                storageKey: 'coreHistory',
+                onChange: function () { cur = 1; render(); }
+            });
+        }
 
         Array.prototype.slice.call(document.querySelectorAll('#hiTable th.sortable')).forEach(function (th) {
             th.addEventListener('click', function () {

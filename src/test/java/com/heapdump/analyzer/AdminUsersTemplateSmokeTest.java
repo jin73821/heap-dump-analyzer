@@ -109,6 +109,30 @@ class AdminUsersTemplateSmokeTest {
     }
 
     @Test
+    @DisplayName("사용자 목록: 최근 접속 열 + 조밀 표·작업 버튼 스타일이 사용자 탭에만 갇혀 있다 (2026-09-14)")
+    void userListDensityAndActions() {
+        String html = render(model(false, 10, true));
+
+        assertTrue(html.contains(">최근 접속</th>"), "최근 접속 열 헤더가 없다");
+        assertTrue(html.contains("<th class=\"u-act-h\">작업</th>"), "작업 열이 오른쪽 정렬 헤더가 아니다");
+        assertTrue(html.contains("<tbody id=\"userBody\">"), "이벤트 위임 대상 tbody id 가 없다");
+        assertTrue(html.contains("<td colspan=\"8\" class=\"lh-empty\">"), "열이 8개인데 빈 행 colspan 이 맞지 않다");
+        assertFalse(html.contains("colspan=\"7\" class=\"lh-empty\">'"), "옛 7열 colspan 이 JS 에 남아 있다");
+
+        // 조밀 표 규칙은 #panel-users 로 가둔다 — 다른 탭(현재 접속/접속 이력/계정 신청) 표를 건드리면 안 된다
+        assertTrue(html.contains("#panel-users .utable td { padding: 5px 10px;"), "조밀 표 규칙이 사용자 탭 범위가 아니다");
+        // 버튼 폰트 상속 누락이 종전 결함(라벨 Arial) — 되돌아가면 안 된다
+        int ubtn = html.indexOf(".ubtn { display: inline-flex;");
+        assertTrue(ubtn > 0 && html.indexOf("font-family: inherit;", ubtn) - ubtn < 400, "작업 버튼이 폰트를 상속하지 않는다");
+        // 메뉴는 표 스크롤 컨테이너에 잘리지 않도록 fixed
+        assertTrue(html.contains(".u-menu { position: fixed;"), "더보기 메뉴가 fixed 가 아니다 (overflow-x 컨테이너에 잘린다)");
+        // 위험·드문 동작은 메뉴로, 기본 관리자 삭제는 메뉴에서 비활성
+        assertTrue(html.contains("data-act=\"delete\"") && html.contains("보호 계정"), "삭제 메뉴 항목/보호 계정 안내가 없다");
+        assertTrue(html.contains("aria-haspopup=\"menu\""), "더보기 버튼 접근성 속성이 없다");
+        assertTrue(html.contains("function renderLastLogin(u)") && html.contains("기록 없음"), "최근 접속 렌더러가 없다");
+    }
+
+    @Test
     @DisplayName("잠금 해제 모달은 사유(OTP/비밀번호)를 표시할 자리를 가진다")
     void unlockModalCarriesReasonSlot() {
         String html = render(model(true, 10, true));

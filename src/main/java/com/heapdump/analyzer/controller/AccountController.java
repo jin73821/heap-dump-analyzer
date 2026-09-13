@@ -223,12 +223,26 @@ public class AccountController {
         return ResponseEntity.ok(res);
     }
 
+    /** 저장 시점 개별 삭제. 현재 메모(users.memo)에는 영향이 없다. */
+    @DeleteMapping("/api/account/memo/history/{id}")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> memoHistoryDelete(@PathVariable Long id, Principal principal) {
+        long remaining = memoHistoryService.delete(principal.getName(), id);
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        res.put("deleted", 1);
+        res.put("remaining", remaining);
+        return ResponseEntity.ok(res);
+    }
+
     @DeleteMapping("/api/account/memo/history")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> memoHistoryClear(Principal principal) {
-        memoHistoryService.deleteAll(principal.getName());
+        int deleted = memoHistoryService.deleteAll(principal.getName());
         Map<String, Object> res = new HashMap<>();
         res.put("success", true);
+        res.put("deleted", deleted);
+        res.put("remaining", 0);
         return ResponseEntity.ok(res);
     }
 }

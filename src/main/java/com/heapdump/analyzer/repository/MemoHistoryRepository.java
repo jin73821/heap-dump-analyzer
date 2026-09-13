@@ -31,8 +31,24 @@ public interface MemoHistoryRepository extends JpaRepository<MemoHistory, Long> 
 
     long countByUsername(String username);
 
+    /**
+     * 전체 삭제 — <b>벌크 JPQL</b>. 파생 delete({@code deleteByUsername})는 행마다 엔티티를 먼저 로드하므로
+     * 최대 10MB 본문 × 사용자당 100건을 메모리로 끌고 온 뒤 한 건씩 지운다.
+     */
+    @Modifying
     @Transactional
-    void deleteByUsername(String username);
+    @Query("DELETE FROM MemoHistory h WHERE h.username = :username")
+    int deleteAllOwnedBy(@Param("username") String username);
+
+    /** 개별 삭제 전 감사 로그용 식별정보(시각·크기·사유) — 본문 제외, 소유권 조건 포함. */
+    @Query("SELECT h.createdAt, h.byteSize, h.reason FROM MemoHistory h WHERE h.id = :id AND h.username = :username")
+    List<Object[]> findMetaOwnedBy(@Param("id") Long id, @Param("username") String username);
+
+    /** 개별 삭제 — 소유권을 WHERE 에 넣는다. 남의 id 면 0건. */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MemoHistory h WHERE h.id = :id AND h.username = :username")
+    int deleteOwnedBy(@Param("id") Long id, @Param("username") String username);
 
     /** 보관기간 만료 정리. */
     @Modifying
