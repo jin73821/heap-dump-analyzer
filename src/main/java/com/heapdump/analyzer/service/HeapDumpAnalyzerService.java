@@ -2474,6 +2474,41 @@ public class HeapDumpAnalyzerService {
         return fileMgmt.loadFileClassifications();
     }
 
+    public void removeFileClassification(String filename) throws IOException {
+        fileMgmt.removeFileClassification(filename);
+    }
+
+    /** 힙덤프 저장소(dumpfiles) — 파일 분류 이동이 원본 위치를 판정할 때 쓴다. */
+    public File heapDumpFilesDirectory() {
+        return fileMgmt.dumpFilesDirectory();
+    }
+
+    public java.util.Optional<AnalysisHistoryEntity> findHistoryEntity(String filename) {
+        return analysisHistoryRepository.findByFilename(new File(filename).getName());
+    }
+
+    /**
+     * 힙 분석 <b>기록만</b> 지운다 — DB 행(이력·상세·refs·AI 인사이트)·메모리 캐시·결과 디렉토리({@code data/{filename}/}).
+     * dumpfiles 의 파일은 하나도 건드리지 않는다. 파일을 다른 저장소(GC 로그 등)로 옮긴 뒤 남은 유령 행을 치울 때 쓴다(2026-09-14).
+     * <p>⚠ {@link #deleteHistory} 를 대신 쓰지 말 것 — 확장자를 뗀 이름으로 dumpfiles 를 훑어 '관련 인덱스' 를 지우므로
+     * {@code gc.log} 에 쓰면 {@code gc.*} 인 다른 파일({@code gc.log.1} 등)까지 삭제한다.
+     */
+    @Transactional
+    public void deleteHistoryRecordOnly(String filename) {
+        String safe = new File(filename).getName();
+        File resultDir = resultDirectory(safe);
+        if (resultDir.exists() && resultDir.isDirectory() && !resultDir.getName().isEmpty()
+                && resultDir.getName().equals(safe)) {
+            deleteDirectoryRecursively(resultDir);
+        }
+        resultCache.remove(safe);
+        try { analysisHistoryRepository.deleteByFilename(safe); } catch (Exception e) { logger.warn("[DeleteHistoryRecord] analysis_history '{}': {}", safe, e.getMessage()); }
+        try { resultDetailRepository.deleteByFilename(safe); } catch (Exception e) { logger.warn("[DeleteHistoryRecord] analysis_result_detail '{}': {}", safe, e.getMessage()); }
+        try { dominatorRefsRepository.deleteByFilename(safe); } catch (Exception e) { logger.warn("[DeleteHistoryRecord] analysis_dominator_refs '{}': {}", safe, e.getMessage()); }
+        try { aiInsightRepository.deleteByFilename(safe); } catch (Exception e) { logger.warn("[DeleteHistoryRecord] ai_insights '{}': {}", safe, e.getMessage()); }
+        logger.info("[DeleteHistoryRecord] Completed (files untouched): {}", safe);
+    }
+
     public void saveFileClassification(String filename, String fileType) throws IOException {
         fileMgmt.saveFileClassification(filename, fileType);
     }
@@ -3384,10 +3419,19 @@ public class HeapDumpAnalyzerService {
             }
             analysisHistoryRepository.save(entity);
             logger.info("[DB] Analysis history saved for: {}", result.getFilename());
+            // GC 로그 매칭 재평가 훅(2026-09-14) — 먼저 도착한 GC 로그가 이 덤프와 붙을 수 있다. 수신자 예외는 여기로 오지 않는다.
+            if (eventPublisher != null) {
+                try { eventPublisher.publishEvent(new HeapAnalysisSavedEvent(result.getFilename())); }
+                catch (Exception ex) { logger.debug("[GcLog] heap-saved event publish failed: {}", ex.getMessage()); }
+            }
         } catch (Exception e) {
             logger.warn("[DB] Failed to save analysis history for {}: {}", result.getFilename(), e.getMessage());
         }
     }
+
+    /** 힙 저장 이벤트 발행기 — 선택 주입(테스트에서 null 허용). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /**
      * 업로드 완료 직후 analysis_history 에 NOT_ANALYZED 레코드를 삽입해 ID(순번)를 채번한다.
@@ -3455,6 +3499,25 @@ public class HeapDumpAnalyzerService {
                     .orElse("");
         } catch (Exception e) {
             logger.debug("[DB] getAnalysisJeusInstance failed for {}: {}", filename, e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * 화면에 보이는 JEUS 인스턴스 — 수동 편집값 우선, 없으면 System Properties({@code jeus.server.name}).
+     * analyze 화면 Instance 칩과 같은 규칙이다(GC 로그 결과의 인스턴스 카드가 이 값을 가져간다). 미식별이면 빈 문자열.
+     * 결과가 캐시에 없으면 DB 상세를 한 번 읽는다.
+     */
+    public String getEffectiveJeusInstance(String filename) {
+        String manual = getAnalysisJeusInstance(filename);
+        if (!manual.isEmpty()) return manual;
+        try {
+            HeapAnalysisResult r = getCachedResult(filename);
+            java.util.Map<String, String> sysProps = r == null ? null : r.getSystemProperties();
+            String auto = sysProps == null ? null : sysProps.get("jeus.server.name");
+            return auto == null ? "" : auto.trim();
+        } catch (Exception e) {
+            logger.debug("[DB] getEffectiveJeusInstance failed for {}: {}", filename, e.getMessage());
             return "";
         }
     }

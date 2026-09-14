@@ -43,15 +43,17 @@ public class TargetServer {
 
     /** dumpPath를 줄바꿈 기준으로 분리 — 빈/공백 제거, 최대 MAX_DUMP_PATHS개. */
     @Transient
-    public List<String> getDumpPaths() {
-        if (dumpPath == null || dumpPath.isEmpty()) return Collections.emptyList();
-        List<String> result = Arrays.stream(dumpPath.split("\\r?\\n"))
+    public List<String> getDumpPaths() { return splitPaths(dumpPath); }
+
+    /** 줄바꿈 구분 경로 문자열 → 목록(빈/공백 제거, 중복 제거, 상한). 힙·코어·GC 로그 셋이 공유한다. */
+    private static List<String> splitPaths(String raw) {
+        if (raw == null || raw.isEmpty()) return Collections.emptyList();
+        return Arrays.stream(raw.split("\\r?\\n"))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .distinct()
                 .limit(MAX_DUMP_PATHS)
                 .collect(Collectors.toList());
-        return result;
     }
 
     /** 힙덤프 파일 탐지 여부. null은 true로 처리(기존 서버 호환). */
@@ -70,21 +72,26 @@ public class TargetServer {
     @Column(name = "core_dump_path", length = 2500)
     private String coreDumpPath;
 
+    /** GC 로그 탐지 여부(2026-09-14). null은 false로 처리. */
+    @Column(name = "scan_gclog")
+    private Boolean scanGcLog;
+
+    /** GC 로그 탐지 경로 — 1~5개. 다중 경로는 줄바꿈(\n)으로 구분 저장. */
+    @Column(name = "gc_log_path", length = 2500)
+    private String gcLogPath;
+
     public boolean isScanHeap()       { return scanHeap == null || scanHeap; }
     public boolean isScanCore()       { return Boolean.TRUE.equals(scanCore); }
     public boolean isScanExecutable() { return Boolean.TRUE.equals(scanExecutable); }
+    public boolean isScanGcLog()      { return Boolean.TRUE.equals(scanGcLog); }
 
     /** coreDumpPath를 줄바꿈 기준으로 분리 — 빈/공백 제거, 최대 MAX_DUMP_PATHS개. */
     @Transient
-    public List<String> getCoreDumpPaths() {
-        if (coreDumpPath == null || coreDumpPath.isEmpty()) return Collections.emptyList();
-        return Arrays.stream(coreDumpPath.split("\\r?\\n"))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .distinct()
-                .limit(MAX_DUMP_PATHS)
-                .collect(Collectors.toList());
-    }
+    public List<String> getCoreDumpPaths() { return splitPaths(coreDumpPath); }
+
+    /** gcLogPath를 줄바꿈 기준으로 분리 — 빈/공백 제거, 최대 MAX_DUMP_PATHS개. */
+    @Transient
+    public List<String> getGcLogPaths() { return splitPaths(gcLogPath); }
 
     @Column(name = "auto_detect", nullable = false)
     private boolean autoDetect = false;

@@ -317,6 +317,8 @@
                         th:data-scancore="${s.isScanCore()}"
                         th:data-scanexecutable="${s.isScanExecutable()}"
                         th:data-coredumppath="${s.coreDumpPath}"
+                        th:data-scangclog="${s.isScanGcLog()}"
+                        th:data-gclogpath="${s.gcLogPath}"
                         th:attr="data-status=${!s.enabled ? 'DISABLED' : (s.connStatus == null ? 'UNKNOWN' : s.connStatus)}">
                         <td class="col-name" data-label="이름" style="font-weight:600">
                             <a th:href="@{'/servers/' + ${s.id}}" th:text="${s.name}"
@@ -360,6 +362,8 @@
                                     th:data-scancore="${s.isScanCore()}"
                                     th:data-scanexecutable="${s.isScanExecutable()}"
                                     th:data-coredumppath="${s.coreDumpPath}"
+                                    th:data-scangclog="${s.isScanGcLog()}"
+                                    th:data-gclogpath="${s.gcLogPath}"
                                     onclick="openEditModal(this.dataset)">수정</button>
                             <button class="action-btn danger"
                                     th:data-id="${s.id}" th:data-name="${s.name}"
@@ -429,6 +433,10 @@
                         <span>실행파일 경로 탐지 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(file 명령으로 크래시 프로세스 확인)</span></span>
                     </label>
                 </div>
+                <label class="modal-check">
+                    <input type="checkbox" id="smScanGcLog" onchange="onScanGcLogChange()">
+                    <span>GC 로그 파일 탐지 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(gc.log · gc.log.N · gc-*.log · .gz — 기록 중인 최신 파일은 자동 전송 제외)</span></span>
+                </label>
             </div>
         </div>
         <div class="modal-group">
@@ -444,6 +452,13 @@
             <button type="button" class="action-btn" id="smCoreDumpPathAdd"
                     style="margin-top:6px;font-size:11px;padding:4px 10px"
                     onclick="addCoreDumpPathRow()">+ 경로 추가</button>
+        </div>
+        <div class="modal-group" id="smGcLogPathSection" style="display:none">
+            <label class="modal-label">GC 로그 경로 <span style="font-weight:400;color:#9CA3AF;font-size:11px">(최대 5개 — -Xlog:gc*:file= / -Xloggc: 가 가리키는 디렉토리)</span></label>
+            <div id="smGcLogPathList"></div>
+            <button type="button" class="action-btn" id="smGcLogPathAdd"
+                    style="margin-top:6px;font-size:11px;padding:4px 10px"
+                    onclick="addGcLogPathRow()">+ 경로 추가</button>
         </div>
         <div class="modal-group">
             <label class="modal-check">
@@ -594,6 +609,44 @@ function collectCoreDumpPaths() {
     return out;
 }
 
+// GC 로그 경로 관련 (2026-09-14) — 코어 경로 섹션과 같은 행 헬퍼(makeDumpPathRow) 재사용
+function setGcLogPaths(paths) {
+    var list = document.getElementById('smGcLogPathList');
+    list.innerHTML = '';
+    var arr = (paths && paths.length > 0) ? paths : [''];
+    for (var i = 0; i < arr.length && i < MAX_DUMP_PATHS; i++) {
+        makeDumpPathRow(arr[i], 'smGcLogPathList', 'sm-gclog-path-input', refreshGcLogPathAddBtn);
+    }
+    refreshGcLogPathAddBtn();
+}
+
+function addGcLogPathRow() {
+    makeDumpPathRow('', 'smGcLogPathList', 'sm-gclog-path-input', refreshGcLogPathAddBtn);
+    refreshGcLogPathAddBtn();
+}
+
+function refreshGcLogPathAddBtn() {
+    var btn = document.getElementById('smGcLogPathAdd');
+    var count = document.querySelectorAll('#smGcLogPathList .sm-path-row').length;
+    if (btn) btn.style.display = count >= MAX_DUMP_PATHS ? 'none' : '';
+}
+
+function collectGcLogPaths() {
+    var inputs = document.querySelectorAll('#smGcLogPathList .sm-gclog-path-input');
+    var out = [];
+    var seen = {};
+    for (var i = 0; i < inputs.length; i++) {
+        var v = inputs[i].value.trim();
+        if (v && !seen[v]) { seen[v] = 1; out.push(v); }
+    }
+    return out;
+}
+
+function onScanGcLogChange() {
+    var checked = document.getElementById('smScanGcLog').checked;
+    document.getElementById('smGcLogPathSection').style.display = checked ? '' : 'none';
+}
+
 function onScanCoreChange() {
     var checked = document.getElementById('smScanCore').checked;
     var coreOptions = document.getElementById('smCoreOptions');
@@ -627,6 +680,9 @@ function openCreateModal() {
     document.getElementById('smCoreOptions').style.display = 'none';
     document.getElementById('smCoreDumpPathSection').style.display = 'none';
     setCoreDumpPaths([]);
+    document.getElementById('smScanGcLog').checked = false;
+    document.getElementById('smGcLogPathSection').style.display = 'none';
+    setGcLogPaths([]);
     document.getElementById('smAutoDetect').checked = false;
     document.body.style.overflow = 'hidden';
     document.getElementById('serverModal').classList.add('open');
@@ -654,6 +710,11 @@ function openEditModal(ds) {
     document.getElementById('smCoreDumpPathSection').style.display = scanCore ? '' : 'none';
     var corePaths = (ds.coredumppath || '').split(/\r?\n/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
     setCoreDumpPaths(corePaths);
+    var scanGc = ds.scangclog === 'true';
+    document.getElementById('smScanGcLog').checked = scanGc;
+    document.getElementById('smGcLogPathSection').style.display = scanGc ? '' : 'none';
+    var gcPaths = (ds.gclogpath || '').split(/\r?\n/).map(function(s) { return s.trim(); }).filter(function(s) { return s.length > 0; });
+    setGcLogPaths(gcPaths);
     document.getElementById('smAutoDetect').checked = ds.autodetect === 'true';
     document.body.style.overflow = 'hidden';
     document.getElementById('serverModal').classList.add('open');
@@ -664,9 +725,14 @@ function submitServer() {
     var scanCore = document.getElementById('smScanCore').checked;
     var corePaths = scanCore ? collectCoreDumpPaths() : [];
     var scanHeap = document.getElementById('smScanHeap').checked;
+    var scanGcLog = document.getElementById('smScanGcLog').checked;
+    var gcPaths = scanGcLog ? collectGcLogPaths() : [];
 
-    if (!scanHeap && !scanCore) {
-        showToast('힙덤프 또는 코어파일 탐지 중 하나 이상을 선택하세요.', 'error'); return;
+    if (!scanHeap && !scanCore && !scanGcLog) {
+        showToast('힙덤프·코어파일·GC 로그 탐지 중 하나 이상을 선택하세요.', 'error'); return;
+    }
+    if (scanGcLog && gcPaths.length === 0) {
+        showToast('GC 로그 탐지를 활성화한 경우 GC 로그 경로(1개 이상)를 입력하세요.', 'error'); return;
     }
     if (scanHeap && paths.length === 0) {
         showToast('힙덤프 탐지를 활성화한 경우 힙덤프 경로(1개 이상)를 입력하세요.', 'error'); return;
@@ -691,7 +757,9 @@ function submitServer() {
         scanHeap: scanHeap,
         scanCore: scanCore,
         scanExecutable: document.getElementById('smScanExecutable').checked,
-        coreDumpPath: corePaths.join('\n')
+        coreDumpPath: corePaths.join('\n'),
+        scanGcLog: scanGcLog,
+        gcLogPath: gcPaths.join('\n')
     };
     var id = document.getElementById('smId').value;
     var url = _isEdit ? '/api/servers/' + id : '/api/servers';

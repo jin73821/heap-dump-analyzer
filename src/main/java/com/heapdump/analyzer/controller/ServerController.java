@@ -125,11 +125,13 @@ public class ServerController {
             if (body.containsKey("scanCore"))       server.setScanCore(Boolean.TRUE.equals(body.get("scanCore")));
             if (body.containsKey("scanExecutable")) server.setScanExecutable(Boolean.TRUE.equals(body.get("scanExecutable")));
             if (body.containsKey("coreDumpPath"))   server.setCoreDumpPath((String) body.get("coreDumpPath"));
+            if (body.containsKey("scanGcLog"))      server.setScanGcLog(Boolean.TRUE.equals(body.get("scanGcLog")));
+            if (body.containsKey("gcLogPath"))      server.setGcLogPath((String) body.get("gcLogPath"));
             server.setEnabled(true);
             serverRepository.save(server);
-            logger.info("[Server] action=create id={} name='{}' host='{}' port={} sshUser='{}' autoDetect={} scanHeap={} scanCore={} by={}",
+            logger.info("[Server] action=create id={} name='{}' host='{}' port={} sshUser='{}' autoDetect={} scanHeap={} scanCore={} scanGcLog={} by={}",
                     server.getId(), server.getName(), server.getHost(), server.getPort(),
-                    server.getSshUser(), server.isAutoDetect(), server.isScanHeap(), server.isScanCore(), who(auth));
+                    server.getSshUser(), server.isAutoDetect(), server.isScanHeap(), server.isScanCore(), server.isScanGcLog(), who(auth));
             result.put("success", true);
             result.put("serverId", server.getId());
             return ResponseEntity.ok(result);
@@ -166,6 +168,8 @@ public class ServerController {
             if (body.containsKey("scanCore")) { server.setScanCore(Boolean.TRUE.equals(body.get("scanCore"))); changed.add("scanCore"); }
             if (body.containsKey("scanExecutable")) { server.setScanExecutable(Boolean.TRUE.equals(body.get("scanExecutable"))); changed.add("scanExecutable"); }
             if (body.containsKey("coreDumpPath")) { server.setCoreDumpPath((String) body.get("coreDumpPath")); changed.add("coreDumpPath"); }
+            if (body.containsKey("scanGcLog")) { server.setScanGcLog(Boolean.TRUE.equals(body.get("scanGcLog"))); changed.add("scanGcLog"); }
+            if (body.containsKey("gcLogPath")) { server.setGcLogPath((String) body.get("gcLogPath")); changed.add("gcLogPath"); }
             serverRepository.save(server);
             logger.info("[Server] action=update id={} name='{}'->'{}' host='{}'->'{}' port={}->{} autoDetect={}->{} enabled={}->{} fields={} by={}",
                     id, oldName, server.getName(), oldHost, server.getHost(), oldPort, server.getPort(),
@@ -477,7 +481,7 @@ public class ServerController {
     private boolean isAllowedSortField(String field) {
         // 클라이언트가 임의 필드로 정렬 못 하도록 화이트리스트
         switch (field) {
-            case "id": case "filename": case "fileSize":
+            case "id": case "filename": case "fileSize": case "fileType":
             case "transferStatus": case "startedAt": case "completedAt":
                 return true;
             default:
@@ -548,6 +552,7 @@ public class ServerController {
         t.serverName = serverNames.getOrDefault(l.getServerId(), "(삭제된 서버 #" + l.getServerId() + ")");
         t.filename = l.getFilename();
         t.remotePath = l.getRemotePath();
+        t.fileType = l.getFileType() == null ? "heap" : l.getFileType();
         t.transferStatus = l.getTransferStatus();
         t.fileSize = l.getFileSize();
         t.formattedSize = formatBytes(l.getFileSize());
@@ -635,6 +640,8 @@ public class ServerController {
         public String serverName;
         public String filename;
         public String remotePath;
+        /** heap(null 포함) / core / coreexec / gclog */
+        public String fileType;
         public String transferStatus;
         public Long fileSize;
         public String formattedSize;

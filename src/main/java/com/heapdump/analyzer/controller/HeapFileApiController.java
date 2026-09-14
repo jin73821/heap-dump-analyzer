@@ -44,11 +44,14 @@ public class HeapFileApiController {
 
     private final HeapDumpAnalyzerService analyzerService;
     private final CoreDumpAnalyzerService coreDumpService;
+    private final com.heapdump.analyzer.service.GcLogAnalyzerService gcLogService;
 
     public HeapFileApiController(HeapDumpAnalyzerService analyzerService,
-                                 CoreDumpAnalyzerService coreDumpService) {
+                                 CoreDumpAnalyzerService coreDumpService,
+                                 com.heapdump.analyzer.service.GcLogAnalyzerService gcLogService) {
         this.analyzerService = analyzerService;
         this.coreDumpService = coreDumpService;
+        this.gcLogService = gcLogService;
     }
 
     @PostMapping("/api/files/bulk-delete")
@@ -142,15 +145,61 @@ public class HeapFileApiController {
             Authentication authentication) {
         filename = FilenameValidator.validateSafe(filename);
         String fileType = body.get("fileType");
-        Set<String> allowed = Set.of("core", "exec", "heapdump", "others");
+        Set<String> allowed = Set.of("core", "exec", "heapdump", "others", "gclog");
         if (fileType == null || !allowed.contains(fileType)) {
             Map<String, Object> err = new HashMap<>();
             err.put("status", "error");
-            err.put("message", "유효하지 않은 파일 유형입니다. (core|exec|heapdump|others)");
+            err.put("message", "유효하지 않은 파일 유형입니다. (core|exec|heapdump|others|gclog)");
             return ResponseEntity.badRequest().body(err);
         }
+        String who0 = authentication != null ? authentication.getName() : "unknown";
+        // GC 로그는 라벨이 아니라 '저장소' 가 다르다 — 분석기가 GC 로그 저장소의 파일만 읽으므로 분류를 바꾸면 파일을 옮긴다(2026-09-14)
+        File heapFile = new File(analyzerService.heapDumpFilesDirectory(), filename);
+        File coreFile = new File(coreDumpService.dumpFilesDir(), filename);
+        File gcFile = gcLogService.fileOf(filename);
+        boolean inHeap = heapFile.isFile(), inCore = coreFile.isFile(), inGc = gcFile.isFile();
         try {
-            String who = authentication != null ? authentication.getName() : "unknown";
+            if ("gclog".equals(fileType)) {
+                if (inGc && !inHeap && !inCore) return classifyOk(filename, fileType, false);   // 이미 GC 로그
+                if (inHeap && inCore) return classifyError(409, "힙덤프·코어 저장소에 같은 이름의 파일이 모두 있어 어느 것을 옮길지 정할 수 없습니다: " + filename);
+                if (!inHeap && !inCore) return classifyError(404, "파일을 찾을 수 없습니다: " + filename);
+                String blocked = inHeap
+                        ? analyzerService.findHistoryEntity(filename).map(h -> h.getStatus()).filter(st -> "SUCCESS".equals(st) || "ANALYZING".equals(st)).orElse(null)
+                        : coreDumpService.getEntity(filename).map(c -> c.getStatus()).filter(st -> "SUCCESS".equals(st) || "ANALYZING".equals(st)).orElse(null);
+                if (blocked != null) {
+                    return classifyError(400, ("SUCCESS".equals(blocked) ? (inHeap ? "힙 덤프" : "코어 덤프") + " 분석 결과가 있는 파일은 GC 로그로 분류할 수 없습니다. 분석 기록을 먼저 삭제하세요."
+                            : "분석이 진행 중인 파일은 분류를 바꿀 수 없습니다."));
+                }
+                String serverName = analyzerService.resolveServerNameByFilename(filename);
+                gcLogService.adoptFile(inHeap ? heapFile : coreFile, who0, serverName);
+                // 원래 저장소에 남은 기록·라벨 정리 — 파일은 이미 옮겼으므로 실패해도 분류 자체는 성공으로 둔다(WARN)
+                try {
+                    if (inHeap) analyzerService.deleteHistoryRecordOnly(filename);
+                    else coreDumpService.deleteHistoryOnly(filename);
+                    analyzerService.removeFileClassification(filename);
+                } catch (Exception cleanup) {
+                    logger.warn("[ClassifyFile] 원래 저장소 기록 정리 실패 file={} — {}", filename, cleanup.getMessage());
+                }
+                logger.info("[ClassifyFile] action=classify file={} type=gclog moved-from={} by={}", filename, inHeap ? "heap" : "core", who0);
+                return classifyOk(filename, fileType, true);
+            }
+            if (inGc && !inHeap && !inCore) {
+                // GC 로그 → 다른 유형: 힙덤프 저장소로 내보낸 뒤 기존 라벨 규칙을 그대로 적용한다
+                gcLogService.releaseFile(filename, analyzerService.heapDumpFilesDirectory(), who0);
+                analyzerService.saveFileClassification(filename, fileType);
+                logger.info("[ClassifyFile] action=classify file={} type={} moved-from=gclog by={}", filename, fileType, who0);
+                return classifyOk(filename, fileType, true);
+            }
+        } catch (IllegalStateException e) {
+            return classifyError(409, e.getMessage());
+        } catch (IllegalArgumentException e) {
+            return classifyError(400, e.getMessage());
+        } catch (IOException e) {
+            logger.error("[ClassifyFile] 파일 이동 실패 file={} type={} — {}", filename, fileType, e.getMessage());
+            return classifyError(500, "파일을 옮기지 못했습니다: " + e.getMessage());
+        }
+        try {
+            String who = who0;
             analyzerService.saveFileClassification(filename, fileType);
             logger.info("[ClassifyFile] action=classify file={} type={} by={}", filename, fileType, who);
             Map<String, Object> resp = new HashMap<>();
@@ -165,6 +214,23 @@ public class HeapFileApiController {
             err.put("message", "분류 저장 실패: " + e.getMessage());
             return ResponseEntity.status(500).body(err);
         }
+    }
+
+    private static ResponseEntity<Map<String, Object>> classifyOk(String filename, String fileType, boolean moved) {
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("status", "ok");
+        resp.put("filename", filename);
+        resp.put("fileType", fileType);
+        resp.put("moved", moved);
+        return ResponseEntity.ok(resp);
+    }
+
+    /** files.html 의 submitClassify 는 {status,message} 를 읽는다 — 전역 핸들러의 {success,code,error} 로 새지 않게 여기서 만든다. */
+    private static ResponseEntity<Map<String, Object>> classifyError(int status, String message) {
+        Map<String, Object> err = new HashMap<>();
+        err.put("status", "error");
+        err.put("message", message);
+        return ResponseEntity.status(status).body(err);
     }
 
     @PostMapping("/api/files/{filename:.+}/pair")

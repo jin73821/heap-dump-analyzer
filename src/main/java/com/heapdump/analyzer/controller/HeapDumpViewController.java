@@ -8,6 +8,7 @@ import com.heapdump.analyzer.model.dto.ClassDiff;
 import com.heapdump.analyzer.model.dto.DetectionAggregate;
 import com.heapdump.analyzer.model.dto.HistogramDiff;
 import com.heapdump.analyzer.model.dto.KpiDiff;
+import com.heapdump.analyzer.model.dto.RecentFileItem;
 import com.heapdump.analyzer.model.dto.SuspectDiff;
 import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.service.ComparisonHistoryService;
@@ -56,6 +57,14 @@ public class HeapDumpViewController {
     private final RagConfigService ragConfig;
     private final com.heapdump.analyzer.service.JvmHeapInfoService jvmHeapInfoService;
 
+    /** GC 로그 매칭 뷰(2026-09-14) — 선택 주입. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.service.GcLogMatchService gcLogMatchService;
+
+    /** Files 페이지 GC Log 탭(2026-09-14) — 선택 주입. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.service.GcLogAnalyzerService gcLogAnalyzerService;
+
     public HeapDumpViewController(HeapDumpAnalyzerService analyzerService,
                                   LlmConfigService llmConfig,
                                   HeapDumpConfig config,
@@ -81,6 +90,7 @@ public class HeapDumpViewController {
     @GetMapping("/")
     public String index(Model model) {
         List<HeapDumpFile> files = analyzerService.listFiles();
+        // files = 힙 저장소 상위 5(대시보드 통계·빈 화면 판정용). Recent Files 목록은 아래 recentFiles(힙 + GC 로그)가 그린다
         model.addAttribute("files", files.size() > 5 ? files.subList(0, 5) : files);
         model.addAttribute("allFiles", files);
         model.addAttribute("fileCount", files.size());
@@ -165,6 +175,18 @@ public class HeapDumpViewController {
             model.addAttribute("othersFiles", java.util.Collections.emptySet());
         }
 
+        // Recent Files — 힙 저장소 + GC 로그 저장소를 한 목록으로(2026-09-14). 상태는 각 저장소의 분석 이력을 본다.
+        @SuppressWarnings("unchecked")
+        Set<String> othersSet = (Set<String>) model.getAttribute("othersFiles");
+        List<RecentFileItem> heapItems = new ArrayList<>(files.size());
+        for (HeapDumpFile f : files) {
+            String st = analyzedFiles.contains(f.getName()) ? "SUCCESS" : errorFiles.contains(f.getName()) ? "ERROR" : "NOT_ANALYZED";
+            heapItems.add(new RecentFileItem(f, RecentFileItem.KIND_HEAP, st, othersSet != null && othersSet.contains(f.getName())));
+        }
+        List<RecentFileItem> recent = RecentFileItem.merge(heapItems, buildGcLogRecentItems());
+        model.addAttribute("recentFiles", recent.size() > 5 ? recent.subList(0, 5) : recent);
+        model.addAttribute("recentCount", recent.size());
+
         return "index";
     }
 
@@ -183,6 +205,8 @@ public class HeapDumpViewController {
         List<AnalysisHistoryItem> coreItems = buildCoreDumpHistory(isAdmin);
         List<AnalysisHistoryItem> combined = new ArrayList<>(heapVisible);
         combined.addAll(coreItems);
+        // GC 로그 항목 병합(2026-09-14) — fileType "gclog". 아래 분류 루프는 heapdump/coredump 만 건드리므로 영향 없음
+        combined.addAll(buildGcLogHistory(isAdmin));
 
         // 확장자 없는 파일에 사용자 분류 적용 (allowAllExtensions=true 일 때만 유효)
         if (analyzerService.isAllowAllExtensions()) {
@@ -337,6 +361,68 @@ public class HeapDumpViewController {
         model.addAttribute("allowAllExtensions", analyzerService.isAllowAllExtensions());
 
         return "files";
+    }
+
+    /** GC 로그 저장소 파일 + 이력 → Files 행(fileType=gclog). 디스크에만 있는 파일도 listExistingFiles 가 등록해 준다. */
+    /** 대시보드 Recent Files 용 GC 로그 저장소 파일(디스크에 있는 것만). 실패는 WARN 후 빈 목록 — 대시보드 전체를 깨뜨리지 않는다. */
+    private List<RecentFileItem> buildGcLogRecentItems() {
+        List<RecentFileItem> out = new ArrayList<>();
+        if (gcLogAnalyzerService == null) return out;
+        try {
+            for (com.heapdump.analyzer.model.entity.GcLogAnalysisEntity e : gcLogAnalyzerService.listExistingFiles()) {
+                File f = gcLogAnalyzerService.fileOf(e.getFilename());
+                if (!f.isFile()) continue;
+                String st = gcLogAnalyzerService.isAnalyzing(e.getFilename())
+                        ? com.heapdump.analyzer.model.entity.GcLogAnalysisEntity.STATUS_ANALYZING : e.getStatus();
+                // 압축 표기(GZ 원본→압축)는 힙 전용 — GC 로그 .gz 는 원본 크기를 모르므로 디스크 크기만 보인다
+                HeapDumpFile hf = new HeapDumpFile(f.getName(), f.getAbsolutePath(), f.length(), f.lastModified(), false, f.length(), 0L);
+                out.add(new RecentFileItem(hf, RecentFileItem.KIND_GCLOG, st, false));
+            }
+        } catch (Exception ex) {
+            logger.warn("[Dashboard] GC 로그 목록 병합 실패 — Recent Files 에 GC 로그가 빠진다: {}", ex.getMessage());
+        }
+        return out;
+    }
+
+    private List<AnalysisHistoryItem> buildGcLogHistory(boolean isAdmin) {
+        List<AnalysisHistoryItem> result = new ArrayList<>();
+        if (gcLogAnalyzerService == null) return result;
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+        try {
+            gcLogAnalyzerService.listExistingFiles();   // 디스크 ↔ 이력 동기화(미등록 파일 등록·사라진 파일 fileDeleted 표시)
+            for (com.heapdump.analyzer.model.entity.GcLogAnalysisEntity e : gcLogAnalyzerService.history()) {
+                File f = gcLogAnalyzerService.fileOf(e.getFilename());
+                boolean deleted = e.isFileDeleted() || !f.isFile();
+                if (!isAdmin && deleted) continue;
+                AnalysisHistoryItem item = new AnalysisHistoryItem();
+                item.setFileType("gclog");
+                item.setId(e.getId());
+                item.setFilename(e.getFilename());
+                item.setStatus(e.getStatus());
+                item.setFileDeleted(deleted);
+                item.setServerName(e.getServerName());
+                if (e.getAnalysisTimeMs() != null) item.setAnalysisTime(e.getAnalysisTimeMs());
+                if (!deleted) {
+                    item.setSizeBytes(f.length());
+                    item.setOriginalSizeBytes(f.length());
+                    item.setFormattedSize(FormatUtils.formatBytes(f.length()));
+                    item.setFormattedDate(sdf.format(new Date(f.lastModified())));
+                    item.setLastModified(f.lastModified());
+                } else {
+                    long fb = e.getFileSize() != null ? e.getFileSize() : 0;
+                    item.setSizeBytes(fb);
+                    item.setFormattedSize(fb > 0 ? FormatUtils.formatBytes(fb) : "-");
+                    if (e.getCreatedAt() != null) {
+                        item.setFormattedDate(e.getCreatedAt().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+                        item.setLastModified(e.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
+                    }
+                }
+                result.add(item);
+            }
+        } catch (Exception ex) {
+            logger.warn("[Files] GC 로그 목록 병합 실패 — GC Log 탭이 비어 보인다: {}", ex.getMessage());
+        }
+        return result;
     }
 
     private List<AnalysisHistoryItem> buildCoreDumpHistory(boolean isAdmin) {
@@ -728,6 +814,10 @@ public class HeapDumpViewController {
         // JVM 힙 설정(-Xms/-Xmx) — 원격 전송 시 자동 수집 + 수동/후보 선택/재수집 (2026-09-11). 빈 뷰도 Map 이라 null 가드 불필요.
         model.addAttribute("jvmHeap", jvmHeapInfoService.view(filename,
                 result.getTotalHeapSize() > 0 ? result.getTotalHeapSize() : null));
+
+        // GC 로그 연결 상태(2026-09-14) — 항상 Map(matched/candidates/count/hasMatch). 칩 + 'gc-log' 패널이 읽는다.
+        model.addAttribute("gcLog", gcLogMatchService != null ? gcLogMatchService.viewForDump(filename)
+                : java.util.Map.of("matched", java.util.List.of(), "candidates", java.util.List.of(), "count", 0, "candidateCount", 0, "hasMatch", false));
 
         // JEUS Instance/Domain — System Properties(jeus.server.name/jeus.domain.name) 자동 식별 + 수동 편집.
         // 수동 편집값이 있으면 우선, 없으면 자동 식별값으로 폴백. 둘 다 없으면 빈 값(미지정, 편집 가능).

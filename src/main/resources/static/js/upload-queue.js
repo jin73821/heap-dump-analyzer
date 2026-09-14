@@ -23,7 +23,7 @@
     var _uploading = false;
     var _uploadCancelled = false;
     var _currentXhr = null;
-    var _uploadMode = 'auto'; // 'auto' | 'heapdump' | 'coredump'
+    var _uploadMode = 'auto'; // 'auto' | 'heapdump' | 'coredump' | 'gclog'
 
     /* ── 작은 유틸 ── */
     function fmtB(b) {
@@ -101,12 +101,66 @@
         var base = name.split('/').pop();
         return base.indexOf('.') === -1;
     }
-    function resolveFileType(name) {
+    /* ── GC 로그 파일 판별 (2026-09-14) — gc.log / gc.log.3 / gc.log.1.current / gc-2026-09-14_00-52-33.log / app_gc.log.gz / x.gclog */
+    var _GC_LOG_RE = /(^|[-_.])gc(log)?([-_.][^\/]*)?\.log(\.\d+)?(\.current)?(\.gz)?$|\.gclog(\.gz)?$/i;
+    function isGcLogFilename(name) {
+        var base = (name || '').split('/').pop();
+        return _GC_LOG_RE.test(base);
+    }
+    /* ── GC 로그 내용 판별 (2026-09-14) — 서버 GcLogFormatDetector 와 같은 규칙.
+     *    파일명 규칙에 안 맞는 GC 로그(verbosegc.txt, jvm_20260914.out …)도 대시보드에서 GC 로그로 분류하려고
+     *    앞부분 64KB 만 읽는다(힙 덤프 확장자·코어 이름은 읽지 않는다 — 수 GB 파일도 slice 라 비용 없음). */
+    var _SNIFF_BYTES = 64 * 1024;
+    var _UNIFIED_LINE = /^(\[[^\]]*\]){2,}/;
+    var _UNIFIED_GC_TAG = /\[(gc|gc,[a-z,]+)\s*\]/;
+    var _JDK8_LINE = /^(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{4}: )?(?:\d+\.\d+: )?\[(GC|Full GC|CMS-concurrent)/;
+    var _JDK8_HEADER = /^(Java HotSpot\(TM\)|OpenJDK) .*VM \(.*\) for /;
+    function looksLikeGcLogText(text) {
+        var lines = String(text || '').split(/\r?\n/, 200);
+        for (var i = 0; i < lines.length; i++) {
+            var l = lines[i];
+            if (!l) continue;
+            if (_UNIFIED_LINE.test(l) && _UNIFIED_GC_TAG.test(l)) return true;
+            if (_JDK8_LINE.test(l) || _JDK8_HEADER.test(l)) return true;
+        }
+        return false;
+    }
+    var _gcByContent = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+    function needsSniff(file) {
+        var n = file.name || '';
+        if (!file.slice || !file.size) return false;
+        if (isCoreDumpFilename(n) || isRecognizedHeapExt(n) || isGcLogFilename(n)) return false;
+        if (/\.gz$/i.test(n)) return false;          // 압축본은 내용을 볼 수 없다 — 이름 규칙(.log.gz)으로만
+        return true;
+    }
+    /** 내용 판별이 필요한 파일만 앞부분을 읽어 GC 로그면 표시해 둔다. 실패해도 업로드는 막지 않는다. */
+    function sniffGcLogs(files) {
+        if (!_gcByContent || _uploadMode !== 'auto') return Promise.resolve();
+        var jobs = [];
+        for (var i = 0; i < files.length; i++) {
+            (function (f) {
+                if (!needsSniff(f)) return;
+                var blob = f.slice(0, _SNIFF_BYTES);
+                var read = blob.text ? blob.text() : new Promise(function (res, rej) {
+                    var fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.onerror = function () { rej(fr.error); }; fr.readAsText(blob);
+                });
+                jobs.push(read.then(function (t) { if (looksLikeGcLogText(t)) _gcByContent.add(f); })
+                    .catch(function (e) { if (global.Common) global.Common.logIgnored('[UploadQueue] GC 로그 내용 판별 실패 — 이름 규칙만 사용: ' + f.name, e); }));
+            })(files[i]);
+        }
+        return Promise.all(jobs);
+    }
+    function resolveFileType(file) {
+        var name = typeof file === 'string' ? file : file.name;
         if (_uploadMode === 'heapdump') return 'heapdump';
         if (_uploadMode === 'coredump') return 'coredump';
-        // auto: 파일명 패턴으로 자동 판별
+        if (_uploadMode === 'gclog') return 'gclog';
+        // auto: 코어 이름 → 힙 확장자 → GC 로그(이름 규칙 또는 내용) → 기타
         if (isCoreDumpFilename(name)) return 'coredump';
-        if (!isRecognizedHeapExt(name) && hasNoExtension(name)) return 'others';
+        if (isRecognizedHeapExt(name)) return 'heapdump';
+        if (isGcLogFilename(name)) return 'gclog';
+        if (_gcByContent && typeof file !== 'string' && _gcByContent.has(file)) return 'gclog';
+        if (hasNoExtension(name)) return 'others';
         return 'heapdump';
     }
 
@@ -142,14 +196,19 @@
     /* ── 큐 진입 ── */
     function enqueueFiles(files) {
         if (_uploading) { toast('업로드가 진행 중입니다. 완료 후 다시 시도해주세요.', 'error'); return; }
+        var list = Array.prototype.slice.call(files || []);
+        sniffGcLogs(list).then(function () { enqueueResolved(list); });
+    }
+
+    function enqueueResolved(files) {
         var valid = [], rejected = [], oversized = [];
         var heapExts = ['.hprof', '.bin', '.dump', '.hprof.gz', '.bin.gz', '.dump.gz'];
         for (var i = 0; i < files.length; i++) {
-            var ftype = resolveFileType(files[i].name);
+            var ftype = resolveFileType(files[i]);
             var lower = files[i].name.toLowerCase();
             var extOk;
-            if (ftype === 'coredump') {
-                extOk = true; // 코어 덤프는 확장자 제한 없음
+            if (ftype === 'coredump' || ftype === 'gclog') {
+                extOk = true; // 코어 덤프·GC 로그는 확장자가 제각각(core.1234, gc.log.3) — 서버가 형식을 다시 검사한다
             } else {
                 extOk = global.ALLOW_ALL_EXT || heapExts.some(function(ext) { return lower.endsWith(ext); });
             }
@@ -219,7 +278,7 @@
             toast('최대 ' + _MAX_QUEUE + '개까지 동시 업로드 가능합니다. 처음 ' + _MAX_QUEUE + '개만 처리합니다.', 'error');
             valid = valid.slice(0, _MAX_QUEUE);
         }
-        _uploadQueue = valid.map(function(f) { return { file: f, uploadName: f.name, status: 'pending', fileType: resolveFileType(f.name) }; });
+        _uploadQueue = valid.map(function(f) { return { file: f, uploadName: f.name, status: 'pending', fileType: resolveFileType(f) }; });
         fetch('/api/disk/check').then(function(r) { return r.json(); }).then(function(d) {
             var totalSize = valid.reduce(function(s, f) { return s + f.size; }, 0);
             if (d.usableSpaceBytes != null && totalSize > d.usableSpaceBytes) {
@@ -232,7 +291,8 @@
     function startDuplicateChecks(idx) {
         if (idx >= _uploadQueue.length) { showStagedModal(); return; }
         var item = _uploadQueue[idx];
-        if (item.status === 'skipped' || item.fileType === 'coredump') { startDuplicateChecks(idx + 1); return; }
+        // 힙 중복 검사는 힙덤프 저장소 기준 — 코어·GC 로그는 저장소가 달라 검사하지 않는다(GC 로그는 서버가 같은 이름을 409 로 거부)
+        if (item.status === 'skipped' || item.fileType === 'coredump' || item.fileType === 'gclog') { startDuplicateChecks(idx + 1); return; }
         computePartialHash(item.file).then(function(hash) {
             item._hash = hash;
             fetch('/api/upload/check', {
@@ -347,6 +407,8 @@
             var typeBadge = '';
             if (q.fileType === 'coredump') {
                 typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#FEF3C7;color:#92400E;font-weight:700;margin-left:4px;vertical-align:middle">CORE</span>';
+            } else if (q.fileType === 'gclog') {
+                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#DCFCE7;color:#166534;font-weight:700;margin-left:4px;vertical-align:middle">GC LOG</span>';
             } else if (q.fileType === 'exec') {
                 typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#EDE9FE;color:#5B21B6;font-weight:700;margin-left:4px;vertical-align:middle">EXEC</span>';
             } else if (q.fileType === 'others') {
@@ -423,6 +485,8 @@
             var typeBadge = '';
             if (q.fileType === 'coredump') {
                 typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#FEF3C7;color:#92400E;font-weight:700;margin-left:4px;vertical-align:middle">CORE</span>';
+            } else if (q.fileType === 'gclog') {
+                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#DCFCE7;color:#166534;font-weight:700;margin-left:4px;vertical-align:middle">GC LOG</span>';
             } else if (q.fileType === 'others') {
                 typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#F3F4F6;color:#6B7280;font-weight:700;margin-left:4px;vertical-align:middle">?</span>';
             }
@@ -526,7 +590,8 @@
                 item.status = 'error';
                 try {
                     var j = JSON.parse(xhr.responseText);
-                    if (j && j.message) item._error = j.message;
+                    // 힙·코어 업로드는 {message}, GC 로그 업로드는 {error} 로 사유를 준다
+                    if (j && (j.message || j.error)) item._error = j.message || j.error;
                 } catch (e) { item._error = '서버 오류 (HTTP ' + xhr.status + ')'; }
             }
             renderUploadModalList();
@@ -543,6 +608,11 @@
             var fd = new FormData();
             fd.append('coreFile', item.file, item.uploadName);
             xhr.send(fd);
+        } else if (item.fileType === 'gclog') {
+            xhr.open('POST', '/api/gc-log/upload');
+            var fdg = new FormData();
+            fdg.append('gcLogFile', item.file, item.uploadName);
+            xhr.send(fdg);
         } else {
             xhr.open('POST', '/api/upload');
             var fd = new FormData();
@@ -639,6 +709,9 @@
     global.UploadQueue = {
         enqueueFiles: enqueueFiles,
         bindZone: bindZone,
+        /** 테스트·진단용 — 파일 하나의 업로드 분류를 돌려준다(내용 판별 포함). */
+        detectFileType: function(file) { return sniffGcLogs([file]).then(function () { return resolveFileType(file); }); },
+        looksLikeGcLogText: looksLikeGcLogText,
         setUploadMode: function(mode) { _uploadMode = mode; },
         getLastQueueTypes: function() {
             return _uploadQueue.map(function(item) {

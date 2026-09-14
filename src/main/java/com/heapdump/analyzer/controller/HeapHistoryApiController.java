@@ -56,6 +56,85 @@ public class HeapHistoryApiController {
         return auth != null ? auth.getName() : "unknown";
     }
 
+    /** GC 로그 매칭(2026-09-14) — 선택 주입. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.service.GcLogMatchService gcLogMatchService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.repository.GcLogAnalysisRepository gcLogAnalysisRepository;
+
+    /** 덤프 기준 GC 로그 연결 상태(칩·패널). */
+    @GetMapping("/api/history/{filename:.+}/gc-log")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> gcLogView(@org.springframework.web.bind.annotation.PathVariable String filename) {
+        String safe = FilenameValidator.validate(filename);
+        Map<String, Object> v = gcLogMatchService == null ? new HashMap<>() : gcLogMatchService.viewForDump(safe);
+        v.put("success", true);
+        return ResponseEntity.ok(v);
+    }
+
+    /** 덤프 쪽에서 GC 로그 연결({@code gcLogFilename})/해제(null → 이 덤프를 가리키는 로그 전부 manual 해제). */
+    @PostMapping("/api/history/{filename:.+}/gc-log")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> gcLogLink(@org.springframework.web.bind.annotation.PathVariable String filename,
+                                                         @RequestBody Map<String, Object> body, Authentication auth) {
+        String safe = FilenameValidator.validate(filename);
+        Map<String, Object> resp = new HashMap<>();
+        if (gcLogMatchService == null || gcLogAnalysisRepository == null) {
+            resp.put("success", false); resp.put("error", "GC 로그 기능이 비활성입니다."); return ResponseEntity.status(503).body(resp);
+        }
+        Object gv = body.get("gcLogFilename");
+        String gc = gv == null || gv.toString().isBlank() ? null : gv.toString();
+        if (gc != null) {
+            String safeGc = com.heapdump.analyzer.util.FilenameValidator.validateSafe(gc);
+            com.heapdump.analyzer.model.entity.GcLogAnalysisEntity e = gcLogAnalysisRepository.findByFilename(safeGc).orElse(null);
+            if (e == null) { resp.put("success", false); resp.put("error", "GC 로그 이력이 없습니다: " + safeGc); return ResponseEntity.status(404).body(resp); }
+            gcLogMatchService.setManual(e, safe);
+            logger.info("[GcLog] action=match source=dump-page dump={} gclog={} by={}", safe, safeGc, who(auth));
+        } else {
+            int n = 0;
+            for (com.heapdump.analyzer.model.entity.GcLogAnalysisEntity e : gcLogAnalysisRepository.findByMatchedDumpFilename(safe)) {
+                gcLogMatchService.setManual(e, null);
+                n++;
+            }
+            logger.info("[GcLog] action=unlink source=dump-page dump={} count={} by={}", safe, n, who(auth));
+        }
+        Map<String, Object> v = gcLogMatchService.viewForDump(safe);
+        v.put("success", true);
+        return ResponseEntity.ok(v);
+    }
+
+    /** 덤프 쪽 수동 선택 모달용 GC 로그 목록. */
+    @org.springframework.web.bind.annotation.GetMapping("/api/history/{filename:.+}/gc-log/options")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> gcLogOptions(@org.springframework.web.bind.annotation.PathVariable String filename,
+                                                            @org.springframework.web.bind.annotation.RequestParam(value = "q", required = false) String q) {
+        String safe = FilenameValidator.validate(filename);
+        Map<String, Object> resp = new HashMap<>();
+        List<Map<String, Object>> options = new java.util.ArrayList<>();
+        if (gcLogAnalysisRepository != null) {
+            String needle = q == null ? "" : q.trim().toLowerCase(java.util.Locale.ROOT);
+            for (com.heapdump.analyzer.model.entity.GcLogAnalysisEntity e : gcLogAnalysisRepository.findAllByOrderByCreatedAtDesc()) {
+                if (!needle.isEmpty() && !(e.getFilename().toLowerCase(java.util.Locale.ROOT).contains(needle)
+                        || (e.getServerName() != null && e.getServerName().toLowerCase(java.util.Locale.ROOT).contains(needle)))) continue;
+                Map<String, Object> m = new java.util.LinkedHashMap<>();
+                m.put("filename", e.getFilename());
+                m.put("serverName", e.getServerName());
+                m.put("status", e.getStatus());
+                m.put("collector", e.getCollector());
+                m.put("logStart", e.getLogStart() == null ? null : e.getLogStart().toString().replace('T', ' '));
+                m.put("logEnd", e.getLogEnd() == null ? null : e.getLogEnd().toString().replace('T', ' '));
+                m.put("matchedDumpFilename", e.getMatchedDumpFilename());
+                m.put("matchSource", e.getMatchSource());
+                m.put("linkedHere", safe.equals(e.getMatchedDumpFilename()));
+                options.add(m);
+                if (options.size() >= 200) break;
+            }
+        }
+        resp.put("success", true);
+        resp.put("options", options);
+        return ResponseEntity.ok(resp);
+    }
+
     @PostMapping("/api/history/bulk-delete")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> bulkDeleteHistory(@RequestBody Map<String, Object> body) {

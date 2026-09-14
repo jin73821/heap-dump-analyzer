@@ -27,7 +27,7 @@
 
     function ignored(tag, e) { if (global.Common) global.Common.logIgnored('[AnalyzeConfirm] ' + tag, e); }
 
-    var KIND_LABEL = { heap: '힙 덤프', core: '코어 덤프', others: '기타(Others)' };
+    var KIND_LABEL = { heap: '힙 덤프', core: '코어 덤프', gclog: 'GC 로그', others: '기타(Others)' };
 
     /**
      * 힙 덤프 확장자 — .hprof/.bin/.dump/.dmp (+ .gz 압축). 업로드 큐(_HEAP_EXTS)·FilenameValidator 와 같은 목록이다.
@@ -65,6 +65,7 @@
             '.ac-kind{display:inline-block;font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px}' +
             '.ac-kind.heap{background:#DBEAFE;color:#1E40AF}' +
             '.ac-kind.core{background:#FEF3C7;color:#92400E}' +
+            '.ac-kind.gclog{background:#DCFCE7;color:#166534}' +
             '.ac-kind.others{background:#F3F4F6;color:#4B5563}' +
             '.ac-queue{font-size:12px;line-height:1.55;border-radius:8px;padding:9px 12px;margin-bottom:12px;' +
             'background:#F0FDF4;color:#166534;border-left:3px solid #22C55E}' +
@@ -146,8 +147,12 @@
     }
 
     function defaultTarget(kind, filename) {
-        // 코어는 GDB 분석 진행 화면, 힙·기타는 MAT 진행 화면. 두 화면 모두 이미 SUCCESS 면 결과로 리다이렉트한다.
-        return (kind === 'core' ? '/core-dump/progress/' : '/analyze/') + encodeURIComponent(filename);
+        // 코어는 GDB 분석 진행 화면, GC 로그는 결과 페이지, 힙·기타는 MAT 진행 화면. 세 화면 모두 이미 SUCCESS 면 결과를 보여준다.
+        // GC 로그의 ?start=1 은 '확인했으니 시작하라' 는 뜻 — 없으면 결과 페이지는 실패(ERROR) 기록을 보여 주기만 한다
+        // (2026-09-14: 실패 행에서 '분석'을 눌러도 옛 오류만 다시 보이고 요청이 나가지 않았다).
+        if (kind === 'core') return '/core-dump/progress/' + encodeURIComponent(filename);
+        if (kind === 'gclog') return '/gc-log/analyze/' + encodeURIComponent(filename) + '?start=1';
+        return '/analyze/' + encodeURIComponent(filename);
     }
 
     function setQueue(cls, html) {
@@ -202,10 +207,12 @@
 
         els.sub.textContent = kind === 'core'
             ? '아래 코어 덤프의 GDB 분석을 시작합니다.'
+            : kind === 'gclog'
+            ? '아래 GC 로그를 파싱해 일시정지·처리량·힙 추세를 분석합니다. 수 초에서 수십 초 걸립니다.'
             : '아래 파일의 Eclipse MAT 분석을 시작합니다. 덤프 크기에 따라 수 분 이상 걸릴 수 있습니다.';
 
-        // 코어 파일은 원래 확장자가 없다(core, core.1234) — 확장자 경고는 MAT 로 가는 힙·기타에만
-        var extWarn = kind !== 'core' && !hasHeapDumpExtension(opts.filename);
+        // 코어 파일은 원래 확장자가 없고(core, core.1234) GC 로그는 .log/.log.N/.gz 다 — 확장자 경고는 MAT 로 가는 힙·기타에만
+        var extWarn = kind !== 'core' && kind !== 'gclog' && !hasHeapDumpExtension(opts.filename);
         if (extWarn) {
             var esc = global.Common.escHtml;
             els.warn.innerHTML = (kind === 'others' ? '<b>기타(Others)</b> 유형으로 분류된 파일입니다. ' : '')
@@ -221,7 +228,7 @@
 
         els.ok.disabled = false;
         els.ok.textContent = extWarn ? '그래도 분석 시작' : '분석 시작';
-        if (kind === 'core') { queueSeq++; els.queue.hidden = true; }
+        if (kind === 'core' || kind === 'gclog') { queueSeq++; els.queue.hidden = true; }   // 별도 실행기 — MAT 대기열과 무관
         else loadQueue(opts.filename);
 
         lastFocus = document.activeElement;

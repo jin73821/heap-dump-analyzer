@@ -38,6 +38,8 @@ class RemoteDumpPathGuardTest {
         s.setSshUser("sscuser");
         s.setDumpPath("/opt/dumps\n/data/heap dumps/");
         s.setCoreDumpPath("/var/crash");
+        s.setScanGcLog(true);
+        s.setGcLogPath("/var/log/jvm");
         return s;
     }
 
@@ -63,6 +65,33 @@ class RemoteDumpPathGuardTest {
         assertFalse(RemoteDumpService.isUnderConfiguredPaths(s, "/etc/passwd", "heap"));
         assertTrue(RemoteDumpService.isUnderConfiguredPaths(s, "/var/crash/core.1", "core"));
         assertFalse(RemoteDumpService.isUnderConfiguredPaths(s, "/opt/dumps/core.1", "core"), "코어는 코어 경로 기준");
+        // GC 로그(2026-09-14) — 세 번째 경로 집합. 힙 경로 밑의 gc.log 는 gclog 종류로는 거부된다
+        assertTrue(RemoteDumpService.isUnderConfiguredPaths(s, "/var/log/jvm/gc.log.0", "gclog"));
+        assertFalse(RemoteDumpService.isUnderConfiguredPaths(s, "/opt/dumps/gc.log", "gclog"), "GC 로그는 GC 로그 경로 기준");
+        assertFalse(RemoteDumpService.isUnderConfiguredPaths(s, "/var/log/jvm/x.hprof", "heap"), "반대로 GC 경로는 힙 종류로 거부");
+        assertTrue(RemoteDumpService.isUnderConfiguredPaths(s, "/opt/dumps/a.hprof", null), "종류 미지정은 힙");
+    }
+
+    @Test
+    @DisplayName("GC 로그 find 글롭은 상수 — gc.log·회전본·날짜형·gz 는 잡고 logic.log·magic.log 는 잡지 않는다")
+    void gcLogGlobsAreSelective() {
+        String[] globs = RemoteDumpService.GC_LOG_NAME_GLOBS;
+        assertTrue(globs.length > 0);
+        for (String g : globs) assertFalse(g.startsWith("*gc*"), "'*gc*.log*' 류는 logic.log 를 잡는다: " + g);
+        String[] shouldMatch = {"gc.log", "gc.log.0", "gc.log.3.current", "gc.log.gz", "gc-2026-09-14_00-52-33.log", "gc_pid123.log.1",
+                "app-gc.log", "app_gc.log.2.gz", "app.gc.log", "gclog.txt", "jvm.gclog", "gc-was1.log"};
+        String[] shouldNot = {"logic.log", "magic.log", "catalina.out", "app.log", "gc.hprof", "server.log.gz"};
+        for (String n : shouldMatch) assertTrue(anyGlob(globs, n), "잡아야 함: " + n);
+        for (String n : shouldNot) assertFalse(anyGlob(globs, n), "잡으면 안 됨: " + n);
+    }
+
+    /** find -name 과 같은 규칙의 글롭 매칭(‘*’ 만, 경로 구분자 없음). */
+    private static boolean anyGlob(String[] globs, String name) {
+        for (String g : globs) {
+            String rx = "^" + java.util.regex.Pattern.quote(g).replace("*", "\\E.*\\Q") + "$";
+            if (name.matches(rx)) return true;
+        }
+        return false;
     }
 
     @Test

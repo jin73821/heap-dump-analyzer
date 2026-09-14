@@ -42,6 +42,11 @@ import java.util.Map;
 @Controller
 public class HeapAiApiController {
 
+    /** GC 로그 요약 주입(2026-09-14) — 선택 주입. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.service.GcLogAnalyzerService gcLogAnalyzerService;
+
+
     private static final Logger logger = LoggerFactory.getLogger(HeapAiApiController.class);
 
     private final HeapDumpAnalyzerService analyzerService;
@@ -176,6 +181,17 @@ public class HeapAiApiController {
                 prompt = prompt + "\n\n" + oomSection;
             }
             logger.info("[AI-Insight] OOM context injected: {} char(s)", oomSection.length());
+        }
+        // 매칭된 GC 로그 요약(2026-09-14) — OOM 블록과 같은 자리(첫 '== ' 섹션 앞)에 끼운다. 미연결이면 빈 문자열.
+        String gcSection = gcLogAnalyzerService == null ? "" : gcLogAnalyzerService.buildGcPromptSectionForDump(filename);
+        if (!gcSection.isEmpty()) {
+            int firstSection = prompt.indexOf("\n== ");
+            if (firstSection > 0) {
+                prompt = prompt.substring(0, firstSection) + "\n\n" + gcSection + prompt.substring(firstSection);
+            } else {
+                prompt = prompt + "\n\n" + gcSection;
+            }
+            logger.info("[AI-Insight] GC context injected: {} char(s)", gcSection.length());
         }
 
         logger.info("[AI-Insight][REQ] 분석 요청 수신 — file='{}', promptLen={} chars, save={}, provider={}",

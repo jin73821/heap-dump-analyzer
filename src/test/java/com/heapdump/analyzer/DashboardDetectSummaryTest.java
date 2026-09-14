@@ -84,6 +84,9 @@ class DashboardDetectSummaryTest {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("_csrf", new CsrfStub());
         m.put("files", List.of(file));
+        m.put("recentFiles", List.of(new com.heapdump.analyzer.model.dto.RecentFileItem(
+                new com.heapdump.analyzer.model.HeapDumpFile("dump.hprof", "/x/dump.hprof", 157L << 20, 0L, false, 0L, 0L), "heap", "SUCCESS", false)));
+        m.put("recentCount", 1);
         m.put("fileCount", 1);
         m.put("totalSize", "157 MB");
         m.put("analyzedCount", 1L);
@@ -150,5 +153,44 @@ class DashboardDetectSummaryTest {
         // 컨테이너 쿼리 미지원 브라우저용 2차 방어 — 최소한 말줄임으로 끝나야 한다(넘쳐서 옆 카드를 침범 금지)
         assertTrue(html.contains("white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"),
                 "말줄임 폴백이 없다 — 컨테이너 쿼리 미지원 시 라벨이 카드 밖으로 삐져나간다");
+    }
+
+    @Test
+    @DisplayName("Recent Files: GC 로그 항목은 GC 경로·배지·확인 모달 kind 로, 힙 항목은 힙 경로로 렌더된다 (2026-09-14)")
+    void recentFilesRenderGcLogWithGcRoutes() {
+        Map<String, Object> m = dashboardModel();
+        com.heapdump.analyzer.model.HeapDumpFile gcDone = new com.heapdump.analyzer.model.HeapDumpFile("gc.log", "/g/gc.log", 53_251L, 2L, false, 53_251L, 0L);
+        com.heapdump.analyzer.model.HeapDumpFile gcNew = new com.heapdump.analyzer.model.HeapDumpFile("gc.log.1", "/g/gc.log.1", 10L, 1L, false, 10L, 0L);
+        com.heapdump.analyzer.model.HeapDumpFile gcRun = new com.heapdump.analyzer.model.HeapDumpFile("gc.log.2", "/g/gc.log.2", 10L, 1L, false, 10L, 0L);
+        com.heapdump.analyzer.model.HeapDumpFile heapNew = new com.heapdump.analyzer.model.HeapDumpFile("app.hprof", "/h/app.hprof", 10L, 0L, false, 10L, 0L);
+        m.put("recentFiles", List.of(
+                new com.heapdump.analyzer.model.dto.RecentFileItem(gcDone, "gclog", "SUCCESS", false),
+                new com.heapdump.analyzer.model.dto.RecentFileItem(gcNew, "gclog", "NOT_ANALYZED", false),
+                new com.heapdump.analyzer.model.dto.RecentFileItem(gcRun, "gclog", "ANALYZING", false),
+                new com.heapdump.analyzer.model.dto.RecentFileItem(heapNew, "heap", "NOT_ANALYZED", false)));
+        m.put("recentCount", 7);
+        String raw = render("index", m);
+        assertTrue(raw.trim().endsWith("</html>"), "문서 끝까지 렌더되지 않았다");
+        String html = raw.replaceAll("\\s+", " ");   // 속성 사이 개행·들여쓰기 무시
+        assertTrue(html.contains("(4 / 7)"), "헤더 건수는 병합 목록 기준");
+
+        assertTrue(html.contains("data-name=\"gc.log\" data-kind=\"gclog\""), "GC 로그 항목 kind");
+        assertTrue(html.contains("<div class=\"ext-badge\">GC</div>") && html.contains("file-gclog"), "GC 배지·클래스");
+        assertTrue(html.contains("href=\"/gc-log/analyze/gc.log\" class=\"fb v\""), "분석 완료 GC 로그는 GC 결과 페이지로 — 힙 /analyze/result 로 가면 안 된다");
+        assertFalse(html.contains("/analyze/result/gc.log"), "GC 로그에 힙 결과 경로");
+        assertTrue(html.contains("href=\"/gc-log/analyze/gc.log.1?start=1\" class=\"fb p\""), "미분석 GC 로그의 분석 폴백 href 는 start=1");
+        assertTrue(html.contains("data-filename=\"gc.log.1\" data-kind=\"gclog\""), "분석 확인 모달 kind gclog");
+        assertTrue(html.contains("href=\"/gc-log/analyze/gc.log.2\" class=\"fb analyzing\""), "GC 분석 중 버튼");
+        assertTrue(html.contains("href=\"/analyze/app.hprof\" class=\"fb p\"") && html.contains("data-filename=\"app.hprof\" data-kind=\"heap\""), "힙 항목은 종전 경로");
+        assertTrue(html.contains("data-url=\"/delete/app.hprof\" data-kind=\"heap\""), "힙 삭제는 종전 form 경로");
+        assertTrue(html.contains("title=\"Delete\" data-name=\"gc.log\" data-kind=\"gclog\" onclick=\"showDeleteModal(this.dataset.name,this.dataset.url,this.dataset.kind)"),
+                "GC 삭제는 힙 /delete URL 없이(빈 값은 속성째 빠진다) kind 로 분기");
+        assertTrue(html.contains("title=\"Download\" data-name=\"gc.log\" data-size=\"52.00 KB\" data-kind=\"gclog\" onclick=\"showDownloadModal("), "GC 다운로드 버튼도 kind 를 넘긴다");
+
+        // JS 분기 — 다운로드·삭제·분석 중 폴링
+        assertTrue(html.contains("(_dlKind === 'gclog' ? '/api/gc-log/download/' : '/download/')"), "GC 다운로드 경로");
+        assertTrue(html.contains("Common.fetchJSON('/api/gc-log/' + encodeURIComponent(filename) + '?deleteFile=true', { method: 'DELETE' })"), "GC 삭제 API");
+        assertTrue(html.contains("if (!d || d.success !== true)"), "삭제 응답 success 확인(함정 27)");
+        assertTrue(html.contains("if (item.getAttribute('data-kind') === 'gclog') return;"), "힙 MAT 큐 폴링이 GC 항목을 건드리지 않는다");
     }
 }

@@ -587,17 +587,25 @@ public class LlmConfigService {
     }
 
     public Map<String, Object> callLlmAnalysis(String prompt) {
+        return callLlmAnalysis(prompt, null);
+    }
+
+    /**
+     * 시스템 프롬프트를 바꿔 부르는 오버로드(2026-09-14, GC 로그 해석용). null 이면 힙 덤프 전문가 문구(기본).
+     * 게이트·Lease 규약은 1-인자 버전과 동일 — 새 호출 메서드는 반드시 이 안에서만 만든다.
+     */
+    public Map<String, Object> callLlmAnalysis(String prompt, String systemPromptOverride) {
         LlmRateLimitService.Lease lease = acquireGate("analyze");
         if (!lease.allowed()) return rateLimitResult(lease);
         try {
-            return doCallLlmAnalysis(prompt);
+            return doCallLlmAnalysis(prompt, systemPromptOverride);
         } finally {
             lease.close();
         }
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, Object> doCallLlmAnalysis(String prompt) {
+    private Map<String, Object> doCallLlmAnalysis(String prompt, String systemPromptOverride) {
         Map<String, Object> result = new LinkedHashMap<>();
 
         if (!llmEnabled) {
@@ -656,7 +664,8 @@ public class LlmConfigService {
             conn.setReadTimeout(llmTimeoutReadSeconds * 1000);
             conn.setRequestProperty("Content-Type", "application/json");
 
-            String systemPrompt = "당신은 Java 힙 덤프 분석 전문가입니다. "
+            String systemPrompt = systemPromptOverride != null ? systemPromptOverride
+                : "당신은 Java 힙 덤프 분석 전문가입니다. "
                 + "Eclipse MAT 분석 결과를 해석하여 메모리 누수의 근본 원인을 진단하고 "
                 + "실행 가능한 조치를 한국어로 제안합니다. "
                 + "JVM 힙 설정(-Xms, -Xmx)이 제공되면 실제 힙 사용량과 비교하여 "

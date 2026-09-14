@@ -192,6 +192,12 @@ function showPanel(name, btn) {
         renderDomBars();
     }
 
+    // GC 로그 패널: 첫 진입 시 연결된 로그 요약을 1회 조회 (2026-09-14)
+    if (name === 'gc-log' && !_gcLogPanelLoaded) {
+        _gcLogPanelLoaded = true;
+        loadGcLogPanel();
+    }
+
     // iframe lazy-load (Overview, Top Components, Suspects, Dominator Tree Raw)
     var iframeMap = {
         'mat-overview': 'matOverviewIframe',
@@ -3858,6 +3864,10 @@ function buildAnalysisPrompt(data) {
     if (data.jvmXms || data.jvmXmx) {
         schema += ',"jvmAdvice":"JVM 힙 설정 분석: 현재 설정 대비 사용량 평가, 힙 여유 공간 비율, Xmx 증설/축소 권고 및 권장 값"';
     }
+    // 서버가 == GC 로그 요약 == 섹션을 주입하는 경우(연결된 GC 로그) — GC 관점 해석을 별도 키로 받는다
+    if (typeof GC_LOG_MATCHED !== 'undefined' && GC_LOG_MATCHED) {
+        schema += ',"gcAdvice":"연결된 GC 로그 관점: 덤프 시점 전후의 GC 추세(Full GC 빈도·처리량·힙 증가)와 힙 덤프 내용의 정합성, GC 튜닝 권고"';
+    }
     schema += '}';
     p.push(schema);
     return p.join('\n');
@@ -3998,6 +4008,16 @@ function showAiResult(result, isSaved) {
         setTextWithLineBreaks(jvmDesc, data.jvmAdvice);
     } else if (jvmCard) {
         jvmCard.style.display = 'none';
+    }
+
+    // GC 로그 연계 분석 카드 (2026-09-14)
+    var gcCard = document.getElementById('aiGcAdviceCard');
+    var gcDesc = document.getElementById('aiGcAdviceDesc');
+    if (gcCard && gcDesc && data.gcAdvice && String(data.gcAdvice).trim()) {
+        gcCard.style.display = '';
+        setTextWithLineBreaks(gcDesc, data.gcAdvice);
+    } else if (gcCard) {
+        gcCard.style.display = 'none';
     }
 
     // 메타 정보
@@ -5406,3 +5426,215 @@ document.addEventListener('keydown', function(e) {
         }
     }
 });
+
+
+// ═══════════════════════════════════════════════════════════════
+// GC 로그 연결 칩 + 패널 (2026-09-14)
+//   칩: 이 덤프에 매칭된 GC 로그(자동/수동) · 후보 N · 열기/선택/해제.
+//   패널: /api/gc-log/{logfn}/summary?dump={fn} 를 첫 진입 시 1회 조회 → KPI 6장 + 미니 라인 차트(덤프 시각 점선) + 소견 3.
+//   사이드바 배지는 배너 탭 클론 때문에 class(.gclog-nav-badge)로만 갱신(함정 8).
+// ═══════════════════════════════════════════════════════════════
+var _gcLogPanelLoaded = false;
+var _gcLogView = null;
+var _gcLogChart = null;
+
+function _gcApi(path) { return '/api/history/' + encodeURIComponent(FILENAME) + '/gc-log' + (path || ''); }
+
+function renderGcLogChip(view) {
+    _gcLogView = view || { matched: [], candidates: [], count: 0, candidateCount: 0, hasMatch: false };
+    var v = _gcLogView;
+    var nameEl = document.getElementById('gcLogChipName');
+    var flagsEl = document.getElementById('gcLogChipFlags');
+    var openBtn = document.getElementById('gcLogChipOpen');
+    var unlinkBtn = document.getElementById('gcLogChipUnlink');
+    if (nameEl) {
+        if (v.hasMatch) {
+            nameEl.textContent = v.matched[0].filename + (v.count > 1 ? ' 외 ' + (v.count - 1) : '');
+            nameEl.classList.remove('host-chip-empty');
+        } else {
+            nameEl.textContent = '미연결';
+            nameEl.classList.add('host-chip-empty');
+        }
+    }
+    if (flagsEl) {
+        flagsEl.innerHTML = '';
+        if (v.hasMatch) {
+            var f = document.createElement('span'); f.className = 'jvm-flag'; f.textContent = v.matched[0].source === 'auto' ? '자동' : '수동'; flagsEl.appendChild(f);
+        } else if (v.candidateCount > 0) {
+            var w = document.createElement('span'); w.className = 'jvm-flag jvm-flag-warn'; w.tabIndex = 0; w.textContent = '후보 ' + v.candidateCount;
+            w.setAttribute('data-tip', '자동 매칭이 확정하지 못한 GC 로그 후보가 있습니다 — 목록(☰)에서 고르세요.');
+            flagsEl.appendChild(w);
+        }
+    }
+    if (openBtn) openBtn.style.display = v.hasMatch ? '' : 'none';
+    if (unlinkBtn) unlinkBtn.style.display = v.hasMatch ? '' : 'none';
+    document.querySelectorAll('.gclog-nav-badge').forEach(function(b) { b.textContent = v.count; b.style.display = v.count > 0 ? '' : 'none'; });
+    if (typeof GC_LOG_MATCHED !== 'undefined') GC_LOG_MATCHED = !!v.hasMatch;
+    _gcLogPanelLoaded = false;   // 연결이 바뀌면 패널을 다시 채운다
+    var panel = document.getElementById('panel-gc-log');
+    if (panel && panel.classList.contains('active')) { _gcLogPanelLoaded = true; loadGcLogPanel(); }
+}
+
+function openGcLogPage() {
+    if (_gcLogView && _gcLogView.hasMatch) window.location.href = '/gc-log/analyze/' + encodeURIComponent(_gcLogView.matched[0].filename);
+}
+
+function unlinkGcLog() {
+    if (!confirm('GC 로그 연결을 해제할까요? 해제 후에는 자동 매칭이 다시 연결하지 않습니다.')) return;
+    Common.fetchJSON(_gcApi(), { method: 'POST', body: JSON.stringify({ gcLogFilename: null }) })
+        .then(function(v) { renderGcLogChip(v); })
+        .catch(function(e) { alert('해제 실패: ' + _jvmErrMsg(e, '알 수 없는 오류')); });
+}
+
+var _gcLogPick = null, _gcLogPickOptions = [];
+function openGcLogPickModal() {
+    var modal = document.getElementById('gcLogPickModal');
+    var list = document.getElementById('gcLogPickList');
+    if (!modal || !list) return;
+    _gcLogPick = null;
+    var confirmBtn = document.getElementById('gcLogPickConfirm');
+    if (confirmBtn) confirmBtn.disabled = true;
+    list.innerHTML = '<div style="color:#94a3b8;padding:8px 0">GC 로그 목록을 불러오는 중…</div>';
+    modal.classList.add('open');
+    var search = document.getElementById('gcLogPickSearch');
+    if (search && !search._wired) { search._wired = true; search.addEventListener('input', function() { _renderGcLogPick(search.value); }); }
+    Common.fetchJSON(_gcApi('/options')).then(function(d) { _gcLogPickOptions = d.options || []; _renderGcLogPick(search ? search.value : ''); })
+        .catch(function(e) { list.innerHTML = '<div style="color:#dc2626;padding:8px 0">조회 실패: ' + Common.escHtml(_jvmErrMsg(e, '')) + '</div>'; });
+}
+function _renderGcLogPick(q) {
+    var list = document.getElementById('gcLogPickList');
+    var esc = Common.escHtml;
+    q = (q || '').toLowerCase();
+    var rows = _gcLogPickOptions.filter(function(o) { return !q || o.filename.toLowerCase().indexOf(q) >= 0 || (o.serverName || '').toLowerCase().indexOf(q) >= 0; });
+    if (!rows.length) { list.innerHTML = '<div style="color:#94a3b8;padding:8px 0">GC 로그가 없습니다. <a href="/gc-log">GC 로그 페이지</a>에서 업로드하거나 Servers 에서 전송하세요.</div>'; return; }
+    list.innerHTML = rows.map(function(o) {
+        var tags = '';
+        if (o.linkedHere) tags += '<span class="jvm-pick-tag hit">현재 연결</span>';
+        else if (o.matchedDumpFilename) tags += '<span class="jvm-pick-tag warn">다른 덤프에 연결됨: ' + esc(o.matchedDumpFilename) + '</span>';
+        if (o.status !== 'SUCCESS') tags += '<span class="jvm-pick-tag">' + esc(o.status) + '</span>';
+        return '<label class="jvm-pick-row" data-fn="' + esc(o.filename) + '"><input type="radio" name="gcLogPick" value="' + esc(o.filename) + '">'
+            + '<div style="min-width:0;flex:1"><div class="jvm-pick-main">' + esc(o.filename) + '</div>'
+            + '<div class="jvm-pick-meta"><span>서버 <b>' + esc(o.serverName || '-') + '</b></span><span>수집기 <b>' + esc(o.collector || '-') + '</b></span>'
+            + (o.logStart ? '<span>기간 <b>' + esc(o.logStart) + ' ~ ' + esc(o.logEnd || '') + '</b></span>' : '') + '</div>'
+            + (tags ? '<div class="jvm-pick-meta">' + tags + '</div>' : '') + '</div></label>';
+    }).join('');
+    list.querySelectorAll('.jvm-pick-row').forEach(function(row) {
+        row.addEventListener('change', function() {
+            _gcLogPick = row.dataset.fn;
+            list.querySelectorAll('.jvm-pick-row').forEach(function(r) { r.classList.toggle('selected', r === row); });
+            var c = document.getElementById('gcLogPickConfirm'); if (c) c.disabled = false;
+        });
+    });
+}
+function closeGcLogPickModal() {
+    var modal = document.getElementById('gcLogPickModal');
+    if (modal) modal.classList.remove('open');
+}
+function confirmGcLogPick() {
+    if (!_gcLogPick) return;
+    var btn = document.getElementById('gcLogPickConfirm');
+    if (btn) btn.disabled = true;
+    Common.fetchJSON(_gcApi(), { method: 'POST', body: JSON.stringify({ gcLogFilename: _gcLogPick }) })
+        .then(function(v) { renderGcLogChip(v); closeGcLogPickModal(); })
+        .catch(function(e) { alert('연결 실패: ' + _jvmErrMsg(e, '알 수 없는 오류')); if (btn) btn.disabled = false; });
+}
+
+function loadGcLogPanel() {
+    var body = document.getElementById('gcLogPanelBody');
+    if (!body) return;
+    var esc = Common.escHtml;
+    var v = _gcLogView;
+    function render(view) {
+        if (!view || !view.hasMatch) {
+            var cands = (view && view.candidates) || [];
+            body.innerHTML = '<div class="gcl-panel-empty">이 덤프에 연결된 GC 로그가 없습니다.'
+                + (cands.length ? '<br>자동 매칭 후보 <b>' + cands.length + '건</b>이 있습니다 — 목록에서 고르세요.' : '<br>GC 로그를 Servers 에서 전송하거나 GC 로그 페이지에서 업로드한 뒤 연결하세요.')
+                + '<div class="btn-row"><button type="button" class="gcl-panel-btn primary" onclick="openGcLogPickModal()">GC 로그 연결</button>'
+                + '<a class="gcl-panel-btn" href="/gc-log">GC 로그 페이지</a></div></div>';
+            return;
+        }
+        var logfn = view.matched[0].filename;
+        body.innerHTML = '<div class="gcl-panel-empty">요약을 불러오는 중…</div>';
+        Common.fetchJSON('/api/gc-log/' + encodeURIComponent(logfn) + '/summary?dump=' + encodeURIComponent(FILENAME))
+            .then(function(s) { _renderGcLogPanel(view, s); })
+            .catch(function(e) {
+                _azFailed('GC 로그 요약 조회 실패', e);
+                body.innerHTML = '<div class="gcl-panel-empty">요약을 불러오지 못했습니다: ' + esc(_jvmErrMsg(e, '')) + '<div class="btn-row"><a class="gcl-panel-btn" href="/gc-log/analyze/' + encodeURIComponent(logfn) + '">GC 로그 결과 열기</a></div></div>';
+            });
+    }
+    if (v) render(v);
+    else Common.fetchJSON(_gcApi()).then(function(view) { _gcLogView = view; render(view); }).catch(function(e) { _azFailed('GC 로그 연결 조회 실패', e); render(null); });
+}
+
+function _renderGcLogPanel(view, s) {
+    var body = document.getElementById('gcLogPanelBody');
+    var esc = Common.escHtml;
+    var m = view.matched[0];
+    var link = '/gc-log/analyze/' + encodeURIComponent(m.filename);
+    if (!s || !s.available) {
+        body.innerHTML = '<div class="gcl-panel-empty">연결된 GC 로그 <b>' + esc(m.filename) + '</b> 는 아직 분석되지 않았습니다(' + esc(m.status || '') + ').'
+            + '<div class="btn-row"><a class="gcl-panel-btn primary" href="' + link + '">GC 로그 분석 열기</a></div></div>';
+        return;
+    }
+    var k = s.kpi, meta = s.meta, ps = s.pauseStats, t = s.trend, pos = s.dumpPosition || {};
+    var fb = Common.formatBytes;
+    function ms(v) { return v == null ? '–' : (v >= 1000 ? (v / 1000).toFixed(2) + ' s' : v.toFixed(1) + ' ms'); }
+    function dur(sec) { if (sec == null) return '–'; var x = Math.round(sec); if (x >= 3600) return Math.floor(x / 3600) + 'h ' + ('0' + Math.floor((x % 3600) / 60)).slice(-2) + 'm'; if (x >= 60) return Math.floor(x / 60) + 'm ' + ('0' + (x % 60)).slice(-2) + 's'; return sec.toFixed(1) + 's'; }
+    function card(l, val, sub, cls) { return '<div class="gcl-pk ' + (cls || '') + '"><div class="gcl-pk-l">' + esc(l) + '</div><div class="gcl-pk-v" title="' + esc(val) + '">' + esc(val) + '</div>' + (sub ? '<div class="gcl-pk-s">' + esc(sub) + '</div>' : '') + '</div>'; }
+    var h = '<div class="gcl-panel-head"><div><div class="gcl-panel-title">' + esc(m.filename) + ' <span class="jvm-flag">' + (m.source === 'auto' ? '자동 매칭' : '수동 연결') + '</span></div>'
+        + '<div class="gcl-panel-sub">' + esc(meta.collector) + (meta.jdkVersion ? ' · JDK ' + esc(meta.jdkVersion) : '') + ' · 기간 ' + esc(dur(meta.durationSec))
+        + (meta.timeSource !== 'absolute' ? ' · 절대 시각 없음' : '') + (view.count > 1 ? ' · 외 ' + (view.count - 1) + '건 연결' : '') + '</div></div>'
+        + '<div style="display:flex;gap:8px"><a class="gcl-panel-btn primary" href="' + link + '">전체 결과 열기</a><button type="button" class="gcl-panel-btn" onclick="openGcLogPickModal()">연결 변경</button></div></div>';
+    h += '<div class="gcl-panel-kpis">';
+    h += card('처리량', k.throughputPct == null ? '–' : k.throughputPct.toFixed(2) + '%', 'GC 일시정지 합 ' + ms(ps.totalMs), k.throughputPct != null && k.throughputPct < 90 ? 'bad' : k.throughputPct != null && k.throughputPct < 95 ? 'warn' : '');
+    h += card('일시정지 p99 · 최대', ms(ps.p99Ms) + ' · ' + ms(ps.maxMs), ps.count + '회', ps.maxMs > 5000 ? 'bad' : ps.maxMs > 1000 ? 'warn' : '');
+    h += card('Full GC', String(k.fullCount), k.fullGcPerHour != null ? '시간당 ' + k.fullGcPerHour.toFixed(2) + '회' : '', k.fullGcPerHour > 6 ? 'bad' : k.fullGcPerHour > 1 ? 'warn' : '');
+    var basis = t.basis === 'full' ? 'Full GC' : t.basis === 'remark' ? 'Remark' : t.basis === 'mixed' ? 'Mixed' : '';
+    h += card((basis || '힙') + ' 직후 추세', t.slopeMbPerHour == null ? '–' : (t.slopeMbPerHour >= 0 ? '+' : '') + t.slopeMbPerHour.toFixed(1) + ' MB/h', t.r2 != null ? 'R² ' + t.r2.toFixed(2) + (t.excludedWarmup ? ' · 기동 직후 ' + t.excludedWarmup + '점 제외' : '') : (t.note ? '추세 계산 안 함' : ''), (t.slopeMbPerHour > 0 && t.r2 > 0.5) ? 'warn' : '');
+    h += card('최대 힙 · 마지막 GC 후', fb(k.maxHeapTotalBytes) + ' · ' + fb(k.lastHeapAfterBytes), k.maxHeapTotalBytes && k.lastHeapAfterBytes ? Math.round(100 * k.lastHeapAfterBytes / k.maxHeapTotalBytes) + '% 점유' : '');
+    var posTxt = pos.offsetSec == null ? '시각 대조 불가' : (pos.inside ? '로그 시작 후 ' + dur(pos.offsetSec) : (pos.offsetSec < 0 ? '로그 시작 ' + dur(-pos.offsetSec) + ' 전' : '로그 끝 이후'));
+    h += card('덤프 시점', posTxt, pos.offsetSec == null ? '절대 시각 없음' : (pos.inside ? '로그 범위 안' : '로그 범위 밖'), pos.offsetSec != null && !pos.inside ? 'warn' : '');
+    h += '</div>';
+    h += '<div class="gcl-panel-chart"><div style="font-size:13px;font-weight:700;color:#1F2937;margin-bottom:6px">GC 직후 힙 사용량 <span style="font-size:11px;color:#9CA3AF;font-weight:400">x = 기동 후 경과 · 빨간 점선 = 덤프 생성 시점</span></div><div class="gcl-panel-chart-box"><canvas id="gcLogPanelChart"></canvas></div></div>';
+    var fs = s.findings || [];
+    if (fs.length) {
+        h += '<div class="gcl-panel-findings">' + fs.map(function(f) { return '<div class="gcl-pf sev-' + esc(f.severity) + '"><b>[' + esc(f.severity) + '] ' + esc(f.title) + '</b> — ' + esc(f.detail || '') + '</div>'; }).join('')
+            + (s.findingsTotal > fs.length ? '<div style="font-size:12px;color:#6B7280">외 ' + (s.findingsTotal - fs.length) + '건 — 전체 결과에서 확인</div>' : '') + '</div>';
+    } else {
+        h += '<div style="font-size:12px;color:#6B7280;margin-bottom:14px">규칙 기반 이상 징후가 없습니다.</div>';
+    }
+    body.innerHTML = h;
+    _renderGcLogPanelChart(s, pos);
+}
+
+function _renderGcLogPanelChart(s, pos) {
+    if (typeof Chart === 'undefined') return;
+    var ctx = document.getElementById('gcLogPanelChart');
+    if (!ctx || !s.series) return;
+    if (_gcLogChart) { try { _gcLogChart.destroy(); } catch (e) { _azIgnored('GC 패널 차트 정리', e); } _gcLogChart = null; }
+    var sr = s.series;
+    var after = [], total = [];
+    for (var i = 0; i < sr.uptimeSec.length; i++) {
+        after.push({ x: sr.uptimeSec[i], y: sr.heapAfter[i] });
+        if (sr.heapTotal[i] != null) total.push({ x: sr.uptimeSec[i], y: sr.heapTotal[i] });
+    }
+    var datasets = [
+        { label: 'GC 직후 사용량', data: after, borderColor: '#2563EB', backgroundColor: 'rgba(37,99,235,.10)', fill: true, borderWidth: 1.5, pointRadius: 0, tension: 0.1 }
+    ];
+    if (total.length) datasets.push({ label: '총 용량', data: total, borderColor: '#6B7280', borderWidth: 1, pointRadius: 0, stepped: true });
+    var yMax = null;
+    for (var j = 0; j < total.length; j++) if (yMax == null || total[j].y > yMax) yMax = total[j].y;
+    if (yMax == null) for (var q = 0; q < after.length; q++) if (yMax == null || after[q].y > yMax) yMax = after[q].y;
+    if (pos && pos.uptimeSec != null && pos.inside) {
+        // 덤프 생성 시점 — annotation 플러그인 없이 수직 점선을 dataset 하나로 그린다
+        datasets.push({ label: '덤프 생성 시점', data: [{ x: pos.uptimeSec, y: 0 }, { x: pos.uptimeSec, y: yMax || 0 }], borderColor: '#DC2626', borderWidth: 1.5, borderDash: [5, 4], pointRadius: 0, showLine: true });
+    }
+    function xTick(v) { var x = Math.round(v); if (x >= 3600) return Math.floor(x / 3600) + 'h' + ('0' + Math.floor((x % 3600) / 60)).slice(-2); if (x >= 60) return Math.floor(x / 60) + 'm' + ('0' + (x % 60)).slice(-2); return x + 's'; }
+    _gcLogChart = new Chart(ctx, { type: 'line', data: { datasets: datasets }, options: {
+        responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'nearest', intersect: false },
+        scales: { x: { type: 'linear', ticks: { callback: xTick, maxTicksLimit: 10, font: { size: 10 } }, grid: { color: '#F3F4F6' } },
+                  y: { beginAtZero: true, ticks: { callback: function(v) { return (v / 1048576).toFixed(0) + ' MB'; }, font: { size: 10 } }, grid: { color: '#F3F4F6' } } },
+        plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } },
+                   tooltip: { callbacks: { title: function(it) { return it.length ? 'uptime ' + xTick(it[0].parsed.x) : ''; }, label: function(it) { return it.dataset.label + ': ' + Common.formatBytes(it.parsed.y); } } } }
+    } });
+}

@@ -46,6 +46,8 @@
             '.scan-transferred{color:#9CA3AF;font-size:11px}' +
             '.scan-analyzed{color:#059669;font-size:11px;font-weight:600}' +
             '.badge-core{font-size:10px;padding:2px 6px;border-radius:4px;background:#FEF3C7;color:#92400E;font-weight:700;flex-shrink:0}' +
+            '.badge-gclog{font-size:10px;padding:2px 6px;border-radius:4px;background:#DCFCE7;color:#166534;font-weight:700;flex-shrink:0}' +
+            '.badge-active{font-size:10px;padding:2px 6px;border-radius:4px;background:#FEE2E2;color:#991B1B;font-weight:700;flex-shrink:0}' +
             '.exec-info{font-size:11px;color:#6B7280;font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}' +
             '.exec-warn{font-size:11px;color:#D97706;flex-shrink:0}' +
             '.exec-cmd{font-size:11px;color:#9CA3AF;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0}' +
@@ -306,9 +308,13 @@
 
         function renderRow(f) {
             var isCore = f.fileType === 'core';
+            var isGc = f.fileType === 'gclog';
             var html = '<div class="scan-file" data-row-path="' + esc(f.path) + '">';
             html += '<span style="flex:1;min-width:0;display:flex;align-items:center;gap:8px;overflow:hidden">'
                   + (isCore ? '<span class="badge-core">CORE</span>' : '')
+                  + (isGc ? '<span class="badge-gclog">GC LOG</span>' : '')
+                  // 기록 중(회전 전 최신 파일) — 자동 전송은 건너뛰고 수동 전송만 허용. 잘린 채 올 수 있음을 알린다.
+                  + (isGc && f.active ? '<span class="badge-active" title="JVM 이 아직 쓰고 있는 파일입니다. 지금 전송하면 마지막 이벤트가 잘릴 수 있습니다.">기록 중</span>' : '')
                   + '<span style="font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.filename) + '</span>'
                   + (f.date ? '<span style="font-size:12px;color:#9CA3AF;flex-shrink:0;white-space:nowrap">' + esc(parseLsDate(f.date)) + '</span>' : '')
                   + '</span>';
@@ -549,7 +555,11 @@
             var f = findFile(path);
             if (!f || !f.localFilename) return;
             var isCore = f.fileType === 'core';
+            var isGc = f.fileType === 'gclog';
             var note = '';
+            if (isGc && f.active) {
+                note = '전송 시점에 JVM 이 기록 중이던 파일입니다. 마지막 이벤트가 잘려 있을 수 있습니다.';
+            }
             if (isCore && f.executablePath && !f._execTransferred) {
                 note = '실행파일(' + f.executablePath + ')이 이 화면에서 전송되지 않았습니다. 실행파일이 연결되지 않으면 '
                      + 'GDB 가 함수명을 ?? 로 표시할 수 있으니 필요하면 먼저 \'실행파일 전송\'을 하세요. 이미 연결했다면 무시해도 됩니다.';
@@ -561,7 +571,7 @@
             }
             global.AnalyzeConfirm.open({
                 filename: f.localFilename,
-                kind: isCore ? 'core' : 'heap',
+                kind: isCore ? 'core' : isGc ? 'gclog' : 'heap',
                 size: f.formattedSize,
                 source: serverName,
                 note: note

@@ -72,6 +72,8 @@
         .file-item.file-err:hover { border-color: #F87171; background: #FEE2E2; }
         .file-item.file-err .ext-badge { background: #FEE2E2; color: #DC2626; }
         .file-item.file-err .fname { color: #DC2626; }
+        /* GC 로그 항목 — 배지 색으로만 구분(힙 덤프 파랑과 겹치지 않게 GC 로그 페이지와 같은 초록). 실패면 위 file-err 빨강이 이긴다 */
+        .file-item.file-gclog:not(.file-err) .ext-badge { background: #DCFCE7; color: #166534; }
         .fb.e  { background: #EF4444; border-color: #EF4444; }
         .fb.e:hover { background: #DC2626; }
         .fb.e svg { stroke: white; }
@@ -619,7 +621,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.5.1 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.5.2 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -630,8 +632,8 @@
                         <svg viewBox="0 0 20 20"><path d="M10 13V5M6 8l4-4 4 4"/><path d="M3 16h14"/></svg>
                     </div>
                     <div class="upload-zone-title">Drop file here</div>
-                    <div class="upload-zone-sub" th:text="${allowAllExtensions} ? 'All file extensions · Max ' + ${maxUploadSizeGb} + ' GB' : '.hprof .bin .dump (.gz) · Max ' + ${maxUploadSizeGb} + ' GB'">.hprof .bin .dump (.gz) · Max 5 GB</div>
-                    <input type="file" id="fileInput" name="file" th:attr="accept=${allowAllExtensions} ? '' : '.hprof,.bin,.dump,.gz'" style="display:none" multiple>
+                    <div class="upload-zone-sub" th:text="${allowAllExtensions} ? 'All file extensions · GC 로그 자동 분류 · Max ' + ${maxUploadSizeGb} + ' GB' : '.hprof .bin .dump (.gz) · GC 로그 · Max ' + ${maxUploadSizeGb} + ' GB'">.hprof .bin .dump (.gz) · GC 로그 · Max 5 GB</div>
+                    <input type="file" id="fileInput" name="file" th:attr="accept=${allowAllExtensions} ? '' : '.hprof,.bin,.dump,.gz,.log,.gclog,.txt'" style="display:none" multiple>
                     <button type="button" class="upload-zone-btn" id="uploadBtn"
                             onclick="document.getElementById('fileInput').click()">Choose files</button>
                     <div id="uploadQueueUI" style="display:none;width:100%;margin-top:10px">
@@ -642,17 +644,21 @@
         </div>
 
         <div class="sidebar-section" style="flex:1;">
+            <!-- Recent Files — 힙 덤프 저장소 + GC 로그 저장소(2026-09-14, RecentFileItem). 상태·버튼 경로는 항목의 kind 가 정한다:
+                 GC 로그는 /gc-log/analyze · /api/gc-log/download · DELETE /api/gc-log (힙 경로는 GC 로그 저장소 파일을 못 찾는다) -->
             <div class="s-title">Recent Files
-                <span th:if="${fileCount &gt; 5}" th:text="'(' + ${#lists.size(files)} + ' / ' + ${fileCount} + ')'">(5 / 12)</span>
-                <span th:unless="${fileCount &gt; 5}" th:text="'(' + ${fileCount} + ')'">(0)</span>
+                <span th:if="${recentCount &gt; 5}" th:text="'(' + ${#lists.size(recentFiles)} + ' / ' + ${recentCount} + ')'">(5 / 12)</span>
+                <span th:unless="${recentCount &gt; 5}" th:text="'(' + ${recentCount} + ')'">(0)</span>
             </div>
 
-            <div th:if="${#lists.isEmpty(files)}" class="empty-files">
+            <div th:if="${#lists.isEmpty(recentFiles)}" class="empty-files">
                 No files yet.<br>Upload a heap dump to start.
             </div>
 
-            <div th:each="file : ${files}" class="file-item" th:data-name="${file.name}" th:classappend="${errorFiles.contains(file.name)} ? 'file-err'">
-                <div class="ext-badge" th:text="${file.extension}">HPROF</div>
+            <div th:each="item : ${recentFiles}" th:with="file=${item.file}" class="file-item"
+                 th:data-name="${item.name}" th:data-kind="${item.kind}"
+                 th:classappend="${(item.error ? 'file-err' : '') + (item.gcLog ? ' file-gclog' : '')}">
+                <div class="ext-badge" th:text="${item.badge}">HPROF</div>
                 <div class="file-info">
                     <div class="fname" th:text="${file.name}">dump.hprof</div>
                     <div class="fmeta">
@@ -664,32 +670,39 @@
                 </div>
                 <div class="fname-tooltip">
                     <div class="tt-row"><span class="tt-label">File</span><span class="tt-val" th:text="${file.name}">dump.hprof</span></div>
+                    <div class="tt-row"><span class="tt-label">Type</span><span class="tt-val" th:text="${item.gcLog ? 'GC 로그' : (item.others ? 'Others' : '힙 덤프')}">힙 덤프</span></div>
                     <div class="tt-row" th:if="${file.compressed}"><span class="tt-label">Original</span><span class="tt-val" th:text="${file.formattedOriginalSize}">997 MB</span></div>
                     <div class="tt-row" th:if="${file.compressed}"><span class="tt-label">Compressed</span><span class="tt-val" th:text="${file.formattedCompressedSize}">45 MB</span></div>
                     <div class="tt-row" th:if="${!file.compressed}"><span class="tt-label">Size</span><span class="tt-val" th:text="${file.formattedSize}">157 MB</span></div>
                     <div class="tt-row"><span class="tt-label">Date</span><span class="tt-val" th:text="${file.formattedDate}">03-18</span></div>
                     <div class="tt-row"><span class="tt-label">Status</span>
-                        <span class="tt-val" th:if="${analyzedFiles.contains(file.name)}" style="color:#6ee7b7">Analyzed</span>
-                        <span class="tt-val" th:if="${errorFiles.contains(file.name)}" style="color:#f87171">Failed</span>
-                        <span class="tt-val" th:if="${!analyzedFiles.contains(file.name) and !errorFiles.contains(file.name)}" style="color:#fca5a5">Not analyzed</span>
+                        <span class="tt-val" th:if="${item.analyzed}" style="color:#6ee7b7">Analyzed</span>
+                        <span class="tt-val" th:if="${item.error}" style="color:#f87171">Failed</span>
+                        <span class="tt-val" th:if="${item.analyzing}" style="color:#93c5fd">Analyzing</span>
+                        <span class="tt-val" th:if="${item.notAnalyzed}" style="color:#fca5a5">Not analyzed</span>
                     </div>
                 </div>
                 <div class="file-btns">
                     <!-- View: 분석 완료 (SUCCESS) -->
-                    <a th:if="${analyzedFiles.contains(file.name)}"
-                       th:href="@{/analyze/result/{f}(f=${file.name})}" class="fb v" title="View Result">
+                    <a th:if="${item.analyzed}"
+                       th:href="${item.gcLog} ? @{/gc-log/analyze/{f}(f=${file.name})} : @{/analyze/result/{f}(f=${file.name})}" class="fb v" title="View Result">
                         <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
                     </a>
                     <!-- 분석 실패 (ERROR) — 빨간 버튼 → 실패 결과 페이지 -->
-                    <a th:if="${errorFiles.contains(file.name)}"
-                       th:href="@{/analyze/result/{f}(f=${file.name})}" class="fb e" title="View Error">
+                    <a th:if="${item.error}"
+                       th:href="${item.gcLog} ? @{/gc-log/analyze/{f}(f=${file.name})} : @{/analyze/result/{f}(f=${file.name})}" class="fb e" title="View Error">
                         <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
                     </a>
-                    <!-- Analyze: 미분석 — 분석 시작 확인 모달(/js/analyze-confirm.js). Others 는 같은 모달에 경고 블록이 붙는다 -->
-                    <a th:if="${!analyzedFiles.contains(file.name) and !errorFiles.contains(file.name)}"
-                       th:href="@{/analyze/{f}(f=${file.name})}" class="fb p" title="Analyze"
+                    <!-- GC 로그 분석 중 — 결과 페이지가 진행을 폴링한다. (힙 분석 중 표시는 큐 폴링 applyInProgress 가 동적으로 붙인다) -->
+                    <a th:if="${item.analyzing}"
+                       th:href="@{/gc-log/analyze/{f}(f=${file.name})}" class="fb analyzing" title="분석 중 — 진행 상황 보기">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                    </a>
+                    <!-- Analyze: 미분석 — 분석 시작 확인 모달(/js/analyze-confirm.js). Others 는 같은 모달에 경고 블록이 붙고, GC 로그는 결과 페이지(?start=1)로 간다 -->
+                    <a th:if="${item.notAnalyzed}"
+                       th:href="${item.gcLog} ? @{/gc-log/analyze/{f}(f=${file.name},start=1)} : @{/analyze/{f}(f=${file.name})}" class="fb p" title="Analyze"
                        th:data-filename="${file.name}"
-                       th:data-kind="${othersFiles.contains(file.name) ? 'others' : 'heap'}"
+                       th:data-kind="${item.confirmKind}"
                        th:data-size="${file.compressed ? file.formattedOriginalSize + ' (GZ ' + file.formattedCompressedSize + ')' : file.formattedSize}"
                        onclick="return window.AnalyzeConfirm ? AnalyzeConfirm.fromLink(this) : true;">
                         <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
@@ -698,12 +711,14 @@
                        th:data-name="${file.name}" th:data-size="${file.formattedSize}"
                        th:data-orig="${file.compressed ? file.formattedOriginalSize : ''}"
                        th:data-gz="${file.compressed ? file.formattedCompressedSize : ''}"
-                       onclick="showDownloadModal(this.dataset.name,this.dataset.size,this.dataset.orig,this.dataset.gz);return false;">
+                       th:data-kind="${item.kind}"
+                       onclick="showDownloadModal(this.dataset.name,this.dataset.size,this.dataset.orig,this.dataset.gz,this.dataset.kind);return false;">
                         <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
                     </a>
                     <a href="#" class="fb d" title="Delete"
-                       th:data-name="${file.name}" th:data-url="@{/delete/{f}(f=${file.name})}"
-                       onclick="showDeleteModal(this.dataset.name,this.dataset.url);return false;">
+                       th:data-name="${file.name}" th:data-url="${item.gcLog} ? '' : @{/delete/{f}(f=${file.name})}"
+                       th:data-kind="${item.kind}"
+                       onclick="showDeleteModal(this.dataset.name,this.dataset.url,this.dataset.kind);return false;">
                         <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                     </a>
                 </div>
@@ -963,7 +978,7 @@
             Delete File
             <button class="modal-close" onclick="closeDeleteModal()">&#215;</button>
         </div>
-        <div class="modal-desc">힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.</div>
+        <div class="modal-desc" id="delModalDesc">힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.</div>
         <div style="background:#f9fafb;border-radius:8px;padding:12px 16px;margin-bottom:14px">
             <div style="display:flex;justify-content:space-between;font-size:12px">
                 <span style="color:#6b7280">Filename</span>
@@ -1141,10 +1156,31 @@ const uploadForm = document.getElementById('uploadForm');
 
 // 분석 시작 확인(Others 경고 포함)은 /js/analyze-confirm.js 공통 모달 — Analyze 버튼의 onclick 에서 연다.
 
-function showDeleteModal(filename, url) {
+// kind 'gclog' — GC 로그 저장소 파일. 힙 삭제 경로(/delete)는 GC 로그 저장소를 못 보므로 GC API 로 지우고(Files GC 탭과 같은 deleteFile=true — 결과도 함께 삭제) 새로고침한다
+var _DEL_DESC_HEAP = '힙덤프 파일만 삭제되며 분석 결과는 보존됩니다.';
+var _DEL_DESC_GCLOG = 'GC 로그 파일과 그 분석 결과가 함께 삭제됩니다.';
+function showDeleteModal(filename, url, kind) {
+    var isGc = kind === 'gclog';
     document.getElementById('delModalFilename').textContent = filename;
-    document.getElementById('delModalBtn').onclick = function() { postRedirect(url); };
+    document.getElementById('delModalDesc').textContent = isGc ? _DEL_DESC_GCLOG : _DEL_DESC_HEAP;
+    var btn = document.getElementById('delModalBtn');
+    btn.disabled = false;
+    btn.onclick = isGc ? function() { deleteGcLog(filename, btn); } : function() { postRedirect(url); };
     document.getElementById('deleteModal').classList.add('open');
+}
+function deleteGcLog(filename, btn) {
+    btn.disabled = true;
+    Common.fetchJSON('/api/gc-log/' + encodeURIComponent(filename) + '?deleteFile=true', { method: 'DELETE' })
+        .then(function(d) {
+            if (!d || d.success !== true) throw new Error((d && d.error) || '삭제 응답이 올바르지 않습니다.');
+            window.location.reload();
+        })
+        .catch(function(e) {
+            btn.disabled = false;
+            var msg = e && e.message ? e.message : String(e);
+            if (e && e.body) { try { var b = JSON.parse(e.body); if (b && b.error) msg = b.error; } catch (x) { Common.logIgnored('[Dashboard] 삭제 오류 본문 파싱', x); } }
+            toast('GC 로그 삭제 실패: ' + msg, 'error');
+        });
 }
 function postRedirect(url) {
     var f = document.createElement('form');
@@ -1170,10 +1206,15 @@ window.onUploadQueueDone = function() {
     var items = typeof UploadQueue !== 'undefined' ? UploadQueue.getLastQueueTypes() : [];
     var doneCore = items.filter(function(i) { return i.fileType === 'coredump' && i.status === 'done'; });
     var doneHeap = items.filter(function(i) { return i.fileType === 'heapdump' && i.status === 'done'; });
-    if (doneCore.length > 0 && doneHeap.length === 0) {
+    var doneGc = items.filter(function(i) { return i.fileType === 'gclog' && i.status === 'done'; });
+    if (doneCore.length > 0 && doneHeap.length === 0 && doneGc.length === 0) {
         var url = '/core-dump';
         if (doneCore.length === 1) url += '?file=' + encodeURIComponent(doneCore[0].filename);
         window.location.href = url;
+    } else if (doneGc.length > 0 && doneHeap.length === 0 && doneCore.length === 0) {
+        var gurl = '/gc-log';
+        if (doneGc.length === 1) gurl += '?file=' + encodeURIComponent(doneGc[0].filename);
+        window.location.href = gurl;
     } else {
         window.location.reload();
     }
@@ -1189,8 +1230,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 var _dlFilename = '';
-function showDownloadModal(filename, size, origSize, gzSize) {
+var _dlKind = 'heap';
+function showDownloadModal(filename, size, origSize, gzSize, kind) {
     _dlFilename = filename;
+    _dlKind = kind || 'heap';
     document.getElementById('dlModalFilename').textContent = filename;
     var hasGz = origSize && origSize.length > 0 && gzSize && gzSize.length > 0;
     document.getElementById('dlModalSizeRow').style.display = hasGz ? 'none' : 'flex';
@@ -1209,7 +1252,8 @@ function closeDownloadModal() {
 }
 function doDownload() {
     closeDownloadModal();
-    window.location.href = '/download/' + encodeURIComponent(_dlFilename);
+    // GC 로그는 GC 로그 저장소 전용 경로 — /download 는 힙 저장소만 본다
+    window.location.href = (_dlKind === 'gclog' ? '/api/gc-log/download/' : '/download/') + encodeURIComponent(_dlFilename);
 }
 
 /* fmtB / fmtSpeed / toast 는 /js/upload-queue.js 가 window 글로벌로 노출. */
@@ -1274,6 +1318,8 @@ function applyInProgress(files) {
     if (completed) { location.reload(); return; }
     _trackedInProgress = current;
     document.querySelectorAll('.file-item[data-name]').forEach(function(item) {
+        // 힙 MAT 큐 상태라 GC 로그 항목은 대상이 아니다 — 같은 이름이면 GC 쪽 분석 중 버튼을 지우고 힙 진행 페이지로 보낸다
+        if (item.getAttribute('data-kind') === 'gclog') return;
         var name = item.getAttribute('data-name');
         var btns = item.querySelector('.file-btns');
         if (!btns) return;

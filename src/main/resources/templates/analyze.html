@@ -174,6 +174,11 @@ function loadFullErrorLog() {
             <span th:if="${result.hasLeakSuspects()}" class="nav-badge"
                   th:text="${#lists.size(result.leakSuspects)}"></span>
         </button>
+        <!-- GC 로그 (2026-09-14) — 배지는 배너 탭 클론 때문에 ID 없이 class 로만 갱신(함정 8) -->
+        <button type="button" class="nav-item" data-panel="gc-log">
+            <span class="nav-icon">&#128200;</span> GC 로그
+            <span class="nav-badge gclog-nav-badge" th:if="${gcLog.count > 0}" th:text="${gcLog.count}"></span>
+        </button>
     </div>
 
     <!-- AI Analysis -->
@@ -278,6 +283,37 @@ function loadFullErrorLog() {
 
 <!-- ──── MAIN ──── -->
 <div class="main-content">
+
+    <!-- ▌ GC LOG PANEL (2026-09-14) — 연결된 GC 로그 요약. 내용은 showPanel('gc-log') 훅이 /api/gc-log/{fn}/summary 로 1회 채운다 ▌ -->
+    <div id="panel-gc-log" class="panel" style="max-width:1100px;margin:0 auto">
+        <style>
+            .gcl-panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+            .gcl-panel-title{font-size:16px;font-weight:700;color:#1F2937}
+            .gcl-panel-sub{font-size:12px;color:#6B7280;margin-top:2px}
+            .gcl-panel-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+            .gcl-pk{background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:12px 14px;min-width:0}
+            .gcl-pk-l{font-size:11px;color:#6B7280;font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+            .gcl-pk-v{font-size:19px;font-weight:700;color:#111827;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+            .gcl-pk-s{font-size:11px;color:#9CA3AF;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+            .gcl-pk.warn .gcl-pk-v{color:#EA580C}.gcl-pk.bad .gcl-pk-v{color:#DC2626}
+            .gcl-panel-chart{background:#fff;border:1px solid #E5E7EB;border-radius:10px;padding:12px 14px 6px;margin-bottom:14px}
+            .gcl-panel-chart-box{position:relative;height:220px}
+            .gcl-panel-findings{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+            .gcl-pf{border:1px solid #E5E7EB;border-left:4px solid #6B7280;border-radius:8px;padding:9px 12px;background:#fff;font-size:12px;color:#374151}
+            .gcl-pf.sev-Critical{border-left-color:#DC2626;background:#FEF2F2}.gcl-pf.sev-High{border-left-color:#EA580C;background:#FFF7ED}
+            .gcl-pf.sev-Medium{border-left-color:#D97706;background:#FFFBEB}.gcl-pf.sev-Low{border-left-color:#2563EB;background:#EFF6FF}
+            .gcl-pf b{color:#111827}
+            .gcl-panel-empty{background:#fff;border:1px dashed #D1D5DB;border-radius:12px;padding:28px 24px;text-align:center;color:#6B7280;font-size:13px;line-height:1.7}
+            .gcl-panel-empty .btn-row{margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+            .gcl-panel-btn{padding:7px 14px;border:1px solid #D1D5DB;border-radius:8px;background:#fff;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;color:#1F2937;text-decoration:none;display:inline-block;line-height:18px}
+            .gcl-panel-btn:hover{background:#F3F4F6}
+            .gcl-panel-btn.primary{background:#2563EB;border-color:#2563EB;color:#fff}.gcl-panel-btn.primary:hover{background:#1D4ED8}
+            .gcl-pick-list{margin-top:12px;max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:8px}
+        </style>
+        <div id="gcLogPanelBody">
+            <div class="gcl-panel-empty">불러오는 중…</div>
+        </div>
+    </div>
 
     <!-- ▌ AI INSIGHT PANEL ▌ -->
     <div id="panel-ai-insight" class="panel" style="max-width:960px;margin:0 auto">
@@ -448,6 +484,14 @@ function loadFullErrorLog() {
                             <span style="font-size:13px;font-weight:800;color:#1E40AF;text-transform:uppercase;letter-spacing:.08em">JVM 힙 설정 분석</span>
                         </div>
                         <div id="aiJvmAdviceDesc" style="font-size:15px;color:#374151;line-height:1.85;word-break:break-word"></div>
+                    </div>
+                    <!-- GC 로그가 연결된 경우 — 프롬프트에 == GC 로그 요약 == 이 주입되고 응답에 gcAdvice 가 온다(2026-09-14) -->
+                    <div id="aiGcAdviceCard" style="display:none;background:#fff;border:1px solid #BBF7D0;border-radius:12px;padding:22px 24px;box-shadow:0 1px 4px rgba(0,0,0,.04)">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                            <div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#F0FDF4,#DCFCE7);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0">&#128200;</div>
+                            <span style="font-size:13px;font-weight:800;color:#166534;text-transform:uppercase;letter-spacing:.08em">GC 로그 연계 분석</span>
+                        </div>
+                        <div id="aiGcAdviceDesc" style="font-size:15px;color:#374151;line-height:1.85;word-break:break-word"></div>
                     </div>
                 </div>
             </div>
@@ -639,6 +683,26 @@ function loadFullErrorLog() {
                 <button type="button" class="host-chip-edit" id="jvmChipRecollect"
                         onclick="recollectJvm()" title="출처 서버에서 다시 수집"
                         th:style="${jvmHeap.recollectable} ? '' : 'display:none'">&#8635;</button>
+            </div>
+            <!-- GC 로그 칩 (2026-09-14) — 이 덤프에 연결된 GC 로그(자동/수동)·후보. JS renderGcLogChip 이 같은 구조를 다시 그린다. -->
+            <div class="host-chip gclog-chip" id="gcLogChip">
+                <span class="host-chip-icon">&#128200;</span>
+                <span class="host-chip-label">GC Log</span>
+                <span class="host-chip-name" id="gcLogChipName"
+                      th:classappend="${gcLog.hasMatch} ? '' : ' host-chip-empty'"
+                      th:text="${gcLog.hasMatch} ? (${gcLog.matched[0].filename} + (${gcLog.count > 1} ? ' 외 ' + (${gcLog.count} - 1) : '')) : '미연결'">gc.log.0</span>
+                <span class="jvm-flags" id="gcLogChipFlags">
+                    <span class="jvm-flag" th:if="${gcLog.hasMatch}"
+                          th:text="${gcLog.matched[0].source == 'auto'} ? '자동' : '수동'">자동</span>
+                    <span class="jvm-flag jvm-flag-warn" th:if="${!gcLog.hasMatch and gcLog.candidateCount > 0}" tabindex="0"
+                          th:text="'후보 ' + ${gcLog.candidateCount}"
+                          data-tip="자동 매칭이 확정하지 못한 GC 로그 후보가 있습니다 — 목록(&#9776;)에서 고르세요.">후보 1</span>
+                </span>
+                <button type="button" class="host-chip-edit" id="gcLogChipOpen" onclick="openGcLogPage()" title="GC 로그 분석 결과 열기"
+                        th:style="${gcLog.hasMatch} ? '' : 'display:none'">&#8599;</button>
+                <button type="button" class="host-chip-edit" onclick="openGcLogPickModal()" title="GC 로그 연결/변경">&#9776;</button>
+                <button type="button" class="host-chip-edit" id="gcLogChipUnlink" onclick="unlinkGcLog()" title="연결 해제(이후 자동 매칭 안 함)"
+                        th:style="${gcLog.hasMatch} ? '' : 'display:none'">&#10005;</button>
             </div>
         </div>
 
@@ -1472,6 +1536,26 @@ function loadFullErrorLog() {
 </div>
 
 <!-- ── 재분석 확인 모달 ── -->
+<!-- ── GC 로그 선택 모달 (2026-09-14) — 이 덤프에 연결할 GC 로그를 고른다(수동 = 자동이 덮지 않음) ── -->
+<div class="modal-overlay" id="gcLogPickModal" onclick="if(event.target===this)closeGcLogPickModal()">
+    <div class="modal-box" style="max-width:660px">
+        <div class="modal-header">
+            <div class="modal-icon" style="background:#DCFCE7;color:#166534">&#128200;</div>
+            <div class="modal-title">GC 로그 연결</div>
+        </div>
+        <div class="modal-body">
+            이 힙 덤프와 같은 JVM 의 GC 로그를 고르세요. 수동 연결은 이후 자동 매칭이 덮지 않습니다.
+            <input type="text" id="gcLogPickSearch" placeholder="파일명·서버 검색…" autocomplete="off"
+                   style="width:100%;margin-top:10px;padding:7px 10px;border:1px solid #D1D5DB;border-radius:8px;font-family:inherit;font-size:13px">
+            <div class="jvm-pick-list gcl-pick-list" id="gcLogPickList"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="modal-btn modal-btn-cancel" onclick="closeGcLogPickModal()">취소</button>
+            <button class="modal-btn modal-btn-primary" id="gcLogPickConfirm" onclick="confirmGcLogPick()" disabled>연결</button>
+        </div>
+    </div>
+</div>
+
 <!-- ── JVM 후보 프로세스 선택 모달 (원격 java 프로세스가 여럿이라 덤프 주인 미확정일 때) ── -->
 <div class="modal-overlay" id="jvmPickModal" onclick="if(event.target===this)closeJvmPickModal()">
     <div class="modal-box" style="max-width:660px">
@@ -1598,6 +1682,7 @@ var OBJ_PCTS      = /*[[${topObjPcts}]]*/ [];
 var THREAD_STACKS  = /*[[${threadStacks}]]*/ [];
 var JEUS_INSTANCE_AUTO = /*[[${jeusInstanceAuto}]]*/ '';
 var JEUS_DOMAIN_AUTO   = /*[[${jeusDomainAuto}]]*/ '';
+var GC_LOG_MATCHED     = /*[[${gcLog.hasMatch}]]*/ false;
 var JVM_HEAP           = /*[[${jvmHeap}]]*/ {};
 var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ true;
 /*]]>*/

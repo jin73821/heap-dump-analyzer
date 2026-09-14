@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title th:text="'GC 로그 결과 - ' + ${filename}">GC 로그 결과</title>
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-08-12}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-14}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-14b}">
+    <script th:src="@{/js/lib/chart.umd.min.js}"></script>
+</head>
+<body>
+
+<div th:replace="~{fragments/banner :: banner}"></div>
+
+<div class="cd-topbar">
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title">GC 로그 분석 결과</span>
+    </div>
+    <nav class="cd-steps" aria-label="분석 단계">
+        <span class="cd-step"><span class="cd-step-dot"></span><span class="cd-step-label">파일</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step" th:classappend="${status == 'ANALYZING'} ? 'is-current'"><span class="cd-step-dot"></span><span class="cd-step-label">분석</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step" th:classappend="${status == 'SUCCESS'} ? 'is-current'"><span class="cd-step-dot"></span><span class="cd-step-label">결과</span></span>
+    </nav>
+    <div class="topbar-right">
+        <a href="/gc-log" class="topbar-btn">GC 로그 목록</a>
+    </div>
+</div>
+
+<!-- 페이지 래퍼 — 고정 상단바(52px)·배너 폭만큼 비우고, 남은 영역 안에서 카드를 가운데 정렬한다.
+     ⚠ 공용 .cd-page 에 인라인 margin/padding 을 덮으면 두 보정이 사라져 내용이 상단바 밑·배너 쪽에 붙는다(2026-09-14 실제 제보) -->
+<div class="gcl-page"><div class="gcl-page-inner">
+
+    <!-- 헤더 카드: 파일·상태·메타·액션 + 힙 덤프 매칭 -->
+    <section class="gcl-headcard" aria-labelledby="gclFileTitle">
+        <div class="gcl-head">
+            <div class="gcl-head-main">
+                <div class="gcl-title-row">
+                    <span class="gcl-title-icon" aria-hidden="true">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 8 11 12 14 17 7 21 10"></polyline><line x1="3" y1="21" x2="21" y2="21"></line></svg>
+                    </span>
+                    <h1 class="gcl-file" id="gclFileTitle" th:text="${filename}">gc.log</h1>
+                    <span class="status-badge"
+                          th:classappend="${status == 'SUCCESS'} ? 'status-success' : (${status == 'ERROR'} ? 'status-error' : (${status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                          th:text="${status == 'SUCCESS'} ? '완료' : (${status == 'ERROR'} ? '실패' : (${status == 'ANALYZING'} ? '분석 중' : (${status == 'MISSING'} ? '파일 없음' : '미분석')))">완료</span>
+                </div>
+                <div class="gcl-meta" id="gclMeta" th:if="${entity != null}">
+                    <span class="gcl-meta-item" th:if="${entity.serverName != null}"><span class="gcl-meta-k">서버</span><span class="gcl-meta-v" th:text="${entity.serverName}">was01</span></span>
+                    <span class="gcl-meta-item" th:if="${entity.fileSize != null}"><span class="gcl-meta-k">크기</span><span class="gcl-meta-v" th:text="${entity.formattedSize}">52.0 KB</span></span>
+                    <span class="gcl-meta-item gcl-meta-path" th:if="${entity.remotePath != null}" th:title="${entity.remotePath}"><span class="gcl-meta-k">원격 경로</span><span class="gcl-meta-v mono" th:text="${entity.remotePath}">/var/log/gc.log</span></span>
+                    <span class="gcl-meta-item" th:if="${entity.uploadedBy != null}"><span class="gcl-meta-k">등록</span><span class="gcl-meta-v" th:text="${entity.uploadedBy}">admin</span></span>
+                    <span class="gcl-meta-item" th:if="${entity.analyzedAt != null}"><span class="gcl-meta-k">분석</span><span class="gcl-meta-v" th:text="${#temporals.format(entity.analyzedAt, 'yyyy-MM-dd HH:mm')}">2026-09-14 14:03</span></span>
+                    <span class="gcl-meta-item" th:if="${entity.analysisTimeMs != null and status == 'SUCCESS'}"><span class="gcl-meta-k">소요</span><span class="gcl-meta-v" th:text="${entity.analysisTimeMs &lt; 1000} ? ${entity.analysisTimeMs} + 'ms' : ${#numbers.formatDecimal(entity.analysisTimeMs / 1000.0, 1, 1)} + '초'">0.4초</span></span>
+                </div>
+            </div>
+            <div class="gcl-head-actions">
+                <button type="button" class="btn btn-sm btn-soft" id="btnAi" onclick="runAi()" th:disabled="${status != 'SUCCESS'}">AI 해석</button>
+                <button type="button" class="btn btn-sm btn-ghost" id="btnReanalyze" onclick="reanalyze()" th:disabled="${status == 'ANALYZING' or !fileExists}">재분석</button>
+                <button type="button" class="btn btn-sm btn-soft soft-danger" onclick="deleteThis()">삭제</button>
+            </div>
+        </div>
+        <!-- 힙 덤프 매칭 칩 — 힙 analyze 페이지의 JVM 칩과 같은 언어. 상태는 JS(renderMatchChip)가 /match 응답으로 다시 그린다 -->
+        <div class="gcl-head-foot">
+            <div class="gcl-chip" id="gclMatchChip">
+                <span class="gcl-chip-label">연결된 힙 덤프</span>
+                <span class="gcl-chip-name" id="gclMatchName"
+                      th:classappend="${entity == null or entity.matchedDumpFilename == null} ? ' empty'"
+                      th:text="${entity != null and entity.matchedDumpFilename != null} ? ${entity.matchedDumpFilename} : (${entity != null and entity.matchSource == 'manual'} ? '미연결(수동 해제)' : '미연결')">미연결</span>
+                <span class="gcl-chip-src" id="gclMatchSrc"
+                      th:if="${entity != null and entity.matchedDumpFilename != null}"
+                      th:classappend="${entity.matchSource}" th:text="${entity.matchSource == 'auto'} ? '자동' : '수동'">자동</span>
+                <span class="gcl-chip-src cand" id="gclMatchCand"
+                      th:if="${entity != null and entity.matchedDumpFilename == null and !#lists.isEmpty(candidates)}"
+                      th:text="'후보 ' + ${#lists.size(candidates)}">후보 2</span>
+                <button type="button" class="gcl-chip-btn" id="gclMatchOpen" title="힙 덤프 분석 결과 열기" onclick="openMatchedDump()"
+                        th:style="${entity != null and entity.matchedDumpFilename != null} ? '' : 'display:none'">&#8599;</button>
+                <button type="button" class="gcl-chip-btn" title="힙 덤프 선택/변경" onclick="openMatchPickModal()">&#9776;</button>
+                <button type="button" class="gcl-chip-btn" id="gclMatchUnlink" title="연결 해제(이후 자동 매칭 안 함)" onclick="unlinkMatch()"
+                        th:style="${entity != null and entity.matchedDumpFilename != null} ? '' : 'display:none'">&#10005;</button>
+                <button type="button" class="gcl-chip-btn" title="자동 매칭 다시 평가" onclick="rematch()">&#8635;</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- 분석 중 / 미분석 / 오류 블록 — 결과가 아닐 때만 -->
+    <!-- 실패(ERROR)면 진행 막대를 숨긴다 — '분석을 시작합니다' + 0% 가 오류와 함께 보이면 시작된 것처럼 읽힌다 -->
+    <div class="gcl-progress" id="gclProgress" th:style="${status == 'SUCCESS' or status == 'ERROR'} ? 'display:none' : ''">
+        <div class="gcl-progress-title">
+            <span class="gcl-spinner" id="gclSpinner" th:style="${status == 'ANALYZING'} ? '' : 'display:none'"></span>
+            <span id="gclProgressTitle"
+                  th:text="${status == 'ANALYZING'} ? 'GC 로그를 분석하는 중입니다'
+                         : (${status == 'MISSING'} ? '파일이 없습니다' : 'GC 로그 분석을 시작합니다')">분석 중</span>
+        </div>
+        <div class="gcl-progress-track"><div class="gcl-progress-fill" id="gclProgressFill"></div></div>
+        <div class="gcl-progress-meta">
+            <span id="gclProgressPct">0%</span>
+            <span id="gclProgressBytes"></span>
+            <span id="gclProgressLines"></span>
+            <span id="gclProgressEvents"></span>
+            <span id="gclProgressPhase"></span>
+        </div>
+        <div class="gcl-progress-actions">
+            <button type="button" class="btn btn-sm btn-ghost" id="gclCancelBtn" onclick="cancelAnalysis()" th:style="${status == 'ANALYZING'} ? '' : 'display:none'">취소</button>
+        </div>
+    </div>
+
+    <div class="gcl-error" id="gclError" th:style="${status == 'ERROR'} ? '' : 'display:none'">
+        <div class="gcl-error-title">분석 실패</div>
+        <div class="gcl-error-msg" id="gclErrorMsg" th:text="${entity != null ? entity.errorMessage : ''}"></div>
+        <div class="gcl-error-actions" th:if="${fileExists}">
+            <button type="button" class="btn btn-sm btn-primary" id="gclRetryBtn" onclick="reanalyze()">다시 분석</button>
+            <span class="gcl-error-hint">위 오류는 마지막 분석 기록입니다. 코드가 고쳐졌거나 파일을 바꿨다면 다시 분석하세요.</span>
+        </div>
+    </div>
+
+    <!-- 결과 본문 — JS 가 #gcResult JSON 으로 그린다 -->
+    <div id="gclResult" th:style="${status == 'SUCCESS'} ? '' : 'display:none'">
+
+        <div class="gcl-kpi-grid" id="gclKpi"></div>
+
+        <div class="gcl-charts">
+            <div class="gcl-chart-card">
+                <div class="gcl-chart-title">힙 사용량 추이 <span class="gcl-chart-note" id="gclHeapChartNote">GC 직후 사용량 · 총 용량 (x = 기동 후 경과)</span></div>
+                <div class="gcl-chart-box"><canvas id="gclHeapChart"></canvas></div>
+            </div>
+            <div class="gcl-chart-card">
+                <div class="gcl-chart-title">일시정지 시간 <span class="gcl-chart-note" id="gclPauseChartNote">이벤트별 STW ms (x = 기동 후 경과)</span></div>
+                <div class="gcl-chart-box"><canvas id="gclPauseChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <div class="content-card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                소견
+                <span class="title-count" id="gclFindingsCount"></span>
+            </div>
+            <div class="gcl-findings" id="gclFindings"></div>
+        </div>
+
+        <div class="content-card">
+            <div class="content-card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"></path><rect x="4" y="12" width="16" height="8" rx="2"></rect><path d="M2 12h20"></path></svg>
+                AI 해석
+                <span class="title-count" id="gclAiMetaTitle"></span>
+            </div>
+            <div class="gcl-ai-body" id="gclAiBody"><div class="gcl-ai-empty">LLM 이 GC 통계와 소견을 종합 해석합니다. 상단 <b>AI 해석</b> 버튼으로 실행하세요. 연결된 힙 덤프가 있으면 그 정보도 함께 넣습니다.</div></div>
+        </div>
+
+        <div class="content-card">
+            <div class="content-card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+                GC 이벤트
+                <span class="title-count" id="gclEventsCount"></span>
+            </div>
+            <div class="gcl-table-tools">
+                <input type="text" id="gclEvSearch" class="cd-input" placeholder="유형·원인·플래그 검색…" autocomplete="off">
+                <label><input type="checkbox" id="gclEvOnlyFlag"> Full/이상만</label>
+                <span style="margin-left:auto">행 표시
+                    <select id="gclPageSize" class="cd-select" onchange="_evGrid.onPageSizeChange()">
+                        <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option>
+                    </select>
+                </span>
+            </div>
+            <div class="gcl-table-wrap">
+                <table class="gcl-table" id="gclEvTable">
+                    <thead>
+                        <tr>
+                            <th class="sortable" data-sort-key="seq" data-sort-type="num" onclick="_evGrid.onHeaderSort(this)"># <span class="sort-arrow">▲</span></th>
+                            <th class="sortable" data-sort-key="line" data-sort-type="num" onclick="_evGrid.onHeaderSort(this)">줄 <span class="sort-arrow">▲</span></th>
+                            <th class="sortable" data-sort-key="ts" data-sort-type="str" onclick="_evGrid.onHeaderSort(this)">시각 <span class="sort-arrow">▲</span></th>
+                            <th class="sortable" data-sort-key="uptime" data-sort-type="num" onclick="_evGrid.onHeaderSort(this)">uptime <span class="sort-arrow">▲</span></th>
+                            <th class="sortable" data-sort-key="type" data-sort-type="str" onclick="_evGrid.onHeaderSort(this)">유형 <span class="sort-arrow">▲</span></th>
+                            <th>원인</th>
+                            <th class="sortable" data-sort-key="pause" data-sort-type="num" onclick="_evGrid.onHeaderSort(this)">pause <span class="sort-arrow">▲</span></th>
+                            <th>힙 (전→후/총)</th>
+                            <th>user/sys/real</th>
+                            <th>플래그</th>
+                        </tr>
+                    </thead>
+                    <tbody id="gclEvBody"></tbody>
+                </table>
+                <div id="gclEvNoMatch" class="gcl-empty" style="display:none">조건에 맞는 이벤트가 없습니다.</div>
+            </div>
+            <div class="pagination-bar" id="gclEvPg"><div id="gclEvPgList" style="display:flex;gap:4px;flex-wrap:wrap"></div><span class="pg-info" id="gclEvPgInfo"></span></div>
+        </div>
+
+        <div class="content-card">
+            <div class="content-card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                원문 샘플
+            </div>
+            <div class="gcl-raw-tabs">
+                <button type="button" class="gcl-raw-tab active" data-raw="head" onclick="showRaw('head', this)">앞부분</button>
+                <button type="button" class="gcl-raw-tab" data-raw="aroundMaxPause" onclick="showRaw('aroundMaxPause', this)">최장 일시정지 주변</button>
+                <button type="button" class="gcl-raw-tab" data-raw="tail" onclick="showRaw('tail', this)">뒷부분</button>
+            </div>
+            <pre class="gcl-pre" id="gclRaw"></pre>
+        </div>
+    </div>
+</div></div>
+
+<!-- 힙 덤프 선택 모달 (골격 4종 gc-log.css .gcl-modal — 함정 17) -->
+<div id="matchPickModal" class="modal-ov gcl-modal" onclick="if(event.target===this)closeMatchPickModal()">
+    <div class="modal-box">
+        <div class="modal-title">연결할 힙 덤프 선택</div>
+        <div class="modal-body">
+            같은 서버·시간대의 힙 덤프를 고르세요. 점수는 자동 매칭 신호(서버·시간·경로)의 합입니다. 수동 선택은 이후 자동 매칭이 덮지 않습니다.
+            <input type="text" id="matchPickSearch" class="cd-input gcl-pick-search" placeholder="파일명·서버 검색…" autocomplete="off">
+            <div class="gcl-pick-list" id="matchPickList"><div class="gcl-pick-empty">불러오는 중…</div></div>
+            <div class="modal-err" id="matchPickErr"></div>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeMatchPickModal()">취소</button>
+            <button class="mbtn-save" id="matchPickConfirm" onclick="confirmMatchPick()" disabled>연결</button>
+        </div>
+    </div>
+</div>
+
+<!-- 삭제 확인 모달 -->
+<div id="deleteGcModal" class="modal-ov gcl-modal" onclick="if(event.target===this)closeGcDeleteModal()">
+    <div class="modal-box">
+        <div class="modal-title">삭제 확인</div>
+        <div class="modal-body">
+            <span class="modal-filename" th:text="${filename}"></span>
+            <div class="modal-check-row">
+                <input type="checkbox" id="deleteGcFileChk" checked>
+                <div>
+                    <label class="modal-check-label" for="deleteGcFileChk">원본 파일도 삭제</label>
+                    <div class="modal-check-desc">체크 해제 시 분석 결과만 지우고 원본 파일은 보존합니다.</div>
+                </div>
+            </div>
+            <div class="modal-err" id="deleteGcModalErr"></div>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeGcDeleteModal()">취소</button>
+            <button class="mbtn-del" id="deleteGcConfirmBtn" onclick="confirmGcDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<div class="cd-toast-wrap" id="cdToastWrap"></div>
+
+<!-- 결과 JSON — th:utext 로 그대로 싣는다(함정 23: 인라인 표현식 시작 문자열 회피). 컨트롤러가 슬래시 닫힘 태그를 이스케이프했다. -->
+<script type="application/json" id="gcResult" th:utext="${resultJson}">null</script>
+<script th:inline="javascript">
+    var GC_FILENAME = /*[[${filename}]]*/ '';
+    var GC_STATUS = /*[[${status}]]*/ 'NOT_ANALYZED';
+    var GC_FILE_EXISTS = /*[[${fileExists}]]*/ false;
+    // KPI '인스턴스' 카드 초기값(수동 입력 > 연결된 힙 덤프) — Map 을 통째로 직렬화하지 않고 문자열로 나눠 싣는다
+    var GC_INSTANCE = {
+        name: /*[[${instance.name}]]*/ '',
+        source: /*[[${instance.source}]]*/ 'none',
+        manual: /*[[${instance.manual}]]*/ '',
+        dump: /*[[${instance.dump}]]*/ '',
+        dumpFilename: /*[[${instance.dumpFilename}]]*/ ''
+    };
+</script>
+<script th:src="@{/js/table-grid.js?v=2026-09-13}"></script>
+<script th:src="@{/js/gc-log-analyze.js?v=2026-09-14c}"></script>
+
+</body>
+</html>

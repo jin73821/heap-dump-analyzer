@@ -200,6 +200,12 @@
                       background: #EDE9FE; color: #5B21B6; font-weight: 600; vertical-align: middle; margin-left: 3px; }
         .others-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
                         background: #F3F4F6; color: #6B7280; font-weight: 600; vertical-align: middle; }
+        .gclog-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px;
+                       background: #DCFCE7; color: #166534; font-weight: 600; vertical-align: middle; }
+        .classify-note { display:none; font-size:12px; line-height:1.55; border-radius:8px; padding:9px 12px; margin-bottom:12px; }
+        .classify-note.show { display:block; }
+        .classify-note.info { background:#F0FDF4; border:1px solid #BBF7D0; color:#166534; }
+        .classify-note.warn { background:#FFF7ED; border:1px solid #FCD34D; color:#92400E; }
         /* KRDS 선택 컴포넌트 (component_06_03) */
         .krds-select-wrap { display: flex; align-items: center; gap: 6px; }
         .krds-file-type-sel {
@@ -471,6 +477,9 @@
         <button class="type-tab" data-tab="coredump" onclick="onTabClick(this)">
             Corefile <span class="tab-count" id="tabCntCore">0</span>
         </button>
+        <button class="type-tab" data-tab="gclog" onclick="onTabClick(this)">
+            GC Log <span class="tab-count" id="tabCntGc">0</span>
+        </button>
         <button class="type-tab" data-tab="others" onclick="onTabClick(this)">
             Others <span class="tab-count" id="tabCntOthers">0</span>
         </button>
@@ -533,9 +542,9 @@
                     </div>
                     <div class="upload-text">
                         <div class="upload-zone-title">파일 업로드</div>
-                        <div class="upload-zone-sub" th:text="${allowAllExtensions} ? 'Drag & drop · All extensions · Max ' + ${maxUploadSizeGb} + ' GB' : 'Drag & drop · .hprof .bin .dump (.gz) · Max ' + ${maxUploadSizeGb} + ' GB'">Drag & drop · .hprof .bin .dump (.gz) · Max 5 GB</div>
+                        <div class="upload-zone-sub" th:text="${allowAllExtensions} ? 'Drag & drop · All extensions · GC 로그 자동 분류 · Max ' + ${maxUploadSizeGb} + ' GB' : 'Drag & drop · .hprof .bin .dump (.gz) · GC 로그 · Max ' + ${maxUploadSizeGb} + ' GB'">Drag & drop · .hprof .bin .dump (.gz) · GC 로그 · Max 5 GB</div>
                     </div>
-                    <input type="file" id="fileInput" name="file" th:attr="accept=${allowAllExtensions} ? '' : '.hprof,.bin,.dump,.gz'" style="display:none" multiple>
+                    <input type="file" id="fileInput" name="file" th:attr="accept=${allowAllExtensions} ? '' : '.hprof,.bin,.dump,.gz,.log,.gclog,.txt'" style="display:none" multiple>
                     <button type="button" class="upload-zone-btn" id="uploadBtn"
                             onclick="document.getElementById('fileInput').click()">Choose files</button>
                 </div>
@@ -600,6 +609,7 @@
                         <span th:if="${h.fileType == 'exec'}" class="exec-badge">EXEC</span>
                         <span th:if="${h.fileType == 'coreexec'}" class="exec-badge">EXEC</span>
                         <span th:if="${h.fileType == 'others'}" class="others-badge">OTHERS</span>
+                        <span th:if="${h.fileType == 'gclog'}" class="gclog-badge">GC LOG</span>
                         <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
                     </td>
                     <td class="col-osize" data-label="원본">
@@ -691,6 +701,40 @@
                             <a th:if="${h.fileType == 'coredump' and !h.fileDeleted}" href="#" class="fb d" title="Delete"
                                th:data-filename="${h.filename}"
                                onclick="confirmCoreDumpDelete(this.dataset.filename);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
+                            </a>
+                            <!-- ── GC 로그 액션 (2026-09-14) — 결과는 /gc-log/analyze, 시작은 확인 모달(kind=gclog → ?start=1) ── -->
+                            <a th:if="${h.fileType == 'gclog' and h.status == 'SUCCESS'}"
+                               th:href="@{/gc-log/analyze/{f}(f=${h.filename})}"
+                               class="fb v" title="분석 결과 보기">
+                                <svg viewBox="0 0 12 12"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg>
+                            </a>
+                            <a th:if="${h.fileType == 'gclog' and h.status == 'ANALYZING' and !h.fileDeleted}"
+                               th:href="@{/gc-log/analyze/{f}(f=${h.filename})}"
+                               class="fb p" title="분석 진행 확인">
+                                <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                            </a>
+                            <a th:if="${h.fileType == 'gclog' and (h.status == 'ERROR' or h.status == 'NOT_ANALYZED') and !h.fileDeleted}"
+                               th:href="@{/gc-log/analyze/{f}(f=${h.filename},start=1)}" class="fb p"
+                               th:title="${h.status == 'ERROR'} ? 'GC 로그 다시 분석' : 'GC 로그 분석'"
+                               th:data-filename="${h.filename}" data-kind="gclog"
+                               th:data-size="${h.formattedSize}" th:data-source="${h.serverName}"
+                               onclick="return window.AnalyzeConfirm ? AnalyzeConfirm.fromLink(this) : true;">
+                                <svg viewBox="0 0 12 12"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg>
+                            </a>
+                            <a th:if="${h.fileType == 'gclog' and !h.fileDeleted}" href="#" class="fb" title="Download"
+                               th:data-filename="${h.filename}" th:data-size="${h.formattedSize}"
+                               onclick="showDownloadModal(this.dataset.filename,this.dataset.size,'','','gclog');return false;">
+                                <svg viewBox="0 0 12 12"><path d="M6 2v6M3 7l3 3 3-3"/><path d="M2 11h8"/></svg>
+                            </a>
+                            <a th:if="${h.fileType == 'gclog' and !h.fileDeleted}" href="#" class="fb d" title="Delete"
+                               th:data-filename="${h.filename}"
+                               onclick="confirmGcLogDelete(this.dataset.filename);return false;">
+                                <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
+                            </a>
+                            <a th:if="${h.fileType == 'gclog' and h.fileDeleted and isAdmin}" href="#" class="fb d" title="기록 영구 삭제 (관리자)"
+                               th:data-filename="${h.filename}"
+                               onclick="confirmGcLogDelete(this.dataset.filename);return false;">
                                 <svg viewBox="0 0 12 12"><path d="M2 3h8M5 3V2h2v1M4 3v7h4V3"/></svg>
                             </a>
                             <!-- ── CoreExec (연결 해제된 실행파일) 액션 ── -->
@@ -887,8 +931,17 @@
                 <option value="core">코어파일</option>
                 <option value="exec">실행파일</option>
                 <option value="heapdump">덤프파일</option>
+                <option value="gclog">GC로그</option>
                 <option value="others">기타</option>
             </select>
+        </div>
+        <!-- GC 로그는 라벨이 아니라 저장소가 달라 분류를 바꾸면 파일이 옮겨진다 — 저장 전에 알린다 -->
+        <div class="classify-note info" id="classifyGcIn">
+            파일을 <b>GC 로그 저장소</b>로 옮기고 GC 로그 분석 대상으로 등록합니다. GC 로그 형식(JDK 9+ -Xlog:gc* / JDK 8 PrintGCDetails)이 아니면 거부됩니다.
+            미분석·실패한 힙 분석 기록은 함께 정리됩니다.
+        </div>
+        <div class="classify-note warn" id="classifyGcOut">
+            GC 로그를 다른 유형으로 바꾸면 파일을 <b>힙덤프 저장소</b>로 옮기고, GC 분석 결과·AI 해석·힙 덤프 연결 기록을 <b>삭제</b>합니다.
         </div>
         <div class="exec-pair-section classify-field" id="execPairSection" style="display:none">
             <label for="execPairSelect">연결할 실행파일 <span class="exec-pair-notice">(선택)</span></label>
@@ -1006,12 +1059,34 @@ function confirmCoreDumpDelete(filename) {
     document.getElementById('delModalNote').textContent = '코어 덤프 파일과 분석 결과가 함께 삭제됩니다.';
     document.getElementById('deleteModal').classList.add('open');
 }
+var _delIsGc = false;
+function confirmGcLogDelete(filename) {
+    _delTarget = filename; _delIsCore = false; _delIsGc = true;
+    document.getElementById('delFileName').textContent = filename;
+    document.getElementById('delModalNote').textContent = 'GC 로그 파일과 분석 결과·AI 해석·힙 덤프 연결 기록이 함께 삭제됩니다.';
+    document.getElementById('deleteModal').classList.add('open');
+}
 function closeDeleteModal() {
     document.getElementById('deleteModal').classList.remove('open');
-    _delTarget = ''; _delIsCore = false;
+    _delTarget = ''; _delIsCore = false; _delIsGc = false;
 }
 document.getElementById('btnConfirmDel').onclick = function() {
     if (!_delTarget) return;
+    if (_delIsGc) {
+        var gcTarget = _delTarget;
+        Common.fetchJSON('/api/gc-log/' + encodeURIComponent(gcTarget) + '?deleteFile=true', { method: 'DELETE' })
+            .then(function() {
+                closeDeleteModal();
+                Common.flashToast('GC 로그가 삭제되었습니다: ' + gcTarget, 'success');
+                location.reload();
+            })
+            .catch(function(e) {
+                var msg = e && e.message;
+                try { var b = JSON.parse(e.body); if (b && b.error) msg = b.error; } catch (x) { if (window.Common) Common.logIgnored('[Files] GC 로그 삭제 오류 본문 파싱', x); }
+                alert('삭제 실패: ' + (msg || '알 수 없는 오류'));
+            });
+        return;
+    }
     if (_delIsCore) {
         var csrfMeta = document.querySelector('meta[name="_csrf"]');
         var csrfHdr  = document.querySelector('meta[name="_csrf_header"]');
@@ -1065,9 +1140,11 @@ document.getElementById('deleteModal').addEventListener('click', function(e) {
 
 var _dlFilename = '';
 var _dlIsCore = false;
+var _dlIsGc = false;
 function showDownloadModal(filename, size, origSize, gzSize, isCore) {
     _dlFilename = filename;
-    _dlIsCore = !!isCore;
+    _dlIsGc = isCore === 'gclog';           // 5번째 인자: true=코어, 'gclog'=GC 로그
+    _dlIsCore = !_dlIsGc && !!isCore;
     document.getElementById('dlModalFilename').textContent = filename;
     var hasGz = origSize && origSize.length > 0 && gzSize && gzSize.length > 0;
     document.getElementById('dlModalSizeRow').style.display = hasGz ? 'none' : 'flex';
@@ -1089,8 +1166,11 @@ document.getElementById('btnConfirmDl').onclick = function() {
     if (!_dlFilename) return;
     var filename = _dlFilename;
     var isCore = _dlIsCore;
+    var isGc = _dlIsGc;
     closeDownloadModal();
-    var downloadUrl = isCore
+    var downloadUrl = isGc
+        ? '/api/gc-log/download/' + encodeURIComponent(filename)
+        : isCore
         ? '/api/core-dump/download/' + encodeURIComponent(filename)
         : '/download/' + encodeURIComponent(filename);
     fetch(downloadUrl, {credentials: 'same-origin'})
@@ -1152,9 +1232,11 @@ function submitBulkDownload() {
         var tr = c.closest('tr');
         var fileType = tr ? tr.getAttribute('data-file-type') : 'heapdump';
         var isCore = fileType === 'coredump' || fileType === 'coreexec';
+        var isGc = fileType === 'gclog';
         return {
             filename: c.value,
-            url: isCore ? '/api/core-dump/download/' + encodeURIComponent(c.value)
+            url: isGc ? '/api/gc-log/download/' + encodeURIComponent(c.value)
+               : isCore ? '/api/core-dump/download/' + encodeURIComponent(c.value)
                         : '/download/' + encodeURIComponent(c.value)
         };
     });
@@ -1202,6 +1284,10 @@ function submitBulkDelete() {
     var sel = getSelectedCheckboxes();
     if (sel.length === 0) return;
     // 분리: 살아있는 파일은 /api/files/bulk-delete, 이미 deleted된 항목은 /api/history/bulk-delete (분석 기록 purge)
+    // GC 로그는 저장소·API 가 달라 따로 보낸다(파일+분석 결과 삭제). 힙 일괄 삭제 API 로 보내면 '파일 없음' 으로 실패한다
+    var isGcRow = function(c) { var tr = c.closest('tr'); return tr && tr.getAttribute('data-file-type') === 'gclog'; };
+    var gcFiles = sel.filter(isGcRow).map(function(c) { return c.value; });
+    sel = sel.filter(function(c) { return !isGcRow(c); });
     var liveFiles = sel.filter(function(c) { return c.getAttribute('data-deleted') !== 'true'; }).map(function(c) { return c.value; });
     var deletedFiles = sel.filter(function(c) { return c.getAttribute('data-deleted') === 'true'; }).map(function(c) { return c.value; });
     var btn = document.getElementById('bulkDelConfirmBtn');
@@ -1218,6 +1304,16 @@ function submitBulkDelete() {
             method: 'POST', headers: headers,
             body: JSON.stringify({ filenames: liveFiles })
         }).then(toJson));
+    }
+    if (gcFiles.length > 0) {
+        tasks.push(Promise.all(gcFiles.map(function(fn) {
+            return Common.fetchJSON('/api/gc-log/' + encodeURIComponent(fn) + '?deleteFile=true', { method: 'DELETE' })
+                .then(function() { return { ok: true }; })
+                .catch(function(e) { return { ok: false, error: fn + ': ' + ((e && e.message) || '삭제 실패') }; });
+        })).then(function(rs) {
+            return { success: rs.filter(function(x) { return x.ok; }).length, failed: rs.filter(function(x) { return !x.ok; }).length,
+                     errors: rs.filter(function(x) { return !x.ok; }).map(function(x) { return x.error; }) };
+        }));
     }
     if (deletedFiles.length > 0) {
         tasks.push(fetch('/api/history/bulk-delete', {
@@ -1254,32 +1350,38 @@ function onTabClick(btn) {
     localStorage.setItem('filesActiveTab', _activeTab);
     document.querySelectorAll('.type-tab').forEach(function(t) { t.classList.remove('active'); });
     btn.classList.add('active');
-    var modeMap = { all: 'auto', heapdump: 'heapdump', coredump: 'coredump', others: 'auto' };
+    var modeMap = { all: 'auto', heapdump: 'heapdump', coredump: 'coredump', gclog: 'gclog', others: 'auto' };
     if (typeof UploadQueue !== 'undefined') UploadQueue.setUploadMode(modeMap[_activeTab] || 'auto');
     var fi = document.querySelectorAll('#fileInput, #fileInputBanner');
-    var heapAccept = ALLOW_ALL_EXT ? '' : '.hprof,.bin,.dump,.gz';
-    fi.forEach(function(el) {
-        el.setAttribute('accept', _activeTab === 'coredump' ? '' : heapAccept);
-    });
+    fi.forEach(function(el) { el.setAttribute('accept', acceptForTab(_activeTab)); });
     var table = document.getElementById('filesTable');
     if (table) {
-        if (_activeTab === 'others') table.classList.add('hide-ai-col');
+        // AI 인사이트 열은 힙 분석 전용 — Others·GC Log 탭에서는 숨긴다
+        if (_activeTab === 'others' || _activeTab === 'gclog') table.classList.add('hide-ai-col');
         else table.classList.remove('hide-ai-col');
     }
     applyFilter();
 }
 
+/** 탭별 파일 선택 필터 — 코어·GC 로그 탭은 확장자가 제각각(core.1234, gc.log.3)이라 제한하지 않는다. */
+function acceptForTab(tab) {
+    if (tab === 'coredump' || tab === 'gclog') return '';
+    return ALLOW_ALL_EXT ? '' : '.hprof,.bin,.dump,.gz,.log,.gclog,.txt';
+}
+
 function updateTabCounts(rows) {
-    var heap = 0, core = 0, others = 0;
+    var heap = 0, core = 0, gc = 0, others = 0;
     rows.forEach(function(r) {
         var t = r.getAttribute('data-file-type') || 'heapdump';
         if (t === 'coredump' || t === 'core' || t === 'coreexec' || t === 'exec') core++;
+        else if (t === 'gclog') gc++;
         else if (t === 'others') others++;
         else heap++;
     });
-    document.getElementById('tabCntAll').textContent    = heap + core + others;
+    document.getElementById('tabCntAll').textContent    = heap + core + gc + others;
     document.getElementById('tabCntHeap').textContent   = heap;
     document.getElementById('tabCntCore').textContent   = core;
+    document.getElementById('tabCntGc').textContent     = gc;
     document.getElementById('tabCntOthers').textContent = others;
 }
 
@@ -1313,6 +1415,9 @@ function closeClassifyModal() {
 
 function onClassifyTypeChange() {
     var type = document.getElementById('classifyTypeSelect').value;
+    var gcIn = document.getElementById('classifyGcIn'), gcOut = document.getElementById('classifyGcOut');
+    if (gcIn) gcIn.classList.toggle('show', type === 'gclog' && _classifyCurrentType !== 'gclog');
+    if (gcOut) gcOut.classList.toggle('show', _classifyCurrentType === 'gclog' && type !== 'gclog');
     document.getElementById('execPairSection').style.display = (type === 'core') ? '' : 'none';
     // 실행파일 연결된 코어파일을 다른 유형으로 변경 시 경고
     var warn = document.getElementById('classifyExecWarn');
@@ -1485,14 +1590,13 @@ function initRows() {
         _activeTab = savedTab;
         document.querySelectorAll('.type-tab').forEach(function(t) { t.classList.remove('active'); });
         savedTabBtn.classList.add('active');
-        var modeMap = { heapdump: 'heapdump', coredump: 'coredump', others: 'auto' };
+        var modeMap = { heapdump: 'heapdump', coredump: 'coredump', gclog: 'gclog', others: 'auto' };
         if (typeof UploadQueue !== 'undefined') UploadQueue.setUploadMode(modeMap[_activeTab] || 'auto');
-        var heapAccept = ALLOW_ALL_EXT ? '' : '.hprof,.bin,.dump,.gz';
         document.querySelectorAll('#fileInput, #fileInputBanner').forEach(function(el) {
-            el.setAttribute('accept', _activeTab === 'coredump' ? '' : heapAccept);
+            el.setAttribute('accept', acceptForTab(_activeTab));
         });
         var table = document.getElementById('filesTable');
-        if (table && _activeTab === 'others') table.classList.add('hide-ai-col');
+        if (table && (_activeTab === 'others' || _activeTab === 'gclog')) table.classList.add('hide-ai-col');
     }
     _grid.init(_grid.allRows);
     applyFilter();
@@ -1500,11 +1604,12 @@ function initRows() {
 
 // 순번(#) = 유형 접두 + 카테고리별 "날짜 오름차순 고정 순위"(가장 오래된 파일 = 1).
 // 정렬/필터/페이지/페어링과 무관한 안정적 식별자 → 한 번만(initRows) 계산해 셀에 고정.
-// 카테고리: H=Heapdump, C=Corefile(coredump/core), E=실행파일(exec/coreexec), O=Others.
+// 카테고리: H=Heapdump, C=Corefile(coredump/core), E=실행파일(exec/coreexec), G=GC 로그, O=Others.
 //   ⚠ 이 매핑은 탭 필터 로직(applyFilter)과 동기 유지(단 exec/coreexec 는 coredump 탭에 함께 노출).
 function categoryOf(t) {
     t = t || 'heapdump';
     if (t === 'others') return 'O';
+    if (t === 'gclog') return 'G';
     if (t === 'exec' || t === 'coreexec') return 'E';
     if (t === 'coredump' || t === 'core') return 'C';
     return 'H';
@@ -1513,7 +1618,7 @@ function assignStableNumbers() {
     // top-level 행 + 페어링된 exec 서브행(연결 상태)까지 모두 포함 → 연결/연결해제에도 E 순번 유지.
     var all = _grid.allRows.slice();
     Object.keys(_subrowMap).forEach(function(k) { all.push(_subrowMap[k]); });
-    var groups = { H: [], C: [], E: [], O: [] };
+    var groups = { H: [], C: [], E: [], G: [], O: [] };
     all.forEach(function(row) {
         if (row.getAttribute('data-deleted') === 'true') return;   // 삭제 행은 순번 미부여
         groups[categoryOf(row.getAttribute('data-file-type'))].push(row);
@@ -1595,6 +1700,7 @@ function applyFilter() {
         if (_activeTab === 'others')   return t === 'others';
         if (_activeTab === 'heapdump') return t === 'heapdump';
         if (_activeTab === 'coredump') return (t === 'coredump' || t === 'core' || t === 'coreexec' || t === 'exec');
+        if (_activeTab === 'gclog')    return t === 'gclog';
         return t === _activeTab;
     }));
     updateMobileFilterBadge();   // 모바일 '필터' 버튼 활성 카운트 동기화 (초기 복원 포함 모든 경로)

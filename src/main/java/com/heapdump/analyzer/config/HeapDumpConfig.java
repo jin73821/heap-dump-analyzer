@@ -326,6 +326,26 @@ public class HeapDumpConfig {
     @Value("${coredump.timeout.minutes:10}")
     private int coreDumpTimeoutMinutes;
 
+    // ── GC 로그 설정 (2026-09-14) — @Value 전용: 런타임 변경 없음(coredump.directory 와 같은 정책, 5-place 미적용) ──
+    @Value("${gclog.directory:/opt/gclogs}")
+    private String gcLogDirectory;
+
+    /** 분석 상한(바이트, gz 는 해제 후 기준). 기본 2GB. */
+    @Value("${gclog.max-file-bytes:2147483648}")
+    private long gcLogMaxFileBytes;
+
+    /** 줄 길이 상한(초과분 절단). */
+    @Value("${gclog.max-line-chars:4096}")
+    private int gcLogMaxLineChars;
+
+    /** 분석 작업 최대 시간(분). 초과 시 ERROR. */
+    @Value("${gclog.analysis.timeout-minutes:10}")
+    private int gcLogAnalysisTimeoutMinutes;
+
+    /** 덤프 생성 시각 ↔ 로그 시간 범위 매칭 허용 오차(분). */
+    @Value("${gclog.match.tolerance-min:10}")
+    private int gcLogMatchToleranceMin;
+
     /** MAT CLI 유효성 상태 (init 후 설정) */
     private boolean matCliReady;
     private String  matCliStatusMessage;
@@ -345,6 +365,9 @@ public class HeapDumpConfig {
 
         // ── 2. 코어 덤프 디렉토리 초기화 ──────────────────────
         initCoreDumpDirectory();
+
+        // ── 2-1. GC 로그 디렉토리 초기화 ──────────────────────
+        initGcLogDirectory();
 
         // ── 3. MAT CLI 검증 ───────────────────────────────────
         validateMatCli();
@@ -379,6 +402,24 @@ public class HeapDumpConfig {
             }
         } catch (IOException e) {
             logger.error("[Config] Failed to create core dump directory: {} — {}", coreDumpDirectory, e.getMessage());
+        }
+    }
+
+    private void initGcLogDirectory() {
+        logger.info("[Config] GC log directory: {}", gcLogDirectory);
+        try {
+            for (String sub : new String[]{"", "dumpfiles", "data", "tmp"}) {
+                Path p = sub.isEmpty() ? Paths.get(gcLogDirectory) : Paths.get(gcLogDirectory, sub);
+                if (!Files.exists(p)) {
+                    Files.createDirectories(p);
+                    logger.info("[Config] Created GC log directory: {}", p);
+                }
+            }
+            if (!new File(gcLogDirectory).canWrite()) {
+                logger.warn("[Config] GC log directory is NOT writable: {}", gcLogDirectory);
+            }
+        } catch (IOException e) {
+            logger.error("[Config] Failed to create GC log directory: {} — {}", gcLogDirectory, e.getMessage());
         }
     }
 
@@ -591,6 +632,14 @@ public class HeapDumpConfig {
     public boolean isGdbCliReady()               { return gdbCliReady; }
     public String  getGdbCliStatusMessage()      { return gdbCliStatusMessage; }
     public int     getCoreDumpTimeoutMinutes()   { return coreDumpTimeoutMinutes; }
+
+    // ── GC 로그 getters ───────────────────────────────────────────
+    public String  getGcLogDirectory()             { return gcLogDirectory; }
+    public String  getGcLogDumpFilesDirectory()    { return gcLogDirectory + File.separator + "dumpfiles"; }
+    public long    getGcLogMaxFileBytes()          { return gcLogMaxFileBytes; }
+    public int     getGcLogMaxLineChars()          { return gcLogMaxLineChars; }
+    public int     getGcLogAnalysisTimeoutMinutes(){ return gcLogAnalysisTimeoutMinutes; }
+    public int     getGcLogMatchToleranceMin()     { return gcLogMatchToleranceMin; }
 
     // ── LLM getters ────────────────────────────────────────────
     public boolean isLlmEnabled()              { return llmEnabled; }

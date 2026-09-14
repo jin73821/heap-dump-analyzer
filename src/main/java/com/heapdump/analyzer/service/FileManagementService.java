@@ -471,6 +471,21 @@ public class FileManagementService {
         logger.info("[FileMeta] Saved classification: {}={}", filename, fileType);
     }
 
+    /** 분류 라벨 제거 — 파일이 다른 저장소로 옮겨 가 라벨이 남으면 같은 이름의 새 파일에 잘못 붙는다(2026-09-14). */
+    public synchronized void removeFileClassification(String filename) throws IOException {
+        File f = fileClassificationsFile();
+        if (!f.exists()) return;
+        Properties p = new Properties();
+        try (InputStream is = new FileInputStream(f)) {
+            p.load(is);
+        }
+        if (p.remove(filename) == null) return;
+        try (OutputStream os = new FileOutputStream(f)) {
+            p.store(os, null);
+        }
+        logger.info("[FileMeta] Removed classification: {}", filename);
+    }
+
     // ── 코어-실행파일 페어링 저장/로드 ──────────────────────────────────
 
     private File coreExecPairsFile() {

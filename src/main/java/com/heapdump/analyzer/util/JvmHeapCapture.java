@@ -41,7 +41,7 @@ public final class JvmHeapCapture {
 
     private JvmHeapCapture() {}
 
-    public static final int SCHEMA = 1;
+    public static final int SCHEMA = 2; // 2: Candidate.gcLogPath (2026-09-14)
     public static final int MAX_CANDIDATES = 20;
     public static final int MAX_OPTIONS_PER_CANDIDATE = 40;
     public static final int MAX_OPTION_LEN = 200;
@@ -93,7 +93,7 @@ public final class JvmHeapCapture {
 
     /** java 프로세스 1개. options/markers 는 allow-list 통과분만 담긴다. */
     public record Candidate(int pid, String user, Long startEpoch, String mainClass, String cwd, String exe,
-                            Long xmsBytes, Long xmxBytes, String xmxOrigin, String heapDumpPath,
+                            Long xmsBytes, Long xmxBytes, String xmxOrigin, String heapDumpPath, String gcLogPath,
                             List<String> options, int otherOptionCount, Map<String, String> markers,
                             boolean envReadable, boolean envUsed, boolean argfile, boolean container) {
         public Candidate {
@@ -352,7 +352,14 @@ public final class JvmHeapCapture {
             + "|^-XX:[+-]Use\\w+GC$"
             + "|^-XX:[+-](HeapDumpOnOutOfMemoryError|ExitOnOutOfMemoryError|UseCompressedOops|UseContainerSupport"
             + "|AlwaysPreTouch|DisableExplicitGC)$"
-            + "|^-XX:HeapDumpPath=\\S+$");
+            + "|^-XX:HeapDumpPath=\\S+$"
+            // GC 로그 위치·형식 (2026-09-14) — 값이 경로/숫자뿐이라 allow-list 철학 유지. -Xlog 는 gc 셀렉터만 남긴다(parseGcLogPath).
+            + "|^-Xloggc:\\S+$"
+            + "|^-Xlog:\\S+$"
+            + "|^-verbose:gc$"
+            + "|^-XX:[+-](PrintGC|PrintGCDetails|PrintGCDateStamps|PrintGCTimeStamps|PrintGCApplicationStoppedTime"
+            + "|UseGCLogFileRotation|PrintTenuringDistribution)$"
+            + "|^-XX:(NumberOfGCLogFiles|GCLogFileSize)=\\S+$");
 
     /** 매칭에 쓰는 {@code -D} 키. 이 키의 값만 markers 로 남긴다(200자 절단). */
     public static final List<String> MARKER_KEYS = List.of(
@@ -397,7 +404,7 @@ public final class JvmHeapCapture {
         addEnvTokens(sources, env, "_JAVA_OPTIONS");
 
         Long xms = null, xmx = null;
-        String xmxOrigin = null, heapDumpPath = null;
+        String xmxOrigin = null, heapDumpPath = null, gcLogPath = null;
         Double maxRamPct = null;
         Long maxRam = null;
         boolean argfile = false, envUsed = false;
@@ -423,6 +430,8 @@ public final class JvmHeapCapture {
             else if (t.startsWith("-XX:MaxRAMPercentage=")) { maxRamPct = parseDoubleOrNull(t.substring(21)); }
             else if ((v = sizeAfter(t, "-XX:MaxRAM=")) != null) { maxRam = v; }
             else if (t.startsWith("-XX:HeapDumpPath=")) { heapDumpPath = trunc(t.substring(17), MAX_MARKER_LEN); }
+            else if (t.startsWith("-Xloggc:")) { gcLogPath = trunc(t.substring(8), MAX_MARKER_LEN); }
+            else if (t.startsWith("-Xlog:")) { String g = parseGcLogPath(t); if (g != null) gcLogPath = trunc(g, MAX_MARKER_LEN); }
 
             if (STORED_OPTION.matcher(t).matches()) {
                 if (options.size() < MAX_OPTIONS_PER_CANDIDATE) options.add(trunc(t, MAX_OPTION_LEN));
@@ -451,7 +460,82 @@ public final class JvmHeapCapture {
         }
         if (xmx != null && xmxOrigin == null) xmxOrigin = "cmdline";
         return new Candidate(pid, user, startEpoch, mainClass == null ? null : trunc(mainClass, MAX_MARKER_LEN),
-                cwd, exe, xms, xmx, xmxOrigin, heapDumpPath, options, other, markers, envReadable, envUsed, argfile, container);
+                cwd, exe, xms, xmx, xmxOrigin, heapDumpPath, gcLogPath, options, other, markers, envReadable, envUsed, argfile, container);
+    }
+
+    // ── GC 로그 경로 (2026-09-14) ───────────────────────────────
+
+    /**
+     * {@code -Xlog:<selectors>:<output>[:<decorators>[:<options>]]} 에서 gc 셀렉터가 있을 때 파일 경로를 뽑는다.
+     * output 은 {@code file=<p>} 또는 {@code <p>}(stdout/stderr 가 아닌 것). 없으면 null.
+     */
+    static String parseGcLogPath(String opt) {
+        if (opt == null || !opt.startsWith("-Xlog:")) return null;
+        String body = opt.substring(6);
+        if (body.isEmpty() || body.equals("disable") || body.startsWith("help")) return null;
+        // output 구분자 ':' — 셀렉터(gc*=info,safepoint) 뒤 첫 ':'. 셀렉터 안에는 ':' 이 없다.
+        int c1 = body.indexOf(':');
+        String selectors = c1 < 0 ? body : body.substring(0, c1);
+        if (!selectors.contains("gc") && !selectors.equals("all")) return null;
+        if (c1 < 0) return null;                 // 출력 지정 없음 → stdout
+        String rest = body.substring(c1 + 1);
+        int c2 = rest.indexOf(':');
+        String output = c2 < 0 ? rest : rest.substring(0, c2);
+        if (output.startsWith("file=")) output = output.substring(5);
+        if (output.isEmpty() || output.equals("stdout") || output.equals("stderr")) return null;
+        if (output.startsWith("\"") && output.endsWith("\"") && output.length() >= 2) output = output.substring(1, output.length() - 1);
+        return output;
+    }
+
+    /**
+     * 로그 경로 정규화 — 회전 접미사({@code .0}, {@code .1.current}), JVM 치환자({@code %t}/{@code %p}/{@code %pid})를
+     * 지운 뒤 비교한다. 두 경로가 같은 JVM 의 GC 로그를 가리키면 true.
+     */
+    public static boolean sameGcLogPath(String configured, String actual, String cwd) {
+        if (configured == null || actual == null) return false;
+        String a = stripRotation(actual.trim());
+        String c = configured.trim();
+        if (!c.startsWith("/") && cwd != null && !cwd.isBlank()) c = normDir(cwd) + "/" + c;
+        String cn = stripRotation(c);
+        if (cn.equals(a)) return true;
+        if (cn.contains("%")) {
+            String rx = java.util.regex.Pattern.quote(cn).replace("%t", "\\E.*\\Q").replace("%p", "\\E.*\\Q")
+                    .replace("%pid", "\\E.*\\Q").replace("%hn", "\\E.*\\Q");
+            if (a.matches(rx)) return true;
+        }
+        // 같은 디렉토리 + 같은 base(회전 접미사만 다름) — gc-2026-09-14_00-52-33.log 류(%t) 는 위 정규식이 잡는다
+        return false;
+    }
+
+    private static final Pattern ROTATION_SUFFIX = Pattern.compile("(\\.\\d+)?(\\.current)?(\\.gz)?$");
+
+    /** {@code gc.log.3.current} → {@code gc.log}, {@code gc.log.1.gz} → {@code gc.log}. */
+    public static String stripRotation(String p) {
+        if (p == null) return null;
+        String s = p;
+        // 접미사가 여러 겹일 수 있어 두 번 적용
+        for (int i = 0; i < 2; i++) s = ROTATION_SUFFIX.matcher(s).replaceFirst("");
+        return s;
+    }
+
+    /**
+     * GC 로그 전송 시 매칭 — 방금 가져온 로그 경로를 {@code -Xloggc}/{@code -Xlog} 로 쓰는 JVM 을 찾는다.
+     * 정확히 1개 → {@code gclog-path}, 여럿 → {@code ambiguous}, 0개인데 java 가 1개뿐 → {@code single}(약한 근거).
+     */
+    public static Match matchGcLog(Capture cap, String remoteLogPath) {
+        List<Candidate> cs = cap == null ? List.of() : cap.candidates();
+        if (cs.isEmpty()) return new Match(null, "no-candidates", Set.of());
+        Integer only = null;
+        for (int i = 0; i < cs.size(); i++) {
+            Candidate c = cs.get(i);
+            if (sameGcLogPath(c.gcLogPath(), remoteLogPath, c.cwd())) {
+                if (only != null) return new Match(null, "ambiguous", Set.of(FLAG_AMBIGUOUS_PID));
+                only = i;
+            }
+        }
+        if (only != null) return new Match(only, "gclog-path", Set.of());
+        if (cs.size() == 1) return new Match(0, "single", Set.of());
+        return new Match(null, "ambiguous", Set.of());
     }
 
     private static void addEnvTokens(List<String[]> out, Map<String, String> env, String key) {
@@ -641,7 +725,7 @@ public final class JvmHeapCapture {
             List<String> opts = c.options().subList(0, Math.min(keepOptions, c.options().size()));
             Map<String, String> mk = keepMarkers ? c.markers() : Map.of();
             out.add(new Candidate(c.pid(), c.user(), c.startEpoch(), c.mainClass(), c.cwd(), c.exe(), c.xmsBytes(),
-                    c.xmxBytes(), c.xmxOrigin(), c.heapDumpPath(), opts, c.otherOptionCount(), mk,
+                    c.xmxBytes(), c.xmxOrigin(), c.heapDumpPath(), c.gcLogPath(), opts, c.otherOptionCount(), mk,
                     c.envReadable(), c.envUsed(), c.argfile(), c.container()));
         }
         return new Capture(cap.schema(), cap.capturedAtEpoch(), cap.remoteNowEpoch(), cap.memTotal(), cap.memAvailable(),

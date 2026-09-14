@@ -34,6 +34,10 @@ public class DumpTransferLog {
     @Column(name = "transfer_status", nullable = false, length = 20)
     private String transferStatus;
 
+    /** 전송 파일 종류 — heap / core / coreexec / gclog. 2026-09-14 도입, null = 도입 이전 힙 전송(백필 없음). */
+    @Column(name = "file_type", length = 10)
+    private String fileType;
+
     @Column(name = "file_size")
     private Long fileSize;
 

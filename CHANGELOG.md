@@ -1,5 +1,219 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-14] GC 로그 — JDK 6/7 형식(JEUS 8 CMS 로그) 호환: 원인 괄호 없는 CMS 판정 · 전체 수집 승격 · CMS Old 포화 소견 (v2.5.2 유지)
+
+**질문:** JEUS 8.0 GC 로그(JVM 1.8.0 이라고 전달받음)가 분석에 호환되는가?
+**점검 결과:** 형식 판별(JDK8)·시각·동시 단계·크기는 읽혔지만 **일시정지 이벤트 16건이 전부 Young GC 로 분류**됐다. 샘플을 엔진에 그대로 넣어 확인했다.
+- 로그에 `CMS Perm`·`perm gen` 과 원인 괄호 없는 `[GC [1 CMS-initial-mark:` 가 있다. **JDK 7 이하가 찍은 형식**이다(PermGen 은 JDK 8 에서 제거, JDK 8 은 `[GC (CMS Initial Mark)` 처럼 원인을 찍는다). 파서는 JDK 8 의 원인 괄호로 CMS 유형을 판정해서 이 형식을 놓쳤다.
+
+**수정 전 → 후 (사용자 샘플 107줄):**
+| 항목 | 전 | 후 |
+|---|---|---|
+| `[GC [1 CMS-initial-mark: …]` 7건 | Young | CMS Initial Mark |
+| `[GC[YG occupancy: … [1 CMS-remark: …]` 8건 | Young | CMS Final Remark |
+| `[GC [ParNew: …][CMS: …], 4.18 secs]` | Young | **Full** |
+| Full GC / Young 평균 일시정지 | 0회 / 611ms | 1회 / 해당 없음 |
+| 최고 심각도 | Medium | **Critical** (`CMS_OLD_SATURATED`) |
+| 수집기·JDK | CMS · (없음) | CMS · 1.7 이하(PermGen) |
+
+**파서 (`Jdk8GcLogParser`):**
+- CMS 유형을 본문 마커 `CMS-initial-mark:`·`CMS-remark:` 로 판정한다(JDK 6/7/8 공통). 순간 점유량 `[1 CMS-…: old(oldCap)] heap(heapCap)` 에서 Old 점유량·Old 용량·힙 용량을 채운다.
+  - 힙 before/after 는 채우지 않는다. 수집 전후 값이 아니라서 누수 추세·할당률을 오염시킨다.
+- `[GC` 안에 Old 세대 수집(`[CMS:`·`[Tenured:`)이 있으면 **Full** 로 승격한다. JDK 6/7 은 전체 수집을 `[Full GC` 가 아니라 이렇게 찍는다.
+  - ⚠ **기존 동작 변경:** JDK 8 의 `[GC (Allocation Failure) [ParNew (promotion failed)…][CMS (concurrent mode failure)…]` 도 Young → Full 이 됐다. Old 까지 STW 로 치운 수집이라 Full 이 맞다. 플래그(PROMOTION_FAILED·CONCURRENT_MODE_FAILURE)는 그대로다.
+- Old 수집 도중 끼어든 CMS 동시 단계(`[CMS2026-…: [CMS-concurrent-mark: …] [Times: …]` + 다음 줄 ` (concurrent mode failure): …`)를 별도 동시 이벤트로 빼고 본문에서 지운다. 남겨 두면 `[CMS` 라벨이 끊겨 Old 크기가 힙 총합으로 잡히고, 안쪽 `[Times:` 가 먼저 잡혔다.
+- `PrintTenuringDistribution` 줄을 크기 해석 전에 지운다. CMS 는 `[ParNew` 와 `: 크기` 사이에 이 줄이 끼어 Young 크기와 수집기 판별을 잃었다.
+- JDK 6/7 어휘: `(System)` → SYSTEM_GC, `[GC--` → PROMOTION_FAILED, `[PSOldGen:` → Parallel Old.
+- PermGen 라벨(`CMS Perm`/`PSPermGen`/`Perm`)을 보면 메타 `permGen` 을 올린다.
+
+**집계기 (`GcLogAnalyzer`):**
+- 신규 소견 `CMS_OLD_SATURATED`: CMS Initial Mark 시점 Old 점유율 ≥98% 가 **연속 3회**면 High, **5회** 이상이면 Critical. 사이클 평균 간격을 근거에 싣는다.
+  - 사용자 로그의 핵심 증상이다. 사이클이 끝나도 Old 가 1,572,858K/1,572,864K 그대로이고 6초마다 다음 사이클이 돈다.
+  - 기존 소견은 이 상태를 못 잡았다. Full GC 가 1회뿐이라 빈도 소견이 안 나고, 60초 미만이라 처리량 소견도 안 난다.
+- `Meta.permGen`(Boolean)을 추가했다. JDK 헤더가 없으면 `jdkVersion` 을 `1.7 이하(PermGen)` 로 채운다. 결과 화면 KPI 는 `Metaspace` 대신 `PermGen` 으로, LLM 프롬프트도 `PermGen:` 으로 부른다.
+- 형식 안내 문구 `JDK 8` → `JDK 8 이하`: 결과 KPI, 업로드 영역, NOT_GC_LOG 오류 3곳.
+
+**검증:**
+- 사용자 샘플을 엔진에 직접 넣어 확인했다. 원본·CRLF·gzip 결과 동일, 줄 사이 빈 줄 버전은 줄 번호만 다름.
+- `Jdk8GcLogParserTest` +4: 운영 로그 원문 골든(PrintHeapAtGC 블록 포함), 동시 단계 끼어들기 JDK 7/8, ParNew Tenuring 라벨 보존, 레거시 Parallel/Serial 어휘. 기존 CMS 테스트의 promotion failed 기대값은 Young → Full.
+- `GcLogAnalyzerTest` +2: 포화 Critical·Full 집계·PermGen 메타 / 정상 70%·연속 2회는 미발생, 3회는 High.
+- 테스트 769 → **775** 전체 통과(라이브 4 skip).
+- ⚠ **이미 분석한 GC 로그는 자동으로 다시 파싱되지 않는다** — 결과 페이지에서 '다시 분석'해야 반영된다.
+
+## [2026-09-14] 원격 전송·등록의 이름 충돌 방어 보강 — 기록만 남은 이름 · 동시 전송 · 원격 경로 판정 (v2.5.2 유지)
+
+**질문:** gc.log 스캔·전송 시 기존 파일과 이름이 겹치면 방어 로직이 있는가?
+**점검 결과:** 디스크에 같은 이름 파일이 있으면 전송 시각을 넣은 회피명(`gc_202609141530.log`)으로 받는 방어는 이미 있었다(힙·코어 공용). 스캔 패널도 실제 로컬 이름으로 결과를 연다. 다만 코드 점검에서 빈틈 3곳이 나왔고, 셋 다 고쳤다(재현이 아니라 코드 경로로 확인).
+
+**① 파일 없이 남은 GC 로그 기록 이름 재사용 → 옛 분석 결과가 새 파일에 붙음**
+- 원인: 이름 충돌 검사는 디스크 파일만 봤다. GC 로그 파일을 디스크에서 지워도 `gc_log_analysis` 기록은 삭제 표시만 남는다. 같은 이름으로 새 파일이 들어오면 `registerTransferred`·`registerUploaded`·`listExistingFiles`(디스크 재등장)가 새 기록일 때만 상태를 초기화했다. 그래서 옛 `SUCCESS`·결과 JSON·결과 캐시·AI 해석·수동 매칭·인스턴스명이 그대로 이어졌다.
+- 수정 1 (`RemoteDumpService.nameTaken`): 전송 시 `gc_log_analysis` 에 기록이 있는 이름을 점유로 보고 회피명으로 받는다. 옛 기록은 보존된다.
+- 수정 2 (`GcLogAnalyzerService.forgetAnalysis`): 기록을 재사용하는 경로에서 진행 중 작업·캐시·결과 JSON·AI 해석을 지운다. 엔티티의 요약·오류·매칭·인스턴스명·출처(서버·원격 경로·원격 mtime·JVM 수집)·등록자도 비운다(감사 로그 `[GcLog] action=forget-previous file= reason= hadResult=`).
+  - 전송·업로드는 늘 새 파일로 취급한다.
+  - 디스크 재등장은 **크기가 기록과 다를 때만** 새 파일로 본다. 크기가 같으면 같은 파일을 되돌려 놓은 것으로 보고 결과를 살린다.
+  - `adoptFile`(분류 이동)도 같은 헬퍼로 바꿨다. 종전엔 심각도·매칭만 비우고 요약 컬럼·인스턴스명·옛 서버명은 남겼다.
+
+**② 같은 이름 동시 전송 → 먼저 받은 파일이 덮어써짐** (힙·코어 공용)
+- 원인: 이름 검사는 SCP 시작 전 1회였고, 마지막 이동이 `Files.move(..., REPLACE_EXISTING)` 였다. 자동 탐지와 수동 전송(또는 탭 두 개)이 같은 이름을 동시에 받으면 둘 다 같은 이름을 골랐다. 나중에 끝난 쪽이 먼저 받은 파일을 덮었고 전송 기록은 두 건 모두 SUCCESS였다.
+- 수정: `reserveLocalName` 이 도착 디렉토리+이름을 메모리에 예약한다. 파일 존재 · 저장소별 점유 · 다른 전송의 예약 중 하나라도 걸리면 회피명을 쓴다. 예약은 `finally` 에서 푼다. `moveIntoPlace` 는 덮어쓰지 않는다. 예약 밖(업로드·수동 복사)에서 그 사이 같은 이름이 생기면 원래 이름 기준 회피명을 다시 예약해 옮긴다(최대 5회, WARN).
+- ⚠ **덤 — 힙 `.gz` 짝:** 같은 점유 판정에 힙의 `X.hprof` ↔ `X.hprof.gz` 짝을 넣었다. 로컬에 `X.hprof.gz`(분석 후 압축된 다른 덤프)가 있는데 새 `X.hprof` 가 들어오면, 다음 기동 때 `cleanupDuplicateGzFiles` 가 `.gz` 를 중복본으로 지워 **옛 덤프 원본이 사라지는** 경로였다. 이제 새 파일은 `X_yyyyMMddHHmm.hprof` 로 받는다.
+
+**③ 스캔 '전송됨' 판정이 원격 파일명 기준 → 다른 디렉토리의 같은 이름 파일이 자동 전송에서 빠짐** (힙·GC·코어 공용)
+- 원인: `서버 + 원격 파일명 + 크기` 로만 찾았다. 인스턴스별 `/logs/was1/gc.log`·`/logs/was2/gc.log` 의 크기가 같으면 뒤쪽이 이미 전송된 것으로 보였다.
+- 수정: 스캔 3곳을 `findTransferredLocal` 하나로 모았다. 기존 조회(인덱스 동일) 결과를 **원격 전체 경로**로 한 번 더 거른다. 비교는 연속 슬래시·`/./` 만 정규화하고 대소문자는 구분한다. `remote_path` 가 없는 옛 기록은 종전처럼 인정한다 — 갑자기 '미전송'이 되어 자동 탐지가 재전송하지 않게.
+- 운영 영향 점검: 이 서버 로그에는 자동 탐지 전송(`[AutoDetect] New`)이 한 건도 없다(수동 스캔만). 옛 기록의 경로 표기가 달라도 대량 재전송으로 번질 가능성은 낮다.
+
+**검증:**
+- 신규 `RemoteDumpTransferNameGuardTest`(8)
+  - 기록만 남은 GC 이름은 회피명, 힙 `.gz` 짝 양방향, 코어 무관.
+  - 예약 차단·해제·디렉토리별, **32 스레드 동시 예약 전부 다른 이름**.
+  - 이동 중 선점 파일 내용 보존 + 예약 이전.
+  - `transferFile` 본문에 `REPLACE_EXISTING` 없음 + 예약/이동/finally 해제 계약.
+  - 다른 디렉토리 같은 이름·크기 = 미전송, 표기 차이 정규화, 로컬 파일 없음, 옛 기록 인정.
+- 신규 `GcLogReusedNameTest`(4): 전송·업로드가 옛 기록을 비움, 재등장은 크기 다를 때만 비우고 같으면 결과 보존, 처음 보는 이름은 결과 삭제를 부르지 않음.
+- 기존 `GcLogClassifyMoveTest`·`RemoteDumpDedupFilenameTest`·`GcLogAnalyzerServiceRunTest`·`RemoteDumpPathGuardTest`·`FileClassifyGcLogEndpointTest` 통과.
+- 테스트 757 → **769** 전체 통과(라이브 4 skip), `mvn clean package` 성공, 운영 재기동(16:00) 경고 없음.
+- ⚠ 실제 SSH/SCP 동시 전송은 돌려 보지 않았다. 경합은 예약·이동 단위 테스트로만 확인했다.
+
+## [2026-09-14] 대시보드 Recent Files — GC 로그 상태 반영 (분석 완료인데 '미분석' 표시) (v2.5.2 유지)
+
+**제보:** 대시보드 Recent Files 에 `gc.log` 가 이미 분석 완료인데 미분석으로 표시된다.
+
+**원인:** Recent Files 는 **힙 덤프 저장소**(`/opt/heapdumps/dumpfiles`)만 나열하고 상태도 힙 분석 이력만 봤다. `gc.log` 는 13:35 에 힙 저장소로 한 번 올라간 뒤 13:36 에 GC 로그 저장소(`/opt/gclogs/dumpfiles`)로 다시 올라가 거기서 분석됐다(두 사본 모두 53,251B). 대시보드가 보여 준 것은 분석 기록이 없는 힙 저장소 사본이라 '미분석' + 힙 분석(Others 경고) 버튼이었다. 같은 이유로 대시보드에서 올린 GC 로그는 Recent Files 에 아예 나오지 않았다.
+
+**수정:**
+- 신규 DTO `RecentFileItem`(`HeapDumpFile` + `kind` heap|gclog + 저장소별 `status` + others). `HeapDumpViewController.index` 가 힙 저장소 항목과 GC 로그 저장소 항목(`listExistingFiles`, 진행 중이면 ANALYZING)을 `RecentFileItem.merge` 로 합쳐 최신순 상위 5를 `recentFiles`, 전체 건수를 `recentCount` 로 싣는다. GC 목록 조회 실패는 WARN 후 힙 목록만 보인다.
+- ⚠ 병합 규칙: 힙 쪽 **분석 기록이 없고(미분석) 이름·크기가 GC 로그 파일과 같은** 힙 항목은 같은 파일의 사본으로 보고 목록에서 뺀다 — 안 그러면 `gc.log` 가 '분석 완료'(GC)와 '미분석'(힙) 두 줄로 남는다. 크기가 다르거나 힙에서 분석(성공·실패)한 파일은 둘 다 보인다. **파일은 삭제하지 않는다**(Files 페이지에는 계속 보인다).
+- `index.html` Recent Files: GC 로그는 초록 `GC` 배지, 툴팁 `Type`·`Analyzing` 행, 버튼 경로 분기 — 결과/실패 `/gc-log/analyze/{f}` · 분석 중 스피너 링크 · 미분석은 `AnalyzeConfirm`(kind `gclog`, 폴백 href `?start=1`) · 다운로드 `/api/gc-log/download/{f}` · 삭제 `DELETE /api/gc-log/{f}?deleteFile=true`(Files GC 탭과 동일, 결과도 함께 삭제 — 모달 설명 문구도 분기, 응답 `success` 확인 후 새로고침). 힙 항목은 종전과 동일.
+- 힙 MAT 큐 폴링(`applyInProgress`)은 `data-kind="gclog"` 항목을 건너뛴다(같은 이름이면 GC 분석 중 버튼을 지우고 힙 진행 페이지로 보내던 경로 차단).
+- 대시보드 통계(FILES·DISK·Analyzed 비율)와 빈 화면 판정은 종전대로 힙 저장소 기준(`files`/`fileCount`).
+
+**검증:**
+- 신규 `RecentFileItemTest`(4 — 제보 재현: 사본 1줄로 합침 / 크기 다름·힙 분석 기록 있음은 유지 / 저장소 간 최신순 / 배지·확인 모달 kind·상태), `DashboardDetectSummaryTest.recentFilesRenderGcLogWithGcRoutes`(실제 템플릿 렌더 — GC 결과·미분석 `?start=1`·분석 중·삭제·다운로드 kind, 힙 결과 경로 미사용, JS 분기 3종). 기존 `AnalyzeConfirmTemplateSmokeTest`·`DashboardDetectSummaryTest` 모델을 `recentFiles` 로 갱신.
+- 운영 디스크 대조: 두 `gc.log` 크기 동일(53,251B), 힙 분석 시도 로그 없음 → 병합 규칙상 GC 항목(분석 완료) 한 줄만 남는다.
+- 테스트 752 → **757** 전체 통과(라이브 4 skip), `mvn clean package` 성공, 운영 재기동(15:28). ⚠ 로그인이 필요한 대시보드 실화면은 직접 열어 보지 못했다.
+
+## [2026-09-14] GC 로그 결과 — KPI '인스턴스' 카드 (연결된 힙 덤프에서 자동 + 수동 입력) (v2.5.2 유지)
+
+**요청:** GC 분석 결과에서 힙 덤프를 연결하면 인스턴스명을 가져오고, 수동 입력도 가능하게. KPI 영역의 빈 한 칸에 인스턴스명 카드 추가.
+
+**값 규칙:** **수동 입력 > 연결된 힙 덤프의 Instance > 미지정.** 덤프 쪽 값은 analyze 화면 Instance 칩과 같은 규칙(덤프의 수동 편집값 `jeus_instance` > System Properties `jeus.server.name`)으로 구해 두 화면이 어긋나지 않는다. 덤프 값은 GC 로그 기록에 **복사하지 않고 조회 시점에 읽는다** — 연결을 바꾸거나 해제하면 카드도 따라 바뀐다(해제하면 수동값이 없는 한 '미지정').
+
+**백엔드:**
+- `gc_log_analysis.instance_name`(VARCHAR 100, nullable) — **수동 입력값만** 저장. `ddl-auto=update` 가 기동 시 컬럼을 추가한다.
+- 신규 `GcLogInstanceService` — 순수 `view(manual, dumpFilename, dumpInstance)` → `{name, source: manual|dump|none, manual, dump, dumpFilename}` + `viewOf(entity)` + `updateManual`(trim·빈 값 null·100자 절단). ⚠ 컨트롤러만 주입한다 — `GcLogAnalyzerService`/`GcLogMatchService` 에 넣으면 `HeapDumpAnalyzerService` 를 거쳐 순환 참조로 기동이 실패한다.
+- `HeapDumpAnalyzerService.getEffectiveJeusInstance(filename)` — 화면에 보이는 Instance(수동 > sysprop). 결과가 캐시에 없으면 DB 상세를 1회 읽는다.
+- `POST /api/gc-log/{fn}/instance` `{instance}` — 빈 값이면 수동값 삭제(덤프 값 폴백), `instance` 키가 없으면 400(조용히 지우지 않음), 이력 없음 404. 감사 로그 `[GcLog] action=instance file= instance='A'->'B' by=`. USER/ADMIN 공통·CSRF 면제 영역(힙의 `/api/history/{fn}/jeus` 와 같은 정책) — SecurityConfig 변경 없음.
+- `GET/POST /api/gc-log/{fn}/match`·`/rematch` 응답에 `instance` 뷰 추가 — 연결 변경 직후 카드 갱신용. `GcLogViewController` 가 결과가 있을 때만 초기값을 모델에 싣는다(인라인 JS `GC_INSTANCE`, Map 통째 직렬화 대신 문자열 5개).
+
+**프런트 (`gc-log-analyze.js`·`gc-log.css`·`gc-log/analyze.html`):**
+- `renderKpi` 마지막에 `인스턴스` 카드 — 1920px(6열)에서 11장이던 KPI 의 빈 12번째 칸을 채운다. 부가 줄은 출처: `연결된 힙 덤프 · {파일명}` / `수동 입력 · 덤프 값 {값}`(다를 때) / `연결된 힙 덤프에 Instance 없음 — 직접 입력` / `힙 덤프를 연결하면 자동으로 가져옵니다`.
+- 우상단 연필(✎, `aria-label`) → 카드 안 인라인 편집(입력 + 저장/취소, Enter/Esc, 한글 조합 중 Enter 무시). 수동값이 없으면 덤프 값을 미리 채워 둔다. 저장 응답은 `success === true` 확인 후 반영(함정 27), 실패는 서버 `error` 문구로 토스트(함정 14).
+- 편집 줄 높이(2 + 26px)를 값 줄(4 + 24px)과 맞춰 편집을 열어도 KPI 행 높이가 변하지 않는다(실측 90px/90px).
+- 캐시 키 `gc-log.css`·`gc-log-analyze.js` `?v=2026-09-14b`.
+
+**검증:**
+- 신규 `GcLogInstanceServiceTest`(4 — 우선순위·빈 값·연결 없을 때 덤프 값 무시·힙 서비스 미호출·정규화·저장), `GcLogInstanceEndpointTest`(3, standalone MockMvc — 수동 저장/삭제 후 덤프 폴백, 400/404 무저장, `/match` 응답의 instance 와 해제 후 비움). `GcLogTemplateSmokeTest` 에 `GC_INSTANCE` 렌더·스크립트 순서·JS 배선·CSS 단언 추가.
+- 실제 `gc-log.css`/`core-dump.css` 를 쓴 픽스처를 헤드리스 Chrome 1920px 로 렌더 — 인스턴스 카드가 12번째 칸에 들어가고 편집 상태에서도 카드 높이가 같음을 확인.
+- 테스트 745 → **752** 전체 통과(라이브 4 skip), `mvn clean package` 성공, 운영 재기동(14:49) 후 새 CSS·JS 서빙, 미인증 `POST …/instance` 401 확인. ⚠ 로그인이 필요한 결과 화면에서 실제 저장을 눌러 보지는 못했고, 컬럼 추가도 DB 를 직접 조회하지 않았다(`ddl-auto=update` 에 의존).
+
+## [2026-09-14] GC 로그 화면 다듬기 + Files 페이지 GC Log 탭·'GC로그' 분류 + 대시보드 내용 기반 분류 (v2.5.2 유지)
+
+**요청:** ① GC 로그 분석 페이지에서 파일을 올려도 시작 버튼 문구가 그대로 ② 파일 선택 카드와 시작 버튼 간격이 좁음 ③ 결과 페이지의 "서버 guacmg1t 크기 52.0 KB 분석 …" 줄이 무스타일이고 페이지 최상단에 붙음 ④ 결과 페이지 카드가 좌측에 붙음 — 가운데 정렬 ⑤ Files 페이지 GC Log 탭 + 파일 분류 설정에 'GC로그' ⑥ 대시보드 업로드에서도 GC 로그 분류.
+
+**① 업로드 버튼 문구 (`gc-log-index.js`·`gc-log/index.html`):** 라벨을 `#uploadBtnLabel` span 으로 분리하고 `setCta(state)` 4상태 — 파일 없음 `GC 로그 파일을 선택하세요` / 선택됨 차트 아이콘 + `GC 로그 분석 시작` / 전송 중 `업로드 중 43% · 12.0 MB / 28.0 MB` / 성공 `분석 시작 중…`. 실패·네트워크 오류는 `선택됨`으로 되돌린다(종전엔 파일을 골라도 '선택하세요'가 남았다). ② `.gcl-upload-grid` 에 `margin-bottom: 18px`.
+
+**③④ 결과 페이지 레이아웃 (`gc-log/analyze.html`·`gc-log.css`):** 종전 래퍼 `<div class="cd-page" style="max-width:1500px;margin:0 auto;padding:20px 24px 40px">` 는 **배너 폭·고정 상단바 높이를 padding 에 넣지 않아** 콘텐츠가 상단바 바로 밑에 붙고, `margin:auto` 가 배너를 포함한 전체 폭 기준이라 배너 옆 영역에서는 왼쪽으로 치우쳤다. `.gcl-page`(padding `76px 24px 48px calc(var(--banner-w) + 24px)`, 배너 접힘 트랜지션 동일, ≤900px 좌우 16px) > `.gcl-page-inner`(max-width 1400px, `margin: 0 auto`)로 교체. 머리글은 `.gcl-headcard` 카드 — 제목 줄(아이콘·파일명·상태 배지·AI 해석/재분석/삭제) + **키·값 알약형 메타**(서버·크기·원격 경로·등록자·분석 시각·소요 시간, 값이 없으면 생략) + 점선 구분 아래 매칭 칩(라벨 `연결된 힙 덤프`). KPI 카드 최소 폭 150→200px(`G1 · 21+35-2513`·`40.6 ms · 40.6 ms` 가 말줄임으로 잘렸다). 이력 표 수집기 칸은 JDK 빌드 문자열이 칸을 세 줄로 접어 수집기만 보이고 JDK 는 툴팁으로.
+
+**⑤ Files 페이지 GC Log 탭 (`files.html`·`HeapDumpViewController`·`GcLogApiController`):**
+- `filesPage` 가 `buildGcLogHistory` 로 GC 로그 저장소 목록을 병합(`listExistingFiles` 로 디스크↔이력 동기화, 파일 없는 행은 deleted 취급 — 비관리자에게 제외, 실패는 WARN 후 빈 탭). 탭 순서 ALL · Heapdump · Corefile · **GC Log** · Others, 순번 `G-n`, `GC LOG` 배지, AI 열 숨김.
+- 동작 버튼은 GC 전용: 결과 보기 `/gc-log/analyze/{f}` / 분석 중 진행 링크 / 미분석·실패 분석은 `AnalyzeConfirm`(kind `gclog`, `?start=1`) / 다운로드 `GET /api/gc-log/download/{f}`(신규) / 삭제 `DELETE /api/gc-log/{f}?deleteFile=true` — 힙 경로(`/download`·`/api/files/bulk-delete`)는 heap dumpfiles 만 봐서 GC 로그를 못 찾는다. 다중 다운로드·다중 삭제도 GC 행을 GC API 로 분리해 결과를 합산.
+- 파일 분류 설정에 **`GC로그`** 옵션. ⚠ **GC 로그 분류는 라벨이 아니라 저장소 이동이다** — 분석기는 GC 로그 저장소(`/opt/gclogs/dumpfiles`)의 파일만 읽는다. `POST /api/files/{f}/classify` 가 `gclog` 면: 힙·코어 저장소의 파일을 `GcLogAnalyzerService.adoptFile`(형식 sniff 실패 400 · 이름 충돌 409 · 옮긴 뒤 NOT_ANALYZED 로 새로 시작, 옛 결과·매칭 초기화, 전송 기록이 있으면 서버 ID·원격 경로 복원, 자동 매칭 시도)로 옮기고, 원래 저장소 기록(힙 `deleteHistoryRecordOnly` / 코어 `deleteHistoryOnly`)과 라벨을 정리한다. 분석 결과가 있거나 분석 중인 파일은 400. GC 로그를 다른 유형으로 바꾸면 `releaseFile` 로 힙덤프 저장소에 내보내고(분석 중 409 · 대상 충돌 409) GC 결과·AI 해석·엔티티를 함께 지운 뒤 기존 라벨 규칙을 적용한다. 모달이 이동 사실을 안내한다(들어올 때 초록 / 나갈 때 주황 — 결과 삭제 경고). 오류 본문은 files.html 이 읽는 `{status,message}` 모양.
+- ⚠ **신규 `HeapDumpAnalyzerService.deleteHistoryRecordOnly`** — 기존 `deleteHistory` 는 확장자를 뗀 이름으로 dumpfiles 를 훑어 '관련 인덱스' 를 지우므로 **`gc.log` 에 쓰면 `gc.log.1`·`gc.log.2` 같은 다른 파일까지 삭제**한다. 이동 후 유령 행 정리는 DB 행·캐시·이름이 정확히 같은 결과 디렉토리만 지우는 새 메서드로 한다. `FileManagementService.removeFileClassification` 추가.
+- 순환 참조 회피: `GcLogAnalyzerService → HeapDumpAnalyzerService` 를 주입하면 `…→ JvmHeapInfoService → RemoteDumpService → GcLogAnalyzerService` 순환이 생겨 Boot 4 가 기동을 거부한다 — 저장소 간 조정은 컨트롤러(`HeapFileApiController`)에 둔다.
+
+**⑥ 대시보드 업로드 분류 (`upload-queue.js`·`index.html`):** 종전엔 파일명 규칙(`gc.log*`, `gc-*.log*` …)만 봐서 `verbosegc.txt`·`jvm_20260914.out` 같은 GC 로그는 힙 덤프(확장자 경고)로 들어갔다. 자동 모드에서 **코어 이름·힙 확장자·GC 이름 규칙·`.gz` 가 아닌 파일만** 앞 64KB 를 `Blob.slice().text()` 로 읽어 서버 `GcLogFormatDetector` 와 같은 규칙(`looksLikeGcLogText`)으로 판정하고 GC 로그면 `/api/gc-log/upload` 로 보낸다(판정 실패는 이름 규칙으로 후퇴, 업로드를 막지 않음). GC 로그는 확장자 경고·중복 검사 대상에서 제외. 업로드 안내에 `GC 로그`, accept 에 `.log,.gclog,.txt` 추가. 오류 메시지는 `message || error` 둘 다 읽는다. `UploadQueue.detectFileType(file)`(Promise)·`looksLikeGcLogText` 노출.
+
+**검증:**
+- 신규 `GcLogClassifyMoveTest`(5, @TempDir 실제 이동 — 옮김·초기화·출처 복원 / 비-GC 거부 시 파일 제자리 / 충돌 시 양쪽 원본 유지 / 내보내기 시 결과·AI·엔티티 삭제 + 형제 `gc.log.1` 보존 / 거부 시 기록 무삭제), `FileClassifyGcLogEndpointTest`(7, standalone MockMvc — 힙·코어→GC 이동과 정리 대상, `deleteHistory` 미호출, 분석 결과·진행 중 거부, 서비스 예외 400/409 매핑, 404/409/이미 GC, GC→덤프 내보내기·충돌 시 라벨 미저장, 허용 목록). `GcLogTemplateSmokeTest` +2(Files GC 탭·분류·다운로드/삭제 계약 / 대시보드 내용 판별 — **JS 정규식 리터럴을 뽑아 Java 로 컴파일해 서버 판별기와 표본 11개 결론 일치**) + 결과 헤더 구조·CTA 4상태 단언, `AnalyzeConfirmTemplateSmokeTest` files 확인 모달 2→3곳(gclog).
+- Node 로 실제 `upload-queue.js` 를 샌드박스 실행: `looksLikeGcLogText` 8표본(통합/uptime/JDK8 날짜·헤더·타임스탬프 참, 앱 로그·비 GC 대괄호·빈 문자열 거짓), `detectFileType` 으로 `verbosegc.txt`(GC 로그 내용)→gclog · `gc.log.3`→gclog · `.hprof`→heapdump · `core.1234`→coredump.
+- 실제 템플릿 렌더 + 헤드리스 Chrome 스크린샷: 업로드 카드 문구·간격(1600px), 결과 페이지 헤더 카드·가운데 정렬·KPI 무절단(1920px), Files GC Log 탭 2행·배지·버튼, 분류 모달 두 방향 안내.
+- 테스트 731 → **745** 전체 통과(라이브 4 skip), `mvn clean package` 성공, 운영 재기동(14:33) 후 새 `gc-log.css`·`upload-queue.js` 서빙 확인. ⚠ 로그인이 필요한 `/files` 실화면과 실제 분류 이동은 자격증명이 없어 운영에서 직접 누르지 못했다.
+
+## [2026-09-14] GC 로그 분석 — 업로드 파일 NPE 수정 + 기동 워밍업 누수 오탐 수정 (v2.5.2 유지)
+
+**제보:** `[gclog-analyzer] WARN … action=analyze-failed file=gc.log — NullPointerException: Cannot invoke "java.lang.Long.longValue()"`
+
+**원인 1 — 삼항 연산자 자동 언박싱:** `GcLogAnalyzerService.runAnalysis` 가 절대 시각 없는 로그용 폴백 시각을 `remoteMtime != null ? toEpochSecond() : (serverId != null ? f.lastModified()/1000L : null)` 로 계산했다. 바깥 참 쪽이 원시 `long`, 거짓 쪽이 `Long` 이라 **결과 타입이 원시 long** 이 되고, 원격 mtime 도 서버 ID 도 없는 **업로드 파일**에서 안쪽이 null 을 내는 순간 언박싱 NPE 가 났다. 로그 내용과 무관하게 업로드한 GC 로그가 전부 실패했다. 파서·집계기 테스트는 엔진에 null 을 직접 넘겨서 이 서비스 경로를 지나지 않았다.
+- 수정: `static Long fallbackEndEpochSec(entity, file)` — `if` 문으로 원격 mtime → (전송 파일만) 로컬 mtime → null.
+- 진단성: 예상 밖 예외는 `[GcLog] action=analyze-failed … unexpected exception` 에 **스택 트레이스**를 남긴다(종전엔 메시지만 남아 위치를 추론해야 했다). 화면 문구는 `내부 오류로 분석하지 못했습니다 (…)`.
+
+**원인 2 — 기동 워밍업을 누수로 판정:** 같은 파일을 고친 코드로 돌리니 `LEAK_TREND`(Medium) "Remark 직후 16MB → 152MB, +40,390 MB/h" 가 나왔다. 회귀에 쓴 Remark 7점이 **전부 JVM 기동 후 2~16초**(Spring 기동의 클래스 로딩)였고, 이후 36분은 동시 사이클이 없었다 — 14초 폭 기울기를 시간 단위로 환산한 허수다.
+- 수정(`GcLogAnalyzer.finish`): uptime 이 있으면 **기동 후 300초 이내 점은 회귀에서 제외**(`WARMUP_SEC`), 남은 점이 **600초 미만 폭**이면 기울기를 계산하지 않고 이유를 `trend.note` 에 남긴다(`MIN_TREND_SPAN_SEC`). 차트용 `afterPoints` 는 전체 유지, `pointsUsed`·`excludedWarmup`·`spanSec` 추가. `LEAK_TREND` 상세·LLM 프롬프트·결과 KPI·힙 analyze 패널 카드가 제외 건수와 사유를 표시한다.
+
+**검증:**
+- 신규 `GcLogAnalyzerServiceRunTest`(4) — `submitAnalysis` 로 실제 실행기를 태운다(리포지토리만 mock): 업로드(시각 있음/uptime 만)·전송(원격 mtime/로컬 mtime)·비-GC 로그·예상 밖 예외. **수정 전 코드로 되돌려 돌리면 3건이 제보와 같은 메시지로 실패함을 확인**한 뒤 원복.
+- `GcLogAnalyzerTest` +3 — 기동 직후 점만(오탐 모양) → 기울기 없음·소견 없음 / 워밍업 1점 제외 후 실제 누수 검출(기울기 왜곡 없음) / 4분 폭 군집 → 기울기 없음.
+- 실패했던 업로드 파일 `/opt/gclogs/dumpfiles/gc.log` 를 엔진으로 재실행(읽기 전용): 이벤트 45건 성공, `LEAK_TREND` 사라짐, `note=기동 직후(5분) 점 7개를 빼고 나면 0점뿐이라 추세를 계산하지 않았습니다.`
+- 테스트 724 → **731** 전체 통과, 운영 재기동(v2.5.2) 확인. 기존 ERROR 행은 화면의 **재분석**으로 다시 돌리면 된다.
+- 정정: 직전 항목의 테스트 내역 "경로 가드/글롭 +2" 는 +1 이 맞다(합계 47 은 동일).
+
+**후속 제보 — 재분석해도 같은 NPE 문구, 앱 로그 무기록:** Tomcat 접근 로그로 확인하니 재기동(13:46) 이후 브라우저는 **분석 POST 를 한 번도 보내지 않았다** — `/gc-log` → `/gc-log/analyze/gc.log` 이동만 4회. 화면의 NPE 문구는 수정 전에 DB 에 저장된 **옛 오류 기록**이었다(수정 후 문구는 `내부 오류로…` 형식).
+- 원인 3: 목록의 실패 행 '분석' → 확인 모달 '분석 시작' 이 결과 페이지로 이동만 하는데, 결과 페이지 JS 는 **미분석(NOT_ANALYZED)일 때만** 자동 시작하고 **실패(ERROR)면 저장된 오류를 보여 주기만** 했다. 게다가 실패 화면에 '분석을 시작합니다' + 0% 진행 막대가 오류와 함께 떠 시작된 것처럼 보였다.
+- 수정: 확인 모달의 GC 로그 이동 경로에 `?start=1`(확인했으니 시작하라) — 결과 페이지는 이 표시가 있으면 실패 파일도 `POST /api/gc-log/analyze` 로 시작하고, 표시는 즉시 `history.replaceState` 로 지워 새로고침으로 반복 시작되지 않는다. 표시 없이 실패 기록을 열면 오류만 보인다(이력의 결과 링크로 열 때 멋대로 재실행하지 않도록). 실패 화면은 진행 막대를 숨기고 오류 상자 안에 **다시 분석** 버튼(`POST /reanalyze`). 목록 링크의 모듈 미로드 폴백 href 도 `start=1`.
+- 검증: 실제 템플릿을 실패 상태로 렌더한 파일 + 실제 JS + `fetch` 기록 스텁으로 헤드리스 Chrome 4경우 — 표시 없음(분석 POST 없음·오류+다시 분석 보임·진행 막대 숨김) / `?start=1`(`POST …/analyze` → 상태 폴링) / 헤더 '재분석'(`POST …/reanalyze` → 폴링, 버튼 자체는 원래 정상이었음) / 오류 상자 '다시 분석'(동일). `GcLogTemplateSmokeTest` 에 실패 화면·`?start=1` 계약 고정. 테스트 731 전체 통과, 운영 재기동 확인.
+
+## [2026-09-14] GC 로그 분석 — 원격 전송·힙 덤프 자동/수동 매칭·로컬 파서 + LLM 해석 (v2.5.1 → v2.5.2)
+
+**요청:** ① Target 서버에서 GC 로그도 전송 ② 전송 시 힙 덤프와 매칭(자동 가능 여부 검토 + 수동 매칭) ③ 분석은 LLM 인지 로컬인지 검토.
+
+**결정(사용자 확인):** 분석 엔진은 **로컬 Java 스트리밍 파서 + LLM 선택 해석**(리포에 GC 파서 라이브러리 없음, 폐쇄망·Jackson2/guava 금지 규약상 GCToolkit 류 부적합). 형식은 **JDK 9+ 통합 로깅(-Xlog:gc*) + JDK 8 PrintGCDetails(Parallel/CMS/Serial/G1)** 모두. UI 는 **독립 페이지 `/gc-log` + 힙 analyze 페이지 탭/칩**. 자동 매칭은 **강한 단일 후보만 확정**(서버·시간·경로 3신호 중 2점 이상이 정확히 1건), 그 외 후보 제안.
+
+**변경 — 파서·분석기 (`parser/gclog/`, 신규 12 클래스):**
+- `GcLogFormatDetector.sniff`(첫 200줄) → `UnifiedGcLogParser`(데코레이션 부분집합을 내용으로 분류, GC(n) 조립 — **cpu 줄이 완료 줄 뒤에 오므로 pending 보류**, concurrent 사이클은 pause 와 id 공간을 공유해 별도 맵) / `Jdk8GcLogParser`(대괄호 깊이로 다중 행 이벤트 경계, `PrintTenuringDistribution` 끼어듦·CMS Final Remark 다중 시각·G1 트레일러 `[Eden: … Heap: …]`/`[Times:]` 흡수, 바깥 `, X secs]` 만 pause, 세대 라벨로 수집기 판별). 원인 괄호는 `(System.gc())` 한 단계 중첩 허용.
+- `GcLogAnalyzer`(single-pass·상수 메모리): 유형/원인/플래그 카운트, pause 합·평균·최대·p50/p95/p99(20만 건까지 정확, 초과 로그 256버킷 근사), 처리량, 할당률, 승격률, **Full GC 직후 힙 선형회귀(slope MB/h, R²)** — G1 은 Remark/Mixed 대체(`basis`), Full GC 빈도·연속, 10분 창 최대 GC 비중(분모 고정 600s — 인접 두 pause 로 비율이 튀던 결함 수정), Metaspace 추세, sys/user·real 비율, 시계열 다운샘플(≤2000, 병합 계수 기록), 이벤트 표(Full/이상 플래그 ≤2000 + 앞뒤 2500 — **정상 원인 플래그(Allocation Failure/Ergonomics/Initial Mark)는 표 우선 보존 대상에서 제외**), 소견 18종(한국어, Critical/High/Medium/Low/Info).
+- `GcLogEngine`(gz 매직 판정·해제 바이트 상한·줄 절단·이벤트 상한·원문 샘플 앞100/뒤100/최장 pause ±20줄·진행 콜백) / `GcLogResultCodec`(Jackson 3, 4MB 상한 초과 시 시계열·표 절반 축소 + `RESULT_TRIMMED`) / `GcLogResult` 모델.
+
+**변경 — 전송(Phase A):** `TargetServer.scan_gclog/gc_log_path`(경로 분리 헬퍼 공유), `RemoteDumpService.scanGcLogPath`(글롭 상수 `GC_LOG_NAME_GLOBS` — `*gc*.log*` 금지, **기록 중 파일 `active` 판정**(`.current` 또는 최신+120초) → 자동 전송 제외), 전송 디렉토리 `localDirFor` 3분기(`gclog.directory=/opt/gclogs`), `isUnderConfiguredPaths` 3분기, JVM 수집 재사용(`captureJvmInfo(server,path,fileType)` — gclog 는 `JvmHeapCapture.matchGcLog`), 성공 시 `gc_log_analysis` 등록 + 자동 매칭. 힙 find 에 `! -name '*.log.gz'`. `DumpTransferLog.file_type`(nullable, null=heap) + 전송 이력 배지·정렬. `servers.html` 모달 GC 로그 탐지/경로, `server-detail.html` 정보 카드. `server-scan.js` GC LOG/기록 중 배지 + kind `gclog`, `analyze-confirm.js` `gclog` kind(결과 페이지로, 확장자 경고·MAT 대기열 제외), `upload-queue.js` gclog 모드/휴리스틱/`/api/gc-log/upload`, 대시보드 완료 이동, 배너 메뉴.
+- `JvmHeapCapture`: `STORED_OPTION` 에 `-Xloggc:`/`-Xlog:`/`-verbose:gc`/`PrintGC*`/회전 옵션, `Candidate.gcLogPath`(`-Xlog:<sel>:file=` 해석, gc 셀렉터만), `sameGcLogPath`(회전 접미사·`%t/%p` 정규화·cwd 상대경로), `matchGcLog`, SCHEMA 2(구 JSON 호환).
+
+**변경 — 매칭(Phase B):** `gc_log_analysis`(요약 + 출처 + 매칭 상태) / `gc_log_result_detail`(LONGTEXT — `analysis_result_detail` 과 분리, 힙 정리 흐름 오염 방지). `GcLogMatchService.decide`(순수 함수): 서버(id 또는 이름) 1점 · 시간(absolute 1점 / mtime 0.5점 tol×6 / none 0) · 경로 1점 → **≥2점 정확히 1건만 auto**. `mayOverwrite`: manual 은 연결·**해제**(manual+null) 모두 자동이 덮지 않음, `/rematch` 만 예외. 트리거 3곳(전송/업로드 직후 · GC 분석 SUCCESS · 힙 `saveAnalysisToDb` 직후 — `HeapAnalysisSavedEvent` 로 결합 최소화). API `GET/POST /api/gc-log/{fn}/match`·`/rematch`·`/match-options`, 역방향 `GET/POST /api/history/{fn}/gc-log`·`/options`. 힙 `analyze.html`: Overview `GC Log` 칩(열기·선택·해제, 후보 N 경고) + 사이드바 `GC 로그` 탭(class 배지, 함정 8) + `#panel-gc-log`(요약 KPI 6장 + 미니 차트에 덤프 시점 점선 + 소견 3) + 선택 모달.
+
+**변경 — 분석·화면(Phase C):** `GcLogAnalyzerService`(자체 executor 2, 상태 폴링 — SSE 아님, LRU 결과 캐시, 등록/삭제/재분석/취소/호스트명, 업로드 sniff 로 비-GC 로그 400 `NOT_GC_LOG`). `GcLogViewController`(`/gc-log`, `/gc-log/analyze/{fn}` — 결과 JSON 은 `<script type="application/json">` + `th:utext`, `</` 이스케이프) / `GcLogApiController`(upload·analyze·reanalyze·cancel·status·result·summary·history·delete·hostname·match 4종·AI 3종, 오류 `{success,code,error}`). 화면 `gc-log/index.html`(core-dump 레이아웃·이력 캘린더 재사용, 연결 덤프 배지 자동/수동/후보/해제) · `gc-log/analyze.html`(KPI 11장·힙 추이/일시정지 Chart.js **linear x=uptime**(date adapter 없음)·소견·이벤트 표 table-grid detach·원문 3탭·AI 카드·매칭 칩·모달 골격 `gc-log.css .gcl-modal`(함정 17)) · `gc-log-index.js`/`gc-log-analyze.js`(폴링 `managedInterval`+`registerActivityGuard`).
+
+**변경 — LLM(Phase D):** `LlmConfigService.callLlmAnalysis(prompt, systemPrompt)` 오버로드(게이트·Lease 동일), GC 전용 시스템 프롬프트, `buildGcPrompt`(서버 조립, 연결 덤프 섹션 포함, ≤12k), 키 `__gclog__:{fn}`, `POST /api/gc-log/{fn}/ai-analyze`·`GET|DELETE …/ai-insight`. 힙 AI: `HeapAiApiController` 가 매칭된 로그의 `== GC 로그 요약 ==`(≤1500자)을 OOM 블록 자리에 주입, 스키마 `gcAdvice` + AI 패널 `GC 로그 연계 분석` 카드.
+
+**설정:** `gclog.directory`(기본 `/opt/gclogs`)·`max-file-bytes`(2GB)·`max-line-chars`(4096)·`analysis.timeout-minutes`(10)·`match.tolerance-min`(10) — **`@Value` 전용**(런타임 변경 없음, coredump.directory 와 같은 정책). k8s 패키지 `config/application.properties` 5키(`/data/heapdumps/gclogs` — heapdumps PVC 하위, 별도 볼륨 불필요) + `sync-config.sh` 필수 키 검사 + ConfigMap 재생성(이미지 태그는 다음 리패키징 때 2.5.2).
+
+**검증:**
+- 단위 테스트 677 → **724**(+47): 파서 골든 18(통합 9·JDK8 9) · 포맷 판정 3 · 집계기/엔진 7 · 코덱 2 · 매칭 판정 7 · JVM 수집 GC 확장 4 · 경로 가드/글롭 +1 · 템플릿 스모크 5(gc-log index/analyze 4상태·JS 배선·힙 칩 3모델·사이드바/패널) · AnalyzeConfirm 계약 갱신. 전체 통과, `EmptyCatchGuardTest` 0건 유지.
+- 앱 자체 `logs/gc.log`(JDK 21 G1, 547줄)로 엔진 실측: 47 이벤트(Young 19·Mixed 7·Remark/Cleanup 7·Concurrent 7), 처리량 99.997%, p99 261.8ms, Humongous 72 리전(24%)·Metaspace 임계치 5회 소견, JSON 45KB.
+- 운영 재기동(v2.5.2): `/opt/gclogs/{dumpfiles,data,tmp}` 생성, 기동 WARN 은 종전 dominator ZIP 8건뿐(DDL 오류 없음), `/css/gc-log.css`·`/js/gc-log-*.js` 200 UTF-8, `/gc-log` 인증 리다이렉트 정상. ⚠ 로그인이 필요한 화면·원격 전송·LLM 호출은 자격증명 없이 실측하지 못했다 — 실제 서버 등록 후 스캔→전송→분석→매칭 순으로 확인 필요.
+
+## [2026-09-14] Kubernetes 배포 패키지 리패키징 — 2.4.1 → 2.5.1 (Spring Boot 4.1) (`/opt/genspark/heapApp_k8s`)
+
+**요청:** k8s 리패키징 진행.
+
+**배경:** 패키지(2026-09-05)는 2.4.1 · Boot 3.5.14 기준이었다. 이후 Boot 4.1 전환(v2.5.0)과 v2.5.1 기능(계정 잠금·원격 JVM 힙 수집·Histogram 500행·Accounts 재디자인 등)이 들어갔다.
+
+**차이 분석:**
+- 설정: 컨테이너 설정 원본(`config/application.properties`)에 **신규 키 4개 누락** — `mat.histogram.wide-query.enabled`, `security.password.lockout-{enabled,threshold,admin-exempt}`. 빠져도 코드 기본값으로 기동은 되지만 `syncApplicationProperties` 가 **기존 줄 치환 전용**이라 설정 화면 변경이 이 파일에 반영되지 않는다. 반대로 Boot 3.0 에서 삭제된 `spring.session.store-type=jdbc` 가 남아 있었다(앱 원본은 이미 제거 — JDBC 세션은 스타터가 결정).
+- 코드의 호스트 경로 `@Value` 기본값(`logging.dir`·`rag.index.*`·`remote.scp.temp-dir` 등)은 기존 컨테이너 설정이 전부 덮고 있음. 매니페스트 환경변수 계약(`HEAP_ADMIN_DEFAULT_PASSWORD`·`HEAP_ANALYZER_ENCRYPTION_KEY`·`LLM_API_KEY`·`SPRING_DATASOURCE_*`) 유효.
+- Chroma 파이썬 스택·`requirements.lock`·색인 실행기 계약(`--sources`/`--reset`·`RAG_CSV_SOURCE`)·지식 익스포트 런처(`org.springframework.boot.loader.launch.PropertiesLauncher`, Boot 4 매니페스트 동일) 무변경 → Dockerfile·entrypoint 수정 불필요.
+
+**변경 (패키지 트리 — 앱 리포·`/opt/chroma` 는 읽기만):**
+- `config/application.properties` 키 4개 추가·삭제 키 제거 → `sync-config.sh` 로 `configmap-app.yaml` 재생성. `sync-config.sh` 필수 키 검사에 2.5.1 키 존재 + 삭제 키 부재 추가.
+- 이미지 태그 2.4.1 → 2.5.1 (`deployment.yaml` 컨테이너 3개, `overlays/{incluster-db,external-db}` newTag).
+- `verify-image.sh` 2.5.1 검사 5종 추가: MAT Histogram 단독 쿼리(앱과 같은 옵션, `_Query.zip` Retained 열) · 기동 버전 v2.5.1 · 2.5.1 설정 키 `/config` 시드 · `GET /admin/users` 렌더(계정 잠금 정책 카드) · `/api/admin/users` 최근 접속(login_history 집계 네이티브 SQL 을 pod 의 MariaDB 11.4 에서 실행).
+- 문서: README(버전·검증 이력·결과표), `DEPLOY.md` §8-1 **2.4.1 → 2.5.1 업그레이드 절차**(ConfigMap 재적용 필수 · DDL 자동 · 세션 TRUNCATE 불필요 · 재색인 불필요 · 롤백), `OPERATIONS.md`(원격 JVM 힙 수집 요건 · Histogram 25행 트러블슈팅), `COMPATIBILITY.md`(버전 표기·Maven 요구).
+
+**검증 (Rocky 8.10 · podman 4.9.4 · 4.6GB):**
+- `build-image.sh` — JAR 재빌드 시크릿 잔존 검사 통과, JAR 78MB(2.4.1 85MB — log4j-api·guava 제거), 이미지 1.3GB.
+- `verify-image.sh` **39/39** — 호스트 Chroma 스택은 메모리 때문에 검증 동안만 내렸다가 자동 재기동(`chroma` 185M/400M · `chroma-embed` 617M/900M active, 운영 앱 `/login` 200 확인). 색인 427청크 약 60초, 벡터 검색 top `oom_kind:HEAP_SPACE` 0.894, 연동 상태 API 경고 0, admin `lastLoginAt` 채워짐.
+- `validate-manifests.sh` **69/69**, 두 오버레이 렌더 결과 컨테이너 3개 모두 `heap-analyzer:2.5.1`.
+- 반출 `dist/heap-analyzer-2.5.1.tar.gz` + `mariadb-11.4.tar.gz` + `SHA256SUMS.txt`.
+- ⚠ 이 호스트에는 kubectl/클러스터가 없어 실제 Kubernetes 적용은 미검증(podman pod 로 네트워크 공유·command·env·프로브 명령 재현).
+
 ## [2026-09-14] 코어 덤프 분석 이력 — 업로드일 기간 캘린더 필터 (v2.5.1 유지)
 
 **요청:** 코어파일 분석 이력에 캘린더를 추가한다. 캘린더는 Files 의 것을 사용한다.

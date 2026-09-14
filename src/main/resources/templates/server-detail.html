@@ -200,6 +200,15 @@
                     <span th:if="${#lists.isEmpty(paths)}">-</span>
                 </div>
             </div>
+            <div class="info-item" th:if="${server.isScanGcLog()}">
+                <div class="info-label" th:with="paths=${server.gcLogPaths}"
+                     th:text="'GC 로그 경로' + (${#lists.size(paths) > 1} ? ' (' + ${#lists.size(paths)} + '개)' : '')">GC 로그 경로</div>
+                <div class="info-value mono" th:with="paths=${server.gcLogPaths}">
+                    <div th:each="p : ${paths}" th:text="${p}" style="margin-bottom:2px;word-break:break-all">/var/log/jvm</div>
+                    <span th:if="${#lists.isEmpty(paths)}">-</span>
+                </div>
+            </div>
+            <!-- 이 페이지의 편집 모달은 dumpPath/autoDetect 만 다룬다. PUT 이 containsKey 가드라 GC 로그 설정은 지워지지 않는다 — 전체 편집은 /servers -->
             <div class="info-item">
                 <div class="info-label">자동탐지</div>
                 <div class="info-value">

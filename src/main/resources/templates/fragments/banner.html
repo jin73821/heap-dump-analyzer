@@ -288,7 +288,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         </div>
         <div class="gb-header-text">
             <div class="gb-header-title">Heap Dump Analyzer</div>
-            <div class="gb-header-sub">v2.5.1 · MAT CLI</div>
+            <div class="gb-header-sub">v2.5.2 · MAT CLI</div>
         </div>
     </a>
 
@@ -404,6 +404,10 @@ body.banner-no-transition .gb-header { transition: none !important; }
                 <svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9l-6-6z"/><polyline points="9 3 9 9 15 9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
                 코어 파일
             </a>
+            <a href="/gc-log" class="gb-nav-link" id="gbNavGcLog">
+                <svg viewBox="0 0 24 24"><polyline points="3 17 8 11 12 14 17 7 21 10"/><line x1="3" y1="21" x2="21" y2="21"/></svg>
+                GC 로그
+            </a>
             <a href="/ai-chat" class="gb-nav-link" id="gbNavAiChat">
                 <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
                 AI Chat
@@ -481,6 +485,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         <a href="/history" class="gb-ci" title="History"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></a>
         <a href="/compare" class="gb-ci" title="Comparison"><svg viewBox="0 0 24 24"><path d="M2 7h10M9 4l3 3-3 3M5 4L2 7l3 3"/><path d="M22 17H12M15 14l-3 3 3 3M19 14l3 3-3 3"/></svg></a>
         <a href="/core-dump" class="gb-ci" title="코어 파일"><svg viewBox="0 0 24 24"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9l-6-6z"/><polyline points="9 3 9 9 15 9"/></svg></a>
+        <a href="/gc-log" class="gb-ci" title="GC 로그"><svg viewBox="0 0 24 24"><polyline points="3 17 8 11 12 14 17 7 21 10"/><line x1="3" y1="21" x2="21" y2="21"/></svg></a>
         <a href="/ai-chat" class="gb-ci" title="AI Chat"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></a>
         <a href="/servers" class="gb-ci" title="Servers"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></a>
         <a href="/settings" class="gb-ci" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></a>
@@ -778,6 +783,10 @@ function highlightActiveNav() {
     if (path.startsWith('/core-dump')) {
         var coreDumpLink = document.getElementById('gbNavCoreDump');
         if (coreDumpLink) coreDumpLink.classList.add('active');
+    }
+    if (path.startsWith('/gc-log')) {
+        var gcLogLink = document.getElementById('gbNavGcLog');
+        if (gcLogLink) gcLogLink.classList.add('active');
     }
     // /settings 또는 /admin/users 또는 /admin/leak-rules 경로면 Settings 서브 메뉴 펼치기 + 부모 활성화
     if (path.startsWith('/settings') || path.startsWith('/admin/users') || path.startsWith('/admin/leak-rules')) {

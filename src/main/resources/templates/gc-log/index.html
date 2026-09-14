@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title>GC 로그 분석 - Heap Dump Analyzer</title>
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-08-12}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-14}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-14b}">
+</head>
+<body>
+
+<div th:replace="~{fragments/banner :: banner}"></div>
+
+<div class="cd-topbar">
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title">GC 로그 분석</span>
+    </div>
+    <nav class="cd-steps" aria-label="분석 단계">
+        <span class="cd-step is-current"><span class="cd-step-dot"></span><span class="cd-step-label">파일</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step"><span class="cd-step-dot"></span><span class="cd-step-label">분석</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step"><span class="cd-step-dot"></span><span class="cd-step-label">결과</span></span>
+    </nav>
+    <div class="topbar-right">
+        <a href="/servers" class="topbar-btn">Servers</a>
+        <a href="/" class="topbar-btn">Dashboard</a>
+    </div>
+</div>
+
+<div class="cd-app-layout">
+  <aside class="cd-sidebar">
+    <div class="cd-side-section cd-side-files">
+        <div class="cd-file-panel-head">
+            서버 GC 로그
+            <span class="cd-file-panel-count" id="glFileCount" th:text="${#lists.size(gcLogFiles)}">0</span>
+        </div>
+        <div class="cd-side-hint">원격 전송(Servers) 또는 업로드된 파일입니다. 클릭하면 분석·결과로 이동합니다.</div>
+
+        <div class="cd-file-search" id="glFileSearchWrap">
+            <span class="cd-file-search-icon" aria-hidden="true">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+            </span>
+            <input type="text" id="glFileSearch" placeholder="파일명 검색..." autocomplete="off">
+            <button type="button" class="cd-file-search-clear" id="glFileSearchClear" aria-label="검색 지우기">&times;</button>
+        </div>
+        <div class="cd-file-filter">
+            <select id="glFileStatusFilter" class="cd-select" aria-label="상태 필터">
+                <option value="all">상태: 전체</option>
+                <option value="SUCCESS">완료</option>
+                <option value="ERROR">실패</option>
+                <option value="ANALYZING">분석 중</option>
+                <option value="NOT_ANALYZED">미분석</option>
+            </select>
+        </div>
+
+        <div th:if="${#lists.isEmpty(gcLogFiles)}" class="cd-file-empty">
+            서버에 GC 로그 파일이 없습니다.
+        </div>
+
+        <div th:if="${!#lists.isEmpty(gcLogFiles)}" class="cd-file-list" id="glFileList">
+            <div th:each="f : ${gcLogFiles}"
+                 class="cd-file-item" tabindex="0" role="button"
+                 th:data-filename="${f.filename}"
+                 th:data-status="${f.status}"
+                 th:title="${f.filename}"
+                 onclick="glOpenFile(this.dataset.filename, this.dataset.status)"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();glOpenFile(this.dataset.filename, this.dataset.status)}">
+                <div class="cd-finfo">
+                    <div class="cd-file-name" th:text="${f.filename}"></div>
+                    <div class="cd-fmeta">
+                        <span class="cd-file-size" th:text="${f.formattedSize}"></span>
+                        <span class="status-badge"
+                              th:classappend="${f.status == 'SUCCESS'} ? 'status-success'
+                                             : (${f.status == 'ERROR'} ? 'status-error'
+                                             : (${f.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                              th:text="${f.status == 'SUCCESS'} ? '완료'
+                                       : (${f.status == 'ERROR'} ? '실패'
+                                       : (${f.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
+                        <span th:if="${f.serverName != null}" class="hi-mono" style="color:#6B7280" th:text="${f.serverName}"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div th:if="${!#lists.isEmpty(gcLogFiles)}" class="cd-file-noresult" id="glFileNoResult">검색 결과가 없습니다.</div>
+        <div class="cd-pg" id="glFilePg">
+            <div class="cd-pg-list" id="glFilePgList"></div>
+            <div class="cd-pg-info" id="glFilePgInfo"></div>
+        </div>
+    </div>
+  </aside>
+
+  <main class="cd-main">
+
+    <!-- 업로드 카드 -->
+    <div class="content-card">
+        <div class="content-card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M17 8l-5-5-5 5"></path><path d="M12 3v12"></path></svg>
+            GC 로그 업로드
+        </div>
+        <div class="gcl-upload-grid">
+            <div>
+                <div class="upload-zone-label">GC 로그 파일 <span class="required-badge">필수</span></div>
+                <div class="upload-zone" id="gcDropZone">
+                    <input type="file" id="gcFileInput" onchange="onGcFileSelect(this)" aria-label="GC 로그 파일 선택">
+                    <span class="upload-zone-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 8 11 12 14 17 7 21 10"></polyline><line x1="3" y1="21" x2="21" y2="21"></line></svg>
+                    </span>
+                    <div class="upload-zone-text">파일 선택 또는 드래그</div>
+                    <div class="upload-zone-sub">gc.log · gc.log.N · gc-*.log · .gz — JDK 9+ 통합 로깅(-Xlog:gc*) / JDK 8 이하 -XX:+PrintGCDetails</div>
+                    <div class="upload-zone-file" id="gcFileName"></div>
+                    <button type="button" class="upload-zone-clear" id="gcClearBtn"
+                            title="선택 해제" aria-label="GC 로그 선택 해제"
+                            onclick="clearGcZone(event)">&times;</button>
+                </div>
+            </div>
+            <div class="gcl-side-field">
+                <label for="gcServerName">출처 서버명 <span style="font-weight:400;color:#9CA3AF">(선택)</span></label>
+                <input type="text" id="gcServerName" class="cd-input" placeholder="예: was01" autocomplete="off" maxlength="100">
+                <div class="gcl-side-hint">힙 덤프와 자동 매칭할 때 '같은 서버' 신호로 씁니다. Servers 에 등록된 서버명과 같게 적으세요. 원격 전송된 로그는 자동으로 채워집니다.</div>
+            </div>
+        </div>
+        <button class="btn btn-primary btn-lg upload-submit-btn" id="uploadBtn" onclick="startUpload()" disabled>
+            <span class="usb-progress" id="uploadProgressFill"></span>
+            <!-- 문구는 gc-log-index.js setCta() 가 상태별로 바꾼다: 미선택 → 선택됨 → 업로드 중 N% → 분석 시작 중 -->
+            <span class="usb-label" id="uploadBtnLabel">GC 로그 파일을 선택하세요</span>
+        </button>
+        <div class="upload-status" id="uploadStatus"></div>
+        <div class="upload-error-box" id="uploadErrorBox">
+            <div class="upload-error-title">✕ 업로드 실패</div>
+            <div class="upload-error-msg" id="uploadErrorMsg"></div>
+        </div>
+    </div>
+
+    <!-- 분석 이력 카드 -->
+    <div class="content-card">
+        <div class="content-card-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 15l4-4 3 3 5-6"></path></svg>
+            분석 이력
+            <span class="title-count" id="hiCount" th:text="${#lists.size(history)} + '건'"></span>
+        </div>
+
+        <div th:if="${#lists.isEmpty(history)}" class="empty-state">
+            <div class="empty-state-icon">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 8 11 12 14 17 7 21 10"></polyline><line x1="3" y1="21" x2="21" y2="21"></line></svg>
+            </div>
+            <div class="empty-state-title">분석 이력이 없습니다</div>
+            <div class="empty-state-text">GC 로그를 업로드하거나 Servers 에서 전송해 분석을 시작하세요.</div>
+            <button type="button" class="btn btn-ghost btn-sm" onclick="focusUpload()">GC 로그 업로드하기</button>
+        </div>
+
+        <div th:if="${!#lists.isEmpty(history)}">
+            <div class="hi-controls">
+                <input type="text" id="hiSearch" class="cd-input" placeholder="파일명·서버 검색..." autocomplete="off">
+                <!-- 기간 필터 — 코어덤프 이력과 같은 KRDS 캘린더(calendar.js 배너 전역 로드). 기준은 '업로드' 일시(createdAt).
+                     calendar.js 는 페이지당 인스턴스 1개 — 이 페이지의 Calendar.attach 는 여기뿐이어야 한다 -->
+                <div class="hi-date" role="group" aria-labelledby="hiDateLbl">
+                    <span class="hi-date-lbl" id="hiDateLbl">업로드일</span>
+                    <div class="calendar-range">
+                        <input type="text" class="cal-text" id="hiDateStart" placeholder="시작일" readonly aria-label="업로드 시작일">
+                        <span class="calendar-input-sep">~</span>
+                        <input type="text" class="cal-text" id="hiDateEnd" placeholder="종료일" readonly aria-label="업로드 종료일">
+                        <button type="button" class="form-btn-datepicker" onclick="Calendar.open()" aria-label="달력 열기">
+                            <span class="sr-only">달력 열기</span>
+                            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3.5" width="12" height="11" rx="1"/><path d="M2 6.5h12M5 2v3M11 2v3"/></svg>
+                        </button>
+                        <div class="krds-calendar-area" id="hiCalArea"></div>
+                    </div>
+                    <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()" title="기간 지우기">지우기</button>
+                </div>
+            </div>
+            <div class="hi-table-wrap">
+                <table class="hi-table" id="hiTable">
+                    <thead>
+                        <tr>
+                            <th class="hi-col-num">#</th>
+                            <th class="sortable" data-sort-key="fname" data-sort-type="str">파일명 <span class="hi-sort-ind"></span></th>
+                            <th class="hi-hide-sm sortable" data-sort-key="server" data-sort-type="str">서버 <span class="hi-sort-ind"></span></th>
+                            <th class="sortable" data-sort-key="status" data-sort-type="str">상태 <span class="hi-sort-ind"></span></th>
+                            <th class="hi-hide-sm">수집기</th>
+                            <th class="hi-hide-sm sortable" data-sort-key="logstart" data-sort-type="str">로그 기간 <span class="hi-sort-ind"></span></th>
+                            <th class="hi-hide-sm">Full GC</th>
+                            <th class="hi-hide-sm">최대 pause</th>
+                            <th>심각도</th>
+                            <th>연결 덤프</th>
+                            <th class="hi-hide-sm sortable" data-sort-key="uploaded" data-sort-type="str">업로드 <span class="hi-sort-ind"></span></th>
+                            <th>액션</th>
+                        </tr>
+                    </thead>
+                    <tbody id="hiTbody">
+                        <tr th:each="item, stat : ${history}"
+                            th:classappend="${item.status == 'SUCCESS'} ? 'hi-success'
+                                           : (${item.status == 'ERROR'} ? 'hi-error'
+                                           : (${item.status == 'ANALYZING'} ? 'hi-analyzing' : ''))"
+                            th:data-filename="${item.filename}"
+                            th:data-status="${item.status}"
+                            th:data-fname="${item.filename}"
+                            th:data-server="${item.serverName}"
+                            th:data-logstart="${item.logStart}"
+                            th:data-uploaded="${item.createdAt}"
+                            th:data-analyzed="${item.analyzedAt}"
+                            tabindex="0"
+                            onclick="glRowAction(event, this)">
+
+                            <td class="hi-col-num" th:text="${stat.count}"></td>
+
+                            <td>
+                                <div class="hi-fname-cell">
+                                    <span class="hi-filename" th:text="${item.filename}" th:title="${item.filename}"></span>
+                                    <span th:if="${item.compressed}" class="hi-badge-gz">GZ</span>
+                                    <span th:if="${item.fileDeleted}" class="hi-badge-gz" title="원본 파일이 삭제됨">파일 없음</span>
+                                </div>
+                            </td>
+
+                            <td class="hi-hide-sm">
+                                <span th:if="${item.serverName != null}" class="hi-mono" th:text="${item.serverName}"></span>
+                                <span th:unless="${item.serverName != null}" class="hi-muted">–</span>
+                            </td>
+
+                            <td>
+                                <span class="status-badge"
+                                      th:classappend="${item.status == 'SUCCESS'} ? 'status-success'
+                                                     : (${item.status == 'ERROR'} ? 'status-error'
+                                                     : (${item.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                                      th:text="${item.status == 'SUCCESS'} ? '완료'
+                                               : (${item.status == 'ERROR'} ? '실패'
+                                               : (${item.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
+                            </td>
+
+                            <td class="hi-hide-sm">
+                                <!-- JDK 빌드 문자열(21+35-2513)이 칸을 세 줄로 접어 수집기만 보이고 JDK 는 툴팁으로 -->
+                                <span th:if="${item.collector != null}" class="hi-nowrap" th:text="${item.collector}"
+                                      th:title="${item.jdkVersion != null} ? 'JDK ' + ${item.jdkVersion} : ''">G1</span>
+                                <span th:unless="${item.collector != null}" class="hi-muted">–</span>
+                            </td>
+
+                            <td class="hi-hide-sm">
+                                <span class="hi-time" th:if="${item.logStart != null}"
+                                      th:text="${#temporals.format(item.logStart, 'MM-dd HH:mm')} + ' ~ ' + (${item.logEnd != null} ? ${#temporals.format(item.logEnd, 'MM-dd HH:mm')} : '')"
+                                      th:title="${item.timeSource == 'mtime'} ? '절대 시각 없음 — 파일 수정 시각으로 추정' : ''"></span>
+                                <span th:if="${item.logStart == null and item.status == 'SUCCESS'}" class="hi-muted" title="로그에 절대 시각이 없습니다(uptime 만)">uptime 기준</span>
+                                <span th:if="${item.logStart == null and item.status != 'SUCCESS'}" class="hi-muted">–</span>
+                            </td>
+
+                            <td class="hi-hide-sm">
+                                <span th:if="${item.fullGcCount != null}" th:text="${item.fullGcCount}" th:classappend="${item.fullGcCount > 0} ? 'hi-mono' : 'hi-muted'"></span>
+                                <span th:unless="${item.fullGcCount != null}" class="hi-muted">–</span>
+                            </td>
+
+                            <td class="hi-hide-sm">
+                                <span th:if="${item.maxPauseMs != null}" class="hi-mono" th:text="${#numbers.formatDecimal(item.maxPauseMs, 1, 0)} + ' ms'"></span>
+                                <span th:unless="${item.maxPauseMs != null}" class="hi-muted">–</span>
+                            </td>
+
+                            <td>
+                                <span th:if="${item.severity != null}" class="hi-sev" th:classappend="'sev-' + ${item.severity}" th:text="${item.severity}"></span>
+                                <span th:unless="${item.severity != null}" class="hi-muted">–</span>
+                            </td>
+
+                            <td>
+                                <span th:if="${item.matchedDumpFilename != null}" class="hi-match" th:title="${item.matchedDumpFilename} + ' (' + ${item.matchSource} + ', ' + ${item.matchReason} + ')'">
+                                    <span class="hi-match-src" th:classappend="${item.matchSource}" th:text="${item.matchSource == 'auto'} ? '자동' : '수동'"></span>
+                                    <a class="hi-match-name" th:href="@{/analyze/{fn}(fn=${item.matchedDumpFilename})}" th:text="${item.matchedDumpFilename}" onclick="event.stopPropagation()"></a>
+                                </span>
+                                <span th:if="${item.matchedDumpFilename == null and item.matchSource == 'manual'}" class="hi-match"><span class="hi-match-src none">해제됨</span></span>
+                                <span th:if="${item.matchedDumpFilename == null and item.matchSource != 'manual' and item.matchCandidates != null and item.matchCandidates != '[]'}" class="hi-match">
+                                    <span class="hi-match-src cand">후보 있음</span>
+                                </span>
+                                <span th:if="${item.matchedDumpFilename == null and item.matchSource != 'manual' and (item.matchCandidates == null or item.matchCandidates == '[]')}" class="hi-muted">–</span>
+                            </td>
+
+                            <td class="hi-hide-sm">
+                                <span class="hi-time" th:if="${item.createdAt != null}"
+                                      th:text="${#temporals.format(item.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
+                                <span th:unless="${item.createdAt != null}" class="hi-muted">–</span>
+                            </td>
+
+                            <td>
+                                <div class="hi-actions">
+                                    <a th:if="${item.status == 'SUCCESS' or item.status == 'ANALYZING'}"
+                                       th:href="@{/gc-log/analyze/{fn}(fn=${item.filename})}"
+                                       class="btn btn-sm btn-soft" onclick="event.stopPropagation()"
+                                       th:text="${item.status == 'SUCCESS'} ? '결과 보기' : '진행 확인'">결과 보기</a>
+                                    <a th:if="${(item.status == 'ERROR' or item.status == 'NOT_ANALYZED') and !item.fileDeleted}"
+                                       th:href="@{/gc-log/analyze/{fn}(fn=${item.filename},start=1)}"
+                                       th:data-filename="${item.filename}" th:data-size="${item.formattedSize}"
+                                       th:data-source="${item.serverName}" data-kind="gclog"
+                                       class="btn btn-sm btn-ghost"
+                                       onclick="event.stopPropagation(); return window.AnalyzeConfirm ? AnalyzeConfirm.fromLink(this) : true;">분석</a>
+                                    <button class="btn btn-sm btn-soft soft-danger"
+                                            th:data-filename="${item.filename}"
+                                            onclick="event.stopPropagation(); deleteGcLog(this.dataset.filename)">삭제</button>
+                                    <span class="hi-row-chevron" aria-hidden="true">›</span>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="cd-file-noresult" id="hiNoResult">조건에 맞는 분석 이력이 없습니다.</div>
+            <div class="cd-pg" id="hiPg">
+                <div class="cd-pg-list" id="hiPgList"></div>
+                <div class="cd-pg-info" id="hiPgInfo"></div>
+            </div>
+        </div>
+    </div>
+
+    </main>
+</div>
+
+<!-- 삭제 확인 모달 (골격 4종은 gc-log.css .gcl-modal — 함정 17) -->
+<div id="deleteGcModal" class="modal-ov gcl-modal" onclick="if(event.target===this)closeGcDeleteModal()">
+    <div class="modal-box">
+        <div class="modal-title">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
+            삭제 확인
+        </div>
+        <div class="modal-body">
+            <span id="deleteGcModalFilename" class="modal-filename"></span>
+            <div class="modal-check-row">
+                <input type="checkbox" id="deleteGcFileChk" checked>
+                <div>
+                    <label class="modal-check-label" for="deleteGcFileChk">원본 파일도 삭제</label>
+                    <div class="modal-check-desc">체크 해제 시 분석 결과만 지우고 원본 파일은 보존합니다(미분석 상태로 돌아갑니다).</div>
+                </div>
+            </div>
+            <div class="modal-err" id="deleteGcModalErr"></div>
+        </div>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeGcDeleteModal()">취소</button>
+            <button class="mbtn-del" id="deleteGcConfirmBtn" onclick="confirmGcDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<div class="cd-toast-wrap" id="cdToastWrap"></div>
+
+<script th:src="@{/js/analyze-confirm.js?v=2026-09-14}"></script>
+<script th:src="@{/js/gc-log-index.js?v=2026-09-14}"></script>
+
+</body>
+</html>

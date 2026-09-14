@@ -56,7 +56,7 @@ class JvmHeapInfoServiceTest {
 
     private static Candidate cand(int pid, Long xmx, Map<String, String> markers) {
         return new Candidate(pid, "jeus", NOW - 10_000, "jeus.server.Bootstrapper", "/opt/jeus", "/opt/jdk/bin/java",
-                GB, xmx, "cmdline", null, List.of("-Xmx" + JvmHeapCapture.formatSize(xmx), "-XX:+UseG1GC"), 0,
+                GB, xmx, "cmdline", null, null, List.of("-Xmx" + JvmHeapCapture.formatSize(xmx), "-XX:+UseG1GC"), 0,
                 markers, true, false, false, false);
     }
 

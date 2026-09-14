@@ -1,0 +1,208 @@
+/* gc-log.css — GC 로그 페이지 고유 스타일 (2026-09-14)
+ * 레이아웃(.cd-app-layout/.cd-sidebar/.cd-main)·파일 패널(.cd-file-*)·이력 표(.hi-*)·카드(.content-card)·버튼(.btn*)·
+ * 배지(.status-badge)·토스트(.cd-toast*)·페이지네이션(.cd-pg*) 은 core-dump.css 를 그대로 재사용한다(1200줄 복제 회피).
+ * 여기는 GC 고유: KPI 카드, 차트 카드, 소견, 이벤트 표, 원문, 매칭 칩, 진행 블록, 모달 골격(함정 17). */
+
+:root {
+    --gcl-sev-critical: #DC2626; --gcl-sev-high: #EA580C; --gcl-sev-medium: #D97706; --gcl-sev-low: #2563EB; --gcl-sev-info: #6B7280;
+    --gcl-sev-critical-bg: #FEF2F2; --gcl-sev-high-bg: #FFF7ED; --gcl-sev-medium-bg: #FFFBEB; --gcl-sev-low-bg: #EFF6FF; --gcl-sev-info-bg: #F9FAFB;
+}
+
+/* ── 업로드 존 (단일 슬롯) ─────────────────────────────────── */
+/* 아래 여백은 CTA 버튼과의 간격 — 코어 덤프의 .upload-grid 는 margin-bottom 을 갖는데 이 그리드는 빠져 버튼이 붙었다(2026-09-14) */
+.gcl-upload-grid { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 16px; align-items: start; margin-bottom: 18px; }
+@media (max-width: 900px) { .gcl-upload-grid { grid-template-columns: 1fr; } }
+.gcl-side-field label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+.gcl-side-field .cd-input { width: 100%; }
+.gcl-side-hint { font-size: 11px; color: #9CA3AF; margin-top: 6px; line-height: 1.5; }
+
+/* ── 이력 표 셀 ──────────────────────────────────────────── */
+.hi-sev { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; letter-spacing: .02em; }
+.hi-sev.sev-Critical { background: var(--gcl-sev-critical-bg); color: var(--gcl-sev-critical); }
+.hi-sev.sev-High     { background: var(--gcl-sev-high-bg);     color: var(--gcl-sev-high); }
+.hi-sev.sev-Medium   { background: var(--gcl-sev-medium-bg);   color: var(--gcl-sev-medium); }
+.hi-sev.sev-Low      { background: var(--gcl-sev-low-bg);      color: var(--gcl-sev-low); }
+.hi-match { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; max-width: 220px; }
+.hi-match-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1F2937; }
+.hi-match-src { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
+.hi-match-src.auto   { background: #DCFCE7; color: #166534; }
+.hi-match-src.manual { background: #E0E7FF; color: #3730A3; }
+.hi-match-src.cand   { background: #FEF3C7; color: #92400E; }
+.hi-match-src.none   { background: #F3F4F6; color: #6B7280; }
+.hi-mono { font-family: "JetBrains Mono", "SF Mono", monospace; font-size: 11px; }
+.hi-nowrap { white-space: nowrap; }
+.hi-badge-gz { font-size: 10px; padding: 1px 5px; border-radius: 4px; background: #F3F4F6; color: #6B7280; font-weight: 700; margin-left: 4px; }
+
+/* ── 결과 페이지: 페이지 래퍼 ─────────────────────────────
+   고정 상단바(.cd-topbar 52px) 아래 24px, 배너 폭(--banner-w) 오른쪽 영역 안에서 가운데 정렬.
+   공용 .cd-page 는 max-width 에 배너 패딩이 포함돼 넓은 화면에서 좌우가 어긋나므로 쓰지 않는다. */
+.gcl-page { padding: 76px 24px 48px calc(var(--banner-w, 220px) + 24px); transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+.gcl-page-inner { max-width: 1400px; margin: 0 auto; }
+@media (max-width: 900px) { .gcl-page { padding-left: 16px; padding-right: 16px; } }
+
+/* ── 결과 페이지: 헤더 카드 ─────────────────────────────── */
+.gcl-headcard { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; box-shadow: 0 1px 2px rgba(16,24,40,.04); padding: 18px 20px 14px; margin-bottom: 16px; }
+.gcl-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.gcl-head-main { min-width: 0; flex: 1 1 420px; }
+.gcl-title-row { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; }
+.gcl-title-icon { width: 32px; height: 32px; border-radius: 8px; background: #DCFCE7; color: #166534; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.gcl-file { margin: 0; font-family: "JetBrains Mono", "SF Mono", monospace; font-size: 17px; font-weight: 700; color: #111827; word-break: break-all; line-height: 1.3; }
+.gcl-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.gcl-meta-item { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid #E5E7EB; border-radius: 999px; background: #F9FAFB; font-size: 12px; line-height: 18px; max-width: 100%; min-width: 0; }
+.gcl-meta-k { color: #6B7280; font-weight: 500; flex-shrink: 0; }
+.gcl-meta-v { color: #111827; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcl-meta-v.mono { font-family: "JetBrains Mono", "SF Mono", monospace; font-weight: 500; font-size: 11px; }
+.gcl-meta-path { max-width: 460px; }
+.gcl-head-actions { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; align-items: center; }
+.gcl-head-foot { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #E5E7EB; }
+
+/* 매칭 칩 — 힙 analyze 의 .host-chip 과 같은 언어 */
+.gcl-chip { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px; border: 1px solid #E5E7EB; border-radius: 20px; background: #F1F5F9; font-size: 13px; max-width: 100%; }
+.gcl-chip-label { color: #64748B; font-weight: 500; flex-shrink: 0; }
+.gcl-chip-name { font-weight: 700; color: #1E293B; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.gcl-chip-name.empty { font-weight: 500; color: #94A3B8; font-style: italic; }
+.gcl-chip-name a { color: inherit; text-decoration: none; }
+.gcl-chip-name a:hover { text-decoration: underline; }
+.gcl-chip-src { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; flex-shrink: 0; }
+.gcl-chip-src.auto { background: #DCFCE7; color: #166534; } .gcl-chip-src.manual { background: #E0E7FF; color: #3730A3; } .gcl-chip-src.cand { background: #FEF3C7; color: #92400E; }
+.gcl-chip-btn { border: none; background: transparent; cursor: pointer; font-size: 13px; color: #64748B; padding: 2px 5px; border-radius: 6px; line-height: 1; font-family: inherit; }
+.gcl-chip-btn:hover { background: #E2E8F0; color: #1E293B; }
+.gcl-chip-btn:disabled { opacity: .5; cursor: default; }
+
+/* ── KPI ─────────────────────────────────────────────────── */
+/* 최소 폭 200px — 150px 에서는 'G1 · 21+35-2513', '40.6 ms · 261.8 ms' 같은 값이 말줄임으로 잘렸다 */
+.gcl-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.gcl-kpi { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.gcl-kpi-label { font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gcl-kpi-value { font-size: 20px; font-weight: 700; color: #111827; margin-top: 4px; line-height: 1.2; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gcl-kpi-sub { font-size: 11px; color: #9CA3AF; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gcl-kpi.warn .gcl-kpi-value { color: var(--gcl-sev-high); }
+.gcl-kpi.bad .gcl-kpi-value { color: var(--gcl-sev-critical); }
+
+/* 인스턴스 카드 — 수동 입력 > 연결된 힙 덤프(analyze Instance 칩) 값. 연필은 우상단 고정이라 라벨 말줄임과 겹치지 않게 라벨 오른쪽을 비운다.
+   편집 줄(.gcl-inst-form)은 값 줄을 숨기고 그 자리에 들어간다 — 카드 최소 폭 200px 안에 입력+버튼 2개가 한 줄로 들어가야 한다 */
+.gcl-kpi-inst { position: relative; }
+.gcl-kpi-inst .gcl-kpi-label { padding-right: 26px; }
+.gcl-kpi-inst .gcl-kpi-value.empty { color: #94A3B8; font-weight: 500; font-style: italic; font-size: 16px; }
+.gcl-kpi-edit { position: absolute; top: 7px; right: 8px; border: none; background: transparent; cursor: pointer; font-size: 13px; line-height: 1; color: #64748B; padding: 4px 5px; border-radius: 6px; font-family: inherit; }
+.gcl-kpi-edit:hover { background: #E2E8F0; color: #1E293B; }
+.gcl-kpi-edit:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
+.gcl-inst-form { display: flex; align-items: center; gap: 4px; margin-top: 2px; min-width: 0; }   /* 2 + 26px = 값 줄(4 + 24px)과 같은 높이 — 편집을 열어도 행이 출렁이지 않는다 */
+.gcl-inst-input { flex: 1 1 auto; min-width: 0; font-size: 13px; padding: 3px 7px; border: 1px solid #CBD5E1; border-radius: 6px; font-family: inherit; color: #111827; line-height: 18px; }
+.gcl-inst-input:focus { outline: none; border-color: #2563EB; box-shadow: 0 0 0 2px rgba(37, 99, 235, .15); }
+.gcl-inst-save, .gcl-inst-cancel { flex-shrink: 0; border: 1px solid transparent; cursor: pointer; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; font-family: inherit; line-height: 18px; }
+.gcl-inst-save { background: #2563EB; color: #fff; }
+.gcl-inst-cancel { background: #E2E8F0; color: #475569; }
+.gcl-inst-save:disabled, .gcl-inst-cancel:disabled { opacity: .55; cursor: default; }
+
+/* ── 차트 ────────────────────────────────────────────────── */
+.gcl-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 14px; margin-bottom: 16px; }
+@media (max-width: 900px) { .gcl-charts { grid-template-columns: 1fr; } }
+.gcl-chart-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px 14px 8px; min-width: 0; }
+.gcl-chart-title { font-size: 13px; font-weight: 700; color: #1F2937; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.gcl-chart-note { font-size: 11px; color: #9CA3AF; font-weight: 400; }
+.gcl-chart-box { position: relative; height: 240px; }
+.gcl-chart-box canvas { max-width: 100%; }
+
+/* ── 소견 ────────────────────────────────────────────────── */
+.gcl-findings { display: flex; flex-direction: column; gap: 8px; }
+.gcl-finding { border: 1px solid #E5E7EB; border-left: 4px solid var(--gcl-sev-info); border-radius: 8px; padding: 10px 14px; background: #fff; }
+.gcl-finding.sev-Critical { border-left-color: var(--gcl-sev-critical); background: var(--gcl-sev-critical-bg); }
+.gcl-finding.sev-High     { border-left-color: var(--gcl-sev-high);     background: var(--gcl-sev-high-bg); }
+.gcl-finding.sev-Medium   { border-left-color: var(--gcl-sev-medium);   background: var(--gcl-sev-medium-bg); }
+.gcl-finding.sev-Low      { border-left-color: var(--gcl-sev-low);      background: var(--gcl-sev-low-bg); }
+.gcl-finding.sev-Info     { border-left-color: var(--gcl-sev-info);     background: var(--gcl-sev-info-bg); }
+.gcl-finding-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gcl-finding-sev { font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 8px; letter-spacing: .04em; color: #fff; background: var(--gcl-sev-info); flex-shrink: 0; }
+.sev-Critical .gcl-finding-sev { background: var(--gcl-sev-critical); } .sev-High .gcl-finding-sev { background: var(--gcl-sev-high); }
+.sev-Medium .gcl-finding-sev { background: var(--gcl-sev-medium); } .sev-Low .gcl-finding-sev { background: var(--gcl-sev-low); }
+.gcl-finding-title { font-size: 13px; font-weight: 700; color: #111827; }
+.gcl-finding-code { font-size: 10px; color: #9CA3AF; font-family: "JetBrains Mono", monospace; margin-left: auto; }
+.gcl-finding-detail { font-size: 12px; color: #374151; margin-top: 4px; line-height: 1.55; }
+.gcl-finding-advice { font-size: 12px; color: #1F2937; margin-top: 4px; line-height: 1.55; padding-left: 10px; border-left: 2px solid rgba(0,0,0,.08); }
+.gcl-finding-advice::before { content: "권고 · "; font-weight: 700; color: #6B7280; }
+.gcl-empty { font-size: 13px; color: #6B7280; padding: 12px 0; }
+
+/* ── 이벤트 표 ───────────────────────────────────────────── */
+.gcl-table-wrap { overflow-x: auto; }
+.gcl-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.gcl-table th, .gcl-table td { padding: 5px 10px; border-bottom: 1px solid #F3F4F6; text-align: left; white-space: nowrap; }
+.gcl-table th { font-size: 11px; color: #6B7280; font-weight: 600; background: #F9FAFB; position: sticky; top: 0; z-index: 1; cursor: pointer; user-select: none; }
+.gcl-table th.sort-active { color: #2563EB; }
+.gcl-table td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: "JetBrains Mono", monospace; }
+.gcl-table tr.ev-FULL td { background: #FEF2F2; }
+.gcl-table tr.ev-flag td { background: #FFFBEB; }
+.gcl-type { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: #E5E7EB; color: #374151; }
+.gcl-type.t-FULL { background: #FEE2E2; color: #991B1B; } .gcl-type.t-MIXED { background: #E0E7FF; color: #3730A3; }
+.gcl-type.t-YOUNG { background: #DCFCE7; color: #166534; } .gcl-type.t-CONCURRENT_CYCLE { background: #F3F4F6; color: #6B7280; }
+.gcl-flag { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 4px; background: #FEF3C7; color: #92400E; margin-right: 3px; }
+.gcl-table-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: #6B7280; }
+.gcl-table-tools .cd-input { width: 220px; }
+.pagination-bar { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 10px 0 2px; flex-wrap: wrap; }
+.pg-btn { min-width: 30px; height: 28px; padding: 0 8px; border: 1px solid #E5E7EB; background: #fff; border-radius: 6px; font-size: 12px; cursor: pointer; font-family: inherit; color: #374151; }
+.pg-btn:hover:not(:disabled):not(.active) { background: #F3F4F6; }
+.pg-btn.active { background: #2563EB; border-color: #2563EB; color: #fff; }
+.pg-btn:disabled { opacity: .45; cursor: default; }
+.pg-ellipsis { padding: 0 4px; color: #9CA3AF; }
+.pg-info { font-size: 11px; color: #9CA3AF; margin-left: 8px; }
+
+/* ── 원문 ────────────────────────────────────────────────── */
+.gcl-raw-tabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.gcl-raw-tab { padding: 4px 10px; border: 1px solid #E5E7EB; border-radius: 6px; background: #fff; font-size: 12px; cursor: pointer; font-family: inherit; color: #374151; }
+.gcl-raw-tab.active { background: #1F2937; border-color: #1F2937; color: #fff; }
+.gcl-pre { background: #0F172A; color: #E2E8F0; font-family: "JetBrains Mono", "SF Mono", monospace; font-size: 11px; line-height: 1.5; padding: 12px 14px; border-radius: 8px; overflow: auto; max-height: 420px; white-space: pre; margin: 0; }
+.gcl-pre .hl { background: rgba(250, 204, 21, .22); display: inline-block; width: 100%; }
+
+/* ── 진행 블록 (결과 페이지 안, 분석 중) ────────────────── */
+.gcl-progress { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 22px 24px; margin-bottom: 16px; }
+.gcl-progress-title { font-size: 15px; font-weight: 700; color: #111827; display: flex; align-items: center; gap: 10px; }
+.gcl-spinner { width: 16px; height: 16px; border: 2px solid #E5E7EB; border-top-color: #2563EB; border-radius: 50%; animation: gcl-spin .8s linear infinite; flex-shrink: 0; }
+@keyframes gcl-spin { to { transform: rotate(360deg); } }
+.gcl-progress-track { height: 8px; background: #F3F4F6; border-radius: 4px; overflow: hidden; margin: 14px 0 8px; }
+.gcl-progress-fill { height: 100%; width: 0; background: linear-gradient(90deg, #3B82F6, #2563EB); transition: width .4s ease; }
+.gcl-progress-meta { font-size: 12px; color: #6B7280; display: flex; gap: 14px; flex-wrap: wrap; }
+.gcl-progress-actions { margin-top: 12px; display: flex; gap: 8px; }
+.gcl-error { border: 1px solid #FECACA; background: #FEF2F2; border-radius: 12px; padding: 18px 20px; margin-bottom: 16px; }
+.gcl-error-title { font-size: 14px; font-weight: 700; color: #991B1B; }
+.gcl-error-msg { font-size: 12px; color: #7F1D1D; margin-top: 6px; word-break: break-all; font-family: "JetBrains Mono", monospace; }
+.gcl-error-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.gcl-error-hint { font-size: 12px; color: #991B1B; }
+
+/* ── AI 카드 (코어덤프 .cda-* 와 같은 구조를 축약) ─────────── */
+.gcl-ai-body { font-size: 13px; color: #1F2937; line-height: 1.6; }
+.gcl-ai-sev { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 8px; font-weight: 700; margin-bottom: 10px; }
+.gcl-ai-sev.sev-Critical { background: var(--gcl-sev-critical-bg); color: var(--gcl-sev-critical); } .gcl-ai-sev.sev-High { background: var(--gcl-sev-high-bg); color: var(--gcl-sev-high); }
+.gcl-ai-sev.sev-Medium { background: var(--gcl-sev-medium-bg); color: var(--gcl-sev-medium); } .gcl-ai-sev.sev-Low { background: var(--gcl-sev-low-bg); color: var(--gcl-sev-low); }
+.gcl-ai-block { margin-top: 10px; }
+.gcl-ai-block h4 { font-size: 12px; color: #6B7280; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 4px; }
+.gcl-ai-block ol { margin: 0; padding-left: 20px; }
+.gcl-ai-meta { font-size: 11px; color: #9CA3AF; margin-top: 10px; display: flex; gap: 12px; flex-wrap: wrap; }
+.gcl-ai-empty { font-size: 13px; color: #6B7280; }
+.gcl-ai-err { font-size: 12px; color: #991B1B; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 10px 12px; }
+
+/* ── 모달 골격 (함정 17: common.css 는 .modal-ov/.modal-box base + 버튼 색만 준다) ─────── */
+.gcl-modal .modal-box { width: 560px; max-width: 94vw; padding: 24px 26px 20px; border-radius: 14px; }
+.gcl-modal .modal-title { font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.gcl-modal .modal-body { font-size: 13px; color: #374151; line-height: 1.6; }
+.gcl-modal .modal-filename { display: block; font-family: "JetBrains Mono", monospace; font-size: 12px; color: #4B5563; background: #F3F4F6; border-radius: 6px; padding: 6px 10px; margin: 6px 0 10px; word-break: break-all; }
+.gcl-modal .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+.gcl-modal .modal-btns button { padding: 8px 16px; border: 1px solid transparent; border-radius: 8px; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; line-height: 18px; }
+.gcl-modal .modal-btns button:disabled { opacity: .55; cursor: default; }
+.gcl-modal .modal-check-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; }
+.gcl-modal .modal-check-row input[type=checkbox] { width: 17px; height: 17px; margin-top: 1px; cursor: pointer; }
+.gcl-modal .modal-check-label { font-size: 13px; font-weight: 600; color: #1F2937; cursor: pointer; }
+.gcl-modal .modal-check-desc { font-size: 11px; color: #6B7280; margin-top: 2px; }
+.gcl-modal .modal-err { font-size: 12px; color: #991B1B; margin-top: 8px; display: none; }
+.gcl-modal .modal-err.show { display: block; }
+.gcl-pick-search { width: 100%; margin: 8px 0; }
+.gcl-pick-list { max-height: 340px; overflow-y: auto; border: 1px solid #E5E7EB; border-radius: 8px; }
+.gcl-pick-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-bottom: 1px solid #F3F4F6; cursor: pointer; }
+.gcl-pick-row:last-child { border-bottom: none; }
+.gcl-pick-row:hover { background: #F9FAFB; }
+.gcl-pick-row.selected { background: #EFF6FF; }
+.gcl-pick-row input { margin-top: 3px; }
+.gcl-pick-main { font-size: 13px; font-weight: 600; color: #111827; word-break: break-all; }
+.gcl-pick-meta { font-size: 11px; color: #6B7280; display: flex; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+.gcl-pick-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: #E5E7EB; color: #374151; }
+.gcl-pick-tag.hit { background: #DCFCE7; color: #166534; } .gcl-pick-tag.warn { background: #FEF3C7; color: #92400E; } .gcl-pick-tag.cur { background: #E0E7FF; color: #3730A3; }
+.gcl-pick-empty { padding: 14px; font-size: 12px; color: #9CA3AF; text-align: center; }

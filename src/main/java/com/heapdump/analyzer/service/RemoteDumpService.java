@@ -59,6 +59,30 @@ public class RemoteDumpService {
     private record CachedJvmCapture(long atMillis, JvmHeapCapture.Capture capture) {}
     private final Map<Long, CachedJvmCapture> jvmCaptureCache = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * 전송 중인 로컬 이름 예약(2026-09-14) — 키 {@link #reservationKey}. 이름 검사는 SCP 시작 전에 한 번만 하므로, 같은 이름을 동시에
+     * 받는 두 전송(자동 탐지 + 수동, 탭 두 개)이 둘 다 같은 이름을 고르고 마지막 이동에서 먼저 받은 파일을 덮어썼다. 예약은 성공·실패와 무관하게
+     * 전송이 끝나면 푼다(그때는 파일이 디스크에 있어 존재 검사가 대신 막는다).
+     */
+    private final Set<String> reservedLocalNames = new HashSet<>();
+
+    /** GC 로그 등록·분석 이력(2026-09-14) — 선택 주입(단위 테스트 null 허용). 의존 방향: RemoteDumpService → GcLog 서비스 단방향. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private GcLogAnalyzerService gcLogAnalyzerService;
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.repository.GcLogAnalysisRepository gcLogAnalysisRepository;
+
+    /**
+     * GC 로그 find 이름 글롭 — 정적 상수(테스트가 고정). ⚠ {@code *gc*.log*} 한 방은 {@code logic.log}·{@code magic.log} 를
+     * 잡으므로 금지. 회전 접미사({@code gc.log.0}, {@code .current}, {@code .gz})는 각 글롭 끝의 {@code *} 가 받는다.
+     */
+    static final String[] GC_LOG_NAME_GLOBS = {
+            "gc.log*", "gc-*.log*", "gc_*.log*", "*-gc.log*", "*_gc.log*", "*.gc.log*", "gclog*", "*.gclog*", "gc*.log*"
+    };
+
+    /** 기록 중 판정 — 이 시간 안에 수정된 최신 파일은 JVM 이 쓰는 중으로 본다(자동 전송 제외). */
+    static final long GC_LOG_ACTIVE_WINDOW_SEC = 120;
+
     public RemoteDumpService(TargetServerRepository serverRepository,
                              DumpTransferLogRepository transferLogRepository,
                              AnalysisHistoryRepository analysisHistoryRepository,
@@ -213,11 +237,12 @@ public class RemoteDumpService {
 
         List<String> heapPaths = server.isScanHeap() ? server.getDumpPaths() : Collections.emptyList();
         List<String> corePaths = server.isScanCore() ? server.getCoreDumpPaths() : Collections.emptyList();
+        List<String> gcPaths = server.isScanGcLog() ? server.getGcLogPaths() : Collections.emptyList();
 
-        if (heapPaths.isEmpty() && corePaths.isEmpty()) {
-            String errorMsg = server.isScanHeap() || server.isScanCore()
+        if (heapPaths.isEmpty() && corePaths.isEmpty() && gcPaths.isEmpty()) {
+            String errorMsg = server.isScanHeap() || server.isScanCore() || server.isScanGcLog()
                     ? "탐지 경로가 설정되지 않았습니다."
-                    : "힙덤프 또는 코어파일 탐지 경로가 설정되지 않았습니다.";
+                    : "힙덤프·코어파일·GC 로그 탐지 경로가 설정되지 않았습니다.";
             result.put("errorCode", "NO_DUMP_PATH");
             result.put("error", errorMsg);
             result.put("files", files);
@@ -235,6 +260,9 @@ public class RemoteDumpService {
         // 코어파일 경로 스캔
         scanPathList(server, corePaths, this::scanCorePath, "코어파일 스캔 실패: ",
                 "[RemoteDump] Core scan failed for {} path={}: {}", files, seenPaths, pathErrors, acc);
+        // GC 로그 경로 스캔 (2026-09-14)
+        scanPathList(server, gcPaths, this::scanGcLogPath, "GC 로그 스캔 실패: ",
+                "[RemoteDump] GC log scan failed for {} path={}: {}", files, seenPaths, pathErrors, acc);
 
         int successCount = acc.successCount;
         String firstFatalError = acc.firstFatalError;
@@ -258,8 +286,8 @@ public class RemoteDumpService {
         } else {
             updateServerStatus(server, "OK", null);
         }
-        logger.info("[RemoteDump] Scanned {} files ({} heap-paths, {} core-paths) on server {}",
-                files.size(), heapPaths.size(), corePaths.size(), server.getName());
+        logger.info("[RemoteDump] Scanned {} files ({} heap-paths, {} core-paths, {} gclog-paths) on server {}",
+                files.size(), heapPaths.size(), corePaths.size(), gcPaths.size(), server.getName());
         return result;
     }
 
@@ -336,6 +364,8 @@ public class RemoteDumpService {
             "[ -d '" + safePath + "' ] || { echo HEAPDUMP_PATH_NOT_FOUND >&2; exit 2; }; "
             + "[ -r '" + safePath + "' ] || { echo HEAPDUMP_PATH_NOT_READABLE >&2; exit 3; }; "
             + "find '" + safePath + "' -maxdepth 2 -type f \\( -name '*.hprof' -o -name '*.hprof.gz' -o -name '*.bin' -o -name '*.dump' -o -name '*.dmp' -o -name '*.gz' \\) "
+            // GC 로그 압축본(gc.log.gz)이 힙 경로 밑에 있으면 '*.gz' 에 걸려 힙으로 분류된다 — 힙덤프가 .log.gz 로 끝날 일은 없다(2026-09-14)
+            + "! -name '*.log.gz' "
             + "-printf '%T@|%TY-%Tm-%Td %TH:%TM|%s|%p\\n' || true";
         String[] cmd = buildSshCommand(server, findCmd);
         ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
@@ -370,21 +400,9 @@ public class RemoteDumpService {
                     if (fileInfo != null) {
                         String filename = (String) fileInfo.get("filename");
                         Long size = (Long) fileInfo.get("size");
-                        List<DumpTransferLog> succLogs = transferLogRepository
-                                .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
-                                        server.getId(), filename, size, "SUCCESS");
                         File localDir = new File(config.getDumpFilesDirectory());
-                        String matchedLocalFilename = null;
-                        for (DumpTransferLog sl : succLogs) {
-                            String local = sl.getFilename();
-                            if (local == null) continue;
-                            File f = new File(localDir, local);
-                            File gz = new File(localDir, local + ".gz");
-                            if (f.exists() || gz.exists()) {
-                                matchedLocalFilename = local;
-                                break;
-                            }
-                        }
+                        String matchedLocalFilename = findTransferredLocal(server, filename, (String) fileInfo.get("path"), size,
+                                local -> new File(localDir, local).exists() || new File(localDir, local + ".gz").exists());
                         boolean transferred = matchedLocalFilename != null;
                         boolean analyzed = transferred
                                 && analysisHistoryRepository.existsByFilename(matchedLocalFilename);
@@ -397,6 +415,81 @@ public class RemoteDumpService {
                         files.add(fileInfo);
                     }
                 }
+            }
+        }
+        result.put("files", files);
+        return result;
+    }
+
+    /**
+     * GC 로그 단일 경로 스캔 (2026-09-14) — {@link #GC_LOG_NAME_GLOBS} 이름 패턴, {@code -maxdepth 2}.
+     * transferred 판정은 GC 로그 디렉토리, analyzed 는 {@code gc_log_analysis} SUCCESS. 디렉토리 내 최신 파일이
+     * {@link #GC_LOG_ACTIVE_WINDOW_SEC} 안에 수정됐거나 이름이 {@code .current} 로 끝나면 {@code active=true}(기록 중 — 자동 전송 제외).
+     */
+    private Map<String, Object> scanGcLogPath(TargetServer server, String gcPath) throws Exception {
+        Map<String, Object> result = new HashMap<>();
+        List<Map<String, Object>> files = new ArrayList<>();
+        String safePath = gcPath.replace("'", "'\\''");
+        StringBuilder names = new StringBuilder();
+        for (int i = 0; i < GC_LOG_NAME_GLOBS.length; i++) {
+            if (i > 0) names.append(" -o ");
+            names.append("-name '").append(GC_LOG_NAME_GLOBS[i]).append('\'');
+        }
+        String findCmd =
+            "[ -d '" + safePath + "' ] || { echo GCLOG_PATH_NOT_FOUND >&2; exit 2; }; "
+            + "[ -r '" + safePath + "' ] || { echo GCLOG_PATH_NOT_READABLE >&2; exit 3; }; "
+            + "find '" + safePath + "' -maxdepth 2 -type f \\( " + names + " \\) "
+            + "-printf '%T@|%TY-%Tm-%Td %TH:%TM|%s|%p\\n' || true";
+        String[] cmd = buildSshCommand(server, findCmd);
+        ProcessResult pr = executeCommand(cmd, SSH_TIMEOUT_SEC);
+
+        if (pr.exitCode == 2) {
+            result.put("errorCode", "DUMP_PATH_NOT_FOUND");
+            result.put("error", "원격 GC 로그 경로가 존재하지 않습니다: " + gcPath);
+            logger.warn("[RemoteDump] GC log path not found on {}: {}", server.getName(), gcPath);
+        } else if (pr.exitCode == 3) {
+            result.put("errorCode", "DUMP_PATH_NOT_READABLE");
+            result.put("error", "원격 GC 로그 경로 읽기 권한이 없습니다: " + gcPath);
+            logger.warn("[RemoteDump] GC log path not readable on {} (user={}): {}", server.getName(), server.getSshUser(), gcPath);
+        } else if (pr.exitCode != 0) {
+            String errorMsg = cleanSshError(pr.stderr);
+            if (errorMsg.isEmpty()) errorMsg = "원격 명령 실행 실패 (exit " + pr.exitCode + ")";
+            result.put("errorCode", "SSH_ERROR");
+            result.put("error", "SSH 오류: " + errorMsg);
+            logger.warn("[RemoteDump] SSH error on {} gclog path={}: exit={}, stderr={}", server.getName(), gcPath, pr.exitCode, errorMsg);
+        } else {
+            String nonFatal = stripBanners(pr.stderr, 5);
+            if (!nonFatal.isEmpty()) logger.info("[RemoteDump] find non-fatal stderr on {} gclog path={}: {}", server.getName(), gcPath, nonFatal);
+            File localDir = new File(config.getGcLogDumpFilesDirectory());
+            double newestMtime = -1;
+            for (String line : pr.stdout.split("\n")) {
+                line = line.trim();
+                if (line.isEmpty()) continue;
+                Map<String, Object> fileInfo = parsePrintfLine(line);
+                if (fileInfo == null) continue;
+                String filename = (String) fileInfo.get("filename");
+                Long size = (Long) fileInfo.get("size");
+                double mtime = fileInfo.get("mtime") instanceof Number ? ((Number) fileInfo.get("mtime")).doubleValue() : 0;
+                if (mtime > newestMtime) newestMtime = mtime;
+                String matchedLocalFilename = findTransferredLocal(server, filename, (String) fileInfo.get("path"), size,
+                        local -> new File(localDir, local).exists());
+                boolean transferred = matchedLocalFilename != null;
+                boolean analyzed = transferred && gcLogAnalysisRepository != null
+                        && gcLogAnalysisRepository.existsByFilenameAndStatus(matchedLocalFilename, "SUCCESS");
+                fileInfo.put("transferred", transferred);
+                fileInfo.put("analyzed", analyzed);
+                if (matchedLocalFilename != null) fileInfo.put("localFilename", matchedLocalFilename);
+                fileInfo.put("sourceDumpPath", gcPath);
+                fileInfo.put("fileType", "gclog");
+                files.add(fileInfo);
+            }
+            long nowSec = System.currentTimeMillis() / 1000L;
+            for (Map<String, Object> f : files) {
+                double mtime = f.get("mtime") instanceof Number ? ((Number) f.get("mtime")).doubleValue() : 0;
+                String name = (String) f.get("filename");
+                boolean active = (name != null && name.endsWith(".current"))
+                        || (mtime == newestMtime && nowSec - mtime < GC_LOG_ACTIVE_WINDOW_SEC);
+                if (active) f.put("active", true);
             }
         }
         result.put("files", files);
@@ -458,20 +551,10 @@ public class RemoteDumpService {
                     if (fileInfo != null) {
                         Long size = (Long) fileInfo.get("size");
                         String filename = (String) fileInfo.get("filename");
-                        List<DumpTransferLog> succLogs = transferLogRepository
-                                .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(
-                                        server.getId(), filename, size, "SUCCESS");
-                        String matchedLocalFilename = null;
-                        for (DumpTransferLog sl : succLogs) {
-                            String local = sl.getFilename();
-                            if (local == null) continue;
-                            if (new File(localCoreDir, local).exists()
-                                    || new File(localHeapDir, local).exists()
-                                    || new File(localHeapDir, local + ".gz").exists()) {
-                                matchedLocalFilename = local;
-                                break;
-                            }
-                        }
+                        String matchedLocalFilename = findTransferredLocal(server, filename, (String) fileInfo.get("path"), size,
+                                local -> new File(localCoreDir, local).exists()
+                                        || new File(localHeapDir, local).exists()
+                                        || new File(localHeapDir, local + ".gz").exists());
                         boolean transferred = matchedLocalFilename != null;
                         fileInfo.put("transferred", transferred);
                         if (matchedLocalFilename != null) fileInfo.put("localFilename", matchedLocalFilename);
@@ -696,21 +779,25 @@ public class RemoteDumpService {
         transferLogRepository.save(log);
 
         File tempFile = null;
+        File localDir = null;
+        String reservedName = null;
+        final String requestedName = filename;
 
         try {
-            // core(코어덤프) / coreexec(코어의 실행 바이너리) 모두 코어덤프 dumpfiles 디렉터리로 전송
+            // core(코어덤프) / coreexec(코어의 실행 바이너리) 는 코어덤프 dumpfiles, gclog 는 GC 로그 dumpfiles, 그 외(힙) 는 힙 dumpfiles
             boolean toCoreDir = "core".equals(fileType) || "coreexec".equals(fileType);
-            File localDir = toCoreDir
-                    ? new File(config.getCoreDumpDirectory(), "dumpfiles")
-                    : new File(config.getDumpFilesDirectory());
+            boolean isGcLog = "gclog".equals(fileType);
+            log.setFileType(isGcLog ? "gclog" : toCoreDir ? fileType : "heap");
+            localDir = localDirFor(fileType);
             if (!localDir.exists()) localDir.mkdirs();
-            File localFile = new File(localDir, filename);
 
-            if (localFile.exists()) {
-                localFile = new File(localDir, dedupFilename(localDir, filename, LocalDateTime.now()));
+            // 로컬 이름 결정 + 예약 — 파일 존재 · 저장소별 점유(nameTaken) · 다른 전송의 예약 중 하나라도 걸리면 회피명
+            java.util.function.Predicate<String> taken = nameTaken(fileType, localDir);
+            reservedName = reserveLocalName(localDir, requestedName, taken, LocalDateTime.now());
+            if (!reservedName.equals(requestedName)) {
                 logger.info("[RemoteDump] Local name collision: {} → {} (server={})",
-                        filename, localFile.getName(), server.getName());
-                filename = localFile.getName();
+                        requestedName, reservedName, server.getName());
+                filename = reservedName;
                 log.setFilename(filename);
             }
 
@@ -734,17 +821,21 @@ public class RemoteDumpService {
                 long finalSize = tempFile.length();
                 if (listener != null) safeProgress(listener, finalSize, totalBytes > 0 ? totalBytes : finalSize);
 
-                // Phase 2: 임시 파일 → 최종 경로 (앱 계정 권한으로 이동)
-                Files.move(tempFile.toPath(), localFile.toPath(),
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                // Phase 2: 임시 파일 → 최종 경로 (앱 계정 권한으로 이동). 덮어쓰지 않는다 — 그 사이 업로드·수동 복사가 같은 이름을 만들었으면 새 이름으로
+                File localFile = moveIntoPlace(tempFile, localDir, reservedName, requestedName, taken);
+                if (!localFile.getName().equals(reservedName)) {
+                    reservedName = localFile.getName();
+                    filename = reservedName;
+                    log.setFilename(filename);
+                }
 
                 log.setTransferStatus("SUCCESS");
                 log.setFileSize(localFile.length());
                 log.setCompletedAt(LocalDateTime.now());
                 logger.info("[RemoteDump] Transfer success: {} from {} ({}bytes)",
                         filename, server.getName(), localFile.length());
-                // 힙 전송이면 같은 접속으로 그 서버의 JVM 힙 설정(-Xms/-Xmx)을 수집해 둔다 — 실패해도 전송은 SUCCESS.
-                if (!toCoreDir) log.setJvmInfo(captureJvmInfo(server, remoteFilePath));
+                // 힙·GC 로그 전송이면 같은 접속으로 그 서버의 JVM 설정을 수집해 둔다 — 실패해도 전송은 SUCCESS.
+                if (!toCoreDir) log.setJvmInfo(captureJvmInfo(server, remoteFilePath, fileType));
             } else {
                 cleanupTempFile(tempFile);
                 String errorMsg = cleanSshError(pr.stderr);
@@ -761,10 +852,129 @@ public class RemoteDumpService {
             log.setErrorMessage(e.getMessage());
             log.setCompletedAt(LocalDateTime.now());
             logger.error("[RemoteDump] Transfer error: {}", e.getMessage());
+        } finally {
+            releaseLocalName(localDir, reservedName);
         }
 
         transferLogRepository.save(log);
+        // GC 로그면 분석 이력에 등록(NOT_ANALYZED) + 자동 매칭 1차 시도 — 등록 실패가 전송 결과를 바꾸지는 않는다
+        if ("gclog".equals(fileType) && "SUCCESS".equals(log.getTransferStatus()) && gcLogAnalyzerService != null) {
+            try { gcLogAnalyzerService.registerTransferred(log, server); }
+            catch (Exception e) { logger.warn("[GcLog] register after transfer failed file={} — {}", log.getFilename(), e.getMessage()); }
+        }
         return log;
+    }
+
+    /**
+     * 스캔 '전송됨' 판정 (2026-09-14) — 이 서버에서 <b>같은 원격 파일</b>(원격 전체 경로 + 크기)을 받은 SUCCESS 기록 중, 로컬 파일이 실존하는
+     * 가장 최근 기록의 로컬 이름. 없으면 null.
+     * <p>⚠ 종전엔 원격 <b>파일명</b>만 봐서, 한 서버의 서로 다른 디렉토리에 있는 같은 이름·같은 크기 파일(인스턴스별 {@code gc.log} 가 흔하다)을
+     * 이미 전송된 것으로 판정해 자동 전송에서 조용히 빠졌다. {@code remote_path} 가 없는 옛 기록은 종전처럼 이름·크기로 인정한다(재전송 폭주 방지).
+     * 조회 자체는 기존 인덱스(서버·원격명·크기·상태)를 그대로 쓰고 경로는 메모리에서 거른다.
+     */
+    String findTransferredLocal(TargetServer server, String remoteFilename, String remotePath, Long size,
+                                java.util.function.Predicate<String> localExists) {
+        for (DumpTransferLog sl : transferLogRepository
+                .findByServerIdAndRemoteFilenameAndFileSizeAndTransferStatusOrderByCompletedAtDesc(server.getId(), remoteFilename, size, "SUCCESS")) {
+            String local = sl.getFilename();
+            if (local == null) continue;
+            if (sl.getRemotePath() != null && remotePath != null && !sameRemotePath(sl.getRemotePath(), remotePath)) continue;
+            if (localExists.test(local)) return local;
+        }
+        return null;
+    }
+
+    /** 원격 경로 동일성 — 연속 슬래시·{@code /./} 만 정규화한다(심볼릭 링크·{@code ..} 는 원격에서만 알 수 있어 풀지 않는다). */
+    static boolean sameRemotePath(String a, String b) {
+        return normalizeRemotePath(a).equals(normalizeRemotePath(b));
+    }
+
+    static String normalizeRemotePath(String p) {
+        String s = p.trim().replaceAll("/+", "/");
+        String prev;
+        do { prev = s; s = s.replace("/./", "/"); } while (!s.equals(prev));
+        return s;
+    }
+
+    static String reservationKey(File dir, String name) {
+        return dir.getAbsolutePath() + File.separator + name;
+    }
+
+    /**
+     * 저장소별 "이름이 이미 쓰이는가"(파일 존재 외) — 회피명 판정에 더해진다(2026-09-14).
+     * <ul>
+     *   <li><b>gclog</b>: {@code gc_log_analysis} 에 같은 이름의 기록이 있음 — 파일을 디스크에서 지워도 기록(결과·AI·매칭)은 남는데,
+     *       그 이름으로 새 파일을 받으면 {@code registerTransferred} 가 옛 기록을 이어 써서 <b>새 파일에 옛 분석 결과가 붙었다</b>.</li>
+     *   <li><b>heap</b>: 짝이 되는 {@code .gz} 가 있음({@code X.hprof} ↔ {@code X.hprof.gz}) — 둘이 함께 있으면 기동 시
+     *       {@code cleanupDuplicateGzFiles} 가 .gz 를 중복본으로 보고 지운다(다른 덤프의 압축 원본이 사라진다). 스캔도 둘을 같은 파일로 본다.</li>
+     * </ul>
+     */
+    java.util.function.Predicate<String> nameTaken(String fileType, File localDir) {
+        if ("gclog".equals(fileType)) {
+            com.heapdump.analyzer.repository.GcLogAnalysisRepository repo = gcLogAnalysisRepository;
+            return n -> repo != null && repo.existsByFilename(n);
+        }
+        if ("core".equals(fileType) || "coreexec".equals(fileType)) return n -> false;
+        return n -> n.toLowerCase(Locale.ROOT).endsWith(".gz")
+                ? new File(localDir, n.substring(0, n.length() - 3)).exists()
+                : new File(localDir, n + ".gz").exists();
+    }
+
+    /**
+     * 도착 디렉토리에서 쓸 이름을 고르고 예약한다 — 파일 존재 · {@code taken} · 다른 전송의 예약 중 하나라도 걸리면 {@link #dedupFilename} 회피명.
+     * 돌려준 이름은 호출자가 {@link #releaseLocalName} 로 풀어야 한다.
+     */
+    String reserveLocalName(File dir, String filename, java.util.function.Predicate<String> taken, LocalDateTime now) {
+        synchronized (reservedLocalNames) {
+            java.util.function.Predicate<String> busy = n -> new File(dir, n).exists() || taken.test(n)
+                    || reservedLocalNames.contains(reservationKey(dir, n));
+            String name = busy.test(filename) ? dedupFilename(dir, filename, now, busy) : filename;
+            reservedLocalNames.add(reservationKey(dir, name));
+            return name;
+        }
+    }
+
+    void releaseLocalName(File dir, String name) {
+        if (dir == null || name == null) return;
+        synchronized (reservedLocalNames) {
+            reservedLocalNames.remove(reservationKey(dir, name));
+        }
+    }
+
+    boolean isReserved(File dir, String name) {
+        synchronized (reservedLocalNames) {
+            return reservedLocalNames.contains(reservationKey(dir, name));
+        }
+    }
+
+    /**
+     * 임시 파일을 예약한 이름으로 옮긴다 — ⚠ {@code REPLACE_EXISTING} 금지(덮어쓰면 먼저 있던 파일이 사라진다).
+     * 예약 밖의 경로(업로드·수동 복사)가 그 사이 같은 이름을 만들어 이동이 거부되면, 원래 이름({@code baseName}) 기준 회피명을 다시 예약해
+     * 옮긴다(최대 5회). 예약은 최종 이름으로 넘어가며 호출자는 돌려받은 파일 이름을 풀어야 한다.
+     */
+    File moveIntoPlace(File temp, File dir, String reservedName, String baseName,
+                       java.util.function.Predicate<String> taken) throws IOException {
+        String name = reservedName;
+        for (int attempt = 0; ; attempt++) {
+            File target = new File(dir, name);
+            try {
+                Files.move(temp.toPath(), target.toPath());
+                return target;
+            } catch (java.nio.file.FileAlreadyExistsException e) {
+                if (attempt >= 4) throw e;
+                String next = reserveLocalName(dir, baseName, taken, LocalDateTime.now());
+                releaseLocalName(dir, name);
+                logger.warn("[RemoteDump] Local name taken during transfer: {} → {} (dir={})", name, next, dir);
+                name = next;
+            }
+        }
+    }
+
+    /** 파일 종류별 로컬 도착 디렉토리. */
+    File localDirFor(String fileType) {
+        if ("core".equals(fileType) || "coreexec".equals(fileType)) return new File(config.getCoreDumpDirectory(), "dumpfiles");
+        if ("gclog".equals(fileType)) return new File(config.getGcLogDumpFilesDirectory());
+        return new File(config.getDumpFilesDirectory());
     }
 
     /**
@@ -775,17 +985,22 @@ public class RemoteDumpService {
      * 확장자 없는 파일(exec 바이너리 등)은 이름 끝에 붙는다.
      */
     static String dedupFilename(File dir, String filename, LocalDateTime now) {
+        return dedupFilename(dir, filename, now, n -> new File(dir, n).exists());
+    }
+
+    /** {@code busy} 가 참인 이름을 피한다 — 파일 존재 외에 저장소 기록·전송 예약까지 함께 보는 판정을 넘긴다(2026-09-14). */
+    static String dedupFilename(File dir, String filename, LocalDateTime now, java.util.function.Predicate<String> busy) {
         int dot = filename.lastIndexOf('.');
         String base = dot > 0 ? filename.substring(0, dot) : filename;
         String ext  = dot > 0 ? filename.substring(dot) : "";
         String minute = now.format(DateTimeFormatter.ofPattern("yyyyMMddHHmm"));
         String candidate = base + "_" + minute + ext;
-        if (!new File(dir, candidate).exists()) return candidate;
+        if (!busy.test(candidate)) return candidate;
         String second = now.format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
         candidate = base + "_" + second + ext;
-        if (!new File(dir, candidate).exists()) return candidate;
+        if (!busy.test(candidate)) return candidate;
         int count = 2;
-        while (new File(dir, base + "_" + second + "_" + count + ext).exists()) count++;
+        while (busy.test(base + "_" + second + "_" + count + ext)) count++;
         return base + "_" + second + "_" + count + ext;
     }
 
@@ -857,6 +1072,14 @@ public class RemoteDumpService {
      * @param remoteFilePath 방금 전송한 덤프 경로(있으면 원격 mtime 도 같은 왕복에서 얻어 매칭에 쓴다). null 이면 후보 수집만.
      */
     public String captureJvmInfo(TargetServer server, String remoteFilePath) {
+        return captureJvmInfo(server, remoteFilePath, "heap");
+    }
+
+    /**
+     * 파일 종류별 매칭 — {@code gclog} 면 방금 가져온 로그 경로를 {@code -Xloggc}/{@code -Xlog} 로 쓰는 JVM 을 찾고
+     * ({@link JvmHeapCapture#matchGcLog}), 그 외는 힙 덤프 매칭. 캐시는 종류와 무관하게 공유한다.
+     */
+    public String captureJvmInfo(TargetServer server, String remoteFilePath, String fileType) {
         JvmHeapCapture.Capture cap = null;
         try {
             CachedJvmCapture cached = server.getId() == null ? null : jvmCaptureCache.get(server.getId());
@@ -881,7 +1104,9 @@ public class RemoteDumpService {
                 }
             }
             String remoteName = remoteFilePath == null ? null : new File(remoteFilePath).getName();
-            JvmHeapCapture.Match m = JvmHeapCapture.match(cap, remoteName, JvmHeapCapture.dirOf(remoteFilePath), null, null);
+            JvmHeapCapture.Match m = "gclog".equals(fileType)
+                    ? JvmHeapCapture.matchGcLog(cap, remoteFilePath)
+                    : JvmHeapCapture.match(cap, remoteName, JvmHeapCapture.dirOf(remoteFilePath), null, null);
             cap = cap.withMatch(m);
             JvmHeapCapture.Candidate hit = cap.matched();
             logger.info("[JvmHeap] capture server={} file={} candidates={} matched={} reason={} xmx={} flags={}",
@@ -925,9 +1150,14 @@ public class RemoteDumpService {
         if (remotePath.length() > 1000) throw new IllegalArgumentException("원격 경로가 너무 깁니다");
     }
 
-    /** heap/core 전송은 서버에 등록된 덤프 경로 하위여야 한다(코어 실행파일 페어링은 예외 — 호출자가 건너뜀). */
+    /** heap/core/gclog 전송은 서버에 등록된 그 종류의 경로 하위여야 한다(코어 실행파일 페어링은 예외 — 호출자가 건너뜀). */
     static boolean isUnderConfiguredPaths(TargetServer server, String remotePath, String fileType) {
-        java.util.List<String> roots = "core".equals(fileType) ? server.getCoreDumpPaths() : server.getDumpPaths();
+        java.util.List<String> roots;
+        switch (fileType == null ? "heap" : fileType) {
+            case "core": roots = server.getCoreDumpPaths(); break;
+            case "gclog": roots = server.getGcLogPaths(); break;
+            default: roots = server.getDumpPaths();
+        }
         if (roots == null) return false;
         for (String root : roots) {
             String r = root.trim();
@@ -1056,6 +1286,8 @@ public class RemoteDumpService {
                         (List<Map<String, Object>>) scanResult.getOrDefault("files", Collections.emptyList());
                 for (Map<String, Object> dump : remoteDumps) {
                     boolean transferred = (Boolean) dump.getOrDefault("transferred", false);
+                    // 기록 중인 GC 로그(회전 전 최신 파일)는 잘린 채 오므로 자동 전송에서 건너뛴다 — 수동 전송은 허용
+                    if (Boolean.TRUE.equals(dump.get("active"))) continue;
                     if (!transferred) {
                         String remotePath = (String) dump.get("path");
                         String fileType = (String) dump.getOrDefault("fileType", "heap");

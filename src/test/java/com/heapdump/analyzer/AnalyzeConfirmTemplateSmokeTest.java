@@ -79,6 +79,13 @@ class AnalyzeConfirmTemplateSmokeTest {
         return n;
     }
 
+    private static com.heapdump.analyzer.model.dto.RecentFileItem recentItem(String name, boolean compressed, String status, boolean others) {
+        long mb = 1024L * 1024;
+        com.heapdump.analyzer.model.HeapDumpFile f = new com.heapdump.analyzer.model.HeapDumpFile(
+                name, "/h/" + name, compressed ? 45 * mb : 157 * mb, 0L, compressed, compressed ? 997 * mb : 157 * mb, compressed ? 45 * mb : 0L);
+        return new com.heapdump.analyzer.model.dto.RecentFileItem(f, "heap", status, others);
+    }
+
     private static Map<String, Object> dashboardFile(String name, boolean compressed) {
         Map<String, Object> f = new LinkedHashMap<>();
         f.put("name", name);
@@ -99,6 +106,10 @@ class AnalyzeConfirmTemplateSmokeTest {
         m.put("files", List.of(dashboardFile("plain.hprof", false), dashboardFile("mystery", false),
                 dashboardFile("packed.hprof.gz", true), dashboardFile("done.hprof", false)));
         m.put("fileCount", 4);
+        // Recent Files 는 recentFiles(RecentFileItem — 힙 + GC 로그, 2026-09-14)가 그린다. 크기 표기는 실제 HeapDumpFile 포맷
+        m.put("recentFiles", List.of(recentItem("plain.hprof", false, "NOT_ANALYZED", false), recentItem("mystery", false, "NOT_ANALYZED", true),
+                recentItem("packed.hprof.gz", true, "NOT_ANALYZED", false), recentItem("done.hprof", false, "SUCCESS", false)));
+        m.put("recentCount", 4);
         m.put("totalSize", "1 GB");
         m.put("analyzedCount", 1L);
         m.put("totalSuspects", 0L);
@@ -124,7 +135,7 @@ class AnalyzeConfirmTemplateSmokeTest {
         assertTrue(html.contains("href=\"/analyze/plain.hprof\" class=\"fb p\" title=\"Analyze\" data-filename=\"plain.hprof\" data-kind=\"heap\""),
                 "일반 힙 덤프 Analyze 버튼 — JS 미로드 폴백용 href 와 data-kind=heap");
         assertTrue(html.contains("data-filename=\"mystery\" data-kind=\"others\""), "Others 파일은 kind=others 로 열어야 경고 블록이 붙는다");
-        assertTrue(html.contains("data-size=\"997 MB (GZ 45 MB)\""), "압축 파일은 원본·GZ 크기를 함께 보여준다");
+        assertTrue(html.contains("data-size=\"997.00 MB (GZ 45.00 MB)\""), "압축 파일은 원본·GZ 크기를 함께 보여준다");
 
         assertFalse(html.contains("othersAnalyzeModal"), "페이지 전용 Others 모달이 되살아났다 — 공통 모달과 갈린다");
         assertFalse(html.contains("confirmOthersAnalyze"), "제거된 전역 함수를 여전히 호출한다");
@@ -139,7 +150,7 @@ class AnalyzeConfirmTemplateSmokeTest {
         String js = Files.readString(Path.of("src/main/resources/static/js/analyze-confirm.js"), StandardCharsets.UTF_8);
         assertTrue(js.contains("var HEAP_EXT_RE = /\\.(hprof|bin|dump|dmp)(\\.gz)?$/i;"),
                 "힙 덤프 확장자 목록이 업로드 큐·FilenameValidator 와 어긋났다 (단독 .gz 는 인정하지 않는다)");
-        assertTrue(js.contains("var extWarn = kind !== 'core' && !hasHeapDumpExtension(opts.filename);"),
+        assertTrue(js.contains("var extWarn = kind !== 'core' && kind !== 'gclog' && !hasHeapDumpExtension(opts.filename);"),
                 "경고 조건이 kind==='others' 로 되돌아가면 '파일 분류'로 heapdump 가 된 비-덤프 파일에서 경고가 빠진다");
         assertTrue(js.contains("덤프 파일 확장자가 아닌데 분석을 진행하시겠습니까?"), "진행 여부를 묻는 문구가 없다");
         assertTrue(js.contains("'그래도 분석 시작'"), "되묻는 경우의 확인 버튼 문구");
@@ -151,9 +162,10 @@ class AnalyzeConfirmTemplateSmokeTest {
     void filesAnalyzeButtonsOpenConfirmModal() throws IOException {
         // files.html 은 모델이 커서 소스 계약만 본다 — 렌더는 기존 운영 경로에서 검증됨
         String src = source("files.html");
-        assertEquals(2, count(src, ONCLICK), "heapdump NOT_ANALYZED · others/exec NOT_ANALYZED 두 곳");
+        assertEquals(3, count(src, ONCLICK), "heapdump NOT_ANALYZED · others/exec NOT_ANALYZED · gclog 미분석/실패 세 곳");
         assertTrue(src.contains("th:data-filename=\"${h.filename}\" data-kind=\"heap\""), "heapdump 버튼 kind");
         assertTrue(src.contains("th:data-filename=\"${h.filename}\" data-kind=\"others\""), "others/exec 버튼 kind");
+        assertTrue(src.contains("th:data-filename=\"${h.filename}\" data-kind=\"gclog\""), "GC Log 탭 분석 버튼 kind (2026-09-14)");
         assertFalse(src.contains("othersAnalyzeModal") || src.contains("confirmOthersAnalyze"),
                 "페이지 전용 Others 모달이 남아 있다");
         assertTrue(src.indexOf("src=\"/js/analyze-confirm.js") > 0, "analyze-confirm.js 가 로드되지 않는다");

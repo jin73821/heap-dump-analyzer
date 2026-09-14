@@ -65,7 +65,7 @@ class JvmHeapCaptureTest {
     private static Candidate cand(int pid, Long startEpoch, Long xmx, String heapDumpPath, String cwd,
                                   Map<String, String> markers, String mainClass) {
         return new Candidate(pid, "jeus", startEpoch, mainClass, cwd, "/opt/jdk/bin/java", null, xmx,
-                xmx == null ? null : "cmdline", heapDumpPath, List.of(), 0, markers, true, false, false, false);
+                xmx == null ? null : "cmdline", heapDumpPath, null, List.of(), 0, markers, true, false, false, false);
     }
 
     private static Capture capture(Long mtime, Candidate... cs) {
@@ -407,7 +407,7 @@ class JvmHeapCaptureTest {
             List<String> opts = new ArrayList<>();
             for (int k = 0; k < 40; k++) opts.add("-XX:HeapDumpPath=" + "x".repeat(180) + k);
             big.add(new Candidate(i, "u".repeat(30), NOW, "M".repeat(200), "/c".repeat(100), "/e".repeat(100), GB, GB, "cmdline",
-                    "/h".repeat(100), opts, 0, Map.of("user.dir", "d".repeat(200), "catalina.base", "b".repeat(200)),
+                    "/h".repeat(100), null, opts, 0, Map.of("user.dir", "d".repeat(200), "catalina.base", "b".repeat(200)),
                     true, false, false, false));
         }
         Capture huge = new Capture(1, NOW, NOW, GB, GB, 100, false, null, big, 3, "pid", List.of(), null);
