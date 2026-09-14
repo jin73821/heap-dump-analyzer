@@ -1309,7 +1309,8 @@ public class MatReportParser {
             long shallowHeap = parseLong(COMMA_SPACE_PATTERN.matcher(shallowStr).replaceAll(""));
             long retainedHeap = parseLong(COMMA_SPACE_PATTERN.matcher(retainedStr).replaceAll(""));
             double pct = 0;
-            try { pct = Double.parseDouble(pctStr); } catch (NumberFormatException ignored) {}
+            try { pct = Double.parseDouble(pctStr); }
+            catch (NumberFormatException e) { logger.debug("[Parser] Dominator 비율 파싱 실패 — 0 으로 둔다: {}", pctStr); }
 
             entries.add(new DominatorTreeEntry(className, objectAddress, shallowHeap, retainedHeap, pct,
                     isClassLoaderClass(className), null, null));
@@ -1503,7 +1504,8 @@ public class MatReportParser {
                 String text = COMMA_SPACE_PATTERN.matcher(
                         stripTags(cellM.group(1)).trim()).replaceAll("").trim();
                 if (text.isEmpty()) continue;
-                try { return Long.parseLong(text); } catch (NumberFormatException ignore) {}
+                try { return Long.parseLong(text); }
+                catch (NumberFormatException e) { logger.debug("[Parser] objectId 후보가 숫자가 아님 — 다음 행: {}", text); }
             }
         }
         logger.warn("[Parser] extractObjectIdFromOqlZip: objectId 파싱 실패 (zip={})", zip.getName());
@@ -1549,7 +1551,9 @@ public class MatReportParser {
         if (m.find()) {
             try {
                 return Long.parseLong(COMMA_SPACE_PATTERN.matcher(m.group(1)).replaceAll(""));
-            } catch (NumberFormatException ignore) {}
+            } catch (NumberFormatException e) {
+                logger.debug("[Parser] Dominator 총계 파싱 실패: {}", m.group(1));
+            }
         }
         return -1;
     }

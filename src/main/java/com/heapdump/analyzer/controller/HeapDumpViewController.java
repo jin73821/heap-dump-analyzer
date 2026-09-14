@@ -265,7 +265,9 @@ public class HeapDumpViewController {
                     try {
                         File inHeap = analyzerService.getFile(execName);
                         if (inHeap != null && inHeap.exists()) execFile = inHeap;
-                    } catch (Exception ignored) {}
+                    } catch (Exception e) {
+                        logger.debug("[CoreDump] 힙덤프 저장소에서 exec 조회 실패 ({}): {}", execName, e.toString());
+                    }
                 }
                 if (execFile.exists()) {
                     AnalysisHistoryItem execItem = new AnalysisHistoryItem();

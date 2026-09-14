@@ -187,7 +187,8 @@ public class RemoteDumpService {
             Object v = saved.get("scanIntervalSec");
             int sec = (v instanceof Number) ? ((Number) v).intValue() : -1;
             if (sec <= 0 && v != null) {
-                try { sec = Integer.parseInt(String.valueOf(v).trim()); } catch (NumberFormatException ignored) {}
+                try { sec = Integer.parseInt(String.valueOf(v).trim()); }
+                catch (NumberFormatException e) { logger.warn("[RemoteDump] settings.json scanIntervalSec 값이 숫자가 아님 — 기존 값 유지: {}", v); }
             }
             if (sec > 0) {
                 this.scanIntervalSec = sec;
@@ -1186,7 +1187,8 @@ public class RemoteDumpService {
     }
 
     private void safeProgress(TransferProgressListener listener, long bytes, long total) {
-        try { listener.onProgress(bytes, total); } catch (Exception ignored) {}
+        try { listener.onProgress(bytes, total); }
+        catch (Exception e) { logger.debug("[RemoteDump] 진행률 리스너 실패 — 전송은 계속: {}", e.toString()); }
     }
 
     /**
@@ -1207,7 +1209,9 @@ public class RemoteDumpService {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) stdout.append(line).append("\n");
-            } catch (IOException ignored) {}
+            } catch (IOException e) {
+                logger.debug("[RemoteDump] stdout 읽기 중단(프로세스 종료): {}", e.toString());
+            }
         });
         // stderr 는 raw 바이트로 캡처 후 decodeStderr 로 디코딩 (UTF-8 실패 시 MS949 폴백)
         Thread errReader = new Thread(() -> {
@@ -1215,7 +1219,9 @@ public class RemoteDumpService {
                 byte[] buf = new byte[8192];
                 int n;
                 while ((n = es.read(buf)) != -1) stderrBuf.write(buf, 0, n);
-            } catch (IOException ignored) {}
+            } catch (IOException e) {
+                logger.debug("[RemoteDump] stderr 읽기 중단(프로세스 종료): {}", e.toString());
+            }
         });
         outReader.setDaemon(true);
         errReader.setDaemon(true);
@@ -1411,7 +1417,9 @@ public class RemoteDumpService {
             try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) stdout.append(line).append("\n");
-            } catch (IOException ignored) {}
+            } catch (IOException e) {
+                logger.debug("[RemoteDump] stdout 읽기 중단(프로세스 종료): {}", e.toString());
+            }
         });
         // stderr 는 raw 바이트로 캡처 후 decodeStderr 로 디코딩 (UTF-8 실패 시 MS949 폴백 — 사내 EUC-KR 배너/에러 대응)
         Thread errReader = new Thread(() -> {
@@ -1419,7 +1427,9 @@ public class RemoteDumpService {
                 byte[] buf = new byte[8192];
                 int n;
                 while ((n = es.read(buf)) != -1) stderrBuf.write(buf, 0, n);
-            } catch (IOException ignored) {}
+            } catch (IOException e) {
+                logger.debug("[RemoteDump] stderr 읽기 중단(프로세스 종료): {}", e.toString());
+            }
         });
 
         outReader.start();

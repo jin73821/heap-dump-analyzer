@@ -1,5 +1,7 @@
 package com.heapdump.analyzer.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
@@ -8,6 +10,8 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
  * error 는 \\ \" \n (기존 에러 경로가 \r\t 를 이스케이프하지 않던 동작 보존).
  */
 public final class SseJson {
+
+    private static final Logger logger = LoggerFactory.getLogger(SseJson.class);
 
     private SseJson() {}
 
@@ -34,6 +38,8 @@ public final class SseJson {
         try {
             emitter.send(SseEmitter.event().name("error").data(error(code, msg)));
             emitter.complete();
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            logger.debug("[SSE] error 이벤트 전송 실패(클라이언트 disconnect 추정) code={}: {}", code, e.toString());
+        }
     }
 }

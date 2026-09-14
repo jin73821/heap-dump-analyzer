@@ -226,7 +226,9 @@ public class HeapDumpAnalyzerService {
                     this.maxUploadSizeBytes = initBytes;
                 }
             }
-        } catch (Exception ignored) { /* DEFAULT_UPLOAD_SIZE_BYTES 유지 */ }
+        } catch (Exception e) {
+            logger.debug("[Config] multipart 최대 크기 조회 실패 — 기본 업로드 한도 유지: {}", e.toString());
+        }
         // LLM/RAG 초기화는 각각 LlmConfigService/RagConfigService @PostConstruct 에서 수행
     }
 
@@ -1297,7 +1299,8 @@ public class HeapDumpAnalyzerService {
 
             // 3) (OOM 인스턴스 주소 → 메시지) 파싱 후 임시 디렉토리 정리
             java.util.Map<Long, String> oomInstances = parseOomQueryZip(queryZip);
-            try { deleteDirectoryRecursively(queryZip.getParentFile()); } catch (Exception ignore) {}
+            try { deleteDirectoryRecursively(queryZip.getParentFile()); }
+            catch (Exception e) { logger.warn("[OOM] 쿼리 임시 디렉토리 정리 실패 ({}): {}", queryZip.getParentFile(), e.toString()); }
             if (oomInstances.isEmpty()) return;
 
             // 4) 메시지 추출 — 스레드가 실제 참조하는(=throw 된) OOM 인스턴스만 카운트
@@ -1372,7 +1375,8 @@ public class HeapDumpAnalyzerService {
             java.util.Set<Long> locals = new java.util.HashSet<>();
             java.util.regex.Matcher lm = localP.matcher(block);
             while (lm.find()) {
-                try { locals.add(Long.parseUnsignedLong(lm.group(1), 16)); } catch (NumberFormatException ignore) {}
+                try { locals.add(Long.parseUnsignedLong(lm.group(1), 16)); }
+                catch (NumberFormatException e) { logger.debug("[OOM] 스레드 로컬 주소 파싱 실패 — 건너뜀: {}", lm.group(1)); }
             }
             if (!locals.isEmpty()) map.put(addr, locals);
         }
@@ -1414,7 +1418,10 @@ public class HeapDumpAnalyzerService {
             return zip.exists() ? zip : null;
         } catch (Exception e) {
             logger.warn("[OOM] OQL query run failed: {}", e.getMessage());
-            if (qdir != null) { try { deleteDirectoryRecursively(qdir); } catch (Exception ignore) {} }
+            if (qdir != null) {
+                try { deleteDirectoryRecursively(qdir); }
+                catch (Exception cleanupErr) { logger.warn("[OOM] 쿼리 임시 디렉토리 정리 실패 ({}): {}", qdir, cleanupErr.toString()); }
+            }
             return null;
         }
     }
@@ -1553,7 +1560,10 @@ public class HeapDumpAnalyzerService {
             logger.warn("[SysProp] System properties extraction failed for {}: {}",
                     result != null ? result.getFilename() : "?", e.getMessage());
         } finally {
-            if (qdir != null) { try { deleteDirectoryRecursively(qdir); } catch (Exception ignore) {} }
+            if (qdir != null) {
+                try { deleteDirectoryRecursively(qdir); }
+                catch (Exception cleanupErr) { logger.warn("[SysProp] 쿼리 임시 디렉토리 정리 실패 ({}): {}", qdir, cleanupErr.toString()); }
+            }
         }
     }
 
@@ -1912,7 +1922,8 @@ public class HeapDumpAnalyzerService {
             if (val instanceof Number) {
                 bytes = ((Number) val).longValue();
             } else if (val != null) {
-                try { bytes = Long.parseLong(String.valueOf(val)); } catch (NumberFormatException ignored) {}
+                try { bytes = Long.parseLong(String.valueOf(val)); }
+                catch (NumberFormatException e) { logger.warn("[Settings] maxUploadSizeBytes 값이 숫자가 아님 — 기존 값 유지: {}", val); }
             }
             if (bytes > 0 && bytes <= MAX_UPLOAD_LIMIT_BYTES) {
                 this.maxUploadSizeBytes = bytes;
@@ -1930,7 +1941,8 @@ public class HeapDumpAnalyzerService {
             if (val instanceof Number) {
                 sec = ((Number) val).longValue();
             } else if (val != null) {
-                try { sec = Long.parseLong(String.valueOf(val)); } catch (NumberFormatException ignored) {}
+                try { sec = Long.parseLong(String.valueOf(val)); }
+                catch (NumberFormatException e) { logger.warn("[Settings] dominatorRefsPrecomputeBudgetSeconds 값이 숫자가 아님 — 기존 값 유지: {}", val); }
             }
             if (sec >= DOM_PRECOMPUTE_BUDGET_MIN && sec <= DOM_PRECOMPUTE_BUDGET_MAX) {
                 config.setDominatorRefsPrecomputeBudgetSeconds(sec);
@@ -2123,13 +2135,17 @@ public class HeapDumpAnalyzerService {
                 File f = new File(jarDir, "application.properties");
                 if (f.exists()) return f;
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            logger.debug("[Settings] JAR 위치 기준 application.properties 탐색 실패: {}", e.toString());
+        }
 
         // 2) 현재 작업 디렉토리
         try {
             File f = new File(System.getProperty("user.dir", "."), "application.properties");
             if (f.exists()) return f;
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            logger.debug("[Settings] 작업 디렉토리 기준 application.properties 탐색 실패: {}", e.toString());
+        }
 
         // 3) 프로젝트 소스 디렉토리 (개발 환경)
         File srcProps = new File("src/main/resources/application.properties");
@@ -2288,7 +2304,9 @@ public class HeapDumpAnalyzerService {
                     if (p.length >= 2) return Long.parseLong(p[1]) * 1024L; // kB → bytes
                 }
             }
-        } catch (Exception ignore) {}
+        } catch (Exception e) {
+            logger.debug("[System] /proc/meminfo MemTotal 읽기 실패(비 Linux 등): {}", e.toString());
+        }
         return -1;
     }
 
@@ -2301,7 +2319,9 @@ public class HeapDumpAnalyzerService {
                     if (p.length >= 2) return Long.parseLong(p[1]) / 1024L; // kB → MB
                 }
             }
-        } catch (Exception ignore) {}
+        } catch (Exception e) {
+            logger.debug("[System] /proc/meminfo MemAvailable 읽기 실패(비 Linux 등): {}", e.toString());
+        }
         return -1;
     }
 
@@ -2805,7 +2825,8 @@ public class HeapDumpAnalyzerService {
                         .data(objectMapper.writeValueAsString(AnalysisProgress.alreadyAnalyzing(safe))));
                 emitter.complete();
             } catch (Exception e) {
-                try { emitter.completeWithError(e); } catch (Exception ignored) {}
+                try { emitter.completeWithError(e); }
+                catch (Exception completeErr) { logger.debug("[Analysis] 중복 안내 SSE 종료 실패: {}", completeErr.toString()); }
             }
             return null;  // cancelTask 클로저의 null 체크로 기존 태스크 취소 방지
         }
@@ -3075,7 +3096,8 @@ public class HeapDumpAnalyzerService {
                                 safe, tmpFile.getAbsolutePath(), tmpFile.length());
                     }
                 }
-                try { emitter.complete(); } catch (Exception ignored) {}
+                try { emitter.complete(); }
+                catch (Exception completeErr) { logger.debug("[Analysis] 분석 종료 후 SSE complete 실패(이미 닫힘): {}", completeErr.toString()); }
                 deadEmitters.remove(emitter);  // dead-emitter 집합 누수 방지
             }
         });
@@ -3314,7 +3336,9 @@ public class HeapDumpAnalyzerService {
                     while ((line = br.readLine()) != null) {
                         output.append(line).append('\n');
                     }
-                } catch (IOException ignored) {}
+                } catch (IOException e) {
+                    logger.debug("[MAT lazy] 출력 읽기 중단(프로세스 종료): {}", e.toString());
+                }
             }, "mat-lazy-reader");
             reader.setDaemon(true);
             reader.start();
@@ -3696,7 +3720,9 @@ public class HeapDumpAnalyzerService {
                     int d = Integer.parseInt(parts[2].trim());
                     parsedDate = String.format("%04d-%02d-%02d", y, m, d);
                 }
-            } catch (Exception e) { /* fall through */ }
+            } catch (Exception e) {
+                logger.debug("[Parser] 덤프 생성 날짜 파싱 실패 — 원문 표시: {}", date);
+            }
             if (parsedDate == null) parsedDate = date.trim();
         }
 
@@ -3713,7 +3739,9 @@ public class HeapDumpAnalyzerService {
                     else if (!pm && h == 12) h = 0;
                     parsedTime = String.format("%02d:%02d:%02d", h, min, sec);
                 }
-            } catch (Exception e) { /* fall through */ }
+            } catch (Exception e) {
+                logger.debug("[Parser] 덤프 생성 시각 파싱 실패 — 원문 표시: {}", time);
+            }
             if (parsedTime == null) parsedTime = time.trim();
         }
 

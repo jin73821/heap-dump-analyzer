@@ -196,7 +196,9 @@ public class TwoFactorController {
         if (session != null) {
             try {
                 session.invalidate();
-            } catch (IllegalStateException ignored) { /* 이미 무효화됨 */ }
+            } catch (IllegalStateException e) {
+                logger.debug("세션이 이미 무효화됨: {}", e.getMessage());
+            }
         }
     }
 }

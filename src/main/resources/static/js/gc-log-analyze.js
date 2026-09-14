@@ -1,5 +1,5 @@
 /* gc-log-analyze.js — GC 로그 결과 페이지 (gc-log/analyze.html, 2026-09-14)
- * 상태 폴링(분석 중) · KPI/차트/소견/이벤트 표/원문 렌더 · 힙 덤프 매칭 칩 · AI 해석.
+ * 상태 폴링(분석 중) · KPI/차트/소견/이벤트 표/원문 렌더 · 힙 덤프 매칭 칩 · AI 분석(확인 모달 · 경과 시간).
  * 폴링은 SessionTimeout.managedInterval + registerActivityGuard 경유(함정 38). Chart.js 는 date adapter 가 없어
  * x 축을 uptime 초(linear)로 두고 눈금 콜백이 h:mm 으로 바꾼다. */
 (function () {
@@ -515,53 +515,160 @@
             .catch(function (e) { btn.disabled = false; var err = document.getElementById('matchPickErr'); if (err) { err.textContent = errMsg(e, '연결 실패'); err.classList.add('show'); } });
     }
 
-    // ── AI ───────────────────────────────────────────────────
+    // ── AI 분석 ──────────────────────────────────────────────
+    // 흐름: [AI 분석](상단)·[분석/재분석](카드) → 확인 모달 → POST /ai-analyze(동기, 15~40초) → 카드 렌더.
+    // 분석 중에는 카드에 초 단위 경과 시간을 보인다. 실패하면 오류를 위에 얹고 직전 결과는 그대로 둔다(DB 의 옛 결과는 지워지지 않았다).
+    var AI_ICONS = {
+        summary: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="14" y2="18"></line></svg>',
+        cause: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
+        recs: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>',
+        tuning: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>'
+    };
+    var AI_EMPTY_HTML = '<div class="gcl-ai-empty">LLM 이 GC 통계와 소견을 종합 분석합니다. 오른쪽 <b>분석</b> 버튼으로 실행하세요. 연결된 힙 덤프가 있으면 그 정보도 함께 넣습니다.</div>';
+
+    /** 이스케이프한 뒤 JVM 옵션(-XX:… / -Xmx4g / -Xlog:…)만 코드 칩으로 감싼다. 값 문자에 '&' 를 넣지 않아 엔티티(&quot; 등)를 가르지 않는다. */
+    var JVM_OPT_RE = /(^|[\s(\[,;/“‘:])(-(?:XX:[+\-]?[A-Za-z][A-Za-z0-9_]*(?:=[A-Za-z0-9_.:\/%+*=\-]+)?|Xm[snx]\d+[kKmMgGtT]?|Xss\d+[kKmMgG]?|Xlog(?:gc)?:[A-Za-z0-9_.:\/%+*=,\-]+))/g;
+    function aiText(s) {
+        return esc(s).replace(JVM_OPT_RE, function (all, pre, opt) {
+            var tail = '';
+            while (/[.,:]$/.test(opt)) { tail = opt.slice(-1) + tail; opt = opt.slice(0, -1); }   // 문장 끝 마침표·쉼표는 칩 밖으로
+            return pre + '<code class="gcl-ai-code">' + opt + '</code>' + tail;
+        });
+    }
+    function aiBlock(kind, title, inner) {
+        return '<section class="gcl-ai-block k-' + kind + '"><div class="gcl-ai-block-head"><span class="gcl-ai-block-icon">' + AI_ICONS[kind] + '</span>'
+            + '<h4 class="gcl-ai-block-title">' + esc(title) + '</h4></div>' + inner + '</section>';
+    }
+    function aiMetaItem(k, v) {
+        return '<span class="gcl-ai-meta-item"><span class="gcl-ai-meta-k">' + esc(k) + '</span><span class="gcl-ai-meta-v">' + esc(v) + '</span></span>';
+    }
+
+    var _aiHtml = null;        // 마지막으로 그린 결과 — 재분석이 실패하면 오류 아래에 다시 보인다
     function renderAi(d) {
         var body = document.getElementById('gclAiBody');
         var meta = document.getElementById('gclAiMetaTitle');
         if (!d || d.found === false) { return; }
         var data = d.data || d;
         var sev = data.severity || 'Unknown';
-        var h = '<div class="gcl-ai-sev sev-' + esc(sev) + '">' + esc(sev) + (data.severityDesc ? ' — ' + esc(data.severityDesc) : '') + '</div>';
-        if (data.summary) h += '<div class="gcl-ai-block"><h4>요약</h4><div>' + esc(data.summary) + '</div></div>';
-        if (data.rootCause) h += '<div class="gcl-ai-block"><h4>근본 원인</h4><div>' + esc(data.rootCause) + '</div></div>';
+        var h = '<div class="gcl-ai-sev sev-' + esc(sev) + '"><span class="gcl-ai-sev-badge">' + esc(sev) + '</span>'
+            + (data.severityDesc ? '<span class="gcl-ai-sev-desc">' + aiText(data.severityDesc) + '</span>' : '') + '</div>';
+        h += '<div class="gcl-ai-blocks">';
+        if (data.summary) h += aiBlock('summary', '요약', '<div class="gcl-ai-block-text">' + aiText(data.summary) + '</div>');
+        if (data.rootCause) h += aiBlock('cause', '근본 원인', '<div class="gcl-ai-block-text">' + aiText(data.rootCause) + '</div>');
         var recs = data.recommendations;
         if (typeof recs === 'string') recs = recs.split(/\n+/).filter(Boolean);
-        if (recs && recs.length) h += '<div class="gcl-ai-block"><h4>권고</h4><ol>' + recs.map(function (r) { return '<li>' + esc(String(r).replace(/^\s*\d+[.)]\s*/, '')) + '</li>'; }).join('') + '</ol></div>';
-        if (data.gcTuningAdvice) h += '<div class="gcl-ai-block"><h4>GC 튜닝 제안</h4><div>' + esc(data.gcTuningAdvice) + '</div></div>';
+        var pair = [];
+        if (recs && recs.length) {
+            pair.push(aiBlock('recs', '권고', '<ol class="gcl-ai-recs">' + recs.map(function (r, i) {
+                return '<li><span class="gcl-ai-rec-no">' + (i + 1) + '</span><span>' + aiText(String(r).replace(/^\s*\d+[.)]\s*/, '')) + '</span></li>';
+            }).join('') + '</ol>'));
+        }
+        if (data.gcTuningAdvice) pair.push(aiBlock('tuning', 'GC 튜닝 제안', '<div class="gcl-ai-block-text">' + aiText(data.gcTuningAdvice) + '</div>'));
+        // 권고·튜닝이 둘 다 있을 때만 나란히 — 하나뿐이면 전폭
+        h += pair.length === 2 ? '<div class="gcl-ai-pair">' + pair.join('') + '</div>' : pair.join('');
+        h += '</div>';
         var at = d.analysedAt || data.analysedAt;
-        h += '<div class="gcl-ai-meta">' + (d.model || data.model ? '<span>모델 ' + esc(d.model || data.model) + '</span>' : '') + (at ? '<span>' + esc(fmtTs(typeof at === 'number' ? at : Date.parse(at))) + '</span>' : '')
-            + (d.saved === false ? '<span style="color:#991B1B">저장 실패: ' + esc(d.saveError || '') + '</span>' : '') + '<button type="button" class="btn btn-sm btn-ghost" onclick="deleteAi()">삭제</button></div>';
+        var model = d.model || data.model;
+        var latency = d.latencyMs != null ? d.latencyMs : data.latencyMs;
+        h += '<div class="gcl-ai-meta">' + (model ? aiMetaItem('모델', model) : '') + (at ? aiMetaItem('분석 시각', fmtTs(typeof at === 'number' ? at : Date.parse(at))) : '')
+            + (latency != null && !isNaN(latency) ? aiMetaItem('소요', (latency / 1000).toFixed(1) + '초') : '')
+            + (d.saved === false ? '<span class="gcl-ai-meta-warn">저장 실패: ' + esc(d.saveError || '') + '</span>' : '')
+            + '<button type="button" class="btn btn-sm btn-ghost" onclick="deleteAi()">삭제</button></div>';
         body.innerHTML = h;
+        _aiHtml = h;
         if (meta) meta.textContent = '';
+        syncAiButtons();
     }
     function loadAi() {
         Common.fetchJSON(api('/ai-insight')).then(function (d) { if (d && d.found) renderAi(d); }).catch(function (e) { ignored('AI 인사이트 조회', e); });
     }
+
     var _aiRunning = false;
+    var _aiGuarded = false;
+    var _aiTimer = null;
+    function syncAiButtons() {
+        var top = document.getElementById('btnAi');
+        if (top) { top.disabled = _aiRunning || GC_STATUS !== 'SUCCESS'; top.textContent = _aiRunning ? 'AI 분석 중…' : 'AI 분석'; }
+        var run = document.getElementById('gclAiRunBtn');
+        var label = document.getElementById('gclAiRunLabel');
+        if (run) run.disabled = _aiRunning;
+        if (label) label.textContent = _aiRunning ? '분석 중…' : (_aiHtml ? '재분석' : '분석');
+    }
+
+    var _aiReturnFocus = null;
     function runAi() {
         if (_aiRunning) return;
+        var reanalyze = !!_aiHtml;
+        document.getElementById('aiConfirmTitle').textContent = reanalyze ? 'AI 재분석' : 'AI 분석 시작';
+        document.getElementById('aiConfirmReplace').style.display = reanalyze ? '' : 'none';
+        var dump = document.getElementById('aiConfirmDump');
+        var matched = _matchView && _matchView.matched ? _matchView.matched.dumpFilename : null;
+        dump.textContent = matched ? '연결된 힙 덤프(' + matched + ')의 분석 정보도 함께 보냅니다.' : '';
+        dump.style.display = matched ? '' : 'none';
+        document.getElementById('aiConfirmBtn').textContent = reanalyze ? '재분석' : '분석 시작';
+        _aiReturnFocus = document.activeElement;
+        document.getElementById('aiConfirmModal').classList.add('open');
+        document.getElementById('aiConfirmBtn').focus();
+    }
+    function closeAiConfirm() {
+        var modal = document.getElementById('aiConfirmModal');
+        if (!modal.classList.contains('open')) return;
+        modal.classList.remove('open');
+        if (_aiReturnFocus && _aiReturnFocus.focus && !_aiReturnFocus.disabled) _aiReturnFocus.focus();
+        _aiReturnFocus = null;
+    }
+    function confirmAi() {
+        closeAiConfirm();
+        startAi();
+    }
+
+    function startAi() {
+        if (_aiRunning) return;
         _aiRunning = true;
-        if (window.SessionTimeout && SessionTimeout.registerActivityGuard) SessionTimeout.registerActivityGuard(function () { return _aiRunning; });
-        var btn = document.getElementById('btnAi'); btn.disabled = true; btn.textContent = 'AI 해석 중…';
+        if (!_aiGuarded && window.SessionTimeout && SessionTimeout.registerActivityGuard) {
+            SessionTimeout.registerActivityGuard(function () { return _aiRunning; });   // 끝나는 작업만 — 응답이 오면 false(함정 38)
+            _aiGuarded = true;
+        }
+        syncAiButtons();
         var body = document.getElementById('gclAiBody');
-        body.innerHTML = '<div class="gcl-ai-empty"><span class="gcl-spinner" style="display:inline-block;vertical-align:middle;margin-right:8px"></span>LLM 이 GC 통계를 해석하는 중입니다…</div>';
+        body.innerHTML = '<div class="gcl-ai-loading">'
+            + '<div class="gcl-ai-loading-row"><span class="gcl-ai-loading-spin" aria-hidden="true"></span>'
+            + '<div class="gcl-ai-loading-text"><div class="gcl-ai-loading-title" role="status">AI 분석 중입니다</div>'
+            + '<div class="gcl-ai-loading-desc">LLM 이 GC 통계와 소견을 종합하고 있습니다. 모델에 따라 15~40초 걸릴 수 있습니다.</div></div>'
+            + '<span class="gcl-ai-elapsed" aria-label="경과 시간"><span class="gcl-ai-elapsed-k">경과</span><span class="gcl-ai-elapsed-v" id="gclAiElapsed">0</span>초</span></div>'
+            + '<div class="gcl-ai-loading-track" aria-hidden="true"><div class="gcl-ai-loading-fill"></div></div></div>';
+        var t0 = Date.now();
+        stopAiTimer();
+        _aiTimer = setInterval(function () {   // 화면 안 시계일 뿐 요청을 보내지 않는다 — managedInterval 대상 아님
+            var el = document.getElementById('gclAiElapsed');
+            if (el) el.textContent = String(Math.floor((Date.now() - t0) / 1000));
+        }, 1000);
+        var done = function () { _aiRunning = false; stopAiTimer(); syncAiButtons(); };
+        var showErr = function (msg) {
+            body.innerHTML = '<div class="gcl-ai-err" role="alert">' + esc(msg) + '</div>' + (_aiHtml || AI_EMPTY_HTML);
+        };
         Common.fetchJSON(api('/ai-analyze'), { method: 'POST' })
             .then(function (d) {
-                _aiRunning = false; btn.disabled = false; btn.textContent = 'AI 해석';
-                if (!d.success) { body.innerHTML = '<div class="gcl-ai-err">' + esc(d.error || d.errorCode || 'AI 해석 실패') + '</div>'; return; }
+                done();
+                if (!d.success) { showErr(d.error || d.errorCode || 'AI 분석 실패'); return; }
                 renderAi(d);
+                toast('AI 분석을 마쳤습니다 (' + Math.floor((Date.now() - t0) / 1000) + '초).', 'success');
             })
             .catch(function (e) {
-                _aiRunning = false; btn.disabled = false; btn.textContent = 'AI 해석';
-                var msg = e && e.rateLimited ? 'LLM 호출량 제한 — ' + (e.retryAfterSeconds ? e.retryAfterSeconds + '초 후 다시 시도하세요' : '잠시 후 다시 시도하세요') : errMsg(e, 'AI 해석 실패');
-                body.innerHTML = '<div class="gcl-ai-err">' + esc(msg) + '</div>';
+                done();
+                showErr(e && e.rateLimited ? 'LLM 호출량 제한 — ' + (e.retryAfterSeconds ? e.retryAfterSeconds + '초 후 다시 시도하세요' : '잠시 후 다시 시도하세요') : errMsg(e, 'AI 분석 실패'));
             });
     }
+    function stopAiTimer() { if (_aiTimer) { clearInterval(_aiTimer); _aiTimer = null; } }
+
     function deleteAi() {
-        if (!confirm('AI 해석 결과를 삭제할까요?')) return;
+        if (!confirm('AI 분석 결과를 삭제할까요?')) return;
         Common.fetchJSON(api('/ai-insight'), { method: 'DELETE' })
-            .then(function () { document.getElementById('gclAiBody').innerHTML = '<div class="gcl-ai-empty">삭제했습니다. 상단 <b>AI 해석</b> 버튼으로 다시 실행할 수 있습니다.</div>'; })
+            .then(function () {
+                _aiHtml = null;
+                document.getElementById('gclAiBody').innerHTML = '<div class="gcl-ai-empty">삭제했습니다. 오른쪽 <b>분석</b> 버튼으로 다시 실행할 수 있습니다.</div>';
+                syncAiButtons();
+            })
             .catch(function (e) { toast('삭제 실패: ' + errMsg(e, ''), 'danger'); });
     }
 
@@ -590,6 +697,7 @@
 
         var search = document.getElementById('matchPickSearch');
         if (search) search.addEventListener('input', function () { renderPickList(search.value); });
+        document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeAiConfirm(); });
 
         if (GC_STATUS === 'SUCCESS') {
             R = loadResult();
@@ -625,6 +733,8 @@
     window.closeMatchPickModal = closeMatchPickModal;
     window.confirmMatchPick = confirmMatchPick;
     window.runAi = runAi;
+    window.closeAiConfirm = closeAiConfirm;
+    window.confirmAi = confirmAi;
     window.deleteAi = deleteAi;
     window.deleteThis = deleteThis;
     window.startInstanceEdit = startInstanceEdit;

@@ -221,7 +221,9 @@ public class CoreDumpAnalyzerService {
         if (rev.getAnalyzedAt() != null) {
             try {
                 when = LocalDateTime.parse(rev.getAnalyzedAt()).format(REVISION_LABEL_FMT);
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                logger.debug("[CoreDump] 리비전 분석 시각 파싱 실패 — 보관 시각 사용: {}", rev.getAnalyzedAt());
+            }
         }
         if (when == null) {
             when = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(rev.getArchivedAtEpoch()),
@@ -280,7 +282,9 @@ public class CoreDumpAnalyzerService {
             try {
                 File inHeap = heapFacade.getFile(paired);
                 if (inHeap != null && inHeap.exists()) return paired;
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                logger.debug("[CoreDump] 힙덤프 저장소에서 페어링 exec 조회 실패 ({}): {}", paired, e.toString());
+            }
             return null;
         }
         // properties에 없을 때만 레거시 폴백 사용
@@ -311,7 +315,9 @@ public class CoreDumpAnalyzerService {
                         deleteQuietly(execInCoreDir);
                         logger.info("[CoreDump] 페어링 해제: exec 복사본 삭제 {}", pairedExec);
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    logger.debug("[CoreDump] 힙덤프 저장소에서 exec 조회 실패 — 복사본 유지 ({}): {}", pairedExec, e.toString());
+                }
             }
         }
         File legacyExec = new File(dumpFilesDir(), coreFilename + ".exec");
@@ -464,7 +470,9 @@ public class CoreDumpAnalyzerService {
                         .data(objectMapper.writeValueAsString(
                                 AnalysisProgress.alreadyAnalyzing(safe))));
                 emitter.complete();
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                logger.debug("[CoreDump] 중복 분석 안내 전송 실패(클라이언트 disconnect 추정): {}", e.toString());
+            }
             return CompletableFuture.completedFuture(null);
         }
 
@@ -617,7 +625,8 @@ public class CoreDumpAnalyzerService {
             long elapsed = System.currentTimeMillis() - startTime;
             logger.warn("[CoreDump] 분석 취소됨: {} (경과: {}ms)", filename, elapsed);
             updateDbError(filename, "분석이 취소되었습니다");
-            try { emitter.complete(); } catch (Exception ignored) {}
+            try { emitter.complete(); }
+            catch (Exception completeErr) { logger.debug("[CoreDump] 취소 후 SSE 종료 실패: {}", completeErr.toString()); }
 
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - startTime;
@@ -636,7 +645,9 @@ public class CoreDumpAnalyzerService {
             try {
                 sendProgress(emitter, AnalysisProgress.error(filename, errMsg));
                 emitter.complete();
-            } catch (Exception ignored) {}
+            } catch (Exception sendErr) {
+                logger.debug("[CoreDump] 오류 진행 이벤트 전송 실패(클라이언트 disconnect 추정): {}", sendErr.toString());
+            }
 
         } finally {
             deleteDirectoryQuietly(tmpAnalysisDir);

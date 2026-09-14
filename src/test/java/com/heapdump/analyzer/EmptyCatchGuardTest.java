@@ -32,9 +32,11 @@ class EmptyCatchGuardTest {
 
     private static final Path JS_ROOT  = Paths.get("src/main/resources/static/js");
     private static final Path TPL_ROOT = Paths.get("src/main/resources/templates");
+    /** 2026-09-14 추가 — 점검기는 서버 소스도 본다. 이 가드가 JS·템플릿만 보던 동안 Java 에 69건이 쌓였다. */
+    private static final Path JAVA_ROOT = Paths.get("src/main/java");
 
     @Test
-    @DisplayName("static/js 와 templates 인라인 스크립트에 빈 catch 블록이 없다")
+    @DisplayName("static/js · templates 인라인 스크립트 · src/main/java 에 빈 catch 블록이 없다")
     void noEmptyCatchBlocks() throws IOException {
         List<String> violations = new ArrayList<>();
 
@@ -46,10 +48,14 @@ class EmptyCatchGuardTest {
         for (Path p : filesUnder(TPL_ROOT, ".html")) {
             violations.addAll(scan(p.toString(), blankNonCode(scriptsOnly(read(p)))));
         }
+        for (Path p : filesUnder(JAVA_ROOT, ".java")) {
+            // Java 에는 .catch(…) 핸들러가 없다 — CompletableFuture.exceptionally 등은 람다 반환값이 필요해 빈 블록이 될 수 없다
+            violations.addAll(scanCatchStatements(p.toString(), blankNonCode(read(p))));
+        }
 
         assertTrue(violations.isEmpty(),
                 "실행문 없는 catch 블록이 " + violations.size() + "건 남아 있다 "
-                        + "(정적분석 04.02 재지적 대상 — 최소한 Common.logIgnored/logError 한 줄을 넣을 것):\n  "
+                        + "(정적분석 04.02 재지적 대상 — JS 는 Common.logIgnored/logError, Java 는 logger.debug/warn 한 줄 이상):\n  "
                         + String.join("\n  ", violations));
     }
 
@@ -68,6 +74,15 @@ class EmptyCatchGuardTest {
         assertEquals(0, count("// catch (e) {}\nvar u = 'http://x/a';"),     "주석 안의 catch 를 세고 있다");
         assertEquals(0, count("var re = /catch \\(e\\) \\{\\}/;"),           "정규식 리터럴 안의 catch 를 세고 있다");
         assertEquals(1, count("try { a(); } catch (e) { // 설명\n }"),       "줄 주석만 있는 catch 를 못 잡는다");
+        assertEquals(1, count("try { a(); } catch { }"),                     "바인딩 생략(ES2019) 빈 catch 를 못 잡는다");
+        assertEquals(1, count("try { a(); } catch (e) { ; }"),               "빈 문장(;)만 있는 catch 를 못 잡는다");
+        assertEquals(1, count("p.catch(() => {});"),                         "빈 화살표 .catch 를 못 잡는다");
+        assertEquals(0, count("p.catch(() => show());"),                     "식 본문 화살표는 실행문이다");
+        // Java 형태
+        assertEquals(1, count("try { x(); } catch (IOException | RuntimeException ignored) {}"), "Java 다중 catch 빈 블록을 못 잡는다");
+        assertEquals(1, count("try { x(); } catch (Exception e) { /* fall through */ }"),        "Java 주석만 있는 catch 를 못 잡는다");
+        assertEquals(0, count("try { x(); } catch (Exception e) { logger.debug(\"x\", e); }"),  "Java 로그 있는 catch 를 잘못 잡는다");
+        assertEquals(0, count("char c = '{'; try { x(); } catch (Exception e) { throw e; }"),    "Java 문자 리터럴의 중괄호가 균형을 깨뜨린다");
     }
 
     private static int count(String js) {
@@ -178,10 +193,16 @@ class EmptyCatchGuardTest {
             from = at + 5;
             if (at > 0 && (Character.isJavaIdentifierPart(code.charAt(at - 1)) || code.charAt(at - 1) == '.')) continue;
             int p = skipSpace(code, at + 5);
-            if (p >= code.length() || code.charAt(p) != '(') continue;
-            int paren = matchBrace(code, p, '(', ')');
-            if (paren < 0) continue;
-            int b = skipSpace(code, paren + 1);
+            if (p >= code.length()) continue;
+            int b;
+            if (code.charAt(p) == '{') {
+                b = p;                                   // catch { … } — ES2019 바인딩 생략
+            } else {
+                if (code.charAt(p) != '(') continue;
+                int paren = matchBrace(code, p, '(', ')');
+                if (paren < 0) continue;
+                b = skipSpace(code, paren + 1);
+            }
             if (b >= code.length() || code.charAt(b) != '{') continue;
             int end = matchBrace(code, b, '{', '}');
             if (end < 0) continue;
@@ -226,8 +247,12 @@ class EmptyCatchGuardTest {
         return -1;
     }
 
+    /** 공백과 빈 문장(;)뿐이면 비었다 — 점검기는 {@code catch (e) { ; }} 도 빈 블록으로 본다. */
     private static boolean isBlank(String s, int from, int to) {
-        for (int i = from; i < to; i++) if (!Character.isWhitespace(s.charAt(i))) return false;
+        for (int i = from; i < to; i++) {
+            char ch = s.charAt(i);
+            if (!Character.isWhitespace(ch) && ch != ';') return false;
+        }
         return true;
     }
 

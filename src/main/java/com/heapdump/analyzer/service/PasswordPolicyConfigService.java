@@ -125,7 +125,9 @@ public class PasswordPolicyConfigService {
         if (saved.containsKey("passwordExpiryDays")) {
             try {
                 this.passwordExpiryDays = normalizeDays(Integer.parseInt(String.valueOf(saved.get("passwordExpiryDays"))));
-            } catch (NumberFormatException ignored) { /* 잘못된 값은 무시 */ }
+            } catch (NumberFormatException e) {
+                logger.warn("[PwdPolicy] settings.json passwordExpiryDays 값이 숫자가 아님 — 기존 값 유지: {}", saved.get("passwordExpiryDays"));
+            }
         }
         if (saved.containsKey("passwordExpiryAdminExempt")) {
             this.passwordExpiryAdminExempt = Boolean.parseBoolean(String.valueOf(saved.get("passwordExpiryAdminExempt")));

@@ -352,8 +352,9 @@ public class LlmConfigService {
             if (a != null && a.getName() != null && !"anonymousUser".equals(a.getName())) {
                 return a.getName();
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
             // SecurityContext 미가용 — system 버킷으로 폴백
+            logger.debug("[LLM-RateLimit] 인증 주체 조회 실패 — system 버킷 사용: {}", e.toString());
         }
         return LlmRateLimitService.SYSTEM_USER;
     }
@@ -521,7 +522,9 @@ public class LlmConfigService {
                     if (resp.containsKey("model")) {
                         result.put("model", resp.get("model"));
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    logger.debug("[LLM-Test] 응답에서 model 추출 실패 — 설정값 표시: {}", e.toString());
+                }
                 logger.info("[LLM-Test] 연결 테스트 성공 — provider={}, model={}, status={}, latency={}ms",
                     llmProvider, result.get("model"), code, latency);
             } else {
@@ -1130,7 +1133,8 @@ public class LlmConfigService {
                                 onChunk.accept(text);
                             }
                         } catch (Exception parseErr) {
-                            // 개별 청크 파싱 오류는 무시
+                            // 개별 청크 파싱 오류는 건너뛰고 스트림을 계속 읽는다
+                            logger.debug("[LLM-Stream] 청크 파싱 실패 — 건너뜀: {}", parseErr.toString());
                         }
                     }
                 }
@@ -1336,7 +1340,9 @@ public class LlmConfigService {
                                 fullText.append(text);
                                 onChunk.accept(text);
                             }
-                        } catch (Exception parseErr) { /* 청크 파싱 오류 무시 */ }
+                        } catch (Exception parseErr) {
+                            logger.debug("[LLM-Stream] 청크 파싱 실패 — 건너뜀: {}", parseErr.toString());
+                        }
                     }
                 }
                 long elapsed = System.currentTimeMillis() - startTime;

@@ -199,6 +199,12 @@ class GcLogTemplateSmokeTest {
         assertTrue(h.contains("name: \"server1\"") && h.contains("source: \"dump\"") && h.contains("dumpFilename: \"app_20260914.hprof\""),
                 "GC_INSTANCE 초기값");
         assertTrue(h.indexOf("var GC_INSTANCE") < h.indexOf("/js/gc-log-analyze.js"), "인라인 변수가 외부 JS 보다 먼저");
+        // AI 분석 카드(2026-09-14): 'AI 해석' 문구 폐기 · 카드 분석 버튼 · 확인 모달(골격 클래스 — 함정 17)
+        assertFalse(h.contains("AI 해석"), "문구는 'AI 분석' 으로 통일");
+        assertTrue(h.contains("id=\"btnAi\" onclick=\"runAi()\">AI 분석</button>"), "상단 AI 분석 버튼");
+        assertTrue(h.contains("id=\"gclAiRunBtn\" onclick=\"runAi()\"") && h.contains("id=\"gclAiRunLabel\">분석</span>"), "AI 카드 분석 버튼");
+        assertTrue(h.contains("id=\"aiConfirmModal\" class=\"modal-ov gcl-modal\"") && h.contains("onclick=\"confirmAi()\"")
+                && h.contains("onclick=\"closeAiConfirm()\""), "AI 분석 확인 모달");
     }
 
     @Test
@@ -240,7 +246,22 @@ class GcLogTemplateSmokeTest {
         assertTrue(an.contains("if (v && v.instance) renderInstance(v.instance);"), "매칭 칩 갱신이 인스턴스 카드도 갱신한다");
         assertTrue(an.contains("window.startInstanceEdit = startInstanceEdit;"), "인라인 onclick 전역 노출");
         assertTrue(an.contains("if (ev.isComposing) return;"), "한글 조합 중 Enter 로 저장되지 않는다");
+        // AI 분석(2026-09-14): 버튼은 확인 모달만 연다 — 요청은 confirmAi → startAi 에서만 나간다. 분석 중에는 초 단위 경과 시간
+        int runAiAt = an.indexOf("function runAi() {");
+        String runAiBody = an.substring(runAiAt, an.indexOf("function closeAiConfirm()", runAiAt));
+        assertTrue(runAiBody.contains("classList.add('open')") && !runAiBody.contains("/ai-analyze"), "runAi 는 모달만 열고 LLM 을 호출하지 않는다");
+        assertTrue(an.contains("function confirmAi() {\n        closeAiConfirm();\n        startAi();"), "모달 확인 → 분석 시작");
+        assertTrue(an.contains("id=\"gclAiElapsed\"") && an.contains("Math.floor((Date.now() - t0) / 1000)"), "경과 시간 초 단위");
+        assertTrue(an.contains("var done = function () { _aiRunning = false; stopAiTimer(); syncAiButtons(); };"), "성공·실패 모두 타이머 정리");
+        assertTrue(an.contains("if (!_aiGuarded && window.SessionTimeout"), "활동 가드는 한 번만 등록(누적 금지)");
+        assertTrue(an.contains("aiBlock('summary', '요약'") && an.contains("aiBlock('cause', '근본 원인'") && an.contains("aiBlock('recs', '권고'")
+                && an.contains("aiBlock('tuning', 'GC 튜닝 제안'"), "AI 블록 4종");
+        assertTrue(an.contains("window.confirmAi = confirmAi;") && an.contains("window.closeAiConfirm = closeAiConfirm;"), "모달 인라인 핸들러 전역 노출");
+        assertFalse(an.contains("AI 해석"), "JS 문구도 'AI 분석'");
         String css = Files.readString(Path.of("src/main/resources/static/css/gc-log.css"), StandardCharsets.UTF_8);
+        // 소견 카드는 좌측 색 띠 없이 — border-left 선언이 CSS 어디에도 없어야 한다(주석 제외)
+        assertFalse(css.replaceAll("(?s)/\\*.*?\\*/", "").contains("border-left"), "gc-log.css 에 border-left 가 되살아났다(2026-09-14 제거)");
+        assertTrue(css.contains(".gcl-ai-block {") && css.contains(".gcl-ai-loading {") && css.contains(".gcl-ai-elapsed-v {") && css.contains(".gcl-ai-code {"), "AI 카드 CSS");
         assertTrue(css.contains(".gcl-kpi-inst { position: relative; }") && css.contains(".gcl-inst-form {") && css.contains(".gcl-kpi-edit {"), "인스턴스 카드 CSS");
         assertFalse(an.contains("setInterval(tick, 1000)") && !an.contains("SessionTimeout.managedInterval"), "managedInterval 없이 setInterval 만 쓰면 안 된다");
 

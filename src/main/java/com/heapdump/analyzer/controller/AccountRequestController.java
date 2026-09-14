@@ -3,6 +3,8 @@ package com.heapdump.analyzer.controller;
 import com.heapdump.analyzer.model.entity.AccountRequest;
 import com.heapdump.analyzer.model.entity.User;
 import com.heapdump.analyzer.service.AccountRequestService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -24,6 +26,8 @@ import java.util.Map;
 
 @RestController
 public class AccountRequestController {
+
+    private static final Logger logger = LoggerFactory.getLogger(AccountRequestController.class);
 
     private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -120,7 +124,10 @@ public class AccountRequestController {
             User.Role role = User.Role.USER;
             if (body != null && body.get("role") != null) {
                 try { role = User.Role.valueOf(body.get("role")); }
-                catch (IllegalArgumentException ignored) {}
+                catch (IllegalArgumentException e) {
+                    // 종전 동작(USER 로 승인) 유지 — 다만 요청한 권한과 다르게 승인됐다는 사실은 남긴다
+                    logger.warn("[AccountRequest] 알 수 없는 권한 값 {} — USER 로 승인 (id={})", body.get("role"), id);
+                }
             }
             String approver = principal != null ? principal.getName() : "unknown";
             service.approve(id, role, approver);

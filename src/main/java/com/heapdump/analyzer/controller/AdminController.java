@@ -289,7 +289,9 @@ public class AdminController {
             if (status != null && !status.isEmpty()) {
                 try {
                     ps.add(cb.equal(root.get("status"), LoginHistory.Status.valueOf(status)));
-                } catch (IllegalArgumentException ignored) {}
+                } catch (IllegalArgumentException e) {
+                    logger.debug("[Admin] 알 수 없는 로그인 이력 상태 필터 무시: {}", status);
+                }
             }
             return ps.isEmpty() ? null : cb.and(ps.toArray(new Predicate[0]));
         };

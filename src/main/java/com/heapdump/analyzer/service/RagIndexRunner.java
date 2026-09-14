@@ -275,7 +275,8 @@ public class RagIndexRunner {
     private void killTree(Process p, String ctx) {
         try {
             p.descendants().forEach(h -> {
-                try { h.destroyForcibly(); } catch (Exception ignore) { /* 개별 실패는 무시하고 계속 */ }
+                try { h.destroyForcibly(); }
+                catch (Exception e) { logger.debug("[RagIndex] 자식 프로세스 {} 종료 실패 — 나머지 계속 ({}): {}", h.pid(), ctx, e.toString()); }
             });
         } catch (Exception e) {
             logger.warn("[RagIndex] 프로세스 트리 열거 실패 ({}): {}", ctx, e.toString());

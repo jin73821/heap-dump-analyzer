@@ -235,7 +235,7 @@ public class RagCorpusController {
         } else {
             for (String raw : ids.split(",")) {
                 try { corpus.knowledge().findById(Long.parseLong(raw.trim())).ifPresent(docs::add); }
-                catch (NumberFormatException ignore) { /* 잘못된 id 는 무시 */ }
+                catch (NumberFormatException e) { logger.debug("[RagCorpus] 숫자가 아닌 id 건너뜀: {}", raw); }
             }
         }
         String scope = (ids == null || ids.isBlank()) ? "all" : "selected";
@@ -525,7 +525,7 @@ public class RagCorpusController {
         if (raw instanceof List) {
             for (Object o : (List<?>) raw) {
                 try { out.add(Long.parseLong(String.valueOf(o).trim())); }
-                catch (NumberFormatException ignore) { /* 잘못된 id 무시 */ }
+                catch (NumberFormatException e) { logger.debug("[RagCorpus] 숫자가 아닌 id 건너뜀: {}", o); }
             }
         }
         return out;

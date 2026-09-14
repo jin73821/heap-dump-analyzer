@@ -591,7 +591,9 @@ public class CoreDumpSysrootService {
     private static void abortExtract(File destDir) {
         try (Stream<Path> s = Files.walk(destDir.toPath())) {
             s.sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
-        } catch (IOException ignored) {}
+        } catch (IOException e) {
+            logger.warn("[Sysroot] 해제 중단 후 부분 산출물 정리 실패 — 수동 확인 필요 ({}): {}", destDir, e.toString());
+        }
     }
 
     // ── 분석 품질 경고 (assessAnalysisQuality 직후 훅) ─────────────

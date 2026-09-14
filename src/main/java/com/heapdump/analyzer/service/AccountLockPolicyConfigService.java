@@ -99,7 +99,9 @@ public class AccountLockPolicyConfigService {
             try {
                 this.lockoutThreshold = normalizeThreshold(
                         Integer.parseInt(String.valueOf(saved.get("accountLockoutThreshold"))));
-            } catch (NumberFormatException ignored) { /* 잘못된 값은 무시 (기존 값 유지) */ }
+            } catch (NumberFormatException e) {
+                logger.warn("[LockPolicy] settings.json accountLockoutThreshold 값이 숫자가 아님 — 기존 값 유지: {}", saved.get("accountLockoutThreshold"));
+            }
         }
         if (saved.containsKey("accountLockoutAdminExempt")) {
             this.lockoutAdminExempt = Boolean.parseBoolean(String.valueOf(saved.get("accountLockoutAdminExempt")));

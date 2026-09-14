@@ -92,7 +92,7 @@ public class ComparisonHistoryController {
                     ids.add(((Number) o).longValue());
                 } else if (o != null) {
                     try { ids.add(Long.parseLong(o.toString())); }
-                    catch (NumberFormatException ignore) { /* skip */ }
+                    catch (NumberFormatException e) { logger.debug("[CompareHistory] 숫자가 아닌 id 건너뜀: {}", o); }
                 }
             }
         }

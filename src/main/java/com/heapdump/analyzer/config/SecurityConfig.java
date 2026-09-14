@@ -3,6 +3,8 @@ package com.heapdump.analyzer.config;
 import com.heapdump.analyzer.service.CustomUserDetailsService;
 import com.heapdump.analyzer.service.PasswordPolicyConfigService;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -19,6 +21,8 @@ import org.springframework.security.web.SecurityFilterChain;
 @Configuration
 @EnableMethodSecurity
 public class SecurityConfig {
+
+    private static final Logger logger = LoggerFactory.getLogger(SecurityConfig.class);
 
     private final CustomUserDetailsService userDetailsService;
     private final TwoFactorAuthenticationSuccessHandler twoFactorSuccessHandler;
@@ -198,8 +202,9 @@ public class SecurityConfig {
             res.setContentType("application/json;charset=UTF-8");
             res.setCharacterEncoding("UTF-8");
             res.getWriter().write("{\"success\":false,\"code\":\"" + code + "\",\"error\":\"" + message + "\"}");
-        } catch (java.io.IOException ignored) {
+        } catch (java.io.IOException e) {
             // 응답이 이미 커밋된 경우 — 더 할 수 있는 일이 없다
+            logger.debug("[Security] API 오류 응답 쓰기 실패 (status={}, code={}): {}", status, code, e.toString());
         }
     }
 }

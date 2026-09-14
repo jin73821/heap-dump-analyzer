@@ -462,10 +462,15 @@ public class ChromaSearchService {
 
             // ⚠ count 를 먼저 읽는다 — 상한을 넘으면 집계가 조용히 과소보고되므로 partial 로 알린다.
             long total = 0L;
+            boolean countKnown = false;
             try {
                 total = Long.parseLong(get(base + "/collections/" + enc(id) + "/count",
                         authType, token, sslVerify, timeoutSec).trim());
-            } catch (Exception ignore) { /* count 실패는 치명적이지 않다 */ }
+                countKnown = true;
+            } catch (Exception e) {
+                // 집계 자체는 계속한다 — 다만 총계를 모르면 상한 도달 여부로 partial 을 추정해야 과소보고를 숨기지 않는다
+                logger.warn("[Chroma] 컬렉션 count 조회 실패 — 스캔 건수로 추정: {}", e.toString());
+            }
 
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("include", List.of("metadatas"));
@@ -480,7 +485,8 @@ public class ChromaSearchService {
             res.put("success", true);
             res.put("collection", collection);
             res.put("totalChunks", total > 0 ? total : agg.get("scanned"));
-            res.put("partial", total > STATS_MAX_ITEMS);
+            int scanned = agg.get("scanned") instanceof Number ? ((Number) agg.get("scanned")).intValue() : 0;
+            res.put("partial", countKnown ? total > STATS_MAX_ITEMS : scanned >= STATS_MAX_ITEMS);
         } catch (Exception e) {
             logger.warn("[Chroma] 색인 현황 집계 실패: {}", e.toString());
             res.put("success", false);

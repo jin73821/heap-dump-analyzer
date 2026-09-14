@@ -941,7 +941,7 @@
             미분석·실패한 힙 분석 기록은 함께 정리됩니다.
         </div>
         <div class="classify-note warn" id="classifyGcOut">
-            GC 로그를 다른 유형으로 바꾸면 파일을 <b>힙덤프 저장소</b>로 옮기고, GC 분석 결과·AI 해석·힙 덤프 연결 기록을 <b>삭제</b>합니다.
+            GC 로그를 다른 유형으로 바꾸면 파일을 <b>힙덤프 저장소</b>로 옮기고, GC 분석 결과·AI 분석·힙 덤프 연결 기록을 <b>삭제</b>합니다.
         </div>
         <div class="exec-pair-section classify-field" id="execPairSection" style="display:none">
             <label for="execPairSelect">연결할 실행파일 <span class="exec-pair-notice">(선택)</span></label>
@@ -1063,7 +1063,7 @@ var _delIsGc = false;
 function confirmGcLogDelete(filename) {
     _delTarget = filename; _delIsCore = false; _delIsGc = true;
     document.getElementById('delFileName').textContent = filename;
-    document.getElementById('delModalNote').textContent = 'GC 로그 파일과 분석 결과·AI 해석·힙 덤프 연결 기록이 함께 삭제됩니다.';
+    document.getElementById('delModalNote').textContent = 'GC 로그 파일과 분석 결과·AI 분석·힙 덤프 연결 기록이 함께 삭제됩니다.';
     document.getElementById('deleteModal').classList.add('open');
 }
 function closeDeleteModal() {

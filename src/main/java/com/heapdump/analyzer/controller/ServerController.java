@@ -296,7 +296,9 @@ public class ServerController {
                 try {
                     emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
                             .event().name("done").data(err));
-                } catch (Exception ignored) {}
+                } catch (Exception sendErr) {
+                    logger.debug("[Server] 전송 SSE done 이벤트 전송 실패(클라이언트 disconnect 추정): {}", sendErr.toString());
+                }
                 emitter.complete();
                 return emitter;
             }
@@ -316,7 +318,9 @@ public class ServerController {
                     try {
                         emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
                                 .event().name("progress").data(p));
-                    } catch (Exception ignored) { /* 클라이언트 disconnect */ }
+                    } catch (Exception sendErr) {
+                        logger.debug("[Server] 전송 SSE progress 전송 실패(클라이언트 disconnect 추정): {}", sendErr.toString());
+                    }
                 });
                 // coreexec 전송 성공 시 코어-실행파일 페어링을 명시적으로 저장(원본명 유지).
                 if (coreLocalForPair != null && "SUCCESS".equals(log.getTransferStatus())) {
@@ -340,7 +344,9 @@ public class ServerController {
                 try {
                     emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
                             .event().name("done").data(done));
-                } catch (Exception ignored) {}
+                } catch (Exception sendErr) {
+                    logger.debug("[Server] 전송 SSE done 이벤트 전송 실패(클라이언트 disconnect 추정): {}", sendErr.toString());
+                }
                 emitter.complete();
             } catch (Exception e) {
                 Map<String, Object> err = new LinkedHashMap<>();
@@ -349,7 +355,9 @@ public class ServerController {
                 try {
                     emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter
                             .event().name("done").data(err));
-                } catch (Exception ignored) {}
+                } catch (Exception sendErr) {
+                    logger.debug("[Server] 전송 SSE done 이벤트 전송 실패(클라이언트 disconnect 추정): {}", sendErr.toString());
+                }
                 emitter.complete();
             }
         }, "transfer-stream-" + id);

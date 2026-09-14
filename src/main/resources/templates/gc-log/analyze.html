@@ -9,7 +9,7 @@
     <title th:text="'GC 로그 결과 - ' + ${filename}">GC 로그 결과</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-08-12}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-14}">
-    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-14b}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-14c}">
     <script th:src="@{/js/lib/chart.umd.min.js}"></script>
 </head>
 <body>
@@ -60,7 +60,7 @@
                 </div>
             </div>
             <div class="gcl-head-actions">
-                <button type="button" class="btn btn-sm btn-soft" id="btnAi" onclick="runAi()" th:disabled="${status != 'SUCCESS'}">AI 해석</button>
+                <button type="button" class="btn btn-sm btn-soft" id="btnAi" onclick="runAi()" th:disabled="${status != 'SUCCESS'}">AI 분석</button>
                 <button type="button" class="btn btn-sm btn-ghost" id="btnReanalyze" onclick="reanalyze()" th:disabled="${status == 'ANALYZING' or !fileExists}">재분석</button>
                 <button type="button" class="btn btn-sm btn-soft soft-danger" onclick="deleteThis()">삭제</button>
             </div>
@@ -147,10 +147,17 @@
         <div class="content-card">
             <div class="content-card-title">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"></path><rect x="4" y="12" width="16" height="8" rx="2"></rect><path d="M2 12h20"></path></svg>
-                AI 해석
+                AI 분석
                 <span class="title-count" id="gclAiMetaTitle"></span>
+                <!-- 분석 버튼 — 상단 'AI 분석' 버튼과 같은 확인 모달(openAiConfirm)을 거친다. 라벨은 결과 유무에 따라 분석/재분석 -->
+                <span class="card-actions">
+                    <button type="button" class="btn btn-sm btn-primary" id="gclAiRunBtn" onclick="runAi()">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"></polygon></svg>
+                        <span id="gclAiRunLabel">분석</span>
+                    </button>
+                </span>
             </div>
-            <div class="gcl-ai-body" id="gclAiBody"><div class="gcl-ai-empty">LLM 이 GC 통계와 소견을 종합 해석합니다. 상단 <b>AI 해석</b> 버튼으로 실행하세요. 연결된 힙 덤프가 있으면 그 정보도 함께 넣습니다.</div></div>
+            <div class="gcl-ai-body" id="gclAiBody"><div class="gcl-ai-empty">LLM 이 GC 통계와 소견을 종합 분석합니다. 오른쪽 <b>분석</b> 버튼으로 실행하세요. 연결된 힙 덤프가 있으면 그 정보도 함께 넣습니다.</div></div>
         </div>
 
         <div class="content-card">
@@ -223,6 +230,27 @@
     </div>
 </div>
 
+<!-- AI 분석 확인 모달 (골격 4종 gc-log.css .gcl-modal — 함정 17). 외부 LLM 호출이라 버튼 한 번에 바로 나가지 않게 한다 -->
+<div id="aiConfirmModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="aiConfirmTitle" onclick="if(event.target===this)closeAiConfirm()">
+    <div class="modal-box">
+        <div class="modal-title" id="aiConfirmTitle">AI 분석 시작</div>
+        <div class="modal-body">
+            <p class="gcl-ai-confirm-desc" id="aiConfirmDesc">LLM 이 GC 로그의 통계·소견을 종합해 근본 원인과 권고를 제시합니다.</p>
+            <span class="modal-filename" th:text="${filename}"></span>
+            <div class="gcl-ai-confirm-dump" id="aiConfirmDump" style="display:none"></div>
+            <ul class="gcl-ai-confirm-list">
+                <li>외부 LLM API 를 호출하므로 <b>API 비용이 발생</b>할 수 있습니다.</li>
+                <li>모델에 따라 <b>15~40초</b> 정도 걸립니다.</li>
+                <li id="aiConfirmReplace" style="display:none">기존 AI 분석 결과가 <b>새 결과로 대체</b>됩니다.</li>
+            </ul>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="closeAiConfirm()">취소</button>
+            <button type="button" class="mbtn-save" id="aiConfirmBtn" onclick="confirmAi()">분석 시작</button>
+        </div>
+    </div>
+</div>
+
 <!-- 삭제 확인 모달 -->
 <div id="deleteGcModal" class="modal-ov gcl-modal" onclick="if(event.target===this)closeGcDeleteModal()">
     <div class="modal-box">
@@ -263,7 +291,7 @@
     };
 </script>
 <script th:src="@{/js/table-grid.js?v=2026-09-13}"></script>
-<script th:src="@{/js/gc-log-analyze.js?v=2026-09-14c}"></script>
+<script th:src="@{/js/gc-log-analyze.js?v=2026-09-14d}"></script>
 
 </body>
 </html>

@@ -451,7 +451,8 @@ public class HeapReportApiController {
                 if (s != null) s.release();
                 File dir = workDirRef.get();
                 if (dir != null) {
-                    try { analyzerService.deleteDirectoryPublic(dir); } catch (Exception ignore) {}
+                    try { analyzerService.deleteDirectoryPublic(dir); }
+                    catch (Exception cleanupErr) { logger.warn("[MAT lazy] 작업 디렉토리 정리 실패 ({}): {}", dir, cleanupErr.toString()); }
                 }
             }
         };
@@ -586,8 +587,7 @@ public class HeapReportApiController {
             } catch (Exception e) {
                 logger.error("[Dominator Refs SSE] 추출 실패 (filename={}, addr={}): {}",
                         filename, addrFinal, e.getMessage(), e);
-                try { sendDomRefError(emitter, "참조 추출 실패: " + e.getMessage()); }
-                catch (Exception ignore) {}
+                sendDomRefError(emitter, "참조 추출 실패: " + e.getMessage());   // 전송 실패는 헬퍼가 흡수·기록한다
             } finally {
                 cleanup.run();
             }
@@ -604,7 +604,9 @@ public class HeapReportApiController {
             emitter.send(SseEmitter.event().name("refs-error")
                     .data(Map.of("error", msg), MediaType.APPLICATION_JSON));
             emitter.complete();
-        } catch (Exception ignore) {}
+        } catch (Exception e) {
+            logger.debug("[Dominator Refs SSE] 오류 이벤트 전송 실패(클라이언트 disconnect 추정): {}", e.toString());
+        }
     }
 
     // ─── ClassLoader 로드 클래스 목록 SSE ─────────────────────────────────────────
@@ -644,7 +646,8 @@ public class HeapReportApiController {
                 if (s != null) s.release();
                 File dir = workDirRef.get();
                 if (dir != null) {
-                    try { analyzerService.deleteDirectoryPublic(dir); } catch (Exception ignore) {}
+                    try { analyzerService.deleteDirectoryPublic(dir); }
+                    catch (Exception cleanupErr) { logger.warn("[MAT lazy] 작업 디렉토리 정리 실패 ({}): {}", dir, cleanupErr.toString()); }
                 }
             }
         };
@@ -755,8 +758,7 @@ public class HeapReportApiController {
             } catch (Exception e) {
                 logger.error("[ClassLoader Classes SSE] 실패 (filename={}, addr={}): {}",
                         filename, addrFinal, e.getMessage(), e);
-                try { sendClError(emitter, "클래스 목록 조회 실패: " + e.getMessage()); }
-                catch (Exception ignore) {}
+                sendClError(emitter, "클래스 목록 조회 실패: " + e.getMessage());   // 전송 실패는 헬퍼가 흡수·기록한다
             } finally {
                 cleanup.run();
             }
@@ -773,7 +775,9 @@ public class HeapReportApiController {
             emitter.send(SseEmitter.event().name("cl-error")
                     .data(Map.of("error", msg), MediaType.APPLICATION_JSON));
             emitter.complete();
-        } catch (Exception ignore) {}
+        } catch (Exception e) {
+            logger.debug("[ClassLoader Classes SSE] 오류 이벤트 전송 실패(클라이언트 disconnect 추정): {}", e.toString());
+        }
     }
 
     // ─── 클래스 인스턴스 조회 SSE ─────────────────────────────────────────────
@@ -811,7 +815,8 @@ public class HeapReportApiController {
                 if (s != null) s.release();
                 File dir = workDirRef.get();
                 if (dir != null) {
-                    try { analyzerService.deleteDirectoryPublic(dir); } catch (Exception ignore) {}
+                    try { analyzerService.deleteDirectoryPublic(dir); }
+                    catch (Exception cleanupErr) { logger.warn("[MAT lazy] 작업 디렉토리 정리 실패 ({}): {}", dir, cleanupErr.toString()); }
                 }
             }
         };
@@ -899,8 +904,7 @@ public class HeapReportApiController {
             } catch (Exception e) {
                 logger.error("[ClassInst SSE] 실패 (filename={}, class={}): {}",
                         filename, classNameFinal, e.getMessage(), e);
-                try { sendInstError(emitter, "인스턴스 조회 실패: " + e.getMessage()); }
-                catch (Exception ignore) {}
+                sendInstError(emitter, "인스턴스 조회 실패: " + e.getMessage());   // 전송 실패는 헬퍼가 흡수·기록한다
             } finally {
                 cleanup.run();
             }
@@ -917,6 +921,8 @@ public class HeapReportApiController {
             emitter.send(SseEmitter.event().name("inst-error")
                     .data(Map.of("error", msg), MediaType.APPLICATION_JSON));
             emitter.complete();
-        } catch (Exception ignore) {}
+        } catch (Exception e) {
+            logger.debug("[ClassInst SSE] 오류 이벤트 전송 실패(클라이언트 disconnect 추정): {}", e.toString());
+        }
     }
 }

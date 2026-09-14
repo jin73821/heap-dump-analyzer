@@ -175,3 +175,59 @@ localStorage 차단 환경에서 이 지점이 throw 하면 **이후 배너 스�
 `templates/{login,login-otp,login-otp-setup,leak-rules,history,account,account-memo,ai-chat,rag-settings,server-logs,servers,files,index,progress,settings}.html` ·
 `templates/fragments/banner.html` · `templates/admin/users.html` · `templates/{analyze,core-dump/analyze,core-dump/index}.html`(캐시 키) ·
 `src/test/java/com/heapdump/analyzer/{EmptyCatchGuardTest,CommonToastStackTest}.java`
+
+---
+
+## 8. 추록 — 2차 자체 점검: Java 서버 소스 (2026-09-14, heap-analyzer 2.5.2)
+
+**배경:** 1차 조치 이후 GC 로그 분석·원격 JVM 수집·계정 잠금 등 소스가 크게 늘었다. 재점검 전에 점검기 규칙
+("예외를 처리하는 코드 내용이 없는 예외 처리 블록")으로 **저장소 전체**를 다시 훑었다.
+
+**발견:** JS·템플릿은 0건(1차 가드 유지). **Java(`src/main/java`) 69건.** 1차 가드(`EmptyCatchGuardTest`)가
+JS·템플릿만 스캔해서 Java 쪽이 기계적으로 막히지 않았다. 대부분 1차 이전부터 있던 코드이고, 일부는 신규 코드다.
+주석만 있는 블록(`/* 무시 */`, `// 클라이언트 disconnect`)도 포함했다.
+
+### 8.1 등급별 조치
+
+| 등급 | 정의 | 조치 | 건수 |
+|---|---|---|---:|
+| **A** | 삼킨 예외가 잘못된 결과를 조용히 만든다 | 동작 보정 + `logger.warn` | 1 |
+| **W** | 동작은 폴백이 맞지만 운영자가 알아야 한다(설정값 손상, 임시 디렉토리 잔존, 요청과 다른 처리) | `logger.warn` | 13 |
+| **B** | 정당한 폴백(클라이언트 disconnect 후 SSE 전송, 선택적 파싱, 비 Linux `/proc`, 프로세스 종료 후 출력 읽기) | `logger.debug` — 기본 로그 레벨에서 숨김 | 52 |
+| **C** | 죽은 코드 — 이미 모든 예외를 흡수하는 헬퍼를 다시 try 로 감쌈 | try 제거(헬퍼 내부 catch 에 debug 로그) | 3 |
+| **합계** | | | **69** |
+
+### 8.2 A·W·C 상세
+
+| 파일 | 위치 | 등급 | 내용 |
+|---|---|:--:|---|
+| `ChromaSearchService` | 색인 현황 집계 `count` 조회 | **A** | count 실패 시 `total=0` 이라 상한(`STATS_MAX_ITEMS`)에 걸려도 `partial=false` 가 됐다. 주석 그대로 "조용한 과소보고"였다. 이제 count 를 모르면 **스캔 건수가 상한에 닿았는지로 partial 을 추정**하고 warn 을 남긴다 |
+| `HeapReportApiController` | Dominator Refs·ClassLoader Classes·ClassInst SSE 정리 람다 ×3 | W | MAT 작업 디렉토리 삭제 실패 → tmp 잔존. warn(경로 포함) |
+| `HeapReportApiController` | `send{DomRef,Cl,Inst}Error` 호출부 ×3 | **C** | 헬퍼가 이미 `catch (Exception)` 으로 흡수하므로 바깥 try 는 도달 불가. 제거하고 헬퍼 내부에 debug 로그 |
+| `AccountRequestController` | 계정 신청 승인 `role` 파싱 | W | 알 수 없는 권한 문자열은 **USER 로 승인**된다(종전 동작 유지). 요청과 다른 권한으로 승인됐다는 사실을 warn 으로 남긴다 |
+| `PasswordPolicyConfigService` · `AccountLockPolicyConfigService` · `HeapDumpAnalyzerService`(×2) · `RemoteDumpService` | settings.json 숫자 설정 복원 | W | 손상된 값은 기존 값을 유지한다. 어떤 키가 무시됐는지 warn |
+| `HeapDumpAnalyzerService` | OOM 상세 쿼리·SysProp 쿼리 임시 디렉토리 정리 ×3 | W | tmp 잔존 → warn |
+| `CoreDumpSysrootService` | `abortExtract` 부분 산출물 정리 | W | 해제 중단 뒤 sysroot 에 파일이 남으면 다음 분석이 오염된 번들을 쓴다. 수동 확인 요청 warn |
+
+B 52건은 태그 접두(`[CoreDump]`·`[RemoteDump]`·`[LLM-Stream]` 등)와 대상 값을 담아 debug 로 남겼다. 로그 레벨만 올리면 진단할 수 있다.
+신규 로거는 `SecurityConfig`·`AccountRequestController`·`SseJson` 3곳이다(나머지는 기존 `logger` 재사용).
+
+### 8.3 재발 방지 — 가드 범위 확장
+
+`EmptyCatchGuardTest` 를 넓혔다(테스트 수는 그대로 2건).
+- 스캔 대상에 **`src/main/java/**.java`** 를 추가했다(`catch (…) { }` 문 형태).
+- 점검기가 빈 블록으로 볼 형태 2가지를 더 잡는다: **ES2019 바인딩 생략 `catch { }`**, **빈 문장만 있는 `catch (e) { ; }`**.
+- 스캐너 자체 검증을 12 → **20 형태**로 늘렸다. 빈 화살표 `.catch(() => {})`, 식 본문 화살표(실행문), Java 다중 catch, Java 주석만 있는 블록, Java 로그 있는 블록, Java 문자 리터럴 `'{'` 가 추가분이다.
+- 가드가 Java 를 실제로 잡는지 확인했다. 빈 catch 가 든 임시 Java 파일을 넣으면 `파일:라인` 과 함께 실패하고, 지우면 통과한다.
+
+### 8.4 검증
+
+| 항목 | 결과 |
+|---|---|
+| 조치 전 스캔(Java) | 69건 |
+| 조치 후 스캔(Java·JS·템플릿) | **0건** |
+| 컴파일·단위 테스트 | `mvn test` **775건 통과**(라이브 4 skip) |
+| 빌드·기동 | `mvn clean package` 성공, `restart.sh` 후 `Started HeapAnalyzerApplication in 15.615 seconds`, 기동 중 신규 warn 0건 |
+
+**저장소 밖(참고):** `/opt/chroma/app/indexer.py` 의 `collection(reset=True)` 에 `except Exception: pass` 1건이 있다. 이 저장소가 아니라 Chroma 색인기 트리이고, k8s 이미지에는 포함된다. 점검 대상에 들어가면 같은 원칙으로 조치해야 한다.
+

@@ -106,12 +106,13 @@
 
 /* ── 소견 ────────────────────────────────────────────────── */
 .gcl-findings { display: flex; flex-direction: column; gap: 8px; }
-.gcl-finding { border: 1px solid #E5E7EB; border-left: 4px solid var(--gcl-sev-info); border-radius: 8px; padding: 10px 14px; background: #fff; }
-.gcl-finding.sev-Critical { border-left-color: var(--gcl-sev-critical); background: var(--gcl-sev-critical-bg); }
-.gcl-finding.sev-High     { border-left-color: var(--gcl-sev-high);     background: var(--gcl-sev-high-bg); }
-.gcl-finding.sev-Medium   { border-left-color: var(--gcl-sev-medium);   background: var(--gcl-sev-medium-bg); }
-.gcl-finding.sev-Low      { border-left-color: var(--gcl-sev-low);      background: var(--gcl-sev-low-bg); }
-.gcl-finding.sev-Info     { border-left-color: var(--gcl-sev-info);     background: var(--gcl-sev-info-bg); }
+/* 심각도는 옅은 배경·같은 계열 1px 테두리·배지로만 드러낸다. ⚠ 좌측 두꺼운 색 띠(border-left 4px)는 되돌리지 말 것(2026-09-14 제거 요청) */
+.gcl-finding { border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 14px; background: #fff; }
+.gcl-finding.sev-Critical { border-color: #FECACA; background: var(--gcl-sev-critical-bg); }
+.gcl-finding.sev-High     { border-color: #FED7AA; background: var(--gcl-sev-high-bg); }
+.gcl-finding.sev-Medium   { border-color: #FDE68A; background: var(--gcl-sev-medium-bg); }
+.gcl-finding.sev-Low      { border-color: #BFDBFE; background: var(--gcl-sev-low-bg); }
+.gcl-finding.sev-Info     { border-color: #E5E7EB; background: var(--gcl-sev-info-bg); }
 .gcl-finding-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .gcl-finding-sev { font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 8px; letter-spacing: .04em; color: #fff; background: var(--gcl-sev-info); flex-shrink: 0; }
 .sev-Critical .gcl-finding-sev { background: var(--gcl-sev-critical); } .sev-High .gcl-finding-sev { background: var(--gcl-sev-high); }
@@ -119,7 +120,7 @@
 .gcl-finding-title { font-size: 13px; font-weight: 700; color: #111827; }
 .gcl-finding-code { font-size: 10px; color: #9CA3AF; font-family: "JetBrains Mono", monospace; margin-left: auto; }
 .gcl-finding-detail { font-size: 12px; color: #374151; margin-top: 4px; line-height: 1.55; }
-.gcl-finding-advice { font-size: 12px; color: #1F2937; margin-top: 4px; line-height: 1.55; padding-left: 10px; border-left: 2px solid rgba(0,0,0,.08); }
+.gcl-finding-advice { font-size: 12px; color: #1F2937; margin-top: 6px; line-height: 1.55; padding-top: 6px; border-top: 1px dashed rgba(0,0,0,.10); }
 .gcl-finding-advice::before { content: "권고 · "; font-weight: 700; color: #6B7280; }
 .gcl-empty { font-size: 13px; color: #6B7280; padding: 12px 0; }
 
@@ -168,17 +169,70 @@
 .gcl-error-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .gcl-error-hint { font-size: 12px; color: #991B1B; }
 
-/* ── AI 카드 (코어덤프 .cda-* 와 같은 구조를 축약) ─────────── */
+/* ── AI 분석 카드 (2026-09-14 재디자인) ─────────────────────
+   심각도 행 → 요약(전폭) → 근본 원인(전폭) → 권고 | GC 튜닝 제안(≥1100px 2열) → 메타 줄.
+   블록은 1px 테두리 카드 + 제목 앞 색 아이콘으로만 구분한다 — 좌측 색 띠(border-left/inset shadow)는 쓰지 않는다. */
 .gcl-ai-body { font-size: 13px; color: #1F2937; line-height: 1.6; }
-.gcl-ai-sev { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 8px; font-weight: 700; margin-bottom: 10px; }
-.gcl-ai-sev.sev-Critical { background: var(--gcl-sev-critical-bg); color: var(--gcl-sev-critical); } .gcl-ai-sev.sev-High { background: var(--gcl-sev-high-bg); color: var(--gcl-sev-high); }
-.gcl-ai-sev.sev-Medium { background: var(--gcl-sev-medium-bg); color: var(--gcl-sev-medium); } .gcl-ai-sev.sev-Low { background: var(--gcl-sev-low-bg); color: var(--gcl-sev-low); }
-.gcl-ai-block { margin-top: 10px; }
-.gcl-ai-block h4 { font-size: 12px; color: #6B7280; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 4px; }
-.gcl-ai-block ol { margin: 0; padding-left: 20px; }
-.gcl-ai-meta { font-size: 11px; color: #9CA3AF; margin-top: 10px; display: flex; gap: 12px; flex-wrap: wrap; }
-.gcl-ai-empty { font-size: 13px; color: #6B7280; }
-.gcl-ai-err { font-size: 12px; color: #991B1B; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 10px 12px; }
+
+.gcl-ai-sev { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border: 1px solid #E5E7EB; border-radius: 10px; background: var(--gcl-sev-info-bg); margin-bottom: 12px; }
+.gcl-ai-sev-badge { font-size: 11px; font-weight: 800; letter-spacing: .04em; padding: 3px 10px; border-radius: 999px; color: #fff; background: var(--gcl-sev-info); flex-shrink: 0; }
+.gcl-ai-sev-desc { font-size: 13px; color: #374151; line-height: 1.55; min-width: 0; flex: 1 1 240px; }
+.gcl-ai-sev.sev-Critical { background: var(--gcl-sev-critical-bg); border-color: #FECACA; } .gcl-ai-sev.sev-Critical .gcl-ai-sev-badge { background: var(--gcl-sev-critical); }
+.gcl-ai-sev.sev-High     { background: var(--gcl-sev-high-bg);     border-color: #FED7AA; } .gcl-ai-sev.sev-High .gcl-ai-sev-badge     { background: var(--gcl-sev-high); }
+.gcl-ai-sev.sev-Medium   { background: var(--gcl-sev-medium-bg);   border-color: #FDE68A; } .gcl-ai-sev.sev-Medium .gcl-ai-sev-badge   { background: var(--gcl-sev-medium); }
+.gcl-ai-sev.sev-Low      { background: var(--gcl-sev-low-bg);      border-color: #BFDBFE; } .gcl-ai-sev.sev-Low .gcl-ai-sev-badge      { background: var(--gcl-sev-low); }
+
+.gcl-ai-blocks { display: flex; flex-direction: column; gap: 10px; }
+.gcl-ai-pair { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 1100px) { .gcl-ai-pair { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.gcl-ai-block { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px 16px 14px; min-width: 0; }
+.gcl-ai-block-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.gcl-ai-block-icon { width: 24px; height: 24px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.gcl-ai-block-title { margin: 0; font-size: 13px; font-weight: 700; color: #111827; }
+.gcl-ai-block-text { font-size: 13px; color: #374151; line-height: 1.75; white-space: pre-line; word-break: break-word; }
+.gcl-ai-block.k-summary { background: #F8FAFC; }
+.gcl-ai-block.k-summary .gcl-ai-block-text { font-size: 14px; color: #1F2937; }
+.gcl-ai-block.k-summary .gcl-ai-block-icon { background: #DBEAFE; color: #1D4ED8; }
+.gcl-ai-block.k-cause   .gcl-ai-block-icon { background: #FEF3C7; color: #B45309; }
+.gcl-ai-block.k-recs    .gcl-ai-block-icon { background: #DCFCE7; color: #047857; }
+.gcl-ai-block.k-tuning  .gcl-ai-block-icon { background: #EDE9FE; color: #6D28D9; }
+.gcl-ai-recs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.gcl-ai-recs li { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: #374151; line-height: 1.7; word-break: break-word; }
+.gcl-ai-rec-no { width: 20px; height: 20px; margin-top: 2px; border-radius: 50%; background: #DCFCE7; color: #047857; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; font-variant-numeric: tabular-nums; }
+/* JVM 옵션(-XX:… / -Xmx… / -Xlog:…)은 코드 칩. inline-block 이라 옵션 중간의 '-' 에서 끊기지 않고 통째로 다음 줄로 넘어간다 — 카드보다 긴 옵션만 안에서 줄바꿈 */
+.gcl-ai-code { display: inline-block; max-width: 100%; vertical-align: baseline; line-height: 1.5; font-family: "JetBrains Mono", "SF Mono", monospace; font-size: 12px; background: #F1F5F9; color: #0F172A; border: 1px solid #E2E8F0; border-radius: 5px; padding: 0 5px; overflow-wrap: anywhere; }
+
+.gcl-ai-meta { font-size: 11px; color: #6B7280; margin-top: 12px; padding-top: 10px; border-top: 1px solid #F3F4F6; display: flex; align-items: center; gap: 6px 14px; flex-wrap: wrap; }
+.gcl-ai-meta-item { display: inline-flex; gap: 5px; align-items: center; }
+.gcl-ai-meta-k { color: #9CA3AF; }
+.gcl-ai-meta-v { color: #374151; font-weight: 600; font-variant-numeric: tabular-nums; }
+.gcl-ai-meta-warn { color: #991B1B; font-weight: 600; }
+.gcl-ai-meta .btn { margin-left: auto; }
+
+.gcl-ai-empty { font-size: 13px; color: #6B7280; padding: 14px 16px; background: #F9FAFB; border: 1px dashed #E5E7EB; border-radius: 10px; line-height: 1.6; }
+.gcl-ai-err { font-size: 12px; color: #991B1B; background: #FEF2F2; border: 1px solid #FECACA; border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; }
+
+/* 분석 중 — 스피너 + 제목·설명 + 초 단위 경과 + 불확정 막대. 경과 숫자는 tabular-nums 로 자릿수가 바뀌어도 흔들리지 않는다 */
+.gcl-ai-loading { border: 1px solid #BFDBFE; background: #F5F9FF; border-radius: 10px; padding: 16px 18px 14px; }
+.gcl-ai-loading-row { display: flex; align-items: center; gap: 14px; }
+.gcl-ai-loading-spin { width: 22px; height: 22px; border: 2.5px solid #DBEAFE; border-top-color: #2563EB; border-radius: 50%; animation: gcl-spin .8s linear infinite; flex-shrink: 0; }
+.gcl-ai-loading-text { min-width: 0; flex: 1 1 auto; }
+.gcl-ai-loading-title { font-size: 14px; font-weight: 700; color: #1E3A8A; }
+.gcl-ai-loading-desc { font-size: 12px; color: #475569; margin-top: 2px; line-height: 1.5; }
+.gcl-ai-elapsed { display: inline-flex; align-items: baseline; gap: 1px; flex-shrink: 0; padding: 4px 12px; background: #fff; border: 1px solid #BFDBFE; border-radius: 999px; color: #1D4ED8; font-size: 12px; font-weight: 600; }
+.gcl-ai-elapsed-k { margin-right: 5px; }
+.gcl-ai-elapsed-v { font-family: "JetBrains Mono", "SF Mono", monospace; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 2ch; text-align: right; }
+.gcl-ai-loading-track { position: relative; height: 4px; margin-top: 14px; background: #DBEAFE; border-radius: 999px; overflow: hidden; }
+.gcl-ai-loading-fill { position: absolute; top: 0; left: -35%; width: 35%; height: 100%; background: #3B82F6; border-radius: 999px; animation: gcl-ai-indet 1.4s ease-in-out infinite; }
+@keyframes gcl-ai-indet { 0% { left: -35%; } 100% { left: 100%; } }
+@media (max-width: 640px) { .gcl-ai-loading-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; } .gcl-ai-elapsed { grid-column: 2; justify-self: start; margin-top: 4px; } }
+@media (prefers-reduced-motion: reduce) { .gcl-ai-loading-spin, .gcl-ai-loading-fill { animation: none; } .gcl-ai-loading-fill { left: 0; width: 100%; opacity: .45; } }
+
+/* AI 분석 확인 모달 — 안내 상자도 좌측 띠 없이 1px 테두리 */
+.gcl-ai-confirm-desc { margin: 0 0 4px; }
+.gcl-ai-confirm-list { margin: 10px 0 0; padding: 10px 14px 10px 30px; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; color: #92400E; font-size: 12px; line-height: 1.7; }
+.gcl-ai-confirm-list b { color: #78350F; }
+.gcl-ai-confirm-dump { margin-top: 8px; font-size: 12px; color: #1E40AF; background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; padding: 8px 12px; word-break: break-all; }
 
 /* ── 모달 골격 (함정 17: common.css 는 .modal-ov/.modal-box base + 버튼 색만 준다) ─────── */
 .gcl-modal .modal-box { width: 560px; max-width: 94vw; padding: 24px 26px 20px; border-radius: 14px; }

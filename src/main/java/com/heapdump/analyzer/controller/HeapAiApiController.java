@@ -566,7 +566,7 @@ public class HeapAiApiController {
                         try {
                             emitter.send(SseEmitter.event().name("chunk").data(SseJson.chunk(chunk)));
                         } catch (Exception e) {
-                            // 클라이언트 disconnect
+                            logger.debug("[AI-Chat SSE] chunk 전송 실패(클라이언트 disconnect 추정): {}", e.toString());
                         }
                     },
                     (fullText, latencyMs) -> {
@@ -574,7 +574,9 @@ public class HeapAiApiController {
                             emitter.send(SseEmitter.event().name("done")
                                 .data("{\"latencyMs\":" + latencyMs + "}"));
                             emitter.complete();
-                        } catch (Exception ignored) {}
+                        } catch (Exception e) {
+                            logger.debug("[AI-Chat SSE] done 전송 실패(클라이언트 disconnect 추정): {}", e.toString());
+                        }
                     },
                     (errorCode, errorMsg) -> SseJson.sendError(emitter, errorCode, errorMsg)
                 );

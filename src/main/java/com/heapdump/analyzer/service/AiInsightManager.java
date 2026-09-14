@@ -207,7 +207,9 @@ public class AiInsightManager {
             try {
                 HeapAnalysisResult r = objectMapper.readValue(resultFile, HeapAnalysisResult.class);
                 if (r.getFilename() != null && !r.getFilename().isEmpty()) return r.getFilename();
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                logger.debug("[AiInsight] {} 읽기 실패 — 디렉토리명으로 파일명 추정: {}", resultFile, e.toString());
+            }
         }
         String name = dir.getName();
         return name.indexOf('.') > 0 ? name : name + ".hprof";
@@ -222,7 +224,9 @@ public class AiInsightManager {
         try {
             Map<String, Object> dbData = objectMapper.readValue(entity.getInsightData(), Map.class);
             dbTs = epochMillisOf(dbData.get("analysedAt"));
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            logger.debug("[AiInsight] DB 인사이트 JSON 파싱 실패 — 엔티티 시각 사용: {}", e.toString());
+        }
         if (dbTs == null && entity.getAnalysedAt() != null) {
             dbTs = entity.getAnalysedAt().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
         }
@@ -246,7 +250,9 @@ public class AiInsightManager {
         if (v instanceof String) {
             try {
                 return Long.parseLong(((String) v).trim());
-            } catch (NumberFormatException ignored) {}
+            } catch (NumberFormatException e) {
+                logger.debug("[AiInsight] analysedAt 이 epoch 숫자가 아님: {}", v);
+            }
         }
         return null;
     }
