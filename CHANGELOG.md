@@ -8,6 +8,24 @@
 
 **배포 후 확인:** `gc_log_analysis.pressure_full_gc_count` 컬럼이 자동 생성된다(`ddl-auto=update`). **이미 분석된 GC 로그는 재분석해야** 배너·KPI 분리·이벤트 배지·목록 `(압박 n)` 이 나온다 — 재분석 전에는 배너가 "이전 분석 결과라 Full GC 분류가 없습니다" + 재분석 버튼을 보인다. 회수율이 낮은 로그는 재분석 후 종합 심각도가 올라갈 수 있다(`FULL_GC_LOW_RECLAIM` Critical/High).
 
+## [2026-09-16] JVM Heap 재수집 — 후보 0개 이유 표시 + java 프로세스 탐지 확장 (v2.5.4)
+
+**계기:** 사내망 `daniwb1p` 에서 `java_pid10971.hprof` 재수집 시 로그는 `candidates=0 reason=no-candidates` 인데 화면에 아무 반응이 없었다. 원격 스크립트는 정상 종료(`capture incomplete` WARN 없음)했지만 java 프로세스를 하나도 찾지 못한 경우로, 서비스가 이를 성공으로 돌려주고 화면은 실패·후보 다수일 때만 안내해 **성공인지 실패인지 알 수 없었다**. 원인 후보(hidepid·JVM 종료·이름이 java 가 아닌 프로세스·비 Linux)를 가릴 정보도 저장되지 않았다.
+
+**1. 후보 0개 이유 표시** (`JvmHeapCapture`·`JvmHeapInfoService`·`HeapHistoryApiController`·`RemoteDumpService`·`analyze.html`·`analyze.js`)
+- 원격 스크립트가 환경 정보 4줄을 더 싣는다: `uname -s`, `id -un`, `/proc` 마운트 옵션(`/proc/mounts`), `ps -p $$` 성공 여부 → `Capture.remoteEnv`(옛 JSON 은 null, 13-인자 생성자 유지).
+- `JvmHeapCapture.diagnoseNoCandidates(cap, 덤프명)` 이 이유를 가린다 — 순서대로 `PROC_UNAVAILABLE`(Linux 아님·/proc 없음) → `PS_UNAVAILABLE` → `LIST_RESTRICTED`(hidepid 이고 root 아님, 또는 보이는 프로세스 &lt; 30) → `NO_JAVA`(덤프명이 `java_pid<N>` 이면 "pid N 이 종료된 뒤 재기동되지 않았거나 다른 서버" 안내). 문구에 계정·hidepid 값·보이는 프로세스 수와 조치(SSH 계정을 WAS 실행 계정으로 / 연필로 직접 입력)를 넣는다.
+- 재수집 응답에 `notice {code,label,message}` — 화면이 "재수집 완료 — JVM 힙 설정을 찾지 못했습니다 [목록 제한]" 알림을 띄운다. 값을 찾았을 때도 "재수집 완료 — Xms/Xmx" 로 결과를 알린다(종전 무반응).
+- 칩에 이유 배지(`#jvmChipNoCand`: 목록 제한 / java 없음 / 미지원 OS / ps 실행 불가) + data-tip 에 마지막 수집 시각·안내, ⓘ 툴팁에 "마지막 수집(시각): java 프로세스 0개 — 이유"(값이 남아 있으면 "표시 값은 그 이전 수집·입력 값" 까지). 서버 렌더·JS 재렌더 양쪽. 템플릿은 Map 인덱서(`jvmHeap['noCandidate']`)로 읽어 키가 없는 뷰에서도 깨지지 않는다.
+- 운영 로그: 후보 0개면 `[JvmHeap] no-candidates server= diag= procVisible= user= os= procMount=` 한 줄, 재수집 감사 로그에 `notice=` 코드.
+
+**2. java 프로세스 탐지 확장** (`JvmHeapCapture.REMOTE_SCRIPT`)
+- 종전: `ps -eo pid=,comm=` 에서 이름이 `java*` 인 것만. 이제 합집합 — ① comm 이 java* ② 명령줄 첫 인자 이름이 java* ③ 명령줄에 JVM 옵션(`-Xms/-Xmx<숫자>`·`-XX:`·`-Djava.`·`-Djeus.`·`-Dweblogic.`). 이름을 바꾼 java 바이너리나 래퍼로 띄운 WAS 도 잡는다. 중복 제거 후 20개 상한은 그대로, 넓게 모은 pid 는 `/proc/<pid>/cmdline` 을 읽은 뒤 기존 `looksLikeJava` 가 한 번 더 거른다.
+- 비용은 `ps` 두 번(운영자가 늘 치는 `ps -ef` 수준). 폭 절단을 피하려 `ps -eww -o pid=,args=`, 지원하지 않으면 `ps -eo` 로 폴백. 사용자 입력은 여전히 없다(base64 전송 유지).
+- ⚠ hidepid 로 막힌 목록은 코드로 우회할 수 없다 — SSH 계정을 WAS 실행 계정으로 맞추는 것이 해법이고, 화면 안내가 그렇게 말한다.
+
+**회귀 방어(+4):** `JvmHeapCaptureShellTest`(1, **실제 sh 실행** — 테스트 JVM 과 이름이 bash 인데 명령줄에 `-Xmx64m` 이 있는 프로세스를 모두 찾는지, base64 전송 형태도 같은지, 환경 줄) · `JvmHeapCaptureTest` +2(환경 줄 파싱·이유 5가지·root+hidepid·옛 출력·JSON 왕복, 스크립트 탐지 규칙) · `JvmHeapInfoServiceTest` +1(notice·view.noCandidate·tipText) · `JvmChipTemplateSmokeTest` 보강(이유 배지 렌더, 키 없는 뷰에서도 렌더). `mvn test` 전체 통과, 21:01 재기동.
+
 ## [2026-09-16] GC 재분석 확인 모달 · Target Servers 덤프 경로 툴팁 · 스캔 경로 글자 크기 · 스캔 대상 선택 (v2.5.4)
 
 **1. GC 로그 재분석 확인 모달** (`gc-log/analyze.html`·`gc-log-analyze.js`)

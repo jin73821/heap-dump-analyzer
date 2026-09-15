@@ -60,8 +60,22 @@ public final class JvmHeapCapture {
             "grep -E '^(MemTotal|MemAvailable):' /proc/meminfo 2>/dev/null",
             "echo \"__NOW__ $(date +%s 2>/dev/null)\"",
             "echo \"__NPROC__ $(ls /proc 2>/dev/null | grep -c '^[0-9]')\"",
+            // 후보 0개일 때 이유를 가리기 위한 환경 정보(2026-09-16) — OS·접속 계정·/proc 마운트 옵션(hidepid)·ps 사용 가능 여부
+            "echo \"__UNAME__ $(uname -s 2>/dev/null)\"",
+            "echo \"__WHO__ $(id -un 2>/dev/null)\"",
+            "echo \"__PROCMNT__ $(awk '$2 == \"/proc\" {print $4; exit}' /proc/mounts 2>/dev/null)\"",
+            "ps -p $$ -o pid= >/dev/null 2>&1 && echo __PSOK__",
             "echo __PS__",
-            "for p in $(ps -eo pid=,comm= 2>/dev/null | awk '$2 ~ /^java/ {print $1}' | head -" + MAX_CANDIDATES + "); do",
+            // java 프로세스 찾기(2026-09-16 확장) — ① 실행 파일 이름(comm)이 java* ② 명령줄 첫 인자 이름이 java* ③ 명령줄에 JVM 옵션
+            // (-Xms/-Xmx·-XX:·-Djava.·-Djeus.·-Dweblogic.) — 이름을 바꾼 java 바이너리·래퍼(jsvc 등)로 띄운 WAS 도 잡는다.
+            // ps 한 번씩만 쓴다(운영자가 늘 치는 ps -ef 와 같은 비용). 폭 절단을 피하려고 -ww, 지원하지 않으면 일반 -o 로 폴백.
+            // 여기서 넓게 모은 pid 는 /proc/<pid>/cmdline 을 읽은 뒤 파서(looksLikeJava)가 한 번 더 거른다.
+            "JPIDS=$( { ps -eo pid=,comm= 2>/dev/null | awk '$2 ~ /^java/ {print $1}';"
+                    + " { ps -eww -o pid=,args= 2>/dev/null || ps -eo pid=,args= 2>/dev/null; }"
+                    + " | awk '{ b=$2; sub(/.*\\//, \"\", b); if (b ~ /^java/) { print $1; next }"
+                    + " for (i = 3; i <= NF; i++) if ($i ~ /^-(Xm[sx][0-9]|XX:|Djava\\.|Djeus\\.|Dweblogic\\.)/) { print $1; next } }'; }"
+                    + " | awk '!s[$1]++' | head -" + MAX_CANDIDATES + " )",
+            "for p in $JPIDS; do",
             "  echo \"__PID__ $p\"",
             "  echo \"__PSLINE__ $(ps -o user=,etime= -p \"$p\" 2>/dev/null)\"",
             "  echo \"__EXE__ $(readlink \"/proc/$p/exe\" 2>/dev/null)\"",
@@ -102,22 +116,44 @@ public final class JvmHeapCapture {
         }
     }
 
+    /**
+     * 원격 환경 정보(2026-09-16) — 후보가 0개일 때 이유(목록 제한·java 없음·미지원 OS)를 가리는 근거.
+     * 옛 JSON(필드 없음)은 null.
+     *
+     * @param os            {@code uname -s}(예: Linux, AIX). 모르면 null
+     * @param user          SSH 접속 계정({@code id -un})
+     * @param procMountOpts {@code /proc} 마운트 옵션(예: {@code rw,nosuid,hidepid=2}). 모르면 null
+     * @param psOk          {@code ps -p $$ -o pid=} 성공 여부 — false 면 ps 옵션 비호환
+     */
+    public record RemoteEnv(String os, String user, String procMountOpts, boolean psOk) {}
+
+    /** 후보 0개의 이유 — code(PROC_UNAVAILABLE/PS_UNAVAILABLE/LIST_RESTRICTED/NO_JAVA)·짧은 라벨·안내 문구. */
+    public record NoCandidateReason(String code, String label, String message) {}
+
     /** 수집 1회의 결과. 전송 로그 {@code jvm_info} 에 JSON 으로 저장된다. */
     public record Capture(int schema, long capturedAtEpoch, Long remoteNowEpoch, long memTotal, long memAvailable,
                           int procVisible, boolean truncated, Long dumpMtimeEpoch,
                           List<Candidate> candidates, Integer matchedIndex, String matchReason,
-                          List<String> matchFlags, String note) {
+                          List<String> matchFlags, String note, RemoteEnv remoteEnv) {
         public Capture {
             candidates = candidates == null ? List.of() : List.copyOf(candidates);
             matchFlags = matchFlags == null ? List.of() : List.copyOf(matchFlags);
         }
+        /** 환경 정보 없는 생성(테스트·실패 기록·옛 호출부). */
+        public Capture(int schema, long capturedAtEpoch, Long remoteNowEpoch, long memTotal, long memAvailable,
+                       int procVisible, boolean truncated, Long dumpMtimeEpoch,
+                       List<Candidate> candidates, Integer matchedIndex, String matchReason,
+                       List<String> matchFlags, String note) {
+            this(schema, capturedAtEpoch, remoteNowEpoch, memTotal, memAvailable, procVisible, truncated, dumpMtimeEpoch,
+                    candidates, matchedIndex, matchReason, matchFlags, note, null);
+        }
         public Capture withMatch(Match m) {
             return new Capture(schema, capturedAtEpoch, remoteNowEpoch, memTotal, memAvailable, procVisible, truncated,
-                    dumpMtimeEpoch, candidates, m.index(), m.reason(), new ArrayList<>(m.flags()), note);
+                    dumpMtimeEpoch, candidates, m.index(), m.reason(), new ArrayList<>(m.flags()), note, remoteEnv);
         }
         public Capture withNote(String n) {
             return new Capture(schema, capturedAtEpoch, remoteNowEpoch, memTotal, memAvailable, procVisible, truncated,
-                    dumpMtimeEpoch, candidates, matchedIndex, matchReason, matchFlags, n);
+                    dumpMtimeEpoch, candidates, matchedIndex, matchReason, matchFlags, n, remoteEnv);
         }
         public Candidate matched() {
             return matchedIndex != null && matchedIndex >= 0 && matchedIndex < candidates.size()
@@ -248,6 +284,8 @@ public final class JvmHeapCapture {
         Long now = null, mtime = null;
         int nproc = -1;
         boolean ended = false;
+        String os = null, who = null, procMnt = null;
+        boolean psOk = false, envSeen = false;
         List<RawProc> procs = new ArrayList<>();
         RawProc cur = null;
 
@@ -264,6 +302,10 @@ public final class JvmHeapCapture {
             if (t.startsWith("__MTIME__")) { mtime = parseLongOrNull(t.substring(9)); continue; }
             if (t.startsWith("__NOW__")) { now = parseLongOrNull(t.substring(7)); continue; }
             if (t.startsWith("__NPROC__")) { Long n = parseLongOrNull(t.substring(9)); nproc = n == null ? -1 : n.intValue(); continue; }
+            if (t.startsWith("__UNAME__")) { os = emptyToNull(t.substring(9).trim()); envSeen = true; continue; }
+            if (t.startsWith("__WHO__")) { who = emptyToNull(t.substring(7).trim()); envSeen = true; continue; }
+            if (t.startsWith("__PROCMNT__")) { procMnt = emptyToNull(t.substring(11).trim()); envSeen = true; continue; }
+            if (t.equals("__PSOK__")) { psOk = true; envSeen = true; continue; }
             if (t.equals("__PS__")) continue;
             if (t.startsWith("MemTotal:")) { memTotal = parseKb(t.substring(9)); continue; }
             if (t.startsWith("MemAvailable:")) { memAvail = parseKb(t.substring(13)); continue; }
@@ -312,11 +354,67 @@ public final class JvmHeapCapture {
             candidates.add(parseCommandLine(p.pid, p.user, startEpoch, p.cwd, p.exe, p.tokens, p.env,
                     p.envReadable, memTotal, p.container));
         }
+        RemoteEnv env = envSeen ? new RemoteEnv(os, who, procMnt, psOk) : null;
         String note = null;
+        Capture draft = new Capture(SCHEMA, capturedAtEpoch, now, memTotal, memAvail, nproc, !ended, mtime,
+                candidates, null, null, List.of(), null, env);
         if (!ended) note = "출력이 중간에 끊김(타임아웃 또는 원격 오류)";
-        else if (candidates.isEmpty()) note = nproc >= 0 && nproc < 30 ? "java 프로세스 없음 (프로세스 목록이 제한됐을 수 있음)" : "java 프로세스 없음";
-        return new Capture(SCHEMA, capturedAtEpoch, now, memTotal, memAvail, nproc, !ended, mtime,
-                candidates, null, null, List.of(), note);
+        else if (candidates.isEmpty()) {
+            NoCandidateReason why = diagnoseNoCandidates(draft, null);
+            note = why == null ? "java 프로세스 없음" : why.message();
+        }
+        return draft.withNote(note);
+    }
+
+    private static final Pattern PID_IN_DUMP_NAME = Pattern.compile("java_pid(\\d+)");
+    private static final Pattern HIDEPID = Pattern.compile("(?:^|,)hidepid=(1|2|invisible|noaccess)(?:,|$)");
+
+    /**
+     * 후보가 0개인 이유(2026-09-16). 후보가 있거나 수집이 끊겼으면(truncated — 호출자가 SSH 실패로 따로 처리) null.
+     * 판정 순서: ① Linux 가 아닌 OS·/proc 없음 ② ps 비호환 ③ 프로세스 목록 제한(hidepid·보이는 프로세스 &lt; 30) ④ java 없음.
+     * ③ 은 root 로 접속했으면 hidepid 가 있어도 제한이 아니다.
+     *
+     * @param remoteName 덤프 파일명(원격) — {@code java_pid<N>} 이면 그 pid 를 안내에 넣는다. null 가능
+     */
+    public static NoCandidateReason diagnoseNoCandidates(Capture cap, String remoteName) {
+        if (cap == null || cap.truncated() || !cap.candidates().isEmpty()) return null;
+        RemoteEnv env = cap.remoteEnv();
+        String os = env == null ? null : env.os();
+        if ((os != null && !os.equalsIgnoreCase("Linux")) || (cap.memTotal() <= 0 && cap.procVisible() <= 0)) {
+            return new NoCandidateReason("PROC_UNAVAILABLE", "미지원 OS",
+                    (os != null && !os.equalsIgnoreCase("Linux") ? "원격 서버 OS 가 " + os + " 입니다." : "원격 서버에서 /proc 를 읽을 수 없습니다.")
+                            + " JVM 힙 자동 수집은 Linux 의 /proc 에서만 동작합니다 — 연필(✎)로 직접 입력하세요.");
+        }
+        if (env != null && !env.psOk()) {
+            return new NoCandidateReason("PS_UNAVAILABLE", "ps 실행 불가",
+                    "원격 서버에서 ps 명령을 실행하지 못했습니다(옵션 비호환 또는 PATH 문제). 접속 계정의 PATH·ps 설치 여부를 확인하세요.");
+        }
+        String user = env == null ? null : env.user();
+        boolean root = "root".equals(user);
+        String mnt = env == null ? null : env.procMountOpts();
+        Matcher hm = mnt == null ? null : HIDEPID.matcher(mnt);
+        boolean hidepid = hm != null && hm.find();
+        boolean fewVisible = cap.procVisible() >= 0 && cap.procVisible() < 30;
+        if ((hidepid && !root) || fewVisible) {
+            StringBuilder sb = new StringBuilder("프로세스 목록이 제한돼 있어 java 프로세스를 볼 수 없습니다");
+            List<String> why = new ArrayList<>();
+            if (hidepid) why.add("/proc 가 hidepid=" + hm.group(1) + " 로 마운트됨");
+            if (user != null) why.add("접속 계정 " + user);
+            if (cap.procVisible() >= 0) why.add("보이는 프로세스 " + cap.procVisible() + "개");
+            if (!why.isEmpty()) sb.append(" (").append(String.join(", ", why)).append(")");
+            sb.append(". 서버 설정의 SSH 계정을 WAS 실행 계정으로 바꾸거나, 연필(✎)로 직접 입력하세요.");
+            return new NoCandidateReason("LIST_RESTRICTED", "목록 제한", sb.toString());
+        }
+        StringBuilder sb = new StringBuilder("원격 서버에 실행 중인 java 프로세스가 없습니다");
+        if (cap.procVisible() >= 0) sb.append(" (보이는 프로세스 ").append(cap.procVisible()).append("개)");
+        sb.append('.');
+        Matcher pm = remoteName == null ? null : PID_IN_DUMP_NAME.matcher(remoteName);
+        if (pm != null && pm.find()) {
+            sb.append(" 덤프를 만든 JVM(pid ").append(pm.group(1)).append(")이 종료된 뒤 다시 기동되지 않았거나, 다른 서버에서 실행 중일 수 있습니다.");
+        } else {
+            sb.append(" 덤프를 만든 JVM 이 종료됐거나 다른 서버에서 실행 중일 수 있습니다.");
+        }
+        return new NoCandidateReason("NO_JAVA", "java 없음", sb.toString());
     }
 
     private static boolean looksLikeJava(RawProc p) {
@@ -715,7 +813,7 @@ public final class JvmHeapCapture {
         Capture tiny = new Capture(slim.schema(), slim.capturedAtEpoch(), slim.remoteNowEpoch(), slim.memTotal(),
                 slim.memAvailable(), slim.procVisible(), slim.truncated(), slim.dumpMtimeEpoch(), few,
                 slim.matchedIndex() != null && slim.matchedIndex() < few.size() ? slim.matchedIndex() : null,
-                slim.matchReason(), slim.matchFlags(), "후보 목록이 커서 일부만 저장됨");
+                slim.matchReason(), slim.matchFlags(), "후보 목록이 커서 일부만 저장됨", slim.remoteEnv());
         return MAPPER.writeValueAsString(tiny);
     }
 
@@ -730,7 +828,7 @@ public final class JvmHeapCapture {
         }
         return new Capture(cap.schema(), cap.capturedAtEpoch(), cap.remoteNowEpoch(), cap.memTotal(), cap.memAvailable(),
                 cap.procVisible(), cap.truncated(), cap.dumpMtimeEpoch(), out, cap.matchedIndex(), cap.matchReason(),
-                cap.matchFlags(), cap.note());
+                cap.matchFlags(), cap.note(), cap.remoteEnv());
     }
 
     /** JSON → Capture. null/빈 값/손상은 null (호출자가 로그). */

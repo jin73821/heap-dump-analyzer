@@ -250,7 +250,8 @@ class JvmHeapCaptureTest {
         Capture cap = JvmHeapCapture.parseOutput(out, NOW);
         assertEquals(1799990000L, cap.dumpMtimeEpoch());
         assertTrue(cap.candidates().isEmpty());
-        assertEquals("java 프로세스 없음", cap.note());
+        // 2026-09-16: note 는 후보 0개 이유 문구(diagnoseNoCandidates)
+        assertTrue(cap.note().startsWith("원격 서버에 실행 중인 java 프로세스가 없습니다 (보이는 프로세스 200개)."), cap.note());
     }
 
     @Test
@@ -429,6 +430,72 @@ class JvmHeapCaptureTest {
         assertTrue(script.contains("/proc/$p/cmdline"));
         assertEquals(JvmHeapCapture.REMOTE_SCRIPT, JvmHeapCapture.buildScript(null));
         assertFalse(JvmHeapCapture.REMOTE_SCRIPT.contains("ps -eo pid,user,etimes,args"), "폭 절단·etimes 의존 명령은 쓰지 않는다");
+    }
+
+    // ── 후보 0개 이유 (2026-09-16) ─────────────────────────────
+
+    private static String envLines(String os, String who, String mnt, boolean psOk) {
+        return "__UNAME__ " + os + "\n__WHO__ " + who + "\n__PROCMNT__ " + mnt + "\n" + (psOk ? "__PSOK__\n" : "");
+    }
+
+    private static String withEnv(String out, String env) {
+        return out.replace("__PS__\n", env + "__PS__\n");
+    }
+
+    @Test
+    void remoteEnvIsParsedAndNoCandidateReasonsAreDiagnosed() {
+        Capture hide = JvmHeapCapture.parseOutput(withEnv(output(16_000_000, 6, true), envLines("Linux", "sscuser", "rw,nosuid,relatime,hidepid=2", true)), NOW);
+        assertNotNull(hide.remoteEnv());
+        assertEquals("sscuser", hide.remoteEnv().user());
+        assertEquals("rw,nosuid,relatime,hidepid=2", hide.remoteEnv().procMountOpts());
+        JvmHeapCapture.NoCandidateReason r1 = JvmHeapCapture.diagnoseNoCandidates(hide, "java_pid10971.hprof");
+        assertEquals("LIST_RESTRICTED", r1.code());
+        assertTrue(r1.message().contains("hidepid=2") && r1.message().contains("sscuser") && r1.message().contains("보이는 프로세스 6개"), r1.message());
+        assertEquals(r1.message(), hide.note(), "note 도 같은 이유");
+
+        // hidepid 여도 root 는 전부 보인다 → 목록 제한이 아니라 java 없음
+        Capture rootHide = JvmHeapCapture.parseOutput(withEnv(output(16_000_000, 480, true), envLines("Linux", "root", "rw,hidepid=2", true)), NOW);
+        JvmHeapCapture.NoCandidateReason r2 = JvmHeapCapture.diagnoseNoCandidates(rootHide, "java_pid10971.hprof");
+        assertEquals("NO_JAVA", r2.code());
+        assertTrue(r2.message().contains("pid 10971") && r2.message().contains("보이는 프로세스 480개"), r2.message());
+
+        // hidepid 옵션 없이도 보이는 프로세스가 30개 미만이면 제한으로 본다(컨테이너·네임스페이스)
+        Capture few = JvmHeapCapture.parseOutput(withEnv(output(16_000_000, 9, true), envLines("Linux", "was", "rw,relatime", true)), NOW);
+        assertEquals("LIST_RESTRICTED", JvmHeapCapture.diagnoseNoCandidates(few, null).code());
+
+        Capture aix = JvmHeapCapture.parseOutput(withEnv(output(0, 120, true), envLines("AIX", "was", "", true)), NOW);
+        JvmHeapCapture.NoCandidateReason r3 = JvmHeapCapture.diagnoseNoCandidates(aix, null);
+        assertEquals("PROC_UNAVAILABLE", r3.code());
+        assertTrue(r3.message().contains("AIX"), r3.message());
+
+        Capture noPs = JvmHeapCapture.parseOutput(withEnv(output(16_000_000, 300, true), envLines("Linux", "was", "rw", false)), NOW);
+        assertEquals("PS_UNAVAILABLE", JvmHeapCapture.diagnoseNoCandidates(noPs, null).code());
+
+        // 옛 스크립트 출력(환경 줄 없음)도 판단한다
+        Capture legacy = JvmHeapCapture.parseOutput(output(16_000_000, 300, true), NOW);
+        assertNull(legacy.remoteEnv());
+        assertEquals("NO_JAVA", JvmHeapCapture.diagnoseNoCandidates(legacy, "app.hprof").code());
+
+        // 후보가 있거나 출력이 끊겼으면 이유 없음
+        assertNull(JvmHeapCapture.diagnoseNoCandidates(JvmHeapCapture.parseOutput(output(16_000_000, 300, false), NOW), null));
+        Capture withJava = JvmHeapCapture.parseOutput(output(16_000_000, 300, true,
+                procBlock(100, "jeus", "01:00", "/opt/jeus", new String[]{"/opt/jdk/bin/java", "-Xmx2g", "Main"}, null, true, false)), NOW);
+        assertNull(JvmHeapCapture.diagnoseNoCandidates(withJava, null));
+
+        // 환경 정보는 JSON 왕복 후에도 남는다(옛 JSON 은 null)
+        Capture back = JvmHeapCapture.fromJson(JvmHeapCapture.toJson(hide));
+        assertEquals("hidepid=2", back.remoteEnv().procMountOpts().substring(back.remoteEnv().procMountOpts().indexOf("hidepid")));
+        assertNull(JvmHeapCapture.fromJson(JvmHeapCapture.toJson(legacy)).remoteEnv());
+    }
+
+    @Test
+    void remoteScriptFindsJavaByNameOrJvmOptions() {
+        String s = JvmHeapCapture.REMOTE_SCRIPT;
+        assertTrue(s.contains("ps -eo pid=,comm= 2>/dev/null | awk '$2 ~ /^java/ {print $1}'"), "① comm 이 java*");
+        assertTrue(s.contains("{ ps -eww -o pid=,args= 2>/dev/null || ps -eo pid=,args= 2>/dev/null; }"), "② ③ 명령줄 — 폭 절단 방지 -ww, 비호환이면 폴백");
+        assertTrue(s.contains("/^-(Xm[sx][0-9]|XX:|Djava\\.|Djeus\\.|Dweblogic\\.)/"), "③ JVM 옵션 표지");
+        assertTrue(s.contains("awk '!s[$1]++' | head -" + JvmHeapCapture.MAX_CANDIDATES), "중복 제거 후 상한");
+        assertTrue(s.contains("__UNAME__") && s.contains("__WHO__") && s.contains("__PROCMNT__") && s.contains("__PSOK__"), "후보 0개 이유용 환경 정보");
     }
 
     @Test

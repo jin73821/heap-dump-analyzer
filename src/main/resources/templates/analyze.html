@@ -675,6 +675,11 @@ function loadFullErrorLog() {
                     <span class="jvm-flag jvm-flag-warn" th:if="${jvmHeap.ambiguous}" tabindex="0"
                           th:text="'후보 ' + ${jvmHeap.candidateCount}"
                           data-tip="java 프로세스가 여러 개라 자동 확정하지 못했습니다 — 목록(&#9776;)에서 고르세요.">후보 2</span>
+                    <!-- 마지막 수집에서 java 프로세스 0개 — 이유 배지(2026-09-16). 문구는 서버 JvmHeapCapture.diagnoseNoCandidates.
+                         Map 인덱서 ['키'] 로 읽는다 — 점 표기는 키가 없는 뷰(옛 호출부·테스트)에서 SpEL 예외로 페이지 전체가 깨진다 -->
+                    <span class="jvm-flag jvm-flag-warn" id="jvmChipNoCand" th:if="${jvmHeap['noCandidate'] != null}" tabindex="0"
+                          th:text="${jvmHeap['noCandidate']?.get('label')}"
+                          th:attr="data-tip='마지막 수집' + (${jvmHeap['lastCaptureAt']} != null ? '(' + ${jvmHeap['lastCaptureAt']} + ')' : '') + '에서 java 프로세스를 찾지 못했습니다. ' + ${jvmHeap['noCandidate']?.get('message')}">java 없음</span>
                 </span>
                 <button type="button" class="host-chip-edit" id="jvmChipEdit"
                         onclick="startJvmEdit()" title="JVM 힙 설정 편집">&#9998;</button>
@@ -1694,7 +1699,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
      ⚠ float-tooltip.js([data-tooltip] 커서 추종형)와 한 페이지에 같이 싣지 말 것 — 동작은 하지만 디자인이 섞인다. -->
 <script src="/js/krds-tooltip.js?v=2026-08-09"></script>
 <script src="/js/table-grid.js?v=2026-09-13"></script>
-<script src="/js/analyze.js?v=2026-09-15"></script>
+<script src="/js/analyze.js?v=2026-09-16"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

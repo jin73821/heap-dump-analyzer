@@ -237,6 +237,44 @@ class JvmHeapInfoServiceTest {
         assertEquals("NOT_FOUND", svc.recollect("missing.hprof", null, null, null).code());
     }
 
+    @Test
+    void recollectWithNoJavaProcessReturnsNoticeAndViewExplainsWhy() {
+        // 2026-09-15 사내망 제보: candidates=0 인데 화면에 아무 반응이 없었다 — 이유를 notice·배지·툴팁으로 돌려준다
+        AnalysisHistoryEntity e = new AnalysisHistoryEntity();
+        e.setFilename("java_pid10971.hprof");
+        e.setServerName("daniwb1p");
+        Mockito.when(historyRepo.findByFilename("java_pid10971.hprof")).thenReturn(Optional.of(e));
+        TargetServer srv = new TargetServer();
+        srv.setId(3L);
+        srv.setName("daniwb1p");
+        Mockito.when(serverRepo.findAll()).thenReturn(List.of(srv));
+
+        Capture noJava = new Capture(2, NOW, NOW, 16 * GB, 8 * GB, 412, false, null, List.of(), null, null, List.of(), null,
+                new JvmHeapCapture.RemoteEnv("Linux", "wasadm", "rw,nosuid,nodev,noexec,relatime", true));
+        Mockito.when(remote.captureJvmInfo(Mockito.eq(srv), Mockito.any())).thenReturn(JvmHeapCapture.toJson(noJava));
+        JvmHeapInfoService.RecollectResult rr = svc.recollect("java_pid10971.hprof", null, null, null);
+        assertNull(rr.code(), "수집 자체는 성공");
+        assertFalse(rr.needsSelection());
+        assertNotNull(rr.notice(), "후보 0개면 이유를 돌려준다");
+        assertEquals("NO_JAVA", rr.notice().get("code"));
+        assertTrue(((String) rr.notice().get("message")).contains("pid 10971"), String.valueOf(rr.notice()));
+        @SuppressWarnings("unchecked") Map<String, Object> nc = (Map<String, Object>) rr.view().get("noCandidate");
+        assertEquals("java 없음", nc.get("label"));
+        assertNotNull(rr.view().get("lastCaptureAt"));
+        assertTrue(((String) rr.view().get("tipText")).contains("java 프로세스 0개 — java 없음"), (String) rr.view().get("tipText"));
+
+        Capture restricted = new Capture(2, NOW, NOW, 16 * GB, 8 * GB, 4, false, null, List.of(), null, null, List.of(), null,
+                new JvmHeapCapture.RemoteEnv("Linux", "sscuser", "rw,relatime,hidepid=2", true));
+        Mockito.when(remote.captureJvmInfo(Mockito.eq(srv), Mockito.any())).thenReturn(JvmHeapCapture.toJson(restricted));
+        assertEquals("LIST_RESTRICTED", svc.recollect("java_pid10971.hprof", null, null, null).notice().get("code"));
+
+        Mockito.when(remote.captureJvmInfo(Mockito.eq(srv), Mockito.any())).thenReturn(JvmHeapCapture.toJson(
+                new Capture(2, NOW, NOW, 16 * GB, 8 * GB, 300, false, null, List.of(cand(300, 6 * GB, Map.of())), null, null, List.of(), null)));
+        JvmHeapInfoService.RecollectResult ok = svc.recollect("java_pid10971.hprof", null, null, null);
+        assertNull(ok.notice(), "후보가 있으면 notice 없음");
+        assertNull(ok.view().get("noCandidate"));
+    }
+
     /**
      * ⓘ 툴팁 문구는 서버가 유일한 출처다 — 칩은 편집·후보 선택·재수집 때마다 JS 가 다시 그리므로, 문구를
      * 양쪽에서 조립하면 예외 없이 갈라진다. 수집 시각은 이 툴팁이 화면에 처음 노출하는 값이라 함께 고정한다.

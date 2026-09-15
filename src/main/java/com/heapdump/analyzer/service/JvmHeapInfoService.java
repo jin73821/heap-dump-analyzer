@@ -186,6 +186,11 @@ public class JvmHeapInfoService {
         v.put("ambiguous", ambiguous);
         v.put("processListRestricted", cap != null && cap.processListRestricted());
         v.put("captureNote", cap == null ? null : cap.note());
+        // 마지막 수집에서 java 프로세스를 하나도 못 찾은 이유(2026-09-16) — 칩 경고 배지·툴팁·재수집 안내가 같은 문구를 쓴다
+        JvmHeapCapture.NoCandidateReason why = JvmHeapCapture.diagnoseNoCandidates(cap, remoteNameOf(e));
+        v.put("noCandidate", why == null ? null : noticeOf(why));
+        v.put("lastCaptureAt", cap == null || cap.capturedAtEpoch() <= 0 ? null
+                : LocalDateTime.ofInstant(Instant.ofEpochSecond(cap.capturedAtEpoch()), ZoneId.systemDefault()).format(DUMP_TS));
         v.put("recollectable", e != null && originServer(e).isPresent());
         Integer pct = null;
         if (xmx != null && xmx > 0 && usedHeapBytes != null && usedHeapBytes > 0) {
@@ -259,7 +264,15 @@ public class JvmHeapInfoService {
             lines.add("SSH 전송 시 원격 서버의 java 프로세스에서 자동 수집됩니다. 연필(✎)로 직접 입력할 수 있습니다.");
         }
         String note = cap == null ? null : cap.note();
-        if (!hasValue && note != null && !note.isBlank()) lines.add("수집 메모: " + note);
+        JvmHeapCapture.NoCandidateReason why = JvmHeapCapture.diagnoseNoCandidates(cap, remoteNameOf(e));
+        if (why != null) {
+            // 값이 있어도 보인다 — 재수집에서 못 찾았으면 표시값은 이전 수집 값이라는 것을 알려야 한다
+            lines.add("");
+            lines.add("마지막 수집(" + LocalDateTime.ofInstant(Instant.ofEpochSecond(cap.capturedAtEpoch()), ZoneId.systemDefault()).format(DUMP_TS)
+                    + "): java 프로세스 0개 — " + why.label());
+            lines.add(why.message());
+            if (hasValue) lines.add("표시 값은 그 이전 수집·입력 값입니다.");
+        } else if (!hasValue && note != null && !note.isBlank()) lines.add("수집 메모: " + note);
 
         String options = e == null ? null : e.getJvmOptions();
         if (options != null && !options.isBlank()) {
@@ -394,8 +407,30 @@ public class JvmHeapInfoService {
     }
 
     /** 재수집 결과. code 는 null(성공) / NOT_FOUND / NO_ORIGIN / BUSY / SSH_FAIL. */
+    /**
+     * @param notice 수집은 끝났지만 값을 못 정한 이유 — 현재는 후보 0개({@code code/label/message}, 2026-09-16). 없으면 null.
+     *               종전엔 이 경우 success 만 돌려줘 화면에 아무 반응이 없었다.
+     */
     public record RecollectResult(String code, String error, boolean needsSelection,
-                                  Map<String, Object> view, List<Map<String, Object>> candidates) {}
+                                  Map<String, Object> view, List<Map<String, Object>> candidates, Map<String, Object> notice) {
+        public RecollectResult(String code, String error, boolean needsSelection,
+                               Map<String, Object> view, List<Map<String, Object>> candidates) {
+            this(code, error, needsSelection, view, candidates, null);
+        }
+    }
+
+    private static Map<String, Object> noticeOf(JvmHeapCapture.NoCandidateReason why) {
+        Map<String, Object> n = new LinkedHashMap<>();
+        n.put("code", why.code());
+        n.put("label", why.label());
+        n.put("message", why.message());
+        return n;
+    }
+
+    /** 덤프 파일명 — 안내 문구의 {@code java_pid<N>} 추출용. */
+    private static String remoteNameOf(AnalysisHistoryEntity e) {
+        return e == null ? null : e.getFilename();
+    }
 
     /**
      * 출처 서버에서 다시 수집한다. 사용자가 명시적으로 누른 동작이라 매칭이 확정되면 source 와 무관하게 auto 로 덮고,
@@ -444,8 +479,9 @@ public class JvmHeapInfoService {
             }
             historyRepository.save(e);
             boolean needsSelection = !r.matched() && !cap.candidates().isEmpty();
+            JvmHeapCapture.NoCandidateReason why = JvmHeapCapture.diagnoseNoCandidates(cap, remoteName);
             return new RecollectResult(null, null, needsSelection, toView(e, usedHeapBytes),
-                    needsSelection ? candidatesForClient(r.infoJson()) : null);
+                    needsSelection ? candidatesForClient(r.infoJson()) : null, why == null ? null : noticeOf(why));
         } finally {
             recollectInFlight.remove(filename);
         }

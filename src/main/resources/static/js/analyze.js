@@ -5129,6 +5129,16 @@ function renderJvmChip(view) {
             warn.setAttribute('data-tip', 'java 프로세스가 여러 개라 자동 확정하지 못했습니다 — 목록(☰)에서 고르세요.');
             flagsEl.appendChild(warn);
         }
+        // 마지막 수집에서 java 프로세스 0개(2026-09-16) — 이유를 배지로 남긴다(목록 제한 / java 없음 / 미지원 OS / ps 실행 불가)
+        if (v.noCandidate) {
+            var nc = document.createElement('span');
+            nc.className = 'jvm-flag jvm-flag-warn';
+            nc.id = 'jvmChipNoCand';
+            nc.tabIndex = 0;
+            nc.textContent = v.noCandidate.label;
+            nc.setAttribute('data-tip', '마지막 수집' + (v.lastCaptureAt ? '(' + v.lastCaptureAt + ')' : '') + '에서 java 프로세스를 찾지 못했습니다.\n' + v.noCandidate.message);
+            flagsEl.appendChild(nc);
+        }
     }
     var pick = document.getElementById('jvmChipPick');
     if (pick) pick.style.display = (v.candidateCount > 1) ? '' : 'none';
@@ -5315,7 +5325,10 @@ function recollectJvm() {
             if (!d) return;
             if (d.view) renderJvmChip(d.view);
             if (!d.success) { alert('재수집 실패: ' + (d.error || d.code || '')); return; }
-            if (d.needsSelection) openJvmCandidateModal(d.candidates || []);
+            if (d.needsSelection) { openJvmCandidateModal(d.candidates || []); return; }
+            // 수집은 끝났지만 java 프로세스를 못 찾음 — 종전엔 아무 반응이 없어 성공인지 실패인지 알 수 없었다(2026-09-16)
+            if (d.notice && d.notice.message) { alert('재수집 완료 — JVM 힙 설정을 찾지 못했습니다 [' + (d.notice.label || d.notice.code) + ']\n\n' + d.notice.message); return; }
+            if (d.view && d.view.hasValue) alert('재수집 완료 — Xms ' + (d.view.xms || '-') + ' / Xmx ' + (d.view.xmx || '-'));
         })
         .catch(function(e) {
             restore();

@@ -1136,7 +1136,7 @@ public class RemoteDumpService {
                     jvmCaptureCache.put(server.getId(), new CachedJvmCapture(System.currentTimeMillis(),
                             new JvmHeapCapture.Capture(cap.schema(), cap.capturedAtEpoch(), cap.remoteNowEpoch(),
                                     cap.memTotal(), cap.memAvailable(), cap.procVisible(), false, null,
-                                    cap.candidates(), null, null, java.util.List.of(), cap.note())));
+                                    cap.candidates(), null, null, java.util.List.of(), cap.note(), cap.remoteEnv())));
                 }
             }
             String remoteName = remoteFilePath == null ? null : new File(remoteFilePath).getName();
@@ -1149,6 +1149,14 @@ public class RemoteDumpService {
                     server.getName(), remoteName, cap.candidates().size(),
                     hit == null ? "-" : "pid " + hit.pid(), m.reason(),
                     hit == null ? "-" : JvmHeapCapture.formatSizeOrNull(hit.xmxBytes()), m.flags());
+            if (cap.candidates().isEmpty() && !cap.truncated()) {
+                // 후보 0개 — 이유를 운영 로그에도 남긴다(2026-09-16: 로그만으로는 hidepid·java 없음·미지원 OS 를 가릴 수 없었다)
+                JvmHeapCapture.NoCandidateReason why = JvmHeapCapture.diagnoseNoCandidates(cap, remoteName);
+                JvmHeapCapture.RemoteEnv env = cap.remoteEnv();
+                logger.info("[JvmHeap] no-candidates server={} diag={} procVisible={} user={} os={} procMount={}",
+                        server.getName(), why == null ? "-" : why.code(), cap.procVisible(),
+                        env == null ? "?" : env.user(), env == null ? "?" : env.os(), env == null ? "?" : env.procMountOpts());
+            }
             return JvmHeapCapture.toJson(cap);
         } catch (Exception e) {
             logger.warn("[JvmHeap] capture failed server={} — {}", server.getName(), e.getMessage());

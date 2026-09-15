@@ -298,12 +298,15 @@ public class HeapHistoryApiController {
             int status = "NOT_FOUND".equals(rr.code()) ? 404 : "BUSY".equals(rr.code()) ? 409 : 200;
             return ResponseEntity.status(status).body(resp);
         }
-        logger.info("[JvmHeap] action=recollect file={} needsSelection={} xms={} xmx={} by={}",
-                safe, rr.needsSelection(), rr.view().get("xms"), rr.view().get("xmx"), who(auth));
+        logger.info("[JvmHeap] action=recollect file={} needsSelection={} xms={} xmx={} notice={} by={}",
+                safe, rr.needsSelection(), rr.view().get("xms"), rr.view().get("xmx"),
+                rr.notice() == null ? "-" : rr.notice().get("code"), who(auth));
         resp.put("success", true);
         resp.put("needsSelection", rr.needsSelection());
         resp.put("view", rr.view());
         if (rr.candidates() != null) resp.put("candidates", rr.candidates());
+        // 후보 0개 — 수집은 됐지만 값을 못 정한 이유. 화면이 안내한다(종전엔 아무 반응 없음, 2026-09-16)
+        if (rr.notice() != null) resp.put("notice", rr.notice());
         return ResponseEntity.ok(resp);
     }
 

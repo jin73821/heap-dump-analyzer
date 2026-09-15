@@ -121,6 +121,19 @@ class JvmChipTemplateSmokeTest {
         assertTrue(k0.contains("display:none"), k0);
         String j0 = render(js, without);
         assertTrue(j0.contains("\"xmx\":null"), j0);
+        assertFalse(c0.contains("id=\"jvmChipNoCand\""), "후보 0개 이유가 없으면 배지 없음");
+
+        // 마지막 수집에서 java 프로세스 0개(2026-09-16) — 이유 배지 + data-tip 에 수집 시각·안내
+        Map<String, Object> none = view(false);
+        none.put("ambiguous", false);
+        none.put("candidateCount", 0);
+        none.put("noCandidate", Map.of("code", "LIST_RESTRICTED", "label", "목록 제한",
+                "message", "프로세스 목록이 제한돼 있어 java 프로세스를 볼 수 없습니다 (/proc 가 hidepid=2 로 마운트됨, 접속 계정 sscuser, 보이는 프로세스 4개)."));
+        none.put("lastCaptureAt", "2026-09-15 20:45:05");
+        String cn = render(chip, Map.of("jvmHeap", none)).replaceAll("\\s+", " ");
+        assertTrue(cn.contains("id=\"jvmChipNoCand\"") && cn.contains(">목록 제한</span>"), cn);
+        assertTrue(cn.contains("data-tip=\"마지막 수집(2026-09-15 20:45:05)에서 java 프로세스를 찾지 못했습니다. 프로세스 목록이 제한돼 있어"), cn);
+        assertFalse(cn.contains("후보 0"), "후보 0개는 후보 배지가 아니라 이유 배지");
     }
 
     @Test
