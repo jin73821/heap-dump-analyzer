@@ -135,7 +135,8 @@ class GcLogTemplateSmokeTest {
         for (String st : new String[]{"NOT_ANALYZED", "ANALYZING", "ERROR", "MISSING"}) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("filename", "gc.log.0");
-            m.put("entity", "MISSING".equals(st) ? null : entity("gc.log.0", "ERROR".equals(st) ? "ERROR" : st, "was01", null, "none"));
+            // 업로드 때 서버명을 비운 로그 — 서버 알약이 사라지면 나중에 입력할 곳이 없다(2026-09-15)
+            m.put("entity", "MISSING".equals(st) ? null : entity("gc.log.0", "ERROR".equals(st) ? "ERROR" : st, null, null, "none"));
             m.put("fileExists", !"MISSING".equals(st));
             m.put("status", st);
             m.put("result", null);
@@ -152,6 +153,12 @@ class GcLogTemplateSmokeTest {
                 assertTrue(h.contains("id=\"gclProgress\"") && !h.contains("id=\"gclProgress\" style=\"display:none\""), st + ": 진행 블록 보임");
             }
             if ("MISSING".equals(st)) assertFalse(h.contains("id=\"gclRetryBtn\""), "파일이 없으면 다시 분석 버튼 없음");
+            if (!"MISSING".equals(st)) {
+                assertTrue(h.contains("id=\"gclServerValue\"") && h.contains(">미지정</span>") && h.contains("gcl-meta-v empty"),
+                        st + ": 서버명이 없어도 '미지정' 알약이 보여야 한다");
+                assertTrue(h.contains("id=\"gclServerEdit\"") && h.contains("onclick=\"startServerEdit()\"") && h.contains("aria-label=\"서버명 편집\""),
+                        st + ": 서버명 편집 버튼(아이콘만이라 접근성 이름 필수)");
+            }
             assertTrue(h.contains("<script type=\"application/json\" id=\"gcResult\">null</script>"), st + ": 결과 JSON null");
             assertFalse(h.replace("/*[[", "").contains("[["), st + ": '[[' 잔존");
         }
@@ -182,9 +189,13 @@ class GcLogTemplateSmokeTest {
         assertFalse(h.contains("class=\"cd-page\""), "cd-page 인라인 max-width 래퍼는 배너 padding 이 없어 좌측에 붙는다");
         assertTrue(h.contains("class=\"gcl-headcard\"") && h.contains("id=\"gclMeta\""), "헤더 카드 + 메타 영역");
         assertTrue(h.contains("<span class=\"gcl-meta-k\">서버</span>") && h.contains("<span class=\"gcl-meta-k\">분석</span>"), "메타는 키·값 알약");
+        assertTrue(h.contains(">was01</span>") && h.contains("id=\"gclServerEdit\""), "서버명이 있어도 편집 버튼은 남는다");
+        assertFalse(h.contains("gcl-meta-v empty"), "값이 있으면 empty 표시 없음");
         assertTrue(h.contains("연결된 힙 덤프"), "매칭 칩 라벨");
         assertTrue(h.contains(">1.5초</span>"), "소요 시간 초 단위 표기");
         assertTrue(h.contains("id=\"gclResult\"") && h.contains("id=\"gclHeapChart\"") && h.contains("id=\"gclEvTable\""), "결과 섹션");
+        assertTrue(h.contains("id=\"gclEvTypes\" role=\"group\"") && h.indexOf("id=\"gclEvTypes\"") < h.indexOf("id=\"gclEvTable\""),
+                "이벤트 유형 필터 버튼 영역(표 위, 그룹 역할)");
         int js = h.indexOf("<script type=\"application/json\" id=\"gcResult\">");
         int jsEnd = h.indexOf("</script>", js);
         String payload = h.substring(js, jsEnd);
@@ -238,6 +249,17 @@ class GcLogTemplateSmokeTest {
         assertTrue(idxHtml.contains("@{/gc-log/analyze/{fn}(fn=${item.filename},start=1)}"), "모듈 미로드 폴백 href 도 start=1");
         assertTrue(an.contains("SessionTimeout.managedInterval(tick, 1000)") && an.contains("SessionTimeout.registerActivityGuard"), "폴링은 함정 38 규약");
         assertTrue(an.contains("detach: true"), "이벤트 표는 table-grid detach 모드");
+        // 유형 필터(2026-09-15): 선택 상태 단일 출처 + aria-pressed, 다른 필터와 AND, 테이블 렌더 후 배선
+        assertTrue(an.contains("if (anyType && !_evTypeSel[tr.getAttribute('data-type')]) return false;"), "유형 필터가 applyFilter 술어에 들어간다");
+        assertTrue(an.contains("renderEventTypeFilter(events, applyFilter);"), "renderEvents 가 유형 버튼을 만든다");
+        // 명시적 GC·누수 실질성(2026-09-15): 경고색은 압박 Full·significant 기준(옛 결과 폴백), 명시적 Full 행에 호출 전체 회수량
+        assertTrue(an.contains("var fullRate = k.pressureFullGcPerHour != null ? k.pressureFullGcPerHour : k.fullGcPerHour;"), "Full GC 카드 경고색 기준");
+        assertTrue(an.contains("var trendWarn = t.significant != null ? t.significant === true : (t.slopeMbPerHour > 0 && t.r2 > 0.5);"), "힙 추세 카드 경고색 기준");
+        assertTrue(an.contains("esc(heap) + callHeapNote(e)") && an.contains("if (e.callHeapBefore == null || e.heapAfter == null) return '';"), "호출 전체 회수량 줄");
+        String heapJs = js("analyze.js");
+        assertTrue(heapJs.contains("var fullRate = k.pressureFullGcPerHour != null") && heapJs.contains("var trendWarn = t.significant != null"), "힙 analyze GC 패널도 같은 기준");
+        assertTrue(an.contains("b.setAttribute('aria-pressed'"), "선택 상태는 aria-pressed");
+        assertTrue(an.contains("esc(typeLabel(e.type))") && an.contains("esc(typeLabel(t))"), "표 배지와 버튼이 같은 라벨 함수");
         // 인스턴스 카드(2026-09-14): KPI 마지막 칸 · 수동 편집 POST · 연결 변경 응답(/match 계열)으로도 갱신
         assertTrue(an.contains("h += INSTANCE_CARD;") && an.contains("renderInstance(_instance);"), "renderKpi 가 인스턴스 카드를 붙이고 초기값을 그린다");
         assertTrue(an.contains("id=\"gclInstCard\"") && an.contains("onclick=\"startInstanceEdit()\"") && an.contains("aria-label=\"인스턴스명 편집\""), "카드 골격·편집 버튼 접근성 이름");
@@ -246,6 +268,14 @@ class GcLogTemplateSmokeTest {
         assertTrue(an.contains("if (v && v.instance) renderInstance(v.instance);"), "매칭 칩 갱신이 인스턴스 카드도 갱신한다");
         assertTrue(an.contains("window.startInstanceEdit = startInstanceEdit;"), "인라인 onclick 전역 노출");
         assertTrue(an.contains("if (ev.isComposing) return;"), "한글 조합 중 Enter 로 저장되지 않는다");
+        // 출처 서버명(2026-09-15): 저장 경로 + 응답(매칭 뷰)으로 칩·카드 동시 갱신 + 전역 노출
+        assertTrue(an.contains("Common.fetchJSON(api('/hostname'), { method: 'POST', body: JSON.stringify({ hostname: input.value }) })"), "서버명 저장 경로");
+        int srvAt = an.indexOf("function startServerEdit() {");
+        assertTrue(srvAt >= 0, "서버명 편집 함수");
+        String srvBody = an.substring(srvAt, an.indexOf("// ── 차트", srvAt));
+        assertTrue(srvBody.contains("if (!d || d.success !== true)") && srvBody.contains("renderMatchChip(d);"), "success 확인 후 매칭 칩(→인스턴스 카드) 갱신");
+        assertTrue(srvBody.contains("if (ev.isComposing) return;"), "서버명도 한글 조합 중 Enter 저장 금지");
+        assertTrue(an.contains("window.startServerEdit = startServerEdit;"), "서버명 편집 전역 노출");
         // AI 분석(2026-09-14): 버튼은 확인 모달만 연다 — 요청은 confirmAi → startAi 에서만 나간다. 분석 중에는 초 단위 경과 시간
         int runAiAt = an.indexOf("function runAi() {");
         String runAiBody = an.substring(runAiAt, an.indexOf("function closeAiConfirm()", runAiAt));

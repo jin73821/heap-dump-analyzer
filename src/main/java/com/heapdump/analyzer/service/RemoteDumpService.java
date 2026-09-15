@@ -670,7 +670,7 @@ public class RemoteDumpService {
      * 라인만 남겨 최대 maxLines 줄을 로깅용 한 줄로 묶는다. 남는 게 없으면 빈 문자열 → 호출자 로그 생략.
      * 비ASCII 블랭킷 삭제는 하지 않음 (decodeStderr 로 복원된 한글 '진짜' 에러 보존).
      */
-    private String stripBanners(String stderr, int maxLines) {
+    static String stripBanners(String stderr, int maxLines) {
         if (stderr == null || stderr.trim().isEmpty()) return "";
         List<String> kept = new ArrayList<>();
         for (String l : stderr.split("\n")) {
@@ -691,7 +691,7 @@ public class RemoteDumpService {
     }
 
     /** 트림된 한 줄이 SSH 배너/MOTD 장식·고지 라인인지 구조적으로 판정. */
-    private boolean isBannerLine(String t) {
+    static boolean isBannerLine(String t) {
         if (FRAME_ONLY.matcher(t).matches()) return true;      // 순수 프레임/구분선
         if (t.startsWith("|") || t.endsWith("|")) return true;  // 액자형 텍스트 라인
         if (RULE_RUN.matcher(t).find()) return true;            // ====== 류 룰 포함
@@ -1335,12 +1335,22 @@ public class RemoteDumpService {
         return wrapWithLocalUser(buildSshCommandString(server, remoteCommand));
     }
 
+    /**
+     * ssh·scp 공통 옵션 — 두 빌더의 단일 출처(종전엔 손으로 복사돼 있었다).
+     *
+     * <p>{@code LogLevel=ERROR} 는 원격 sshd 로그인 배너를 끈다(2026-09-15). OpenSSH 클라이언트는 배너를 LogLevel INFO 이상에서만
+     * stderr 로 내보내는데, 사내 서버 배너는 CP949 라 로컬 UTF-8 로케일의 ssh 가 유효하지 않은 바이트를 {@code \ooo} 8진 이스케이프로
+     * 바꿔 출력한다 — 결과가 ASCII+유효 UTF-8 이라 {@link #decodeStderr} 의 strict 디코딩을 통과해 깨진 채 로그·오류 문구에 남고,
+     * 오류 문구 앞자리를 차지해 scp 의 진짜 실패 원인을 밀어냈다. 인증·접속 실패는 ERROR/FATAL 이고 scp 원격 오류는 프로토콜
+     * 메시지라 그대로 보인다. ⚠ {@code -q}(LogLevel=QUIET)로 바꾸지 말 것 — FATAL 까지 숨겨 접속 실패 원인이 사라진다.
+     */
+    static final String SSH_COMMON_OPTS =
+            " -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes -o LogLevel=ERROR";
+
     /** SSH 원격 명령 문자열 조립 (wrapWithLocalUser 이전 단계). 원격 명령은 큰따옴표로 감싸 로컬 셸 해석 방지. */
-    private String buildSshCommandString(TargetServer server, String remoteCommand) {
+    static String buildSshCommandString(TargetServer server, String remoteCommand) {
         return "ssh"
-                + " -o StrictHostKeyChecking=no"
-                + " -o ConnectTimeout=10"
-                + " -o BatchMode=yes"
+                + SSH_COMMON_OPTS
                 + " -p " + server.getPort()
                 + " " + server.getSshUser() + "@" + server.getHost()
                 + " \"" + remoteCommand.replace("\"", "\\\"") + "\"";
@@ -1365,9 +1375,7 @@ public class RemoteDumpService {
     static String scpCommandString(TargetServer server, String remotePath, String localPath) {
         validateRemotePath(remotePath);
         return "scp"
-                + " -o StrictHostKeyChecking=no"
-                + " -o ConnectTimeout=10"
-                + " -o BatchMode=yes"
+                + SSH_COMMON_OPTS
                 + " -P " + server.getPort()
                 + " " + server.getSshUser() + "@" + server.getHost() + ":\"" + escapeForRemoteShell(remotePath) + "\""
                 + " '" + localPath.replace("'", "'\\''") + "'";
@@ -1451,7 +1459,7 @@ public class RemoteDumpService {
      * SSH/SCP stderr 에서 배너/MOTD 를 제거하고 핵심 에러만 추출 (에러 경로 전용).
      * 배너 판정은 stripBanners 와 동일한 구조적 필터(isBannerLine) 재사용 + 기존 prefix 패턴 보강.
      */
-    private String cleanSshError(String stderr) {
+    static String cleanSshError(String stderr) {
         if (stderr == null || stderr.trim().isEmpty()) return "";
         StringBuilder cleaned = new StringBuilder();
         for (String line : stderr.split("\n")) {
@@ -1462,22 +1470,27 @@ public class RemoteDumpService {
             cleaned.append(t).append(" ");
         }
         String result = cleaned.toString().trim();
-        // 너무 길면 잘라내기
-        if (result.length() > 300) result = result.substring(0, 300) + "...";
+        // 너무 길면 꼬리를 남긴다 — ssh/scp 의 최종 실패 사유는 마지막 줄이다. 앞을 자르면 배너·경고가 원인을 밀어낸다(2026-09-15)
+        if (result.length() > ERROR_MSG_MAX) result = "…" + result.substring(result.length() - ERROR_MSG_MAX);
         return result;
     }
+
+    /** {@link #cleanSshError} 결과 상한(자). 넘으면 앞을 잘라 꼬리를 남긴다. */
+    static final int ERROR_MSG_MAX = 300;
+
+    /** OpenSSH 가 0x80 이상 바이트를 바꾼 8진 이스케이프({@code \200}~{@code \377}). */
+    private static final java.util.regex.Pattern SSH_HIGH_OCTAL = java.util.regex.Pattern.compile("\\\\[23][0-7]{2}");
 
     /**
      * 프로세스 stderr raw 바이트를 문자열로 디코딩. UTF-8 strict 시도 후 실패하면
      * MS949(EUC-KR 상위호환)로 폴백 — 사내 서버의 EUC-KR 로그인 배너/에러 가독 처리.
+     * UTF-8 로 읽혔더라도 OpenSSH 8진 이스케이프가 섞여 있으면 {@link #unescapeSshOctal} 로 원문 복원을 시도한다.
      */
-    private static String decodeStderr(byte[] bytes) {
+    static String decodeStderr(byte[] bytes) {
         if (bytes == null || bytes.length == 0) return "";
         try {                                   // 1) UTF-8 strict
-            return StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(bytes)).toString();
+            String text = strict(StandardCharsets.UTF_8, bytes);
+            return SSH_HIGH_OCTAL.matcher(text).find() ? unescapeSshOctal(text) : text;
         } catch (CharacterCodingException e) {  // 2) EUC-KR/MS949 폴백
             try {
                 return new String(bytes, Charset.forName("MS949"));
@@ -1485,6 +1498,55 @@ public class RemoteDumpService {
                 return new String(bytes, StandardCharsets.UTF_8);
             }
         }
+    }
+
+    /**
+     * OpenSSH 클라이언트가 자기 출력(로그인 배너 등)에서 유효하지 않은 멀티바이트를 {@code \ooo} 로 바꾼 문자열을 원래 문장으로 되돌린다.
+     * ssh 는 우연히 UTF-8 로 읽히는 바이트 쌍은 그대로 통과시키므로({@code \300ΰ} = C0 CE B0 = CP949 "인가") 이스케이프는 바이트로,
+     * 나머지 문자는 UTF-8 바이트로 되돌려 바이트열을 재구성한 뒤 UTF-8 → MS949 순으로 <b>strict</b> 디코딩한다.
+     * 둘 다 실패하면 원문을 그대로 돌려준다 — 추측으로 고치지 않는다.
+     *
+     * <p><b>줄 단위</b>로 처리한다 — 같은 stderr 에 원격 명령이 보낸 정상 UTF-8 한글({@code find: …: 허가 거부})이 섞여 오는데,
+     * 통째로 MS949 로 읽으면 그 줄이 오히려 깨진다(MS949 는 UTF-8 한글 바이트도 대부분 '유효'하게 읽어 버린다).
+     */
+    static String unescapeSshOctal(String text) {
+        if (text == null || text.indexOf('\\') < 0) return text;
+        String[] lines = text.split("\n", -1);
+        StringBuilder sb = new StringBuilder(text.length());
+        for (int i = 0; i < lines.length; i++) {
+            if (i > 0) sb.append('\n');
+            sb.append(unescapeSshOctalLine(lines[i]));
+        }
+        return sb.toString();
+    }
+
+    private static String unescapeSshOctalLine(String line) {
+        java.util.regex.Matcher m = SSH_HIGH_OCTAL.matcher(line);
+        if (!m.find()) return line;
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(line.length());
+        int last = 0;
+        do {
+            out.writeBytes(line.substring(last, m.start()).getBytes(StandardCharsets.UTF_8));
+            out.write(Integer.parseInt(m.group().substring(1), 8));
+            last = m.end();
+        } while (m.find());
+        out.writeBytes(line.substring(last).getBytes(StandardCharsets.UTF_8));
+        byte[] raw = out.toByteArray();
+        for (Charset cs : new Charset[]{StandardCharsets.UTF_8, Charset.forName("MS949")}) {
+            try {
+                return strict(cs, raw);
+            } catch (CharacterCodingException e) {
+                logger.debug("[RemoteDump] ssh octal unescape not {}: {}", cs, e.getMessage());
+            }
+        }
+        return line;
+    }
+
+    private static String strict(Charset cs, byte[] bytes) throws CharacterCodingException {
+        return cs.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes)).toString();
     }
 
     /**

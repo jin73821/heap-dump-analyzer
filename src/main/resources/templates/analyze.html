@@ -631,9 +631,10 @@ function loadFullErrorLog() {
                 <span th:if="${middlewareVendor != null}" class="mw-badge-meta"
                       th:text="${middlewareCategory}">WAS</span>
             </div>
-            <!-- JEUS Instance 칩 (jeus.server.name 자동 식별 + 수동 편집) -->
+            <!-- Instance 칩 (jeus.server.name → weblogic.Name 자동 식별 + 수동 편집, WasInstanceName) -->
             <div class="host-chip jeus-chip" id="jeusChip-instance"
-                 title="JEUS Instance — System Properties(jeus.server.name) 자동 식별, 미식별 시 직접 입력 (연필 클릭)">
+                 title="Instance — System Properties(jeus.server.name / weblogic.Name) 자동 식별, 미식별 시 직접 입력 (연필 클릭)"
+                 th:title="${jeusInstanceAutoKey != null} ? ('Instance — System Properties(' + ${jeusInstanceAutoKey} + ') 자동 식별, 연필 클릭으로 직접 입력') : 'Instance — System Properties(jeus.server.name / weblogic.Name) 미식별, 직접 입력 (연필 클릭)'">
                 <span class="host-chip-icon">&#129513;</span>
                 <span class="host-chip-label">Instance</span>
                 <span class="host-chip-name" id="jeusInstanceName"
@@ -1693,7 +1694,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
      ⚠ float-tooltip.js([data-tooltip] 커서 추종형)와 한 페이지에 같이 싣지 말 것 — 동작은 하지만 디자인이 섞인다. -->
 <script src="/js/krds-tooltip.js?v=2026-08-09"></script>
 <script src="/js/table-grid.js?v=2026-09-13"></script>
-<script src="/js/analyze.js?v=2026-09-13"></script>
+<script src="/js/analyze.js?v=2026-09-15"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

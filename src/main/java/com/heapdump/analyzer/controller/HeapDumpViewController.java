@@ -21,6 +21,7 @@ import com.heapdump.analyzer.service.PdfReportService;
 import com.heapdump.analyzer.util.AuthUtil;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
+import com.heapdump.analyzer.util.WasInstanceName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
@@ -821,16 +822,18 @@ public class HeapDumpViewController {
         model.addAttribute("gcLog", gcLogMatchService != null ? gcLogMatchService.viewForDump(filename)
                 : java.util.Map.of("matched", java.util.List.of(), "candidates", java.util.List.of(), "count", 0, "candidateCount", 0, "hasMatch", false));
 
-        // JEUS Instance/Domain — System Properties(jeus.server.name/jeus.domain.name) 자동 식별 + 수동 편집.
+        // Instance/Domain — System Properties 자동 식별 + 수동 편집.
+        // Instance 는 jeus.server.name → weblogic.Name(WasInstanceName), Domain 은 jeus.domain.name.
         // 수동 편집값이 있으면 우선, 없으면 자동 식별값으로 폴백. 둘 다 없으면 빈 값(미지정, 편집 가능).
         java.util.Map<String, String> sysProps = result.getSystemProperties();
-        String jeusInstanceAuto = sysProps != null && sysProps.get("jeus.server.name") != null
-                ? sysProps.get("jeus.server.name").trim() : "";
+        WasInstanceName.Auto instanceAuto = WasInstanceName.resolve(sysProps);
+        String jeusInstanceAuto = instanceAuto.value();
         String jeusDomainAuto = sysProps != null && sysProps.get("jeus.domain.name") != null
                 ? sysProps.get("jeus.domain.name").trim() : "";
         String jeusInstanceManual = analyzerService.getAnalysisJeusInstance(filename);
         String jeusDomainManual = analyzerService.getAnalysisJeusDomain(filename);
         model.addAttribute("jeusInstanceAuto", jeusInstanceAuto);
+        model.addAttribute("jeusInstanceAutoKey", instanceAuto.key()); // 칩 툴팁의 출처 표기, 미식별이면 null
         model.addAttribute("jeusDomainAuto", jeusDomainAuto);
         model.addAttribute("jeusInstance", !jeusInstanceManual.isEmpty() ? jeusInstanceManual : jeusInstanceAuto);
         model.addAttribute("jeusDomain", !jeusDomainManual.isEmpty() ? jeusDomainManual : jeusDomainAuto);

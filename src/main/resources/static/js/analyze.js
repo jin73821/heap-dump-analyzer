@@ -5324,7 +5324,7 @@ function recollectJvm() {
 }
 
 // ── JEUS Instance/Domain 칩 인라인 편집 ───────────────────
-// jeus.server.name(Instance) / jeus.domain.name(Domain) 을 System Properties 에서 자동 식별.
+// Instance(jeus.server.name → weblogic.Name) / Domain(jeus.domain.name) 을 System Properties 에서 자동 식별(서버 WasInstanceName).
 // 미식별이거나 수동 업로드 덤프는 운영자가 직접 입력(analysis_history.jeus_instance/jeus_domain 영속화).
 // 수동값이 비면 자동 식별값(JEUS_*_AUTO)으로 폴백 표시.
 function startJeusEdit(field) {
@@ -5588,9 +5588,12 @@ function _renderGcLogPanel(view, s) {
     h += '<div class="gcl-panel-kpis">';
     h += card('처리량', k.throughputPct == null ? '–' : k.throughputPct.toFixed(2) + '%', 'GC 일시정지 합 ' + ms(ps.totalMs), k.throughputPct != null && k.throughputPct < 90 ? 'bad' : k.throughputPct != null && k.throughputPct < 95 ? 'warn' : '');
     h += card('일시정지 p99 · 최대', ms(ps.p99Ms) + ' · ' + ms(ps.maxMs), ps.count + '회', ps.maxMs > 5000 ? 'bad' : ps.maxMs > 1000 ? 'warn' : '');
-    h += card('Full GC', String(k.fullCount), k.fullGcPerHour != null ? '시간당 ' + k.fullGcPerHour.toFixed(2) + '회' : '', k.fullGcPerHour > 6 ? 'bad' : k.fullGcPerHour > 1 ? 'warn' : '');
+    var fullRate = k.pressureFullGcPerHour != null ? k.pressureFullGcPerHour : k.fullGcPerHour;   // 명시적 호출 제외 기준(2026-09-15)
+    h += card('Full GC', String(k.fullCount), k.fullGcPerHour != null ? '시간당 ' + k.fullGcPerHour.toFixed(2) + '회' + (k.explicitFullCount ? ' · 명시적 ' + k.explicitFullCount + '회' : '') : '', fullRate > 6 ? 'bad' : fullRate > 1 ? 'warn' : '');
     var basis = t.basis === 'full' ? 'Full GC' : t.basis === 'remark' ? 'Remark' : t.basis === 'mixed' ? 'Mixed' : '';
-    h += card((basis || '힙') + ' 직후 추세', t.slopeMbPerHour == null ? '–' : (t.slopeMbPerHour >= 0 ? '+' : '') + t.slopeMbPerHour.toFixed(1) + ' MB/h', t.r2 != null ? 'R² ' + t.r2.toFixed(2) + (t.excludedWarmup ? ' · 기동 직후 ' + t.excludedWarmup + '점 제외' : '') : (t.note ? '추세 계산 안 함' : ''), (t.slopeMbPerHour > 0 && t.r2 > 0.5) ? 'warn' : '');
+    var trendWarn = t.significant != null ? t.significant === true : (t.slopeMbPerHour > 0 && t.r2 > 0.5);
+    h += card((basis || '힙') + ' 직후 추세', t.slopeMbPerHour == null ? '–' : (t.slopeMbPerHour >= 0 ? '+' : '') + (Math.abs(t.slopeMbPerHour) < 1 ? t.slopeMbPerHour.toFixed(2) : t.slopeMbPerHour.toFixed(1)) + ' MB/h',
+        t.r2 != null ? (t.significant === false ? '누수 신호 아님 · R² ' + t.r2.toFixed(2) : 'R² ' + t.r2.toFixed(2) + (t.excludedWarmup ? ' · 기동 직후 ' + t.excludedWarmup + '점 제외' : '')) : (t.note ? '추세 계산 안 함' : ''), trendWarn ? 'warn' : '');
     h += card('최대 힙 · 마지막 GC 후', fb(k.maxHeapTotalBytes) + ' · ' + fb(k.lastHeapAfterBytes), k.maxHeapTotalBytes && k.lastHeapAfterBytes ? Math.round(100 * k.lastHeapAfterBytes / k.maxHeapTotalBytes) + '% 점유' : '');
     var posTxt = pos.offsetSec == null ? '시각 대조 불가' : (pos.inside ? '로그 시작 후 ' + dur(pos.offsetSec) : (pos.offsetSec < 0 ? '로그 시작 ' + dur(-pos.offsetSec) + ' 전' : '로그 끝 이후'));
     h += card('덤프 시점', posTxt, pos.offsetSec == null ? '절대 시각 없음' : (pos.inside ? '로그 범위 안' : '로그 범위 밖'), pos.offsetSec != null && !pos.inside ? 'warn' : '');

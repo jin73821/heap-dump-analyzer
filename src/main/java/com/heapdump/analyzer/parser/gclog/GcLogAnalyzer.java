@@ -40,6 +40,13 @@ public final class GcLogAnalyzer implements GcEventSink {
     static final double MIN_TREND_SPAN_SEC = 600.0;
     /** CMS 사이클 시작(Initial Mark) 시점 Old 점유율이 이 이상이면 직전 사이클이 회수하지 못한 것으로 본다(기본 트리거 ~92%). */
     static final double CMS_SATURATED_RATIO = 0.98;
+    /** Parallel 의 명시적 호출은 Young 수집 → Full GC 로 연달아 기록된다(ScavengeBeforeFullGC). 이 간격 안이면 같은 호출. */
+    static final double EXPLICIT_PAIR_SEC = 2.0;
+    static final int CALL_INTERVAL_CAP = 5000;
+    /** 누수 추세의 실질성 — 회귀 구간 증가량 하한(바이트)·최대 힙 대비 하한·최대 힙 90% 도달 예상 상한(일). */
+    static final long LEAK_MIN_GROWTH_BYTES = 32L << 20;
+    static final double LEAK_MIN_GROWTH_RATIO = 0.02;
+    static final double LEAK_MAX_DAYS_TO_FILL = 30.0;
 
     // ── 메타 ────────────────────────────────────────────────────
     private String collector, jdkVersion, decorations, jvmOptionsLine;
@@ -77,6 +84,14 @@ public final class GcLogAnalyzer implements GcEventSink {
     private Long metaFirst, metaLast, metaMaxTotal;
     private Integer maxHumongous;
     private int sysHigh, starvation, systemGc;
+
+    // ── 명시적 GC(System.gc() 등) ───────────────────────────────
+    private int explicitFull, pairedExplicit;
+    private double explicitFullTotalMs, explicitFullMaxMs;
+    private String pendingExplicitCause; private Double pendingExplicitX; private Long pendingExplicitBefore;
+    private Double firstSysGcX, lastSysGcX;
+    private final List<Double> sysGcIntervals = new ArrayList<>();
+    private Double trendGrowthBytes, trendDaysToFill;
 
     // ── CMS Old 포화 ────────────────────────────────────────────
     private int cmsMarks, cmsSaturated, cmsSaturatedRun, cmsMaxSaturatedRun;
@@ -127,7 +142,7 @@ public final class GcLogAnalyzer implements GcEventSink {
         byType.merge(ev.type, 1, Integer::sum);
         if (ev.cause != null && (byCause.size() < CAUSE_CAP || byCause.containsKey(ev.cause))) byCause.merge(ev.cause, 1, Integer::sum);
         for (GcFlag f : ev.flags) byFlag.merge(f, 1, Integer::sum);
-        if (ev.flags.contains(GcFlag.SYSTEM_GC)) systemGc++;
+        Long callHeapBefore = onExplicit(ev, x);
 
         if (ev.concurrent) { concurrentCount++; }
         else if (ev.isPause()) {
@@ -193,6 +208,7 @@ public final class GcLogAnalyzer implements GcEventSink {
         }
 
         EventRow row = toRow(ev);
+        row.setCallHeapBefore(callHeapBefore);
         boolean abnormal = false;
         for (GcFlag f : ev.flags) if (f.isAbnormal()) { abnormal = true; break; }
         if (ev.type == GcEventType.FULL || abnormal || ev.type == GcEventType.CMS_FINAL_REMARK) {
@@ -203,6 +219,52 @@ public final class GcLogAnalyzer implements GcEventSink {
             if (tail.size() >= TAIL_CAP) tail.pollFirst();
             tail.addLast(row);
         }
+    }
+
+    /**
+     * 명시적 GC 집계. Parallel 은 호출 1회를 {@code [GC (System.gc())]} Young 수집 + {@code [Full GC (System.gc())]} 로 남기므로
+     * 같은 원인의 Young 직후 {@link #EXPLICIT_PAIR_SEC} 이내 Full 은 같은 호출로 짝짓는다 — 짝지은 Full 에는 호출 전체의
+     * 시작 힙(Young 수집 전)을 돌려준다. 그 사이에 다른 일시정지가 끼면 짝을 끊는다(동시 사이클은 무관).
+     */
+    private Long onExplicit(GcEvent ev, Double x) {
+        boolean explicit = ev.flags.contains(GcFlag.SYSTEM_GC) || GcLogSupport.isExplicitCause(ev.cause);
+        if (!explicit) {
+            if (!ev.concurrent) { pendingExplicitCause = null; pendingExplicitX = null; pendingExplicitBefore = null; }
+            return null;
+        }
+        boolean sysGc = ev.flags.contains(GcFlag.SYSTEM_GC);
+        Long callBefore = null;
+        boolean paired = ev.type == GcEventType.FULL && pendingExplicitCause != null && pendingExplicitCause.equals(ev.cause)
+                && (x == null || pendingExplicitX == null || (x >= pendingExplicitX && x - pendingExplicitX <= EXPLICIT_PAIR_SEC));
+        if (paired) {
+            pairedExplicit++;
+            callBefore = pendingExplicitBefore;
+        } else if (sysGc) {
+            systemGc++;
+            if (x != null) {
+                if (firstSysGcX == null) firstSysGcX = x;
+                if (lastSysGcX != null && x > lastSysGcX) {
+                    if (sysGcIntervals.size() >= CALL_INTERVAL_CAP) {   // 절반 솎기 — 중앙값 근사용이라 순서만 유지하면 된다
+                        List<Double> thin = new ArrayList<>(sysGcIntervals.size() / 2 + 1);
+                        for (int i = 0; i < sysGcIntervals.size(); i += 2) thin.add(sysGcIntervals.get(i));
+                        sysGcIntervals.clear();
+                        sysGcIntervals.addAll(thin);
+                    }
+                    sysGcIntervals.add(x - lastSysGcX);
+                }
+                lastSysGcX = x;
+            }
+        }
+        if (ev.type == GcEventType.FULL) {
+            explicitFull++;
+            if (ev.pauseMs != null) { explicitFullTotalMs += ev.pauseMs; explicitFullMaxMs = Math.max(explicitFullMaxMs, ev.pauseMs); }
+        }
+        if (!ev.concurrent && ev.type != GcEventType.FULL) {
+            pendingExplicitCause = ev.cause; pendingExplicitX = x; pendingExplicitBefore = ev.heapBefore;
+        } else if (!ev.concurrent) {
+            pendingExplicitCause = null; pendingExplicitX = null; pendingExplicitBefore = null;
+        }
+        return callBefore;
     }
 
     /** uptime 이 없으면 절대 시각으로, 그것도 없으면 null. */
@@ -292,6 +354,7 @@ public final class GcLogAnalyzer implements GcEventSink {
         meta.setJdkVersion(jdkVersion);
         meta.setDecorations(decorations);
         meta.setRegionSizeBytes(regionSize);
+        if (heapMax == null) heapMax = heapMaxFromOptions(jvmOptionsLine);   // JDK 8 CommandLine flags 의 -XX:MaxHeapSize / -Xmx
         meta.setHeapMaxBytes(heapMax);
         if (permGen) {
             meta.setPermGen(Boolean.TRUE);
@@ -344,6 +407,9 @@ public final class GcLogAnalyzer implements GcEventSink {
         k.setSysTimeHighCount(sysHigh);
         k.setCpuStarvationCount(starvation);
         k.setSystemGcCount(systemGc);
+        k.setExplicitFullCount(explicitFull);
+        if (durationSec > 0) k.setPressureFullGcPerHour((k.getFullCount() - explicitFull) / (durationSec / 3600.0));
+        k.setSystemGcIntervalSec(regularInterval(sysGcIntervals));
 
         r.setPauseStats(all.stats());
         r.setYoungPauseStats(young.stats());
@@ -383,6 +449,7 @@ public final class GcLogAnalyzer implements GcEventSink {
             double[] reg = regression(fit);
             t.setSlopeMbPerHour(reg[0]);
             t.setR2(reg[1]);
+            judgeTrendSignificance(t, span, heapMax != null && heapMax > 0 ? heapMax : (maxHeapTotal == null ? 0 : maxHeapTotal));
         } else if (!basisList.isEmpty()) {
             if (fit.size() < 3 && t.getExcludedWarmup() > 0) {
                 t.setNote(String.format(Locale.ROOT, "기동 직후(%.0f분) 점 %d개를 빼고 나면 %d점뿐이라 추세를 계산하지 않았습니다.", WARMUP_SEC / 60, t.getExcludedWarmup(), fit.size()));
@@ -423,6 +490,83 @@ public final class GcLogAnalyzer implements GcEventSink {
         return r;
     }
 
+    /**
+     * 누수 추세의 실질성 판정(2026-09-15). 기울기가 양수·R²&gt;0.5 여도 증가가 미미하면 누수 신호가 아니다 — 71시간 동안 +2MB
+     * (0.03 MB/h, 2GB 힙 90% 도달까지 6년)가 "누수 의심" 으로 나온 실측 오탐. 증가량과 도달 예상을 <b>둘 다</b> 넘겨야 significant.
+     */
+    private void judgeTrendSignificance(GcLogResult.Trend t, double spanSec, long capBytes) {
+        double slope = t.getSlopeMbPerHour();
+        if (!(slope > 0) || t.getR2() == null || t.getR2() <= 0.5 || t.getPointsUsed() == null || t.getPointsUsed() < 3 || t.getLastAfterBytes() == null) {
+            t.setSignificant(false);
+            return;
+        }
+        double growthBytes = slope * (spanSec / 3600.0) * 1048576.0;
+        double minGrowth = Math.max(LEAK_MIN_GROWTH_BYTES, capBytes * LEAK_MIN_GROWTH_RATIO);
+        Double days = null;
+        if (capBytes > 0) {
+            double remainMb = (capBytes * 0.9 - t.getLastAfterBytes()) / 1048576.0;
+            days = Math.max(0, remainMb / slope) / 24.0;
+        }
+        trendGrowthBytes = growthBytes;
+        trendDaysToFill = days;
+        boolean sig = growthBytes >= minGrowth && (days == null || days <= LEAK_MAX_DAYS_TO_FILL);
+        t.setSignificant(sig);
+        if (!sig) {
+            StringBuilder sb = new StringBuilder("완만한 증가(회귀 구간 +").append(fmtBytes(growthBytes));
+            if (capBytes > 0) sb.append(String.format(Locale.ROOT, ", 최대 힙의 %.1f%%", 100.0 * growthBytes / capBytes));
+            if (days != null) sb.append(", 최대 힙 90% 도달까지 ").append(fmtDays(days));
+            sb.append(") — 누수 신호로 보지 않았습니다.");
+            t.setNote(sb.toString());
+        }
+    }
+
+    /** 간격이 규칙적이면(3개 이상·80% 가 중앙값 ±5% 이내·중앙값 1분 이상) 중앙값, 아니면 null. */
+    static Double regularInterval(List<Double> intervals) {
+        if (intervals.size() < 3) return null;
+        double[] a = intervals.stream().mapToDouble(Double::doubleValue).sorted().toArray();
+        double med = a[a.length / 2];
+        if (med < 60) return null;
+        int near = 0;
+        for (double v : a) if (Math.abs(v - med) <= med * 0.05) near++;
+        return near >= a.length * 0.8 ? round3(med) : null;
+    }
+
+    private static final java.util.regex.Pattern MAX_HEAP_FLAG = java.util.regex.Pattern.compile("(?:^|\\s)-XX:MaxHeapSize=(\\d+)(?=\\s|$)");
+    private static final java.util.regex.Pattern XMX_FLAG = java.util.regex.Pattern.compile("(?:^|\\s)-Xmx(\\d+[kKmMgGtT]?)(?=\\s|$)");
+
+    /** JVM 옵션 줄의 최대 힙 — 뒤에 나온 값이 이긴다(JVM 규칙). 없으면 null. */
+    static Long heapMaxFromOptions(String line) {
+        if (line == null) return null;
+        Long v = null;
+        java.util.regex.Matcher m = MAX_HEAP_FLAG.matcher(line);
+        while (m.find()) v = parseLong(m.group(1));
+        m = XMX_FLAG.matcher(line);
+        int lastXmx = -1; Long xmx = null;
+        while (m.find()) { lastXmx = m.start(); xmx = GcLogSupport.parseSizeToken(m.group(1).toUpperCase(Locale.ROOT)); }
+        if (xmx != null) {
+            java.util.regex.Matcher mh = MAX_HEAP_FLAG.matcher(line);
+            int lastMh = -1; while (mh.find()) lastMh = mh.start();
+            if (v == null || lastXmx > lastMh) v = xmx;
+        }
+        return v != null && v > 0 ? v : null;
+    }
+
+    static String fmtDays(double days) {
+        if (days < 1) return String.format(Locale.ROOT, "약 %.0f시간", days * 24);
+        if (days < 365) return String.format(Locale.ROOT, "약 %.0f일", days);
+        return String.format(Locale.ROOT, "약 %.1f년", days / 365);
+    }
+
+    static String fmtInterval(double sec) {
+        if (sec < 120) return String.format(Locale.ROOT, "%.0f초", sec);
+        if (sec < 7200) return String.format(Locale.ROOT, "%.0f분", sec / 60);
+        return String.format(Locale.ROOT, "%.1f시간", sec / 3600);
+    }
+
+    static String fmtSlope(double mbPerHour) {
+        return Math.abs(mbPerHour) < 1 ? String.format(Locale.ROOT, "%+.2f", mbPerHour) : String.format(Locale.ROOT, "%+.1f", mbPerHour);
+    }
+
     // ── 소견 규칙 ───────────────────────────────────────────────
 
     private List<Finding> buildFindings(GcLogResult r, boolean limitHit) {
@@ -432,30 +576,41 @@ public final class GcLogAnalyzer implements GcEventSink {
         double durSec = r.getMeta().getDurationSec() == null ? 0 : r.getMeta().getDurationSec();
         long maxTotal = k.getMaxHeapTotalBytes() == null ? 0 : k.getMaxHeapTotalBytes();
 
-        // Full GC 빈도
-        if (k.getFullCount() >= 2 && k.getFullGcPerHour() != null) {
-            double ph = k.getFullGcPerHour();
+        // Full GC 빈도 — 명시적 호출(System.gc()·힙 덤프 등)은 Old 가 찼다는 신호가 아니라 뺀다(2026-09-15 실측: 1시간 주기
+        // RMI System.gc() 72회가 "Old 영역이 반복해서 차고 있습니다" High 로 나왔다. Old 점유 5%)
+        int pressureFull = k.getFullCount() - explicitFull;
+        if (pressureFull >= 2 && k.getPressureFullGcPerHour() != null) {
+            double ph = k.getPressureFullGcPerHour();
             String sev = ph > 6 ? "Critical" : ph > 1 ? "High" : (durSec >= 600 && ph > 0.25) ? "Medium" : null;
-            if (sev == null && durSec < 600 && k.getFullCount() >= 3) sev = "Medium";
+            if (sev == null && durSec < 600 && pressureFull >= 3) sev = "Medium";
             if (sev != null) {
                 out.add(f("FULL_GC_FREQUENT", sev, "Full GC 가 잦습니다",
-                        String.format(Locale.ROOT, "로그 구간 %s 동안 Full GC %d회 (시간당 %.1f회, 연속 최대 %d회).", fmtDur(durSec), k.getFullCount(), ph, k.getMaxConsecutiveFull()),
+                        String.format(Locale.ROOT, "로그 구간 %s 동안 Full GC %d회 (시간당 %.1f회, 연속 최대 %d회).", fmtDur(durSec), pressureFull, ph, k.getMaxConsecutiveFull())
+                                + (explicitFull > 0 ? String.format(Locale.ROOT, " 명시적 호출(System.gc() 등) Full %d회는 제외한 수치입니다(전체 %d회).", explicitFull, k.getFullCount()) : ""),
                         "Old 영역이 반복해서 차고 있습니다. Full GC 직후 힙 추세(누수 신호)를 먼저 확인하고, 추세가 평평하면 -Xmx 확대·Young 비율 조정·Humongous/승격 원인을 점검하세요.",
-                        Map.of("fullCount", k.getFullCount(), "perHour", round3(ph), "maxConsecutive", k.getMaxConsecutiveFull())));
+                        Map.of("fullCount", pressureFull, "perHour", round3(ph), "maxConsecutive", k.getMaxConsecutiveFull(), "explicitFullCount", explicitFull)));
             }
         }
         // 누수 추세
-        if (t.getSlopeMbPerHour() != null && t.getR2() != null && t.getSlopeMbPerHour() > 0 && t.getR2() > 0.5
-                && t.getPointsUsed() != null && t.getPointsUsed() >= 3 && t.getLastAfterBytes() != null) {
-            double ratio = maxTotal > 0 ? t.getLastAfterBytes() / maxTotal : 0;
+        if (Boolean.TRUE.equals(t.getSignificant())) {
+            long cap = r.getMeta().getHeapMaxBytes() != null && r.getMeta().getHeapMaxBytes() > 0 ? r.getMeta().getHeapMaxBytes() : maxTotal;
+            double ratio = cap > 0 ? t.getLastAfterBytes() / cap : 0;
             String sev = ratio >= 0.85 ? "Critical" : ratio >= 0.6 ? "High" : "Medium";
             String basisLabel = "full".equals(t.getBasis()) ? "Full GC" : "remark".equals(t.getBasis()) ? "Remark" : "Mixed GC";
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("slopeMbPerHour", round3(t.getSlopeMbPerHour()));
+            ev.put("r2", round3(t.getR2()));
+            ev.put("lastAfterBytes", t.getLastAfterBytes().longValue());
+            ev.put("basis", t.getBasis());
+            if (trendGrowthBytes != null) ev.put("growthBytes", Math.round(trendGrowthBytes));
+            if (trendDaysToFill != null) ev.put("daysToFill", round3(trendDaysToFill));
             out.add(f("LEAK_TREND", sev, basisLabel + " 직후 힙 사용량이 계속 증가합니다 (메모리 누수 의심)",
-                    String.format(Locale.ROOT, "%s 직후 살아남는 객체가 %s → %s 로 늘었고 회귀 기울기 +%.1f MB/h (R²=%.2f, %d점). 최대 힙 대비 %.0f%%.",
-                            basisLabel, fmtBytes(t.getFirstAfterBytes()), fmtBytes(t.getLastAfterBytes()), t.getSlopeMbPerHour(), t.getR2(), t.getPointsUsed(), ratio * 100)
+                    String.format(Locale.ROOT, "%s 직후 살아남는 객체가 %s → %s 로 늘었고 회귀 기울기 %s MB/h (R²=%.2f, %d점). 최대 힙 대비 %.0f%%.",
+                            basisLabel, fmtBytes(t.getFirstAfterBytes()), fmtBytes(t.getLastAfterBytes()), fmtSlope(t.getSlopeMbPerHour()), t.getR2(), t.getPointsUsed(), ratio * 100)
+                            + (trendDaysToFill != null ? " 이 속도면 최대 힙 90% 도달까지 " + fmtDays(trendDaysToFill) + "." : "")
                             + (t.getExcludedWarmup() > 0 ? String.format(Locale.ROOT, " 기동 직후 %d점은 제외.", t.getExcludedWarmup()) : ""),
                     "GC 로 회수되지 않는 객체가 누적되는 전형적 패턴입니다. 연결된 힙 덤프의 Leak Suspects·Dominator Tree 로 누적 주체를 확인하세요.",
-                    Map.of("slopeMbPerHour", round3(t.getSlopeMbPerHour()), "r2", round3(t.getR2()), "lastAfterBytes", t.getLastAfterBytes().longValue(), "basis", t.getBasis())));
+                    ev));
         }
         // 힙 만수
         if (maxTotal > 0 && k.getLastHeapAfterBytes() != null) {
@@ -541,10 +696,7 @@ public final class GcLogAnalyzer implements GcEventSink {
                 String.format(Locale.ROOT, "Metadata GC Threshold 원인 GC %d회. Metaspace %s → %s (예약 최대 %s).", meta, fmtBytes(metaFirst), fmtBytes(metaLast), fmtBytes(metaMaxTotal)),
                 "클래스 로딩이 계속 늘고 있습니다(동적 프록시·스크립트·클래스로더 누수 의심). -XX:MetaspaceSize 를 올려 초기 GC 를 줄이고 클래스 누수를 점검하세요.",
                 Map.of("count", meta)));
-        if (systemGc > 0) out.add(f("SYSTEM_GC", systemGc >= 10 ? "Medium" : "Low", "System.gc() 호출로 인한 GC",
-                String.format(Locale.ROOT, "%d회. 애플리케이션 또는 RMI/NIO 가 명시적으로 Full GC 를 유발했습니다.", systemGc),
-                "불필요하면 -XX:+DisableExplicitGC (또는 G1/CMS 는 -XX:+ExplicitGCInvokesConcurrent) 를 검토하세요.",
-                Map.of("count", systemGc)));
+        if (systemGc > 0) out.add(systemGcFinding(k, durSec));
         if (k.getAllocationRateMbPerSec() != null && k.getAllocationRateMbPerSec() > 500) {
             double ar = k.getAllocationRateMbPerSec();
             out.add(f("ALLOC_RATE_HIGH", ar > 1500 ? "High" : "Medium", "객체 할당률이 높습니다",
@@ -574,6 +726,65 @@ public final class GcLogAnalyzer implements GcEventSink {
 
         out.sort((a, b) -> Integer.compare(sevRank(b.getSeverity()), sevRank(a.getSeverity())));
         return out;
+    }
+
+    /**
+     * System.gc() 소견(2026-09-15 재작성) — 호출 단위 횟수 · 규칙적 주기와 원인 추정(1시간 = RMI 분산 GC) · 기동 직후 첫 호출 ·
+     * 영향 기준 심각도(명시적 Full 최장 ≥1초 또는 시간당 6회 초과면 Medium) · 수집기에 맞는 권고.
+     */
+    private Finding systemGcFinding(GcLogResult.Kpi k, double durSec) {
+        Double interval = k.getSystemGcIntervalSec();
+        boolean rmiLike = interval != null && interval >= 3300 && interval <= 3900;
+        double perHour = durSec > 0 ? systemGc / (durSec / 3600.0) : 0;
+        String sev = (explicitFullMaxMs >= 1000 || perHour > 6) ? "Medium" : "Low";
+        String col = collector == null ? "" : collector;
+        boolean stwCollector = col.equals("Parallel") || col.equals("Serial");
+
+        StringBuilder d = new StringBuilder(String.format(Locale.ROOT, "System.gc() 호출 %d회", systemGc));
+        if (durSec > 0) d.append(String.format(Locale.ROOT, "(시간당 %.2f회)", perHour));
+        if (explicitFull > 0) {
+            d.append(String.format(Locale.ROOT, " — 명시적 Full GC %d회, 1회 평균 %.0fms · 최장 %.0fms", explicitFull, explicitFullTotalMs / explicitFull, explicitFullMaxMs));
+        }
+        d.append('.');
+        if (pairedExplicit > 0) {
+            d.append(String.format(Locale.ROOT, " %s 수집기는 호출마다 Young 수집 → Full GC 두 단계를 기록하므로 이벤트로는 %d건입니다(짝지어 한 번으로 셌습니다).",
+                    col.isEmpty() ? "이" : col, systemGc + pairedExplicit));
+        }
+        if (interval != null) {
+            d.append(" 호출이 약 ").append(fmtInterval(interval)).append(" 간격으로 규칙적입니다 — 부하와 무관한 타이머성 호출(JVM 내부 데몬 또는 스케줄러)로 보입니다.");
+        }
+        if (rmiLike) {
+            d.append(" 1시간 주기는 RMI 분산 GC(sun.rmi.dgc.client.gcInterval / sun.rmi.dgc.server.gcInterval, 기본 3600000ms)의 전형입니다.");
+        }
+        if (firstSysGcX != null && xIsUptime && firstSysGcX < WARMUP_SEC) {
+            d.append(" 첫 호출은 기동 ").append(firstSysGcX < 60 ? String.format(Locale.ROOT, "%.1f초", firstSysGcX) : fmtDur(firstSysGcX))
+                    .append(" 시점으로, WAS·프레임워크 기동 코드의 명시적 호출로 보입니다.");
+        }
+        if (explicitFull > 0) {
+            d.append(" 명시적 Full GC 는 메모리 압박 신호가 아니므로 Full GC 빈도 판정에서 제외했습니다.");
+        }
+
+        StringBuilder a = new StringBuilder();
+        if ("Low".equals(sev)) a.append("1회 일시정지가 짧아 서비스 영향은 작습니다 — 조치가 꼭 필요하지는 않습니다. ");
+        if (rmiLike) {
+            a.append("주기를 늘리려면 -Dsun.rmi.dgc.client.gcInterval=86400000 -Dsun.rmi.dgc.server.gcInterval=86400000(24시간) 처럼 지정하세요. ");
+        }
+        if (stwCollector) {
+            a.append("-XX:+ExplicitGCInvokesConcurrent 는 ").append(col).append(" 수집기에서는 효과가 없습니다(G1·CMS 전용). ");
+        } else if (col.equals("G1") || col.equals("CMS")) {
+            a.append("-XX:+ExplicitGCInvokesConcurrent 로 명시적 호출을 동시 사이클로 바꾸면 STW Full GC 를 피할 수 있습니다. ");
+        }
+        a.append("-XX:+DisableExplicitGC 는 NIO Direct 버퍼 회수가 System.gc() 에 기대는 경우 Direct 메모리 OutOfMemoryError 를 부를 수 있어 신중히 쓰세요.");
+
+        String title = String.format(Locale.ROOT, "System.gc() 명시적 호출 %d회", systemGc) + (interval != null ? " (약 " + fmtInterval(interval) + " 간격)" : "");
+        Map<String, Object> ev = new LinkedHashMap<>();
+        ev.put("count", systemGc);
+        ev.put("explicitFullCount", explicitFull);
+        ev.put("pairedEvents", pairedExplicit);
+        if (explicitFull > 0) ev.put("explicitFullMaxMs", round3(explicitFullMaxMs));
+        if (interval != null) ev.put("intervalSec", interval);
+        ev.put("rmiLike", rmiLike);
+        return f("SYSTEM_GC", sev, title, d.toString(), a.toString().trim(), ev);
     }
 
     private int droppedNote;

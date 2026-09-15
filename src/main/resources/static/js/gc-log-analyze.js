@@ -25,6 +25,7 @@
         function p(n) { return (n < 10 ? '0' : '') + n; }
         return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
     }
+    function fmtSlope(v) { return (v >= 0 ? '+' : '') + (Math.abs(v) < 1 ? v.toFixed(2) : v.toFixed(1)); }
     function pct(v, digits) { return v == null ? '–' : v.toFixed(digits == null ? 1 : digits) + '%'; }
 
     function toast(msg, type) {
@@ -170,15 +171,22 @@
         var tpCls = k.throughputPct == null ? '' : k.throughputPct < 90 ? 'bad' : k.throughputPct < 95 ? 'warn' : '';
         h += kpiCard('처리량', pct(k.throughputPct, 2), 'GC 일시정지 합 ' + fmtMs(ps.totalMs) + ' / ' + ps.count + '회', tpCls);
         h += kpiCard('일시정지 p99 · 최대', fmtMs(ps.p99Ms) + ' · ' + fmtMs(ps.maxMs), 'p50 ' + fmtMs(ps.p50Ms) + ' · p95 ' + fmtMs(ps.p95Ms) + (ps.approximate ? ' (근사)' : ''), ps.maxMs > 5000 ? 'bad' : ps.maxMs > 1000 ? 'warn' : '');
-        h += kpiCard('Full GC', String(k.fullCount), k.fullGcPerHour != null ? '시간당 ' + k.fullGcPerHour.toFixed(2) + '회 · 연속 최대 ' + k.maxConsecutiveFull : '', k.fullGcPerHour > 6 ? 'bad' : k.fullGcPerHour > 1 ? 'warn' : '');
+        // 경고색은 명시적 호출(System.gc() 등)을 뺀 압박 Full 빈도 기준 — 필드가 없는 옛 결과는 전체 빈도(2026-09-15)
+        var fullRate = k.pressureFullGcPerHour != null ? k.pressureFullGcPerHour : k.fullGcPerHour;
+        h += kpiCard('Full GC', String(k.fullCount), k.fullGcPerHour != null ? '시간당 ' + k.fullGcPerHour.toFixed(2) + '회' + (k.explicitFullCount ? ' · 명시적 ' + k.explicitFullCount + '회' : '') + ' · 연속 최대 ' + k.maxConsecutiveFull : '', fullRate > 6 ? 'bad' : fullRate > 1 ? 'warn' : '');
         h += kpiCard('이벤트', String(k.eventCount), 'Young ' + k.youngCount + ' · Mixed ' + k.mixedCount + ' · Concurrent ' + k.concurrentCount);
         h += kpiCard('최대 힙 용량', fmtBytes(k.maxHeapTotalBytes), '마지막 GC 후 ' + fmtBytes(k.lastHeapAfterBytes) + (k.maxHeapTotalBytes && k.lastHeapAfterBytes ? ' (' + Math.round(100 * k.lastHeapAfterBytes / k.maxHeapTotalBytes) + '%)' : ''));
         h += kpiCard('할당률', k.allocationRateMbPerSec == null ? '–' : k.allocationRateMbPerSec.toFixed(1) + ' MB/s', k.promotionRateMbPerSec != null ? '승격 ' + k.promotionRateMbPerSec.toFixed(3) + ' MB/s' : '');
         var basisLabel = t.basis === 'full' ? 'Full GC' : t.basis === 'remark' ? 'Remark' : t.basis === 'mixed' ? 'Mixed' : '';
-        h += kpiCard(basisLabel ? basisLabel + ' 직후 힙 추세' : '힙 추세', t.slopeMbPerHour == null ? '–' : (t.slopeMbPerHour >= 0 ? '+' : '') + t.slopeMbPerHour.toFixed(1) + ' MB/h',
-            t.r2 != null ? 'R² ' + t.r2.toFixed(2) + ' · ' + (t.pointsUsed != null ? t.pointsUsed : t.afterPoints.length) + '점 · ' + fmtBytes(t.firstAfterBytes) + ' → ' + fmtBytes(t.lastAfterBytes)
-                + (t.excludedWarmup ? ' · 기동 직후 ' + t.excludedWarmup + '점 제외' : '') : (t.note || '점이 부족함'),
-            (t.slopeMbPerHour > 0 && t.r2 > 0.5) ? 'warn' : '');
+        // significant(실질 증가량·도달 예상 게이트)가 false 면 note 가 이유를 말한다 — 없는 옛 결과는 종전 규칙(2026-09-15)
+        var trendWarn = t.significant != null ? t.significant === true : (t.slopeMbPerHour > 0 && t.r2 > 0.5);
+        h += kpiCard(basisLabel ? basisLabel + ' 직후 힙 추세' : '힙 추세', t.slopeMbPerHour == null ? '–' : fmtSlope(t.slopeMbPerHour) + ' MB/h',
+            t.r2 != null
+                ? (t.significant === false && t.note ? t.note
+                    : 'R² ' + t.r2.toFixed(2) + ' · ' + (t.pointsUsed != null ? t.pointsUsed : t.afterPoints.length) + '점 · ' + fmtBytes(t.firstAfterBytes) + ' → ' + fmtBytes(t.lastAfterBytes)
+                        + (t.excludedWarmup ? ' · 기동 직후 ' + t.excludedWarmup + '점 제외' : ''))
+                : (t.note || '점이 부족함'),
+            trendWarn ? 'warn' : '');
         if (k.metaspaceLastBytes != null) h += kpiCard(m.permGen ? 'PermGen' : 'Metaspace', fmtBytes(k.metaspaceLastBytes), '시작 ' + fmtBytes(k.metaspaceFirstBytes) + (k.metaspaceMaxTotalBytes ? ' · 예약 ' + fmtBytes(k.metaspaceMaxTotalBytes) : ''));
         if (k.maxOverheadPct10m != null) h += kpiCard('10분 창 최대 GC 비중', pct(k.maxOverheadPct10m, 1), 'uptime ' + fmtDur(k.maxOverheadWindowStartSec) + ' 부근', k.maxOverheadPct10m >= 50 ? 'bad' : k.maxOverheadPct10m >= 25 ? 'warn' : '');
         h += INSTANCE_CARD;
@@ -261,6 +269,76 @@
                 .catch(function (e) {
                     save.disabled = false; cancel.disabled = false;
                     toast('인스턴스명 저장 실패: ' + errMsg(e, ''), 'danger');
+                });
+        };
+        input.addEventListener('keydown', function (ev) {
+            if (ev.isComposing) return;   // 한글 조합 중 Enter 는 확정용
+            if (ev.key === 'Enter') { ev.preventDefault(); save.onclick(); }
+            else if (ev.key === 'Escape') { ev.preventDefault(); close(); }
+        });
+        val.style.display = 'none';
+        if (btn) btn.style.display = 'none';
+        val.insertAdjacentElement('afterend', form);
+        input.focus();
+        input.select();
+    }
+
+    // ── 출처 서버명 ──────────────────────────────────────────
+    // 헤더 메타의 '서버' 알약. 업로드 때 비워 둔 로그도 여기서 채운다(2026-09-15 — 종전엔 알약 자체가 없어 입력할 곳이 없었다).
+    // 서버명은 자동 매칭의 '같은 서버' 신호라 저장 응답(matchView)으로 매칭 칩·인스턴스 카드도 함께 다시 그린다.
+    function renderServerName(name) {
+        var val = document.getElementById('gclServerValue');
+        if (!val) return;
+        val.textContent = name || '미지정';
+        val.title = name || '';
+        val.classList.toggle('empty', !name);
+    }
+
+    function startServerEdit() {
+        var item = document.getElementById('gclServerItem');
+        var val = document.getElementById('gclServerValue');
+        var btn = document.getElementById('gclServerEdit');
+        if (!item || !val || item.querySelector('.gcl-meta-form')) return;
+        var form = document.createElement('span');
+        form.className = 'gcl-meta-form';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'gcl-meta-input';
+        input.maxLength = 100;
+        input.value = val.classList.contains('empty') ? '' : val.textContent.trim();
+        input.placeholder = '서버명 (비우면 미지정)';
+        input.setAttribute('aria-label', '출처 서버명');
+        var save = document.createElement('button');
+        save.type = 'button'; save.className = 'gcl-inst-save'; save.textContent = '저장';
+        var cancel = document.createElement('button');
+        cancel.type = 'button'; cancel.className = 'gcl-inst-cancel'; cancel.textContent = '취소';
+        form.appendChild(input); form.appendChild(save); form.appendChild(cancel);
+
+        function close() {
+            if (form.parentNode) form.parentNode.removeChild(form);
+            val.style.display = '';
+            if (btn) { btn.style.display = ''; btn.focus(); }
+        }
+        cancel.onclick = close;
+        save.onclick = function () {
+            if (save.disabled) return;
+            save.disabled = true; cancel.disabled = true;
+            var before = _matchView && _matchView.matched ? _matchView.matched.dumpFilename : null;
+            Common.fetchJSON(api('/hostname'), { method: 'POST', body: JSON.stringify({ hostname: input.value }) })
+                .then(function (d) {
+                    if (!d || d.success !== true) throw new Error((d && d.error) || '저장 응답이 올바르지 않습니다.');
+                    renderServerName(d.hostname);
+                    close();
+                    renderMatchChip(d);
+                    var after = d.matched ? d.matched.dumpFilename : null;
+                    var msg = d.hostname ? '서버명을 저장했습니다.' : '서버명을 지웠습니다.';
+                    if (after && after !== before) msg += ' 자동 매칭: ' + after;
+                    else if (!after && before) msg += ' 힙 덤프 자동 연결이 풀렸습니다.';
+                    toast(msg, 'success');
+                })
+                .catch(function (e) {
+                    save.disabled = false; cancel.disabled = false;
+                    toast('서버명 저장 실패: ' + errMsg(e, ''), 'danger');
                 });
         };
         input.addEventListener('keydown', function (ev) {
@@ -372,10 +450,10 @@
             var cpu = e.userSec != null ? e.userSec.toFixed(2) + ' / ' + e.sysSec.toFixed(2) + ' / ' + e.realSec.toFixed(2) : '–';
             tr.innerHTML = '<td class="num">' + e.seq + '</td><td class="num">' + e.line + '</td><td>' + esc(fmtTs(e.tsEpochMs)) + '</td>'
                 + '<td class="num">' + (e.uptimeSec == null ? '–' : xTick(e.uptimeSec)) + '</td>'
-                + '<td><span class="gcl-type t-' + esc(e.type) + '">' + esc(e.type === 'CONCURRENT_CYCLE' ? 'CONC' : e.type) + '</span></td>'
+                + '<td><span class="gcl-type t-' + esc(e.type) + '">' + esc(typeLabel(e.type)) + '</span></td>'
                 + '<td title="' + esc(e.cause || '') + '">' + esc(e.cause || '') + '</td>'
                 + '<td class="num">' + (e.pauseMs == null ? '–' : (e.concurrent ? '(' + fmtMs(e.pauseMs) + ')' : fmtMs(e.pauseMs))) + '</td>'
-                + '<td>' + esc(heap) + '</td><td class="num">' + esc(cpu) + '</td>'
+                + '<td>' + esc(heap) + callHeapNote(e) + '</td><td class="num">' + esc(cpu) + '</td>'
                 + '<td>' + (e.flags || []).map(function (f) { return '<span class="gcl-flag">' + esc(f) + '</span>'; }).join('') + '</td>';
             return tr;
         });
@@ -384,7 +462,9 @@
         function applyFilter() {
             var q = (search.value || '').trim().toLowerCase();
             var only = onlyFlag.checked;
+            var anyType = Object.keys(_evTypeSel).length > 0;
             _evGrid.setFiltered(_evGrid.allRows.filter(function (tr) {
+                if (anyType && !_evTypeSel[tr.getAttribute('data-type')]) return false;
                 if (only && tr.getAttribute('data-flag') !== '1') return false;
                 if (q && tr.getAttribute('data-search').indexOf(q) === -1) return false;
                 return true;
@@ -401,7 +481,72 @@
         var deb = null;
         search.addEventListener('input', function () { clearTimeout(deb); deb = setTimeout(applyFilter, 150); });
         onlyFlag.addEventListener('change', applyFilter);
+        renderEventTypeFilter(events, applyFilter);
         applyFilter();
+    }
+
+    // 명시적 호출(System.gc() 등)의 Full 단계 행 — 같은 호출의 Young 수집까지 합친 전체 회수량을 한 줄 더 보인다(2026-09-15).
+    // Full 단계만 보면 '26.0 MB → 25.8 MB' 처럼 해제가 미미해 보이지만 그건 Young 에서 살아남은 객체를 Old 로 옮겨 압축하는 단계라서다.
+    function callHeapNote(e) {
+        if (e.callHeapBefore == null || e.heapAfter == null) return '';
+        var tip = '같은 System.gc() 호출이 Young 수집 → Full GC 두 단계로 기록됐습니다. Full 단계의 변화가 작은 것은 Young 에서 살아남은 객체를 Old 로 옮겨 압축하기 때문이며, 호출 전체로는 이만큼 회수했습니다.';
+        return '<div class="gcl-ev-call" title="' + esc(tip) + '">호출 전체 ' + esc(fmtBytes(e.callHeapBefore)) + ' → ' + esc(fmtBytes(e.heapAfter)) + ' (Young 수집 포함)</div>';
+    }
+
+    // ── 이벤트 유형 필터 ─────────────────────────────────────
+    // 로그에 실제로 나온 유형만 버튼으로(건수 = 적재된 이벤트 기준). 여러 개를 켤 수 있고 아무것도 안 켜면 전체.
+    // 선택 상태의 단일 출처는 _evTypeSel 이고 버튼은 aria-pressed 로만 그린다 — 클래스와 속성이 따로 놀지 않게.
+    var TYPE_ORDER = ['YOUNG', 'MIXED', 'FULL', 'REMARK', 'CLEANUP', 'CMS_INITIAL_MARK', 'CMS_FINAL_REMARK', 'CONCURRENT_CYCLE', 'OTHER'];
+    var _evTypeSel = {};
+    function typeLabel(t) { return t === 'CONCURRENT_CYCLE' ? 'CONC' : t; }
+
+    function renderEventTypeFilter(events, onChange) {
+        var box = document.getElementById('gclEvTypes');
+        if (!box) return;
+        var counts = {};
+        events.forEach(function (e) { counts[e.type] = (counts[e.type] || 0) + 1; });
+        var types = Object.keys(counts).sort(function (a, b) {
+            var ia = TYPE_ORDER.indexOf(a), ib = TYPE_ORDER.indexOf(b);
+            return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || (a < b ? -1 : a > b ? 1 : 0);
+        });
+        box.innerHTML = '';
+        _evTypeSel = {};
+        if (types.length < 2) { box.hidden = true; return; }   // 유형이 하나뿐이면 거를 것이 없다
+        var all = document.createElement('button');
+        all.type = 'button';
+        all.className = 'gcl-ev-type-btn gcl-ev-type-all';
+        all.setAttribute('data-type', '');
+        all.innerHTML = '전체 <span class="cnt">' + events.length + '</span>';
+        box.appendChild(all);
+        types.forEach(function (t) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'gcl-ev-type-btn';
+            b.setAttribute('data-type', t);
+            b.title = t + ' ' + counts[t] + '건 — 눌러서 켜고 끄기(여러 개 선택 가능)';
+            b.innerHTML = '<span class="gcl-type t-' + esc(t) + '">' + esc(typeLabel(t)) + '</span><span class="cnt">' + counts[t] + '</span>';
+            box.appendChild(b);
+        });
+        function sync() {
+            var any = Object.keys(_evTypeSel).length > 0;
+            box.querySelectorAll('.gcl-ev-type-btn').forEach(function (b) {
+                var t = b.getAttribute('data-type');
+                b.setAttribute('aria-pressed', String(t ? !!_evTypeSel[t] : !any));
+            });
+        }
+        box.onclick = function (ev) {
+            var b = ev.target.closest('.gcl-ev-type-btn');
+            if (!b) return;
+            var t = b.getAttribute('data-type');
+            if (!t) _evTypeSel = {};
+            else if (_evTypeSel[t]) delete _evTypeSel[t];
+            else _evTypeSel[t] = true;
+            if (Object.keys(_evTypeSel).length === types.length) _evTypeSel = {};   // 전부 켠 것 = 전체
+            sync();
+            onChange();
+        };
+        sync();
+        box.hidden = false;
     }
 
     // ── 원문 ─────────────────────────────────────────────────
@@ -738,6 +883,7 @@
     window.deleteAi = deleteAi;
     window.deleteThis = deleteThis;
     window.startInstanceEdit = startInstanceEdit;
+    window.startServerEdit = startServerEdit;
     window.closeGcDeleteModal = closeGcDeleteModal;
     window.confirmGcDelete = confirmGcDelete;
 })();

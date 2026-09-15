@@ -20,6 +20,7 @@ import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.TargetServerRepository;
 import com.heapdump.analyzer.util.MatErrorHint;
 import com.heapdump.analyzer.util.FormatUtils;
+import com.heapdump.analyzer.util.WasInstanceName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.servlet.autoconfigure.MultipartProperties;
@@ -3512,7 +3513,7 @@ public class HeapDumpAnalyzerService {
     }
 
     /**
-     * JEUS 인스턴스(jeus.server.name) 수동 편집값 조회. 미설정/레코드 없으면 빈 문자열.
+     * 인스턴스 수동 편집값 조회(컬럼명은 jeus_instance 지만 WebLogic 등 WAS 공용). 미설정/레코드 없으면 빈 문자열.
      * 자동 식별값(System Properties)으로의 폴백은 호출자(컨트롤러)가 처리한다.
      */
     public String getAnalysisJeusInstance(String filename) {
@@ -3528,7 +3529,8 @@ public class HeapDumpAnalyzerService {
     }
 
     /**
-     * 화면에 보이는 JEUS 인스턴스 — 수동 편집값 우선, 없으면 System Properties({@code jeus.server.name}).
+     * 화면에 보이는 인스턴스 — 수동 편집값 우선, 없으면 System Properties
+     * ({@code jeus.server.name} → {@code weblogic.Name}, {@link WasInstanceName}).
      * analyze 화면 Instance 칩과 같은 규칙이다(GC 로그 결과의 인스턴스 카드가 이 값을 가져간다). 미식별이면 빈 문자열.
      * 결과가 캐시에 없으면 DB 상세를 한 번 읽는다.
      */
@@ -3538,8 +3540,7 @@ public class HeapDumpAnalyzerService {
         try {
             HeapAnalysisResult r = getCachedResult(filename);
             java.util.Map<String, String> sysProps = r == null ? null : r.getSystemProperties();
-            String auto = sysProps == null ? null : sysProps.get("jeus.server.name");
-            return auto == null ? "" : auto.trim();
+            return WasInstanceName.of(sysProps);
         } catch (Exception e) {
             logger.debug("[DB] getEffectiveJeusInstance failed for {}: {}", filename, e.getMessage());
             return "";

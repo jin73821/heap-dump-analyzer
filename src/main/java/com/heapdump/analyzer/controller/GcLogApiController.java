@@ -211,21 +211,26 @@ public class GcLogApiController {
         return ResponseEntity.ok(Map.of("success", true, "filename", safe));
     }
 
-    /** 업로드 로그의 출처 서버명(수동) — 매칭 신호 확보. */
+    /**
+     * 출처 서버명(수동) — body {@code hostname}, 빈 값이면 지운다. 결과 페이지 헤더의 '서버' 알약이 부른다.
+     * 서버명은 자동 매칭 신호라 저장 후 재평가한다(수동 연결은 덮지 않음). 응답은 매칭 뷰 + {@code hostname} —
+     * 칩·인스턴스 카드를 같은 응답으로 다시 그린다. {@code hostname} 키가 없으면 400(조용히 지우지 않는다).
+     */
     @PostMapping("/api/gc-log/{filename:.+}/hostname")
     public ResponseEntity<Map<String, Object>> hostname(@PathVariable String filename,
                                                         @RequestBody Map<String, Object> body, Principal principal) {
         String safe = service.validateGcLogFilename(filename);
         GcLogAnalysisEntity e = service.find(safe).orElse(null);
         if (e == null) return ResponseEntity.status(404).body(err("NOT_FOUND", "GC 로그 이력이 없습니다: " + safe));
+        if (!body.containsKey("hostname")) throw new IllegalArgumentException("hostname 값이 필요합니다.");
         Object hv = body.get("hostname");
+        String before = e.getServerName();
+        String beforeMatch = e.getMatchedDumpFilename();
         e = service.updateServerName(e, hv == null ? null : hv.toString());
-        logger.info("[GcLog] action=hostname file={} hostname='{}' by={}", safe, e.getServerName(), who(principal));
-        Map<String, Object> ok = new LinkedHashMap<>();
-        ok.put("success", true);
+        logger.info("[GcLog] action=hostname file={} hostname='{}'->'{}' match={}->{} by={}",
+                safe, before, e.getServerName(), beforeMatch, e.getMatchedDumpFilename(), who(principal));
+        Map<String, Object> ok = matchView(e);
         ok.put("hostname", e.getServerName());
-        ok.put("matched", e.getMatchedDumpFilename());
-        ok.put("matchSource", e.getMatchSource());
         return ResponseEntity.ok(ok);
     }
 

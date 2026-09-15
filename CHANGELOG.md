@@ -1,5 +1,176 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-15] v2.5.3 릴리스 — 버전 2.5.2 → 2.5.3
+
+**버전 표기:** `pom.xml <version>`, `fragments/banner.html`·`index.html`·`progress.html`. 쉘 스크립트는 버전 비의존이라 변경 없음.
+
+**포함 변경(아래 2026-09-15 항목):**
+- 인스턴스 이름 자동 식별에 WebLogic `weblogic.Name` 추가.
+- GC 로그 결과 페이지 — 출처 서버명을 나중에 입력·수정.
+- 원격 스캔·전송 stderr 글자깨짐(EUC-KR 로그인 배너) 보완 + 전송 실패 원인 가림 해소(`-o LogLevel=ERROR`).
+- GC 이벤트 유형별 필터 버튼.
+- GC 로그 분석 엔진 품질 강화 — 명시적 GC 판정 · 누수 추세 실질성 게이트(실측 로그 회귀 픽스처 포함).
+
+**배포 후 확인:** 이미 분석된 GC 로그는 재분석해야 새 판정이 적용된다. daniwb1p 전송은 재시도해 `SCP failed` 뒤 실제 원인을 확인할 것.
+
+## [2026-09-15] GC 로그 분석 엔진 품질 강화 — 명시적 GC(System.gc()) 판정 · 누수 추세 실질성 게이트 (v2.5.3)
+
+**계기:** 사내 JEUS 8 로그(`gc_log_spdomain.txt`)를 받았다.
+- JDK 1.8.0_422 · `-XX:+UseParallelGC -XX:+PrintHeapAtGC` · 힙 2GB · 71시간.
+- 정상 로그인데 종전 엔진은 **종합 High** 로 판정했다.
+
+| 종전 소견 | 실제 |
+|---|---|
+| `FULL_GC_FREQUENT` High "Old 영역이 반복해서 차고 있습니다" | Full 72회 **전부 System.gc()**, Old 점유 약 6% |
+| `LEAK_TREND` Medium "누수 의심 +0.0 MB/h" | 0.03 MB/h, 71시간 +2.2MB, 90% 도달까지 6.3년 |
+| `SYSTEM_GC` Medium "144회" | 호출 **72회**. Parallel 은 호출마다 `[GC (System.gc())]` Young + `[Full GC (System.gc())]` 두 줄 |
+
+**사용자 질의 검토 — 2026-09-12 11:39:34 Full GC `26.04MB → 25.85MB` 는 정상이다.**
+- 같은 System.gc() 호출의 직전 Young 수집 단계(11:39:34.879, 줄 65)가 **83.1MB → 26.0MB** 를 회수했다.
+- Full 단계(11:39:34.918, 줄 105)는 Young 에서 살아남은 객체를 Old 로 옮겨 압축했다(PSYoungGen 26559K→0K, ParOldGen 104K→26467K). 그래서 전체 사용량 변화가 작다.
+- 기동 3.8초라 힙에는 살아 있는 기동 객체만 있었다.
+- 이후 72회는 직전 Full GC 기준 3600.10~3600.19초 간격이다. RMI 분산 GC(`sun.rmi.dgc.*.gcInterval` 기본 1시간)의 전형이다.
+- 호출 1회 평균 111ms · 최장 188ms 로 영향이 작다.
+
+**엔진 (`parser/gclog/GcLogAnalyzer`·`GcLogSupport`):**
+- **명시적 GC 짝짓기:**
+  - 같은 원인의 Young 직후 2초 이내 Full 은 한 호출이다. `systemGcCount` 는 호출 수를 센다.
+  - 짝지은 Full 행에 `callHeapBefore`(호출 전체의 시작 힙)를 싣는다.
+  - 명시적 원인 판별 `isExplicitCause`: System.gc()·System·Heap Inspection/Dump Initiated GC·JvmtiEnv ForceGarbageCollection·Diagnostic Command.
+- **`FULL_GC_FREQUENT`:**
+  - 명시적 Full 을 뺀 `pressureFullGcPerHour` 로 판정한다.
+  - 명시적 Full 만 있으면 소견이 없다. 섞여 있으면 detail 에 제외 수를 적는다.
+- **`LEAK_TREND` 실질성 게이트:**
+  - 조건: 회귀 구간 증가량 ≥ max(32MB, 최대 힙 2%) **그리고** 최대 힙 90% 도달 예상 ≤ 30일.
+  - 미달이면 소견 없이 `trend.significant=false` + note("완만한 증가… 누수 신호로 보지 않았습니다")다.
+  - 소견 detail 에 도달 예상을 추가했다. 1 MB/h 미만은 소수 둘째 자리로 표기한다.
+- **`SYSTEM_GC` 재작성:**
+  - 호출 수 · 명시적 Full 평균/최장을 보인다.
+  - Parallel 두 줄 기록 설명을 붙인다.
+  - **규칙적 간격**을 판정한다(간격 3개 이상 · 80% 가 중앙값 ±5% · 1분 이상). 1시간이면 RMI 설정 키를 안내한다.
+  - 기동 5분 이내 첫 호출을 짚는다.
+  - **영향 기준 심각도**: 명시적 Full 최장 ≥1초 또는 시간당 >6회면 Medium, 아니면 Low.
+  - **수집기 맞춤 권고**: Parallel/Serial 은 `ExplicitGCInvokesConcurrent` 효과 없음, G1/CMS 는 권장, 공통으로 `DisableExplicitGC` 의 Direct 버퍼 위험.
+- **`meta.heapMaxBytes`:** JDK 8 `CommandLine flags` 의 `-XX:MaxHeapSize`/`-Xmx`(뒤에 나온 값 우선)에서 채운다. 누수 비율·도달 예상의 분모다.
+- **모델(추가만, 옛 결과 JSON 호환):** `Kpi.explicitFullCount`·`pressureFullGcPerHour`·`systemGcIntervalSec`, `Trend.significant`, `EventRow.callHeapBefore`.
+
+**화면:**
+- `gc-log-analyze.js`:
+  - Full GC 카드 부제에 "명시적 N회"를 넣었다. 경고색은 압박 Full 기준이다.
+  - 힙 추세 카드는 `significant` 기준이고, 게이트 미달이면 부제에 note 를 쓴다. 필드가 없는 옛 결과는 종전 규칙이다.
+  - 이벤트 표의 명시적 Full 행 힙 칸 아래에 `호출 전체 83.15 MB → 25.85 MB (Young 수집 포함)` 과 설명 툴팁을 단다.
+- `analyze.js`(힙 페이지 GC 패널)도 같은 기준이다.
+- 캐시 키: `gc-log-analyze.js`·`gc-log.css` `2026-09-15c`, `analyze.js` `2026-09-15`.
+
+**LLM 프롬프트 (`GcLogAnalyzerService`):**
+- Full GC 줄에 명시적 호출 수·주기·압박 Full 빈도를 붙인다("명시적 Full 은 Old 부족 신호가 아님").
+- 추세 줄에 게이트 판정 note 를 싣는다.
+
+**회귀 방어:**
+- `GcLogRealLogRegressionTest`(3): 실측 로그 gzip 16KB `src/test/resources/gclog/spdomain-jdk8-parallel-heapatgc.log.gz`.
+- `GcLogAnalyzerTest` +5: 짝짓기·주기 / 압박+명시 혼재 / 긴 명시적 Full Medium / 완만 vs 빠른 증가 / 힙 최대 플래그. G1 단독 System.gc() 단언도 보강했다.
+- `GcLogTemplateSmokeTest`: 경고색 기준·호출 전체 줄 배선.
+
+**검증:**
+- `mvn test` 795 통과(라이브 4 skip), 운영 재기동 정상.
+- 실측 결과는 종합 **Low** 이고 소견은 `SYSTEM_GC` Low 1건이다(약 60분 간격·RMI).
+- 실측 결과 JSON 을 붙인 정적 픽스처로 KPI 카드·Full 행 부가 줄을 헤드리스 Chrome 에서 확인했다.
+
+**주의:** 이미 분석된 GC 로그는 결과 JSON 저장본이라 **재분석해야** 새 판정이 적용된다.
+
+## [2026-09-15] GC 로그 결과 — GC 이벤트 유형별 필터 버튼 (v2.5.3)
+
+**변경 (`templates/gc-log/analyze.html`, `js/gc-log-analyze.js`, `css/gc-log.css`):**
+- GC 이벤트 표 위에 유형 필터 버튼 줄(`#gclEvTypes`, `role="group"`)을 추가했다.
+  - 버튼은 `전체 N` + **로그에 실제로 나온 유형만** 건수와 함께 보인다. 순서는 YOUNG · MIXED · FULL · REMARK · CLEANUP · CMS_INITIAL_MARK · CMS_FINAL_REMARK · CONC · OTHER.
+  - 유형이 하나뿐인 로그에서는 줄을 숨긴다.
+- **여러 유형을 함께 켤 수 있다.**
+  - 아무것도 안 켜면 전체다. 모든 유형을 켜면 자동으로 `전체`로 돌아간다.
+  - 기존 검색·`Full/이상만` 체크와는 AND 로 겹친다.
+- 선택 상태의 단일 출처는 `_evTypeSel` 이고 버튼은 `aria-pressed` 로만 그린다. 선택 버튼은 색에 더해 두꺼운 테두리와 ✓ 표시로도 구분된다.
+- 버튼 배지와 표의 유형 배지가 같은 라벨 함수 `typeLabel` 을 쓴다(`CONCURRENT_CYCLE` → `CONC`).
+- 건수는 적재된 이벤트 기준이다. 이벤트 상한에 걸린 로그는 제목의 `/ 전체 N건(상한)` 과 함께 읽을 것.
+- 캐시 키 `gc-log-analyze.js`·`gc-log.css` → `2026-09-15b`.
+
+**검증:**
+- `GcLogTemplateSmokeTest` 보강: 버튼 영역 렌더·위치, 필터 술어·aria-pressed·라벨 함수 배선.
+- `mvn test` 787 통과(라이브 4 skip), 운영 재기동 정상.
+- 실제 JS·CSS 를 붙인 정적 픽스처를 헤드리스 Chrome 에서 클릭해 확인했다(59건 중 FULL 3 · FULL+REMARK 8 · +Full/이상만 3 · 전체 복귀 59 · 모두 켬 → 전체).
+
+## [2026-09-15] 원격 스캔·전송 stderr 글자깨짐(EUC-KR 로그인 배너) 보완 + 전송 실패 원인 가림 해소 (v2.5.3)
+
+**증상(사내망 daniwb1p):**
+- 스캔 로그 `find non-fatal stderr` 와 `SCP failed: java_pid20662.hprof` 뒤에 `\300ΰ\241\265\310 …` 형태의 깨진 문자열이 찍혔다.
+- SCP 실패 문구는 이 문자열로 300자가 차 **실제 실패 원인이 잘려 보이지 않았다.**
+- 이 문구는 `dump_transfer_log.error_message`·전송 토스트·server-detail/server-logs 에 그대로 저장·표시된다.
+
+**원인(실측):**
+- 원격 **sshd 로그인 배너가 CP949** 다. 복원하면 "인가된 사용자가 아닌 경우 즉시 로그아웃 해주시기 바랍니다. …"
+- 로컬 OpenSSH 8.0 클라이언트(UTF-8 로케일)는 배너를 stderr 로 내면서 유효하지 않은 바이트를 `\ooo` 8진 이스케이프로 바꾸고, 우연히 UTF-8 로 읽히는 쌍(`ΰ`=CE B0)은 그대로 둔다.
+- 그 결과가 ASCII+유효 UTF-8 이라 `decodeStderr` 의 UTF-8 strict 가 성공한다. 그래서 MS949 폴백도, U+FFFD 기반 배너 필터도 동작하지 않았다.
+
+**변경 (`RemoteDumpService`):**
+- **ssh·scp 공통 옵션 `SSH_COMMON_OPTS` 단일화 + `-o LogLevel=ERROR`.**
+  - 종전엔 두 빌더에 옵션이 손으로 복사돼 있었다.
+  - 이 옵션은 모든 원격 호출에 적용된다: 접속 테스트·스캔 3종·file 판별·stat·JVM 수집·SCP·collect-libs.
+  - 배너는 LogLevel INFO 이상에서만 출력되므로 사라진다. 인증·접속 실패와 scp 원격 오류는 유지된다.
+  - 로컬 sshd(배너 `/etc/issue.net`)로 실측했다. 옵션이 없으면 배너 14줄 + `Permission denied` 이고, 옵션을 주면 ssh·scp 모두 `sscuser@localhost: Permission denied (…)` 한 줄이다.
+  - `-q` 는 쓰지 않는다(QUIET 은 FATAL 까지 숨긴다).
+- **`decodeStderr` → `unescapeSshOctal` 방어선.**
+  - UTF-8 로 읽힌 줄에 0x80 이상 8진 이스케이프가 있으면 바이트열을 재구성해 UTF-8 → MS949 **strict** 로 복원한다. 실패하면 원문을 그대로 둔다.
+  - **줄 단위**로 처리한다. 같은 stderr 의 원격 UTF-8 한글(`find: …: 허가 거부`)까지 MS949 로 읽으면 그 줄이 깨진다.
+- **`cleanSshError` 꼬리 보존.** 300자를 넘으면 앞을 잘라 `…` + 마지막 300자로 남긴다(최종 실패 사유는 마지막 줄).
+- 테스트를 위해 `buildSshCommandString`·`cleanSshError`·`stripBanners`·`isBannerLine`·`decodeStderr` 를 static 패키지 전용으로 바꿨다(동작 불변).
+
+**회귀 방어:**
+- `RemoteDumpStderrTest`(5, 운영 로그 문자열 그대로 사용).
+- `RemoteDumpPathGuardTest` scp 골든에 `-o LogLevel=ERROR` 반영, 인자 인덱스 9→11.
+
+**검증:** `mvn test` 787 통과(라이브 4 skip), 운영 재기동 정상.
+
+**남은 확인:** 이 수정은 daniwb1p SCP 실패의 원인을 **드러낼 뿐 해결하지는 않는다.** 재전송 후 로그의 `SCP failed` 뒤 문구로 원인을 확인할 것.
+
+## [2026-09-15] GC 로그 결과 페이지 — 출처 서버명을 나중에 입력·수정 (v2.5.3)
+
+**배경:** 업로드 때 서버명을 입력하면 결과 페이지 헤더에 `서버 guacmg1t` 알약이 보이지만, 비워 두면 알약이 아예 렌더되지 않았다(`th:if="${entity.serverName != null}"`). 서버 API(`POST /api/gc-log/{fn}/hostname`)는 있었지만 화면에서 부르는 곳이 없어 나중에 입력할 방법이 없었다. 서버명은 힙 덤프 자동 매칭의 '같은 서버' 신호라, 비워 둔 로그는 매칭 점수 1점을 영구히 잃었다.
+
+**화면 (`templates/gc-log/analyze.html`, `js/gc-log-analyze.js`, `css/gc-log.css`):**
+- 서버 알약은 항상 보인다. 값이 없으면 회색 `미지정` 이다.
+- 연필(✎) 버튼은 `aria-label` 을 가진다. 누르면 알약 안에서 입력칸과 저장·취소가 열린다(Enter 저장 · Esc 취소 · 한글 조합 중 Enter 무시).
+- 저장 응답으로 **매칭 칩과 인스턴스 카드도 함께 다시 그린다.** 서버명을 채워 자동 연결이 생기거나 지워서 풀리면 토스트로 알린다.
+- 빈 값으로 저장하면 서버명을 지운다.
+- 캐시 키 `gc-log-analyze.js`·`gc-log.css` → `2026-09-15a`.
+
+**API (`GcLogApiController.hostname`):**
+- 응답이 매칭 뷰(`matched`·`candidates`·`instance`·`serverName`) + `hostname` 으로 바뀌었다. 종전 응답의 `matched`(문자열)·`matchSource` 를 읽는 호출처는 없었다.
+- `hostname` 키가 없는 요청은 **400** 이다. 종전에는 null 로 처리해 서버명을 조용히 지웠다(`/instance` 와 같은 규약).
+- 감사 로그가 before→after 를 남긴다: `[GcLog] action=hostname file= hostname='A'->'B' match=X->Y by=`.
+- 자동 매칭 재평가는 종전대로 `updateServerName` 이 한다. 수동 연결은 덮지 않는다.
+
+**회귀 방어:**
+- `GcLogHostnameEndpointTest`(2): 저장·삭제 응답 계약, 400/404 는 저장하지 않음.
+- `GcLogTemplateSmokeTest` 보강: 서버명 없는 NOT_ANALYZED/ANALYZING/ERROR 에서도 `미지정` 알약과 편집 버튼, 저장 경로·success 확인·칩 갱신 JS 배선.
+
+**검증:** `mvn test` 782 통과(라이브 4 skip). 운영 재기동 정상. 실제 CSS·JS 를 붙인 정적 픽스처를 헤드리스 Chrome 으로 찍어 보기·편집 두 상태가 알약 한 줄 높이 안에 들어가는 것을 확인했다. 로그인이 필요한 실제 페이지에서 저장까지 눌러 보지는 못했다.
+
+## [2026-09-15] 인스턴스 이름 자동 식별에 WebLogic `weblogic.Name` 추가 (v2.5.3)
+
+**배경:** analyze 화면 Instance 칩은 System Properties 의 `jeus.server.name` 만 보고 있어, WebLogic 덤프는 `weblogic.Name` 이 있어도 '미지정'으로 떠 직접 입력해야 했다.
+
+**변경:**
+- 신규 `util/WasInstanceName` — 대조 순서 `jeus.server.name` → `weblogic.Name`(공백뿐인 값은 건너뜀). 이름과 출처 키를 함께 돌려준다.
+- 이 규칙을 쓰는 곳 3곳을 한 유틸로 모았다(한 곳만 고치면 화면·리포트가 서로 다른 이름을 보인다):
+  - `HeapDumpViewController` analyze Instance 칩.
+  - `PdfReportService.buildPrintModel` PDF 리포트 Instance.
+  - `HeapDumpAnalyzerService.getEffectiveJeusInstance` → GC 로그 결과의 인스턴스 카드도 연결된 WebLogic 덤프 이름을 받는다.
+- 우선순위는 그대로 **수동 편집값 > 자동 식별값**이다. 둘 다 있으면 JEUS 가 앞선다.
+- Instance 칩 툴팁이 실제로 채택한 키(`jeus.server.name`/`weblogic.Name`)를 표시한다(모델 속성 `jeusInstanceAutoKey`). 미식별이면 두 키를 모두 안내한다.
+- Domain 칩은 여전히 `jeus.domain.name` 만 본다(WebLogic 은 표준 도메인 sysprop 이 없다).
+
+**회귀 방어:** `WasInstanceNameTest`(4) · `InstanceChipTemplateSmokeTest`(1, 식별/미식별 두 모델 렌더).
+
+**검증:** `mvn test` 780 통과(라이브 4 skip), 운영 재기동 정상. 운영 저장소의 분석 결과에는 `weblogic.Name` 을 가진 덤프가 없어 실 WebLogic 덤프 화면 확인은 못 했다.
+
 ## [2026-09-14] 빈 catch 블록 2차 점검 — Java 서버 소스 69건 조치 + 가드 Java 확장 · Files GC 로그 안내 문구 'AI 분석' (v2.5.2 유지)
 
 **배경:** 사내 소스코드 취약점 점검기의 "빈 catch 블록" 체커(04.02)에 다시 걸리지 않도록 저장소 전체를 재점검했다. 상세는 `SECURITY_AUDIT_EMPTY_CATCH.md` 8절.

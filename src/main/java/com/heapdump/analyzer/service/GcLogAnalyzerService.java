@@ -656,10 +656,12 @@ public class GcLogAnalyzerService {
         sb.append("\n== Full GC·힙 추세 ==\n");
         sb.append("Full GC: ").append(k.getFullCount()).append("회");
         if (k.getFullGcPerHour() != null) sb.append(String.format(Locale.ROOT, " (시간당 %.2f회, 연속 최대 %d회)", k.getFullGcPerHour(), k.getMaxConsecutiveFull()));
-        sb.append('\n');
-        if (t.getSlopeMbPerHour() != null) sb.append(String.format(Locale.ROOT, "%s 직후 힙 회귀: 기울기 %+.1f MB/h, R²=%.2f, %d점, %s → %s\n",
-                t.getBasis(), t.getSlopeMbPerHour(), t.getR2(), t.getPointsUsed(), FormatUtils.formatBytes(t.getFirstAfterBytes().longValue()), FormatUtils.formatBytes(t.getLastAfterBytes().longValue())));
-        else if (t.getNote() != null) sb.append("힙 추세: ").append(t.getNote()).append('\n');
+        sb.append(explicitGcNote(k)).append('\n');
+        if (t.getSlopeMbPerHour() != null) {
+            sb.append(String.format(Locale.ROOT, "%s 직후 힙 회귀: 기울기 %+.2f MB/h, R²=%.2f, %d점, %s → %s\n",
+                    t.getBasis(), t.getSlopeMbPerHour(), t.getR2(), t.getPointsUsed(), FormatUtils.formatBytes(t.getFirstAfterBytes().longValue()), FormatUtils.formatBytes(t.getLastAfterBytes().longValue())));
+            if (t.getNote() != null) sb.append("힙 추세 판정: ").append(t.getNote()).append('\n');
+        } else if (t.getNote() != null) sb.append("힙 추세: ").append(t.getNote()).append('\n');
         if (t.getExcludedWarmup() > 0) sb.append("(기동 직후 5분 이내 점 ").append(t.getExcludedWarmup()).append("개는 워밍업으로 보고 추세에서 제외)\n");
         int shown = 0;
         for (double[] p : t.getAfterPoints()) {
@@ -701,6 +703,18 @@ public class GcLogAnalyzerService {
         return out.length() > 12_000 ? out.substring(0, 12_000) + "\n...(truncated)" : out;
     }
 
+    /**
+     * Full GC 줄 뒤에 붙이는 명시적 호출 설명 — LLM 이 System.gc() Full 을 메모리 압박으로 읽지 않게 한다(2026-09-15).
+     * 옛 결과(필드 없음)는 빈 문자열.
+     */
+    static String explicitGcNote(GcLogResult.Kpi k) {
+        if (k.getExplicitFullCount() <= 0 && k.getSystemGcCount() <= 0) return "";
+        StringBuilder sb = new StringBuilder(" — 그중 명시적 호출(System.gc() 등) Full ").append(k.getExplicitFullCount()).append("회");
+        if (k.getSystemGcIntervalSec() != null) sb.append(String.format(Locale.ROOT, ", System.gc() 약 %.0f분 간격 규칙적", k.getSystemGcIntervalSec() / 60));
+        if (k.getPressureFullGcPerHour() != null) sb.append(String.format(Locale.ROOT, ", 메모리 압박 Full GC 시간당 %.2f회", k.getPressureFullGcPerHour()));
+        return sb.append(" (명시적 Full 은 Old 부족 신호가 아님)").toString();
+    }
+
     /** 힙 AI 프롬프트에 끼워 넣는 {@code == GC 로그 요약 ==} 섹션(≤1500자). 미연결이면 빈 문자열. */
     public String buildGcPromptSectionForDump(String dumpFilename) {
         if (dumpFilename == null || dumpFilename.isEmpty()) return "";
@@ -719,9 +733,10 @@ public class GcLogAnalyzerService {
             sb.append(String.format(Locale.ROOT, "처리량 %s, 일시정지 p99 %s / 최대 %s, Full GC %d회", k.getThroughputPct() == null ? "?" : String.format(Locale.ROOT, "%.1f%%", k.getThroughputPct()),
                     ms(r.getPauseStats().getP99Ms()), ms(r.getPauseStats().getMaxMs()), k.getFullCount()));
             if (k.getFullGcPerHour() != null) sb.append(String.format(Locale.ROOT, " (시간당 %.2f회)", k.getFullGcPerHour()));
-            sb.append('\n');
+            sb.append(explicitGcNote(k)).append('\n');
             GcLogResult.Trend t = r.getTrend();
-            if (t.getSlopeMbPerHour() != null) sb.append(String.format(Locale.ROOT, "%s 직후 힙 추세: %+.1f MB/h (R²=%.2f)\n", t.getBasis(), t.getSlopeMbPerHour(), t.getR2()));
+            if (t.getSlopeMbPerHour() != null) sb.append(String.format(Locale.ROOT, "%s 직후 힙 추세: %+.2f MB/h (R²=%.2f)%s\n", t.getBasis(), t.getSlopeMbPerHour(), t.getR2(),
+                    Boolean.FALSE.equals(t.getSignificant()) && t.getNote() != null ? " — " + t.getNote() : ""));
             int n = 0;
             for (GcLogResult.Finding f : r.getFindings()) {
                 if ("Info".equals(f.getSeverity())) continue;

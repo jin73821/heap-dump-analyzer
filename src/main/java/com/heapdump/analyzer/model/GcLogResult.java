@@ -81,7 +81,14 @@ public class GcLogResult {
         private Integer maxHumongousRegions;
         private int sysTimeHighCount;
         private int cpuStarvationCount;
+        /** System.gc() <b>호출</b> 수 — Parallel 은 호출 1회를 Young+Full 두 이벤트로 남기므로 짝지어 한 번만 센다(2026-09-15). */
         private int systemGcCount;
+        /** 명시적 원인(System.gc()·힙 덤프·jmap·jcmd)으로 일어난 Full GC 수. */
+        private int explicitFullCount;
+        /** 명시적 Full 을 뺀 시간당 Full GC — 메모리 압박 판정·경고색 기준. 기간을 모르면 null. */
+        private Double pressureFullGcPerHour;
+        /** System.gc() 호출 간격 중앙값(초) — 간격이 규칙적일 때만(3개 이상·80% 가 ±5% 이내). */
+        private Double systemGcIntervalSec;
         private String severity;        // 소견 최대 심각도
     }
 
@@ -126,8 +133,13 @@ public class GcLogResult {
         private int excludedWarmup;
         /** 회귀에 쓴 점들의 시간 폭(초). 600s 미만이면 기울기를 계산하지 않는다. */
         private Double spanSec;
-        /** 기울기를 계산하지 않은 이유(사람이 읽는 문구). 계산했으면 null. */
+        /** 기울기를 계산하지 않은 이유, 또는 계산했지만 누수 신호로 보지 않은 이유(사람이 읽는 문구). */
         private String note;
+        /**
+         * 누수 신호로 볼 만한 증가인가 — 기울기·R² 에 더해 실질 증가량(≥ max(32MB, 최대 힙 2%))과 최대 힙 90% 도달 예상(≤ 30일)을
+         * 모두 넘겨야 true(2026-09-15). 기울기를 못 냈으면 null. 필드가 없는 옛 결과는 화면이 종전 규칙(slope&gt;0·R²&gt;0.5)으로 판단한다.
+         */
+        private Boolean significant;
     }
 
     @Data
@@ -162,6 +174,11 @@ public class GcLogResult {
         private Double userSec;
         private Double sysSec;
         private Double realSec;
+        /**
+         * 명시적 호출의 Full 단계 행에만 — 같은 호출의 직전 Young 수집 전 힙(Parallel ScavengeBeforeFullGC). Full 단계만 보면
+         * 해제량이 미미해 보이는데(Young 에서 살아남은 객체를 Old 로 옮길 뿐) 호출 전체로는 이만큼 회수했다는 근거다.
+         */
+        private Long callHeapBefore;
     }
 
     @Data

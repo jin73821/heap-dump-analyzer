@@ -53,6 +53,15 @@
 .gcl-meta-v { color: #111827; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gcl-meta-v.mono { font-family: "JetBrains Mono", "SF Mono", monospace; font-weight: 500; font-size: 11px; }
 .gcl-meta-path { max-width: 460px; }
+/* 서버 알약(2026-09-15) — 미지정이어도 보이고 연필로 편집한다. 편집 줄은 알약 안에서 값·연필을 숨기고 들어가며 높이(24px)를 넘기지 않는다 */
+.gcl-meta-v.empty { color: #9CA3AF; font-weight: 500; }
+.gcl-meta-edit { border: none; background: transparent; cursor: pointer; font-size: 12px; line-height: 1; color: #64748B; padding: 2px 4px; margin: -2px -6px -2px -2px; border-radius: 999px; font-family: inherit; flex-shrink: 0; }
+.gcl-meta-edit:hover { background: #E5E7EB; color: #1E293B; }
+.gcl-meta-edit:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
+.gcl-meta-form { display: inline-flex; align-items: center; gap: 4px; min-width: 0; margin: -2px -6px -2px 0; }
+.gcl-meta-input { width: 180px; max-width: 46vw; min-width: 0; font-size: 12px; padding: 1px 7px; border: 1px solid #CBD5E1; border-radius: 6px; font-family: inherit; color: #111827; line-height: 18px; background: #fff; }
+.gcl-meta-input:focus { outline: none; border-color: #2563EB; box-shadow: 0 0 0 2px rgba(37, 99, 235, .15); }
+.gcl-meta-form .gcl-inst-save, .gcl-meta-form .gcl-inst-cancel { padding: 1px 8px; border-radius: 999px; }
 .gcl-head-actions { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; align-items: center; }
 .gcl-head-foot { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #E5E7EB; }
 
@@ -136,7 +145,19 @@
 .gcl-type { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: #E5E7EB; color: #374151; }
 .gcl-type.t-FULL { background: #FEE2E2; color: #991B1B; } .gcl-type.t-MIXED { background: #E0E7FF; color: #3730A3; }
 .gcl-type.t-YOUNG { background: #DCFCE7; color: #166534; } .gcl-type.t-CONCURRENT_CYCLE { background: #F3F4F6; color: #6B7280; }
+.gcl-ev-call { margin-top: 1px; font-size: 11px; color: #6B7280; white-space: nowrap; cursor: help; }   /* 명시적 호출 Full 행 — 호출 전체 회수량(2026-09-15) */
 .gcl-flag { display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 4px; background: #FEF3C7; color: #92400E; margin-right: 3px; }
+/* GC 이벤트 유형 필터(2026-09-15) — 토글 버튼, 선택 상태는 aria-pressed 하나로 그린다(색만이 아니라 테두리 굵기·체크 표시로도 구분) */
+.gcl-ev-types { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.gcl-ev-type-btn { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border: 1px solid #E5E7EB; border-radius: 999px; background: #fff; font-size: 12px; line-height: 18px; cursor: pointer; font-family: inherit; color: #374151; }
+.gcl-ev-type-btn:hover { background: #F9FAFB; border-color: #CBD5E1; }
+.gcl-ev-type-btn:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
+.gcl-ev-type-btn[aria-pressed="true"] { background: #EFF6FF; border-color: #2563EB; box-shadow: inset 0 0 0 1px #2563EB; color: #1E3A8A; }
+.gcl-ev-type-btn[aria-pressed="true"]::before { content: "✓"; font-size: 11px; font-weight: 700; color: #2563EB; }
+.gcl-ev-type-btn .gcl-type { font-size: 10px; }
+.gcl-ev-type-btn .cnt { font-variant-numeric: tabular-nums; color: #6B7280; font-weight: 600; }
+.gcl-ev-type-btn[aria-pressed="true"] .cnt { color: #1D4ED8; }
+.gcl-ev-type-all { font-weight: 600; }
 .gcl-table-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; font-size: 12px; color: #6B7280; }
 .gcl-table-tools .cd-input { width: 220px; }
 .pagination-bar { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 10px 0 2px; flex-wrap: wrap; }

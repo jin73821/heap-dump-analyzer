@@ -9,7 +9,7 @@
     <title th:text="'GC 로그 결과 - ' + ${filename}">GC 로그 결과</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-08-12}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-14}">
-    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-14c}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-15c}">
     <script th:src="@{/js/lib/chart.umd.min.js}"></script>
 </head>
 <body>
@@ -51,7 +51,12 @@
                           th:text="${status == 'SUCCESS'} ? '완료' : (${status == 'ERROR'} ? '실패' : (${status == 'ANALYZING'} ? '분석 중' : (${status == 'MISSING'} ? '파일 없음' : '미분석')))">완료</span>
                 </div>
                 <div class="gcl-meta" id="gclMeta" th:if="${entity != null}">
-                    <span class="gcl-meta-item" th:if="${entity.serverName != null}"><span class="gcl-meta-k">서버</span><span class="gcl-meta-v" th:text="${entity.serverName}">was01</span></span>
+                    <!-- 서버 알약은 값이 없어도 항상 보인다 — 업로드 때 비워 두면 나중에 입력할 곳이 없었다(2026-09-15). 편집은 JS startServerEdit -->
+                    <span class="gcl-meta-item gcl-meta-server" id="gclServerItem"
+                          title="출처 서버 — 힙 덤프 자동 매칭의 '같은 서버' 신호입니다. Servers 에 등록된 서버명과 같게 적으세요."><span class="gcl-meta-k">서버</span><span class="gcl-meta-v" id="gclServerValue"
+                          th:classappend="${entity.serverName == null} ? 'empty'"
+                          th:text="${entity.serverName != null} ? ${entity.serverName} : '미지정'">was01</span><button type="button" class="gcl-meta-edit" id="gclServerEdit"
+                          onclick="startServerEdit()" title="서버명 편집" aria-label="서버명 편집">&#9998;</button></span>
                     <span class="gcl-meta-item" th:if="${entity.fileSize != null}"><span class="gcl-meta-k">크기</span><span class="gcl-meta-v" th:text="${entity.formattedSize}">52.0 KB</span></span>
                     <span class="gcl-meta-item gcl-meta-path" th:if="${entity.remotePath != null}" th:title="${entity.remotePath}"><span class="gcl-meta-k">원격 경로</span><span class="gcl-meta-v mono" th:text="${entity.remotePath}">/var/log/gc.log</span></span>
                     <span class="gcl-meta-item" th:if="${entity.uploadedBy != null}"><span class="gcl-meta-k">등록</span><span class="gcl-meta-v" th:text="${entity.uploadedBy}">admin</span></span>
@@ -166,6 +171,8 @@
                 GC 이벤트
                 <span class="title-count" id="gclEventsCount"></span>
             </div>
+            <!-- 유형 필터(2026-09-15) — 로그에 나온 유형만 건수와 함께. 여러 개 선택 가능, 선택 없음 = 전체. 검색·Full/이상만과 AND. JS renderEventTypeFilter 가 채운다 -->
+            <div class="gcl-ev-types" id="gclEvTypes" role="group" aria-label="GC 이벤트 유형 필터" hidden></div>
             <div class="gcl-table-tools">
                 <input type="text" id="gclEvSearch" class="cd-input" placeholder="유형·원인·플래그 검색…" autocomplete="off">
                 <label><input type="checkbox" id="gclEvOnlyFlag"> Full/이상만</label>
@@ -291,7 +298,7 @@
     };
 </script>
 <script th:src="@{/js/table-grid.js?v=2026-09-13}"></script>
-<script th:src="@{/js/gc-log-analyze.js?v=2026-09-14d}"></script>
+<script th:src="@{/js/gc-log-analyze.js?v=2026-09-15c}"></script>
 
 </body>
 </html>

@@ -64,6 +64,18 @@ final class GcLogSupport {
         return s == null || s.length() <= max ? s : s.substring(0, max);
     }
 
+    /**
+     * 메모리 압박이 아니라 <b>누군가 명시적으로 부른</b> GC 인가 — System.gc()(JDK 6/7 은 {@code System}), jmap -histo:live·힙 덤프,
+     * JVMTI 강제 GC, jcmd GC.run. 이런 Full GC 는 Old 가 찼다는 신호가 아니므로 빈도·압박 판정에서 뺀다(2026-09-15).
+     */
+    static boolean isExplicitCause(String cause) {
+        if (cause == null) return false;
+        String c = cause.toLowerCase(Locale.ROOT);
+        return c.contains("system.gc") || c.equals("system")
+                || c.contains("heap inspection initiated") || c.contains("heap dump initiated")
+                || c.contains("jvmtienv forcegarbagecollection") || c.contains("diagnostic command");
+    }
+
     /** 원인 문자열에서 플래그를 뽑는다(두 형식 공통 어휘). */
     static void flagsFromCause(String cause, GcEvent ev) {
         if (cause == null) return;

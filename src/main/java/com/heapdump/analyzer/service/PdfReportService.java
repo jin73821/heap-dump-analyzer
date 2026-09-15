@@ -7,6 +7,7 @@ import com.heapdump.analyzer.model.LeakSuspect;
 import com.heapdump.analyzer.model.MemoryObject;
 import com.heapdump.analyzer.util.OomDetector;
 import com.heapdump.analyzer.util.MiddlewareDetector;
+import com.heapdump.analyzer.util.WasInstanceName;
 import com.heapdump.analyzer.model.entity.AiInsightEntity;
 import com.heapdump.analyzer.repository.AiInsightRepository;
 import com.openhtmltopdf.outputdevice.helper.BaseRendererBuilder;
@@ -103,14 +104,13 @@ public class PdfReportService {
 
         // 환경 정보 (HOST / Middleware / Instance / Domain) — analyze 뷰(HeapDumpViewController)와 동일 로직.
         // HOST: server_name(SSH 자동/수동 편집), Middleware: 히스토그램·sysprop 기반 벤더 추정,
-        // Instance/Domain: sysProps(jeus.server.name/jeus.domain.name) 자동 식별 + 수동 편집값 우선.
+        // Instance/Domain: sysProps 자동 식별(Instance 는 jeus.server.name → weblogic.Name, Domain 은 jeus.domain.name) + 수동 편집값 우선.
         m.put("hostname", analyzerService.getAnalysisServerName(filename));
         MiddlewareDetector.Result mw = MiddlewareDetector.detect(
                 result.getHistogramEntries(), result.getThreadInfos(), result.getSystemProperties());
         m.put("middlewareVendor", mw.detected() ? mw.displayName() : "");
         Map<String, String> sysProps = result.getSystemProperties();
-        String jeusInstanceAuto = sysProps != null && sysProps.get("jeus.server.name") != null
-                ? sysProps.get("jeus.server.name").trim() : "";
+        String jeusInstanceAuto = WasInstanceName.of(sysProps);
         String jeusDomainAuto = sysProps != null && sysProps.get("jeus.domain.name") != null
                 ? sysProps.get("jeus.domain.name").trim() : "";
         String jeusInstanceManual = analyzerService.getAnalysisJeusInstance(filename);

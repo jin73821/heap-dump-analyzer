@@ -158,7 +158,12 @@ class GcLogAnalyzerTest {
         assertEquals("G1", r.getMeta().getCollector());
         assertEquals("Critical", finding(r, "TO_SPACE_EXHAUSTED").get().getSeverity());
         assertTrue(finding(r, "HUMONGOUS_HEAVY").isPresent(), "40 리전 × 1M = 40MB ≥ 258M 의 10%");
-        assertTrue(finding(r, "SYSTEM_GC").isPresent());
+        GcLogResult.Finding sys = finding(r, "SYSTEM_GC").orElseThrow();
+        assertEquals("Medium", sys.getSeverity(), "명시적 Full 최장 1초 이상은 영향 기준 Medium");
+        assertEquals(1, r.getKpi().getSystemGcCount(), "G1 Pause Full 단독은 짝짓기 없이 1회");
+        assertEquals(1, r.getKpi().getExplicitFullCount());
+        assertEquals(0, sys.getEvidence().get("pairedEvents"));
+        assertTrue(sys.getAdvice().contains("ExplicitGCInvokesConcurrent 로 명시적 호출을 동시 사이클로"), "G1 은 효과 있는 권고: " + sys.getAdvice());
         assertTrue(finding(r, "LONG_PAUSE").isPresent());
         assertTrue(finding(r, "HEAP_NEAR_MAX").isPresent(), "마지막 GC 후 230/258 = 89%");
         assertEquals("Critical", r.getKpi().getSeverity());
@@ -275,6 +280,97 @@ class GcLogAnalyzerTest {
             }
         }
         return sb.toString();
+    }
+
+    // ── 명시적 GC · 누수 실질성 (2026-09-15, spdomain 실측 로그 오탐 대응) ─────────────────
+
+    private static String sysYoung(double up, long beforeK, long afterK, long totalK) {
+        return ts(up) + ": " + String.format(Locale.ROOT, "%.3f: [GC (System.gc()) [PSYoungGen: %dK->%dK(%dK)] %dK->%dK(%dK), 0.0050000 secs] [Times: user=0.02 sys=0.00, real=0.01 secs]",
+                up, beforeK - 1000, afterK - 1000, totalK / 3, beforeK, afterK, totalK);
+    }
+
+    @Test
+    void parallelSystemGcIsPairedPeriodicAndNotFullGcPressure() throws Exception {
+        StringBuilder sb = new StringBuilder();
+        long total = 2_000_000;
+        for (int i = 0; i < 10; i++) {
+            double up = 5 + i * 3600.0;
+            if (i > 0) sb.append(young(up - 1800, 600_000, 100_000, total, 0.02, true)).append('\n');
+            sb.append(sysYoung(up, 300_000, 90_000, total)).append('\n');
+            sb.append(full(up + 0.04, 90_000, 80_000, total, 0.110, true, "System.gc()")).append('\n');
+        }
+        GcLogResult r = engine(sb.toString());
+        assertEquals(10, r.getKpi().getFullCount());
+        assertEquals(10, r.getKpi().getSystemGcCount(), "Young+Full 한 쌍 = 1회");
+        assertEquals(10, r.getKpi().getExplicitFullCount());
+        assertEquals(3600.0, r.getKpi().getSystemGcIntervalSec(), 1e-6);
+        assertTrue(finding(r, "FULL_GC_FREQUENT").isEmpty(), "시간당 1회지만 전부 명시적 호출");
+        GcLogResult.Finding sys = finding(r, "SYSTEM_GC").orElseThrow();
+        assertEquals("Low", sys.getSeverity());
+        assertTrue(sys.getTitle().contains("60분") && sys.getDetail().contains("RMI"), sys.getTitle() + " / " + sys.getDetail());
+        assertEquals(10, sys.getEvidence().get("pairedEvents"));
+        assertEquals("Low", r.getKpi().getSeverity());
+        GcLogResult.EventRow fullRow = r.getEvents().stream().filter(e -> "FULL".equals(e.getType())).findFirst().orElseThrow();
+        assertEquals(300_000L << 10, fullRow.getCallHeapBefore(), "같은 호출의 Young 수집 전 힙");
+    }
+
+    @Test
+    void pressureFullStillCountsWhenMixedWithExplicitAndIrregularCallsHaveNoPeriod() throws Exception {
+        StringBuilder sb = new StringBuilder();
+        long total = 1_000_000;
+        for (int i = 0; i < 6; i++) sb.append(full(600 + i * 600, 500_000, 300_000, total, 0.3, true, "Ergonomics")).append('\n');
+        sb.append(full(700, 400_000, 300_000, total, 0.2, true, "System.gc()")).append('\n');
+        sb.append(full(1900, 400_000, 300_000, total, 0.2, true, "System.gc()")).append('\n');
+        sb.append(full(2050, 400_000, 300_000, total, 0.2, true, "System.gc()")).append('\n');
+        String text = sb.toString().lines().sorted((a, b) -> a.substring(0, 28).compareTo(b.substring(0, 28))).reduce("", (a, b) -> a + b + "\n");
+        GcLogResult r = engine(text);
+        assertEquals(9, r.getKpi().getFullCount());
+        assertEquals(3, r.getKpi().getExplicitFullCount());
+        assertEquals(3, r.getKpi().getSystemGcCount(), "Young 짝 없이 Full 만 — 짝짓기 없음");
+        GcLogResult.Finding freq = finding(r, "FULL_GC_FREQUENT").orElseThrow();
+        assertEquals(6, freq.getEvidence().get("fullCount"), "압박 Full 만");
+        assertTrue(freq.getDetail().contains("명시적 호출") && freq.getDetail().contains("전체 9회"), freq.getDetail());
+        assertEquals(null, r.getKpi().getSystemGcIntervalSec(), "간격 2개뿐 — 규칙성 판단 안 함");
+        assertFalse(finding(r, "SYSTEM_GC").orElseThrow().getTitle().contains("간격"));
+    }
+
+    @Test
+    void longExplicitFullRaisesSystemGcToMediumWithParallelAdvice() throws Exception {
+        String text = full(400, 500_000, 300_000, 1_000_000, 1.2, true, "System.gc()") + "\n"
+                + full(9000, 500_000, 300_000, 1_000_000, 0.3, true, "System.gc()") + "\n";
+        GcLogResult.Finding sys = finding(engine(text), "SYSTEM_GC").orElseThrow();
+        assertEquals("Medium", sys.getSeverity());
+        assertTrue(sys.getAdvice().contains("효과가 없습니다") && !sys.getAdvice().contains("조치가 꼭 필요하지는 않습니다"), sys.getAdvice());
+    }
+
+    @Test
+    void slowGrowthIsNotLeakButFastGrowthStillIs() throws Exception {
+        // 8GB 힙, Full 직후 1시간마다 +1MB × 24시간 = +23MB — R² 1 이지만 실질 증가량 미달
+        StringBuilder sb = new StringBuilder();
+        long total = 8L * 1024 * 1024;
+        for (int i = 0; i < 25; i++) sb.append(full(600 + i * 3600.0, 2_000_000 + i * 1024L, 1_000_000 + i * 1024L, total, 0.3, true, "Ergonomics")).append('\n');
+        GcLogResult slow = engine(sb.toString());
+        assertEquals(1.0, slow.getTrend().getR2(), 1e-6);
+        assertEquals(Boolean.FALSE, slow.getTrend().getSignificant());
+        assertTrue(finding(slow, "LEAK_TREND").isEmpty());
+        assertTrue(slow.getTrend().getNote().contains("누수 신호로 보지 않았습니다"), slow.getTrend().getNote());
+
+        GcLogResult fast = engine(hourLog(true, true));
+        assertEquals(Boolean.TRUE, fast.getTrend().getSignificant());
+        GcLogResult.Finding leak = finding(fast, "LEAK_TREND").orElseThrow();
+        assertNotNull(leak.getEvidence().get("daysToFill"));
+        assertTrue(leak.getDetail().contains("90% 도달까지"), leak.getDetail());
+        assertEquals(Boolean.FALSE, engine(hourLog(false, true)).getTrend().getSignificant(), "평평하면 false");
+    }
+
+    @Test
+    void heapMaxIsReadFromJvmFlagsLastWins() {
+        assertEquals(2147483648L, GcLogAnalyzer.heapMaxFromOptions("-XX:InitialHeapSize=1073741824 -XX:MaxHeapSize=2147483648 -XX:+UseParallelGC"));
+        assertEquals(4L << 30, GcLogAnalyzer.heapMaxFromOptions("-XX:MaxHeapSize=1073741824 -Xmx4g"));
+        assertEquals(1073741824L, GcLogAnalyzer.heapMaxFromOptions("-Xmx4g -XX:MaxHeapSize=1073741824"));
+        assertEquals(512L << 20, GcLogAnalyzer.heapMaxFromOptions("-Xms256m -Xmx512M"));
+        assertEquals(null, GcLogAnalyzer.heapMaxFromOptions("-XX:MaxHeapSizeX=1 -Xmxfoo"));
+        assertEquals(null, GcLogAnalyzer.heapMaxFromOptions(null));
     }
 
     @Test

@@ -98,11 +98,11 @@ class RemoteDumpPathGuardTest {
     @DisplayName("scp 조립 골든 — 원격 층은 역슬래시 이스케이프, 로컬 대상은 단일 인용")
     void scpCommandGolden() {
         String cmd = RemoteDumpService.scpCommandString(server(), "/data/heap dumps/it's.hprof", "/tmp/heapdump_transfer_ab12_it's.hprof");
-        assertEquals("scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes -P 22"
+        assertEquals("scp -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o BatchMode=yes -o LogLevel=ERROR -P 22"
                 + " sscuser@10.0.0.5:\"/data/heap\\ dumps/it\\'s.hprof\""
                 + " '/tmp/heapdump_transfer_ab12_it'\\''s.hprof'", cmd);
         assertEquals("sscuser@10.0.0.5:\"/tmp/heap_dump_11410.hprof\"",
-                RemoteDumpService.scpCommandString(server(), "/tmp/heap_dump_11410.hprof", "/x").split(" ")[9],
+                RemoteDumpService.scpCommandString(server(), "/tmp/heap_dump_11410.hprof", "/x").split(" ")[11],
                 "평범한 경로는 v2.5.0 이전과 같은 모양");
         assertFalse(cmd.contains(":'\""), "따옴표가 scp 인자에 글자로 남는 형태로 되돌아가면 전송이 전부 실패한다");
     }
