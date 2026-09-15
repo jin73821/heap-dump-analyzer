@@ -31,6 +31,11 @@ public class GcLogResult {
     private List<Finding> findings = new ArrayList<>();
     private RawSample rawSample = new RawSample();
     private List<String> jvmOptions = new ArrayList<>();
+    /**
+     * Full GC 분류·메모리 압박 요약(2026-09-16). ⚠ {@code = new} 로 초기화하지 말 것 — 이 필드가 없는 옛 JSON 은 null 이어야
+     * 화면이 "옛 결과(재분석 안내)"와 "압박 Full GC 0회"를 구분한다(함정 58).
+     */
+    private FullGcSummary fullGcSummary;
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -179,6 +184,65 @@ public class GcLogResult {
          * 해제량이 미미해 보이는데(Young 에서 살아남은 객체를 Old 로 옮길 뿐) 호출 전체로는 이만큼 회수했다는 근거다.
          */
         private Long callHeapBefore;
+        /** FULL 행만 — EXPLICIT / METASPACE / GC_LOCKER / HEAP_PRESSURE / OTHER({@code FullGcKind}). 옛 결과·비-FULL 행은 null. */
+        private String fullKind;
+    }
+
+    /**
+     * Full GC 를 원인별로 나눈 요약 + <b>메모리 압박(HEAP_PRESSURE)</b> Full GC 의 회수율·직후 점유율·간격 추세.
+     * 명시적 호출(System.gc() 등)은 회수율 표본에서 뺀다 — Full 단계만 보면 회수가 미미해 보이기 때문이다(함정 57).
+     */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class FullGcSummary {
+        private int total;                                                   // == kpi.fullCount
+        private Map<String, Integer> byKind = new LinkedHashMap<>();          // 5 종 전부(0 포함), FullGcKind 순서
+        private int heapPressureCount;
+        private Double heapPressurePerHour;                                  // 기간을 모르면 null
+        private Map<String, Integer> pressureByCause = new LinkedHashMap<>(); // HEAP_PRESSURE 만, 내림차순 ≤12, 원인 없음 = "(원인 미기록)"
+        private int maxConsecutivePressure;
+        private Double firstAtSec;
+        private Double lastAtSec;
+        private Integer lastLine;
+        private Long lastBeforeBytes;
+        private Long lastAfterBytes;
+        private Long lastTotalBytes;
+        /** 마지막 압박 Full GC 직후 사용량 / 그 시점 committed 총량. */
+        private Double lastAfterRatio;
+        /** 마지막 압박 Full GC 직후 사용량 / 최대 힙(-Xmx, 없으면 관측 최대 총량). */
+        private Double lastAfterCapRatio;
+        private Double maxAfterRatio;
+        /** before·after 가 모두 있고 before > 0 인 압박 Full GC 수(회수율 표본). */
+        private int reclaimSamples;
+        private Double reclaimPctMin;
+        private Double reclaimPctMedian;
+        private Double reclaimPctLast;
+        /** 회수율 20% 미만 압박 Full GC 수. */
+        private int lowReclaimCount;
+        /** 직후 점유율(after/total) 85% 이상 압박 Full GC 수. */
+        private int highOccupancyCount;
+        private Integer intervalCount;
+        private Double intervalMedianFirstHalfSec;
+        private Double intervalMedianSecondHalfSec;
+        /** 뒤 절반 간격 중앙값이 앞 절반의 절반 이하면 true. 간격이 6개 미만이면 판단하지 않아 null. */
+        private Boolean intervalShrinking;
+        /** 압박 Full GC 만 — [x, heapAfter, heapBefore], ≤500 점(차트 ▲ 표시용). */
+        private List<double[]> points = new ArrayList<>();
+        /** 회수율이 가장 낮은 압박 Full GC ≤5 건. */
+        private List<FullGcSample> worstReclaim = new ArrayList<>();
+        private String note;
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class FullGcSample {
+        private int line;
+        private Double uptimeSec;
+        private String cause;
+        private Long heapBefore;
+        private Long heapAfter;
+        private Long heapTotal;
+        private Double reclaimPct;
     }
 
     @Data

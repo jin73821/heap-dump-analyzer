@@ -1,5 +1,84 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-16] v2.5.4 릴리스 — 버전 2.5.3 → 2.5.4
+
+**버전 표기:** `pom.xml <version>`, `fragments/banner.html`·`index.html`·`progress.html`. 쉘 스크립트는 버전 비의존이라 변경 없음.
+
+**포함 변경(아래 2026-09-16 항목):** GC 로그 — 메모리 압박 Full GC 분류·배너·회수율 소견 + AI 프롬프트 분류 섹션 + AI 응답 정규화. GC 재분석 확인 모달 · Target Servers 덤프 경로 툴팁 · 스캔 결과 경로 글자 크기 · 스캔 대상 선택 팝오버.
+
+**배포 후 확인:** `gc_log_analysis.pressure_full_gc_count` 컬럼이 자동 생성된다(`ddl-auto=update`). **이미 분석된 GC 로그는 재분석해야** 배너·KPI 분리·이벤트 배지·목록 `(압박 n)` 이 나온다 — 재분석 전에는 배너가 "이전 분석 결과라 Full GC 분류가 없습니다" + 재분석 버튼을 보인다. 회수율이 낮은 로그는 재분석 후 종합 심각도가 올라갈 수 있다(`FULL_GC_LOW_RECLAIM` Critical/High).
+
+## [2026-09-16] GC 재분석 확인 모달 · Target Servers 덤프 경로 툴팁 · 스캔 경로 글자 크기 · 스캔 대상 선택 (v2.5.4)
+
+**1. GC 로그 재분석 확인 모달** (`gc-log/analyze.html`·`gc-log-analyze.js`)
+- 헤더 `재분석` · 오류 상자 `다시 분석` · 옛 결과 배너 `재분석` 세 버튼이 요청을 바로 보내지 않고 `#reanalyzeModal` 만 연다. 요청은 `confirmReanalyze → reanalyze` 에서만 나간다.
+- 문구는 상태를 따른다 — 결과가 있으면 "저장된 결과(KPI·소견·차트·이벤트 표)가 새 결과로 교체", AI 결과가 있으면 "AI 결과는 지워지지 않지만 새 결과와 맞지 않을 수 있음", 실패 기록이면 "마지막 분석이 실패했습니다". 공통으로 진행 화면·자동 새로고침, 수동 연결 힙 덤프·서버명·인스턴스명 유지 안내.
+- Esc·바깥 클릭으로 닫히고 포커스를 돌려준다. 확인 버튼은 누르는 즉시 비활성(중복 요청 방지). 골격은 `.gcl-modal`(함정 17).
+
+**2. Target Servers 덤프 경로 툴팁** (`servers.html`)
+- 원인: 셀에 `data-tooltip` 이 있었지만 **`float-tooltip.js` 를 싣지 않아** 툴팁이 뜨지 않았다(주석만 "공통 모듈 사용"). 같은 이유로 연결 `⚠ 실패` 배지의 사유 툴팁도 뜨지 않았다 — 함께 복구된다.
+- 스크립트를 싣고, `decorateDumpPathTooltips()` 가 경로가 여러 개면 `덤프 경로 N개` + 번호 목록, 하나면 경로 그대로(말줄임 확인용)로 문구를 다듬는다. `+N` 은 회색 알약, 셀은 `cursor:help`.
+
+**3. 스캔 결과 경로 글자 크기** (`server-scan.js`)
+- 여러 탐지 경로일 때 파일 아래 붙는 `↳ 경로` 줄 10px → **12px**(`.scan-src-path`, 색 한 단계 진하게, title 로 전체 경로). 코어 파일 실행파일·실행명령·경고 줄도 11px → 12px.
+
+**4. 스캔 대상 선택 팝오버** (`server-scan.js`·`servers.html`·`server-detail.html`·`ServerController`·`RemoteDumpService`)
+- `스캔` 버튼을 누르면 버튼 아래 **흰 팝오버**(화살표가 버튼을 가리킴)에서 `힙 덤프`·`코어 파일`·`GC 로그` 를 체크해 스캔한다. 각 항목에 경로 수·첫 경로(외 n개), 마우스를 올리면 전체 경로.
+- 서버 설정에서 꺼진 대상은 "서버 설정에서 탐지 대상이 꺼져 있습니다", 경로가 없으면 "탐지 경로가 설정되지 않았습니다" 로 비활성. 기본값은 가능한 대상 전부 체크, `전체 선택/해제`, 선택이 없으면 스캔 버튼 비활성. Esc·바깥 클릭·같은 버튼 재클릭으로 닫힘, 스크롤·리사이즈에 따라 위치 재계산, 아래 공간이 없으면 위로 뒤집힌다. 결과 패널 제목에 스캔한 대상 칩, 파일이 없으면 "GC 로그 파일이 없습니다" 처럼 대상 이름으로 안내.
+- 서버 정보 페이지(`/servers/{id}`)도 같은 모듈이라 동일하게 동작한다(버튼에 대상 설정 `data-*` 추가).
+- API: `POST /api/servers/{id}/scan?types=heap,core,gclog` — 없으면 종전(서버 설정 전부). 서버 설정의 탐지 대상이 **상한**이고 `types` 는 그 안에서만 좁힌다(`RemoteDumpService.resolveScanPaths`) — 꺼진 대상의 코어·GC 경로는 설정 화면이 저장하지 않아 낡았을 수 있기 때문. 유효한 값이 하나도 없으면 400, 선택과 설정이 겹치지 않으면 `NO_SCAN_TARGET` 이고 **서버 연결 상태를 FAIL 로 바꾸지 않는다**(화면도 배지를 건드리지 않음). 자동 탐지·스케줄러 경로는 무변경.
+
+**5. 전송 재시도 시 진행바 중복 수정 · 글자 크기** (`server-scan.js`)
+- 증상: 전송 실패 후 `재시도` 를 누를 때마다 **실패 진행바가 하나씩 더 쌓였다**. 재시도 시작 시 오류 문구(`.transfer-err`)는 첫 것만 지우고 진행바(`.transfer-progress`)는 지우지 않았기 때문이다. 이제 같은 칸의 이전 진행바·오류 문구를 모두 걷어낸 뒤 새 진행바를 붙인다. 헤드리스 Chrome 모의 실행(EventSource 실패 주입)으로 종전 모듈 1→2→3개 / 수정 모듈 1→1→1개를 확인했다.
+- 파일 크기 12px → 13px(`.scan-size`), `전송됨`·`전송됨(분석완료)` 11px → 12px, 전송 진행/실패 라벨·오류 문구 11px → 12px, 스캔 오류 배너 12px → 13px.
+
+**6. GC 로그 결과 — 인스턴스 카드 → 헤더 알약** (`gc-log/analyze.html`·`gc-log-analyze.js`·`gc-log.css`)
+- KPI 그리드 마지막의 `인스턴스` 카드를 없애고 헤더 메타의 **서버 알약 바로 오른쪽 알약**으로 옮겼다. 서버명과 함께 "어느 JVM 의 로그인가" 를 말하는 식별 정보라서다.
+- 모양은 서버 알약과 같다: `인스턴스 <값> [덤프|수동] ✎`. 출처 배지 색은 매칭 칩의 자동(초록)·수동(인디고)과 같고, 값이 없으면 `미지정`(회색)에 배지를 숨긴다. 종전 카드 부제(수동 입력 · 덤프 값 / 연결된 힙 덤프 파일명 / 연결하면 자동으로 가져옴)는 알약 `title` 로 옮겼다.
+- 편집은 서버 알약과 같은 인라인 편집 줄(입력 + 저장·취소, Enter/Esc, 한글 조합 중 Enter 무시). 저장·연결 변경 응답이 알약을 다시 그리는 경로(`renderInstance`)는 그대로다.
+- 알약은 서버 렌더라 **분석 전·실패 화면에서도** 보이고 입력할 수 있다(종전 카드는 결과가 있을 때만 그려졌다).
+- 카드 전용 CSS(`.gcl-kpi-inst`·`.gcl-kpi-edit`·`.gcl-inst-form`·`.gcl-inst-input`) 제거, 저장·취소 버튼 스타일은 공용으로 유지.
+
+**회귀 방어(+8):** `RemoteDumpScanTargetsTest`(4) · `ServerScanTypesParamTest`(3) · `AnalyzeConfirmTemplateSmokeTest` +1(팝오버 모듈·types·NO_SCAN_TARGET·12px·툴팁 로드·servers/server-detail 배선) · `GcLogTemplateSmokeTest` 수정(재분석 모달 렌더·배선, 템플릿에 `onclick="reanalyze()"` 부재). 헤드리스 Chrome 픽스처로 팝오버 배치·화살표 확인. `mvn test` 전체 통과, 20:09 재기동.
+
+## [2026-09-16] GC 로그 — 메모리 압박 Full GC 분류·명시 표시 + AI 분석 보완 (v2.5.4)
+
+**계기:** 2026-09-15 에 명시적 GC(System.gc())를 메모리 압박에서 분리했지만, 그 뒤 남는 것은 "명시적을 뺀 Full GC 가 몇 회" 뿐이었다.
+- 그 Full GC 가 **무엇 때문에**(Allocation Failure / Ergonomics / Metaspace 임계치 / GCLocker) 일어났는지, **얼마나 회수했는지**, **직후 힙이 얼마나 남았는지**는 엔진·화면·프롬프트 어디에도 없었다.
+- Metaspace 임계치·GCLocker Full 도 "압박" 으로 세었다. 기동 직후 Metaspace Full 만 있는 로그가 "메모리 압박 N회" 로 읽힐 수 있었다.
+- 화면에는 Full GC 카드 하나에 전체 수만 있어 정상 spdomain 로그도 `Full GC 72` 로 보였다. 목록 페이지도 같다.
+- AI 프롬프트에 분류·회수율이 없었고, LLM 응답은 검증 없이 저장됐다(`severity="Unknown"`, `recommendations` 가 String/List 혼재).
+
+**엔진 (`parser/gclog/FullGcKind`·`GcLogSupport`·`GcLogAnalyzer`):**
+- **Full GC 분류 `FullGcKind`** 5종 — 첫 일치 우선: `EXPLICIT`(System.gc()·힙 덤프·jcmd) → `METASPACE`(Metadata GC Threshold) → `GC_LOCKER` → `HEAP_PRESSURE`(Allocation Failure·Ergonomics·Last ditch·G1 Evacuation/Compaction/Humongous/Preventive·promotion failed·concurrent mode failure·to-space exhausted·**JDK 6/7 무원인 `[Full GC`·`[GC [ParNew][CMS]`**·Shenandoah Degenerated) → `OTHER`. 원인 어휘는 `GcLogSupport.isPressureCause`(`isExplicitCause` 옆).
+- **`GcLogResult.fullGcSummary` 블록** — 종류별 수·압박 원인 분포·시간당·연속 최대·**회수율(min/중앙값/last, 20% 미만 수)**·**직후 점유율(85% 이상 수, 마지막 압박 Full 직후 total/최대 힙 대비)**·**간격 추세(앞/뒤 절반 중앙값, 단축 여부)**·차트용 점(≤500)·최저 회수 표본(≤5). 회수율 표본에서 **명시적 Full 은 뺀다**(Full 단계만 보면 회수가 미미해 보인다 — 함정 57). 중앙값은 1% 버킷 히스토그램이라 상수 메모리.
+  - ⚠ 이 필드는 `= new` 초기화가 없다 — 옛 JSON 은 null 이어야 화면이 "재분석 안내"와 "압박 0회"를 가른다(함정 58).
+- `EventRow.fullKind` — FULL 행에 분류. 옛 결과·비-FULL 행은 null. `halveEvents` 는 FULL 행을 보존한다.
+- **`pressureFullGcPerHour` 의 의미는 유지**(비명시 Full/h) — `FULL_GC_FREQUENT` 임계·JS 경고색 폴백·힙 패널이 의존한다. 배너·KPI·엔티티 컬럼은 HEAP_PRESSURE 전용 수치를 쓴다.
+- **소견:**
+  - `FULL_GC_FREQUENT` detail 에 분류 문장 추가(`분류: 힙 압박 9회(원인: Ergonomics 8 · Allocation Failure 1) · Metaspace 2회 · GCLocker 0회.`) + evidence `heapPressureCount/metaspaceCount/gcLockerCount/pressureByCause`.
+  - **신설 `FULL_GC_LOW_RECLAIM`** — 압박 Full ≥2 이고 회수율 20% 미만 ≥2. 심각도는 마지막 압박 Full 직후 최대 힙 대비 점유율: ≥85% Critical / ≥60% High / 그 외 Medium. 권고는 수집기 맞춤(CMS→concurrent mode failure, G1→MixedGC·IHOP, Parallel/Serial→곧 OOM).
+  - **신설 `FULL_GC_INTERVAL_SHRINKING`** — 압박 Full 간격 6개 이상이고 뒤 절반 중앙값 ≤ 앞 절반 × 0.5. ≤ ×0.25 또는 5분 미만이면 High, 아니면 Medium.
+  - `METADATA_THRESHOLD` detail 에 "그중 Full GC n회(힙 압박이 아니라 Metaspace 부족)".
+
+**모델·엔티티·서비스:**
+- `gc_log_analysis.pressure_full_gc_count`(Integer, null = 분석 전/옛 결과). `applySummary` 가 채우고 **`forgetAnalysis` 가 지운다**(함정 54).
+- `summaryForDump` 에 `fullGcSummary`, `GcLogMatchService` 매칭 뷰에 `pressureFullGcCount`.
+
+**화면 (`gc-log/analyze.html`·`gc-log-analyze.js`·`gc-log.css`·`gc-log/index.html`·`analyze.js`):**
+- **결과 상단 배너 `#gclPressureBanner`**(`#gclResult` 첫 자식, 옅은 배경 + 1px 테두리 + 배지 — 좌측 색 띠 없음) 상태 5종: ① 압박 있음(관련 소견 최고 심각도 색, 원인 칩, 회수율·직후 점유·간격 줄, `해당 이벤트 보기`·`연결된 힙 덤프`) ② 힙 압박 아님(Metaspace·GCLocker 만, Low) ③ 전부 명시적(`.ok`, "메모리 압박 신호 아님" + 간격) ④ 옛 결과(`.legacy` 점선, "재분석하면 압박 Full GC 분류를 볼 수 있습니다" + 재분석 버튼) ⑤ Full 없음(숨김).
+- **KPI 분리** — 블록이 있으면 `압박 Full GC`(경고색은 여기만: LOW_RECLAIM 소견 또는 시간당 >6 bad / >1 warn) + `명시적 Full GC`(System.gc() 수·간격·전체 Full). 없으면 종전 단일 카드.
+- 이벤트 표 FULL 행에 `압박/명시적/Metaspace/GCLocker/기타` 배지(`.gcl-kind`), 검색 키에 라벨 포함, **명시적 Full 행은 붉은 배경 해제**. `해당 이벤트 보기` = 유형 FULL + 검색 '압박'(기존 `applyFilter` 3 술어 재사용 — detach 표라 tbody 직접 조작 금지).
+- 힙 차트에 `압박 Full GC 직후` ▲(triangle) 데이터셋 — Series 는 병합 시 유형이 FULL 로 뭉개져 압박/명시적을 못 가르므로 블록의 점을 쓴다.
+- 목록 페이지 Full GC 셀 `72 (압박 0)`(회색) / `13 (압박 9)`(붉은 강조), null 이면 종전 표시. 힙 analyze GC 패널 Full GC 카드 부제에 `· 압박 n회`.
+- AI 카드에 `warnings`(응답 정규화 안내) 표시.
+
+**LLM (`GcLogAnalyzerService`·`GcAiResponseNormalizer`):**
+- 프롬프트에 **`== Full GC 분류 ==` 섹션**(분류 합계·압박 원인·회수율·간격·마지막 압박 Full·회수율 최저 3건) — "Full GC·힙 추세" 뒤·"이상 징후" 앞. Full GC 줄과 힙 프롬프트용 `== GC 로그 요약 ==` 에 `· 메모리 압박 Full GC n회(회수율 중앙값 x%, 마지막 직후 최대 힙 대비 w%)` 노트. 시스템 프롬프트에 분류를 따르라는 지시 + severity 4값 제한.
+- **응답 정규화 `GcAiResponseNormalizer.normalize`**(순수 함수, 절대 던지지 않음): severity 4값 정규형(앞머리만 맞아도 채택, 미인식은 Unknown + `severityRaw`), `recommendations` 는 항상 `List<String>`(번호·불릿 제거, 상한 5), 본문 길이 상한(summary/rootCause 2000·severityDesc 1000·gcTuningAdvice 3000), 고친 것이 있을 때만 `warnings`. `analyzeWithAi` 가 저장 전에 적용하므로 조회 응답도 같은 모양.
+
+**회귀 방어(+23):** `GcLogAnalyzerTest` +7(JDK8·통합 로깅 분류, 회수율 High/Critical/Medium/없음, 간격 단축 High/FALSE/null, 전부 명시적, FREQUENT 분류 문장, 20,000 Full 상한) · `GcLogPressureFixtureTest` 4(합성 픽스처 `synthetic-jdk8-parallel-pressure.log` — 생성기 `GcLogTestSupport.pressureParallelLog()` 와 동일성 고정, `-Dgclog.fixture.write=true` 로 재생성) · `GcLogRealLogRegressionTest` 수정(spdomain: 압박 0·EXPLICIT 72·새 소견 없음·Low 유지) · `GcLogResultCodecTest` +1(왕복·옛 JSON null·축소 후 fullKind) · `GcLogAnalyzerServiceRunTest` +1(컬럼 저장·forget) · `GcAiResponseNormalizerTest` 7 · `GcLogAiPromptTest` 3 · `GcLogTemplateSmokeTest` 수정(배너 골격·JSON 블록·목록 셀 3상태·JS/CSS 배선). `mvn test` 전체 통과.
+
 ## [2026-09-15] v2.5.3 릴리스 — 버전 2.5.2 → 2.5.3
 
 **버전 표기:** `pom.xml <version>`, `fragments/banner.html`·`index.html`·`progress.html`. 쉘 스크립트는 버전 비의존이라 변경 없음.

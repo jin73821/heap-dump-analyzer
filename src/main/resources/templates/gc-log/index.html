@@ -9,7 +9,7 @@
     <title>GC 로그 분석 - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-08-12}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-14}">
-    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-14b}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-16b}">
 </head>
 <body>
 
@@ -248,7 +248,11 @@
                             </td>
 
                             <td class="hi-hide-sm">
-                                <span th:if="${item.fullGcCount != null}" th:text="${item.fullGcCount}" th:classappend="${item.fullGcCount > 0} ? 'hi-mono' : 'hi-muted'"></span>
+                                <!-- 메모리 압박 Full GC(2026-09-16) — 전체 수 옆에 압박 n 표기. 분류 이전 옛 결과는 null 이라 전체 수만 -->
+                                <span th:if="${item.fullGcCount != null}" class="hi-nowrap">
+                                    <span th:text="${item.fullGcCount}" th:classappend="${item.fullGcCount > 0} ? 'hi-mono' : 'hi-muted'"></span>
+                                    <span th:if="${item.pressureFullGcCount != null}" th:classappend="${item.pressureFullGcCount > 0} ? 'hi-pressure' : 'hi-muted'" th:title="${item.pressureFullGcCount > 0} ? '메모리 압박(명시적 호출·Metaspace·GCLocker 제외) Full GC' : '메모리 압박 Full GC 없음'" th:text="'(압박 ' + ${item.pressureFullGcCount} + ')'"></span>
+                                </span>
                                 <span th:unless="${item.fullGcCount != null}" class="hi-muted">–</span>
                             </td>
 

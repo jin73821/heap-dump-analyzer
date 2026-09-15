@@ -233,8 +233,12 @@
         </div>
         <div class="info-actions">
             <button class="action-btn" th:data-id="${server.id}" onclick="testConn(this.dataset.id)">연결 테스트</button>
-            <button class="action-btn scan" th:data-id="${server.id}" th:data-name="${server.name}"
-                    onclick="scanServer(this, this.dataset.id, this.dataset.name)">스캔</button>
+            <button class="action-btn scan" type="button" aria-haspopup="dialog" aria-expanded="false"
+                    th:data-id="${server.id}" th:data-name="${server.name}"
+                    th:data-scanheap="${server.isScanHeap()}" th:data-dumppath="${server.dumpPath}"
+                    th:data-scancore="${server.isScanCore()}" th:data-coredumppath="${server.coreDumpPath}"
+                    th:data-scangclog="${server.isScanGcLog()}" th:data-gclogpath="${server.gcLogPath}"
+                    onclick="openScanPicker(this)">스캔</button>
             <button class="action-btn"
                     th:data-id="${server.id}" th:data-name="${server.name}"
                     th:data-host="${server.host}" th:data-port="${server.port}"
@@ -392,7 +396,7 @@
 
 <script src="/js/float-tooltip.js?v=2026-08-02"></script>
 <script src="/js/analyze-confirm.js?v=2026-09-14"></script>
-<script src="/js/server-scan.js?v=2026-09-13"></script>
+<script src="/js/server-scan.js?v=2026-09-16b"></script>
 <script>
 var _serverId = '[[${server.id}]]';
 var _csrf = Common.csrfToken();
@@ -428,9 +432,17 @@ var _scanPanel = ServerScan.create({
     toast: showToast
 });
 
-function scanServer(btn, id, name) {
+/** 스캔 버튼 — 흰 팝오버에서 스캔 대상(힙 덤프·코어 파일·GC 로그)을 고른 뒤 스캔(2026-09-16, Target Servers 와 같은 모듈). */
+function openScanPicker(btn) {
+    ServerScan.pickTargets(btn, {
+        targets: ServerScan.targetsFromDataset(btn.dataset),
+        onConfirm: function(types) { scanServer(btn, btn.dataset.id, btn.dataset.name, types); }
+    });
+}
+
+function scanServer(btn, id, name, types) {
     btn.disabled = true; btn.textContent = '스캔 중...';
-    _scanPanel.scan(id, name).then(function(d) {
+    _scanPanel.scan(id, name, types).then(function(d) {
         btn.disabled = false; btn.textContent = '스캔';
         if (d && d.success) showToast('스캔 완료: ' + (d.count || 0) + '개 파일 발견', true);
         else if (d) showToast('스캔 실패: ' + (d.error || d.message || ''), false);

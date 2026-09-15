@@ -5589,7 +5589,7 @@ function _renderGcLogPanel(view, s) {
     h += card('처리량', k.throughputPct == null ? '–' : k.throughputPct.toFixed(2) + '%', 'GC 일시정지 합 ' + ms(ps.totalMs), k.throughputPct != null && k.throughputPct < 90 ? 'bad' : k.throughputPct != null && k.throughputPct < 95 ? 'warn' : '');
     h += card('일시정지 p99 · 최대', ms(ps.p99Ms) + ' · ' + ms(ps.maxMs), ps.count + '회', ps.maxMs > 5000 ? 'bad' : ps.maxMs > 1000 ? 'warn' : '');
     var fullRate = k.pressureFullGcPerHour != null ? k.pressureFullGcPerHour : k.fullGcPerHour;   // 명시적 호출 제외 기준(2026-09-15)
-    h += card('Full GC', String(k.fullCount), k.fullGcPerHour != null ? '시간당 ' + k.fullGcPerHour.toFixed(2) + '회' + (k.explicitFullCount ? ' · 명시적 ' + k.explicitFullCount + '회' : '') : '', fullRate > 6 ? 'bad' : fullRate > 1 ? 'warn' : '');
+    h += card('Full GC', String(k.fullCount), k.fullGcPerHour != null ? '시간당 ' + k.fullGcPerHour.toFixed(2) + '회' + (k.explicitFullCount ? ' · 명시적 ' + k.explicitFullCount + '회' : '') + (d.fullGcSummary ? ' · 압박 ' + d.fullGcSummary.heapPressureCount + '회' : '') : '', fullRate > 6 ? 'bad' : fullRate > 1 ? 'warn' : '');
     var basis = t.basis === 'full' ? 'Full GC' : t.basis === 'remark' ? 'Remark' : t.basis === 'mixed' ? 'Mixed' : '';
     var trendWarn = t.significant != null ? t.significant === true : (t.slopeMbPerHour > 0 && t.r2 > 0.5);
     h += card((basis || '힙') + ' 직후 추세', t.slopeMbPerHour == null ? '–' : (t.slopeMbPerHour >= 0 ? '+' : '') + (Math.abs(t.slopeMbPerHour) < 1 ? t.slopeMbPerHour.toFixed(2) : t.slopeMbPerHour.toFixed(1)) + ' MB/h',

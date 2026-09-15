@@ -215,14 +215,32 @@ public class ServerController {
 
     // ── Scan & Transfer ──────────────────────────────────
 
+    /**
+     * 스캔 대상 파라미터 {@code types=heap,gclog} → 집합(2026-09-16). 파라미터가 없으면 null(서버 설정 전부 — 종전 동작).
+     * 알 수 없는 값은 무시하고, 있는데 유효한 값이 하나도 없으면 400 — 조용히 '전부 스캔'으로 떨어지면 선택이 무시된 줄 모른다.
+     */
+    static Set<String> parseScanTypes(String raw) {
+        if (raw == null) return null;
+        Set<String> out = new LinkedHashSet<>();
+        for (String t : raw.split(",")) {
+            String k = t.trim().toLowerCase(Locale.ROOT);
+            if (RemoteDumpService.SCAN_TYPES.contains(k)) out.add(k);
+        }
+        if (out.isEmpty()) throw new IllegalArgumentException("스캔할 대상을 하나 이상 선택하세요.");
+        return out;
+    }
+
     @PostMapping("/api/servers/{id}/scan")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> scanServer(@PathVariable Long id) {
+    public ResponseEntity<Map<String, Object>> scanServer(@PathVariable Long id,
+                                                          @RequestParam(value = "types", required = false) String types) {
         Map<String, Object> result = new HashMap<>();
         try {
+            Set<String> selected = parseScanTypes(types);
             TargetServer server = serverRepository.findById(id)
                     .orElseThrow(() -> new IllegalArgumentException("서버를 찾을 수 없습니다: " + id));
-            Map<String, Object> scanResult = remoteDumpService.scanRemoteDumpsWithStatus(server);
+            Map<String, Object> scanResult = remoteDumpService.scanRemoteDumpsWithStatus(server, selected);
+            result.put("types", selected == null ? RemoteDumpService.SCAN_TYPES : selected);
             result.put("success", !scanResult.containsKey("error"));
             result.put("files", scanResult.getOrDefault("files", java.util.Collections.emptyList()));
             result.put("count", scanResult.getOrDefault("count", 0));

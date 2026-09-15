@@ -9,7 +9,7 @@
     <title th:text="'GC 로그 결과 - ' + ${filename}">GC 로그 결과</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-08-12}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-14}">
-    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-15c}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-16b}">
     <script th:src="@{/js/lib/chart.umd.min.js}"></script>
 </head>
 <body>
@@ -57,6 +57,16 @@
                           th:classappend="${entity.serverName == null} ? 'empty'"
                           th:text="${entity.serverName != null} ? ${entity.serverName} : '미지정'">was01</span><button type="button" class="gcl-meta-edit" id="gclServerEdit"
                           onclick="startServerEdit()" title="서버명 편집" aria-label="서버명 편집">&#9998;</button></span>
+                    <!-- 인스턴스 알약(2026-09-16, 종전 KPI 마지막 카드) — 서버 알약 오른쪽. 값 = 수동 입력 > 연결된 힙 덤프 Instance.
+                         출처(수동/덤프)는 작은 배지, 설명은 title. 서버 렌더가 초기값이고 JS renderInstance 가 저장·연결 변경 응답으로 다시 그린다 -->
+                    <span class="gcl-meta-item gcl-meta-inst" id="gclInstItem"
+                          th:title="${instance.source == 'manual'} ? '인스턴스 — 수동 입력' : (${instance.source == 'dump'} ? '인스턴스 — 연결된 힙 덤프 ' + ${instance.dumpFilename} : '인스턴스 — 힙 덤프를 연결하면 자동으로 가져옵니다')"><span class="gcl-meta-k">인스턴스</span><span class="gcl-meta-v" id="gclInstValue"
+                          th:classappend="${#strings.isEmpty(instance.name)} ? 'empty'"
+                          th:text="${#strings.isEmpty(instance.name)} ? '미지정' : ${instance.name}">server1</span><span class="gcl-meta-src" id="gclInstSrc"
+                          th:classappend="${instance.source}"
+                          th:style="${instance.source == 'none'} ? 'display:none' : ''"
+                          th:text="${instance.source == 'manual'} ? '수동' : '덤프'">덤프</span><button type="button" class="gcl-meta-edit" id="gclInstEdit"
+                          onclick="startInstanceEdit()" title="인스턴스명 편집" aria-label="인스턴스명 편집">&#9998;</button></span>
                     <span class="gcl-meta-item" th:if="${entity.fileSize != null}"><span class="gcl-meta-k">크기</span><span class="gcl-meta-v" th:text="${entity.formattedSize}">52.0 KB</span></span>
                     <span class="gcl-meta-item gcl-meta-path" th:if="${entity.remotePath != null}" th:title="${entity.remotePath}"><span class="gcl-meta-k">원격 경로</span><span class="gcl-meta-v mono" th:text="${entity.remotePath}">/var/log/gc.log</span></span>
                     <span class="gcl-meta-item" th:if="${entity.uploadedBy != null}"><span class="gcl-meta-k">등록</span><span class="gcl-meta-v" th:text="${entity.uploadedBy}">admin</span></span>
@@ -66,7 +76,7 @@
             </div>
             <div class="gcl-head-actions">
                 <button type="button" class="btn btn-sm btn-soft" id="btnAi" onclick="runAi()" th:disabled="${status != 'SUCCESS'}">AI 분석</button>
-                <button type="button" class="btn btn-sm btn-ghost" id="btnReanalyze" onclick="reanalyze()" th:disabled="${status == 'ANALYZING' or !fileExists}">재분석</button>
+                <button type="button" class="btn btn-sm btn-ghost" id="btnReanalyze" onclick="openReanalyzeConfirm()" th:disabled="${status == 'ANALYZING' or !fileExists}">재분석</button>
                 <button type="button" class="btn btn-sm btn-soft soft-danger" onclick="deleteThis()">삭제</button>
             </div>
         </div>
@@ -119,13 +129,16 @@
         <div class="gcl-error-title">분석 실패</div>
         <div class="gcl-error-msg" id="gclErrorMsg" th:text="${entity != null ? entity.errorMessage : ''}"></div>
         <div class="gcl-error-actions" th:if="${fileExists}">
-            <button type="button" class="btn btn-sm btn-primary" id="gclRetryBtn" onclick="reanalyze()">다시 분석</button>
+            <button type="button" class="btn btn-sm btn-primary" id="gclRetryBtn" onclick="openReanalyzeConfirm()">다시 분석</button>
             <span class="gcl-error-hint">위 오류는 마지막 분석 기록입니다. 코드가 고쳐졌거나 파일을 바꿨다면 다시 분석하세요.</span>
         </div>
     </div>
 
     <!-- 결과 본문 — JS 가 #gcResult JSON 으로 그린다 -->
     <div id="gclResult" th:style="${status == 'SUCCESS'} ? '' : 'display:none'">
+
+        <!-- 메모리 압박 Full GC 배너(2026-09-16) — JS 가 fullGcSummary 로 그린다. 옛 결과(블록 없음)는 재분석 안내 -->
+        <div class="gcl-pressure" id="gclPressureBanner" role="status" hidden></div>
 
         <div class="gcl-kpi-grid" id="gclKpi"></div>
 
@@ -258,6 +271,27 @@
     </div>
 </div>
 
+<!-- 재분석 확인 모달(2026-09-16) — 저장된 결과가 새 결과로 바뀌므로 버튼 한 번에 바로 시작하지 않는다. 문구는 openReanalyzeConfirm 이 상태에 맞춘다 -->
+<div id="reanalyzeModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="reanalyzeTitle" onclick="if(event.target===this)closeReanalyzeConfirm()">
+    <div class="modal-box">
+        <div class="modal-title" id="reanalyzeTitle">GC 로그 재분석</div>
+        <div class="modal-body">
+            <p class="gcl-ai-confirm-desc" id="reanalyzeDesc">이 GC 로그를 처음부터 다시 분석합니다.</p>
+            <span class="modal-filename" th:text="${filename}"></span>
+            <ul class="gcl-ai-confirm-list" id="reanalyzeList">
+                <li id="reanalyzeReplace">저장된 분석 결과(KPI·소견·차트·이벤트 표)가 <b>새 결과로 교체</b>됩니다. 분석 규칙이 바뀌었다면 소견·심각도가 달라질 수 있습니다.</li>
+                <li id="reanalyzeAi" style="display:none">기존 <b>AI 분석 결과는 지워지지 않지만</b> 새 결과와 맞지 않을 수 있으니 필요하면 다시 실행하세요.</li>
+                <li>분석하는 동안 이 화면은 진행 표시로 바뀌며, 끝나면 자동으로 새로고침됩니다.</li>
+                <li>수동으로 연결한 힙 덤프·서버명·인스턴스명은 유지됩니다.</li>
+            </ul>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="closeReanalyzeConfirm()">취소</button>
+            <button type="button" class="mbtn-save" id="reanalyzeConfirmBtn" onclick="confirmReanalyze()">재분석</button>
+        </div>
+    </div>
+</div>
+
 <!-- 삭제 확인 모달 -->
 <div id="deleteGcModal" class="modal-ov gcl-modal" onclick="if(event.target===this)closeGcDeleteModal()">
     <div class="modal-box">
@@ -298,7 +332,7 @@
     };
 </script>
 <script th:src="@{/js/table-grid.js?v=2026-09-13}"></script>
-<script th:src="@{/js/gc-log-analyze.js?v=2026-09-15c}"></script>
+<script th:src="@{/js/gc-log-analyze.js?v=2026-09-16c}"></script>
 
 </body>
 </html>

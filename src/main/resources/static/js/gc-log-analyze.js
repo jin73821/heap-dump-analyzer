@@ -129,6 +129,41 @@
             .catch(function (e) { failed('분석 시작 실패', e); setRetryDisabled(false); showError(errMsg(e, '분석을 시작하지 못했습니다.')); });
     }
 
+    // ── 재분석 확인 모달 (2026-09-16) ───────────────────────────
+    // 재분석은 저장된 결과를 덮으므로 버튼(헤더 '재분석' · 오류 상자 '다시 분석' · 옛 결과 배너 '재분석')은 모달만 연다.
+    // 요청은 confirmReanalyze → reanalyze 에서만 나간다.
+    var _reanalyzeReturnFocus = null;
+    function openReanalyzeConfirm() {
+        var modal = document.getElementById('reanalyzeModal');
+        if (!modal) { reanalyze(); return; }   // 템플릿이 옛 캐시일 때 — 동작은 막지 않는다
+        var hasResult = GC_STATUS === 'SUCCESS';
+        document.getElementById('reanalyzeTitle').textContent = hasResult ? 'GC 로그 재분석' : 'GC 로그 다시 분석';
+        document.getElementById('reanalyzeDesc').textContent = hasResult
+            ? '이 GC 로그를 처음부터 다시 분석합니다.'
+            : '마지막 분석이 실패했습니다. 이 GC 로그를 처음부터 다시 분석합니다.';
+        document.getElementById('reanalyzeReplace').style.display = hasResult ? '' : 'none';
+        document.getElementById('reanalyzeAi').style.display = hasResult && _aiHtml ? '' : 'none';
+        var btn = document.getElementById('reanalyzeConfirmBtn');
+        btn.textContent = hasResult ? '재분석' : '다시 분석';
+        btn.disabled = false;
+        _reanalyzeReturnFocus = document.activeElement;
+        modal.classList.add('open');
+        btn.focus();
+    }
+    function closeReanalyzeConfirm() {
+        var modal = document.getElementById('reanalyzeModal');
+        if (!modal || !modal.classList.contains('open')) return;
+        modal.classList.remove('open');
+        if (_reanalyzeReturnFocus && _reanalyzeReturnFocus.focus) { try { _reanalyzeReturnFocus.focus(); } catch (e) { ignored('재분석 모달 포커스 복귀', e); } }
+        _reanalyzeReturnFocus = null;
+    }
+    function confirmReanalyze() {
+        var btn = document.getElementById('reanalyzeConfirmBtn');
+        if (btn) btn.disabled = true;   // 두 번 눌러 요청이 두 번 나가지 않게
+        closeReanalyzeConfirm();
+        reanalyze();
+    }
+
     function reanalyze() {
         setRetryDisabled(true);
         Common.fetchJSON('/api/gc-log/reanalyze/' + encodeURIComponent(GC_FILENAME), { method: 'POST' })
@@ -162,6 +197,99 @@
             + (sub ? '<div class="gcl-kpi-sub" title="' + esc(sub) + '">' + esc(sub) + '</div>' : '') + '</div>';
     }
 
+    // ── 메모리 압박 Full GC 배너 (2026-09-16) ─────────────────
+    // fullGcSummary(엔진의 Full GC 분류 블록)로 그린다. 상태 5종: 압박 있음(심각도 색) / 힙 압박 아님(Metaspace·GCLocker 만) /
+    // 전부 명시적(.ok) / 옛 결과(블록 없음 → .legacy + 재분석 버튼) / Full 없음(숨김).
+    var KIND_LABEL = { HEAP_PRESSURE: '압박', EXPLICIT: '명시적', METASPACE: 'Metaspace', GC_LOCKER: 'GCLocker', OTHER: '기타' };
+    var PRESSURE_FINDINGS = { FULL_GC_LOW_RECLAIM: 1, FULL_GC_FREQUENT: 1, FULL_GC_INTERVAL_SHRINKING: 1 };
+    var SEV_RANK = { Critical: 5, High: 4, Medium: 3, Low: 2, Info: 1 };
+    function pressureSeverity(r) {
+        var best = 'Low';
+        (r.findings || []).forEach(function (f) { if (PRESSURE_FINDINGS[f.code] && (SEV_RANK[f.severity] || 0) > (SEV_RANK[best] || 0)) best = f.severity; });
+        return best;
+    }
+    function pressureChip(label, n, muted) {
+        return '<span class="gcl-pressure-chip' + (muted ? ' muted' : '') + '">' + esc(label) + ' <span class="cnt">' + esc(n) + '</span></span>';
+    }
+    function renderPressureBanner(r) {
+        var box = document.getElementById('gclPressureBanner');
+        if (!box) return;
+        var s = r.fullGcSummary, k = r.kpi;
+        box.className = 'gcl-pressure';
+        if (!s) {
+            // 분류 이전 옛 결과 — Full GC 가 있었다면 재분석해야 압박 여부를 알 수 있다
+            if (!(k.fullCount > 0)) { box.hidden = true; return; }
+            box.className = 'gcl-pressure legacy';
+            box.innerHTML = '<div class="gcl-pressure-head"><span class="gcl-pressure-title">Full GC ' + esc(k.fullCount) + '회 — 이전 분석 결과라 Full GC 분류가 없습니다.</span></div>'
+                + '<div class="gcl-pressure-line">재분석하면 압박 Full GC 분류를 볼 수 있습니다(메모리 압박 · Metaspace · GCLocker · 명시적 호출, 회수율·직후 점유율).</div>'
+                + (GC_FILE_EXISTS ? '<div class="gcl-pressure-actions"><button type="button" class="btn btn-sm btn-primary" onclick="openReanalyzeConfirm()">재분석</button></div>' : '');
+            box.hidden = false;
+            return;
+        }
+        if (!(s.total > 0)) { box.hidden = true; return; }
+        var bk = s.byKind || {};
+        var meta = bk.METASPACE || 0, locker = bk.GC_LOCKER || 0, other = bk.OTHER || 0, explicit = bk.EXPLICIT || 0;
+        var h;
+        if (s.heapPressureCount > 0) {
+            var sev = pressureSeverity(r);
+            box.className = 'gcl-pressure sev-' + sev;
+            h = '<div class="gcl-pressure-head"><span class="gcl-pressure-sev">' + esc(sev) + '</span>'
+                + '<span class="gcl-pressure-title">메모리 압박 Full GC ' + esc(s.heapPressureCount) + '회</span>'
+                + (s.heapPressurePerHour != null ? '<span class="gcl-pressure-rate">시간당 ' + s.heapPressurePerHour.toFixed(2) + '회</span>' : '') + '</div>';
+            var chips = '';
+            Object.keys(s.pressureByCause || {}).forEach(function (c) { chips += pressureChip(c, s.pressureByCause[c], false); });
+            if (meta) chips += pressureChip('Metaspace', meta, true);
+            if (locker) chips += pressureChip('GCLocker', locker, true);
+            if (other) chips += pressureChip('기타', other, true);
+            if (explicit) chips += pressureChip('명시적', explicit, true);
+            if (chips) h += '<div class="gcl-pressure-chips">' + chips + '</div>';
+            if (s.reclaimSamples > 0) {
+                h += '<div class="gcl-pressure-line">회수율 중앙값 <b>' + pct(s.reclaimPctMedian, 0) + '</b> · 최저 <b>' + pct(s.reclaimPctMin, 0) + '</b> · 20% 미만 <b>' + esc(s.lowReclaimCount) + '회</b>'
+                    + ' · 직후 점유 85% 이상 <b>' + esc(s.highOccupancyCount) + '회</b> · 연속 최대 <b>' + esc(s.maxConsecutivePressure) + '회</b></div>';
+            } else if (s.note) h += '<div class="gcl-pressure-line">' + esc(s.note) + '</div>';
+            if (s.lastAfterBytes != null) {
+                h += '<div class="gcl-pressure-line">마지막 압박 Full GC 직후 힙 <b>' + esc(fmtBytes(s.lastAfterBytes)) + '</b>' + (s.lastTotalBytes != null ? ' / ' + esc(fmtBytes(s.lastTotalBytes)) : '')
+                    + (s.lastAfterRatio != null ? ' (<b>' + pct(s.lastAfterRatio * 100, 0) + '</b>)' : '') + (s.lastAfterCapRatio != null ? ' · 최대 힙 대비 ' + pct(s.lastAfterCapRatio * 100, 0) : '')
+                    + (s.lastAtSec != null ? ' · uptime ' + esc(fmtDur(s.lastAtSec)) : '') + (s.lastLine != null ? ' · 줄 ' + esc(s.lastLine) : '') + '</div>';
+            }
+            if (s.intervalShrinking === true) {
+                h += '<div class="gcl-pressure-line">간격 앞 절반 중앙값 <b>' + esc(fmtDur(s.intervalMedianFirstHalfSec)) + '</b> → 뒤 절반 <b>' + esc(fmtDur(s.intervalMedianSecondHalfSec)) + '</b> — 짧아지는 중</div>';
+            }
+            h += '<div class="gcl-pressure-actions"><button type="button" class="btn btn-sm btn-secondary" onclick="showPressureEvents()">해당 이벤트 보기</button>'
+                + '<a id="gclPressureDump" class="btn btn-sm btn-ghost" href="#" hidden>연결된 힙 덤프</a></div>';
+        } else if (meta + locker + other > 0) {
+            box.className = 'gcl-pressure sev-Low';
+            h = '<div class="gcl-pressure-head"><span class="gcl-pressure-sev">Low</span><span class="gcl-pressure-title">Full GC ' + esc(s.total) + '회 — 힙 압박 아님</span></div>'
+                + '<div class="gcl-pressure-chips">' + (meta ? pressureChip('Metaspace 임계치', meta, true) : '') + (locker ? pressureChip('GCLocker', locker, true) : '')
+                + (other ? pressureChip('기타', other, true) : '') + (explicit ? pressureChip('명시적', explicit, true) : '') + '</div>'
+                + '<div class="gcl-pressure-line">힙이 차서 일어난 Full GC 는 없습니다' + (meta ? ' — Metaspace 임계치는 클래스 로딩(Metaspace 부족) 신호이니 METADATA_THRESHOLD 소견을 보세요' : '') + '.</div>';
+        } else {
+            box.className = 'gcl-pressure ok';
+            h = '<div class="gcl-pressure-head"><span class="gcl-pressure-sev">OK</span><span class="gcl-pressure-title">Full GC ' + esc(s.total) + '회는 전부 명시적 호출(System.gc() 등) — 메모리 압박 신호 아님</span>'
+                + (k.systemGcIntervalSec != null ? '<span class="gcl-pressure-rate">약 ' + esc(fmtDur(k.systemGcIntervalSec)) + ' 간격</span>' : '') + '</div>';
+        }
+        box.innerHTML = h;
+        box.hidden = false;
+        syncPressureDumpLink();
+    }
+    function syncPressureDumpLink() {
+        var a = document.getElementById('gclPressureDump');
+        if (!a) return;
+        var matched = _matchView && _matchView.matched;
+        if (matched) { a.href = '/analyze/' + encodeURIComponent(matched.dumpFilename); a.hidden = false; }
+        else a.hidden = true;
+    }
+    /** 배너 '해당 이벤트 보기' — 유형 FULL + 검색 '압박' 을 기존 applyFilter 3 술어로 건다(detach 표: tbody 직접 조작 금지). 검색창을 비우면 원래대로. */
+    function showPressureEvents() {
+        if (!_evGrid) return;
+        _evTypeSel = { FULL: true };
+        if (_evTypeSync) _evTypeSync();
+        var search = document.getElementById('gclEvSearch'); if (search) search.value = '압박';
+        var only = document.getElementById('gclEvOnlyFlag'); if (only) only.checked = false;
+        if (_evApplyFilter) _evApplyFilter();
+        var tbl = document.getElementById('gclEvTable'); if (tbl && tbl.scrollIntoView) tbl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     function renderKpi(r) {
         var k = r.kpi, m = r.meta, ps = r.pauseStats, t = r.trend;
         var h = '';
@@ -173,7 +301,20 @@
         h += kpiCard('일시정지 p99 · 최대', fmtMs(ps.p99Ms) + ' · ' + fmtMs(ps.maxMs), 'p50 ' + fmtMs(ps.p50Ms) + ' · p95 ' + fmtMs(ps.p95Ms) + (ps.approximate ? ' (근사)' : ''), ps.maxMs > 5000 ? 'bad' : ps.maxMs > 1000 ? 'warn' : '');
         // 경고색은 명시적 호출(System.gc() 등)을 뺀 압박 Full 빈도 기준 — 필드가 없는 옛 결과는 전체 빈도(2026-09-15)
         var fullRate = k.pressureFullGcPerHour != null ? k.pressureFullGcPerHour : k.fullGcPerHour;
-        h += kpiCard('Full GC', String(k.fullCount), k.fullGcPerHour != null ? '시간당 ' + k.fullGcPerHour.toFixed(2) + '회' + (k.explicitFullCount ? ' · 명시적 ' + k.explicitFullCount + '회' : '') + ' · 연속 최대 ' + k.maxConsecutiveFull : '', fullRate > 6 ? 'bad' : fullRate > 1 ? 'warn' : '');
+        var fs = r.fullGcSummary;
+        if (fs) {
+            // 분류 블록이 있으면 '압박 Full GC' / '명시적 Full GC' 두 카드(2026-09-16) — 경고색은 압박 쪽에만
+            var ph = fs.heapPressurePerHour;
+            var lowReclaim = (r.findings || []).some(function (f) { return f.code === 'FULL_GC_LOW_RECLAIM'; });
+            var pCls = lowReclaim || ph > 6 ? 'bad' : ph > 1 ? 'warn' : '';
+            var pSub = (ph != null ? '시간당 ' + ph.toFixed(2) + '회 · ' : '') + '연속 최대 ' + fs.maxConsecutivePressure + (fs.reclaimSamples > 0 ? ' · 회수율 중앙값 ' + pct(fs.reclaimPctMedian, 0) : '')
+                + ((fs.byKind && (fs.byKind.METASPACE || 0)) ? ' · Metaspace ' + fs.byKind.METASPACE : '');
+            h += kpiCard('압박 Full GC', String(fs.heapPressureCount), pSub, pCls);
+            var eSub = 'System.gc() ' + k.systemGcCount + '회' + (k.systemGcIntervalSec != null ? ' · 약 ' + fmtDur(k.systemGcIntervalSec) + ' 간격' : '') + ' · 전체 Full ' + k.fullCount + '회';
+            h += kpiCard('명시적 Full GC', String(k.explicitFullCount), eSub, '');
+        } else {
+            h += kpiCard('Full GC', String(k.fullCount), k.fullGcPerHour != null ? '시간당 ' + k.fullGcPerHour.toFixed(2) + '회' + (k.explicitFullCount ? ' · 명시적 ' + k.explicitFullCount + '회' : '') + ' · 연속 최대 ' + k.maxConsecutiveFull : '', fullRate > 6 ? 'bad' : fullRate > 1 ? 'warn' : '');
+        }
         h += kpiCard('이벤트', String(k.eventCount), 'Young ' + k.youngCount + ' · Mixed ' + k.mixedCount + ' · Concurrent ' + k.concurrentCount);
         h += kpiCard('최대 힙 용량', fmtBytes(k.maxHeapTotalBytes), '마지막 GC 후 ' + fmtBytes(k.lastHeapAfterBytes) + (k.maxHeapTotalBytes && k.lastHeapAfterBytes ? ' (' + Math.round(100 * k.lastHeapAfterBytes / k.maxHeapTotalBytes) + '%)' : ''));
         h += kpiCard('할당률', k.allocationRateMbPerSec == null ? '–' : k.allocationRateMbPerSec.toFixed(1) + ' MB/s', k.promotionRateMbPerSec != null ? '승격 ' + k.promotionRateMbPerSec.toFixed(3) + ' MB/s' : '');
@@ -189,56 +330,54 @@
             trendWarn ? 'warn' : '');
         if (k.metaspaceLastBytes != null) h += kpiCard(m.permGen ? 'PermGen' : 'Metaspace', fmtBytes(k.metaspaceLastBytes), '시작 ' + fmtBytes(k.metaspaceFirstBytes) + (k.metaspaceMaxTotalBytes ? ' · 예약 ' + fmtBytes(k.metaspaceMaxTotalBytes) : ''));
         if (k.maxOverheadPct10m != null) h += kpiCard('10분 창 최대 GC 비중', pct(k.maxOverheadPct10m, 1), 'uptime ' + fmtDur(k.maxOverheadWindowStartSec) + ' 부근', k.maxOverheadPct10m >= 50 ? 'bad' : k.maxOverheadPct10m >= 25 ? 'warn' : '');
-        h += INSTANCE_CARD;
         document.getElementById('gclKpi').innerHTML = h;
-        renderInstance(_instance);
     }
 
-    // ── 인스턴스 카드 ────────────────────────────────────────
+    // ── 인스턴스 알약 (헤더 메타, 서버 알약 오른쪽) ─────────────
+    // 2026-09-16: 종전 KPI 마지막 카드에서 헤더 메타 알약으로 옮겼다 — 서버명과 함께 "어느 JVM 의 로그인가" 를 말하는 식별 정보라서다.
     // 값 = 수동 입력 > 연결된 힙 덤프의 Instance(analyze 화면 Instance 칩과 같은 값). 서버 뷰({name,source,manual,dump,dumpFilename})를
-    // 그대로 그린다 — 초기값은 GC_INSTANCE, 이후 /instance 저장 응답과 /match 계열 응답(연결 변경)이 갱신한다.
-    // ⚠ 편집 중에는 값 줄을 숨기고 입력 줄을 형제로 끼운다 — 그 사이 매칭 응답이 와도 renderInstance 가 입력을 덮지 않는다.
-    var INSTANCE_CARD = '<div class="gcl-kpi gcl-kpi-inst" id="gclInstCard">'
-        + '<div class="gcl-kpi-label">인스턴스</div>'
-        + '<button type="button" class="gcl-kpi-edit" id="gclInstEdit" onclick="startInstanceEdit()" title="인스턴스명 편집" aria-label="인스턴스명 편집">&#9998;</button>'
-        + '<div class="gcl-kpi-value" id="gclInstValue"></div>'
-        + '<div class="gcl-kpi-sub" id="gclInstSub"></div></div>';
+    // 그대로 그린다 — 초기값은 서버 렌더(GC_INSTANCE 와 같은 값), 이후 /instance 저장 응답과 /match 계열 응답(연결 변경)이 갱신한다.
+    // 알약은 결과 유무와 무관하게 있으므로 분석 전·실패 화면에서도 입력할 수 있다.
+    // ⚠ 편집 중에는 값·배지·연필을 숨기고 입력 줄을 형제로 끼운다 — 그 사이 매칭 응답이 와도 renderInstance 가 입력을 덮지 않는다.
     var _instance = (typeof GC_INSTANCE !== 'undefined' && GC_INSTANCE) ? GC_INSTANCE : null;
+
+    function instanceDescription(v) {
+        if (v.source === 'manual') return '수동 입력' + (v.dump && v.dump !== v.manual ? ' · 덤프 값 ' + v.dump : '');
+        if (v.source === 'dump') return '연결된 힙 덤프 · ' + v.dumpFilename;
+        if (v.dumpFilename) return '연결된 힙 덤프에 Instance 없음 — 직접 입력';
+        return '힙 덤프를 연결하면 자동으로 가져옵니다';
+    }
 
     function renderInstance(v) {
         if (v) _instance = v;
         v = _instance || {};
+        var item = document.getElementById('gclInstItem');
         var val = document.getElementById('gclInstValue');
-        var sub = document.getElementById('gclInstSub');
-        if (!val || !sub) return;
+        var src = document.getElementById('gclInstSrc');
+        if (!item || !val) return;
         var name = v.name || '';
         val.textContent = name || '미지정';
-        val.title = name;
         val.classList.toggle('empty', !name);
-        var s;
-        if (v.source === 'manual') {
-            s = '수동 입력' + (v.dump && v.dump !== v.manual ? ' · 덤프 값 ' + v.dump : '');
-        } else if (v.source === 'dump') {
-            s = '연결된 힙 덤프 · ' + v.dumpFilename;
-        } else if (v.dumpFilename) {
-            s = '연결된 힙 덤프에 Instance 없음 — 직접 입력';
-        } else {
-            s = '힙 덤프를 연결하면 자동으로 가져옵니다';
+        item.title = '인스턴스 — ' + instanceDescription(v);
+        if (src) {
+            var editing = !!item.querySelector('.gcl-meta-form');
+            src.className = 'gcl-meta-src ' + (v.source || 'none');
+            src.textContent = v.source === 'manual' ? '수동' : '덤프';
+            src.style.display = editing || v.source !== 'manual' && v.source !== 'dump' ? 'none' : '';
         }
-        sub.textContent = s;
-        sub.title = s;
     }
 
     function startInstanceEdit() {
-        var card = document.getElementById('gclInstCard');
+        var item = document.getElementById('gclInstItem');
         var val = document.getElementById('gclInstValue');
+        var src = document.getElementById('gclInstSrc');
         var btn = document.getElementById('gclInstEdit');
-        if (!card || !val || card.querySelector('.gcl-inst-form')) return;
-        var form = document.createElement('div');
-        form.className = 'gcl-inst-form';
+        if (!item || !val || item.querySelector('.gcl-meta-form')) return;
+        var form = document.createElement('span');
+        form.className = 'gcl-meta-form';
         var input = document.createElement('input');
         input.type = 'text';
-        input.className = 'gcl-inst-input';
+        input.className = 'gcl-meta-input';
         input.maxLength = 100;
         // 수동값이 없으면 덤프 값을 채워 둔다 — 그대로 저장하면 연결을 바꿔도 유지되는 수동값이 된다
         input.value = _instance ? (_instance.manual || _instance.dump || '') : '';
@@ -254,6 +393,7 @@
             if (form.parentNode) form.parentNode.removeChild(form);
             val.style.display = '';
             if (btn) { btn.style.display = ''; btn.focus(); }
+            renderInstance();   // 출처 배지 표시 복원
         }
         cancel.onclick = close;
         save.onclick = function () {
@@ -277,6 +417,7 @@
             else if (ev.key === 'Escape') { ev.preventDefault(); close(); }
         });
         val.style.display = 'none';
+        if (src) src.style.display = 'none';
         if (btn) btn.style.display = 'none';
         val.insertAdjacentElement('afterend', form);
         input.focus();
@@ -285,7 +426,7 @@
 
     // ── 출처 서버명 ──────────────────────────────────────────
     // 헤더 메타의 '서버' 알약. 업로드 때 비워 둔 로그도 여기서 채운다(2026-09-15 — 종전엔 알약 자체가 없어 입력할 곳이 없었다).
-    // 서버명은 자동 매칭의 '같은 서버' 신호라 저장 응답(matchView)으로 매칭 칩·인스턴스 카드도 함께 다시 그린다.
+    // 서버명은 자동 매칭의 '같은 서버' 신호라 저장 응답(matchView)으로 매칭 칩·인스턴스 알약도 함께 다시 그린다.
     function renderServerName(name) {
         var val = document.getElementById('gclServerValue');
         if (!val) return;
@@ -394,6 +535,11 @@
                 datasets.push({ label: (r.trend.basis === 'full' ? 'Full GC' : r.trend.basis === 'remark' ? 'Remark' : 'Mixed') + ' 직후', data: r.trend.afterPoints.map(function (p) { return { x: p[0], y: p[1] }; }),
                     borderColor: '#DC2626', backgroundColor: '#DC2626', showLine: true, borderWidth: 1.5, pointRadius: 3, tension: 0 });
             }
+            // 압박 Full GC 만 ▲ — Series 는 병합 시 유형이 FULL 로 뭉개져 압박/명시적을 못 가르므로 분류 블록의 점을 쓴다(2026-09-16)
+            if (r.fullGcSummary && r.fullGcSummary.points && r.fullGcSummary.points.length) {
+                datasets.push({ label: '압박 Full GC 직후', data: r.fullGcSummary.points.map(function (p) { return { x: p[0], y: p[1] }; }),
+                    borderColor: '#DC2626', backgroundColor: '#DC2626', showLine: false, pointStyle: 'triangle', pointRadius: 5, pointHoverRadius: 7 });
+            }
             _charts.push(new Chart(heapCtx, { type: 'line', data: { datasets: datasets }, options: Object.assign({}, common, {
                 scales: Object.assign({}, common.scales, { y: { beginAtZero: true, ticks: { callback: mb, font: { size: 10 } }, grid: { color: '#F3F4F6' } } }),
                 plugins: Object.assign({}, common.plugins, { tooltip: { callbacks: { title: function (it) { return it.length ? 'uptime ' + xTick(it[0].parsed.x) : ''; }, label: function (it) { return it.dataset.label + ': ' + fmtBytes(it.parsed.y); } } } })
@@ -411,6 +557,7 @@
         }
         var hn = document.getElementById('gclHeapChartNote');
         if (hn && s.mergeFactor > 1) hn.textContent = '표시 점은 ' + s.mergeFactor + '건씩 병합(직전=최대, 직후=마지막)';
+        if (hn && r.fullGcSummary && r.fullGcSummary.points && r.fullGcSummary.points.length) hn.textContent += ' · ▲ 압박 Full GC';
     }
 
     // ── 소견 ─────────────────────────────────────────────────
@@ -440,17 +587,19 @@
         _evRows = events.map(function (e) {
             var tr = document.createElement('tr');
             var abnormal = (e.flags || []).some(function (f) { return ABNORMAL[f]; });
-            tr.className = 'ev-' + e.type + (abnormal ? ' ev-flag' : '');
+            var kind = e.type === 'FULL' ? e.fullKind : null;   // Full 행 분류(2026-09-16) — 옛 결과는 없다
+            tr.className = 'ev-' + e.type + (abnormal ? ' ev-flag' : '') + (kind === 'EXPLICIT' ? ' ev-explicit' : '');
             tr.setAttribute('data-seq', e.seq); tr.setAttribute('data-line', e.line);
             tr.setAttribute('data-ts', e.tsEpochMs == null ? '' : String(e.tsEpochMs)); tr.setAttribute('data-uptime', e.uptimeSec == null ? '' : e.uptimeSec);
             tr.setAttribute('data-type', e.type); tr.setAttribute('data-pause', e.pauseMs == null ? '' : e.pauseMs);
-            tr.setAttribute('data-search', (e.type + ' ' + (e.cause || '') + ' ' + (e.flags || []).join(' ')).toLowerCase());
+            tr.setAttribute('data-kind', kind || '');
+            tr.setAttribute('data-search', (e.type + ' ' + (e.cause || '') + ' ' + (e.flags || []).join(' ') + ' ' + (kind ? KIND_LABEL[kind] || kind : '')).toLowerCase());
             tr.setAttribute('data-flag', (e.type === 'FULL' || abnormal) ? '1' : '0');
             var heap = e.heapBefore != null ? fmtBytes(e.heapBefore) + ' → ' + fmtBytes(e.heapAfter) + (e.heapTotal != null ? ' / ' + fmtBytes(e.heapTotal) : '') : '–';
             var cpu = e.userSec != null ? e.userSec.toFixed(2) + ' / ' + e.sysSec.toFixed(2) + ' / ' + e.realSec.toFixed(2) : '–';
             tr.innerHTML = '<td class="num">' + e.seq + '</td><td class="num">' + e.line + '</td><td>' + esc(fmtTs(e.tsEpochMs)) + '</td>'
                 + '<td class="num">' + (e.uptimeSec == null ? '–' : xTick(e.uptimeSec)) + '</td>'
-                + '<td><span class="gcl-type t-' + esc(e.type) + '">' + esc(typeLabel(e.type)) + '</span></td>'
+                + '<td><span class="gcl-type t-' + esc(e.type) + '">' + esc(typeLabel(e.type)) + '</span>' + (kind ? '<span class="gcl-kind k-' + esc(kind) + '">' + esc(KIND_LABEL[kind] || kind) + '</span>' : '') + '</td>'
                 + '<td title="' + esc(e.cause || '') + '">' + esc(e.cause || '') + '</td>'
                 + '<td class="num">' + (e.pauseMs == null ? '–' : (e.concurrent ? '(' + fmtMs(e.pauseMs) + ')' : fmtMs(e.pauseMs))) + '</td>'
                 + '<td>' + esc(heap) + callHeapNote(e) + '</td><td class="num">' + esc(cpu) + '</td>'
@@ -482,8 +631,10 @@
         search.addEventListener('input', function () { clearTimeout(deb); deb = setTimeout(applyFilter, 150); });
         onlyFlag.addEventListener('change', applyFilter);
         renderEventTypeFilter(events, applyFilter);
+        _evApplyFilter = applyFilter;   // 배너 '해당 이벤트 보기' 가 같은 술어를 쓴다
         applyFilter();
     }
+    var _evApplyFilter = null, _evTypeSync = null;
 
     // 명시적 호출(System.gc() 등)의 Full 단계 행 — 같은 호출의 Young 수집까지 합친 전체 회수량을 한 줄 더 보인다(2026-09-15).
     // Full 단계만 보면 '26.0 MB → 25.8 MB' 처럼 해제가 미미해 보이지만 그건 Young 에서 살아남은 객체를 Old 로 옮겨 압축하는 단계라서다.
@@ -511,6 +662,7 @@
         });
         box.innerHTML = '';
         _evTypeSel = {};
+        _evTypeSync = null;
         if (types.length < 2) { box.hidden = true; return; }   // 유형이 하나뿐이면 거를 것이 없다
         var all = document.createElement('button');
         all.type = 'button';
@@ -546,6 +698,7 @@
             onChange();
         };
         sync();
+        _evTypeSync = sync;
         box.hidden = false;
     }
 
@@ -593,6 +746,7 @@
         }
         _matchView = v;
         if (v && v.instance) renderInstance(v.instance);
+        syncPressureDumpLink();
     }
     var _matchView = null;
     function refreshMatch() {
@@ -697,6 +851,8 @@
         var sev = data.severity || 'Unknown';
         var h = '<div class="gcl-ai-sev sev-' + esc(sev) + '"><span class="gcl-ai-sev-badge">' + esc(sev) + '</span>'
             + (data.severityDesc ? '<span class="gcl-ai-sev-desc">' + aiText(data.severityDesc) + '</span>' : '') + '</div>';
+        // 서버가 응답 모양을 고쳤으면(severity 미인식·권고 5건 초과·본문 절단) 무엇을 고쳤는지 보인다(2026-09-16)
+        if (Array.isArray(data.warnings) && data.warnings.length) h += '<div class="gcl-ai-warn">응답 정규화: ' + esc(data.warnings.join(' · ')) + '</div>';
         h += '<div class="gcl-ai-blocks">';
         if (data.summary) h += aiBlock('summary', '요약', '<div class="gcl-ai-block-text">' + aiText(data.summary) + '</div>');
         if (data.rootCause) h += aiBlock('cause', '근본 원인', '<div class="gcl-ai-block-text">' + aiText(data.rootCause) + '</div>');
@@ -840,13 +996,16 @@
             if (wantStart) history.replaceState(null, document.title, window.location.pathname);
         } catch (e) { ignored('start 파라미터 처리', e); }
 
+        try { renderInstance(_instance); } catch (e) { failed('인스턴스 알약 렌더', e); }   // 결과 유무와 무관 — 설명(title)을 채운다
+
         var search = document.getElementById('matchPickSearch');
         if (search) search.addEventListener('input', function () { renderPickList(search.value); });
-        document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeAiConfirm(); });
+        document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { closeAiConfirm(); closeReanalyzeConfirm(); } });
 
         if (GC_STATUS === 'SUCCESS') {
             R = loadResult();
             if (!R) { showError('저장된 결과를 읽지 못했습니다. 재분석하세요.'); document.getElementById('gclResult').style.display = 'none'; document.getElementById('gclProgress').style.display = ''; return; }
+            try { renderPressureBanner(R); } catch (e) { failed('압박 배너 렌더', e); }
             try { renderKpi(R); } catch (e) { failed('KPI 렌더', e); }
             try { renderCharts(R); } catch (e) { failed('차트 렌더', e); }
             try { renderFindings(R); } catch (e) { failed('소견 렌더', e); }
@@ -869,6 +1028,9 @@
     });
 
     window.reanalyze = reanalyze;
+    window.openReanalyzeConfirm = openReanalyzeConfirm;
+    window.closeReanalyzeConfirm = closeReanalyzeConfirm;
+    window.confirmReanalyze = confirmReanalyze;
     window.cancelAnalysis = cancelAnalysis;
     window.showRaw = showRaw;
     window.openMatchedDump = openMatchedDump;
@@ -886,4 +1048,5 @@
     window.startServerEdit = startServerEdit;
     window.closeGcDeleteModal = closeGcDeleteModal;
     window.confirmGcDelete = confirmGcDelete;
+    window.showPressureEvents = showPressureEvents;
 })();

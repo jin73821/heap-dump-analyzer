@@ -269,6 +269,7 @@ public class GcLogAnalyzerService {
         e.setTimeSource(null);
         e.setEventCount(null);
         e.setFullGcCount(null);
+        e.setPressureFullGcCount(null);
         e.setFindingsCount(null);
         e.setMaxPauseMs(null);
         e.setP99PauseMs(null);
@@ -469,6 +470,7 @@ public class GcLogAnalyzerService {
         e.setLogEnd(m.getLogEndEpochMs() == null ? null : LocalDateTime.ofInstant(Instant.ofEpochMilli(m.getLogEndEpochMs()), ZoneId.systemDefault()));
         e.setEventCount(k.getEventCount());
         e.setFullGcCount(k.getFullCount());
+        e.setPressureFullGcCount(r.getFullGcSummary() == null ? null : r.getFullGcSummary().getHeapPressureCount());
         e.setFindingsCount((int) r.getFindings().stream().filter(f -> !"Info".equals(f.getSeverity())).count());
         e.setMaxPauseMs(r.getPauseStats().getMaxMs());
         e.setP99PauseMs(r.getPauseStats().getP99Ms());
@@ -527,6 +529,7 @@ public class GcLogAnalyzerService {
         m.put("kpi", r.getKpi());
         m.put("pauseStats", r.getPauseStats());
         m.put("trend", r.getTrend());
+        m.put("fullGcSummary", r.getFullGcSummary());
         List<GcLogResult.Finding> top = new ArrayList<>();
         for (GcLogResult.Finding f : r.getFindings()) { if (!"Info".equals(f.getSeverity())) top.add(f); if (top.size() >= 3) break; }
         m.put("findings", top);
@@ -601,7 +604,10 @@ public class GcLogAnalyzerService {
 
     static final String GC_SYSTEM_PROMPT = "당신은 JVM GC 로그 분석 전문가입니다. 주어진 GC 로그 통계(수집기·일시정지·처리량·할당률·Full GC 추세·규칙 기반 이상 징후)와, "
             + "연결된 힙 덤프 정보가 있으면 그것까지 함께 해석해 근본 원인과 튜닝 권고를 제시하세요. 수치는 주어진 값만 인용하고 추측 수치를 만들지 마세요. "
-            + "recommendations 는 우선순위가 높은 3개까지, gcTuningAdvice 에는 구체적 JVM 옵션을 적으세요. 반드시 마크다운 없이 순수 JSON 만 출력하세요.";
+            + "Full GC 는 주어진 분류(메모리 압박/Metaspace/GCLocker/명시적)를 따르세요 — 명시적 호출(System.gc()·힙 덤프)의 Full GC 는 메모리 압박 신호가 아니며, "
+            + "메모리 압박 Full GC 의 회수율이 낮거나 직후 점유율이 높으면 누수·힙 부족을 먼저 의심하세요. "
+            + "recommendations 는 우선순위가 높은 3개까지, gcTuningAdvice 에는 구체적 JVM 옵션을 적으세요. severity 는 Critical|High|Medium|Low 네 값 중 하나만 쓰세요. "
+            + "반드시 마크다운 없이 순수 JSON 만 출력하세요.";
 
     public Map<String, Object> analyzeWithAi(String safeFilename) {
         GcLogAnalysisEntity e = repository.findByFilename(safeFilename).orElse(null);
@@ -616,7 +622,13 @@ public class GcLogAnalyzerService {
         AnalysisHistoryEntity dump = e.getMatchedDumpFilename() == null ? null
                 : historyRepository.findByFilename(e.getMatchedDumpFilename()).orElse(null);
         String prompt = buildGcPrompt(r.get(), e, dump);
-        return llmConfig.callLlmAnalysis(prompt, GC_SYSTEM_PROMPT);
+        Map<String, Object> res = llmConfig.callLlmAnalysis(prompt, GC_SYSTEM_PROMPT);
+        // 응답 모양 정규화(2026-09-16) — severity 4값·recommendations 리스트·길이 상한. 컨트롤러가 이 data 를 그대로 저장하므로 조회도 같은 모양이다
+        if (res != null && Boolean.TRUE.equals(res.get("success")) && res.get("data") instanceof Map) {
+            @SuppressWarnings("unchecked") Map<String, Object> data = (Map<String, Object>) res.get("data");
+            res.put("data", GcAiResponseNormalizer.normalize(data));
+        }
+        return res;
     }
 
     /** LLM 프롬프트 — 서버 측 조립(코어덤프 buildCrashPrompt 와 같은 방식). ≤ 12k chars. */
@@ -656,7 +668,7 @@ public class GcLogAnalyzerService {
         sb.append("\n== Full GC·힙 추세 ==\n");
         sb.append("Full GC: ").append(k.getFullCount()).append("회");
         if (k.getFullGcPerHour() != null) sb.append(String.format(Locale.ROOT, " (시간당 %.2f회, 연속 최대 %d회)", k.getFullGcPerHour(), k.getMaxConsecutiveFull()));
-        sb.append(explicitGcNote(k)).append('\n');
+        sb.append(explicitGcNote(k)).append(pressureNote(r.getFullGcSummary())).append('\n');
         if (t.getSlopeMbPerHour() != null) {
             sb.append(String.format(Locale.ROOT, "%s 직후 힙 회귀: 기울기 %+.2f MB/h, R²=%.2f, %d점, %s → %s\n",
                     t.getBasis(), t.getSlopeMbPerHour(), t.getR2(), t.getPointsUsed(), FormatUtils.formatBytes(t.getFirstAfterBytes().longValue()), FormatUtils.formatBytes(t.getLastAfterBytes().longValue())));
@@ -670,6 +682,8 @@ public class GcLogAnalyzerService {
         }
         if (k.getLastHeapAfterBytes() != null && k.getMaxHeapTotalBytes() != null) sb.append(String.format(Locale.ROOT, "마지막 GC 직후 사용량: %s (%.0f%%)\n",
                 FormatUtils.formatBytes(k.getLastHeapAfterBytes()), 100.0 * k.getLastHeapAfterBytes() / k.getMaxHeapTotalBytes()));
+
+        sb.append(fullGcClassificationSection(r));
 
         sb.append("\n== 이상 징후 (규칙 기반) ==\n");
         boolean any = false;
@@ -715,6 +729,67 @@ public class GcLogAnalyzerService {
         return sb.append(" (명시적 Full 은 Old 부족 신호가 아님)").toString();
     }
 
+    /** 압박 Full GC 한 줄 요약 — Full GC 줄 뒤에 붙인다. 블록이 없거나(옛 결과) 압박 Full 이 0 이면 빈 문자열. */
+    static String pressureNote(GcLogResult.FullGcSummary s) {
+        if (s == null || s.getHeapPressureCount() <= 0) return "";
+        StringBuilder sb = new StringBuilder(String.format(Locale.ROOT, " · 메모리 압박 Full GC %d회", s.getHeapPressureCount()));
+        List<String> parts = new ArrayList<>();
+        if (s.getReclaimPctMedian() != null) parts.add(String.format(Locale.ROOT, "회수율 중앙값 %.0f%%", s.getReclaimPctMedian()));
+        if (s.getLastAfterCapRatio() != null) parts.add(String.format(Locale.ROOT, "마지막 직후 최대 힙 대비 %.0f%%", s.getLastAfterCapRatio() * 100));
+        if (!parts.isEmpty()) sb.append('(').append(String.join(", ", parts)).append(')');
+        return sb.toString();
+    }
+
+    /**
+     * {@code == Full GC 분류 ==} 섹션(2026-09-16) — 원인별 분류·압박 원인 분포·회수율·간격 추세·마지막 압박 Full·최저 회수 표본.
+     * 블록이 없는 옛 결과는 빈 문자열(재분석 전에는 LLM 도 분류를 모른다).
+     */
+    static String fullGcClassificationSection(GcLogResult r) {
+        GcLogResult.FullGcSummary s = r.getFullGcSummary();
+        if (s == null) return "";
+        Map<String, Integer> bk = s.getByKind();
+        StringBuilder sb = new StringBuilder("\n== Full GC 분류 ==\n");
+        sb.append(String.format(Locale.ROOT, "전체 %d회 = 메모리 압박 %d회 · Metaspace %d회 · GCLocker %d회 · 명시적 %d회 · 기타 %d회\n", s.getTotal(),
+                bk.getOrDefault("HEAP_PRESSURE", 0), bk.getOrDefault("METASPACE", 0), bk.getOrDefault("GC_LOCKER", 0), bk.getOrDefault("EXPLICIT", 0), bk.getOrDefault("OTHER", 0)));
+        if (s.getHeapPressureCount() <= 0) {
+            sb.append(s.getTotal() > 0 ? "압박 Full GC 없음 — 힙이 차서 일어난 Full GC 는 없습니다(명시적 호출·Metaspace·GCLocker 뿐)\n" : "Full GC 없음\n");
+            return sb.toString();
+        }
+        StringBuilder causes = new StringBuilder();
+        s.getPressureByCause().forEach((c, n) -> causes.append(causes.length() > 0 ? ", " : "").append(c).append(' ').append(n));
+        sb.append("압박 Full GC 원인: ").append(causes.length() > 0 ? causes : "(원인 미기록)");
+        if (s.getHeapPressurePerHour() != null) sb.append(String.format(Locale.ROOT, " — 시간당 %.2f회, 연속 최대 %d회", s.getHeapPressurePerHour(), s.getMaxConsecutivePressure()));
+        sb.append('\n');
+        if (s.getReclaimSamples() > 0) {
+            sb.append(String.format(Locale.ROOT, "압박 Full GC 회수율: 중앙값 %.0f%% · 최저 %.0f%% · 20%% 미만 %d회 (표본 %d회)\n",
+                    nzd(s.getReclaimPctMedian()), nzd(s.getReclaimPctMin()), s.getLowReclaimCount(), s.getReclaimSamples()));
+        } else if (s.getNote() != null) sb.append(s.getNote()).append('\n');
+        if (s.getIntervalMedianFirstHalfSec() != null && s.getIntervalMedianSecondHalfSec() != null) {
+            sb.append(String.format(Locale.ROOT, "압박 Full GC 간격: 앞 절반 중앙값 %s → 뒤 절반 %s (%s)\n", fmtDur(s.getIntervalMedianFirstHalfSec()), fmtDur(s.getIntervalMedianSecondHalfSec()),
+                    Boolean.TRUE.equals(s.getIntervalShrinking()) ? "짧아짐" : s.getIntervalShrinking() == null ? "표본 부족" : "유지"));
+        }
+        if (s.getLastAfterBytes() != null) {
+            sb.append(String.format(Locale.ROOT, "마지막 압박 Full GC: uptime %s, 줄 %d, %s → %s / %s", fmtDur(s.getLastAtSec()), s.getLastLine() == null ? 0 : s.getLastLine(),
+                    FormatUtils.formatBytes(nz(s.getLastBeforeBytes())), FormatUtils.formatBytes(s.getLastAfterBytes()), FormatUtils.formatBytes(nz(s.getLastTotalBytes()))));
+            if (s.getLastAfterRatio() != null) sb.append(String.format(Locale.ROOT, " (%.0f%%)", s.getLastAfterRatio() * 100));
+            if (s.getLastAfterCapRatio() != null) sb.append(String.format(Locale.ROOT, ", 최대 힙 대비 %.0f%%", s.getLastAfterCapRatio() * 100));
+            sb.append('\n');
+        }
+        if (!s.getWorstReclaim().isEmpty()) {
+            sb.append("회수율 최저 ").append(Math.min(3, s.getWorstReclaim().size())).append("건:");
+            int n = 0;
+            for (GcLogResult.FullGcSample w : s.getWorstReclaim()) {
+                if (n++ >= 3) break;
+                sb.append(n > 1 ? ", " : " ").append(String.format(Locale.ROOT, "줄 %d %s→%s (%.0f%%)", w.getLine(),
+                        FormatUtils.formatBytes(nz(w.getHeapBefore())), FormatUtils.formatBytes(nz(w.getHeapAfter())), nzd(w.getReclaimPct())));
+            }
+            sb.append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static double nzd(Double v) { return v == null ? 0 : v; }
+
     /** 힙 AI 프롬프트에 끼워 넣는 {@code == GC 로그 요약 ==} 섹션(≤1500자). 미연결이면 빈 문자열. */
     public String buildGcPromptSectionForDump(String dumpFilename) {
         if (dumpFilename == null || dumpFilename.isEmpty()) return "";
@@ -733,7 +808,13 @@ public class GcLogAnalyzerService {
             sb.append(String.format(Locale.ROOT, "처리량 %s, 일시정지 p99 %s / 최대 %s, Full GC %d회", k.getThroughputPct() == null ? "?" : String.format(Locale.ROOT, "%.1f%%", k.getThroughputPct()),
                     ms(r.getPauseStats().getP99Ms()), ms(r.getPauseStats().getMaxMs()), k.getFullCount()));
             if (k.getFullGcPerHour() != null) sb.append(String.format(Locale.ROOT, " (시간당 %.2f회)", k.getFullGcPerHour()));
-            sb.append(explicitGcNote(k)).append('\n');
+            sb.append(explicitGcNote(k)).append(pressureNote(r.getFullGcSummary())).append('\n');
+            GcLogResult.FullGcSummary fs = r.getFullGcSummary();
+            if (fs != null && fs.getHeapPressureCount() > 0 && fs.getReclaimSamples() > 0) {
+                sb.append(String.format(Locale.ROOT, "압박 Full GC 회수율 중앙값 %.0f%% · 20%% 미만 %d회", nzd(fs.getReclaimPctMedian()), fs.getLowReclaimCount()));
+                if (Boolean.TRUE.equals(fs.getIntervalShrinking())) sb.append(" · 간격 짧아지는 중");
+                sb.append('\n');
+            }
             GcLogResult.Trend t = r.getTrend();
             if (t.getSlopeMbPerHour() != null) sb.append(String.format(Locale.ROOT, "%s 직후 힙 추세: %+.2f MB/h (R²=%.2f)%s\n", t.getBasis(), t.getSlopeMbPerHour(), t.getR2(),
                     Boolean.FALSE.equals(t.getSignificant()) && t.getNote() != null ? " — " + t.getNote() : ""));

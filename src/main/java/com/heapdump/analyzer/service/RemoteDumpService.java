@@ -232,13 +232,48 @@ public class RemoteDumpService {
      * - 한 경로라도 성공하면 서버 상태는 OK
      */
     public Map<String, Object> scanRemoteDumpsWithStatus(TargetServer server) {
+        return scanRemoteDumpsWithStatus(server, null);
+    }
+
+    /** 스캔 대상 키 — 화면의 선택지·요청 파라미터 {@code types} 와 같은 이름. */
+    public static final String SCAN_HEAP = "heap", SCAN_CORE = "core", SCAN_GCLOG = "gclog";
+    public static final List<String> SCAN_TYPES = List.of(SCAN_HEAP, SCAN_CORE, SCAN_GCLOG);
+
+    /**
+     * 이번 스캔에서 훑을 경로 — {@code [heap, core, gclog]} 순서. 서버 설정의 탐지 대상(scanHeap/scanCore/scanGcLog)이 상한이고,
+     * {@code types} 가 있으면 그 안에서 더 좁힌다(2026-09-16 스캔 대상 선택). 설정에서 끈 대상은 선택해도 스캔하지 않는다 —
+     * 코어·GC 경로는 설정 화면이 대상이 켜져 있을 때만 받으므로 꺼진 대상의 경로는 낡았을 수 있다.
+     */
+    static List<List<String>> resolveScanPaths(TargetServer server, Set<String> types) {
+        boolean all = types == null;
+        List<String> heap = server.isScanHeap() && (all || types.contains(SCAN_HEAP)) ? server.getDumpPaths() : Collections.emptyList();
+        List<String> core = server.isScanCore() && (all || types.contains(SCAN_CORE)) ? server.getCoreDumpPaths() : Collections.emptyList();
+        List<String> gc = server.isScanGcLog() && (all || types.contains(SCAN_GCLOG)) ? server.getGcLogPaths() : Collections.emptyList();
+        return List.of(heap, core, gc);
+    }
+
+    /**
+     * @param types 스캔할 대상({@link #SCAN_TYPES} 부분집합). null 이면 서버 설정의 탐지 대상 전부(자동 탐지·종전 호출).
+     *              비어 있지 않은데 서버 설정과 겹치는 경로가 없으면 오류로 돌려주되 <b>서버 상태를 FAIL 로 바꾸지 않는다</b> —
+     *              사용자의 선택 결과이지 연결 문제가 아니다.
+     */
+    public Map<String, Object> scanRemoteDumpsWithStatus(TargetServer server, Set<String> types) {
         Map<String, Object> result = new HashMap<>();
         List<Map<String, Object>> files = new ArrayList<>();
         List<Map<String, Object>> pathErrors = new ArrayList<>();
 
-        List<String> heapPaths = server.isScanHeap() ? server.getDumpPaths() : Collections.emptyList();
-        List<String> corePaths = server.isScanCore() ? server.getCoreDumpPaths() : Collections.emptyList();
-        List<String> gcPaths = server.isScanGcLog() ? server.getGcLogPaths() : Collections.emptyList();
+        List<List<String>> resolved = resolveScanPaths(server, types);
+        List<String> heapPaths = resolved.get(0);
+        List<String> corePaths = resolved.get(1);
+        List<String> gcPaths = resolved.get(2);
+
+        if (types != null && heapPaths.isEmpty() && corePaths.isEmpty() && gcPaths.isEmpty()) {
+            result.put("errorCode", "NO_SCAN_TARGET");
+            result.put("error", "선택한 스캔 대상에 설정된 탐지 경로가 없습니다. 서버 설정의 탐지 대상과 경로를 확인하세요.");
+            result.put("files", files);
+            result.put("count", 0);
+            return result;
+        }
 
         if (heapPaths.isEmpty() && corePaths.isEmpty() && gcPaths.isEmpty()) {
             String errorMsg = server.isScanHeap() || server.isScanCore() || server.isScanGcLog()
@@ -287,8 +322,8 @@ public class RemoteDumpService {
         } else {
             updateServerStatus(server, "OK", null);
         }
-        logger.info("[RemoteDump] Scanned {} files ({} heap-paths, {} core-paths, {} gclog-paths) on server {}",
-                files.size(), heapPaths.size(), corePaths.size(), gcPaths.size(), server.getName());
+        logger.info("[RemoteDump] Scanned {} files ({} heap-paths, {} core-paths, {} gclog-paths) on server {} types={}",
+                files.size(), heapPaths.size(), corePaths.size(), gcPaths.size(), server.getName(), types == null ? "all" : types);
         return result;
     }
 

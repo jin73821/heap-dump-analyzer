@@ -122,6 +122,17 @@ class GcLogTemplateSmokeTest {
         assertTrue(h.contains(">자동</span>") && h.contains(">수동</span>") && h.contains("후보 있음") && h.contains("해제됨"), "연결 덤프 배지 3종 + 해제");
         assertTrue(h.contains("href=\"/analyze/app_20260914.hprof\""), "연결 덤프 링크");
         assertTrue(h.contains("class=\"hi-sev sev-Medium\""), "심각도 배지");
+        // Full GC 셀 '(압박 n)'(2026-09-16): null(옛 결과) → 전체 수만, 0 → 회색, >0 → 붉은 강조
+        assertFalse(h.contains("(압박 "), "pressureFullGcCount 가 null 이면 압박 표기 없음");
+        GcLogAnalysisEntity p0 = entity("gc.log.7", "SUCCESS", "was01", null, "none"); p0.setFullGcCount(72); p0.setPressureFullGcCount(0);
+        GcLogAnalysisEntity p3 = entity("gc.log.8", "SUCCESS", "was01", null, "none"); p3.setFullGcCount(13); p3.setPressureFullGcCount(9);
+        Map<String, Object> pm = new LinkedHashMap<>();
+        pm.put("gcLogFiles", List.of()); pm.put("history", List.of(p0, p3)); pm.put("isAdmin", false);
+        String hp = render("gc-log/index", pm);
+        // Thymeleaf 는 th:classappend 의 class 를 다른 속성 뒤에 붙인다 — 속성 순서는 title → class
+        assertTrue(hp.contains("<span title=\"메모리 압박 Full GC 없음\" class=\"hi-muted\">(압박 0)</span>"), "압박 0 은 회색");
+        assertTrue(hp.contains("<span title=\"메모리 압박(명시적 호출·Metaspace·GCLocker 제외) Full GC\" class=\"hi-pressure\">(압박 9)</span>"), "압박 9 는 강조");
+        assertFalse(hp.contains("[["), "인라인 표현식으로 해석될 '[[' 가 남아 있다");
         assertTrue(h.contains("uptime 기준") || h.contains("00:52 ~"), "로그 기간 셀");
         assertTrue(h.contains("data-kind=\"gclog\"") && h.contains("AnalyzeConfirm.fromLink(this)"), "미분석 '분석' 링크는 확인 모달을 거친다");
         assertTrue(h.contains("id=\"deleteGcModal\"") && h.contains("class=\"modal-ov gcl-modal\""), "삭제 모달 골격 클래스(함정 17)");
@@ -148,7 +159,7 @@ class GcLogTemplateSmokeTest {
             if ("ERROR".equals(st)) {
                 // 실패 기록 화면: 진행 막대('분석을 시작합니다' + 0%)를 숨기고 오류 상자 안에 '다시 분석' 버튼 — 옛 오류가 시작된 것처럼 보이면 안 된다
                 assertTrue(h.contains("id=\"gclProgress\" style=\"display:none\""), "ERROR: 진행 블록 숨김");
-                assertTrue(h.contains("id=\"gclRetryBtn\" onclick=\"reanalyze()\""), "ERROR: 오류 상자의 다시 분석 버튼");
+                assertTrue(h.contains("id=\"gclRetryBtn\" onclick=\"openReanalyzeConfirm()\""), "ERROR: 오류 상자의 다시 분석 버튼 — 확인 모달을 거친다");
             } else {
                 assertTrue(h.contains("id=\"gclProgress\"") && !h.contains("id=\"gclProgress\" style=\"display:none\""), st + ": 진행 블록 보임");
             }
@@ -158,6 +169,12 @@ class GcLogTemplateSmokeTest {
                         st + ": 서버명이 없어도 '미지정' 알약이 보여야 한다");
                 assertTrue(h.contains("id=\"gclServerEdit\"") && h.contains("onclick=\"startServerEdit()\"") && h.contains("aria-label=\"서버명 편집\""),
                         st + ": 서버명 편집 버튼(아이콘만이라 접근성 이름 필수)");
+                // 인스턴스 알약(2026-09-16): 결과가 없어도 서버 알약 오른쪽에 '미지정' + 연필, 출처 배지는 숨김
+                assertTrue(h.indexOf("id=\"gclServerItem\"") < h.indexOf("id=\"gclInstItem\"") && h.indexOf("id=\"gclInstItem\"") < h.indexOf("크기</span>"),
+                        st + ": 인스턴스 알약은 서버 알약 바로 오른쪽");
+                String hn = h.replaceAll("\\s+", " ");   // 렌더 결과는 속성 사이에 줄바꿈이 남는다
+                assertTrue(hn.contains("id=\"gclInstValue\">미지정</span>") && hn.contains("class=\"gcl-meta-src none\" id=\"gclInstSrc\" style=\"display:none\">")
+                        && hn.contains("id=\"gclInstEdit\" onclick=\"startInstanceEdit()\"") && hn.contains("aria-label=\"인스턴스명 편집\""), st + ": 인스턴스 미지정 알약 + 편집 버튼(출처 배지 숨김)");
             }
             assertTrue(h.contains("<script type=\"application/json\" id=\"gcResult\">null</script>"), st + ": 결과 JSON null");
             assertFalse(h.replace("/*[[", "").contains("[["), st + ": '[[' 잔존");
@@ -170,6 +187,8 @@ class GcLogTemplateSmokeTest {
         f.setCode("HUMONGOUS_HEAVY"); f.setSeverity("Medium"); f.setTitle("Humongous <script>alert(1)</script>"); f.setDetail("d"); f.setAdvice("a");
         r.getFindings().add(f);
         r.getRawSample().getHead().add("</script><b>x</b>");   // 결과 JSON 안의 닫힘 태그 — 컨트롤러가 '</' 를 이스케이프한다
+        GcLogResult.FullGcSummary fs = new GcLogResult.FullGcSummary(); fs.setTotal(3); fs.setHeapPressureCount(2); fs.getPressureByCause().put("Ergonomics", 2);
+        r.setFullGcSummary(fs);
         String json = GcLogResultCodec.toJson(r).replace("</", "<\\/");
         Map<String, Object> ok = new LinkedHashMap<>();
         ok.put("filename", "gc.log.0");
@@ -190,16 +209,24 @@ class GcLogTemplateSmokeTest {
         assertTrue(h.contains("class=\"gcl-headcard\"") && h.contains("id=\"gclMeta\""), "헤더 카드 + 메타 영역");
         assertTrue(h.contains("<span class=\"gcl-meta-k\">서버</span>") && h.contains("<span class=\"gcl-meta-k\">분석</span>"), "메타는 키·값 알약");
         assertTrue(h.contains(">was01</span>") && h.contains("id=\"gclServerEdit\""), "서버명이 있어도 편집 버튼은 남는다");
+        String hn2 = h.replaceAll("\\s+", " ");
+        assertTrue(hn2.contains("id=\"gclInstValue\">server1</span>") && hn2.contains("class=\"gcl-meta-src dump\" id=\"gclInstSrc\"")
+                && hn2.contains(">덤프</span>") && hn2.contains("title=\"인스턴스 — 연결된 힙 덤프 app_20260914.hprof\""), "인스턴스 알약 — 덤프 값 + 출처 배지 + 설명");
+        assertFalse(h.contains("gclInstCard"), "KPI 인스턴스 카드는 없다");
         assertFalse(h.contains("gcl-meta-v empty"), "값이 있으면 empty 표시 없음");
         assertTrue(h.contains("연결된 힙 덤프"), "매칭 칩 라벨");
         assertTrue(h.contains(">1.5초</span>"), "소요 시간 초 단위 표기");
         assertTrue(h.contains("id=\"gclResult\"") && h.contains("id=\"gclHeapChart\"") && h.contains("id=\"gclEvTable\""), "결과 섹션");
+        // 메모리 압박 Full GC 배너(2026-09-16) — 결과 본문 첫 자식, JS 가 채우기 전엔 hidden
+        assertTrue(h.contains("<div class=\"gcl-pressure\" id=\"gclPressureBanner\" role=\"status\" hidden></div>"), "압박 배너 골격");
+        assertTrue(h.indexOf("id=\"gclResult\"") < h.indexOf("id=\"gclPressureBanner\"") && h.indexOf("id=\"gclPressureBanner\"") < h.indexOf("id=\"gclKpi\""), "배너는 KPI 그리드 앞");
         assertTrue(h.contains("id=\"gclEvTypes\" role=\"group\"") && h.indexOf("id=\"gclEvTypes\"") < h.indexOf("id=\"gclEvTable\""),
                 "이벤트 유형 필터 버튼 영역(표 위, 그룹 역할)");
         int js = h.indexOf("<script type=\"application/json\" id=\"gcResult\">");
         int jsEnd = h.indexOf("</script>", js);
         String payload = h.substring(js, jsEnd);
         assertTrue(payload.contains("HUMONGOUS_HEAVY"), "결과 JSON 이 실렸다");
+        assertTrue(payload.contains("\"fullGcSummary\":{") && payload.contains("\"heapPressureCount\":2"), "분류 블록이 JSON 에 실린다");
         assertFalse(payload.contains("</script>"), "JSON 안의 '</script>' 가 살아 있으면 스크립트 블록이 조기 종료된다");
         assertTrue(payload.contains("<\\/script>"), "이스케이프된 닫힘 태그");
         assertTrue(h.contains("app_20260914.hprof") && h.contains(">자동</span>"), "매칭 칩");
@@ -216,6 +243,8 @@ class GcLogTemplateSmokeTest {
         assertTrue(h.contains("id=\"gclAiRunBtn\" onclick=\"runAi()\"") && h.contains("id=\"gclAiRunLabel\">분석</span>"), "AI 카드 분석 버튼");
         assertTrue(h.contains("id=\"aiConfirmModal\" class=\"modal-ov gcl-modal\"") && h.contains("onclick=\"confirmAi()\"")
                 && h.contains("onclick=\"closeAiConfirm()\""), "AI 분석 확인 모달");
+        assertTrue(h.contains("id=\"reanalyzeModal\" class=\"modal-ov gcl-modal\"") && h.contains("id=\"reanalyzeConfirmBtn\" onclick=\"confirmReanalyze()\"")
+                && h.contains("onclick=\"closeReanalyzeConfirm()\"") && h.contains("id=\"btnReanalyze\" onclick=\"openReanalyzeConfirm()\""), "재분석 확인 모달(골격 클래스 — 함정 17)");
     }
 
     @Test
@@ -258,11 +287,42 @@ class GcLogTemplateSmokeTest {
         assertTrue(an.contains("esc(heap) + callHeapNote(e)") && an.contains("if (e.callHeapBefore == null || e.heapAfter == null) return '';"), "호출 전체 회수량 줄");
         String heapJs = js("analyze.js");
         assertTrue(heapJs.contains("var fullRate = k.pressureFullGcPerHour != null") && heapJs.contains("var trendWarn = t.significant != null"), "힙 analyze GC 패널도 같은 기준");
+        assertTrue(heapJs.contains("(d.fullGcSummary ? ' · 압박 ' + d.fullGcSummary.heapPressureCount + '회' : '')"), "힙 GC 패널 Full GC 카드에 압박 수");
+        // 메모리 압박 Full GC 배너·KPI 분리·이벤트 배지·차트 ▲·'해당 이벤트 보기'(2026-09-16)
+        assertTrue(an.contains("function renderPressureBanner(r) {"), "배너 렌더 함수");
+        assertTrue(an.indexOf("try { renderPressureBanner(R); }") < an.indexOf("try { renderKpi(R); }"), "배너를 KPI 보다 먼저 그린다");
+        assertTrue(an.contains("재분석하면 압박 Full GC 분류를 볼 수 있습니다") && an.contains("onclick=\"openReanalyzeConfirm()\">재분석</button>"), "옛 결과 안내 + 재분석 버튼(확인 모달)");
+        // 재분석 확인 모달(2026-09-16): 세 버튼은 모달만 열고, 요청은 confirmReanalyze → reanalyze 에서만 나간다
+        int openAt = an.indexOf("function openReanalyzeConfirm() {");
+        assertTrue(openAt >= 0, "재분석 확인 모달 함수");
+        String openBody = an.substring(openAt, an.indexOf("function closeReanalyzeConfirm()", openAt));
+        assertTrue(openBody.contains("modal.classList.add('open')") && !openBody.contains("/api/gc-log/reanalyze"), "모달 열기는 요청을 보내지 않는다");
+        assertTrue(an.contains("function confirmReanalyze() {") && an.contains("closeReanalyzeConfirm();\n        reanalyze();"), "확인 → 재분석");
+        assertTrue(an.contains("document.getElementById('reanalyzeAi').style.display = hasResult && _aiHtml ? '' : 'none';"), "AI 결과가 있을 때만 AI 안내");
+        assertTrue(an.contains("closeAiConfirm(); closeReanalyzeConfirm();"), "Esc 로 닫힌다");
+        assertTrue(an.contains("window.openReanalyzeConfirm = openReanalyzeConfirm;") && an.contains("window.confirmReanalyze = confirmReanalyze;")
+                && an.contains("window.closeReanalyzeConfirm = closeReanalyzeConfirm;"), "모달 인라인 핸들러 전역 노출");
+        String anHtml = Files.readString(Path.of("src/main/resources/templates/gc-log/analyze.html"), StandardCharsets.UTF_8);
+        assertFalse(anHtml.contains("onclick=\"reanalyze()\""), "템플릿 버튼이 확인 없이 재분석을 부르면 안 된다");
+        assertTrue(an.contains("if (!(k.fullCount > 0)) { box.hidden = true; return; }"), "옛 결과여도 Full 이 없으면 배너 없음");
+        assertTrue(an.contains("전부 명시적 호출(System.gc() 등) — 메모리 압박 신호 아님"), "전부 명시적 상태 문구");
+        assertTrue(an.contains("kpiCard('압박 Full GC', String(fs.heapPressureCount), pSub, pCls)") && an.contains("kpiCard('명시적 Full GC', String(k.explicitFullCount), eSub, '')"), "KPI 분리 두 장");
+        assertTrue(an.contains("var KIND_LABEL = { HEAP_PRESSURE: '압박', EXPLICIT: '명시적', METASPACE: 'Metaspace', GC_LOCKER: 'GCLocker', OTHER: '기타' };"), "분류 라벨");
+        assertTrue(an.contains("tr.setAttribute('data-kind', kind || '');") && an.contains("'<span class=\"gcl-kind k-' + esc(kind) + '\">'"), "이벤트 행 분류 배지");
+        assertTrue(an.contains("pointStyle: 'triangle'") && an.contains("label: '압박 Full GC 직후'"), "힙 차트 ▲ 데이터셋");
+        assertTrue(an.contains("function showPressureEvents() {") && an.contains("_evTypeSel = { FULL: true };") && an.contains("search.value = '압박';")
+                && an.contains("if (_evApplyFilter) _evApplyFilter();"), "'해당 이벤트 보기' 는 applyFilter 술어를 재사용(detach 표)");
+        assertTrue(an.contains("window.showPressureEvents = showPressureEvents;"), "배너 버튼 전역 노출");
+        assertTrue(an.contains("if (Array.isArray(data.warnings) && data.warnings.length) h += '<div class=\"gcl-ai-warn\">응답 정규화: '"), "AI 응답 정규화 경고 표시");
         assertTrue(an.contains("b.setAttribute('aria-pressed'"), "선택 상태는 aria-pressed");
         assertTrue(an.contains("esc(typeLabel(e.type))") && an.contains("esc(typeLabel(t))"), "표 배지와 버튼이 같은 라벨 함수");
         // 인스턴스 카드(2026-09-14): KPI 마지막 칸 · 수동 편집 POST · 연결 변경 응답(/match 계열)으로도 갱신
-        assertTrue(an.contains("h += INSTANCE_CARD;") && an.contains("renderInstance(_instance);"), "renderKpi 가 인스턴스 카드를 붙이고 초기값을 그린다");
-        assertTrue(an.contains("id=\"gclInstCard\"") && an.contains("onclick=\"startInstanceEdit()\"") && an.contains("aria-label=\"인스턴스명 편집\""), "카드 골격·편집 버튼 접근성 이름");
+        // 인스턴스(2026-09-16): KPI 카드 → 헤더 메타 알약(서버 알약 오른쪽). 결과 유무와 무관하게 초기화한다
+        assertFalse(an.contains("INSTANCE_CARD") || an.contains("gclInstCard"), "KPI 인스턴스 카드는 제거됐다");
+        assertTrue(an.contains("try { renderInstance(_instance); } catch (e) { failed('인스턴스 알약 렌더', e); }"), "DOMContentLoaded 에서 알약 초기화");
+        assertTrue(an.contains("var item = document.getElementById('gclInstItem');") && an.contains("form.className = 'gcl-meta-form';")
+                && an.contains("input.className = 'gcl-meta-input';"), "알약 편집은 서버 알약과 같은 편집 줄");
+        assertTrue(an.contains("src.textContent = v.source === 'manual' ? '수동' : '덤프';"), "출처 배지");
         assertTrue(an.contains("Common.fetchJSON(api('/instance'), { method: 'POST', body: JSON.stringify({ instance: input.value }) })"), "수동 입력 저장 경로");
         assertTrue(an.contains("if (!d || d.success !== true)"), "응답 success 확인(함정 27)");
         assertTrue(an.contains("if (v && v.instance) renderInstance(v.instance);"), "매칭 칩 갱신이 인스턴스 카드도 갱신한다");
@@ -292,7 +352,10 @@ class GcLogTemplateSmokeTest {
         // 소견 카드는 좌측 색 띠 없이 — border-left 선언이 CSS 어디에도 없어야 한다(주석 제외)
         assertFalse(css.replaceAll("(?s)/\\*.*?\\*/", "").contains("border-left"), "gc-log.css 에 border-left 가 되살아났다(2026-09-14 제거)");
         assertTrue(css.contains(".gcl-ai-block {") && css.contains(".gcl-ai-loading {") && css.contains(".gcl-ai-elapsed-v {") && css.contains(".gcl-ai-code {"), "AI 카드 CSS");
-        assertTrue(css.contains(".gcl-kpi-inst { position: relative; }") && css.contains(".gcl-inst-form {") && css.contains(".gcl-kpi-edit {"), "인스턴스 카드 CSS");
+        assertTrue(css.contains(".gcl-meta-src.dump {") && css.contains(".gcl-meta-src.manual {") && css.contains(".gcl-meta-inst .gcl-meta-v {")
+                && css.contains(".gcl-inst-save, .gcl-inst-cancel {") && !css.contains(".gcl-kpi-inst"), "인스턴스 알약 CSS(카드 CSS 제거)");
+        assertTrue(css.contains(".gcl-pressure {") && css.contains(".gcl-pressure.legacy") && css.contains(".gcl-pressure.ok") && css.contains(".gcl-kind.k-HEAP_PRESSURE")
+                && css.contains(".gcl-table tr.ev-FULL.ev-explicit td") && css.contains(".hi-pressure {") && css.contains(".gcl-ai-warn {"), "압박 배너·분류 배지·목록 강조 CSS");
         assertFalse(an.contains("setInterval(tick, 1000)") && !an.contains("SessionTimeout.managedInterval"), "managedInterval 없이 setInterval 만 쓰면 안 된다");
 
         // 업로드 버튼 문구는 선택 상태를 따라간다(2026-09-14) — 파일을 골라도 '선택하세요' 로 남던 결함

@@ -62,6 +62,11 @@
 .gcl-meta-input { width: 180px; max-width: 46vw; min-width: 0; font-size: 12px; padding: 1px 7px; border: 1px solid #CBD5E1; border-radius: 6px; font-family: inherit; color: #111827; line-height: 18px; background: #fff; }
 .gcl-meta-input:focus { outline: none; border-color: #2563EB; box-shadow: 0 0 0 2px rgba(37, 99, 235, .15); }
 .gcl-meta-form .gcl-inst-save, .gcl-meta-form .gcl-inst-cancel { padding: 1px 8px; border-radius: 999px; }
+/* 인스턴스 알약(2026-09-16, 종전 KPI 카드) — 서버 알약 오른쪽. 값 뒤 출처 배지: 덤프(자동, 초록) / 수동(인디고). 매칭 칩의 자동·수동 배지와 같은 색 */
+.gcl-meta-inst .gcl-meta-v { max-width: 260px; }
+.gcl-meta-src { font-size: 10px; font-weight: 700; padding: 0 6px; border-radius: 8px; line-height: 16px; flex-shrink: 0; }
+.gcl-meta-src.dump { background: #DCFCE7; color: #166534; }
+.gcl-meta-src.manual { background: #E0E7FF; color: #3730A3; }
 .gcl-head-actions { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; align-items: center; }
 .gcl-head-foot { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #E5E7EB; }
 
@@ -78,6 +83,48 @@
 .gcl-chip-btn:hover { background: #E2E8F0; color: #1E293B; }
 .gcl-chip-btn:disabled { opacity: .5; cursor: default; }
 
+/* ── 메모리 압박 Full GC 배너(2026-09-16) ────────────────────
+   #gclResult 최상단. 심각도는 옅은 배경 + 같은 계열 1px 테두리 + 배지 — 좌측 색 띠 금지(소견 카드와 같은 규칙).
+   .ok = 전부 명시적 호출(압박 신호 아님), .legacy = 분류 이전 옛 결과(재분석 안내, 점선) */
+.gcl-pressure { border: 1px solid #E5E7EB; border-radius: 12px; padding: 14px 18px; margin-bottom: 16px; background: #fff; }
+.gcl-pressure.sev-Critical { border-color: #FECACA; background: var(--gcl-sev-critical-bg); }
+.gcl-pressure.sev-High     { border-color: #FED7AA; background: var(--gcl-sev-high-bg); }
+.gcl-pressure.sev-Medium   { border-color: #FDE68A; background: var(--gcl-sev-medium-bg); }
+.gcl-pressure.sev-Low      { border-color: #BFDBFE; background: var(--gcl-sev-low-bg); }
+.gcl-pressure.ok           { border-color: #BBF7D0; background: #F0FDF4; }
+.gcl-pressure.legacy       { border-style: dashed; background: #F9FAFB; color: #6B7280; }
+.gcl-pressure-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.gcl-pressure-sev { font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 8px; letter-spacing: .04em; color: #fff; background: var(--gcl-sev-info); flex-shrink: 0; }
+.gcl-pressure.sev-Critical .gcl-pressure-sev { background: var(--gcl-sev-critical); } .gcl-pressure.sev-High .gcl-pressure-sev { background: var(--gcl-sev-high); }
+.gcl-pressure.sev-Medium .gcl-pressure-sev { background: var(--gcl-sev-medium); } .gcl-pressure.sev-Low .gcl-pressure-sev { background: var(--gcl-sev-low); }
+.gcl-pressure.ok .gcl-pressure-sev { background: #16A34A; }
+.gcl-pressure-title { font-size: 15px; font-weight: 700; color: #111827; }
+.gcl-pressure.legacy .gcl-pressure-title { font-weight: 600; color: #4B5563; }
+.gcl-pressure-rate { font-size: 13px; color: #374151; font-variant-numeric: tabular-nums; }
+.gcl-pressure-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.gcl-pressure-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; background: #fff; border: 1px solid rgba(0,0,0,.10); font-size: 11px; color: #1F2937; font-weight: 600; }
+.gcl-pressure-chip .cnt { font-variant-numeric: tabular-nums; color: #DC2626; }
+.gcl-pressure-chip.muted { color: #6B7280; font-weight: 500; }
+.gcl-pressure-chip.muted .cnt { color: #6B7280; }
+.gcl-pressure-line { font-size: 12px; color: #374151; margin-top: 6px; line-height: 1.55; font-variant-numeric: tabular-nums; }
+.gcl-pressure-line b { color: #111827; }
+.gcl-pressure-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.gcl-pressure-actions .btn { text-decoration: none; }
+
+/* 이벤트 표 Full 행 분류 배지 — 압박/명시적/Metaspace/GCLocker/기타 */
+.gcl-kind { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; margin-left: 4px; background: #F3F4F6; color: #6B7280; }
+.gcl-kind.k-HEAP_PRESSURE { background: #FEE2E2; color: #991B1B; }
+.gcl-kind.k-EXPLICIT { background: #E0E7FF; color: #3730A3; }
+.gcl-kind.k-METASPACE { background: #FEF3C7; color: #92400E; }
+.gcl-kind.k-GC_LOCKER { background: #F3F4F6; color: #374151; }
+.gcl-kind.k-OTHER { background: #F3F4F6; color: #6B7280; }
+/* 명시적 Full 행은 붉은 배경을 쓰지 않는다(압박 신호가 아니다). 분류가 없는 옛 결과 행은 종전대로 붉게 */
+.gcl-table tr.ev-FULL.ev-explicit td { background: #F8FAFC; }
+
+/* AI 응답 정규화 안내 · 목록 페이지 '(압박 n)' */
+.gcl-ai-warn { font-size: 11px; color: #92400E; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; }
+.hi-pressure { color: var(--gcl-sev-critical); font-weight: 700; font-size: 11px; margin-left: 3px; }
+
 /* ── KPI ─────────────────────────────────────────────────── */
 /* 최소 폭 200px — 150px 에서는 'G1 · 21+35-2513', '40.6 ms · 261.8 ms' 같은 값이 말줄임으로 잘렸다 */
 .gcl-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-bottom: 16px; }
@@ -88,17 +135,7 @@
 .gcl-kpi.warn .gcl-kpi-value { color: var(--gcl-sev-high); }
 .gcl-kpi.bad .gcl-kpi-value { color: var(--gcl-sev-critical); }
 
-/* 인스턴스 카드 — 수동 입력 > 연결된 힙 덤프(analyze Instance 칩) 값. 연필은 우상단 고정이라 라벨 말줄임과 겹치지 않게 라벨 오른쪽을 비운다.
-   편집 줄(.gcl-inst-form)은 값 줄을 숨기고 그 자리에 들어간다 — 카드 최소 폭 200px 안에 입력+버튼 2개가 한 줄로 들어가야 한다 */
-.gcl-kpi-inst { position: relative; }
-.gcl-kpi-inst .gcl-kpi-label { padding-right: 26px; }
-.gcl-kpi-inst .gcl-kpi-value.empty { color: #94A3B8; font-weight: 500; font-style: italic; font-size: 16px; }
-.gcl-kpi-edit { position: absolute; top: 7px; right: 8px; border: none; background: transparent; cursor: pointer; font-size: 13px; line-height: 1; color: #64748B; padding: 4px 5px; border-radius: 6px; font-family: inherit; }
-.gcl-kpi-edit:hover { background: #E2E8F0; color: #1E293B; }
-.gcl-kpi-edit:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
-.gcl-inst-form { display: flex; align-items: center; gap: 4px; margin-top: 2px; min-width: 0; }   /* 2 + 26px = 값 줄(4 + 24px)과 같은 높이 — 편집을 열어도 행이 출렁이지 않는다 */
-.gcl-inst-input { flex: 1 1 auto; min-width: 0; font-size: 13px; padding: 3px 7px; border: 1px solid #CBD5E1; border-radius: 6px; font-family: inherit; color: #111827; line-height: 18px; }
-.gcl-inst-input:focus { outline: none; border-color: #2563EB; box-shadow: 0 0 0 2px rgba(37, 99, 235, .15); }
+/* 헤더 메타 편집 줄의 저장·취소 버튼 — 서버 알약·인스턴스 알약 공용(.gcl-meta-form 안에서 알약 모양으로 줄어든다) */
 .gcl-inst-save, .gcl-inst-cancel { flex-shrink: 0; border: 1px solid transparent; cursor: pointer; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 6px; font-family: inherit; line-height: 18px; }
 .gcl-inst-save { background: #2563EB; color: #fff; }
 .gcl-inst-cancel { background: #E2E8F0; color: #475569; }

@@ -57,3 +57,6 @@ certs/
 *.crt
 *.cer
 *.key
+
+# GC 로그 테스트 픽스처는 *.log 여도 커밋한다(GcLogPressureFixtureTest 가 읽는다, 2026-09-16)
+!src/test/resources/gclog/*.log

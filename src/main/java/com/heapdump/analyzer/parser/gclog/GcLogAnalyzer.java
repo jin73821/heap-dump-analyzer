@@ -47,6 +47,14 @@ public final class GcLogAnalyzer implements GcEventSink {
     static final long LEAK_MIN_GROWTH_BYTES = 32L << 20;
     static final double LEAK_MIN_GROWTH_RATIO = 0.02;
     static final double LEAK_MAX_DAYS_TO_FILL = 30.0;
+    /** 메모리 압박 Full GC(2026-09-16) — 회수율 하한(%)·직후 점유율 상한·간격 추세 판단 최소 간격 수·단축 비율·표본 상한. */
+    static final double LOW_RECLAIM_PCT = 20.0;
+    static final double HIGH_OCCUPANCY_RATIO = 0.85;
+    static final int INTERVAL_MIN_COUNT = 6;
+    static final double INTERVAL_SHRINK_RATIO = 0.5;
+    static final double INTERVAL_STRONG_SHRINK_RATIO = 0.25;
+    static final int WORST_CAP = 5;
+    static final int PRESSURE_POINTS_CAP = 500;
 
     // ── 메타 ────────────────────────────────────────────────────
     private String collector, jdkVersion, decorations, jvmOptionsLine;
@@ -92,6 +100,22 @@ public final class GcLogAnalyzer implements GcEventSink {
     private Double firstSysGcX, lastSysGcX;
     private final List<Double> sysGcIntervals = new ArrayList<>();
     private Double trendGrowthBytes, trendDaysToFill;
+
+    // ── Full GC 분류·메모리 압박 ────────────────────────────────
+    private final EnumMap<FullGcKind, Integer> fullByKind = new EnumMap<>(FullGcKind.class);
+    private final Map<String, Integer> pressureByCause = new HashMap<>();
+    private int consecutivePressure, maxConsecutivePressure;
+    private Double firstPressureX, lastPressureX;
+    private Integer lastPressureLine;
+    private Long lastPressureBefore, lastPressureAfter, lastPressureTotal;
+    private double maxPressureAfterRatio;
+    /** 회수율 1% 버킷 히스토그램 — 상수 메모리로 중앙값을 낸다. */
+    private final int[] reclaimHist = new int[101];
+    private int reclaimSamples, lowReclaimCount, highOccupancyCount;
+    private Double reclaimMin, reclaimLast;
+    private final List<Double> pressureIntervals = new ArrayList<>();
+    private final List<double[]> pressurePoints = new ArrayList<>();       // x, after, before
+    private final List<GcLogResult.FullGcSample> worstReclaim = new ArrayList<>();
 
     // ── CMS Old 포화 ────────────────────────────────────────────
     private int cmsMarks, cmsSaturated, cmsSaturatedRun, cmsMaxSaturatedRun;
@@ -160,12 +184,22 @@ public final class GcLogAnalyzer implements GcEventSink {
             }
         }
 
+        FullGcKind kind = null;
         if (ev.type == GcEventType.FULL) {
             consecutiveFull++;
             maxConsecutiveFull = Math.max(maxConsecutiveFull, consecutiveFull);
             if (x != null) { if (firstFullX == null) firstFullX = x; lastFullX = x; }
+            kind = FullGcKind.of(ev);
+            fullByKind.merge(kind, 1, Integer::sum);
+            if (kind == FullGcKind.HEAP_PRESSURE) {
+                onPressureFull(ev, x);
+                maxConsecutivePressure = Math.max(maxConsecutivePressure, ++consecutivePressure);
+            } else {
+                consecutivePressure = 0;
+            }
         } else if (!ev.concurrent) {
             consecutiveFull = 0;
+            consecutivePressure = 0;
         }
 
         if (ev.heapTotal != null && (maxHeapTotal == null || ev.heapTotal > maxHeapTotal)) maxHeapTotal = ev.heapTotal;
@@ -209,6 +243,7 @@ public final class GcLogAnalyzer implements GcEventSink {
 
         EventRow row = toRow(ev);
         row.setCallHeapBefore(callHeapBefore);
+        if (kind != null) row.setFullKind(kind.name());
         boolean abnormal = false;
         for (GcFlag f : ev.flags) if (f.isAbnormal()) { abnormal = true; break; }
         if (ev.type == GcEventType.FULL || abnormal || ev.type == GcEventType.CMS_FINAL_REMARK) {
@@ -265,6 +300,122 @@ public final class GcLogAnalyzer implements GcEventSink {
             pendingExplicitCause = null; pendingExplicitX = null; pendingExplicitBefore = null;
         }
         return callBefore;
+    }
+
+    /**
+     * 메모리 압박 Full GC 집계(2026-09-16) — 원인 분포·회수율(before→after)·직후 점유율(after/total)·간격·차트 점·최저 회수 표본.
+     * 명시적 Full 은 여기 오지 않는다(호출자가 {@link FullGcKind#HEAP_PRESSURE} 만 넘긴다).
+     */
+    private void onPressureFull(GcEvent ev, Double x) {
+        String cause = ev.cause == null ? "(원인 미기록)" : ev.cause;
+        if (pressureByCause.size() < CAUSE_CAP || pressureByCause.containsKey(cause)) pressureByCause.merge(cause, 1, Integer::sum);
+        if (x != null) {
+            if (firstPressureX == null) firstPressureX = x;
+            if (lastPressureX != null && x > lastPressureX) {
+                if (pressureIntervals.size() >= CALL_INTERVAL_CAP) {
+                    List<Double> thin = new ArrayList<>(pressureIntervals.size() / 2 + 1);
+                    for (int i = 0; i < pressureIntervals.size(); i += 2) thin.add(pressureIntervals.get(i));
+                    pressureIntervals.clear();
+                    pressureIntervals.addAll(thin);
+                }
+                pressureIntervals.add(x - lastPressureX);
+            }
+            lastPressureX = x;
+        }
+        lastPressureLine = ev.line;
+        lastPressureBefore = ev.heapBefore;
+        lastPressureAfter = ev.heapAfter;
+        lastPressureTotal = ev.heapTotal;
+        Double reclaimPct = null;
+        if (ev.heapBefore != null && ev.heapAfter != null && ev.heapBefore > 0) {
+            reclaimPct = clamp(100.0 * (ev.heapBefore - ev.heapAfter) / ev.heapBefore, 0, 100);
+            reclaimHist[(int) Math.round(reclaimPct)]++;
+            reclaimSamples++;
+            reclaimLast = reclaimPct;
+            if (reclaimMin == null || reclaimPct < reclaimMin) reclaimMin = reclaimPct;
+            if (reclaimPct < LOW_RECLAIM_PCT) lowReclaimCount++;
+            // 회수율 최저 표본 — 삽입 정렬, 상한을 넘으면 가장 좋은 것을 버린다
+            GcLogResult.FullGcSample s = new GcLogResult.FullGcSample();
+            s.setLine(ev.line); s.setUptimeSec(ev.uptimeSec); s.setCause(ev.cause);
+            s.setHeapBefore(ev.heapBefore); s.setHeapAfter(ev.heapAfter); s.setHeapTotal(ev.heapTotal); s.setReclaimPct(round3(reclaimPct));
+            int pos = 0;
+            while (pos < worstReclaim.size() && worstReclaim.get(pos).getReclaimPct() <= reclaimPct) pos++;
+            if (pos < WORST_CAP) {
+                worstReclaim.add(pos, s);
+                if (worstReclaim.size() > WORST_CAP) worstReclaim.remove(worstReclaim.size() - 1);
+            }
+        }
+        if (ev.heapAfter != null && ev.heapTotal != null && ev.heapTotal > 0) {
+            double ratio = (double) ev.heapAfter / ev.heapTotal;
+            if (ratio > maxPressureAfterRatio) maxPressureAfterRatio = ratio;
+            if (ratio >= HIGH_OCCUPANCY_RATIO) highOccupancyCount++;
+        }
+        if (ev.heapAfter != null) {
+            double px = x == null ? eventCount : x;
+            if (pressurePoints.size() >= TREND_CAP) {
+                List<double[]> thin = new ArrayList<>(pressurePoints.size() / 2 + 1);
+                for (int i = 0; i < pressurePoints.size(); i += 2) thin.add(pressurePoints.get(i));
+                pressurePoints.clear();
+                pressurePoints.addAll(thin);
+            }
+            pressurePoints.add(new double[]{px, ev.heapAfter, ev.heapBefore == null ? -1 : ev.heapBefore});
+        }
+    }
+
+    /** {@link GcLogResult.FullGcSummary} 조립 — 파싱만 되면 늘 만든다(Full 0회여도 total=0). 옛 JSON(null)과 구분하기 위해서다. */
+    private GcLogResult.FullGcSummary buildFullGcSummary(double durationSec, long capBytes) {
+        GcLogResult.FullGcSummary s = new GcLogResult.FullGcSummary();
+        int total = 0;
+        for (FullGcKind k : FullGcKind.values()) {
+            int n = fullByKind.getOrDefault(k, 0);
+            s.getByKind().put(k.name(), n);
+            total += n;
+        }
+        s.setTotal(total);
+        int pressure = fullByKind.getOrDefault(FullGcKind.HEAP_PRESSURE, 0);
+        s.setHeapPressureCount(pressure);
+        if (durationSec > 0) s.setHeapPressurePerHour(round3(pressure / (durationSec / 3600.0)));
+        pressureByCause.entrySet().stream().sorted((a, b) -> b.getValue() - a.getValue()).limit(12)
+                .forEach(e -> s.getPressureByCause().put(e.getKey(), e.getValue()));
+        s.setMaxConsecutivePressure(maxConsecutivePressure);
+        s.setFirstAtSec(firstPressureX == null ? null : round3(firstPressureX));
+        s.setLastAtSec(lastPressureX == null ? null : round3(lastPressureX));
+        s.setLastLine(lastPressureLine);
+        s.setLastBeforeBytes(lastPressureBefore);
+        s.setLastAfterBytes(lastPressureAfter);
+        s.setLastTotalBytes(lastPressureTotal);
+        if (lastPressureAfter != null && lastPressureTotal != null && lastPressureTotal > 0) s.setLastAfterRatio(round3((double) lastPressureAfter / lastPressureTotal));
+        if (lastPressureAfter != null && capBytes > 0) s.setLastAfterCapRatio(round3((double) lastPressureAfter / capBytes));
+        if (maxPressureAfterRatio > 0) s.setMaxAfterRatio(round3(maxPressureAfterRatio));
+        s.setReclaimSamples(reclaimSamples);
+        if (reclaimSamples > 0) {
+            s.setReclaimPctMin(round3(reclaimMin));
+            s.setReclaimPctLast(round3(reclaimLast));
+            int target = (reclaimSamples + 1) / 2, cum = 0;
+            for (int b = 0; b <= 100; b++) { cum += reclaimHist[b]; if (cum >= target) { s.setReclaimPctMedian((double) b); break; } }
+        }
+        s.setLowReclaimCount(lowReclaimCount);
+        s.setHighOccupancyCount(highOccupancyCount);
+        s.setIntervalCount(pressureIntervals.size());
+        if (pressureIntervals.size() >= 2) {
+            int half = pressureIntervals.size() / 2;
+            double first = median(pressureIntervals.subList(0, half));
+            double second = median(pressureIntervals.subList(half, pressureIntervals.size()));
+            s.setIntervalMedianFirstHalfSec(round3(first));
+            s.setIntervalMedianSecondHalfSec(round3(second));
+            if (pressureIntervals.size() >= INTERVAL_MIN_COUNT) s.setIntervalShrinking(first > 0 && second <= first * INTERVAL_SHRINK_RATIO);
+        }
+        s.setPoints(pressurePoints.size() > PRESSURE_POINTS_CAP ? thin(pressurePoints, PRESSURE_POINTS_CAP) : new ArrayList<>(pressurePoints));
+        s.setWorstReclaim(new ArrayList<>(worstReclaim));
+        if (pressure > 0 && reclaimSamples == 0) s.setNote("힙 크기 전후 값이 없어 회수율을 계산하지 않았습니다.");
+        else if (pressure > 0 && lastPressureTotal == null) s.setNote("힙 총량이 없어 직후 점유율을 계산하지 않았습니다.");
+        return s;
+    }
+
+    private static double median(List<Double> v) {
+        if (v.isEmpty()) return 0;
+        double[] a = v.stream().mapToDouble(Double::doubleValue).sorted().toArray();
+        return a[a.length / 2];
     }
 
     /** uptime 이 없으면 절대 시각으로, 그것도 없으면 null. */
@@ -485,6 +636,7 @@ public final class GcLogAnalyzer implements GcEventSink {
             }
         }
 
+        r.setFullGcSummary(buildFullGcSummary(durationSec, heapMax != null && heapMax > 0 ? heapMax : (maxHeapTotal == null ? 0 : maxHeapTotal)));
         r.setFindings(buildFindings(r, limitHit));
         k.setSeverity(maxSeverity(r.getFindings()));
         return r;
@@ -579,17 +731,70 @@ public final class GcLogAnalyzer implements GcEventSink {
         // Full GC 빈도 — 명시적 호출(System.gc()·힙 덤프 등)은 Old 가 찼다는 신호가 아니라 뺀다(2026-09-15 실측: 1시간 주기
         // RMI System.gc() 72회가 "Old 영역이 반복해서 차고 있습니다" High 로 나왔다. Old 점유 5%)
         int pressureFull = k.getFullCount() - explicitFull;
+        GcLogResult.FullGcSummary fs = r.getFullGcSummary();
+        int heapPressure = fs == null ? pressureFull : fs.getHeapPressureCount();
+        int metaFull = fs == null ? 0 : fs.getByKind().getOrDefault(FullGcKind.METASPACE.name(), 0);
+        int lockerFull = fs == null ? 0 : fs.getByKind().getOrDefault(FullGcKind.GC_LOCKER.name(), 0);
         if (pressureFull >= 2 && k.getPressureFullGcPerHour() != null) {
             double ph = k.getPressureFullGcPerHour();
             String sev = ph > 6 ? "Critical" : ph > 1 ? "High" : (durSec >= 600 && ph > 0.25) ? "Medium" : null;
             if (sev == null && durSec < 600 && pressureFull >= 3) sev = "Medium";
             if (sev != null) {
+                Map<String, Object> ev = new LinkedHashMap<>();
+                ev.put("fullCount", pressureFull); ev.put("perHour", round3(ph)); ev.put("maxConsecutive", k.getMaxConsecutiveFull()); ev.put("explicitFullCount", explicitFull);
+                StringBuilder breakdown = new StringBuilder();
+                if (fs != null) {
+                    ev.put("heapPressureCount", heapPressure); ev.put("metaspaceCount", metaFull); ev.put("gcLockerCount", lockerFull);
+                    ev.put("pressureByCause", new LinkedHashMap<>(fs.getPressureByCause()));
+                    breakdown.append(String.format(Locale.ROOT, " 분류: 힙 압박 %d회", heapPressure));
+                    if (!fs.getPressureByCause().isEmpty()) {
+                        StringBuilder c = new StringBuilder();
+                        fs.getPressureByCause().forEach((cause, n) -> c.append(c.length() > 0 ? " · " : "").append(cause).append(' ').append(n));
+                        breakdown.append("(원인: ").append(c).append(')');
+                    }
+                    breakdown.append(String.format(Locale.ROOT, " · Metaspace %d회 · GCLocker %d회.", metaFull, lockerFull));
+                }
                 out.add(f("FULL_GC_FREQUENT", sev, "Full GC 가 잦습니다",
                         String.format(Locale.ROOT, "로그 구간 %s 동안 Full GC %d회 (시간당 %.1f회, 연속 최대 %d회).", fmtDur(durSec), pressureFull, ph, k.getMaxConsecutiveFull())
-                                + (explicitFull > 0 ? String.format(Locale.ROOT, " 명시적 호출(System.gc() 등) Full %d회는 제외한 수치입니다(전체 %d회).", explicitFull, k.getFullCount()) : ""),
+                                + (explicitFull > 0 ? String.format(Locale.ROOT, " 명시적 호출(System.gc() 등) Full %d회는 제외한 수치입니다(전체 %d회).", explicitFull, k.getFullCount()) : "")
+                                + breakdown,
                         "Old 영역이 반복해서 차고 있습니다. Full GC 직후 힙 추세(누수 신호)를 먼저 확인하고, 추세가 평평하면 -Xmx 확대·Young 비율 조정·Humongous/승격 원인을 점검하세요.",
-                        Map.of("fullCount", pressureFull, "perHour", round3(ph), "maxConsecutive", k.getMaxConsecutiveFull(), "explicitFullCount", explicitFull)));
+                        ev));
             }
+        }
+        // 메모리 압박 Full GC 가 회수하지 못함 — Full GC 뒤에도 살아 있는 객체가 힙 대부분(2026-09-16). 빈도와 별개의 신호다:
+        // 시간당 0.5회여도 매번 10% 만 회수하고 직후 90% 라면 다음 Full 은 OutOfMemoryError 다.
+        if (fs != null && fs.getHeapPressureCount() >= 2 && fs.getLowReclaimCount() >= 2) {
+            double capRatio = fs.getLastAfterCapRatio() == null ? 0 : fs.getLastAfterCapRatio();
+            String sev = capRatio >= 0.85 ? "Critical" : capRatio >= 0.6 ? "High" : "Medium";
+            String col = collector == null ? "" : collector;
+            StringBuilder advice = new StringBuilder("Full GC 뒤에도 살아 있는 객체가 힙 대부분을 차지합니다 — 누수 또는 힙 부족입니다. "
+                    + "연결된 힙 덤프의 Leak Suspects·Dominator Tree 로 누적 주체를 확인하고, 누수가 아니면 -Xmx 를 늘리세요.");
+            if (col.equals("CMS")) advice.append(" CMS 는 이 상태에서 concurrent mode failure 로 이어집니다.");
+            else if (col.equals("G1")) advice.append(" G1 은 Full GC 전 Mixed GC 가 Old 를 못 비운 것이니 -XX:G1MixedGCLiveThresholdPercent·IHOP(-XX:InitiatingHeapOccupancyPercent)도 함께 보세요.");
+            else if (col.equals("Parallel") || col.equals("Serial")) advice.append(" ").append(col).append(" 은 Full GC 만이 Old 를 회수하므로 회수율이 낮으면 곧 OutOfMemoryError 입니다.");
+            List<Integer> worstLines = new ArrayList<>();
+            for (GcLogResult.FullGcSample w : fs.getWorstReclaim()) worstLines.add(w.getLine());
+            Map<String, Object> ev = new LinkedHashMap<>();
+            ev.put("heapPressureCount", fs.getHeapPressureCount()); ev.put("lowReclaimCount", fs.getLowReclaimCount());
+            ev.put("reclaimMedianPct", fs.getReclaimPctMedian()); ev.put("reclaimMinPct", fs.getReclaimPctMin());
+            ev.put("lastAfterBytes", fs.getLastAfterBytes()); ev.put("capBytes", r.getMeta().getHeapMaxBytes() != null && r.getMeta().getHeapMaxBytes() > 0 ? r.getMeta().getHeapMaxBytes() : maxTotal);
+            ev.put("lastAfterCapRatio", fs.getLastAfterCapRatio()); ev.put("lastLine", fs.getLastLine()); ev.put("worstLines", worstLines);
+            out.add(f("FULL_GC_LOW_RECLAIM", sev, "Full GC 가 메모리를 거의 회수하지 못합니다",
+                    String.format(Locale.ROOT, "메모리 압박 Full GC %d회 중 %d회에서 회수율이 %.0f%% 미만이었습니다(중앙값 %.0f%%, 최저 %.0f%%).",
+                            fs.getHeapPressureCount(), fs.getLowReclaimCount(), LOW_RECLAIM_PCT, nz(fs.getReclaimPctMedian()), nz(fs.getReclaimPctMin()))
+                            + (fs.getLastAfterBytes() != null ? String.format(Locale.ROOT, " 마지막 압박 Full GC 직후 %s / %s (%.0f%%), uptime %s, 줄 %d.",
+                                    fmtBytes(fs.getLastAfterBytes()), fmtBytes(fs.getLastTotalBytes()), nz(fs.getLastAfterRatio()) * 100, fmtDur(fs.getLastAtSec()), fs.getLastLine() == null ? 0 : fs.getLastLine()) : ""),
+                    advice.toString(), ev));
+        }
+        // 압박 Full GC 간격 단축 — 라이브 셋이 늘거나 할당 부하가 커지는 신호
+        if (fs != null && Boolean.TRUE.equals(fs.getIntervalShrinking())) {
+            double first = fs.getIntervalMedianFirstHalfSec(), second = fs.getIntervalMedianSecondHalfSec();
+            String sev = (second <= first * INTERVAL_STRONG_SHRINK_RATIO || second < 300) ? "High" : "Medium";
+            out.add(f("FULL_GC_INTERVAL_SHRINKING", sev, "메모리 압박 Full GC 간격이 짧아지고 있습니다",
+                    String.format(Locale.ROOT, "압박 Full GC %d회 — 간격 중앙값 앞 절반 %s → 뒤 절반 %s.", fs.getHeapPressureCount(), fmtInterval(first), fmtInterval(second)),
+                    "라이브 셋이 늘거나 할당 부하가 커지는 신호입니다. Full GC 직후 힙 추세(누수)와 할당률 소견을 함께 보고, 힙 덤프로 증가 주체를 확인하세요.",
+                    Map.of("intervalCount", fs.getIntervalCount(), "firstHalfMedianSec", round3(first), "secondHalfMedianSec", round3(second), "ratio", first > 0 ? round3(second / first) : 0)));
         }
         // 누수 추세
         if (Boolean.TRUE.equals(t.getSignificant())) {
@@ -693,9 +898,10 @@ public final class GcLogAnalyzer implements GcEventSink {
         }
         int meta = byFlag.getOrDefault(GcFlag.METADATA_THRESHOLD, 0);
         if (meta >= 3) out.add(f("METADATA_THRESHOLD", "Medium", "Metaspace 임계치로 인한 GC 가 반복됩니다",
-                String.format(Locale.ROOT, "Metadata GC Threshold 원인 GC %d회. Metaspace %s → %s (예약 최대 %s).", meta, fmtBytes(metaFirst), fmtBytes(metaLast), fmtBytes(metaMaxTotal)),
+                String.format(Locale.ROOT, "Metadata GC Threshold 원인 GC %d회. Metaspace %s → %s (예약 최대 %s).", meta, fmtBytes(metaFirst), fmtBytes(metaLast), fmtBytes(metaMaxTotal))
+                        + (metaFull > 0 ? String.format(Locale.ROOT, " 그중 Full GC %d회(힙 압박이 아니라 Metaspace 부족).", metaFull) : ""),
                 "클래스 로딩이 계속 늘고 있습니다(동적 프록시·스크립트·클래스로더 누수 의심). -XX:MetaspaceSize 를 올려 초기 GC 를 줄이고 클래스 누수를 점검하세요.",
-                Map.of("count", meta)));
+                Map.of("count", meta, "fullCount", metaFull)));
         if (systemGc > 0) out.add(systemGcFinding(k, durSec));
         if (k.getAllocationRateMbPerSec() != null && k.getAllocationRateMbPerSec() > 500) {
             double ar = k.getAllocationRateMbPerSec();
@@ -839,6 +1045,7 @@ public final class GcLogAnalyzer implements GcEventSink {
     }
 
     private static double clamp(double v, double lo, double hi) { return Math.max(lo, Math.min(hi, v)); }
+    private static double nz(Double v) { return v == null ? 0 : v; }
     private static double round3(double v) { return Math.round(v * 1000.0) / 1000.0; }
     private static Long parseLong(String s) { try { return Long.parseLong(s.trim()); } catch (RuntimeException e) { return null; } }
 

@@ -52,6 +52,14 @@ class GcLogRealLogRegressionTest {
         assertEquals(72, r.getKpi().getExplicitFullCount());
         assertEquals(0.0, r.getKpi().getPressureFullGcPerHour(), 1e-9);
         assertEquals(3600.11, r.getKpi().getSystemGcIntervalSec(), 0.05);
+        // Full GC 분류(2026-09-16) — 전부 명시적, 압박 0. 회수율 표본도 0(명시적 Full 은 Full 단계만 보면 회수가 미미해 보여 뺀다)
+        GcLogResult.FullGcSummary s = r.getFullGcSummary();
+        assertNotNull(s);
+        assertEquals(72, s.getTotal());
+        assertEquals(0, s.getHeapPressureCount());
+        assertEquals(72, s.getByKind().get("EXPLICIT"));
+        assertEquals(0, s.getReclaimSamples());
+        assertTrue(s.getPoints().isEmpty() && s.getPressureByCause().isEmpty());
     }
 
     @Test
@@ -59,6 +67,7 @@ class GcLogRealLogRegressionTest {
     void noFalseAlarms() {
         assertTrue(finding("FULL_GC_FREQUENT").isEmpty(), "명시적 Full 은 Old 부족 신호가 아니다");
         assertTrue(finding("LEAK_TREND").isEmpty(), "71시간 +2MB 는 누수가 아니다");
+        assertTrue(finding("FULL_GC_LOW_RECLAIM").isEmpty() && finding("FULL_GC_INTERVAL_SHRINKING").isEmpty(), "압박 Full 0회 — 회수율·간격 소견 없음");
         GcLogResult.Finding sys = finding("SYSTEM_GC").orElseThrow();
         assertEquals("Low", sys.getSeverity());
         assertTrue(sys.getTitle().contains("72회") && sys.getTitle().contains("60분"), sys.getTitle());
@@ -81,6 +90,7 @@ class GcLogRealLogRegressionTest {
         assertEquals(26663L << 10, full.getHeapBefore());
         assertEquals(26467L << 10, full.getHeapAfter());
         assertEquals(85143L << 10, full.getCallHeapBefore(), "직전 [GC (System.gc())] 의 heapBefore");
+        assertEquals("EXPLICIT", full.getFullKind());
         GcLogResult.EventRow young = r.getEvents().stream().filter(e -> e.getLine() == 65).findFirst().orElseThrow();
         assertEquals("YOUNG", young.getType());
         assertEquals(null, young.getCallHeapBefore(), "Young 단계 행에는 싣지 않는다");

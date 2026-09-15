@@ -202,6 +202,46 @@ class AnalyzeConfirmTemplateSmokeTest {
         int use = html.indexOf("ServerScan.create(");
         assertTrue(confirm > 0 && scan > confirm && use > scan,
                 "스크립트 순서: analyze-confirm.js → server-scan.js → 인라인 ServerScan.create");
+
+        // 스캔 대상 선택 팝오버(2026-09-16) — 버튼이 대상 설정을 data-* 로 싣고 팝오버를 연다
+        assertTrue(html.contains("onclick=\"openScanPicker(this)\"") && html.contains("aria-haspopup=\"dialog\""), "스캔 버튼은 대상 선택 팝오버를 연다");
+        assertTrue(html.contains("data-scanheap=\"true\"") && html.contains("data-dumppath=\"/opt/dumps\n/var/tmp\"")
+                && html.contains("data-scancore=\"false\"") && html.contains("data-scangclog=\"false\""), "대상 설정 data-*");
+        assertTrue(html.contains("ServerScan.pickTargets(btn, {") && html.contains("_scanPanel.scan(id, name, types)"), "선택 결과로 스캔");
+    }
+
+    @Test
+    @DisplayName("스캔 대상 선택: 모듈 팝오버·types 파라미터·선택 결과 오류는 서버 상태를 FAIL 로 바꾸지 않음 · 경로 줄 글자 12px")
+    void scanTargetPickerModule() throws IOException {
+        String js = Files.readString(Path.of("src/main/resources/static/js/server-scan.js"), StandardCharsets.UTF_8);
+        assertTrue(js.contains("function pickTargets(anchor, opts) {") && js.contains("function targetsFromDataset(ds) {"), "팝오버·대상 해석 함수");
+        assertTrue(js.contains("global.ServerScan = { create: create, pickTargets: pickTargets, targetsFromDataset: targetsFromDataset, closePicker: closePicker };"), "공개 API");
+        assertTrue(js.contains("{ key: 'heap',  label: '힙 덤프',  flag: 'scanheap',  path: 'dumppath',     flagDefault: true }"), "scanHeap null = 켜짐(엔티티와 같다)");
+        assertTrue(js.contains("'?types=' + encodeURIComponent(scanTypes.join(','))"), "선택 대상을 types 로 보낸다");
+        assertTrue(js.contains("if (!noTarget) onStatus(id, 'FAIL', d.error);"), "NO_SCAN_TARGET 은 연결 실패가 아니다");
+        assertTrue(js.contains("'.ss-pick{position:fixed;z-index:10000;") && js.contains("background:#fff;"), "흰 팝오버");
+        assertTrue(js.contains("if (e.key === 'Escape') { e.preventDefault(); closePicker(true); }"), "Esc 로 닫고 버튼으로 포커스 복귀");
+        assertTrue(js.contains("goBtn.disabled = n === 0;"), "대상이 없으면 스캔 버튼 비활성");
+        assertTrue(js.contains("'.scan-src-path{flex:1 1 100%;font-size:12px;") && !js.contains("font-size:10px;color:#9CA3AF;font-family:monospace"),
+                "스캔 결과 경로 줄은 12px(종전 10px)");
+        // 전송 재시도(2026-09-16): 직전 시도의 진행바·오류 문구를 모두 걷어낸 뒤 새 진행바를 붙인다 — 종전엔 진행바가 시도마다 쌓였다
+        int tf = js.indexOf("function transferFile(btn, callback) {");
+        String tfBody = js.substring(tf, js.indexOf("var prog = document.createElement('div');", tf));
+        assertTrue(tfBody.contains("parent.querySelectorAll('.transfer-progress, .transfer-err')") && tfBody.contains("parent.removeChild(el)"),
+                "재시도 전에 이전 진행바·오류 문구 제거");
+        assertFalse(tfBody.contains("var prevErr = parent.querySelector('.transfer-err');"), "오류 문구 하나만 지우던 종전 코드");
+        assertTrue(js.contains("'.scan-size{color:#6B7280;font-size:13px;") && js.contains("'.scan-analyzed{color:#059669;font-size:12px;")
+                && js.contains("'.transfer-err{font-size:12px;") && js.contains("'.transfer-label{font-size:12px;")
+                && js.contains("html += '<span class=\"scan-size\">' + esc(f.formattedSize) + '</span>';"), "크기·전송 상태·오류 문구 글자 크기");
+
+        String servers = source("servers.html");
+        assertTrue(servers.contains("onclick=\"openScanPicker(this)\"") && servers.contains("function openScanPicker(btn) {"), "Target Servers 스캔 버튼 → 팝오버");
+        assertTrue(servers.contains("targets: ServerScan.targetsFromDataset(row ? row.dataset : btn.dataset)"), "행의 대상 설정 data-* 사용");
+        assertTrue(servers.contains("<script src=\"/js/float-tooltip.js"), "툴팁 모듈 로드(종전 누락 — 덤프 경로·실패 사유 툴팁이 안 떴다)");
+        assertTrue(servers.contains("class=\"col-hide-sm col-dumppath\"") && servers.contains("th:attr=\"data-tooltip=${s.dumpPath}\"") && servers.contains("class=\"path-more\""),
+                "덤프 경로 셀 툴팁 + '+N' 표시");
+        assertTrue(servers.contains("'덤프 경로 ' + paths.length + '개\\n' + paths.map(function(p, i) { return (i + 1) + '. ' + p; }).join('\\n')"), "여러 경로는 번호 목록");
+        assertTrue(servers.indexOf("initRows();\ndecorateDumpPathTooltips();") > 0, "로드 시 툴팁 문구 정리");
     }
 
     @Test

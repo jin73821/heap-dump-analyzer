@@ -109,6 +109,10 @@ public class GcLogAnalysisEntity {
     @Column(name = "full_gc_count")
     private Integer fullGcCount;
 
+    /** 메모리 압박(HEAP_PRESSURE) Full GC 수 — 명시적 호출·Metaspace·GCLocker 제외(2026-09-16). null = 분석 전 또는 분류 이전 옛 결과. */
+    @Column(name = "pressure_full_gc_count")
+    private Integer pressureFullGcCount;
+
     @Column(name = "findings_count")
     private Integer findingsCount;
 

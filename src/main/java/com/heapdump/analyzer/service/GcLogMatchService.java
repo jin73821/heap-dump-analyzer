@@ -225,6 +225,7 @@ public class GcLogMatchService {
                 m.put("logStart", l.getLogStart() == null ? null : l.getLogStart().toString().replace('T', ' '));
                 m.put("logEnd", l.getLogEnd() == null ? null : l.getLogEnd().toString().replace('T', ' '));
                 m.put("fullGcCount", l.getFullGcCount());
+                m.put("pressureFullGcCount", l.getPressureFullGcCount());
                 m.put("throughputPct", l.getThroughputPct());
                 matched.add(m);
             }

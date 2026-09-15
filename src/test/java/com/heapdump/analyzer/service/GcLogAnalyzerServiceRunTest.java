@@ -155,6 +155,28 @@ class GcLogAnalyzerServiceRunTest {
     }
 
     @Test
+    @DisplayName("압박 Full GC 수는 엔티티 컬럼에 실리고 forgetAnalysis 가 지운다(함정 54)")
+    void pressureFullCountIsPersistedAndForgotten() throws Exception {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 3; i++) {
+            double up = 600 + i * 600;
+            sb.append(String.format(java.util.Locale.ROOT, "%.3f: [Full GC (Ergonomics) [PSYoungGen: 1000K->0K(30000K)] [ParOldGen: 499000K->300000K(970000K)] 500000K->300000K(1000000K), [Metaspace: 3000K->3000K(1056768K)], 0.4000000 secs] [Times: user=0.80 sys=0.00, real=0.40 secs]\n", up));
+        }
+        sb.append("2400.000: [Full GC (System.gc()) [PSYoungGen: 1000K->0K(30000K)] [ParOldGen: 399000K->300000K(970000K)] 400000K->300000K(1000000K), [Metaspace: 3000K->3000K(1056768K)], 0.2000000 secs] [Times: user=0.40 sys=0.00, real=0.20 secs]\n");
+        write("pressure.log", sb.toString());
+        GcLogAnalysisEntity e = new GcLogAnalysisEntity();
+        e.setFilename("pressure.log");
+        GcLogAnalysisEntity done = runToEnd(e);
+        assertEquals(GcLogAnalysisEntity.STATUS_SUCCESS, done.getStatus(), "오류: " + done.getErrorMessage());
+        assertEquals(4, done.getFullGcCount());
+        assertEquals(3, done.getPressureFullGcCount(), "명시적 1회 제외");
+        assertTrue(storedDetail.get().getResultJson().contains("\"fullGcSummary\":{"));
+        service.forgetAnalysis(done, "test");
+        assertNull(done.getFullGcCount());
+        assertNull(done.getPressureFullGcCount());
+    }
+
+    @Test
     @DisplayName("GC 로그가 아닌 파일·예상 밖 예외는 ERROR + 사람이 읽을 문구로 끝난다(실행기 스레드가 죽지 않는다)")
     void failuresEndAsErrorWithMessage() throws Exception {
         write("not-gc.log", "2026-09-14 00:00:00 INFO application started\nnothing else\n");

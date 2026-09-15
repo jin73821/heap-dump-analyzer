@@ -76,6 +76,19 @@ final class GcLogSupport {
                 || c.contains("jvmtienv forcegarbagecollection") || c.contains("diagnostic command");
     }
 
+    /**
+     * 힙이 차서 일어난 수집인가 — 두 형식의 Full GC 원인 어휘(Allocation Failure·Ergonomics·Last ditch·G1 Evacuation/Compaction/
+     * Humongous/Preventive·promotion failed·concurrent mode failure). {@link #isExplicitCause} 와 나란히 두어 원인 어휘를 한 곳에서 관리한다.
+     * 인자는 소문자.
+     */
+    static boolean isPressureCause(String lower) {
+        if (lower == null) return false;
+        return lower.contains("allocation failure") || lower.contains("ergonomics") || lower.contains("last ditch")
+                || lower.contains("g1 evacuation") || lower.contains("g1 compaction") || lower.contains("g1 humongous")
+                || lower.contains("g1 preventive") || lower.contains("promotion failed") || lower.contains("concurrent mode failure")
+                || lower.contains("allocation rate") || lower.contains("proactive");
+    }
+
     /** 원인 문자열에서 플래그를 뽑는다(두 형식 공통 어휘). */
     static void flagsFromCause(String cause, GcEvent ev) {
         if (cause == null) return;
