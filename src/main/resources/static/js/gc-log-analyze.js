@@ -521,7 +521,13 @@
         var mb = function (v) { return (v / 1048576).toFixed(0) + ' MB'; };
         var common = {
             responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'nearest', intersect: false },
-            scales: { x: { type: 'linear', title: { display: true, text: xTitle(r), font: { size: 11 } }, ticks: { callback: xTick, maxTicksLimit: 10, font: { size: 10 } }, grid: { color: '#F3F4F6' } } },
+            // ⚠ bounds:'data' 필수 — Chart.js 4 의 linear 축 기본값은 'ticks' 라 축 범위를
+            //    "눈금이 다 보이도록" 바깥의 둥근 눈금까지 넓힌다(예: 마지막 이벤트 255,000s →
+            //    축 max 300,000s). 그러면 선이 오른쪽 끝에 닿지 못하고 애매한 위치에서 끊긴 것처럼
+            //    보인다(데이터가 끝난 것인지 잘린 것인지 구분되지 않는다). 'data' 는 축을 실제
+            //    데이터 구간에 맞추고 범위 밖 눈금만 지운다. 두 차트가 같은 x 데이터를 쓰므로
+            //    세로 정렬도 그대로 유지된다.
+            scales: { x: { type: 'linear', bounds: 'data', title: { display: true, text: xTitle(r), font: { size: 11 } }, ticks: { callback: xTick, maxTicksLimit: 10, font: { size: 10 } }, grid: { color: '#F3F4F6' } } },
             plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } }
         };
         var heapCtx = document.getElementById('gclHeapChart');

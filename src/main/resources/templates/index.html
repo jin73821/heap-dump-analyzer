@@ -7,6 +7,8 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/common.css?v=2026-08-12">
+    <!-- 세그먼트 토글 애니메이션 — 탐지 현황 토글 스크립트가 본문 중간에서 도므로 head 에서 먼저 싣는다 -->
+    <script src="/js/seg-thumb.js?v=2026-09-19"></script>
     <title>Heap Dump Analyzer</title>
     <script src="/js/lib/chart.umd.min.js"></script>
     <style>
@@ -182,6 +184,20 @@
                  min-width: 0; }   /* Grid 자식 기본 min-width:auto 로 인한 가로 오버플로우 방지 */
         .panel-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
         .panel-ttl { font-size: 13px; font-weight: 600; }
+        /* 탐지 현황 종류 토글(힙덤프/코어덤프/GC로그) — history.html .det-group-toggle 과 같은 언어 */
+        .detect-hdr { flex-wrap: wrap; gap: 8px 12px; }
+        .detect-hdr-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; }
+        .detect-total { font-size: 12px; color: #6B7280; white-space: nowrap; }
+        .detect-kind-toggle { display: inline-flex; gap: 2px; padding: 3px; background: #F3F4F6; border-radius: 8px; }
+        .detect-kind-btn { padding: 4px 11px; font-size: 12px; line-height: 18px; border-radius: 6px;
+                           cursor: pointer; color: #6B7280; border: none; background: transparent; font-weight: 500; font-family: inherit;
+                           white-space: nowrap; transition: color .2s ease, background .15s ease; }
+        .detect-kind-btn:hover { color: #1F2937; }
+        .detect-kind-btn[aria-pressed="true"] { background: #fff; color: #1F2937; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+        .detect-kind-btn:focus-visible { outline: 2px solid #93C5FD; outline-offset: 1px; }
+        /* 전환 애니메이션(미끄러지는 선택 표시·새 내용 슬라이드)은 /js/seg-thumb.js 공용 모듈 — 현황판·History 와 같은 동작 */
+        [data-detect-kind][hidden], [data-detect-total][hidden] { display: none !important; }
+        .detect-signal { flex-shrink: 0; font-size: 11px; color: #6B7280; white-space: nowrap; }
         .history-item { display: flex; align-items: center; gap: 10px;
                         padding: 9px 0; border-bottom: 1px solid #F3F4F6; }
         .history-item:last-child { border-bottom: none; }
@@ -611,6 +627,8 @@
         <span class="topbar-title">Dashboard</span>
     </div>
     <div class="topbar-right">
+        <!-- 알림 벨 — 아이콘·배지·말풍선은 /js/alert-bell.js 가 채운다 -->
+        <button type="button" class="topbar-btn ab-bell" id="alertBellBtn" aria-label="알림"></button>
         <a class="topbar-btn" href="/">Refresh</a>
     </div>
 </header>
@@ -886,11 +904,22 @@
 
             <!-- 탐지 현황 -->
             <div class="panel">
-                <div class="panel-hdr">
+                <div class="panel-hdr detect-hdr">
                     <span class="panel-ttl">탐지 현황 &middot; critical 우선</span>
-                    <span th:if="${hasDetections}" style="font-size:12px;color:#6B7280"
-                          th:text="'총 ' + ${criticalCount + highCount + mediumCount + lowCount} + ' suspects'"></span>
+                    <div class="detect-hdr-right">
+                        <span data-detect-total="heap" class="detect-total"><span th:if="${hasDetections}"
+                              th:text="'총 ' + ${criticalCount + highCount + mediumCount + lowCount} + ' suspects'"></span></span>
+                        <span th:each="k : ${ {'core','gclog'} }" th:attr="data-detect-total=${k}" class="detect-total" hidden
+                              th:with="dk=${detectKinds?.get(k)}"><span th:if="${dk != null and dk.total > 0}"
+                              th:text="'총 ' + ${dk.total} + '건'"></span></span>
+                        <div class="detect-kind-toggle" id="detectKindToggle" role="group" aria-label="탐지 현황 종류">
+                            <button type="button" class="detect-kind-btn" data-kind="heap" aria-pressed="true">힙덤프</button>
+                            <button type="button" class="detect-kind-btn" data-kind="core" aria-pressed="false">코어덤프</button>
+                            <button type="button" class="detect-kind-btn" data-kind="gclog" aria-pressed="false">GC로그</button>
+                        </div>
+                    </div>
                 </div>
+                <div data-detect-kind="heap">
                 <div th:if="${hasDetections}">
                     <div class="detect-summary">
                         <div class="detect-card dc-critical" title="Critical">
@@ -933,7 +962,88 @@
                 <div th:unless="${hasDetections}" class="detect-empty">
                     탐지된 누수 의심 항목이 없습니다.
                 </div>
+                </div>
+
+                <!-- 코어덤프 · GC 로그 — 건수는 파일 단위(힙은 suspect 단위). 기본은 숨김, 토글로 전환 -->
+                <div th:each="k : ${ {'core','gclog'} }" th:attr="data-detect-kind=${k}" hidden
+                     th:with="dk=${detectKinds?.get(k)}">
+                    <div th:if="${dk != null and dk.total > 0}">
+                        <div class="detect-summary">
+                            <div class="detect-card dc-critical" title="Critical">
+                                <div class="detect-card-val" th:text="${dk.critical}">0</div>
+                                <div class="detect-card-lbl">Critical</div>
+                            </div>
+                            <div class="detect-card dc-high" title="High">
+                                <div class="detect-card-val" th:text="${dk.high}">0</div>
+                                <div class="detect-card-lbl">High</div>
+                            </div>
+                            <div class="detect-card dc-medium" title="Medium">
+                                <div class="detect-card-val" th:text="${dk.medium}">0</div>
+                                <div class="detect-card-lbl">Medium</div>
+                            </div>
+                            <div class="detect-card dc-low" title="Low">
+                                <div class="detect-card-val" th:text="${dk.low}">0</div>
+                                <div class="detect-card-lbl">Low</div>
+                            </div>
+                        </div>
+                        <div th:each="it : ${dk.items}" class="detect-item">
+                            <div class="hdot" th:classappend="${it.severity == 'Critical'} ? 'hd-err' : (${it.severity == 'High'} ? 'hd-warn' : 'hd-ok')"></div>
+                            <div class="detect-fname" th:text="${it.filename}" th:title="${it.filename}">core.1234</div>
+                            <div class="detect-signal" th:if="${it.keySignal != null}" th:text="${it.keySignal}">SIGSEGV</div>
+                            <div class="detect-sevs">
+                                <span class="detect-sev" th:classappend="'ds-' + ${#strings.toLowerCase(it.severity)}"
+                                      th:text="${#strings.toLowerCase(it.severity)}">critical</span>
+                            </div>
+                            <a th:if="${it.link != null}" th:href="${it.link}" class="hbadge hb-ok">view</a>
+                        </div>
+                    </div>
+                    <div th:unless="${dk != null and dk.total > 0}" class="detect-empty"
+                         th:text="${k == 'core'} ? '심각도가 판정된 코어덤프 분석 결과가 없습니다.' : '심각도가 판정된 GC 로그 분석 결과가 없습니다.'">없음</div>
+                </div>
             </div>
+            <script>
+            /* 탐지 현황 종류 토글 — 세 블록은 서버 렌더, 여기서는 hidden 만 바꾼다. 선택은 브라우저별 기억(기본 힙덤프).
+               전환 애니메이션은 사용자가 바꿀 때만 — 저장된 탭으로 처음 열 때는 움직이지 않는다 */
+            (function () {
+                var KEY = 'dashDetectKind', KINDS = ['heap', 'core', 'gclog'];
+                var box = document.getElementById('detectKindToggle');
+                if (!box) return;
+                var current = null;
+
+                /* 새 내용이 이동 방향에서 들어온다 — 오른쪽 탭으로 가면 오른쪽에서(dir=1), 왼쪽이면 왼쪽에서 */
+                function enter(kind, dir) {
+                    if (window.SegThumb) SegThumb.slideIn(
+                        document.querySelectorAll('[data-detect-kind="' + kind + '"], [data-detect-total="' + kind + '"]'), dir);
+                }
+
+                function apply(kind) {
+                    if (KINDS.indexOf(kind) < 0) kind = 'heap';
+                    var i, els = document.querySelectorAll('[data-detect-kind]');
+                    for (i = 0; i < els.length; i++) els[i].hidden = els[i].getAttribute('data-detect-kind') !== kind;
+                    els = document.querySelectorAll('[data-detect-total]');
+                    for (i = 0; i < els.length; i++) els[i].hidden = els[i].getAttribute('data-detect-total') !== kind;
+                    els = box.querySelectorAll('.detect-kind-btn');
+                    for (i = 0; i < els.length; i++) els[i].setAttribute('aria-pressed', String(els[i].getAttribute('data-kind') === kind));
+                    current = kind;
+                    return kind;
+                }
+                var saved = 'heap';
+                try { saved = localStorage.getItem(KEY) || 'heap'; }
+                catch (e) { Common.logIgnored('[Dashboard] 탐지 현황 종류 읽기 실패(localStorage 차단)', e); }
+                apply(saved);
+                // 미끄러지는 선택 표시 — 선택(aria-pressed) 변화를 모듈이 감지해 따라간다. 첫 배치는 움직이지 않는다
+                if (window.SegThumb) SegThumb.attach(box, { active: '[aria-pressed="true"]' });
+                box.addEventListener('click', function (ev) {
+                    var b = ev.target.closest ? ev.target.closest('.detect-kind-btn') : null;
+                    if (!b) return;
+                    var prev = current;
+                    var kind = apply(b.getAttribute('data-kind'));
+                    if (kind !== prev) enter(kind, KINDS.indexOf(kind) > KINDS.indexOf(prev) ? 1 : -1);
+                    try { localStorage.setItem(KEY, kind); }
+                    catch (e) { Common.logIgnored('[Dashboard] 탐지 현황 종류 저장 실패(localStorage 차단)', e); }
+                });
+            })();
+            </script>
 
         </div>
     </main>
@@ -1010,6 +1120,10 @@ var DASHBOARD_DETECT_DAYS = /*[[${dashboardDetectDays}]]*/ 14;
 </script>
 <script src="/js/upload-queue.js?v=2026-08-19"></script>
 <script src="/js/analyze-confirm.js?v=2026-09-14"></script>
+<script src="/js/alert-bell.js?v=2026-09-19b"></script>
+<script>
+if (window.AlertBell) AlertBell.mount(document.getElementById('alertBellBtn'), { boardUrl: '/alerts' });
+</script>
 <script>
 /* ── Daily Detections Chart (서버별 stacked bar) ─────────── */
 (function(){

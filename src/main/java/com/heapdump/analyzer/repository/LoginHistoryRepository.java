@@ -26,4 +26,10 @@ public interface LoginHistoryRepository
             + "  ON t.username = lh.username AND t.last_at = lh.login_at "
             + "WHERE lh.status = 'SUCCESS'", nativeQuery = true)
     List<Object[]> findLastSuccessfulLogins();
+
+    /**
+     * 한 사용자의 최근 로그인 성공 2건(최신순) — /account 의 '최근 접속'·'이전 접속'.
+     * 최신 1건은 대개 지금 이 접속이라, 기억에 없는 접속을 알아채는 데 쓰이는 건 둘째 건이다.
+     */
+    List<LoginHistory> findTop2ByUsernameAndStatusOrderByLoginAtDesc(String username, LoginHistory.Status status);
 }

@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/css/common.css?v=2026-08-12">
     <title>Analysis History — Heap Dump Analyzer</title>
     <script src="/js/lib/chart.umd.min.js"></script>
+    <script src="/js/seg-thumb.js?v=2026-09-19"></script>
     <style>
         .container { max-width: 1800px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
@@ -1014,6 +1015,12 @@ initRows();
         document.querySelectorAll('#detGroupToggle .det-group-btn').forEach(function(b) {
             b.classList.toggle('active', b.dataset.group === _detGroup);
         });
+    }
+
+    /* 기간·그룹 토글의 미끄러지는 선택 표시 — .active 변화를 /js/seg-thumb.js 가 따라간다(대시보드·현황판과 같은 동작) */
+    if (window.SegThumb) {
+        SegThumb.attach(document.getElementById('detPeriodChips'), { active: '.active' });
+        SegThumb.attach(document.getElementById('detGroupToggle'), { active: '.active' });
     }
 
     function buildDatasets(rawDatasets, groupBy) {

@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -115,6 +116,58 @@ class DashboardDetectSummaryTest {
         m.put("kpiPeakDay", "08-29");
         m.put("kpiPeakCount", 4);
         return m;
+    }
+
+    @Test
+    @DisplayName("탐지 현황 종류 토글 — 기본은 힙덤프, 코어덤프·GC로그 블록은 숨긴 채 서버 렌더. 알림 벨은 Refresh 왼쪽")
+    void detectKindToggleAndBell() {
+        // detectKinds 가 없어도(서비스 미주입·조회 실패) 대시보드는 렌더된다
+        String bare = render("index", dashboardModel());
+        assertTrue(bare.contains("심각도가 판정된 코어덤프 분석 결과가 없습니다."), "detectKinds 없는 렌더의 빈 상태");
+
+        Map<String, Object> model = dashboardModel();
+        com.heapdump.analyzer.model.dto.DetectKindSummary core = new com.heapdump.analyzer.model.dto.DetectKindSummary();
+        core.setCritical(1); core.setHigh(1);
+        com.heapdump.analyzer.model.dto.AlertBoardRow row = new com.heapdump.analyzer.model.dto.AlertBoardRow();
+        row.setDomain("core"); row.setFilename("core.1234"); row.setSeverity("Critical"); row.setKeySignal("SIGSEGV");
+        row.setStatus("SUCCESS"); row.setLink("/core-dump/analyze/core.1234");
+        core.getItems().add(row);
+        model.put("detectKinds", Map.of("core", core, "gclog", new com.heapdump.analyzer.model.dto.DetectKindSummary()));
+        String html = render("index", model);
+
+        assertTrue(html.trim().endsWith("</html>"), "문서 끝까지 렌더되지 않았다");
+        assertTrue(html.contains("<div data-detect-kind=\"heap\">"), "힙 블록은 hidden 없이 기본 표시");
+        // th:attr 로 붙는 data-* 는 정적 속성 뒤에 온다 — 순서가 아니라 같은 태그 안에 hidden 이 있는지를 본다
+        assertTrue(html.contains("<div hidden data-detect-kind=\"core\">") && html.contains("<div hidden data-detect-kind=\"gclog\">"),
+                "코어덤프·GC로그 블록이 기본 숨김이 아니다");
+        assertEquals(3, html.split("class=\"detect-kind-btn\"", -1).length - 1, "토글 버튼 3개");
+        assertTrue(html.contains("data-kind=\"heap\" aria-pressed=\"true\""), "기본 선택은 힙덤프");
+        assertTrue(html.contains("총 2건"), "코어덤프는 파일 단위 건수");
+        assertTrue(html.contains("href=\"/core-dump/analyze/core.1234\"") && html.contains(">SIGSEGV<"), "코어 항목");
+        assertTrue(html.contains("심각도가 판정된 GC 로그 분석 결과가 없습니다."), "GC 빈 상태");
+        assertTrue(html.contains("[data-detect-kind][hidden]"), "[hidden] 이 display 에 지지 않게 하는 규칙");
+
+        int bell = html.indexOf("id=\"alertBellBtn\"");
+        int refresh = html.indexOf(">Refresh</a>");
+        assertTrue(bell > 0 && bell < refresh, "알림 벨이 Refresh 왼쪽(앞)에 없다");
+        assertTrue(html.contains("/js/alert-bell.js?v="), "alert-bell.js 로드");
+        assertTrue(html.contains("AlertBell.mount("), "벨 mount 호출");
+    }
+
+    @Test
+    @DisplayName("탐지 현황 종류 전환 애니메이션 — 공용 seg-thumb.js 로 선택 표시가 미끄러지고 새 내용이 이동 방향에서 들어온다")
+    void detectKindSwitchAnimates() {
+        String html = render("index", dashboardModel());
+        // 토글 스크립트가 본문 중간에서 돌므로 모듈은 그보다 먼저(head) 실려야 한다
+        int mod = html.indexOf("/js/seg-thumb.js?v=");
+        int toggleScript = html.indexOf("SegThumb.attach(box,");
+        assertTrue(mod > 0 && mod < html.indexOf("</head>"), "seg-thumb.js 가 head 에 없다");
+        assertTrue(toggleScript > mod, "선택 표시 배선이 없다");
+        assertTrue(html.contains("SegThumb.attach(box, { active: '[aria-pressed=\"true\"]' })"), "선택 기준이 aria-pressed 가 아니다");
+        assertTrue(html.contains("if (kind !== prev) enter(kind,") && html.contains("SegThumb.slideIn("),
+                "전환 시 내용 슬라이드 호출이 없다 / 같은 탭을 다시 눌러도 돈다");
+        // 종전 인라인 구현이 남으면 선택 표시가 둘이 된다
+        assertFalse(html.contains("detect-kind-thumb") || html.contains("@keyframes detKindIn"), "인라인 선택 표시 구현이 남았다");
     }
 
     @Test

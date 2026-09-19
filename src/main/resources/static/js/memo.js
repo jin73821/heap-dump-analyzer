@@ -626,7 +626,66 @@
     var TRASH_SVG = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true" fill="none" stroke="currentColor" '
         + 'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4"/></svg>';
 
+    /** 스피너 표시 지연 (ms) — 이보다 빨리 끝나는 조회(실측 대부분 10~30ms)는 스피너 없이 내용만 바뀐다 */
+    var BUSY_DELAY_MS = 150;
+    /** 한 번 뜬 스피너의 최소 표시 시간 (ms) — 지연 직후 끝나면 한 프레임만 번쩍이고 사라지는 것을 막는다 */
+    var BUSY_MIN_MS = 300;
+
     var hv = null;
+
+    /**
+     * 조회 중 스피너 (지연 표시 + 최소 표시 시간).
+     * host 위에 반투명 덮개를 얹는다 — 내용을 '불러오는 중' 문구로 갈아 끼우지 않으므로 창 크기도 본문도 흔들리지 않는다.
+     * dims: 덮개 밖에 있지만 조회 결과에 딸린 요소(비교 통계·범례) — 스피너가 떠 있는 동안만 흐리게 한다.
+     */
+    function createBusy(host, label, dims) {
+        var el = document.createElement('div');
+        el.className = 'memo-hv-busy';
+        el.setAttribute('role', 'status');
+        el.innerHTML = '<span class="memo-hv-spin" aria-hidden="true"></span><span class="lbl"></span>';
+        el.querySelector('.lbl').textContent = label;
+        host.appendChild(el);
+        var showTimer = null, hideTimer = null, shownAt = 0;
+
+        function setOn(on) {
+            el.classList.toggle('on', on);
+            (dims || []).forEach(function (d) { d.classList.toggle('memo-hv-dim', on); });
+        }
+        function clearTimers() {
+            clearTimeout(showTimer);
+            clearTimeout(hideTimer);
+            showTimer = hideTimer = null;
+        }
+        return {
+            start: function () {
+                clearTimers();
+                host.setAttribute('aria-busy', 'true');
+                if (el.classList.contains('on')) return;   // 이미 떠 있으면 유지 — 연속 선택에서 껐다 켜지 않는다
+                showTimer = setTimeout(function () {
+                    showTimer = null;
+                    setOn(true);
+                    shownAt = Date.now();
+                }, BUSY_DELAY_MS);
+            },
+            stop: function () {
+                clearTimers();
+                host.removeAttribute('aria-busy');
+                if (!el.classList.contains('on')) return;
+                var left = BUSY_MIN_MS - (Date.now() - shownAt);
+                if (left <= 0) { setOn(false); return; }
+                hideTimer = setTimeout(function () {
+                    hideTimer = null;
+                    setOn(false);
+                }, left);
+            },
+            /** 즉시 해제 (창 닫기·다시 열기) */
+            reset: function () {
+                clearTimers();
+                host.removeAttribute('aria-busy');
+                setOn(false);
+            }
+        };
+    }
 
     function readDiffPref() {
         try { return localStorage.getItem(DIFF_PREF_KEY) !== '0'; }   // 기본 켜짐
@@ -642,14 +701,16 @@
         var css = ''
             + '.memo-hv-ov{position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:1200;'
             + 'display:flex;align-items:center;justify-content:center;padding:20px}'
-            + '.memo-hv-box{background:#fff;border-radius:12px;width:min(1040px,100%);max-height:min(88vh,800px);'
+            /* 높이는 max-height 가 아니라 height 로 고정 — 내용 높이를 따르면 '불러오는 중' 한 줄과 본문을
+               오갈 때마다 창이 줄었다 늘어난다(실측 800→376→800px, 16ms 안에). 2026-09-19 */
+            + '.memo-hv-box{background:#fff;border-radius:12px;width:min(1040px,100%);height:min(88vh,800px);'
             + 'display:flex;flex-direction:column;box-shadow:0 18px 48px rgba(0,0,0,.25);overflow:hidden}'
             + '.memo-hv-hd{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid #E5E7EB}'
             + '.memo-hv-hd h3{margin:0;font-size:15px;font-weight:700;color:#111827;flex:1 1 auto}'
             + '.memo-hv-x{border:none;background:none;font-size:20px;line-height:1;color:#9CA3AF;cursor:pointer;padding:2px 6px}'
             + '.memo-hv-x:hover{color:#374151}'
             + '.memo-hv-note{padding:9px 18px 0;font-size:11.5px;color:#6B7280;line-height:1.6}'
-            + '.memo-hv-main{flex:1 1 auto;display:flex;gap:12px;padding:12px 18px;min-height:0}'
+            + '.memo-hv-main{position:relative;flex:1 1 auto;display:flex;gap:12px;padding:12px 18px;min-height:0}'
             + '.memo-hv-list{flex:0 0 290px;overflow:auto;border:1px solid #E5E7EB;border-radius:8px;background:#FCFCFD}'
             + '.memo-hv-item{padding:9px 11px;border-bottom:1px solid #F3F4F6;cursor:pointer;outline:none}'
             + '.memo-hv-item:hover{background:#F9FAFB}'
@@ -685,9 +746,13 @@
             + '.memo-hv-stat .a{color:#15803D;font-weight:700}'
             + '.memo-hv-stat .r{color:#B91C1C;font-weight:700}'
             + '.memo-hv-legend{margin-left:auto;display:inline-flex;align-items:center;gap:10px;color:#6B7280}'
+            /* display:inline-flex 가 [hidden] 을 이겨 범례가 늘 보였다. display:none 이 아니라 visibility 로 감춰 자리는 남긴다 —
+               좁은 폭에서는 범례가 둘째 줄로 접히므로, 자리까지 빼면 내용이 뜰 때마다 본문이 한 줄 밀려 내려간다 */
+            + '.memo-hv-legend[hidden]{display:inline-flex;visibility:hidden}'
             + '.memo-hv-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}'
             + '.memo-hv-legend .lg-del{background:#FEE2E2;box-shadow:inset 3px 0 0 #DC2626}'
             + '.memo-hv-legend .lg-add{background:#DCFCE7;box-shadow:inset 3px 0 0 #16A34A}'
+            + '.memo-hv-stage{position:relative;flex:1 1 auto;display:flex;flex-direction:column;min-height:0}'
             + '.memo-hv-body{position:relative;flex:1 1 auto;overflow:auto;padding:12px 14px;border:1px solid #E5E7EB;border-radius:8px;'
             + 'background:#FAFAFA;font-family:\'D2Coding\',\'JetBrains Mono\',monospace;font-size:12.5px;'
             + 'line-height:1.65;color:#111827;white-space:pre-wrap;word-break:break-word;margin:0;min-height:160px}'
@@ -701,6 +766,18 @@
             + '.memo-hv-ln.del{background:#FEE2E2;box-shadow:inset 3px 0 0 #DC2626;color:#7F1D1D}'
             + '.memo-hv-ln.del::before{content:"−";color:#B91C1C}'
             + '.memo-hv-ln.more{color:#9CA3AF;font-style:italic;padding-top:6px}'
+            /* 조회 스피너 — 지연 표시(BUSY_DELAY_MS)라 빠른 응답에서는 아예 뜨지 않는다. hidden 대신 opacity 라 페이드로 사라진다 */
+            + '.memo-hv-busy{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;'
+            + 'justify-content:center;gap:10px;border-radius:8px;background:rgba(255,255,255,.74);font-size:12px;color:#4B5563;'
+            + 'opacity:0;visibility:hidden;transition:opacity .12s ease,visibility 0s linear .12s}'
+            + '.memo-hv-busy.on{opacity:1;visibility:visible;transition:opacity .12s ease}'
+            + '.memo-hv-spin{box-sizing:border-box;width:26px;height:26px;border-radius:50%;border:3px solid #DBEAFE;'
+            + 'border-top-color:#2563EB;animation:memo-hv-spin .8s linear infinite}'
+            + '.memo-hv-busy:not(.on) .memo-hv-spin{animation-play-state:paused}'
+            + '.memo-hv-stat,.memo-hv-legend{transition:opacity .12s ease}'
+            + '.memo-hv-dim{opacity:.35}'
+            + '@keyframes memo-hv-spin{to{transform:rotate(360deg)}}'
+            + '@media(prefers-reduced-motion:reduce){.memo-hv-spin{animation-duration:1.8s}}'
             + '.memo-hv-confirm{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:12px 18px;'
             + 'border-top:1px solid #FECACA;background:#FEF2F2}'
             + '.memo-hv-confirm[hidden],.memo-hv-btns[hidden]{display:none}'
@@ -754,7 +831,7 @@
             +           '<span><i class="lg-del"></i>이 시점에만 있는 줄</span>'
             +           '<span><i class="lg-add"></i>현재 메모에만 있는 줄</span></span>'
             +       '</div>'
-            +       '<pre class="memo-hv-body"></pre>'
+            +       '<div class="memo-hv-stage"><pre class="memo-hv-body"></pre></div>'
             +     '</div>'
             +   '</div>'
             +   '<div class="memo-hv-confirm" role="alertdialog" aria-live="assertive" hidden>'
@@ -791,11 +868,16 @@
             items: [],
             policy: {},
             confirmAction: null,
+            loadSeq: 0,           // 목록 조회 세대 — 닫았다 다시 연 사이 도착한 옛 응답을 버린다
             cfg: {}
         };
+        api.listBusy = createBusy(ov.querySelector('.memo-hv-main'), '변경 이력을 불러오는 중…');
+        api.bodyBusy = createBusy(ov.querySelector('.memo-hv-stage'), '내용을 불러오는 중…', [api.stat, api.legend]);
 
         function close() {
             hideConfirm();
+            api.listBusy.reset();
+            api.bodyBusy.reset();
             ov.hidden = true;
             document.removeEventListener('keydown', onKey);
         }
@@ -917,6 +999,7 @@
         api.renderSelected = renderSelected;
 
         function showPlaceholder(msg) {
+            api.bodyBusy.stop();   // 안내 문구가 조회 결과를 대신하는 경로(오류·선택 해제) — 스피너가 남지 않게
             api.selectedText = null;
             api.body.classList.remove('diff');
             api.body.classList.add('empty');
@@ -925,6 +1008,17 @@
             api.stat.textContent = '';
         }
         api.showPlaceholder = showPlaceholder;
+
+        /**
+         * 상세 조회 시작 — 본문은 비우지 않는다. 짧은 '불러오는 중…' 으로 갈아 끼웠다가 되돌리면 그 사이
+         * 본문이 번쩍인다(실측 응답 10~30ms). 직전 내용 위에 지연 스피너만 얹고, 응답이 오면 바로 갈아 끼운다.
+         * 비교 통계·범례도 지우지 않는다 — 도구줄이 접히는 폭(≤ 약 1100px)에서는 통계가 비는 순간 줄 수가 바뀌어
+         * 본문이 위아래로 튄다(실측 406→382→406px). 느린 조회에서는 스피너와 함께 흐려져(dims) 옛 값임을 알린다.
+         */
+        api.beginDetailLoad = function () {
+            api.selectedText = null;
+            api.bodyBusy.start();
+        };
 
         // ── 삭제 확인 바 (모달 안) ──
         function showConfirm(html, okLabel, action) {
@@ -1063,11 +1157,13 @@
         row.setAttribute('aria-selected', 'true');
         hv.selectedId = item.id;
         hv.restoreBtn.disabled = true;
-        hv.showPlaceholder('불러오는 중…');
+        hv.beginDetailLoad();
         Memo.historyGet(item.id).then(function (detail) {
-            if (hv.selectedId !== item.id) return;   // 빠른 연속 클릭·삭제 — 마지막 선택만 반영
+            // 빠른 연속 클릭 — 마지막 선택만 반영(스피너는 그 선택의 응답이 내린다) / 삭제로 선택 해제 — 안내 문구가 내렸다
+            if (hv.selectedId !== item.id) return;
             hv.selectedText = detail.memo || '';
             hv.renderSelected();
+            hv.bodyBusy.stop();
             hv.restoreBtn.disabled = false;
         }).catch(function (e) {
             if (hv.selectedId !== item.id) return;
@@ -1112,13 +1208,19 @@
         hv.clearBtn.disabled = true;
         hv.list.textContent = '';
         hv.diffInput.checked = readDiffPref();
-        hv.showPlaceholder('불러오는 중…');
+        hv.listBusy.reset();
+        hv.bodyBusy.reset();
+        hv.showPlaceholder('');   // 조회 중 문구는 본문이 아니라 스피너가 맡는다
         hv.renderSelected();   // 토글 가능 여부만 반영(선택 없음)
-        hv.note.textContent = '';
+        hv.note.textContent = '\u00a0';   // 한 줄 자리 확보 — 안내가 채워질 때 목록·본문이 밀려 내려가지 않게
         hv.ov.hidden = false;
         hv.bindEsc();
+        var seq = ++hv.loadSeq;
+        hv.listBusy.start();
 
         Memo.historyList().then(function (d) {
+            if (seq !== hv.loadSeq) return;   // 닫았다 다시 연 사이 도착한 옛 응답 — 받으면 목록이 두 벌 쌓인다
+            hv.listBusy.stop();
             var items = d.items || [];
             hv.policy = { enabled: d.enabled, retentionDays: d.retentionDays, maxPerUser: d.maxPerUser };
             hv.items = items.slice();
@@ -1146,6 +1248,8 @@
                 hv.list.appendChild(row);
             });
         }).catch(function (e) {
+            if (seq !== hv.loadSeq) return;
+            hv.listBusy.stop();
             hv.showPlaceholder('이력을 불러오지 못했습니다: ' + Memo.errorMessage(e));
             if (hv.cfg.onError) hv.cfg.onError(e);
         });

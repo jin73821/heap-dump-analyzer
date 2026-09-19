@@ -3463,7 +3463,10 @@ public class HeapDumpAnalyzerService {
      * 이후 분석이 실행되면 saveAnalysisToDb() 가 동일 레코드를 findByFilename 으로 찾아 update 한다.
      * 이미 레코드가 존재하면(재업로드 방지 로직 우회 등) 삽입하지 않고 기존 ID 를 유지한다.
      */
-    public void saveUploadRecord(String filename, long fileSize, String uploadedBy) {
+    public void saveUploadRecord(String diskFilename, long fileSize, String uploadedBy) {
+        // 기록은 목록 이름으로 — X.hprof.gz 를 올리면 목록·분석은 X.hprof 로 부르므로 기록도 그 이름이어야 한 행으로 이어진다.
+        // 디스크 이름으로 남기면 분석 기록이 따로 생기고 이 행은 '삭제됨' 유령 행이 된다(2026-09-19, HeapRecordNameMigration 이 기존분 정리)
+        String filename = com.heapdump.analyzer.util.FileTypeRules.listingName(diskFilename);
         try {
             if (analysisHistoryRepository.findByFilename(filename).isPresent()) return;
             AnalysisHistoryEntity entity = new AnalysisHistoryEntity();

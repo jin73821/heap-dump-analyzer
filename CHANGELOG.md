@@ -1,5 +1,197 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-19] 알람 확인(ACK) 확인 모달 — 현황판 개별·전체 확인, 대시보드 말풍선 (v2.5.4)
+
+**요청:** 현황판 최우선 알람 카드의 `전체 확인`·`확인` 버튼, 대시보드 알람 말풍선의 `확인` 버튼을 누르면 확인 모달을 표시.
+
+**배경:** 확인(ACK)은 전체 사용자에게 공유되어 한 번 누르면 **모든 사용자의 알림에서 빠진다**. 종전엔 `전체 확인` 만 모달을 거치고 개별 `확인` 은 누르는 즉시 처리됐다.
+
+**현황판** (`templates/alerts.html`)
+- 기존 전체 확인 모달을 **공용 확인 모달 `#ackConfirmModal`** 로 넓혀 개별·전체가 함께 쓴다. 개별 확인은 대상 알람(제목 · 종류 · 파일)을 옅은 배경 상자로 보이고, 전체 확인은 미확인 건수를 보인다.
+- 기본 포커스는 `취소`(Enter 한 번으로 처리되지 않게), Esc·바깥 클릭은 취소, Tab 은 두 버튼 사이에서만 돈다, 닫히면 누른 버튼으로 포커스를 돌려준다. 처리 중에는 `처리 중…` 으로 두 버튼을 잠그고, 실패하면 모달을 닫고 서버 오류 문구를 토스트로 보인다.
+- `확인 취소` 는 알람을 되살리는 방향이라 묻지 않고 바로 처리한다(종전 그대로).
+
+**대시보드 말풍선** (`static/js/alert-bell.js`, 캐시 키 `?v=2026-09-19b`)
+- 항목의 `확인` 이 자체 확인 창(`askAck`)을 연다 — 모듈이 CSS·DOM 을 스스로 주입(말풍선 위 z-index 10001, 오버레이 페이드 + 상자 등장 애니메이션, 동작 줄이기면 끔). 대상 알람(제목 · 종류 · 파일 · 서버)을 보이고 기본 포커스는 취소.
+- ⚠ 확인 창이 떠 있는 동안 말풍선의 Esc·바깥 클릭 처리기는 빠진다 — 안 그러면 Esc 한 번에 확인 창과 말풍선이 함께 닫힌다. Esc·오버레이 클릭은 확인 창만 닫고 `확인` 버튼으로 포커스를 돌려준다. `확인 처리` 뒤에는 말풍선에 포커스를 둔다(행이 곧 사라지므로).
+- 확인 창이 떠 있는 사이 60초 배지 갱신으로 목록이 다시 그려질 수 있어, 처리할 행은 key 로 다시 찾는다(`rowOf`).
+- 한글 안내문은 어절 단위로 줄바꿈(`word-break: keep-all`) — 현황판 모달도 같이(종전엔 "모 / 든" 처럼 글자 중간에서 끊겼다).
+
+**검증:** 헤드리스 Chrome — 말풍선: 확인 클릭 → 확인 창·대상 표시·포커스 취소·API 0회 / Esc → 확인 창만 닫힘·포커스 복귀 / 확인 창 중 바깥 mousedown → 말풍선 유지 / 오버레이 클릭 → 닫힘 / 확인 처리 → API 1회·항목 빠짐·배지 3→2. 현황판(실제 렌더): 확인 클릭 → 모달·대상 표시·API 0회 / Esc → 닫힘·포커스 복귀 / 전체 확인 → "2건"·버튼 "전체 확인" / 바깥 클릭 → 닫힘 / 확인 취소 → 모달 없이 unack / 확인 처리 → ack 호출. 두 창 스크린샷 확인.
+
+**회귀 방어:** `AlertBoardTemplateSmokeTest.ackRequiresConfirm`(1 — ack·ack-all 호출이 확인 모달 실행 함수 안 한 곳뿐 · 기본 포커스 취소 · 말풍선 확인 창 접근성 · 확인 창 중 말풍선 닫힘 방지). 876 → **877건**.
+
+## [2026-09-19] 세그먼트 토글 애니메이션 공용화 — 현황판·History 적용 (v2.5.4)
+
+**요청:** 현황판 최우선 알람 카드·최근 분석 현황 카드의 토글 버튼, History 페이지 Detections 의 토글 버튼에도 애니메이션 적용.
+
+**구현** — 대시보드 탐지 현황 토글에 인라인으로 넣었던 동작을 **공용 모듈 `static/js/seg-thumb.js`** 로 뽑아 세 페이지가 같이 쓴다.
+- `SegThumb.attach(토글, {active})` — 흰 선택 표시가 눌린 버튼 자리로 미끄러진다(0.28s). 페이지의 토글 로직은 그대로 두고 **버튼의 `class`·`aria-pressed` 변화를 `MutationObserver` 로 따라간다** — 클릭·저장값 복원·URL 등 선택을 바꾸는 방법과 무관. 대시보드·현황판은 `aria-pressed`, History 는 `.active` 로 선택을 표시해 `active` 선택자만 다르다. 버튼 폭 변화(선택 글꼴 굵기·웹폰트·반응형·숨김 해제)는 `ResizeObserver`·`resize`·`document.fonts.ready` 로 다시 잰다.
+- `SegThumb.slideIn(요소들, dir)` — 새로 보인 내용이 이동 방향에서 10px 페이드로 들어온다(0.26s). 탭처럼 내용을 바꾸는 토글에만 쓴다: 대시보드 탐지 현황, 현황판 **최근 분석 현황 탭**. 현황판 알람 필터(미확인/전체·종류)와 History 기간·그룹은 선택 표시만 움직인다(History 차트는 Chart.js 가 자체 애니메이션).
+- 적용 토글: 대시보드 `#detectKindToggle` · 현황판 `#ackFilter`·`#domFilter`·`#rowTabs` · History `#detPeriodChips`·`#detGroupToggle`.
+- ⚠ **감지 루프** — `classList` 조작은 값이 같아도 속성 변경 기록을 만든다. 모듈이 붙이는 표시 클래스를 바뀔 때만 건드린다(`setClass`) — 안 그러면 감지 → 수정 → 감지가 끝없이 돈다.
+- ⚠ 버튼 자체 배경은 선택 표시가 자리를 잡은 뒤(`.seg-thumb-ready`)에만 끈다 — 스크립트가 없거나 선택이 없으면 종전 모양. 트랜지션은 첫 배치 두 프레임 뒤부터(저장된 선택으로 열 때 왼쪽 끝에서 날아오지 않게). OS '동작 줄이기'면 둘 다 끈다.
+- 대시보드는 인라인 구현을 걷어내고 모듈로 옮겼다(동작 동일). 모듈은 head 에서 싣는다 — 탐지 현황 토글 스크립트가 본문 중간에서 돈다.
+
+**검증:** 실제 템플릿 렌더(현황판·History·대시보드) + 헤드리스 Chrome — 토글 6개 모두 초기 배치·클릭마다 선택 표시가 눌린 버튼과 위치·폭 일치, 선택된 버튼 배경 투명(선택 표시가 대신), 탭 전환 시 방향별 슬라이드(+10px/−10px). 최종 상태 스크린샷으로 모양 확인. (헤드리스 가상 시간에서는 CSS 트랜지션이 진행되지 않아 트랜지션 중 캡처는 옛 위치로 찍힌다 — 트랜지션을 끄고 최종 상태를 확인했다.)
+
+**회귀 방어:** `SegThumbWiringTest`(2 — 모듈: 선택 변화 감지·감지 루프 방지·첫 배치 무이동·폴백·동작 줄이기·ResizeObserver / 배선: 세 페이지·토글 6개) · `DashboardDetectSummaryTest.detectKindSwitchAnimates`(모듈 배선으로 갱신). 874 → **876건**.
+
+## [2026-09-19] 대시보드 알림 말풍선 — 열기·닫기·확인 애니메이션 (v2.5.4)
+
+**요청:** 대시보드 알림 벨의 최우선 알람 말풍선(툴팁) 표시에도 애니메이션 적용.
+
+**구현** (`static/js/alert-bell.js` — CSS 자체 주입, 캐시 키 `alert-bell.js?v=2026-09-19a`)
+- **열기** — 말풍선 꼬리(벨 쪽)를 기준점으로 95% → 100% 확대 + 페이드 + 6px 이동(0.2s). 화면 아래쪽이라 위로 뒤집혀 열리면 기준점이 말풍선 아래 꼬리로, 이동 방향도 반대로 바뀐다.
+- **닫기** — 0.13s 페이드·축소 후 DOM 에서 뗀다. 닫는 동안에는 클릭을 받지 않는다(`pointer-events:none`) — 그 사이 다시 열면 새 말풍선이 바로 뜬다. 포커스는 닫기 시작 시점에 벨로 돌아간다.
+- **확인(ACK)한 항목** — 옆으로 16px 빠지며 높이·여백을 접은 뒤(0.2s) 목록을 다시 그린다. 배지 숫자는 응답 즉시 갱신.
+- ⚠ 위/아래 방향은 **변수(`--ab-dy`)** 로만 바꾼다 — 애니메이션 이름을 바꾸면 열리는 도중 새 내용으로 높이가 바뀌어 위/아래가 뒤집힐 때 처음부터 다시 재생된다.
+- ⚠ 끝 이벤트(`animationend`/`transitionend`)는 `afterMotion` 으로 한 번만 받고 **시간 상한**을 둔다 — 숨은 탭에서는 이벤트가 오지 않아 말풍선이 영영 안 떨어질 수 있다. `transitionend` 는 속성마다 오므로 가장 긴 `height` 만 기다린다(투명도에서 그리면 접힘이 잘린다).
+- ⚠ OS '동작 줄이기'(`prefers-reduced-motion`)면 CSS 로 끄고 JS 도 기다리지 않고 즉시 붙이고 뗀다(애니메이션이 없으면 끝 이벤트가 안 오므로, 기다리면 닫힌 말풍선이 잠시 남는다).
+
+**검증:** 헤드리스 Chrome(실제 `alert-bell.js`·`common.css` + API 모의)으로 시간 순서 — 열기 직후 `abPopIn`·기준점이 꼬리 중심(`--ab-arrow-x`+7px) / 확인 60ms 뒤 항목 접히는 중·배지 즉시 감소 → 320ms 뒤 목록 재구성 / Esc 직후 `ab-out` 으로 남아 있고 포커스는 벨 / 닫는 중 다시 열면 두 말풍선이 잠시 공존 후 옛 것만 제거 / 위로 뒤집히면 기준점 아래·`--ab-dy:6px` / 동작 줄이기에서는 모두 즉시. 열리는 중간 프레임 스크린샷으로 모양 확인.
+
+**회귀 방어:** `AlertBoardTemplateSmokeTest.bellAnimations`(1). 873 → **874건**.
+
+## [2026-09-19] 대시보드 탐지 현황 종류 토글 — 전환 애니메이션 (v2.5.4)
+
+**요청:** "탐지 현황 · critical 우선" 카드에서 토글(힙덤프/코어덤프/GC로그)이 전환될 때 애니메이션 표시.
+
+**구현** (`templates/index.html` — 인라인 CSS·스크립트만, 서버 변경 없음)
+- **선택 표시가 미끄러진다** — 토글 안에 흰 알약 `.detect-kind-thumb` 를 두고 눌린 버튼의 위치·폭으로 `transform`/`width` 를 옮긴다(0.28s, `cubic-bezier(.4,0,.2,1)`). 버튼 폭은 글꼴 굵기(500↔600)·웹폰트 로드로 바뀌므로 전환·창 크기 변경·`document.fonts.ready` 때마다 다시 잰다.
+- **새 내용이 이동 방향에서 들어온다** — 오른쪽 탭으로 가면 오른쪽에서, 왼쪽이면 왼쪽에서 10px 이동 + 페이드(0.26s, `@keyframes detKindIn`). 카드 4종·목록과 헤더의 "총 N" 표기가 함께 움직인다. 연속 클릭에도 처음부터 다시 돌고, 같은 탭을 다시 누르면 움직이지 않는다.
+- ⚠ **처음 열 때는 움직이지 않는다** — 트랜지션 클래스를 첫 배치 두 프레임 뒤에 붙인다(저장된 탭으로 열 때 선택 표시가 왼쪽 끝에서 날아오지 않게). ⚠ 버튼 자체 배경은 선택 표시가 자리를 잡은 뒤에만 끈다 — 스크립트가 없어도 선택이 보인다. ⚠ OS 의 '동작 줄이기'(`prefers-reduced-motion`)면 둘 다 끈다.
+
+**검증:** 헤드리스 Chrome(실제 렌더 결과 + `common.css`)으로 — 첫 배치 시 트랜지션 없음·두 프레임 뒤 켜짐 / 전환마다 선택 표시가 눌린 버튼과 위치·폭 일치 / 힙→코어→GC 는 오른쪽(+10px)·GC→힙은 왼쪽(−10px)에서 진입 / 저장된 탭(GC)으로 열어도 움직이지 않음 / `--force-prefers-reduced-motion` 에서 animation·transition 모두 none. 중간 프레임 스크린샷으로 이동 폭이 패널 안쪽 여백(16px) 안에 머무는 것도 확인.
+
+**회귀 방어:** `DashboardDetectSummaryTest.detectKindSwitchAnimates`(1). 872 → **873건**.
+
+## [2026-09-19] 현황판 삭제 파일 토글(관리자) · 단독 .gz 힙 덤프 제외 · 업로드 기록 이름 통일 (v2.5.4)
+
+**계기:** 현황판 최근 분석 현황의 힙 덤프 표에 `heapApp_20260622.tar.gz`(deleted·실패)·`ibm-semeru-open-jre_ppc64_aix_21.0.11.0.tar.gz`(deleted·미분석)가 힙 덤프로 집계됐다. 원인 셋 — ① 서버 쪽 힙 덤프 판정이 **모든 `.gz`** 를 압축 힙 덤프로 인정(확장자가 인식되면 분류 라벨도 무시) ② 업로드가 '미분석' 기록을 **디스크 이름**(`X.tar.gz`)으로 남기는데 파일 목록은 `.gz` 를 뗀 이름(`X.tar`)을 써서, 파일이 있는데도 기록이 '삭제됨' 으로 보였다(유령 행) ③ 현황판은 관리자에게 삭제된 파일 행을 항상 보였다(Files·History 는 기본 숨김).
+
+**1. 삭제된 파일 표시 — 관리자 전용 토글** (`templates/alerts.html`, `AlertBoardService.board`, `AlertBoardController`)
+- 삭제된 파일의 행·알람은 **관리자에게만** 보낸다(비관리자는 서버가 애초에 보내지 않음). 화면은 **기본 숨김**(서버 렌더 `hidden` — JS 전에 번쩍이지 않게), 헤더 우측 `삭제된 파일 표시 (N)` 체크박스로 보인다. 선택은 브라우저별 기억(`localStorage alertBoardShowDeleted`). 표가 삭제분만 남아 전부 숨겨지면 빈 상태 문구.
+- **KPI 는 누구에게나 현존 파일만** 센다(대시보드 규약 — 종전엔 관리자 KPI 에 삭제분이 섞였다). 최근 표는 현존 최근 50건을 먼저 채우고 삭제분은 따로 50건까지 덧붙인다 — 숨겼을 때 현존 행이 50건 아래로 줄지 않게.
+
+**2. 단독 `.gz` 는 힙 덤프 확장자가 아니다** (`util/FileTypeRules.hasRecognizedHeapDumpExtension`)
+- `.hprof/.bin/.dump/.dmp` 와 그 `.gz` 만 인정 — 분석 시작 확인 창(`analyze-confirm.js HEAP_EXT_RE`)과 같은 식. `.tar.gz`·`gc.log.gz` 등은 분류 라벨이 적용되고, 라벨이 없으면 others.
+- 영향: Files 페이지 탭(Heap Dump/Others)·대시보드 Recent Files 의 others 표시·현황판이 공유 규칙이라 함께 바뀐다. 업로드 허용 목록(`FilenameValidator`)·파일 목록의 `.gz` 처리는 그대로.
+
+**3. 업로드 기록 이름 통일 — 근본 원인** (`FileTypeRules.listingName` · `FileManagementService.listFiles` · `HeapDumpAnalyzerService.saveUploadRecord` · `service/HeapRecordNameMigration` 신규)
+- 목록 이름 규칙(`X.gz` → `X`)을 `FileTypeRules.listingName` 한 곳으로 뽑고, 파일 목록과 **업로드 기록이 같은 함수**를 쓴다. 이제 `X.hprof.gz` 를 올리면 기록이 `X.hprof` 로 남고, 분석이 같은 행을 이어 쓴다(종전엔 분석 기록이 따로 생기고 업로드 기록은 유령 행으로 남았다).
+- **기존 유령 기록 정리**(기동 시 1회·멱등): `.gz` 이름의 **'미분석'** 기록을 목록 이름으로 바꾸거나, 그 이름으로 이미 분석된 기록이 있으면 빈 업로드자·출처 서버만 옮기고 지운다. 유령 이름에 붙은 GC 로그 매칭도 옮긴다. ⚠ **분석된 `.gz` 기록(성공·실패·분석 중)은 건드리지 않는다** — 결과 디렉토리·상세 JSON·AI 인사이트가 그 이름에 묶여 있다(`heapApp_20260622.tar.gz` 가 그 예 — 2번 규칙으로 others 가 되어 힙 표에서 빠진다).
+- **운영 적용 결과**(22:07 기동): `[Migrate] action=rename-upload-record` 2건 — id 60 `heapdumps.tar.gz → heapdumps.tar`, id 69 `ibm-semeru-open-jre_ppc64_aix_21.0.11.0.tar.gz → …tar`. 병합 0건·GC 매칭 이동 0건. id 69 는 이제 디스크 파일과 이름이 맞아 '삭제됨' 이 아니고, `…tar` 의 others 라벨로 Files Others 탭·현황판 제외.
+
+**검증:** 헤드리스 Chrome(실제 렌더 결과 + API 모의)로 토글 4상태 — 기본 숨김·삭제분만 남은 표의 빈 상태 문구·체크 시 표시·선택 기억/해제.
+
+**회귀 방어:** `HeapRecordNameMigrationTest`(6 — 이름 변경·병합(기존 값 보존)·분석된 .gz 기록 불변·GC 매칭 이동·멱등/실패 무해·목록 이름과 업로드 기록 배선) · `FileTypeRulesTest`(+1, 단독 .gz·listingName) · `AlertBoardTemplateSmokeTest.deletedToggleIsAdminOnly`(1) · `AlertBoardServiceTest`(KPI 현존 파일만·삭제분 관리자 전용·.tar.gz 제외 단언 보강). 864 → **872건**.
+
+## [2026-09-19] 현황판 최근 분석 현황에서 others 파일 제외 (v2.5.4)
+
+**요청:** 현황판 "최근 분석 현황" 에 others 에 해당하는 파일이 보이지 않게.
+
+**원인:** 현황판 힙 덤프 표는 힙 저장소의 디스크 파일을 전부 '미분석' 행으로 넣었다. 모든 확장자 허용 모드에서는 이 저장소에 `.png`·`.jar`·`.zip`·`gc.log` 같은 비-덤프 파일이 함께 있어(Files 페이지에서는 Others 탭) 힙 덤프처럼 섞여 보였다.
+
+**수정**
+- **`util/FileTypeRules` 신설 — Files 페이지 탭 판정의 단일 출처.** 종전엔 `HeapDumpViewController` 의 private `hasRecognizedHeapDumpExtension` + Files 페이지 인라인 분기 + 대시보드 `othersFiles` 필터에 흩어져 있었다. Files 페이지·대시보드는 이 헬퍼로 옮겼고 **판정 결과는 종전과 같다**(조건을 그대로 옮김).
+  - 힙 저장소: 모든 확장자 허용이고 힙 덤프 확장자(.hprof/.bin/.dump/.dmp/.gz)가 아닐 때만 분류 라벨 적용, 라벨이 없으면 `others`.
+  - 코어 저장소: `exec`·`others` 라벨만 적용.
+- **현황판**(`AlertBoardService`): 힙 덤프 표·KPI 에는 Files 페이지 **Heap Dump 탭과 같은 파일만** 싣는다 — others 와 힙 저장소의 core/exec 라벨 파일은 제외. 코어 파일 표·KPI 는 others 라벨 코어 저장소 파일을 제외. 대시보드 탐지 현황의 코어덤프 탭도 같은 행을 쓰므로 함께 적용된다. GC 로그는 분류 대상이 아니라 변화 없음.
+- **알람은 유지** — 최우선 알람은 MAT·GDB 분석 결과(OOM·Critical)로만 생기므로, 이름이 others 여도 분석이 성공했다면 실제 덤프다. 숨기면 확장자 없는 진짜 덤프의 OOM 을 놓친다.
+
+**운영 데이터 기준 효과:** 힙 덤프 표에서 `VIOM_Service_Summary.zip`·`front_design_sample.png`·`front_log_design_sample.png`·`gc.log`·`heap-analyzer-2.1.6.jar`·`heap-analyzer-2.5.3.jar` 가 빠진다. `ibm-semeru-…tar.gz`(others 라벨이지만 `.gz`)·`*.bin`·힙 덤프로 명시 분류된 `.rpm`·`.zip` 은 Files 페이지 Heap Dump 탭과 같이 남는다.
+
+**회귀 방어:** `FileTypeRulesTest`(3) · `AlertBoardServiceTest.othersExcludedFromTables`(1). 860 → **864건**.
+
+## [2026-09-19] 알림 현황판 — 알림 벨 말풍선 · 공유 ACK · /alerts · 탐지 현황 종류 토글 (v2.5.4)
+
+**요청:** ① 대시보드 Refresh 왼쪽에 알림 버튼 — 클릭 시 말풍선, 그 안의 버튼으로 현황판 이동 ② 말풍선에는 Critical·OOM 최중요 알람만 ③ 힙덤프·코어파일·GC 로그 분석 현황을 보는 현황판 페이지 ④ 대시보드 "탐지 현황 · critical 우선" 카드는 기본 힙덤프, 토글로 코어덤프·GC 로그 전환.
+**확정 사항:** 코어 심각도 = AI 우선 + 시그널 폴백 / 말풍선 = 기간 제한 없이 최근 10건 + ACK 버튼으로 수동 읽음 / ACK = 전체 사용자 공유·DB 저장 / 힙 알람 = OOM 스레드 탐지 또는 Critical suspect / 배너 메뉴 추가.
+
+**최우선 알람 정의** (분석 성공 건만, `AlertBoardService` static 순수 함수)
+| 종류 | 조건 | key |
+|---|---|---|
+| 힙 덤프 | OOM 스레드 탐지(`getOomThreadCount() > 0`) 또는 critical suspect. 제목은 OOM 우선(`OomDetector` 한국어 라벨 + 스레드 수) | `heap:{파일}:{분석시각}` |
+| 코어덤프 | AI 인사이트(`__core__:`) 심각도 우선, 없으면 시그널 — SIGSEGV/SIGBUS/SIGILL=Critical · SIGABRT/SIGFPE=High · 그 외 Medium. Critical 일 때 알람 | `core:{파일}:{분석시각}` |
+| GC 로그 | `gc_log_analysis.severity` = Critical. 메모리 압박 Full GC 가 있으면 제목에 횟수 | `gclog:{파일}:{분석시각}` |
+- ⚠ 힙은 `aggregateDetections` 를 재사용하지 않는다 — suspect 0건을 건너뛰어 **OOM 만 있는 덤프를 놓친다**. ⚠ 힙 `file_deleted` 컬럼은 true 로 쓰이는 곳이 없어 파일 실존(`listFiles()`)으로 판정. ⚠ 힙 재분석은 `analyzedAt` 을 보존해 key·ACK 가 유지되고, 코어·GC 는 재분석이 새 알람이다. 코어는 AI 가 나중에 Critical 을 주면 발생 시각을 AI 시각으로 잡아 최신 10건에 뜨게 한다(key 는 분석 시각 기준이라 불변).
+- `ai_insights.severity` 의 혼재 어휘(`Critical…` / 레거시 `critical|warning|info`)는 `normalizeSeverity` 가 정규화. 인사이트는 접두 프로젝션 조회 1회(`AiInsightRepository.findByFilenameStartingWith` — LOB 미로드, N+1 없음).
+
+**1. 알림 벨 + 말풍선** (`static/js/alert-bell.js` 신규, `templates/index.html`)
+- 상단바 Refresh **왼쪽**에 벨 버튼 + 빨간 미확인 건수 배지(99 초과 `99+`, 0 이면 숨김). 클릭 시 흰 말풍선 — 미확인 최우선 알람 최신 10건(종류 칩·Critical 배지·시각·제목·파일명·서버) + 항목별 `확인` + 하단 `현황판 보기`. 10건 밖에 밀린 건은 "외 N건" 안내, ACK 하면 끌어올린다.
+- 팝오버는 `ServerScan.pickTargets` 와 같은 언어: fixed 좌표·버튼 오른쪽 끝 정렬·2겹 삼각 꼬리·아래 공간 부족 시 위로 뒤집힘·Esc/capture 단계 바깥 클릭 닫기·닫을 때 포커스 복귀·`aria-haspopup/expanded`. 심각도는 옅은 배경 + 1px 테두리 + 배지(좌측 색 띠 없음).
+- 배지 갱신은 로드 1회 + `SessionTimeout.managedInterval` 60초(직접 `setInterval` 금지 — 함정 38). 응답은 `success === true` 확인 후 신뢰(함정 27). 삭제된 파일의 알람은 말풍선에 싣지 않는다(관리자 포함).
+
+**2. 공유 ACK** (`AlertAck` 엔티티 · `alert_ack` 테이블 · `AlertAckRepository`)
+- `POST /api/alerts/ack|unack {key}` · `POST /api/alerts/ack-all` · `GET /api/alerts/top?limit=`. 한 명이 확인하면 모든 사용자의 말풍선에서 빠지고 현황판에 `ACK: 누가 · 언제` 가 남는다. 현황판에서 `확인 취소` 가능.
+- key 는 도메인 접두 검증 + **현재 알람 목록에 실재**해야 한다(임의 문자열로 테이블 오염 방지). 이미 확인된 알람은 기존 확인자를 덮지 않고, 동시 확인(unique 위반)은 '이미 확인됨' 으로 흡수. 감사 로그 `[Alert] action=ack|unack|ack-all … by=`(unack 은 삭제 전 확인자 `prevBy`).
+- 알람이 사라진 뒤 남은 ACK 행은 매일 03:40 정리(30일 경과분만, 수집이 부분 실패한 날은 건너뜀 — 불완전한 목록으로 살아 있는 확인을 지우지 않게).
+
+**3. 현황판 `/alerts`** (`AlertBoardController` · `templates/alerts.html` · 배너 메뉴 `현황판` + 접힘 아이콘)
+- 도메인 KPI 카드 3장(분석 완료/실패/분석 중/미분석 + 파일 단위 심각도 4칩, 컨테이너 쿼리로 1열 전환) · 최우선 알람 목록(미확인/전체 × 전체/힙/코어/GC 필터, `localStorage alertBoardFilter`, 전체 확인은 확인 모달·기본 포커스 취소) · 종류별 최근 분석 50건 표(파일·서버·상태·심각도·핵심 신호·분석 시각). 비관리자에게는 삭제된 파일을 보이지 않는다.
+- 수집은 요약 테이블 3종 + 인사이트 프로젝션 + 힙 결과 캐시만 읽고 8초 TTL 스냅샷으로 묶는다. 도메인별 try 격리 — 한 곳의 조회 실패가 나머지 현황을 막지 않는다. GC 는 `history()` 만 쓴다(`listExistingFiles()` 는 DB 에 쓴다).
+
+**4. 대시보드 탐지 현황 종류 토글** (`templates/index.html`, `HeapDumpViewController.index`)
+- 카드 헤더에 `힙덤프 | 코어덤프 | GC로그` 세그먼트. **기본은 힙덤프**(종전 화면 그대로), 선택은 `localStorage dashDetectKind`. 세 블록을 모두 서버 렌더하고 `hidden` 만 바꾼다(추가 요청 없음). 코어·GC 는 **파일 단위** 심각도 카드 4종 + "총 N건" + 항목(파일·핵심 신호·심각도·view).
+- 기존 힙 마크업은 그대로 두고 감싸기만 했다(`DashboardDetectSummaryTest` 의 리터럴 단언 유지). `detectKinds` 모델이 없어도(조회 실패) 대시보드는 열린다.
+
+**함정(신규 59):** `th:with="k=${m != null ? m[d] : null}"` 는 오류 없이 늘 null 이 된다 — `${m?.get(d)}` 로 쓸 것. 빈 모델 스모크로는 못 잡고 값을 채워 숫자를 단언해야 드러난다.
+
+**검증:** 헤드리스 Chrome 픽스처(실제 `alert-bell.js`·`common.css` + API 모의)로 말풍선 목록 13건(10건 표시·배지 13)·ACK 후 12 + 끌어올림·Esc 닫기 + 포커스 복귀·빈 상태·좁은 폭을, 실제 Thymeleaf 렌더 결과로 현황판 레이아웃·필터·배너 메뉴를 확인. 재기동 후 미인증 `/api/alerts/top` 401 JSON · `/alerts` 302 확인.
+
+**회귀 방어:** `AlertBoardServiceTest`(10) · `AlertEndpointTest`(4) · `AlertBoardTemplateSmokeTest`(3) · `DashboardDetectSummaryTest.detectKindToggleAndBell`(1). 842 → **860건**.
+
+## [2026-09-19] 계정 정보에 최근 접속·이전 접속 표기 (v2.5.4)
+
+**요청:** `/account` 계정 정보에 최근 접속 일자를 표기.
+
+**표기** (`templates/account.html` — 비밀번호 만료와 생성일 사이)
+- **최근 접속** — 마지막 로그인 성공의 시각(`yyyy-MM-dd HH:mm`)·IP. Accounts 사용자 목록의 '최근 접속' 과 같은 정의다. 이 화면을 보는 사람은 로그인한 본인이라 대개 **지금 이 접속**이므로, `login_history.session_id` 가 현재 세션과 같으면 `현재 세션` 배지를 붙인다(함정 1 의 이벤트 선택 덕에 세션 ID 가 일치한다 — OTP 경로도 세션 회전 없이 기록). 다른 기기에서 그 뒤에 로그인했다면 배지가 빠진다.
+- **이전 접속** — 그 직전 로그인 성공의 시각·IP. 기억에 없는 접속을 알아채는 데 쓰이는 건 이쪽이라 함께 싣는다(마우스를 올리면 "기억에 없는 시각·IP 라면 비밀번호를 변경하세요" 안내).
+- 기록이 없으면(첫 접속·조회 실패) `—`. 시각·IP·배지는 각각 `white-space:nowrap` 토막이라 좁은 분할 카드(360px)에서도 날짜 중간이 아니라 토막 사이에서 줄바꿈된다.
+
+**구현**
+- `LoginHistoryRepository.findTop2ByUsernameAndStatusOrderByLoginAtDesc(username, SUCCESS)` — 로그인 사용자 기준 1회 조회(`idx_login_history_username`).
+- `AccountController` 에 `LoginHistoryRepository` 주입 + 순수 함수 `recentLoginModel(rows, currentSessionId)` → `lastLoginAt/lastLoginIp/lastLoginCurrent/prevLoginAt/prevLoginIp`. 조회 예외는 `[Account]` WARN 후 빈 목록 — 계정 화면을 막지 않는다. 세션 ID 가 둘 다 없을 때 `null == null` 로 '현재 세션' 이 되지 않게 막았다.
+
+**회귀 방어:** `AccountRecentLoginTest`(5 — 현재 세션·이전 접속 변환 / 다른 기기 로그인·세션 없음 / 기록 없음 / 로그인 사용자·성공 행만 조회 + 모델 배선 / 조회 실패 시 화면 유지) · `AccountMemoTemplateSmokeTest.recentLoginsRender`(1 — 값 렌더·`—` 폴백·템플릿 예시값 누출 없음). 836 → **842건**.
+
+## [2026-09-19] 메모 변경 이력 창 — 조회 스피너 + 창 크기 깜빡임 제거 (v2.5.4)
+
+**계기:** 이력 항목을 고를 때마다 창이 커졌다 작아지며 깜빡였고, 처음 열 때 창이 작게 떴다가 커졌다. 조회 중 표시는 본문의 '불러오는 중…' 한 줄뿐이었다.
+
+**원인 (헤드리스 실측, 응답 20ms 모의):** ① 창(`.memo-hv-box`)이 `max-height` 라 내용 높이를 따랐다 ② 조회를 시작할 때마다 본문을 한 줄짜리 '불러오는 중…' 으로 갈아 끼웠다. 운영 접속 로그상 이력 조회가 10~30ms 라, 항목을 누를 때마다 창이 **800 → 376 → 800px** 로 16ms 안에 줄었다 늘었다(처음 열 때는 358px 로 떴다가 800px).
+
+**수정** (`static/js/memo.js`)
+- **창 높이 고정** — `height: min(88vh, 800px)`. 목록·본문 로딩 상태와 무관하게 크기가 같다. 안내 줄(`.memo-hv-note`)도 열 때 한 줄 자리를 미리 잡는다.
+- **조회 스피너** — 목록 조회(창을 열 때)는 목록·본문 영역 전체, 항목 상세 조회는 본문 위에 반투명 덮개 + 스피너 + "…불러오는 중". `createBusy()` 가 **150ms 지연 표시**(`BUSY_DELAY_MS`) + **뜨면 최소 300ms 유지**(`BUSY_MIN_MS`)를 맡는다 — 지연이 없으면 10~30ms 응답마다 스피너가 한 프레임 번쩍여 제보된 깜빡임을 되살린다. 그래서 **평소(빠른 응답)엔 스피너가 보이지 않는 것이 정상**이고, 큰 메모·느린 망에서만 뜬다.
+- **상세 조회 중 본문을 비우지 않는다** — 직전 내용을 그대로 두고 덮개만 얹었다가 응답이 오면 바로 갈아 끼운다. 비교 통계("현재 메모 대비 +n −m 줄")도 지우지 않고 스피너가 떠 있는 동안만 흐리게 한다 — 지우면 도구줄이 접히는 폭(≤ 약 1100px)에서 줄 수가 바뀌어 본문이 위아래로 튀었다(500px 실측 406 → 382 → 406px).
+- 빠른 연속 클릭은 마지막 선택만 반영하고 스피너는 그 응답이 내린다. 오류·삭제로 선택이 풀리는 경로(`showPlaceholder`)도 스피너를 내린다. 창을 닫았다 다시 연 사이 도착한 옛 목록 응답은 세대 번호(`loadSeq`)로 버린다(종전엔 목록이 두 벌 쌓일 수 있었다).
+- **변경점 범례가 늘 보이던 결함** — `.memo-hv-legend{display:inline-flex}` 가 `[hidden]` 을 이겨 변경점 표시가 꺼져 있거나 선택이 없어도 범례가 떠 있었다. `[hidden]` 일 때 `visibility:hidden` 으로 감춘다(`display:none` 이면 좁은 폭에서 범례 줄이 생겼다 사라져 본문이 밀린다).
+- 캐시 키 `memo.js?v=2026-09-19` (`account.html`·`account-memo.html`).
+
+**검증:** 헤드리스 픽스처(실제 `common.js`·`memo.js` + `Common.fetchJSON` 지연 모의)로 폭 1440/900/500px 에서 창 높이·본문 위치를 4ms 간격 샘플링 — 수정 전 항목 전환마다 800↔376px, 수정 후 1440/900px 는 변화 0, 500px 는 첫 표시 때 한 번만 자리를 잡는다. 느린 조회(600ms)·연속 클릭·지연 직후 종료(최소 표시)·목록 조회 실패 상태를 계산된 스타일로 확인.
+
+**회귀 방어:** `MemoHistoryViewerLoadingTest`(3 — 창 높이 고정·조회 중 본문 치환 금지·통계 유지 / 지연·최소 표시·목록·상세 배선·세대 검사 / 범례 `[hidden]` 자리 유지). 수정 전 코드에서 3건 모두 실패 확인. 833 → **836건**.
+
+## [2026-09-17] Files 목록 로딩 스피너 + GC 로그 차트 x축 끝맺음 (v2.5.4)
+
+**1. Analysis Files 목록 로딩 스피너** (`templates/files.html`)
+- 행은 서버 렌더지만 정렬·필터·페이지네이션은 `TableGrid` 가 하므로, 그 전까지 `#fileTableBody.tb-loading tr { display:none }` 가 행을 전부 감춘다. 종전엔 그 구간이 **빈 표**로 보여 "파일이 없다"와 구분되지 않았다.
+- `#fileLoadingBody` (별도 `<tbody>`) + `.tb-spinner`(18px, `@keyframes tb-spin`) + "파일 목록을 불러오는 중…". 빠른 렌더에서 깜빡이지 않도록 기존 `fadeIn` 을 **150ms 지연 + `both`** 로 걸었다.
+- ⚠ **로딩 행은 반드시 `#fileTableBody` 와 별도 tbody** — 같은 tbody 에 넣으면 `initRows()` 의 `querySelectorAll('#fileTableBody tr')` 가 데이터 행으로 주워 담아 순번(`assignStableNumbers`)·페이지 건수가 어긋난다.
+- ⚠ **스피너 해제는 행을 드러내는 지점과 같은 콜백**(`TableGrid` 의 `onRenderStart`) — 갈라 두면 렌더가 끝난 뒤에도 스피너가 남아 "아직 로딩 중"으로 읽힌다. `render()` 가 첫 줄에서 `onRenderStart` 를 무조건 부르므로 **파일 0건이어도 반드시 사라진다**.
+- 모바일(≤900px) 카드 변환에서는 로딩 행만 제외 — `data-label` 이 없어 `td::before` 가 빈 56px 칸을 만들어 스피너가 왼쪽으로 밀렸다.
+
+**2. GC 로그 결과 차트가 x축 오른쪽 끝에서 끊기던 문제** (`static/js/gc-log-analyze.js`)
+- 힙 사용량·일시정지 두 차트 모두 선이 오른쪽 끝에 닿지 못하고 애매한 위치에서 멈췄다.
+- 원인은 **Chart.js 4 linear 축의 기본값 `bounds: 'ticks'`** — 축 범위를 "눈금이 다 보이도록" 바깥의 둥근 눈금까지 넓힌다(마지막 이벤트 255,000s → 축 max 300,000s). 데이터가 끝난 것인지 잘린 것인지 구분되지 않는다. (`time` 축만 기본이 `'data'` 라 이 함정은 linear 축에서만 나타난다.)
+- 공유 `common.scales.x` 에 **`bounds: 'data'`** 추가 — 축을 실제 데이터 구간에 맞추고 범위 밖 눈금만 지운다. 두 차트가 같은 x 데이터(`series.uptimeSec`)를 쓰므로 세로 정렬은 그대로다. 왼쪽 끝 여백도 함께 사라진다.
+- 캐시 키 `gc-log-analyze.js?v=2026-09-17a`.
+
+**회귀 방어:** `FilesTemplateSmokeTest`(2 — 렌더 완주·별도 tbody 계약·`onRenderStart` 동일 지점 배선) · `GcLogTemplateSmokeTest.chartXAxisIsBoundToData`(1 — `bounds:'data'` + linear 축 정의가 하나뿐임). 830 → **833건**.
+
 ## [2026-09-16] v2.5.4 릴리스 — 버전 2.5.3 → 2.5.4
 
 **버전 표기:** `pom.xml <version>`, `fragments/banner.html`·`index.html`·`progress.html`. 쉘 스크립트는 버전 비의존이라 변경 없음.

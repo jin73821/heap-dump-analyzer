@@ -440,4 +440,25 @@ class GcLogTemplateSmokeTest {
         String idx = Files.readString(Path.of("src/main/resources/templates/index.html"), StandardCharsets.UTF_8);
         assertTrue(idx.contains("'.hprof,.bin,.dump,.gz,.log,.gclog,.txt'") && idx.contains("· GC 로그 · Max"), "대시보드 업로드 안내·accept");
     }
+
+    @Test
+    @DisplayName("차트: x 축이 bounds:'data' — 기본값 'ticks' 면 선이 오른쪽 끝에 닿지 않는다")
+    void chartXAxisIsBoundToData() throws IOException {
+        String js = js("gc-log-analyze.js");
+
+        // 두 차트(힙 사용량·일시정지)가 공유하는 x 축 정의는 common.scales 한 곳이다.
+        int x = js.indexOf("scales: { x: { type: 'linear'");
+        assertTrue(x > 0, "공유 x 축 정의를 찾지 못했다");
+        String axis = js.substring(x, js.indexOf("}", js.indexOf("grid:", x)));
+
+        // ⚠ Chart.js 4 의 linear 축 기본값은 bounds:'ticks' 라 축 범위를 바깥의 둥근 눈금까지
+        //    넓힌다(마지막 이벤트 255,000s → 축 max 300,000s). 그러면 데이터가 끝난 것인지
+        //    잘린 것인지 구분되지 않는 위치에서 선이 멈춘다.
+        assertTrue(axis.contains("bounds: 'data'"),
+                "x 축에 bounds:'data' 가 없다 — 선이 축 오른쪽 끝에 닿지 못한다");
+
+        // 축은 반드시 공유 정의 하나여야 두 차트의 세로 정렬이 유지된다.
+        assertEquals(1, js.split("type: 'linear'", -1).length - 1,
+                "linear x 축 정의가 둘 이상 — 차트마다 범위가 갈려 세로 정렬이 어긋난다");
+    }
 }

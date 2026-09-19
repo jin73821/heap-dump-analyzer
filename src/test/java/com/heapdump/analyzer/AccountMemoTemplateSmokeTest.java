@@ -109,6 +109,35 @@ class AccountMemoTemplateSmokeTest {
     }
 
     @Test
+    @DisplayName("계정 정보에 최근 접속(현재 세션 표시)·이전 접속이 렌더되고, 기록이 없으면 '—' 다")
+    void recentLoginsRender() {
+        Map<String, Object> model = memoModel();
+        model.put("lastLoginAt", "2026-09-19 16:40");
+        model.put("lastLoginIp", "192.168.55.1");
+        model.put("lastLoginCurrent", true);
+        model.put("prevLoginAt", "2026-09-18 09:05");
+        model.put("prevLoginIp", "10.0.0.5");
+        String html = render("account", model);
+        String card = html.substring(html.indexOf("id=\"cardAccount\""), html.indexOf("id=\"cardMemo\""));
+
+        assertTrue(card.contains("<dt>최근 접속</dt>"), "최근 접속 행이 없다");
+        assertTrue(card.contains(">2026-09-19 16:40<") && card.contains(">192.168.55.1<"), "최근 접속 시각·IP 가 없다");
+        assertTrue(card.contains(">현재 세션<"), "현재 세션 표시가 없다");
+        assertTrue(card.contains("<dt>이전 접속</dt>"), "이전 접속 행이 없다");
+        assertTrue(card.contains(">2026-09-18 09:05<") && card.contains(">10.0.0.5<"), "이전 접속 시각·IP 가 없다");
+        // 날짜 중간에서 줄바꿈되지 않게 시각·IP 는 토막(span)으로 나간다
+        assertTrue(card.contains("class=\"login-at\""), "시각이 토막으로 묶이지 않았다");
+
+        // 컨트롤러가 값을 싣지 못한 경우(첫 접속·조회 실패) — 템플릿 기본 문구가 새어 나오면 안 된다
+        String empty = render("account", memoModel());
+        String emptyCard = empty.substring(empty.indexOf("id=\"cardAccount\""), empty.indexOf("id=\"cardMemo\""));
+        assertTrue(emptyCard.contains("<dt>최근 접속</dt>\n            <dd>—</dd>"), "기록 없음이 '—' 로 나오지 않는다");
+        assertTrue(emptyCard.contains("<dt>이전 접속</dt>\n            <dd>—</dd>"), "이전 접속 없음이 '—' 로 나오지 않는다");
+        assertFalse(emptyCard.contains("현재 세션"), "기록이 없는데 현재 세션 표시가 나온다");
+        assertFalse(emptyCard.contains("192.168.0.10"), "템플릿 예시 IP 가 새어 나왔다");
+    }
+
+    @Test
     @DisplayName("레이아웃은 서버가 <html> 클래스로 렌더한다 (FOUC 방지 경로)")
     void accountLayoutIsServerRendered() {
         // ⚠ head 전체를 보면 안 된다 — <style> 안에 `html.acct-split ...` 규칙이 있어 항상 매칭된다.

@@ -247,12 +247,9 @@ public class FileManagementService {
         Set<String> existing = new HashSet<>();
         if (files != null) {
             for (File f : files) {
-                String displayName = f.getName();
-                boolean compressed = isValidHeapDumpFile(displayName)
-                        && displayName.toLowerCase().endsWith(".gz");
-                if (compressed) {
-                    displayName = displayName.substring(0, displayName.length() - 3);
-                }
+                // 목록 이름 규칙은 FileTypeRules.listingName 단일 출처 — 업로드 기록도 같은 이름으로 남긴다
+                String displayName = com.heapdump.analyzer.util.FileTypeRules.listingName(f.getName());
+                boolean compressed = !displayName.equals(f.getName());
                 if (!existing.contains(displayName)) {
                     HeapDumpFile hdf = new HeapDumpFile();
                     hdf.setName(displayName);

@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/common.css?v=2026-08-12">
+    <script src="/js/seg-thumb.js?v=2026-09-19"></script>
+    <title>현황판 — Heap Dump Analyzer</title>
+    <style>
+        body { overflow-x: hidden; }
+        .container { max-width: 1500px; margin: 0 auto; padding: 68px 20px 40px;
+                     padding-left: calc(var(--banner-w, 220px) + 20px);
+                     transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
+        .topbar-brand { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+        .topbar-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .topbar-right { flex-shrink: 0; }
+        [hidden] { display: none !important; }
+
+        .page-hdr { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+        .page-ttl { font-size: 18px; font-weight: 700; }
+        .page-sub { font-size: 12px; color: #6B7280; }
+
+        .card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 16px 18px; margin-bottom: 16px; }
+        .card-hdr { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+        .card-ttl { font-size: 14px; font-weight: 700; color: #111827; }
+        .card-cnt { font-size: 11px; font-weight: 700; border-radius: 9px; padding: 1px 8px; background: #F3F4F6; color: #4B5563; }
+        .card-cnt.hot { background: #FEE2E2; color: #B91C1C; }
+        .card-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+        /* 심각도 — 옅은 배경 + 같은 계열 1px 테두리 + 배지 (좌측 색 띠 없음) */
+        .sev { display: inline-block; padding: 1px 8px; border-radius: 9px; font-size: 11px; font-weight: 700; white-space: nowrap;
+               border: 1px solid transparent; }
+        .sev-Critical { background: #FEE2E2; color: #DC2626; border-color: #FECACA; }
+        .sev-High     { background: #FEF9C3; color: #A16207; border-color: #FDE047; }
+        .sev-Medium   { background: #DCFCE7; color: #15803D; border-color: #86EFAC; }
+        .sev-Low      { background: #DBEAFE; color: #1D4ED8; border-color: #93C5FD; }
+        .sev-none     { background: #F3F4F6; color: #9CA3AF; border-color: #E5E7EB; }
+
+        /* 도메인 KPI — 카드 폭은 배너 접힘·뷰포트에 따라 달라지므로 컨테이너 쿼리로 접는다 */
+        .kpi-wrap { container-type: inline-size; container-name: kpiwrap; margin-bottom: 16px; }
+        .kpi-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+        @container kpiwrap (max-width: 860px) { .kpi-grid { grid-template-columns: minmax(0, 1fr); } }
+        .kpi-card { background: #fff; border: 1px solid #E5E7EB; border-radius: 12px; padding: 14px 16px; }
+        .kpi-hd { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+        .kpi-name { font-size: 13px; font-weight: 700; color: #111827; }
+        .kpi-total { margin-left: auto; font-size: 12px; color: #6B7280; }
+        .kpi-total b { font-size: 18px; color: #111827; font-variant-numeric: tabular-nums; }
+        .kpi-link { font-size: 11px; color: #2563EB; text-decoration: none; }
+        .kpi-link:hover { text-decoration: underline; }
+        .kpi-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+        .kpi-stat { border: 1px solid #F3F4F6; border-radius: 8px; padding: 7px 4px; text-align: center; background: #FAFAFA; }
+        .kpi-stat-val { font-size: 16px; font-weight: 700; color: #1F2937; font-variant-numeric: tabular-nums; }
+        .kpi-stat-lbl { font-size: 10.5px; color: #6B7280; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .kpi-stat.st-err .kpi-stat-val { color: #DC2626; }
+        .kpi-stat.st-run .kpi-stat-val { color: #2563EB; }
+        .kpi-sevs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+
+        /* 세그먼트 필터 */
+        .seg { display: inline-flex; gap: 2px; padding: 3px; background: #F3F4F6; border-radius: 8px; }
+        .seg button { padding: 4px 11px; font-size: 12px; line-height: 18px; border-radius: 6px; border: none; background: transparent;
+                      color: #6B7280; font-weight: 500; font-family: inherit; cursor: pointer; white-space: nowrap; }
+        .seg button:hover { color: #1F2937; }
+        .seg button[aria-pressed="true"] { background: #fff; color: #1F2937; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+        .seg button:focus-visible { outline: 2px solid #93C5FD; outline-offset: 1px; }
+
+        .btn-sm { padding: 5px 12px; font-size: 12px; font-weight: 600; line-height: 18px; border-radius: 6px; font-family: inherit;
+                  border: 1px solid #D1D5DB; background: #fff; color: #374151; cursor: pointer; white-space: nowrap; }
+        .btn-sm:hover:not(:disabled) { background: #F9FAFB; border-color: #9CA3AF; }
+        .btn-sm:disabled { opacity: .5; cursor: not-allowed; }
+
+        /* 최우선 알람 */
+        .al-list { display: flex; flex-direction: column; gap: 8px; }
+        .al-item { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-radius: 10px;
+                   border: 1px solid #FECACA; background: #FEF2F2; }
+        .al-item.acked { border-color: #E5E7EB; background: #FAFAFA; }
+        .al-main { flex: 1 1 auto; min-width: 0; }
+        .al-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; color: #6B7280; }
+        .al-chip { padding: 1px 7px; border-radius: 8px; font-weight: 700; background: #fff; border: 1px solid #E5E7EB; color: #374151; }
+        .al-ttl { margin-top: 4px; font-size: 13px; font-weight: 600; color: #7F1D1D; word-break: break-word; }
+        .al-item.acked .al-ttl { color: #4B5563; }
+        .al-detail { margin-top: 2px; font-size: 12px; color: #6B7280; }
+        .al-file { margin-top: 3px; font-size: 11.5px; color: #6B7280; font-family: 'JetBrains Mono', 'D2Coding', monospace;
+                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .al-file a { color: #2563EB; text-decoration: none; }
+        .al-file a:hover { text-decoration: underline; }
+        .al-side { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+        .al-ack-info { font-size: 11px; color: #6B7280; white-space: nowrap; }
+        .al-deleted { padding: 1px 7px; border-radius: 8px; font-size: 10.5px; font-weight: 700; background: #F3F4F6; color: #6B7280; }
+        .al-empty { padding: 22px 0; text-align: center; font-size: 13px; color: #6B7280; }
+        /* 삭제된 파일 표시 — 관리자 전용 토글 (Files 페이지 'deleted 표시' 와 같은 역할) */
+        .del-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #4B5563;
+                      cursor: pointer; user-select: none; padding: 5px 10px; border: 1px solid #E5E7EB; border-radius: 6px; background: #fff; }
+        .del-toggle input { margin: 0; cursor: pointer; }
+        .del-toggle .del-cnt { color: #9CA3AF; font-variant-numeric: tabular-nums; }
+
+        /* 도메인별 최근 분석 */
+        .tbl-wrap { overflow-x: auto; }
+        .btable { width: 100%; border-collapse: collapse; font-size: 12.5px; min-width: 720px; }
+        .btable th { text-align: left; font-size: 11px; font-weight: 600; color: #6B7280; padding: 7px 10px; border-bottom: 1px solid #E5E7EB;
+                     white-space: nowrap; background: #FAFAFA; }
+        .btable td { padding: 7px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; }
+        .btable tr:hover td { background: #FAFAFA; }
+        .btable .c-file { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                          font-family: 'JetBrains Mono', 'D2Coding', monospace; font-size: 12px; }
+        .btable .c-file a { color: #1F2937; text-decoration: none; }
+        .btable .c-file a:hover { color: #2563EB; text-decoration: underline; }
+        .btable .c-dim { color: #6B7280; white-space: nowrap; }
+        .st { display: inline-block; padding: 1px 8px; border-radius: 9px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+        .st-SUCCESS { background: #DCFCE7; color: #166534; }
+        .st-ERROR { background: #FEE2E2; color: #B91C1C; }
+        .st-ANALYZING { background: #DBEAFE; color: #1D4ED8; }
+        .st-NOT_ANALYZED { background: #F3F4F6; color: #6B7280; }
+        .dom-tabs { margin-bottom: 12px; }
+
+        /* 전체 확인 모달 — common.css 는 .modal-ov/.modal-box base 와 버튼 색만 준다. 골격은 페이지 몫 */
+        .modal-box { width: 90%; max-width: 400px; text-align: left; }
+        .modal-title { font-size: 15px; font-weight: 700; color: #111827; margin-bottom: 8px; }
+        .modal-body { font-size: 13px; color: #4B5563; line-height: 1.6; margin-bottom: 18px; word-break: keep-all; }   /* 한글은 어절 단위로 줄바꿈 */
+        .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
+        .modal-btns button { padding: 7px 18px; border-radius: 7px; font-size: 13px; font-weight: 600; line-height: 18px;
+                             font-family: inherit; cursor: pointer; border: 1px solid transparent; }
+        .modal-btns button:disabled { opacity: .55; cursor: progress; }
+        /* 개별 확인 모달의 대상 알람 — 옅은 배경 + 1px 테두리(좌측 색 띠 없음) */
+        .cf-target { margin: 2px 0 12px; padding: 10px 12px; border: 1px solid #FECACA; border-radius: 8px; background: #FEF2F2; }
+        .cf-target-ttl { font-size: 13px; font-weight: 600; color: #7F1D1D; word-break: break-word; }
+        .cf-target-meta { margin-top: 3px; font-size: 11.5px; color: #6B7280; font-family: 'JetBrains Mono', 'D2Coding', monospace;
+                          word-break: break-all; }
+
+        @media (max-width: 900px) { .container { padding-left: 20px; } }
+        @media (max-width: 640px) {
+            .container { padding: 60px 14px 32px; }
+            .al-item { flex-direction: column; align-items: stretch; }
+            .al-side { flex-direction: row; align-items: center; justify-content: space-between; }
+        }
+    </style>
+</head>
+<body>
+<div th:replace="~{fragments/banner :: banner}"></div>
+
+<div class="topbar">
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title">현황판</span>
+    </div>
+    <div class="topbar-right">
+        <a href="/" class="topbar-btn">← Dashboard</a>
+        <a href="/alerts" class="topbar-btn">Refresh</a>
+    </div>
+</div>
+
+<div class="container">
+    <div class="page-hdr">
+        <div class="page-ttl">알림 현황판</div>
+        <div class="page-sub">힙 덤프 · 코어 파일 · GC 로그의 분석 현황과 최우선 알람(Critical · OOM)</div>
+        <!-- 관리자 전용 — 비관리자에게는 서버가 삭제된 파일의 행·알람을 아예 보내지 않는다 -->
+        <label th:if="${isAdmin}" class="del-toggle" title="삭제된 파일의 분석 기록·알람 표시 여부 (관리자 전용). KPI 는 늘 현존 파일만 셉니다.">
+            <input type="checkbox" id="showDeletedChk">
+            <span>삭제된 파일 표시</span>
+            <span class="del-cnt" th:text="'(' + ${deletedCount != null ? deletedCount : 0} + ')'">(0)</span>
+        </label>
+    </div>
+
+    <!-- ── 도메인별 KPI ───────────────────────────────── -->
+    <div class="kpi-wrap">
+        <div class="kpi-grid">
+            <div class="kpi-card" th:each="d : ${ {'heap','core','gclog'} }"
+                 th:with="k=${kpi?.get(d)}">
+                <div class="kpi-hd">
+                    <span class="kpi-name" th:text="${d == 'heap'} ? '힙 덤프' : (${d == 'core'} ? '코어 파일' : 'GC 로그')">힙 덤프</span>
+                    <a class="kpi-link" th:href="${d == 'heap'} ? '/files' : (${d == 'core'} ? '/core-dump' : '/gc-log')">목록 →</a>
+                    <span class="kpi-total"><b th:text="${k != null ? k.total : 0}">0</b> 건</span>
+                </div>
+                <div class="kpi-stats">
+                    <div class="kpi-stat"><div class="kpi-stat-val" th:text="${k != null ? k.success : 0}">0</div><div class="kpi-stat-lbl">분석 완료</div></div>
+                    <div class="kpi-stat st-err"><div class="kpi-stat-val" th:text="${k != null ? k.error : 0}">0</div><div class="kpi-stat-lbl">실패</div></div>
+                    <div class="kpi-stat st-run"><div class="kpi-stat-val" th:text="${k != null ? k.analyzing : 0}">0</div><div class="kpi-stat-lbl">분석 중</div></div>
+                    <div class="kpi-stat"><div class="kpi-stat-val" th:text="${k != null ? k.notAnalyzed : 0}">0</div><div class="kpi-stat-lbl">미분석</div></div>
+                </div>
+                <div class="kpi-sevs" title="분석 완료 건의 파일 단위 심각도">
+                    <span class="sev sev-Critical" th:text="'Critical ' + ${k != null ? k.critical : 0}">Critical 0</span>
+                    <span class="sev sev-High" th:text="'High ' + ${k != null ? k.high : 0}">High 0</span>
+                    <span class="sev sev-Medium" th:text="'Medium ' + ${k != null ? k.medium : 0}">Medium 0</span>
+                    <span class="sev sev-Low" th:text="'Low ' + ${k != null ? k.low : 0}">Low 0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── 최우선 알람 ───────────────────────────────── -->
+    <div class="card">
+        <div class="card-hdr">
+            <span class="card-ttl">최우선 알람</span>
+            <span class="card-cnt" id="unackedCnt" th:classappend="${unackedCount != null and unackedCount > 0} ? 'hot' : ''"
+                  th:text="'미확인 ' + ${unackedCount != null ? unackedCount : 0}">미확인 0</span>
+            <div class="card-tools">
+                <div class="seg" id="ackFilter" role="group" aria-label="확인 상태">
+                    <button type="button" data-ack="unacked" aria-pressed="true">미확인</button>
+                    <button type="button" data-ack="all" aria-pressed="false">전체</button>
+                </div>
+                <div class="seg" id="domFilter" role="group" aria-label="분석 종류">
+                    <button type="button" data-dom="all" aria-pressed="true">전체</button>
+                    <button type="button" data-dom="heap" aria-pressed="false">힙</button>
+                    <button type="button" data-dom="core" aria-pressed="false">코어</button>
+                    <button type="button" data-dom="gclog" aria-pressed="false">GC</button>
+                </div>
+                <button type="button" class="btn-sm" id="ackAllBtn" onclick="openAckAll()"
+                        th:disabled="${unackedCount == null or unackedCount == 0}">전체 확인</button>
+            </div>
+        </div>
+        <div class="al-list" id="alertList">
+            <div class="al-item" th:each="a : ${alerts}" th:classappend="${a.acked} ? 'acked' : ''" th:hidden="${a.fileDeleted}"
+                 th:attr="data-key=${a.key},data-domain=${a.domain},data-acked=${a.acked},data-deleted=${a.fileDeleted}">
+                <div class="al-main">
+                    <div class="al-top">
+                        <span class="al-chip" th:text="${a.domain == 'heap'} ? '힙 덤프' : (${a.domain == 'core'} ? '코어덤프' : 'GC 로그')">힙 덤프</span>
+                        <span class="sev sev-Critical" th:text="${a.severity}">Critical</span>
+                        <span th:text="${a.occurredAtLabel}">2026-09-19 10:00</span>
+                        <span th:if="${a.serverName != null and !#strings.isEmpty(a.serverName)}" th:text="'· ' + ${a.serverName}">· server</span>
+                        <span class="al-deleted" th:if="${a.fileDeleted}">deleted</span>
+                    </div>
+                    <div class="al-ttl" th:text="${a.title}">OOM 탐지</div>
+                    <div class="al-detail" th:if="${a.detail != null}" th:text="${a.detail}">상세</div>
+                    <div class="al-file" th:title="${a.filename}">
+                        <a th:if="${a.link != null}" th:href="${a.link}" th:text="${a.filename}">dump.hprof</a>
+                        <span th:if="${a.link == null}" th:text="${a.filename}">dump.hprof</span>
+                    </div>
+                </div>
+                <div class="al-side">
+                    <span class="al-ack-info" th:text="${a.acked} ? ('ACK: ' + ${a.ackedBy} + ' · ' + ${a.ackedAtLabel}) : ''"></span>
+                    <button type="button" class="btn-sm" data-act="toggle-ack" th:text="${a.acked} ? '확인 취소' : '확인'">확인</button>
+                </div>
+            </div>
+        </div>
+        <div class="al-empty" id="alertEmpty" hidden>표시할 알람이 없습니다.</div>
+    </div>
+
+    <!-- ── 도메인별 최근 분석 ─────────────────────────── -->
+    <div class="card">
+        <div class="card-hdr">
+            <span class="card-ttl">최근 분석 현황</span>
+            <span class="page-sub">종류별 최근 50건</span>
+        </div>
+        <div class="seg dom-tabs" id="rowTabs" role="group" aria-label="분석 종류">
+            <button type="button" data-tab="heap" aria-pressed="true">힙 덤프</button>
+            <button type="button" data-tab="core" aria-pressed="false">코어 파일</button>
+            <button type="button" data-tab="gclog" aria-pressed="false">GC 로그</button>
+        </div>
+        <div th:each="d : ${ {'heap','core','gclog'} }" th:attr="data-rows=${d}" th:hidden="${d != 'heap'}"
+             th:with="list=${rows?.get(d)}">
+            <div class="tbl-wrap" th:if="${list != null and !#lists.isEmpty(list)}">
+                <table class="btable">
+                    <thead><tr>
+                        <th>파일</th>
+                        <th th:text="${d == 'core'} ? '실행 파일' : '서버'">서버</th>
+                        <th>상태</th><th>심각도</th><th>핵심 신호</th><th>분석 시각</th>
+                    </tr></thead>
+                    <tbody>
+                    <tr th:each="r : ${list}" th:hidden="${r.fileDeleted}" th:attr="data-deleted=${r.fileDeleted}">
+                        <td class="c-file" th:title="${r.filename}">
+                            <a th:if="${r.link != null}" th:href="${r.link}" th:text="${r.filename}">file</a>
+                            <span th:if="${r.link == null}" th:text="${r.filename}">file</span>
+                            <span class="al-deleted" th:if="${r.fileDeleted}">deleted</span>
+                        </td>
+                        <td class="c-dim" th:text="${r.serverName != null and !#strings.isEmpty(r.serverName)} ? ${r.serverName} : '—'">—</td>
+                        <td><span class="st" th:classappend="'st-' + ${r.status}"
+                                  th:text="${r.status == 'SUCCESS'} ? '완료' : (${r.status == 'ERROR'} ? '실패' : (${r.status == 'ANALYZING'} ? '분석 중' : '미분석'))">완료</span></td>
+                        <td><span class="sev" th:classappend="${r.severity != null} ? ('sev-' + ${r.severity}) : 'sev-none'"
+                                  th:text="${r.severity != null} ? ${r.severity} : '—'">—</span></td>
+                        <td class="c-dim" th:text="${r.keySignal != null} ? ${r.keySignal} : '—'">—</td>
+                        <td class="c-dim" th:text="${r.analyzedAtLabel}">—</td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="al-empty" th:unless="${list != null and !#lists.isEmpty(list)}">분석 기록이 없습니다.</div>
+            <!-- 행이 삭제된 파일뿐이라 전부 숨겨졌을 때 -->
+            <div class="al-empty" data-rows-empty hidden>표시할 분석 기록이 없습니다. (삭제된 파일은 '삭제된 파일 표시' 로 볼 수 있습니다)</div>
+        </div>
+    </div>
+</div>
+
+<!-- 확인(ACK) 모달 — 전체 확인·개별 확인 공용. 확인은 전체 사용자에게 공유되므로 누르기 전에 한 번 더 묻는다 -->
+<div class="modal-ov" id="ackConfirmModal" onclick="if(event.target===this)closeAckConfirm()">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="ackConfirmTitle" aria-describedby="ackConfirmBody">
+        <div class="modal-title" id="ackConfirmTitle">알람 확인</div>
+        <div class="modal-body" id="ackConfirmBody"></div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" id="ackConfirmCancel" onclick="closeAckConfirm()">취소</button>
+            <button type="button" class="mbtn-confirm" id="ackConfirmOk" onclick="runAckConfirm()">확인 처리</button>
+        </div>
+    </div>
+</div>
+
+<script>
+/* 현황판 — 목록은 서버 렌더, 여기서는 필터·ACK 만. 데이터는 행의 data-* 에서 읽는다 */
+(function () {
+    var TAG = '[AlertBoard]';
+    var FILTER_KEY = 'alertBoardFilter';
+    var list = document.getElementById('alertList');
+    var empty = document.getElementById('alertEmpty');
+    var cnt = document.getElementById('unackedCnt');
+    var ackAllBtn = document.getElementById('ackAllBtn');
+    var filter = { ack: 'unacked', dom: 'all' };
+    var DELETED_KEY = 'alertBoardShowDeleted';
+    var delChk = document.getElementById('showDeletedChk');   // 관리자에게만 있다
+    var showDeleted = false;
+    if (delChk) {
+        try { showDeleted = localStorage.getItem(DELETED_KEY) === 'true'; }
+        catch (e) { Common.logIgnored(TAG + ' 삭제 표시 설정 읽기 실패', e); }
+        delChk.checked = showDeleted;
+    }
+
+    try {
+        var saved = JSON.parse(localStorage.getItem(FILTER_KEY) || 'null');
+        if (saved && (saved.ack === 'all' || saved.ack === 'unacked')) filter.ack = saved.ack;
+        if (saved && ['all', 'heap', 'core', 'gclog'].indexOf(saved.dom) >= 0) filter.dom = saved.dom;
+    } catch (e) { Common.logIgnored(TAG + ' 필터 읽기 실패', e); }
+
+    function items() { return list.querySelectorAll('.al-item'); }
+
+    function applyFilter() {
+        var shown = 0, rows = items();
+        for (var i = 0; i < rows.length; i++) {
+            var r = rows[i];
+            var ok = (filter.ack === 'all' || r.getAttribute('data-acked') !== 'true')
+                  && (filter.dom === 'all' || r.getAttribute('data-domain') === filter.dom)
+                  && (showDeleted || r.getAttribute('data-deleted') !== 'true');
+            r.hidden = !ok;
+            if (ok) shown++;
+        }
+        empty.hidden = shown > 0;
+        empty.textContent = rows.length === 0 ? '최우선 알람이 없습니다.'
+            : (filter.ack === 'unacked' ? '미확인 알람이 없습니다.' : '표시할 알람이 없습니다.');
+        press('ackFilter', 'data-ack', filter.ack);
+        press('domFilter', 'data-dom', filter.dom);
+    }
+
+    function press(boxId, attr, value) {
+        var bs = document.getElementById(boxId).querySelectorAll('button');
+        for (var i = 0; i < bs.length; i++) bs[i].setAttribute('aria-pressed', String(bs[i].getAttribute(attr) === value));
+    }
+
+    function saveFilter() {
+        try { localStorage.setItem(FILTER_KEY, JSON.stringify(filter)); }
+        catch (e) { Common.logIgnored(TAG + ' 필터 저장 실패', e); }
+    }
+
+    function setCount(n) {
+        cnt.textContent = '미확인 ' + n;
+        cnt.classList.toggle('hot', n > 0);
+        ackAllBtn.disabled = n === 0;
+    }
+
+    function serverMsg(e, fallback) {
+        if (e && e.sessionExpired) return '세션이 만료되었습니다. 다시 로그인하세요.';
+        try { var b = JSON.parse(e && e.body ? e.body : 'null'); if (b && b.error) return b.error; }
+        catch (x) { Common.logIgnored(TAG + ' 오류 본문이 JSON 이 아님', x); }
+        return fallback;
+    }
+
+    function paint(row, acked, by, at) {
+        row.setAttribute('data-acked', String(acked));
+        row.classList.toggle('acked', acked);
+        row.querySelector('.al-ack-info').textContent = acked ? 'ACK: ' + by + ' · ' + at : '';
+        row.querySelector('[data-act="toggle-ack"]').textContent = acked ? '확인 취소' : '확인';
+    }
+
+    document.getElementById('ackFilter').addEventListener('click', function (ev) {
+        var b = ev.target.closest('button'); if (!b) return;
+        filter.ack = b.getAttribute('data-ack'); saveFilter(); applyFilter();
+    });
+    document.getElementById('domFilter').addEventListener('click', function (ev) {
+        var b = ev.target.closest('button'); if (!b) return;
+        filter.dom = b.getAttribute('data-dom'); saveFilter(); applyFilter();
+    });
+
+    /* ── 확인(ACK) 모달 — 전체 확인·개별 확인 공용 ─────────────────
+       확인은 전체 사용자에게 공유되어 모든 사용자의 알림에서 빠지므로, 실행 전에 대상을 보여 주고 한 번 더 묻는다.
+       기본 포커스는 취소(Enter 한 번으로 처리되지 않게), Esc·바깥 클릭은 취소, 닫히면 누른 버튼으로 포커스를 돌려준다. */
+    var cfModal = document.getElementById('ackConfirmModal');
+    var cfOk = document.getElementById('ackConfirmOk');
+    var cfCancel = document.getElementById('ackConfirmCancel');
+    var cfRun = null, cfTrigger = null;
+
+    function openAckConfirm(opt) {
+        cfRun = opt.run;
+        cfTrigger = opt.trigger || null;
+        document.getElementById('ackConfirmTitle').textContent = opt.title;
+        document.getElementById('ackConfirmBody').innerHTML = opt.bodyHtml;   // 호출부가 Common.escHtml 로 만든다
+        cfOk.textContent = opt.okLabel;
+        cfOk.setAttribute('data-label', opt.okLabel);
+        cfOk.disabled = false;
+        cfCancel.disabled = false;
+        cfModal.classList.add('open');
+        cfCancel.focus();
+    }
+    window.closeAckConfirm = function () {
+        if (!cfModal.classList.contains('open') || cfOk.disabled) return;   // 처리 중에는 닫지 않는다
+        cfModal.classList.remove('open');
+        cfRun = null;
+        if (cfTrigger && document.body.contains(cfTrigger)) cfTrigger.focus();
+        cfTrigger = null;
+    };
+    window.runAckConfirm = function () {
+        if (!cfRun || cfOk.disabled) return;
+        var run = cfRun;
+        cfOk.disabled = true;
+        cfCancel.disabled = true;
+        cfOk.textContent = '처리 중…';
+        run().catch(function (e) {
+            Common.logError(TAG + ' 확인 처리 실패', e);
+            Common.toast(serverMsg(e, '확인 처리에 실패했습니다.'), 'error');
+        }).then(function () {
+            cfOk.disabled = false;
+            cfCancel.disabled = false;
+            cfOk.textContent = cfOk.getAttribute('data-label') || '확인 처리';
+            closeAckConfirm();
+        });
+    };
+    document.addEventListener('keydown', function (ev) {
+        if (!cfModal.classList.contains('open')) return;
+        if (ev.key === 'Escape') { ev.preventDefault(); closeAckConfirm(); }
+        else if (ev.key === 'Tab') {   // 두 버튼 사이에서만 돈다(모달 밖으로 포커스가 새지 않게)
+            var first = cfCancel, last = cfOk;
+            if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+            else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+        }
+    });
+
+    function textOf(row, sel) { var el = row.querySelector(sel); return el ? el.textContent.trim() : ''; }
+
+    list.addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-act="toggle-ack"]'); if (!b) return;
+        var row = b.closest('.al-item');
+        var key = row.getAttribute('data-key');
+        if (row.getAttribute('data-acked') !== 'true') {
+            // 개별 확인 — 대상 알람을 보여 주고 묻는다
+            openAckConfirm({
+                title: '알람 확인',
+                okLabel: '확인 처리',
+                trigger: b,
+                bodyHtml: '<div class="cf-target"><div class="cf-target-ttl">' + Common.escHtml(textOf(row, '.al-ttl')) + '</div>'
+                    + '<div class="cf-target-meta">' + Common.escHtml(textOf(row, '.al-chip')) + ' · ' + Common.escHtml(textOf(row, '.al-file'))
+                    + '</div></div>이 알람을 확인 처리합니다. 확인은 전체 사용자에게 공유되어 모든 사용자의 알림에서 빠집니다.'
+                    + '<br><span style="color:#6B7280">(현황판에서 확인을 취소할 수 있습니다)</span>',
+                run: function () {
+                    return Common.fetchJSON('/api/alerts/ack', { method: 'POST', body: JSON.stringify({ key: key }) }).then(function (d) {
+                        if (!d || d.success !== true) throw new Error('처리 실패');
+                        // 확인자·시각은 서버가 정한 값이 진실이다 — 이미 다른 사용자가 확인했을 수 있어 새로 읽어 온다
+                        location.reload();
+                    });
+                }
+            });
+            return;
+        }
+        // 확인 취소 — 알람을 되살리는 방향이라 묻지 않는다
+        b.disabled = true;
+        Common.fetchJSON('/api/alerts/unack', { method: 'POST', body: JSON.stringify({ key: key }) }).then(function (d) {
+            if (!d || d.success !== true) throw new Error('처리 실패');
+            paint(row, false, '', '');
+            setCount(d.unackedCount || 0);
+            applyFilter();
+        }).catch(function (e) {
+            Common.logError(TAG + ' 확인 취소 실패', e);
+            Common.toast(serverMsg(e, '확인 취소에 실패했습니다.'), 'error');
+        }).then(function () { b.disabled = false; });
+    });
+
+    /* 전체 확인 */
+    window.openAckAll = function () {
+        var n = 0, rows = items();
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].getAttribute('data-acked') !== 'true' && rows[i].getAttribute('data-deleted') !== 'true') n++;
+        }
+        openAckConfirm({
+            title: '미확인 알람 전체 확인',
+            okLabel: '전체 확인',
+            trigger: ackAllBtn,
+            bodyHtml: '미확인 최우선 알람 <b>' + n + '</b>건을 모두 확인 처리합니다.<br>'
+                + '확인은 전체 사용자에게 공유되어, 모든 사용자의 알림에서 빠집니다. (현황판에서 개별로 취소할 수 있습니다)',
+            run: function () {
+                return Common.fetchJSON('/api/alerts/ack-all', { method: 'POST' }).then(function (d) {
+                    if (!d || d.success !== true) throw new Error('처리 실패');
+                    location.reload();
+                });
+            }
+        });
+    };
+
+    /* 최근 분석 탭 — 새 표는 이동 방향에서 들어온다(대시보드 탐지 현황 토글과 같은 동작) */
+    var TABS = ['heap', 'core', 'gclog'], curTab = 'heap';
+    document.getElementById('rowTabs').addEventListener('click', function (ev) {
+        var b = ev.target.closest('button'); if (!b) return;
+        var tab = b.getAttribute('data-tab');
+        if (tab === curTab) return;
+        var dir = TABS.indexOf(tab) > TABS.indexOf(curTab) ? 1 : -1;
+        curTab = tab;
+        var blocks = document.querySelectorAll('[data-rows]');
+        for (var i = 0; i < blocks.length; i++) blocks[i].hidden = blocks[i].getAttribute('data-rows') !== tab;
+        press('rowTabs', 'data-tab', tab);
+        if (window.SegThumb) SegThumb.slideIn(document.querySelectorAll('[data-rows="' + tab + '"]'), dir);
+    });
+
+    /* 토글 3종의 미끄러지는 선택 표시 — aria-pressed 변화를 모듈이 따라간다 */
+    if (window.SegThumb) {
+        ['ackFilter', 'domFilter', 'rowTabs'].forEach(function (id) {
+            SegThumb.attach(document.getElementById(id), { active: '[aria-pressed="true"]' });
+        });
+    }
+
+    /* 삭제된 파일 행 — 표마다 전부 숨겨지면 빈 상태 문구 */
+    function applyDeletedRows() {
+        var blocks = document.querySelectorAll('[data-rows]');
+        for (var i = 0; i < blocks.length; i++) {
+            var trs = blocks[i].querySelectorAll('tbody tr'), shown = 0;
+            for (var j = 0; j < trs.length; j++) {
+                var hide = !showDeleted && trs[j].getAttribute('data-deleted') === 'true';
+                trs[j].hidden = hide;
+                if (!hide) shown++;
+            }
+            var wrap = blocks[i].querySelector('.tbl-wrap');
+            var msg = blocks[i].querySelector('[data-rows-empty]');
+            if (wrap) wrap.hidden = trs.length > 0 && shown === 0;
+            if (msg) msg.hidden = !(trs.length > 0 && shown === 0);
+        }
+    }
+    if (delChk) delChk.addEventListener('change', function () {
+        showDeleted = delChk.checked;
+        try { localStorage.setItem(DELETED_KEY, String(showDeleted)); }
+        catch (e) { Common.logIgnored(TAG + ' 삭제 표시 설정 저장 실패', e); }
+        applyDeletedRows();
+        applyFilter();
+    });
+
+    applyDeletedRows();
+    applyFilter();
+})();
+</script>
+</body>
+</html>

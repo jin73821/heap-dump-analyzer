@@ -252,6 +252,18 @@
         /* 초기 렌더링 flash 방지 — JS 필터 적용 전까지 행 숨김 */
         #fileTableBody.tb-loading tr { display: none; }
 
+        /* 목록 로딩 스피너 — 행을 드러내는 신호(tb-loading 해제)와 같은 지점에서 끈다.
+           둘을 갈라 두면 렌더가 끝난 뒤에도 스피너가 남아 "아직 로딩 중"으로 읽힌다. */
+        #fileLoadingBody td { padding: 44px 12px; text-align: center; border-bottom: none; }
+        .tb-loading-wrap { display: inline-flex; align-items: center; gap: 10px;
+                           color: #6B7280; font-size: 13px;
+                           /* 빠른 렌더에서 깜빡임 방지 — 150ms 뒤에야 모습을 드러낸다 */
+                           animation: fadeIn .2s ease-out .15s both; }
+        .tb-spinner { width: 18px; height: 18px; border: 2px solid #E5E7EB;
+                      border-top-color: #2563EB; border-radius: 50%;
+                      animation: tb-spin .8s linear infinite; flex-shrink: 0; }
+        @keyframes tb-spin { to { transform: rotate(360deg); } }
+
         /* exec 서브 row */
         .exec-subrow { background: #F5F3FF !important; }
         .exec-subrow td { padding-top: 5px !important; padding-bottom: 5px !important; font-size: 12px; color: #6B7280; }
@@ -356,6 +368,13 @@
                 text-transform: uppercase; letter-spacing: .04em;
                 flex-shrink: 0; min-width: 56px; text-align: left;
             }
+
+            /* 로딩 행은 카드 변환 대상이 아니다 — data-label 이 없어 ::before 가 빈 56px
+               칸을 만들고 그만큼 스피너가 왼쪽으로 밀린다. */
+            .ftable tr.tb-loading-row { background: transparent; border: none;
+                                        box-shadow: none; padding: 0; margin-bottom: 0; }
+            .ftable td.tb-loading-cell { display: block; text-align: center; border-bottom: none; }
+            .ftable td.tb-loading-cell::before { content: none; }
 
             /* (d-1) 카드 모드에서 컬럼 전부 표시 — desktop 의 숨김 override */
             .ftable .col-date, .ftable .col-compressed, .ftable .col-hide-sm { display: flex; }
@@ -587,6 +606,13 @@
                     <th>작업</th>
                 </tr>
             </thead>
+            <tbody id="fileLoadingBody">
+                <tr class="tb-loading-row">
+                    <td colspan="9" class="tb-loading-cell">
+                        <span class="tb-loading-wrap"><span class="tb-spinner"></span>파일 목록을 불러오는 중…</span>
+                    </td>
+                </tr>
+            </tbody>
             <tbody id="fileTableBody" class="tb-loading">
                 <th:block th:each="h : ${analysisHistory}">
                 <tr th:classappend="${h.fileDeleted} ? 'fi-deleted'"
@@ -1533,6 +1559,8 @@ var _grid = TableGrid.create({
     },
     onRenderStart: function() {
         document.getElementById('fileTableBody').classList.remove('tb-loading');
+        var _lb = document.getElementById('fileLoadingBody');
+        if (_lb) _lb.style.display = 'none';
         Object.keys(_subrowMap).forEach(function(k) { _subrowMap[k].style.display = 'none'; });
     },
     showRow: function(row) {

@@ -19,6 +19,7 @@ import com.heapdump.analyzer.service.HeapHistoryAggregator;
 import com.heapdump.analyzer.service.RagConfigService;
 import com.heapdump.analyzer.service.PdfReportService;
 import com.heapdump.analyzer.util.AuthUtil;
+import com.heapdump.analyzer.util.FileTypeRules;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
 import com.heapdump.analyzer.util.WasInstanceName;
@@ -59,6 +60,9 @@ public class HeapDumpViewController {
     private final com.heapdump.analyzer.service.JvmHeapInfoService jvmHeapInfoService;
 
     /** GC 로그 매칭 뷰(2026-09-14) — 선택 주입. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.service.AlertBoardService alertBoardService;
+
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.heapdump.analyzer.service.GcLogMatchService gcLogMatchService;
 
@@ -167,8 +171,7 @@ public class HeapDumpViewController {
         if (allowAll) {
             Map<String, String> classifications = analyzerService.loadFileClassifications();
             Set<String> othersFiles = files.stream()
-                .filter(f -> !hasRecognizedHeapDumpExtension(f.getName()))
-                .filter(f -> "others".equals(classifications.getOrDefault(f.getName(), "others")))
+                .filter(f -> FileTypeRules.OTHERS.equals(FileTypeRules.heapDirType(f.getName(), true, classifications)))
                 .map(HeapDumpFile::getName)
                 .collect(Collectors.toSet());
             model.addAttribute("othersFiles", othersFiles);
@@ -187,6 +190,12 @@ public class HeapDumpViewController {
         List<RecentFileItem> recent = RecentFileItem.merge(heapItems, buildGcLogRecentItems());
         model.addAttribute("recentFiles", recent.size() > 5 ? recent.subList(0, 5) : recent);
         model.addAttribute("recentCount", recent.size());
+        // 탐지 현황 토글(코어덤프·GC 로그) — 실패해도 대시보드는 열린다(힙 탐지 현황은 위 aggregateDetections 그대로)
+        try {
+            model.addAttribute("detectKinds", alertBoardService != null ? alertBoardService.dashboardKinds() : null);
+        } catch (Exception ex) {
+            logger.warn("[Dashboard] 코어덤프·GC 로그 탐지 현황 조회 실패 — 토글의 두 탭이 비어 보인다: {}", ex.getMessage());
+        }
 
         return "index";
     }
@@ -212,17 +221,15 @@ public class HeapDumpViewController {
         // 확장자 없는 파일에 사용자 분류 적용 (allowAllExtensions=true 일 때만 유효)
         if (analyzerService.isAllowAllExtensions()) {
             Map<String, String> classifications = analyzerService.loadFileClassifications();
+            // 규칙은 FileTypeRules 단일 출처 — 대시보드 Recent Files·현황판이 같은 판정을 쓴다
             for (AnalysisHistoryItem item : combined) {
-                String cls = classifications.get(item.getFilename());
-                if (!hasRecognizedHeapDumpExtension(item.getFilename())) {
-                    if ("coredump".equals(item.getFileType()) || "coreexec".equals(item.getFileType())) {
-                        // 코어덤프 디렉터리 파일: exec/others 분류 적용 (core 분류는 무시)
-                        if ("exec".equals(cls)) item.setFileType("exec");
-                        else if ("others".equals(cls)) item.setFileType("others");
-                    } else if ("heapdump".equals(item.getFileType())) {
-                        // 힙덤프 디렉터리 파일: 명시적 분류 적용, 없으면 others
-                        item.setFileType(cls != null ? cls : "others");
-                    }
+                if ("coredump".equals(item.getFileType()) || "coreexec".equals(item.getFileType())) {
+                    // 코어덤프 디렉터리 파일: exec/others 분류 적용 (core 분류는 무시)
+                    String label = FileTypeRules.coreDirLabel(item.getFilename(), true, classifications);
+                    if (label != null) item.setFileType(label);
+                } else if ("heapdump".equals(item.getFileType())) {
+                    // 힙덤프 디렉터리 파일: 명시적 분류 적용, 없으면 others
+                    item.setFileType(FileTypeRules.heapDirType(item.getFilename(), true, classifications));
                 }
             }
         }
@@ -505,13 +512,6 @@ public class HeapDumpViewController {
             }
         }
         return result;
-    }
-
-    private static boolean hasRecognizedHeapDumpExtension(String name) {
-        if (name == null) return false;
-        String l = name.toLowerCase();
-        return l.endsWith(".hprof") || l.endsWith(".bin") || l.endsWith(".dump") || l.endsWith(".dmp")
-                || l.endsWith(".gz");
     }
 
     // ── 분석 이력 페이지 ─────────────────────────────────────────

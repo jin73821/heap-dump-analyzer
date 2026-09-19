@@ -1,5 +1,6 @@
 package com.heapdump.analyzer.controller;
 
+import com.heapdump.analyzer.repository.LoginHistoryRepository;
 import com.heapdump.analyzer.service.MemoHistoryService;
 import com.heapdump.analyzer.service.PasswordPolicyConfigService;
 import com.heapdump.analyzer.service.UserService;
@@ -41,7 +42,8 @@ class MemoHistoryDeleteEndpointTest {
     void setUp() {
         history = Mockito.mock(MemoHistoryService.class);
         AccountController controller = new AccountController(
-                Mockito.mock(UserService.class), history, Mockito.mock(PasswordPolicyConfigService.class));
+                Mockito.mock(UserService.class), history, Mockito.mock(PasswordPolicyConfigService.class),
+                Mockito.mock(LoginHistoryRepository.class));
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

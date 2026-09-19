@@ -1,9 +1,15 @@
 package com.heapdump.analyzer.controller;
 
+import com.heapdump.analyzer.model.entity.LoginHistory;
 import com.heapdump.analyzer.model.entity.MemoHistory;
 import com.heapdump.analyzer.model.entity.User;
+import com.heapdump.analyzer.repository.LoginHistoryRepository;
 import com.heapdump.analyzer.service.MemoHistoryService;
 import com.heapdump.analyzer.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -11,8 +17,12 @@ import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * /account — 본인 계정 자기서비스 페이지 (계정 정보 / 비밀번호 변경 / 개인 메모장).
@@ -22,22 +32,28 @@ import java.util.Map;
 @Controller
 public class AccountController {
 
+    private static final Logger logger = LoggerFactory.getLogger(AccountController.class);
+    private static final DateTimeFormatter LOGIN_AT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
     private final UserService userService;
     private final MemoHistoryService memoHistoryService;
     private final com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy;
+    private final LoginHistoryRepository loginHistoryRepository;
 
     public AccountController(UserService userService,
                             MemoHistoryService memoHistoryService,
-                            com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy) {
+                            com.heapdump.analyzer.service.PasswordPolicyConfigService passwordPolicy,
+                            LoginHistoryRepository loginHistoryRepository) {
         this.userService = userService;
         this.memoHistoryService = memoHistoryService;
         this.passwordPolicy = passwordPolicy;
+        this.loginHistoryRepository = loginHistoryRepository;
     }
 
     // ── 페이지 ────────────────────────────────────────────────
 
     @GetMapping("/account")
-    public String accountPage(Principal principal, Model model) {
+    public String accountPage(Principal principal, Model model, HttpServletRequest request) {
         String username = principal.getName();
         User user = userService.findByUsername(username)
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
@@ -62,7 +78,48 @@ public class AccountController {
         model.addAttribute("pwExpiryText", pwExpiryText);
         model.addAttribute("pwWarnSoon", pwWarnSoon);
         model.addAttribute("pwDaysLeft", daysLeft);
+        HttpSession session = request.getSession(false);
+        model.addAllAttributes(recentLoginModel(loadRecentLogins(username), session != null ? session.getId() : null));
         return "account";
+    }
+
+    /** 최근 로그인 성공 2건. 조회 실패는 계정 화면을 막지 않는다 — 두 칸만 '—' 로 보인다. */
+    private List<LoginHistory> loadRecentLogins(String username) {
+        try {
+            return loginHistoryRepository.findTop2ByUsernameAndStatusOrderByLoginAtDesc(
+                    username, LoginHistory.Status.SUCCESS);
+        } catch (Exception e) {
+            logger.warn("[Account] 최근 접속 조회 실패 — 계정 정보는 최근 접속 없이 표시: user={} err={}", username, e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * 계정 정보의 '최근 접속'·'이전 접속' 모델 (최신순 로그인 성공 행 → 표시 값).
+     * <ul>
+     *   <li>최근 접속 = 마지막 로그인 성공 — Accounts 사용자 목록의 '최근 접속' 과 같은 정의다.
+     *       이 화면을 보는 사람은 로그인한 본인이라 대개 지금 이 접속이고, 그때는 {@code lastLoginCurrent}
+     *       (login_history.session_id == 현재 세션 — 함정 1 의 이벤트 선택 덕에 일치한다)로 '현재 세션' 을 붙인다.
+     *       다른 기기에서 그 뒤에 로그인했다면 표시가 빠진다.</li>
+     *   <li>이전 접속 = 그 직전 로그인 성공. 기억에 없는 접속을 알아채는 데 쓰이는 건 이쪽이다.</li>
+     * </ul>
+     * 기록이 없으면 값이 null 이고 화면은 '—'.
+     */
+    static Map<String, Object> recentLoginModel(List<LoginHistory> rows, String currentSessionId) {
+        Map<String, Object> m = new HashMap<>();
+        LoginHistory last = rows != null && !rows.isEmpty() ? rows.get(0) : null;
+        LoginHistory prev = rows != null && rows.size() > 1 ? rows.get(1) : null;
+        m.put("lastLoginAt", formatLoginAt(last));
+        m.put("lastLoginIp", last != null ? last.getIp() : null);
+        m.put("lastLoginCurrent", last != null && currentSessionId != null
+                && Objects.equals(currentSessionId, last.getSessionId()));
+        m.put("prevLoginAt", formatLoginAt(prev));
+        m.put("prevLoginIp", prev != null ? prev.getIp() : null);
+        return m;
+    }
+
+    private static String formatLoginAt(LoginHistory h) {
+        return h != null && h.getLoginAt() != null ? h.getLoginAt().format(LOGIN_AT_FMT) : null;
     }
 
     /**
