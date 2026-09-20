@@ -233,5 +233,33 @@
         return n.toFixed(i === 0 ? 0 : 2) + ' ' + units[i];
     };
 
+    /*
+     * ── 모션 헬퍼 (2026-09-20) ────────────────────────────────
+     * 모달·목록 항목이 나타나고 사라지는 연출을 붙이는 곳이 여러 군데라(메모 변경 이력 창,
+     * 현황판 확인/확인 취소, 알림 말풍선) 판정과 대기를 한 곳에 둔다.
+     */
+
+    /** OS '동작 줄이기'. 켜져 있으면 애니메이션 없이 바로 붙이고 떼야 한다(끝 이벤트가 오지 않는다). */
+    Common.reduceMotion = function () {
+        return !!(global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    };
+
+    /**
+     * 끝 이벤트를 한 번만 받는다 — 숨은 탭처럼 이벤트가 아예 오지 않아도 timeoutMs 뒤에는 반드시 진행한다.
+     * 자식에서 올라온 이벤트는 무시하고(모달 골격은 겹쳐 있다), transitionend 는 속성마다 오므로
+     * prop 으로 기다릴 속성(가장 오래 걸리는 것)을 지정한다 — 가장 빠른 속성에서 끝내면 연출이 잘린다.
+     */
+    Common.afterMotion = function (el, eventName, timeoutMs, done, prop) {
+        var called = false;
+        function fin(ev) {
+            if (called || (ev && (ev.target !== el || (prop && ev.propertyName !== prop)))) return;
+            called = true;
+            el.removeEventListener(eventName, fin);
+            done();
+        }
+        el.addEventListener(eventName, fin);
+        global.setTimeout(fin, timeoutMs);
+    };
+
     global.Common = Common;
 })(typeof window !== 'undefined' ? window : this);

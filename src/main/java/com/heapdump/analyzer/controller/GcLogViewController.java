@@ -60,6 +60,11 @@ public class GcLogViewController {
         // 결과 JSON 은 <script type="application/json"> 에 th:utext 로 넣는다(함정 23 회피). '</' 는 반드시 이스케이프.
         model.addAttribute("resultJson", result == null ? "null" : GcLogResultCodec.toJson(result).replace("</", "<\\/"));
         model.addAttribute("candidates", entity.map(matchService::candidatesOf).orElse(List.of()));
+        // 이어 붙인 구성 — 화면이 '구성 파일 N개' 알약과 누락 안내를 서버 렌더로 띄운다(함정 63: 파일이 사라지면 재분석이 막힌다)
+        List<String> members = entity.map(e -> service.parseMembers(e.getMemberFiles()).stream()
+                .map(GcLogAnalyzerService.MemberRef::filename).toList()).orElse(List.of());
+        model.addAttribute("members", members);
+        model.addAttribute("missingMembers", members.stream().filter(m -> !service.fileOf(m).isFile()).toList());
         // KPI '인스턴스' 카드 초기값 — 수동 입력 > 연결된 힙 덤프의 Instance. 결과가 있을 때만 카드가 그려지므로 그때만 덤프를 조회한다
         model.addAttribute("instance", result != null ? instanceService.viewOf(entity.orElse(null)) : GcLogInstanceService.view(null, null, null));
         return "gc-log/analyze";

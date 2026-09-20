@@ -7,9 +7,9 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title>GC 로그 분석 - Heap Dump Analyzer</title>
-    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-08-12}">
-    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-14}">
-    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-16b}">
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-09-20}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-20}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-20a}">
 </head>
 <body>
 
@@ -107,22 +107,31 @@
             <div>
                 <div class="upload-zone-label">GC 로그 파일 <span class="required-badge">필수</span></div>
                 <div class="upload-zone" id="gcDropZone">
-                    <input type="file" id="gcFileInput" onchange="onGcFileSelect(this)" aria-label="GC 로그 파일 선택">
+                    <input type="file" id="gcFileInput" multiple onchange="onGcFileSelect(this)" aria-label="GC 로그 파일 선택">
                     <span class="upload-zone-icon">
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 8 11 12 14 17 7 21 10"></polyline><line x1="3" y1="21" x2="21" y2="21"></line></svg>
                     </span>
-                    <div class="upload-zone-text">파일 선택 또는 드래그</div>
+                    <div class="upload-zone-text">파일 선택 또는 드래그 <span class="upload-zone-multi">(여러 개 가능)</span></div>
                     <div class="upload-zone-sub">gc.log · gc.log.N · gc-*.log · .gz — JDK 9+ 통합 로깅(-Xlog:gc*) / JDK 8 이하 -XX:+PrintGCDetails</div>
                     <div class="upload-zone-file" id="gcFileName"></div>
+                    <!-- 회전 로그를 여러 개 고르면 업로드 뒤 '일자별로 이어 붙이기' 를 제안한다 -->
+                    <div class="gcl-chips" id="gcFileChips"></div>
                     <button type="button" class="upload-zone-clear" id="gcClearBtn"
                             title="선택 해제" aria-label="GC 로그 선택 해제"
                             onclick="clearGcZone(event)">&times;</button>
                 </div>
             </div>
             <div class="gcl-side-field">
-                <label for="gcServerName">출처 서버명 <span style="font-weight:400;color:#9CA3AF">(선택)</span></label>
-                <input type="text" id="gcServerName" class="cd-input" placeholder="예: was01" autocomplete="off" maxlength="100">
-                <div class="gcl-side-hint">힙 덤프와 자동 매칭할 때 '같은 서버' 신호로 씁니다. Servers 에 등록된 서버명과 같게 적으세요. 원격 전송된 로그는 자동으로 채워집니다.</div>
+                <!-- 2026-09-20: 호스트네임은 필수다 — 분석명(호스트_인스턴스_일자)과 덤프 매칭의 '같은 서버' 신호가 여기서 나온다.
+                     서버가 분석 시작 때 한 번 더 막는다(NO_HOSTNAME). 원격 전송된 로그는 자동으로 채워진다. -->
+                <label for="gcServerName">호스트네임 <span class="required-badge">필수</span></label>
+                <input type="text" id="gcServerName" class="cd-input" placeholder="예: was01" autocomplete="off" maxlength="100"
+                       oninput="onOriginInput()" required>
+                <div class="gcl-side-hint">GC 로그를 수집한 서버 이름. Servers 에 등록된 서버명과 같게 적으세요.</div>
+                <label for="gcInstanceName" style="margin-top:10px">인스턴스명 <span style="font-weight:400;color:#9CA3AF">(선택)</span></label>
+                <input type="text" id="gcInstanceName" class="cd-input" placeholder="예: container1" autocomplete="off" maxlength="100"
+                       oninput="onOriginInput()">
+                <div class="gcl-side-hint">WAS 인스턴스(JEUS <code>jeus.server.name</code> · WebLogic <code>Name</code>). 분석명은 <b>호스트네임_인스턴스명_일자</b> 가 됩니다.</div>
             </div>
         </div>
         <button class="btn btn-primary btn-lg upload-submit-btn" id="uploadBtn" onclick="startUpload()" disabled>
@@ -156,7 +165,16 @@
 
         <div th:if="${!#lists.isEmpty(history)}">
             <div class="hi-controls">
-                <input type="text" id="hiSearch" class="cd-input" placeholder="파일명·서버 검색..." autocomplete="off">
+                <input type="text" id="hiSearch" class="cd-input" placeholder="분석명·파일명·서버 검색..." autocomplete="off">
+                <button type="button" class="btn btn-sm btn-ghost" id="selectModeBtn" onclick="toggleSelectMode()">
+                    <span id="selectModeBtnLabel">선택</span>
+                </button>
+                <!-- 이어 붙인 분석의 구성 파일은 기본으로 접는다 — 목록에 '미분석' 으로 남으면 같은 로그를 또 분석하게 된다 -->
+                <label class="hi-members-toggle" title="다른 분석에 이어 붙인 구성 파일까지 보이기">
+                    <input type="checkbox" id="hiShowMembers" onchange="onShowMembersChange()">
+                    <span>구성 파일 포함</span>
+                    <span class="hi-members-cnt" id="hiMembersCnt"></span>
+                </label>
                 <!-- 기간 필터 — 코어덤프 이력과 같은 KRDS 캘린더(calendar.js 배너 전역 로드). 기준은 '업로드' 일시(createdAt).
                      calendar.js 는 페이지당 인스턴스 1개 — 이 페이지의 Calendar.attach 는 여기뿐이어야 한다 -->
                 <div class="hi-date" role="group" aria-labelledby="hiDateLbl">
@@ -178,8 +196,9 @@
                 <table class="hi-table" id="hiTable">
                     <thead>
                         <tr>
+                            <th class="td-check"><input type="checkbox" id="allCheck" onclick="onSelectAll()" aria-label="전체 선택"></th>
                             <th class="hi-col-num">#</th>
-                            <th class="sortable" data-sort-key="fname" data-sort-type="str">파일명 <span class="hi-sort-ind"></span></th>
+                            <th class="sortable" data-sort-key="fname" data-sort-type="str">분석명 <span class="hi-sort-ind"></span></th>
                             <th class="hi-hide-sm sortable" data-sort-key="server" data-sort-type="str">서버 <span class="hi-sort-ind"></span></th>
                             <th class="sortable" data-sort-key="status" data-sort-type="str">상태 <span class="hi-sort-ind"></span></th>
                             <th class="hi-hide-sm">수집기</th>
@@ -204,17 +223,26 @@
                             th:data-logstart="${item.logStart}"
                             th:data-uploaded="${item.createdAt}"
                             th:data-analyzed="${item.analyzedAt}"
+                            th:data-partof="${item.partOf}"
                             tabindex="0"
                             onclick="glRowAction(event, this)">
+
+                            <td class="td-check"><input type="checkbox" class="row-check" onclick="onRowCheck(event)" aria-label="선택"></td>
 
                             <td class="hi-col-num" th:text="${stat.count}"></td>
 
                             <td>
                                 <div class="hi-fname-cell">
-                                    <span class="hi-filename" th:text="${item.filename}" th:title="${item.filename}"></span>
+                                    <span class="hi-filename" th:text="${item.displayName}" th:title="${item.filename}"></span>
                                     <span th:if="${item.compressed}" class="hi-badge-gz">GZ</span>
                                     <span th:if="${item.fileDeleted}" class="hi-badge-gz" title="원본 파일이 삭제됨">파일 없음</span>
+                                    <!-- 이어 붙인 분석 / 다른 분석의 구성 파일 — 목록에서 같은 파일을 또 분석하지 않게 -->
+                                    <span th:if="${item.memberCount != null and item.memberCount > 1}" class="hi-badge-parts"
+                                          th:text="${item.memberCount} + '개 이어붙임'">3개 이어붙임</span>
+                                    <span th:if="${item.partOf != null}" class="hi-badge-partof"
+                                          th:title="${item.partOf} + ' 의 구성 파일'" th:text="'→ ' + ${item.partOf}">→ gc.log</span>
                                 </div>
+                                <div class="hi-fname-sub mono" th:if="${item.analysisName != null}" th:text="${item.filename}">gc.log.1</div>
                             </td>
 
                             <td class="hi-hide-sm">
@@ -240,9 +268,14 @@
                             </td>
 
                             <td class="hi-hide-sm">
-                                <span class="hi-time" th:if="${item.logStart != null}"
-                                      th:text="${#temporals.format(item.logStart, 'MM-dd HH:mm')} + ' ~ ' + (${item.logEnd != null} ? ${#temporals.format(item.logEnd, 'MM-dd HH:mm')} : '')"
-                                      th:title="${item.timeSource == 'mtime'} ? '절대 시각 없음 — 파일 수정 시각으로 추정' : ''"></span>
+                                <!-- 로그 기간은 두 줄(시작 / ~ 끝) — 한 줄이면 열 폭을 넘겨 다른 열을 밀어낸다.
+                                     끝 시각이 없으면 두 번째 줄을 아예 내지 않는다('~ ' 만 남는 꼬리 방지) -->
+                                <span class="hi-range" th:if="${item.logStart != null}"
+                                      th:title="${item.timeSource == 'mtime'} ? '절대 시각 없음 — 파일 수정 시각으로 추정' : ''">
+                                    <span class="hi-time" th:text="${#temporals.format(item.logStart, 'MM-dd HH:mm')}">09-19 22:18</span>
+                                    <span class="hi-time hi-range-end" th:if="${item.logEnd != null}"
+                                          th:text="'~ ' + ${#temporals.format(item.logEnd, 'MM-dd HH:mm')}">~ 09-20 12:49</span>
+                                </span>
                                 <span th:if="${item.logStart == null and item.status == 'SUCCESS'}" class="hi-muted" title="로그에 절대 시각이 없습니다(uptime 만)">uptime 기준</span>
                                 <span th:if="${item.logStart == null and item.status != 'SUCCESS'}" class="hi-muted">–</span>
                             </td>
@@ -317,6 +350,31 @@
     </main>
 </div>
 
+<!-- 선택 모드 액션 바 — id 계약은 select-mode.js 가 고정한다(selectModeBtn/selectActionBar/saCount/saDelBtn/allCheck) -->
+<div class="select-action-bar" id="selectActionBar">
+    <div class="sa-info"><strong id="saCount">0</strong>건 선택됨</div>
+    <div class="sa-btns">
+        <button type="button" class="sa-btn sa-btn-cancel" onclick="exitSelectMode()">취소</button>
+        <button type="button" class="sa-btn sa-btn-combine" id="saCombineBtn" onclick="openCombineFromList()" disabled>이어붙여 분석</button>
+        <button type="button" class="sa-btn sa-btn-del" id="saDelBtn" onclick="deleteSelected()" disabled>선택 삭제</button>
+    </div>
+</div>
+
+<!-- 목록에서 이어붙이기 — 대표는 가장 최근 로그 -->
+<div class="modal-ov gcl-modal" id="listCombineModal" onclick="if(event.target===this)closeListCombine()">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="listCombineTitle">
+        <div class="modal-title" id="listCombineTitle">이어 붙여 분석</div>
+        <div class="modal-body">
+            <div id="listCombineBody"></div>
+            <div class="modal-err" id="listCombineErr"></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="closeListCombine()">취소</button>
+            <button type="button" class="mbtn-confirm" id="listCombineOk" onclick="confirmListCombine()">이어 붙여 분석</button>
+        </div>
+    </div>
+</div>
+
 <!-- 삭제 확인 모달 (골격 4종은 gc-log.css .gcl-modal — 함정 17) -->
 <div id="deleteGcModal" class="modal-ov gcl-modal" onclick="if(event.target===this)closeGcDeleteModal()">
     <div class="modal-box">
@@ -344,8 +402,9 @@
 
 <div class="cd-toast-wrap" id="cdToastWrap"></div>
 
-<script th:src="@{/js/analyze-confirm.js?v=2026-09-14}"></script>
-<script th:src="@{/js/gc-log-index.js?v=2026-09-14}"></script>
+<script th:src="@{/js/select-mode.js?v=2026-09-20}"></script>
+<script th:src="@{/js/analyze-confirm.js?v=2026-09-20}"></script>
+<script th:src="@{/js/gc-log-index.js?v=2026-09-20}"></script>
 
 </body>
 </html>

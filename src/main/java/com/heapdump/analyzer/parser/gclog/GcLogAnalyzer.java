@@ -11,9 +11,11 @@ import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 단일 패스·상수 메모리 집계기. 파서가 흘려보내는 이벤트를 받아 통계·시계열(다운샘플)·이벤트 표(상한)·소견을 만든다.
@@ -38,6 +40,14 @@ public final class GcLogAnalyzer implements GcEventSink {
     static final double WARMUP_SEC = 300.0;
     /** 회귀 점들의 최소 시간 폭 — 몇 초 구간의 증가를 시간 단위로 환산하면 수만 MB/h 같은 허수가 나온다. */
     static final double MIN_TREND_SPAN_SEC = 600.0;
+    /**
+     * 조각 경계에서 uptime 이 이만큼 뒤로 가면 다른 JVM 실행으로 본다(같은 실행 안에서는 단조 증가한다).
+     *
+     * <p>⚠ 크게 잡으면 <b>짧은 조각의 재기동을 놓친다</b> — 기동 직후 회전된 파일은 uptime 이 0.003~2초뿐이라
+     * 되돌아간 폭도 그만큼 작다(실측 픽스처 {@code gclog/rotated/*} 가 이 경우다). 반대로 0 으로 두면 경계에서
+     * 순서가 살짝 뒤바뀐 이벤트(동시 사이클 완료)를 재기동으로 오해하므로 0.5초만 봐준다.
+     */
+    static final double RUN_RESTART_SLACK_SEC = 0.5;
     /** CMS 사이클 시작(Initial Mark) 시점 Old 점유율이 이 이상이면 직전 사이클이 회수하지 못한 것으로 본다(기본 트리거 ~92%). */
     static final double CMS_SATURATED_RATIO = 0.98;
     /** Parallel 의 명시적 호출은 Young 수집 → Full GC 로 연달아 기록된다(ScavengeBeforeFullGC). 이 간격 안이면 같은 호출. */
@@ -65,6 +75,30 @@ public final class GcLogAnalyzer implements GcEventSink {
     private Long firstTs, lastTs;
     private Double firstUptime, lastUptime;
     private boolean xIsUptime = true;
+    private Double firstX, lastX;
+
+    // ── 이어 붙이기(세그먼트·실행) ──────────────────────────────
+    /** 조각이 2개 이상일 때만 켠다 — 파일 하나짜리 결과는 기존과 한 글자도 달라지면 안 된다. */
+    private boolean multiSource;
+    private final List<GcLogResult.Segment> segments = new ArrayList<>();
+    private GcLogResult.Segment curSeg;
+    private int runIndex;
+    /** uptime → 전역 x 보정값(조각의 첫 이벤트에서 확정). */
+    private double segOffset;
+    private Double prevSegLastUptime, prevSegLastX;
+    private Double curSegFirstX, curSegLastX;
+    private boolean curSegSawTs;
+    private String curSegJvmOptions;
+    private int segsWithTs, segsWithoutTs;
+    private boolean gapUnknown;
+    /** runIndex → {xStart, xEnd, 그 실행의 첫 이벤트 uptime}. 누수 추세를 실행 안에서만 계산하는 근거. */
+    private final Map<Integer, double[]> runMeta = new LinkedHashMap<>();
+    /** 조각별 이상 이벤트 — 전역 선착순이면 앞 조각이 상한을 독식해 마지막 파일의 Full GC 가 표에서 사라진다. */
+    private final Map<Integer, List<EventRow>> flaggedBySeg = new LinkedHashMap<>();
+    private String limitStopMember;
+    private int skippedMembers;
+    /** 실행별 기동 워밍업으로 추세에서 뺀 점 수(이어 붙이기 전용). */
+    private int warmupSkipped;
 
     // ── 카운트 ──────────────────────────────────────────────────
     private final EnumMap<GcEventType, Integer> byType = new EnumMap<>(GcEventType.class);
@@ -144,6 +178,16 @@ public final class GcLogAnalyzer implements GcEventSink {
     // ═══════════════════════════════════════════════════════════
     @Override
     public void onMeta(String key, String value) {
+        if (curSeg != null) {   // 조각별 출처 대조용(수집기·JDK·힙 크기가 다르면 다른 JVM 이다)
+            switch (key) {
+                case "collector": if (curSeg.getCollector() == null) curSeg.setCollector(value); break;
+                case "jdkVersion": if (curSeg.getJdkVersion() == null) curSeg.setJdkVersion(value); break;
+                case "heapMax": if (curSeg.getHeapMaxBytes() == null) curSeg.setHeapMaxBytes(parseLong(value)); break;
+                // JDK 8 은 힙 크기가 메타가 아니라 'CommandLine flags:' 줄에 있다 — 조각 마감 때 뽑는다
+                case "jvmOptions": if (curSegJvmOptions == null) curSegJvmOptions = value; break;
+                default: break;
+            }
+        }
         switch (key) {
             case "collector": if (collector == null) collector = value; break;
             case "jdkVersion": if (jdkVersion == null) jdkVersion = value; break;
@@ -161,7 +205,21 @@ public final class GcLogAnalyzer implements GcEventSink {
         eventCount++;
         if (ev.tsEpochMs != null) { if (firstTs == null) firstTs = ev.tsEpochMs; lastTs = ev.tsEpochMs; }
         if (ev.uptimeSec != null) { if (firstUptime == null) firstUptime = ev.uptimeSec; lastUptime = ev.uptimeSec; }
+        if (curSeg != null && curSeg.getEventCount() == 0) beginSegmentAt(ev);
         Double x = effectiveX(ev);
+        if (x != null) { if (firstX == null) firstX = x; lastX = x; }
+        if (curSeg != null) {
+            curSeg.setEventCount(curSeg.getEventCount() + 1);
+            if (ev.type == GcEventType.FULL) curSeg.setFullCount(curSeg.getFullCount() + 1);
+            if (ev.tsEpochMs != null) { if (curSeg.getFirstTsEpochMs() == null) curSeg.setFirstTsEpochMs(ev.tsEpochMs); curSeg.setLastTsEpochMs(ev.tsEpochMs); curSegSawTs = true; }
+            if (ev.uptimeSec != null) { if (curSeg.getFirstUptimeSec() == null) curSeg.setFirstUptimeSec(ev.uptimeSec); curSeg.setLastUptimeSec(ev.uptimeSec); }
+            if (x != null) { if (curSegFirstX == null) curSegFirstX = x; curSegLastX = x; }
+        }
+        if (x != null && multiSource) {
+            double[] m = runMeta.get(runIndex);
+            if (m == null) runMeta.put(runIndex, new double[]{x, x, ev.uptimeSec == null ? 0 : ev.uptimeSec});
+            else m[1] = x;
+        }
 
         byType.merge(ev.type, 1, Integer::sum);
         if (ev.cause != null && (byCause.size() < CAUSE_CAP || byCause.containsKey(ev.cause))) byCause.merge(ev.cause, 1, Integer::sum);
@@ -206,11 +264,17 @@ public final class GcLogAnalyzer implements GcEventSink {
         if (ev.heapAfter != null) {
             if (maxHeapAfter == null || ev.heapAfter > maxHeapAfter) maxHeapAfter = ev.heapAfter;
             lastHeapAfter = ev.heapAfter;
-            if (x != null && !ev.concurrent) {
+            // ⚠ 이어 붙이기에서는 x 가 절대 시각 기준이라 finish 의 'x >= WARMUP_SEC' 필터가 통째로 꺼진다.
+            // 실행마다 기동 램프가 하나씩 들어와 누수 오탐(함정 57)이 조각 수만큼 증폭되므로 넣을 때 거른다.
+            boolean warmup = multiSource && ev.uptimeSec != null && ev.uptimeSec < WARMUP_SEC;
+            if (x != null && !ev.concurrent && !warmup) {
                 if (ev.type == GcEventType.FULL) addTrend(fullAfter, x, ev.heapAfter);
                 else if (ev.type == GcEventType.REMARK || ev.type == GcEventType.CMS_FINAL_REMARK) addTrend(remarkAfter, x, ev.heapAfter);
                 else if (ev.type == GcEventType.MIXED) addTrend(mixedAfter, x, ev.heapAfter);
             }
+            if (warmup && x != null && !ev.concurrent
+                    && (ev.type == GcEventType.FULL || ev.type == GcEventType.REMARK
+                        || ev.type == GcEventType.CMS_FINAL_REMARK || ev.type == GcEventType.MIXED)) warmupSkipped++;
         }
         if (ev.heapBefore != null && ev.heapAfter != null && !ev.concurrent) {
             if (prevAfter != null && prevX != null && x != null && x > prevX) {
@@ -244,10 +308,14 @@ public final class GcLogAnalyzer implements GcEventSink {
         EventRow row = toRow(ev);
         row.setCallHeapBefore(callHeapBefore);
         if (kind != null) row.setFullKind(kind.name());
+        if (curSeg != null) row.setSeg(curSeg.getIndex());
         boolean abnormal = false;
         for (GcFlag f : ev.flags) if (f.isAbnormal()) { abnormal = true; break; }
         if (ev.type == GcEventType.FULL || abnormal || ev.type == GcEventType.CMS_FINAL_REMARK) {
-            if (flagged.size() < FLAGGED_CAP) flagged.add(row);
+            if (multiSource) {
+                List<EventRow> bucket = flaggedBySeg.computeIfAbsent(curSeg == null ? 0 : curSeg.getIndex(), i -> new ArrayList<>());
+                if (bucket.size() < FLAGGED_CAP) bucket.add(row);
+            } else if (flagged.size() < FLAGGED_CAP) flagged.add(row);
         } else if (head.size() < HEAD_CAP) {
             head.add(row);
         } else {
@@ -418,14 +486,152 @@ public final class GcLogAnalyzer implements GcEventSink {
         return a[a.length / 2];
     }
 
-    /** uptime 이 없으면 절대 시각으로, 그것도 없으면 null. */
+    /**
+     * 차트·추세·간격의 x 좌표(초).
+     *
+     * <p>파일 하나면 uptime 을 그대로 쓴다(기존과 동일). <b>이어 붙인 분석에서는 절대 시각을 우선</b>한다 —
+     * 회전본은 대개 JVM 실행이 달라 uptime 이 0 으로 되돌아가는데, 그대로 쓰면 10분 창이 비지 않고
+     * 할당률 구간이 통째로 누락되며 차트 선이 되돌아 그어진다(함정 61). 절대 시각이 없는 조각은
+     * {@link #segOffset} 으로 앞 조각 끝에 이어 붙인다.
+     */
     private Double effectiveX(GcEvent ev) {
+        if (multiSource) {
+            if (ev.tsEpochMs != null && firstTs != null) {
+                return (ev.tsEpochMs - firstTs) / 1000.0 + (firstUptime == null ? 0 : firstUptime);
+            }
+            if (ev.uptimeSec != null) return ev.uptimeSec + segOffset;
+            return null;
+        }
         if (ev.uptimeSec != null) return ev.uptimeSec;
         if (ev.tsEpochMs != null && firstTs != null) {
             xIsUptime = false;
             return (ev.tsEpochMs - firstTs) / 1000.0 + (firstUptime == null ? 0 : firstUptime);
         }
         return null;
+    }
+
+    // ── 이어 붙이기 API (엔진 전용) ──────────────────────────────
+
+    /**
+     * 조각 시작. 파일이 2개 이상일 때만 불린다 — 한 번이라도 불리면 x 기준·워밍업 규칙이 이어 붙이기용으로 바뀐다.
+     * 실행 경계 판정과 x 보정은 이 조각의 <b>첫 이벤트</b>에서 확정한다(그때까지 uptime 을 알 수 없다).
+     */
+    public void beginSegment(int index, String filename, GcLogFormat format, boolean formatInferred, int firstLine) {
+        multiSource = true;
+        GcLogResult.Segment seg = new GcLogResult.Segment();
+        seg.setIndex(index);
+        seg.setFilename(filename);
+        seg.setFormat(format == null ? null : format.name());
+        if (formatInferred) seg.setFormatInferred(Boolean.TRUE);
+        seg.setFirstLine(firstLine);
+        seg.setRunIndex(runIndex);
+        curSeg = seg;
+        curSegFirstX = null;
+        curSegLastX = null;
+        curSegSawTs = false;
+        curSegJvmOptions = null;
+    }
+
+    /** 조각의 첫 이벤트 — 실행이 바뀌었는지 보고 x 보정값을 정한다. */
+    private void beginSegmentAt(GcEvent ev) {
+        boolean restarted = ev.uptimeSec != null && prevSegLastUptime != null
+                && ev.uptimeSec < prevSegLastUptime - RUN_RESTART_SLACK_SEC;
+        if (restarted) {
+            runIndex++;
+            // 실행이 바뀌면 이전 JVM 의 힙·일시정지를 끌고 오지 않는다 — 재기동 직후 첫 이벤트의
+            // heapBefore - prevAfter 는 남의 힙과의 차이라 할당률을 오염시킨다.
+            prevAfter = null;
+            prevX = null;
+            window.clear();
+            windowSum = 0;
+            consecutiveFull = 0;
+            consecutivePressure = 0;
+            pendingExplicitCause = null;
+            pendingExplicitX = null;
+            pendingExplicitBefore = null;
+        }
+        curSeg.setRunIndex(runIndex);
+        if (segments.isEmpty()) { segOffset = 0; return; }
+        if (ev.tsEpochMs != null && firstTs != null) {
+            double xByTs = (ev.tsEpochMs - firstTs) / 1000.0 + (firstUptime == null ? 0 : firstUptime);
+            segOffset = xByTs - (ev.uptimeSec == null ? 0 : ev.uptimeSec);
+        } else if (ev.uptimeSec != null) {
+            segOffset = (prevSegLastX == null ? 0 : prevSegLastX) - ev.uptimeSec;   // 공백을 모르니 0 으로 본다
+            gapUnknown = true;
+        } else {
+            segOffset = 0;
+        }
+    }
+
+    /** 조각 끝 — 줄 범위·바이트·원문 샘플을 받아 마감한다. */
+    public void endSegment(int lastLine, long bytes, long lines, List<String> head, List<String> tail) {
+        if (curSeg == null) return;
+        curSeg.setLastLine(lastLine);
+        curSeg.setBytes(bytes);
+        curSeg.setLines(lines);
+        if (head != null) curSeg.getHead().addAll(head);
+        if (tail != null) curSeg.getTail().addAll(tail);
+        curSeg.setXStartSec(round3n(curSegFirstX));
+        curSeg.setXEndSec(round3n(curSegLastX));
+        curSeg.setCoveredSec(curSegFirstX != null && curSegLastX != null && curSegLastX > curSegFirstX
+                ? round3(curSegLastX - curSegFirstX) : 0.0);
+        if (curSeg.getHeapMaxBytes() == null) curSeg.setHeapMaxBytes(heapMaxFromOptions(curSegJvmOptions));
+        if (curSeg.getLastUptimeSec() != null) prevSegLastUptime = curSeg.getLastUptimeSec();
+        if (curSegLastX != null) prevSegLastX = curSegLastX;
+        if (curSegSawTs) segsWithTs++; else segsWithoutTs++;
+        segments.add(curSeg);
+        curSeg = null;
+    }
+
+    /** 이벤트 상한에 걸려 멈춘 조각과 아예 읽지 못한 조각 수 — 뒤쪽 파일이 통째로 빠진 채 성공으로 보이지 않게 소견에 싣는다. */
+    public void setLimitStop(String memberName, int skipped) {
+        this.limitStopMember = memberName;
+        this.skippedMembers = skipped;
+    }
+
+    /**
+     * 이상 이벤트 표를 조각별로 나눠 담는다. 전역 선착순이면 앞 조각이 상한을 독식해 <b>마지막 파일의 Full GC 가
+     * 한 줄도 남지 않는다</b> — "범위를 넓혔는데 정작 최근 구간이 안 보이는" 역효과다. 조각마다 균등 몫을 주고
+     * 몫을 다 못 쓴 조각의 자리는 다시 나눠 준다. 몫을 넘는 조각은 앞뒤를 고루 남긴다(앞만 남기면 그 조각의
+     * 마지막 압박 Full 이 사라진다).
+     */
+    private List<EventRow> quotaFlagged() {
+        List<EventRow> out = new ArrayList<>();
+        if (flaggedBySeg.isEmpty()) return out;
+        int quota = Math.max(100, FLAGGED_CAP / flaggedBySeg.size());
+        Map<Integer, Integer> take = new LinkedHashMap<>();
+        int used = 0;
+        for (Map.Entry<Integer, List<EventRow>> e : flaggedBySeg.entrySet()) {
+            int t = Math.min(quota, e.getValue().size());
+            take.put(e.getKey(), t);
+            used += t;
+        }
+        int room = Math.max(0, FLAGGED_CAP - used);
+        while (room > 0) {
+            int before = room;
+            for (Map.Entry<Integer, List<EventRow>> e : flaggedBySeg.entrySet()) {
+                if (room <= 0) break;
+                int t = take.get(e.getKey());
+                if (t < e.getValue().size()) { take.put(e.getKey(), t + 1); room--; }
+            }
+            if (room == before) break;
+        }
+        for (Map.Entry<Integer, List<EventRow>> e : flaggedBySeg.entrySet()) {
+            List<EventRow> v = e.getValue();
+            int t = take.get(e.getKey());
+            if (t >= v.size()) { out.addAll(v); continue; }
+            int headN = (t + 1) / 2, tailN = t - headN;
+            out.addAll(v.subList(0, headN));
+            if (tailN > 0) out.addAll(v.subList(v.size() - tailN, v.size()));
+        }
+        return out;
+    }
+
+    /** 가장 오래 이어진 실행 {xStart, xEnd, 첫 uptime} — 누수 추세는 이 안에서만 계산한다. */
+    private double[] longestRun() {
+        double[] best = null;
+        for (double[] m : runMeta.values()) if (best == null || (m[1] - m[0]) > (best[1] - best[0])) best = m;
+        return best;
     }
 
     private void slideWindow(double x, double pauseMs) {
@@ -517,8 +723,13 @@ public final class GcLogAnalyzer implements GcEventSink {
         meta.setTruncated(limitHit || droppedIncomplete > 0);
 
         double durationSec = 0;
-        if (firstUptime != null && lastUptime != null && lastUptime > firstUptime) durationSec = lastUptime - firstUptime;
+        if (multiSource) {
+            // 조각들이 실제로 덮은 시간의 합 — JVM 이 꺼져 있던 공백을 처리량·Full GC/h 분모에 넣지 않는다.
+            for (GcLogResult.Segment sg : segments) if (sg.getCoveredSec() != null) durationSec += sg.getCoveredSec();
+            if (durationSec <= 0 && firstX != null && lastX != null && lastX > firstX) durationSec = lastX - firstX;
+        } else if (firstUptime != null && lastUptime != null && lastUptime > firstUptime) durationSec = lastUptime - firstUptime;
         else if (firstTs != null && lastTs != null && lastTs > firstTs) durationSec = (lastTs - firstTs) / 1000.0;
+        durationSec = round3(durationSec);
         meta.setDurationSec(durationSec);
 
         if (firstTs != null && lastTs != null) {
@@ -531,6 +742,21 @@ public final class GcLogAnalyzer implements GcEventSink {
             meta.setLogStartEpochMs(fallbackEndEpochSec * 1000L - (long) (durationSec * 1000.0));
         } else {
             meta.setTimeSource("none");
+        }
+
+        if (multiSource) {
+            r.setSegments(segments);
+            double span = 0;
+            if (firstTs != null && lastTs != null && lastTs > firstTs) span = (lastTs - firstTs) / 1000.0;
+            else if (firstX != null && lastX != null && lastX > firstX) span = lastX - firstX;
+            if (span < durationSec) span = durationSec;   // 조각이 겹치면 커버 합이 더 클 수 있다
+            meta.setSpanSec(round3(span));
+            meta.setCoveredSec(durationSec);
+            meta.setGapSec(round3(Math.max(0, span - durationSec)));
+            meta.setRunCount(runMeta.isEmpty() ? (segments.isEmpty() ? null : 1) : runMeta.size());
+            meta.setXBasis(segsWithoutTs == 0 ? "absolute" : (segsWithTs == 0 ? "stacked" : "mixed"));
+            if (gapUnknown) meta.setGapUnknown(Boolean.TRUE);
+            if (segsWithTs > 0 && segsWithoutTs > 0) meta.setXApprox(Boolean.TRUE);
         }
 
         GcLogResult.Kpi k = r.getKpi();
@@ -583,7 +809,19 @@ public final class GcLogAnalyzer implements GcEventSink {
         // 회귀 대상 — 기동 워밍업 점 제외(x 가 uptime 일 때만 판별 가능). 2026-09-14: 기동 2~16초의 Remark 7점으로
         // +40,390 MB/h '누수 의심' 오탐이 났다(정상 Spring 기동의 클래스 로딩 증가).
         List<double[]> fit = basisList;
-        if (xIsUptime && firstUptime != null) {
+        String runNote = null;
+        if (multiSource) {
+            // 실행이 여러 개면 재기동마다 힙이 초기화되므로 구간을 가로지르는 회귀는 허수다 — 가장 긴 실행 안에서만 잰다.
+            // (기동 워밍업 점은 넣을 때 이미 걸렀다 — onEvent 의 warmup 참조)
+            double[] run = longestRun();
+            if (run != null && runMeta.size() > 1) {
+                fit = new ArrayList<>(basisList.size());
+                for (double[] p : basisList) if (p[0] >= run[0] && p[0] <= run[1]) fit.add(p);
+                runNote = String.format(Locale.ROOT, "실행 %d개 중 가장 긴 구간(%s)만으로 계산했습니다.",
+                        runMeta.size(), fmtDur(run[1] - run[0]));
+            }
+            t.setExcludedWarmup(warmupSkipped);
+        } else if (xIsUptime && firstUptime != null) {
             fit = new ArrayList<>(basisList.size());
             for (double[] p : basisList) if (p[0] >= WARMUP_SEC) fit.add(p);
             t.setExcludedWarmup(basisList.size() - fit.size());
@@ -601,6 +839,7 @@ public final class GcLogAnalyzer implements GcEventSink {
             t.setSlopeMbPerHour(reg[0]);
             t.setR2(reg[1]);
             judgeTrendSignificance(t, span, heapMax != null && heapMax > 0 ? heapMax : (maxHeapTotal == null ? 0 : maxHeapTotal));
+            if (runNote != null) t.setNote(runNote);
         } else if (!basisList.isEmpty()) {
             if (fit.size() < 3 && t.getExcludedWarmup() > 0) {
                 t.setNote(String.format(Locale.ROOT, "기동 직후(%.0f분) 점 %d개를 빼고 나면 %d점뿐이라 추세를 계산하지 않았습니다.", WARMUP_SEC / 60, t.getExcludedWarmup(), fit.size()));
@@ -623,7 +862,7 @@ public final class GcLogAnalyzer implements GcEventSink {
         }
 
         List<EventRow> events = new ArrayList<>(flagged.size() + head.size() + tail.size());
-        events.addAll(flagged);
+        events.addAll(multiSource ? quotaFlagged() : flagged);
         events.addAll(head);
         events.addAll(tail);
         // 파서는 완료 순(동시 사이클 완료가 pending pause 보다 먼저 나올 수 있음)이라 줄 번호로 정렬한다
@@ -921,7 +1160,11 @@ public final class GcLogAnalyzer implements GcEventSink {
         if ("ZGC".equals(collector) || "Shenandoah".equals(collector) || "Epsilon".equals(collector)) out.add(f("PARTIAL_SUPPORT", "Info", collector + " 로그는 일시정지·사이클 집계만 지원합니다",
                 "세대별 크기·승격률·Full GC 추세는 이 수집기의 로그 형식에서 산출하지 않습니다.", "", Map.of("collector", collector)));
         if (limitHit) out.add(f("LOG_TRUNCATED_LIMIT", "Low", "이벤트 상한에 도달해 뒷부분을 읽지 않았습니다",
-                String.format(Locale.ROOT, "%,d건에서 중단. 통계는 앞부분 기준입니다.", eventCount), "로그를 회전 단위로 나눠 올리세요.", Map.of("eventCount", eventCount)));
+                String.format(Locale.ROOT, "%,d건에서 중단.%s 통계는 읽은 부분 기준입니다.", eventCount,
+                        limitStopMember == null ? "" : (" " + limitStopMember + " 를 읽던 중"
+                                + (skippedMembers > 0 ? ", 이후 파일 " + skippedMembers + "개는 읽지 않았습니다." : "."))),
+                skippedMembers > 0 ? "이어 붙이는 파일 수를 줄이거나 구간을 나눠 분석하세요." : "로그를 회전 단위로 나눠 올리세요.",
+                Map.of("eventCount", eventCount)));
         if ("mtime".equals(r.getMeta().getTimeSource())) out.add(f("TIME_FROM_MTIME", "Info", "로그에 절대 시각이 없어 파일 수정 시각으로 기간을 추정했습니다",
                 "-Xlog 데코레이션에 time 이 없거나(JDK 8 은 -XX:+PrintGCDateStamps 미지정) uptime 만 있습니다. 덤프 매칭 시간 신호는 약한 근거로만 씁니다.",
                 "다음부터는 -Xlog:gc*:file=…:time,uptime,level,tags (JDK 8: -XX:+PrintGCDateStamps) 로 남기세요.", Map.of()));
@@ -929,9 +1172,77 @@ public final class GcLogAnalyzer implements GcEventSink {
                 "uptime 만으로는 덤프 생성 시각과 대조할 수 없어 시간 기반 자동 매칭에서 제외됩니다.", "수동 매칭을 이용하거나 time 데코레이션을 켜서 다시 수집하세요.", Map.of()));
         if (droppedNote > 0) out.add(f("INCOMPLETE_EVENTS", "Info", "미종결 이벤트를 버렸습니다",
                 String.format(Locale.ROOT, "%d건 — 기록 중인 파일이거나 회전 경계에서 잘린 이벤트입니다.", droppedNote), "", Map.of("count", droppedNote)));
+        addSegmentFindings(out, r);
 
         out.sort((a, b) -> Integer.compare(sevRank(b.getSeverity()), sevRank(a.getSeverity())));
         return out;
+    }
+
+    /**
+     * 이어 붙인 분석의 구성 안내와 경고.
+     *
+     * <p>이 서버 실측처럼 <b>회전본이 곧 별개 JVM 실행</b>인 경우가 흔하므로 실행이 여러 개인 것 자체는 경고가 아니라
+     * 안내다(Info). 진짜 경고는 ① 조각의 기간이 겹칠 때(이벤트 이중 계수로 수치가 거짓이 된다) ② 출처가 다를 때
+     * (수집기·JDK·힙 크기가 다르면 다른 JVM 의 로그를 섞은 것이다).
+     */
+    private void addSegmentFindings(List<Finding> out, GcLogResult r) {
+        if (!multiSource || segments.isEmpty()) return;
+        GcLogResult.Meta m = r.getMeta();
+        int runs = m.getRunCount() == null ? 1 : m.getRunCount();
+        StringBuilder sb = new StringBuilder();
+        for (GcLogResult.Segment sg : segments) {
+            if (sb.length() > 0) sb.append(" · ");
+            if (sb.length() > 400) { sb.append("…"); break; }
+            sb.append(sg.getFilename() == null ? ("#" + sg.getIndex()) : sg.getFilename());
+            if (sg.getCoveredSec() != null && sg.getCoveredSec() > 0) sb.append("(").append(fmtDur(sg.getCoveredSec())).append(")");
+        }
+        out.add(f("MULTI_RUN_SEGMENTS", "Info",
+                runs > 1 ? String.format(Locale.ROOT, "로그 %d개를 이어 붙였습니다 (JVM 실행 %d개)", segments.size(), runs)
+                         : String.format(Locale.ROOT, "로그 %d개를 이어 붙였습니다", segments.size()),
+                sb.toString(),
+                runs > 1 ? "실행이 여러 개라 재기동마다 힙이 초기화됩니다. 누수 추세는 가장 긴 실행 안에서만 계산했습니다."
+                         : "한 실행이 여러 파일로 회전된 경우라 전 구간이 하나로 이어집니다.",
+                Map.of("segments", segments.size(), "runs", runs)));
+
+        Double gap = m.getGapSec();
+        if (gap != null && gap > 60 && m.getSpanSec() != null && m.getSpanSec() > 0) {
+            out.add(f("SEGMENT_GAP", "Info", "이어 붙인 구간 사이에 로그가 없는 시간이 있습니다",
+                    String.format(Locale.ROOT, "전체 %s 중 %s 가 공백입니다(JVM 정지 또는 빠진 회전본).", fmtDur(m.getSpanSec()), fmtDur(gap)),
+                    "처리량·Full GC 빈도는 공백을 뺀 실제 기록 시간을 분모로 계산했습니다.",
+                    Map.of("gapSec", Math.round(gap))));
+        }
+
+        List<String> overlaps = new ArrayList<>();
+        for (int i = 1; i < segments.size(); i++) {
+            GcLogResult.Segment a = segments.get(i - 1), b = segments.get(i);
+            if (a.getLastTsEpochMs() != null && b.getFirstTsEpochMs() != null && b.getFirstTsEpochMs() < a.getLastTsEpochMs()) {
+                overlaps.add((a.getFilename() == null ? "#" + a.getIndex() : a.getFilename()) + " ↔ "
+                        + (b.getFilename() == null ? "#" + b.getIndex() : b.getFilename()));
+            }
+        }
+        if (!overlaps.isEmpty()) {
+            out.add(f("SEGMENT_OVERLAP", "Medium", "기간이 겹치는 로그를 함께 분석했습니다",
+                    "겹치는 구간: " + String.join(", ", overlaps) + " — 같은 이벤트가 두 번 집계돼 횟수·처리량이 실제보다 나쁘게 나옵니다.",
+                    "같은 파일의 사본이거나 구간이 겹치는 회전본입니다. 하나를 빼고 다시 분석하세요.",
+                    Map.of("count", overlaps.size())));
+        }
+
+        Set<String> collectors = new LinkedHashSet<>(), jdks = new LinkedHashSet<>(), heaps = new LinkedHashSet<>();
+        for (GcLogResult.Segment sg : segments) {
+            if (sg.getCollector() != null) collectors.add(sg.getCollector());
+            if (sg.getJdkVersion() != null) jdks.add(sg.getJdkVersion());
+            if (sg.getHeapMaxBytes() != null) heaps.add(String.valueOf(sg.getHeapMaxBytes()));
+        }
+        if (collectors.size() > 1 || jdks.size() > 1 || heaps.size() > 1) {
+            List<String> diff = new ArrayList<>();
+            if (collectors.size() > 1) diff.add("수집기 " + String.join("/", collectors));
+            if (jdks.size() > 1) diff.add("JDK " + String.join("/", jdks));
+            if (heaps.size() > 1) diff.add("힙 최대 크기 " + heaps.size() + "종");
+            out.add(f("MIXED_SOURCES", "Medium", "서로 다른 JVM 의 로그가 섞였을 수 있습니다",
+                    "조각마다 " + String.join(", ", diff) + " 가 다릅니다.",
+                    "다른 서버·인스턴스의 로그를 함께 고르지 않았는지 확인하세요. 누수 추세·간격 판정이 무의미해집니다.",
+                    Map.of("collectors", collectors.size(), "jdks", jdks.size())));
+        }
     }
 
     /**
@@ -1047,6 +1358,7 @@ public final class GcLogAnalyzer implements GcEventSink {
     private static double clamp(double v, double lo, double hi) { return Math.max(lo, Math.min(hi, v)); }
     private static double nz(Double v) { return v == null ? 0 : v; }
     private static double round3(double v) { return Math.round(v * 1000.0) / 1000.0; }
+    private static Double round3n(Double v) { return v == null ? null : round3(v); }
     private static Long parseLong(String s) { try { return Long.parseLong(s.trim()); } catch (RuntimeException e) { return null; } }
 
     static String fmtBytes(Number b) {

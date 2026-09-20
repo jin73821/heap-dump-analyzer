@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-08-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-09-20">
     <!-- 세그먼트 토글 애니메이션 — 탐지 현황 토글 스크립트가 본문 중간에서 도므로 head 에서 먼저 싣는다 -->
     <script src="/js/seg-thumb.js?v=2026-09-19"></script>
     <title>Heap Dump Analyzer</title>
@@ -639,7 +639,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.5.4 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.5.6 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -1119,8 +1119,8 @@ var DASHBOARD_DETECT_DAYS = /*[[${dashboardDetectDays}]]*/ 14;
 /*]]>*/
 </script>
 <script src="/js/upload-queue.js?v=2026-08-19"></script>
-<script src="/js/analyze-confirm.js?v=2026-09-14"></script>
-<script src="/js/alert-bell.js?v=2026-09-19b"></script>
+<script src="/js/analyze-confirm.js?v=2026-09-20"></script>
+<script src="/js/alert-bell.js?v=2026-09-20"></script>
 <script>
 if (window.AlertBell) AlertBell.mount(document.getElementById('alertBellBtn'), { boardUrl: '/alerts' });
 </script>

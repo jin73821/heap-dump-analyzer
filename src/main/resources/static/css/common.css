@@ -779,6 +779,17 @@
     unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* ── 글꼴 단일 출처 ────────────────────────────────────────
+ * 화면 글꼴은 여기서만 정한다. core-dump.css(코어덤프·GC 로그 페이지)가 자기 :root 에 같은 이름으로
+ * 다시 선언하고 있었는데 목록이 달라(한국어 폴백에 'Nanum Gothic Coding' 이 끼어 있었다) 같은 한글이
+ * 현황판·대시보드와 코어덤프·GC 로그에서 서로 다른 글꼴로 그려졌다 — 그 폰트는 번들 웹폰트라 시스템에
+ * Malgun Gothic 이 없는 클라이언트에서는 항상 코딩용 글꼴이 당첨됐다(2026-09-20 제보).
+ * 새 페이지·CSS 는 var(--font-sans)/var(--font-mono) 를 쓰고, 값을 바꿀 일이 있으면 여기만 고칠 것. */
+:root {
+    --font-sans: 'Segoe UI', 'Trebuchet MS', sans-serif;
+    --font-mono: 'JetBrains Mono', 'D2Coding', Consolas, monospace;
+}
+
 /* ── Reset ── */
 *, *::before, *::after {
     margin: 0;
@@ -788,7 +799,7 @@
 html, body { height: 100%; }
 
 body {
-    font-family: 'Segoe UI', 'Trebuchet MS', sans-serif;
+    font-family: var(--font-sans);
     font-size: 14px;
     color: #1F2937;
     background: #F3F4F6;

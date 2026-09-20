@@ -88,6 +88,31 @@ class AlertEndpointTest {
     }
 
     @Test
+    @DisplayName("ack·ack-all 은 확인자·시각을 함께 돌려준다 — 화면이 그 행만 고쳐 그린다(새로고침 없이)")
+    void ackReturnsAckInfo() throws Exception {
+        // 이미 bob 이 확인해 둔 알람을 alice 가 눌렀다 — 화면에 찍혀야 하는 이름은 alice 가 아니라 bob 이다
+        Mockito.when(service.ack("heap:a.hprof:1", "alice")).thenReturn(false);
+        Mockito.when(service.ackInfo("heap:a.hprof:1"))
+                .thenReturn(Map.of("by", "bob", "atLabel", "2026-09-20 10:00"));
+        mvc.perform(post("/api/alerts/ack").principal(auth("alice", "ROLE_USER"))
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"key\":\"heap:a.hprof:1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.already").value(true))
+                .andExpect(jsonPath("$.ack.by").value("bob"))
+                .andExpect(jsonPath("$.ack.atLabel").value("2026-09-20 10:00"));
+
+        // 전체 확인은 행마다 확인자가 다를 수 있다 — key → 확인 정보 맵을 그대로 싣는다
+        Mockito.when(service.ackAll("alice")).thenReturn(1);
+        Mockito.when(service.ackInfoAll()).thenReturn(Map.of(
+                "heap:a.hprof:1", Map.of("by", "bob", "atLabel", "2026-09-20 10:00"),
+                "gclog:gc.log:2", Map.of("by", "alice", "atLabel", "2026-09-20 11:00")));
+        mvc.perform(post("/api/alerts/ack-all").principal(auth("alice", "ROLE_USER")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.acks['heap:a.hprof:1'].by").value("bob"))
+                .andExpect(jsonPath("$.acks['gclog:gc.log:2'].by").value("alice"));
+    }
+
+    @Test
     @DisplayName("key 누락·잘못된 key 는 400 JSON {success,code,error}")
     void badRequest() throws Exception {
         mvc.perform(post("/api/alerts/ack").contentType(MediaType.APPLICATION_JSON).content("{}"))

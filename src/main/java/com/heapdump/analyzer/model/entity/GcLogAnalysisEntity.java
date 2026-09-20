@@ -9,6 +9,7 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.Data;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -131,6 +132,50 @@ public class GcLogAnalysisEntity {
     @Column(length = 10)
     private String severity;
 
+    // ── 분석명 (2026-09-20) ──────────────────────────────────────
+    /**
+     * 화면에 보이는 분석 이름 {@code 호스트네임_인스턴스명_일자}. <b>표시용일 뿐 키가 아니다</b> — 키는 언제나
+     * {@code filename} 이고, 같은 이름이 둘 이상이면 {@code _2} 가 붙는다({@code GcLogNameService}).
+     */
+    @Column(name = "analysis_name", length = 255)
+    private String analysisName;
+
+    /** 분석명의 일자 = <b>로그 시작일</b>. 분석 전에는 전송 mtime·업로드일로 잠정 표기하고 분석 성공 시 확정한다. */
+    @Column(name = "analysis_date")
+    private LocalDate analysisDate;
+
+    // ── 이어 붙이기 (2026-09-20) ─────────────────────────────────
+    /**
+     * 이어 붙인 구성 파일 목록 JSON {@code [{"f":이름,"size":바이트,"mtime":epoch초}]} — <b>병합 순서</b>이고
+     * 대표(이 행) 자신도 포함한다. 크기·mtime 스냅샷은 구성 파일이 바뀌었는지 판정하는 근거다.
+     */
+    @Column(name = "member_files", columnDefinition = "TEXT")
+    private String memberFiles;
+
+    @Column(name = "member_count")
+    private Integer memberCount;
+
+    /**
+     * 구성 파일 크기 합. ⚠ {@code fileSize} 에 넣지 말 것 — {@code listExistingFiles()} 가 디스크 크기와 달라진 것을
+     * "다른 파일"로 보고 {@code forgetAnalysis} 를 돌려 결과가 조용히 사라진다(함정 63).
+     */
+    @Column(name = "members_bytes")
+    private Long membersBytes;
+
+    /** 이 파일이 구성 파일로 들어간 대표 분석의 filename. 대표 자신은 null. */
+    @Column(name = "part_of", length = 500)
+    private String partOf;
+
+    /**
+     * 덤프 매칭에만 쓰는 시간창 = <b>대표 파일 자신의 구간</b>. 이어 붙여 범위가 넓어져도 매칭 동작이 변하지 않게
+     * 화면용 {@code logStart/logEnd} 와 분리한다 — 넓은 범위는 후보를 전부 strong 으로 만들어 자동 연결을 지운다(함정 64).
+     */
+    @Column(name = "match_window_start")
+    private LocalDateTime matchWindowStart;
+
+    @Column(name = "match_window_end")
+    private LocalDateTime matchWindowEnd;
+
     // ── 덤프 매칭 ────────────────────────────────────────────────
     @Column(name = "matched_dump_filename", length = 500)
     private String matchedDumpFilename;
@@ -165,6 +210,12 @@ public class GcLogAnalysisEntity {
     }
 
     public boolean isManualMatch() { return MATCH_MANUAL.equals(matchSource); }
+
+    /** 이어 붙인 분석인가(구성 파일 2개 이상). */
+    public boolean isCombined() { return memberCount != null && memberCount > 1; }
+
+    /** 목록·제목에 쓸 이름 — 분석명이 없으면 파일명. */
+    public String getDisplayName() { return analysisName == null || analysisName.isBlank() ? filename : analysisName; }
 
     /** 화면용 크기 문자열 — 템플릿에서 T(FormatUtils) 정적 접근이 제한되는 속성 컨텍스트가 있어 여기서 만든다. */
     public String getFormattedSize() {

@@ -15,4 +15,9 @@ public interface GcLogAnalysisRepository extends JpaRepository<GcLogAnalysisEnti
     List<GcLogAnalysisEntity> findByMatchedDumpFilename(String dumpFilename);
     List<GcLogAnalysisEntity> findByMatchSource(String matchSource);
     List<GcLogAnalysisEntity> findByServerIdOrderByCreatedAtDesc(Long serverId);
+
+    /** 이 대표 분석의 구성 파일 행들. ⚠ 호출부는 null 안전하게 쓸 것 — 목 객체는 stub 이 없으면 null 을 돌려준다. */
+    List<GcLogAnalysisEntity> findByPartOf(String partOf);
+
+    List<GcLogAnalysisEntity> findByAnalysisName(String analysisName);
 }

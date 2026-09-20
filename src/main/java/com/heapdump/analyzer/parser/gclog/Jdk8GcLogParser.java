@@ -74,13 +74,23 @@ public final class Jdk8GcLogParser implements GcLogParser {
     private boolean permGenReported;
 
     public Jdk8GcLogParser(GcEventSink sink, int maxEvents) {
+        this(sink, maxEvents, 0);
+    }
+
+    /**
+     * @param seqBase 이어 붙이기에서 앞 조각이 남긴 {@link #seqEnd()} — 이벤트 예산({@code maxEvents})도
+     *                전역이라 조각마다 0 으로 되돌리면 상한이 조각 수만큼 곱해진다.
+     */
+    public Jdk8GcLogParser(GcEventSink sink, int maxEvents, int seqBase) {
         this.sink = sink;
         this.maxEvents = maxEvents;
+        this.seq = seqBase;
     }
 
     @Override public GcLogFormat format() { return GcLogFormat.JDK8; }
     @Override public int droppedIncomplete() { return dropped; }
     @Override public boolean limitReached() { return limit; }
+    @Override public int seqEnd() { return seq; }
 
     @Override
     public void feedLine(int lineNo, String line) {

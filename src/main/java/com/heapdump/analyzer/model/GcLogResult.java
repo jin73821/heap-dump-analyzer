@@ -16,7 +16,7 @@ import java.util.Map;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class GcLogResult {
 
-    public static final int SCHEMA = 1;
+    public static final int SCHEMA = 2;
 
     private int schema = SCHEMA;
     private Meta meta = new Meta();
@@ -36,6 +36,48 @@ public class GcLogResult {
      * 화면이 "옛 결과(재분석 안내)"와 "압박 Full GC 0회"를 구분한다(함정 58).
      */
     private FullGcSummary fullGcSummary;
+
+    /**
+     * 회전 로그를 이어 붙여 분석했을 때의 조각 목록(병합 순서). ⚠ {@code = new} 로 초기화하지 말 것 —
+     * <b>null = 파일 하나짜리 분석(또는 옛 결과)</b> 이어야 화면이 "구성 파일" 표시 여부를 가른다(함정 58 규약).
+     */
+    private List<Segment> segments;
+
+    /**
+     * 이어 붙인 조각 하나. 줄 번호는 <b>전역</b>이라({@code EventRow.line}·{@code PauseStats.maxAtLine} 이 전부
+     * 전역 전제다) 화면이 원문 줄을 찾으려면 {@code line - firstLine + 1} 로 조각 안 줄 번호를 구한다.
+     */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Segment {
+        private int index;
+        private String filename;
+        /** 같은 JVM 실행끼리 묶은 번호. 조각 경계에서 uptime 이 되돌아가면 새 실행으로 본다. */
+        private int runIndex;
+        private int firstLine;
+        private int lastLine;
+        private long bytes;
+        private long lines;
+        private Long firstTsEpochMs;
+        private Long lastTsEpochMs;
+        /** 원문 그대로의 per-run uptime(전역 x 축이 아니다). */
+        private Double firstUptimeSec;
+        private Double lastUptimeSec;
+        /** 전역 x 축에서의 시작·끝·커버 구간(초). */
+        private Double xStartSec;
+        private Double xEndSec;
+        private Double coveredSec;
+        private int eventCount;
+        private int fullCount;
+        private String format;
+        /** 헤더가 없어 형식을 스스로 못 밝혀 그룹 형식을 물려받았다. */
+        private Boolean formatInferred;
+        private String collector;
+        private String jdkVersion;
+        private Long heapMaxBytes;
+        private List<String> head = new ArrayList<>();
+        private List<String> tail = new ArrayList<>();
+    }
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -57,6 +99,24 @@ public class GcLogResult {
         private int truncatedLines;
         private Long regionSizeBytes;
         private Long heapMaxBytes;
+        /**
+         * x 축(차트·추세·간격)의 기준. {@code uptime} = 파일 하나(기존과 동일) / {@code absolute} = 이어 붙인
+         * 조각 전부에 절대 시각이 있어 첫 이벤트로부터의 경과초 / {@code stacked} = 절대 시각이 없어 조각을
+         * 순서대로 이어 붙임(공백을 모른다) / {@code mixed} = 둘이 섞임. null = 옛 결과.
+         */
+        private String xBasis;
+        /** 로그 첫 시각 → 끝 시각(공백 포함). 덤프가 로그 범위 안인지 판정하는 기준이다. */
+        private Double spanSec;
+        /** 조각들이 실제로 덮은 시간의 합(공백 제외) — {@code durationSec} 와 같은 값이다. */
+        private Double coveredSec;
+        /** {@code spanSec - coveredSec} — JVM 이 꺼져 있었거나 로그가 빠진 구간. */
+        private Double gapSec;
+        /** 서로 다른 JVM 실행 수(1 = 한 실행). null = 옛 결과·단일 파일. */
+        private Integer runCount;
+        /** 절대 시각이 없어 조각 사이 공백을 0 으로 가정했다. */
+        private Boolean gapUnknown;
+        /** 일부 조각만 절대 시각을 가져 x 가 근사값이다. */
+        private Boolean xApprox;
         /** 로그에 PermGen 라벨이 있었다(JDK 7 이하) — 화면·프롬프트가 metaspace* 값을 PermGen 으로 부른다. null = Metaspace/미상. */
         private Boolean permGen;
     }
@@ -186,6 +246,8 @@ public class GcLogResult {
         private Long callHeapBefore;
         /** FULL 행만 — EXPLICIT / METASPACE / GC_LOCKER / HEAP_PRESSURE / OTHER({@code FullGcKind}). 옛 결과·비-FULL 행은 null. */
         private String fullKind;
+        /** 이어 붙인 분석에서 이 이벤트가 나온 조각 번호({@code Segment.index}). 파일 하나짜리는 null. */
+        private Integer seg;
     }
 
     /**

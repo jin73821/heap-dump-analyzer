@@ -17,4 +17,10 @@ public interface GcLogParser {
 
     /** 형식을 판별한 결과(파서가 아는 형식). */
     GcLogFormat format();
+
+    /**
+     * 지금까지 부여한 이벤트 일련번호의 다음 값. 회전본을 이어 붙일 때 다음 조각의 파서에 이 값을
+     * {@code seqBase} 로 넘겨야 {@code EventRow.seq} 가 중복되지 않는다(이벤트 표 기본 정렬 키다).
+     */
+    int seqEnd();
 }

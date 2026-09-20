@@ -503,6 +503,8 @@
         return s + 's';
     }
     function xTitle(r) {
+        // 이어 붙인 분석의 x 는 JVM 기동 기준이 아니라 로그 첫 이벤트 기준이다(함정 61)
+        if (r.segments && r.segments.length > 1) return '로그 시작 후 경과';
         return r.meta.firstUptimeSec != null ? 'JVM 기동 후 경과' : '이벤트 순서';
     }
     function renderCharts(r) {
@@ -599,11 +601,14 @@
             tr.setAttribute('data-ts', e.tsEpochMs == null ? '' : String(e.tsEpochMs)); tr.setAttribute('data-uptime', e.uptimeSec == null ? '' : e.uptimeSec);
             tr.setAttribute('data-type', e.type); tr.setAttribute('data-pause', e.pauseMs == null ? '' : e.pauseMs);
             tr.setAttribute('data-kind', kind || '');
+            tr.setAttribute('data-seg', e.seg == null ? '' : e.seg);
             tr.setAttribute('data-search', (e.type + ' ' + (e.cause || '') + ' ' + (e.flags || []).join(' ') + ' ' + (kind ? KIND_LABEL[kind] || kind : '')).toLowerCase());
             tr.setAttribute('data-flag', (e.type === 'FULL' || abnormal) ? '1' : '0');
             var heap = e.heapBefore != null ? fmtBytes(e.heapBefore) + ' → ' + fmtBytes(e.heapAfter) + (e.heapTotal != null ? ' / ' + fmtBytes(e.heapTotal) : '') : '–';
             var cpu = e.userSec != null ? e.userSec.toFixed(2) + ' / ' + e.sysSec.toFixed(2) + ' / ' + e.realSec.toFixed(2) : '–';
-            tr.innerHTML = '<td class="num">' + e.seq + '</td><td class="num">' + e.line + '</td><td>' + esc(fmtTs(e.tsEpochMs)) + '</td>'
+            tr.innerHTML = '<td class="num">' + e.seq + '</td><td class="num">' + e.line + '</td>'
+                + (_segs ? '<td class="gcl-col-seg">' + segBadge(e.seg) + '</td>' : '')
+                + '<td>' + esc(fmtTs(e.tsEpochMs)) + '</td>'
                 + '<td class="num">' + (e.uptimeSec == null ? '–' : xTick(e.uptimeSec)) + '</td>'
                 + '<td><span class="gcl-type t-' + esc(e.type) + '">' + esc(typeLabel(e.type)) + '</span>' + (kind ? '<span class="gcl-kind k-' + esc(kind) + '">' + esc(KIND_LABEL[kind] || kind) + '</span>' : '') + '</td>'
                 + '<td title="' + esc(e.cause || '') + '">' + esc(e.cause || '') + '</td>'
@@ -618,7 +623,10 @@
             var q = (search.value || '').trim().toLowerCase();
             var only = onlyFlag.checked;
             var anyType = Object.keys(_evTypeSel).length > 0;
+            var seg = _segFilter;
             _evGrid.setFiltered(_evGrid.allRows.filter(function (tr) {
+                // ⚠ detach 표라 tbody 를 직접 손대면 다른 페이지 행이 걸러지지 않는다 — 술어에만 넣는다
+                if (seg != null && tr.getAttribute('data-seg') !== String(seg)) return false;
                 if (anyType && !_evTypeSel[tr.getAttribute('data-type')]) return false;
                 if (only && tr.getAttribute('data-flag') !== '1') return false;
                 if (q && tr.getAttribute('data-search').indexOf(q) === -1) return false;
@@ -709,10 +717,98 @@
     }
 
     // ── 원문 ─────────────────────────────────────────────────
+    // ── 이어 붙인 구간 ───────────────────────────────────────
+    // _segs 가 있으면(조각 ≥2) 이벤트 표의 '구간' 열·원문 조각 선택·구성 패널이 켜진다. null 이면 파일 하나짜리 분석.
+    var _segs = null, _segFilter = null;
+
+    function segOf(i) { return _segs && _segs[i] ? _segs[i] : null; }
+    function segName(i) { var g = segOf(i); return g && g.filename ? g.filename : ('#' + (i == null ? '?' : i)); }
+
+    function segBadge(i) {
+        if (i == null) return '<span class="gcl-seg-badge none">–</span>';
+        return '<span class="gcl-seg-badge" title="' + esc(segName(i)) + '">' + esc(shortSeg(segName(i))) + '</span>';
+    }
+
+    /** 목록에서 파일명이 길면 꼬리만 — gc.log.1 · …-gc.log */
+    function shortSeg(name) { return name.length <= 14 ? name : '…' + name.slice(-13); }
+
+    function fmtDurSec(sec) {
+        if (sec == null) return '–';
+        var s = Math.round(sec);
+        if (s >= 3600) return Math.floor(s / 3600) + '시간 ' + Math.floor((s % 3600) / 60) + '분';
+        if (s >= 60) return Math.floor(s / 60) + '분';
+        return s + '초';
+    }
+
+    /** 구성 패널을 결과 값(기간·이벤트 수·실행 번호)으로 다시 그린다. 서버 렌더는 파일명만 안다. */
+    function renderSegments(r) {
+        _segs = r.segments && r.segments.length > 1 ? r.segments : null;
+        var col = document.querySelectorAll('.gcl-col-seg');
+        for (var c = 0; c < col.length; c++) col[c].hidden = !_segs;
+        var sel = document.getElementById('gclRawSeg');
+        if (sel) {
+            sel.hidden = !_segs;
+            if (_segs) {
+                sel.innerHTML = '<option value="">전체(앞·뒤)</option>' + _segs.map(function (g, i) {
+                    return '<option value="' + i + '">' + esc(segName(i)) + '</option>';
+                }).join('');
+            }
+        }
+        var list = document.getElementById('gclSegList');
+        if (!list || !_segs) return;
+        list.innerHTML = _segs.map(function (g, i) {
+            var span = (g.firstTsEpochMs != null && g.lastTsEpochMs != null)
+                ? fmtTs(g.firstTsEpochMs) + ' ~ ' + fmtTs(g.lastTsEpochMs) : '시각 없음';
+            var run = _segs.some(function (x) { return x.runIndex !== _segs[0].runIndex; })
+                ? '<span class="gcl-seg-run">실행 ' + (g.runIndex + 1) + '</span>' : '';
+            return '<li class="gcl-seg-item">'
+                + '<span class="gcl-seg-idx">' + (i + 1) + '</span>'
+                + '<span class="gcl-seg-name mono" title="' + esc(segName(i)) + '">' + esc(segName(i)) + '</span>'
+                + run
+                + '<span class="gcl-seg-span">' + esc(span) + '</span>'
+                + '<span class="gcl-seg-num">' + fmtDurSec(g.coveredSec) + ' · 이벤트 ' + (g.eventCount || 0) + '건</span>'
+                + '<span class="gcl-seg-num">줄 ' + g.firstLine + '–' + g.lastLine + '</span>'
+                + '<button type="button" class="gcl-seg-only" onclick="filterBySegment(' + i + ')">이 구간만 보기</button>'
+                + '</li>';
+        }).join('');
+    }
+
+    function toggleSegPanel() {
+        var p = document.getElementById('gclSegPanel');
+        if (p) p.hidden = !p.hidden;
+    }
+
+    /** 구성 패널의 '이 구간만 보기' — 이벤트 표로 데려간다(표 필터는 술어로만 건다) */
+    function filterBySegment(i) {
+        _segFilter = (_segFilter === i) ? null : i;
+        var note = document.getElementById('gclEvSegNote');
+        if (note) {
+            note.hidden = _segFilter == null;
+            note.textContent = _segFilter == null ? '' : (segName(_segFilter) + ' 구간만 보는 중');
+        }
+        if (_evApplyFilter) _evApplyFilter();
+        var tbl = document.getElementById('gclEvTable');
+        if (tbl && _segFilter != null) tbl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     function showRaw(which, btn) {
         if (!R) return;
-        document.querySelectorAll('.gcl-raw-tab').forEach(function (b) { b.classList.toggle('active', b === btn); });
+        if (which == null) which = (document.querySelector('.gcl-raw-tab.active') || {}).getAttribute
+            ? document.querySelector('.gcl-raw-tab.active').getAttribute('data-raw') : 'head';
+        if (btn) document.querySelectorAll('.gcl-raw-tab').forEach(function (b) { b.classList.toggle('active', b === btn); });
         var pre = document.getElementById('gclRaw');
+        var sel = document.getElementById('gclRawSeg');
+        var segIdx = (_segs && sel && sel.value !== '') ? parseInt(sel.value, 10) : null;
+        if (segIdx != null && which !== 'aroundMaxPause') {
+            var g = segOf(segIdx) || {};
+            var segLines = (which === 'head' ? g.head : g.tail) || [];
+            if (!segLines.length) { pre.textContent = '(이 구간의 원문 샘플이 없습니다)'; return; }
+            var base = which === 'head' ? g.firstLine : Math.max(g.firstLine, g.lastLine - segLines.length + 1);
+            pre.innerHTML = segLines.map(function (l, i) {
+                return '<span style="color:#64748B">' + ('      ' + (base + i)).slice(-6) + '</span>  ' + esc(l);
+            }).join('\n');
+            return;
+        }
         var lines = (R.rawSample && R.rawSample[which]) || [];
         if (!lines.length) { pre.textContent = '(없음)'; return; }
         var hl = -1;
@@ -723,6 +819,124 @@
             var row = '<span style="color:#64748B">' + ('      ' + no).slice(-6) + '</span>  ' + esc(l);
             return i === hl ? '<span class="hl">' + row + '</span>' : row;
         }).join('\n');
+    }
+
+    // ── 이어붙이기 모달 ──────────────────────────────────────
+    // 후보는 /combine-options 가 준다(같은 회전 계열·서버·일자면 suggested=true 로 미리 체크).
+    // 순서는 화면이 정하지 않는다 — 서버가 로그 안의 첫 시각으로 정렬하고 미리보기로 알려 준다(함정 60).
+    var _cbOptions = [], _cbSel = {}, _cbBusy = false;
+
+    function openCombineModal() {
+        var ov = document.getElementById('gclCombineModal');
+        if (!ov) return;
+        ov.classList.add('open');
+        var list = document.getElementById('gclCombineList');
+        list.innerHTML = '<div class="gcl-empty">불러오는 중…</div>';
+        document.getElementById('gclCombinePreview').hidden = true;
+        Common.fetchJSON(api('/combine-options')).then(function (d) {
+            if (!d || d.success !== true) throw new Error('후보를 불러오지 못했습니다.');
+            _cbOptions = d.options || [];
+            _cbSel = {};
+            var already = d.members || [];
+            _cbOptions.forEach(function (o) {
+                if (already.indexOf(o.filename) >= 0 || (already.length === 0 && o.suggested)) _cbSel[o.filename] = true;
+            });
+            renderCombineList();
+            previewCombine();   // 미리 체크된 구성이 있으면 열자마자 순서를 보여 준다(토글해야 보이면 놓친다)
+        }).catch(function (e) {
+            failed('이어붙이기 후보 조회', e);
+            list.innerHTML = '<div class="gcl-empty">' + esc(errMsg(e, '후보를 불러오지 못했습니다.')) + '</div>';
+        });
+    }
+
+    function closeCombineModal() {
+        var ov = document.getElementById('gclCombineModal');
+        if (ov) ov.classList.remove('open');
+    }
+
+    function renderCombineList() {
+        var list = document.getElementById('gclCombineList');
+        if (!list) return;
+        var q = (document.getElementById('gclCombineSearch').value || '').trim().toLowerCase();
+        var rows = _cbOptions.filter(function (o) {
+            if (!q) return true;
+            return (o.filename || '').toLowerCase().indexOf(q) >= 0
+                || (o.analysisName || '').toLowerCase().indexOf(q) >= 0;
+        });
+        if (!rows.length) { list.innerHTML = '<div class="gcl-empty">이어 붙일 다른 GC 로그가 없습니다.</div>'; syncCombineBtn(); return; }
+        list.innerHTML = rows.map(function (o) {
+            var tags = '';
+            if (o.suggested) tags += '<span class="gcl-pick-tag ok">같은 계열·일자</span>';
+            else if (o.sameServer) tags += '<span class="gcl-pick-tag">같은 서버</span>';
+            if (o.partOf) tags += '<span class="gcl-pick-tag warn">다른 구성</span>';
+            var when = o.logStart ? o.logStart.replace('T', ' ').slice(0, 16) : (o.analysisDate || '');
+            return '<label class="gcl-pick-row"><input type="checkbox" value="' + esc(o.filename) + '"'
+                + (_cbSel[o.filename] ? ' checked' : '') + ' onchange="toggleCombineMember(this)">'
+                + '<span class="gcl-pick-main"><span class="gcl-pick-name mono">' + esc(o.filename) + '</span>'
+                + '<span class="gcl-pick-sub">' + esc(o.analysisName || '') + (when ? ' · ' + esc(when) : '')
+                + (o.formattedSize ? ' · ' + esc(o.formattedSize) : '') + '</span></span>' + tags + '</label>';
+        }).join('');
+        syncCombineBtn();
+    }
+
+    function toggleCombineMember(cb) {
+        if (cb.checked) _cbSel[cb.value] = true; else delete _cbSel[cb.value];
+        syncCombineBtn();
+        previewCombine();
+    }
+
+    function selectedMembers() { return Object.keys(_cbSel); }
+
+    function syncCombineBtn() {
+        var btn = document.getElementById('gclCombineOk');
+        if (!btn) return;
+        var n = selectedMembers().length;
+        btn.textContent = n === 0 ? '구성 해제하고 단독 분석' : ('이어 붙여 분석 (' + (n + 1) + '개)');
+        btn.disabled = _cbBusy;
+    }
+
+    /** 서버가 정한 순서와 경고를 미리 보여 준다 — 분석은 시작하지 않는다. */
+    function previewCombine() {
+        var box = document.getElementById('gclCombinePreview');
+        var names = selectedMembers();
+        if (!box) return;
+        if (!names.length) { box.hidden = true; return; }
+        Common.fetchJSON(api('/combine/preview'), { method: 'POST', body: JSON.stringify({ filenames: names }) })
+            .then(function (d) {
+                if (!d || d.success !== true) throw new Error('미리보기 실패');
+                var order = (d.order || []).map(function (o, i) {
+                    return '<span class="gcl-prev-step">' + (i + 1) + '. ' + esc(o.filename) + '</span>';
+                }).join('<span class="gcl-prev-arrow">→</span>');
+                var warn = (d.warnings || []).map(function (w) { return '<div class="gcl-prev-warn">' + esc(w) + '</div>'; }).join('');
+                box.innerHTML = '<div class="gcl-prev-title">이 순서로 이어 붙입니다'
+                    + (d.orderBasis === 'absolute' ? ' (로그 안의 시각 기준)' : ' (파일 시각 기준 — 추정)') + '</div>'
+                    + '<div class="gcl-prev-order">' + order + '</div>' + warn;
+                box.hidden = false;
+            }).catch(function (e) {
+                failed('이어붙이기 미리보기', e);
+                box.innerHTML = '<div class="gcl-prev-warn">' + esc(errMsg(e, '미리보기에 실패했습니다.')) + '</div>';
+                box.hidden = false;
+            });
+    }
+
+    function confirmCombine() {
+        if (_cbBusy) return;
+        _cbBusy = true;
+        var btn = document.getElementById('gclCombineOk');
+        var label = btn.textContent;
+        btn.textContent = '처리 중…';
+        btn.disabled = true;
+        Common.fetchJSON(api('/combine'), { method: 'POST', body: JSON.stringify({ filenames: selectedMembers() }) })
+            .then(function (d) {
+                if (!d || d.success !== true) throw new Error('이어붙이기에 실패했습니다.');
+                window.location.reload();   // 구성·요약·결과가 통째로 바뀐다
+            }).catch(function (e) {
+                failed('이어붙이기', e);
+                toast(errMsg(e, '이어붙이기에 실패했습니다.'), 'danger');
+                _cbBusy = false;
+                btn.textContent = label;
+                btn.disabled = false;
+            });
     }
 
     // ── 매칭 칩 ──────────────────────────────────────────────
@@ -1011,12 +1225,15 @@
         if (GC_STATUS === 'SUCCESS') {
             R = loadResult();
             if (!R) { showError('저장된 결과를 읽지 못했습니다. 재분석하세요.'); document.getElementById('gclResult').style.display = 'none'; document.getElementById('gclProgress').style.display = ''; return; }
+            try { renderSegments(R); } catch (e) { failed('구성 패널 렌더', e); }
             try { renderPressureBanner(R); } catch (e) { failed('압박 배너 렌더', e); }
             try { renderKpi(R); } catch (e) { failed('KPI 렌더', e); }
             try { renderCharts(R); } catch (e) { failed('차트 렌더', e); }
             try { renderFindings(R); } catch (e) { failed('소견 렌더', e); }
             try { renderEvents(R); } catch (e) { failed('이벤트 표 렌더', e); }
             try { showRaw('head', document.querySelector('.gcl-raw-tab[data-raw="head"]')); } catch (e) { failed('원문 렌더', e); }
+            var cbSearch = document.getElementById('gclCombineSearch');
+            if (cbSearch) cbSearch.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') closeCombineModal(); });
             loadAi();
             refreshMatch();
         } else if (GC_STATUS === 'ANALYZING') {
@@ -1055,4 +1272,11 @@
     window.closeGcDeleteModal = closeGcDeleteModal;
     window.confirmGcDelete = confirmGcDelete;
     window.showPressureEvents = showPressureEvents;
+    window.toggleSegPanel = toggleSegPanel;
+    window.filterBySegment = filterBySegment;
+    window.openCombineModal = openCombineModal;
+    window.closeCombineModal = closeCombineModal;
+    window.renderCombineList = renderCombineList;
+    window.toggleCombineMember = toggleCombineMember;
+    window.confirmCombine = confirmCombine;
 })();

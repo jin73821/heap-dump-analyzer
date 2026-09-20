@@ -58,44 +58,81 @@
         var el = document.getElementById('uploadBtnLabel');
         if (!el) return;
         if (state === 'empty') el.textContent = 'GC 로그 파일을 선택하세요';
-        else if (state === 'ready') el.innerHTML = CHART_ICON + ' GC 로그 분석 시작';
+        else if (state === 'needHost') el.textContent = '호스트네임을 입력하세요';
+        else if (state === 'ready') el.innerHTML = CHART_ICON + (detail > 1 ? ' GC 로그 ' + detail + '개 업로드' : ' GC 로그 분석 시작');
         else if (state === 'uploading') el.textContent = '업로드 중 ' + detail;
         else if (state === 'starting') el.textContent = '분석 시작 중…';
     }
 
-    // ── 업로드 존 ─────────────────────────────────────────────
-    var _file = null;
+    // ── 업로드 존 (2026-09-20: 회전 로그를 한 번에 올릴 수 있게 다중 선택) ──
+    var _files = [];
 
     function onGcFileSelect(input) {
-        var f = input.files && input.files[0];
-        setFile(f || null);
+        // 파일 선택창은 목록을 '교체' 한다 — 나눠 고르려면 직전 선택과 합쳐야 한다(rag-settings 드롭존과 같은 규칙)
+        addFiles(input.files);
     }
-    function setFile(f) {
-        _file = f;
+
+    function addFiles(list) {
+        if (!list) return;
+        for (var i = 0; i < list.length; i++) {
+            var f = list[i];
+            var dup = _files.findIndex(function (x) { return x.name === f.name; });
+            if (dup >= 0) _files[dup] = f;   // 같은 이름은 last-wins — 고친 파일 대신 옛 내용이 올라가지 않게
+            else _files.push(f);
+        }
+        renderFiles();
+    }
+
+    function removeFile(name) {
+        _files = _files.filter(function (f) { return f.name !== name; });
+        renderFiles();
+    }
+
+    function renderFiles() {
         var nameEl = document.getElementById('gcFileName');
+        var chips = document.getElementById('gcFileChips');
         var zone = document.getElementById('gcDropZone');
         var clearBtn = document.getElementById('gcClearBtn');
-        var btn = document.getElementById('uploadBtn');
-        if (f) {
-            nameEl.textContent = f.name + ' (' + Common.formatBytes(f.size) + ')';
+        if (_files.length) {
+            var total = _files.reduce(function (a, f) { return a + f.size; }, 0);
+            nameEl.textContent = _files.length === 1
+                ? _files[0].name + ' (' + Common.formatBytes(_files[0].size) + ')'
+                : _files.length + '개 · ' + Common.formatBytes(total);
             zone.classList.add('has-file');
             if (clearBtn) clearBtn.style.display = '';
-            btn.disabled = false;
-            setCta('ready');
         } else {
             nameEl.textContent = '';
             zone.classList.remove('has-file');
             if (clearBtn) clearBtn.style.display = 'none';
-            btn.disabled = true;
-            setCta('empty');
         }
+        if (chips) {
+            chips.innerHTML = _files.length < 2 ? '' : _files.map(function (f) {
+                return '<span class="gcl-chip-file"><span class="gcl-chip-name" title="' + esc(f.name) + '">' + esc(f.name) + '</span>'
+                    + '<button type="button" class="gcl-chip-x" onclick="removeGcFile(\'' + esc(f.name).replace(/'/g, "\\'") + '\')" aria-label="제외">&times;</button></span>';
+            }).join('');
+        }
+        syncCta();
         hideError();
     }
+
+    /** 호스트네임이 비면 시작할 수 없다 — 서버도 NO_HOSTNAME 으로 막지만 여기서 먼저 알린다(2026-09-20). */
+    function syncCta() {
+        var btn = document.getElementById('uploadBtn');
+        var host = ((document.getElementById('gcServerName') || {}).value || '').trim();
+        if (!_files.length) { btn.disabled = true; setCta('empty'); return; }
+        if (!host) { btn.disabled = true; setCta('needHost'); return; }
+        btn.disabled = false;
+        setCta('ready', _files.length);
+    }
+
+    function onOriginInput() { syncCta(); }
+
     function clearGcZone(e) {
         if (e) { e.preventDefault(); e.stopPropagation(); }
         var input = document.getElementById('gcFileInput');
         if (input) input.value = '';
-        setFile(null);
+        _files = [];
+        renderFiles();
     }
     function focusUpload() {
         var zone = document.getElementById('gcDropZone');
@@ -122,8 +159,7 @@
             zone.addEventListener(ev, function (e) { e.preventDefault(); e.stopPropagation(); zone.classList.remove('dragover'); });
         });
         zone.addEventListener('drop', function (e) {
-            var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-            if (f) setFile(f);
+            addFiles(e.dataTransfer && e.dataTransfer.files);
         });
         // 페이지 어디에 떨어뜨려도 브라우저가 파일로 이동하지 않게
         window.addEventListener('dragover', function (e) { e.preventDefault(); });
@@ -134,56 +170,88 @@
 
     // ── 업로드 제출 ───────────────────────────────────────────
     var _uploading = false;
+
+    /**
+     * 파일을 하나씩 순서대로 올린다 — 한 번에 묶어 보내지 않는 이유는 기존 엔드포인트가 형식 판별·중복명 409·등록·
+     * 자동 매칭까지 완결하기 때문이다(실패도 파일 단위로 격리된다). 진행률은 전체 바이트 기준 합산.
+     */
     function startUpload() {
-        if (!_file || _uploading) return;
+        if (!_files.length || _uploading) return;
+        var host = ((document.getElementById('gcServerName') || {}).value || '').trim();
+        if (!host) { showError('GC 로그를 수집한 서버(호스트네임)를 입력하세요.'); return; }
+        var inst = ((document.getElementById('gcInstanceName') || {}).value || '').trim();
         _uploading = true;
         hideError();
         var btn = document.getElementById('uploadBtn');
         var fill = document.getElementById('uploadProgressFill');
         var status = document.getElementById('uploadStatus');
         btn.disabled = true;
-        if (status) status.textContent = '업로드 중…';
-        var fd = new FormData();
-        fd.append('gcLogFile', _file, _file.name);
-        var server = (document.getElementById('gcServerName') || {}).value || '';
-        if (server.trim()) fd.append('serverName', server.trim());
+        var total = _files.reduce(function (a, f) { return a + f.size; }, 0);
+        var done = 0, okNames = [], failures = [];
 
-        var xhr = new XMLHttpRequest();
-        xhr.open('POST', '/api/gc-log/upload');
-        var h = csrfHeaders(false);
-        Object.keys(h).forEach(function (k) { xhr.setRequestHeader(k, h[k]); });
-        setCta('uploading', '0%');
-        xhr.upload.addEventListener('progress', function (e) {
-            if (!e.lengthComputable) return;
-            var pct = Math.round(100 * e.loaded / e.total);
-            if (fill) fill.style.width = pct + '%';
-            setCta('uploading', pct + '% · ' + Common.formatBytes(e.loaded) + ' / ' + Common.formatBytes(e.total));
-        });
-        xhr.addEventListener('load', function () {
-            _uploading = false;
-            var d = readJsonSafe(xhr, xhr.status);
-            if (xhr.status >= 200 && xhr.status < 300 && d.success) {
-                if (fill) fill.style.width = '100%';
-                setCta('starting');
-                if (status) status.textContent = '업로드 완료 — 분석을 시작합니다.';
-                startAnalysisAndGo(d.filename);
-            } else {
-                if (fill) fill.style.width = '0';
-                btn.disabled = false;
-                setCta('ready');
-                if (status) status.textContent = '';
-                showError(d.error || d.message || httpMsg(xhr.status));
-            }
-        });
-        xhr.addEventListener('error', function () {
+        function finish() {
             _uploading = false;
             if (fill) fill.style.width = '0';
             btn.disabled = false;
-            setCta('ready');
-            if (status) status.textContent = '';
-            showError('네트워크 오류로 업로드하지 못했습니다.');
-        });
-        xhr.send(fd);
+            syncCta();
+            if (failures.length) showError(failures.join(' / '));
+            if (!okNames.length) { if (status) status.textContent = ''; return; }
+            if (status) status.textContent = okNames.length + '개 업로드 완료';
+            if (okNames.length === 1) { setCta('starting'); startAnalysisAndGo(okNames[0]); return; }
+            offerCombine(okNames);   // 여러 개 — 이어 붙일지 묻는다
+        }
+
+        function next(i) {
+            if (i >= _files.length) { finish(); return; }
+            var f = _files[i];
+            if (status) status.textContent = '업로드 중 (' + (i + 1) + '/' + _files.length + ') ' + f.name;
+            var fd = new FormData();
+            fd.append('gcLogFile', f, f.name);
+            fd.append('serverName', host);
+            if (inst) fd.append('instanceName', inst);
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/gc-log/upload');
+            var h = csrfHeaders(false);
+            Object.keys(h).forEach(function (k) { xhr.setRequestHeader(k, h[k]); });
+            xhr.upload.addEventListener('progress', function (e) {
+                if (!e.lengthComputable) return;
+                var sent = done + e.loaded;
+                var pct = total > 0 ? Math.round(100 * sent / total) : 0;
+                if (fill) fill.style.width = pct + '%';
+                setCta('uploading', pct + '% · ' + Common.formatBytes(sent) + ' / ' + Common.formatBytes(total));
+            });
+            xhr.addEventListener('load', function () {
+                var d = readJsonSafe(xhr, xhr.status);
+                if (xhr.status >= 200 && xhr.status < 300 && d.success) okNames.push(d.filename);
+                else failures.push(f.name + ': ' + (d.error || d.message || httpMsg(xhr.status)));
+                done += f.size;
+                next(i + 1);
+            });
+            xhr.addEventListener('error', function () {
+                failures.push(f.name + ': 네트워크 오류');
+                done += f.size;
+                next(i + 1);
+            });
+            xhr.send(fd);
+        }
+        setCta('uploading', '0%');
+        next(0);
+    }
+
+    /**
+     * 여러 개를 올린 뒤 — 회전 로그면 이어 붙여 한 번에 분석하는 편이 낫다.
+     * 대표는 <b>가장 최근 로그</b>(목록에서 고를 때와 같은 규칙)이고, 순서·일자 판정은 서버가 한다.
+     */
+    function offerCombine(names) {
+        var body = document.getElementById('listCombineBody');
+        if (!body) { window.location.reload(); return; }
+        _listSel = names.slice();
+        body.innerHTML = '<p>' + names.length + '개를 올렸습니다. 같은 JVM 의 회전 로그라면 <b>이어 붙여</b> 한 번에 분석할 수 있습니다.</p>'
+            + '<div class="gcl-list-names">' + names.map(function (n) { return '<span class="gcl-prev-step">' + esc(n) + '</span>'; }).join('') + '</div>'
+            + '<p class="gcl-list-note">순서는 파일 이름이 아니라 로그 안의 첫 시각으로 정해집니다. '
+            + '일자가 다르면 분석명이 기간 표기로 바뀝니다.</p>';
+        document.getElementById('listCombineErr').classList.remove('show');
+        document.getElementById('listCombineModal').classList.add('open');
     }
 
     function startAnalysisAndGo(filename) {
@@ -214,9 +282,143 @@
     }
 
     function glRowAction(e, tr) {
-        if (e.target.closest('a, button')) return;
+        if (e.target.closest('a, button, input')) return;
+        if (_sel && _sel.active) {   // 선택 모드에서는 행 클릭이 체크 토글이다(이동하지 않는다)
+            var c = tr.querySelector('.row-check');
+            if (c) { c.checked = !c.checked; _sel.updateCount(); }
+            return;
+        }
         var fn = tr.dataset.filename, status = tr.dataset.status;
         glOpenFile(fn, status);
+    }
+
+    // ── 선택 모드 · 목록에서 이어붙이기 (2026-09-20) ──────────
+    // 고정 id 계약(selectModeBtn/selectModeBtnLabel/selectActionBar/saCount/saDelBtn/allCheck)은 select-mode.js 몫.
+    var _sel = null, _listSel = [];
+
+    // ── 구성 파일 접기 (2026-09-20) ──────────────────────────
+    // 이어 붙인 분석의 구성 파일은 그 자체로 분석 대상이 아니다 — 목록에 '미분석' 으로 남으면 같은 로그를 또 분석한다.
+    // Files 페이지의 'deleted 표시' 와 같은 역할의 토글로 열어 둔다.
+    var MEMBERS_KEY = 'gcLogShowMembers';
+    var _showMembers = false;
+    var _historyRender = null;
+
+    function initShowMembers() {
+        var chk = document.getElementById('hiShowMembers');
+        if (!chk) return;
+        try { _showMembers = localStorage.getItem(MEMBERS_KEY) === 'true'; }
+        catch (e) { ignored('구성 파일 표시 설정 읽기', e); }
+        chk.checked = _showMembers;
+        var n = document.querySelectorAll('#hiTbody tr[data-partof]:not([data-partof=""])').length;
+        var cnt = document.getElementById('hiMembersCnt');
+        if (cnt) cnt.textContent = n ? '(' + n + ')' : '';
+    }
+
+    function onShowMembersChange() {
+        var chk = document.getElementById('hiShowMembers');
+        _showMembers = !!(chk && chk.checked);
+        try { localStorage.setItem(MEMBERS_KEY, String(_showMembers)); }
+        catch (e) { ignored('구성 파일 표시 설정 저장', e); }
+        if (_historyRender) _historyRender();
+    }
+
+    function initSelectMode() {
+        if (!window.SelectMode || !document.getElementById('hiTable')) return;
+        _sel = SelectMode.create({
+            tableId: 'hiTable', tbodyId: 'hiTbody', bodyClass: 'action-bar-open',
+            onCountChange: function (checked) {
+                var btn = document.getElementById('saCombineBtn');
+                if (btn) btn.disabled = checked.length < 2;   // 이어 붙이려면 2개 이상
+            }
+        });
+    }
+    function toggleSelectMode() { if (_sel) _sel.toggle(); }
+    function exitSelectMode() { if (_sel) _sel.exit(); }
+    function onRowCheck(e) { if (e) e.stopPropagation(); if (_sel) _sel.updateCount(); }
+    function onSelectAll() { if (_sel) _sel.onSelectAll(); }
+
+    function selectedFilenames() {
+        if (!_sel) return [];
+        return _sel.selectedChecks().map(function (c) {
+            var tr = c.closest('tr');
+            return tr ? tr.dataset.filename : null;
+        }).filter(Boolean);
+    }
+
+    function openCombineFromList() {
+        var names = selectedFilenames();
+        if (names.length < 2) return;
+        _listSel = names;
+        var body = document.getElementById('listCombineBody');
+        body.innerHTML = '<p>고른 로그 <b>' + names.length + '개</b>를 이어 붙여 한 번에 분석합니다.</p>'
+            + '<div class="gcl-list-names">' + names.map(function (n) { return '<span class="gcl-prev-step">' + esc(n) + '</span>'; }).join('') + '</div>'
+            + '<p class="gcl-list-note">순서는 파일 이름이 아니라 <b>로그 안의 첫 시각</b>으로 정해집니다. '
+            + '결과는 가장 최근 로그의 분석에 담기고, 나머지는 그 구성 파일이 됩니다.</p>';
+        document.getElementById('listCombineErr').classList.remove('show');
+        document.getElementById('listCombineModal').classList.add('open');
+    }
+
+    function closeListCombine() {
+        var m = document.getElementById('listCombineModal');
+        if (m) m.classList.remove('open');
+    }
+
+    function listCombineError(msg) {
+        var el = document.getElementById('listCombineErr');
+        el.textContent = msg;
+        el.classList.add('show');
+        var ok = document.getElementById('listCombineOk');
+        ok.disabled = false;
+        ok.textContent = '이어 붙여 분석';
+    }
+
+    /**
+     * 대표는 <b>가장 최근 로그</b>다. 어느 것이 최근인지는 화면이 추측하지 않고 서버의 미리보기 순서를 쓴다
+     * (파일 이름은 시간순이 아니다 — 함정 60).
+     */
+    function confirmListCombine() {
+        if (_listSel.length < 2) return;
+        var ok = document.getElementById('listCombineOk');
+        ok.disabled = true;
+        ok.textContent = '처리 중…';
+        var first = _listSel[0];
+        var rest = _listSel.slice(1);
+        fetch('/api/gc-log/' + encodeURIComponent(first) + '/combine/preview',
+                { method: 'POST', headers: csrfHeaders(true), body: JSON.stringify({ filenames: rest }) })
+            .then(function (r) { return r.text().then(function (t) { return readJsonSafe(t, r.status); }); })
+            .then(function (d) {
+                if (!d.success) throw new Error(d.error || '미리보기 실패');
+                var order = (d.order || []).map(function (o) { return o.filename; });
+                var rep = order.length ? order[order.length - 1] : first;
+                var members = order.filter(function (n) { return n !== rep; });
+                return fetch('/api/gc-log/' + encodeURIComponent(rep) + '/combine',
+                        { method: 'POST', headers: csrfHeaders(true), body: JSON.stringify({ filenames: members }) })
+                    .then(function (r) { return r.text().then(function (t) { return readJsonSafe(t, r.status); }); })
+                    .then(function (c) {
+                        if (!c.success) throw new Error(c.error || '이어붙이기 실패');
+                        window.location.href = '/gc-log/analyze/' + encodeURIComponent(rep);
+                    });
+            })
+            .catch(function (e) { failed('이어붙이기', e); listCombineError(e.message || '이어붙이기에 실패했습니다.'); });
+    }
+
+    /** 선택 삭제 — 파일까지 지운다(목록의 개별 삭제 모달과 같은 기본값). */
+    function deleteSelected() {
+        var names = selectedFilenames();
+        if (!names.length) return;
+        if (!window.confirm('선택한 GC 로그 ' + names.length + '개를 원본 파일과 함께 삭제합니다. 계속할까요?')) return;
+        var left = names.length, failures = 0;
+        names.forEach(function (n) {
+            fetch('/api/gc-log/' + encodeURIComponent(n) + '?deleteFile=true', { method: 'DELETE', headers: csrfHeaders(false) })
+                .then(function (r) { if (!r.ok) failures++; })
+                .catch(function (e) { failed('GC 로그 삭제', e); failures++; })
+                .then(function () {
+                    if (--left === 0) {
+                        if (failures) toast(failures + '개를 삭제하지 못했습니다.', 'danger');
+                        setTimeout(function () { window.location.reload(); }, 400);
+                    }
+                });
+        });
     }
 
     // ── 삭제 ─────────────────────────────────────────────────
@@ -320,6 +522,8 @@
             var from = range.start ? dayKey(range.start) : '';
             var to = range.end ? dayKey(range.end) : '';
             var f = rows.filter(function (r) {
+                // 구성 파일(다른 분석에 이어 붙인 로그)은 토글을 켜야 보인다 — 접어 두지 않으면 같은 로그를 또 분석한다
+                if (!_showMembers && r.dataset.partof) return false;
                 if (q && (r.dataset.fname || '').toLowerCase().indexOf(q) === -1 && (r.dataset.server || '').toLowerCase().indexOf(q) === -1) return false;
                 if (from || to) {
                     // data-uploaded 는 LocalDateTime ISO('2026-09-13T10:05:23') — 앞 10자 문자열 비교(하루 단위, 종료일 포함)
@@ -352,8 +556,10 @@
             }
             if (countEl) countEl.textContent = (total === TOTAL) ? (total + '건') : (total + ' / ' + TOTAL + '건');
             if (noResult) noResult.style.display = (TOTAL > 0 && total === 0) ? 'block' : 'none';
+            if (_sel && _sel.active) _sel.updateCount();   // 페이지·필터가 바뀌면 보이는 행 기준으로 다시 센다
             renderPg(pgBar, pgList, pgInfo, total, pages, start, end, PAGE, cur, function (p) { cur = p; render(); });
         }
+        _historyRender = function () { cur = 1; render(); };
         if (search) search.addEventListener('input', function () { cur = 1; render(); });
         if (hasCal) {
             window.Calendar.attach({
@@ -402,7 +608,9 @@
     document.addEventListener('DOMContentLoaded', function () {
         initDropZone();
         initSidebar();
+        initShowMembers();
         initHistory();
+        initSelectMode();
         // ?file= 프리셀렉트 — 대시보드 업로드 큐에서 넘어온 경우 그 파일의 결과/분석으로 안내
         try {
             var params = new URLSearchParams(window.location.search);
@@ -425,4 +633,15 @@
     window.deleteGcLog = deleteGcLog;
     window.closeGcDeleteModal = closeGcDeleteModal;
     window.confirmGcDelete = confirmGcDelete;
+    window.removeGcFile = removeFile;
+    window.onOriginInput = onOriginInput;
+    window.toggleSelectMode = toggleSelectMode;
+    window.exitSelectMode = exitSelectMode;
+    window.onRowCheck = onRowCheck;
+    window.onSelectAll = onSelectAll;
+    window.openCombineFromList = openCombineFromList;
+    window.closeListCombine = closeListCombine;
+    window.confirmListCombine = confirmListCombine;
+    window.deleteSelected = deleteSelected;
+    window.onShowMembersChange = onShowMembersChange;
 })();

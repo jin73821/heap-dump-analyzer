@@ -424,6 +424,9 @@ public class AlertBoardService {
     private void collectGc(Snapshot s) {
         List<AlertBoardRow> rows = s.rows.get(DOMAIN_GCLOG);
         for (GcLogAnalysisEntity e : gcLogService.history()) {
+            // 다른 분석의 구성 파일(이어 붙이기 멤버)은 그 자체로 분석 대상이 아니다 — 현황판에 '미분석' 으로 세면
+            // 회전본 수만큼 건수가 부풀고 사용자가 같은 로그를 또 분석하게 된다(2026-09-20)
+            if (e.getPartOf() != null) continue;
             long at = epochOf(e.getAnalyzedAt() != null ? e.getAnalyzedAt() : e.getCreatedAt());
             String status = gcLogService.isAnalyzing(e.getFilename()) ? "ANALYZING" : e.getStatus();
             AlertBoardRow row = row(DOMAIN_GCLOG, e.getFilename(), e.getServerName(), status, at,
@@ -565,6 +568,31 @@ public class AlertBoardService {
         String prev = ackRepository.findByAlertKey(key).map(AlertAck::getAckedBy).orElse(null);
         if (prev != null) ackRepository.deleteByAlertKey(key);
         return prev;
+    }
+
+    /**
+     * 확인 정보(확인자·시각 라벨). 확인되지 않은 key 는 null.
+     *
+     * <p>ACK 직후 화면을 <b>서버가 정한 값</b>으로 갱신하라고 있는 것이다 — 이미 다른 사용자가 확인해 둔
+     * 알람이면 그 사용자의 이름·시각이 돌아온다(누른 사람 이름으로 그리면 거짓이 된다). 종전에는 이걸
+     * 알 방법이 없어 현황판이 확인 직후 페이지를 통째로 새로고침했다.
+     */
+    public Map<String, String> ackInfo(String key) {
+        return ackRepository.findByAlertKey(key).map(AlertBoardService::ackView).orElse(null);
+    }
+
+    /** 현재 확인된 모든 알람의 key → 확인 정보 (전체 확인 직후 화면 갱신용). */
+    public Map<String, Map<String, String>> ackInfoAll() {
+        Map<String, Map<String, String>> out = new LinkedHashMap<>();
+        for (AlertAck a : ackRepository.findAll()) out.put(a.getAlertKey(), ackView(a));
+        return out;
+    }
+
+    private static Map<String, String> ackView(AlertAck a) {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("by", a.getAckedBy() != null ? a.getAckedBy() : "");
+        m.put("atLabel", a.getAckedAt() != null ? a.getAckedAt().format(LABEL_FMT) : "");
+        return m;
     }
 
     public int ackAll(String who) {

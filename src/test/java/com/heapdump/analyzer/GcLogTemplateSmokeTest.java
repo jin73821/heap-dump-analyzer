@@ -133,7 +133,8 @@ class GcLogTemplateSmokeTest {
         assertTrue(hp.contains("<span title=\"메모리 압박 Full GC 없음\" class=\"hi-muted\">(압박 0)</span>"), "압박 0 은 회색");
         assertTrue(hp.contains("<span title=\"메모리 압박(명시적 호출·Metaspace·GCLocker 제외) Full GC\" class=\"hi-pressure\">(압박 9)</span>"), "압박 9 는 강조");
         assertFalse(hp.contains("[["), "인라인 표현식으로 해석될 '[[' 가 남아 있다");
-        assertTrue(h.contains("uptime 기준") || h.contains("00:52 ~"), "로그 기간 셀");
+        // 로그 기간은 두 줄 — 시작 시각 줄과 '~ 끝' 줄이 따로 난다(2026-09-20)
+        assertTrue(h.contains("uptime 기준") || (h.contains(">09-14 00:52<") && h.contains(">~ 09-14 10:53<")), "로그 기간 셀");
         assertTrue(h.contains("data-kind=\"gclog\"") && h.contains("AnalyzeConfirm.fromLink(this)"), "미분석 '분석' 링크는 확인 모달을 거친다");
         assertTrue(h.contains("id=\"deleteGcModal\"") && h.contains("class=\"modal-ov gcl-modal\""), "삭제 모달 골격 클래스(함정 17)");
         assertTrue(h.contains("/js/analyze-confirm.js") && h.indexOf("/js/analyze-confirm.js") < h.indexOf("/js/gc-log-index.js"), "모듈 스크립트 순서");
@@ -358,14 +359,92 @@ class GcLogTemplateSmokeTest {
                 && css.contains(".gcl-table tr.ev-FULL.ev-explicit td") && css.contains(".hi-pressure {") && css.contains(".gcl-ai-warn {"), "압박 배너·분류 배지·목록 강조 CSS");
         assertFalse(an.contains("setInterval(tick, 1000)") && !an.contains("SessionTimeout.managedInterval"), "managedInterval 없이 setInterval 만 쓰면 안 된다");
 
-        // 업로드 버튼 문구는 선택 상태를 따라간다(2026-09-14) — 파일을 골라도 '선택하세요' 로 남던 결함
-        assertTrue(idx.contains("el.textContent = 'GC 로그 파일을 선택하세요'") && idx.contains("CHART_ICON + ' GC 로그 분석 시작'")
-                && idx.contains("'업로드 중 ' + detail") && idx.contains("'분석 시작 중…'"), "CTA 4상태");
-        assertTrue(idx.contains("setCta('ready')") && idx.contains("setCta('empty')") && idx.contains("setCta('starting')"), "파일 선택·해제·성공 시 문구 갱신");
+        // 업로드 버튼 문구는 선택 상태를 따라간다(2026-09-14) — 파일을 골라도 '선택하세요' 로 남던 결함.
+        // 2026-09-20: 호스트네임이 필수가 되어 'needHost' 상태가 늘었다(서버도 NO_HOSTNAME 으로 막는다).
+        assertTrue(idx.contains("el.textContent = 'GC 로그 파일을 선택하세요'") && idx.contains("' GC 로그 분석 시작'")
+                && idx.contains("el.textContent = '호스트네임을 입력하세요'")
+                && idx.contains("'업로드 중 ' + detail") && idx.contains("'분석 시작 중…'"), "CTA 5상태");
+        assertTrue(idx.contains("setCta('ready'") && idx.contains("setCta('empty')") && idx.contains("setCta('starting')")
+                && idx.contains("setCta('needHost')"), "파일 선택·해제·출처 입력·성공 시 문구 갱신");
         assertTrue(idxHtml.contains("<span class=\"usb-label\" id=\"uploadBtnLabel\">GC 로그 파일을 선택하세요</span>"), "라벨 span id");
 
         String banner = Files.readString(Path.of("src/main/resources/templates/fragments/banner.html"), StandardCharsets.UTF_8);
         assertTrue(banner.contains("href=\"/gc-log\" class=\"gb-nav-link\" id=\"gbNavGcLog\"") && banner.contains("path.startsWith('/gc-log')"), "배너 메뉴 + 활성화");
+    }
+
+    @Test
+    @DisplayName("이어붙이기 UI — 모달 골격·구성 알약·구간 열·다중 업로드·호스트네임 필수·선택 모드 id 계약")
+    void combineUiContract() throws IOException {
+        String idxHtml = Files.readString(Path.of("src/main/resources/templates/gc-log/index.html"), StandardCharsets.UTF_8);
+        String anHtml = Files.readString(Path.of("src/main/resources/templates/gc-log/analyze.html"), StandardCharsets.UTF_8);
+        String an = Files.readString(Path.of("src/main/resources/static/js/gc-log-analyze.js"), StandardCharsets.UTF_8);
+        String idx = Files.readString(Path.of("src/main/resources/static/js/gc-log-index.js"), StandardCharsets.UTF_8);
+        String css = Files.readString(Path.of("src/main/resources/static/css/gc-log.css"), StandardCharsets.UTF_8);
+        String ac = Files.readString(Path.of("src/main/resources/static/js/analyze-confirm.js"), StandardCharsets.UTF_8);
+
+        // 결과 페이지 — 모달 골격은 .gcl-modal 이 준다(함정 17). 구성 알약·구간 열·조각 원문 선택
+        assertTrue(anHtml.contains("id=\"gclCombineModal\"") && anHtml.contains("class=\"modal-ov gcl-modal\""),
+                "이어붙이기 모달이 골격 없는 민짜로 렌더된다(함정 17)");
+        assertTrue(anHtml.contains("id=\"gclPartsItem\"") && anHtml.contains("id=\"gclSegPanel\"") && anHtml.contains("id=\"gclSegList\""),
+                "구성 알약·구간 패널이 없다");
+        assertTrue(anHtml.contains("class=\"gcl-col-seg sortable\"") && anHtml.contains("id=\"gclRawSeg\""), "구간 열·조각 원문 선택");
+        assertTrue(an.contains("function renderSegments") && an.contains("tr.setAttribute('data-seg'"), "구간 렌더·행 속성");
+        // detach 표라 tbody 를 직접 숨기면 다른 페이지 행이 걸러지지 않는다 — 필터는 술어에만
+        assertTrue(an.contains("if (seg != null && tr.getAttribute('data-seg') !== String(seg)) return false;"),
+                "구간 필터가 applyFilter 술어에 없다");
+        assertFalse(css.replaceAll("(?s)/\\*.*?\\*/", "").contains("border-left"),
+                "이 페이지 CSS 에 좌측 색 띠가 생겼다(제거 규약 — 주석 제외)");
+        assertTrue(css.contains(".gcl-seg-panel {") && css.contains(".gcl-combine-box {"), "구성 패널·모달 CSS");
+
+        // 목록 페이지 — 다중 업로드 + 호스트네임 필수 + 인스턴스(선택)
+        assertTrue(idxHtml.contains("id=\"gcFileInput\" multiple"), "업로드 입력이 다중 선택이 아니다");
+        // 로그 기간은 시작/끝 두 줄 — 한 줄이면 열 폭을 넘겨 뒤 열을 밀어낸다
+        assertTrue(idxHtml.contains("class=\"hi-range\"") && idxHtml.contains("class=\"hi-time hi-range-end\""),
+                "로그 기간이 두 줄이 아니다");
+        assertTrue(css.contains(".hi-range { display: inline-flex; flex-direction: column;"), "두 줄 배치 CSS 가 없다");
+        assertTrue(idxHtml.contains("id=\"gcInstanceName\"") && idxHtml.contains("호스트네임 <span class=\"required-badge\">필수</span>"),
+                "호스트네임 필수 표시·인스턴스 입력이 없다");
+        assertTrue(idx.contains("function addFiles") && idx.contains("_files.push(f)"), "다중 파일 상태");
+        assertTrue(idx.contains("if (dup >= 0) _files[dup] = f;"), "같은 이름을 건너뛰면 고친 파일 대신 옛 내용이 올라간다");
+
+        // 선택 모드 — id 하나라도 빠지면 첫 클릭에서 TypeError 로 죽는다(select-mode.js 는 가드가 없다)
+        for (String id : new String[] { "selectModeBtn", "selectModeBtnLabel", "selectActionBar", "saCount", "saDelBtn", "allCheck" }) {
+            assertTrue(idxHtml.contains("id=\"" + id + "\""), "select-mode.js 고정 id 누락: " + id);
+        }
+        assertTrue(idxHtml.contains("class=\"row-check\""), ".row-check 가 없다");
+        int sm = idxHtml.indexOf("/js/select-mode.js"), page = idxHtml.indexOf("/js/gc-log-index.js");
+        assertTrue(sm > 0 && sm < page, "select-mode.js 가 페이지 스크립트보다 늦게 로드된다");
+
+        // 분석 시작 확인 모달 — 호스트네임이 없으면 받아서 저장한 뒤 진행한다
+        assertTrue(ac.contains("function loadOrigin") && ac.contains("'/api/gc-log/' + encodeURIComponent(filename) + '/match'"),
+                "GC 로그 출처 조회 배선이 없다");
+        assertTrue(ac.contains("els.ok.disabled = need;"), "호스트네임 없이도 시작 버튼이 열려 있다");
+        assertTrue(ac.contains("saveOriginThen"), "입력한 출처를 저장하지 않는다");
+
+        // 이어 붙인 분석을 실제 모델로 렌더 — 빈 모델 스모크로는 '구성' 알약이 조건부라 드러나지 않는다(함정 59 계열)
+        GcLogAnalysisEntity combined = entity("gc.log", "SUCCESS", "was1", null, "none");
+        combined.setAnalysisName("was1_container1_20260919");
+        combined.setMemberCount(3);
+        combined.setMembersBytes(3L * 56_669L);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("filename", "gc.log");
+        m.put("entity", combined);
+        m.put("fileExists", true);
+        m.put("status", "SUCCESS");
+        m.put("result", null);
+        m.put("resultJson", "null");
+        m.put("candidates", List.of());
+        m.put("instance", com.heapdump.analyzer.service.GcLogInstanceService.view(null, null, null));
+        m.put("members", List.of("gc.log.1", "gc.log.2", "gc.log"));
+        m.put("missingMembers", List.of("gc.log.2"));
+        String h = render("gc-log/analyze", m).replaceAll("\\s+", " ");
+        assertTrue(h.trim().endsWith("</html>"), "이어 붙인 분석 렌더 미완");
+        assertTrue(h.contains("was1_container1_20260919"), "제목이 분석명이 아니다");
+        assertTrue(h.contains("3개 파일"), "구성 알약에 파일 수가 없다");
+        assertTrue(h.contains("MB (합계)"), "크기가 구성 합계로 보이지 않는다");
+        assertTrue(h.contains("gc.log.2") && h.contains("구성 파일이 없습니다"),
+                "사라진 구성 파일을 알리지 않는다 — 재분석이 막히는 이유를 화면에서 알 수 없다");
+        assertTrue(h.contains("id=\"gclSegList\""), "구성 목록이 없다");
     }
 
     @Test

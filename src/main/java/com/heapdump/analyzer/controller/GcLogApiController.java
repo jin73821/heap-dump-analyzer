@@ -27,6 +27,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.File;
 import java.io.IOException;
 import java.security.Principal;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -71,11 +72,18 @@ public class GcLogApiController {
         return ResponseEntity.badRequest().body(err("BAD_REQUEST", e.getMessage()));
     }
 
+    /** 호스트네임 없이 분석을 시작하려 했다 — 화면이 입력 칸을 펼칠 수 있게 전용 코드로 내린다. */
+    @ExceptionHandler(GcLogAnalyzerService.MissingHostnameException.class)
+    public ResponseEntity<Map<String, Object>> noHostname(GcLogAnalyzerService.MissingHostnameException e) {
+        return ResponseEntity.badRequest().body(err("NO_HOSTNAME", e.getMessage()));
+    }
+
     // ── 업로드 ──────────────────────────────────────────────────
 
     @PostMapping("/api/gc-log/upload")
     public ResponseEntity<Map<String, Object>> upload(@RequestParam("gcLogFile") MultipartFile file,
                                                       @RequestParam(value = "serverName", required = false) String serverName,
+                                                      @RequestParam(value = "instanceName", required = false) String instanceName,
                                                       Principal principal) {
         if (file == null || file.isEmpty()) return ResponseEntity.badRequest().body(err("EMPTY", "GC 로그 파일이 필요합니다."));
         String safe = service.validateGcLogFilename(file.getOriginalFilename());
@@ -95,7 +103,7 @@ public class GcLogApiController {
                 return ResponseEntity.badRequest().body(err("NOT_GC_LOG",
                         "GC 로그 형식을 인식하지 못했습니다. JDK 9+ 통합 로깅(-Xlog:gc*) 또는 JDK 8 이하 -XX:+PrintGCDetails 출력만 지원합니다."));
             }
-            GcLogAnalysisEntity e = service.registerUploaded(safe, dest.length(), who(principal), serverName);
+            GcLogAnalysisEntity e = service.registerUploaded(safe, dest.length(), who(principal), serverName, instanceName);
             logger.info("[GcLog] action=upload file={} size={} format={} by={}", safe, dest.length(), fmt, who(principal));
             Map<String, Object> ok = new LinkedHashMap<>();
             ok.put("success", true);
@@ -103,6 +111,8 @@ public class GcLogApiController {
             ok.put("size", dest.length());
             ok.put("format", fmt.name());
             ok.put("matched", e.getMatchedDumpFilename());
+            ok.put("analysisName", e.getAnalysisName());
+            ok.put("analysisDate", e.getAnalysisDate() == null ? null : e.getAnalysisDate().toString());
             return ResponseEntity.ok(ok);
         } catch (IOException e) {
             logger.error("[GcLog] 업로드 I/O 실패 file={} by={} — {}", safe, who(principal), e.getMessage());
@@ -231,6 +241,7 @@ public class GcLogApiController {
                 safe, before, e.getServerName(), beforeMatch, e.getMatchedDumpFilename(), who(principal));
         Map<String, Object> ok = matchView(e);
         ok.put("hostname", e.getServerName());
+        ok.put("analysisName", e.getAnalysisName());
         return ResponseEntity.ok(ok);
     }
 
@@ -248,11 +259,86 @@ public class GcLogApiController {
         Object iv = body.get("instance");
         String before = e.getInstanceName();
         e = instanceService.updateManual(e, iv == null ? null : iv.toString());
-        logger.info("[GcLog] action=instance file={} instance='{}'->'{}' by={}", safe, before, e.getInstanceName(), who(principal));
+        service.renameAfterInstanceChange(e);   // 분석명이 인스턴스명을 담는다(같은 객체를 고친다)
+        logger.info("[GcLog] action=instance file={} instance='{}'->'{}' name={} by={}",
+                safe, before, e.getInstanceName(), e.getAnalysisName(), who(principal));
         Map<String, Object> ok = new LinkedHashMap<>();
         ok.put("success", true);
         ok.put("instance", instanceService.viewOf(e));
+        ok.put("analysisName", e.getAnalysisName());
         return ResponseEntity.ok(ok);
+    }
+
+    // ── 이어 붙이기 (2026-09-20) ────────────────────────────────
+
+    /**
+     * 회전 로그를 이어 붙여 다시 분석한다 — body {@code {filenames:[...]}}(대표는 없어도 자동 포함).
+     * 빈 목록이면 구성을 해제하고 대표 단독으로 다시 분석한다.
+     */
+    @PostMapping("/api/gc-log/{filename:.+}/combine")
+    public ResponseEntity<Map<String, Object>> combine(@PathVariable String filename,
+                                                       @RequestBody(required = false) Map<String, Object> body,
+                                                       Principal principal) {
+        String safe = service.validateGcLogFilename(filename);
+        if (service.find(safe).isEmpty()) return ResponseEntity.status(404).body(err("NOT_FOUND", "GC 로그 이력이 없습니다: " + safe));
+        List<String> names = filenames(body);
+        service.submitCombined(safe, names, who(principal));
+        GcLogAnalysisEntity e = service.find(safe).orElseThrow();
+        Map<String, Object> ok = new LinkedHashMap<>();
+        ok.put("success", true);
+        ok.put("filename", safe);
+        ok.put("status", e.getStatus());
+        ok.put("memberCount", e.getMemberCount());
+        ok.put("analysisName", e.getAnalysisName());
+        return ResponseEntity.ok(ok);
+    }
+
+    /** 이어 붙이기 미리보기 — 순서와 경고만 돌려주고 분석은 시작하지 않는다. */
+    @PostMapping("/api/gc-log/{filename:.+}/combine/preview")
+    public ResponseEntity<Map<String, Object>> combinePreview(@PathVariable String filename,
+                                                              @RequestBody(required = false) Map<String, Object> body) {
+        String safe = service.validateGcLogFilename(filename);
+        if (service.find(safe).isEmpty()) return ResponseEntity.status(404).body(err("NOT_FOUND", "GC 로그 이력이 없습니다: " + safe));
+        GcLogAnalyzerService.CombinePlan plan = service.planCombine(safe, filenames(body));
+        List<Map<String, Object>> order = new ArrayList<>();
+        for (GcLogAnalyzerService.MemberRef ref : plan.ordered()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("filename", ref.filename());
+            m.put("size", ref.size());
+            order.add(m);
+        }
+        Map<String, Object> ok = new LinkedHashMap<>();
+        ok.put("success", true);
+        ok.put("order", order);
+        ok.put("warnings", plan.warnings());
+        ok.put("totalBytes", plan.totalBytes());
+        ok.put("orderBasis", plan.orderBasis());
+        return ResponseEntity.ok(ok);
+    }
+
+    /** 이어 붙일 후보 — 같은 회전 계열·서버·일자면 {@code suggested} 가 true 로 온다. */
+    @GetMapping("/api/gc-log/{filename:.+}/combine-options")
+    public ResponseEntity<Map<String, Object>> combineOptions(@PathVariable String filename,
+                                                              @RequestParam(value = "q", required = false) String q) {
+        String safe = service.validateGcLogFilename(filename);
+        GcLogAnalysisEntity e = service.find(safe).orElse(null);
+        if (e == null) return ResponseEntity.status(404).body(err("NOT_FOUND", "GC 로그 이력이 없습니다: " + safe));
+        Map<String, Object> ok = new LinkedHashMap<>();
+        ok.put("success", true);
+        ok.put("options", service.combineOptions(e, q, 200));
+        ok.put("members", service.parseMembers(e.getMemberFiles()).stream().map(GcLogAnalyzerService.MemberRef::filename).toList());
+        ok.put("maxMembers", GcLogAnalyzerService.MAX_MEMBERS);
+        return ResponseEntity.ok(ok);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> filenames(Map<String, Object> body) {
+        Object v = body == null ? null : body.get("filenames");
+        if (v == null) return List.of();
+        if (!(v instanceof List<?> raw)) throw new IllegalArgumentException("filenames 는 배열이어야 합니다.");
+        List<String> out = new ArrayList<>();
+        for (Object o : raw) if (o != null) out.add(String.valueOf(o));
+        return out;
     }
 
     // ── 매칭 ────────────────────────────────────────────────────

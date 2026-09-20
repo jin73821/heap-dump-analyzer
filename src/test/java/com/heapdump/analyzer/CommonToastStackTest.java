@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -72,10 +74,18 @@ class CommonToastStackTest {
     @DisplayName("common.js 를 로드하는 모든 템플릿의 캐시 키가 같다")
     void cacheKeysAreInSync() throws IOException {
         // 캐시 키가 갈라지면 한 페이지만 옛 common.js 를 받아 겹침이 남는다.
+        // 값 자체는 고정하지 않는다 — 리터럴로 박아 두면 common.js 를 고칠 때마다 이 테스트가 함께 틀어진다.
         String banner = resource("/templates/fragments/banner.html");
         String memo = resource("/templates/account-memo.html");
-        String key = "/js/common.js?v=2026-09-09";
-        assertTrue(banner.contains(key), "banner.html 의 common.js 캐시 키가 갱신되지 않았다");
-        assertTrue(memo.contains(key), "account-memo.html 의 common.js 캐시 키가 갱신되지 않았다");
+        String key = cacheKey(banner);
+        assertTrue(key != null && !key.isEmpty(), "banner.html 이 common.js 를 캐시 키 없이 싣는다");
+        assertTrue(memo.contains("/js/common.js?v=" + key),
+                "account-memo.html 의 common.js 캐시 키가 banner.html(" + key + ") 과 다르다");
+    }
+
+    /** {@code /js/common.js?v=…} 의 버전 값. 없으면 null. */
+    private static String cacheKey(String html) {
+        Matcher m = Pattern.compile("/js/common\\.js\\?v=([0-9A-Za-z.-]+)").matcher(html);
+        return m.find() ? m.group(1) : null;
     }
 }

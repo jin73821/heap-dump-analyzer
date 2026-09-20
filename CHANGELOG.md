@@ -1,5 +1,86 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-20] GC 로그 이어붙여 분석(회전 로그 병합) + 분석명·출처 입력 체계 (v2.5.6)
+
+**버전:** 2.5.4 → **2.5.6** (`pom.xml` + UI 표기 3곳 `fragments/banner.html`·`index.html`·`progress.html`. 쉘 스크립트는 버전 비의존 — `env.sh` 가 `target/heap-analyzer-*.jar` 최신본을 자동 탐색한다)
+
+**요청:** GC 로그는 `gc.log.0`, `gc.log.1` … 순으로 생성된다. `gc.log` 만으로 부족하면 추가 로그를 붙여 분석 range 를 넓힐 것. 더해서 — 원격 전송본은 호스트네임 자동 입력, 수동 업로드는 분석 시작 전 호스트네임(필수)·인스턴스명(선택) 입력, 분석명은 `호스트네임_인스턴스명_일자` 형태이고 일자가 다르면 분석 건수가 분리될 것.
+
+### 왜 필요했나
+회전 주기만큼 구간이 짧으면 `MIN_TREND_SPAN_SEC`(600초) 미만에서 **누수 추세를 아예 계산하지 않고**, `FULL_GC_INTERVAL_SHRINKING`·`LEAK_TREND` 같은 장기 판정이 근거 부족으로 빠지며, 덤프 자동 매칭도 덤프 시각이 범위 밖이면 점수를 못 받는다.
+
+### 설계의 전제를 바꾼 실측
+이 서버 `logs/` 의 회전본 순서는 **`gc.log.0`(9/19 22:18) → `.3`(22:57) → `.4`(23:09) → `.1`(23:23) → `.2`(9/20 10:56) → `gc.log`(현재)** 였다 — JDK 9+ 는 아카이브 슬롯을 돌려 쓰므로 **이름순이 시간순이 아니다**. 게다가 6개 전부 `gc,init` 로 시작해 `gc,heap,exit` 로 끝난다(= 회전이 곧 재기동). 그래서 ① 정렬은 **로그 안의 첫 시각** 기준이고 ② 여러 JVM 실행이 섞인 입력이 예외가 아니라 기본이며 ③ 실행이 여러 개인 것은 경고가 아니라 **안내(Info)** 다.
+
+### 엔진 (`parser/gclog/`)
+- `GcLogEngine.analyze(List<GcLogSource>, …)` 오버로드 신설(기존 단일 입력 시그니처 유지). 조각마다 gz 판정·형식 sniff·**파서 교체**, 줄 번호·이벤트 예산·`seq` 는 전역.
+- `GcLogResult` `SCHEMA=2` + `segments`(조각별 줄 범위·시각·실행 번호·이벤트 수·원문 30줄) + `Meta.xBasis/spanSec/coveredSec/gapSec/runCount/gapUnknown/xApprox` + `EventRow.seg`. ⚠ **단일 파일이면 `segments==null` 이고 결과 JSON 이 종전과 바이트 단위로 같다**(`= new` 금지 규약, 함정 58 계열).
+- 파서 `(sink, maxEvents, seqBase)` 생성자 + `seqEnd()` — 기존 2-인자는 `seqBase=0` 위임이라 파서 테스트 22건 무수정.
+- 집계기: 조각 경계에서 실행 판정(uptime 역행 > 0.5초) → 할당률·10분 창·연속 카운터 리셋, x 기준 전환(절대 시각 우선), `durationSec` = **커버 구간의 합**, 누수 추세는 **가장 긴 실행 + per-run 워밍업 제외**, 이상 이벤트 표는 **조각별 쿼터**.
+- 신규 소견 `MULTI_RUN_SEGMENTS`(Info) · `SEGMENT_GAP`(Info) · `SEGMENT_OVERLAP`(Medium) · `MIXED_SOURCES`(Medium), `LOG_TRUNCATED_LIMIT` 은 **어느 파일에서 멈췄는지** 밝힌다.
+
+### 저장·서비스·API
+- `gc_log_analysis` 컬럼 8종 추가(`member_files`·`member_count`·`members_bytes`·`part_of`·`match_window_start/end`·`analysis_name`·`analysis_date`, `ddl-auto=update` 로 자동 생성 — 운영 DB 확인 완료).
+- `GcLogAnalyzerService`: `peek`/`orderMembers`(순수)·`planCombine`·`submitCombined`·`clearCombination`·`combineOptions`·`refreshAnalysisName`·`memberFilesOf`, `forgetAnalysis` 에 구성 정리(양방향) 추가, `fallbackEndEpochSec` 는 **마지막 멤버** mtime, 진행률 분모는 멤버 크기 합.
+- `GcLogNameService`(신설, 순수 static) — `호스트_인스턴스_일자`, 여러 날이면 `20260919-0920`, 중복은 `_2`.
+- `POST /api/gc-log/{fn}/combine`(빈 배열 = 해제 + 단독 재분석) · `POST …/combine/preview` · `GET …/combine-options` · `upload` 에 `instanceName`. 감사 로그 `[GcLog] action=combine file=… members=… order=[…] basis=… name=… by=…`.
+- **호스트네임 필수** — 초크포인트는 `requireHostname` 하나(`MissingHostnameException` → 400 `NO_HOSTNAME`). 전송본은 서버명 + `jvm_info` 마커(`WasInstanceName.resolve`)로 인스턴스까지 자동.
+- 매칭 시간창 분리 — `logFacts()` 가 `match_window_*`(대표 구간)를 쓴다. 범위가 넓어져도 자동 연결이 `ambiguous` 로 풀리지 않는다.
+
+### 화면
+- **결과 페이지**: 제목이 분석명, `구성 N개 파일` 알약 + 접이식 구간 패널(파일·실행·기간·이벤트 수·줄 범위·`이 구간만 보기`·파일 없음 배지), `로그 이어붙이기` 모달(후보 자동 체크 + **서버가 정한 순서 미리보기** + 경고), 이벤트 표 `구간` 열·구간 필터(detach 표라 술어에만), 원문 샘플 조각 선택, x축 라벨 `로그 시작 후 경과`.
+- **목록 페이지**: 다중 업로드(칩·순차 XHR·합산 진행률), 호스트네임 필수·인스턴스 입력, `select-mode.js` 도입(`이어붙여 분석`·선택 삭제), 주 라벨이 분석명(파일명은 보조), 구성 파일 기본 접기 + `구성 파일 포함` 토글(`localStorage gcLogShowMembers`).
+- **분석 시작 확인 모달**: GC 로그인데 호스트네임이 없으면 입력 칸을 펼치고 **채우기 전엔 시작 버튼을 잠근다**(대시보드·Files 업로드 큐 경로 대응).
+- **현황판**: 구성 파일 행은 건너뛴다(미분석 건수가 회전본 수만큼 부풀지 않게).
+
+**검증:** `mvn test` 930건(883 → 930). 실측 회전본 6개를 잘라 픽스처(`src/test/resources/gclog/rotated/*`, gz 1개 포함)로 고정 — 정렬·`runCount=6`·공백 52,258초·누수 오탐 부재를 단언한다. 운영 DB 에서 새 컬럼 8종 생성 확인. 헤드리스 Chrome 128 로 실제 렌더 페이지 구동: 결과 페이지(구간 6·실행 배지 6·이벤트 표 배지 50·원문 선택 7옵션·구간 필터 10행·모달 640px·미리보기 3단계+경고 1) / 목록 페이지(구성 파일 접힘 2/3 · 토글 시 3 · 파일 2개 칩 · 호스트네임 전 `호스트네임을 입력하세요`·잠김 → 입력 후 해제 · 선택 모드 바·카운트 2·이어붙이기 모달). ⚠ 이 헤드리스 검증이 **구성 파일 접기 블록이 통째로 누락된 실제 결함**을 잡았다(스크립트 적용 실패가 조용히 지나간 것).
+
+**회귀 방어:** `GcLogMultiSourceEngineTest`(10 — **단일 입력 JSON 동일성**·전역 예산/seq·경계 파서 리셋·GC(n) 충돌 격리·gz 혼합·형식 불일치 거부·헤더 없는 조각 상속·줄 범위·상한 파일명) · `GcLogSegmentAnalyzerTest`(11 — 실행 분리·커버 합·분모·**워밍업 오탐 방지**·진짜 누수 검출·10분 창·할당률·겹침·출처 혼합·stacked·쿼터) · `GcLogRotatedRealFixtureTest`(4, 실측) · `GcLogCombineServiceTest`(11) · `GcLogCombineEndpointTest`(5) · `GcLogNameServiceTest`(5) · `GcLogTemplateSmokeTest` +1(이어붙이기 UI 계약). 기존 테스트 중 **`GcLogAnalyzerServiceRunTest`(호스트네임 필수화로 픽스처에 서버명 추가)**·`GcLogTemplateSmokeTest.jsWiring`(CTA 5상태) 두 곳만 계약 변경에 맞춰 갱신했다.
+
+**CLAUDE.md 함정 60~66 추가** — 회전 번호 ≠ 시간순 / uptime 역행·x 기준 전환·per-run 워밍업 / 파서·예산·seq·조각 쿼터 / 대표 행과 `file_size`·`part_of`·`forgetAnalysis` / 매칭 시간창 분리 / `select-mode.js` id 계약 / 분석명은 표시용·일자는 분석 후 확정.
+
+**알아 둘 한계:** 회전본이 곧 별개 JVM 실행이면 이어붙이기는 *시간 범위*와 *이벤트 표·차트*를 넓혀 주지만 **누수 추세는 가장 긴 실행 안에서만** 계산된다(재기동으로 힙이 초기화되므로 그게 정답이다). 추세 구간이 실제로 넓어지는 것은 한 실행이 크기 기준으로 회전된 경우다.
+
+## [2026-09-20] 모달·확인 연출 + 화면 글꼴 단일 출처 (v2.5.6)
+
+**요청:** ① 개인 메모장 `변경 이력` 모달 표시에 애니메이션 ② 현황판 알람·알람 벨 말풍선의 `확인`·`확인 취소` 에 애니메이션 ③ 현황판에서 GC 로그·코어 파일을 열면 글꼴이 달라지는 현상 조치.
+
+### ① 메모 변경 이력 창 열기·닫기 연출 (`static/js/memo.js`, 캐시 키 `?v=2026-09-20`)
+- 열기 = 오버레이 페이드(0.16s) + 창 97% → 100% 확대·10px 이동(0.2s), 닫기 = 0.14s 페이드·축소.
+- ⚠ **감추기는 연출이 끝난 뒤에** — `account.html`·`account-memo.html` 은 `[hidden]{display:none!important}` 이라 `hidden` 을 먼저 붙이면 사라지는 모습이 통째로 잘린다. 사라지는 동안에는 클릭을 받지 않는다(`pointer-events:none`).
+- ⚠ 닫히는 0.14s 사이에 다시 열 수 있다 — 세대 번호(`motionSeq`)로 뒤늦게 도착한 '감추기'가 새 창을 지우지 않게 막는다.
+- 여는 경로는 `show()` 한 곳으로 모았다(`hidden` 직접 조작 금지 — 연출을 건너뛴 경로가 생긴다).
+
+### ② 현황판·말풍선의 확인·확인 취소 연출
+**현황판** (`templates/alerts.html`)
+- **확인** — `미확인` 보기에서는 행이 옆으로 18px 빠지며 높이·여백을 접고(0.22s), `전체` 보기에서는 자리에 남아 배경·테두리가 '확인됨'으로 옮겨 간다(0.22s). 미확인 건수 배지는 응답 즉시 갱신.
+- **확인 취소** — 행이 사라지지 않아 무엇이 바뀌었는지 보이지 않으므로, 되살아난 행을 0.5s 동안 붉은 링으로 강조한다.
+- **확인 모달** — 오버레이 페이드 + 상자 등장(`modalIn`), 닫을 때는 `.closing` 으로 0.14s 사라진 뒤 `.open` 을 뗀다(먼저 떼면 `display:none` 이라 잘린다). 열고 닫는 세대 번호로 닫히는 중 재오픈을 막는다.
+- ⚠ **확인 직후의 `location.reload()` 를 걷어냈다** — 새로고침이 연출을 통째로 지우고, 확인한 행이 빠지는 모습도 보이지 않았다. 대신 **서버가 확인자·시각을 돌려주고** 화면은 그 행만 고쳐 그린다(아래).
+
+**서버** (`AlertBoardService`·`AlertBoardController`)
+- `POST /api/alerts/ack` 응답에 `ack: {by, atLabel}`, `POST /api/alerts/ack-all` 응답에 `acks: {key: {by, atLabel}}` 추가(`ackInfo`/`ackInfoAll`).
+- ⚠ **확인자·시각은 서버 값이 진실이다** — 이미 다른 사용자가 확인해 둔 알람이면 그 사용자의 이름·시각이 온다. 누른 사람 이름으로 그리면 거짓이 되므로 화면은 응답 값만 쓴다(종전에 새로고침하던 이유가 이것이었다).
+
+**말풍선** (`static/js/alert-bell.js`, 캐시 키 `?v=2026-09-20`)
+- 확인 창(`askAck`)이 닫힐 때도 0.13s 페이드·축소 후 뗀다 — 열기만 연출하면 취소가 화면을 툭 끊는다. 사라지는 동안 클릭 차단, 상태(`cf`)는 즉시 넘겨 말풍선의 Esc·바깥 클릭이 바로 제 몫을 한다.
+
+**공통** (`static/js/common.js`, 캐시 키 `?v=2026-09-20`)
+- `Common.reduceMotion()` · `Common.afterMotion(el, event, 상한ms, done, prop)` 신설 — 판정과 끝 이벤트 대기를 한 곳에 뒀다(말풍선에 있던 사본을 옮기고 메모·현황판이 같이 쓴다). 자식에서 올라온 이벤트·다른 속성은 무시하고, **숨은 탭처럼 끝 이벤트가 오지 않아도 시간 상한 뒤에는 반드시 진행**한다. OS '동작 줄이기'면 CSS 로 끄고 JS 도 기다리지 않는다.
+
+### ③ 화면 글꼴 단일 출처 (`static/css/common.css`·`core-dump.css`, 캐시 키 `?v=2026-09-20`)
+- **증상:** 현황판·대시보드와 코어 파일·GC 로그 페이지의 **한글만** 서로 다른 글꼴로 그려졌다.
+- **원인:** `core-dump.css` 가 자기 `:root` 에 `--font-sans` 를 다시 선언했는데 목록이 달랐다 — common.css 는 `'Segoe UI','Trebuchet MS',sans-serif` 인데 여기에는 사이에 `'Malgun Gothic','Nanum Gothic Coding'` 이 끼어 있었다. 앞 두 글꼴에는 한글이 없어 **한글만** 다음 후보로 넘어가는데, Malgun Gothic 이 없는 클라이언트(리눅스·macOS)에서는 번들 웹폰트인 **Nanum Gothic Coding(코딩용)** 이 당첨된다. 코어덤프·GC 로그는 `core-dump.css` 를 싣는 유일한 페이지들이라 그 두 화면의 한글만 튀었다.
+- **조치:** `--font-sans`/`--font-mono` 를 **common.css `:root` 한 곳**에 두고 body 가 변수를 쓰게 했다. `core-dump.css` 의 재선언은 제거(두 파일은 항상 common.css 를 먼저 싣는다). 새 페이지·CSS 는 `var(--font-sans)`/`var(--font-mono)` 를 쓸 것. analyze 페이지(`analyze.css`)는 "모든 텍스트를 sans-serif 로 통일" 이라는 별도 의도가 명시돼 있어 건드리지 않았다.
+
+**검증:** 실제 렌더 + 헤드리스 Chrome 128.
+- 현황판(엔진이 렌더한 실제 마크업 + API 모의): 확인 → 모달 `ovFadeIn`/`modalIn` → 확인 처리 40ms 시점에 행 `leaving`·**아직 안 감춰짐**·모달 `closing`·배지 2→1 → 540ms 뒤 행 감춰짐·`data-acked=true`·`ACK: alice`(응답 값) / `전체` 보기에서 확인 취소 → `returning`·배지 1→2 → 840ms 뒤 강조 해제 / Esc → `closing` → 430ms 뒤 `.open` 제거.
+- 메모 이력 창: 열기 20ms `hv-in`·`memo-hv-fade`/`memo-hv-in` → 420ms 정착 / 닫기 30ms `hv-out`·**`display:flex` 유지** → 430ms `hidden` / 닫는 도중 재오픈 → 520ms 뒤에도 열린 채.
+- 말풍선: 확인 창 `abCfFade` → Esc 30ms `ab-cf-out`·`pointer-events:none` → 430ms 제거 / 확인 처리 40ms 항목 `ab-leaving`·배지 2→1 → 540ms 목록 2→1건.
+- 글꼴: `common.css` 단독 / `+core-dump.css` / `+gc-log.css` 세 조합의 `getComputedStyle(body).fontFamily` 가 모두 `"Segoe UI", "Trebuchet MS", sans-serif` 로 동일(조치 전에는 두 번째·세 번째가 달랐다).
+
+**회귀 방어:** `AlertBoardTemplateSmokeTest.boardAckAnimations`(1 — 새로고침 부재·응답 값 사용·접힘 대기 속성·되살아난 행 강조·모달 닫기 연출·말풍선 확인 창) · `AlertEndpointTest.ackReturnsAckInfo`(1 — 이미 확인된 알람은 **다른 사용자의** 이름·시각을 돌려준다) · `ModalMotionTest`(2 — 모션 헬퍼 단일 출처 · 메모 이력 창 열기/닫기 순서) · `PageFontSourceTest`(2 — 글꼴 재선언 금지 · core-dump.css 를 싣는 페이지는 common.css 를 먼저 싣는다). `CommonToastStackTest.cacheKeysAreInSync` 는 캐시 키 리터럴 고정을 버리고 **두 템플릿이 같은 키인지**만 본다(버전을 올릴 때마다 함께 틀어졌다). 877 → **883건**.
+
 ## [2026-09-19] 알람 확인(ACK) 확인 모달 — 현황판 개별·전체 확인, 대시보드 말풍선 (v2.5.4)
 
 **요청:** 현황판 최우선 알람 카드의 `전체 확인`·`확인` 버튼, 대시보드 알람 말풍선의 `확인` 버튼을 누르면 확인 모달을 표시.

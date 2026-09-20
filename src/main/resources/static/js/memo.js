@@ -19,6 +19,11 @@
     var TAG = '[Memo]';
     function ignored(where, e) { if (window.Common) window.Common.logIgnored(TAG + ' ' + where, e); }
 
+    /* 모션 헬퍼는 common.js 가 단일 출처(Common.reduceMotion/afterMotion). common.js 가 없으면
+       연출 없이 즉시 처리한다 — 기다리다 창이 열리지 않는 쪽으로 실패하면 안 된다. */
+    function motionOff() { return !window.Common || !window.Common.afterMotion || window.Common.reduceMotion(); }
+    function afterMotion(el, evName, capMs, done, prop) { window.Common.afterMotion(el, evName, capMs, done, prop); }
+
     /** 저장 한도 — UserService.MEMO_MAX_BYTES 미러 */
     Memo.MAX = 10 * 1024 * 1024;
 
@@ -701,6 +706,19 @@
         var css = ''
             + '.memo-hv-ov{position:fixed;inset:0;background:rgba(17,24,39,.55);z-index:1200;'
             + 'display:flex;align-items:center;justify-content:center;padding:20px}'
+            /* 열기·닫기 연출 — 창이 툭 나타났다 툭 사라지지 않게. 닫을 때는 애니메이션이 끝난 뒤에
+               hidden 을 붙인다(먼저 붙이면 [hidden]{display:none!important} 에 걸려 연출이 통째로 잘린다).
+               말풍선(alert-bell.js)·현황판 확인 모달과 같은 언어를 쓴다. 2026-09-20 */
+            + '.memo-hv-ov.hv-in{animation:memo-hv-fade .16s ease both}'
+            + '.memo-hv-ov.hv-in .memo-hv-box{animation:memo-hv-in .2s cubic-bezier(.2,.8,.2,1) both}'
+            + '.memo-hv-ov.hv-out{animation:memo-hv-fade-out .14s ease-in both;pointer-events:none}'
+            + '.memo-hv-ov.hv-out .memo-hv-box{animation:memo-hv-out .14s ease-in both}'
+            + '@keyframes memo-hv-fade{from{opacity:0}to{opacity:1}}'
+            + '@keyframes memo-hv-fade-out{to{opacity:0}}'
+            + '@keyframes memo-hv-in{from{opacity:0;transform:translateY(-10px) scale(.97)}to{opacity:1;transform:none}}'
+            + '@keyframes memo-hv-out{to{opacity:0;transform:translateY(-6px) scale(.985)}}'
+            + '@media(prefers-reduced-motion:reduce){.memo-hv-ov.hv-in,.memo-hv-ov.hv-out,'
+            + '.memo-hv-ov.hv-in .memo-hv-box,.memo-hv-ov.hv-out .memo-hv-box{animation:none}}'
             /* 높이는 max-height 가 아니라 height 로 고정 — 내용 높이를 따르면 '불러오는 중' 한 줄과 본문을
                오갈 때마다 창이 줄었다 늘어난다(실측 800→376→800px, 16ms 안에). 2026-09-19 */
             + '.memo-hv-box{background:#fff;border-radius:12px;width:min(1040px,100%);height:min(88vh,800px);'
@@ -874,12 +892,33 @@
         api.listBusy = createBusy(ov.querySelector('.memo-hv-main'), '변경 이력을 불러오는 중…');
         api.bodyBusy = createBusy(ov.querySelector('.memo-hv-stage'), '내용을 불러오는 중…', [api.stat, api.legend]);
 
+        /* 열고 닫는 세대 — 닫히는 도중(연출 .14s) 다시 열면 뒤늦게 도착한 '감추기'가 새 창을 지운다 */
+        var motionSeq = 0;
+
+        function show() {
+            motionSeq++;
+            ov.classList.remove('hv-out');
+            ov.hidden = false;
+            if (motionOff()) return;
+            ov.classList.add('hv-in');
+            afterMotion(ov, 'animationend', 320, function () { ov.classList.remove('hv-in'); });
+        }
+
         function close() {
             hideConfirm();
             api.listBusy.reset();
             api.bodyBusy.reset();
-            ov.hidden = true;
             document.removeEventListener('keydown', onKey);
+            if (ov.hidden) return;
+            var seq = ++motionSeq;
+            ov.classList.remove('hv-in');
+            if (motionOff()) { ov.hidden = true; return; }
+            ov.classList.add('hv-out');
+            afterMotion(ov, 'animationend', 260, function () {
+                if (seq !== motionSeq) return;   // 사라지는 사이 다시 열렸다
+                ov.classList.remove('hv-out');
+                ov.hidden = true;
+            });
         }
         function isTypingTarget(el) {
             if (!el) return false;
@@ -902,6 +941,7 @@
             }
         }
         api.close = close;
+        api.show = show;
         api.bindEsc = function () { document.addEventListener('keydown', onKey); };
 
         ov.querySelector('.memo-hv-x').addEventListener('click', close);
@@ -1213,7 +1253,7 @@
         hv.showPlaceholder('');   // 조회 중 문구는 본문이 아니라 스피너가 맡는다
         hv.renderSelected();   // 토글 가능 여부만 반영(선택 없음)
         hv.note.textContent = '\u00a0';   // 한 줄 자리 확보 — 안내가 채워질 때 목록·본문이 밀려 내려가지 않게
-        hv.ov.hidden = false;
+        hv.show();
         hv.bindEsc();
         var seq = ++hv.loadSeq;
         hv.listBusy.start();

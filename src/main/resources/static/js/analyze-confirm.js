@@ -26,6 +26,7 @@
     'use strict';
 
     function ignored(tag, e) { if (global.Common) global.Common.logIgnored('[AnalyzeConfirm] ' + tag, e); }
+    function failed(tag, e) { if (global.Common) global.Common.logError('[AnalyzeConfirm] ' + tag, e); }
 
     var KIND_LABEL = { heap: '힙 덤프', core: '코어 덤프', gclog: 'GC 로그', others: '기타(Others)' };
 
@@ -93,10 +94,25 @@
             '.ac-ov{align-items:flex-end;padding:0}' +
             '.ac-box{max-width:100%;border-radius:14px 14px 0 0;padding-bottom:calc(24px + env(safe-area-inset-bottom))}' +
             '.ac-btns button{flex:1 1 0;padding:11px 10px}}';
+        st.textContent += ORIGIN_CSS;
         document.head.appendChild(st);
     }
 
     var ov = null, els = {}, state = null, lastFocus = null, queueSeq = 0;
+
+    /** 출처 입력 블록 스타일 — 모듈이 CSS 를 스스로 주입하는 이 파일의 규약을 따른다. */
+    var ORIGIN_CSS = ''
+        + '.ac-origin{margin:12px 0 0;padding:11px 13px;border:1px solid #BFDBFE;border-radius:9px;background:#EFF6FF}'
+        + '.ac-origin[hidden]{display:none}'
+        + '.ac-origin-title{font-size:12.5px;font-weight:700;color:#1E40AF;margin-bottom:3px}'
+        + '.ac-origin-desc{font-size:11.5px;color:#475569;line-height:1.5;margin-bottom:8px}'
+        + '.ac-origin-row{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:12px;color:#374151}'
+        + '.ac-origin-row>span{flex:0 0 86px}'
+        + '.ac-origin-row input{flex:1 1 auto;min-width:0;padding:5px 9px;border:1px solid #CBD5E1;border-radius:6px;'
+        + 'font-size:12.5px;font-family:inherit;color:#111827;background:#fff}'
+        + '.ac-origin-row input:focus{outline:2px solid #93C5FD;outline-offset:1px}'
+        + '.ac-req{color:#B91C1C;font-size:10px;font-weight:700}'
+        + '.ac-opt{color:#9CA3AF;font-size:10px;font-weight:600}';
 
     function build() {
         if (ov) return;
@@ -116,6 +132,14 @@
             '    <div class="ac-row"><span class="ac-lbl">유형</span><span class="ac-val"><span class="ac-kind" data-ac="kind"></span></span></div>' +
             '    <div class="ac-row" data-ac="sizeRow"><span class="ac-lbl">크기</span><span class="ac-val mono" data-ac="size"></span></div>' +
             '    <div class="ac-row" data-ac="sourceRow"><span class="ac-lbl">출처 서버</span><span class="ac-val" data-ac="source"></span></div>' +
+            '  </div>' +
+            '  <div class="ac-origin" data-ac="origin" hidden>' +
+            '    <div class="ac-origin-title">이 GC 로그를 수집한 서버를 입력하세요</div>' +
+            '    <div class="ac-origin-desc">분석명(<b>호스트네임_인스턴스명_일자</b>)과 힙 덤프 자동 매칭의 \'같은 서버\' 신호로 씁니다.</div>' +
+            '    <label class="ac-origin-row"><span>호스트네임 <b class="ac-req">필수</b></span>' +
+            '      <input type="text" data-ac="host" maxlength="100" placeholder="예: was01" autocomplete="off"></label>' +
+            '    <label class="ac-origin-row"><span>인스턴스명 <span class="ac-opt">선택</span></span>' +
+            '      <input type="text" data-ac="inst" maxlength="100" placeholder="예: container1" autocomplete="off"></label>' +
             '  </div>' +
             '  <div class="ac-warn" data-ac="warn" role="alert"></div>' +
             '  <div class="ac-queue unknown" data-ac="queue" aria-live="polite"></div>' +
@@ -230,6 +254,8 @@
         els.ok.textContent = extWarn ? '그래도 분석 시작' : '분석 시작';
         if (kind === 'core' || kind === 'gclog') { queueSeq++; els.queue.hidden = true; }   // 별도 실행기 — MAT 대기열과 무관
         else loadQueue(opts.filename);
+        els.origin.hidden = true;
+        if (kind === 'gclog') loadOrigin(opts.filename, opts.source);
 
         lastFocus = document.activeElement;
         ov.classList.add('open');
@@ -246,9 +272,72 @@
         lastFocus = null;
     }
 
+    /**
+     * GC 로그의 출처(호스트네임) 확인 — 2026-09-20.
+     *
+     * <p>대시보드·Files 업로드 큐로 들어온 로그는 물을 자리가 없어 여기서 받는다. 비어 있으면 <b>입력 전까지
+     * 시작 버튼을 잠근다</b>(서버도 {@code NO_HOSTNAME} 으로 막지만, 막힌 이유를 여기서 바로 보여 준다).
+     * 값은 화면이 추측하지 않고 {@code /match} 응답(서버가 아는 진실)을 그대로 읽는다.
+     */
+    function loadOrigin(filename, sourceHint) {
+        if (!global.Common || !global.Common.fetchJSON) return;
+        var seq = ++queueSeq;
+        global.Common.fetchJSON('/api/gc-log/' + encodeURIComponent(filename) + '/match').then(function (d) {
+            if (seq !== queueSeq || !state || state.filename !== filename) return;
+            var host = d && d.serverName ? String(d.serverName).trim() : '';
+            if (host) { els.origin.hidden = true; return; }
+            els.origin.hidden = false;
+            els.host.value = sourceHint || '';
+            els.inst.value = (d && d.instance && d.instance.manual) ? d.instance.name : '';
+            syncOriginOk();
+            els.host.addEventListener('input', syncOriginOk);
+            els.host.focus();
+        }).catch(function (e) {
+            // 출처 조회 실패는 분석 자체를 막지 않는다 — 서버가 한 번 더 검사한다
+            ignored('GC 로그 출처 조회 실패', e);
+        });
+    }
+
+    function syncOriginOk() {
+        var need = !els.origin.hidden && !(els.host.value || '').trim();
+        els.ok.disabled = need;
+        els.ok.textContent = need ? '호스트네임을 입력하세요' : '분석 시작';
+    }
+
+    /** 입력한 출처를 저장한 뒤 이어서 진행한다. 실패하면 모달을 닫지 않고 이유를 보인다. */
+    function saveOriginThen(filename, done) {
+        var host = (els.host.value || '').trim();
+        var inst = (els.inst.value || '').trim();
+        var base = '/api/gc-log/' + encodeURIComponent(filename);
+        global.Common.fetchJSON(base + '/hostname', { method: 'POST', body: JSON.stringify({ hostname: host }) })
+            .then(function () {
+                if (!inst) return null;
+                return global.Common.fetchJSON(base + '/instance', { method: 'POST', body: JSON.stringify({ instance: inst }) });
+            })
+            .then(function () { done(); })
+            .catch(function (e) {
+                failed('GC 로그 출처 저장', e);
+                els.ok.disabled = false;
+                els.ok.textContent = '분석 시작';
+                els.warn.innerHTML = '출처를 저장하지 못했습니다. 잠시 후 다시 시도하세요.';
+                els.warn.hidden = false;
+            });
+    }
+
     function confirm() {
         if (!state) return;
         var s = state;
+        if (!els.origin.hidden) {
+            if (!(els.host.value || '').trim()) { els.host.focus(); return; }
+            els.ok.disabled = true;
+            els.ok.textContent = '저장 중…';
+            saveOriginThen(s.filename, function () { proceed(s); });
+            return;
+        }
+        proceed(s);
+    }
+
+    function proceed(s) {
         els.ok.disabled = true;              // 이동 전 이중 클릭 차단
         els.ok.textContent = '이동 중…';
         if (typeof s.onConfirm === 'function') {

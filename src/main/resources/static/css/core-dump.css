@@ -19,8 +19,8 @@
     --sp-5: 20px; --sp-6: 24px; --sp-7: 32px; --sp-8: 40px;
 
     /* 폰트 */
-    --font-sans: 'Segoe UI', 'Trebuchet MS', 'Malgun Gothic', 'Nanum Gothic Coding', sans-serif;
-    --font-mono: 'JetBrains Mono', 'D2Coding', Consolas, monospace;
+    /* --font-sans / --font-mono 는 common.css :root 가 준다(이 페이지들은 common.css 를 먼저 싣는다).
+       여기서 다시 선언하면 목록이 어긋나 같은 한글이 다른 페이지와 다른 글꼴로 그려진다 — 2026-09-20 제보로 제거. */
 
     /* radius */
     --r-sm: 6px; --r-md: 8px; --r-lg: 12px; --r-xl: 16px; --r-pill: 999px;

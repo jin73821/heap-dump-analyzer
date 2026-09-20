@@ -95,6 +95,9 @@ class GcLogAnalyzerServiceRunTest {
     }
 
     private GcLogAnalysisEntity runToEnd(GcLogAnalysisEntity e) throws Exception {
+        // 2026-09-20: 분석 시작에는 호스트네임이 필수다(분석명 호스트_인스턴스_일자 · 덤프 매칭의 '같은 서버' 신호).
+        // 이 테스트들이 보는 것은 시간 출처·요약 저장이므로 출처만 채워 준다.
+        if (e.getServerName() == null) e.setServerName("was1");
         stored.set(e);
         GcLogAnalyzerService.JobProgress p = service.submitAnalysis(e.getFilename(), "tester");
         p.future.get(20, TimeUnit.SECONDS);

@@ -268,8 +268,13 @@ public class GcLogMatchService {
             String h = cap.matched().heapDumpPath();
             hdpDir = h.endsWith("/") ? h : (h.contains(".") ? JvmHeapCapture.dirOf(h) : h);
         }
+        // ⚠ 시간창은 화면용 전체 범위(logStart/logEnd)가 아니라 **대표 파일 자신의 구간**을 쓴다.
+        // 회전 로그를 이어 붙여 범위가 13시간이 되면 그 안의 덤프가 전부 strong(서버 1 + 시간 1)이 되어
+        // ambiguous 로 퇴화하고, apply() 가 기존 자동 연결을 null 로 덮는다(함정 64). 없으면 종전대로.
+        java.time.LocalDateTime ws = log.getMatchWindowStart() != null ? log.getMatchWindowStart() : log.getLogStart();
+        java.time.LocalDateTime we = log.getMatchWindowEnd() != null ? log.getMatchWindowEnd() : log.getLogEnd();
         return new LogFacts(log.getServerId(), log.getServerName(), log.getRemotePath(),
-                toEpoch(log.getLogStart()), toEpoch(log.getLogEnd()), log.getTimeSource(), hdpDir);
+                toEpoch(ws), toEpoch(we), log.getTimeSource(), hdpDir);
     }
 
     private List<DumpFacts> candidateDumps(LogFacts lf) {

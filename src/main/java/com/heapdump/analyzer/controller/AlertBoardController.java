@@ -71,6 +71,9 @@ public class AlertBoardController {
         res.put("success", true);
         res.put("key", key);
         res.put("already", !fresh);
+        // 확인자·시각은 서버가 정한 값이 진실이다(이미 다른 사용자가 확인해 뒀을 수 있다).
+        // 화면은 이걸로 해당 행만 고쳐 그린다 — 종전처럼 페이지를 통째로 새로고침하지 않는다.
+        res.put("ack", alertBoardService.ackInfo(key));
         res.put("unackedCount", alertBoardService.unacked().size());
         return ResponseEntity.ok(res);
     }
@@ -98,6 +101,7 @@ public class AlertBoardController {
         Map<String, Object> res = new LinkedHashMap<>();
         res.put("success", true);
         res.put("acked", n);
+        res.put("acks", alertBoardService.ackInfoAll());   // 화면이 행마다 확인자·시각을 그대로 그린다
         res.put("unackedCount", alertBoardService.unacked().size());
         return ResponseEntity.ok(res);
     }

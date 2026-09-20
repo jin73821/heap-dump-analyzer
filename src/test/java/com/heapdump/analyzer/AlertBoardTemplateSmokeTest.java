@@ -217,6 +217,40 @@ class AlertBoardTemplateSmokeTest {
     }
 
     @Test
+    @DisplayName("현황판 확인·확인 취소 연출 — 빠지는 행은 접히고, 되살아난 행은 강조되며, 화면은 서버가 준 확인자·시각을 그린다")
+    void boardAckAnimations() throws IOException {
+        String tpl = resource("/templates/alerts.html");
+
+        // 확인 직후 페이지를 통째로 새로고침하면 연출이 들어설 자리가 없다(행이 빠지는 모습도 안 보인다).
+        // 대신 서버가 돌려준 확인자·시각(d.ack / d.acks)으로 그 행만 고쳐 그린다.
+        assertFalse(tpl.contains("location.reload()"), "확인 직후 페이지를 새로고침한다 — 연출이 통째로 잘린다");
+        assertTrue(tpl.contains("setCount(d.unackedCount || 0);\n                        applyAck(row, d.ack, applyFilter);"),
+                "개별 확인이 응답의 확인 정보로 행을 그리지 않는다");
+        assertTrue(tpl.contains("var acks = d.acks || {};"), "전체 확인이 행마다의 확인 정보를 쓰지 않는다");
+
+        // 목록에서 빠질 행만 접는다 — '전체' 보기에서는 자리에 남아 배경·테두리가 옮겨 간다
+        assertTrue(tpl.contains("if (filter.ack === 'unacked') {   // 곧 목록에서 빠진다"), "필터에 따른 연출 분기가 없다");
+        assertTrue(tpl.contains(".al-item.leaving {") && tpl.contains("height: 0 !important;"),
+                "빠지는 행이 접히지 않는다(높이 인라인 값을 이기려면 !important 가 필요하다)");
+        assertTrue(tpl.contains("Common.afterMotion(row, 'transitionend', 320,") && tpl.contains("'height');"),
+                "가장 오래 걸리는 속성(height)에서 끝내지 않는다 — 접힘이 잘린다");
+        assertTrue(tpl.contains(".al-item.returning") && tpl.contains("markReturned(row);"),
+                "확인 취소한 행을 강조하지 않는다 — 행이 사라지지 않아 무엇이 바뀌었는지 안 보인다");
+        assertTrue(tpl.contains(".al-item { transition: background-color"), "확인 상태 전환이 즉시 바뀐다");
+
+        // 모달: 닫을 때는 연출이 끝난 뒤에 .open 을 뗀다(먼저 떼면 display:none 이라 잘린다)
+        assertTrue(tpl.contains(".modal-ov.closing { animation: ovFadeOut"), "확인 모달 닫기 연출이 없다");
+        assertTrue(tpl.contains("cfModal.classList.add('closing');"), "확인 모달이 닫기 연출 없이 사라진다");
+        assertTrue(tpl.contains("if (seq !== cfSeq) return;"), "닫히는 사이 다시 열면 뒤늦은 감추기가 새 모달을 지운다");
+        assertTrue(tpl.contains("prefers-reduced-motion: reduce"), "동작 줄이기에서 연출을 끄지 않는다");
+
+        // 말풍선의 확인 창도 같은 언어 — 열기만 연출하면 취소가 화면을 툭 끊는다
+        String js = resource("/static/js/alert-bell.js");
+        assertTrue(js.contains(".ab-cf-ov.ab-cf-out{animation:abCfFadeOut"), "말풍선 확인 창 닫기 연출이 없다");
+        assertTrue(js.contains("afterMotion(ov, 'animationend', 220, detach);"), "확인 창을 연출이 끝난 뒤 떼지 않는다");
+    }
+
+    @Test
     @DisplayName("알림 말풍선 애니메이션 — 꼬리 기준으로 열리고, 닫을 때 사라진 뒤 떼며, 확인 항목은 접혀 빠진다. 동작 줄이기면 즉시")
     void bellAnimations() throws IOException {
         String js = resource("/static/js/alert-bell.js");

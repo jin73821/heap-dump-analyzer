@@ -6,7 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <link rel="stylesheet" href="/css/common.css?v=2026-08-12">
+    <link rel="stylesheet" href="/css/common.css?v=2026-09-20">
     <script src="/js/seg-thumb.js?v=2026-09-19"></script>
     <title>현황판 — Heap Dump Analyzer</title>
     <style>
@@ -90,6 +90,20 @@
         .al-ack-info { font-size: 11px; color: #6B7280; white-space: nowrap; }
         .al-deleted { padding: 1px 7px; border-radius: 8px; font-size: 10.5px; font-weight: 700; background: #F3F4F6; color: #6B7280; }
         .al-empty { padding: 22px 0; text-align: center; font-size: 13px; color: #6B7280; }
+        /* 확인·확인 취소 연출 (2026-09-20) — 알람이 목록에서 빠지거나 되살아나는 것을 눈으로 따라갈 수 있게.
+           말풍선(alert-bell.js)의 .ab-item 과 같은 언어다. 자리에 남는 행은 배경·테두리가 옮겨 가고,
+           빠지는 행은 높이까지 접는다 — 음수 margin 이 .al-list 의 flex gap(8px)까지 거둔다. */
+        .al-item { transition: background-color .22s ease, border-color .22s ease; }
+        .al-item.leaving { height: 0 !important; padding-top: 0; padding-bottom: 0; margin-bottom: -8px; border-width: 0;
+                           opacity: 0; transform: translateX(18px); overflow: hidden; pointer-events: none;
+                           transition: height .22s cubic-bezier(.4,0,.2,1), padding .22s cubic-bezier(.4,0,.2,1),
+                                       margin .22s cubic-bezier(.4,0,.2,1), border-width .22s, opacity .16s ease,
+                                       transform .22s ease; }
+        /* 확인 취소는 알람을 되살리는 방향이라 사라지지 않는다 — 어느 행이 돌아왔는지 잠깐 강조한다 */
+        .al-item.returning { animation: alBack .5s ease both; }
+        @keyframes alBack { from { box-shadow: 0 0 0 3px rgba(248, 113, 113, .45); }
+                            to   { box-shadow: 0 0 0 3px rgba(248, 113, 113, 0); } }
+        .al-ack-info { transition: opacity .2s ease; }
         /* 삭제된 파일 표시 — 관리자 전용 토글 (Files 페이지 'deleted 표시' 와 같은 역할) */
         .del-toggle { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #4B5563;
                       cursor: pointer; user-select: none; padding: 5px 10px; border: 1px solid #E5E7EB; border-radius: 6px; background: #fff; }
@@ -116,7 +130,21 @@
         .dom-tabs { margin-bottom: 12px; }
 
         /* 전체 확인 모달 — common.css 는 .modal-ov/.modal-box base 와 버튼 색만 준다. 골격은 페이지 몫 */
-        .modal-box { width: 90%; max-width: 400px; text-align: left; }
+        .modal-box { width: 90%; max-width: 400px; text-align: left; animation: modalIn .2s ease; }
+        /* 열기·닫기 연출 — 닫을 때는 .closing 을 붙여 연출이 끝난 뒤에 .open 을 뗀다
+           (먼저 떼면 .modal-ov 가 display:none 이라 사라지는 모습이 통째로 잘린다) */
+        .modal-ov.open { animation: ovFadeIn .16s ease both; }
+        .modal-ov.closing { animation: ovFadeOut .14s ease-in both; pointer-events: none; }
+        .modal-ov.closing .modal-box { animation: modalOut .14s ease-in both; }
+        @keyframes ovFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes ovFadeOut { to { opacity: 0; } }
+        @keyframes modalOut { to { opacity: 0; transform: translateY(8px); } }
+        /* OS '동작 줄이기' — CSS 로 끄고 JS 도 끝 이벤트를 기다리지 않는다(기다리면 화면이 멈춘 것처럼 남는다) */
+        @media (prefers-reduced-motion: reduce) {
+            .al-item, .al-item.leaving, .al-ack-info { transition: none; }
+            .al-item.returning, .modal-box, .modal-ov.open, .modal-ov.closing,
+            .modal-ov.closing .modal-box { animation: none; }
+        }
         .modal-title { font-size: 15px; font-weight: 700; color: #111827; margin-bottom: 8px; }
         .modal-body { font-size: 13px; color: #4B5563; line-height: 1.6; margin-bottom: 18px; word-break: keep-all; }   /* 한글은 어절 단위로 줄바꿈 */
         .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
@@ -368,6 +396,49 @@
         row.querySelector('[data-act="toggle-ack"]').textContent = acked ? '확인 취소' : '확인';
     }
 
+    /* ── 확인·확인 취소 연출 ─────────────────────────────────
+       판정·대기는 common.js 가 단일 출처(Common.reduceMotion/afterMotion). '동작 줄이기'면 즉시 처리한다 —
+       끝 이벤트를 기다리면 화면이 멈춘 것처럼 남는다. */
+    function motionOff() { return !Common.afterMotion || Common.reduceMotion(); }
+
+    /** 목록에서 빠질 행을 접으며 뺀 뒤 done — 높이를 고정해야 0 으로의 트랜지션이 돈다 */
+    function leaveRow(row, done) {
+        if (!row || row.hidden || motionOff()) { done(); return; }
+        row.style.height = row.offsetHeight + 'px';
+        void row.offsetHeight;
+        row.classList.add('leaving');
+        // 가장 오래 걸리는 속성(height)에서 끝낸다 — 투명도에서 끝내면 접힘이 잘린다
+        Common.afterMotion(row, 'transitionend', 320, function () {
+            row.classList.remove('leaving');
+            row.style.height = '';
+            done();
+        }, 'height');
+    }
+
+    /** 되살아난 알람을 잠깐 강조 — 확인 취소는 행이 사라지지 않아 무엇이 바뀌었는지 안 보인다 */
+    function markReturned(row) {
+        if (!row || motionOff()) return;
+        row.classList.remove('returning');
+        void row.offsetWidth;   // 연속으로 눌러도 다시 재생되게
+        row.classList.add('returning');
+        Common.afterMotion(row, 'animationend', 700, function () { row.classList.remove('returning'); });
+    }
+
+    /**
+     * 확인 결과를 행에 반영. 확인자·시각은 응답(서버가 정한 값)을 그대로 쓴다 —
+     * 이미 다른 사용자가 확인해 둔 알람이면 그 사용자의 이름·시각이 온다.
+     */
+    function applyAck(row, ack, done) {
+        var by = ack && ack.by ? ack.by : '';
+        var at = ack && ack.atLabel ? ack.atLabel : '';
+        if (filter.ack === 'unacked') {   // 곧 목록에서 빠진다 — 접으며 뺀 뒤에 상태를 바꾼다
+            leaveRow(row, function () { paint(row, true, by, at); if (done) done(); });
+            return;
+        }
+        paint(row, true, by, at);         // 전체 보기 — 자리에 남아 '확인됨' 으로 옮겨 간다
+        if (done) done();
+    }
+
     document.getElementById('ackFilter').addEventListener('click', function (ev) {
         var b = ev.target.closest('button'); if (!b) return;
         filter.ack = b.getAttribute('data-ack'); saveFilter(); applyFilter();
@@ -384,8 +455,11 @@
     var cfOk = document.getElementById('ackConfirmOk');
     var cfCancel = document.getElementById('ackConfirmCancel');
     var cfRun = null, cfTrigger = null;
+    var cfSeq = 0;   // 열고 닫는 세대 — 닫히는 도중(연출 .14s) 다시 열면 뒤늦은 '감추기'가 새 모달을 지운다
 
     function openAckConfirm(opt) {
+        cfSeq++;
+        cfModal.classList.remove('closing');
         cfRun = opt.run;
         cfTrigger = opt.trigger || null;
         document.getElementById('ackConfirmTitle').textContent = opt.title;
@@ -399,8 +473,18 @@
     }
     window.closeAckConfirm = function () {
         if (!cfModal.classList.contains('open') || cfOk.disabled) return;   // 처리 중에는 닫지 않는다
-        cfModal.classList.remove('open');
+        if (cfModal.classList.contains('closing')) return;                  // 이미 사라지는 중
         cfRun = null;
+        var seq = ++cfSeq;
+        if (motionOff()) {
+            cfModal.classList.remove('open');
+        } else {
+            cfModal.classList.add('closing');   // 연출이 끝난 뒤에 .open 을 뗀다
+            Common.afterMotion(cfModal, 'animationend', 260, function () {
+                if (seq !== cfSeq) return;      // 사라지는 사이 다시 열렸다
+                cfModal.classList.remove('open', 'closing');
+            });
+        }
         if (cfTrigger && document.body.contains(cfTrigger)) cfTrigger.focus();
         cfTrigger = null;
     };
@@ -449,8 +533,10 @@
                 run: function () {
                     return Common.fetchJSON('/api/alerts/ack', { method: 'POST', body: JSON.stringify({ key: key }) }).then(function (d) {
                         if (!d || d.success !== true) throw new Error('처리 실패');
-                        // 확인자·시각은 서버가 정한 값이 진실이다 — 이미 다른 사용자가 확인했을 수 있어 새로 읽어 온다
-                        location.reload();
+                        // 확인자·시각은 서버가 정한 값이 진실이다 — 이미 다른 사용자가 확인했을 수 있어 응답(d.ack)을 그대로 그린다.
+                        // 종전에는 그 값을 알 방법이 없어 페이지를 통째로 새로고침했고, 그래서 연출이 들어설 자리가 없었다.
+                        setCount(d.unackedCount || 0);
+                        applyAck(row, d.ack, applyFilter);
                     });
                 }
             });
@@ -463,6 +549,7 @@
             paint(row, false, '', '');
             setCount(d.unackedCount || 0);
             applyFilter();
+            markReturned(row);
         }).catch(function (e) {
             Common.logError(TAG + ' 확인 취소 실패', e);
             Common.toast(serverMsg(e, '확인 취소에 실패했습니다.'), 'error');
@@ -484,7 +571,19 @@
             run: function () {
                 return Common.fetchJSON('/api/alerts/ack-all', { method: 'POST' }).then(function (d) {
                     if (!d || d.success !== true) throw new Error('처리 실패');
-                    location.reload();
+                    setCount(d.unackedCount || 0);
+                    // 행마다 확인자·시각이 다를 수 있다(이미 확인돼 있던 알람) — 응답의 key → 확인 정보를 그대로 쓴다
+                    var acks = d.acks || {};
+                    var rows = items(), pending = [];
+                    for (var i = 0; i < rows.length; i++) {
+                        // 삭제된 파일의 알람은 서버가 전체 확인 대상으로 보지 않는다 — 화면에서도 그대로 둔다
+                        if (rows[i].getAttribute('data-acked') !== 'true' && rows[i].getAttribute('data-deleted') !== 'true'
+                                && acks[rows[i].getAttribute('data-key')]) pending.push(rows[i]);
+                    }
+                    if (!pending.length) { applyFilter(); return; }
+                    var left = pending.length;
+                    function fin() { if (--left === 0) applyFilter(); }   // 마지막 행이 빠진 뒤 한 번만 다시 거른다
+                    pending.forEach(function (r) { applyAck(r, acks[r.getAttribute('data-key')], fin); });
                 });
             }
         });

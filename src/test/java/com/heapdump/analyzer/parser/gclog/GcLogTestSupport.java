@@ -52,6 +52,28 @@ final class GcLogTestSupport {
         return GcLogEngine.analyze(new ByteArrayInputStream(text.getBytes(StandardCharsets.UTF_8)), limits, mtime, null);
     }
 
+    // ── 이어 붙이기(다중 입력) ────────────────────────────────
+
+    /** 이름 있는 평문 조각. */
+    static GcLogSource src(String name, String text) {
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        return new GcLogSource(name, () -> new ByteArrayInputStream(bytes), bytes.length, null);
+    }
+
+    /** 이름 있는 gz 조각 — 조각마다 압축 여부가 달라도 읽혀야 한다. */
+    static GcLogSource srcGz(String name, String text) throws IOException {
+        byte[] bytes = gzip(text);
+        return new GcLogSource(name, () -> new ByteArrayInputStream(bytes), bytes.length, null);
+    }
+
+    static GcLogResult engineMulti(List<GcLogSource> sources) throws IOException {
+        return GcLogEngine.analyze(sources, ParseLimits.DEFAULT, null, null);
+    }
+
+    static GcLogResult engineMulti(List<GcLogSource> sources, ParseLimits limits, Long mtime) throws IOException {
+        return GcLogEngine.analyze(sources, limits, mtime, null);
+    }
+
     static byte[] gzip(String text) throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (GZIPOutputStream gz = new GZIPOutputStream(bos)) { gz.write(text.getBytes(StandardCharsets.UTF_8)); }

@@ -318,3 +318,97 @@
 .gcl-pick-tag { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: #E5E7EB; color: #374151; }
 .gcl-pick-tag.hit { background: #DCFCE7; color: #166534; } .gcl-pick-tag.warn { background: #FEF3C7; color: #92400E; } .gcl-pick-tag.cur { background: #E0E7FF; color: #3730A3; }
 .gcl-pick-empty { padding: 14px; font-size: 12px; color: #9CA3AF; text-align: center; }
+
+/* ── 이어 붙이기(회전 로그 병합, 2026-09-20) ───────────────────────────
+ * ⚠ 좌측 색 띠(border-left) 금지 — 이 페이지의 규약이다(GcLogTemplateSmokeTest 가 부재를 단언).
+ * 심각도·강조는 옅은 배경 + 같은 계열 1px 테두리 + 배지로만 표현한다. */
+
+/* 헤더 '구성' 알약 */
+.gcl-meta-parts-btn { border: none; background: transparent; padding: 0; font: inherit; font-weight: 600; color: #2563EB;
+                      cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.gcl-meta-parts-btn:hover { color: #1D4ED8; }
+
+/* 구성 패널 */
+.gcl-seg-panel { margin-top: 12px; padding: 12px 14px; border: 1px solid #E5E7EB; border-radius: 10px; background: #F9FAFB; }
+.gcl-seg-panel[hidden] { display: none; }
+.gcl-seg-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.gcl-seg-title { font-size: 13px; font-weight: 700; color: #111827; }
+.gcl-seg-sub { font-size: 11.5px; color: #6B7280; margin-right: auto; }
+.gcl-seg-warn { font-size: 12px; color: #92400E; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px;
+                padding: 8px 10px; margin-bottom: 8px; line-height: 1.55; }
+.gcl-seg-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.gcl-seg-item { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 7px 10px; background: #fff;
+                border: 1px solid #E5E7EB; border-radius: 8px; font-size: 12px; }
+.gcl-seg-idx { flex-shrink: 0; width: 18px; height: 18px; border-radius: 50%; background: #E5E7EB; color: #374151;
+               font-size: 10.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.gcl-seg-name { font-weight: 600; color: #111827; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcl-seg-run { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: #E0E7FF; color: #3730A3; }
+.gcl-seg-span { color: #4B5563; font-variant-numeric: tabular-nums; }
+.gcl-seg-num { color: #6B7280; font-variant-numeric: tabular-nums; }
+.gcl-seg-missing { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: #FEE2E2; color: #B91C1C; }
+.gcl-seg-only { margin-left: auto; border: 1px solid #E5E7EB; background: #fff; border-radius: 6px; padding: 2px 8px;
+                font-size: 11px; font-family: inherit; color: #374151; cursor: pointer; }
+.gcl-seg-only:hover { background: #F3F4F6; }
+
+/* 이벤트 표 '구간' 열 */
+.gcl-col-seg[hidden] { display: none; }
+.gcl-seg-badge { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px;
+                 background: #F1F5F9; color: #334155; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcl-seg-badge.none { background: transparent; color: #9CA3AF; }
+.gcl-ev-seg-note { font-size: 11.5px; color: #1D4ED8; background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 6px;
+                   padding: 3px 9px; }
+.gcl-ev-seg-note[hidden] { display: none; }
+.gcl-raw-seg { margin-left: auto; padding: 3px 8px; border: 1px solid #E5E7EB; border-radius: 6px; background: #fff;
+               font-size: 12px; font-family: inherit; color: #374151; max-width: 220px; }
+.gcl-raw-seg[hidden] { display: none; }
+
+/* 이어붙이기 모달 */
+/* ⚠ .gcl-modal .modal-box 가 width 560px 를 주므로 같은 특정도 이상이어야 이긴다(실측으로 무시됐다) */
+.gcl-modal .modal-box.gcl-combine-box { width: 640px; }
+.gcl-combine-help { font-size: 12.5px; color: #4B5563; line-height: 1.6; margin: 0 0 10px; }
+.gcl-combine-search { width: 100%; padding: 6px 10px; border: 1px solid #D1D5DB; border-radius: 7px; font-size: 13px;
+                      font-family: inherit; margin-bottom: 8px; }
+.gcl-combine-list { max-height: 300px; overflow-y: auto; border: 1px solid #E5E7EB; border-radius: 8px; }
+.gcl-combine-list .gcl-pick-row { align-items: center; }
+.gcl-pick-name { display: block; font-size: 12.5px; font-weight: 600; color: #111827; word-break: break-all; }
+.gcl-pick-sub { display: block; font-size: 11px; color: #6B7280; margin-top: 1px; }
+.gcl-pick-tag.ok { background: #DCFCE7; color: #166534; }
+.gcl-combine-preview { margin-top: 10px; padding: 9px 11px; border: 1px solid #E5E7EB; border-radius: 8px; background: #F9FAFB; }
+.gcl-combine-preview[hidden] { display: none; }
+.gcl-prev-title { font-size: 11.5px; font-weight: 700; color: #374151; margin-bottom: 5px; }
+.gcl-prev-order { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11.5px; }
+.gcl-prev-step { background: #fff; border: 1px solid #E5E7EB; border-radius: 6px; padding: 2px 7px;
+                 font-family: "JetBrains Mono", monospace; color: #1F2937; }
+.gcl-prev-arrow { color: #9CA3AF; }
+.gcl-prev-warn { margin-top: 6px; font-size: 11.5px; color: #92400E; background: #FFFBEB; border: 1px solid #FDE68A;
+                 border-radius: 6px; padding: 5px 8px; line-height: 1.5; }
+
+/* 업로드 다중 선택 칩 · 선택 모드 (2026-09-20) */
+.upload-zone-multi { font-size: 11px; font-weight: 500; color: #9CA3AF; }
+.gcl-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; justify-content: center; }
+.gcl-chip-file { display: inline-flex; align-items: center; gap: 4px; max-width: 220px; padding: 2px 4px 2px 9px;
+                 border: 1px solid #E5E7EB; border-radius: 999px; background: #fff; font-size: 11.5px; color: #374151; }
+.gcl-chip-file .gcl-chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                                font-family: "JetBrains Mono", monospace; }
+.gcl-chip-x { border: none; background: transparent; color: #9CA3AF; font-size: 14px; line-height: 1; cursor: pointer;
+              padding: 0 3px; font-family: inherit; }
+.gcl-chip-x:hover { color: #B91C1C; }
+/* .sa-btn-cancel / .sa-btn-del 색상은 common.css — 여기는 이어붙이기 버튼 색만 */
+.sa-btn-combine { background: #2563EB; color: #fff; }
+.sa-btn-combine:hover:not(:disabled) { background: #1D4ED8; }
+.sa-btn-combine:disabled { background: #BFDBFE; color: #fff; cursor: not-allowed; }
+.hi-badge-parts { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: #E0E7FF; color: #3730A3; }
+.hi-badge-partof { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 8px; background: #F1F5F9; color: #475569;
+                   max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hi-fname-sub { font-size: 10.5px; color: #9CA3AF; margin-top: 1px; }
+.gcl-list-names { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+.gcl-list-note { font-size: 11.5px; color: #6B7280; line-height: 1.55; }
+.hi-members-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #4B5563;
+                     cursor: pointer; user-select: none; padding: 5px 10px; border: 1px solid #E5E7EB;
+                     border-radius: 6px; background: #fff; }
+.hi-members-toggle input { margin: 0; cursor: pointer; }
+.hi-members-cnt { color: #9CA3AF; font-variant-numeric: tabular-nums; }
+
+/* 이력 표 '로그 기간' — 시작/끝 두 줄 (2026-09-20). 한 줄이면 열 폭을 넘겨 뒤 열을 밀어낸다 */
+.hi-range { display: inline-flex; flex-direction: column; line-height: 1.45; }
+.hi-range-end { color: #9CA3AF; }

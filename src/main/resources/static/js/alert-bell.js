@@ -56,6 +56,11 @@
             + 'box-shadow:0 20px 50px rgba(15,23,42,.28);text-align:left;color:#1F2937;animation:abCfIn .2s cubic-bezier(.2,.8,.2,1) both}'
             + '@keyframes abCfFade{from{opacity:0}to{opacity:1}}'
             + '@keyframes abCfIn{from{opacity:0;transform:translateY(-10px) scale(.97)}to{opacity:1;transform:none}}'
+            /* 닫을 때도 짧게 사라진다(열기만 연출하면 취소가 화면을 툭 끊는다). 사라지는 동안 클릭을 받지 않는다 */
+            + '.ab-cf-ov.ab-cf-out{animation:abCfFadeOut .13s ease-in both;pointer-events:none}'
+            + '.ab-cf-ov.ab-cf-out .ab-cf-box{animation:abCfOut .13s ease-in both}'
+            + '@keyframes abCfFadeOut{to{opacity:0}}'
+            + '@keyframes abCfOut{to{opacity:0;transform:translateY(-6px) scale(.98)}}'
             + '.ab-cf-ttl{font-size:15px;font-weight:700;color:#111827;margin-bottom:10px}'
             + '.ab-cf-target{padding:10px 12px;border:1px solid #FECACA;border-radius:8px;background:#FEF2F2;margin-bottom:12px}'
             + '.ab-cf-target-ttl{font-size:13px;font-weight:600;color:#7F1D1D;word-break:break-word}'
@@ -72,7 +77,7 @@
             + '.ab-cf-btns button:focus-visible{outline:2px solid #93C5FD;outline-offset:2px}'
             + '.ab-pop:focus{outline:none}'
             + '@media (prefers-reduced-motion:reduce){.ab-pop.ab-in,.ab-pop.ab-out{animation:none}.ab-item.ab-leaving{transition:none}'
-            + '.ab-cf-ov,.ab-cf-box{animation:none}}'
+            + '.ab-cf-ov,.ab-cf-box,.ab-cf-ov.ab-cf-out,.ab-cf-ov.ab-cf-out .ab-cf-box{animation:none}}'
             + '.ab-hd{display:flex;align-items:center;gap:8px;padding:11px 14px 9px;border-bottom:1px solid #F3F4F6}'
             + '.ab-hd-ttl{font-size:13px;font-weight:700;color:#111827}'
             + '.ab-hd-cnt{font-size:11px;font-weight:700;color:#B91C1C;background:#FEE2E2;border-radius:9px;padding:1px 7px}'
@@ -102,25 +107,13 @@
         document.head.appendChild(st);
     }
 
-    /** OS '동작 줄이기' — 켜져 있으면 애니메이션 없이 바로 붙이고 뗀다(끝 이벤트가 오지 않으므로 기다리면 안 된다) */
-    function motionOff() {
-        return !!(global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches);
-    }
+    /* 모션 판정·대기는 common.js 가 단일 출처(Common.reduceMotion/afterMotion — 메모 이력 창·현황판과 공유).
+       OS '동작 줄이기'면 애니메이션 없이 바로 붙이고 뗀다(끝 이벤트가 오지 않으므로 기다리면 안 된다). */
+    function motionOff() { return !global.Common || !global.Common.afterMotion || global.Common.reduceMotion(); }
 
-    /**
-     * 끝 이벤트를 한 번만 받는다 — 탭이 숨겨지는 등으로 이벤트가 오지 않아도 timeoutMs 뒤에는 반드시 진행한다.
-     * prop: transitionend 는 속성마다 오므로 기다릴 속성(가장 긴 것)을 지정한다
-     */
+    /** 끝 이벤트를 한 번만 — 자식에서 올라온 것·다른 속성은 무시하고, 안 와도 timeoutMs 뒤엔 진행한다 */
     function afterMotion(el, eventName, timeoutMs, done, prop) {
-        var called = false;
-        function fin(ev) {
-            if (called || (ev && (ev.target !== el || (prop && ev.propertyName !== prop)))) return;
-            called = true;
-            el.removeEventListener(eventName, fin);
-            done();
-        }
-        el.addEventListener(eventName, fin);
-        setTimeout(fin, timeoutMs);
+        global.Common.afterMotion(el, eventName, timeoutMs, done, prop);
     }
 
     var BELL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>'
@@ -269,9 +262,15 @@
         function closeConfirm(restoreFocus) {
             if (!cf) return;
             var c = cf;
-            cf = null;
+            cf = null;   // 상태는 즉시 넘긴다 — 사라지는 동안에도 말풍선의 Esc·바깥 클릭이 다시 제 몫을 한다
             document.removeEventListener('keydown', c.onKey, true);
-            if (c.ov.parentNode) c.ov.parentNode.removeChild(c.ov);
+            var ov = c.ov;
+            function detach() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+            if (motionOff()) detach();
+            else {
+                ov.classList.add('ab-cf-out');
+                afterMotion(ov, 'animationend', 220, detach);
+            }
             if (restoreFocus && c.trigger && document.body.contains(c.trigger)) c.trigger.focus();
         }
 
