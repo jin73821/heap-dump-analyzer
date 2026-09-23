@@ -264,6 +264,24 @@
                       animation: tb-spin .8s linear infinite; flex-shrink: 0; }
         @keyframes tb-spin { to { transform: rotate(360deg); } }
 
+        /* GC 로그 묶음 서랍 (2026-09-21) — gc-log.css 는 이 페이지에 없으므로 여기서 정의한다(함정 17 계열) */
+        .hi-group-toggle { border: 0; background: none; padding: 0 4px 0 0; margin: 0; cursor: pointer;
+                           color: #6366F1; font-size: 11px; line-height: 1; font-family: inherit;
+                           transition: transform .15s ease; transform-origin: 40% 50%; }
+        .hi-group-toggle:hover { color: #4338CA; }
+        .hi-group-toggle:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; border-radius: 3px; }
+        .hi-group-toggle[aria-expanded="true"] { transform: rotate(90deg); }
+        @media (prefers-reduced-motion: reduce) { .hi-group-toggle { transition: none; } }
+        .gclog-parts-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px;
+                             background: #E0E7FF; color: #3730A3; font-weight: 700; vertical-align: middle; margin-left: 3px; }
+        .gclog-partof-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px;
+                              background: #F1F5F9; color: #475569; font-weight: 700; vertical-align: middle; margin-left: 3px;
+                              max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .gclog-subrow { background: #F8FAFC !important; }
+        .gclog-subrow td { padding-top: 5px !important; padding-bottom: 5px !important; font-size: 12px; color: #6B7280; }
+        .gclog-subrow .col-fname { padding-left: 24px; }
+        .gclog-subrow .fname { font-weight: 400; color: #374151; }
+
         /* exec 서브 row */
         .exec-subrow { background: #F5F3FF !important; }
         .exec-subrow td { padding-top: 5px !important; padding-bottom: 5px !important; font-size: 12px; color: #6B7280; }
@@ -615,9 +633,10 @@
             </tbody>
             <tbody id="fileTableBody" class="tb-loading">
                 <th:block th:each="h : ${analysisHistory}">
-                <tr th:classappend="${h.fileDeleted} ? 'fi-deleted'"
+                <tr th:classappend="${h.fileDeleted} ? 'fi-deleted' : (${h.partOf != null} ? 'gclog-subrow' : '')"
                     th:data-name="${h.filename}" th:data-deleted="${h.fileDeleted}"
                     th:data-status="${h.status}" th:data-file-type="${h.fileType}"
+                    th:data-parent-group="${h.partOf}"
                     th:attr="data-sort-id=${h.id != null ? h.id : 0},
                              data-sort-osize=${h.originalSizeBytes},
                              data-sort-csize=${h.compressedSizeBytes},
@@ -628,6 +647,11 @@
                                                 th:data-deleted="${h.fileDeleted}" onchange="onRowCheck()"></td>
                     <td class="td-seq col-seq" data-label="#"></td>
                     <td class="col-fname" data-label="파일명">
+                        <!-- 이어 붙인 GC 로그 묶음의 대표 — ▸ 로 구성 파일을 펼친다(기본 접힘, /gc-log 목록과 같은 언어) -->
+                        <button type="button" class="hi-group-toggle" aria-expanded="false"
+                                th:if="${h.fileType == 'gclog' and h.memberCount != null and h.memberCount > 1}"
+                                th:attr="aria-label='구성 파일 ' + ${h.memberCount} + '개 펼치기'"
+                                onclick="filesToggleGroup(event, this)">&#9656;</button>
                         <span class="fname" th:classappend="${h.status == 'ERROR'} ? 'fname-err'" th:text="${h.filename}">dump.hprof</span>
                         <span th:if="${h.fileType == 'coredump'}" class="core-badge">CORE</span>
                         <span th:if="${h.fileType == 'coredump' and h.hasExec}" class="exec-badge">EXEC</span>
@@ -636,6 +660,10 @@
                         <span th:if="${h.fileType == 'coreexec'}" class="exec-badge">EXEC</span>
                         <span th:if="${h.fileType == 'others'}" class="others-badge">OTHERS</span>
                         <span th:if="${h.fileType == 'gclog'}" class="gclog-badge">GC LOG</span>
+                        <span th:if="${h.fileType == 'gclog' and h.memberCount != null and h.memberCount > 1}"
+                              class="gclog-parts-badge" th:text="${h.memberCount} + '개 이어붙임'">5개 이어붙임</span>
+                        <span th:if="${h.fileType == 'gclog' and h.partOf != null}" class="gclog-partof-badge"
+                              th:title="${h.partOf} + ' 의 구성 파일'" th:text="'→ ' + ${h.partOf}">→ gc.log</span>
                         <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
                     </td>
                     <td class="col-osize" data-label="원본">
@@ -1060,8 +1088,8 @@ var MAX_UPLOAD_GB    = /*[[${maxUploadSizeGb}]]*/ 5;
 var ALLOW_ALL_EXT    = /*[[${allowAllExtensions}]]*/ false;
 /*]]>*/
 </script>
-<script src="/js/upload-queue.js?v=2026-08-19"></script>
-<script src="/js/analyze-confirm.js?v=2026-09-20"></script>
+<script src="/js/upload-queue.js?v=2026-09-21"></script>
+<script src="/js/analyze-confirm.js?v=2026-09-23"></script>
 <script src="/js/table-grid.js?v=2026-09-13"></script>
 <script src="/js/select-mode.js?v=2026-08-02"></script>
 <script>
@@ -1542,8 +1570,71 @@ document.getElementById('unpairModal').addEventListener('click', function(e) {
 // 분석 시작 확인(Others 경고 포함)은 /js/analyze-confirm.js 공통 모달 — Analyze 버튼의 onclick 에서 연다.
 
 // ── 검색 + 페이지네이션 + 정렬 ────────────────────────────────
-var _subrowMap = {}; // coreFilename → exec sub-row TR
+// 부모 파일명 → 하위 행 배열. 두 종류가 들어온다:
+//   · exec 서브행(코어덤프 페어) — 부모가 보이면 늘 같이 보인다
+//   · GC 로그 묶음의 구성 파일(2026-09-21) — data-parent-group 을 달고, 접힌 상태가 기본이다
+var _subrowMap = {};
+var _openGroups = {};        // 펼쳐 둔 GC 묶음 대표 파일명
+var GROUP_OPEN_KEY = 'filesOpenGroups';
 var _showDeleted = false;
+
+/** 이 행이 어느 부모에 속하는가(없으면 null). */
+function parentOfRow(tr) {
+    return tr.getAttribute('data-parent-core') || tr.getAttribute('data-parent-group');
+}
+/** 접었다 펼 수 있는 하위 행인가 — exec 페어는 접히지 않는다. */
+function isCollapsibleRow(tr) { return tr.hasAttribute('data-parent-group'); }
+
+/**
+ * 부모 행이 보일 때 하위 행들의 노출을 정한다 — exec 페어는 늘, GC 구성 파일은 펼친 묶음만.
+ * 검색어가 구성 파일명에 맞은 묶음(`_hitByMember`)은 접혀 있어도 펼쳐 보여 준다(답이 서랍 안에 숨지 않게).
+ */
+function showSubrowsFor(parentName, parentRow) {
+    var kids = _subrowMap[parentName];
+    if (!kids) return;
+    var open = !!_openGroups[parentName] || !!(parentRow && parentRow._hitByMember);
+    kids.forEach(function(k) {
+        k.style.display = (isCollapsibleRow(k) && !open) ? 'none' : '';
+    });
+    var btn = parentRow ? parentRow.querySelector('.hi-group-toggle') : null;
+    if (btn) btn.setAttribute('aria-expanded', String(open));
+}
+
+/** ▸ 클릭 — 구성 파일 행의 노출과 aria-expanded 만 바꾼다(재렌더 금지: 정렬·페이지가 리셋된다). */
+function filesToggleGroup(e, btn) {
+    if (e) e.stopPropagation();
+    var tr = btn.closest('tr');
+    if (!tr) return;
+    var name = tr.getAttribute('data-name');
+    var open = btn.getAttribute('aria-expanded') !== 'true';
+    _openGroups[name] = open;
+    try {
+        localStorage.setItem(GROUP_OPEN_KEY, JSON.stringify(Object.keys(_openGroups).filter(function(k) { return _openGroups[k]; })));
+    } catch (err) { Common.logIgnored('[Files] 묶음 펼침 상태 저장', err); }
+    btn.setAttribute('aria-expanded', String(open));
+    var n = (_subrowMap[name] || []).length + 1;
+    btn.setAttribute('aria-label', '구성 파일 ' + n + '개 ' + (open ? '접기' : '펼치기'));
+    tr._hitByMember = false;   // 손으로 접었으면 검색 자동 펼침보다 우선한다
+    if (!open) {
+        // 접으면서 선택은 푼다 — 보이지 않는 행이 선택된 채 남으면 '몇 개 선택됨' 이 화면과 어긋난다
+        (_subrowMap[name] || []).forEach(function(k) {
+            var c = k.querySelector('.row-check');
+            if (c) c.checked = false;
+        });
+    }
+    showSubrowsFor(name, tr);
+    if (_sel && _sel.active) _sel.updateCount();
+}
+
+function loadOpenGroups() {
+    try {
+        var raw = localStorage.getItem(GROUP_OPEN_KEY);
+        var arr = raw ? JSON.parse(raw) : [];
+        if (Object.prototype.toString.call(arr) === '[object Array]') {
+            arr.forEach(function(n) { if (n) _openGroups[n] = true; });
+        }
+    } catch (err) { Common.logIgnored('[Files] 묶음 펼침 상태 읽기', err); }
+}
 
 // ── TableGrid 공통 엔진(/js/table-grid.js) 위임 — exec sub-row 페어링 훅 포함 ──
 var _grid = TableGrid.create({
@@ -1554,20 +1645,23 @@ var _grid = TableGrid.create({
     sortValue: function(el, key) { return key === 'name' ? (el.getAttribute('data-name') || '') : null; },
     attachRow: function(tbody, r) {
         tbody.appendChild(r);
-        var coreName = r.getAttribute('data-name');
-        if (coreName && _subrowMap[coreName]) tbody.appendChild(_subrowMap[coreName]);
+        // 하위 행은 닫혀 있어도 부모 바로 뒤 자리를 지킨다 — 그래야 토글이 재배치 없이 동작한다
+        var name = r.getAttribute('data-name');
+        if (name && _subrowMap[name]) _subrowMap[name].forEach(function(k) { tbody.appendChild(k); });
     },
     onRenderStart: function() {
         document.getElementById('fileTableBody').classList.remove('tb-loading');
         var _lb = document.getElementById('fileLoadingBody');
         if (_lb) _lb.style.display = 'none';
-        Object.keys(_subrowMap).forEach(function(k) { _subrowMap[k].style.display = 'none'; });
+        Object.keys(_subrowMap).forEach(function(k) {
+            _subrowMap[k].forEach(function(r) { r.style.display = 'none'; });
+        });
     },
     showRow: function(row) {
         row.style.display = '';
-        // core row가 보이면 연결된 sub-row도 표시
-        var coreName = row.getAttribute('data-name');
-        if (coreName && _subrowMap[coreName]) _subrowMap[coreName].style.display = '';
+        // 부모가 보이면 exec 페어는 늘, GC 구성 파일은 펼친 묶음만 따라 보인다
+        var name = row.getAttribute('data-name');
+        if (name && _subrowMap[name]) showSubrowsFor(name, row);
     },
     applyFilter: function() { applyFilter(); },
     onAfterRender: function() { if (_sel.active) _sel.updateCount(); }
@@ -1576,14 +1670,27 @@ var _grid = TableGrid.create({
 function initRows() {
     var allTr = Array.prototype.slice.call(document.querySelectorAll('#fileTableBody tr'));
     _subrowMap = {};
+    loadOpenGroups();
     var topRows = [];
     allTr.forEach(function(tr) {
-        var parentCore = tr.getAttribute('data-parent-core');
-        if (parentCore) {
-            _subrowMap[parentCore] = tr;
+        var parent = parentOfRow(tr);
+        if (parent) {
+            (_subrowMap[parent] = _subrowMap[parent] || []).push(tr);
         } else {
             topRows.push(tr);
         }
+    });
+    // ⚠ 부모가 목록에 없는 하위 행은 최상위로 되돌린다 — 어느 쪽에서도 안 그려지면 파일이 조용히 사라진다
+    Object.keys(_subrowMap).forEach(function(parent) {
+        var hasParent = topRows.some(function(r) { return r.getAttribute('data-name') === parent; });
+        if (hasParent) return;
+        _subrowMap[parent].forEach(function(r) { topRows.push(r); });
+        delete _subrowMap[parent];
+    });
+    // 대표 행의 토글 초기 상태를 저장된 펼침과 맞춘다
+    topRows.forEach(function(r) {
+        var btn = r.querySelector('.hi-group-toggle');
+        if (btn) btn.setAttribute('aria-expanded', String(!!_openGroups[r.getAttribute('data-name')]));
     });
     _grid.allRows = topRows;
     assignStableNumbers();   // 순번은 정렬/필터와 무관한 고정 식별자 — 최초 1회만 계산
@@ -1645,7 +1752,7 @@ function categoryOf(t) {
 function assignStableNumbers() {
     // top-level 행 + 페어링된 exec 서브행(연결 상태)까지 모두 포함 → 연결/연결해제에도 E 순번 유지.
     var all = _grid.allRows.slice();
-    Object.keys(_subrowMap).forEach(function(k) { all.push(_subrowMap[k]); });
+    Object.keys(_subrowMap).forEach(function(k) { _subrowMap[k].forEach(function(r) { all.push(r); }); });
     var groups = { H: [], C: [], E: [], G: [], O: [] };
     all.forEach(function(row) {
         if (row.getAttribute('data-deleted') === 'true') return;   // 삭제 행은 순번 미부여
@@ -1660,8 +1767,8 @@ function assignStableNumbers() {
             var cell = row.querySelector('.td-seq');
             if (!cell) return;
             var label = cat + '-' + (i + 1);
-            if (row.hasAttribute('data-parent-core')) {
-                cell.innerHTML = '<span class="exec-subrow-indent">└</span>' + label;  // 연결된 실행파일
+            if (row.hasAttribute('data-parent-core') || row.hasAttribute('data-parent-group')) {
+                cell.innerHTML = '<span class="exec-subrow-indent">└</span>' + label;  // 연결된 실행파일 · GC 묶음 구성 파일
             } else {
                 cell.textContent = label;
             }
@@ -1701,10 +1808,19 @@ function applyFilter() {
     // 탭 카운트는 탭 필터 제외, 나머지 필터 적용 후 계산
     var tabBaseRows = _grid.allRows.filter(function(el) {
         if (!_showDeleted && el.getAttribute('data-deleted') === 'true') return false;
+        el._hitByMember = false;
         if (q) {
             var name = (el.getAttribute('data-name') || '').toLowerCase();
             var srv  = (el.getAttribute('data-sort-server') || '').toLowerCase();
-            if (name.indexOf(q) === -1 && srv.indexOf(q) === -1) return false;
+            var own = name.indexOf(q) !== -1 || srv.indexOf(q) !== -1;
+            // 접힌 서랍 안의 구성 파일명으로도 찾을 수 있어야 한다 — 맞으면 그 묶음을 펼쳐서 보여 준다
+            if (!own) {
+                var kids = _subrowMap[el.getAttribute('data-name')] || [];
+                el._hitByMember = kids.some(function(k) {
+                    return (k.getAttribute('data-name') || '').toLowerCase().indexOf(q) !== -1;
+                });
+                if (!el._hitByMember) return false;
+            }
         }
         if (server) {
             var rowServer = el.getAttribute('data-sort-server') || '';

@@ -33,6 +33,15 @@ public class AnalysisHistoryItem {
     private String  pairedExecFilename;
     private boolean pairedExec;
     private boolean fromCoreDir;
+    /** GC 로그 묶음 — 이 파일이 구성원이면 대표 파일명(대표 자신은 null). Files 목록의 서랍 판정에 쓴다. */
+    private String  partOf;
+    /** GC 로그 묶음의 구성 파일 수(대표 포함). 2 이상이면 대표 행에 펼침 토글이 붙는다. */
+    private Integer memberCount;
+
+    public String  getPartOf()                 { return partOf; }
+    public void    setPartOf(String v)         { partOf = v; }
+    public Integer getMemberCount()            { return memberCount; }
+    public void    setMemberCount(Integer v)   { memberCount = v; }
 
     public Long    getId()            { return id; }
     public void    setId(Long v)              { id = v; }

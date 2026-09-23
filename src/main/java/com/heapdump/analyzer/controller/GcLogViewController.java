@@ -37,10 +37,40 @@ public class GcLogViewController {
     @GetMapping
     public String index(Model model, Authentication auth) {
         List<GcLogAnalysisEntity> files = service.listExistingFiles();
+        List<GcLogAnalysisEntity> history = service.history();
         model.addAttribute("gcLogFiles", files);
-        model.addAttribute("history", service.history());
+        model.addAttribute("history", history);
+        // 서랍(대표 행 + 접힌 구성 파일) 렌더용 — 템플릿이 대표만 최상위로 뽑고 구성 파일을 그 뒤에 붙인다.
+        // ⚠ 늘 non-null 이어야 한다 — 템플릿의 th:each 가 null 을 만나면 안 되고,
+        //   th:if 안에 삼항을 쓰면 값이 조용히 null 이 된다(함정 59).
+        java.util.Map<String, List<GcLogAnalysisEntity>> members = membersByParent(history);
+        java.util.Set<String> claimed = new java.util.LinkedHashSet<>();
+        members.values().forEach(list -> list.forEach(m -> claimed.add(m.getFilename())));
+        model.addAttribute("memberRows", members);
+        // ⚠ 최상위 여부를 part_of 로 판정하지 말 것 — 대표의 member_files 에서 빠진 구성 파일이 있으면
+        //   어느 쪽에서도 렌더되지 않아 목록에서 조용히 사라진다. '어느 묶음이 실제로 그리는가' 로 판정한다.
+        model.addAttribute("claimed", claimed);
         model.addAttribute("isAdmin", com.heapdump.analyzer.util.AuthUtil.isAdmin(auth));
         return "gc-log/index";
+    }
+
+    /** 대표 파일명 → 구성 파일 행(병합 순서). 순서는 대표의 {@code member_files} 가 정한다. */
+    private java.util.Map<String, List<GcLogAnalysisEntity>> membersByParent(List<GcLogAnalysisEntity> history) {
+        java.util.Map<String, GcLogAnalysisEntity> byName = new java.util.LinkedHashMap<>();
+        java.util.Map<String, List<GcLogAnalysisEntity>> out = new java.util.LinkedHashMap<>();
+        for (GcLogAnalysisEntity e : history) byName.put(e.getFilename(), e);
+        for (GcLogAnalysisEntity rep : history) {
+            if (rep.getPartOf() != null || !rep.isCombined()) continue;
+            // 대표 자신이 남의 구성원이면 그릴 수 없다 — 위 조건이 이미 걸렀다.
+            List<GcLogAnalysisEntity> members = new java.util.ArrayList<>();
+            for (var ref : service.parseMembers(rep.getMemberFiles())) {
+                if (ref.filename().equals(rep.getFilename())) continue;   // 대표 자신은 구성 목록에 들어 있다
+                GcLogAnalysisEntity m = byName.get(ref.filename());
+                if (m != null) members.add(m);
+            }
+            if (!members.isEmpty()) out.put(rep.getFilename(), members);
+        }
+        return out;
     }
 
     @GetMapping("/analyze/{filename:.+}")

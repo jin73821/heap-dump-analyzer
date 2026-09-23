@@ -412,3 +412,19 @@
 /* 이력 표 '로그 기간' — 시작/끝 두 줄 (2026-09-20). 한 줄이면 열 폭을 넘겨 뒤 열을 밀어낸다 */
 .hi-range { display: inline-flex; flex-direction: column; line-height: 1.45; }
 .hi-range-end { color: #9CA3AF; }
+
+/* ── 이력 표 서랍(대표 행 + 접힌 구성 파일, 2026-09-21) ─────────────────────
+   ⚠ .hi-row-chevron(장식용 '›')을 개조하지 말 것 — core-dump/index.html 이 같은 CSS 를 쓴다. */
+.hi-group-toggle { flex: none; border: 0; background: none; padding: 0 4px 0 0; margin: 0; cursor: pointer;
+                   color: #6366F1; font-size: 11px; line-height: 1; font-family: inherit;
+                   transition: transform .15s ease; transform-origin: 40% 50%; }
+.hi-group-toggle:hover { color: #4338CA; }
+.hi-group-toggle:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; border-radius: 3px; }
+.hi-group-toggle[aria-expanded="true"] { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .hi-group-toggle { transition: none; } }
+
+.hi-table tbody tr.hi-subrow { background: #F8FAFC; }
+.hi-table tbody tr.hi-subrow:hover { background: #F1F5F9; }
+.hi-table tbody tr.hi-subrow > td { padding-top: 5px; padding-bottom: 5px; font-size: 12px; color: #6B7280; }
+.hi-table tbody tr.hi-subrow .hi-filename { font-weight: 400; color: #6B7280; }
+.hi-subrow-indent { color: #A78BFA; margin-right: 3px; font-size: 13px; }

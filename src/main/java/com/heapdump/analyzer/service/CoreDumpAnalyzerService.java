@@ -725,7 +725,7 @@ public class CoreDumpAnalyzerService {
 
         // sysroot 번들 — 반드시 -iex(파일 로드 전 실행). positional <exec> <core> 는 -ex 보다
         // 먼저 로드되므로 -ex 로 주면 초기 solib 해석이 분석 서버 로컬 경로로 한 번 수행된 뒤
-        // 재해석된다(잘못된 빌드가 있으면 초기 출력 오염 — COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md
+        // 재해석된다(잘못된 빌드가 있으면 초기 출력 오염 — docs/COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md
         // 케이스 D-2 실증). 코어 단독(-ex core-file) 분기에서도 -iex 선행은 무해.
         if (sysrootDir != null) {
             cmd.add("-iex");

@@ -503,6 +503,8 @@
             }
             var html;
             if (f._doneLabel) html = '<span class="transfer-label ok">' + esc(f._doneLabel) + '</span>';
+            // groupRep — 이어 붙인 묶음의 구성 파일(대표가 분석 완료). 자기 행은 미분석이라 '분석 시작' 이 붙던 것을 막는다(2026-09-23)
+            else if (f.analyzed && f.groupRep) html = '<span class="scan-analyzed" title="' + esc(f.groupRep) + ' 에 이어 붙여 분석됨">전송됨(묶음 분석완료)</span>';
             else if (f.analyzed) html = '<span class="scan-analyzed">전송됨(분석완료)</span>';
             else html = '<span class="scan-transferred">전송됨</span>';
             // 미분석 + 로컬 파일명을 아는 경우에만 — 모르면 엉뚱한 이름으로 분석이 시작된다

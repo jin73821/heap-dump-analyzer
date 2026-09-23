@@ -1,5 +1,156 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-23] v2.5.8 릴리스
+
+**버전:** 2.5.7 → **2.5.8** (`pom.xml` + UI 표기 3곳 `fragments/banner.html`·`index.html`·`progress.html` + `CLAUDE.md` 실행 예시). 쉘 스크립트는 버전 비의존이라 무변경.
+
+**포함 내용:** 2026-09-21 v2.5.7 작업(GC 로그 연속 회전본 자동 묶기 + 목록 서랍 · 대시보드/Files 업로드 GC 로그 출처 입력 · 큐 상한 10 — 그동안 미커밋이었다) + 2026-09-23 두 건(아래: GC 로그 분석 시작 시 연속 로그 제안 · Transfer Logs 컨테이너 폭) + 문서 파일 `docs/` 이동.
+
+**검증:** 단위 테스트 1005건 통과(라이브 4 skip) · `mvn clean package` · 운영 재기동(15.1초, `heap-analyzer-2.5.8.jar` 기동 확인).
+
+⚠ k8s 패키지(`/opt/genspark/heapApp_k8s`)의 매니페스트·이미지는 2.5.7 로 남아 있다 — `validate-manifests.sh` 의 "이미지 태그 = pom 버전" 검사가 실패하므로 k8s 반입 시 이미지 재빌드·태그 갱신이 필요하다.
+
+## [2026-09-23] Transfer Logs 페이지 컨테이너 폭 확대
+
+**요청:** Transfer Logs 페이지의 container 가로 사이즈를 약간 늘릴 것.
+
+- `templates/server-logs.html` `.container` `max-width` 1440px → **1600px**(Files 페이지와 같은 값). `max-width` 는 좌측 padding(배너 폭 + 20px)을 포함하므로 배너가 펼쳐진 상태의 실제 콘텐츠 폭은 1180 → 1340px. 반응형 분기(≤900/768/640px)는 무변경.
+- 빌드·운영 재기동 완료.
+
+## [2026-09-23] GC 로그 '분석 시작' 시 연속 회전본 자동 판정 + 확인 모달 (v2.5.8)
+
+**요청:** aibank01d 에서 GC 로그 6개를 전송받았다. Target Servers 에서 전송 완료 후 파일별로 분석은 되지만 연결 로직이 없다. 아무 파일이나 '분석 시작'을 누르면 자동으로 연결될 로그를 판단해 모달로 확인받을 것.
+
+### 원인
+2026-09-21 의 자동 묶기(`autoGroup`)는 **업로드 큐가 끝날 때 한 번** 도는 배치다. 원격 전송은 파일마다 따로 도착해(`registerTransferred`) 배치가 없으므로 한 번도 불리지 않았다. 운영 DB 실측: `gc.log_202609231516.0~4` + `gc_202609231516.log`(전송 회피명, 원격 `/tmp/gc.log*`) 6행이 전부 단독이고, 그중 `.4` 는 이미 단독 분석돼 있었다.
+
+### 추가
+- **`GET /api/gc-log/{fn}/group-suggestion`** — 이 파일이 속한 연속 회전본 제안(쓰기 없음). `GcLogAnalyzerService.suggestGroup` — 판정은 autoGroup 과 같은 `GcLogGroupPlanner`, 후보만 좁힌다: ① 같은 서버(둘 다 없음 포함) ② 같은 회전 계열(`seriesKey` — 원격 경로 우선, 회전 접미사·`%t`·4자리 이상 숫자만 가리고 **디렉토리·짧은 숫자(인스턴스 번호)는 가리지 않는다**) ③ 인스턴스명이 둘 다 있으면 같음 ④ 파일 존재·분석 중 아님·다른 묶음에 속하지 않음(속한 것은 `excludedGrouped` 로 센다). **이미 단독 분석된 파일도 후보다** — 구성 파일로 묶여도 그 결과는 지워지지 않고, 빼면 사슬 가운데가 빈다. 계열로 먼저 나누는 이유: 한 서버의 인스턴스별 로그를 한 사슬에 넣으면 시간순으로 번갈아 놓여 다른 인스턴스 조각을 이을 수 있다.
+  - 제안 종류 `group`(새 묶음, 대표 = 가장 최근 조각 — 업로드 자동 묶기와 같다) / `combined`(이미 이어 붙인 대표) / `member`(다른 묶음의 구성 파일 — 역참조가 살아 있고 대표 구성에 실제로 있을 때만) / `single`.
+  - `single` 이유는 **이 파일 기준**으로 바로 옆 로그와 잰다(`neighborReason`) — planner 의 `singleReasons` 는 '앞 덩어리와 끊긴 이유' 라 시간상 첫 파일엔 "이어질 로그를 찾지 못했습니다" 만 남는다.
+  - 감사 `[GcLog] action=group-suggest file=… mode=… rep=… members=… candidates=… excluded=… reason=… by=`.
+- **분석 시작 확인 창(`analyze-confirm.js`)** — `kind:'gclog'` 면 열자마자 제안을 묻고 '이어지는 GC 로그 N개를 찾았습니다' 블록(근거 칩 `시간 연속·같은 서버·같은 JVM 설정(G1·최대 힙)` + 시간순 목록(선택·대표·분석됨 꼬리표, 구간·크기) + 안내)을 보인다. 버튼 `[취소] [이 파일만 분석] [이어붙여 분석 (N개)]`. 수락은 `POST /api/gc-log/{대표}/combine {filenames, via:'suggest'}` 후 대표 결과 화면(분석이 이미 제출돼 `?start=1` 없음). `member` 는 `[묶음 결과 보기 / 묶음으로 분석]`. **판정 중에는 시작 버튼을 잠근다**(Enter 한 번에 단독으로 새지 않게) — 8초 넘으면 단독 분석은 풀어 주고, 조회 실패(404 등)는 조용히 단독으로 돌아간다. Target Servers·서버 정보·대시보드·Files·GC 로그 목록이 모두 이 모달을 거치므로 진입점 5곳에 한 번에 적용된다. 블록은 옅은 배경 + 1px 테두리(좌측 색 띠 없음).
+- `/combine` 에 `via`(`suggest` 만 인정, 그 밖은 `manual` — 감사 로그에 임의 문자열 금지) → `submitCombined(rep, names, who, via)` 오버로드.
+
+### 변경 / 곁들여 고친 것
+- **`probe()` 끝 시각** — 분석된 행의 `log_end` 는 마지막 **GC 이벤트** 시각이라 JVM 종료 줄보다 이르다(`.4` 실측 13:18:02 vs 파일 끝 13:22:36). 그대로 쓰면 이어지는 회전본 사이에 없는 "4분 공백" 이 생겼다. 이제 평문은 꼬리 256KB 가 우선(gz 만 `log_end` 우선)이고, **이어 붙인 대표의 `log_end`(묶음 전체의 끝)는 그 파일의 끝으로 쓰지 않는다.** 지문 캐시 키에 `log_end`·구성 여부 포함.
+- **스캔 '분석 완료' 판정**(`RemoteDumpService.gcLogAnalyzedVia`) — 분석된 묶음의 구성 파일은 대표 이름으로 분석 완료다. 구성 파일 행은 늘 미분석이라 종전엔 묶어 분석한 뒤에도 나머지 5개에 '분석 시작' 이 계속 붙었다. 스캔 패널 문구 `전송됨(묶음 분석완료)`(title = 대표 이름).
+- 확인 창의 포커스 가둠을 '보이는 입력·버튼' 기준으로 일반화(버튼 셋·출처 입력 칸 둘). 출처 입력 `input` 리스너가 모달을 열 때마다 하나씩 쌓이던 것을 build 1회로.
+- 캐시 키 `analyze-confirm.js?v=2026-09-23`(5 템플릿) · `server-scan.js?v=2026-09-23`(2 템플릿).
+
+### 검증
+- 단위 테스트 **1005건 통과**(라이브 4 skip, 신규 15). `GcLogGroupSuggestionTest`(11) — 픽스처 `src/test/resources/gclog/rotated-transfer/*.gz` 는 **실제로 받은 6개 파일**(이 앱 자신의 G1 로그, 경계 공백 ~1초, 52KB)을 전송 회피명·원격 경로 그대로 재현: 어느 파일에서 열어도 같은 6개가 `.3 → .4 → .1 → .2 → .0 → gc.log` 순(회전 번호와 무관, 함정 60)·대표 `gc_202609231516.log`·세 축 MATCH·쓰기 0 / 분석된 `.4` 가 사슬에 남고 공백 경고 없음 / 이어 붙인 대표의 끝 / member·combined / 낡은 part_of / 다른 서버·경로·묶음 제외 / 겹침 이유 / 설정 OFF / 계열 키 규칙 / 스캔 판정. `GcLogGroupSuggestionEndpointTest`(3) · `AnalyzeConfirmTemplateSmokeTest`(+1 계약). 기존 `GcLogCombineEndpointTest`·`GcLogGroupEndpointTest` 의 목 검증을 4인자 오버로드로 옮겼다(3인자만 보면 가드가 조용히 무력해진다).
+- 헤드리스 Chrome 정적 픽스처(`fetch` 스텁 = 실제 서비스 출력): group·member·single·출처 입력·힙(회귀 없음) 5상태, 1280px·390px(iframe — headless 는 레이아웃 폭을 최소 500px 로 잡는다), 수락 시 POST 본문(`via:'suggest'` + 6개 시간순)·잠김 문구·실패 문구 복구, 이동 경로(수락 → `/gc-log/analyze/gc_202609231516.log`, 이 파일만 → `…/gc.log_202609231516.2?start=1`, 구성 파일 → 대표 결과).
+- 빌드·운영 재기동(15.5초), 배포 JS 에 신규 코드 확인. **미검증:** 로그인 후 실제 화면 클릭(자격증명 없음) — 운영 DB 상태(6행·`.4` SUCCESS·`remote_mtime` 5행 NULL)는 테스트 픽스처와 같게 재현했다.
+
+**변경 파일:** `service/GcLogAnalyzerService.java`(`suggestGroup`·`neighborReason`·`seriesKey`·`probe` 끝 시각·`submitCombined` via) · `service/GcLogGroupPlanner.java`(`humanGap` 패키지 공개) · `service/RemoteDumpService.java`(`gcLogAnalyzedVia`) · `controller/GcLogApiController.java`(`group-suggestion`·`via`) · `static/js/analyze-confirm.js` · `static/js/server-scan.js` · 템플릿 5종(캐시 키) · 테스트 신규 2(+픽스처 6) · 수정 4(`GcLogCombineEndpointTest`·`GcLogGroupEndpointTest`·`AnalyzeConfirmTemplateSmokeTest`·`GcLogTemplateSmokeTest`) · `CLAUDE.md`.
+
+## [2026-09-22] k8s 매니페스트 2.5.7 + 사내 개발망 오버레이 `dev-k8sdata` (로컬 디스크 정적 PV + XFS 쿼터) (`/opt/genspark/heapApp_k8s`)
+
+**요청:** 사내 개발망 서버의 `/k8sdata`(50GB, 비어 있음, **증설 불가**)를 StorageClass 로 쓰도록 StorageClass·PV 파일, 패치, 이미지 태그 수정까지 넣은 `heapapp-k8s-manifests-2.5.7.tar.gz` 를 만들 것. 지금은 개발망 반입이고 운영망 이행 시 조건이 바뀔 수 있다.
+
+**산출물:** `dist/heapapp-k8s-manifests-2.5.7.tar.gz`(56KB — `README.md`·`docs/`·`k8s/`) + `dist/SHA256SUMS.txt` 한 줄 추가(기존 3줄 해시 불변 확인). 이미지 tar 는 다시 만들지 않았다.
+
+### 왜 이렇게 했나
+- **동적 프로비저너 대신 정적 local PV** — 사내망에 local-path-provisioner 이미지를 더 들일 필요가 없다. k3s 내장 `local-path` 는 `reclaimPolicy: Delete` 라 `kubectl delete -k` 한 번에 힙덤프·DB 가 지워지므로 쓰지 않는다.
+- **local PV 는 용량을 강제하지 않는다** — 매니페스트 요청 합계(145Gi)가 50GB 를 넘어도 바인딩은 되고, 넷이 한 파일시스템을 나눠 써서 힙덤프가 디스크를 채우면 MariaDB·Chroma 가 함께 멈춘다. 그래서 **XFS 프로젝트 쿼터**로 디렉토리마다 실제 한도를 건다. 루프 XFS 실측: 한도에서 쓰기가 막히고, `df`·Java `File.getTotalSpace/getUsableSpace`(앱 디스크 검사 `HeapSystemApiController`)가 쿼터 값을 본다(420MiB 한도·100MiB 사용 → total 420 / usable 320).
+- **이미지 이름** — 반입 tar 의 RepoTags 가 `localhost/heap-analyzer:2.5.7`(podman save) 이라, 오버레이가 `heap-analyzer:<ver>` 면 kubelet 이 `docker.io/library/heap-analyzer` 를 찾아 ErrImagePull. 기존 오버레이 태그도 2.5.1 로 낡아 있었다.
+
+### 추가
+- `k8s/storage/setup-local-storage.sh <오버레이> check|apply|generate` — 파일시스템(별도 마운트·fstab·크기)·클러스터(노드 이름·기존 SC/PVC/STS/PV)·용량(합계+예비 ≤ 디스크, `SIZE_HEAPDUMPS=auto` = 나머지)·SELinux·쿼터(prjquota·ID 충돌)를 점검하고, apply 는 디렉토리(10001/999, 2770 — kubelet `OnRootMismatch` 가 재귀 chown 을 건너뛰는 조건)·`container_file_t`(semanage 영구, 없으면 chcon+경고)·쿼터를 적용한 뒤 `<오버레이>/storage/*.yaml`(StorageClass + PV 4개 + PVC 3개 SMP + MariaDB volumeClaimTemplate JSON6902(`test` op 포함))을 만든다. 네임스페이스·MariaDB 유무는 오버레이 `kustomization.yaml` 에서 읽는다. ⚠ **배포 후 재실행하면 매니페스트 용량은 배포된 PVC/STS 값을 따르고 쿼터만 storage.env 값으로 바뀐다** — PVC·STS 용량은 바꿀 수 없어 `kubectl apply -k` 가 거부하기 때문(재배분 = 쿼터).
+- `k8s/overlays/dev-k8sdata/` — `kustomization.yaml`(base + 내부 MariaDB + expose + 생성물, `localhost/heap-analyzer:2.5.7`) · `storage.env`(저장소 조건 한 곳, 기본 heapdumps auto / coredumps 5Gi / chroma 2Gi / mariadb 6Gi / 예비 2Gi, `QUOTA=auto`) · `storage/README.md`(생성물 설명 — 생성물 자체는 노드 이름이 들어가 패키지에 넣지 않는다).
+- `docs/DEV-K8SDATA.md` — 전제·반입물·용량/쿼터(켜는 법)·설치 순서·Secret·운영(재배분·재배포·Released PV·재부팅)·**운영망 이행 표**(동적 SC·레지스트리·외부 DB·노드 여러 대·네임스페이스·공유 디스크)·검증 범위.
+
+### 변경
+- 이미지 태그 2.5.1 → **2.5.7**: `base/deployment.yaml` 3곳 + `incluster-db`·`external-db` 오버레이(직접 반입 시 `localhost/` 주석 추가).
+- `scripts/validate-manifests.sh` — 3 오버레이(dev-k8sdata 는 임시 사본에서 `generate` 후 렌더) + 이미지 태그=pom 버전 + 정적 PV 정합성(claimRef↔PVC·StorageClass·PVC≤PV·Retain·local.path·nodeAffinity·PV/SC 에 namespace 없음·`localhost/` 이미지). **137/137 PASS**(종전 69).
+- `README.md`·`docs/DEPLOY.md`·`docs/COMPATIBILITY.md` — 버전 표기, 직접 반입 이미지 이름, `sha256sum -c --ignore-missing`, 로컬 디스크 안내 링크.
+
+### 검증
+- 루프 XFS(600MB, prjquota): check(ID 충돌 탐지) → apply → 재실행(변경 없음) → 쿼터 강제(`dd` 가 한도에서 멈춤) → kustomize 렌더(PV 네임스페이스 없음·claimRef 유지·VCT 패치·이미지 치환·적용 순서 SC→PV→PVC). 실패 분기: prjquota 없음(WARN+켜는 법)·`QUOTA=required`·마운트 지점 아님·빌드 머신 generate(auto 거부)·MariaDB 없는 오버레이(3개 생성).
+- 가짜 kubectl: 빈 클러스터·배포 후 재실행(PVC 400Mi 유지, 쿼터 420Mi)·Released PV(patch 명령 안내)·다른 SC PVC·다른 프로비저너 SC·노드 여러 대/오기·연결 실패.
+- 묶음을 새 디렉토리에 풀어 빈 디스크에서 check→apply→렌더 재확인. apply 전 `kubectl apply -k` 는 `storage/local-pv.yaml: no such file` 로 명확히 멈춘다.
+- **미검증:** 실제 클러스터의 PV 바인딩·fsGroup·SELinux enforcing. 이미지 `verify-image.sh` 는 이번에 다시 돌리지 않았다.
+
+**변경 파일(k8s 트리):** `k8s/storage/setup-local-storage.sh`(신규) · `k8s/overlays/dev-k8sdata/{kustomization.yaml,storage.env,storage/README.md}`(신규) · `docs/DEV-K8SDATA.md`(신규) · `k8s/base/deployment.yaml` · `k8s/overlays/{incluster-db,external-db}/kustomization.yaml` · `scripts/validate-manifests.sh` · `README.md` · `docs/{DEPLOY,COMPATIBILITY}.md` · `dist/{heapapp-k8s-manifests-2.5.7.tar.gz,SHA256SUMS.txt}`. 앱 리포: `CLAUDE.md`(k8s 절) · 이 파일.
+
+## [2026-09-21] GC 로그 연속 회전본 자동 묶기 + 목록 서랍 구조 (v2.5.7)
+
+**버전:** 2.5.6 → **2.5.7** (`pom.xml` + UI 표기 3곳 `fragments/banner.html`·`index.html`·`progress.html`)
+
+**요청:** GC 로그 파일 업로드 시 예를 들어 하나의 인스턴스의 연속된 로그를 5개 업로드하면 5개 모두 연속된 로그임을 알아야 한다. 로그를 서랍 구조로 연결시킬 것. 더해서 — 대시보드에서 GC 로그 파일 업로드 시 이를 감지해 호스트명·인스턴스명(선택)을 입력받을 것.
+
+**확정한 방침(질의 후):** 서랍은 **대표 행 + 접힌 구성 파일 행**, 자동화는 **묶기만 자동이고 분석은 사용자**, 연속 판정은 **시각 연속성 · 호스트네임/인스턴스명 · JVM 마커 세 축 모두**.
+
+### 왜 필요했나
+회전본을 하나씩 따로 분석하면 구간이 짧아 `MIN_TREND_SPAN_SEC`(600초) 미만에서 누수 추세를 아예 내지 않고, Full GC 간격 같은 장기 판정이 근거 부족으로 빠진다. 2026-09-20 에 이어붙이기(combine)가 들어갔지만 진입점이 전부 사용자가 직접 고르는 것이었고 고르는 즉시 분석까지 시작했다. 게다가 대시보드·Files 큐로 올린 GC 로그는 `serverName` 을 보내지 않아 **업로드는 성공하고 분석만** 400 `NO_HOSTNAME` 으로 막히는 경로가 열려 있었다.
+
+### 판정 (`GcLogGroupPlanner` 신설 — 스프링 의존 0, 전부 static)
+- 세 축을 3값(`MATCH`/`MISMATCH`/`UNKNOWN`)으로 재고 **양쪽에 값이 있을 때만** 비교한다. **시간은 직전 조각과, 출처·마커는 그룹의 첫 조각(anchor)과** — 사슬로만 비교하면 A≈B, B≈C 인데 A·C 가 다른 표류가 생긴다.
+- 정렬은 새로 짜지 않고 기존 `orderMembers` 에 위임한다(회전 번호 ≠ 시간 순, 함정 60).
+- 지문 `Probe` = `Peek`(머리) + 끝 시각 + JVM 마커 + 출처. ⚠ `Peek` 에 필드를 더하지 않았다 — 골든 테스트가 6인자 생성자를 직접 부르고, `planCombine` 은 결과 페이지 모달의 체크박스 토글마다 호출돼 꼬리 읽기·마커 파싱 비용을 얹으면 안 된다.
+- 끝 시각 3단 폴백: 분석된 행의 `log_end` → 평문 꼬리 256KB 역스캔(파일 크기와 무관) → gz 는 `gz-tail-max-bytes` 이하일 때만 스트리밍. 모르면 그 경계에서 끊는다(안전측).
+- JVM 마커는 **앞 200줄을 기존 파서에 먹여 `onMeta` 로** 받는다(정규식 신설 없음). ⚠ `maxEvents=0` 금지 — `feedLine` 이 상한이 서는 순간 뒤 줄을 전부 버려 JDK8 의 `collector` 가 사라진다.
+- 설정 4키 `gclog.group.{enabled,max-overlap-seconds(60),max-gap-minutes(720),gz-tail-max-bytes(64MiB)}` — `@Value` 전용, `application.properties` 와 k8s `config/application.properties` 양쪽 기재.
+
+### 묶기 (분석과 분리)
+- `submitCombined` 에서 DB 링크 부분만 `linkCombined(rep, members, who, via)` 로 추출. `submitCombined` 는 이걸 부른 뒤 `submitAnalysis` 만 한다 — **시그니처·부작용 순서 불변이라 기존 테스트 무수정 통과**.
+- `forgetAnalysis` 에서 결과 컬럼 목록만 떼어 `invalidateResult` 신설. ⚠ 구성을 바꾼 뒤 `forgetAnalysis` 를 부르면 서버명·인스턴스명이 날아가고 마지막의 `clearMemberLinks` 가 방금 건 링크를 되돌린다.
+- API 3종: `POST /api/gc-log/group/preview`(판정만) · `POST …/group/auto`(판정+묶기) · `POST …/{fn}/combine/link`(묶기·해제·빼기). 전부 **분석 미시작**이고 `MissingHostnameException` 이 나오지 않는다. 알 수 없는 파일은 404 가 아니라 `skipped`(배치 의미). 한 그룹이 실패해도 나머지는 묶는다.
+- 감사 `[GcLog] action=autogroup files=… groups=… linked=… singles=… skipped=… apply=… by=` + 그룹마다 기존 `action=combine … via=auto`.
+
+### 곁들여 고친 기존 구멍 2건
+- **`forgetAnalysis` 가 자기 `part_of` 를 지우지 않았다** — 멤버였던 파일을 같은 이름으로 재업로드하면 새 내용이 옛 묶음에 매달린 채 남아 엉뚱한 로그가 이어 붙여 분석됐다.
+- **`memberFilesOf` 가 존재만 확인했다** — `MemberRef.size`/`mtimeEpochSec` 스냅샷은 "구성이 바뀌었는지 판정" 용으로 저장되는데 아무도 읽지 않았다. 이제 크기가 다르면 이름을 밝히고 거부한다.
+
+### 목록 서랍 (`/gc-log`)
+- 대표 행 한 줄 + `▸` 로 펼치는 구성 파일 행(`.hi-subrow` — files.html `.exec-subrow` 와 같은 언어, 열 수 동일). 기본 접힘, 상태는 `localStorage gcLogOpenGroups`.
+- ⚠ 최상위 판정은 `part_of` 가 아니라 **컨트롤러가 준 `claimed` 집합**(어느 묶음이 실제로 그리는가)이다 — `part_of` 로 가르면 대표의 `member_files` 에서 빠진 구성 파일이 어느 쪽에서도 렌더되지 않아 목록에서 조용히 사라진다.
+- 토글은 `display` 와 `aria-expanded` 만 만진다(`render()` 를 부르면 페이지·순번·정렬이 리셋된다). 페이지네이션은 대표 행만 센다. 검색어가 구성 파일명에 맞으면 그 그룹을 자동으로 펼친다.
+- 구성 파일 행에는 `.row-check` 를 두지 않는다 — 대표와 함께 선택되면 이어붙이기가 '이미 구성된 파일' 로 거부된다. 액션은 다운로드·**그룹에서 빼기**·삭제, 대표에는 **묶음 해제**.
+- ⚠ `.hi-row-chevron`(장식용 `›`)을 개조하지 않고 새 `.hi-group-toggle` 을 썼다 — 코어덤프 목록이 같은 CSS 를 쓴다.
+- 기존 `#hiShowMembers` 는 '구성 파일 포함' → **'모든 그룹 펼치기'** 로 의미만 바뀌었다(id·저장 키 유지).
+- 업로드 직후 흐름 교체: 옛 '이어 붙일까요' 제안 모달 → `group/auto` 호출 + **결과 안내 모달**(무엇이 묶였고 무엇이 왜 따로 남았는지). **분석은 시작하지 않는다.**
+
+### 대시보드·Files 업로드 출처 입력 (`upload-queue.js`)
+- 큐에 GC 로그가 있으면 **전송 시작 직후**(아직 한 바이트도 안 올린 시점) 호스트명(필수)·인스턴스명(선택)을 묻고 `serverName`/`instanceName` 을 함께 보낸다. 취소 = GC 로그를 올리지 않는다(호스트네임 없이 올리는 우회는 두지 않는다).
+- 모달은 모듈이 인라인 스타일로 자체 주입 — `.gcl-modal` CSS 는 `/gc-log` 에만 있어 템플릿에 두면 민짜가 된다(함정 17).
+- 큐 종료 시 완료된 GC 로그가 2개 이상이면 `group/auto` 를 한 번 부른다(대시보드·Files 가 코드 중복 없이 같은 동작).
+- **`_MAX_QUEUE` 5 → 10** — 회전 세트는 `gc.log.0~.4` + `gc.log` = 6개가 표준인데 5면 6번째가 **토스트 하나 띄우고 조용히** 잘렸고, 잘리는 기준이 파일명 순(≠시간 순)이라 자동 묶기가 엉뚱한 구성을 만든다. 상한 초과는 **차단 모달**(빠질 파일명 + 취소/앞 N개만)로 바꿨다.
+- 대시보드 Recent Files 는 `part_of != null` 을 건너뛴다(현황판과 같은 규약).
+
+### Files 페이지 GC Log 탭도 서랍으로 (같은 날 추가)
+처음에는 "Files 는 파일 관리 화면이니 평면 유지" 로 뒀는데, **`/gc-log` 는 1행인데 Files 는 5행**이라 같은 묶음이 화면마다 다르게 보였다. 그래서 Files 에도 서랍을 넣되 **구성 파일을 목록에서 빼지는 않는다**(파일 관리 화면에서 파일이 사라지면 안 된다) — 대표 아래로 접을 뿐이다.
+- 기존 **exec 페어 기계를 일반화**했다: `_subrowMap` 을 부모당 **배열**로, 부모 판정은 `parentOfRow`(`data-parent-core` 또는 `data-parent-group`), 접힘 여부는 `isCollapsibleRow`(GC 구성 파일만 접힌다 — exec 페어는 종전대로 부모와 늘 함께 보인다). `attachRow`/`showRow`/`onRenderStart`/`assignStableNumbers` 가 배열을 다루도록 수정.
+- ⚠ **부모가 목록에 없는 하위 행은 최상위로 되돌린다** — 어느 쪽에서도 그려지지 않으면 파일이 조용히 사라진다(`/gc-log` 의 `claimed` 판정과 같은 이유).
+- ⚠ `gc-log.css` 는 이 페이지에 실리지 않으므로 `.hi-group-toggle`·`.gclog-subrow`·묶음 배지 CSS 를 files.html 인라인에 뒀다(함정 17 계열 — 안 그러면 민짜 버튼이 된다).
+- 검색어가 구성 파일명에 맞으면 그 묶음을 펼쳐 보여 준다(`_hitByMember`, 접은 뒤에는 수동 선택이 우선). 접을 때 하위 행 선택은 해제하고 카운트를 갱신한다 — 보이지 않는 행이 선택된 채 남으면 '몇 개 선택됨' 이 화면과 어긋난다.
+- DTO `AnalysisHistoryItem` 에 `partOf`·`memberCount` 추가, `buildGcLogHistory` 가 채운다. 회귀 방어 `FilesTemplateSmokeTest` +2.
+
+### 테스트 (+60, 총 990건)
+`GcLogGroupPlannerTest`(16, 순수) · `GcLogAutoGroupRealFixtureTest`(7, **이 서버 실측 회전본 6개로 업로드→묶기→분석까지**) · `GcLogGroupLinkServiceTest`(12) · `GcLogGroupEndpointTest`(7) · `GcLogDrawerTemplateSmokeTest`(8) · `UploadQueueGcOriginTest`(8) · `FilesTemplateSmokeTest`(+2, Files 서랍). 기존 골든은 전부 무수정 통과 — `Peek` 무변경, 엔진·분석기 로직 0줄 변경(`heapMaxFromOptions` 는 가시성만 `public`), 컨트롤러 생성자 무변경.
+
+**변경 파일:** `service/{GcLogGroupPlanner(신규),GcLogAnalyzerService}.java` · `controller/{GcLogApiController,GcLogViewController,HeapDumpViewController}.java` · `parser/gclog/GcLogAnalyzer.java`(가시성) · `config/HeapDumpConfig.java` · `resources/application.properties` · `/opt/genspark/heapApp_k8s/config/application.properties` · `model/dto/AnalysisHistoryItem.java` · `templates/{gc-log/index,files}.html` · `static/js/{gc-log-index,upload-queue}.js` · `static/css/gc-log.css` · `templates/{index,files}.html`(캐시 키) · 테스트 6종 신규 · `CLAUDE.md`(GC 절 + 함정 67)
+
+
+## [2026-09-21] 문서 파일 `docs/` 디렉토리로 이동
+
+**요청:** md 파일들을 `docs/` 디렉토리를 만들어 그 위치로 옮길 것.
+
+### 이동 (`git mv` — 전부 rename 으로 추적됨, 이력 보존)
+루트의 md 15개 → `docs/` : `BOOT3_MIGRATION_PLAN` · `BOOT4_MIGRATION_PLAN` · `CHANGELOG` · `COREDUMP_SYMBOL_ACCURACY_VERIFICATION` · `DOMTREE_CHILDREN_RESEARCH` · `MAT_PARSE_REGRESSION_DIAGNOSIS` · `PHASE_4A_PLAN` · `RAG_PHASE2_PLAN` · `README-DEPLOY` · `SECRET_ENCRYPTION_FOLLOWUP` · `SECURITY_AUDIT_ACCOUNT` · `SECURITY_AUDIT_EMPTY_CATCH` · `SECURITY_AUDIT_OSS_CVE` · `SECURITY_REFACTOR_PLAN` · `VERSION_SPEC`.
+
+### 남겨 둔 것
+- **`CLAUDE.md` 는 루트 유지** — Claude Code 가 프로젝트 루트의 `CLAUDE.md` 만 프로젝트 지침으로 읽는다. `docs/` 로 옮기면 오류 없이 **지침이 통째로 로드되지 않는다**(조용한 실패).
+- `rag-data/README.md` · `rag-data/eval/BASELINE.md` 는 제자리 — 설명 대상 데이터와 같은 디렉토리에 있어야 하고, `evaluate.py`·`run-index.sh` 문서 경로 관례(`rag-data/eval/BASELINE.md`)가 `CLAUDE.md` 에 그대로 기재돼 있다.
+
+### 참조 갱신
+- `CLAUDE.md` 9곳 → `docs/…` (개요 Boot3/Boot4 계획, OSS CVE, 빈 catch 감사, RAG Phase2, 코어덤프 심볼 정확도, 시크릿 후속, Changelog 절, 리팩토링 이력). ⚠ `rag-data/eval/BASELINE.md` 와 k8s 트리의 `docs/COMPATIBILITY.md` 는 대상이 아니라 무변경.
+- `pom.xml` 주석 2곳, Java 주석 6곳(`CoreDumpAnalysisResult`·`CoreDumpAnalyzerService`·`CoreDumpSysrootService`·`CoreDumpSysrootCommandTest`) — 전부 주석이라 동작·빌드 산출물 무영향.
+- `docs/` 안 문서끼리의 상호 참조(`SECURITY_AUDIT_OSS_CVE.md` ↔ `BOOT4_MIGRATION_PLAN.md` 등)는 **형제 파일이 되어 그대로 유효**해 무수정.
+
+**변경 파일:** 루트 md 15개 → `docs/**`(rename) · `CLAUDE.md` · `pom.xml`(주석) · `src/**` Java 4개(주석)
+
 ## [2026-09-20] GC 로그 이어붙여 분석(회전 로그 병합) + 분석명·출처 입력 체계 (v2.5.6)
 
 **버전:** 2.5.4 → **2.5.6** (`pom.xml` + UI 표기 3곳 `fragments/banner.html`·`index.html`·`progress.html`. 쉘 스크립트는 버전 비의존 — `env.sh` 가 `target/heap-analyzer-*.jar` 최신본을 자동 탐색한다)

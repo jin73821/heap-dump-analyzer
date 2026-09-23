@@ -7,12 +7,18 @@ import com.heapdump.analyzer.model.entity.DumpTransferLog;
 import com.heapdump.analyzer.model.entity.GcLogAnalysisEntity;
 import com.heapdump.analyzer.model.entity.GcLogResultDetailEntity;
 import com.heapdump.analyzer.model.entity.TargetServer;
+import com.heapdump.analyzer.parser.gclog.GcEvent;
+import com.heapdump.analyzer.parser.gclog.GcEventSink;
+import com.heapdump.analyzer.parser.gclog.GcLogAnalyzer;
 import com.heapdump.analyzer.parser.gclog.GcLogEngine;
 import com.heapdump.analyzer.parser.gclog.GcLogFormat;
 import com.heapdump.analyzer.parser.gclog.GcLogFormatDetector;
+import com.heapdump.analyzer.parser.gclog.GcLogParser;
 import com.heapdump.analyzer.parser.gclog.GcLogResultCodec;
 import com.heapdump.analyzer.parser.gclog.GcLogSource;
+import com.heapdump.analyzer.parser.gclog.Jdk8GcLogParser;
 import com.heapdump.analyzer.parser.gclog.ParseLimits;
+import com.heapdump.analyzer.parser.gclog.UnifiedGcLogParser;
 import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.GcLogAnalysisRepository;
@@ -33,6 +39,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.RandomAccessFile;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -271,15 +278,9 @@ public class GcLogAnalyzerService {
      */
     void forgetAnalysis(GcLogAnalysisEntity e, String reason) {
         String fn = e.getFilename();
-        JobProgress p = jobs.remove(fn);
-        if (p != null && p.future != null) p.future.cancel(true);
-        resultCache.remove(fn);
-        detailRepository.deleteByFilename(fn);
-        aiInsight.deleteAiInsight(gcInsightKey(fn));
         boolean hadResult = GcLogAnalysisEntity.STATUS_SUCCESS.equals(e.getStatus()) || GcLogAnalysisEntity.STATUS_ERROR.equals(e.getStatus())
                 || e.getMatchedDumpFilename() != null;
-        e.setStatus(GcLogAnalysisEntity.STATUS_NOT_ANALYZED);
-        e.setErrorMessage(null);
+        invalidateResult(e);
         e.setUploadedBy(null);
         e.setServerId(null);
         e.setServerName(null);
@@ -287,6 +288,38 @@ public class GcLogAnalyzerService {
         e.setRemoteMtime(null);
         e.setJvmInfo(null);
         e.setInstanceName(null);
+        e.setMatchedDumpFilename(null);
+        e.setMatchSource(GcLogAnalysisEntity.MATCH_NONE);
+        e.setMatchReason(null);
+        e.setMatchCandidates(null);
+        e.setMatchedAt(null);
+        e.setAnalysisName(null);
+        e.setAnalysisDate(null);
+        // ⚠ 구성(이어 붙이기)도 함께 지운다 — 남겨 두면 같은 이름으로 새 파일이 들어온 뒤 재분석할 때
+        // 옛 구성 그대로 엉뚱한 파일과 합쳐 분석한다(함정 63). 대표 쪽(member_*)은 clearMemberLinks 가,
+        // 이 파일이 남의 구성원이었던 경우(part_of)는 아래 한 줄이 끊는다 — 없으면 새 내용이 옛 그룹에 매달린다.
+        e.setPartOf(null);
+        clearMemberLinks(e);
+        logger.info("[GcLog] action=forget-previous file={} reason={} hadResult={}", fn, reason, hadResult);
+    }
+
+    /**
+     * 분석 <b>결과만</b> 버린다 — 진행 중 작업·결과 캐시·결과 JSON·AI 해석과 엔티티의 요약 컬럼. 저장은 호출자가 한다.
+     * <p>출처(서버·인스턴스·원격 경로·JVM 수집)·구성(member_*·part_of)·{@code file_size}·덤프 매칭은 <b>건드리지 않는다</b>.
+     * 구성을 바꿀 때({@link #linkCombined})는 입력이 달라져 옛 결과가 거짓이 되지만 출처와 연결은 그대로 유효하기 때문이다.
+     * <p>⚠ 구성을 바꾼 뒤 {@link #forgetAnalysis} 를 부르면 안 된다 — 서버명·인스턴스명을 날리고 마지막의
+     * {@code clearMemberLinks} 가 방금 건 링크를 되돌린다. 결과만 버릴 때는 이 메서드를 쓸 것.
+     * <p>감사 로그는 남기지 않는다(호출자가 자기 문맥으로 한 줄 남긴다).
+     */
+    private void invalidateResult(GcLogAnalysisEntity e) {
+        String fn = e.getFilename();
+        JobProgress p = jobs.remove(fn);
+        if (p != null && p.future != null) p.future.cancel(true);
+        resultCache.remove(fn);
+        detailRepository.deleteByFilename(fn);
+        aiInsight.deleteAiInsight(gcInsightKey(fn));
+        e.setStatus(GcLogAnalysisEntity.STATUS_NOT_ANALYZED);
+        e.setErrorMessage(null);
         e.setLogFormat(null);
         e.setCollector(null);
         e.setJdkVersion(null);
@@ -302,21 +335,11 @@ public class GcLogAnalyzerService {
         e.setThroughputPct(null);
         e.setMaxHeapBytes(null);
         e.setSeverity(null);
-        e.setMatchedDumpFilename(null);
-        e.setMatchSource(GcLogAnalysisEntity.MATCH_NONE);
-        e.setMatchReason(null);
-        e.setMatchCandidates(null);
-        e.setMatchedAt(null);
         e.setAnalysisTimeMs(null);
         e.setAnalyzedAt(null);
+        // ⚠ 매칭 시간창은 비운다 — 구성이 바뀌면 대표 구간도 바뀌고, 분석이 applySummary 에서 다시 채운다(함정 64).
         e.setMatchWindowStart(null);
         e.setMatchWindowEnd(null);
-        e.setAnalysisName(null);
-        e.setAnalysisDate(null);
-        // ⚠ 구성(이어 붙이기)도 함께 지운다 — 남겨 두면 같은 이름으로 새 파일이 들어온 뒤 재분석할 때
-        // 옛 구성 그대로 엉뚱한 파일과 합쳐 분석한다(함정 63).
-        clearMemberLinks(e);
-        logger.info("[GcLog] action=forget-previous file={} reason={} hadResult={}", fn, reason, hadResult);
     }
 
     // ── 이어 붙이기(회전 로그 병합, 2026-09-20) ─────────────────
@@ -351,6 +374,11 @@ public class GcLogAnalyzerService {
      * @param preferredMtimeEpochSec 전송본의 <b>원격</b> mtime — 로컬 mtime 은 scp 가 새로 찍어 순서 근거가 못 된다
      */
     public Peek peek(File f, Long preferredMtimeEpochSec) throws IOException {
+        return peekFrom(headLines(f), f, preferredMtimeEpochSec);
+    }
+
+    /** 조각 앞부분(≤200줄 또는 64KB)을 읽는다. gz 도 읽는다. 머리를 여러 번 쓰는 호출자(마커 추출)가 재사용한다. */
+    List<String> headLines(File f) throws IOException {
         List<String> lines = new ArrayList<>(GcLogFormatDetector.SNIFF_LINES);
         try (InputStream raw = new FileInputStream(f)) {
             InputStream in = isGzip(f) ? new GZIPInputStream(raw, 1 << 16) : raw;
@@ -364,6 +392,11 @@ public class GcLogAnalyzerService {
                 lines.add(line);
             }
         }
+        return lines;
+    }
+
+    /** 이미 읽어 둔 머리 줄로 Peek 을 만든다(파일을 다시 열지 않는다). */
+    Peek peekFrom(List<String> lines, File f, Long preferredMtimeEpochSec) {
         GcLogFormat fmt = GcLogFormatDetector.sniff(lines);
         Long firstTs = null;
         Double firstUp = null;
@@ -431,20 +464,193 @@ public class GcLogAnalyzerService {
         return peeks.stream().allMatch(x -> x.firstTsEpochMs() != null) ? "absolute" : "mtime";
     }
 
+    // ── 연속 회전본 자동 판정용 지문(2026-09-21) ─────────────────
+
+    /** 꼬리 읽기 결과 — 마지막 절대 시각과 그 근거. 값이 없으면 {@code lastTsEpochMs == null}. */
+    record Tail(Long lastTsEpochMs, String source) {
+        static Tail none()            { return new Tail(null, "none"); }
+        static Tail of(Long ts)       { return ts == null ? none() : new Tail(ts, "content"); }
+    }
+
+    /** 헤더에서 뽑은 JVM 마커. 없는 값은 null 이고, null 은 "다르다"가 아니라 "모른다"는 뜻이다. */
+    record Markers(String collector, String jdkVersion, Long heapMaxBytes) {
+        static final Markers EMPTY = new Markers(null, null, null);
+    }
+
+    /** 꼬리 읽기 최대량(평문). 파일 크기와 무관하게 이만큼만 읽는다. */
+    private static final int TAIL_BYTES = 256 * 1024;
+
+    /** 지문 캐시 — 업로드 직후 판정 → 화면 표시 → 해제 후 재판정에서 같은 파일을 여러 번 훑는다. */
+    private final Map<String, GcLogGroupPlanner.Probe> probeCache = new ConcurrentHashMap<>();
+
+    /**
+     * 그룹 판정용 지문을 만든다 — 머리(형식·첫 시각)와 꼬리(끝 시각), JVM 마커, 출처(DB).
+     *
+     * <p>끝 시각은 <b>파일 꼬리</b>가 우선이다(평문은 256KB 만 읽어 싸다). 분석된 행의 {@code log_end} 는
+     * 마지막 <b>GC 이벤트</b> 시각이라 JVM 종료 줄({@code gc,heap,exit})보다 몇 분 이를 수 있어, 그대로 쓰면 이어지는
+     * 회전본 사이에 없는 공백이 생긴다(2026-09-23 실측 4분). gz 는 꼬리가 스트리밍이라 {@code log_end} 를 먼저 쓴다.
+     * ⚠ 이어 붙인 대표의 {@code log_end} 는 <b>묶음 전체</b>의 끝이라 그 파일의 끝으로 쓰면 안 된다.
+     */
+    GcLogGroupPlanner.Probe probe(GcLogAnalysisEntity e) throws IOException {
+        File f = fileOf(e.getFilename());
+        if (!f.isFile()) throw new IllegalArgumentException("GC 로그 파일이 없습니다: " + e.getFilename());
+        String key = e.getFilename() + "|" + f.length() + "|" + f.lastModified() + "|"
+                + e.getServerName() + "|" + e.getInstanceName() + "|" + e.getLogEnd() + "|" + e.isCombined();
+        GcLogGroupPlanner.Probe hit = probeCache.get(key);
+        if (hit != null) return hit;
+
+        List<String> head = headLines(f);
+        Long remoteMtime = e.getRemoteMtime() == null ? null
+                : e.getRemoteMtime().atZone(ZoneId.systemDefault()).toEpochSecond();
+        Peek pk = peekFrom(head, f, remoteMtime);
+        Markers mk = markersOf(head, pk.format());
+        Tail ownEnd = e.getLogEnd() != null && !e.isCombined()
+                ? new Tail(e.getLogEnd().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli(), "logEnd")
+                : null;
+        Tail tail = ownEnd != null && isGzip(f) ? ownEnd : tailOf(f);
+        if (tail.lastTsEpochMs() == null && ownEnd != null) tail = ownEnd;
+
+        GcLogGroupPlanner.Probe p = new GcLogGroupPlanner.Probe(pk, tail.lastTsEpochMs(), tail.source(),
+                e.getServerName(), e.getInstanceName(), mk.collector(), mk.jdkVersion(), mk.heapMaxBytes());
+        if (probeCache.size() > 500) probeCache.clear();   // 단순 상한 — 업로드 배치 단위 캐시라 정밀한 LRU 가 필요 없다
+        probeCache.put(key, p);
+        return p;
+    }
+
+    /**
+     * 조각의 <b>마지막</b> 절대 시각. 평문은 꼬리 {@value #TAIL_BYTES} 바이트만 읽으므로 파일 크기와 무관하고,
+     * gz 는 설정 상한 이하일 때만 스트리밍 해제한다(2GiB 로그를 통째로 푸는 일이 없게).
+     *
+     * <p>⚠ mtime 으로 대신하지 말 것 — 업로드본의 로컬 mtime 은 업로드 시각이다.
+     */
+    Tail tailOf(File f) {
+        try {
+            if (isGzip(f)) {
+                if (f.length() > config.getGcLogGroupGzTailMaxBytes()) return Tail.none();
+                return Tail.of(lastTimestampStreaming(f));
+            }
+            return Tail.of(lastTimestampFromTail(f));
+        } catch (IOException | RuntimeException ex) {
+            // 끝 시각을 모르면 그 경계에서 묶지 않는다(안전측) — 판정을 못 할 뿐 실패는 아니다.
+            logger.debug("[GcLog] 꼬리 시각 읽기 실패 file={} : {}", f.getName(), ex.toString());
+            return Tail.none();
+        }
+    }
+
+    /** 평문 파일의 꼬리만 읽어 마지막 ISO 시각을 찾는다. 앞이 잘린 첫 줄은 버린다. */
+    private Long lastTimestampFromTail(File f) throws IOException {
+        long len = f.length();
+        if (len == 0) return null;
+        long from = Math.max(0, len - TAIL_BYTES);
+        byte[] buf = new byte[(int) Math.min(TAIL_BYTES, len)];
+        try (RandomAccessFile raf = new RandomAccessFile(f, "r")) {
+            raf.seek(from);
+            raf.readFully(buf);
+        }
+        String text = new String(buf, StandardCharsets.UTF_8);
+        if (from > 0) {
+            int nl = text.indexOf('\n');
+            text = nl >= 0 ? text.substring(nl + 1) : "";
+        }
+        return lastTimestampIn(text);
+    }
+
+    /** gz 를 흘려 보내며 마지막 시각만 들고 있는다(줄을 모으지 않는다). 해제 누적이 분석 상한을 넘으면 멈춘다. */
+    private Long lastTimestampStreaming(File f) throws IOException {
+        Long last = null;
+        long read = 0, budget = config.getGcLogMaxFileBytes();
+        try (InputStream raw = new FileInputStream(f);
+             InputStream in = new GZIPInputStream(raw, 1 << 16)) {
+            var decoder = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPLACE).onUnmappableCharacter(CodingErrorAction.REPLACE);
+            BufferedReader r = new BufferedReader(new InputStreamReader(in, decoder), 1 << 16);
+            String line;
+            while ((line = r.readLine()) != null) {
+                read += line.length() + 1;
+                if (read > budget) return last;
+                Long ts = firstTimestampIn(line);
+                if (ts != null) last = ts;
+            }
+        }
+        return last;
+    }
+
+    private static Long lastTimestampIn(String text) {
+        var m = ISO_ANY.matcher(text);
+        String found = null;
+        while (m.find()) found = m.group(1);
+        return found == null ? null : parseLogTs(found);
+    }
+
+    private static Long firstTimestampIn(String line) {
+        var m = ISO_ANY.matcher(line);
+        return m.find() ? parseLogTs(m.group(1)) : null;
+    }
+
+    /**
+     * 머리 줄을 형식에 맞는 파서에 먹여 JVM 마커만 받는다 — GC 로그 정규식을 새로 짜지 않는다.
+     *
+     * <p>⚠ {@code maxEvents} 를 0 으로 주면 안 된다. 파서의 {@code feedLine} 은 상한이 서는 순간 그 뒤 줄을
+     * 통째로 버리므로 JDK 8 의 {@code collector}(첫 이벤트에서 emit)와 뒤따르는 메타가 사라진다.
+     * 입력이 ≤200줄/64KB 로 이미 묶여 있어 예산은 무제한이 안전하다.
+     */
+    static Markers markersOf(List<String> lines, GcLogFormat fmt) {
+        if (lines == null || lines.isEmpty() || fmt == null || fmt == GcLogFormat.UNKNOWN) return Markers.EMPTY;
+        String[] box = new String[3];   // 0=collector 1=jdkVersion 2=jvmOptions
+        Long[] heap = new Long[1];
+        GcEventSink sink = new GcEventSink() {
+            @Override
+            public void onEvent(GcEvent event) {
+                // 마커만 필요하다 — 이벤트는 버린다(파서는 이벤트를 보관하지 않으므로 비용도 없다).
+            }
+
+            @Override
+            public void onMeta(String key, String value) {
+                switch (key) {
+                    case "collector"  -> { if (box[0] == null) box[0] = value; }
+                    case "jdkVersion" -> { if (box[1] == null) box[1] = value; }
+                    case "jvmOptions" -> { if (box[2] == null) box[2] = value; }
+                    case "heapMax"    -> { if (heap[0] == null) heap[0] = parseLongOrNull(value); }
+                    default -> { }   // regionSize·decorations·permGen 은 그룹 판정에 쓰지 않는다
+                }
+            }
+        };
+        GcLogParser p = fmt == GcLogFormat.JDK8
+                ? new Jdk8GcLogParser(sink, Integer.MAX_VALUE)
+                : new UnifiedGcLogParser(sink, Integer.MAX_VALUE);
+        for (int i = 0; i < lines.size(); i++) p.feedLine(i + 1, lines.get(i));
+        p.finish();
+        Long heapMax = heap[0] != null ? heap[0] : GcLogAnalyzer.heapMaxFromOptions(box[2]);
+        return new Markers(box[0], box[1], heapMax);
+    }
+
+    private static Long parseLongOrNull(String s) {
+        try { return s == null ? null : Long.valueOf(s.trim()); }
+        catch (NumberFormatException e) { return null; }
+    }
+
     /** 대표 행의 구성 파일 목록(병합 순서). 구성이 없으면 대표 파일 하나. 파일이 없으면 이름을 밝히고 예외. */
     List<File> memberFilesOf(GcLogAnalysisEntity e) {
         List<MemberRef> refs = parseMembers(e.getMemberFiles());
         if (refs.isEmpty()) return List.of(fileOf(e.getFilename()));
         List<File> out = new ArrayList<>(refs.size());
         List<String> missing = new ArrayList<>();
+        List<String> changed = new ArrayList<>();
         for (MemberRef ref : refs) {
             File f = fileOf(ref.filename());
-            if (!f.isFile()) missing.add(ref.filename());
-            else out.add(f);
+            if (!f.isFile()) { missing.add(ref.filename()); continue; }
+            // 구성에 적어 둔 크기와 다르면 같은 이름의 **다른 파일**이다(지우고 다시 올린 경우).
+            // 존재만 확인하고 넘어가면 새 내용을 옛 구성으로 분석하게 된다 — 스냅샷은 바로 이걸 보려고 저장한다.
+            if (ref.size() > 0 && ref.size() != f.length()) { changed.add(ref.filename()); continue; }
+            out.add(f);
         }
         if (!missing.isEmpty()) {
             throw new IllegalArgumentException("이어 붙인 구성 파일이 없습니다: " + String.join(", ", missing)
                     + " — 구성에서 빼고 다시 분석하세요.");
+        }
+        if (!changed.isEmpty()) {
+            throw new IllegalArgumentException("구성 파일이 바뀌었습니다: " + String.join(", ", changed)
+                    + " — 같은 이름의 다른 파일입니다. 구성을 다시 만들고 분석하세요.");
         }
         return out;
     }
@@ -560,27 +766,61 @@ public class GcLogAnalyzerService {
 
     /** 이어 붙여 분석 시작. {@code memberNames} 가 비면 구성을 해제하고 대표 단독으로 다시 분석한다. */
     public synchronized JobProgress submitCombined(String repSafe, List<String> memberNames, String who) {
+        return submitCombined(repSafe, memberNames, who, "manual");
+    }
+
+    /**
+     * @param via 감사용 — {@code manual}(결과 화면·목록에서 직접 고름) 또는 {@code suggest}(분석 시작 확인 창의 제안을 수락,
+     *            {@link #suggestGroup})
+     */
+    public synchronized JobProgress submitCombined(String repSafe, List<String> memberNames, String who, String via) {
         GcLogAnalysisEntity rep = repository.findByFilename(repSafe)
                 .orElseThrow(() -> new IllegalArgumentException("GC 로그 기록이 없습니다: " + repSafe));
         if (isAnalyzing(repSafe)) throw new IllegalArgumentException("이미 분석 중입니다.");
         requireHostname(rep);
+        linkCombined(repSafe, memberNames, who, via);
+        return submitAnalysis(repSafe, who);
+    }
+
+    /**
+     * 구성을 <b>저장하기만</b> 한다 — 분석은 시작하지 않는다(2026-09-21). {@code memberNames} 가 대표 외 이름을
+     * 담지 않으면 구성을 해제한다. {@link #submitCombined}(수동 이어붙여 분석)와 업로드 직후 자동 그룹화가 공유한다.
+     *
+     * <p>⚠ 호스트네임을 요구하지 않는다 — 분석 초크포인트는 {@link #requireHostname} 하나다(함정 66).
+     * 묶기는 분석이 아니므로 여기서 막으면 출처 없는 기존 로그를 정리조차 못 하게 된다.
+     * <p>⚠ 옛 결과를 버릴 때 {@link #forgetAnalysis} 를 쓰지 말 것 — 서버명·인스턴스명을 날리고
+     * 마지막의 {@code clearMemberLinks} 가 방금 건 링크를 되돌린다. {@link #invalidateResult} 를 쓴다.
+     *
+     * @param via 감사용 — {@code manual}(사용자가 직접 고름) 또는 {@code auto}(업로드 직후 자동 판정)
+     * @return 저장한 구성(해제면 빈 계획)
+     */
+    public synchronized CombinePlan linkCombined(String repSafe, List<String> memberNames, String who, String via) {
+        GcLogAnalysisEntity rep = repository.findByFilename(repSafe)
+                .orElseThrow(() -> new IllegalArgumentException("GC 로그 기록이 없습니다: " + repSafe));
+        if (isAnalyzing(repSafe)) throw new IllegalArgumentException("분석이 진행 중입니다 — 끝난 뒤 구성을 바꾸세요.");
 
         boolean ungroup = memberNames == null || memberNames.stream().filter(n -> n != null && !n.isBlank())
                 .noneMatch(n -> !n.equals(repSafe));
         if (ungroup) {
-            clearCombination(repSafe, "ungroup");
-            logger.info("[GcLog] action=combine file={} members=1 order=[] name={} by={}", repSafe, rep.getAnalysisName(), who);
-            return submitAnalysis(repSafe, who);
+            clearCombination(repSafe, via + "-ungroup");
+            logger.info("[GcLog] action=combine file={} members=1 order=[] via={} name={} by={}",
+                    repSafe, via, rep.getAnalysisName(), who);
+            return new CombinePlan(List.of(), List.of(), 0L, "none");
         }
 
         CombinePlan plan = planCombine(repSafe, memberNames);
+        // 결과가 달라지므로 옛 결과·AI 해석을 남겨 두지 않는다. 출처·매칭·file_size 는 그대로 둔다.
+        invalidateResult(rep);
         clearMemberLinks(rep);
         long bytes = 0;
         for (MemberRef ref : plan.ordered()) bytes += ref.size();
         rep.setMemberFiles(writeMembers(plan.ordered()));
         rep.setMemberCount(plan.ordered().size());
+        // ⚠ 합계는 members_bytes 에만 — file_size 에 넣으면 listExistingFiles() 가 '다른 파일'로 보고
+        // forgetAnalysis 를 돌려 결과가 조용히 사라진다(함정 63).
         rep.setMembersBytes(bytes);
         rep.setPartOf(null);
+        refreshAnalysisName(rep);
         repository.save(rep);
         for (MemberRef ref : plan.ordered()) {
             if (ref.filename().equals(repSafe)) continue;
@@ -589,16 +829,12 @@ public class GcLogAnalyzerService {
             m.setPartOf(repSafe);
             repository.save(m);
         }
-        // 결과가 달라지므로 옛 AI 해석을 남겨 두지 않는다
-        aiInsight.deleteAiInsight(gcInsightKey(repSafe));
-        detailRepository.deleteByFilename(repSafe);
-        resultCache.remove(repSafe);
 
         List<String> order = new ArrayList<>();
         for (MemberRef ref : plan.ordered()) order.add(ref.filename());
-        logger.info("[GcLog] action=combine file={} members={} order={} basis={} name={} by={}",
-                repSafe, plan.ordered().size(), order, plan.orderBasis(), rep.getAnalysisName(), who);
-        return submitAnalysis(repSafe, who);
+        logger.info("[GcLog] action=combine file={} members={} order={} basis={} via={} name={} by={}",
+                repSafe, plan.ordered().size(), order, plan.orderBasis(), via, rep.getAnalysisName(), who);
+        return plan;
     }
 
     /** 구성 해제 — 표시·역참조만 지우고 파일은 건드리지 않는다. */
@@ -608,6 +844,322 @@ public class GcLogAnalyzerService {
         clearMemberLinks(rep);
         repository.save(rep);
         logger.info("[GcLog] action=combine-clear file={} reason={}", repSafe, reason);
+    }
+
+    // ── 업로드 직후 자동 그룹화(2026-09-21) ──────────────────────
+
+    /** 자동 판정 결과 한 덩어리. {@code linked} 는 실제로 DB 에 묶였는지(미리보기는 늘 false). */
+    public record GroupOutcome(GcLogGroupPlanner.Group group, boolean linked, String error, String analysisName) { }
+
+    /**
+     * 자동 판정 전체 결과.
+     *
+     * @param skipped 판정 대상에서 뺀 파일과 이유 — 배치 의미라 404 로 실패시키지 않는다
+     */
+    public record AutoGroupResult(List<GroupOutcome> groups, List<String> singles,
+                                  Map<String, String> singleReasons, List<Map<String, String>> skipped) { }
+
+    /**
+     * 방금 올린 GC 로그들이 한 인스턴스의 연속된 회전본인지 판정하고, {@code apply} 면 <b>묶기까지</b> 한다.
+     *
+     * <p>⚠ <b>분석은 시작하지 않는다.</b> 묶인 대표 행은 {@code NOT_ANALYZED} 로 남고 사용자가 '분석'을 누를 때
+     * {@link #submitAnalysis} 가 저장된 구성을 그대로 이어 붙여 분석한다.
+     * <p>⚠ 호스트네임을 요구하지 않는다 — 묶기는 분석이 아니다(함정 66).
+     * <p>한 그룹이 실패해도 나머지는 묶는다. 업로드 직후 배치라 전부 잃으면 사용자가 손으로 다시 해야 한다.
+     */
+    public synchronized AutoGroupResult autoGroup(List<String> filenames, String who, boolean apply) {
+        List<Map<String, String>> skipped = new ArrayList<>();
+        List<GcLogGroupPlanner.Probe> probes = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+
+        for (String raw : filenames == null ? List.<String>of() : filenames) {
+            if (raw == null || raw.isBlank()) continue;
+            String safe = validateGcLogFilename(raw);
+            if (!seen.add(safe)) continue;
+            GcLogAnalysisEntity e = repository.findByFilename(safe).orElse(null);
+            String skip = skipReason(e);
+            if (skip != null) { skipped.add(Map.of("filename", safe, "reason", skip)); continue; }
+            try {
+                probes.add(probe(e));
+            } catch (IOException | IllegalArgumentException ex) {
+                logger.debug("[GcLog] 지문 생성 실패 file={} : {}", safe, ex.toString());
+                skipped.add(Map.of("filename", safe, "reason", "unreadable"));
+            }
+        }
+
+        if (!config.isGcLogGroupEnabled()) {
+            List<String> singles = probes.stream().map(GcLogGroupPlanner.Probe::filename).toList();
+            Map<String, String> reasons = new LinkedHashMap<>();
+            for (String s : singles) reasons.put(s, "자동 묶기가 꺼져 있습니다(gclog.group.enabled=false).");
+            return new AutoGroupResult(List.of(), singles, reasons, skipped);
+        }
+
+        GcLogGroupPlanner.Rules rules = new GcLogGroupPlanner.Rules(
+                config.getGcLogGroupMaxOverlapSeconds(), config.getGcLogGroupMaxGapMinutes() * 60L, MAX_MEMBERS);
+        GcLogGroupPlanner.Plan plan = GcLogGroupPlanner.plan(probes, rules);
+
+        List<GroupOutcome> outcomes = new ArrayList<>(plan.groups().size());
+        int linked = 0;
+        for (GcLogGroupPlanner.Group g : plan.groups()) {
+            if (!apply) { outcomes.add(new GroupOutcome(g, false, null, null)); continue; }
+            List<String> members = new ArrayList<>(g.members());
+            members.remove(g.representative());
+            try {
+                linkCombined(g.representative(), members, who, "auto");
+                String name = repository.findByFilename(g.representative())
+                        .map(GcLogAnalysisEntity::getAnalysisName).orElse(null);
+                outcomes.add(new GroupOutcome(g, true, null, name));
+                linked++;
+            } catch (RuntimeException ex) {
+                // 한 그룹의 실패가 나머지를 막지 않는다 — 이유는 응답에 실어 화면이 설명하게 한다.
+                logger.warn("[GcLog] action=autogroup-failed rep={} members={} error={}",
+                        g.representative(), members.size(), ex.getMessage());
+                outcomes.add(new GroupOutcome(g, false, ex.getMessage(), null));
+            }
+        }
+        logger.info("[GcLog] action=autogroup files={} groups={} linked={} singles={} skipped={} apply={} by={}",
+                probes.size(), plan.groups().size(), linked, plan.singles().size(), skipped.size(), apply, who);
+        return new AutoGroupResult(outcomes, plan.singles(), plan.singleReasons(), skipped);
+    }
+
+    /** 자동 판정 대상에서 뺄 이유. 대상이면 null. */
+    private String skipReason(GcLogAnalysisEntity e) {
+        if (e == null) return "not-registered";
+        if (e.isFileDeleted()) return "file-deleted";
+        if (isAnalyzing(e.getFilename())) return "analyzing";
+        if (GcLogAnalysisEntity.STATUS_ANALYZING.equals(e.getStatus())) return "analyzing";
+        // 이미 낸 결과를 자동으로 버리지 않는다. 수동 이어붙이기는 여전히 가능하다.
+        if (GcLogAnalysisEntity.STATUS_SUCCESS.equals(e.getStatus())) return "already-analyzed";
+        if (e.isCombined()) return "already-combined";
+        if (e.getPartOf() != null) return "already-member";
+        return null;
+    }
+
+    // ── 분석 시작 전 연속 로그 제안(2026-09-23) ──────────────────
+    //
+    // 원격 전송은 파일마다 따로 도착해 업로드 큐처럼 '한 배치'가 없다 — 그래서 autoGroup 이 돌 자리가 없고,
+    // Target Servers 에서 회전본 6개를 받아도 각각 단독 분석만 됐다. 사용자가 아무 로그에서나 '분석 시작'을
+    // 누른 순간 그 파일이 속한 연속 회전본을 찾아 확인 창(analyze-confirm.js)에 보인다. 판정은 autoGroup 과 같은
+    // GcLogGroupPlanner 이고, 후보만 "같은 서버 · 같은 회전 계열" 로 좁힌다. 이 메서드는 아무것도 쓰지 않는다.
+
+    /** 제안 종류 — 새로 찾은 묶음 / 이미 이어 붙인 구성의 대표 / 다른 묶음의 구성 파일 / 묶을 것 없음. */
+    public static final String SUGGEST_GROUP = "group";
+    public static final String SUGGEST_COMBINED = "combined";
+    public static final String SUGGEST_MEMBER = "member";
+    public static final String SUGGEST_SINGLE = "single";
+
+    /**
+     * 제안 목록의 한 파일. {@code start}/{@code end} 는 로그 내용의 첫·끝 시각(서버 시간대, {@code yyyy-MM-dd HH:mm:ss}) —
+     * 화면이 시각을 만들지 않게 서버에서 문자열로 준다(함정 33).
+     */
+    public record SuggestedMember(String filename, long size, String start, String end,
+                                  String status, String analysisName, boolean missing) { }
+
+    /**
+     * 분석 시작 전 제안.
+     *
+     * @param representative  결과가 저장될 행 — {@code group} 이면 가장 최근 조각(autoGroup 과 같은 규칙)
+     * @param series          회전 계열 표시용 경로(원격 경로 또는 파일명에서 회전 접미사를 뗀 것)
+     * @param candidates      판정에 넣은 파일 수(선택한 파일 포함) — 1 이면 같은 계열 로그가 없었다
+     * @param excludedGrouped 같은 계열이지만 이미 다른 묶음에 속해 뺀 파일 수
+     * @param reason          {@code single} 인 이유(같은 계열 후보가 있었을 때만)
+     */
+    public record GroupSuggestion(String mode, String filename, String representative, String series,
+                                  List<SuggestedMember> members, GcLogGroupPlanner.Axes axes,
+                                  List<String> warnings, String reason, int candidates, int excludedGrouped,
+                                  long totalBytes, String orderBasis, String serverName,
+                                  String collector, Long heapMaxBytes) { }
+
+    private static final java.time.format.DateTimeFormatter SUGGEST_TS =
+            java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /**
+     * 이 파일이 속한 연속 회전본을 찾는다 — 쓰기 없음.
+     *
+     * <p>후보는 ① 같은 서버(둘 다 없음 포함) ② 같은 회전 계열({@link #seriesKey}) ③ 인스턴스명이 둘 다 있으면 같음
+     * ④ 파일 존재 · 분석 중 아님 · 다른 묶음에 속하지 않음. <b>이미 단독 분석된 파일도 후보다</b> — 구성 파일로 묶여도
+     * 그 파일의 결과는 지워지지 않고(대표의 결과만 바뀐다), 빼면 사슬 가운데가 비어 없는 공백이 생긴다.
+     * 계열로 먼저 나누는 이유: 한 서버의 인스턴스별 로그(was1/gc.log · was2/gc.log)를 한 사슬에 넣으면
+     * 시간순으로 번갈아 놓여 planner 가 다른 인스턴스의 조각을 이어 붙일 수 있다.
+     */
+    public GroupSuggestion suggestGroup(String safe) {
+        GcLogAnalysisEntity x = repository.findByFilename(safe)
+                .orElseThrow(() -> new IllegalArgumentException("GC 로그 기록이 없습니다: " + safe));
+        String series = seriesBase(x.getRemotePath(), x.getFilename());
+
+        if (x.isCombined()) return fromComposition(SUGGEST_COMBINED, x, x, series);
+        if (x.getPartOf() != null) {
+            // 역참조가 살아 있고 대표의 구성에 실제로 들어 있을 때만 — 대표가 구성을 바꾼 뒤 남은 낡은 part_of 는 무시한다
+            GcLogAnalysisEntity rep = repository.findByFilename(x.getPartOf()).orElse(null);
+            if (rep != null && rep.isCombined() && !rep.isFileDeleted()
+                    && parseMembers(rep.getMemberFiles()).stream().anyMatch(r -> r.filename().equals(safe))) {
+                return fromComposition(SUGGEST_MEMBER, x, rep, series);
+            }
+        }
+        if (!fileOf(safe).isFile()) return singleSuggestion(x, series, "GC 로그 파일이 없습니다.", 1, 0);
+        if (!config.isGcLogGroupEnabled()) {
+            return singleSuggestion(x, series, "자동 묶기가 꺼져 있습니다(gclog.group.enabled=false).", 1, 0);
+        }
+
+        String key = seriesKey(x.getRemotePath(), x.getFilename());
+        Map<String, GcLogAnalysisEntity> pool = new LinkedHashMap<>();
+        pool.put(safe, x);
+        int excluded = 0;
+        for (GcLogAnalysisEntity e : repository.findAllByOrderByCreatedAtDesc()) {
+            if (e.getFilename().equals(safe) || e.isFileDeleted()) continue;
+            if (!sameOrigin(x, e) || key == null || !key.equals(seriesKey(e.getRemotePath(), e.getFilename()))) continue;
+            if (e.isCombined() || e.getPartOf() != null) { excluded++; continue; }
+            if (isAnalyzing(e.getFilename()) || GcLogAnalysisEntity.STATUS_ANALYZING.equals(e.getStatus())) continue;
+            if (!fileOf(e.getFilename()).isFile()) continue;
+            pool.putIfAbsent(e.getFilename(), e);
+        }
+
+        List<GcLogGroupPlanner.Probe> probes = new ArrayList<>(pool.size());
+        for (GcLogAnalysisEntity e : pool.values()) {
+            try {
+                probes.add(probe(e));
+            } catch (IOException | IllegalArgumentException ex) {
+                logger.debug("[GcLog] 제안용 지문 생성 실패 file={} : {}", e.getFilename(), ex.toString());
+                if (e == x) return singleSuggestion(x, series, "로그를 읽지 못했습니다: " + ex.getMessage(), 1, excluded);
+            }
+        }
+        if (probes.size() < 2) return singleSuggestion(x, series, null, probes.size(), excluded);
+
+        GcLogGroupPlanner.Rules rules = new GcLogGroupPlanner.Rules(
+                config.getGcLogGroupMaxOverlapSeconds(), config.getGcLogGroupMaxGapMinutes() * 60L, MAX_MEMBERS);
+        GcLogGroupPlanner.Plan plan = GcLogGroupPlanner.plan(probes, rules);
+        Map<String, GcLogGroupPlanner.Probe> byName = new LinkedHashMap<>();
+        for (GcLogGroupPlanner.Probe p : probes) byName.put(p.filename(), p);
+
+        for (GcLogGroupPlanner.Group g : plan.groups()) {
+            if (!g.members().contains(safe)) continue;
+            List<SuggestedMember> members = new ArrayList<>(g.members().size());
+            String collector = null;
+            Long heapMax = null;
+            for (String fn : g.members()) {
+                GcLogGroupPlanner.Probe p = byName.get(fn);
+                GcLogAnalysisEntity e = pool.get(fn);
+                members.add(new SuggestedMember(fn, p.size(), fmtSuggestTs(p.firstTs()), fmtSuggestTs(p.lastTsEpochMs()),
+                        e.getStatus(), e.getAnalysisName(), false));
+                if (collector == null) collector = p.collector();
+                if (heapMax == null) heapMax = p.heapMaxBytes();
+            }
+            return new GroupSuggestion(SUGGEST_GROUP, safe, g.representative(), series, members, g.axes(),
+                    g.warnings(), null, probes.size(), excluded, g.totalBytes(), g.orderBasis(),
+                    x.getServerName(), collector, heapMax);
+        }
+        String reason = neighborReason(probes, safe, rules);
+        return singleSuggestion(x, series, reason != null ? reason : plan.singleReasons().get(safe), probes.size(), excluded);
+    }
+
+    /**
+     * 단독으로 남은 이유를 <b>이 파일 기준</b>으로 말한다. planner 의 {@code singleReasons} 는 "앞 덩어리와 끊긴 이유" 라
+     * 시간상 첫 파일에는 "이어질 로그를 찾지 못했습니다" 만 남는다 — 사용자가 알고 싶은 건 바로 옆 로그와 왜 안 이어지는지다.
+     * 뒤 이웃이 있으면 그쪽(단독이면 반드시 끊겨 있다), 없으면 앞 이웃과 잰다.
+     */
+    private static String neighborReason(List<GcLogGroupPlanner.Probe> probes, String safe, GcLogGroupPlanner.Rules rules) {
+        List<GcLogGroupPlanner.Probe> ordered = GcLogGroupPlanner.order(probes, null);
+        int i = -1;
+        for (int k = 0; k < ordered.size(); k++) if (ordered.get(k).filename().equals(safe)) { i = k; break; }
+        if (i < 0) return null;
+        GcLogGroupPlanner.Probe x = ordered.get(i);
+        boolean hasNext = i + 1 < ordered.size();
+        if (!hasNext && i == 0) return null;
+        GcLogGroupPlanner.Probe early = hasNext ? x : ordered.get(i - 1);
+        GcLogGroupPlanner.Probe late = hasNext ? ordered.get(i + 1) : x;
+        GcLogGroupPlanner.Axes a = GcLogGroupPlanner.evaluate(early, early, late, rules, null);
+        if (GcLogGroupPlanner.continuous(a)) return null;
+        String who = (hasNext ? late : early).filename();
+        if (a.time() == GcLogGroupPlanner.Signal.MISMATCH) {
+            boolean overlap = early.lastTsEpochMs() != null && late.firstTs() != null
+                    && (early.lastTsEpochMs() - late.firstTs()) / 1000L > rules.maxOverlapSec();
+            return overlap
+                    ? who + " 과(와) 기록 시간이 겹칩니다 — 다른 JVM 이 같은 시각에 쓴 로그로 보입니다"
+                    : who + " 과(와) " + GcLogGroupPlanner.humanGap(rules.maxGapSec()) + " 넘게 떨어져 있습니다";
+        }
+        if (a.time() == GcLogGroupPlanner.Signal.UNKNOWN) {
+            return "로그의 시각(절대 시각 또는 끝 시각)을 확인하지 못해 " + who + " 과(와) 이어지는지 판단할 수 없습니다";
+        }
+        if (a.origin() == GcLogGroupPlanner.Signal.MISMATCH) return who + " 과(와) 호스트네임 또는 인스턴스명이 다릅니다";
+        if (a.jvm() == GcLogGroupPlanner.Signal.MISMATCH) return who + " 과(와) JVM 설정(수집기·최대 힙·로그 형식)이 다릅니다";
+        return who + " 과(와) 같은 인스턴스라는 근거(출처·JVM 설정)가 없습니다";
+    }
+
+    /** 이미 저장된 구성을 그대로 보여 준다(대표 자신 또는 구성 파일에서 열었을 때). 파일이 없어도 목록에서 빼지 않는다. */
+    private GroupSuggestion fromComposition(String mode, GcLogAnalysisEntity x, GcLogAnalysisEntity rep, String series) {
+        List<SuggestedMember> members = new ArrayList<>();
+        long total = 0;
+        for (MemberRef ref : parseMembers(rep.getMemberFiles())) {
+            GcLogAnalysisEntity e = repository.findByFilename(ref.filename()).orElse(null);
+            File f = fileOf(ref.filename());
+            boolean missing = !f.isFile();
+            String start = null, end = null;
+            if (!missing && e != null) {
+                try {
+                    GcLogGroupPlanner.Probe p = probe(e);
+                    start = fmtSuggestTs(p.firstTs());
+                    end = fmtSuggestTs(p.lastTsEpochMs());
+                } catch (IOException | IllegalArgumentException ex) {
+                    // 시각은 표시용이다 — 못 읽어도 구성 목록은 보인다
+                    logger.debug("[GcLog] 구성 파일 시각 읽기 실패 file={} : {}", ref.filename(), ex.toString());
+                }
+            }
+            long size = missing ? ref.size() : f.length();
+            total += size;
+            members.add(new SuggestedMember(ref.filename(), size, start, end,
+                    e == null ? null : e.getStatus(), e == null ? null : e.getAnalysisName(), missing));
+        }
+        return new GroupSuggestion(mode, x.getFilename(), rep.getFilename(), series, members, null, List.of(), null,
+                members.size(), 0, total, null, rep.getServerName(), null, null);
+    }
+
+    private static GroupSuggestion singleSuggestion(GcLogAnalysisEntity x, String series, String reason,
+                                                    int candidates, int excluded) {
+        return new GroupSuggestion(SUGGEST_SINGLE, x.getFilename(), x.getFilename(), series, List.of(), null, List.of(),
+                reason, candidates, excluded, 0L, null, x.getServerName(), null, null);
+    }
+
+    private static String fmtSuggestTs(Long epochMs) {
+        if (epochMs == null) return null;
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMs), ZoneId.systemDefault()).format(SUGGEST_TS);
+    }
+
+    /** 같은 서버(둘 다 비어 있음 포함)이고, 인스턴스명이 둘 다 있으면 같아야 한다. */
+    static boolean sameOrigin(GcLogAnalysisEntity a, GcLogAnalysisEntity b) {
+        if (!java.util.Objects.equals(normOrigin(a.getServerName()), normOrigin(b.getServerName()))) return false;
+        String ai = normOrigin(a.getInstanceName()), bi = normOrigin(b.getInstanceName());
+        return ai == null || bi == null || ai.equals(bi);
+    }
+
+    private static String normOrigin(String s) {
+        if (s == null || s.isBlank()) return null;
+        return s.trim().toLowerCase(Locale.ROOT);
+    }
+
+    /** 회전 계열 표시용 — 원격 경로가 있으면 그쪽(전송 회피명은 파일명 base 를 망가뜨린다), 없으면 파일명. */
+    static String seriesBase(String remotePath, String filename) {
+        String p = remotePath != null && !remotePath.isBlank() ? remotePath.trim() : filename;
+        return p == null ? null : com.heapdump.analyzer.util.JvmHeapCapture.stripRotation(p);
+    }
+
+    /**
+     * 회전 계열 판정 키 — 디렉토리는 그대로, 파일명의 {@code %t}(날짜_시각)·4자리 이상 숫자(pid·epoch)만 가린다.
+     * <ul>
+     *   <li>{@code /tmp/gc.log.3} · {@code /tmp/gc.log} → {@code /tmp/gc.log} (회전 접미사)</li>
+     *   <li>{@code gc-2026-09-14_00-52-33.log} → {@code gc-#.log} (재기동마다 새 파일 — JDK 9+ {@code %t})</li>
+     *   <li>{@code /logs/was1/gc.log} ≠ {@code /logs/was2/gc.log} (디렉토리는 가리지 않는다)</li>
+     *   <li>{@code gc_container1.log} ≠ {@code gc_container2.log} (짧은 숫자는 인스턴스 번호일 수 있어 가리지 않는다)</li>
+     * </ul>
+     */
+    static String seriesKey(String remotePath, String filename) {
+        String base = seriesBase(remotePath, filename);
+        if (base == null || base.isBlank()) return null;
+        int slash = base.lastIndexOf('/');
+        String dir = base.substring(0, slash + 1);
+        String name = base.substring(slash + 1)
+                .replaceAll("\\d{4}-\\d{2}-\\d{2}[_T]\\d{2}[-:.]\\d{2}[-:.]\\d{2}", "#")
+                .replaceAll("\\d{4,}", "#");
+        return dir + name;
     }
 
     /**

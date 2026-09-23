@@ -70,7 +70,7 @@ class GcLogCombineEndpointTest {
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.memberCount").value(3))
                 .andExpect(jsonPath("$.analysisName").value("was1_c1_20260919"));
-        Mockito.verify(gc).submitCombined(eq("gc.log"), eq(List.of("gc.log.1", "gc.log.2")), anyString());
+        Mockito.verify(gc).submitCombined(eq("gc.log"), eq(List.of("gc.log.1", "gc.log.2")), anyString(), eq("manual"));
 
         mvc.perform(post("/api/gc-log/missing.log/combine").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isNotFound())
@@ -81,7 +81,7 @@ class GcLogCombineEndpointTest {
     @DisplayName("호스트네임이 없으면 NO_HOSTNAME 400 — 화면이 입력 칸을 펼칠 수 있게 전용 코드로")
     void missingHostnameHasItsOwnCode() throws Exception {
         Mockito.doThrow(new GcLogAnalyzerService.MissingHostnameException("GC 로그를 수집한 서버(호스트네임)를 입력해야 분석할 수 있습니다."))
-                .when(gc).submitCombined(anyString(), any(), anyString());
+                .when(gc).submitCombined(anyString(), any(), anyString(), anyString());
 
         mvc.perform(post("/api/gc-log/gc.log/combine").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
@@ -100,7 +100,7 @@ class GcLogCombineEndpointTest {
                 .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
 
         Mockito.doThrow(new IllegalArgumentException("GC 로그 파일이 없습니다: gc.log.9"))
-                .when(gc).submitCombined(anyString(), any(), anyString());
+                .when(gc).submitCombined(anyString(), any(), anyString(), anyString());
         mvc.perform(post("/api/gc-log/gc.log/combine").contentType(MediaType.APPLICATION_JSON)
                         .content("{\"filenames\":[\"gc.log.9\"]}"))
                 .andExpect(status().isBadRequest())
@@ -125,6 +125,7 @@ class GcLogCombineEndpointTest {
                 .andExpect(jsonPath("$.warnings[0]").value(org.hamcrest.Matchers.containsString("일자")));
 
         Mockito.verify(gc, Mockito.never()).submitCombined(anyString(), any(), anyString());
+        Mockito.verify(gc, Mockito.never()).submitCombined(anyString(), any(), anyString(), anyString());
         Mockito.verify(gc, Mockito.never()).submitAnalysis(anyString(), anyString());
     }
 

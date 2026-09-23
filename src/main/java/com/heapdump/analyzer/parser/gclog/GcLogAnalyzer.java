@@ -926,7 +926,7 @@ public final class GcLogAnalyzer implements GcEventSink {
     private static final java.util.regex.Pattern XMX_FLAG = java.util.regex.Pattern.compile("(?:^|\\s)-Xmx(\\d+[kKmMgGtT]?)(?=\\s|$)");
 
     /** JVM 옵션 줄의 최대 힙 — 뒤에 나온 값이 이긴다(JVM 규칙). 없으면 null. */
-    static Long heapMaxFromOptions(String line) {
+    public static Long heapMaxFromOptions(String line) {
         if (line == null) return null;
         Long v = null;
         java.util.regex.Matcher m = MAX_HEAP_FLAG.matcher(line);

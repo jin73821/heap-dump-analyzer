@@ -198,7 +198,7 @@
             if (!okNames.length) { if (status) status.textContent = ''; return; }
             if (status) status.textContent = okNames.length + '개 업로드 완료';
             if (okNames.length === 1) { setCta('starting'); startAnalysisAndGo(okNames[0]); return; }
-            offerCombine(okNames);   // 여러 개 — 이어 붙일지 묻는다
+            autoGroupUploaded(okNames);   // 여러 개 — 연속 로그인지 서버가 판정해 묶는다(분석은 시작하지 않는다)
         }
 
         function next(i) {
@@ -239,19 +239,67 @@
     }
 
     /**
-     * 여러 개를 올린 뒤 — 회전 로그면 이어 붙여 한 번에 분석하는 편이 낫다.
-     * 대표는 <b>가장 최근 로그</b>(목록에서 고를 때와 같은 규칙)이고, 순서·일자 판정은 서버가 한다.
+     * 여러 개를 올린 뒤 — <b>연속된 회전본인지 서버가 판정해 자동으로 묶는다</b>(2026-09-21).
+     *
+     * <p>⚠ 분석은 시작하지 않는다. 목록에서 묶음을 확인한 뒤 사용자가 '분석' 을 누른다.
+     * 판정이 실패해도 파일은 안전하니 알리고 목록으로 보낸다(선택 모드로 직접 묶을 수 있다).
      */
-    function offerCombine(names) {
-        var body = document.getElementById('listCombineBody');
+    function autoGroupUploaded(names) {
+        setCta('uploading', '연속 로그 판정 중…');
+        var status = document.getElementById('uploadStatus');   // startUpload 의 지역 변수와 별개 — 여기서 다시 잡는다
+        if (status) status.textContent = names.length + '개 업로드 완료 — 연속 로그인지 확인 중…';
+        Common.fetchJSON('/api/gc-log/group/auto', { method: 'POST', body: JSON.stringify({ filenames: names }) })
+            .then(function (d) { showGroupResult(names, d); })
+            .catch(function (e) {
+                failed('연속 로그 자동 판정', e);
+                toast(serverErrMsg(e, '자동 묶기에 실패했습니다 — 목록에서 직접 묶을 수 있습니다.'), 'danger');
+                setTimeout(function () { window.location.reload(); }, 800);
+            });
+    }
+
+    /** 자동 판정 결과를 보여 준다 — 무엇이 묶였고 무엇이 왜 따로 남았는지. */
+    function showGroupResult(names, d) {
+        var groups = (d && d.groups) || [], singles = (d && d.singles) || [];
+        var reasons = (d && d.singleReasons) || {};
+        var body = document.getElementById('groupResultBody');
         if (!body) { window.location.reload(); return; }
-        _listSel = names.slice();
-        body.innerHTML = '<p>' + names.length + '개를 올렸습니다. 같은 JVM 의 회전 로그라면 <b>이어 붙여</b> 한 번에 분석할 수 있습니다.</p>'
-            + '<div class="gcl-list-names">' + names.map(function (n) { return '<span class="gcl-prev-step">' + esc(n) + '</span>'; }).join('') + '</div>'
-            + '<p class="gcl-list-note">순서는 파일 이름이 아니라 로그 안의 첫 시각으로 정해집니다. '
-            + '일자가 다르면 분석명이 기간 표기로 바뀝니다.</p>';
-        document.getElementById('listCombineErr').classList.remove('show');
-        document.getElementById('listCombineModal').classList.add('open');
+
+        var html = '';
+        if (groups.length) {
+            html += '<p>' + names.length + '개를 올렸고 <b>' + groups.length + '개 묶음</b>으로 이어 붙였습니다. '
+                 + '목록에서 확인한 뒤 <b>분석</b>을 눌러 주세요.</p>';
+            groups.forEach(function (g) {
+                html += '<div class="gcl-list-note" style="margin-top:8px"><b>' + esc(g.analysisName || g.representative) + '</b> '
+                     + '<span class="hi-badge-parts">' + g.memberCount + '개</span></div>'
+                     + '<div class="gcl-list-names">'
+                     + (g.members || []).map(function (n) { return '<span class="gcl-prev-step">' + esc(n) + '</span>'; }).join('')
+                     + '</div>';
+                (g.warnings || []).forEach(function (w) {
+                    html += '<p class="gcl-list-note">· ' + esc(w) + '</p>';
+                });
+                if (g.error) html += '<p class="gcl-list-note">· 묶지 못했습니다: ' + esc(g.error) + '</p>';
+            });
+        } else {
+            html += '<p>' + names.length + '개를 올렸습니다. <b>연속된 로그로 보이지 않아</b> 따로 두었습니다.</p>';
+        }
+        if (singles.length) {
+            html += '<p class="gcl-list-note" style="margin-top:10px">따로 둔 로그</p><div class="gcl-list-names">'
+                 + singles.map(function (n) { return '<span class="gcl-prev-step" title="' + esc(reasons[n] || '') + '">' + esc(n) + '</span>'; }).join('')
+                 + '</div>';
+            var uniq = [];
+            singles.forEach(function (n) { var r = reasons[n]; if (r && uniq.indexOf(r) === -1) uniq.push(r); });
+            uniq.forEach(function (r) { html += '<p class="gcl-list-note">· ' + esc(r) + '</p>'; });
+            html += '<p class="gcl-list-note">필요하면 목록에서 <b>선택 → 이어붙여 분석</b>으로 직접 묶을 수 있습니다.</p>';
+        }
+        body.innerHTML = html;
+        document.getElementById('groupResultModal').classList.add('open');
+    }
+
+    /** 결과 모달을 닫으면 목록을 새로 그린다 — 묶음이 서랍으로 보여야 한다. */
+    function closeGroupResult() {
+        var m = document.getElementById('groupResultModal');
+        if (m) m.classList.remove('open');
+        window.location.reload();
     }
 
     function startAnalysisAndGo(filename) {
@@ -296,18 +344,38 @@
     // 고정 id 계약(selectModeBtn/selectModeBtnLabel/selectActionBar/saCount/saDelBtn/allCheck)은 select-mode.js 몫.
     var _sel = null, _listSel = [];
 
-    // ── 구성 파일 접기 (2026-09-20) ──────────────────────────
-    // 이어 붙인 분석의 구성 파일은 그 자체로 분석 대상이 아니다 — 목록에 '미분석' 으로 남으면 같은 로그를 또 분석한다.
-    // Files 페이지의 'deleted 표시' 와 같은 역할의 토글로 열어 둔다.
-    var MEMBERS_KEY = 'gcLogShowMembers';
-    var _showMembers = false;
+    // ── 서랍: 대표 행 + 접힌 구성 파일 (2026-09-21) ───────────
+    // 종전에는 '전부 보임/전부 숨김' 토글이었다. 지금은 구성 파일이 대표 행 바로 아래 접혀 있고,
+    // ▸ 버튼으로 그룹마다 여닫는다. 기존 체크박스는 '모든 그룹 펼치기' 로 의미만 바뀌었다(id·키 유지).
+    var MEMBERS_KEY = 'gcLogShowMembers';      // 모두 펼치기 상태
+    var OPEN_KEY = 'gcLogOpenGroups';          // 개별로 펼쳐 둔 대표 파일명
+    var _showMembers = false;                  // = 모두 펼치기
+    var _open = {};
     var _historyRender = null;
 
+    function loadOpenGroups() {
+        try {
+            var raw = localStorage.getItem(OPEN_KEY);
+            var arr = raw ? JSON.parse(raw) : [];
+            if (Object.prototype.toString.call(arr) === '[object Array]') {
+                arr.forEach(function (n) { if (n) _open[n] = true; });
+            }
+        } catch (e) { ignored('서랍 펼침 상태 읽기', e); }
+    }
+
+    function saveOpenGroups() {
+        try {
+            var arr = Object.keys(_open).filter(function (k) { return _open[k]; });
+            localStorage.setItem(OPEN_KEY, JSON.stringify(arr));
+        } catch (e) { ignored('서랍 펼침 상태 저장', e); }
+    }
+
     function initShowMembers() {
+        loadOpenGroups();
         var chk = document.getElementById('hiShowMembers');
         if (!chk) return;
         try { _showMembers = localStorage.getItem(MEMBERS_KEY) === 'true'; }
-        catch (e) { ignored('구성 파일 표시 설정 읽기', e); }
+        catch (e) { ignored('모든 그룹 펼치기 설정 읽기', e); }
         chk.checked = _showMembers;
         var n = document.querySelectorAll('#hiTbody tr[data-partof]:not([data-partof=""])').length;
         var cnt = document.getElementById('hiMembersCnt');
@@ -318,8 +386,73 @@
         var chk = document.getElementById('hiShowMembers');
         _showMembers = !!(chk && chk.checked);
         try { localStorage.setItem(MEMBERS_KEY, String(_showMembers)); }
-        catch (e) { ignored('구성 파일 표시 설정 저장', e); }
+        catch (e) { ignored('모든 그룹 펼치기 설정 저장', e); }
         if (_historyRender) _historyRender();
+    }
+
+    /**
+     * ▸ 클릭 — 구성 파일 행의 display 와 aria-expanded 만 바꾼다.
+     * ⚠ render() 를 부르지 말 것: 페이지·순번·정렬이 리셋된다.
+     */
+    function glToggleGroup(e, btn) {
+        if (e) e.stopPropagation();
+        var tr = btn.closest('tr');
+        if (!tr) return;
+        var fn = tr.dataset.filename;
+        var open = btn.getAttribute('aria-expanded') !== 'true';
+        _open[fn] = open;
+        saveOpenGroups();
+        applyGroupState(tr, open);
+    }
+
+    /** 대표 행의 토글 표시와 뒤따르는 구성 파일 행의 노출을 맞춘다. */
+    function applyGroupState(repTr, open) {
+        var btn = repTr.querySelector('.hi-group-toggle');
+        if (btn) {
+            btn.setAttribute('aria-expanded', String(open));
+            var n = btn.dataset.members || '';
+            btn.setAttribute('aria-label', '구성 파일 ' + n + '개 ' + (open ? '접기' : '펼치기'));
+        }
+        var node = repTr.nextElementSibling;
+        while (node && node.classList.contains('hi-subrow')) {
+            node.style.display = open ? '' : 'none';
+            node = node.nextElementSibling;
+        }
+    }
+
+    /** 구성에서 한 파일만 뺀다 — 남길 목록을 보내 다시 묶는다(분석은 시작하지 않는다). */
+    function glDetachMember(rep, member) {
+        var rest = [];
+        document.querySelectorAll('#hiTbody tr.hi-subrow').forEach(function (tr) {
+            if (tr.dataset.partof === rep && tr.dataset.filename !== member) rest.push(tr.dataset.filename);
+        });
+        linkGroup(rep, rest, member + ' 을(를) 묶음에서 뺐습니다.');
+    }
+
+    /** 구성 해제 — 구성원이 전부 단독 행으로 돌아온다. */
+    function glUngroup(rep) { linkGroup(rep, [], '묶음을 해제했습니다.'); }
+
+    function linkGroup(rep, members, okMsg) {
+        Common.fetchJSON('/api/gc-log/' + encodeURIComponent(rep) + '/combine/link',
+                { method: 'POST', body: JSON.stringify({ filenames: members }) })
+            .then(function () {
+                toast(okMsg, 'success');
+                setTimeout(function () { window.location.reload(); }, 400);
+            })
+            .catch(function (e) {
+                failed('구성 변경', e);
+                toast(serverErrMsg(e, '묶음을 바꾸지 못했습니다.'), 'danger');
+            });
+    }
+
+    /** Common.fetchJSON 의 오류에서 서버가 준 한국어 문구를 꺼낸다(없으면 기본 문구, 함정 14). */
+    function serverErrMsg(e, fallback) {
+        if (e && e.sessionExpired) return '로그인이 만료되었습니다. 다시 로그인해 주세요.';
+        try {
+            var d = JSON.parse(e.body);
+            if (d && d.error) return d.error;
+        } catch (ignore) { ignored('오류 본문 파싱', ignore); }
+        return fallback;
     }
 
     function initSelectMode() {
@@ -504,7 +637,19 @@
     function initHistory() {
         var tbody = document.getElementById('hiTbody');
         if (!tbody) return;
-        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+        // 대표 행만 페이지네이션·정렬 대상이고, 구성 파일 행은 부모 뒤에 따라다닌다(서랍).
+        var all = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+        var rows = [], memberMap = {};
+        all.forEach(function (tr) {
+            var p = tr.dataset.partof;
+            if (p) { (memberMap[p] = memberMap[p] || []).push(tr); return; }
+            rows.push(tr);
+        });
+        // 접힌 서랍 안의 파일명으로도 검색이 걸리게 미리 소문자 키를 만들어 둔다.
+        rows.forEach(function (r) {
+            var kids = memberMap[r.dataset.filename] || [];
+            r._memberQuery = kids.map(function (m) { return (m.dataset.fname || '').toLowerCase(); }).join(' ');
+        });
         var search = document.getElementById('hiSearch');
         var countEl = document.getElementById('hiCount');
         var noResult = document.getElementById('hiNoResult');
@@ -522,9 +667,15 @@
             var from = range.start ? dayKey(range.start) : '';
             var to = range.end ? dayKey(range.end) : '';
             var f = rows.filter(function (r) {
-                // 구성 파일(다른 분석에 이어 붙인 로그)은 토글을 켜야 보인다 — 접어 두지 않으면 같은 로그를 또 분석한다
-                if (!_showMembers && r.dataset.partof) return false;
-                if (q && (r.dataset.fname || '').toLowerCase().indexOf(q) === -1 && (r.dataset.server || '').toLowerCase().indexOf(q) === -1) return false;
+                // 구성 파일은 rows 에 없다(서랍 안) — 대신 검색어가 구성 파일명에 맞으면 그 그룹을 펼쳐 보여 준다.
+                r._hitByMember = false;
+                if (q) {
+                    var own = (r.dataset.fname || '').toLowerCase().indexOf(q) !== -1
+                           || (r.dataset.server || '').toLowerCase().indexOf(q) !== -1;
+                    var inMembers = (r._memberQuery || '').indexOf(q) !== -1;
+                    if (!own && !inMembers) return false;
+                    r._hitByMember = !own && inMembers;
+                }
                 if (from || to) {
                     // data-uploaded 는 LocalDateTime ISO('2026-09-13T10:05:23') — 앞 10자 문자열 비교(하루 단위, 종료일 포함)
                     var d = (r.dataset.uploaded || '').substring(0, 10);
@@ -546,13 +697,19 @@
             var f = filtered(), total = f.length;
             var pages = Math.max(1, Math.ceil(total / PAGE));
             if (cur > pages) cur = pages; if (cur < 1) cur = 1;
-            rows.forEach(function (r) { r.style.display = 'none'; });
+            all.forEach(function (r) { r.style.display = 'none'; });
             var start = (cur - 1) * PAGE, end = Math.min(start + PAGE, total);
             for (var i = start; i < end; i++) {
-                f[i].style.display = '';
-                var numCell = f[i].querySelector('.hi-col-num');
+                var rep = f[i];
+                rep.style.display = '';
+                var numCell = rep.querySelector('.hi-col-num');
                 if (numCell) numCell.textContent = (i + 1);
-                tbody.appendChild(f[i]);
+                tbody.appendChild(rep);
+                // 구성 파일은 닫혀 있어도 붙인다 — 대표 바로 뒤 자리를 지켜야 토글이 재배치 없이 동작한다.
+                var kids = memberMap[rep.dataset.filename] || [];
+                var open = _showMembers || !!_open[rep.dataset.filename] || rep._hitByMember;
+                kids.forEach(function (k) { tbody.appendChild(k); });
+                applyGroupState(rep, open);
             }
             if (countEl) countEl.textContent = (total === TOTAL) ? (total + '건') : (total + ' / ' + TOTAL + '건');
             if (noResult) noResult.style.display = (TOTAL > 0 && total === 0) ? 'block' : 'none';
@@ -644,4 +801,8 @@
     window.confirmListCombine = confirmListCombine;
     window.deleteSelected = deleteSelected;
     window.onShowMembersChange = onShowMembersChange;
+    window.glToggleGroup = glToggleGroup;
+    window.glDetachMember = glDetachMember;
+    window.glUngroup = glUngroup;
+    window.closeGroupResult = closeGroupResult;
 })();

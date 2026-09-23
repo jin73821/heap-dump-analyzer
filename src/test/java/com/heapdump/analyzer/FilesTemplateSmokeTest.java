@@ -1,5 +1,6 @@
 package com.heapdump.analyzer;
 
+import com.heapdump.analyzer.model.dto.AnalysisHistoryItem;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.support.StaticApplicationContext;
@@ -16,8 +17,10 @@ import org.thymeleaf.web.servlet.JakartaServletWebApplication;
 
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -81,6 +84,66 @@ class FilesTemplateSmokeTest {
         m.put("maxUploadSizeGb", 5L);
         m.put("allowAllExtensions", false);
         return m;
+    }
+
+    /** GC 로그 묶음(대표 1 + 구성 2)이 든 목록 — 서랍 렌더 계약 확인용. */
+    private static Map<String, Object> gcGroupModel() {
+        AnalysisHistoryItem rep = gc("gc.log.0", null, 5);
+        AnalysisHistoryItem m1 = gc("gc.log.3", "gc.log.0", null);
+        AnalysisHistoryItem m2 = gc("gc.log.4", "gc.log.0", null);
+        AnalysisHistoryItem solo = gc("other.log", null, null);
+        Map<String, Object> m = emptyModel();
+        m.put("analysisHistory", List.of(rep, m1, m2, solo));
+        return m;
+    }
+
+    private static AnalysisHistoryItem gc(String fn, String partOf, Integer members) {
+        AnalysisHistoryItem i = new AnalysisHistoryItem();
+        i.setFileType("gclog");
+        i.setFilename(fn);
+        i.setStatus("NOT_ANALYZED");
+        i.setFormattedSize("48 KB");
+        i.setFormattedDate("2026-09-21 16:45");
+        i.setLastModified(1_758_000_000_000L);
+        i.setServerName("guacmg1t");
+        i.setPartOf(partOf);
+        i.setMemberCount(members);
+        return i;
+    }
+
+    @Test
+    @DisplayName("★ GC 로그 묶음은 Files 목록에서도 서랍으로 보인다 — 구성 파일은 사라지지 않는다")
+    void gcLogGroupRendersAsDrawer() {
+        String h = render("files", gcGroupModel());
+
+        // 구성 파일은 목록에서 빠지지 않는다(파일 관리 화면이므로 어떤 파일도 사라지면 안 된다)
+        assertTrue(h.contains("data-name=\"gc.log.3\""), "구성 파일 행이 통째로 빠졌다");
+        assertTrue(h.contains("data-name=\"gc.log.4\""), "구성 파일 행이 통째로 빠졌다");
+        // 부모를 가리키는 표시가 있어야 JS 가 서랍으로 접는다
+        assertTrue(h.contains("data-parent-group=\"gc.log.0\""), "구성 파일이 부모를 모른다 — 서랍이 만들어지지 않는다");
+        assertTrue(h.contains("gclog-subrow"), "구성 파일 행에 서브행 클래스가 없다");
+        // 대표에는 토글과 묶음 배지
+        assertTrue(h.contains("filesToggleGroup(event, this)"), "대표 행에 펼침 토글이 없다");
+        assertTrue(h.contains("aria-expanded=\"false\""), "토글 초기 상태(접힘)가 없다");
+        assertTrue(h.contains("5개 이어붙임"), "묶음 배지가 없다");
+        assertTrue(h.contains("&rarr; gc.log.0") || h.contains("→ gc.log.0"), "구성 파일에 대표 표시가 없다");
+        // 묶음이 아닌 GC 로그에는 토글이 붙지 않는다
+        assertEquals(1, h.split("onclick=\"filesToggleGroup", -1).length - 1, "토글이 묶음 아닌 행에도 붙었다");
+    }
+
+    @Test
+    @DisplayName("서랍 배선: 부모당 하위 행 배열 · 고아 행 복구 · 접을 때 선택 해제")
+    void drawerWiringContracts() {
+        String h = render("files", gcGroupModel());
+        assertTrue(h.contains("function parentOfRow"), "부모 판정이 한 곳에 모이지 않았다");
+        assertTrue(h.contains("_subrowMap[parent] = _subrowMap[parent] || []"), "하위 행이 부모당 1개로 덮어써진다");
+        // ⚠ 부모가 목록에 없는 하위 행을 최상위로 되돌리지 않으면 파일이 조용히 사라진다
+        assertTrue(h.contains("부모가 목록에 없는 하위 행은 최상위로 되돌린다"), "고아 행 복구가 없다");
+        assertTrue(h.contains("filesOpenGroups"), "펼침 상태 저장 키가 없다");
+        assertTrue(h.contains("if (_sel && _sel.active) _sel.updateCount();"), "접을 때 선택 카운트를 갱신하지 않는다");
+        // gc-log.css 는 이 페이지에 없으므로 토글 CSS 를 페이지가 갖고 있어야 한다(함정 17 계열)
+        assertTrue(h.contains(".hi-group-toggle[aria-expanded=\"true\"]"), "토글 회전 CSS 가 없다 — 민짜 버튼이 된다");
+        assertTrue(h.contains(".gclog-subrow {"), "서브행 CSS 가 없다");
     }
 
     @Test

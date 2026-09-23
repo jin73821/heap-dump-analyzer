@@ -7,6 +7,7 @@ import com.heapdump.analyzer.model.entity.GcLogAnalysisEntity;
 import com.heapdump.analyzer.parser.gclog.GcLogFormat;
 import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.service.GcLogAnalyzerService;
+import com.heapdump.analyzer.service.GcLogGroupPlanner;
 import com.heapdump.analyzer.service.GcLogInstanceService;
 import com.heapdump.analyzer.service.GcLogMatchService;
 import com.heapdump.analyzer.service.LlmRateLimitService;
@@ -282,7 +283,9 @@ public class GcLogApiController {
         String safe = service.validateGcLogFilename(filename);
         if (service.find(safe).isEmpty()) return ResponseEntity.status(404).body(err("NOT_FOUND", "GC 로그 이력이 없습니다: " + safe));
         List<String> names = filenames(body);
-        service.submitCombined(safe, names, who(principal));
+        // via 는 감사 로그 표지일 뿐이라 화이트리스트 밖의 값은 manual 로 둔다(로그에 임의 문자열이 들어가지 않게)
+        String via = body != null && "suggest".equals(body.get("via")) ? "suggest" : "manual";
+        service.submitCombined(safe, names, who(principal), via);
         GcLogAnalysisEntity e = service.find(safe).orElseThrow();
         Map<String, Object> ok = new LinkedHashMap<>();
         ok.put("success", true);
@@ -329,6 +332,131 @@ public class GcLogApiController {
         ok.put("members", service.parseMembers(e.getMemberFiles()).stream().map(GcLogAnalyzerService.MemberRef::filename).toList());
         ok.put("maxMembers", GcLogAnalyzerService.MAX_MEMBERS);
         return ResponseEntity.ok(ok);
+    }
+
+    /**
+     * 구성만 바꾼다 — 묶기·해제·구성원 빼기. <b>분석은 시작하지 않는다</b>(2026-09-21).
+     *
+     * <p>{@code /combine} 의 쌍둥이다. 빈 배열이면 해제, 일부만 주면 그만 남긴다.
+     * 묶기는 분석이 아니므로 호스트네임을 요구하지 않는다(함정 66).
+     */
+    @PostMapping("/api/gc-log/{filename:.+}/combine/link")
+    public ResponseEntity<Map<String, Object>> combineLink(@PathVariable String filename,
+                                                           @RequestBody(required = false) Map<String, Object> body,
+                                                           Principal principal) {
+        String safe = service.validateGcLogFilename(filename);
+        if (service.find(safe).isEmpty()) return ResponseEntity.status(404).body(err("NOT_FOUND", "GC 로그 이력이 없습니다: " + safe));
+        service.linkCombined(safe, filenames(body), who(principal), "manual");
+        GcLogAnalysisEntity e = service.find(safe).orElseThrow();
+        Map<String, Object> ok = new LinkedHashMap<>();
+        ok.put("success", true);
+        ok.put("filename", safe);
+        ok.put("status", e.getStatus());
+        ok.put("memberCount", e.getMemberCount());
+        ok.put("members", service.parseMembers(e.getMemberFiles()).stream()
+                .map(GcLogAnalyzerService.MemberRef::filename).toList());
+        ok.put("analysisName", e.getAnalysisName());
+        return ResponseEntity.ok(ok);
+    }
+
+    /**
+     * 분석 시작 전 연속 로그 제안(2026-09-23) — 이 파일이 속한 연속 회전본을 찾는다. <b>쓰기 없음</b>.
+     *
+     * <p>분석 시작 확인 창(analyze-confirm.js)이 GC 로그를 열 때 부른다. 원격 전송은 파일마다 따로 도착해
+     * 업로드 큐의 자동 묶기가 돌 자리가 없으므로, 여기서 찾아 보여 주고 사용자가 수락하면
+     * {@code POST …/{대표}/combine {via:"suggest"}} 로 이어 붙여 분석한다.
+     */
+    @GetMapping("/api/gc-log/{filename:.+}/group-suggestion")
+    public ResponseEntity<Map<String, Object>> groupSuggestion(@PathVariable String filename, Principal principal) {
+        String safe = service.validateGcLogFilename(filename);
+        if (service.find(safe).isEmpty()) return ResponseEntity.status(404).body(err("NOT_FOUND", "GC 로그 이력이 없습니다: " + safe));
+        GcLogAnalyzerService.GroupSuggestion s = service.suggestGroup(safe);
+        logger.info("[GcLog] action=group-suggest file={} mode={} rep={} members={} candidates={} excluded={} reason={} by={}",
+                safe, s.mode(), s.representative(), s.members().size(), s.candidates(), s.excludedGrouped(),
+                s.reason(), who(principal));
+        return ResponseEntity.ok(suggestionBody(s));
+    }
+
+    private static Map<String, Object> suggestionBody(GcLogAnalyzerService.GroupSuggestion s) {
+        List<Map<String, Object>> members = new ArrayList<>(s.members().size());
+        for (GcLogAnalyzerService.SuggestedMember m : s.members()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("filename", m.filename());
+            row.put("size", m.size());
+            row.put("start", m.start());
+            row.put("end", m.end());
+            row.put("status", m.status());
+            row.put("analysisName", m.analysisName());
+            row.put("missing", m.missing());
+            members.add(row);
+        }
+        Map<String, Object> ok = new LinkedHashMap<>();
+        ok.put("success", true);
+        ok.put("mode", s.mode());
+        ok.put("filename", s.filename());
+        ok.put("representative", s.representative());
+        ok.put("series", s.series());
+        ok.put("members", members);
+        ok.put("axes", s.axes() == null ? null : Map.of("time", s.axes().time().name(),
+                                                         "origin", s.axes().origin().name(),
+                                                         "jvm", s.axes().jvm().name()));
+        ok.put("warnings", s.warnings());
+        ok.put("reason", s.reason());
+        ok.put("candidates", s.candidates());
+        ok.put("excludedGrouped", s.excludedGrouped());
+        ok.put("totalBytes", s.totalBytes());
+        ok.put("orderBasis", s.orderBasis());
+        ok.put("serverName", s.serverName());
+        ok.put("collector", s.collector());
+        ok.put("heapMaxBytes", s.heapMaxBytes());
+        ok.put("maxMembers", GcLogAnalyzerService.MAX_MEMBERS);
+        return ok;
+    }
+
+    /** 연속 회전본 자동 판정 — 판정만 한다(쓰기 없음). */
+    @PostMapping("/api/gc-log/group/preview")
+    public ResponseEntity<Map<String, Object>> groupPreview(@RequestBody(required = false) Map<String, Object> body,
+                                                            Principal principal) {
+        return ResponseEntity.ok(groupBody(service.autoGroup(filenames(body), who(principal), false)));
+    }
+
+    /**
+     * 연속 회전본 자동 판정 + <b>묶기</b>. ⚠ 분석은 시작하지 않는다 — 대표 행은 미분석으로 남고
+     * 사용자가 '분석'을 누를 때 저장된 구성 그대로 이어 붙여 분석된다.
+     */
+    @PostMapping("/api/gc-log/group/auto")
+    public ResponseEntity<Map<String, Object>> groupAuto(@RequestBody(required = false) Map<String, Object> body,
+                                                         Principal principal) {
+        return ResponseEntity.ok(groupBody(service.autoGroup(filenames(body), who(principal), true)));
+    }
+
+    /** 자동 판정 응답 — 묶이지 않은 파일과 이유까지 실어 화면이 설명할 수 있게 한다. */
+    private static Map<String, Object> groupBody(GcLogAnalyzerService.AutoGroupResult r) {
+        List<Map<String, Object>> groups = new ArrayList<>();
+        for (GcLogAnalyzerService.GroupOutcome o : r.groups()) {
+            GcLogGroupPlanner.Group g = o.group();
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("representative", g.representative());
+            m.put("members", g.members());
+            m.put("memberCount", g.members().size());
+            m.put("totalBytes", g.totalBytes());
+            m.put("orderBasis", g.orderBasis());
+            m.put("axes", Map.of("time", g.axes().time().name(),
+                                 "origin", g.axes().origin().name(),
+                                 "jvm", g.axes().jvm().name()));
+            m.put("warnings", g.warnings());
+            m.put("linked", o.linked());
+            m.put("analysisName", o.analysisName());
+            m.put("error", o.error());
+            groups.add(m);
+        }
+        Map<String, Object> ok = new LinkedHashMap<>();
+        ok.put("success", true);
+        ok.put("groups", groups);
+        ok.put("singles", r.singles());
+        ok.put("singleReasons", r.singleReasons());
+        ok.put("skipped", r.skipped());
+        return ok;
     }
 
     @SuppressWarnings("unchecked")

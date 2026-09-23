@@ -154,7 +154,8 @@ class AnalyzeConfirmTemplateSmokeTest {
                 "경고 조건이 kind==='others' 로 되돌아가면 '파일 분류'로 heapdump 가 된 비-덤프 파일에서 경고가 빠진다");
         assertTrue(js.contains("덤프 파일 확장자가 아닌데 분석을 진행하시겠습니까?"), "진행 여부를 묻는 문구가 없다");
         assertTrue(js.contains("'그래도 분석 시작'"), "되묻는 경우의 확인 버튼 문구");
-        assertTrue(js.contains("(extWarn ? els.cancel : els.ok).focus();"), "되묻는 경우 Enter 한 번으로 진행되면 안 된다(기본 포커스=취소)");
+        assertTrue(js.contains("(extWarn || kind === 'gclog' ? els.cancel : els.ok).focus();"),
+                "되묻는 경우(와 GC 로그의 연결 로그 판정 중) Enter 한 번으로 진행되면 안 된다(기본 포커스=취소)");
     }
 
     @Test
@@ -254,5 +255,30 @@ class AnalyzeConfirmTemplateSmokeTest {
         int scan = src.indexOf("src=\"/js/server-scan.js");
         int use = src.indexOf("ServerScan.create(");
         assertTrue(src.indexOf("src=\"/js/analyze-confirm.js") > 0 && scan > 0 && use > scan, "모듈 스크립트 순서");
+    }
+
+    @Test
+    @DisplayName("GC 로그 연결 제안: 열면 group-suggestion 을 묻고, 판정 중엔 시작을 잠그며, 수락은 대표 /combine(via=suggest) 후 결과 화면")
+    void gcLogGroupSuggestionContract() throws IOException {
+        // JS 러너가 없어 소스 계약만 고정한다 — 동작은 헤드리스 픽스처(scratchpad)로 확인했다
+        String js = Files.readString(Path.of("src/main/resources/static/js/analyze-confirm.js"), StandardCharsets.UTF_8);
+        assertTrue(js.contains("'/group-suggestion'"), "GC 로그를 열 때 연결 로그를 묻지 않는다");
+        assertTrue(js.contains("if (kind === 'gclog') {") && js.contains("loadGroup(opts.filename);"),
+                "제안 조회는 GC 로그에만 — 힙·코어 모달에 끼면 안 된다");
+        assertTrue(js.contains("'연결 로그 확인 중…'"), "판정 중 시작 버튼을 잠그지 않으면 Enter 한 번에 단독 분석으로 샌다");
+        assertTrue(js.contains("GROUP_SLOW_MS"), "판정이 멈추면 단독 분석까지 영영 막힌다 — 늦으면 풀어 주는 상한이 있어야 한다");
+        assertTrue(js.contains("body: JSON.stringify({ filenames: names, via: 'suggest' })"),
+                "수락은 대표의 /combine 에 전체 구성과 via=suggest 를 보낸다");
+        assertTrue(js.contains("global.location.href = '/gc-log/analyze/' + encodeURIComponent(rep);"),
+                "수락 후엔 대표 결과 화면으로 — /combine 이 이미 분석을 제출했으므로 ?start=1 을 붙이지 않는다");
+        assertTrue(js.contains("data-ac=\"alt\"") && js.contains("이 파일만 분석"), "제안을 받지 않고 종전처럼 한 파일만 분석하는 길이 있어야 한다");
+        assertTrue(js.contains("function focusables()"), "버튼이 셋·입력 칸이 둘로 늘어 포커스 가둠이 두 버튼만 보면 안 된다");
+
+        String groupCss = js.substring(js.indexOf("var GROUP_CSS"), js.indexOf("function build()"));
+        assertFalse(groupCss.contains("border-left"), "연결 로그 블록에 좌측 색 띠를 쓰지 말 것(사용자 요청 — 옅은 배경 + 1px 테두리)");
+
+        String scan = Files.readString(Path.of("src/main/resources/static/js/server-scan.js"), StandardCharsets.UTF_8);
+        assertTrue(scan.contains("f.analyzed && f.groupRep") && scan.contains("전송됨(묶음 분석완료)"),
+                "분석된 묶음의 구성 파일에 '분석 시작' 이 다시 붙는다");
     }
 }

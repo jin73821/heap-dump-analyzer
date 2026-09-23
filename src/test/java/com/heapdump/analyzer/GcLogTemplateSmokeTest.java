@@ -418,7 +418,9 @@ class GcLogTemplateSmokeTest {
         // 분석 시작 확인 모달 — 호스트네임이 없으면 받아서 저장한 뒤 진행한다
         assertTrue(ac.contains("function loadOrigin") && ac.contains("'/api/gc-log/' + encodeURIComponent(filename) + '/match'"),
                 "GC 로그 출처 조회 배선이 없다");
-        assertTrue(ac.contains("els.ok.disabled = need;"), "호스트네임 없이도 시작 버튼이 열려 있다");
+        // 잠금 판정은 syncButtons 한 곳(2026-09-23 연결 로그 제안과 합침) — 단독·이어붙이기 모두 출처가 필요하다
+        assertTrue(ac.contains("els.ok.disabled = okNeedsOrigin && needOrigin;") && ac.contains("els.alt.disabled = needOrigin;"),
+                "호스트네임 없이도 시작 버튼이 열려 있다");
         assertTrue(ac.contains("saveOriginThen"), "입력한 출처를 저장하지 않는다");
 
         // 이어 붙인 분석을 실제 모델로 렌더 — 빈 모델 스모크로는 '구성' 알약이 조건부라 드러나지 않는다(함정 59 계열)

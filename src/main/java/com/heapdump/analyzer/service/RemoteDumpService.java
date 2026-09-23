@@ -462,6 +462,23 @@ public class RemoteDumpService {
      * transferred 판정은 GC 로그 디렉토리, analyzed 는 {@code gc_log_analysis} SUCCESS. 디렉토리 내 최신 파일이
      * {@link #GC_LOG_ACTIVE_WINDOW_SEC} 안에 수정됐거나 이름이 {@code .current} 로 끝나면 {@code active=true}(기록 중 — 자동 전송 제외).
      */
+    /**
+     * 스캔 행의 '분석 완료' 판정 — 분석된 행의 이름을 돌려준다(아니면 null). 자기 결과가 SUCCESS 면 자기 이름,
+     * <b>이어 붙인 묶음의 구성 파일이면 대표가 SUCCESS 일 때 대표 이름</b>이다(2026-09-23). 구성 파일 행은 늘 미분석
+     * 상태라 자기 상태만 보면, 회전본 6개를 묶어 분석한 뒤에도 나머지 5개에 '분석 시작' 이 계속 붙는다.
+     */
+    static String gcLogAnalyzedVia(com.heapdump.analyzer.repository.GcLogAnalysisRepository repo, String localFilename) {
+        if (repo == null || localFilename == null) return null;
+        com.heapdump.analyzer.model.entity.GcLogAnalysisEntity e = repo.findByFilename(localFilename).orElse(null);
+        if (e == null) return null;
+        if (com.heapdump.analyzer.model.entity.GcLogAnalysisEntity.STATUS_SUCCESS.equals(e.getStatus())) return localFilename;
+        if (e.getPartOf() == null) return null;
+        return repo.findByFilename(e.getPartOf())
+                .filter(r -> com.heapdump.analyzer.model.entity.GcLogAnalysisEntity.STATUS_SUCCESS.equals(r.getStatus()))
+                .map(com.heapdump.analyzer.model.entity.GcLogAnalysisEntity::getFilename)
+                .orElse(null);
+    }
+
     private Map<String, Object> scanGcLogPath(TargetServer server, String gcPath) throws Exception {
         Map<String, Object> result = new HashMap<>();
         List<Map<String, Object>> files = new ArrayList<>();
@@ -510,10 +527,10 @@ public class RemoteDumpService {
                 String matchedLocalFilename = findTransferredLocal(server, filename, (String) fileInfo.get("path"), size,
                         local -> new File(localDir, local).exists());
                 boolean transferred = matchedLocalFilename != null;
-                boolean analyzed = transferred && gcLogAnalysisRepository != null
-                        && gcLogAnalysisRepository.existsByFilenameAndStatus(matchedLocalFilename, "SUCCESS");
+                String analyzedVia = transferred ? gcLogAnalyzedVia(gcLogAnalysisRepository, matchedLocalFilename) : null;
                 fileInfo.put("transferred", transferred);
-                fileInfo.put("analyzed", analyzed);
+                fileInfo.put("analyzed", analyzedVia != null);
+                if (analyzedVia != null && !analyzedVia.equals(matchedLocalFilename)) fileInfo.put("groupRep", analyzedVia);
                 if (matchedLocalFilename != null) fileInfo.put("localFilename", matchedLocalFilename);
                 fileInfo.put("sourceDumpPath", gcPath);
                 fileInfo.put("fileType", "gclog");

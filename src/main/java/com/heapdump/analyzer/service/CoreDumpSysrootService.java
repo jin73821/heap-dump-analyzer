@@ -30,7 +30,7 @@ import java.util.stream.Stream;
  *
  * 별도 서버에서 GDB 분석 시 공유 라이브러리 심볼은 분석 서버 로컬 파일시스템에서 해석되는데,
  * 같은 경로에 다른 빌드가 있으면 gdb(8.2) 가 build-id 검증 없이 잘못된 함수명을 조용히 출력한다
- * (실증: COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md 케이스 C). 원본 서버의 라이브러리를
+ * (실증: docs/COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md 케이스 C). 원본 서버의 라이브러리를
  * {coredump.directory}/sysroots/{coreFilename}/ 에 절대경로 미러 구조로 수집해 두면
  * buildGdbCommand() 가 -iex "set sysroot" 로 정확도를 복원한다.
  *
@@ -424,7 +424,7 @@ public class CoreDumpSysrootService {
      * sysroot 는 "sysroot + 코어에 기록된 절대경로"가 실존할 때만 맞아떨어지므로, 원경로를 모르는
      * 개별 업로드나 구조 없이 압축된 아카이브는 sysroot 만으로는 못 찾는다. solib-search-path 는
      * **basename 으로** 찾아 주고, 실측상 **분석 서버 로컬의 같은 경로 파일보다 우선**한다
-     * (COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md 케이스 F). ⚠ 단 solib-search-path 는 sysroot 와
+     * (docs/COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md 케이스 F). ⚠ 단 solib-search-path 는 sysroot 와
      * **함께** 줘야 한다 — sysroot 없이 주면 gdb 가 원경로 파일을 먼저 찾아버려 무효다.
      *
      * @return ':' 로 이은 절대경로 목록. 담을 것이 없으면 null.

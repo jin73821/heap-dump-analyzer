@@ -18,7 +18,10 @@
 (function(global) {
     'use strict';
 
-    var _MAX_QUEUE = 5;
+    // 회전 GC 로그 한 세트는 gc.log.0~.4 + gc.log = 6개가 표준이다. 5 로 두면 6번째가 조용히 잘리고,
+    // 잘리는 기준이 파일명 순(= 시간 순이 아니다, 함정 60)이라 자동 묶기가 엉뚱한 구성을 만든다.
+    // 업로드는 processNextInQueue 로 엄격히 순차라 이 값은 동시성이 아니라 스테이징 크기일 뿐이다.
+    var _MAX_QUEUE = 10;
     var _uploadQueue = [];
     var _uploading = false;
     var _uploadCancelled = false;
@@ -274,9 +277,13 @@
     }
 
     function continueEnqueue(valid) {
+        // ⚠ 잘라내기를 토스트로 알리고 넘어가지 말 것 — 어떤 파일이 빠졌는지 모른 채 진행된다.
         if (valid.length > _MAX_QUEUE) {
-            toast('최대 ' + _MAX_QUEUE + '개까지 동시 업로드 가능합니다. 처음 ' + _MAX_QUEUE + '개만 처리합니다.', 'error');
-            valid = valid.slice(0, _MAX_QUEUE);
+            showQueueOverflowModal(valid, function(proceed) {
+                if (!proceed) { _uploadQueue = []; setUploadZoneDisabled(false); return; }
+                continueEnqueue(valid.slice(0, _MAX_QUEUE));
+            });
+            return;
         }
         _uploadQueue = valid.map(function(f) { return { file: f, uploadName: f.name, status: 'pending', fileType: resolveFileType(f) }; });
         fetch('/api/disk/check').then(function(r) { return r.json(); }).then(function(d) {
@@ -517,8 +524,101 @@
         };
         ov.querySelector('#stagedStartBtn').onclick = function() {
             ov.remove();
-            startQueueUploads();
+            askGcOriginThenStart();
         };
+    }
+
+    /** 잘려 나갈 파일을 보여 주고 고르게 한다 — 조용히 버리지 않는다. */
+    function showQueueOverflowModal(valid, callback) {
+        var keep = valid.slice(0, _MAX_QUEUE), drop = valid.slice(_MAX_QUEUE);
+        var ov = document.createElement('div');
+        ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10001;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+        ov.innerHTML = '<div style="background:#fff;border-radius:12px;padding:26px;max-width:520px;width:92%;max-height:84vh;overflow-y:auto">'
+            + '<h3 style="font-size:17px;font-weight:700;color:#1F2937;margin:0 0 10px">한 번에 ' + _MAX_QUEUE + '개까지 올릴 수 있습니다</h3>'
+            + '<p style="font-size:13px;color:#6B7280;line-height:1.6;margin:0 0 12px">'
+            + valid.length + '개를 골랐습니다. 계속하면 <b>' + drop.length + '개가 빠집니다</b>. '
+            + '회전 로그를 이어 붙여 분석하려면 빠진 파일도 함께 올려야 합니다.</p>'
+            + '<div style="font-size:12px;color:#B91C1C;background:#FEF2F2;border-radius:8px;padding:10px 12px;margin-bottom:16px;word-break:break-all">'
+            + '빠지는 파일: ' + drop.map(function(f) { return escapeHtml(f.name); }).join(', ') + '</div>'
+            + '<div style="display:flex;gap:10px">'
+            + '<button id="qofCancel" style="flex:1;padding:11px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">취소</button>'
+            + '<button id="qofGo" style="flex:2;padding:11px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">앞 ' + keep.length + '개만 업로드</button>'
+            + '</div></div>';
+        document.body.appendChild(ov);
+        ov.querySelector('#qofCancel').onclick = function() { ov.remove(); callback(false); };
+        ov.querySelector('#qofGo').onclick = function() { ov.remove(); callback(true); };
+    }
+
+    // ── GC 로그 출처 입력 (2026-09-21) ────────────────────────
+    // ⚠ 묻지 않으면 serverName 이 비어 업로드는 성공하고 분석만 400 NO_HOSTNAME 으로 막힌다(종전 증상).
+    // 모달은 이 모듈이 직접 만든다 — .gcl-modal CSS 는 /gc-log 에만 있어 템플릿에 두면 민짜가 된다(함정 17).
+    var _gcOrigin = { serverName: '', instanceName: '' };
+    var HOST_KEY = 'gcUploadHost';
+
+    function askGcOriginThenStart() {
+        var gc = _uploadQueue.filter(function(q) { return q.status === 'pending' && q.fileType === 'gclog'; });
+        if (!gc.length) { startQueueUploads(); return; }
+        showGcOriginModal(gc, function(origin) {
+            if (!origin) { _uploadQueue = []; setUploadZoneDisabled(false); return; }   // 취소 = 업로드 안 함
+            _gcOrigin = origin;
+            try { localStorage.setItem(HOST_KEY, origin.serverName); }
+            catch (e) { if (global.Common) global.Common.logIgnored('[UploadQueue] 호스트네임 기억', e); }
+            startQueueUploads();
+        });
+    }
+
+    function showGcOriginModal(gcItems, callback) {
+        var prev = '';
+        try { prev = localStorage.getItem(HOST_KEY) || ''; }
+        catch (e) { if (global.Common) global.Common.logIgnored('[UploadQueue] 호스트네임 복원', e); }
+
+        var ov = document.createElement('div');
+        ov.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:10001;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center';
+        var inputCss = 'width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #D1D5DB;border-radius:7px;font-size:13px;font-family:inherit';
+        ov.innerHTML = '<div style="background:#fff;border-radius:12px;padding:26px;max-width:480px;width:92%;max-height:84vh;overflow-y:auto">'
+            + '<h3 style="font-size:17px;font-weight:700;color:#1F2937;margin:0 0 4px">GC 로그 출처 입력</h3>'
+            + '<div style="font-size:13px;color:#6B7280;margin-bottom:14px">이번에 올리는 GC 로그 ' + gcItems.length + '개에 함께 적용됩니다.</div>'
+            + '<div style="font-size:12px;color:#4B5563;background:#F9FAFB;border-radius:8px;padding:9px 11px;margin-bottom:16px;word-break:break-all">'
+            + gcItems.map(function(q) { return escapeHtml(q.uploadName); }).join(', ') + '</div>'
+            + '<label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:5px">호스트네임 <span style="color:#DC2626">*</span></label>'
+            + '<input id="gcoHost" type="text" maxlength="100" autocomplete="off" placeholder="was01" value="' + escapeHtml(prev) + '" style="' + inputCss + '">'
+            + '<label style="display:block;font-size:12px;font-weight:600;color:#374151;margin:14px 0 5px">인스턴스명 <span style="color:#9CA3AF;font-weight:400">(선택)</span></label>'
+            + '<input id="gcoInst" type="text" maxlength="100" autocomplete="off" placeholder="container1" style="' + inputCss + '">'
+            + '<p style="font-size:11.5px;color:#6B7280;line-height:1.6;margin:14px 0 18px">'
+            + '분석명은 <b>호스트네임_인스턴스명_일자</b> 가 되고, 호스트네임은 덤프 자동 매칭과 연속 로그 판정의 근거로 쓰입니다.</p>'
+            + '<div style="display:flex;gap:10px">'
+            + '<button id="gcoCancel" style="flex:1;padding:11px;background:#F3F4F6;color:#374151;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">취소</button>'
+            + '<button id="gcoGo" style="flex:2;padding:11px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">업로드 시작</button>'
+            + '</div></div>';
+        document.body.appendChild(ov);
+
+        var host = ov.querySelector('#gcoHost'), inst = ov.querySelector('#gcoInst'), go = ov.querySelector('#gcoGo');
+        function sync() {
+            var ok = host.value.trim().length > 0;
+            go.disabled = !ok;
+            go.style.opacity = ok ? '1' : '.5';
+            go.style.cursor = ok ? 'pointer' : 'not-allowed';
+        }
+        function close(result) {
+            document.removeEventListener('keydown', onKey, true);
+            ov.remove();
+            callback(result);
+        }
+        function onKey(e) {
+            if (e.key === 'Escape') { e.preventDefault(); close(null); return; }
+            if (e.key === 'Enter' && !go.disabled) { e.preventDefault(); submit(); }
+        }
+        function submit() {
+            close({ serverName: host.value.trim(), instanceName: inst.value.trim() });
+        }
+        host.addEventListener('input', sync);
+        ov.querySelector('#gcoCancel').onclick = function() { close(null); };
+        go.onclick = submit;
+        ov.onclick = function(e) { if (e.target === ov) close(null); };
+        document.addEventListener('keydown', onKey, true);
+        sync();
+        host.focus();
+        host.select();
     }
 
     function startQueueUploads() {
@@ -550,6 +650,7 @@
             var total = _uploadQueue.filter(function(q) { return q.status !== 'skipped'; }).length;
             if (sub) sub.textContent = done + ' / ' + total + ' 완료 — 업로드 종료';
             setUploadZoneDisabled(false);
+            maybeAutoGroupGcLogs(sub);
             return;
         }
         var item = _uploadQueue[idx];
@@ -612,6 +713,9 @@
             xhr.open('POST', '/api/gc-log/upload');
             var fdg = new FormData();
             fdg.append('gcLogFile', item.file, item.uploadName);
+            // 호스트네임이 없으면 나중에 분석을 누를 때 400 NO_HOSTNAME 으로 막힌다 — 업로드 전에 받아 둔다.
+            if (_gcOrigin.serverName) fdg.append('serverName', _gcOrigin.serverName);
+            if (_gcOrigin.instanceName) fdg.append('instanceName', _gcOrigin.instanceName);
             xhr.send(fdg);
         } else {
             xhr.open('POST', '/api/upload');
@@ -619,6 +723,34 @@
             fd.append('file', item.file, item.uploadName);
             xhr.send(fd);
         }
+    }
+
+    /**
+     * 큐가 끝난 뒤 — GC 로그를 2개 이상 올렸으면 <b>연속 회전본인지 서버가 판정해 묶는다</b>(2026-09-21).
+     *
+     * <p>⚠ 분석은 시작하지 않는다. 사용자가 /gc-log 목록에서 묶음을 확인한 뒤 '분석'을 누른다.
+     * 이 호출을 모듈에 두면 대시보드와 Files 가 코드 중복 없이 같은 동작을 얻는다.
+     */
+    function maybeAutoGroupGcLogs(sub) {
+        var names = _uploadQueue.filter(function(q) { return q.status === 'done' && q.fileType === 'gclog'; })
+                                .map(function(q) { return q.uploadName; });
+        _gcOrigin = { serverName: '', instanceName: '' };   // 다음 업로드로 새지 않게 비운다
+        if (names.length < 2 || !global.Common || !global.Common.fetchJSON) return;
+        var base = sub ? sub.textContent : '';
+        if (sub) sub.textContent = '연속 로그 확인 중…';
+        global.Common.fetchJSON('/api/gc-log/group/auto', {
+            method: 'POST', body: JSON.stringify({ filenames: names })
+        }).then(function(d) {
+            var n = (d && d.groups) ? d.groups.length : 0;
+            if (sub) sub.textContent = base + (n ? ' · ' + n + '개 묶음으로 이어 붙임' : '');
+            toast(n ? 'GC 로그 ' + names.length + '개를 ' + n + '개 묶음으로 이어 붙였습니다. 목록에서 분석을 시작하세요.'
+                    : 'GC 로그 ' + names.length + '개를 올렸습니다. 연속 로그로 보이지 않아 따로 두었습니다.',
+                  n ? 'success' : 'info');
+        }).catch(function(e) {
+            if (global.Common.logError) global.Common.logError('[UploadQueue] 연속 로그 자동 판정', e);
+            if (sub) sub.textContent = base;
+            toast('연속 로그 자동 묶기에 실패했습니다 — GC 로그 목록에서 직접 묶을 수 있습니다.', 'error');
+        });
     }
 
     function setUploadZoneDisabled(disabled, filename) {

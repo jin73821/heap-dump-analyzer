@@ -346,6 +346,31 @@ public class HeapDumpConfig {
     @Value("${gclog.match.tolerance-min:10}")
     private int gcLogMatchToleranceMin;
 
+    /** 업로드 직후 연속 회전본 자동 묶기(2026-09-21). 끄면 판정만 하고 묶지 않는다. */
+    @Value("${gclog.group.enabled:true}")
+    private boolean gcLogGroupEnabled;
+
+    /**
+     * 조각이 겹쳐도 같은 묶음으로 볼 최대 초. 겹침은 <b>다른 JVM 의 로그가 섞였다</b>는 강한 신호라 작게 잡는다
+     * — 회전 시 마지막 flush 와 새 파일 첫 줄의 시계 흔들림만 허용한다.
+     */
+    @Value("${gclog.group.max-overlap-seconds:60}")
+    private long gcLogGroupMaxOverlapSeconds;
+
+    /**
+     * 조각 사이 허용 공백(분). ⚠ <b>넉넉해야 한다</b> — 회전 = JVM 재기동인 환경에서는 파일 사이에 정지 시간이
+     * 실제로 들어간다(함정 60). 30분 같은 값을 잡으면 정상 회전 세트가 조각마다 따로 놀게 된다.
+     */
+    @Value("${gclog.group.max-gap-minutes:720}")
+    private long gcLogGroupMaxGapMinutes;
+
+    /**
+     * gz 조각의 끝 시각을 얻으려 스트리밍 해제할 최대 <b>압축</b> 크기(바이트). 넘으면 끝 시각을 미상으로 두고
+     * 그 경계에서 묶음을 끊는다(안전측) — 평문은 꼬리만 읽으므로 이 상한과 무관하다.
+     */
+    @Value("${gclog.group.gz-tail-max-bytes:67108864}")
+    private long gcLogGroupGzTailMaxBytes;
+
     /** MAT CLI 유효성 상태 (init 후 설정) */
     private boolean matCliReady;
     private String  matCliStatusMessage;
@@ -640,6 +665,10 @@ public class HeapDumpConfig {
     public int     getGcLogMaxLineChars()          { return gcLogMaxLineChars; }
     public int     getGcLogAnalysisTimeoutMinutes(){ return gcLogAnalysisTimeoutMinutes; }
     public int     getGcLogMatchToleranceMin()     { return gcLogMatchToleranceMin; }
+    public boolean isGcLogGroupEnabled()           { return gcLogGroupEnabled; }
+    public long    getGcLogGroupMaxOverlapSeconds(){ return gcLogGroupMaxOverlapSeconds; }
+    public long    getGcLogGroupMaxGapMinutes()    { return gcLogGroupMaxGapMinutes; }
+    public long    getGcLogGroupGzTailMaxBytes()   { return gcLogGroupGzTailMaxBytes; }
 
     // ── LLM getters ────────────────────────────────────────────
     public boolean isLlmEnabled()              { return llmEnabled; }

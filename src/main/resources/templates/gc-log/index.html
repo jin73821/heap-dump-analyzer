@@ -9,7 +9,7 @@
     <title>GC 로그 분석 - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-09-20}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-20}">
-    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-20a}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-21}">
 </head>
 <body>
 
@@ -169,10 +169,11 @@
                 <button type="button" class="btn btn-sm btn-ghost" id="selectModeBtn" onclick="toggleSelectMode()">
                     <span id="selectModeBtnLabel">선택</span>
                 </button>
-                <!-- 이어 붙인 분석의 구성 파일은 기본으로 접는다 — 목록에 '미분석' 으로 남으면 같은 로그를 또 분석하게 된다 -->
-                <label class="hi-members-toggle" title="다른 분석에 이어 붙인 구성 파일까지 보이기">
+                <!-- 구성 파일은 대표 행 아래 서랍에 접혀 있다(기본 접힘). 이 토글은 모든 서랍을 한 번에 여닫는다.
+                     ⚠ id·localStorage 키는 종전 그대로 둔다 — 의미만 '포함' 에서 '펼치기' 로 바뀌었다 -->
+                <label class="hi-members-toggle" title="이어 붙인 분석의 구성 파일을 모두 펼쳐 보기">
                     <input type="checkbox" id="hiShowMembers" onchange="onShowMembersChange()">
-                    <span>구성 파일 포함</span>
+                    <span>모든 그룹 펼치기</span>
                     <span class="hi-members-cnt" id="hiMembersCnt"></span>
                 </label>
                 <!-- 기간 필터 — 코어덤프 이력과 같은 KRDS 캘린더(calendar.js 배너 전역 로드). 기준은 '업로드' 일시(createdAt).
@@ -212,8 +213,10 @@
                         </tr>
                     </thead>
                     <tbody id="hiTbody">
-                        <tr th:each="item, stat : ${history}"
-                            th:classappend="${item.status == 'SUCCESS'} ? 'hi-success'
+                        <!-- 대표 행만 최상위로 뽑고, 구성 파일은 바로 뒤에 접어 둔다(서랍, 2026-09-21).
+                             ⚠ th:block 은 렌더 결과에 태그를 남기지 않아 표 구조가 그대로다. -->
+                        <th:block th:each="item, stat : ${history}" th:if="${claimed == null or !claimed.contains(item.filename)}">
+                        <tr th:classappend="${item.status == 'SUCCESS'} ? 'hi-success'
                                            : (${item.status == 'ERROR'} ? 'hi-error'
                                            : (${item.status == 'ANALYZING'} ? 'hi-analyzing' : ''))"
                             th:data-filename="${item.filename}"
@@ -233,6 +236,12 @@
 
                             <td>
                                 <div class="hi-fname-cell">
+                                    <!-- 서랍 토글. ⚠ .hi-row-chevron 을 쓰지 말 것 — 코어덤프 목록과 CSS 를 공유한다 -->
+                                    <button type="button" class="hi-group-toggle" aria-expanded="false"
+                                            th:if="${item.memberCount != null and item.memberCount > 1}"
+                                            th:attr="aria-label='구성 파일 ' + ${item.memberCount} + '개 펼치기'"
+                                            th:data-members="${item.memberCount}"
+                                            onclick="glToggleGroup(event, this)">&#9656;</button>
                                     <span class="hi-filename" th:text="${item.displayName}" th:title="${item.filename}"></span>
                                     <span th:if="${item.compressed}" class="hi-badge-gz">GZ</span>
                                     <span th:if="${item.fileDeleted}" class="hi-badge-gz" title="원본 파일이 삭제됨">파일 없음</span>
@@ -329,6 +338,11 @@
                                        th:data-source="${item.serverName}" data-kind="gclog"
                                        class="btn btn-sm btn-ghost"
                                        onclick="event.stopPropagation(); return window.AnalyzeConfirm ? AnalyzeConfirm.fromLink(this) : true;">분석</a>
+                                    <button th:if="${item.memberCount != null and item.memberCount > 1}"
+                                            class="btn btn-sm btn-ghost"
+                                            th:data-filename="${item.filename}"
+                                            title="묶음을 풀어 구성 파일을 각각 단독 로그로 되돌린다(파일은 그대로)"
+                                            onclick="event.stopPropagation(); glUngroup(this.dataset.filename)">묶음 해제</button>
                                     <button class="btn btn-sm btn-soft soft-danger"
                                             th:data-filename="${item.filename}"
                                             onclick="event.stopPropagation(); deleteGcLog(this.dataset.filename)">삭제</button>
@@ -336,6 +350,76 @@
                                 </div>
                             </td>
                         </tr>
+
+                        <!-- 구성 파일(서랍 안) — 대표와 열 수가 같은 완전한 행이어야 표가 어긋나지 않는다.
+                             ⚠ .row-check 를 두지 않는다: 선택 모드는 대표 단위이고, 대표와 구성원이 함께 선택되면
+                                이어붙이기가 '이미 구성된 파일' 로 거부된다. -->
+                        <tr th:each="mem : ${memberRows?.get(item.filename)}" class="hi-subrow" style="display:none"
+                            th:data-filename="${mem.filename}"
+                            th:data-status="${mem.status}"
+                            th:data-fname="${mem.filename}"
+                            th:data-server="${mem.serverName}"
+                            th:data-uploaded="${mem.createdAt}"
+                            th:data-partof="${mem.partOf}"
+                            tabindex="0"
+                            onclick="glRowAction(event, this)">
+
+                            <td class="td-check"></td>
+                            <td class="hi-col-num"><span class="hi-subrow-indent" aria-hidden="true">└</span></td>
+
+                            <td>
+                                <div class="hi-fname-cell">
+                                    <span class="hi-filename" th:text="${mem.filename}" th:title="${mem.filename}"></span>
+                                    <span th:if="${mem.compressed}" class="hi-badge-gz">GZ</span>
+                                    <span th:if="${mem.fileDeleted}" class="hi-badge-gz" title="원본 파일이 삭제됨">파일 없음</span>
+                                </div>
+                            </td>
+
+                            <td class="hi-hide-sm">
+                                <span th:if="${mem.serverName != null}" class="hi-mono" th:text="${mem.serverName}"></span>
+                                <span th:unless="${mem.serverName != null}" class="hi-muted">–</span>
+                            </td>
+
+                            <td><span class="hi-muted hi-nowrap">구성 파일</span></td>
+
+                            <td class="hi-hide-sm"><span class="hi-muted">–</span></td>
+
+                            <td class="hi-hide-sm">
+                                <span class="hi-range" th:if="${mem.logStart != null}">
+                                    <span class="hi-time" th:text="${#temporals.format(mem.logStart, 'MM-dd HH:mm')}"></span>
+                                    <span class="hi-time hi-range-end" th:if="${mem.logEnd != null}"
+                                          th:text="'~ ' + ${#temporals.format(mem.logEnd, 'MM-dd HH:mm')}"></span>
+                                </span>
+                                <span th:unless="${mem.logStart != null}" class="hi-muted">–</span>
+                            </td>
+
+                            <td class="hi-hide-sm"><span class="hi-muted">–</span></td>
+                            <td class="hi-hide-sm"><span class="hi-muted">–</span></td>
+                            <td><span class="hi-muted">–</span></td>
+                            <td><span class="hi-muted">–</span></td>
+
+                            <td class="hi-hide-sm">
+                                <span class="hi-time" th:if="${mem.createdAt != null}"
+                                      th:text="${#temporals.format(mem.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
+                                <span th:unless="${mem.createdAt != null}" class="hi-muted">–</span>
+                            </td>
+
+                            <td>
+                                <div class="hi-actions">
+                                    <a th:href="@{/api/gc-log/download/{f}(f=${mem.filename})}"
+                                       th:unless="${mem.fileDeleted}"
+                                       class="btn btn-sm btn-ghost" onclick="event.stopPropagation()">다운로드</a>
+                                    <button class="btn btn-sm btn-ghost"
+                                            th:data-filename="${mem.filename}" th:data-rep="${item.filename}"
+                                            title="이 파일만 묶음에서 빼낸다(파일은 그대로)"
+                                            onclick="event.stopPropagation(); glDetachMember(this.dataset.rep, this.dataset.filename)">그룹에서 빼기</button>
+                                    <button class="btn btn-sm btn-soft soft-danger"
+                                            th:data-filename="${mem.filename}"
+                                            onclick="event.stopPropagation(); deleteGcLog(this.dataset.filename)">삭제</button>
+                                </div>
+                            </td>
+                        </tr>
+                        </th:block>
                     </tbody>
                 </table>
             </div>
@@ -375,6 +459,20 @@
     </div>
 </div>
 
+<!-- 업로드 직후 자동 묶기 결과 (2026-09-21). 묶기만 하고 분석은 시작하지 않는다 —
+     사용자가 목록에서 확인한 뒤 '분석' 을 누른다. 골격 4종은 gc-log.css .gcl-modal(함정 17) -->
+<div class="modal-ov gcl-modal" id="groupResultModal" onclick="if(event.target===this)closeGroupResult()">
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="groupResultTitle">
+        <div class="modal-title" id="groupResultTitle">연속 로그 확인</div>
+        <div class="modal-body">
+            <div id="groupResultBody"></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-confirm" onclick="closeGroupResult()">확인</button>
+        </div>
+    </div>
+</div>
+
 <!-- 삭제 확인 모달 (골격 4종은 gc-log.css .gcl-modal — 함정 17) -->
 <div id="deleteGcModal" class="modal-ov gcl-modal" onclick="if(event.target===this)closeGcDeleteModal()">
     <div class="modal-box">
@@ -403,8 +501,8 @@
 <div class="cd-toast-wrap" id="cdToastWrap"></div>
 
 <script th:src="@{/js/select-mode.js?v=2026-09-20}"></script>
-<script th:src="@{/js/analyze-confirm.js?v=2026-09-20}"></script>
-<script th:src="@{/js/gc-log-index.js?v=2026-09-20}"></script>
+<script th:src="@{/js/analyze-confirm.js?v=2026-09-23}"></script>
+<script th:src="@{/js/gc-log-index.js?v=2026-09-21}"></script>
 
 </body>
 </html>

@@ -382,6 +382,9 @@ public class HeapDumpViewController {
             for (com.heapdump.analyzer.model.entity.GcLogAnalysisEntity e : gcLogAnalyzerService.listExistingFiles()) {
                 File f = gcLogAnalyzerService.fileOf(e.getFilename());
                 if (!f.isFile()) continue;
+                // 이어 붙인 묶음의 구성 파일은 대표 한 줄로만 보인다 — 안 그러면 대시보드 5행 / GC 목록 1행으로 어긋난다.
+                // (현황판 AlertBoardService 가 part_of 를 건너뛰는 것과 같은 규약. Files 페이지는 파일 관리 화면이라 전부 남긴다.)
+                if (e.getPartOf() != null) continue;
                 String st = gcLogAnalyzerService.isAnalyzing(e.getFilename())
                         ? com.heapdump.analyzer.model.entity.GcLogAnalysisEntity.STATUS_ANALYZING : e.getStatus();
                 // 압축 표기(GZ 원본→압축)는 힙 전용 — GC 로그 .gz 는 원본 크기를 모르므로 디스크 크기만 보인다
@@ -411,6 +414,10 @@ public class HeapDumpViewController {
                 item.setStatus(e.getStatus());
                 item.setFileDeleted(deleted);
                 item.setServerName(e.getServerName());
+                // 이어 붙인 묶음 — Files 목록도 대표 행 + 접힌 구성 파일(서랍)로 보인다.
+                // ⚠ 여기서 구성 파일을 빼지 말 것: Files 는 파일 관리 화면이라 어떤 파일도 사라지면 안 된다.
+                item.setPartOf(e.getPartOf());
+                item.setMemberCount(e.getMemberCount());
                 if (e.getAnalysisTimeMs() != null) item.setAnalysisTime(e.getAnalysisTimeMs());
                 if (!deleted) {
                     item.setSizeBytes(f.length());

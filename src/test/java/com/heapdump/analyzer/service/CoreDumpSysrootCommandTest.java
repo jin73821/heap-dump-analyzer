@@ -18,7 +18,7 @@ import static org.mockito.Mockito.when;
  *
  * 순서가 계약이다: sysroot 는 반드시 -iex(파일 로드 전 실행)로 positional <exec> <core> 및
  * -ex core-file 보다 앞서야 한다. -ex 로 주면 positional 로드 시 분석 서버 로컬 라이브러리로
- * 초기 solib 해석이 한 번 수행된다 (COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md 케이스 D-2 실증).
+ * 초기 solib 해석이 한 번 수행된다 (docs/COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md 케이스 D-2 실증).
  */
 class CoreDumpSysrootCommandTest {
 
@@ -107,7 +107,7 @@ class CoreDumpSysrootCommandTest {
     @Test
     void solibSearchPathIgnoredWithoutSysroot() {
         // sysroot 없이 solib-search-path 만 주면 gdb 가 원경로 파일을 먼저 찾아 무효다
-        // (COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md 케이스 F-2) — 아예 붙이지 않는다.
+        // (docs/COREDUMP_SYMBOL_ACCURACY_VERIFICATION.md 케이스 F-2) — 아예 붙이지 않는다.
         List<String> cmd = service.buildGdbCommand(core, exec, null, "/some/dir");
         assertFalse(cmd.stream().anyMatch(a -> a.startsWith("set solib-search-path")));
     }
