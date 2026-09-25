@@ -57,6 +57,7 @@ public class HeapSystemApiController {
     private final TwoFactorConfigService twoFactorConfig;
     private final PasswordPolicyConfigService passwordPolicyConfig;
     private final AccountLockPolicyConfigService accountLockPolicyConfig;
+    private final com.heapdump.analyzer.service.DbHealthService dbHealth;
 
     public HeapSystemApiController(HeapDumpAnalyzerService analyzerService,
                                    LlmConfigService llmConfig,
@@ -67,7 +68,9 @@ public class HeapSystemApiController {
                                    org.springframework.session.jdbc.JdbcIndexedSessionRepository jdbcSessionRepo,
                                    TwoFactorConfigService twoFactorConfig,
                                    PasswordPolicyConfigService passwordPolicyConfig,
-                                   AccountLockPolicyConfigService accountLockPolicyConfig) {
+                                   AccountLockPolicyConfigService accountLockPolicyConfig,
+                                   com.heapdump.analyzer.service.DbHealthService dbHealth) {
+        this.dbHealth = dbHealth;
         this.analyzerService = analyzerService;
         this.llmConfig = llmConfig;
         this.llmRateLimitService = llmRateLimitService;
@@ -534,6 +537,13 @@ public class HeapSystemApiController {
         resp.put("queueSize", analyzerService.getQueueSize());
         resp.put("currentAnalysis", analyzerService.getCurrentAnalysisFilename());
 
+        // DB 상태(5초 캐시) — 배너 Database 행·전역 안내 스트립. 진짜 장애 때는 세션 필터가 먼저 죽어 이 응답 대신
+        // /error 의 503 DB_UNAVAILABLE 이 나가므로 배너는 둘 다 본다(docs/DB_OUTAGE_DISPLAY_PLAN.md ①·④)
+        com.heapdump.analyzer.service.DbHealthService.Snapshot db = dbHealth.snapshot();
+        resp.put("dbUp", db.up());
+        resp.put("dbError", db.error());
+        resp.put("dbDownSince", db.downSince() != null ? db.downSince().toString() : null);
+
         return ResponseEntity.ok(resp);
     }
 
@@ -640,6 +650,20 @@ public class HeapSystemApiController {
     }
 
     /**
+     * 화면 자동 갱신 주기(초) — 대시보드·현황판 부분 갱신, 배너 System Status, 알림 벨. 10|30|60.
+     * 열려 있는 페이지는 다시 열 때 적용된다(값은 페이지 렌더 시 window.UI_REFRESH_SECONDS 로 내려간다).
+     */
+    @PostMapping("/api/settings/ui-refresh-interval")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> setUiRefreshInterval(@RequestParam int seconds) {
+        return applyValidatedSetting(() -> analyzerService.setUiRefreshIntervalSec(seconds), resp -> {
+            resp.put("uiRefreshIntervalSec", seconds);
+            resp.put("message", "화면 갱신 주기가 " + seconds + "초로 변경되었습니다. 열려 있는 페이지는 다시 열 때 적용됩니다.");
+            logger.info("[Settings] UI refresh interval changed to {}s", seconds);
+        });
+    }
+
+    /**
      * Dominator Refs 사전계산 시간 예산(초).
      * 항목당 MAT 쿼리 2회(약 6초)라 top-n 30 전량에는 190초 이상 필요 — 예산을 넘기면 거기까지만
      * 저장하고 나머지는 항목 클릭 시 lazy 조회된다. 다음 분석부터 적용.
@@ -664,6 +688,7 @@ public class HeapSystemApiController {
         settings.put("allowAllExtensions",     analyzerService.isAllowAllExtensions());
         settings.put("sessionTimeoutHours",    analyzerService.getSessionTimeoutHours());
         settings.put("dashboardDetectDays",    analyzerService.getDashboardDetectDays());
+        settings.put("uiRefreshIntervalSec",   analyzerService.getUiRefreshIntervalSec());
         settings.put("dominatorRefsPrecomputeBudgetSeconds", config.getDominatorRefsPrecomputeBudgetSeconds());
 
         long maxUploadBytes = analyzerService.getMaxUploadSizeBytes();

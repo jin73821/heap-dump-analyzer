@@ -142,6 +142,7 @@
     <div th:if="${errorMessage}" class="msg-error" th:text="${errorMessage}"></div>
     <div th:if="${logoutMessage}" class="msg-info" th:text="${logoutMessage}"></div>
     <div th:if="${expiredMessage}" class="msg-disabled msg-multiline" th:text="${expiredMessage}"></div>
+    <div th:if="${unavailableMessage}" class="msg-disabled msg-multiline" th:text="${unavailableMessage}"></div>
 
     <form th:action="@{/login}" method="post" id="loginForm">
         <div class="form-group">

@@ -1731,6 +1731,21 @@ public class HeapDumpAnalyzerService {
         persistSettings();
     }
 
+    /** 화면 자동 갱신 주기 허용값(초). 설정 화면의 선택지와 1:1 — 값을 늘리면 settings.html 의 option 도 함께. */
+    static final int[] UI_REFRESH_ALLOWED = {10, 30, 60};
+    static boolean isUiRefreshAllowed(int sec) {
+        for (int a : UI_REFRESH_ALLOWED) if (a == sec) return true;
+        return false;
+    }
+
+    public int  getUiRefreshIntervalSec()      { return config.getUiRefreshIntervalSec(); }
+    public void setUiRefreshIntervalSec(int sec) {
+        if (!isUiRefreshAllowed(sec)) throw new IllegalArgumentException("화면 갱신 주기는 10·30·60초 중 하나여야 합니다.");
+        config.setUiRefreshIntervalSec(sec);
+        logger.info("ui_refresh_interval_sec set to {}", sec);
+        persistSettings();
+    }
+
     public long getMaxUploadSizeBytes()           { return maxUploadSizeBytes; }
     public void setMaxUploadSizeBytes(long bytes) {
         if (bytes <= 0) {
@@ -1974,6 +1989,22 @@ public class HeapDumpAnalyzerService {
                 logger.info("[Settings] Restored dashboardDetectDays={}", d);
             }
         }
+
+        if (saved.containsKey("uiRefreshIntervalSec")) {
+            Object val = saved.get("uiRefreshIntervalSec");
+            int sec = -1;
+            if (val instanceof Number) sec = ((Number) val).intValue();
+            else if (val != null) {
+                try { sec = Integer.parseInt(String.valueOf(val).trim()); }
+                catch (NumberFormatException e) { logger.warn("[Settings] uiRefreshIntervalSec 값이 숫자가 아님({}) — 현재값 유지", val); }
+            }
+            if (isUiRefreshAllowed(sec)) {
+                config.setUiRefreshIntervalSec(sec);
+                logger.info("[Settings] Restored uiRefreshIntervalSec={}", sec);
+            } else if (sec != -1) {
+                logger.warn("[Settings] uiRefreshIntervalSec={} 는 허용값(10/30/60)이 아님 — 현재값 {} 유지", sec, config.getUiRefreshIntervalSec());
+            }
+        }
     }
 
     /** boolean 스칼라 복원 — Boolean 외 타입("true"/"false" 문자열 등)은 parseBoolean 폴백 + WARN. */
@@ -2027,6 +2058,7 @@ public class HeapDumpAnalyzerService {
             settings.put("allowAllExtensions", allowAllExtensions);
             settings.put("sessionTimeoutHours", sessionTimeoutHours);
             settings.put("dashboardDetectDays", dashboardDetectDays);
+            settings.put("uiRefreshIntervalSec", config.getUiRefreshIntervalSec());
             // LLM/RAG/2FA/원격 설정 — 각 서비스에 위임
             llmConfig.collectSettings(settings);
             llmRateLimitService.collectSettings(settings);
@@ -2068,6 +2100,7 @@ public class HeapDumpAnalyzerService {
             updates.put("mat.dominator-refs.enabled", String.valueOf(dominatorRefsEnabled));
             updates.put("mat.dominator-refs.precompute.budget-seconds",
                     String.valueOf(config.getDominatorRefsPrecomputeBudgetSeconds()));
+            updates.put("ui.refresh.interval-sec", String.valueOf(config.getUiRefreshIntervalSec()));
             String multipartSize = formatBytesAsSpringSize(maxUploadSizeBytes);
             updates.put("spring.servlet.multipart.max-file-size", multipartSize);
             updates.put("spring.servlet.multipart.max-request-size", multipartSize);

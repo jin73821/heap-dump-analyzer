@@ -824,7 +824,8 @@
     // ── 이어붙이기 모달 ──────────────────────────────────────
     // 후보는 /combine-options 가 준다(같은 회전 계열·서버·일자면 suggested=true 로 미리 체크).
     // 순서는 화면이 정하지 않는다 — 서버가 로그 안의 첫 시각으로 정렬하고 미리보기로 알려 준다(함정 60).
-    var _cbOptions = [], _cbSel = {}, _cbBusy = false;
+    // _cbCurrent = 이 결과 화면의 로그(대표). 늘 구성에 들어가므로 체크 대상이 아니라 맨 위 회색 고정 행이다(2026-09-25).
+    var _cbOptions = [], _cbSel = {}, _cbBusy = false, _cbCurrent = null;
 
     function openCombineModal() {
         var ov = document.getElementById('gclCombineModal');
@@ -836,6 +837,7 @@
         Common.fetchJSON(api('/combine-options')).then(function (d) {
             if (!d || d.success !== true) throw new Error('후보를 불러오지 못했습니다.');
             _cbOptions = d.options || [];
+            _cbCurrent = d.current || null;
             _cbSel = {};
             var already = d.members || [];
             _cbOptions.forEach(function (o) {
@@ -863,8 +865,10 @@
             return (o.filename || '').toLowerCase().indexOf(q) >= 0
                 || (o.analysisName || '').toLowerCase().indexOf(q) >= 0;
         });
-        if (!rows.length) { list.innerHTML = '<div class="gcl-empty">이어 붙일 다른 GC 로그가 없습니다.</div>'; syncCombineBtn(); return; }
-        list.innerHTML = rows.map(function (o) {
+        // 현재 로그는 검색과 무관하게 늘 맨 위 — 무엇에 이어 붙이는지 모달 안에서 보여야 한다
+        var head = _cbCurrent ? combineCurrentRow(_cbCurrent) : '';
+        if (!rows.length) { list.innerHTML = head + '<div class="gcl-empty">이어 붙일 다른 GC 로그가 없습니다.</div>'; syncCombineBtn(); return; }
+        list.innerHTML = head + rows.map(function (o) {
             var tags = '';
             if (o.suggested) tags += '<span class="gcl-pick-tag ok">같은 계열·일자</span>';
             else if (o.sameServer) tags += '<span class="gcl-pick-tag">같은 서버</span>';
@@ -877,6 +881,17 @@
                 + (o.formattedSize ? ' · ' + esc(o.formattedSize) : '') + '</span></span>' + tags + '</label>';
         }).join('');
         syncCombineBtn();
+    }
+
+    /** 현재 로그 행 — 체크 해제할 수 없고(항상 포함) 회색으로 칠해 후보와 구분한다. */
+    function combineCurrentRow(o) {
+        var when = o.logStart ? o.logStart.replace('T', ' ').slice(0, 16) : (o.analysisDate || '');
+        return '<div class="gcl-pick-row is-current" title="지금 보고 있는 로그 — 항상 구성에 포함됩니다">'
+            + '<input type="checkbox" checked disabled aria-label="현재 로그(항상 포함)">'
+            + '<span class="gcl-pick-main"><span class="gcl-pick-name mono">' + esc(o.filename) + '</span>'
+            + '<span class="gcl-pick-sub">' + esc(o.analysisName || '') + (when ? (o.analysisName ? ' · ' : '') + esc(when) : '')
+            + (o.formattedSize ? ' · ' + esc(o.formattedSize) : '') + '</span></span>'
+            + '<span class="gcl-pick-tag self">현재 로그</span></div>';
     }
 
     function toggleCombineMember(cb) {
@@ -904,8 +919,11 @@
         Common.fetchJSON(api('/combine/preview'), { method: 'POST', body: JSON.stringify({ filenames: names }) })
             .then(function (d) {
                 if (!d || d.success !== true) throw new Error('미리보기 실패');
+                var curName = _cbCurrent ? _cbCurrent.filename : GC_FILENAME;
                 var order = (d.order || []).map(function (o, i) {
-                    return '<span class="gcl-prev-step">' + (i + 1) + '. ' + esc(o.filename) + '</span>';
+                    var isCur = o.filename === curName;
+                    return '<span class="gcl-prev-step' + (isCur ? ' is-current' : '') + '"' + (isCur ? ' title="현재 로그"' : '') + '>'
+                        + (i + 1) + '. ' + esc(o.filename) + '</span>';
                 }).join('<span class="gcl-prev-arrow">→</span>');
                 var warn = (d.warnings || []).map(function (w) { return '<div class="gcl-prev-warn">' + esc(w) + '</div>'; }).join('');
                 box.innerHTML = '<div class="gcl-prev-title">이 순서로 이어 붙입니다'

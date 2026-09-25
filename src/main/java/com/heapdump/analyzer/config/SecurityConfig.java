@@ -2,6 +2,7 @@ package com.heapdump.analyzer.config;
 
 import com.heapdump.analyzer.service.CustomUserDetailsService;
 import com.heapdump.analyzer.service.PasswordPolicyConfigService;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,6 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.InternalAuthenticationServiceException;
 import org.springframework.security.authentication.LockedException;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -17,6 +19,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.util.matcher.DispatcherTypeRequestMatcher;
 
 @Configuration
 @EnableMethodSecurity
@@ -43,6 +46,13 @@ public class SecurityConfig {
         http
             .userDetailsService(userDetailsService)
             .authorizeHttpRequests(auth -> auth
+                /*
+                 * ERROR 디스패치(Tomcat → /error)는 세션 필터를 타지 않아(spring.session.servlet.filter-dispatcher-types)
+                 * 항상 익명이다. 허용하지 않으면 DB 장애로 죽은 요청의 오류 페이지가 로그인 리다이렉트/401 로 바뀌어
+                 * "세션 만료" 로 오인된다(docs/DB_OUTAGE_DISPLAY_PLAN.md ②). DbAwareErrorController 가 503 을 낸다.
+                 */
+                .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
+                .requestMatchers("/error").permitAll()
                 .requestMatchers("/login", "/css/**", "/js/**", "/favicon.ico", "/favicon.svg").permitAll()
                 .requestMatchers(HttpMethod.POST, "/api/account-requests").permitAll()
                 // SSO 연동 진입점 (mode=sso 아닐 때는 컨트롤러가 /login redirect)
@@ -93,6 +103,9 @@ public class SecurityConfig {
                         url = "/login?error=disabled";
                     } else if (ex instanceof LockedException) {
                         url = "/login?error=locked";
+                    } else if (ex instanceof InternalAuthenticationServiceException) {
+                        // 사용자 조회 자체가 실패(DB 연결 불가 등) — 자격 증명 오류로 보이면 안 된다
+                        url = "/login?error=unavailable";
                     } else {
                         url = "/login?error=true";
                     }
@@ -164,6 +177,9 @@ public class SecurityConfig {
                 .frameOptions(frame -> frame.sameOrigin())
             )
             .csrf(csrf -> csrf
+                // ERROR 디스패치는 원래 요청의 메서드(POST 포함)를 물려받는데 세션(=토큰 저장소)이 없다 —
+                // 면제하지 않으면 오류 페이지 렌더가 CSRF 거부(403)로 바뀐다
+                .ignoringRequestMatchers(new DispatcherTypeRequestMatcher(DispatcherType.ERROR))
                 .ignoringRequestMatchers(request -> {
                     String uri = request.getRequestURI();
                     // ── CSRF 보호 유지 (면제하지 않음) ──

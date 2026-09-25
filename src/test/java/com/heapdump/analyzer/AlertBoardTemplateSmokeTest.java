@@ -129,6 +129,16 @@ class AlertBoardTemplateSmokeTest {
         // 배너에 현황판 메뉴 (펼침·접힘 둘 다)
         assertTrue(html.contains("href=\"/alerts\" class=\"gb-nav-link\" id=\"gbNavAlerts\""), "배너 메뉴가 없다");
         assertTrue(html.contains("href=\"/alerts\" class=\"gb-ci\""), "배너 접힘 아이콘이 없다");
+
+        // 부분 갱신 조각(2026-09-26) — id = th:fragment. 토글·모달은 조각 밖에 있어야 상태가 보존된다
+        assertTrue(html.contains("id=\"alertKpi\""), "KPI 조각 id");
+        assertTrue(html.contains("id=\"alertList\""), "알람 목록 조각 id");
+        assertTrue(html.contains("data-unacked=\"1\"") && html.contains("data-deleted-count=\"0\""), "조각 밖 카운터를 맞출 data-* 가 없다");
+        assertTrue(html.contains("id=\"alertRows\""), "최근 분석 조각 id");
+        assertTrue(html.indexOf("id=\"rowTabs\"") < html.indexOf("id=\"alertRows\""), "탭이 조각 안에 들어갔다(SegThumb 상태 소실)");
+        assertTrue(html.contains("/js/live-refresh.js"), "부분 갱신 모듈이 실리지 않는다");
+        assertTrue(html.contains("url: '/api/alerts/fragments'"), "조각 엔드포인트는 /api/ 접두여야 한다(만료 시 401 JSON)");
+        assertFalse(html.contains("<a href=\"/alerts\" class=\"topbar-btn\">Refresh</a>"), "Refresh 가 전체 새로고침 링크로 남아 있다");
     }
 
     @Test

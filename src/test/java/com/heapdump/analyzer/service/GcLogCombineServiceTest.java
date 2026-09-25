@@ -323,4 +323,22 @@ class GcLogCombineServiceTest {
         File own = gcDir.resolve("gc.log").toFile();
         assertTrue(own.isFile());
     }
+
+    @Test
+    @DisplayName("이어붙이기 모달의 현재 로그 행은 대표 자신의 이름·크기·구간이다 — 후보 목록에는 없다")
+    void combineCurrentShowsRepresentativeOwnSegment() throws Exception {
+        put("gc.log.1", logText(T0, 3, 5), "was1");
+        put("gc.log", logText(T0 + 5 * HOUR, 3, 5), "was1");
+        long ownSize = gcDir.resolve("gc.log").toFile().length();
+
+        GcLogAnalysisEntity after = await(service.submitCombined("gc.log", List.of("gc.log.1"), "tester"), "gc.log");
+        Map<String, Object> cur = service.combineCurrent(after);
+
+        assertEquals("gc.log", cur.get("filename"));
+        assertEquals(ownSize, cur.get("size"), "현재 로그 행에 합계 크기가 보인다");
+        assertEquals(after.getMatchWindowStart().toString(), cur.get("logStart"),
+                "현재 로그 행의 시작이 묶음 전체 범위다 — 대표 파일 자신의 구간이어야 한다");
+        assertTrue(service.combineOptions(after, null, 200).stream().noneMatch(o -> "gc.log".equals(o.get("filename"))),
+                "대표가 후보 목록에도 나온다 — 체크를 풀 수 있는 것처럼 보인다");
+    }
 }

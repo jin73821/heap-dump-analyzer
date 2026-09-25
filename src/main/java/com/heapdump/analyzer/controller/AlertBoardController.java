@@ -4,6 +4,7 @@ import com.heapdump.analyzer.service.AlertBoardService;
 import com.heapdump.analyzer.util.AuthUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Controller;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
+import org.springframework.web.servlet.view.FragmentsRendering;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -40,6 +42,27 @@ public class AlertBoardController {
 
     @GetMapping("/alerts")
     public String page(Authentication authentication, Model model) {
+        populateBoardModel(authentication, model);
+        return "alerts";
+    }
+
+    /**
+     * 부분 갱신 조각(2026-09-26) — 페이지와 같은 템플릿의 {@code th:fragment} 3개(KPI·알람 목록·최근 분석 표)를
+     * 한 응답으로 돌려준다. {@code /js/live-refresh.js} 가 설정 주기(Settings &gt; General '화면 자동 갱신 주기')로 받아
+     * id 가 같은 영역만 갈아 끼운다. ⚠ 경로는 {@code /api/} 접두여야 한다 — 세션 만료 시 401 JSON 을 받아야
+     * 클라이언트가 만료로 판정한다(페이지 경로면 302→로그인 HTML 이 200 으로 와 조용히 실패, 함정 27).
+     */
+    @GetMapping(value = "/api/alerts/fragments", produces = MediaType.TEXT_HTML_VALUE)
+    public FragmentsRendering fragments(Authentication authentication, Model model) {
+        populateBoardModel(authentication, model);
+        return FragmentsRendering.fragment("alerts :: alertKpi")
+                .fragment("alerts :: alertList")
+                .fragment("alerts :: alertRows")
+                .header("Cache-Control", "no-store")
+                .build();
+    }
+
+    private void populateBoardModel(Authentication authentication, Model model) {
         boolean isAdmin = AuthUtil.isAdmin(authentication);
         AlertBoardService.Board b = alertBoardService.board(isAdmin);
         model.addAttribute("isAdmin", isAdmin);
@@ -48,7 +71,6 @@ public class AlertBoardController {
         model.addAttribute("alerts", b.alerts);
         model.addAttribute("unackedCount", b.unackedCount);
         model.addAttribute("deletedCount", b.deletedCount);
-        return "alerts";
     }
 
     @GetMapping("/api/alerts/top")

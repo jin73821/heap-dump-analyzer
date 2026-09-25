@@ -329,6 +329,7 @@ public class GcLogApiController {
         Map<String, Object> ok = new LinkedHashMap<>();
         ok.put("success", true);
         ok.put("options", service.combineOptions(e, q, 200));
+        ok.put("current", service.combineCurrent(e));
         ok.put("members", service.parseMembers(e.getMemberFiles()).stream().map(GcLogAnalyzerService.MemberRef::filename).toList());
         ok.put("maxMembers", GcLogAnalyzerService.MAX_MEMBERS);
         return ResponseEntity.ok(ok);

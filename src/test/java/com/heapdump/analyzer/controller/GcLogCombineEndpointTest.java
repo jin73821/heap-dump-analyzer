@@ -130,7 +130,7 @@ class GcLogCombineEndpointTest {
     }
 
     @Test
-    @DisplayName("후보 목록은 같은 계열·서버·일자를 suggested 로 표시한다")
+    @DisplayName("후보 목록은 같은 계열·서버·일자를 suggested 로 표시하고, 현재 로그는 current 로 따로 준다")
     void combineOptionsMarkSuggested() throws Exception {
         Map<String, Object> sibling = new LinkedHashMap<>();
         sibling.put("filename", "gc.log.1");
@@ -140,6 +140,10 @@ class GcLogCombineEndpointTest {
         other.put("filename", "other-gc.log");
         other.put("suggested", false);
         Mockito.when(gc.combineOptions(eq(entity), any(), anyInt())).thenReturn(List.of(sibling, other));
+        Map<String, Object> current = new LinkedHashMap<>();
+        current.put("filename", "gc.log");
+        current.put("analysisName", "was1_c1_20260919");
+        Mockito.when(gc.combineCurrent(entity)).thenReturn(current);
 
         mvc.perform(get("/api/gc-log/gc.log/combine-options").param("q", "gc"))
                 .andExpect(status().isOk())
@@ -147,6 +151,9 @@ class GcLogCombineEndpointTest {
                 .andExpect(jsonPath("$.options[0].filename").value("gc.log.1"))
                 .andExpect(jsonPath("$.options[0].suggested").value(true))
                 .andExpect(jsonPath("$.options[1].suggested").value(false))
+                // 현재 로그는 후보가 아니라 모달 맨 위 회색 고정 행으로 따로 온다(2026-09-25)
+                .andExpect(jsonPath("$.current.filename").value("gc.log"))
+                .andExpect(jsonPath("$.current.analysisName").value("was1_c1_20260919"))
                 .andExpect(jsonPath("$.maxMembers").value(GcLogAnalyzerService.MAX_MEMBERS));
     }
 }

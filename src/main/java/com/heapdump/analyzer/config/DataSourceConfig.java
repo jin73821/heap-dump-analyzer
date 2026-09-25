@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
-import javax.sql.DataSource;
+import com.zaxxer.hikari.HikariDataSource;
 
 /**
  * DataSource 설정 — ENC(...) 형식의 암호화된 비밀번호를 자동 복호화.
@@ -19,6 +19,14 @@ import javax.sql.DataSource;
 @Configuration
 public class DataSourceConfig {
 
+    /**
+     * Hikari 대기·검증 타임아웃 코드 기본값(ms) — DB 장애 시 요청이 30초(Hikari 기본)씩 멈추지 않게 한다.
+     * {@code application.properties} 는 .gitignore 대상이라 새 환경에 {@code spring.datasource.hikari.*} 키가 없을 수 있어
+     * 기본값을 코드에 둔다. 키가 있으면 {@code @ConfigurationProperties} 바인딩(빈 생성 직후)이 이 값을 덮어쓴다.
+     */
+    static final long DEFAULT_CONNECTION_TIMEOUT_MS = 5_000;
+    static final long DEFAULT_VALIDATION_TIMEOUT_MS = 2_000;
+
     @Bean
     @Primary
     @ConfigurationProperties("spring.datasource")
@@ -26,9 +34,16 @@ public class DataSourceConfig {
         return new DataSourceProperties();
     }
 
+    /**
+     * ⚠ 직접 만든 DataSource 빈에는 Boot 의 {@code spring.datasource.hikari.*} 가 바인딩되지 않는다 — 그 바인딩은
+     * Boot 자동설정의 {@code @ConfigurationProperties("spring.datasource.hikari") HikariDataSource} 빈에만 붙는다.
+     * 그래서 2026-09-26 이전엔 {@code connection-timeout=5000} 을 적어도 기본 30초 그대로였다(DB 장애 실측: 요청당 30초,
+     * 로그인 60초). 같은 방식으로 반환형을 {@link HikariDataSource} 로 두고 프리픽스를 붙여 바인딩되게 한다.
+     */
     @Bean
     @Primary
-    public DataSource dataSource(DataSourceProperties properties) {
+    @ConfigurationProperties("spring.datasource.hikari")
+    public HikariDataSource dataSource(DataSourceProperties properties) {
         // password가 ENC(...) 형식이면 복호화
         String rawPassword = properties.getPassword();
         if (rawPassword != null && rawPassword.startsWith("ENC(") && rawPassword.endsWith(")")) {
@@ -43,6 +58,9 @@ public class DataSourceConfig {
             }
             properties.setPassword(d.value());
         }
-        return properties.initializeDataSourceBuilder().build();
+        HikariDataSource ds = properties.initializeDataSourceBuilder().type(HikariDataSource.class).build();
+        ds.setConnectionTimeout(DEFAULT_CONNECTION_TIMEOUT_MS);
+        ds.setValidationTimeout(DEFAULT_VALIDATION_TIMEOUT_MS);
+        return ds;
     }
 }

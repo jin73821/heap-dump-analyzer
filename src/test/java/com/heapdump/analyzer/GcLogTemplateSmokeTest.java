@@ -395,6 +395,24 @@ class GcLogTemplateSmokeTest {
         assertFalse(css.replaceAll("(?s)/\\*.*?\\*/", "").contains("border-left"),
                 "이 페이지 CSS 에 좌측 색 띠가 생겼다(제거 규약 — 주석 제외)");
         assertTrue(css.contains(".gcl-seg-panel {") && css.contains(".gcl-combine-box {"), "구성 패널·모달 CSS");
+        // 현재 로그(대표)는 모달 맨 위 회색 고정 행 — 늘 구성에 들어가므로 체크를 풀 수 없다(2026-09-25).
+        // 종전엔 후보 목록에서 빠져 무엇에 이어 붙이는지 모달 안에서 보이지 않았다
+        assertTrue(an.contains("_cbCurrent = d.current || null;") && an.contains("function combineCurrentRow")
+                        && an.contains("'<input type=\"checkbox\" checked disabled"),
+                "이어붙이기 모달에 현재 로그 행이 없다");
+        assertTrue(an.contains("var head = _cbCurrent ? combineCurrentRow(_cbCurrent) : '';"), "현재 로그 행이 검색에 가려진다");
+        assertTrue(css.contains(".gcl-combine-list .gcl-pick-row.is-current { position: sticky; top: 0; z-index: 1; background: #F3F4F6;"),
+                "현재 로그 행이 회색 고정 행이 아니다");
+        // 서랍 ▸ — 11px 이면 5px 남짓이라 안 보인다. files.html 인라인과 같은 크기여야 한다(두 목록이 같은 언어)
+        String files = Files.readString(Path.of("src/main/resources/templates/files.html"), StandardCharsets.UTF_8);
+        for (String src : List.of(css, files)) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\.hi-group-toggle \\{[^}]*\\}").matcher(src);
+            assertTrue(m.find(), "서랍 토글 CSS 가 없다");
+            String rule = m.group();
+            assertTrue(rule.contains("font-size: 17px") && rule.contains("width: 20px") && rule.contains("height: 20px")
+                            && rule.contains("transform-origin: 50% 50%"),
+                    "서랍 ▸ 크기가 두 목록에서 다르거나 작아졌다: " + rule);
+        }
 
         // 목록 페이지 — 다중 업로드 + 호스트네임 필수 + 인스턴스(선택)
         assertTrue(idxHtml.contains("id=\"gcFileInput\" multiple"), "업로드 입력이 다중 선택이 아니다");

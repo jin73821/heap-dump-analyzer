@@ -125,7 +125,8 @@
         opts = opts || {};
         var boardUrl = opts.boardUrl || '/alerts';
         var limit = opts.limit || 10;
-        var interval = opts.interval || 60000;
+        // 배지·말풍선 갱신 주기 — Settings > General 의 '화면 자동 갱신 주기'(window.UI_REFRESH_SECONDS), 폴백 60초
+        var interval = opts.interval || ((global.UI_REFRESH_SECONDS > 0 ? global.UI_REFRESH_SECONDS : 60) * 1000);
 
         injectStyle();
         if (!btn.querySelector('svg')) btn.insertAdjacentHTML('afterbegin', BELL_SVG);
@@ -167,7 +168,8 @@
         function refresh() {
             return fetchTop().then(function () { if (pop) render(); }).catch(function (e) {
                 failed('알림 조회 실패', e);
-                state.error = e && e.sessionExpired ? '세션이 만료되었습니다. 다시 로그인하세요.' : '알림을 불러오지 못했습니다.';
+                state.error = e && e.sessionExpired ? '세션이 만료되었습니다. 다시 로그인하세요.'
+                    : (e && e.dbUnavailable ? '데이터베이스 연결 불가 — 알림을 불러오지 못했습니다.' : '알림을 불러오지 못했습니다.');
                 if (pop) render();
             });
         }
@@ -373,10 +375,11 @@
 
         setCount(0);
         refresh();
+        var poll = null;
         if (global.SessionTimeout && global.SessionTimeout.managedInterval) {
-            global.SessionTimeout.managedInterval(function () { refresh(); }, interval);
+            poll = global.SessionTimeout.managedInterval(function () { refresh(); }, interval);
         }
-        return { refresh: refresh, close: close };
+        return { refresh: refresh, close: close, stop: function () { if (poll) poll.stop(); }, intervalMs: interval };
     }
 
     global.AlertBell = { mount: mount };

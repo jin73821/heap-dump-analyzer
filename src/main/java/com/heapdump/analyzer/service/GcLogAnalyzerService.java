@@ -1209,6 +1209,24 @@ public class GcLogAnalyzerService {
         return out.size() > limit ? new ArrayList<>(out.subList(0, limit)) : out;
     }
 
+    /**
+     * 이어붙이기 모달 맨 위의 '현재 로그' 행(2026-09-25). 대표는 늘 구성에 들어가므로 후보({@link #combineOptions})가 아니라
+     * 고정 표시다 — 종전엔 목록에서 빠져 있어 무엇에 이어 붙이는지 모달 안에서 알 수 없었다.
+     * 구간은 <b>대표 파일 자신의 것</b>이다(이어 붙인 뒤의 {@code logStart} 는 묶음 전체 범위, 함정 64).
+     */
+    public Map<String, Object> combineCurrent(GcLogAnalysisEntity rep) {
+        LocalDateTime start = rep.getMatchWindowStart() != null ? rep.getMatchWindowStart()
+                : rep.isCombined() ? null : rep.getLogStart();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("filename", rep.getFilename());
+        m.put("analysisName", rep.getAnalysisName());
+        m.put("size", rep.getFileSize());
+        m.put("formattedSize", rep.getFormattedSize());
+        m.put("logStart", start == null ? null : start.toString());
+        m.put("analysisDate", rep.getAnalysisDate() == null ? null : rep.getAnalysisDate().toString());
+        return m;
+    }
+
     /** 회전 접미사를 뗀 계열 이름 — 원격 경로가 있으면 그쪽이 더 정확하다(전송 회피명은 파일명 base 를 망가뜨린다). */
     private static String rotationBase(GcLogAnalysisEntity e) {
         if (e.getRemotePath() != null && !e.getRemotePath().isBlank()) {

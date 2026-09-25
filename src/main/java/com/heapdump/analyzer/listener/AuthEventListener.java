@@ -86,6 +86,9 @@ public class AuthEventListener {
             reason = lockReasonTextSafe(username);
         } else if (ex instanceof BadCredentialsException) {
             reason = countFailureSafe(username);
+        } else if (ex instanceof org.springframework.security.authentication.InternalAuthenticationServiceException) {
+            // 사용자 조회 자체가 실패(DB 연결 불가 등) — 자격 증명은 검증되지 않았으므로 실패 횟수에 넣지 않는다
+            reason = "인증 저장소 오류(자격 증명 미검증): " + (ex.getMessage() != null ? ex.getMessage() : "unknown");
         } else {
             reason = ex != null ? ex.getMessage() : event.getClass().getSimpleName();
         }

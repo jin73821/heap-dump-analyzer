@@ -175,7 +175,9 @@
     </div>
     <div class="topbar-right">
         <a href="/" class="topbar-btn">← Dashboard</a>
-        <a href="/alerts" class="topbar-btn">Refresh</a>
+        <!-- 부분 갱신 시각 — /js/live-refresh.js 가 채운다(설정 주기) -->
+        <span class="live-updated" id="liveUpdated" aria-live="polite"></span>
+        <button type="button" class="topbar-btn" onclick="if (window._alertLive) { _alertLive.refreshNow(); } else { location.href = '/alerts'; }">Refresh</button>
     </div>
 </div>
 
@@ -191,8 +193,8 @@
         </label>
     </div>
 
-    <!-- ── 도메인별 KPI ───────────────────────────────── -->
-    <div class="kpi-wrap">
+    <!-- ── 도메인별 KPI — 부분 갱신 조각(id = th:fragment, /api/alerts/fragments) ── -->
+    <div class="kpi-wrap" id="alertKpi" th:fragment="alertKpi">
         <div class="kpi-grid">
             <div class="kpi-card" th:each="d : ${ {'heap','core','gclog'} }"
                  th:with="k=${kpi?.get(d)}">
@@ -238,7 +240,9 @@
                         th:disabled="${unackedCount == null or unackedCount == 0}">전체 확인</button>
             </div>
         </div>
-        <div class="al-list" id="alertList">
+        <!-- 부분 갱신 조각. 미확인 수·삭제 건수는 data-* 로 실어 훅이 #unackedCnt/#ackAllBtn/.del-cnt 를 맞춘다(조각 밖 요소) -->
+        <div class="al-list" id="alertList" th:fragment="alertList"
+             th:attr="data-unacked=${unackedCount != null ? unackedCount : 0},data-deleted-count=${deletedCount != null ? deletedCount : 0}">
             <div class="al-item" th:each="a : ${alerts}" th:classappend="${a.acked} ? 'acked' : ''" th:hidden="${a.fileDeleted}"
                  th:attr="data-key=${a.key},data-domain=${a.domain},data-acked=${a.acked},data-deleted=${a.fileDeleted}">
                 <div class="al-main">
@@ -276,6 +280,8 @@
             <button type="button" data-tab="core" aria-pressed="false">코어 파일</button>
             <button type="button" data-tab="gclog" aria-pressed="false">GC 로그</button>
         </div>
+        <!-- 부분 갱신 조각 — 탭(#rowTabs)은 조각 밖. 교체 뒤 훅이 현재 탭 기준으로 hidden 을 다시 맞춘다 -->
+        <div id="alertRows" th:fragment="alertRows">
         <div th:each="d : ${ {'heap','core','gclog'} }" th:attr="data-rows=${d}" th:hidden="${d != 'heap'}"
              th:with="list=${rows?.get(d)}">
             <div class="tbl-wrap" th:if="${list != null and !#lists.isEmpty(list)}">
@@ -307,6 +313,7 @@
             <!-- 행이 삭제된 파일뿐이라 전부 숨겨졌을 때 -->
             <div class="al-empty" data-rows-empty hidden>표시할 분석 기록이 없습니다. (삭제된 파일은 '삭제된 파일 표시' 로 볼 수 있습니다)</div>
         </div>
+        </div>
     </div>
 </div>
 
@@ -322,8 +329,9 @@
     </div>
 </div>
 
+<script src="/js/live-refresh.js?v=2026-09-26"></script>
 <script>
-/* 현황판 — 목록은 서버 렌더, 여기서는 필터·ACK 만. 데이터는 행의 data-* 에서 읽는다 */
+/* 현황판 — 목록은 서버 렌더, 여기서는 필터·ACK 만(+ 설정 주기 부분 갱신). 데이터는 행의 data-* 에서 읽는다 */
 (function () {
     var TAG = '[AlertBoard]';
     var FILTER_KEY = 'alertBoardFilter';
@@ -346,6 +354,8 @@
         if (saved && (saved.ack === 'all' || saved.ack === 'unacked')) filter.ack = saved.ack;
         if (saved && ['all', 'heap', 'core', 'gclog'].indexOf(saved.dom) >= 0) filter.dom = saved.dom;
     } catch (e) { Common.logIgnored(TAG + ' 필터 읽기 실패', e); }
+
+    var inflight = 0;   // 진행 중인 확인 취소 요청 수 — 부분 갱신이 응답 전에 행을 갈아 끼우지 않게 한다
 
     function items() { return list.querySelectorAll('.al-item'); }
 
@@ -544,6 +554,7 @@
         }
         // 확인 취소 — 알람을 되살리는 방향이라 묻지 않는다
         b.disabled = true;
+        inflight++;
         Common.fetchJSON('/api/alerts/unack', { method: 'POST', body: JSON.stringify({ key: key }) }).then(function (d) {
             if (!d || d.success !== true) throw new Error('처리 실패');
             paint(row, false, '', '');
@@ -553,7 +564,7 @@
         }).catch(function (e) {
             Common.logError(TAG + ' 확인 취소 실패', e);
             Common.toast(serverMsg(e, '확인 취소에 실패했습니다.'), 'error');
-        }).then(function () { b.disabled = false; });
+        }).then(function () { b.disabled = false; inflight--; });
     });
 
     /* 전체 확인 */
@@ -636,6 +647,31 @@
 
     applyDeletedRows();
     applyFilter();
+
+    /* ── 부분 갱신(설정 주기) — KPI·알람 목록·최근 분석 표. 필터·탭·모달은 조각 밖이라 그대로 남는다 ──
+       ACK 모달이 열려 있거나 처리 중·연출 중이면 건너뛴다(행 참조가 죽지 않게). */
+    window._alertLive = window.LiveRefresh ? LiveRefresh.start({
+        url: '/api/alerts/fragments',
+        ids: ['alertKpi', 'alertList', 'alertRows'],
+        label: '#liveUpdated',
+        canRun: function () {
+            return !cfModal.classList.contains('open') && !cfOk.disabled && inflight === 0
+                && !list.querySelector('.leaving, .returning');
+        },
+        onSwapped: function (ids) {
+            if (ids.indexOf('alertList') >= 0) {
+                setCount(parseInt(list.getAttribute('data-unacked') || '0', 10));
+                var dc = document.querySelector('.del-cnt');
+                if (dc) dc.textContent = '(' + (list.getAttribute('data-deleted-count') || '0') + ')';
+            }
+            if (ids.indexOf('alertRows') >= 0) {
+                var blocks = document.querySelectorAll('[data-rows]');
+                for (var i = 0; i < blocks.length; i++) blocks[i].hidden = blocks[i].getAttribute('data-rows') !== curTab;
+            }
+            applyDeletedRows();
+            applyFilter();
+        }
+    }) : null;
 })();
 </script>
 </body>

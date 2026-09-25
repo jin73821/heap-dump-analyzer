@@ -841,6 +841,8 @@
     global.UploadQueue = {
         enqueueFiles: enqueueFiles,
         bindZone: bindZone,
+        /** 전송 진행 중 여부 — 대시보드 부분 갱신(live-refresh.js)이 업로드 중엔 틱을 건너뛰는 데 쓴다. */
+        isUploading: function() { return !!_uploading; },
         /** 테스트·진단용 — 파일 하나의 업로드 분류를 돌려준다(내용 판별 포함). */
         detectFileType: function(file) { return sniffGcLogs([file]).then(function () { return resolveFileType(file); }); },
         looksLikeGcLogText: looksLikeGcLogText,

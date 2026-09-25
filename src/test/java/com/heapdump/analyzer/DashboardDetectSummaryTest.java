@@ -115,7 +115,64 @@ class DashboardDetectSummaryTest {
         m.put("kpiDelta7d", 40);
         m.put("kpiPeakDay", "08-29");
         m.put("kpiPeakCount", 4);
+        m.put("dailyDetectJson", "{\"daily\":[{\"date\":\"2026-08-29\"}],\"series\":[]}");   // 차트 데이터 섬(2026-09-26)
         return m;
+    }
+
+    /** 페이지가 아니라 th:fragment 조각 하나만 렌더 — /api/dashboard/fragments 가 하는 일과 같다. */
+    private static String renderFragment(String template, String fragment, Map<String, Object> model) {
+        ClassLoaderTemplateResolver resolver = new ClassLoaderTemplateResolver();
+        resolver.setPrefix("templates/");
+        resolver.setSuffix(".html");
+        resolver.setTemplateMode(TemplateMode.HTML);
+        resolver.setCharacterEncoding("UTF-8");
+        SpringTemplateEngine engine = new SpringTemplateEngine();
+        engine.setTemplateResolver(resolver);
+        JakartaServletWebApplication app = JakartaServletWebApplication.buildApplication(new MockServletContext());
+        IWebExchange exchange = app.buildExchange(new MockHttpServletRequest(), new MockHttpServletResponse());
+        WebContext ctx = new WebContext(exchange);
+        ctx.setVariable(ThymeleafEvaluationContext.THYMELEAF_EVALUATION_CONTEXT_CONTEXT_VARIABLE_NAME,
+                new ThymeleafEvaluationContext(new StaticApplicationContext(), null));
+        model.forEach(ctx::setVariable);
+        return engine.process(new org.thymeleaf.TemplateSpec(template, Set.of(fragment), TemplateMode.HTML, null), ctx);
+    }
+
+    private static final List<String> DASH_FRAGMENTS = List.of(
+            "dashRecentFiles", "dashStats", "dashProgress", "dashDetections", "dashDetectTotals", "dashDetectKinds");
+
+    @Test
+    @DisplayName("부분 갱신 조각 6개는 페이지와 같은 마크업이고, 파일이 없으면 페이지에 없는 조각은 빈 출력이다 (2026-09-26)")
+    void fragmentsShareMarkupAndFollowPageConditions() {
+        Map<String, Object> full = dashboardModel();
+        String page = render("index", full);
+        for (String f : DASH_FRAGMENTS) {
+            String frag = renderFragment("index", f, full);
+            assertTrue(frag.contains("id=\"" + f + "\""), f + " 조각이 자기 id 를 갖지 않는다");
+            assertTrue(page.contains("id=\"" + f + "\""), f + " 조각 id 가 페이지에 없다");
+            assertFalse(frag.contains("<html"), f + " 조각이 문서 전체를 낸다");
+        }
+        // 차트 데이터 섬 — 조각 안에 있고 페이지에도 있다
+        String det = renderFragment("index", "dashDetections", full);
+        assertTrue(det.contains("<script type=\"application/json\" id=\"dashDetectData\">{\"daily\":[{\"date\":\"2026-08-29\"}],\"series\":[]}</script>"),
+                "데이터 섬이 th:utext 로 실리지 않는다");
+        // 토글·큐 패널은 조각 밖이어야 한다(SegThumb 상태·JS 렌더 유지)
+        assertFalse(renderFragment("index", "dashDetectTotals", full).contains("detectKindToggle"), "토글이 조각 안에 들어갔다");
+        assertFalse(renderFragment("index", "dashDetectKinds", full).contains("detectKindToggle"), "토글이 조각 안에 들어갔다");
+        for (String f : DASH_FRAGMENTS) assertFalse(renderFragment("index", f, full).contains("queuePanel"), "Analysis Queue 가 조각에 포함됐다: " + f);
+
+        // 파일 0건 — 페이지의 조상 th:if 가 조각 루트에도 복제돼 있어야 '한쪽만 있음' 이 생기지 않는다
+        Map<String, Object> none = dashboardModel();
+        none.put("files", Collections.emptyList());
+        none.put("fileCount", 0);
+        none.put("recentFiles", Collections.emptyList());
+        none.put("recentCount", 0);
+        String emptyPage = render("index", none);
+        for (String f : List.of("dashStats", "dashProgress", "dashDetections", "dashDetectTotals", "dashDetectKinds")) {
+            assertFalse(emptyPage.contains("id=\"" + f + "\""), "파일 0건 페이지에 " + f + " 가 있다");
+            assertTrue(renderFragment("index", f, none).trim().isEmpty(),
+                    "파일 0건인데 " + f + " 조각이 렌더된다 — 페이지와 어긋나 부분 갱신이 멈춘다(조각 루트에 th:if 복제 필요)");
+        }
+        assertTrue(renderFragment("index", "dashRecentFiles", none).contains("No files yet"), "Recent Files 조각은 파일 0건에도 있어야 한다");
     }
 
     @Test

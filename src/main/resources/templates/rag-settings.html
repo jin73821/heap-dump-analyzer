@@ -1613,7 +1613,8 @@ function httpMsg(status, fallback) {
     if (status === 401) return '로그인 세션이 만료되었습니다. 다시 로그인해 주세요.';
     if (status === 403) return '이 작업을 수행할 권한이 없습니다.';
     if (status === 413) return '파일이 너무 큽니다 — 업로드 한도를 초과했습니다.';
-    if (status === 502 || status === 503 || status === 504) return '서버에 연결하지 못했습니다 (HTTP ' + status + ')';
+    if (status === 503) return '서비스를 일시적으로 사용할 수 없습니다 — 데이터베이스 연결 불가일 수 있습니다 (HTTP 503)';
+    if (status === 502 || status === 504) return '서버에 연결하지 못했습니다 (HTTP ' + status + ')';
     return (fallback || '요청을 처리하지 못했습니다') + ' (HTTP ' + status + ')';
 }
 

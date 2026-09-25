@@ -70,6 +70,7 @@ class SessionTimeoutTemplateSmokeTest {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("_csrf", new CsrfStub());
         m.put("sessionTimeoutSeconds", 3600);
+        m.put("uiRefreshSeconds", 30);   // UiRefreshModelAdvice — 화면 자동 갱신 주기(2026-09-26)
         return m;
     }
 
@@ -85,6 +86,19 @@ class SessionTimeoutTemplateSmokeTest {
         assertTrue(html.indexOf("/js/common.js") < html.indexOf("/js/session-timeout.js"),
                 "session-timeout.js 가 common.js 보다 먼저 로드된다");
         assertTrue(html.trim().endsWith("</html>"), "문서 끝까지 렌더되지 않았다 (파싱 중단 의심)");
+    }
+
+    @Test
+    @DisplayName("배너 System Status 폴링 주기는 서버 설정(화면 자동 갱신 주기)에서 온다 — 60000 하드코딩 금지 (2026-09-26)")
+    void bannerPollIntervalComesFromSetting() {
+        String html = render("fragments/banner", baseModel());
+        assertTrue(html.contains("window.UI_REFRESH_SECONDS = 30"),
+                "갱신 주기가 서버 모델(uiRefreshSeconds)에서 내려오지 않는다");
+        assertTrue(html.contains("_GB_INTERVAL = (window.UI_REFRESH_SECONDS > 0 ? window.UI_REFRESH_SECONDS : 60) * 1000"),
+                "배너 폴링 주기가 설정값을 읽지 않는다(하드코딩 60000 이면 설정이 무의미)");
+        assertFalse(html.contains("_GB_INTERVAL = 60000"), "종전 하드코딩이 남아 있다");
+        // 만료 시간 라인과 별도 라인이어야 한다(기존 단언 문자열 보존)
+        assertTrue(html.contains("window.SESSION_TIMEOUT_SECONDS = 3600;</script>"), "세션 만료 라인이 갱신 주기와 합쳐졌다");
     }
 
     @Test

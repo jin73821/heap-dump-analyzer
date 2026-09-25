@@ -95,12 +95,17 @@
                         catch (e) { ignored('429 응답 본문 파싱 — JSON 아님, 기본 문구 사용', e); }
                         if (!msg) msg = '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.';
                     }
+                    // DB 연결 불가: 세션 저장소가 DB 라 요청이 필터에서 죽고 /error 가 503 + code=DB_UNAVAILABLE 로 응답한다.
+                    // 재로그인 유도가 아니라 '잠시 후 다시' 안내여야 한다(docs/DB_OUTAGE_DISPLAY_PLAN.md ④)
+                    var dbDown = Common.isDbUnavailable(r.status, t);
+                    if (dbDown) msg = Common.DB_UNAVAILABLE_MESSAGE;
                     var err = new Error(expired
                         ? '로그인 세션이 만료되었습니다. 다시 로그인해 주세요.'
-                        : (limited ? msg : 'HTTP ' + r.status + ': ' + (t || r.statusText)));
+                        : ((limited || dbDown) ? msg : 'HTTP ' + r.status + ': ' + (t || r.statusText)));
                     err.status = r.status;
                     err.body = t;
                     if (expired) err.sessionExpired = true;
+                    if (dbDown) { err.dbUnavailable = true; err.code = 'DB_UNAVAILABLE'; Common.noteDbUnavailable(msg); }
                     if (limited) {
                         err.rateLimited = true;
                         var ra = r.headers.get('Retry-After');
@@ -109,9 +114,32 @@
                     throw err;
                 });
             }
+            if (_dbDownSeen) Common.noteDbAvailable();   // 장애 뒤 첫 성공 — 배너 스트립을 바로 내린다
             var ct = r.headers.get('content-type') || '';
             return ct.indexOf('application/json') >= 0 ? r.json() : r.text();
         });
+    };
+
+    /* ── DB 연결 불가 신호 (2026-09-26) ──
+       503 + {code:"DB_UNAVAILABLE"} 판정과 문서 이벤트(db:unavailable / db:available)의 단일 출처.
+       배너가 이 이벤트로 Database 행·하단 안내 스트립을 즉시 바꾼다(자기 폴링 주기를 기다리지 않는다).
+       수동 fetch 경로(live-refresh.js 등)도 같은 헬퍼를 쓴다. */
+    Common.DB_UNAVAILABLE_MESSAGE = '데이터베이스에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.';
+    var _dbDownSeen = false;
+    Common.isDbUnavailable = function (status, bodyText) {
+        if (status !== 503 || !bodyText) return false;
+        try { var b = JSON.parse(bodyText); return !!(b && b.code === 'DB_UNAVAILABLE'); }
+        catch (e) { ignored('503 응답 본문 파싱 — JSON 아님(DB 장애 아님으로 본다)', e); return false; }
+    };
+    Common.noteDbUnavailable = function (detail) {
+        _dbDownSeen = true;
+        try { document.dispatchEvent(new CustomEvent('db:unavailable', { detail: { error: detail || Common.DB_UNAVAILABLE_MESSAGE } })); }
+        catch (e) { ignored('db:unavailable 이벤트 발행 실패', e); }
+    };
+    Common.noteDbAvailable = function () {
+        _dbDownSeen = false;
+        try { document.dispatchEvent(new CustomEvent('db:available')); }
+        catch (e) { ignored('db:available 이벤트 발행 실패', e); }
     };
 
     /**

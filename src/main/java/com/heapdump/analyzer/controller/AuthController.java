@@ -25,6 +25,9 @@ public class AuthController {
             model.addAttribute("disabledMessage", "비활성화된 계정입니다. 관리자에게 문의하세요.");
         } else if ("locked".equals(error)) {
             model.addAttribute("disabledMessage", "계정이 잠겼습니다 (반복 인증 실패). 관리자에게 잠금 해제를 문의하세요.");
+        } else if ("unavailable".equals(error)) {
+            // 사용자 조회 실패(InternalAuthenticationServiceException — DB 연결 불가 등). 자격 증명 오류와 분리한다
+            model.addAttribute("unavailableMessage", "데이터베이스에 연결할 수 없어 로그인할 수 없습니다.\n잠시 후 다시 시도해 주세요.");
         } else if (error != null) {
             model.addAttribute("errorMessage", "아이디 또는 비밀번호가 올바르지 않습니다.");
         }

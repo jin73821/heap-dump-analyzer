@@ -386,6 +386,20 @@
                         </select>
                     </div>
                 </div>
+                <div class="setting-row">
+                    <div>
+                        <div class="setting-label">화면 자동 갱신 주기</div>
+                        <div class="setting-desc">대시보드 · 현황판 · 배너 System Status · 알림 벨(배지·말풍선)의 자동 갱신 주기. 열려 있는 페이지는 다시 열 때 적용됩니다. (Analysis Queue 는 별도)</div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px">
+                        <select id="uiRefreshIntervalSelect" style="padding:5px 8px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;min-width:100px"
+                                onchange="saveUiRefreshInterval(this.value)">
+                            <option value="10">10초</option>
+                            <option value="30">30초</option>
+                            <option value="60">60초</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -916,6 +930,11 @@ function loadAllData(showToast) {
             selectOption('domPrecomputeBudgetSelect', String(d.dominatorRefsPrecomputeBudgetSeconds));
         }
 
+        var urSel = document.getElementById('uiRefreshIntervalSelect');
+        if (urSel && d.uiRefreshIntervalSec != null) {
+            selectOption('uiRefreshIntervalSelect', String(d.uiRefreshIntervalSec));
+        }
+
         var ddSel = document.getElementById('dashboardDetectDaysSelect');
         if (ddSel && d.dashboardDetectDays != null) {
             selectOption('dashboardDetectDaysSelect', String(d.dashboardDetectDays));
@@ -1344,6 +1363,12 @@ function saveSessionTimeout(hours) {
 function saveDashboardDetectDays(days) {
     Common.fetchJSON('/api/settings/dashboard-detect-days?days=' + days, {method: 'POST'})
         .then(function(d) { toast(d.message || '대시보드 탐지 기간 변경 완료', 'success'); })
+        .catch(function(e) { toast('변경 실패: ' + e.message, 'error'); });
+}
+
+function saveUiRefreshInterval(seconds) {
+    Common.fetchJSON('/api/settings/ui-refresh-interval?seconds=' + seconds, {method: 'POST'})
+        .then(function(d) { toast(d.message || '화면 갱신 주기 변경 완료', 'success'); })
         .catch(function(e) { toast('변경 실패: ' + e.message, 'error'); });
 }
 

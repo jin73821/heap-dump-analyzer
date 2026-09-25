@@ -94,6 +94,31 @@ public class HeapDumpViewController {
 
     @GetMapping("/")
     public String index(Model model) {
+        populateDashboardModel(model);
+        return "index";
+    }
+
+    /**
+     * 대시보드 부분 갱신 조각(2026-09-26) — 페이지와 같은 템플릿의 {@code th:fragment} 6개(Recent Files·통계 카드·
+     * 진행률·Detections·탐지 현황 총계·탐지 현황 블록)를 한 응답으로 돌려준다. {@code /js/live-refresh.js} 가
+     * 설정 주기(Settings &gt; General '화면 자동 갱신 주기')로 받아 id 가 같은 영역만 갈아 끼운다.
+     * Analysis Queue 패널은 대상이 아니다(별도 5초 폴링). ⚠ 경로는 {@code /api/} 접두 — 만료 시 401 JSON(함정 27).
+     */
+    @GetMapping(value = "/api/dashboard/fragments", produces = org.springframework.http.MediaType.TEXT_HTML_VALUE)
+    public org.springframework.web.servlet.view.FragmentsRendering dashboardFragments(Model model) {
+        populateDashboardModel(model);
+        return org.springframework.web.servlet.view.FragmentsRendering.fragment("index :: dashRecentFiles")
+                .fragment("index :: dashStats")
+                .fragment("index :: dashProgress")
+                .fragment("index :: dashDetections")
+                .fragment("index :: dashDetectTotals")
+                .fragment("index :: dashDetectKinds")
+                .header("Cache-Control", "no-store")
+                .build();
+    }
+
+    /** 대시보드 모델 — 페이지 렌더와 부분 갱신 조각이 같은 값을 본다. */
+    private void populateDashboardModel(Model model) {
         List<HeapDumpFile> files = analyzerService.listFiles();
         // files = 힙 저장소 상위 5(대시보드 통계·빈 화면 판정용). Recent Files 목록은 아래 recentFiles(힙 + GC 로그)가 그린다
         model.addAttribute("files", files.size() > 5 ? files.subList(0, 5) : files);
@@ -196,8 +221,24 @@ public class HeapDumpViewController {
         } catch (Exception ex) {
             logger.warn("[Dashboard] 코어덤프·GC 로그 탐지 현황 조회 실패 — 토글의 두 탭이 비어 보인다: {}", ex.getMessage());
         }
+        // Detections 차트 데이터 섬 — 조각 안 <script type="application/json"> 에 th:utext 로 실린다.
+        // '</' 는 반드시 이스케이프(함정 51). 직렬화 실패는 차트만 비우고 대시보드는 연다.
+        model.addAttribute("dailyDetectJson", toDataIsland(agg.getDailyDetections(), agg.getServerSeries()));
+    }
 
-        return "index";
+    private static final tools.jackson.databind.json.JsonMapper DATA_ISLAND_MAPPER = tools.jackson.databind.json.JsonMapper.builder().build();
+
+    /** {@code {daily:[…],series:[…]}} JSON — 데이터 섬용, {@code </} 이스케이프. */
+    static String toDataIsland(Object daily, Object series) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("daily", daily != null ? daily : Collections.emptyList());
+        m.put("series", series != null ? series : Collections.emptyList());
+        try {
+            return DATA_ISLAND_MAPPER.writeValueAsString(m).replace("</", "<\\/");
+        } catch (tools.jackson.core.JacksonException e) {
+            logger.warn("[Dashboard] 탐지 차트 데이터 직렬화 실패 — 차트를 비운다: {}", e.getMessage());
+            return "null";
+        }
     }
 
     // ── 전체 파일 목록 ────────────────────────────────────────────

@@ -126,6 +126,17 @@ public class HeapDumpConfig {
     public long getDominatorRefsPrecomputeBudgetSeconds() { return dominatorRefsPrecomputeBudgetSeconds; }
     public void setDominatorRefsPrecomputeBudgetSeconds(long v) { this.dominatorRefsPrecomputeBudgetSeconds = v; }
 
+    /**
+     * 화면 자동 갱신 주기(초) — 대시보드·현황판 부분 갱신, 배너 System Status, 알림 벨(배지·말풍선)이 공유한다.
+     * 허용값 10|30|60. Analysis Queue 의 5초 폴링은 여기에 묶이지 않는다.
+     * 런타임 변경은 {@code HeapDumpAnalyzerService.setUiRefreshIntervalSec()} 경유(settings.json 영속화 부수효과).
+     * 클라이언트에는 {@code UiRefreshModelAdvice} → 배너의 {@code window.UI_REFRESH_SECONDS} 로 내려간다.
+     */
+    @Value("${ui.refresh.interval-sec:60}")
+    private volatile int uiRefreshIntervalSec;
+    public int  getUiRefreshIntervalSec()      { return uiRefreshIntervalSec; }
+    public void setUiRefreshIntervalSec(int v) { this.uiRefreshIntervalSec = v; }
+
     /** lazy/사전계산 워킹 디렉토리에 .index 를 symlink 연결 (false=copy, 안전 폴백) */
     @Value("${mat.dominator-refs.symlink-index:true}")
     private boolean dominatorRefsSymlinkIndex;

@@ -745,5 +745,8 @@
         return false;
     }
 
-    global.AnalyzeConfirm = { open: open, close: close, fromLink: fromLink, hasHeapDumpExtension: hasHeapDumpExtension };
+    /** 확인 창이 떠 있는지 — 부분 갱신(live-refresh.js)이 모달이 열린 동안 화면을 바꾸지 않게 한다. */
+    function isOpen() { return !!(ov && ov.classList.contains('open')); }
+
+    global.AnalyzeConfirm = { open: open, close: close, fromLink: fromLink, isOpen: isOpen, hasHeapDumpExtension: hasHeapDumpExtension };
 })(window);

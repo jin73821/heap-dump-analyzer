@@ -521,6 +521,8 @@
         // ⚠ 이게 안전한 건 이 앱에 **주기적 자동 새로고침이 없기** 때문이다(location.reload 는 전부
         // 추가/수정/삭제 성공 뒤 1회성). 타이머로 스스로 reload 하는 화면을 만들면 그 페이지는
         // 영원히 만료되지 않으므로, 그런 걸 추가할 땐 여기를 반드시 다시 볼 것.
+        // 2026-09-26 의 '화면 자동 갱신 주기'(대시보드·현황판)는 reload 가 아니라 /js/live-refresh.js 의
+        // 부분 갱신(managedInterval + 조각 교체)이라 이 전제가 그대로 참이다 — LiveRefreshSessionContractTest 가 고정.
         s.lastActivityAt = now();
         writeState(s);
 

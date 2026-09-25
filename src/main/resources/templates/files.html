@@ -264,11 +264,14 @@
                       animation: tb-spin .8s linear infinite; flex-shrink: 0; }
         @keyframes tb-spin { to { transform: rotate(360deg); } }
 
-        /* GC 로그 묶음 서랍 (2026-09-21) — gc-log.css 는 이 페이지에 없으므로 여기서 정의한다(함정 17 계열) */
-        .hi-group-toggle { border: 0; background: none; padding: 0 4px 0 0; margin: 0; cursor: pointer;
-                           color: #6366F1; font-size: 11px; line-height: 1; font-family: inherit;
-                           transition: transform .15s ease; transform-origin: 40% 50%; }
-        .hi-group-toggle:hover { color: #4338CA; }
+        /* GC 로그 묶음 서랍 (2026-09-21) — gc-log.css 는 이 페이지에 없으므로 여기서 정의한다(함정 17 계열).
+           ▸ 는 20px 정사각 버튼에 17px(2026-09-25, gc-log.css 와 같은 값) */
+        .hi-group-toggle { display: inline-flex; align-items: center; justify-content: center;
+                           width: 20px; height: 20px; border: 0; border-radius: 4px; background: none; padding: 0; margin: 0 2px 0 0;
+                           cursor: pointer; vertical-align: middle;
+                           color: #6366F1; font-size: 17px; line-height: 1; font-family: inherit;
+                           transition: transform .15s ease; transform-origin: 50% 50%; }
+        .hi-group-toggle:hover { color: #4338CA; background: #EEF2FF; }
         .hi-group-toggle:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; border-radius: 3px; }
         .hi-group-toggle[aria-expanded="true"] { transform: rotate(90deg); }
         @media (prefers-reduced-motion: reduce) { .hi-group-toggle { transition: none; } }
@@ -279,7 +282,7 @@
                               max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .gclog-subrow { background: #F8FAFC !important; }
         .gclog-subrow td { padding-top: 5px !important; padding-bottom: 5px !important; font-size: 12px; color: #6B7280; }
-        .gclog-subrow .col-fname { padding-left: 24px; }
+        .gclog-subrow .col-fname { padding-left: 34px; }   /* td 12 + ▸ 버튼 20 + 여백 2 — 대표 파일명과 같은 선 */
         .gclog-subrow .fname { font-weight: 400; color: #374151; }
 
         /* exec 서브 row */
@@ -1088,8 +1091,8 @@ var MAX_UPLOAD_GB    = /*[[${maxUploadSizeGb}]]*/ 5;
 var ALLOW_ALL_EXT    = /*[[${allowAllExtensions}]]*/ false;
 /*]]>*/
 </script>
-<script src="/js/upload-queue.js?v=2026-09-21"></script>
-<script src="/js/analyze-confirm.js?v=2026-09-23"></script>
+<script src="/js/upload-queue.js?v=2026-09-26"></script>
+<script src="/js/analyze-confirm.js?v=2026-09-26"></script>
 <script src="/js/table-grid.js?v=2026-09-13"></script>
 <script src="/js/select-mode.js?v=2026-08-02"></script>
 <script>

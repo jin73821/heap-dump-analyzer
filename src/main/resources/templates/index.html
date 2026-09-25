@@ -629,6 +629,8 @@
     <div class="topbar-right">
         <!-- 알림 벨 — 아이콘·배지·말풍선은 /js/alert-bell.js 가 채운다 -->
         <button type="button" class="topbar-btn ab-bell" id="alertBellBtn" aria-label="알림"></button>
+        <!-- 부분 갱신 시각 — /js/live-refresh.js 가 채운다(설정 주기, Analysis Queue 는 별도 5초 폴링) -->
+        <span class="live-updated" id="liveUpdated" aria-live="polite"></span>
         <a class="topbar-btn" href="/">Refresh</a>
     </div>
 </header>
@@ -639,7 +641,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.5.8 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.5.9 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -661,7 +663,8 @@
             </form>
         </div>
 
-        <div class="sidebar-section" style="flex:1;">
+        <!-- 부분 갱신 조각(id = th:fragment). /api/dashboard/fragments 가 같은 템플릿의 이 조각들을 다시 렌더한다 -->
+        <div class="sidebar-section" style="flex:1;" id="dashRecentFiles" th:fragment="dashRecentFiles">
             <!-- Recent Files — 힙 덤프 저장소 + GC 로그 저장소(2026-09-14, RecentFileItem). 상태·버튼 경로는 항목의 kind 가 정한다:
                  GC 로그는 /gc-log/analyze · /api/gc-log/download · DELETE /api/gc-log (힙 경로는 GC 로그 저장소 파일을 못 찾는다) -->
             <div class="s-title">Recent Files
@@ -769,7 +772,7 @@
 
         <!-- Dashboard Top: Stats + Progress/Queue -->
         <div th:if="${not #lists.isEmpty(files)}" class="dashboard-top">
-            <div class="dashboard-left">
+            <div class="dashboard-left" id="dashStats" th:fragment="dashStats" th:if="${not #lists.isEmpty(files)}">
                 <div class="stat-card">
                     <div class="stat-icon si-blue">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
@@ -809,7 +812,7 @@
             </div>
             <div class="dashboard-right">
                 <!-- Analysis progress bar -->
-                <div th:if="${fileCount > 0}" class="progress-bar-wrap">
+                <div th:if="${fileCount > 0}" class="progress-bar-wrap" id="dashProgress" th:fragment="dashProgress">
                     <span class="progress-label">Analysis completed</span>
                     <div class="progress-track">
                         <div class="progress-fill" th:style="'width:' + ${fileCount > 0 ? (analyzedCount * 100 / fileCount) : 0} + '%'"></div>
@@ -859,8 +862,8 @@
         <!-- Main panels (files exist) -->
         <div th:if="${not #lists.isEmpty(files)}" class="grid2">
 
-            <!-- Detections (Daily) -->
-            <div class="panel">
+            <!-- Detections (Daily) — 부분 갱신 조각. 차트 데이터는 아래 데이터 섬(#dashDetectData)에서 다시 읽는다 -->
+            <div class="panel" id="dashDetections" th:fragment="dashDetections" th:if="${not #lists.isEmpty(files)}">
                 <div class="panel-hdr">
                     <span class="panel-ttl">Detections &middot; 최근 <span th:text="${dashboardDetectDays}">14</span>일 &middot; 서버별</span>
                     <a th:href="@{/history}" class="more-link">View history →</a>
@@ -895,6 +898,8 @@
                         </div>
                         <div class="det-breakdown-list" id="dailyBreakdownList"></div>
                     </div>
+                    <!-- 차트 데이터 섬 — 부분 갱신 후 renderDetectChart 가 읽는다. 컨트롤러가 '</' 를 이스케이프한다(함정 51) -->
+                    <script type="application/json" id="dashDetectData" th:utext="${dailyDetectJson}">null</script>
                 </div>
                 <div th:unless="${kpiTotal14d > 0}" class="det-empty-chart"
                      th:text="'최근 ' + ${dashboardDetectDays} + '일간 탐지된 의심 항목이 없습니다.'">
@@ -907,11 +912,14 @@
                 <div class="panel-hdr detect-hdr">
                     <span class="panel-ttl">탐지 현황 &middot; critical 우선</span>
                     <div class="detect-hdr-right">
+                        <!-- 부분 갱신 조각 — 토글(#detectKindToggle)은 조각 밖(SegThumb 상태 유지). display:contents 라 레이아웃 무영향 -->
+                        <span id="dashDetectTotals" th:fragment="dashDetectTotals" style="display:contents" th:if="${not #lists.isEmpty(files)}">
                         <span data-detect-total="heap" class="detect-total"><span th:if="${hasDetections}"
                               th:text="'총 ' + ${criticalCount + highCount + mediumCount + lowCount} + ' suspects'"></span></span>
                         <span th:each="k : ${ {'core','gclog'} }" th:attr="data-detect-total=${k}" class="detect-total" hidden
                               th:with="dk=${detectKinds?.get(k)}"><span th:if="${dk != null and dk.total > 0}"
                               th:text="'총 ' + ${dk.total} + '건'"></span></span>
+                        </span>
                         <div class="detect-kind-toggle" id="detectKindToggle" role="group" aria-label="탐지 현황 종류">
                             <button type="button" class="detect-kind-btn" data-kind="heap" aria-pressed="true">힙덤프</button>
                             <button type="button" class="detect-kind-btn" data-kind="core" aria-pressed="false">코어덤프</button>
@@ -919,6 +927,8 @@
                         </div>
                     </div>
                 </div>
+                <!-- 부분 갱신 조각 — 세 블록의 hidden 은 교체 뒤 토글 스크립트가 다시 맞춘다 -->
+                <div id="dashDetectKinds" th:fragment="dashDetectKinds" th:if="${not #lists.isEmpty(files)}">
                 <div data-detect-kind="heap">
                 <div th:if="${hasDetections}">
                     <div class="detect-summary">
@@ -1000,6 +1010,7 @@
                     <div th:unless="${dk != null and dk.total > 0}" class="detect-empty"
                          th:text="${k == 'core'} ? '심각도가 판정된 코어덤프 분석 결과가 없습니다.' : '심각도가 판정된 GC 로그 분석 결과가 없습니다.'">없음</div>
                 </div>
+                </div>
             </div>
             <script>
             /* 탐지 현황 종류 토글 — 세 블록은 서버 렌더, 여기서는 hidden 만 바꾼다. 선택은 브라우저별 기억(기본 힙덤프).
@@ -1031,6 +1042,8 @@
                 try { saved = localStorage.getItem(KEY) || 'heap'; }
                 catch (e) { Common.logIgnored('[Dashboard] 탐지 현황 종류 읽기 실패(localStorage 차단)', e); }
                 apply(saved);
+                // 부분 갱신으로 블록이 새로 그려지면(서버 렌더 기본 = 힙 표시) 현재 선택을 다시 맞춘다 — 슬라이드 없음
+                document.addEventListener('liverefresh:swapped', function () { apply(current); });
                 // 미끄러지는 선택 표시 — 선택(aria-pressed) 변화를 모듈이 감지해 따라간다. 첫 배치는 움직이지 않는다
                 if (window.SegThumb) SegThumb.attach(box, { active: '[aria-pressed="true"]' });
                 box.addEventListener('click', function (ev) {
@@ -1118,15 +1131,31 @@ var ALLOW_ALL_EXT       = /*[[${allowAllExtensions}]]*/ false;
 var DASHBOARD_DETECT_DAYS = /*[[${dashboardDetectDays}]]*/ 14;
 /*]]>*/
 </script>
-<script src="/js/upload-queue.js?v=2026-09-21"></script>
-<script src="/js/analyze-confirm.js?v=2026-09-23"></script>
-<script src="/js/alert-bell.js?v=2026-09-20"></script>
+<script src="/js/upload-queue.js?v=2026-09-26"></script>
+<script src="/js/analyze-confirm.js?v=2026-09-26"></script>
+<script src="/js/alert-bell.js?v=2026-09-26"></script>
+<script src="/js/live-refresh.js?v=2026-09-26"></script>
 <script>
 if (window.AlertBell) AlertBell.mount(document.getElementById('alertBellBtn'), { boardUrl: '/alerts' });
 </script>
 <script>
-/* ── Daily Detections Chart (서버별 stacked bar) ─────────── */
-(function(){
+/* ── Daily Detections Chart (서버별 stacked bar) ───────────
+   첫 렌더는 인라인 DAILY_DETECT/SERVER_SERIES, 부분 갱신 뒤에는 조각 안 데이터 섬(#dashDetectData)에서 다시 읽어
+   destroy() 후 재생성한다(캔버스가 조각과 함께 새 요소가 된다). 재생성은 애니메이션 없이. */
+var _detectChart = null;
+function readDetectData() {
+    var el = document.getElementById('dashDetectData');
+    if (!el) return null;
+    try { return JSON.parse(el.textContent || 'null'); }
+    catch (e) { Common.logError('[Dashboard] 탐지 차트 데이터 섬 파싱 실패', e); return null; }
+}
+function renderDetectChart(daily, series, animate) {
+    if (_detectChart) {
+        try { _detectChart.destroy(); }
+        catch (e) { Common.logIgnored('[Dashboard] 이전 차트 해제 실패', e); }
+        _detectChart = null;
+    }
+    var DAILY_DETECT = daily, SERVER_SERIES = series;
     var canvas = document.getElementById('dailyDetectChart');
     if (!canvas || !DAILY_DETECT || DAILY_DETECT.length === 0 || typeof Chart === 'undefined') return;
     var labels = DAILY_DETECT.map(function(d){ return (d.date || '').slice(5); });
@@ -1187,7 +1216,7 @@ if (window.AlertBell) AlertBell.mount(document.getElementById('alertBellBtn'), {
         wrap.style.display = '';
     })();
 
-    new Chart(canvas, {
+    _detectChart = new Chart(canvas, {
         type: 'bar',
         data: { labels: labels, datasets: datasets },
         options: {
@@ -1212,10 +1241,11 @@ if (window.AlertBell) AlertBell.mount(document.getElementById('alertBellBtn'), {
                     }
                 }
             },
-            animation: { duration: 600 }
+            animation: animate === false ? false : { duration: 600 }
         }
     });
-})();
+}
+renderDetectChart(DAILY_DETECT, SERVER_SERIES, true);
 
 /* ── Mobile sidebar → banner 연동 ─────────────────────── */
 /* 배너 Upload 탭에 사이드바의 Upload 섹션 등록 */
@@ -1429,7 +1459,12 @@ function applyInProgress(files) {
     // 완료 감지: 이전에 추적 중이던 파일이 진행 목록에서 사라짐 → 상태 갱신 위해 reload
     var completed = false;
     _trackedInProgress.forEach(function(name) { if (!current.has(name)) completed = true; });
-    if (completed) { location.reload(); return; }
+    if (completed) {
+        // 분석 완료 → 통계·Recent Files 만 부분 갱신(큐 패널·업로드 상태 유지).
+        // ⚠ 모듈이 없을 때만 reload — 페이지 로드는 세션 유휴 시계를 되돌린다(session-timeout.js init)
+        if (window._dashLive) { _dashLive.refreshNow(); }
+        else { location.reload(); return; }
+    }
     _trackedInProgress = current;
     document.querySelectorAll('.file-item[data-name]').forEach(function(item) {
         // 힙 MAT 큐 상태라 GC 로그 항목은 대상이 아니다 — 같은 이름이면 GC 쪽 분석 중 버튼을 지우고 힙 진행 페이지로 보낸다
@@ -1605,6 +1640,21 @@ function stopQueuePolling() {
 
 // 페이지 로드 시 큐 상태 확인
 refreshQueueStatus();
+
+/* ── 부분 갱신(설정 주기) — 통계·진행률·Detections·탐지 현황·Recent Files. Analysis Queue(위 5초 폴링)는 제외 ── */
+window._dashLive = window.LiveRefresh ? LiveRefresh.start({
+    url: '/api/dashboard/fragments',
+    ids: ['dashRecentFiles', 'dashStats', 'dashProgress', 'dashDetections', 'dashDetectTotals', 'dashDetectKinds'],
+    label: '#liveUpdated',
+    onSwapped: function (ids) {
+        // 같은 집합을 넘기면 '완료' 판정 없이 분석 중 오버레이만 되살아난다
+        if (ids.indexOf('dashRecentFiles') >= 0) applyInProgress(Array.from(_trackedInProgress));
+        if (ids.indexOf('dashDetections') >= 0) {
+            var d = readDetectData();
+            renderDetectChart(d ? d.daily : null, d ? d.series : null, false);
+        }
+    }
+}) : null;
 
 /* ── Settings (now separate page) ──────────────── */
 function openSettingsModal() { window.location.href = '/settings'; }

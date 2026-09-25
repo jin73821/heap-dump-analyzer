@@ -1,5 +1,74 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-09-26] v2.5.9 릴리스
+
+**버전:** 2.5.8 → **2.5.9** (`pom.xml` + UI 표기 3곳 `fragments/banner.html`·`index.html`·`progress.html` + `CLAUDE.md` 실행 예시). 쉘 스크립트는 버전 비의존이라 무변경.
+
+**포함 내용:** 2026-09-25 GC 로그 이어붙이기 모달 현재 로그 행·목록 서랍 ▸ 확대 + 2026-09-26 두 건(아래: 화면 자동 갱신 주기 설정 · WAS 정상/DB 비정상 표시 구현).
+
+**검증:** 단위 테스트 1033건 통과(라이브 4 skip, Surefire XML 집계) · `mvn clean package` · 운영 재기동(`heap-analyzer-2.5.9.jar`).
+
+**릴리스 직전 보강:** `application.properties` 가 `.gitignore` 대상(`*.properties`)이라 저장소에는 새 키(`ui.refresh.interval-sec`·`spring.datasource.hikari.*`)가 실리지 않는다. DB 장애 대응의 핵심인 Hikari 5초·2초를 `DataSourceConfig.DEFAULT_CONNECTION_TIMEOUT_MS/DEFAULT_VALIDATION_TIMEOUT_MS` 코드 기본값으로 옮기고 properties 는 덮어쓰기용으로 남겼다(`DbOutageDisplaySmokeTest.hikariDefaultsLiveInCode`). 새 환경은 `ui.refresh.interval-sec=60` 키를 수동 추가해야 설정 화면 변경이 properties 까지 왕복한다(없어도 settings.json 으로 영속된다).
+
+⚠ k8s 패키지(`/opt/genspark/heapApp_k8s`, git 저장소 아님)는 `config/application.properties` 에 `ui.refresh.interval-sec`·`spring.datasource.hikari.{connection,validation}-timeout` 키만 반영했고 매니페스트·이미지는 2.5.7 그대로다 — 반입 시 `sync-config.sh` 로 ConfigMap 재생성 + 이미지 재빌드·태그 갱신이 필요하다.
+
+## [2026-09-26] 화면 자동 갱신 주기 설정(10/30/60초) + DB 장애 시 화면 표시 설계
+
+**요청:** 대시보드·현황판·System Status·알림 벨 배지·말풍선을 10초/30초/60초로 갱신하도록 Settings > General 에서 설정(Analysis Queue 제외). WAS 정상·DB 비정상 시 웹페이지 표시 방안은 plan 작성. 추가 요구 — 자동 갱신이 세션 타임아웃을 초기화하지 않는지 확인.
+
+### DB 장애(WAS 정상·DB 비정상) 표시 — 구현 (설계 `docs/DB_OUTAGE_DISPLAY_PLAN.md` 의 ①~④)
+- **종전 실제 동작(원인):** 세션 저장소가 DB 라 쿠키 있는 요청이 인가 필터의 세션 조회에서 죽고 Tomcat 이 `/error` 로 ERROR 디스패치하는데, `/error` 가 permitAll 이 아니고 ERROR 디스패치는 세션 필터를 타지 않아 익명 → 페이지는 `/login` 302, `/api/**` 는 401 `SESSION_EXPIRED`. 화면은 "세션 만료", 로그인 폼은 "아이디 또는 비밀번호 오류". Hikari 기본 `connection-timeout` 30초라 요청마다 30초 대기.
+- ① `DbHealthService`(5초 TTL 프로브, `Snapshot up/error/downSince`) + `/api/system/status` 에 `dbUp`·`dbError`·`dbDownSince`. Hikari `connection-timeout=5000`·`validation-timeout=2000`(앱·k8s properties).
+- ② `SecurityConfig`: `dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()` + `/error` permitAll + CSRF `DispatcherTypeRequestMatcher(ERROR)` 면제. 신규 `DbAwareErrorController`(`BasicErrorController` 확장, Boot 4 는 `WebProperties.getError()`): 예외 사슬이 `DbOutageDetector.isDbOutage` 면 503 + `Retry-After: 30` — `/api/**`·`X-Requested-With` 는 JSON `{success:false,code:DB_UNAVAILABLE,error,retryAfter}`, 페이지는 자립형 `templates/error/db-unavailable.html`(발생 시각·경로·원인·30초 자동 재시도, 세션·CSRF·배너·외부 리소스 무참조). 그 외 오류는 Boot 기본. WARN 은 30초에 1회.
+- `DbOutageDetector`: DB 계층 예외(SQLException/DataAccess/Transaction/Hibernate/JPA) AND 연결성 신호(SQLState 08·자원 실패·트랜잭션 생성 실패·`JDBCConnectionException`·Hikari `SQLTransientConnectionException`·그 아래 `java.net.*`) — LLM·SSH 타임아웃·SQL 문법/제약 오류는 제외.
+- ③ 로그인 실패 핸들러 `InternalAuthenticationServiceException` → `/login?error=unavailable` → `unavailableMessage`("데이터베이스에 연결할 수 없어 로그인할 수 없습니다"). `AuthEventListener` 는 이 실패를 비밀번호 실패 횟수에 넣지 않는다. ⚠ 실제 장애 중엔 로그인 GET(CSRF 토큰 세션 저장)부터 503 이라 새 브라우저도 503 페이지를 본다 — 이 분기는 부분 장애용.
+- ④ `Common.fetchJSON`: 503 + `code=DB_UNAVAILABLE` → `err.dbUnavailable` + 한국어 문구(재로그인 유도 없음) + 문서 이벤트 `db:unavailable`/`db:available`(`Common.isDbUnavailable`·`noteDbUnavailable`·`noteDbAvailable` 단일 출처). 배너: System Status **Database 행** + **하단 고정 안내 스트립**(`#gbDbStrip`, 끊긴 시각·'다시 확인', 좌측 색 띠 없음) — 상태 폴링의 503/`dbUp=false`/이벤트 세 경로로 켜고 폴링 성공·`db:available` 로 내린다. `live-refresh.js` 는 503 DB 면 이전 화면 유지 + '갱신 실패 · DB 연결 불가'. 알림 벨 말풍선 DB 문구. `rag-settings` `httpMsg(503)` 문구. 캐시 키 `common.js?v=2026-09-26`.
+- ⚠ **`DataSourceConfig` 가 직접 만든 DataSource 빈에는 `spring.datasource.hikari.*` 가 바인딩되지 않았다** — 첫 실검증에서 요청당 30초(로그인 60초)로 드러남. `@ConfigurationProperties("spring.datasource.hikari") HikariDataSource dataSource(...)` 로 Boot 자동설정과 같은 방식으로 바꿔 5초 적용(소스 계약 단언 추가).
+- **실검증(운영 호스트, `iptables -I OUTPUT -d 192.168.56.9 -p tcp --dport 3306 -j REJECT|DROP`, 각 1분 미만):** 페이지(`Accept: text/html`, 세션 쿠키) → **503 `text/html;charset=UTF-8` 자립형 페이지 + `Retry-After: 30`**(종전 302 `/login`) · `/api/system/status` → **503 JSON `DB_UNAVAILABLE`**(종전 401) · 조각 XHR → 503 JSON · 로그인 GET(쿠키 없음) → 503 페이지(CSRF 토큰 세션 저장이 DB) · 정적 JS 200 · 지연 **REJECT 6.2초 / DROP 6.2초**(수정 전 30.3초, 로그인 60.3초) · 규칙 해제 후 즉시 200(로그인 20ms) · 로그 `[DbOutage]` WARN 30초 억제. ⚠ curl 기본 Accept(`*/*`)는 Boot 규약대로 JSON 을 받는다 — 브라우저 검증은 `Accept: text/html`.
+- 테스트(+12): `DbOutageDetectorTest`(3) · `DbHealthServiceTest`(2) · `DbAwareErrorControllerTest`(4, 페이지 503 뷰·API/XHR JSON·비-DB 는 Boot 기본·경로 검증) · `DbOutageDisplaySmokeTest`(3, 자립형 렌더·로그인 문구·배선 소스 계약 — Hikari 바인딩 포함).
+
+### 설정 (Settings > General '화면 자동 갱신 주기')
+- `ui.refresh.interval-sec`(10|30|60, 기본 60) — 5곳 영속화(함정 40): `HeapDumpConfig` `@Value` volatile · `HeapDumpAnalyzerService` `restoreScalarSettings`/`persistSettings`/`syncApplicationProperties` · setter facade `setUiRefreshIntervalSec`(허용값 아니면 400). `POST /api/settings/ui-refresh-interval?seconds=` + `GET /api/settings` 의 `uiRefreshIntervalSec`. properties 키를 앱·k8s `config/application.properties` 양쪽에 추가(sync 는 치환 전용).
+- 클라이언트 전달: 신규 `UiRefreshModelAdvice` → 배너 `window.UI_REFRESH_SECONDS`. 적용은 다음 페이지 로드부터(설명문에 명시).
+
+### 갱신 대상 5곳
+- 배너 System Status: `_GB_INTERVAL` 60000 하드코딩 → 설정값(캐시 age 판정·`managedInterval` 동일 변수), 핸들 `_gbStatusPoll` 보관.
+- 알림 벨 배지·말풍선: `alert-bell.js` 기본 주기 → 설정값(말풍선은 열린 채로도 같은 주기에 다시 그려진다). `mount()` 반환에 `stop`·`intervalMs`.
+- **대시보드·현황판은 종전에 자동 갱신이 없었다**(서버 렌더). 신규 `/js/live-refresh.js` — Spring 7 `FragmentsRendering` 으로 같은 템플릿의 `th:fragment` 조각을 한 응답으로 받아 id 별 morph(속성 동기화 + innerHTML, 요소 identity 보존). 동일 응답이면 DOM 무변경. `GET /api/dashboard/fragments`(6조각: `dashRecentFiles`·`dashStats`·`dashProgress`·`dashDetections`·`dashDetectTotals`·`dashDetectKinds`, 차트는 조각 안 데이터 섬 `#dashDetectData` 에서 `destroy()` 후 재생성) · `GET /api/alerts/fragments`(3조각: `alertKpi`·`alertList`·`alertRows`, 미확인·삭제 건수는 `data-unacked`/`data-deleted-count` 로 조각 밖 카운터를 맞춤). 토글·필터·모달·Analysis Queue 패널은 조각 밖. 상단바 `#liveUpdated` 에 갱신 시각.
+- 차단 조건: 요청 진행 중 · `.modal-ov.open` · `AnalyzeConfirm.isOpen()`(신규) · `UploadQueue.isUploading()`(신규) · 현황판은 ACK 모달 열림·처리 중·확인 취소 진행(`inflight`)·연출 중(`.leaving/.returning`).
+- 대시보드 `applyInProgress` 의 '분석 완료 → `location.reload()`' → `_dashLive.refreshNow()`(모듈 미로드 시만 reload). 현황판 Refresh 는 `refreshNow()` 버튼.
+
+### 세션 만료와의 관계 (검증)
+- `managedInterval` 틱은 `noteServerTouch()` 만 기록하고 만료 판정의 `lastActivityAt` 은 사용자 입력·`touch()` 만 갱신 → 갱신 주기와 무관하게 만료 시점 불변. 서버 `LAST_ACCESS_TIME` 도 유휴 2분에서 폴링이 멈춰 함께 멈춘다.
+- 위험 지점은 `init()` 의 페이지 로드 = 활동 기록 → 자동 `location.reload()` 를 전면 배제. 조각이 한쪽에만 있으면(레이아웃 변경) 폴링을 멈추고 '새로고침' 버튼만 보인다(**함정 69**). 소스 계약 `LiveRefreshSessionContractTest` 로 고정.
+
+### DB 장애 설계
+- `docs/DB_OUTAGE_DISPLAY_PLAN.md` — 현재 동작(세션 저장소가 DB 라 장애가 401 SESSION_EXPIRED·로그인 리다이렉트로 오인, 로그인 실패 오표시, Hikari 30초 대기, 오류 페이지·헬스 부재) · 목표 · 계층별 방안(`DbHealthService` + `/api/system/status` DB 필드, ERROR 디스패치 permitAll + 자립형 503 페이지 + `DB_UNAVAILABLE` JSON, 로그인 `unavailable` 분기, `Common.fetchJSON` 503 승격 + 배너 DB 행·전역 스트립) · 구현 순서·검증(iptables DROP/REJECT) · 위험. 구현은 별도 단계.
+
+### 테스트 (+14 갱신 주기 → 1020, +13 DB 장애 → 1033, 라이브 4 skip 포함)
+- 신규 `AlertBoardFragmentsEndpointTest`(2, standalone MockMvc + 실제 `ThymeleafViewResolver` — `FragmentsRendering` 이 `alerts :: alertKpi` 를 해석해 3조각·`text/html;charset=UTF-8`·골격/토글/모달 부재) · `UiRefreshWiringTest`(2, ModelAdvice·데이터 섬 `</` 이스케이프) · `UiRefreshSettingTest`(3, 허용값·설정 화면 선택지 1:1·properties 두 파일+5곳 정합) · `LiveRefreshSessionContractTest`(5).
+- 확장 `SessionTimeoutTemplateSmokeTest.bannerPollIntervalComesFromSetting` · `DashboardDetectSummaryTest.fragmentsShareMarkupAndFollowPageConditions`(6조각 = 페이지 마크업, 파일 0건이면 조각도 빈 출력) · `AlertBoardTemplateSmokeTest.boardRenders`(+조각 id·data-*·탭 위치·모듈 로드).
+- 캐시 키 `?v=2026-09-26`: `alert-bell.js`·`upload-queue.js`·`analyze-confirm.js`·신규 `live-refresh.js` — 이 파일들을 싣는 모든 페이지(files·servers·server-detail·gc-log 목록 포함)와 `common.js` 를 직접 싣는 `account-memo.html` 까지 맞췄다(`CommonToastStackTest.cacheKeysAreInSync`).
+
+## [2026-09-25] GC 로그 이어붙이기 모달에 현재 로그 표시 + 목록 서랍 ▸ 확대
+
+**요청:** GC 로그 결과 화면의 '로그 이어붙이기' 모달에 현재 로그가 따로 보이지 않는다 — 회색으로 칠해 표시할 것. 목록 서랍의 삼각형(▸)이 너무 작으니 키울 것.
+
+### 이어붙이기 모달 — 현재 로그 행
+- 원인: `combineOptions()` 가 대표(지금 보고 있는 로그)를 후보에서 빼고, 응답에도 대표 정보가 없었다. 체크 목록만 보여 **무엇에 이어 붙이는지 모달 안에서 알 수 없었다**(버튼의 `(N+1개)` 만이 흔적).
+- `GcLogAnalyzerService.combineCurrent(rep)` 추가 → `GET /api/gc-log/{fn}/combine-options` 응답에 **`current`**(`filename·analysisName·size·formattedSize·logStart·analysisDate`). 구간은 **대표 파일 자신의 것**(`match_window_start` 우선 — 이어 붙인 뒤의 `log_start` 는 묶음 전체라 쓰지 않는다, 함정 64), 크기는 `file_size`(합계 아님, 함정 63).
+- `gc-log-analyze.js` `combineCurrentRow()` — 목록 **맨 위 회색 고정 행**(`.gcl-pick-row.is-current`, 체크박스 `checked disabled`, 꼬리표 `현재 로그`). 검색과 무관하게 늘 보이고 `position: sticky` 라 목록을 스크롤해도 남는다. 후보가 하나도 없을 때도 이 행 + 안내 문구가 함께 보인다. 미리보기 순서의 같은 파일도 회색 칩(`.gcl-prev-step.is-current`)으로 표시한다.
+- 좌측 색 띠 없이 배경(#F3F4F6)·글자색만 바꿨다(이 페이지 규약).
+
+### 목록 서랍 ▸
+- `.hi-group-toggle` 11px 글자(실제 삼각형 5px 남짓) → **20px 정사각 버튼 가운데 17px**. 회전 중심을 `40% 50%` → `50% 50%`(정사각이라 펼칠 때 흔들리지 않는다), hover 옅은 배경(#EEF2FF). `gc-log.css`(/gc-log 목록)와 `files.html` 인라인(Files GC Log 탭) **두 곳 같은 값**.
+- Files 의 구성 파일 행 들여쓰기 `.gclog-subrow .col-fname` 24px → **34px**(td 12 + 버튼 20 + 여백 2) — 넓어진 토글 뒤의 대표 파일명과 같은 선을 유지한다. /gc-log 목록은 들여쓰기 기호가 번호 열에 있어 무관.
+
+### 테스트
+- `GcLogCombineServiceTest.combineCurrentShowsRepresentativeOwnSegment`(현재 로그 = 대표 자신의 이름·크기·구간, 후보 목록에는 없음) · `GcLogCombineEndpointTest.combineOptionsMarkSuggested` 에 `$.current` 단언 · `GcLogTemplateSmokeTest.combineUiContract` 에 현재 로그 행 배선·회색 고정 CSS·**서랍 토글 크기가 두 목록에서 같고 17px/20px** 단언.
+- 캐시 키 `gc-log.css?v=2026-09-25`(2 템플릿) · `gc-log-analyze.js?v=2026-09-25`.
+- 빌드·운영 재기동 완료. 헤드리스 Chrome 정적 픽스처(실제 서빙 CSS)로 모달·토글 렌더 확인.
+
 ## [2026-09-23] v2.5.8 릴리스
 
 **버전:** 2.5.7 → **2.5.8** (`pom.xml` + UI 표기 3곳 `fragments/banner.html`·`index.html`·`progress.html` + `CLAUDE.md` 실행 예시). 쉘 스크립트는 버전 비의존이라 무변경.
