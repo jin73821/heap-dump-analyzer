@@ -1,5 +1,26 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-10-19] 현황판 최우선 알람 카드 hover 연출 + 개인 메모장 저장 버튼 스피너
+
+**요청:** 알림 현황판의 최우선 알람 카드에 마우스를 올리면 상호작용 애니메이션이 동작하도록 / 개인 메모장의 저장 버튼을 누르면 스피너가 돌도록.
+
+### 현황판 최우선 알람 카드 hover (`templates/alerts.html`)
+- 마우스를 올린 카드가 2px 떠오르며 테두리·그림자가 짙어진다. 미확인 카드는 옅은 붉은 배경·붉은 그림자 + 오른쪽 '확인' 버튼이 붉은 윤곽으로 바뀌고, 확인된 카드는 흰 배경·회색 그림자. 좌측 색 띠 없음(카드 계열 1px 테두리·배경만).
+- `.al-item` 트랜지션에 `box-shadow`·`transform` 추가(기존 배경·테두리 전환 유지), 버튼 색 전환 `.15s`.
+- `@media (hover: hover)` 한정 — 터치 기기에서 탭한 카드가 떠오른 채 남지 않게. ⚠ hover 블록은 `.al-item.leaving` **앞**에 둔다(명시도가 같아 뒤가 이긴다 — 빠지는 행의 `translateX` 가 hover 의 `translateY` 에 덮이면 안 된다).
+- `prefers-reduced-motion` 이면 떠오르지 않고(`transform: none`) 색·그림자만 즉시 바뀐다.
+- 부분 갱신(`live-refresh.js`)과는 독립 — 조각이 바뀌면 커서 아래 새 카드가 다시 떠오르는 정도이고, 갱신 차단 조건은 무변경.
+
+### 메모장 저장 버튼 스피너 (`static/js/memo.js` · `templates/account.html` · `templates/account-memo.html`)
+- 공용 헬퍼 `Memo.spinButton(btn, promise)` + 자체 주입 CSS(`#memo-spin-css`, `.memo-spin-btn`) — 두 페이지(`/account` 본문 카드 · `/account/memo` 새창)가 같은 것을 쓴다. 누른 즉시 돌고 **최소 `Memo.SAVE_SPIN_MIN_MS`(500ms)** 유지 — 저장 응답이 실측 10~30ms 라 없으면 한 프레임만 번쩍인다(이력 창의 *지연* 표시 스피너와 반대 — 이건 사용자가 누른 버튼의 응답이다).
+- 라벨은 지우지 않고 `color: transparent` 로만 숨긴다 — 종전 `/account` 는 라벨을 `저장 중...` 으로 갈아 끼워 버튼 폭이 바뀌고 옆 '초기화' 버튼이 밀렸다(실측: 도는 중에도 폭 62px 동일). `aria-busy="true"` + disabled.
+- ⚠ **결과 처리는 늦추지 않는다** — 헬퍼는 원래 promise 를 돌려주고 스피너 해제만 최소 시간까지 미룬다. 결과까지 미루면 그 사이 입력한 내용이 `clearMemoDirty()`/`dirty=false` 로 덮여 미저장 표시·이탈 경고가 사라진다.
+- 도는 사이 다시 저장(Ctrl+S 는 disabled 를 거치지 않는다)하면 세대 번호(`data-memo-spin`)로 앞 저장의 뒤늦은 '멈춤'을 버려 새 저장의 스피너가 이어 돈다. 실패해도 해제되고 미처리 거부를 남기지 않는다(`promise.then(stop, stop)`).
+- 저장 중 버튼은 흐린 disabled 모습을 쓰지 않는다(흰 스피너가 묻힌다): `/account` `.btn-primary.memo-spin-btn:disabled { background: #2563EB; }`, 새창 `.bar button.memo-spin-btn:disabled { opacity: 1; }`. 동작 줄이기면 스피너가 1.8초 주기로 느리게 돈다.
+- 두 페이지의 수동 disabled 토글·라벨 교체(`finally`) 제거. 자동 저장은 버튼을 돌리지 않는다(타이핑 중 깜빡임 방지 — 새창 상태 문구 `저장 중...` 은 유지). 캐시 키 `memo.js?v=2026-10-19`.
+
+**검증:** 단위 테스트 1035건 통과(라이브 4 skip, +2: `AlertBoardTemplateSmokeTest.alertCardHoverInteraction` · `AccountMemoTemplateSmokeTest.saveButtonSpinsOnBothPages`) · `mvn clean package` · 운영 재기동 후 `/js/memo.js?v=2026-10-19` 서빙 확인. 실제 CSS·JS 를 링크한 정적 픽스처를 헤드리스 Chrome 으로 렌더: hover 카드(미확인·확인) 스크린샷, 스피너 폭 유지·20ms 응답 시 결과 즉시 수신·300ms 유지·600ms 해제·실패 해제·재저장 이어 돌기 실측. ⚠ 헤드리스 Chrome 은 `(hover: hover)` 가 거짓이라 hover 스크린샷은 픽스처에서만 미디어 래퍼를 풀어 찍었다 — 실제 마우스 hover 는 브라우저에서 확인 필요.
+
 ## [2026-09-26] v2.5.9 릴리스
 
 **버전:** 2.5.8 → **2.5.9** (`pom.xml` + UI 표기 3곳 `fragments/banner.html`·`index.html`·`progress.html` + `CLAUDE.md` 실행 예시). 쉘 스크립트는 버전 비의존이라 무변경.

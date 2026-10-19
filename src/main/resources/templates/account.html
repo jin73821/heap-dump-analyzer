@@ -89,6 +89,8 @@
         .btn-primary { background: #2563EB; color: #fff; }
         .btn-primary:hover:not(:disabled) { background: #1D4ED8; }
         .btn-primary:disabled { background: #93C5FD; cursor: not-allowed; }
+        /* 저장 중 스피너(Memo.spinButton) — 쓸 수 없는 게 아니라 일하는 중이라 흐린 disabled 색을 쓰지 않는다(흰 스피너가 묻힌다) */
+        .btn-primary.memo-spin-btn:disabled { background: #2563EB; }
         .btn-secondary { background: #fff; color: #374151; border-color: #E5E7EB; }
         .btn-secondary:hover { background: #F9FAFB; border-color: #D1D5DB; }
         .btn-danger { background: #fff; color: #DC2626; border-color: #FCA5A5; }
@@ -479,7 +481,7 @@
     </div>
 </div>
 
-<script src="/js/memo.js?v=2026-09-20"></script>
+<script src="/js/memo.js?v=2026-10-19"></script>
 <!-- [data-tip] KRDS 앵커드 팝오버 툴팁 공통 모듈 (history·settings 와 공유, 로드만 하면 자동 활성) -->
 <script src="/js/krds-tooltip.js?v=2026-08-09"></script>
 <script th:inline="javascript">
@@ -819,10 +821,9 @@ function saveMemo() {
     var msg = document.getElementById('memoMsg');
     msg.textContent = '';
     msg.className = 'form-err';
-    var btn = document.getElementById('btnSaveMemo');
     memoAutosaver.cancel();
-    btn.disabled = true; btn.textContent = '저장 중...';
-    saveMemoValue(v).then(function() {
+    // 누른 즉시 버튼에서 스피너가 돌고 최소 시간 동안 남는다 — disabled 해제도 Memo.spinButton 이 한다
+    Memo.spinButton(document.getElementById('btnSaveMemo'), saveMemoValue(v)).then(function() {
         msg.className = 'form-ok';
         msg.textContent = '메모가 저장되었습니다.';
         toast('메모가 저장되었습니다.', 'ok');
@@ -834,8 +835,6 @@ function saveMemo() {
             return;
         }
         msg.textContent = extractErrorMessage(e) || '메모 저장에 실패했습니다.';
-    }).finally(function() {
-        btn.disabled = false; btn.textContent = '저장';
     });
 }
 

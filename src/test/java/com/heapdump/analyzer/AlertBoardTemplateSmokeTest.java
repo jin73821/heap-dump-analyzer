@@ -281,4 +281,24 @@ class AlertBoardTemplateSmokeTest {
                 "동작 줄이기에서 즉시 닫지 않는다");
         assertFalse(js.contains("setInterval("), "배경 타이머 직접 사용");
     }
+
+    @Test
+    @DisplayName("최우선 알람 카드는 마우스를 올리면 떠오른다 — hover 기기 한정, 빠지는 행 연출을 덮지 않고, 동작 줄이기면 제자리 (2026-10-19)")
+    void alertCardHoverInteraction() throws IOException {
+        String tpl = resource("/templates/alerts.html");
+        assertTrue(tpl.contains("box-shadow .2s ease, transform .2s cubic-bezier(.4,0,.2,1); }"),
+                "hover 전환이 즉시 바뀐다(그림자·이동 트랜지션 없음)");
+        int hoverMq = tpl.indexOf("@media (hover: hover) {");
+        assertTrue(hoverMq > 0, "hover 가 있는 기기로 한정하지 않았다 — 터치에서 탭한 카드가 떠오른 채 남는다");
+        int lift = tpl.indexOf(".al-item:hover { transform: translateY(-2px);", hoverMq);
+        assertTrue(lift > hoverMq, "카드가 떠오르지 않는다");
+        assertTrue(tpl.indexOf(".al-item.acked:hover {", hoverMq) > hoverMq, "확인된 카드의 hover 색이 미확인과 같다");
+        assertTrue(tpl.indexOf(".al-item:not(.acked):hover .al-side .btn-sm:not(:disabled)", hoverMq) > hoverMq,
+                "미확인 카드에 올려도 '확인' 버튼이 반응하지 않는다");
+        // 같은 명시도라 뒤에 오는 쪽이 이긴다 — hover 가 뒤에 있으면 빠지는 행(.leaving)의 옆으로 밀림이 덮인다
+        assertTrue(lift < tpl.indexOf(".al-item.leaving {"), "hover 규칙이 .leaving 뒤에 있다 — 빠지는 행의 transform 을 덮는다");
+        int rm = tpl.indexOf("@media (prefers-reduced-motion: reduce)");
+        assertTrue(rm > lift && tpl.indexOf(".al-item:hover { transform: none; }", rm) > rm,
+                "동작 줄이기에서 카드가 떠오른다");
+    }
 }

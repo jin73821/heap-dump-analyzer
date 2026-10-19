@@ -170,6 +170,60 @@
         }).then(assertSaved);
     };
 
+    // ── 저장 버튼 스피너 (2026-10-19) ─────────────────────────────
+
+    /** 저장 버튼 스피너의 최소 표시 시간 (ms) — 저장 응답은 실측 10~30ms 라 이게 없으면 눌렸는지조차 안 보인다 */
+    Memo.SAVE_SPIN_MIN_MS = 500;
+
+    function injectSpinCss() {
+        if (document.getElementById('memo-spin-css')) return;
+        var st = document.createElement('style');
+        st.id = 'memo-spin-css';
+        st.textContent = ''
+            /* 라벨은 지우지 않고 투명하게만 둔다 — 폭이 그대로라 옆 버튼이 밀리지 않는다('저장 중...' 으로 갈아 끼우면 밀렸다).
+               색은 페이지마다 버튼 규칙의 명시도가 달라 !important 로 이긴다. 스피너 색은 변수로 바꿀 수 있다(기본: 채움 버튼용 흰색) */
+            + '.memo-spin-btn{position:relative;color:transparent!important;cursor:progress!important}'
+            + '.memo-spin-btn::after{content:"";position:absolute;left:50%;top:50%;box-sizing:border-box;'
+            + 'width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;'
+            + 'border:2px solid var(--memo-spin-track,rgba(255,255,255,.35));border-top-color:var(--memo-spin-fg,#fff);'
+            + 'animation:memo-btn-spin .7s linear infinite}'
+            + '@keyframes memo-btn-spin{to{transform:rotate(360deg)}}'
+            /* 동작 줄이기 — 진행 표시라 멈추지는 않고 느리게만 돈다(이력 창 조회 스피너와 같은 처리) */
+            + '@media(prefers-reduced-motion:reduce){.memo-spin-btn::after{animation-duration:1.8s}}';
+        document.head.appendChild(st);
+    }
+
+    /**
+     * 저장 버튼에 스피너를 돌린다 — 누른 즉시 돌고, promise 가 끝나도 최소 SAVE_SPIN_MIN_MS 동안은 남는다.
+     * 이력 창의 조회 스피너(지연 표시)와 반대인 이유: 이건 사용자가 누른 버튼의 응답이라 눌린 순간 반응해야 하고,
+     * 한 프레임만 번쩍이면 저장이 됐는지 알 수 없다.
+     * 도는 동안 버튼은 disabled 다 — 페이지는 :disabled 의 흐린 모습이 스피너를 가리지 않게 .memo-spin-btn 을 덮어쓴다.
+     * ⚠ 결과 처리는 늦추지 않는다 — 돌려주는 건 원래 promise 다. 결과까지 최소 시간만큼 늦추면 그 사이 입력한 내용이
+     *   '저장됨' 으로 덮여 미저장 표시와 이탈 경고가 사라진다.
+     * ⚠ 도는 사이 다시 저장하면(Ctrl+S 는 disabled 를 거치지 않는다) 새 저장의 스피너가 이어 돈다 — 세대 번호로
+     *   앞 저장의 뒤늦은 '멈춤'을 버린다.
+     */
+    Memo.spinButton = function (btn, promise) {
+        if (!btn) return promise;
+        injectSpinCss();
+        var gen = String((parseInt(btn.getAttribute('data-memo-spin') || '0', 10) || 0) + 1);
+        btn.setAttribute('data-memo-spin', gen);
+        var startedAt = Date.now();
+        btn.disabled = true;
+        btn.classList.add('memo-spin-btn');
+        btn.setAttribute('aria-busy', 'true');
+        function stop() {
+            setTimeout(function () {
+                if (btn.getAttribute('data-memo-spin') !== gen) return;   // 그사이 다시 눌렸다
+                btn.classList.remove('memo-spin-btn');
+                btn.removeAttribute('aria-busy');
+                btn.disabled = false;
+            }, Math.max(0, Memo.SAVE_SPIN_MIN_MS - (Date.now() - startedAt)));
+        }
+        promise.then(stop, stop);   // 실패도 여기서 처리돼 이 갈래가 미처리 거부로 남지 않는다 — 호출자는 원래 promise 로 따로 받는다
+        return promise;
+    };
+
     /**
      * 창을 닫거나 페이지를 떠나는 순간의 마지막 저장.
      * navigator.sendBeacon 은 커스텀 헤더를 못 붙여 CSRF 토큰 전달이 불가하고

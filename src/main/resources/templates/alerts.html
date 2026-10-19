@@ -93,7 +93,21 @@
         /* 확인·확인 취소 연출 (2026-09-20) — 알람이 목록에서 빠지거나 되살아나는 것을 눈으로 따라갈 수 있게.
            말풍선(alert-bell.js)의 .ab-item 과 같은 언어다. 자리에 남는 행은 배경·테두리가 옮겨 가고,
            빠지는 행은 높이까지 접는다 — 음수 margin 이 .al-list 의 flex gap(8px)까지 거둔다. */
-        .al-item { transition: background-color .22s ease, border-color .22s ease; }
+        .al-item { transition: background-color .22s ease, border-color .22s ease,
+                               box-shadow .2s ease, transform .2s cubic-bezier(.4,0,.2,1); }
+        .al-side .btn-sm { transition: background-color .15s ease, border-color .15s ease, color .15s ease; }
+        /* 마우스를 올린 카드 (2026-10-19) — 살짝 떠오르며 테두리·그림자가 짙어지고, 미확인이면 '확인' 버튼이 눈에 띈다.
+           어느 알람을 가리키고 있는지 목록을 훑으며 따라갈 수 있게 한다. 색은 카드 계열 그대로(좌측 색 띠 없음).
+           hover 가 있는 기기에서만 — 터치에서는 탭한 카드가 떠오른 채 남는다.
+           ⚠ 이 블록은 .leaving 보다 앞에 둘 것 — 같은 명시도라 뒤에 오는 쪽이 이기므로, 빠지는 행의 transform 이 hover 에 덮이면 안 된다. */
+        @media (hover: hover) {
+            .al-item:hover { transform: translateY(-2px); border-color: #FCA5A5; background: #FFF5F5;
+                             box-shadow: 0 10px 20px -12px rgba(185, 28, 28, .45), 0 2px 5px rgba(17, 24, 39, .05); }
+            .al-item.acked:hover { border-color: #D1D5DB; background: #fff;
+                                   box-shadow: 0 10px 20px -12px rgba(17, 24, 39, .28), 0 2px 5px rgba(17, 24, 39, .04); }
+            .al-item:not(.acked):hover .al-side .btn-sm:not(:disabled) { border-color: #F87171; color: #B91C1C; }
+            .al-item:not(.acked):hover .al-side .btn-sm:hover:not(:disabled) { background: #FEF2F2; }
+        }
         .al-item.leaving { height: 0 !important; padding-top: 0; padding-bottom: 0; margin-bottom: -8px; border-width: 0;
                            opacity: 0; transform: translateX(18px); overflow: hidden; pointer-events: none;
                            transition: height .22s cubic-bezier(.4,0,.2,1), padding .22s cubic-bezier(.4,0,.2,1),
@@ -141,7 +155,8 @@
         @keyframes modalOut { to { opacity: 0; transform: translateY(8px); } }
         /* OS '동작 줄이기' — CSS 로 끄고 JS 도 끝 이벤트를 기다리지 않는다(기다리면 화면이 멈춘 것처럼 남는다) */
         @media (prefers-reduced-motion: reduce) {
-            .al-item, .al-item.leaving, .al-ack-info { transition: none; }
+            .al-item, .al-item.leaving, .al-ack-info, .al-side .btn-sm { transition: none; }
+            .al-item:hover { transform: none; }   /* 떠오르지 않고 색·그림자만 바뀐다 */
             .al-item.returning, .modal-box, .modal-ov.open, .modal-ov.closing,
             .modal-ov.closing .modal-box { animation: none; }
         }

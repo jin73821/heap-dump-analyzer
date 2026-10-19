@@ -15,11 +15,15 @@ import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 import org.thymeleaf.web.IWebExchange;
 import org.thymeleaf.web.servlet.JakartaServletWebApplication;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -58,6 +62,13 @@ class AccountMemoTemplateSmokeTest {
                 new ThymeleafEvaluationContext(new StaticApplicationContext(), null));
         model.forEach(ctx::setVariable);
         return engine.process(template, ctx);
+    }
+
+    private static String resource(String path) throws IOException {
+        try (InputStream in = AccountMemoTemplateSmokeTest.class.getResourceAsStream(path)) {
+            assertNotNull(in, path + " 를 클래스패스에서 찾을 수 없다");
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
     }
 
     /** {@code <html ...>} 여는 태그만 추출 — 문서 전체에서 클래스명을 grep 하면 CSS 규칙에 걸린다. */
@@ -222,5 +233,39 @@ class AccountMemoTemplateSmokeTest {
         // 팝업은 opener 의 meta 를 빌릴 수 없다 — 자체적으로 있어야 저장이 403 나지 않는다(함정 26)
         assertTrue(html.contains("test-token"), "자체 CSRF meta 가 렌더되지 않았다");
         assertTrue(html.trim().endsWith("</html>"), "문서 끝까지 렌더되지 않았다 (파싱 중단 의심)");
+    }
+
+    @Test
+    @DisplayName("저장 버튼은 누르면 스피너가 돈다 — 두 페이지 공용 헬퍼, 폭 유지, 결과 처리는 늦추지 않는다 (2026-10-19)")
+    void saveButtonSpinsOnBothPages() throws IOException {
+        String js = resource("/static/js/memo.js");
+        assertTrue(js.contains("Memo.spinButton = function (btn, promise)"), "저장 버튼 스피너 헬퍼가 없다");
+        assertTrue(js.contains("Memo.SAVE_SPIN_MIN_MS = "),
+                "최소 표시 시간이 없다 — 저장 응답(10~30ms)이 빨라 스피너가 한 프레임만 번쩍인다");
+        assertTrue(js.contains(".memo-spin-btn::after{") && js.contains("@keyframes memo-btn-spin"), "스피너 CSS 가 없다");
+        // 라벨을 지우지 않고 투명하게만 — '저장 중...' 으로 갈아 끼우면 버튼 폭이 바뀌어 옆 버튼이 밀린다
+        assertTrue(js.contains(".memo-spin-btn{position:relative;color:transparent!important"), "라벨을 투명하게 두지 않는다");
+        assertTrue(js.contains("@media(prefers-reduced-motion:reduce){.memo-spin-btn::after{animation-duration:1.8s}}"),
+                "동작 줄이기에서 스피너 속도를 늦추지 않는다");
+        // 결과 처리는 원래 promise 로 — 최소 시간만큼 늦추면 그 사이 입력이 '저장됨' 으로 덮여 미저장 표시·이탈 경고가 사라진다
+        int fn = js.indexOf("Memo.spinButton = function (btn, promise)");
+        String body = js.substring(fn, js.indexOf("\n    };", fn));
+        assertTrue(body.contains("promise.then(stop, stop);") && body.contains("return promise;"),
+                "스피너가 결과 처리를 늦춘다");
+        assertTrue(body.contains("if (btn.getAttribute('data-memo-spin') !== gen) return;"),
+                "도는 사이 다시 저장하면(Ctrl+S) 앞 저장의 '멈춤'이 새 저장의 스피너를 끈다");
+
+        String account = render("account", memoModel());
+        assertTrue(account.contains("Memo.spinButton(document.getElementById('btnSaveMemo'), saveMemoValue(v))"),
+                "/account 저장 버튼이 스피너를 돌리지 않는다");
+        assertFalse(account.contains("btn.textContent = '저장 중...'"), "/account 저장 버튼 라벨을 갈아 끼운다(폭이 바뀐다)");
+        assertTrue(account.contains(".btn-primary.memo-spin-btn:disabled { background: #2563EB; }"),
+                "/account 저장 중 버튼이 흐린 disabled 색이라 흰 스피너가 묻힌다");
+
+        String popup = render("account-memo", memoModel());
+        assertTrue(popup.contains("Memo.spinButton(saveBtn, Memo.save(box.value))"), "/account/memo 저장 버튼이 스피너를 돌리지 않는다");
+        assertFalse(popup.contains("saveBtn.disabled"), "/account/memo 가 disabled 를 직접 만진다 — 헬퍼와 다툰다");
+        assertTrue(popup.contains(".bar button.memo-spin-btn:disabled { opacity: 1; }"),
+                "/account/memo 저장 중 버튼이 흐려져 흰 스피너가 묻힌다");
     }
 }
