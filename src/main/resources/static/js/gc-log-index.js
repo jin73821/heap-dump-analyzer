@@ -16,6 +16,25 @@
     }
     var esc = function (s) { return window.Common ? Common.escHtml(String(s == null ? '' : s)) : String(s == null ? '' : s); };
 
+    // ── 모달 열기·닫기 연출 (2026-10-22) ─────────────────────────
+    // 모양은 gc-log.css .gcl-modal(.open = 나타나기, .closing = 사라지기). 이 페이지의 모달(이어 붙여 분석·연속 로그 확인·삭제)은
+    // 열고 닫을 때 이 둘만 거친다. ⚠ .open 은 사라지는 연출이 끝난 뒤에 떼고(먼저 떼면 연출이 잘린다), 끝 이벤트는
+    // Common.afterMotion 의 시간 상한으로 기다리며, '동작 줄이기'면 기다리지 않는다. gc-log-analyze.js 와 같은 규칙.
+    function showModal(ov) {
+        if (!ov) return;
+        ov._gclSeq = (ov._gclSeq || 0) + 1;   // 닫히는 사이 다시 열리면 뒤늦은 떼기를 버린다
+        ov.classList.remove('closing');
+        ov.classList.add('open');
+    }
+    function hideModal(ov) {
+        if (!ov || !ov.classList.contains('open') || ov.classList.contains('closing')) return;
+        var seq = ov._gclSeq = (ov._gclSeq || 0) + 1;
+        var fin = function () { if (ov._gclSeq === seq) ov.classList.remove('open', 'closing'); };
+        if (!Common.afterMotion || Common.reduceMotion()) { fin(); return; }
+        ov.classList.add('closing');
+        Common.afterMotion(ov, 'animationend', 260, fin);
+    }
+
     // ── 토스트 ────────────────────────────────────────────────
     function toast(msg, type) {
         var wrap = document.getElementById('cdToastWrap');
@@ -292,13 +311,12 @@
             html += '<p class="gcl-list-note">필요하면 목록에서 <b>선택 → 이어붙여 분석</b>으로 직접 묶을 수 있습니다.</p>';
         }
         body.innerHTML = html;
-        document.getElementById('groupResultModal').classList.add('open');
+        showModal(document.getElementById('groupResultModal'));
     }
 
     /** 결과 모달을 닫으면 목록을 새로 그린다 — 묶음이 서랍으로 보여야 한다. */
     function closeGroupResult() {
-        var m = document.getElementById('groupResultModal');
-        if (m) m.classList.remove('open');
+        hideModal(document.getElementById('groupResultModal'));
         window.location.reload();
     }
 
@@ -353,22 +371,28 @@
     var _open = {};
     var _historyRender = null;
 
-    function loadOpenGroups() {
+    /** localStorage 의 파일명 배열 → {이름: true}. 이력 표 서랍과 좌측 파일 패널 서랍이 키만 달리해 쓴다. */
+    function loadNameSet(key) {
+        var set = {};
         try {
-            var raw = localStorage.getItem(OPEN_KEY);
+            var raw = localStorage.getItem(key);
             var arr = raw ? JSON.parse(raw) : [];
             if (Object.prototype.toString.call(arr) === '[object Array]') {
-                arr.forEach(function (n) { if (n) _open[n] = true; });
+                arr.forEach(function (n) { if (n) set[n] = true; });
             }
-        } catch (e) { ignored('서랍 펼침 상태 읽기', e); }
+        } catch (e) { ignored('서랍 펼침 상태 읽기(' + key + ')', e); }
+        return set;
     }
 
-    function saveOpenGroups() {
+    function saveNameSet(key, set) {
         try {
-            var arr = Object.keys(_open).filter(function (k) { return _open[k]; });
-            localStorage.setItem(OPEN_KEY, JSON.stringify(arr));
-        } catch (e) { ignored('서랍 펼침 상태 저장', e); }
+            var arr = Object.keys(set).filter(function (k) { return set[k]; });
+            localStorage.setItem(key, JSON.stringify(arr));
+        } catch (e) { ignored('서랍 펼침 상태 저장(' + key + ')', e); }
     }
+
+    function loadOpenGroups() { _open = loadNameSet(OPEN_KEY); }
+    function saveOpenGroups() { saveNameSet(OPEN_KEY, _open); }
 
     function initShowMembers() {
         loadOpenGroups();
@@ -455,6 +479,117 @@
         return fallback;
     }
 
+    // ── 이력 표 '⋯' 추가 작업 말풍선 (2026-10-22) ─────────────
+    // 항목은 행의 <template class="hi-more-tpl"> 에 서버가 렌더해 둔다(노출 조건의 단일 출처). 여기서는 복제해 body 에
+    // fixed 로 띄우기만 한다 — 표의 overflow-x 에 잘리지 않고, 항목 클릭이 행 클릭(glRowAction)으로 새지 않는다.
+    // 실행은 항목 자신의 onclick 이 한다(deleteGcLog·glUngroup·AnalyzeConfirm.fromLink …).
+    // 닫기: 같은 ⋯ 재클릭 · Esc(포커스 복귀) · 바깥 누름 · Tab(⋯ 에서 이어서 이동) · 표 다시 그리기. 스크롤·리사이즈는 따라간다.
+    var _menu = null;   // { el, trigger, onKey, onDown, onReflow }
+
+    function glOpenRowMenu(e, btn) {
+        if (e) e.stopPropagation();
+        if (_menu && _menu.trigger === btn) { closeRowMenu(true); return; }
+        closeRowMenu(false);
+        var holder = btn.closest('.hi-actions');
+        var tpl = holder && holder.querySelector('template.hi-more-tpl');
+        if (!tpl) return;
+
+        var el = document.createElement('div');
+        el.className = 'hi-menu';
+        el.setAttribute('role', 'menu');
+        el.setAttribute('aria-label', btn.getAttribute('aria-label') || '추가 작업');
+        el.appendChild(tpl.content.cloneNode(true));
+        tidySeparators(el);
+        if (!el.querySelector('.hi-menu-item')) return;
+        document.body.appendChild(el);
+
+        // 항목을 누르면 실행(항목 onclick) 뒤에 닫는다. 포커스는 먼저 ⋯ 로 돌려 둔다 —
+        // 이어서 열리는 확인 모달이 닫힐 때 그 자리(⋯)로 돌아오게(AnalyzeConfirm 은 열 때의 activeElement 를 기억한다).
+        el.addEventListener('click', function (ev) {
+            if (!(ev.target.closest && ev.target.closest('.hi-menu-item'))) return;
+            if (btn.focus) btn.focus();
+            setTimeout(function () { if (_menu && _menu.el === el) closeRowMenu(false); }, 0);
+        }, true);
+
+        var m = {
+            el: el, trigger: btn,
+            onKey: function (ev) {
+                var items = menuItems(el);
+                var idx = items.indexOf(document.activeElement);
+                if (ev.key === 'Escape') { ev.preventDefault(); closeRowMenu(true); }
+                else if (ev.key === 'Tab') { closeRowMenu(true); }   // 기본 동작은 막지 않는다 — ⋯ 다음 요소로 이어서 간다
+                else if (!el.contains(document.activeElement)) return;
+                else if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(idx + 1) % items.length].focus(); }
+                else if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(idx - 1 + items.length) % items.length].focus(); }
+                else if (ev.key === 'Home') { ev.preventDefault(); items[0].focus(); }
+                else if (ev.key === 'End') { ev.preventDefault(); items[items.length - 1].focus(); }
+            },
+            onDown: function (ev) {
+                if (el.contains(ev.target) || btn.contains(ev.target)) return;
+                closeRowMenu(false);
+            },
+            onReflow: function () {
+                // 행이 사라졌거나(다시 그리기·페이지 이동) 접힌 서랍 안이면 닫는다
+                if (!document.body.contains(btn) || !btn.offsetParent) { closeRowMenu(false); return; }
+                placeRowMenu(el, btn);
+            }
+        };
+        _menu = m;
+        document.addEventListener('keydown', m.onKey, true);
+        document.addEventListener('mousedown', m.onDown, true);
+        document.addEventListener('touchstart', m.onDown, true);
+        window.addEventListener('resize', m.onReflow);
+        window.addEventListener('scroll', m.onReflow, true);
+        btn.setAttribute('aria-expanded', 'true');
+        placeRowMenu(el, btn);
+        menuItems(el)[0].focus();
+    }
+
+    function closeRowMenu(returnFocus) {
+        if (!_menu) return;
+        var m = _menu;
+        _menu = null;
+        document.removeEventListener('keydown', m.onKey, true);
+        document.removeEventListener('mousedown', m.onDown, true);
+        document.removeEventListener('touchstart', m.onDown, true);
+        window.removeEventListener('resize', m.onReflow);
+        window.removeEventListener('scroll', m.onReflow, true);
+        if (m.el.parentNode) m.el.parentNode.removeChild(m.el);
+        m.trigger.setAttribute('aria-expanded', 'false');
+        if (returnFocus && document.body.contains(m.trigger)) m.trigger.focus();
+    }
+
+    function menuItems(el) {
+        return Array.prototype.slice.call(el.querySelectorAll('.hi-menu-item'));
+    }
+
+    /** 조건부 항목이 빠지면 구분선이 맨 앞·맨 뒤·연달아 남는다 — 그런 구분선을 지운다. */
+    function tidySeparators(el) {
+        var prevSep = true;   // 맨 앞 구분선도 지우도록 '직전이 구분선' 으로 시작
+        Array.prototype.slice.call(el.children).forEach(function (c) {
+            var isSep = c.classList.contains('hi-menu-sep');
+            if (isSep && prevSep) { el.removeChild(c); return; }
+            prevSep = isSep;
+        });
+        var last = el.lastElementChild;
+        if (last && last.classList.contains('hi-menu-sep')) el.removeChild(last);
+    }
+
+    /** ⋯ 오른쪽 끝에 맞춘 말풍선. 아래가 모자라면 위로 뒤집고, 꼬리는 ⋯ 가운데를 가리킨다(server-scan placePicker 와 같은 규칙). */
+    function placeRowMenu(el, btn) {
+        var r = btn.getBoundingClientRect();
+        var w = el.offsetWidth, h = el.offsetHeight;
+        var vw = window.innerWidth, vh = window.innerHeight;
+        var left = Math.min(Math.max(8, r.right + 6 - w), vw - w - 8);
+        var up = r.bottom + 10 + h > vh - 8 && r.top - 10 - h >= 8;
+        var top = up ? r.top - 10 - h : r.bottom + 10;
+        el.classList.toggle('up', up);
+        el.style.left = Math.round(left) + 'px';
+        el.style.top = Math.round(Math.max(8, top)) + 'px';
+        var arrowX = Math.min(Math.max(10, r.left + r.width / 2 - left - 7), w - 24);
+        el.style.setProperty('--hi-arrow-x', Math.round(arrowX) + 'px');
+    }
+
     function initSelectMode() {
         if (!window.SelectMode || !document.getElementById('hiTable')) return;
         _sel = SelectMode.create({
@@ -488,12 +623,11 @@
             + '<p class="gcl-list-note">순서는 파일 이름이 아니라 <b>로그 안의 첫 시각</b>으로 정해집니다. '
             + '결과는 가장 최근 로그의 분석에 담기고, 나머지는 그 구성 파일이 됩니다.</p>';
         document.getElementById('listCombineErr').classList.remove('show');
-        document.getElementById('listCombineModal').classList.add('open');
+        showModal(document.getElementById('listCombineModal'));
     }
 
     function closeListCombine() {
-        var m = document.getElementById('listCombineModal');
-        if (m) m.classList.remove('open');
+        hideModal(document.getElementById('listCombineModal'));
     }
 
     function listCombineError(msg) {
@@ -561,10 +695,10 @@
         document.getElementById('deleteGcModalFilename').textContent = filename;
         var err = document.getElementById('deleteGcModalErr');
         if (err) { err.textContent = ''; err.classList.remove('show'); }
-        document.getElementById('deleteGcModal').classList.add('open');
+        showModal(document.getElementById('deleteGcModal'));
     }
     function closeGcDeleteModal() {
-        document.getElementById('deleteGcModal').classList.remove('open');
+        hideModal(document.getElementById('deleteGcModal'));
         _deleteTarget = null;
     }
     function confirmGcDelete() {
@@ -594,11 +728,45 @@
             });
     }
 
-    // ── 사이드 파일 패널: 검색/상태 필터/페이지네이션 ────────
+    // ── 사이드 파일 패널: 검색/상태 필터/페이지네이션 + 서랍(2026-10-22) ────────
+    // 최상위 단위(.gl-unit) = 단독 파일 또는 묶음(대표 카드 + 접힌 구성 파일). 필터·페이지·건수는 단위로 센다 —
+    // 상태 필터는 대표의 상태로 거른다(구성 파일 자신은 늘 '미분석' 이지만 대표의 분석에 포함돼 있다).
+    // 펼침 상태는 이력 표 서랍과 별개 키로 기억한다.
+    var SIDE_OPEN_KEY = 'gcLogSideOpenGroups';
+    var _sideOpen = {};
+    var _sideReveal = null;   // (filename) → 해당 파일이 보이게 페이지·서랍을 맞춘다
+
+    /** 묶음 단위의 손잡이 표시와 구성 파일 목록 노출을 맞춘다. */
+    function applySideGroup(unit, open) {
+        var btn = unit.querySelector('.gl-group-toggle');
+        var box = unit.querySelector('.gl-members');
+        if (!btn || !box) return;
+        btn.setAttribute('aria-expanded', String(open));
+        btn.setAttribute('aria-label', '구성 파일 ' + (btn.dataset.members || '') + '개 ' + (open ? '접기' : '펼치기'));
+        box.hidden = !open;
+    }
+
+    /** 손잡이 클릭 — 펼침 상태만 바꾼다(페이지·필터는 그대로). */
+    function glToggleSideGroup(btn) {
+        var unit = btn.closest('.gl-unit');
+        if (!unit) return;
+        var open = btn.getAttribute('aria-expanded') !== 'true';
+        _sideOpen[unit.dataset.filename] = open;
+        saveNameSet(SIDE_OPEN_KEY, _sideOpen);
+        applySideGroup(unit, open);
+    }
+
     function initSidebar() {
         var list = document.getElementById('glFileList');
         if (!list) return;
-        var items = Array.prototype.slice.call(list.querySelectorAll('.cd-file-item'));
+        _sideOpen = loadNameSet(SIDE_OPEN_KEY);
+        var units = Array.prototype.slice.call(list.children).filter(function (el) { return el.classList.contains('gl-unit'); });
+        // 접힌 서랍 안의 파일명으로도 검색이 걸리게 미리 소문자 키를 만들어 둔다.
+        units.forEach(function (u) {
+            u._memberQuery = Array.prototype.map.call(u.querySelectorAll('.gl-member'), function (m) {
+                return (m.dataset.filename || '').toLowerCase();
+            }).join(' ');
+        });
         var search = document.getElementById('glFileSearch');
         var clearBtn = document.getElementById('glFileSearchClear');
         var statusSel = document.getElementById('glFileStatusFilter');
@@ -609,9 +777,15 @@
         function filtered() {
             var q = (search.value || '').trim().toLowerCase();
             var st = statusSel.value;
-            return items.filter(function (it) {
-                if (q && it.dataset.filename.toLowerCase().indexOf(q) === -1) return false;
-                if (st !== 'all' && it.dataset.status !== st) return false;
+            return units.filter(function (u) {
+                u._hitByMember = false;
+                if (q) {
+                    var own = (u.dataset.filename || '').toLowerCase().indexOf(q) !== -1;
+                    var inMembers = u._memberQuery.indexOf(q) !== -1;
+                    if (!own && !inMembers) return false;
+                    u._hitByMember = !own && inMembers;   // 구성 파일로만 걸렸으면 서랍을 열어 보여 준다(기억은 하지 않는다)
+                }
+                if (st !== 'all' && u.dataset.status !== st) return false;
                 return true;
             });
         }
@@ -619,9 +793,12 @@
             var f = filtered(), total = f.length;
             var pages = Math.max(1, Math.ceil(total / PAGE));
             if (cur > pages) cur = pages;
-            items.forEach(function (it) { it.style.display = 'none'; });
+            units.forEach(function (u) { u.style.display = 'none'; });
             var start = (cur - 1) * PAGE, end = Math.min(start + PAGE, total);
-            for (var i = start; i < end; i++) f[i].style.display = '';
+            for (var i = start; i < end; i++) {
+                f[i].style.display = '';
+                applySideGroup(f[i], !!_sideOpen[f[i].dataset.filename] || f[i]._hitByMember);
+            }
             if (countEl) countEl.textContent = total;
             if (noResult) noResult.style.display = total === 0 ? 'block' : 'none';
             if (clearBtn) clearBtn.style.display = search.value ? '' : 'none';
@@ -631,6 +808,28 @@
         statusSel.addEventListener('change', function () { cur = 1; render(); });
         if (clearBtn) clearBtn.addEventListener('click', function () { search.value = ''; cur = 1; render(); search.focus(); });
         render();
+
+        /** 파일(대표·구성 파일 모두)이 보이게 한다 — 필터에 걸려 있으면 풀고, 그 페이지로 가고, 구성 파일이면 서랍을 연다. */
+        _sideReveal = function (filename) {
+            var unit = null, target = null;
+            units.forEach(function (u) {
+                if (unit) return;
+                if (u.dataset.filename === filename) { unit = u; target = u.querySelector('.cd-file-item'); return; }
+                Array.prototype.forEach.call(u.querySelectorAll('.gl-member'), function (m) {
+                    if (!unit && m.dataset.filename === filename) { unit = u; target = m; }
+                });
+            });
+            if (!unit) return null;
+            var idx = filtered().indexOf(unit);
+            if (idx < 0) { search.value = ''; statusSel.value = 'all'; idx = filtered().indexOf(unit); }
+            cur = Math.floor(idx / PAGE) + 1;
+            if (target !== unit.querySelector('.cd-file-item')) {
+                _sideOpen[unit.dataset.filename] = true;
+                saveNameSet(SIDE_OPEN_KEY, _sideOpen);
+            }
+            render();
+            return target;
+        };
     }
 
     // ── 분석 이력: 검색/정렬/기간/페이지네이션 ────────────────
@@ -694,6 +893,7 @@
             return f;
         }
         function render() {
+            closeRowMenu(false);   // 행이 옮겨지거나 숨겨지면 말풍선이 엉뚱한 자리에 남는다
             var f = filtered(), total = f.length;
             var pages = Math.max(1, Math.ceil(total / PAGE));
             if (cur > pages) cur = pages; if (cur < 1) cur = 1;
@@ -774,7 +974,8 @@
             var pre = params.get('file');
             if (pre) {
                 history.replaceState({}, document.title, window.location.pathname);
-                var item = document.querySelector('.cd-file-item[data-filename="' + CSS.escape(pre) + '"]');
+                // 구성 파일이면 서랍 안에 접혀 있고, 다른 페이지에 있을 수도 있다 — 보이게 맞춘 뒤 옮겨 간다
+                var item = _sideReveal ? _sideReveal(pre) : null;
                 if (item) { item.scrollIntoView({ block: 'center' }); item.focus(); }
                 toast('업로드된 GC 로그: ' + pre + ' — 클릭해 분석을 시작하세요.', 'info');
             }
@@ -805,4 +1006,6 @@
     window.glDetachMember = glDetachMember;
     window.glUngroup = glUngroup;
     window.closeGroupResult = closeGroupResult;
+    window.glToggleSideGroup = glToggleSideGroup;
+    window.glOpenRowMenu = glOpenRowMenu;
 })();

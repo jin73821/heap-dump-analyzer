@@ -297,7 +297,8 @@ class GcLogTemplateSmokeTest {
         int openAt = an.indexOf("function openReanalyzeConfirm() {");
         assertTrue(openAt >= 0, "재분석 확인 모달 함수");
         String openBody = an.substring(openAt, an.indexOf("function closeReanalyzeConfirm()", openAt));
-        assertTrue(openBody.contains("modal.classList.add('open')") && !openBody.contains("/api/gc-log/reanalyze"), "모달 열기는 요청을 보내지 않는다");
+        // 2026-10-22: 열기는 연출 헬퍼(showModal) 경유 — ModalMotionTest.gcLogModalsAnimate
+        assertTrue(openBody.contains("showModal(modal)") && !openBody.contains("/api/gc-log/reanalyze"), "모달 열기는 요청을 보내지 않는다");
         assertTrue(an.contains("function confirmReanalyze() {") && an.contains("closeReanalyzeConfirm();\n        reanalyze();"), "확인 → 재분석");
         assertTrue(an.contains("document.getElementById('reanalyzeAi').style.display = hasResult && _aiHtml ? '' : 'none';"), "AI 결과가 있을 때만 AI 안내");
         assertTrue(an.contains("closeAiConfirm(); closeReanalyzeConfirm();"), "Esc 로 닫힌다");
@@ -340,7 +341,7 @@ class GcLogTemplateSmokeTest {
         // AI 분석(2026-09-14): 버튼은 확인 모달만 연다 — 요청은 confirmAi → startAi 에서만 나간다. 분석 중에는 초 단위 경과 시간
         int runAiAt = an.indexOf("function runAi() {");
         String runAiBody = an.substring(runAiAt, an.indexOf("function closeAiConfirm()", runAiAt));
-        assertTrue(runAiBody.contains("classList.add('open')") && !runAiBody.contains("/ai-analyze"), "runAi 는 모달만 열고 LLM 을 호출하지 않는다");
+        assertTrue(runAiBody.contains("showModal(document.getElementById('aiConfirmModal'))") && !runAiBody.contains("/ai-analyze"), "runAi 는 모달만 열고 LLM 을 호출하지 않는다");
         assertTrue(an.contains("function confirmAi() {\n        closeAiConfirm();\n        startAi();"), "모달 확인 → 분석 시작");
         assertTrue(an.contains("id=\"gclAiElapsed\"") && an.contains("Math.floor((Date.now() - t0) / 1000)"), "경과 시간 초 단위");
         assertTrue(an.contains("var done = function () { _aiRunning = false; stopAiTimer(); syncAiButtons(); };"), "성공·실패 모두 타이머 정리");

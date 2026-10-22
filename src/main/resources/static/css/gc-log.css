@@ -9,12 +9,34 @@
 }
 
 /* ── 업로드 존 (단일 슬롯) ─────────────────────────────────── */
-/* 아래 여백은 CTA 버튼과의 간격 — 코어 덤프의 .upload-grid 는 margin-bottom 을 갖는데 이 그리드는 빠져 버튼이 붙었다(2026-09-14) */
-.gcl-upload-grid { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 16px; align-items: start; margin-bottom: 18px; }
-@media (max-width: 900px) { .gcl-upload-grid { grid-template-columns: 1fr; } }
+/* 2026-10-22: CTA 버튼은 카드 전폭이 아니라 드롭존 열 아래(영역 cta)에 둔다.
+   출처 입력 열(side)이 두 행을 걸치고, 남는 높이는 1fr 행(드롭존)이 받아 두 열의 아래 끝이 맞는다.
+   좁은 화면은 zone → side → cta — 버튼이 필수 입력(호스트네임)보다 위로 오면 안 된다. */
+.gcl-upload-grid { display: grid; grid-template-columns: minmax(0, 1fr) 260px; grid-template-rows: 1fr auto;
+                   grid-template-areas: "zone side" "cta side"; column-gap: 16px; row-gap: 12px; }
+.gcl-upload-main { grid-area: zone; display: flex; flex-direction: column; min-width: 0; }
+.gcl-upload-main .upload-zone { flex: 1 1 auto; }
+.gcl-side-field { grid-area: side; }
+.gcl-upload-cta { grid-area: cta; min-width: 0; }
+/* 버튼 높이는 옆 입력칸(.cd-input 38px)과 맞춘다 — 드롭존 열 안에서 btn-lg(44px)는 무거웠다 */
+.gcl-upload-cta .upload-submit-btn { height: 38px; margin-top: 0; }
+.gcl-upload-cta .upload-status:empty { display: none; }
+@media (max-width: 900px) {
+    .gcl-upload-grid { grid-template-columns: 1fr; grid-template-rows: auto; grid-template-areas: "zone" "side" "cta"; }
+}
 .gcl-side-field label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 6px; }
 .gcl-side-field .cd-input { width: 100%; }
 .gcl-side-hint { font-size: 11px; color: #9CA3AF; margin-top: 6px; line-height: 1.5; }
+
+/* ── 상태 배지 (GC 로그 목록·결과 화면, 2026-10-22) ─────────────
+   종전엔 완료(#047857)·미분석(#64748B)이 둘 다 어두운 단색이라 명도가 거의 같아 한눈에 갈리지 않았다.
+   미분석은 '아직 결과가 없음' 이라 속이 빈 외곽선 배지(흰 바탕·회색 글자·빈 원), 완료는 기존 녹색에 체크를 더한다 —
+   색상만이 아니라 채움·모양으로도 구분된다(색각 이상·흑백 인쇄). 실패·분석 중은 core-dump.css 그대로.
+   ⚠ 코어 덤프 화면은 이 파일을 싣지 않으므로 영향이 없다. */
+.status-badge.status-not-analyzed { background: #fff; color: #64748B; border-color: #CBD5E1; }
+.status-badge.status-not-analyzed::before { content: ''; flex-shrink: 0; width: 5px; height: 5px; border-radius: 50%; border: 1.5px solid currentColor; }
+.status-badge.status-success::before { content: ''; flex-shrink: 0; width: 7px; height: 3px; border: solid currentColor;
+                                       border-width: 0 0 1.5px 1.5px; transform: translateY(-1px) rotate(-45deg); }
 
 /* ── 이력 표 셀 ──────────────────────────────────────────── */
 .hi-sev { display: inline-block; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px; letter-spacing: .02em; }
@@ -306,6 +328,22 @@
 .gcl-modal .modal-check-desc { font-size: 11px; color: #6B7280; margin-top: 2px; }
 .gcl-modal .modal-err { font-size: 12px; color: #991B1B; margin-top: 8px; display: none; }
 .gcl-modal .modal-err.show { display: block; }
+
+/* 모달 열기·닫기 연출 (2026-10-22) — 결과 화면(힙 덤프 선택·AI 분석·재분석·이어붙이기·삭제)과 목록 화면 모달 공용.
+   열기: 배경이 페이드인되고 상자가 아래에서 살짝 커지며 떠오른다. 닫기: JS(showModal/hideModal)가 .closing 을 붙여
+   사라지는 연출이 끝난 뒤에 .open 을 뗀다 — 먼저 떼면 display:none 이라 사라지는 모습이 통째로 잘린다.
+   ⚠ .closing 규칙은 .open 규칙 뒤에 둘 것(사라지는 동안에도 .open 이 붙어 있고 명시도가 같다). */
+.gcl-modal.open { animation: gclOvIn .16s ease both; }
+.gcl-modal.open .modal-box { animation: gclBoxIn .22s cubic-bezier(.2, .8, .2, 1) both; }
+.gcl-modal.closing { animation: gclOvOut .14s ease-in both; pointer-events: none; }
+.gcl-modal.closing .modal-box { animation: gclBoxOut .14s ease-in both; }
+@keyframes gclOvIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes gclOvOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes gclBoxIn { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes gclBoxOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(.98); } }
+@media (prefers-reduced-motion: reduce) {
+    .gcl-modal.open, .gcl-modal.open .modal-box, .gcl-modal.closing, .gcl-modal.closing .modal-box { animation: none; }
+}
 .gcl-pick-search { width: 100%; margin: 8px 0; }
 .gcl-pick-list { max-height: 340px; overflow-y: auto; border: 1px solid #E5E7EB; border-radius: 8px; }
 .gcl-pick-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-bottom: 1px solid #F3F4F6; cursor: pointer; }
@@ -441,3 +479,71 @@
 .hi-table tbody tr.hi-subrow > td { padding-top: 5px; padding-bottom: 5px; font-size: 12px; color: #6B7280; }
 .hi-table tbody tr.hi-subrow .hi-filename { font-weight: 400; color: #6B7280; }
 .hi-subrow-indent { color: #A78BFA; margin-right: 3px; font-size: 13px; }
+
+/* ── 좌측 파일 패널 서랍(대표 카드 + 접힌 구성 파일, 2026-10-22) ─────────────
+   묶음은 테두리 하나로 감싼 카드: 위 = 대표(.cd-file-item, 테두리 없이), 아래 = 손잡이 줄, 펼치면 구성 파일 목록.
+   색은 이력 표 서랍(.hi-group-toggle)·'N개 이어붙임' 배지와 같은 인디고 계열.
+   ⚠ 좌측 색 띠(border-left/inset 레일) 금지 — 이 파일 규약이다(GcLogTemplateSmokeTest). */
+/* ⚠ flex: none — .cd-file-list 는 높이가 제한된 flex 열(min-height:0 + overflow-y)이라, overflow:hidden 인 묶음은
+   min-height 가 0 으로 풀려 목록이 길어지면 납작한 선으로 줄어든다(모바일 380px 패널에서 실측) */
+.gl-unit { flex: none; }
+.gl-group { border: 1px solid var(--cd-border, #E5E7EB); border-radius: var(--r-md, 8px); background: var(--cd-surface-sub, #F9FAFB);
+            overflow: hidden; transition: border-color .15s; }
+.gl-group:hover, .gl-group:focus-within { border-color: var(--pri-border, #BFDBFE); }
+.gl-group > .cd-file-item { border: 0; border-radius: 0; background: transparent; }
+.gl-group > .cd-file-item:hover { background: var(--pri-bg, #EFF6FF); }
+/* 바깥 3px 링은 overflow:hidden 에 잘린다 — 묶음 안에서는 안쪽 링으로 */
+.gl-group > .cd-file-item:focus-visible { box-shadow: inset 0 0 0 2px var(--pri-600, #2563EB); }
+.gl-group-toggle { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 12px; margin: 0;
+                   border: 0; border-top: 1px solid var(--cd-border, #E5E7EB); background: #fff; cursor: pointer;
+                   font-family: inherit; font-size: 11.5px; font-weight: 600; line-height: 16px; color: #4F46E5; text-align: left; }
+.gl-group-toggle:hover { background: #EEF2FF; }
+.gl-group-toggle:focus-visible { outline: none; box-shadow: inset 0 0 0 2px #6366F1; }
+.gl-chev { display: inline-flex; align-items: center; justify-content: center; width: 12px; font-size: 13px; line-height: 1;
+           transition: transform .15s ease; }
+.gl-group-toggle[aria-expanded="true"] .gl-chev { transform: rotate(90deg); }
+.gl-members { background: #fff; border-top: 1px solid var(--cd-divider, #F3F4F6); padding: 3px 0 4px; }
+.gl-members[hidden] { display: none; }
+.gl-member { display: flex; align-items: center; gap: 6px; padding: 5px 12px 5px 14px; cursor: pointer; outline: none;
+             font-size: 12px; color: var(--cd-text-2, #374151); }
+.gl-member:hover { background: var(--cd-surface-sub, #F9FAFB); }
+.gl-member:focus-visible { box-shadow: inset 0 0 0 2px var(--pri-600, #2563EB); }
+.gl-member-tree { flex: none; color: #A78BFA; font-size: 12px; line-height: 1; }
+.gl-member-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                  font-family: var(--font-mono, monospace); }
+.gl-member-size { flex: none; font-family: var(--font-mono, monospace); font-size: 11px; color: var(--cd-text-muted, #9CA3AF); }
+@media (prefers-reduced-motion: reduce) { .gl-chev { transition: none; } }
+
+/* ── 이력 표 '⋯' 추가 작업 + 말풍선 메뉴 (2026-10-22) ─────────────────────
+   액션 열은 [결과 보기][⋯] 고정 순서·오른쪽 정렬 — 행마다 버튼 수가 달라 '삭제' 위치가 흔들리던 것을 없앤다.
+   메뉴는 body 에 붙는 fixed 말풍선(표의 overflow-x 에 잘리지 않게). 모양은 스캔 대상 팝오버(.ss-pick)와 같은 언어:
+   흰 바탕·1px 테두리·그림자·2겹 삼각 꼬리가 ⋯ 를 가리키고, 아래 공간이 모자라면 위로 뒤집힌다(.up). */
+.hi-more-btn { width: 28px; padding: 0; color: var(--cd-text-3, #6B7280); }
+.hi-more-btn svg { width: 16px; height: 16px; fill: currentColor; }
+.hi-more-btn:hover:not(:disabled) { color: var(--cd-text, #111827); }
+.hi-more-btn[aria-expanded="true"] { background: #EFF6FF; border-color: #93C5FD; color: #1D4ED8; }
+.hi-menu { position: fixed; z-index: 1000; min-width: 168px; max-width: calc(100vw - 16px); box-sizing: border-box; padding: 5px;
+           background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; text-align: left;
+           box-shadow: 0 10px 30px rgba(15, 23, 42, .16), 0 2px 6px rgba(15, 23, 42, .08);
+           transform-origin: var(--hi-arrow-x, 50%) top; animation: hiMenuIn .12s ease-out; }
+.hi-menu.up { transform-origin: var(--hi-arrow-x, 50%) bottom; --hi-menu-dy: 4px; }
+.hi-menu::before, .hi-menu::after { content: ""; position: absolute; left: var(--hi-arrow-x, 24px); width: 0; height: 0;
+                                    border: 7px solid transparent; }
+.hi-menu::before { top: -15px; border-bottom-color: #E5E7EB; }
+.hi-menu::after  { top: -13px; border-bottom-color: #fff; }
+.hi-menu.up::before { top: auto; bottom: -15px; border-bottom-color: transparent; border-top-color: #E5E7EB; }
+.hi-menu.up::after  { top: auto; bottom: -13px; border-bottom-color: transparent; border-top-color: #fff; }
+/* 열림 방향은 애니메이션 이름이 아니라 변수(--hi-menu-dy)로 바꾼다 — alert-bell 과 같은 규칙 */
+@keyframes hiMenuIn { from { opacity: 0; transform: translateY(var(--hi-menu-dy, -4px)) scale(.97); } to { opacity: 1; transform: none; } }
+.hi-menu-item { display: flex; align-items: center; gap: 8px; width: 100%; box-sizing: border-box; padding: 7px 10px; margin: 0;
+                border: 0; border-radius: 6px; background: none; cursor: pointer; white-space: nowrap; text-align: left;
+                font-family: inherit; font-size: 13px; font-weight: 500; line-height: 18px; color: #374151; text-decoration: none; }
+.hi-menu-item svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: #9CA3AF; stroke-width: 1.8;
+                    stroke-linecap: round; stroke-linejoin: round; }
+.hi-menu-item:hover, .hi-menu-item:focus-visible { background: #F3F4F6; color: #111827; outline: none; }
+.hi-menu-item:hover svg, .hi-menu-item:focus-visible svg { stroke: #6B7280; }
+.hi-menu-item.danger { color: #B91C1C; }
+.hi-menu-item.danger svg { stroke: #DC2626; }
+.hi-menu-item.danger:hover, .hi-menu-item.danger:focus-visible { background: #FEF2F2; color: #991B1B; }
+.hi-menu-sep { height: 1px; margin: 4px 2px; background: #F3F4F6; }
+@media (prefers-reduced-motion: reduce) { .hi-menu { animation: none; } }

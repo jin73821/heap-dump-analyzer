@@ -79,8 +79,11 @@ class RemoteDumpPathGuardTest {
         assertTrue(globs.length > 0);
         for (String g : globs) assertFalse(g.startsWith("*gc*"), "'*gc*.log*' 류는 logic.log 를 잡는다: " + g);
         String[] shouldMatch = {"gc.log", "gc.log.0", "gc.log.3.current", "gc.log.gz", "gc-2026-09-14_00-52-33.log", "gc_pid123.log.1",
-                "app-gc.log", "app_gc.log.2.gz", "app.gc.log", "gclog.txt", "jvm.gclog", "gc-was1.log"};
-        String[] shouldNot = {"logic.log", "magic.log", "catalina.out", "app.log", "gc.hprof", "server.log.gz"};
+                "app-gc.log", "app_gc.log.2.gz", "app.gc.log", "gclog.txt", "jvm.gclog", "gc-was1.log",
+                // 이름 중간의 gc 토큰 + 날짜 보관(2026-10-22) — -Xloggc:…/<인스턴스>_gc_pid%p.log
+                "gmadm_1_gc_pid9999.log_20260101", "gmadm_1_gc_pid9999.log", "gmadm_1_gc_pid9999.log_20260101.gz", "was1-gc-pid42.log"};
+        String[] shouldNot = {"logic.log", "magic.log", "catalina.out", "app.log", "gc.hprof", "server.log.gz",
+                "magic_x.log", "my_logic_1.log", "gmadm_1_access.log_20260101"};
         for (String n : shouldMatch) assertTrue(anyGlob(globs, n), "잡아야 함: " + n);
         for (String n : shouldNot) assertFalse(anyGlob(globs, n), "잡으면 안 됨: " + n);
     }

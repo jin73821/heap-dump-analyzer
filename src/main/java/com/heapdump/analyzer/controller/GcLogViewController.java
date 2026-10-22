@@ -50,11 +50,18 @@ public class GcLogViewController {
         // ⚠ 최상위 여부를 part_of 로 판정하지 말 것 — 대표의 member_files 에서 빠진 구성 파일이 있으면
         //   어느 쪽에서도 렌더되지 않아 목록에서 조용히 사라진다. '어느 묶음이 실제로 그리는가' 로 판정한다.
         model.addAttribute("claimed", claimed);
+        // 좌측 파일 패널도 같은 서랍(2026-10-22) — 단, 현존 파일만으로 판정한다.
+        // 구성 파일이 지워졌으면 서랍에서 빠지고, 대표가 지워졌으면 구성 파일이 최상위로 남는다(조용히 사라지지 않게).
+        java.util.Map<String, List<GcLogAnalysisEntity>> sideMembers = membersByParent(files);
+        java.util.Set<String> sideClaimed = new java.util.LinkedHashSet<>();
+        sideMembers.values().forEach(list -> list.forEach(m -> sideClaimed.add(m.getFilename())));
+        model.addAttribute("sideMembers", sideMembers);
+        model.addAttribute("sideClaimed", sideClaimed);
         model.addAttribute("isAdmin", com.heapdump.analyzer.util.AuthUtil.isAdmin(auth));
         return "gc-log/index";
     }
 
-    /** 대표 파일명 → 구성 파일 행(병합 순서). 순서는 대표의 {@code member_files} 가 정한다. */
+    /** 대표 파일명 → 구성 파일 행(병합 순서). 순서는 대표의 {@code member_files} 가 정한다. 넘긴 목록에 있는 행만 담는다. */
     private java.util.Map<String, List<GcLogAnalysisEntity>> membersByParent(List<GcLogAnalysisEntity> history) {
         java.util.Map<String, GcLogAnalysisEntity> byName = new java.util.LinkedHashMap<>();
         java.util.Map<String, List<GcLogAnalysisEntity>> out = new java.util.LinkedHashMap<>();

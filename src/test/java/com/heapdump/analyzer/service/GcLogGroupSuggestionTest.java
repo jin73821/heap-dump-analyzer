@@ -338,6 +338,11 @@ class GcLogGroupSuggestionTest {
         assertFalse(GcLogAnalyzerService.seriesKey(null, "gc_container1.log")
                 .equals(GcLogAnalyzerService.seriesKey(null, "gc_container2.log")), "인스턴스 번호를 가렸다");
         assertEquals("gc.log", GcLogAnalyzerService.seriesKey(" ", "gc.log.4"), "원격 경로가 없으면 파일명");
+        // 날짜 보관본과 지금 쓰는 파일은 한 계열이다(2026-10-22, gmadm_1_gc_pid9999.log_20260101 형태)
+        assertEquals(GcLogAnalyzerService.seriesKey("/logs/gmadm_1_gc_pid9999.log", "a"),
+                     GcLogAnalyzerService.seriesKey("/logs/gmadm_1_gc_pid9999.log_20260101", "b"), "날짜 보관본이 다른 계열이 됐다");
+        assertFalse(GcLogAnalyzerService.seriesKey("/logs/gmadm_1_gc_pid9999.log_20260101", "a")
+                .equals(GcLogAnalyzerService.seriesKey("/logs/gmadm_2_gc_pid9999.log_20260101", "b")), "다른 인스턴스(_1/_2)가 한 계열이 됐다");
     }
 
     @Test

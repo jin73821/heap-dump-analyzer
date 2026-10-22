@@ -203,6 +203,99 @@ class GcLogDrawerTemplateSmokeTest {
         assertTrue(html.contains("id=\"groupResultBody\"") && html.contains("modal-btns"), "모달 골격이 빠졌다");
     }
 
+    // ── 2026-10-22: 좌측 파일 패널 서랍 · 액션 '⋯' 말풍선 · 상태 배지 ─────────────
+
+    /** 사이드 패널까지 채운 모델 — 컨트롤러가 현존 파일 기준으로 sideMembers/sideClaimed 를 준다. */
+    private static Map<String, Object> sideModel() {
+        Map<String, Object> model = groupedModel();
+        @SuppressWarnings("unchecked")
+        List<GcLogAnalysisEntity> history = (List<GcLogAnalysisEntity>) model.get("history");
+        model.put("gcLogFiles", history);
+        model.put("sideMembers", Map.of("gc.log", List.of(history.get(1), history.get(2))));
+        model.put("sideClaimed", java.util.Set.of("gc.log.0", "gc.log.1"));
+        return model;
+    }
+
+    private static String fileList(String html) {
+        int a = html.indexOf("id=\"glFileList\"");
+        int b = html.indexOf("id=\"glFileNoResult\"", a);
+        assertTrue(a > 0 && b > a, "좌측 파일 목록을 찾지 못했다");
+        return html.substring(a, b);
+    }
+
+    @Test
+    @DisplayName("좌측 패널: 구성 파일은 대표 카드 아래 접힌 서랍에만 있고, 건수는 최상위 단위로 센다")
+    void sidebarGroupsMembersIntoDrawer() {
+        String html = render("gc-log/index", sideModel());
+        String list = fileList(html);
+
+        assertEquals(2, count(list, "class=\"gl-unit"), "최상위 단위는 묶음 1 + 단독 1 이어야 한다");
+        assertEquals(1, count(list, "class=\"gl-unit gl-group\""), "묶음 단위 표시가 없다");
+        assertEquals(2, count(list, "class=\"cd-file-item\""), "구성 파일이 최상위 카드로도 렌더됐다");
+        assertEquals(2, count(list, "class=\"gl-member\""), "서랍 안 구성 파일 수가 다르다");
+        assertTrue(list.contains("<div class=\"gl-members\" hidden>"), "서랍이 펼쳐진 채로 렌더됐다 — 기본은 접힘이다");
+        assertTrue(list.contains("glToggleSideGroup(this)") && list.contains("aria-expanded=\"false\""), "서랍 손잡이 배선");
+        // 손잡이는 카드(role=button) 밖 형제여야 한다 — 버튼 안의 버튼은 키보드·낭독기에서 깨진다
+        int card = list.indexOf("class=\"cd-file-item\"");
+        int cardEnd = list.indexOf("<button type=\"button\" class=\"gl-group-toggle\"", card);
+        assertTrue(cardEnd > card, "서랍 손잡이를 찾지 못했다");
+        assertFalse(list.substring(card, cardEnd).contains("<button"), "손잡이가 카드 안에 들어갔다");
+        assertTrue(html.contains("id=\"glFileCount\">2<"), "건수가 서랍 안 구성 파일까지 셌다");
+    }
+
+    @Test
+    @DisplayName("좌측 패널: sideMembers 가 없는 모델(옛 컨트롤러·빈 묶음)은 모든 파일을 평범한 카드로 그린다")
+    void sidebarWithoutDrawerModelStaysFlat() {
+        Map<String, Object> model = groupedModel();
+        model.put("gcLogFiles", model.get("history"));
+        String list = fileList(render("gc-log/index", model));
+        assertEquals(4, count(list, "class=\"cd-file-item\""));
+        assertEquals(0, count(list, "gl-group-toggle"));
+    }
+
+    @Test
+    @DisplayName("액션 열: 결과 보기 외 동작은 행마다 ⋯ 하나 뒤의 <template> 메뉴에만 있다")
+    void actionsCollapseIntoMoreMenu() {
+        Map<String, Object> model = groupedModel();
+        model.put("claimed", java.util.Set.of("gc.log.0", "gc.log.1"));   // 컨트롤러처럼 구성 파일은 서랍에만
+        String body = tbody(render("gc-log/index", model));
+        String outside = body.replaceAll("(?s)<template class=\"hi-more-tpl\">.*?</template>", "");
+
+        // 대표 2(gc.log·other.log) + 구성 파일 2 = 4행, 행마다 ⋯ 하나 · 메뉴 템플릿 하나
+        assertEquals(4, count(body, "hi-more-btn\""), "행마다 ⋯ 버튼이 하나여야 한다");
+        assertEquals(4, count(body, "<template class=\"hi-more-tpl\">"), "행마다 메뉴 템플릿이 하나여야 한다");
+        assertTrue(outside.contains("glOpenRowMenu(event, this)") && outside.contains("aria-haspopup=\"menu\""), "⋯ 배선");
+
+        for (String act : List.of("deleteGcLog(", "glUngroup(", "glDetachMember(", "AnalyzeConfirm.fromLink(", "/api/gc-log/download/")) {
+            assertFalse(outside.contains(act), "메뉴 밖에 버튼이 남았다: " + act);
+            assertTrue(body.contains(act), "메뉴에서 동작이 빠졌다: " + act);
+        }
+        // 결과 보기(SUCCESS 단독 행)는 메뉴 밖에 그대로 — 결과 보기만 남기는 것이 요구다
+        assertEquals(1, count(outside, ">결과 보기</a>"), "결과 보기가 메뉴 안으로 들어갔거나 사라졌다");
+    }
+
+    @Test
+    @DisplayName("CSS·JS 계약 — 화면을 봐야만 드러나는 부류(배지 구분·서랍 납작해짐·hidden 무력화·말풍선 잘림)")
+    void drawerMenuAndBadgeStylesAreWired() throws IOException {
+        String css = Files.readString(Path.of("src/main/resources/static/css/gc-log.css"), StandardCharsets.UTF_8);
+        // 미분석은 속이 빈 외곽선 배지 — 완료(녹색 단색)와 명도부터 다르다
+        assertTrue(css.contains(".status-badge.status-not-analyzed { background: #fff;"), "미분석 배지가 외곽선형이 아니다");
+        assertTrue(css.contains(".status-badge.status-success::before"), "완료 배지 체크 표시가 없다");
+        // overflow:hidden 인 묶음은 높이 제한 flex 열에서 납작해진다(모바일 380px 패널 실측)
+        assertTrue(css.contains(".gl-unit { flex: none; }"), "묶음 단위가 flex 열에서 줄어들 수 있다");
+        // display 를 주는 규칙이 hidden 속성을 덮으면 서랍이 늘 펼쳐진다
+        assertTrue(css.contains(".gl-members[hidden] { display: none; }"), "서랍 hidden 이 CSS 에 덮인다");
+        // 말풍선은 body 에 붙는 fixed — 표(overflow-x:auto) 안에 두면 잘린다
+        assertTrue(css.contains(".hi-menu { position: fixed;"), "말풍선이 fixed 가 아니다");
+
+        String js = Files.readString(Path.of("src/main/resources/static/js/gc-log-index.js"), StandardCharsets.UTF_8);
+        assertTrue(js.contains("tpl.content.cloneNode(true)") && js.contains("document.body.appendChild(el)"), "메뉴가 body 에 복제되지 않는다");
+        assertTrue(js.contains("closeRowMenu(false);   // 행이 옮겨지거나"), "표를 다시 그릴 때 말풍선을 닫지 않는다");
+        assertTrue(js.contains("'gcLogSideOpenGroups'"), "좌측 서랍 펼침 상태 키가 없다");
+        assertTrue(js.contains("window.glOpenRowMenu = glOpenRowMenu") && js.contains("window.glToggleSideGroup = glToggleSideGroup"),
+                "인라인 핸들러용 전역 노출이 빠졌다");
+    }
+
     @Test
     @DisplayName("'모든 그룹 펼치기' 토글은 id·localStorage 키를 그대로 쓴다")
     void showMembersToggleKeepsItsContract() throws IOException {

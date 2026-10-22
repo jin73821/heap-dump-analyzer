@@ -97,6 +97,17 @@ class GcLogMatchServiceTest {
         assertEquals("/var/log/gc.log", JvmHeapCapture.stripRotation("/var/log/gc.log.3.current"));
         assertEquals("/var/log/gc.log", JvmHeapCapture.stripRotation("/var/log/gc.log.1.gz"));
         assertEquals("/var/log/gc-2026.log", JvmHeapCapture.stripRotation("/var/log/gc-2026.log"));
+
+        // 날짜 보관 접미사(2026-10-22) — -Xloggc:…_gc_pid%p.log 를 외부 스크립트·logrotate 가 날짜 붙여 보관한 형태
+        assertTrue(JvmHeapCapture.sameGcLogPath("/logs/gmadm_1_gc_pid%p.log", "/logs/gmadm_1_gc_pid9999.log_20260101", null),
+                "날짜를 붙여 보관한 로그가 설정 경로와 이어지지 않는다");
+        assertTrue(JvmHeapCapture.sameGcLogPath("/logs/gmadm_1_gc_pid%p.log", "/logs/gmadm_1_gc_pid9999.log", null), "현재 파일");
+        assertEquals("/logs/gc.log", JvmHeapCapture.stripRotation("/logs/gc.log_20260101.gz"));
+        assertEquals("/logs/gc.log", JvmHeapCapture.stripRotation("/logs/gc.log-2026-01-01"));
+        assertEquals("/logs/gc.log", JvmHeapCapture.stripRotation("/logs/gc.log_20260101_1530"));
+        // 19·20 으로 시작하지 않는 긴 숫자(pid 등)는 날짜로 보지 않는다 · 확장자 앞의 날짜는 이름의 일부다
+        assertEquals("/logs/gc.log_12345678", JvmHeapCapture.stripRotation("/logs/gc.log_12345678"));
+        assertEquals("/logs/gc_20260101.log", JvmHeapCapture.stripRotation("/logs/gc_20260101.log"));
     }
 
     @Test

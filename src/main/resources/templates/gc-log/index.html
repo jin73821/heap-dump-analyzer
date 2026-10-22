@@ -9,7 +9,7 @@
     <title>GC 로그 분석 - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-09-20}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-20}">
-    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-09-25}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-10-22b}">
 </head>
 <body>
 
@@ -38,7 +38,9 @@
     <div class="cd-side-section cd-side-files">
         <div class="cd-file-panel-head">
             서버 GC 로그
-            <span class="cd-file-panel-count" id="glFileCount" th:text="${#lists.size(gcLogFiles)}">0</span>
+            <!-- 목록에 보이는 단위 수(서랍 안 구성 파일은 대표에 포함) — JS 가 필터 후 같은 기준으로 다시 센다 -->
+            <span class="cd-file-panel-count" id="glFileCount"
+                  th:text="${#lists.size(gcLogFiles) - (sideClaimed == null ? 0 : sideClaimed.size())}">0</span>
         </div>
         <div class="cd-side-hint">원격 전송(Servers) 또는 업로드된 파일입니다. 클릭하면 분석·결과로 이동합니다.</div>
 
@@ -63,28 +65,57 @@
             서버에 GC 로그 파일이 없습니다.
         </div>
 
+        <!-- 최상위 단위(.gl-unit) = 단독 파일 또는 묶음(대표 + 접힌 구성 파일, 2026-10-22). 검색·상태 필터·페이지는 단위로 센다.
+             ⚠ 구성 파일 판정은 sideClaimed(현존 파일 기준) — 대표가 지워진 구성 파일은 최상위로 남는다 -->
         <div th:if="${!#lists.isEmpty(gcLogFiles)}" class="cd-file-list" id="glFileList">
-            <div th:each="f : ${gcLogFiles}"
-                 class="cd-file-item" tabindex="0" role="button"
+            <div th:each="f : ${gcLogFiles}" th:if="${sideClaimed == null or !sideClaimed.contains(f.filename)}"
+                 th:with="kids=${sideMembers?.get(f.filename)}"
+                 class="gl-unit" th:classappend="${kids != null and !#lists.isEmpty(kids)} ? 'gl-group'"
                  th:data-filename="${f.filename}"
-                 th:data-status="${f.status}"
-                 th:title="${f.filename}"
-                 onclick="glOpenFile(this.dataset.filename, this.dataset.status)"
-                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();glOpenFile(this.dataset.filename, this.dataset.status)}">
-                <div class="cd-finfo">
-                    <div class="cd-file-name" th:text="${f.filename}"></div>
-                    <div class="cd-fmeta">
-                        <span class="cd-file-size" th:text="${f.formattedSize}"></span>
-                        <span class="status-badge"
-                              th:classappend="${f.status == 'SUCCESS'} ? 'status-success'
-                                             : (${f.status == 'ERROR'} ? 'status-error'
-                                             : (${f.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
-                              th:text="${f.status == 'SUCCESS'} ? '완료'
-                                       : (${f.status == 'ERROR'} ? '실패'
-                                       : (${f.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
-                        <span th:if="${f.serverName != null}" class="hi-mono" style="color:#6B7280" th:text="${f.serverName}"></span>
+                 th:data-status="${f.status}">
+                <div class="cd-file-item" tabindex="0" role="button"
+                     th:data-filename="${f.filename}"
+                     th:data-status="${f.status}"
+                     th:title="${f.filename}"
+                     onclick="glOpenFile(this.dataset.filename, this.dataset.status)"
+                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();glOpenFile(this.dataset.filename, this.dataset.status)}">
+                    <div class="cd-finfo">
+                        <div class="cd-file-name" th:text="${f.filename}"></div>
+                        <div class="cd-fmeta">
+                            <span class="cd-file-size" th:text="${f.formattedSize}"></span>
+                            <span class="status-badge"
+                                  th:classappend="${f.status == 'SUCCESS'} ? 'status-success'
+                                                 : (${f.status == 'ERROR'} ? 'status-error'
+                                                 : (${f.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                                  th:text="${f.status == 'SUCCESS'} ? '완료'
+                                           : (${f.status == 'ERROR'} ? '실패'
+                                           : (${f.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
+                            <span th:if="${f.serverName != null}" class="hi-mono" style="color:#6B7280" th:text="${f.serverName}"></span>
+                        </div>
                     </div>
                 </div>
+                <!-- 서랍 손잡이 — 카드(role=button) 안에 넣지 않고 형제로 둔다(버튼 안의 버튼은 키보드·낭독기에서 깨진다) -->
+                <th:block th:if="${kids != null and !#lists.isEmpty(kids)}">
+                    <button type="button" class="gl-group-toggle" aria-expanded="false"
+                            th:attr="aria-label='구성 파일 ' + ${#lists.size(kids)} + '개 펼치기'"
+                            th:data-members="${#lists.size(kids)}"
+                            onclick="glToggleSideGroup(this)">
+                        <span class="gl-chev" aria-hidden="true">&#9656;</span>
+                        <span class="gl-group-label" th:text="'이어 붙인 구성 파일 ' + ${#lists.size(kids)} + '개'">이어 붙인 구성 파일 3개</span>
+                    </button>
+                    <div class="gl-members" hidden>
+                        <div th:each="m, ms : ${kids}" class="gl-member" tabindex="0" role="button"
+                             th:data-filename="${m.filename}"
+                             th:data-status="${m.status}"
+                             th:title="${m.filename} + ' — ' + ${f.filename} + ' 의 구성 파일'"
+                             onclick="glOpenFile(this.dataset.filename, this.dataset.status)"
+                             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();glOpenFile(this.dataset.filename, this.dataset.status)}">
+                            <span class="gl-member-tree" aria-hidden="true" th:text="${ms.last} ? '└' : '├'">├</span>
+                            <span class="gl-member-name" th:text="${m.filename}">gc.log.0</span>
+                            <span class="gl-member-size" th:text="${m.formattedSize}">20.00 MB</span>
+                        </div>
+                    </div>
+                </th:block>
             </div>
         </div>
         <div th:if="${!#lists.isEmpty(gcLogFiles)}" class="cd-file-noresult" id="glFileNoResult">검색 결과가 없습니다.</div>
@@ -103,8 +134,11 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M17 8l-5-5-5 5"></path><path d="M12 3v12"></path></svg>
             GC 로그 업로드
         </div>
+        <!-- 2026-10-22: 업로드 버튼은 카드 전폭이 아니라 드롭존 열 아래(그리드 영역 cta)에 둔다 —
+             드롭존 열이 출처 입력 열과 같은 높이로 늘어나고 버튼 폭이 드롭존과 맞는다.
+             좁은 화면(≤900px)에서는 zone → side → cta 순서라 필수 입력(호스트네임)을 지나서 버튼에 닿는다 -->
         <div class="gcl-upload-grid">
-            <div>
+            <div class="gcl-upload-main">
                 <div class="upload-zone-label">GC 로그 파일 <span class="required-badge">필수</span></div>
                 <div class="upload-zone" id="gcDropZone">
                     <input type="file" id="gcFileInput" multiple onchange="onGcFileSelect(this)" aria-label="GC 로그 파일 선택">
@@ -133,13 +167,15 @@
                        oninput="onOriginInput()">
                 <div class="gcl-side-hint">WAS 인스턴스(JEUS <code>jeus.server.name</code> · WebLogic <code>Name</code>). 분석명은 <b>호스트네임_인스턴스명_일자</b> 가 됩니다.</div>
             </div>
+            <div class="gcl-upload-cta">
+                <button class="btn btn-primary upload-submit-btn" id="uploadBtn" onclick="startUpload()" disabled>
+                    <span class="usb-progress" id="uploadProgressFill"></span>
+                    <!-- 문구는 gc-log-index.js setCta() 가 상태별로 바꾼다: 미선택 → 선택됨 → 업로드 중 N% → 분석 시작 중 -->
+                    <span class="usb-label" id="uploadBtnLabel">GC 로그 파일을 선택하세요</span>
+                </button>
+                <div class="upload-status" id="uploadStatus"></div>
+            </div>
         </div>
-        <button class="btn btn-primary btn-lg upload-submit-btn" id="uploadBtn" onclick="startUpload()" disabled>
-            <span class="usb-progress" id="uploadProgressFill"></span>
-            <!-- 문구는 gc-log-index.js setCta() 가 상태별로 바꾼다: 미선택 → 선택됨 → 업로드 중 N% → 분석 시작 중 -->
-            <span class="usb-label" id="uploadBtnLabel">GC 로그 파일을 선택하세요</span>
-        </button>
-        <div class="upload-status" id="uploadStatus"></div>
         <div class="upload-error-box" id="uploadErrorBox">
             <div class="upload-error-title">✕ 업로드 실패</div>
             <div class="upload-error-msg" id="uploadErrorMsg"></div>
@@ -327,25 +363,38 @@
                             </td>
 
                             <td>
+                                <!-- 액션(2026-10-22): [결과 보기][⋯] 고정 순서·오른쪽 정렬. 결과 보기 외 동작은 ⋯ 말풍선 메뉴로.
+                                     메뉴 항목은 <template> 에 서버 렌더해 두고 gc-log-index.js glOpenRowMenu 가 복제해 띄운다 —
+                                     항목 노출 조건(상태·파일 유무·묶음 여부)은 이 템플릿 한 곳이 정한다.
+                                     ⚠ 메뉴는 body 에 붙는 fixed 요소라 표의 overflow-x 에 잘리지 않고, 항목 클릭이 행 클릭으로 새지 않는다 -->
                                 <div class="hi-actions">
                                     <a th:if="${item.status == 'SUCCESS' or item.status == 'ANALYZING'}"
                                        th:href="@{/gc-log/analyze/{fn}(fn=${item.filename})}"
                                        class="btn btn-sm btn-soft" onclick="event.stopPropagation()"
                                        th:text="${item.status == 'SUCCESS'} ? '결과 보기' : '진행 확인'">결과 보기</a>
-                                    <a th:if="${(item.status == 'ERROR' or item.status == 'NOT_ANALYZED') and !item.fileDeleted}"
-                                       th:href="@{/gc-log/analyze/{fn}(fn=${item.filename},start=1)}"
-                                       th:data-filename="${item.filename}" th:data-size="${item.formattedSize}"
-                                       th:data-source="${item.serverName}" data-kind="gclog"
-                                       class="btn btn-sm btn-ghost"
-                                       onclick="event.stopPropagation(); return window.AnalyzeConfirm ? AnalyzeConfirm.fromLink(this) : true;">분석</a>
-                                    <button th:if="${item.memberCount != null and item.memberCount > 1}"
-                                            class="btn btn-sm btn-ghost"
-                                            th:data-filename="${item.filename}"
-                                            title="묶음을 풀어 구성 파일을 각각 단독 로그로 되돌린다(파일은 그대로)"
-                                            onclick="event.stopPropagation(); glUngroup(this.dataset.filename)">묶음 해제</button>
-                                    <button class="btn btn-sm btn-soft soft-danger"
-                                            th:data-filename="${item.filename}"
-                                            onclick="event.stopPropagation(); deleteGcLog(this.dataset.filename)">삭제</button>
+                                    <button type="button" class="btn btn-sm btn-ghost hi-more-btn"
+                                            aria-haspopup="menu" aria-expanded="false" title="추가 작업"
+                                            th:attr="aria-label=${item.displayName} + ' 추가 작업'"
+                                            onclick="glOpenRowMenu(event, this)">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+                                    </button>
+                                    <template class="hi-more-tpl">
+                                        <a th:if="${(item.status == 'ERROR' or item.status == 'NOT_ANALYZED') and !item.fileDeleted}"
+                                           role="menuitem" class="hi-menu-item"
+                                           th:href="@{/gc-log/analyze/{fn}(fn=${item.filename},start=1)}"
+                                           th:data-filename="${item.filename}" th:data-size="${item.formattedSize}"
+                                           th:data-source="${item.serverName}" data-kind="gclog"
+                                           onclick="return window.AnalyzeConfirm ? AnalyzeConfirm.fromLink(this) : true;"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z"/></svg>분석</a>
+                                        <button th:if="${item.memberCount != null and item.memberCount > 1}"
+                                                type="button" role="menuitem" class="hi-menu-item"
+                                                th:data-filename="${item.filename}"
+                                                title="묶음을 풀어 구성 파일을 각각 단독 로그로 되돌린다(파일은 그대로)"
+                                                onclick="glUngroup(this.dataset.filename)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2"/></svg>묶음 해제</button>
+                                        <div class="hi-menu-sep" role="separator"></div>
+                                        <button type="button" role="menuitem" class="hi-menu-item danger"
+                                                th:data-filename="${item.filename}"
+                                                onclick="deleteGcLog(this.dataset.filename)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>삭제</button>
+                                    </template>
                                     <span class="hi-row-chevron" aria-hidden="true">›</span>
                                 </div>
                             </td>
@@ -405,17 +454,27 @@
                             </td>
 
                             <td>
+                                <!-- 구성 파일에는 결과 보기가 없다 — ⋯ 하나만(대표 행과 같은 자리) -->
                                 <div class="hi-actions">
-                                    <a th:href="@{/api/gc-log/download/{f}(f=${mem.filename})}"
-                                       th:unless="${mem.fileDeleted}"
-                                       class="btn btn-sm btn-ghost" onclick="event.stopPropagation()">다운로드</a>
-                                    <button class="btn btn-sm btn-ghost"
-                                            th:data-filename="${mem.filename}" th:data-rep="${item.filename}"
-                                            title="이 파일만 묶음에서 빼낸다(파일은 그대로)"
-                                            onclick="event.stopPropagation(); glDetachMember(this.dataset.rep, this.dataset.filename)">그룹에서 빼기</button>
-                                    <button class="btn btn-sm btn-soft soft-danger"
-                                            th:data-filename="${mem.filename}"
-                                            onclick="event.stopPropagation(); deleteGcLog(this.dataset.filename)">삭제</button>
+                                    <button type="button" class="btn btn-sm btn-ghost hi-more-btn"
+                                            aria-haspopup="menu" aria-expanded="false" title="추가 작업"
+                                            th:attr="aria-label=${mem.filename} + ' 추가 작업'"
+                                            onclick="glOpenRowMenu(event, this)">
+                                        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+                                    </button>
+                                    <template class="hi-more-tpl">
+                                        <a th:href="@{/api/gc-log/download/{f}(f=${mem.filename})}"
+                                           th:unless="${mem.fileDeleted}"
+                                           role="menuitem" class="hi-menu-item"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>다운로드</a>
+                                        <button type="button" role="menuitem" class="hi-menu-item"
+                                                th:data-filename="${mem.filename}" th:data-rep="${item.filename}"
+                                                title="이 파일만 묶음에서 빼낸다(파일은 그대로)"
+                                                onclick="glDetachMember(this.dataset.rep, this.dataset.filename)"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12h7"/></svg>그룹에서 빼기</button>
+                                        <div class="hi-menu-sep" role="separator"></div>
+                                        <button type="button" role="menuitem" class="hi-menu-item danger"
+                                                th:data-filename="${mem.filename}"
+                                                onclick="deleteGcLog(this.dataset.filename)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>삭제</button>
+                                    </template>
                                 </div>
                             </td>
                         </tr>
@@ -502,7 +561,7 @@
 
 <script th:src="@{/js/select-mode.js?v=2026-09-20}"></script>
 <script th:src="@{/js/analyze-confirm.js?v=2026-09-26}"></script>
-<script th:src="@{/js/gc-log-index.js?v=2026-09-21}"></script>
+<script th:src="@{/js/gc-log-index.js?v=2026-10-22b}"></script>
 
 </body>
 </html>

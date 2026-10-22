@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -78,5 +79,50 @@ class ModalMotionTest {
                 "닫히는 사이 다시 열리면 뒤늦은 감추기가 새 창을 지운다");
         assertTrue(body.contains("if (motionOff()) { ov.hidden = true; return; }"),
                 "동작 줄이기에서 끝 이벤트를 기다린다 — 창이 남는다");
+    }
+
+    @Test
+    @DisplayName("GC 로그 화면 모달은 열고 닫을 때 연출하고, .open 은 사라지는 연출이 끝난 뒤에 뗀다 (2026-10-22)")
+    void gcLogModalsAnimate() throws IOException {
+        String css = resource("/static/css/gc-log.css");
+        assertTrue(css.contains(".gcl-modal.open .modal-box { animation: gclBoxIn"), "모달 상자가 나타나는 연출이 없다");
+        assertTrue(css.contains(".gcl-modal.open { animation: gclOvIn"), "배경이 페이드인되지 않는다");
+        int open = css.indexOf(".gcl-modal.open .modal-box {"), closing = css.indexOf(".gcl-modal.closing .modal-box {");
+        assertTrue(open > 0 && closing > open,
+                ".closing 규칙이 .open 뒤에 없다 — 사라지는 동안에도 .open 이 붙어 있어 명시도가 같으면 나타나기 연출이 이긴다");
+        assertTrue(css.contains(".gcl-modal.closing { animation: gclOvOut .14s ease-in both; pointer-events: none; }"),
+                "사라지는 창이 클릭을 받는다");
+        assertTrue(css.contains(".gcl-modal.open, .gcl-modal.open .modal-box, .gcl-modal.closing, .gcl-modal.closing .modal-box { animation: none; }"),
+                "동작 줄이기에서 연출을 끄지 않는다");
+
+        // 결과 화면 모달 5종(힙 덤프 선택·AI 분석·재분석·이어붙이기·삭제) + 목록 화면 3종은 열고 닫을 때 헬퍼만 거친다
+        for (String js : new String[] { "/static/js/gc-log-analyze.js", "/static/js/gc-log-index.js" }) {
+            String s = resource(js);
+            int hide = s.indexOf("    function hideModal(ov) {");
+            assertTrue(hide > 0, js + " 에 hideModal 이 없다");
+            String body = s.substring(hide, s.indexOf("\n    }\n", hide));
+            int wait = body.indexOf("Common.afterMotion(ov, 'animationend'");
+            assertTrue(body.indexOf("ov.classList.add('closing');") > 0 && wait > 0, js + " 가 사라지는 연출을 기다리지 않는다");
+            assertTrue(body.contains("if (ov._gclSeq === seq) ov.classList.remove('open', 'closing');"),
+                    js + " — 닫히는 사이 다시 열리면 뒤늦은 떼기가 새 창을 닫는다");
+            assertTrue(body.contains("Common.reduceMotion()) { fin(); return; }"), js + " — 동작 줄이기에서 끝 이벤트를 기다린다");
+            // .open 을 직접 붙이고 떼는 곳은 헬퍼 안 한 곳씩뿐 — 그 밖에서 만지면 연출을 건너뛴 경로가 생긴다
+            assertEquals(1, count(s, "classList.add('open')"), js + " 에 showModal 밖의 직접 열기가 있다");
+            assertEquals(0, count(s, "classList.remove('open')"), js + " 에 연출 없이 바로 닫는 경로가 있다");
+        }
+        String an = resource("/static/js/gc-log-analyze.js");
+        for (String id : new String[] { "aiConfirmModal", "deleteGcModal", "matchPickModal", "gclCombineModal" }) {
+            assertTrue(an.contains("hideModal(document.getElementById('" + id + "'))") || an.contains("hideModal(modal)"),
+                    id + " 를 연출 없이 닫는다");
+        }
+        assertTrue(an.contains("showModal(document.getElementById('aiConfirmModal'))")
+                && an.contains("showModal(document.getElementById('deleteGcModal'))")
+                && an.contains("showModal(ov)") && an.contains("showModal(modal)"), "결과 화면 모달이 showModal 로 열리지 않는다");
+    }
+
+    private static int count(String s, String needle) {
+        int n = 0, i = 0;
+        while ((i = s.indexOf(needle, i)) >= 0) { n++; i += needle.length(); }
+        return n;
     }
 }

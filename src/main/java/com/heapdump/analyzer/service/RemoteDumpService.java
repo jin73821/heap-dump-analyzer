@@ -75,9 +75,13 @@ public class RemoteDumpService {
     /**
      * GC 로그 find 이름 글롭 — 정적 상수(테스트가 고정). ⚠ {@code *gc*.log*} 한 방은 {@code logic.log}·{@code magic.log} 를
      * 잡으므로 금지. 회전 접미사({@code gc.log.0}, {@code .current}, {@code .gz})는 각 글롭 끝의 {@code *} 가 받는다.
+     * 2026-10-22: 이름 <b>중간</b>에 {@code gc} 토큰이 있는 형태 — {@code gmadm_1_gc_pid9999.log_20260101}
+     * ({@code -Xloggc:…/<인스턴스>_gc_pid%p.log} + 날짜 붙여 보관) — 를 {@code *_gc_*.log*}·{@code *-gc-*.log*} 로 잡는다.
+     * 앞뒤가 구분자({@code _}/{@code -})인 토큰만 보므로 {@code logic.log}·{@code magic_x.log} 는 여전히 빠진다.
      */
     static final String[] GC_LOG_NAME_GLOBS = {
-            "gc.log*", "gc-*.log*", "gc_*.log*", "*-gc.log*", "*_gc.log*", "*.gc.log*", "gclog*", "*.gclog*", "gc*.log*"
+            "gc.log*", "gc-*.log*", "gc_*.log*", "*-gc.log*", "*_gc.log*", "*.gc.log*", "gclog*", "*.gclog*", "gc*.log*",
+            "*_gc_*.log*", "*-gc-*.log*"
     };
 
     /** 기록 중 판정 — 이 시간 안에 수정된 최신 파일은 JVM 이 쓰는 중으로 본다(자동 전송 제외). */

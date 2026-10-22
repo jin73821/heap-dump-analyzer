@@ -28,6 +28,28 @@
     function fmtSlope(v) { return (v >= 0 ? '+' : '') + (Math.abs(v) < 1 ? v.toFixed(2) : v.toFixed(1)); }
     function pct(v, digits) { return v == null ? '–' : v.toFixed(digits == null ? 1 : digits) + '%'; }
 
+    // ── 모달 열기·닫기 연출 (2026-10-22) ─────────────────────────
+    // 모양은 gc-log.css .gcl-modal(.open = 나타나기, .closing = 사라지기). 이 페이지의 모달 5종(힙 덤프 선택·AI 분석·
+    // 재분석·이어붙이기·삭제)은 열고 닫을 때 이 둘만 거친다 — classList 를 직접 만지면 연출을 건너뛴 경로가 생긴다.
+    // ⚠ .open 은 사라지는 연출이 끝난 뒤에 뗀다. 끝 이벤트는 숨은 탭에서 오지 않으므로 Common.afterMotion 의 시간 상한으로 진행하고,
+    //   '동작 줄이기'면 기다리지 않는다. 닫히는 사이 다시 열리면 세대 번호로 뒤늦은 떼기를 버린다(gc-log-index.js 와 같은 규칙).
+    function showModal(ov) {
+        if (!ov) return;
+        ov._gclSeq = (ov._gclSeq || 0) + 1;
+        ov.classList.remove('closing');
+        ov.classList.add('open');
+    }
+    function hideModal(ov) {
+        if (!isModalOpen(ov)) return;
+        var seq = ov._gclSeq = (ov._gclSeq || 0) + 1;
+        var fin = function () { if (ov._gclSeq === seq) ov.classList.remove('open', 'closing'); };
+        if (!Common.afterMotion || Common.reduceMotion()) { fin(); return; }
+        ov.classList.add('closing');
+        Common.afterMotion(ov, 'animationend', 260, fin);
+    }
+    /** 열려 있고 사라지는 중이 아닌가 — 사라지는 중인 창은 닫힌 것으로 본다(Esc·바깥 클릭이 두 번 닫지 않게). */
+    function isModalOpen(ov) { return !!ov && ov.classList.contains('open') && !ov.classList.contains('closing'); }
+
     function toast(msg, type) {
         var wrap = document.getElementById('cdToastWrap');
         if (!wrap) { alert(msg); return; }
@@ -147,13 +169,13 @@
         btn.textContent = hasResult ? '재분석' : '다시 분석';
         btn.disabled = false;
         _reanalyzeReturnFocus = document.activeElement;
-        modal.classList.add('open');
+        showModal(modal);
         btn.focus();
     }
     function closeReanalyzeConfirm() {
         var modal = document.getElementById('reanalyzeModal');
-        if (!modal || !modal.classList.contains('open')) return;
-        modal.classList.remove('open');
+        if (!isModalOpen(modal)) return;
+        hideModal(modal);
         if (_reanalyzeReturnFocus && _reanalyzeReturnFocus.focus) { try { _reanalyzeReturnFocus.focus(); } catch (e) { ignored('재분석 모달 포커스 복귀', e); } }
         _reanalyzeReturnFocus = null;
     }
@@ -830,7 +852,7 @@
     function openCombineModal() {
         var ov = document.getElementById('gclCombineModal');
         if (!ov) return;
-        ov.classList.add('open');
+        showModal(ov);
         var list = document.getElementById('gclCombineList');
         list.innerHTML = '<div class="gcl-empty">불러오는 중…</div>';
         document.getElementById('gclCombinePreview').hidden = true;
@@ -852,8 +874,7 @@
     }
 
     function closeCombineModal() {
-        var ov = document.getElementById('gclCombineModal');
-        if (ov) ov.classList.remove('open');
+        hideModal(document.getElementById('gclCombineModal'));
     }
 
     function renderCombineList() {
@@ -1013,7 +1034,7 @@
         var err = document.getElementById('matchPickErr'); if (err) { err.textContent = ''; err.classList.remove('show'); }
         document.getElementById('matchPickConfirm').disabled = true;
         list.innerHTML = '<div class="gcl-pick-empty">불러오는 중…</div>';
-        modal.classList.add('open');
+        showModal(modal);
         Common.fetchJSON(api('/match-options')).then(function (d) { _pickOptions = d.options || []; renderPickList(''); })
             .catch(function (e) { list.innerHTML = '<div class="gcl-pick-empty">조회 실패: ' + esc(errMsg(e, '')) + '</div>'; });
     }
@@ -1043,7 +1064,7 @@
             });
         });
     }
-    function closeMatchPickModal() { document.getElementById('matchPickModal').classList.remove('open'); }
+    function closeMatchPickModal() { hideModal(document.getElementById('matchPickModal')); }
     function confirmMatchPick() {
         if (!_pick) return;
         var btn = document.getElementById('matchPickConfirm'); btn.disabled = true;
@@ -1146,13 +1167,13 @@
         dump.style.display = matched ? '' : 'none';
         document.getElementById('aiConfirmBtn').textContent = reanalyze ? '재분석' : '분석 시작';
         _aiReturnFocus = document.activeElement;
-        document.getElementById('aiConfirmModal').classList.add('open');
+        showModal(document.getElementById('aiConfirmModal'));
         document.getElementById('aiConfirmBtn').focus();
     }
     function closeAiConfirm() {
         var modal = document.getElementById('aiConfirmModal');
-        if (!modal.classList.contains('open')) return;
-        modal.classList.remove('open');
+        if (!isModalOpen(modal)) return;
+        hideModal(modal);
         if (_aiReturnFocus && _aiReturnFocus.focus && !_aiReturnFocus.disabled) _aiReturnFocus.focus();
         _aiReturnFocus = null;
     }
@@ -1214,9 +1235,9 @@
     // ── 삭제 ─────────────────────────────────────────────────
     function deleteThis() {
         var err = document.getElementById('deleteGcModalErr'); if (err) { err.textContent = ''; err.classList.remove('show'); }
-        document.getElementById('deleteGcModal').classList.add('open');
+        showModal(document.getElementById('deleteGcModal'));
     }
-    function closeGcDeleteModal() { document.getElementById('deleteGcModal').classList.remove('open'); }
+    function closeGcDeleteModal() { hideModal(document.getElementById('deleteGcModal')); }
     function confirmGcDelete() {
         var deleteFile = document.getElementById('deleteGcFileChk').checked;
         var btn = document.getElementById('deleteGcConfirmBtn'); btn.disabled = true;

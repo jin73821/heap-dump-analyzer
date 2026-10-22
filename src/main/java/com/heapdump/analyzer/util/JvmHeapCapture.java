@@ -605,9 +605,15 @@ public final class JvmHeapCapture {
         return false;
     }
 
-    private static final Pattern ROTATION_SUFFIX = Pattern.compile("(\\.\\d+)?(\\.current)?(\\.gz)?$");
+    /**
+     * 회전 접미사. 2026-10-22: 날짜 보관 접미사({@code _20260101} · {@code -20260101} · {@code .2026-01-01},
+     * 뒤에 시각 숫자 2~6자리 허용) — 외부 스크립트·logrotate dateext 가 붙인다. 연도는 19·20 으로 시작해야 해서
+     * pid 같은 임의 숫자는 벗기지 않는다.
+     */
+    private static final Pattern ROTATION_SUFFIX = Pattern.compile(
+            "([._-](?:19|20)\\d{2}-?\\d{2}-?\\d{2}(?:[-_]?\\d{2,6})?)?(\\.\\d+)?(\\.current)?(\\.gz)?$");
 
-    /** {@code gc.log.3.current} → {@code gc.log}, {@code gc.log.1.gz} → {@code gc.log}. */
+    /** {@code gc.log.3.current} → {@code gc.log}, {@code gc.log.1.gz} → {@code gc.log}, {@code gc.log_20260101.gz} → {@code gc.log}. */
     public static String stripRotation(String p) {
         if (p == null) return null;
         String s = p;
