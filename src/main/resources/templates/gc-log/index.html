@@ -464,7 +464,7 @@
                                     </button>
                                     <template class="hi-more-tpl">
                                         <a th:href="@{/api/gc-log/download/{f}(f=${mem.filename})}"
-                                           th:unless="${mem.fileDeleted}"
+                                           th:unless="${mem.fileDeleted}" th:data-filename="${mem.filename}" data-download
                                            role="menuitem" class="hi-menu-item"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>다운로드</a>
                                         <button type="button" role="menuitem" class="hi-menu-item"
                                                 th:data-filename="${mem.filename}" th:data-rep="${item.filename}"
@@ -561,7 +561,7 @@
 
 <script th:src="@{/js/select-mode.js?v=2026-09-20}"></script>
 <script th:src="@{/js/analyze-confirm.js?v=2026-09-26}"></script>
-<script th:src="@{/js/gc-log-index.js?v=2026-10-22b}"></script>
+<script th:src="@{/js/gc-log-index.js?v=2026-10-29}"></script>
 
 </body>
 </html>

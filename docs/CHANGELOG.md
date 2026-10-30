@@ -1,5 +1,93 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-10-31] 대시보드 — Recent Files 툴팁 사이드바 잘림 수정 · 탐지 현황 행 호버 배경 · 심각도 요약 칩 · 좁은 화면 1단 전환
+
+**버전:** 변경 없음(2.6.1). **대상:** `templates/index.html`, `model/dto/DetectionSummaryItem`, `static/js/krds-tooltip.js`(+ 소비 템플릿 5곳 캐시 키), `DashboardDetectSummaryTest`(+5), `DetectionSummaryItemTest`(신규 4).
+
+### Recent Files 툴팁
+- **원인:** `.sidebar` 가 `overflow-y: auto` 라 그 안의 `position:absolute` 툴팁은 사이드바 경계에서 잘린다. 실측(1400×800): 툴팁 오른쪽 657px / 사이드바 520px, 목록 끝 항목은 하단 931px 로 뷰포트(800px) 밖. 게다가 `.tt-val` 이 말줄임이라 잘림이 없어도 긴 파일명을 끝까지 볼 수 없었다.
+- **수정:** 항목 안 `.fname-tooltip` 은 내용 보관용으로 두고(서버 렌더 — 부분 갱신을 그대로 따라간다) 화면에는 body 직속 싱글턴 `#fnameFloatTip` 이 뜬다(`_fileTip`). `position:fixed` 만으로는 부족하다 — 사이드바가 `sticky` 라 쌓임 맥락에 갇혀 본문의 위치 지정 요소에 덮일 수 있다. 아래 공간이 모자라면 항목 위로 뒤집고, 파일명은 줄바꿈(`overflow-wrap: anywhere`)한다. z-index 190 = 상단바·배너(100·110) 위, 모달(200) 아래.
+- 공용 툴팁 모듈을 쓰지 않은 이유: `float-tooltip.js`·`krds-tooltip.js` 는 둘 다 `textContent` 전용이라 행별 색상이 있는 내용을 못 담는다.
+- 부분 갱신으로 기준 항목이 사라지면 `mouseout` 이 오지 않으므로 `onSwapped` 에서 직접 닫는다. 사이드바를 굴리면 항목을 따라간다(캡처 단계 scroll). ≤900px 숨김은 종전과 같다(`.fname-tooltip { display:none !important }`).
+
+### 탐지 현황 행 호버
+- 세 종류(힙덤프·코어덤프·GC로그) 공통 `.detect-item:hover` — 배경 `#EFF6FF`(Recent Files 항목과 같은 색). 행 좌우 패딩 0→8px 로 배경이 점·배지에 붙지 않게 했고, 행 끝이 KPI 카드 끝과 맞는다.
+- ⚠ `@media (hover: hover)` 로 감싸지 않았다 — 마우스를 장치로 인식하지 못하는 환경에서 거짓이라 기능이 조용히 꺼진다(헤드리스 Chrome 실측: `:hover` 는 참인데 미디어 쿼리는 거짓). 같은 페이지의 `.file-item:hover` 도 조건 없이 쓴다.
+
+### 탐지 현황 — 심각도 요약 칩 + 툴팁 (파일명이 사라지던 문제)
+- **문제:** 심각도 4종이 모두 있는 힙 행은 종류별 칩이 폭을 다 차지해 파일명 폭이 0 이었다(뷰포트 1400px 이하, 그 뒤 패딩 8px 로 약 1440px 이하). `.detect-fname` 이 `flex:1` 이라 공간이 모자라면 칩이 아니라 파일명만 줄어든다.
+- **칩:** 힙 행의 종류별 칩을 요약 칩 하나로 바꿨다 — 가장 높은 심각도 색, 문구 `critical x3 +9`(그 심각도 건수 + 나머지 건수). 판단할 정보가 칩에 남도록 패널 제목("critical 우선")과 같은 기준을 쓴다. 코어덤프·GC로그 행은 이미 칩이 하나이고 더 보일 내역이 없어 그대로다.
+- **툴팁:** `krds-tooltip.js`(`data-tip`) — hover·키보드 포커스·터치 탭 토글·바깥 탭·Esc. 내역은 건수가 있는 심각도만 한 줄씩. 칩에 `tabindex="0"`, `::after` 투명 영역으로 터치 대상을 넓혔다. 대시보드는 이 모듈을 처음 싣는다(`float-tooltip.js` 와 섞지 않음).
+- **값 계산:** `DetectionSummaryItem` 의 파생 getter(`topSeverity`·`severityChip`·`severityTip`) — `th:with` 삼항은 null 이 되는 함정 59 때문이다. 화면 전용이라 `@JsonIgnore` 로 `/api/history/detections` 응답은 그대로다.
+- **`krds-tooltip.js`:** `window.KrdsTooltip = { hide }` 공개(추가만). 툴팁을 연 채 칩이 교체되면 `mouseout`·`focusout` 이 오지 않아 터치는 옛 숫자가 남고, 스크롤 때 분리된 칩 좌표(0,0)로 튄다 → `onSwapped` 에서 닫는다. 캐시 키 6곳 `?v=2026-10-31`.
+- **좁은 패널:** 칩을 줄여도 901~1100px 은 파일명 폭이 0 이었다(패널 자체가 좁다). `#dashDetectKinds` 를 컨테이너(`detlist`)로 선언하고 `max-width: 300px` 이면 파일명 첫 줄·건수/칩/배지 다음 줄 — 뷰포트가 아니라 패널 폭이 기준이라 배너 접힘을 따라간다(1100px: 펼침 228px 두 줄 / 접힘 316px 한 줄). 모바일(≤480px) 규칙도 `flex-basis: 100%`→`calc(100% - 18px)` 로 맞춰 점만 한 줄을 차지하던 3줄 행을 없앴다.
+
+| 뷰포트 | 첫 행(심각도 4종) 파일명 폭 — 변경 전 | 변경 후 |
+|---|---|---|
+| 901px | 0 | 95px(두 줄) |
+| 1024px | 0 | 156px(두 줄) |
+| 1280px | 0 | 102px |
+| 1400px | 0 | 162px |
+| 1920px | 241px | 422px |
+
+### 좁은 화면 — 오른쪽 카드를 왼쪽 열 아래로
+- **문제:** 2단(`.dashboard-top`·`.grid2`)이 뷰포트 900px 이하에서만 1단이 되어, 그 위 폭에서 카드가 잘렸다. 실측: 본문 콘텐츠 폭 490px 이하에서 진행률·Queue 카드가 본문 밖으로(1024px: 42px, 901px: 140px), 640px 이하에서 Detections 내용이 카드 밖으로(+6~155px). 증상은 배너 상태와 무관하게 **본문 폭**으로만 갈렸다.
+- **수정:** `.main-content` 를 컨테이너(`dashmain`)로 선언하고 `max-width: 700px`(마지막 넘침 640px + 여유)이면 `grid-template-columns: minmax(0, 1fr)`. 순서는 통계 → 진행률 → Queue → Detections → 탐지 현황. 브라우저 폭 환산 **배너 펼침 1260px 이하 · 접힘 1084px 이하**이고, 배너를 토글하면 새로고침 없이 따라간다. 기존 900px 미디어 규칙은 그대로 뒀다(본문이 700px 보다 넓어도 태블릿 폭은 1단 유지).
+- ⚠ `.main-content` 가 컨테이너라 그 안의 `position:fixed` 는 기준이 바뀔 수 있다 — 모달은 `</main>` 뒤에 있어 영향 없고(본문 안 fixed 0건 실측), 새 모달도 본문 밖에 둘 것.
+- 위 절의 '1024px 에서 Analysis Queue 카드가 잘려 보임'은 이 수정으로 해소됐다.
+
+### 알려진 문제(기존, 이번 범위 밖)
+- 힙 행의 `.detect-fname` 에는 `title` 이 없어 말줄임된 파일명 전체를 볼 수 없다(코어·GC 행에는 있다).
+
+### 검증
+- 실제 템플릿을 Thymeleaf 로 렌더한 픽스처 + Chrome 128 실제 마우스 호버로 수정 전 재현 → 수정 후 확인: `elementFromPoint` 로 툴팁 오른쪽·아래 가장자리가 최상단임을 확인, 호버 중 부분 갱신(옛 항목 제거 뒤 커서 아래 새 항목으로 교체, 툴팁 1개 유지), 사이드바 스크롤 16px 시 툴팁 16px 추종, 모달 열림 시 닫힘, 880px 폭 미표시.
+- 요약 칩: 마우스 호버 / Tab 포커스·Esc(포커스 유지) / 터치 에뮬레이션 1탭 표시·2탭 닫힘·바깥 탭 닫힘(1024·390px, `(hover: hover)` 거짓 환경) / 툴팁을 연 채 부분 갱신(마우스: 새 칩으로 교체, 터치: 닫힘) / 901~1400px·배너 접힘·390px 에서 행 넘침·가로 스크롤 없음.
+- 좁은 화면: 901~1400px 배너 펼침·접힘 전부 본문 가로 넘침·카드 밖 넘침 0, 경계 1260/1261px·1084/1085px 전환 정확. 새로고침 없는 배너 토글, 부분 갱신 후 유지, 모달 뷰포트 전체 덮음, 두 툴팁 동작.
+- `mvn test` 1071건 통과(라이브 4건 skip).
+
+## [2026-10-29] v2.6.1 — 한글 파일명 다운로드·리다이렉트 헤더 + 다운로드 화면 오류 정비 (힙·코어·GC 로그)
+
+**버전:** 2.6.0 → **2.6.1** (`pom.xml` + UI 표기 3곳 `fragments/banner.html`·`index.html`·`progress.html` + `CLAUDE.md` 실행 예시). 쉘 스크립트 무변경.
+
+**제보(사내망 2026-10-29 19:17):** `Http11Processor - The HTTP response header [Content-Disposition] with value [attachment; filename="nodejs 사용여부 전수조사_v1.0.xlsx"] has been removed from the response because it is invalid` + `UnmappableCharacterException`. Files 페이지 단건·일괄 다운로드에서 발생.
+
+### 원인
+- Tomcat 은 응답 헤더를 ISO-8859-1 로 인코딩하고, 쓸 수 없는 값은 **그 헤더만 지운 채** 응답을 계속 보낸다(200, 본문 전량). 예외가 컨트롤러로 오지 않아 서버 쪽에서는 성공이다.
+- `/download/{f}`(힙)·`/api/core-dump/download/{f}`·`/api/gc-log/download/{f}` 세 곳이 `"attachment; filename=\"" + 이름 + "\""` 로 한글을 그대로 넣었다. PDF 리포트·RAG 내보내기는 이미 ASCII 대체값 + `filename*` 이라 안전했다.
+- Files 페이지는 "Content-Disposition 이 없으면 세션 만료" 로 판정해 `/login` 으로 보냈다 → **로그인 상태인데 로그인 화면**, 파일은 저장되지 않고 일괄은 그 자리에서 중단.
+- **같은 부류(점검 중 발견):** `"redirect:/core-dump/analyze/" + 이름`(코어 3곳)·`"redirect:/analyze/…" + 이름`(힙 6곳) — 한글 이름이면 **Location 이 지워진 302**(빈 화면). 내장 Tomcat 11.0.25 + Spring MVC 로 실측 재현.
+
+### 서버 — `util/HttpHeaderValues`(신규, 단일 출처)
+- `attachment(name)`/`inline(name)`/`contentDisposition(type, name)` → `type; filename="ASCII 대체값"; filename*=UTF-8''…`. 대체값은 출력 가능 ASCII 밖의 문자와 `" \` 를 `_` 로(CR/LF 로 헤더를 끊을 수 없다). `filename*` 는 RFC 5987 attr-char 만 남기는 자체 인코더 — `URLEncoder` 는 공백을 `+` 로 바꾸고 attr-char 가 아닌 `*` 를 남긴다. 빈 이름은 `download`.
+- `pathSegment(name)` → `redirect:` 경로용 UTF-8 퍼센트 인코딩(`UriUtils.encodePathSegment` — 공백·`? # % { }` 도).
+- 적용: 다운로드 3곳 + PDF 리포트 2곳·RAG 내보내기·Leak 룰 내보내기(기존 수작업 조립 통일) + 전송 로그 내보내기(`setContentDispositionFormData` = `form-data` → `attachment`, 함정 19) / 리다이렉트 9곳(`CoreDumpViewController` 3 · `HeapDumpViewController` 6).
+
+### 프론트 — `Common.downloadFile` · `Common.filenameFromDisposition`(`common.js`, 신규)
+- **다운로드는 1바이트 Range 요청으로 먼저 확인한 뒤 브라우저 기본 다운로드**(`<a download>` 클릭). 판정: 401 또는 `/login` 리다이렉트 = 세션 만료 / 503 `DB_UNAVAILABLE` = DB 장애(배너 이벤트 발행) / 404 = 삭제·이동 / 그 밖 4xx·5xx = 서버 JSON 의 `error` / 헤더 없는 HTML = 잘못된 응답. 206·200·416(빈 파일)은 내려받는다 — Range 를 지우는 중간 장비가 200 전량을 보내면 헤더만 보고 끊는다.
+- 왜 blob 이 아닌가: 종전 Files 페이지는 fetch→blob 이라 수 GB 힙 덤프를 브라우저 메모리에 다 받은 뒤에야 저장이 시작되고 그동안 진행률도 없었다. 왜 HEAD 가 아닌가: Spring+Tomcat 11 에서 HEAD 는 **파일을 끝까지 읽고 버린다**(2GB 실측: 2GB 읽음). Range 1바이트는 206·1바이트 읽기·Content-Disposition 유지(실측).
+- 파일명은 RFC 6266 대로 `filename*` 우선. 응답에 이름이 없으면(옛 서버 — 헤더가 Tomcat 에서 지워짐) 호출자가 준 이름이 `download` 속성으로 들어가 **미수정 서버에서도 한글 이름으로 받는다**.
+- 적용 화면: Files 단건·일괄(힙·코어·GC 로그) · 대시보드 Recent Files(힙·GC 로그) · 분석 화면 원본 다운로드 · GC 로그 목록 구성 파일 ⋯ 메뉴(`data-download` 표지 → 링크 이동 대신 공용 함수). 로그인 이동은 **실제 세션 만료일 때만**(안내 후 이동).
+- Files 일괄: 세션 만료·DB 장애면 나머지도 같은 이유로 실패하므로 **멈추고**, 끝나면 실패·미처리 파일을 모아 alert(최대 10개 + 외 N건) — 업로드 큐의 `toast` 는 한 번에 하나만 떠서 어느 파일이 빠졌는지 남지 않았다.
+- RAG 내보내기(`blobDownload`)·전송 로그 내보내기도 `Common.filenameFromDisposition` — 종전 정규식은 앞쪽 `filename=`(ASCII 대체값)을 먼저 잡아 한글 이름이 `____` 로 저장될 구조였다.
+- 캐시 키 `common.js`(banner·account-memo)·`analyze.js`·`gc-log-index.js` `?v=2026-10-29`.
+
+### 코어 덤프·GC 로그 점검 결과
+| 경로 | 종전 | 지금 |
+|---|---|---|
+| 코어 원본 다운로드 `/api/core-dump/download` | 한글이면 헤더 소실 | 헬퍼 |
+| GC 로그 원본 다운로드 `/api/gc-log/download` | 한글이면 헤더 소실 | 헬퍼 |
+| 코어 진행·인쇄 화면 → 결과 리다이렉트 | 한글이면 Location 없는 302 | 경로 인코딩 |
+| 코어 크래시 PDF | 안전(ASCII+filename*) | 헬퍼로 통일 |
+| GC 로그 목록 ⋯ 다운로드 | 링크 직행(실패 시 화면 이동) | 공용 다운로드 |
+| GC 로그 화면 리다이렉트 | 해당 없음(JS 이동·Thymeleaf 링크는 인코딩됨) | — |
+
+### 검증
+- 테스트 +19 → **1062건 통과**(라이브 4 skip): `HttpHeaderValuesTest`(6 — 제보 파일명 골든·종전 형식이 ISO-8859-1 불가·적대 문자·attr-char 집합·빈 이름·경로 조각) · `HttpHeaderValuesTomcatTest`(3 — **내장 Tomcat 왕복**: 한글 헤더 소실·Location 없는 302 재현 + 헬퍼 값 도착) · `DownloadHeaderEndpointTest`(5 — 힙(.xlsx, 모든 확장자 허용)·코어·GC 다운로드의 헤더 + `Range: bytes=0-0` → 206·1바이트·같은 헤더 / 코어·힙 리다이렉트 인코딩) · `DownloadFrontContractTest`(5 — `common.js` 정규식을 뽑아 Java 로 컴파일해 **서버 헤더 6종에서 원래 이름** 복원·옛 `form-data`·토큰 형식 / `downloadFile` 계약 / Files·대시보드·분석·GC 메뉴·내보내기 배선 / 서버 소스에 직접 조립 0건). `DbOutageDisplaySmokeTest` 의 common.js 캐시 키 단언은 '2026-09-26 이상' 비교로 완화.
+- 헤드리스 Chrome + 스텁 서버로 `Common.downloadFile` 11 시나리오(정상·옛 서버·302/401 만료·404·503 DB(이벤트 unavailable→available)·400·416·HTML·Range 무시 64MB → 64KB 에서 끊김) 및 파일명 해석 8종 확인.
+- 운영 재기동(`heap-analyzer-2.6.1.jar`) — 정적 `common.js` 신규 함수 · 미인증 `/download` 302→`/login` · `/api/{core-dump,gc-log}/download` 401 JSON 확인. 재기동 뒤 `has been removed` WARN 0건.
+
+⚠ k8s 패키지(`/opt/genspark/heapApp_k8s`)는 여전히 2.5.7 — 사내망이 k8s 로 운영된다면 이미지 재빌드가 필요하다(설정 키 변경 없음).
+
 ## [2026-10-22] v2.6.0 릴리스
 
 **버전:** 2.5.9 → **2.6.0** (`pom.xml` + UI 표기 3곳 `fragments/banner.html`·`index.html`·`progress.html` + `CLAUDE.md` 실행 예시). 쉘 스크립트는 버전 비의존이라 무변경.

@@ -23,6 +23,7 @@ import com.heapdump.analyzer.util.FileTypeRules;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
 import com.heapdump.analyzer.util.WasInstanceName;
+import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
@@ -713,7 +714,7 @@ public class HeapDumpViewController {
         HeapAnalysisResult cached = analyzerService.getCachedResult(filename);
         if (cached != null && cached.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.SUCCESS) {
             logger.info("Cache hit for {}, redirecting to result", filename);
-            return "redirect:/analyze/result/" + filename;
+            return "redirect:/analyze/result/" + HttpHeaderValues.pathSegment(filename);
         }
         model.addAttribute("filename", filename);
         return "progress";
@@ -732,12 +733,12 @@ public class HeapDumpViewController {
             logger.warn("[Rerun] Dump file not found: {}. Preserving existing analysis data.", filename);
             redirectAttributes.addFlashAttribute("rerunError",
                     "덤프 파일이 존재하지 않아 재분석할 수 없습니다. 기존 분석 결과는 유지됩니다.");
-            return "redirect:/analyze/result/" + filename;
+            return "redirect:/analyze/result/" + HttpHeaderValues.pathSegment(filename);
         }
 
         analyzerService.clearCache(filename);
         logger.info("Cache cleared for {} → restarting", filename);
-        return "redirect:/analyze/" + filename;
+        return "redirect:/analyze/" + HttpHeaderValues.pathSegment(filename);
     }
 
     // ── 분석 결과 화면 ───────────────────────────────────────────
@@ -746,7 +747,7 @@ public class HeapDumpViewController {
     public String analyzeResult(@PathVariable String filename, Model model) {
         filename = FilenameValidator.validate(filename);
         HeapAnalysisResult result = analyzerService.getCachedResult(filename);
-        if (result == null) return "redirect:/analyze/" + filename;
+        if (result == null) return "redirect:/analyze/" + HttpHeaderValues.pathSegment(filename);
 
         if (result.getAnalysisStatus() == HeapAnalysisResult.AnalysisStatus.ERROR) {
             model.addAttribute("error", result.getErrorMessage());
@@ -908,7 +909,7 @@ public class HeapDumpViewController {
         HeapAnalysisResult result = analyzerService.getCachedResult(safe);
         if (result == null
                 || result.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS) {
-            return "redirect:/analyze/result/" + safe;
+            return "redirect:/analyze/result/" + HttpHeaderValues.pathSegment(safe);
         }
         model.addAttribute("filename", safe);
         String base = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "");
@@ -923,7 +924,7 @@ public class HeapDumpViewController {
         HeapAnalysisResult result = analyzerService.getCachedResult(safe);
         if (result == null
                 || result.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS) {
-            return "redirect:/analyze/result/" + safe;
+            return "redirect:/analyze/result/" + HttpHeaderValues.pathSegment(safe);
         }
         pdfReportService.buildPrintModel(safe, result).forEach(model::addAttribute);
         return "analyze-print";

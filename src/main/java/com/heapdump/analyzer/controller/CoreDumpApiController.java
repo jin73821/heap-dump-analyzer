@@ -7,6 +7,7 @@ import com.heapdump.analyzer.model.entity.TargetServer;
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.CoreDumpPdfReportService;
 import com.heapdump.analyzer.service.CoreDumpSysrootService;
+import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
@@ -20,8 +21,6 @@ import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.File;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
 import java.security.Principal;
@@ -123,7 +122,7 @@ public class CoreDumpApiController {
         File file = new File(analyzerService.dumpFilesDir(), safe);
         if (!file.exists() || !file.isFile()) return ResponseEntity.notFound().build();
         return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + safe + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment(safe))   // 함정 71
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .contentLength(file.length())
                 .body(new FileSystemResource(file));
@@ -158,15 +157,11 @@ public class CoreDumpApiController {
             String base = safe.replaceAll("\\.core$", "");
             if (viewingRevision) base += "-" + rev;
             base += "-crash-report.pdf";
-            String ascii = base.replaceAll("[^\\x20-\\x7E]", "_");
-            String utf8 = URLEncoder.encode(base, StandardCharsets.UTF_8).replace("+", "%20");
-
             String disposition = "inline".equalsIgnoreCase(mode) ? "inline" : "attachment";
 
             HttpHeaders h = new HttpHeaders();
             h.setContentType(MediaType.APPLICATION_PDF);
-            h.add(HttpHeaders.CONTENT_DISPOSITION,
-                    disposition + "; filename=\"" + ascii + "\"; filename*=UTF-8''" + utf8);
+            h.add(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.contentDisposition(disposition, base));
             h.setCacheControl("no-store");
             h.add("X-Content-Type-Options", "nosniff");
             return new ResponseEntity<>(pdf, h, HttpStatus.OK);

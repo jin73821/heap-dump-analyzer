@@ -142,6 +142,117 @@
         catch (e) { ignored('db:available 이벤트 발행 실패', e); }
     };
 
+    /* ── 파일 다운로드 (2026-10-29, 함정 71) ──
+       Content-Disposition 파일명 해석과 다운로드 실행의 단일 출처.
+       ⚠ 정규식은 DownloadFrontContractTest 가 이름으로 뽑아 서버(HttpHeaderValues) 출력과 대조한다 — 이름을 바꾸지 말 것. */
+    var DISPO_EXT_RE = /(?:^|;)\s*filename\*\s*=\s*([^';\s]*)'[^']*'([^;\s]+)/i;
+    var DISPO_QUOTED_RE = /(?:^|;)\s*filename\s*=\s*"((?:[^"\\]|\\.)*)"/i;
+    var DISPO_TOKEN_RE = /(?:^|;)\s*filename\s*=\s*([^;\s"]+)/i;
+
+    /**
+     * Content-Disposition → 파일명 (없으면 null).
+     * RFC 6266 대로 filename*(UTF-8)이 filename(ASCII 대체값)보다 우선한다 — 서버는 한글을 filename= 에
+     * '_' 로 바꿔 넣으므로 앞쪽 filename= 을 먼저 잡으면 '____.xlsx' 로 저장된다.
+     */
+    Common.filenameFromDisposition = function (cd) {
+        if (!cd) return null;
+        var m = DISPO_EXT_RE.exec(cd);
+        if (m) {
+            try {
+                if (/^utf-8$/i.test(m[1])) return decodeURIComponent(m[2]);
+                return m[2].replace(/%([0-9A-Fa-f]{2})/g, function (all, hex) {   // ISO-8859-1: 바이트 = 코드포인트
+                    return String.fromCharCode(parseInt(hex, 16));
+                });
+            } catch (e) { ignored('filename* 디코딩 실패 — filename 으로 폴백', e); }
+        }
+        m = DISPO_QUOTED_RE.exec(cd);
+        if (m) return m[1].replace(/\\(.)/g, '$1');
+        m = DISPO_TOKEN_RE.exec(cd);
+        return m ? m[1] : null;
+    };
+
+    function downloadError(msg, status, flags) {
+        var err = new Error(msg);
+        err.status = status;
+        if (flags) for (var k in flags) if (Object.prototype.hasOwnProperty.call(flags, k)) err[k] = flags[k];
+        return err;
+    }
+
+    /** 실패 응답 본문 → 사람이 읽을 문구. 서버 JSON 의 error/message 를 쓰고, 아니면 상태 코드로. */
+    function downloadFailMessage(status, bodyText) {
+        if (status === 404) return '파일을 찾을 수 없습니다. 이미 삭제되었거나 이동되었을 수 있습니다.';
+        if (status === 403) return '이 파일을 내려받을 권한이 없습니다.';
+        var detail = null;
+        try {
+            var b = JSON.parse(bodyText);
+            detail = b && (b.error || b.message);
+        } catch (e) { ignored('다운로드 오류 본문 파싱 — JSON 아님', e); }
+        if (detail) return detail;
+        return status >= 500 ? '서버 오류로 파일을 내려받지 못했습니다 (HTTP ' + status + ').'
+                             : '파일을 내려받지 못했습니다 (HTTP ' + status + ').';
+    }
+
+    /**
+     * 파일 다운로드 — **1바이트 Range 요청으로 먼저 확인**한 뒤 브라우저 기본 다운로드로 받는다.
+     *
+     * 왜 blob 이 아닌가: 힙 덤프는 수 GB 라 fetch→blob 은 전량을 브라우저 메모리(또는 blob 저장소)에 담은 뒤에야
+     * 저장이 시작되고, 그동안 진행률도 안 보인다. 반대로 바로 링크를 열면 세션 만료·삭제된 파일·DB 장애가
+     * 로그인 화면·빈 화면·JSON 원문으로 보인다. Range 1바이트는 서버가 206 으로 **1바이트만 읽고**
+     * Content-Disposition 을 그대로 돌려주므로(HEAD 는 Tomcat 이 파일을 끝까지 읽는다 — 실측) 판정 비용이 없다.
+     *
+     * @param url  다운로드 URL (경로의 파일명은 호출자가 encodeURIComponent)
+     * @param opts { fallbackName } — 응답에 파일명이 없을 때 저장 이름
+     * @return Promise<{filename}> / reject Error(.status, .sessionExpired | .dbUnavailable | .notFound | .network)
+     */
+    Common.downloadFile = function (url, opts) {
+        opts = opts || {};
+        var ctrl = (typeof AbortController === 'function') ? new AbortController() : null;
+        return fetch(url, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+            // X-Requested-With: 비-API 경로(/download/**)의 검증 오류·DB 장애도 HTML 대신 JSON 으로 받는다
+            headers: { 'Range': 'bytes=0-0', 'X-Requested-With': 'XMLHttpRequest' },
+            signal: ctrl ? ctrl.signal : undefined
+        }).catch(function (e) {
+            throw downloadError('서버에 연결할 수 없습니다. 네트워크 상태를 확인해 주세요.', 0, { network: true, cause: e });
+        }).then(function (r) {
+            var ct = (r.headers.get('content-type') || '').toLowerCase();
+            // 비-API 경로의 미인증은 302 → /login HTML 200 (fetch 가 따라간다), /api/** 는 401 JSON
+            var toLogin = r.redirected && /\/login(?:[/?#]|$)/.test(r.url || '');
+            if (r.status === 401 || toLogin) {
+                if (ctrl) ctrl.abort();
+                throw downloadError('로그인 세션이 만료되었습니다. 다시 로그인해 주세요.', 401, { sessionExpired: true });
+            }
+            // 206(Range 처리) · 200(중간 장비가 Range 를 지운 경우) · 416(빈 파일 — 범위를 만족할 수 없음)은 내려받을 수 있다
+            if (r.status === 206 || r.status === 200 || r.status === 416) {
+                var cd = r.headers.get('Content-Disposition');
+                if (!cd && ct.indexOf('text/html') >= 0) {
+                    if (ctrl) ctrl.abort();
+                    throw downloadError('다운로드 대신 웹 페이지가 응답했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.', r.status);
+                }
+                if (ctrl) ctrl.abort();   // 200 이면 본문 전량이 오고 있다 — 여기서 끊는다(실제 수신은 아래 링크가 한다)
+                if (_dbDownSeen) Common.noteDbAvailable();
+                // 이름이 헤더에 없으면(옛 서버는 한글 이름 헤더가 Tomcat 에서 지워졌다) download 속성이 대신한다
+                var name = Common.filenameFromDisposition(cd) || opts.fallbackName || '';
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = name;
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                return { filename: name };
+            }
+            return r.text().then(function (t) {
+                if (Common.isDbUnavailable(r.status, t)) {
+                    Common.noteDbUnavailable(Common.DB_UNAVAILABLE_MESSAGE);
+                    throw downloadError(Common.DB_UNAVAILABLE_MESSAGE, r.status, { dbUnavailable: true, code: 'DB_UNAVAILABLE' });
+                }
+                throw downloadError(downloadFailMessage(r.status, t), r.status, { notFound: r.status === 404 });
+            });
+        });
+    };
+
     /**
      * 동적 form 에 `_csrf` hidden input 추가.
      * GET → POST 전환에서 사용 (CLAUDE.md 의 동적 폼 패턴).

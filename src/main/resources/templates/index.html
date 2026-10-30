@@ -66,7 +66,7 @@
         .file-item { display: flex; align-items: center; gap: 8px; padding: 9px 10px;
                      border-radius: 8px; border: 1px solid #E5E7EB; background: #F9FAFB; margin-bottom: 6px;
                      position: relative; }
-        .file-item:hover { border-color: #93C5FD; background: #EFF6FF; z-index: 10; }
+        .file-item:hover { border-color: #93C5FD; background: #EFF6FF; }
         .ext-badge { width: 32px; height: 38px; background: #DBEAFE; border-radius: 4px;
                      display: flex; align-items: center; justify-content: center;
                      font-size: 9px; font-weight: 700; color: #1D4ED8; flex-shrink: 0; }
@@ -82,18 +82,22 @@
         .file-info { flex: 1; overflow: hidden; min-width: 0; }
         .fname { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .fmeta { font-size: 11px; color: #9CA3AF; margin-top: 2px; }
-        .file-item .fname-tooltip {
-            display: none; position: absolute; left: 0; top: 100%; margin-top: 4px;
+        /* 항목 안의 .fname-tooltip 은 내용 보관용이고 화면에는 body 직속 #fnameFloatTip 이 뜬다(_fileTip 스크립트).
+           사이드바가 overflow-y:auto 라 그 안의 absolute 는 경계에서 잘리고, sticky 라 fixed 를 줘도 본문에 덮일 수 있다.
+           z-index 190 = 상단바·배너(100·110) 위, 모달(200) 아래 */
+        .fname-tooltip {
+            display: none; position: fixed; left: 0; top: 0;
             background: #1e293b; color: #fff; font-size: 12px; font-weight: 500;
-            padding: 10px 14px; border-radius: 8px; white-space: nowrap; z-index: 100;
+            padding: 10px 14px; border-radius: 8px; white-space: nowrap; z-index: 190;
             box-shadow: 0 4px 12px rgba(0,0,0,.25); pointer-events: none;
-            max-width: 420px;
+            max-width: min(420px, calc(100vw - 16px));
         }
-        .file-item:hover .fname-tooltip { display: block; }
+        #fnameFloatTip.show { display: block; }
         .fname-tooltip .tt-row { display: flex; gap: 8px; margin-bottom: 3px; }
         .fname-tooltip .tt-row:last-child { margin-bottom: 0; }
         .fname-tooltip .tt-label { color: #94a3b8; flex-shrink: 0; min-width: 50px; }
-        .fname-tooltip .tt-val { color: #fff; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+        /* 말줄임 금지 — 목록에서 잘린 파일명을 끝까지 보는 곳이다 */
+        .fname-tooltip .tt-val { color: #fff; font-weight: 600; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
         .file-btns { display: flex; gap: 3px; flex-shrink: 0; }
         .fb { width: 26px; height: 26px; border: 1px solid #E5E7EB; border-radius: 5px;
               background: #fff; cursor: pointer; display: flex; align-items: center;
@@ -130,7 +134,7 @@
         .compare-btn:hover { border-color: #93C5FD; color: #2563EB; background: #F0F9FF; }
         .new-badge { font-size: 10px; padding: 1px 6px; background: #DBEAFE;
                      color: #1D4ED8; border-radius: 10px; font-weight: 600; }
-        .main-content { padding: 20px; overflow-y: auto; }
+        .main-content { padding: 20px; overflow-y: auto; container-type: inline-size; container-name: dashmain; }
         .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;
                  border-left: 4px solid; font-size: 13px; }
         .alert-success { background: #D1FAE5; color: #065F46; border-color: #10B981; }
@@ -179,6 +183,13 @@
                          background: linear-gradient(90deg, #2563EB, #059669); }
         .progress-pct { font-size: 12px; font-weight: 700; color: #1F2937; min-width: 36px; text-align: right; }
         .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        /* 본문이 좁으면 오른쪽 카드(진행률·Queue·탐지 현황)를 왼쪽 열 아래로 — 2단을 유지하면 본문 폭 490px 이하에서 카드가
+           본문 밖으로 잘리고 640px 이하에서 Detections 내용이 카드를 넘는다. 기준은 본문 콘텐츠 폭(padding 제외)이라 컨테이너 쿼리다 —
+           배너를 접으면 같은 뷰포트에서 176px 달라진다(브라우저 폭 환산: 펼침 1260px · 접힘 1084px).
+           ⚠ .main-content 가 컨테이너라 그 안의 position:fixed 는 기준이 바뀔 수 있다 — 모달은 </main> 뒤에 둘 것 */
+        @container dashmain (max-width: 700px) {
+            .dashboard-top, .grid2 { grid-template-columns: minmax(0, 1fr); }
+        }
         .full { grid-column: 1 / -1; }
         .panel { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 16px;
                  min-width: 0; }   /* Grid 자식 기본 min-width:auto 로 인한 가로 오버플로우 방지 */
@@ -249,20 +260,34 @@
         .dc-medium .detect-card-val { color: #B45309; }
         .dc-low { border-color: #BBF7D0; background: #F0FDF4; }
         .dc-low .detect-card-val { color: #16A34A; }
-        .detect-item { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #F3F4F6;
-                       min-width: 0; }
+        .detect-item { display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-bottom: 1px solid #F3F4F6;
+                       min-width: 0; transition: background-color .12s; }
         .detect-item:last-child { border-bottom: none; }
+        /* 좌우 패딩 8px 은 배경이 점·배지에 붙지 않게 하는 여백. 색은 Recent Files(.file-item:hover)와 같다 */
+        .detect-item:hover { background: #EFF6FF; border-bottom-color: transparent; border-radius: 6px; }
         .detect-fname { font-size: 12px; font-weight: 600; flex: 1; min-width: 0;
                         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .detect-count { font-size: 11px; color: #6B7280; flex-shrink: 0; }
         /* 칩이 많을 때 줄바꿈 허용해 부모 .detect-item / .panel 가로 오버플로우 방지 */
         .detect-sevs { display: flex; gap: 6px; flex-wrap: wrap; }
         .detect-sev { font-size: 10px; padding: 1px 6px; border-radius: 10px; font-weight: 500; }
+        /* 힙 행 요약 칩 — 종류별 칩을 늘어놓으면 4종일 때 파일명 폭이 0 이 된다. 내역은 툴팁([data-tip], krds-tooltip.js).
+           ::after 는 터치 대상을 넓히는 투명 영역 */
+        .detect-sev-sum { position: relative; white-space: nowrap; cursor: help; }
+        .detect-sev-sum::after { content: ''; position: absolute; inset: -6px -4px; }
+        .detect-sev-sum:focus-visible { outline: 2px solid #2563EB; outline-offset: 2px; }
         .ds-critical { background: #FEE2E2; color: #DC2626; }
         .ds-high { background: #FFEDD5; color: #EA580C; }
         .ds-medium { background: #FEF3C7; color: #92400E; }
         .ds-low { background: #D1FAE5; color: #065F46; }
         .detect-empty { text-align: center; padding: 24px 0; color: #9CA3AF; font-size: 12px; }
+        /* 행이 좁으면 파일명이 첫 줄, 건수·칩·배지가 다음 줄 — .detect-fname 은 flex:1 이라 그대로 두면 파일명만 폭 0 으로 줄어든다.
+           판정은 패널 폭이라 컨테이너 쿼리(배너를 접으면 같은 뷰포트에서 폭이 달라진다). 18px = 점 8 + gap 10 */
+        #dashDetectKinds { container-type: inline-size; container-name: detlist; }
+        @container detlist (max-width: 300px) {
+            .detect-item { flex-wrap: wrap; gap: 6px 10px; }
+            .detect-fname { flex-basis: calc(100% - 18px); }
+        }
         /* ── Daily Detections Panel ──────────── */
         .det-kpi { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
         .det-kpi-card { background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; min-width: 0; }
@@ -608,7 +633,7 @@
             .det-kpi-val { font-size: 16px; }
             /* 탐지 현황 행: 좁은 폭에서 파일명을 한 줄 차지로, 나머지(건수/칩/배지)는 둘째 줄로 wrap */
             .detect-item { flex-wrap: wrap; gap: 6px 10px; }
-            .detect-fname { flex-basis: 100%; }
+            .detect-fname { flex-basis: calc(100% - 18px); }
             .history-item { flex-wrap: wrap; gap: 4px 8px; }
             .hname { flex-basis: calc(100% - 20px); }
             .main-content { padding: 12px; overflow-x: hidden; }
@@ -641,7 +666,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.6.0 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.6.1 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -954,14 +979,9 @@
                         <div class="detect-fname" th:text="${di.filename}">dump.hprof</div>
                         <div class="detect-count" th:text="${di.suspectCount} + '건'">0건</div>
                         <div class="detect-sevs">
-                            <span th:if="${di.criticalCount > 0}" class="detect-sev ds-critical"
-                                  th:text="'critical x' + ${di.criticalCount}"></span>
-                            <span th:if="${di.highCount > 0}" class="detect-sev ds-high"
-                                  th:text="'high x' + ${di.highCount}"></span>
-                            <span th:if="${di.mediumCount > 0}" class="detect-sev ds-medium"
-                                  th:text="'medium x' + ${di.mediumCount}"></span>
-                            <span th:if="${di.lowCount > 0}" class="detect-sev ds-low"
-                                  th:text="'low x' + ${di.lowCount}"></span>
+                            <span th:if="${di.topSeverity != null}" class="detect-sev detect-sev-sum" tabindex="0"
+                                  th:classappend="'ds-' + ${di.topSeverity}"
+                                  th:data-tip="${di.severityTip}" th:text="${di.severityChip}">critical x3 +9</span>
                         </div>
                         <a th:unless="${di.fileDeleted}"
                            th:href="@{/analyze/result/{f}(f=${di.filename})}"
@@ -1135,6 +1155,7 @@ var DASHBOARD_DETECT_DAYS = /*[[${dashboardDetectDays}]]*/ 14;
 <script src="/js/analyze-confirm.js?v=2026-09-26"></script>
 <script src="/js/alert-bell.js?v=2026-09-26"></script>
 <script src="/js/live-refresh.js?v=2026-09-26"></script>
+<script src="/js/krds-tooltip.js?v=2026-10-31"></script>
 <script>
 if (window.AlertBell) AlertBell.mount(document.getElementById('alertBellBtn'), { boardUrl: '/alerts' });
 </script>
@@ -1396,8 +1417,14 @@ function closeDownloadModal() {
 }
 function doDownload() {
     closeDownloadModal();
+    var name = _dlFilename;
     // GC 로그는 GC 로그 저장소 전용 경로 — /download 는 힙 저장소만 본다
-    window.location.href = (_dlKind === 'gclog' ? '/api/gc-log/download/' : '/download/') + encodeURIComponent(_dlFilename);
+    var url = (_dlKind === 'gclog' ? '/api/gc-log/download/' : '/download/') + encodeURIComponent(name);
+    // 링크로 바로 열면 세션 만료·삭제된 파일·DB 장애가 로그인 화면·빈 화면·JSON 원문이 된다(함정 71)
+    Common.downloadFile(url, { fallbackName: name }).catch(function(e) {
+        if (e.sessionExpired) { alert(e.message); window.location.href = '/login'; return; }
+        toast('다운로드 실패: ' + name + ' — ' + e.message, 'error');
+    });
 }
 
 /* fmtB / fmtSpeed / toast 는 /js/upload-queue.js 가 window 글로벌로 노출. */
@@ -1641,14 +1668,56 @@ function stopQueuePolling() {
 // 페이지 로드 시 큐 상태 확인
 refreshQueueStatus();
 
+/* ── Recent Files 툴팁 — 사이드바 밖까지 보이도록 body 직속 싱글턴에 항목의 .fname-tooltip 내용을 복사해 띄운다 ──
+   목록은 부분 갱신이 innerHTML 을 바꾸지만 #dashRecentFiles 는 유지되므로 거기에 위임한다.
+   ⚠ 조각 교체로 기준 항목이 사라지면 mouseout 이 오지 않는다 — onSwapped 에서 직접 닫을 것 */
+var _fileTip = (function () {
+    var GAP = 4, EDGE = 8;
+    var list = document.getElementById('dashRecentFiles');
+    var tip = document.createElement('div');
+    var anchor = null;
+    tip.id = 'fnameFloatTip';
+    tip.className = 'fname-tooltip';
+    document.body.appendChild(tip);
+
+    function hide() {
+        anchor = null;
+        tip.classList.remove('show');
+    }
+    function place() {
+        var a = anchor.getBoundingClientRect();
+        var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+        var top = a.bottom + GAP;
+        if (top + tip.offsetHeight > vh - EDGE) top = a.top - GAP - tip.offsetHeight;   // 아래가 모자라면 항목 위로
+        tip.style.left = Math.max(EDGE, Math.min(a.left, vw - tip.offsetWidth - EDGE)) + 'px';
+        tip.style.top = Math.max(EDGE, top) + 'px';
+    }
+    list.addEventListener('mouseover', function (e) {
+        var item = e.target.closest('.file-item');
+        if (!item) { hide(); return; }
+        if (item === anchor) return;
+        anchor = item;
+        tip.innerHTML = item.querySelector('.fname-tooltip').innerHTML;
+        tip.classList.add('show');
+        place();
+    });
+    list.addEventListener('mouseleave', hide);
+    window.addEventListener('scroll', function () { if (anchor) place(); }, true);   // 사이드바를 굴리면 항목을 따라간다
+    return { hide: hide };
+})();
+
 /* ── 부분 갱신(설정 주기) — 통계·진행률·Detections·탐지 현황·Recent Files. Analysis Queue(위 5초 폴링)는 제외 ── */
 window._dashLive = window.LiveRefresh ? LiveRefresh.start({
     url: '/api/dashboard/fragments',
     ids: ['dashRecentFiles', 'dashStats', 'dashProgress', 'dashDetections', 'dashDetectTotals', 'dashDetectKinds'],
     label: '#liveUpdated',
     onSwapped: function (ids) {
-        // 같은 집합을 넘기면 '완료' 판정 없이 분석 중 오버레이만 되살아난다
-        if (ids.indexOf('dashRecentFiles') >= 0) applyInProgress(Array.from(_trackedInProgress));
+        if (ids.indexOf('dashRecentFiles') >= 0) {
+            _fileTip.hide();
+            // 같은 집합을 넘기면 '완료' 판정 없이 분석 중 오버레이만 되살아난다
+            applyInProgress(Array.from(_trackedInProgress));
+        }
+        if (ids.indexOf('dashDetectKinds') >= 0 && window.KrdsTooltip) KrdsTooltip.hide();
         if (ids.indexOf('dashDetections') >= 0) {
             var d = readDetectData();
             renderDetectChart(d ? d.daily : null, d ? d.series : null, false);

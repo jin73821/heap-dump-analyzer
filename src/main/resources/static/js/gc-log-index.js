@@ -506,8 +506,11 @@
         // 항목을 누르면 실행(항목 onclick) 뒤에 닫는다. 포커스는 먼저 ⋯ 로 돌려 둔다 —
         // 이어서 열리는 확인 모달이 닫힐 때 그 자리(⋯)로 돌아오게(AnalyzeConfirm 은 열 때의 activeElement 를 기억한다).
         el.addEventListener('click', function (ev) {
-            if (!(ev.target.closest && ev.target.closest('.hi-menu-item'))) return;
+            var item = ev.target.closest && ev.target.closest('.hi-menu-item');
+            if (!item) return;
             if (btn.focus) btn.focus();
+            // 다운로드 항목은 링크로 바로 열지 않는다 — 세션 만료·삭제된 파일이 화면 이동으로 보이지 않게(함정 71)
+            if (item.hasAttribute('data-download')) { ev.preventDefault(); downloadFromMenu(item); }
             setTimeout(function () { if (_menu && _menu.el === el) closeRowMenu(false); }, 0);
         }, true);
 
@@ -543,6 +546,14 @@
         btn.setAttribute('aria-expanded', 'true');
         placeRowMenu(el, btn);
         menuItems(el)[0].focus();
+    }
+
+    function downloadFromMenu(a) {
+        var name = a.getAttribute('data-filename') || '';
+        Common.downloadFile(a.getAttribute('href'), { fallbackName: name }).catch(function (e) {
+            if (e.sessionExpired) { alert(e.message); window.location.href = '/login'; return; }
+            toast('다운로드 실패: ' + name + ' — ' + e.message, 'danger');
+        });
     }
 
     function closeRowMenu(returnFocus) {

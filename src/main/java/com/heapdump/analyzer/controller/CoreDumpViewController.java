@@ -5,6 +5,7 @@ import com.heapdump.analyzer.model.dto.CoreDumpRevision;
 import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.CoreDumpPdfReportService;
+import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Controller;
@@ -49,7 +50,7 @@ public class CoreDumpViewController {
         Optional<CoreDumpAnalysisResult> done = analyzerService.loadResult(safe);
         if (done.isPresent()
                 && (done.get().getErrorMessage() == null || done.get().getErrorMessage().isEmpty())) {
-            return "redirect:/core-dump/analyze/" + safe;
+            return "redirect:/core-dump/analyze/" + HttpHeaderValues.pathSegment(safe);
         }
         model.addAttribute("filename", safe);
         return "core-dump/progress";
@@ -116,11 +117,11 @@ public class CoreDumpViewController {
                     ? analyzerService.loadRevisionResult(safe, rev)
                     : analyzerService.loadResult(safe);
         } catch (IllegalArgumentException e) {
-            return "redirect:/core-dump/analyze/" + safe;
+            return "redirect:/core-dump/analyze/" + HttpHeaderValues.pathSegment(safe);
         }
         CoreDumpAnalysisResult result = resultOpt.orElse(null);
         if (result == null || !CoreDumpApiController.isReportable(result)) {
-            return "redirect:/core-dump/analyze/" + safe;
+            return "redirect:/core-dump/analyze/" + HttpHeaderValues.pathSegment(safe);
         }
         pdfReportService.buildCorePrintModel(safe, viewingRevision ? rev : null, result)
                 .forEach(model::addAttribute);

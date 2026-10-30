@@ -12,6 +12,7 @@ import com.heapdump.analyzer.service.GcLogInstanceService;
 import com.heapdump.analyzer.service.GcLogMatchService;
 import com.heapdump.analyzer.service.LlmRateLimitService;
 import com.heapdump.analyzer.util.FilenameValidator;
+import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -201,7 +202,7 @@ public class GcLogApiController {
         File file = service.fileOf(safe);
         if (!file.isFile()) return ResponseEntity.notFound().build();
         return ResponseEntity.ok()
-                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + safe + "\"")
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment(safe))   // 함정 71
                 .contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
                 .contentLength(file.length())
                 .body(new org.springframework.core.io.FileSystemResource(file));

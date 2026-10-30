@@ -8,6 +8,7 @@ import com.heapdump.analyzer.service.RagCorpusService.Existing;
 import com.heapdump.analyzer.service.RagCorpusService.FileResult;
 import com.heapdump.analyzer.service.RagCorpusService.Rec;
 import com.heapdump.analyzer.service.RagIndexRunner;
+import com.heapdump.analyzer.util.HttpHeaderValues;
 import com.heapdump.analyzer.util.RagZipCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +21,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.format.DateTimeFormatter;
@@ -531,14 +531,11 @@ public class RagCorpusController {
         return out;
     }
 
-    /** 다운로드 공통 — charset 명시(함정 35) + ASCII/RFC 5987 이중 파일명 + no-store. */
+    /** 다운로드 공통 — charset 명시(함정 35) + ASCII/RFC 5987 이중 파일명(함정 71) + no-store. */
     private static ResponseEntity<byte[]> download(byte[] body, String filename, MediaType type) {
-        String ascii = filename.replaceAll("[^\\x20-\\x7E]", "_");
-        String utf8 = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
         HttpHeaders h = new HttpHeaders();
         h.setContentType(type);
-        h.add(HttpHeaders.CONTENT_DISPOSITION,
-                "attachment; filename=\"" + ascii + "\"; filename*=UTF-8''" + utf8);
+        h.add(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment(filename));
         h.setCacheControl("no-store");
         h.add("X-Content-Type-Options", "nosniff");
         return new ResponseEntity<>(body, h, HttpStatus.OK);

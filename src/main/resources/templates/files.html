@@ -1219,41 +1219,25 @@ function closeDownloadModal() {
     document.getElementById('downloadModal').classList.remove('open');
     _dlFilename = ''; _dlIsCore = false;
 }
+/* 다운로드 URL — 저장소마다 경로가 다르다(힙 /download 는 힙 저장소만 봐서 코어·GC 로그를 못 찾는다) */
+function downloadUrlOf(filename, kind) {
+    return kind === 'gclog' ? '/api/gc-log/download/' + encodeURIComponent(filename)
+         : kind === 'core'  ? '/api/core-dump/download/' + encodeURIComponent(filename)
+         : '/download/' + encodeURIComponent(filename);
+}
+
+/* 다운로드는 Common.downloadFile 경유(함정 71) — 종전엔 Content-Disposition 이 없으면 무조건 세션 만료로 보고
+   /login 으로 보냈는데, 한글 파일명은 Tomcat 이 그 헤더를 지워 버려 **로그인 상태에서 로그인 화면**이 떴다.
+   지금은 실제 세션 만료일 때만 로그인으로 가고, 그 밖의 실패(삭제된 파일·DB 장애·서버 오류)는 이유를 보여 준다. */
 document.getElementById('btnConfirmDl').onclick = function() {
     if (!_dlFilename) return;
     var filename = _dlFilename;
-    var isCore = _dlIsCore;
-    var isGc = _dlIsGc;
+    var kind = _dlIsGc ? 'gclog' : (_dlIsCore ? 'core' : 'heap');
     closeDownloadModal();
-    var downloadUrl = isGc
-        ? '/api/gc-log/download/' + encodeURIComponent(filename)
-        : isCore
-        ? '/api/core-dump/download/' + encodeURIComponent(filename)
-        : '/download/' + encodeURIComponent(filename);
-    fetch(downloadUrl, {credentials: 'same-origin'})
-        .then(function(r) {
-            var cd = r.headers.get('Content-Disposition');
-            if (!cd || cd.indexOf('attachment') < 0) {
-                // 세션 만료 등으로 로그인 페이지가 반환된 경우
-                window.location.href = '/login';
-                return;
-            }
-            var dlName = filename;
-            var m = cd.match(/filename="?([^";]+)"?/);
-            if (m) dlName = m[1];
-            return r.blob().then(function(blob) {
-                var url = URL.createObjectURL(blob);
-                var a = document.createElement('a');
-                a.href = url;
-                a.download = dlName;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-            });
-        })
+    Common.downloadFile(downloadUrlOf(filename, kind), { fallbackName: filename })
         .catch(function(e) {
-            alert('다운로드 실패: ' + e.message);
+            if (e.sessionExpired) { alert(e.message); window.location.href = '/login'; return; }
+            alert('다운로드 실패: ' + filename + '\n' + e.message);
         });
 };
 
@@ -1288,43 +1272,53 @@ function submitBulkDownload() {
     var items = sel.filter(function(c) { return c.getAttribute('data-deleted') !== 'true'; }).map(function(c) {
         var tr = c.closest('tr');
         var fileType = tr ? tr.getAttribute('data-file-type') : 'heapdump';
-        var isCore = fileType === 'coredump' || fileType === 'coreexec';
-        var isGc = fileType === 'gclog';
-        return {
-            filename: c.value,
-            url: isGc ? '/api/gc-log/download/' + encodeURIComponent(c.value)
-               : isCore ? '/api/core-dump/download/' + encodeURIComponent(c.value)
-                        : '/download/' + encodeURIComponent(c.value)
-        };
+        var kind = fileType === 'gclog' ? 'gclog'
+                 : (fileType === 'coredump' || fileType === 'coreexec') ? 'core' : 'heap';
+        return { filename: c.value, url: downloadUrlOf(c.value, kind) };
     });
     if (items.length === 0) return;
     closeBulkDownloadModal();
 
+    var failed = [];
     function downloadNext(idx) {
-        if (idx >= items.length) return;
+        if (idx >= items.length) { reportBulkDownload(items.length, failed, [], null); return; }
         var item = items[idx];
-        fetch(item.url, { credentials: 'same-origin' })
-            .then(function(r) {
-                var cd = r.headers.get('Content-Disposition');
-                if (!cd || cd.indexOf('attachment') < 0) { window.location.href = '/login'; return; }
-                var dlName = item.filename;
-                var m = cd.match(/filename\*?=(?:UTF-8'')?["']?([^"';\r\n]+)["']?/i);
-                if (m) dlName = decodeURIComponent(m[1].replace(/\+/g, ' '));
-                return r.blob().then(function(blob) {
-                    var url = URL.createObjectURL(blob);
-                    var a = document.createElement('a');
-                    a.href = url; a.download = dlName;
-                    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                    setTimeout(function() { URL.revokeObjectURL(url); }, 200);
-                });
-            })
+        Common.downloadFile(item.url, { fallbackName: item.filename })
+            // 브라우저가 연달아 시작되는 다운로드를 막지 않도록 간격을 둔다
             .then(function() { setTimeout(function() { downloadNext(idx + 1); }, 600); })
             .catch(function(e) {
-                toast('다운로드 실패: ' + item.filename + ' — ' + e.message, 'error');
+                failed.push({ name: item.filename, msg: e.message });
+                // 세션 만료·DB 장애는 나머지도 같은 이유로 실패한다 — 계속 두드리지 않고 멈춘다
+                if (e.sessionExpired || e.dbUnavailable) {
+                    reportBulkDownload(items.length, failed, items.slice(idx + 1), e);
+                    return;
+                }
                 setTimeout(function() { downloadNext(idx + 1); }, 300);
             });
     }
     downloadNext(0);
+}
+
+/* 일괄 다운로드 결과 — 실패가 있을 때만 알린다. 토스트는 한 번에 하나만 떠서(뒤 실패가 앞 실패를 지운다)
+   어느 파일을 못 받았는지 남지 않으므로, 일괄 삭제의 부분 실패처럼 확인이 필요한 alert 로 모아 보여 준다. */
+function reportBulkDownload(total, failed, skipped, stopErr) {
+    if (!failed.length) return;
+    function listOf(names) {
+        var shown = names.slice(0, 10).map(function(n) { return '· ' + n; });
+        if (names.length > 10) shown.push('… 외 ' + (names.length - 10) + '건');
+        return shown.join('\n');
+    }
+    var msg;
+    if (stopErr) {
+        var missed = failed.map(function(f) { return f.name; })
+            .concat(skipped.map(function(it) { return it.filename; }));
+        msg = stopErr.message + '\n\n다운로드를 중단했습니다. 받지 못한 파일 ' + missed.length + '건:\n' + listOf(missed);
+    } else {
+        msg = '다운로드 ' + (total - failed.length) + '건 시작, 실패 ' + failed.length + '건\n\n'
+            + listOf(failed.map(function(f) { return f.name + ' — ' + f.msg; }));
+    }
+    alert(msg);
+    if (stopErr && stopErr.sessionExpired) window.location.href = '/login';
 }
 
 function openBulkDeleteModal() {

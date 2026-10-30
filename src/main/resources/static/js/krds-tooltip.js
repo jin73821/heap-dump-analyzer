@@ -115,4 +115,7 @@
     }
     window.addEventListener('scroll', repositionOrHide, true);
     window.addEventListener('resize', repositionOrHide);
+
+    // 부분 갱신으로 트리거가 DOM 에서 빠지면 mouseout·focusout 이 오지 않는다 — 소비 페이지가 교체 직후 직접 닫는다
+    window.KrdsTooltip = { hide: hideTip };
 })();

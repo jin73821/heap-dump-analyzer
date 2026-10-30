@@ -5,6 +5,7 @@ import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.PdfReportService;
 import com.heapdump.analyzer.util.FilenameValidator;
+import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.CacheControl;
@@ -25,7 +26,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLDecoder;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -101,16 +101,11 @@ public class HeapReportApiController {
             byte[] pdf = pdfReportService.renderPrintPdf(safe, result);
 
             String base = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "") + "-report.pdf";
-            String ascii = base.replaceAll("[^\\x20-\\x7E]", "_");
-            String utf8 = URLEncoder.encode(base, StandardCharsets.UTF_8.name())
-                    .replace("+", "%20");
-
             String disposition = "inline".equalsIgnoreCase(mode) ? "inline" : "attachment";
 
             HttpHeaders h = new HttpHeaders();
             h.setContentType(MediaType.APPLICATION_PDF);
-            h.add(HttpHeaders.CONTENT_DISPOSITION,
-                    disposition + "; filename=\"" + ascii + "\"; filename*=UTF-8''" + utf8);
+            h.add(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.contentDisposition(disposition, base));
             h.setCacheControl("no-store");
             h.add("X-Content-Type-Options", "nosniff");
             return new ResponseEntity<>(pdf, h, HttpStatus.OK);

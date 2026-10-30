@@ -5,6 +5,7 @@ import com.heapdump.analyzer.model.entity.LeakLibraryRule;
 import com.heapdump.analyzer.repository.LeakFallbackRuleRepository;
 import com.heapdump.analyzer.repository.LeakLibraryRuleRepository;
 import com.heapdump.analyzer.service.LeakRuleService;
+import com.heapdump.analyzer.util.HttpHeaderValues;
 import com.heapdump.analyzer.util.LeakRuleContext;
 import com.heapdump.analyzer.util.LeakRuleTemplate;
 import org.slf4j.Logger;
@@ -306,7 +307,7 @@ public class LeakRuleAdminController {
         String filename = filenamePrefix + "-" + FILENAME_TS.format(now) + ".json";
         HttpHeaders h = new HttpHeaders();
         h.setContentType(MediaType.APPLICATION_JSON);
-        h.set(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"");
+        h.set(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment(filename));
         h.setCacheControl("no-store");
         return new ResponseEntity<>(body, h, HttpStatus.OK);
     }

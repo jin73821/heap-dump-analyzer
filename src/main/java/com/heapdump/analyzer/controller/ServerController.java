@@ -8,6 +8,7 @@ import com.heapdump.analyzer.repository.DumpTransferLogRepository;
 import com.heapdump.analyzer.repository.TargetServerRepository;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.RemoteDumpService;
+import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
@@ -478,11 +479,11 @@ public class ServerController {
         if ("json".equalsIgnoreCase(format)) {
             body = renderJson(items);
             headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.setContentDispositionFormData("attachment", "transfer-logs-" + ts + ".json");
+            headers.set(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment("transfer-logs-" + ts + ".json"));
         } else {
             body = renderCsv(items);
             headers.setContentType(MediaType.parseMediaType("text/csv; charset=UTF-8"));
-            headers.setContentDispositionFormData("attachment", "transfer-logs-" + ts + ".csv");
+            headers.set(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment("transfer-logs-" + ts + ".csv"));
         }
         return new ResponseEntity<>(body, headers, org.springframework.http.HttpStatus.OK);
     }

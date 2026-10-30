@@ -266,6 +266,111 @@ class DashboardDetectSummaryTest {
     }
 
     @Test
+    @DisplayName("Recent Files 툴팁은 사이드바 밖(body 직속)에 떠서 잘리지 않고, 긴 파일명은 줄바꿈으로 끝까지 보인다 (2026-10-31)")
+    void recentFileTooltipEscapesSidebar() {
+        String html = render("index", dashboardModel());
+
+        // 사이드바가 overflow-y:auto 라 그 안에서 hover 로 켜는 absolute 툴팁은 경계에서 잘린다(실측 657px 툴팁이 520px 에서 잘림)
+        assertFalse(html.contains(".file-item:hover .fname-tooltip"), "항목 안의 툴팁을 직접 켜면 사이드바에 잘린다");
+        assertTrue(html.contains("<div class=\"fname-tooltip\">"), "항목별 툴팁 내용은 서버 렌더로 남아야 부분 갱신을 따라간다");
+        assertTrue(html.contains("tip.innerHTML = item.querySelector('.fname-tooltip').innerHTML;"), "항목의 내용을 복사해 띄우지 않는다");
+        assertTrue(html.contains("document.body.appendChild(tip);"), "툴팁이 body 직속이 아니다 — sticky 사이드바의 쌓임 맥락에 갇힌다");
+        assertTrue(html.contains("#fnameFloatTip.show { display: block; }"), "표시 스위치 규칙이 없다");
+        assertTrue(html.contains("z-index: 190;"), "툴팁은 상단바(100) 위·모달(200) 아래여야 한다");
+
+        // 아래가 모자라면 항목 위로 뒤집는다 — 목록 끝 항목의 툴팁이 화면 밖으로 나갔다(실측 931px / 뷰포트 800px)
+        assertTrue(html.contains("top = a.top - GAP - tip.offsetHeight;"), "아래 공간 부족 시 뒤집기가 없다");
+
+        // 툴팁은 목록에서 잘린 이름을 끝까지 보는 곳이다 — 말줄임으로 되돌리면 잘림을 고쳐도 이름을 볼 수 없다
+        int val = html.indexOf(".fname-tooltip .tt-val {");
+        assertTrue(val > 0, "파일명 값 규칙이 없다");
+        String rule = html.substring(val, html.indexOf('}', val));
+        assertTrue(rule.contains("overflow-wrap: anywhere"), "긴 파일명이 줄바꿈되지 않는다");
+        assertFalse(rule.contains("text-overflow"), "툴팁 파일명에 말줄임이 남았다");
+
+        // 조각 교체로 기준 항목이 사라지면 mouseout 이 오지 않아 옛 툴팁이 남는다
+        int swapped = html.indexOf("onSwapped: function (ids)");
+        assertTrue(swapped > 0 && html.indexOf("_fileTip.hide();", swapped) > swapped, "부분 갱신 때 툴팁을 닫지 않는다");
+    }
+
+    @Test
+    @DisplayName("탐지 현황 행은 마우스를 올리면 배경으로 구분된다 — 조건부 미디어 쿼리에 가두지 않는다 (2026-10-31)")
+    void detectRowsHighlightOnHover() {
+        String html = render("index", dashboardModel());
+
+        assertTrue(html.contains(".detect-item:hover { background: #EFF6FF;"), "탐지 현황 행 호버 배경이 없다");
+        // 배경이 점·배지에 붙지 않게 하는 좌우 여백
+        assertTrue(html.contains(".detect-item { display: flex; align-items: center; gap: 10px; padding: 9px 8px;"), "행 좌우 패딩이 없다");
+        // (hover: hover) 는 마우스를 장치로 인식하지 못하는 환경에서 거짓이라 기능이 조용히 꺼진다(헤드리스 실측)
+        assertFalse(html.contains("@media (hover: hover)"), "호버 강조가 장치 조건에 갇혔다");
+    }
+
+    @Test
+    @DisplayName("탐지 현황 힙 행은 심각도 칩이 하나이고 내역은 툴팁이다 — 종류별 칩 4개가 파일명 폭을 0 으로 만들었다 (2026-10-31)")
+    void heapDetectRowUsesSingleChipWithTooltip() throws java.io.IOException {
+        String html = render("index", dashboardModel());   // 모델: critical 3 · high 5 · medium 2 · low 2
+
+        int heap = html.indexOf("<div data-detect-kind=\"heap\">");
+        String block = html.substring(heap, html.indexOf("data-detect-kind=\"core\"", heap));
+        assertEquals(1, block.split("detect-sev detect-sev-sum", -1).length - 1, "힙 행의 심각도 칩은 하나여야 한다");
+        assertTrue(block.contains("class=\"detect-sev detect-sev-sum ds-critical\""), "칩 색은 가장 높은 심각도");
+        assertFalse(block.contains("ds-high") || block.contains("ds-medium") || block.contains("ds-low"), "종류별 칩이 남았다");
+        assertTrue(block.contains(">critical x3 +9<"), "칩 문구");
+        assertTrue(block.contains("data-tip=\"critical 3건\nhigh 5건\nmedium 2건\nlow 2건\""), "툴팁 내역(줄바꿈은 krds 의 pre-wrap 이 살린다)");
+        assertTrue(block.contains("tabindex=\"0\""), "키보드로 닿지 않는다");
+
+        // hover·포커스·터치 탭은 krds-tooltip.js 가 담당한다. 두 툴팁 모듈은 한 페이지에 섞지 않는다
+        assertTrue(html.contains("/js/krds-tooltip.js?v="), "모듈이 없으면 툴팁이 조용히 안 뜬다");
+        assertFalse(html.contains("/js/float-tooltip.js"), "툴팁 모듈 두 종이 섞였다");
+
+        // 툴팁을 연 채 칩이 교체되면 mouseout 이 오지 않는다 — 터치는 다음 탭까지 옛 숫자가 남는다
+        assertTrue(html.contains("if (ids.indexOf('dashDetectKinds') >= 0 && window.KrdsTooltip) KrdsTooltip.hide();"), "부분 갱신 때 툴팁을 닫지 않는다");
+        try (java.io.InputStream in = getClass().getResourceAsStream("/static/js/krds-tooltip.js")) {
+            String module = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(module.contains("window.KrdsTooltip = { hide: hideTip };"), "모듈의 닫기 함수가 공개돼 있지 않다");
+        }
+    }
+
+    @Test
+    @DisplayName("행이 좁으면 파일명이 첫 줄로 내려간다 — 판정은 뷰포트가 아니라 패널 폭이다 (2026-10-31)")
+    void narrowDetectRowsKeepFilename() {
+        String html = render("index", dashboardModel());
+
+        // .detect-fname 은 flex:1 이라 공간이 모자라면 파일명만 폭 0 이 된다(실측 1024px 폭 0)
+        assertTrue(html.contains("#dashDetectKinds { container-type: inline-size; container-name: detlist; }"), "목록이 컨테이너가 아니다");
+        int q = html.indexOf("@container detlist (max-width: 300px)");
+        assertTrue(q > 0, "좁은 행 컨테이너 쿼리가 없다");
+        String block = html.substring(q, q + 200);
+        assertTrue(block.contains("flex-wrap: wrap") && block.contains("flex-basis: calc(100% - 18px)"), "파일명이 한 줄을 차지하지 않는다");
+        // 100% 면 점만 한 줄을 차지해 행이 3줄이 된다
+        assertFalse(html.contains(".detect-fname { flex-basis: 100%; }"), "모바일 규칙이 좁은 행 배치와 다르다");
+    }
+
+    @Test
+    @DisplayName("본문이 좁으면 오른쪽 카드가 왼쪽 열 아래로 내려간다 — 판정은 뷰포트가 아니라 본문 폭이다 (2026-10-31)")
+    void narrowMainStacksRightCards() {
+        String html = render("index", dashboardModel());
+
+        // 배너를 접으면 같은 뷰포트에서 본문이 176px 달라져 미디어 쿼리로는 맞출 수 없다(실측: 증상은 본문 폭으로만 갈린다)
+        assertTrue(html.contains(".main-content { padding: 20px; overflow-y: auto; container-type: inline-size; container-name: dashmain; }"),
+                "본문이 컨테이너가 아니다");
+        int q = html.indexOf("@container dashmain (max-width: 700px)");
+        assertTrue(q > 0, "좁은 본문 컨테이너 쿼리가 없다 (임계값 변경 시 주석의 브라우저 폭 환산도 함께 갱신할 것)");
+        assertTrue(html.substring(q, q + 120).contains(".dashboard-top, .grid2 { grid-template-columns: minmax(0, 1fr); }"), "2단 영역이 1단이 되지 않는다");
+
+        // 같은 명시도라 뒤에 와야 이긴다
+        assertTrue(q > html.indexOf(".dashboard-top { display: grid;") && q > html.indexOf(".grid2 { display: grid;"), "쿼리가 기본 규칙보다 앞에 있다");
+
+        // 진행률·Queue 는 한 열 안에서 함께 내려가도록 같은 래퍼에 있어야 한다
+        int right = html.indexOf("class=\"dashboard-right\"");
+        assertTrue(right > 0 && right < html.indexOf("id=\"dashProgress\"") && right < html.indexOf("id=\"queuePanel\""), "오른쪽 카드 구조가 바뀌었다");
+
+        // 본문이 컨테이너라 그 안의 position:fixed 는 기준이 바뀔 수 있다 — 모달이 본문 밖이어야 뷰포트를 덮는다
+        int mainEnd = html.indexOf("</main>");
+        assertTrue(html.indexOf("id=\"downloadModal\"") > mainEnd && html.indexOf("id=\"deleteModal\"") > mainEnd, "모달이 본문 안으로 들어갔다");
+    }
+
+    @Test
     @DisplayName("Recent Files: GC 로그 항목은 GC 경로·배지·확인 모달 kind 로, 힙 항목은 힙 경로로 렌더된다 (2026-09-14)")
     void recentFilesRenderGcLogWithGcRoutes() {
         Map<String, Object> m = dashboardModel();

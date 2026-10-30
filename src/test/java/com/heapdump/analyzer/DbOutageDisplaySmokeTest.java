@@ -133,7 +133,9 @@ class DbOutageDisplaySmokeTest {
         assertTrue(banner.contains("d.dbUp === false"), "dbUp 필드 반영");
         int css = banner.indexOf("#gbDbStrip {");
         assertTrue(css > 0 && !banner.substring(css, banner.indexOf("@media", css)).contains("border-left"), "스트립에 좌측 색 띠");
-        assertTrue(banner.contains("/js/common.js?v=2026-09-26"), "common.js 캐시 키 갱신");
+        // 캐시 키는 이 기능(2026-09-26) 이후로 계속 올라간다 — 날짜 문자열 비교로 '그 이상' 을 단언
+        java.util.regex.Matcher ck = java.util.regex.Pattern.compile("/js/common\\.js\\?v=(\\d{4}-\\d{2}-\\d{2})").matcher(banner);
+        assertTrue(ck.find() && ck.group(1).compareTo("2026-09-26") >= 0, "common.js 캐시 키 갱신");
 
         String common = read("src/main/resources/static/js/common.js");
         assertTrue(common.contains("err.dbUnavailable = true") && common.contains("Common.isDbUnavailable = function") && common.contains("'db:unavailable'"), "fetchJSON 503 승격");

@@ -4,6 +4,7 @@ import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
+import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.FileSystemResource;
@@ -336,10 +337,9 @@ public class HeapFileApiController {
         filename = FilenameValidator.validate(filename);
         try {
             File file = analyzerService.getFile(filename);
-            String downloadName = file.getName();
+            // 파일명은 반드시 HttpHeaderValues 경유 — 한글을 그대로 넣으면 Tomcat 이 헤더를 지운다(함정 71)
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION,
-                            "attachment; filename=\"" + downloadName + "\"")
+                    .header(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment(file.getName()))
                     .contentType(MediaType.APPLICATION_OCTET_STREAM)
                     .contentLength(file.length())
                     .body(new FileSystemResource(file));

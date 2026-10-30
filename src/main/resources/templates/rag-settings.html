@@ -2106,9 +2106,8 @@ function blobDownload(url, fallbackName) {
                 throw new Error(res.d.error || httpMsg(r.status, '내보내기 실패'));
             });
         }
-        var cd = r.headers.get('Content-Disposition') || '';
-        var m = /filename\*?=(?:UTF-8'')?["']?([^"';]+)/i.exec(cd);
-        var fname = m ? decodeURIComponent(m[1]) : fallbackName;
+        // filename*(UTF-8)를 먼저 — 앞의 filename= 은 한글을 '_' 로 바꾼 대체값이다(함정 71)
+        var fname = Common.filenameFromDisposition(r.headers.get('Content-Disposition')) || fallbackName;
         return r.blob().then(function(b) { return { blob: b, fname: fname }; });
     }).then(function(res) {
         var u = URL.createObjectURL(res.blob);

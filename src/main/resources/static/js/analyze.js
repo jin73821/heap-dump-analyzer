@@ -2932,7 +2932,13 @@ function closeDlModal() {
 }
 function doDlFile() {
     closeDlModal();
-    window.location.href = '/download/' + encodeURIComponent(FILENAME);
+    // Common.downloadFile — 세션 만료·삭제된 파일·DB 장애를 화면 이동 없이 알린다(함정 71).
+    // 이 페이지는 common.css 를 싣지 않아 Common.toast 가 보이지 않으므로 alert 를 쓴다
+    Common.downloadFile('/download/' + encodeURIComponent(FILENAME), { fallbackName: FILENAME })
+        .catch(function(e) {
+            if (e.sessionExpired) { alert(e.message); window.location.href = '/login'; return; }
+            alert('다운로드 실패: ' + e.message);
+        });
 }
 
 // ── CSV Export ────────────────────────────────────────
