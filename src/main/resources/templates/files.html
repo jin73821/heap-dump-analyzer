@@ -125,9 +125,22 @@
         /* 테이블 가로 스크롤 래퍼 — 폭이 좁아 테이블이 넘칠 때 우측 컬럼 잘림 대신 스크롤 노출 */
         .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
         /* .ftable base/thead/td 색상·hover 는 common.css 에서 제공. padding/font-size 만 인라인 */
-        .ftable { min-width: 1000px; }
+        /* 열 폭은 내용이 아니라 헤더가 정한다(2026-11-03) — 자동 레이아웃이면 보이는 행의 내용으로 폭을 다시 계산해
+           GC 묶음 서랍·페이지·탭을 바꿀 때마다 열이 흔들린다(실측: 파일명 397→577px, 1280px 에서 가로 스크롤 발생).
+           파일명 열만 폭을 주지 않아 남는 공간을 전부 가진다. 체크 열·AI 열이 숨어도 파일명 열이 흡수한다. */
+        .ftable { min-width: 1000px; table-layout: fixed; }
         .ftable th { padding: 10px 12px; font-size: 11px; }
         .ftable td { padding: 10px 12px; }
+        .ftable th.td-check    { width: 40px; }
+        .ftable th.td-seq      { width: 84px; }
+        .ftable th.col-osize   { width: 96px; }
+        .ftable th.col-compressed { width: 108px; }
+        .ftable th.col-ai      { width: 112px; }
+        .ftable th.col-hide-sm { width: 126px; }
+        .ftable th.col-date    { width: 140px; }
+        .ftable th.col-actions { width: 140px; }   /* 버튼 4개 또는 exec 행의 [받기][연결해제][분류] + 좌우 패딩 */
+        .ftable .col-server span { display: inline-block; max-width: 100%; box-sizing: border-box; vertical-align: middle;
+                                   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .td-seq { width: 48px; text-align: center; color: #9CA3AF; font-size: 12px;
                   font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -144,7 +157,12 @@
         .pg-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; cursor: default; }
         .pg-btn:disabled { color: #D1D5DB; cursor: not-allowed; background: #F9FAFB; }
         .pg-ellipsis { padding: 0 4px; color: #9CA3AF; font-size: 12px; }
-        .fname { font-weight: 500; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        /* 파일명 칸은 한 줄 — 이름이 말줄임으로 줄고 배지는 줄지 않는다. 줄바꿈되면 행 높이가 행마다 달라진다.
+           ⚠ .fname 은 인라인이라 예전 max-width·말줄임이 먹지 않았다. flex 항목이어야 동작한다. 모바일 카드는 display:contents */
+        .fname-line { display: flex; align-items: center; gap: 3px; min-width: 0; }
+        .fname-line > * { flex: none; }
+        .fname-line > .fname { flex: 0 1 auto; min-width: 0; }
+        .fname { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .fname-err { color: #DC2626; }
         .fsize { font-size: 12px; color: #6B7280; white-space: nowrap; }
         .fdate { font-size: 12px; color: #6B7280; white-space: nowrap; }
@@ -270,18 +288,35 @@
                            width: 20px; height: 20px; border: 0; border-radius: 4px; background: none; padding: 0; margin: 0 2px 0 0;
                            cursor: pointer; vertical-align: middle;
                            color: #6366F1; font-size: 17px; line-height: 1; font-family: inherit;
-                           transition: transform .15s ease; transform-origin: 50% 50%; }
+                           transition: transform .2s ease; transform-origin: 50% 50%; }
         .hi-group-toggle:hover { color: #4338CA; background: #EEF2FF; }
         .hi-group-toggle:focus-visible { outline: 2px solid #6366F1; outline-offset: 2px; border-radius: 3px; }
         .hi-group-toggle[aria-expanded="true"] { transform: rotate(90deg); }
-        @media (prefers-reduced-motion: reduce) { .hi-group-toggle { transition: none; } }
+        /* 서랍 연출(2026-11-03) — tr 은 높이가 애니메이션되지 않으므로 연출 중에만 셀 내용을 두 겹으로 감싼다(drawerSlide).
+           바깥 겹이 높이를 줄이고, flex 가운데 정렬이 평소 vertical-align:middle 과 같은 위치를 지켜 끝날 때 내용이 튀지 않는다. */
+        .ftable tr.drawer-anim td { padding-top: 0 !important; padding-bottom: 0 !important; border-bottom-width: 0; }
+        .drawer-clip { display: flex; align-items: center; overflow: hidden; transition: height .2s ease, opacity .16s ease; }
+        .drawer-inner { flex: 1 1 auto; min-width: 0; }
+        #fileTableBody tr.drawer-fade { animation: drawerFade .2s ease both; }   /* 모바일 카드 — 높이 대신 나타나기만 */
+        @keyframes drawerFade { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+        @media (prefers-reduced-motion: reduce) {
+            .hi-group-toggle, .drawer-clip { transition: none; }
+            #fileTableBody tr.drawer-fade { animation: none; }
+        }
+        /* 서랍 안에서는 대표 바로 아래라 '→ 대표' 가 중복이다. 대표가 목록에 없는 고아 행에는 남긴다(initRows 가 표시) */
+        .in-drawer .gclog-partof-badge { display: none; }
         .gclog-parts-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px;
                              background: #E0E7FF; color: #3730A3; font-weight: 700; vertical-align: middle; margin-left: 3px; }
         .gclog-partof-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px;
                               background: #F1F5F9; color: #475569; font-weight: 700; vertical-align: middle; margin-left: 3px;
                               max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .gclog-subrow { background: #F8FAFC !important; }
-        .gclog-subrow td { padding-top: 5px !important; padding-bottom: 5px !important; font-size: 12px; color: #6B7280; }
+        /* 구성 파일 행은 묶음임을 알리는 옅은 남색 — 일반 행 hover(#F9FAFB)와 달라야 한다(2026-11-03, 종전 #F8FAFC 는 구분 불가).
+           ⚠ background 가 !important 라 hover 도 같은 명시도 + !important 로 줘야 바뀐다(common.css 의 tr:hover 는 지는 쪽).
+           글자는 배경이 진해진 만큼 #4B5563 — #6B7280 은 hover 배경에서 대비 4.5:1 미만이다 */
+        .gclog-subrow { background: #EEF2FF !important; }
+        .gclog-subrow:hover { background: #E0E7FF !important; }
+        .gclog-subrow td, .gclog-subrow .fsize, .gclog-subrow .fdate { color: #4B5563; }
+        .gclog-subrow td { padding-top: 5px !important; padding-bottom: 5px !important; font-size: 12px; }
         .gclog-subrow .col-fname { padding-left: 34px; }   /* td 12 + ▸ 버튼 20 + 여백 2 — 대표 파일명과 같은 선 */
         .gclog-subrow .fname { font-weight: 400; color: #374151; }
 
@@ -401,6 +436,7 @@
             .ftable .col-date, .ftable .col-compressed, .ftable .col-hide-sm { display: flex; }
 
             /* (d-2) 파일명 = 카드 헤더 */
+            .fname-line { display: contents; }
             .ftable .col-fname {
                 padding: 4px 0 10px 0; border-bottom: 1px solid #E5E7EB;
                 flex-wrap: wrap; gap: 6px; padding-right: 40px;
@@ -619,12 +655,12 @@
                     <th class="td-check"><input type="checkbox" class="all-check" id="allCheck" onchange="onSelectAll()"></th>
                     <th class="td-seq">#</th>
                     <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="onHeaderSort(this)">파일명 <span class="sort-arrow">▲</span></th>
-                    <th class="sortable" data-sort-key="osize" data-sort-type="num" onclick="onHeaderSort(this)">원본 크기 <span class="sort-arrow">▲</span></th>
+                    <th class="col-osize sortable" data-sort-key="osize" data-sort-type="num" onclick="onHeaderSort(this)">원본 크기 <span class="sort-arrow">▲</span></th>
                     <th class="col-compressed sortable" data-sort-key="csize" data-sort-type="num" onclick="onHeaderSort(this)">압축 크기 <span class="sort-arrow">▲</span></th>
                     <th class="col-ai sortable" data-sort-key="ai" data-sort-type="num" onclick="onHeaderSort(this)">AI 인사이트 <span class="sort-arrow">▲</span></th>
                     <th class="col-hide-sm sortable" data-sort-key="server" data-sort-type="str" onclick="onHeaderSort(this)">서버 <span class="sort-arrow">▲</span></th>
                     <th class="col-date sortable" data-sort-key="date" data-sort-type="num" onclick="onHeaderSort(this)">날짜 <span class="sort-arrow">▲</span></th>
-                    <th>작업</th>
+                    <th class="col-actions">작업</th>
                 </tr>
             </thead>
             <tbody id="fileLoadingBody">
@@ -650,6 +686,7 @@
                                                 th:data-deleted="${h.fileDeleted}" onchange="onRowCheck()"></td>
                     <td class="td-seq col-seq" data-label="#"></td>
                     <td class="col-fname" data-label="파일명">
+                        <div class="fname-line">
                         <!-- 이어 붙인 GC 로그 묶음의 대표 — ▸ 로 구성 파일을 펼친다(기본 접힘, /gc-log 목록과 같은 언어) -->
                         <button type="button" class="hi-group-toggle" aria-expanded="false"
                                 th:if="${h.fileType == 'gclog' and h.memberCount != null and h.memberCount > 1}"
@@ -668,6 +705,7 @@
                         <span th:if="${h.fileType == 'gclog' and h.partOf != null}" class="gclog-partof-badge"
                               th:title="${h.partOf} + ' 의 구성 파일'" th:text="'→ ' + ${h.partOf}">→ gc.log</span>
                         <span th:if="${h.fileDeleted}" class="fi-del-badge">deleted</span>
+                        </div>
                     </td>
                     <td class="col-osize" data-label="원본">
                         <span th:if="${h.compressed}" class="fsize" th:text="${h.formattedOriginalSize}">500 MB</span>
@@ -861,9 +899,11 @@
                     <td class="td-check"></td>
                     <td class="td-seq col-seq"><span class="exec-subrow-indent">└</span></td>
                     <td class="col-fname" data-label="파일명">
+                        <div class="fname-line">
                         <span class="fname" th:text="${execItem.filename}">exec</span>
                         <span class="exec-badge">EXEC</span>
                         <span th:if="${execItem.fileDeleted}" class="fi-del-badge">deleted</span>
+                        </div>
                     </td>
                     <td class="col-osize" data-label="원본">
                         <span class="fsize" th:text="${execItem.formattedSize}">-</span>
@@ -1095,6 +1135,7 @@ var ALLOW_ALL_EXT    = /*[[${allowAllExtensions}]]*/ false;
 <script src="/js/analyze-confirm.js?v=2026-09-26"></script>
 <script src="/js/table-grid.js?v=2026-09-13"></script>
 <script src="/js/select-mode.js?v=2026-08-02"></script>
+<script src="/js/name-tip.js?v=2026-11-03"></script>
 <script>
 var _delTarget = '';
 var _delIsCore = false;
@@ -1597,6 +1638,96 @@ function showSubrowsFor(parentName, parentRow) {
     if (btn) btn.setAttribute('aria-expanded', String(open));
 }
 
+// ── 서랍 펼치기·접기 연출(2026-11-03) ──────────────────────────
+var DRAWER_MS = 320;         // 끝 이벤트 상한 — 숨은 탭에서는 transitionend 가 오지 않는다
+var _drawerRows = [];        // 연출 중인 행
+
+/** 셀 내용을 clip > inner 두 겹으로 감싼다. 연출 중에만 쓰고 drawerRestore 가 원래 DOM 으로 되돌린다. */
+function drawerWrap(tr, height, open) {
+    var st = { height: height, open: open, gen: 0, clips: [] };
+    Array.prototype.forEach.call(tr.cells, function(td) {
+        var clip = document.createElement('div');
+        var inner = document.createElement('div');
+        clip.className = 'drawer-clip';
+        inner.className = 'drawer-inner';
+        while (td.firstChild) inner.appendChild(td.firstChild);
+        clip.appendChild(inner);
+        td.appendChild(clip);
+        clip.style.height = (open ? 0 : height) + 'px';
+        clip.style.opacity = open ? '0' : '1';
+        st.clips.push(clip);
+    });
+    tr.classList.add('drawer-anim');
+    tr._drawer = st;
+    _drawerRows.push(tr);
+    return st;
+}
+
+function drawerRestore(tr) {
+    var st = tr._drawer;
+    if (!st) return;
+    tr._drawer = null;
+    _drawerRows.splice(_drawerRows.indexOf(tr), 1);
+    st.clips.forEach(function(clip) {
+        var td = clip.parentNode, inner = clip.firstChild;
+        while (inner.firstChild) td.appendChild(inner.firstChild);
+        td.removeChild(clip);
+    });
+    tr.classList.remove('drawer-anim');
+    tr.style.display = st.open ? '' : 'none';
+}
+
+/** 진행 중인 연출을 끝 상태로 즉시 마감한다 — 재렌더가 감싼 셀을 건드리기 전에 부른다. */
+function drawerFlush() {
+    _drawerRows.slice().forEach(drawerRestore);
+}
+
+/**
+ * 구성 파일 행을 펼치거나 접는다. exec 페어는 접히지 않으므로 건드리지 않는다.
+ * 연출 중 다시 누르면 지금 높이에서 방향만 바꾼다(CSS transition 이 현재 값에서 이어 간다).
+ */
+function drawerSlide(parentName, parentRow, open) {
+    var rows = (_subrowMap[parentName] || []).filter(isCollapsibleRow);
+    if (!rows.length) return;
+    if (Common.reduceMotion()) {
+        drawerFlush();
+        rows.forEach(function(r) { r.style.display = open ? '' : 'none'; });
+        return;
+    }
+    // 모바일 카드는 tr 이 block 이라 셀을 감싸면 레이아웃이 깨진다 — 나타나기만 연출한다
+    if (window.getComputedStyle(parentRow).display !== 'table-row') {
+        rows.forEach(function(r) {
+            r.style.display = open ? '' : 'none';
+            if (!open) return;
+            r.classList.add('drawer-fade');
+            Common.afterMotion(r, 'animationend', DRAWER_MS, function() { r.classList.remove('drawer-fade'); });
+        });
+        return;
+    }
+    // 측정을 먼저 한 번에 끝낸다 — 감싸기(쓰기)와 섞으면 행마다 레이아웃을 다시 계산한다
+    rows.forEach(function(r) { if (!r._drawer) r.style.display = ''; });
+    var heights = rows.map(function(r) { return r._drawer ? r._drawer.height : r.getBoundingClientRect().height; });
+    var states = rows.map(function(r, i) { return r._drawer || drawerWrap(r, heights[i], open); });
+    if (rows.length) void rows[0].offsetHeight;   // 시작 상태를 확정해야 transition 이 돈다
+    var pending = rows.length;
+    rows.forEach(function(r, i) {
+        var st = states[i], gen = ++st.gen;
+        st.open = open;
+        st.clips.forEach(function(clip) {
+            clip.style.height = (open ? st.height : 0) + 'px';
+            clip.style.opacity = open ? '1' : '0';
+        });
+        // 체크 열은 숨겨져 있을 수 있어 끝 이벤트가 오지 않는다 — 늘 보이는 파일명 칸을 기다린다
+        var watched = r.querySelector('.col-fname > .drawer-clip');
+        Common.afterMotion(watched, 'transitionend', DRAWER_MS, function() {
+            if (st.gen !== gen || r._drawer !== st) return;   // 그사이 방향이 바뀌었거나 재렌더로 마감됐다
+            drawerRestore(r);
+            pending--;
+            if (pending === 0 && _sel && _sel.active) _sel.updateCount();
+        }, 'height');
+    });
+}
+
 /** ▸ 클릭 — 구성 파일 행의 노출과 aria-expanded 만 바꾼다(재렌더 금지: 정렬·페이지가 리셋된다). */
 function filesToggleGroup(e, btn) {
     if (e) e.stopPropagation();
@@ -1619,8 +1750,9 @@ function filesToggleGroup(e, btn) {
             if (c) c.checked = false;
         });
     }
-    showSubrowsFor(name, tr);
+    drawerSlide(name, tr, open);
     if (_sel && _sel.active) _sel.updateCount();
+    if (_nameTip) _nameTip.refresh();   // 펼쳐진 행의 잘린 이름에도 포인터·키보드 초점을 준다
 }
 
 function loadOpenGroups() {
@@ -1632,6 +1764,13 @@ function loadOpenGroups() {
         }
     } catch (err) { Common.logIgnored('[Files] 묶음 펼침 상태 읽기', err); }
 }
+
+// 말줄임된 파일명 — 마우스를 올리면 전체 이름, 클릭하면 고정·복사
+var _nameTip = window.NameTip ? NameTip.attach({
+    root: document.getElementById('fileTableBody'),
+    selector: '.fname',
+    watch: document.querySelector('#filesTable th[data-sort-key="name"]')
+}) : null;
 
 // ── TableGrid 공통 엔진(/js/table-grid.js) 위임 — exec sub-row 페어링 훅 포함 ──
 var _grid = TableGrid.create({
@@ -1647,6 +1786,8 @@ var _grid = TableGrid.create({
         if (name && _subrowMap[name]) _subrowMap[name].forEach(function(k) { tbody.appendChild(k); });
     },
     onRenderStart: function() {
+        drawerFlush();   // 연출 중인 행을 먼저 마감한다 — 아래에서 노출을 다시 정한다
+        if (_nameTip) _nameTip.close();
         document.getElementById('fileTableBody').classList.remove('tb-loading');
         var _lb = document.getElementById('fileLoadingBody');
         if (_lb) _lb.style.display = 'none';
@@ -1661,7 +1802,10 @@ var _grid = TableGrid.create({
         if (name && _subrowMap[name]) showSubrowsFor(name, row);
     },
     applyFilter: function() { applyFilter(); },
-    onAfterRender: function() { if (_sel.active) _sel.updateCount(); }
+    onAfterRender: function() {
+        if (_sel.active) _sel.updateCount();
+        if (_nameTip) _nameTip.refresh();
+    }
 });
 
 function initRows() {
@@ -1683,6 +1827,9 @@ function initRows() {
         if (hasParent) return;
         _subrowMap[parent].forEach(function(r) { topRows.push(r); });
         delete _subrowMap[parent];
+    });
+    Object.keys(_subrowMap).forEach(function(parent) {
+        _subrowMap[parent].filter(isCollapsibleRow).forEach(function(r) { r.classList.add('in-drawer'); });
     });
     // 대표 행의 토글 초기 상태를 저장된 펼침과 맞춘다
     topRows.forEach(function(r) {

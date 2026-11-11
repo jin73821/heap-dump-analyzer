@@ -334,7 +334,8 @@
             + '</div></div>';
         document.body.appendChild(ov);
         ov.querySelector('#dupSkip').onclick = function() { ov.remove(); item.status = 'skipped'; onDone(); };
-        ov.querySelector('#dupProceed').onclick = function() { ov.remove(); onDone(); };
+        // 서버 로그에 '경고를 보고도 업로드' 흔적을 남기도록 기존 파일명을 함께 보낸다(/api/upload dupContentOf)
+        ov.querySelector('#dupProceed').onclick = function() { ov.remove(); item._dupContentOf = existingName; onDone(); };
     }
 
     function showQueueDupNameBlockedModal(idx, existingName, onDone) {
@@ -721,6 +722,7 @@
             xhr.open('POST', '/api/upload');
             var fd = new FormData();
             fd.append('file', item.file, item.uploadName);
+            if (item._dupContentOf) fd.append('dupContentOf', item._dupContentOf);
             xhr.send(fd);
         }
     }

@@ -88,10 +88,17 @@ public class HeapFileApiController {
     @PostMapping("/api/upload")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> uploadFileApi(@RequestParam("file") MultipartFile file,
+                                                             @RequestParam(value = "dupContentOf", required = false) String dupContentOf,
                                                              Authentication authentication) {
         String originalName = file.getOriginalFilename();
         Map<String, Object> resp = new LinkedHashMap<>();
-        logger.info("[Upload API] Request: filename={}, size={}", originalName, FormatUtils.formatBytes(file.getSize()));
+        String who = authentication != null ? authentication.getName() : "unknown";
+        logger.info("[Upload API] Request: filename={}, size={}, by={}", originalName, FormatUtils.formatBytes(file.getSize()), who);
+        // 중복 내용 경고 모달에서 [업로드] 를 누른 경우 — 클라이언트만 아는 결정이라 여기서 남기지 않으면 흔적이 없다
+        if (dupContentOf != null && !dupContentOf.isBlank()) {
+            logger.warn("[Upload API] Proceeding despite duplicate content: '{}' has same content as existing '{}' (user ignored warning), by={}",
+                    originalName, new File(dupContentOf).getName(), who);
+        }
         try {
             if (file.isEmpty()) {
                 resp.put("status", "error");
@@ -104,7 +111,7 @@ public class HeapFileApiController {
             resp.put("status", "ok");
             resp.put("filename", filename);
             resp.put("size", file.getSize());
-            logger.info("[Upload API] Success: {}", filename);
+            logger.info("[Upload API] Success: {} (by={})", filename, who);
             return ResponseEntity.ok(resp);
         } catch (IllegalArgumentException e) {
             logger.warn("[Upload API] Validation failed for '{}': {}", originalName, e.getMessage());
@@ -121,7 +128,8 @@ public class HeapFileApiController {
 
     @PostMapping("/api/upload/check")
     @ResponseBody
-    public ResponseEntity<Map<String, String>> checkUploadDuplicate(@RequestBody Map<String, Object> request) {
+    public ResponseEntity<Map<String, String>> checkUploadDuplicate(@RequestBody Map<String, Object> request,
+                                                                    Authentication authentication) {
         String filename = (String) request.get("filename");
         Number fileSizeNum = (Number) request.get("fileSize");
         String partialHash = (String) request.get("partialHash");
@@ -135,6 +143,17 @@ public class HeapFileApiController {
         filename = new File(filename).getName(); // path traversal 방지
         long fileSize = fileSizeNum.longValue();
         Map<String, String> result = analyzerService.checkDuplicate(filename, fileSize, partialHash);
+        String status = result.get("status");
+        String who = authentication != null ? authentication.getName() : "unknown";
+        if ("DUPLICATE_NAME".equals(status)) {
+            // 동일 이름은 정책상 차단 — 클라이언트가 이 파일을 건너뛰고 '업로드 차단' 모달만 띄운다(자동 이름 변경·덮어쓰기 없음)
+            logger.warn("[Upload Check] Duplicate name: '{}' already exists ({}) — upload blocked, by={}",
+                    filename, FormatUtils.formatBytes(fileSize), who);
+        } else if ("DUPLICATE_CONTENT".equals(status)) {
+            // 사용자가 [건너뛰기]/[업로드] 를 고른다 — [업로드] 면 /api/upload 의 dupContentOf 로 한 번 더 남는다
+            logger.info("[Upload Check] Duplicate content: '{}' ({}) has same content as existing '{}' — awaiting user choice, by={}",
+                    filename, FormatUtils.formatBytes(fileSize), result.get("existingFilename"), who);
+        }
         return ResponseEntity.ok(result);
     }
 

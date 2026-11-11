@@ -1,5 +1,90 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-11-11] PDF JVM Heap 플래그 제거 + Target Servers 스캔 말풍선 경로 넘침 수정 + 스캔 경로 상한 5→10
+
+**버전:** 2.6.1 → **2.6.2**(`pom.xml`, `fragments/banner.html`·`index.html`·`progress.html`, `CLAUDE.md`). **대상:** `JvmHeapInfoService`, `JvmHeapInfoServiceTest`, `static/js/server-scan.js`, `templates/servers.html`, `templates/server-detail.html`, `TargetServer`, `ServerController`, `RemoteDumpService`(주석).
+
+- **PDF JVM Heap 카드:** 값에서 신뢰도 플래그(`재기동 후` 등)도 뺀다 — `Xms 2g / Xmx 8g`. 플래그는 화면 칩 ⓘ 툴팁에만 남는다. 수동 입력·후보 선택의 출처 괄호는 유지.
+- **스캔 대상 선택 말풍선 넘침:** `.ss-pick-path` 가 `<span>` 인데 display 를 주지 않아 inline 이었고, inline 에는 `overflow:hidden`·`text-overflow:ellipsis` 가 먹지 않아 긴 경로(+ `외 N개`)가 280px 말풍선 밖으로 샜다. flex 줄로 바꾸고 경로(`.ss-pick-path-txt`)만 말줄임, `외 N개`(`.ss-pick-more`)는 항상 보이게 분리. 전체 경로는 종전대로 행 `title`. 헤드리스 Chrome 실측(경로 10개·120자): 수정 전 글자 오른쪽 끝 775px(말풍선 288px), 수정 후 266px · `scrollWidth == clientWidth`. 같은 계열 방어로 스캔 결과 배너·자동 스캔 오류 카드·두 페이지 `#toast` 에 `overflow-wrap:anywhere`, 토스트에 `max-width: calc(100vw - 32px)`. 캐시 버스터 `server-scan.js?v=2026-11-11`.
+- **스캔 경로 상한 5→10:** `TargetServer.MAX_DUMP_PATHS` 와 두 화면의 `MAX_DUMP_PATHS`·안내 문구(힙덤프·코어·GC 로그 공통). 컬럼은 그대로 2500자(경로당 평균 ~240자)라 긴 경로 10개면 넘칠 수 있어 `ServerController.checkPathColumns` 가 저장 전에 "… 전체 길이가 2500자를 넘습니다" 400 으로 막는다(종전엔 DB 오류 문구가 그대로 나갔을 것). DB 스키마 변경 없음.
+- **검증:** `mvn test` 1085건 실패 0, 운영 재기동 정상.
+
+## [2026-11-11] 업로드 중복 로그 + PDF 저장 성공·실패 로그 + PDF JVM Heap 카드 제목 "(자동 수집)"
+
+**버전:** 변경 없음(2.6.1). **대상:** `HeapFileApiController`, `FileManagementService`, `static/js/upload-queue.js`, `CoreDumpApiController`, `GcLogApiController`, `HeapReportApiController`, `JvmHeapInfoService`, `PdfReportService`, `templates/analyze-print.html`, `JvmHeapInfoServiceTest`(+1), `HeapPrintTemplateJvmSmokeTest`(+1).
+
+- **업로드 이름 바뀜 여부 확인:** 2026-05-06 부터 힙덤프 업로드는 동일 이름을 **차단**한다(자동 이름 변경·덮어쓰기 없음). 서버가 `suggestedName`(`_2` 접미사)을 계속 돌려주고 `[Upload Check] Name conflict ... suggested: 'x_2'` 를 INFO 로 남겨 이름이 바뀌어 올라간 것처럼 읽혔다 — 이 문구는 DEBUG 로 내리고 실제 동작대로 남긴다.
+- **업로드 중복 로그(`/api/upload/check`, by= 포함):** 동일 이름 → `WARN [Upload Check] Duplicate name: '…' already exists (…) — upload blocked, by=…`. 동일 내용 → `INFO [Upload Check] Duplicate content: '…' has same content as existing '…' — awaiting user choice`. 경고 모달에서 **[업로드]** 를 고르면 클라이언트가 `dupContentOf` 를 함께 보내 `WARN [Upload API] Proceeding despite duplicate content: '…' has same content as existing '…' (user ignored warning)` 이 남는다(종전엔 사용자 결정이 서버에 흔적이 없었다). 같은 이름+같은 내용으로 강행하면 기존대로 `[Upload] Rejected: same filename already exists … — not renamed, not overwritten`. `[Upload API] Request/Success` 에 `by=` 추가.
+- **코어·GC 로그 업로드:** GC 로그 동일 이름 409 에 `[GcLog] action=upload-rejected reason=DUPLICATE_NAME` 로그 추가. ⚠ 코어 덤프 업로드는 동일 이름 검사가 없어 `transferTo` 가 기존 파일을 **덮어쓴다** — 동작은 그대로 두고 `[CoreDump] 동일 이름 코어 파일 덮어씀: … (기존 → 신규) by …` WARN 만 남긴다(정책 결정 필요).
+- **PDF 저장 로그:** 힙 `[PrintPdf]`·코어 `[CoreDump-PDF]` 모두 `action=pdf-download|pdf-preview result=OK|FAIL file= size= elapsed= by=`. 저장(download) 성공은 INFO, 리포트 탭 iframe 미리보기(inline) 성공은 탭을 열 때마다 와서 DEBUG. 실패는 모드와 무관하게 남긴다 — 결과 없음(404)·파일명 오류(400)는 WARN(종전 무로그), 렌더 예외는 ERROR + 스택. 모바일 HTML 인쇄(브라우저 `window.print`)는 서버를 거치지 않아 기록 대상이 아니다.
+- **PDF JVM Heap 카드:** 출처가 자동 수집이면 제목이 `JVM Heap(자동 수집)`(대문자 CSS 로 `JVM HEAP(자동 수집)` 표시), 값에서는 출처 태그를 빼고 신뢰도 플래그만 남긴다(`Xms 2g / Xmx 8g (재기동 후)`). 수동 입력·후보 선택은 종전대로 제목 `JVM Heap` + 값 괄호에 출처. 규칙은 `JvmHeapInfoService.envCard` 한 곳.
+- **검증:** `mvn test` 1085건 실패 0, 운영 재기동 정상.
+
+## [2026-11-11] PDF 힙 사용률 바 Xmx 기준 + Dominator 참조 사전계산 경과시간 1초 표기 + 대시보드 Recent Files 전체 보기
+
+**버전:** 변경 없음(2.6.1). **대상:** `PdfReportService`, `templates/analyze-print.html`, `static/js/analyze.js`, `templates/index.html`, `PdfHeapBarModelTest`(신규 4), `PdfReportServiceBarAccess`(테스트 통로), `HeapPrintTemplateJvmSmokeTest`(+1).
+
+- **PDF 힙 사용률 버그:** 바가 MAT `used/total` 이었는데 덤프의 Total Heap 은 살아있는 객체 합이라 used 와 거의 같아 Xmx 2g·Total 300MB 에서도 99% 로 찍혔다. 분모를 `-Xmx`(`JvmHeapInfoService.view` 의 `xmxBytes`)로 바꿨다 — analyze 화면 JVM 칩의 `usedPctOfXmx` 와 같은 기준. 범례는 `Used 300 MB (15%) · Free 1.71 GB · Xmx 2 GB`. Xmx 를 모르면 바 대신 "JVM 힙 설정(-Xmx)을 알 수 없어 표시하지 않습니다" 안내. Total 이 Xmx 를 넘으면 바는 100% 로 자르고 실제 비율 + 설정 확인 경고. 칸이 12% 미만이면 글자를 비워 넘침 방지, 0% 로 반올림돼도 1% 폭은 남긴다. 계산·문자열은 `PdfReportService.heapBarModel`(템플릿 계산 금지).
+- **참조 사전계산 경과시간:** 상태 폴링(2초)마다 `elapsedMs` 로 갱신해 2초씩 뛰었다. 폴링은 그대로 두고 응답으로 기준점만 맞춘 뒤 1초 로컬 타이머(`_domPreTick`)가 정수 초(`N초`/`M분 S초`)로 표시한다. 완료 `총 …` 도 같은 형식. 클릭 lazy 조회가 같은 칸을 쓰는 동안은 덮어쓰지 않고, 폴링 종료·완료 시 타이머를 정리한다.
+- **Recent Files 전체 보기:** 제목 오른쪽에 `전체 보기 ›` 링크 → `/files`(힙·코어·GC 로그 전체 목록). 부분 갱신 조각(`dashRecentFiles`) 안이라 갱신 후에도 유지된다.
+- **검증:** `mvn test` 실패 0, 운영 재기동 정상.
+
+## [2026-11-03] Accounts 현재 접속 — 다중 선택 세션 종료 + 조밀 표 + 브라우저 열
+
+**버전:** 변경 없음(2.6.1). **대상:** `AdminController`, `templates/admin/users.html`, `static/js/float-tooltip.js`, `AdminActiveSessionsTerminateTest`(신규 4), `AdminUsersTemplateSmokeTest`(+1, 1건 수정), `docs/guide/{AUTH_SECURITY,FRONTEND,ARCHITECTURE,TEST_INVENTORY}.md`, `CLAUDE.md`(테스트 건수).
+
+- **다중 종료:** `선택` 버튼 → 체크박스·전체 선택 → 하단 바 `선택 세션 종료` → 대상(사용자·IP) 확인 모달. `select-mode.js` 재사용. 본인 세션은 체크박스가 없고 서버도 `POST /api/admin/active-sessions/terminate` 에서 건너뛴다. 응답은 종료·이미 없음·본인 제외·실패 건수이고 한 건 실패로 멈추지 않는다(1회 500개). 탭을 벗어나면 선택 모드를 끝낸다.
+- **자동 갱신과 선택:** 행을 통째로 다시 그려도 선택이 유지되도록 선택 원본을 `sessionId` 맵으로 뒀다. 그 사이 끊긴 세션은 선택에서 빠진다.
+- **단건 종료 변경:** 일괄 경로와 `terminateOne` 을 공유한다. 종전에는 없는 세션도 성공으로 답했는데 이제 `success=false` + "이미 만료" 안내를 주고 목록을 새로 읽는다. 두 경로 모두 없던 감사 로그 `[Session] action=terminate target=… by=…` 를 남긴다(세션 ID 미기록).
+- **표:** 사용자 탭과 같은 조밀 규칙(`#panel-active` 범위)으로 행 높이 37px. 2줄 칸을 없애려고 브라우저 정보를 `만료 예정` 오른쪽 열로 옮겼고, 이 열이 남는 폭을 가지며 말줄임된다. 작업 버튼은 `.ubtn`(위험 동작은 평소에도 붉게).
+- **열 폭:** 사용자·브라우저 열이 남는 폭을 40:60 으로 나눈다(1440px 기준 사용자 173→220px, 브라우저 265→218px). 표시 이름은 고정 120px 대신 사용자 칸에 맞춰 줄어들어 늘어난 폭만큼 더 보인다.
+- **툴팁:** 잘린 브라우저 정보·표시 이름에만 `float-tooltip.js` 로 전체 내용을 보인다. 판정은 마우스를 올린 순간(창 폭이 바뀌어도 맞다). 재렌더용 `FloatTooltip.hide()` 추가.
+- **검증(실제 템플릿 + 헤드리스 Chrome, 스텁 API):** 1280px 이상 가로 스크롤 없음(1280px 선택 모드 포함), 1100px 이하는 `.table-scroll` 스크롤. 전체 선택(본인 제외)·해제·재렌더 후 유지·세션 소멸 시 차감·모달 목록·POST 본문·CSRF 헤더·완료 토스트·탭 이탈 통과, 콘솔 오류 0건. 짧은 내용은 툴팁 미표시.
+
+## [2026-11-03] Files — 잘린 파일명 툴팁(고정·복사) + 구성 파일 행 색상 구분
+
+**버전:** 변경 없음(2.6.1). **대상:** `static/js/name-tip.js`(신규), `templates/files.html`, `FilesTemplateSmokeTest`(+1), `docs/guide/FRONTEND.md`, `docs/guide/GC_LOG.md`.
+
+- **툴팁:** 말줄임된 파일명에만 마우스를 올리면(0.18초 뒤) 전체 이름을 보인다. 클릭하면 고정되고 이름 전체가 선택되며 `복사`·`닫기` 버튼이 나온다. Esc·바깥 클릭·같은 이름 재클릭으로 닫고, 다른 이름을 누르면 옮겨 간다. 키보드는 잘린 이름에 초점 → Enter/Space 로 고정. 기존 툴팁 2종은 `pointer-events:none` 이라 글자를 고를 수 없어 모듈을 새로 만들었다. 직전 변경의 네이티브 `title` 은 겹쳐 떠서 제거했다.
+- **복사:** `navigator.clipboard` 는 보안 컨텍스트 전용이라 사내 HTTP 에는 없다. `execCommand` 폴백을 두고, 그것도 실패하면 이름을 선택해 둔 채 `Ctrl+C 로 복사` 를 안내한다.
+- **행 색상:** 구성 파일 행 `#F8FAFC` 가 일반 행 hover `#F9FAFB` 와 사실상 같았고, `!important` 때문에 구성 파일 행은 hover 해도 색이 바뀌지 않았다. 행 `#EEF2FF` / hover `#E0E7FF` 로 바꾸고 글자는 `#4B5563`(hover 배경 대비 6.13:1, 종전 색 3.92:1).
+- **검증(실제 템플릿 + 헤드리스 Chrome):** 비보안 주소(`isSecureContext=false`)에서 폴백 복사 성공, localhost 에서 클립보드 값이 전체 파일명과 일치. 짧은 이름 미표시·지연·고정 유지·일부 드래그 선택·Esc·바깥 클릭·재클릭·이름 전환·키보드·위쪽 뒤집힘·스크롤 추적·재렌더 닫힘·창 폭/선택 모드 재판정 통과. 실제 호버로 색상 확인.
+
+## [2026-11-03] Files — GC 묶음 서랍을 펼쳐도 표가 흔들리지 않게 고정 + 펼치기·접기 연출
+
+**버전:** 변경 없음(2.6.1). **대상:** `templates/files.html`, `FilesTemplateSmokeTest`(+1), `docs/guide/GC_LOG.md`.
+
+- **원인:** `.ftable` 이 자동 레이아웃이라 열 폭이 보이는 행의 내용으로 다시 계산됐다. 구성 파일 행은 긴 이름·34px 들여쓰기·`→ 대표` 배지·`└G-n` 순번으로 폭을 더 요구해, 대표 이름이 짧은 묶음을 펼치면 실측 파일명 397→577px·다른 열 전부 축소, 1280px 화면은 표가 1018→1088px 로 넘쳐 가로 스크롤이 생겼다. 구성 파일 행은 배지가 줄바꿈돼 37→49.5px 로 커졌다. `.fname` 의 말줄임은 인라인 요소라 처음부터 동작하지 않았다.
+- **열 폭:** `table-layout: fixed` + 헤더별 폭. 파일명 열만 폭을 주지 않아 남는 공간을 가지며, 체크 열·AI 열 표시 변화도 파일명 열이 흡수한다. 페이지·탭을 옮겨도 열이 같다.
+- **행 높이:** 파일명 칸을 `.fname-line` flex 한 줄로 바꿔 이름만 말줄임되고(`title` 로 전체 이름) 배지는 줄지 않는다. 서버명도 말줄임. 서랍 안의 `→ 대표` 배지는 숨기고 대표가 목록에 없는 고아 행에는 남겼다.
+- **연출:** 0.2초 높이·투명도 전환(`drawerSlide`). `tr` 높이는 애니메이션되지 않아 연출 중에만 셀 내용을 감싸고 끝나면 원래 DOM 으로 되돌린다. 연출 중 다시 누르면 그 자리에서 방향을 바꾸고, 재렌더는 먼저 마감한다. 동작 줄이기는 즉시 전환, 모바일 카드는 나타나기만 연출한다.
+- **검증(실제 템플릿 + 헤드리스 Chrome, 1440·1280·1100px):** 펼침 전후·애니메이션 매 프레임 열 폭 동일, 가로 스크롤 없음, 칸 넘침 0건, 행 높이 47/37px 일정, 끝난 뒤 임시 요소 0건. 연속 3회 클릭·연출 중 검색·선택 모드·고아 행·동작 줄이기·390px 카드 통과.
+
+## [2026-11-03] 미사용 파일 `.genspark_llm.yaml` 삭제
+
+**버전:** 변경 없음(2.6.1). **대상:** `.genspark_llm.yaml`. 앱 코드 변경 없음.
+
+- 코드·스크립트 참조가 없는 미사용 파일이라 삭제했다. `.gitignore` 에 있었지만 2026-04-13 커밋(`81ffdcf`) 때 추적되기 시작해 저장소에 남아 있었다. `api_key` 항목이 있는 파일이고 그 커밋은 `origin/main` 이력에 그대로 남는다.
+
+## [2026-11-03] CLAUDE.md 분할 + 오래된 문서 docs/old 이동 (문서만)
+
+**버전:** 변경 없음(2.6.1). **대상:** `CLAUDE.md`, `docs/guide/*`(신규), `docs/old/*`(이동), `docs/README-DEPLOY.md`. 앱 코드 변경 없음.
+
+- **분할:** 매 세션 전부 로드되던 `CLAUDE.md`(234KB)를 10KB 로 줄이고 영역별 상세를 `docs/guide/` 7개로 옮겼다(`ARCHITECTURE`·`BACKEND_NOTES`·`FRONTEND`·`LLM_RAG`·`AUTH_SECURITY`·`GC_LOG`·`DEPLOYMENT`). 문장은 고치지 않고 줄 단위로 옮겼고, 원본 내용 316줄이 각각 정확히 한 번씩 남았음을 스크립트로 대조했다.
+- **함정:** 71개를 영역별 문서로 나눴다. 소스 주석이 번호로 참조하므로 번호는 유지하고 `CLAUDE.md` 에 번호 → 문서 색인을 뒀다.
+- **`CLAUDE.md` 신설 절:** `문서 지도`(작업 영역별 필독 문서 + 함정 색인), `어디서든 지킬 규칙`(영역을 가리지 않는 규칙 요약). 배포 패키지 두 문단은 RAG 절에서 `DEPLOYMENT.md` 로 옮겼다.
+- **`docs/old/` 이동 7건:** 완료됐거나 현행과 맞지 않고 현재 작업에서 쓰지 않는 문서 — `BOOT3_MIGRATION_PLAN`·`PHASE_4A_PLAN`·`RAG_PHASE2_PLAN`·`DOMTREE_CHILDREN_RESEARCH`·`MAT_PARSE_REGRESSION_DIAGNOSIS`·`SECURITY_AUDIT_ACCOUNT`·`VERSION_SPEC`(2.3.5 기준). 참조 경로를 갱신했다. 이 CHANGELOG 의 과거 기록에 남은 옛 경로는 기록이므로 고치지 않았다.
+- **`docs/` 유지:** `README-DEPLOY.md` 는 내용이 Boot 2.7.18 기준으로 낡았지만 k8s 외 유일한 설치 안내이고 `SECRET_ENCRYPTION_FOLLOWUP.md` 의 미해결 항목이 줄 번호로 참조해 남겼다. `SECURITY_REFACTOR_PLAN.md` 는 새 항목을 계속 추가하는 문서라 남겼다.
+
+## [2026-11-03] CLAUDE.md 정확도 점검 (문서만)
+
+**버전:** 변경 없음(2.6.1). **대상:** `CLAUDE.md`, `docs/guide/TEST_INVENTORY.md`(신규). 앱 코드 변경 없음.
+
+- **명령 보강:** 단일 클래스·단일 메서드·Chroma 라이브 테스트 실행법과 '린터 없음'을 추가했다. `mvn test` 건수 1071(라이브 4 skip)은 surefire XML 로 확인했다.
+- **테스트 내역 분리:** Build 코드 블록의 한 줄 약 6KB 내역을 `docs/guide/TEST_INVENTORY.md` 로 내용 그대로 옮겼다.
+- **낡은 값 수정:** Spring Security 6.5→7.1, Maven 요구사항 근거(Boot 3.5→4.1), RAG 엔드포인트 8→9. 서비스 라인 수·`analyze.js` 크기·`analyze.html` 라인 수는 현행과 달라 삭제하고, '현재 332청크'는 `rag-data/eval/BASELINE.md` 참조로 바꿨다.
+- **누락 보충:** 코어 덤프·OTP·SSO·계정 신청 컨트롤러, 서비스 4종, `/core-dump` 페이지, 배너 메뉴(현황판·Core Dump·GC Log), DTO 2종, 개요의 분석 대상 3종.
+
 ## [2026-10-31] 대시보드 — Recent Files 툴팁 사이드바 잘림 수정 · 탐지 현황 행 호버 배경 · 심각도 요약 칩 · 좁은 화면 1단 전환
 
 **버전:** 변경 없음(2.6.1). **대상:** `templates/index.html`, `model/dto/DetectionSummaryItem`, `static/js/krds-tooltip.js`(+ 소비 템플릿 5곳 캐시 키), `DashboardDetectSummaryTest`(+5), `DetectionSummaryItemTest`(신규 4).

@@ -1148,10 +1148,31 @@ function _domPreApply(st) {
             ? '참조 사전 계산을 준비하고 있습니다…'
             : '참조를 사전 계산하고 있습니다… (' + (st.done || 0) + '/' + (st.total || 0) + ')';
     }
-    if (time) time.textContent = _domFmtElapsed(st.elapsedMs || 0);
+    // 폴링(2초)마다 서버 경과시간으로 기준점만 다시 맞추고, 표시는 1초 로컬 타이머가 한다(2026-11-11)
+    _domPreBase = Date.now() - (st.elapsedMs || 0);
+    _domPreTick();
+    if (!_domPreTickTimer) _domPreTickTimer = setInterval(_domPreTick, 1000);
+}
+
+/** 사전계산 경과시간 — 1초 단위 정수 표기 */
+var _domPreBase = 0;
+var _domPreTickTimer = null;
+function _domFmtSec(ms) {
+    var sec = Math.max(0, Math.floor(ms / 1000));
+    if (sec < 60) return sec + '초';
+    return Math.floor(sec / 60) + '분 ' + (sec % 60) + '초';
+}
+function _domPreTick() {
+    if (_domLazyTimer) return;   // 클릭 lazy 가 같은 칸에 자기 경과시간을 쓰는 중 — 덮어쓰지 않는다
+    var t = document.getElementById('domLazyTime');
+    if (t) t.textContent = _domFmtSec(Date.now() - _domPreBase);
+}
+function _domPreTickStop() {
+    if (_domPreTickTimer) { clearInterval(_domPreTickTimer); _domPreTickTimer = null; }
 }
 
 function _domPreFinish(st) {
+    _domPreTickStop();
     _domNavSpinners(false);
     var bar = document.getElementById('domLazyBar');
     if (!bar) return;
@@ -1183,11 +1204,12 @@ function _domPreFinish(st) {
         if (txt) txt.textContent = '참조 사전 계산이 완료되었습니다.'
                 + (st && st.total ? ' (' + (st.done || 0) + '/' + st.total + ')' : '');
     }
-    if (time) time.textContent = '총 ' + _domFmtElapsed((st && st.elapsedMs) || 0);
+    if (time) time.textContent = '총 ' + _domFmtSec((st && st.elapsedMs) || 0);
 }
 
 function _domPrecomputeStop() {
     if (_domPreTimer) { clearInterval(_domPreTimer); _domPreTimer = null; }
+    _domPreTickStop();
 }
 
 /** 페이지 로드 시 1회 확인 → 진행 중이면 2초 간격 폴링 (완료되면 스스로 멈춘다) */

@@ -86,4 +86,32 @@ class HeapPrintTemplateJvmSmokeTest {
         assertTrue(without.substring(cell, Math.min(without.length(), cell + 400)).contains("미지정"), "미지정 폴백이 없다");
         assertTrue(without.contains("width: 20%"), "5셀 폭(20%)으로 바뀌지 않았다");
     }
+
+    @Test
+    @DisplayName("JVM Heap 셀 제목 — 자동 수집이면 jvmHeapTitle 을 그대로, 키가 없으면 기본 제목")
+    void jvmHeapCellTitleFollowsModel() {
+        Map<String, Object> m = model("Xms 2g / Xmx 8g");
+        m.put("jvmHeapTitle", "JVM Heap(자동 수집)");
+        String html = render(m);
+        assertTrue(html.contains("JVM Heap(자동 수집)"), "자동 수집 제목이 렌더되지 않았다");
+        assertTrue(html.contains(">Xms 2g / Xmx 8g<"), "값이 렌더되지 않았다");
+        assertTrue(render(model("미지정")).contains(">JVM Heap<"), "제목 키가 없을 때 기본 제목 폴백이 없다");
+    }
+
+    @Test
+    @DisplayName("힙 사용률 바 — Xmx 대비로 그리고, Xmx 를 모르면 바 대신 안내 문구")
+    void heapBarUsesXmx() {
+        Map<String, Object> m = model("Xms 2g / Xmx 2g");
+        m.putAll(com.heapdump.analyzer.service.PdfReportServiceBarAccess.bar(300L << 20, 2L << 30));
+        String html = render(m);
+        assertTrue(html.contains("Used 15%"), "Xmx 대비 15% 가 아니다");
+        assertTrue(html.contains("Xmx <span>2 GB</span>"), "Xmx 범례가 없다");
+        assertFalse(html.contains("알 수 없어"), "Xmx 가 있는데 안내 문구가 나왔다");
+
+        Map<String, Object> none = model("미지정");
+        none.putAll(com.heapdump.analyzer.service.PdfReportServiceBarAccess.bar(300L << 20, null));
+        String noBar = render(none);
+        assertTrue(noBar.contains("-Xmx)을 알 수 없어"), "Xmx 미지정 안내가 없다");
+        assertFalse(noBar.contains("class=\"seg used\""), "Xmx 를 모르는데 바를 그렸다");
+    }
 }

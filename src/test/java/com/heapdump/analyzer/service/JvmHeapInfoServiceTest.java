@@ -335,4 +335,29 @@ class JvmHeapInfoServiceTest {
         assertNull(JvmHeapInfoService.toEpoch("2026. 9. 10."));
         assertNull(JvmHeapInfoService.toEpoch(null));
     }
+
+    /** PDF 환경 카드 — 자동 수집이면 제목에 출처를 올리고 값에서는 뺀다, 그 외 출처는 종전처럼 값 괄호에. 신뢰도 플래그는 싣지 않는다 (2026-11-11). */
+    @Test
+    void envCardMovesAutoSourceToTitle() {
+        AnalysisHistoryEntity e = new AnalysisHistoryEntity();
+        e.setFilename("x.hprof");
+        e.setJvmXmsBytes(2 * GB);
+        e.setJvmXmxBytes(8 * GB);
+        e.setJvmHeapSource(JvmHeapInfoService.SOURCE_AUTO);
+        e.setJvmHeapFlags(JvmHeapCapture.FLAG_RESTARTED);
+        Mockito.when(historyRepo.findByFilename("x.hprof")).thenReturn(Optional.of(e));
+
+        JvmHeapInfoService.EnvCard auto = svc.envCard("x.hprof");
+        assertEquals("JVM Heap(자동 수집)", auto.title());
+        assertEquals("Xms 2g / Xmx 8g", auto.value(), "출처·플래그(재기동 후) 모두 값에 없어야 한다");
+
+        e.setJvmHeapSource(JvmHeapInfoService.SOURCE_MANUAL);
+        JvmHeapInfoService.EnvCard manual = svc.envCard("x.hprof");
+        assertEquals("JVM Heap", manual.title());
+        assertEquals("Xms 2g / Xmx 8g (수동 입력)", manual.value());
+
+        JvmHeapInfoService.EnvCard none = svc.envCard("nope.hprof");
+        assertEquals("JVM Heap", none.title());
+        assertEquals("미지정", none.value());
+    }
 }

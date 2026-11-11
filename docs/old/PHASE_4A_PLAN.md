@@ -2,7 +2,7 @@
 
 ## Context
 
-`SECURITY_REFACTOR_PLAN.md` 의 Phase 4A 후속 작업. Phase 6-1 (HeapAnalysisResultCache 분리, 2026-05-12 완료) 이후 남은 3 개 sub-task 를 단계적 PR 로 분할.
+`../SECURITY_REFACTOR_PLAN.md` 의 Phase 4A 후속 작업. Phase 6-1 (HeapAnalysisResultCache 분리, 2026-05-12 완료) 이후 남은 3 개 sub-task 를 단계적 PR 로 분할.
 
 `HeapDumpAnalyzerService.java` 는 현재 **3,581 라인** 으로 분석 + LLM + RAG + 파일 관리 + 설정 영속화 + AI 인사이트 등 7~8 개 책임이 혼재. 한 번에 모두 분리하면 회귀 위험 큼. **결합도 낮은 순으로 1 개 PR 씩 분리**.
 

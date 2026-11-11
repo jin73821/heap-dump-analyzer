@@ -7,6 +7,7 @@ import com.heapdump.analyzer.model.entity.TargetServer;
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.CoreDumpPdfReportService;
 import com.heapdump.analyzer.service.CoreDumpSysrootService;
+import com.heapdump.analyzer.util.FormatUtils;
 import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,6 +79,11 @@ public class CoreDumpApiController {
 
             // 코어 파일 저장
             File dest = new File(dumpFilesDir, safe);
+            // 코어 업로드는 동일 이름 검사가 없어 transferTo 가 기존 파일을 덮어쓴다 — 최소한 흔적은 남긴다
+            if (dest.exists()) {
+                logger.warn("[CoreDump] 동일 이름 코어 파일 덮어씀: {} (기존 {} → 신규 {}) by {}",
+                        safe, FormatUtils.formatBytes(dest.length()), FormatUtils.formatBytes(coreFile.getSize()), who);
+            }
             coreFile.transferTo(dest);
             logger.info("[CoreDump] 코어 파일 업로드: {} ({} bytes) by {}", safe, dest.length(), who);
 
@@ -137,7 +143,13 @@ public class CoreDumpApiController {
     public ResponseEntity<byte[]> printPdf(
             @PathVariable String filename,
             @RequestParam(name = "mode", defaultValue = "download") String mode,
-            @RequestParam(name = "rev", required = false) String rev) {
+            @RequestParam(name = "rev", required = false) String rev,
+            Principal principal) {
+        // 힙 PrintPdf 와 같은 규칙 — download 성공은 INFO, inline 미리보기 성공은 DEBUG, 실패는 항상 남긴다
+        boolean inline = "inline".equalsIgnoreCase(mode);
+        String action = inline ? "pdf-preview" : "pdf-download";
+        String who = principal != null ? principal.getName() : "unknown";
+        long t0 = System.currentTimeMillis();
         try {
             String safe = analyzerService.validateCoreDumpFilename(filename);
             boolean viewingRevision = rev != null && !rev.isBlank();
@@ -147,11 +159,22 @@ public class CoreDumpApiController {
             CoreDumpAnalysisResult result = resultOpt.orElse(null);
             // 성공 판정은 결과 화면 탭 렌더 가드와 동일 — GDB 파일 인식 실패(시그널 없음 + 오류만)면 404
             if (result == null || !isReportable(result)) {
+                logger.warn("[CoreDump-PDF] action={} result=FAIL file={} rev={} reason={} by={}",
+                        action, safe, viewingRevision ? rev : "-",
+                        result == null ? "NO_RESULT" : "NOT_REPORTABLE", who);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
             }
 
             String revLabel = viewingRevision ? rev : null;
             byte[] pdf = pdfReportService.renderCorePdf(safe, revLabel, result);
+            long elapsed = System.currentTimeMillis() - t0;
+            if (inline) {
+                logger.debug("[CoreDump-PDF] action={} result=OK file={} rev={} size={} elapsed={}ms by={}",
+                        action, safe, viewingRevision ? rev : "-", FormatUtils.formatBytes(pdf.length), elapsed, who);
+            } else {
+                logger.info("[CoreDump-PDF] action={} result=OK file={} rev={} size={} elapsed={}ms by={}",
+                        action, safe, viewingRevision ? rev : "-", FormatUtils.formatBytes(pdf.length), elapsed, who);
+            }
 
             // 코어는 확장자가 임의(.core / core.12345 / 임의명)라 힙식 확장자 제거 정규식 부적합 — .core 접미사만 제거
             String base = safe.replaceAll("\\.core$", "");
@@ -166,9 +189,12 @@ public class CoreDumpApiController {
             h.add("X-Content-Type-Options", "nosniff");
             return new ResponseEntity<>(pdf, h, HttpStatus.OK);
         } catch (IllegalArgumentException e) {
+            logger.warn("[CoreDump-PDF] action={} result=FAIL file={} reason=INVALID_FILENAME by={} — {}",
+                    action, filename, who, e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
         } catch (Exception e) {
-            logger.error("[CoreDump-PDF] PDF 생성 실패 (filename={}): {}", filename, e.getMessage(), e);
+            logger.error("[CoreDump-PDF] action={} result=FAIL file={} reason=RENDER_ERROR elapsed={}ms by={} — {}",
+                    action, filename, System.currentTimeMillis() - t0, who, e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

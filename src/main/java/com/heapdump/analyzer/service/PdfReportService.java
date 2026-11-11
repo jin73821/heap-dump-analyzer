@@ -5,6 +5,7 @@ import tools.jackson.databind.ObjectMapper;
 import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.LeakSuspect;
 import com.heapdump.analyzer.model.MemoryObject;
+import com.heapdump.analyzer.util.FormatUtils;
 import com.heapdump.analyzer.util.OomDetector;
 import com.heapdump.analyzer.util.MiddlewareDetector;
 import com.heapdump.analyzer.util.WasInstanceName;
@@ -118,13 +119,23 @@ public class PdfReportService {
         m.put("jeusInstance", !jeusInstanceManual.isEmpty() ? jeusInstanceManual : jeusInstanceAuto);
         m.put("jeusDomain", !jeusDomainManual.isEmpty() ? jeusDomainManual : jeusDomainAuto);
         // JVM Heap: 원격 전송 시 수집한 -Xms/-Xmx (출처·신뢰도 라벨 포함) — 문자열로 완성해 넘긴다(템플릿 계산 금지)
-        m.put("jvmHeapLabel", jvmHeapInfoService != null ? jvmHeapInfoService.label(filename) : "미지정");
+        // 자동 수집이면 카드 제목이 "JVM Heap(자동 수집)" — 값에서는 출처 태그를 뺀다(JvmHeapInfoService.envCard)
+        JvmHeapInfoService.EnvCard jvmCard = jvmHeapInfoService != null
+                ? jvmHeapInfoService.envCard(filename)
+                : new JvmHeapInfoService.EnvCard(JvmHeapInfoService.ENV_CARD_TITLE, "미지정");
+        m.put("jvmHeapTitle", jvmCard.title());
+        m.put("jvmHeapLabel", jvmCard.value());
 
-        long usedPct = result.getTotalHeapSize() > 0
-                ? Math.round(100.0 * result.getUsedHeapSize() / result.getTotalHeapSize())
-                : 0;
-        m.put("usedBarPct", Math.max(0, Math.min(100, usedPct)));
-        m.put("freeBarPct", Math.max(0, Math.min(100, 100 - usedPct)));
+        // 힙 사용률 바 (2026-11-11) — 분모는 -Xmx 다. 예전엔 MAT used/total 이었는데 덤프의 total 은
+        // "살아있는 객체 합" 이라 used 와 거의 같아 Xmx 2g·Total 300MB 에서도 99% 로 찍혔다.
+        // 분자는 analyze 화면 칩(JvmHeapInfoService.usedPctOfXmx)과 같은 Total Heap. Xmx 를 모르면 바를 그리지 않는다.
+        Long xmxBytes = null;
+        if (jvmHeapInfoService != null) {
+            Object x = jvmHeapInfoService.view(filename,
+                    result.getTotalHeapSize() > 0 ? result.getTotalHeapSize() : null).get("xmxBytes");
+            if (x instanceof Long) xmxBytes = (Long) x;
+        }
+        m.putAll(heapBarModel(result.getTotalHeapSize(), xmxBytes));
 
         m.put("analysisTimeSec", String.format("%.1f", result.getAnalysisTime() / 1000.0));
         m.put("formattedDate",
@@ -147,6 +158,44 @@ public class PdfReportService {
             m.put("oomThreadSamples", result.getOomThreadNames(3));
         }
 
+        return m;
+    }
+
+    /** 세그먼트 안에 "Used NN%" 글자를 넣을 최소 폭(%) — 이보다 좁으면 글자가 넘쳐 옆 칸을 덮는다. */
+    static final int BAR_LABEL_MIN_PCT = 12;
+
+    /**
+     * PDF 힙 사용률 바 모델 — Total Heap(MAT 가 본 살아있는 객체 합) ÷ -Xmx.
+     * 템플릿 계산 금지 원칙에 따라 표시 문자열까지 여기서 완성한다.
+     * <ul>
+     *   <li>{@code heapBarAvailable} — Xmx·Total 이 모두 있어야 true. false 면 템플릿이 바 대신 안내 문구를 낸다</li>
+     *   <li>{@code usedBarPct}/{@code freeBarPct} — 바 폭(0~100 으로 자른 값)</li>
+     *   <li>{@code heapUsedPctText} — 실제 비율(Xmx 를 넘으면 100 초과 그대로)</li>
+     *   <li>{@code usedSegText}/{@code freeSegText} — 칸이 좁으면 빈 문자열</li>
+     * </ul>
+     */
+    static Map<String, Object> heapBarModel(long totalHeapBytes, Long xmxBytes) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        boolean ok = xmxBytes != null && xmxBytes > 0 && totalHeapBytes > 0;
+        m.put("heapBarAvailable", ok);
+        if (!ok) {
+            m.put("usedBarPct", 0L);
+            m.put("freeBarPct", 100L);
+            return m;
+        }
+        long pct = Math.round(100.0 * totalHeapBytes / xmxBytes);
+        // 0% 로 반올림돼도 사용 중이면 1% 폭은 보이게 한다
+        long usedBar = Math.max(1, Math.min(100, pct));
+        long freeBar = 100 - usedBar;
+        m.put("usedBarPct", usedBar);
+        m.put("freeBarPct", freeBar);
+        m.put("heapUsedPctText", pct + "%");
+        m.put("heapOverXmx", totalHeapBytes > xmxBytes);
+        m.put("usedSegText", usedBar >= BAR_LABEL_MIN_PCT ? "Used " + pct + "%" : "");
+        m.put("freeSegText", freeBar >= BAR_LABEL_MIN_PCT ? "Free " + freeBar + "%" : "");
+        m.put("heapUsedText", FormatUtils.formatBytes(totalHeapBytes));
+        m.put("heapFreeText", FormatUtils.formatBytes(Math.max(0, xmxBytes - totalHeapBytes)));
+        m.put("heapXmxText", FormatUtils.formatBytes(xmxBytes));
         return m;
     }
 

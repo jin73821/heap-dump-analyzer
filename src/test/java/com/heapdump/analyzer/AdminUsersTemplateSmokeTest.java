@@ -119,8 +119,9 @@ class AdminUsersTemplateSmokeTest {
         assertTrue(html.contains("<td colspan=\"8\" class=\"lh-empty\">"), "열이 8개인데 빈 행 colspan 이 맞지 않다");
         assertFalse(html.contains("colspan=\"7\" class=\"lh-empty\">'"), "옛 7열 colspan 이 JS 에 남아 있다");
 
-        // 조밀 표 규칙은 #panel-users 로 가둔다 — 다른 탭(현재 접속/접속 이력/계정 신청) 표를 건드리면 안 된다
-        assertTrue(html.contains("#panel-users .utable td { padding: 5px 10px;"), "조밀 표 규칙이 사용자 탭 범위가 아니다");
+        // 조밀 표 규칙은 #panel-users·#panel-active 로 가둔다 — 다른 탭(접속 이력/계정 신청) 표를 건드리면 안 된다
+        assertTrue(html.contains("#panel-users .utable td, #panel-active .utable td { padding: 5px 10px;"),
+                "조밀 표 규칙이 사용자·현재 접속 탭 범위가 아니다");
         // 버튼 폰트 상속 누락이 종전 결함(라벨 Arial) — 되돌아가면 안 된다
         int ubtn = html.indexOf(".ubtn { display: inline-flex;");
         assertTrue(ubtn > 0 && html.indexOf("font-family: inherit;", ubtn) - ubtn < 400, "작업 버튼이 폰트를 상속하지 않는다");
@@ -130,6 +131,35 @@ class AdminUsersTemplateSmokeTest {
         assertTrue(html.contains("data-act=\"delete\"") && html.contains("보호 계정"), "삭제 메뉴 항목/보호 계정 안내가 없다");
         assertTrue(html.contains("aria-haspopup=\"menu\""), "더보기 버튼 접근성 속성이 없다");
         assertTrue(html.contains("function renderLastLogin(u)") && html.contains("기록 없음"), "최근 접속 렌더러가 없다");
+    }
+
+    @Test
+    @DisplayName("현재 접속: 다중 선택 계약 id + 브라우저는 만료 예정 오른쪽 + 잘린 칸만 툴팁 (2026-11-03)")
+    void activeSessionsSelectionAndBrowserColumn() {
+        String html = render(model(false, 10, true));
+
+        // select-mode.js 고정 id 가 하나라도 빠지면 첫 클릭에서 죽는다 (함정 65)
+        for (String id : new String[]{"selectModeBtn", "selectModeBtnLabel", "selectActionBar", "saCount", "saDelBtn", "allCheck"}) {
+            assertTrue(html.contains("id=\"" + id + "\""), "select-mode 고정 id 누락: " + id);
+        }
+        int select = html.indexOf("/js/select-mode.js");
+        assertTrue(select > 0 && select < html.indexOf("SelectMode.create"), "select-mode.js 는 페이지 JS 앞에 실어야 한다");
+        assertTrue(html.contains("/js/float-tooltip.js"), "data-tooltip 을 쓰는데 float-tooltip.js 로드가 없다");
+
+        // 열 순서: 만료 예정 → 브라우저 → 작업, 체크 열까지 10열
+        int expires = html.indexOf("<th>만료 예정</th>");
+        int browser = html.indexOf("<th class=\"as-ua-h\">브라우저</th>");
+        int action = html.indexOf("<th class=\"u-act-h\">작업</th>", expires);
+        assertTrue(expires > 0 && expires < browser && browser < action, "브라우저 열이 만료 예정과 작업 사이가 아니다");
+        assertTrue(html.contains("<td colspan=\"10\" class=\"lh-empty\">데이터를 불러오는 중"), "현재 접속 빈 행 colspan 이 10열이 아니다");
+
+        // 본인 행은 체크박스가 없어야 한다 — 전체 선택은 disabled 를 보지 않고 모든 .row-check 를 켠다
+        assertTrue(html.contains("var check = it.isCurrent ? '' :"), "본인 세션이 선택 대상에 들어간다");
+        // 자동 갱신이 행을 다시 그려도 선택이 남는다
+        assertTrue(html.contains("(_asSelected[it.sessionId] ? ' checked' : '')"), "재렌더 시 선택 복원이 없다");
+        // 탭을 벗어나면 하단 고정 바가 남지 않는다
+        assertTrue(html.contains("if (_asMode.active) exitAsSelect();"), "탭 이동 시 선택 모드 종료가 없다");
+        assertTrue(html.contains("el.scrollWidth > el.clientWidth"), "잘린 칸만 툴팁을 붙이는 판정이 없다");
     }
 
     @Test

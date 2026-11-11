@@ -86,8 +86,12 @@
             '.ss-pick-body{min-width:0;flex:1}' +
             '.ss-pick-name{font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px}' +
             '.ss-pick-cnt{font-size:11px;font-weight:500;color:#6B7280}' +
-            '.ss-pick-path{font-size:11px;color:#6B7280;font-family:"JetBrains Mono","SF Mono",monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px}' +
-            '.ss-pick-why{font-size:11px;color:#9CA3AF;margin-top:2px}' +
+            /* ⚠ span 이라 display 를 주지 않으면 inline 이 되어 ellipsis·overflow 가 먹지 않고 말풍선 밖으로 글자가 샌다(2026-11-11).
+               경로는 줄여도 '외 N개' 는 항상 보이도록 둘을 나눈다. */
+            '.ss-pick-path{display:flex;align-items:baseline;gap:4px;min-width:0;font-size:11px;color:#6B7280;margin-top:2px}' +
+            '.ss-pick-path-txt{flex:0 1 auto;min-width:0;font-family:"JetBrains Mono","SF Mono",monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+            '.ss-pick-more{flex-shrink:0;white-space:nowrap;color:#9CA3AF}' +
+            '.ss-pick-why{display:block;font-size:11px;color:#9CA3AF;margin-top:2px;overflow-wrap:anywhere}' +
             '.ss-pick-foot{display:flex;justify-content:flex-end;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid #F3F4F6}' +
             '.ss-pick-foot button{padding:5px 14px;border-radius:6px;font-size:12px;font-weight:600;line-height:18px;cursor:pointer;font-family:inherit;border:1px solid #E5E7EB;background:#fff;color:#374151}' +
             '.ss-pick-foot button:hover{background:#F9FAFB}' +
@@ -113,7 +117,7 @@
             '.scan-elapsed .se-slow{display:block;margin-top:8px;color:#D97706;font-size:11px}' +
             '.scan-msg{padding:12px;text-align:center;color:#9CA3AF}' +
             '.scan-msg.err{color:#EF4444}' +
-            '.scan-banner{border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;line-height:1.55}' +
+            '.scan-banner{border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;line-height:1.55;overflow-wrap:anywhere}' +
             '.scan-banner.warn{background:#FFFBEB;border:1px solid #FDE68A;color:#92400E}' +
             '.scan-banner.err{background:#FEF2F2;border:1px solid #FECACA;color:#991B1B}' +
             '.scan-banner code{font-family:monospace}' +
@@ -282,7 +286,8 @@
                + '<span class="ss-pick-body"><span class="ss-pick-name">' + esc(t.label)
                + (t.paths.length ? '<span class="ss-pick-cnt">경로 ' + t.paths.length + '개</span>' : '') + '</span>'
                + (t.enabled
-                    ? '<span class="ss-pick-path">' + esc(first) + (t.paths.length > 1 ? ' 외 ' + (t.paths.length - 1) + '개' : '') + '</span>'
+                    ? '<span class="ss-pick-path"><span class="ss-pick-path-txt">' + esc(first) + '</span>'
+                      + (t.paths.length > 1 ? '<span class="ss-pick-more">외 ' + (t.paths.length - 1) + '개</span>' : '') + '</span>'
                     : '<span class="ss-pick-why">' + esc(t.why) + '</span>')
                + '</span></label>';
         });

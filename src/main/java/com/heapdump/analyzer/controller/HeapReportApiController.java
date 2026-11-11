@@ -5,6 +5,7 @@ import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.PdfReportService;
 import com.heapdump.analyzer.util.FilenameValidator;
+import com.heapdump.analyzer.util.FormatUtils;
 import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,16 +90,33 @@ public class HeapReportApiController {
     @GetMapping("/analyze/{filename:.+}/print-pdf")
     public ResponseEntity<byte[]> downloadPrintPdf(
             @PathVariable String filename,
-            @RequestParam(name = "mode", defaultValue = "download") String mode) {
+            @RequestParam(name = "mode", defaultValue = "download") String mode,
+            java.security.Principal principal) {
+        // 저장(download)은 사용자 행위라 성공도 INFO, 리포트 탭 iframe 미리보기(inline)는 탭을 열 때마다 와서 성공만 DEBUG.
+        // 실패는 모드와 무관하게 남긴다 — 사용자는 빈 탭/깨진 다운로드만 보고 이유를 모른다.
+        boolean inline = "inline".equalsIgnoreCase(mode);
+        String action = inline ? "pdf-preview" : "pdf-download";
+        String who = principal != null ? principal.getName() : "unknown";
+        long t0 = System.currentTimeMillis();
         try {
             String safe = FilenameValidator.validate(filename);
             HeapAnalysisResult result = analyzerService.getCachedResult(safe);
             if (result == null
                     || result.getAnalysisStatus() != HeapAnalysisResult.AnalysisStatus.SUCCESS) {
+                logger.warn("[PrintPdf] action={} result=FAIL file={} reason=NO_SUCCESS_RESULT status={} by={}",
+                        action, safe, result == null ? "none" : result.getAnalysisStatus(), who);
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
             }
 
             byte[] pdf = pdfReportService.renderPrintPdf(safe, result);
+            long elapsed = System.currentTimeMillis() - t0;
+            if (inline) {
+                logger.debug("[PrintPdf] action={} result=OK file={} size={} elapsed={}ms by={}",
+                        action, safe, FormatUtils.formatBytes(pdf.length), elapsed, who);
+            } else {
+                logger.info("[PrintPdf] action={} result=OK file={} size={} elapsed={}ms by={}",
+                        action, safe, FormatUtils.formatBytes(pdf.length), elapsed, who);
+            }
 
             String base = safe.replaceAll("\\.(hprof|bin|dump)(\\.gz)?$", "") + "-report.pdf";
             String disposition = "inline".equalsIgnoreCase(mode) ? "inline" : "attachment";
@@ -110,9 +128,12 @@ public class HeapReportApiController {
             h.add("X-Content-Type-Options", "nosniff");
             return new ResponseEntity<>(pdf, h, HttpStatus.OK);
         } catch (IllegalArgumentException e) {
+            logger.warn("[PrintPdf] action={} result=FAIL file={} reason=INVALID_FILENAME by={} — {}",
+                    action, filename, who, e.getMessage());
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
         } catch (Exception e) {
-            logger.error("[PrintPdf] PDF 생성 실패 (filename={}): {}", filename, e.getMessage(), e);
+            logger.error("[PrintPdf] action={} result=FAIL file={} reason=RENDER_ERROR elapsed={}ms by={} — {}",
+                    action, filename, System.currentTimeMillis() - t0, who, e.getMessage(), e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

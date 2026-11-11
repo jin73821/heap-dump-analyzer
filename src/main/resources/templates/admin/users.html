@@ -61,13 +61,14 @@
            행마다 달라 오클릭 위험 · 1100px 에서 두 줄로 접혀 행 높이 불균일 · 위험 동작이 hover 전엔 구분 안 됨 ·
            포커스 표시 없음. → 자주 쓰는 [수정][비밀번호] 고정 + 드문·위험 동작은 [⋯] 메뉴, 오른쪽 정렬이라
            잠김 행에만 붙는 [잠금해제] 가 나머지 버튼 위치를 밀지 않는다.
-           ⚠ 다른 탭(현재 접속/접속 이력/계정 신청)의 .utable·.action-btn 은 건드리지 않도록 #panel-users 로 가둔다
-           (≥1024px 의 .utable 15px 확대 규칙보다 id 선택자가 이긴다). */
-        #panel-users .utable { font-size: 13px; }
-        #panel-users .utable th { padding: 7px 10px; font-size: 11px; }
-        #panel-users .utable td { padding: 5px 10px; line-height: 1.35; white-space: nowrap; }
-        #panel-users .utable th.u-act-h, #panel-users .utable td.u-act-cell { text-align: right; width: 1%; }
-        #panel-users .badge { font-size: 11px; padding: 1px 7px; line-height: 16px; }
+           ⚠ 다른 탭(접속 이력/계정 신청)의 .utable·.action-btn 은 건드리지 않도록 #panel-users·#panel-active 로 가둔다
+           (≥1024px 의 .utable 15px 확대 규칙보다 id 선택자가 이긴다). 현재 접속 탭은 2026-11-03 합류. */
+        #panel-users .utable, #panel-active .utable { font-size: 13px; }
+        #panel-users .utable th, #panel-active .utable th { padding: 7px 10px; font-size: 11px; white-space: nowrap; }
+        #panel-users .utable td, #panel-active .utable td { padding: 5px 10px; line-height: 1.35; white-space: nowrap; }
+        #panel-users .utable th.u-act-h, #panel-users .utable td.u-act-cell,
+        #panel-active .utable th.u-act-h, #panel-active .utable td.u-act-cell { text-align: right; width: 1%; }
+        #panel-users .badge, #panel-active .badge { font-size: 11px; padding: 1px 7px; line-height: 16px; }
         .u-id { color: #9CA3AF; font-variant-numeric: tabular-nums; }
         .u-name { font-weight: 600; color: #111827; }
         .u-dn { color: #4B5563; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
@@ -86,8 +87,36 @@
         .ubtn:focus-visible { outline: 2px solid #2563EB; outline-offset: 1px; }
         .ubtn.warn { background: #FFFBEB; border-color: #FCD34D; color: #92400E; }
         .ubtn.warn:hover { background: #FEF3C7; border-color: #F59E0B; color: #78350F; }
+        .ubtn.danger { border-color: #FECACA; color: #B91C1C; }
+        .ubtn.danger:hover { background: #FEF2F2; border-color: #F87171; color: #991B1B; }
         .ubtn.icon { width: 26px; padding: 0; color: #6B7280; }
         .ubtn[aria-expanded="true"] { background: #EFF6FF; border-color: #93C5FD; color: #1D4ED8; }
+        /* ── 현재 접속 표 (2026-11-03) ──
+           사용자·브라우저 열이 남는 폭을 나눠 갖고 나머지는 내용 폭 — max-width:0 이라야 긴 내용이 표를 밀지 않고 말줄임된다.
+           두 비율의 합은 100 이어야 한다(넘치면 뒤 열에 밀려 앞 열이 거의 안 는다). 폭이 모자라면 둘 다 min-width 까지 줄어든다.
+           잘린 칸에만 data-tooltip 을 붙이는 판정은 syncAsTip(마우스 올린 순간)이 한다. */
+        #panel-active .utable.select-mode .td-check { display: table-cell; }
+        #panel-active .utable .as-user-h { width: 40%; }
+        #panel-active .utable .as-user-cell { width: 40%; min-width: 170px; max-width: 0; }
+        #panel-active .utable .as-ua-h { width: 60%; }
+        #panel-active .utable .as-ua-cell { width: 60%; min-width: 120px; max-width: 0; }
+        #panel-active .utable th, #panel-active .utable td { padding-left: 8px; padding-right: 8px; }
+        #panel-active .utable .td-check { padding-right: 0; }
+        .as-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .as-ua { display: block; font-size: 12px; color: #6B7280; }
+        .as-user { display: flex; align-items: center; gap: 5px; min-width: 0; }
+        /* 표시 이름만 줄어든다 — 사용자명은 칸보다 길 때만 잘린다 */
+        .as-user .u-name { flex: 0 0 auto; max-width: 100%; }
+        .as-dn { flex: 0 1 auto; min-width: 0; font-size: 11px; color: #6B7280; }
+        .as-user .badge { flex-shrink: 0; }
+        .lh-btn.active { background: #EFF6FF; border-color: #93C5FD; color: #1D4ED8; }
+        body.action-bar-open .container { padding-bottom: 96px; }
+        .as-bulk-list { max-height: 188px; margin: 0 0 16px; padding: 4px 0; overflow-y: auto; list-style: none;
+                        border: 1px solid #E5E7EB; border-radius: 7px; font-size: 12.5px; }
+        .as-bulk-list li { display: flex; justify-content: space-between; gap: 16px; padding: 4px 12px; }
+        .as-bulk-list .as-bulk-user { font-weight: 600; color: #111827; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .as-bulk-list .as-bulk-ip { flex-shrink: 0; color: #6B7280; font-variant-numeric: tabular-nums; }
+
         /* 더보기 메뉴 — .table-scroll(overflow-x:auto) 가 absolute 메뉴를 잘라 먹으므로 body 직속 fixed 싱글턴 */
         .u-menu { position: fixed; z-index: 250; min-width: 176px; padding: 4px; background: #fff;
                   border: 1px solid #E5E7EB; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.14); }
@@ -186,6 +215,7 @@
 
         @media (max-width: 900px) {
             .topbar { left: 0; }
+            .select-action-bar { left: 0; }
             .container { padding-left: 20px; padding-right: 14px; }
             .utable { min-width: 760px; }
             #panel-users .utable { min-width: 960px; }
@@ -360,27 +390,30 @@
                     <input type="checkbox" id="asAutoRefresh" onchange="toggleAutoRefresh()">
                     <span>자동 갱신 (10초)</span>
                 </label>
+                <button type="button" class="lh-btn" id="selectModeBtn" onclick="toggleAsSelect()" title="다중 선택 모드"><span id="selectModeBtnLabel">선택</span></button>
                 <button class="lh-btn" onclick="loadActive()">↻ 새로고침</button>
             </div>
         </div>
 
         <div class="panel">
           <div class="table-scroll">
-            <table class="utable">
+            <table class="utable" id="asTable">
                 <thead>
                     <tr>
-                        <th>사용자</th>
+                        <th class="td-check"><input type="checkbox" class="all-check" id="allCheck" onchange="onAsSelectAll()" aria-label="전체 선택"></th>
+                        <th class="as-user-h">사용자</th>
                         <th>역할</th>
                         <th>IP</th>
                         <th>로그인 시각</th>
                         <th>마지막 활동</th>
                         <th>유휴</th>
                         <th>만료 예정</th>
-                        <th>작업</th>
+                        <th class="as-ua-h">브라우저</th>
+                        <th class="u-act-h">작업</th>
                     </tr>
                 </thead>
                 <tbody id="asBody">
-                    <tr><td colspan="8" class="lh-empty">데이터를 불러오는 중...</td></tr>
+                    <tr><td colspan="10" class="lh-empty">데이터를 불러오는 중...</td></tr>
                 </tbody>
             </table>
           </div>
@@ -863,6 +896,33 @@
     </div>
 </div>
 
+<!-- 현재 접속 다중 선택 액션 바 (하단 고정) -->
+<div class="select-action-bar" id="selectActionBar">
+    <div class="sa-info"><strong id="saCount">0</strong>개 세션 선택됨</div>
+    <div class="sa-btns">
+        <button class="sa-btn sa-btn-cancel" onclick="exitAsSelect()">취소</button>
+        <button class="sa-btn sa-btn-del" id="saDelBtn" onclick="openBulkTerminateModal()" disabled>선택 세션 종료</button>
+    </div>
+</div>
+
+<!-- Bulk Terminate Session Modal -->
+<div class="modal-ov" id="bulkTermModal" onclick="if(event.target===this)closeModal('bulkTermModal')">
+    <div class="modal-box">
+        <div class="modal-ttl">선택 세션 강제 종료</div>
+        <p style="font-size:13px;color:#6B7280;margin-bottom:12px">
+            선택한 <strong id="btCount"></strong>개 세션을 강제 종료하시겠습니까?<br>
+            해당 사용자는 다음 요청 시 로그인 페이지로 이동합니다.
+        </p>
+        <ul class="as-bulk-list" id="btList"></ul>
+        <div class="modal-btns">
+            <button class="mbtn-cancel" onclick="closeModal('bulkTermModal')">취소</button>
+            <button class="mbtn-del" onclick="submitBulkTerminate()">강제 종료</button>
+        </div>
+    </div>
+</div>
+
+<script src="/js/select-mode.js?v=2026-08-02"></script>
+<script src="/js/float-tooltip.js?v=2026-11-03"></script>
 <script>
 var _csrfToken = Common.csrfToken();
 var _csrfHeader = Common.csrfHeaderName();
@@ -1090,6 +1150,8 @@ function switchTab(name) {
         stopAutoRefresh();
         var ar = document.getElementById('asAutoRefresh');
         if (ar) ar.checked = false;
+        // 액션 바가 화면 하단 고정이라 탭을 벗어나면 다른 탭 위에 남는다
+        if (_asMode.active) exitAsSelect();
     }
     // 펜딩 배지는 어떤 탭으로 이동해도 최신값 반영
     refreshPendingCount();
@@ -1666,6 +1728,38 @@ function renderHistory(d) {
 
 // ── 현재 접속 중 ─────────────────────────────────────────────
 var _asAutoTimer = null;
+var _asBulkIds = [];
+/* 선택의 원본은 체크박스가 아니라 이 맵이다 — 자동 갱신이 행을 통째로 다시 그려도 선택이 유지되고,
+   사라진 세션은 다시 그린 뒤의 updateCount 로 저절로 빠진다. */
+var _asSelected = {};
+var _asMode = SelectMode.create({
+    tableId: 'asTable',
+    tbodyId: 'asBody',
+    bodyClass: 'action-bar-open',
+    onCountChange: function(sel) {
+        _asSelected = {};
+        sel.forEach(function(c) { _asSelected[c.value] = { username: c.dataset.user, ip: c.dataset.ip }; });
+    }
+});
+
+function toggleAsSelect() {
+    _asMode.toggle();
+    if (!_asMode.active) _asSelected = {};
+}
+function exitAsSelect() { _asMode.exit(); _asSelected = {}; }
+function onAsRowCheck() { _asMode.updateCount(); }
+function onAsSelectAll() { _asMode.onSelectAll(); }
+
+/* 잘린 칸에만 툴팁 — 폭이 창 크기·탭 표시 여부에 달려 있어 그릴 때가 아니라 올린 순간에 잰다.
+   float-tooltip 은 document 에서 듣기 때문에 그보다 먼저 도는 tbody 에서 속성을 맞춘다. */
+function syncAsTip(e) {
+    var el = e.target.closest ? e.target.closest('.as-trunc') : null;
+    if (!el) return;
+    if (el.scrollWidth > el.clientWidth) el.setAttribute('data-tooltip', el.textContent);
+    else el.removeAttribute('data-tooltip');
+}
+document.getElementById('asBody').addEventListener('mouseover', syncAsTip);
+document.getElementById('asBody').addEventListener('touchstart', syncAsTip, { passive: true });
 
 function fmtIdle(sec) {
     if (sec == null) return '-';
@@ -1682,51 +1776,62 @@ function loadActive() {
     Common.fetchJSON('/api/admin/active-sessions')
         .then(function(d) { renderActive(d); })
         .catch(function(e) {
-            body.innerHTML = '<tr><td colspan="8" class="lh-empty">불러오기 실패: ' + escHtml(e.message) + '</td></tr>';
+            body.innerHTML = '<tr><td colspan="10" class="lh-empty">불러오기 실패: ' + escHtml(e.message) + '</td></tr>';
             document.getElementById('asSummary').textContent = '';
         });
 }
 
 function renderActive(d) {
     var body = document.getElementById('asBody');
+    if (window.FloatTooltip) FloatTooltip.hide();
     if (!d.items || d.items.length === 0) {
-        body.innerHTML = '<tr><td colspan="8" class="lh-empty">현재 접속 중인 계정이 없습니다.</td></tr>';
+        body.innerHTML = '<tr><td colspan="10" class="lh-empty">현재 접속 중인 계정이 없습니다.</td></tr>';
         document.getElementById('asSummary').textContent = '활성 세션 0';
+        _asMode.updateCount();
         return;
     }
     body.innerHTML = d.items.map(function(it) {
-        var nameCell = '<span style="font-weight:600">' + escHtml(it.username) + '</span>';
+        var nameCell = '<span class="as-trunc u-name">' + escHtml(it.username) + '</span>';
         if (it.displayName) {
-            nameCell += '<span style="color:#6B7280;font-size:11px;margin-left:6px">(' + escHtml(it.displayName) + ')</span>';
+            nameCell += '<span class="as-trunc as-dn">(' + escHtml(it.displayName) + ')</span>';
         }
         if (it.isCurrent) {
-            nameCell += ' <span class="badge badge-admin" style="margin-left:4px">본인</span>';
+            nameCell += '<span class="badge badge-admin">본인</span>';
         }
         var roleBadge = '';
         if (it.role === 'ADMIN') roleBadge = '<span class="badge badge-admin">ADMIN</span>';
         else if (it.role === 'USER') roleBadge = '<span class="badge badge-user">USER</span>';
         else roleBadge = '-';
 
+        // 본인 행에는 .row-check 를 두지 않는다 — 전체 선택은 disabled 여부를 보지 않고 모든 .row-check 를 켠다
+        var check = it.isCurrent ? '' :
+            '<input type="checkbox" class="row-check" onchange="onAsRowCheck()" aria-label="세션 선택"'
+            + ' value="' + escHtml(it.sessionId) + '" data-user="' + escHtml(it.username) + '" data-ip="' + escHtml(it.ip || '-') + '"'
+            + (_asSelected[it.sessionId] ? ' checked' : '') + '>';
+
         var actBtn;
         if (it.isCurrent) {
-            actBtn = '<button class="action-btn" onclick="showSelfTerminateInfo()">강제 종료</button>';
+            actBtn = '<button class="ubtn" onclick="showSelfTerminateInfo()">강제 종료</button>';
         } else {
-            actBtn = '<button class="action-btn danger" onclick="openTerminateModal(\'' +
-                     escHtml(it.sessionId) + '\', \'' + escHtml(it.username) + '\')">강제 종료</button>';
+            actBtn = '<button class="ubtn danger" data-sid="' + escHtml(it.sessionId) + '" data-user="' + escHtml(it.username) + '"'
+                   + ' onclick="openTerminateModal(this.dataset.sid, this.dataset.user)">강제 종료</button>';
         }
 
         return '<tr>'
-            + '<td>' + nameCell + '<div style="font-size:11px;color:#9CA3AF;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escHtml(it.userAgent || '') + '">' + escHtml(it.userAgent || '-') + '</div></td>'
+            + '<td class="td-check">' + check + '</td>'
+            + '<td class="as-user-cell"><div class="as-user">' + nameCell + '</div></td>'
             + '<td>' + roleBadge + '</td>'
             + '<td>' + escHtml(it.ip || '-') + '</td>'
-            + '<td>' + escHtml(it.loginAt || it.createdAt) + '</td>'
-            + '<td>' + escHtml(it.lastAccessAt) + '</td>'
-            + '<td>' + fmtIdle(it.idleSec) + '</td>'
-            + '<td>' + escHtml(it.expiresAt) + '</td>'
-            + '<td>' + actBtn + '</td>'
+            + '<td class="u-ts">' + escHtml(it.loginAt || it.createdAt) + '</td>'
+            + '<td class="u-ts">' + escHtml(it.lastAccessAt) + '</td>'
+            + '<td class="u-ts">' + fmtIdle(it.idleSec) + '</td>'
+            + '<td class="u-ts">' + escHtml(it.expiresAt) + '</td>'
+            + '<td class="as-ua-cell"><span class="as-trunc as-ua">' + escHtml(it.userAgent || '-') + '</span></td>'
+            + '<td class="u-act-cell">' + actBtn + '</td>'
             + '</tr>';
     }).join('');
     document.getElementById('asSummary').textContent = '활성 세션 ' + d.totalElements + '개';
+    _asMode.updateCount();
 }
 
 function openTerminateModal(sessionId, username) {
@@ -1741,10 +1846,41 @@ function submitTerminate() {
     fetch('/api/admin/active-sessions/' + encodeURIComponent(sid), {
         method: 'DELETE', headers: delHeaders
     }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d.success) { showToast('세션을 종료했습니다.', 'success'); loadActive(); }
+        if (d.success) { showToast('세션을 종료했습니다.', 'success'); }
         else { showToast(d.message || '종료 실패', 'error'); }
+        loadActive();
     }).catch(function() { showToast('요청 실패', 'error'); });
     closeModal('termSessionModal');
+}
+
+function openBulkTerminateModal() {
+    _asBulkIds = Object.keys(_asSelected);
+    if (_asBulkIds.length === 0) return;
+    document.getElementById('btCount').textContent = _asBulkIds.length;
+    document.getElementById('btList').innerHTML = _asBulkIds.map(function(id) {
+        var s = _asSelected[id];
+        return '<li><span class="as-bulk-user">' + escHtml(s.username) + '</span>'
+             + '<span class="as-bulk-ip">' + escHtml(s.ip) + '</span></li>';
+    }).join('');
+    document.getElementById('bulkTermModal').classList.add('open');
+}
+
+function submitBulkTerminate() {
+    closeModal('bulkTermModal');
+    Common.fetchJSON('/api/admin/active-sessions/terminate', {
+        method: 'POST', body: JSON.stringify({ sessionIds: _asBulkIds })
+    }).then(function(d) {
+        var parts = [d.terminated + '개 세션을 종료했습니다.'];
+        if (d.alreadyGone) parts.push('이미 종료됨 ' + d.alreadyGone + '개');
+        if (d.skippedSelf) parts.push('본인 세션 제외');
+        if (d.failed) parts.push('실패 ' + d.failed + '개');
+        showToast(parts.join(' · '), d.success === true ? 'success' : 'error');
+        exitAsSelect();
+        loadActive();
+    }).catch(function(e) {
+        // 세션 만료·DB 장애만 사람이 읽을 문구가 온다(함정 14). 선택은 남겨 재시도할 수 있게 한다
+        showToast(e.sessionExpired || e.dbUnavailable ? e.message : '세션 종료 요청 실패', 'error');
+    });
 }
 
 function toggleAutoRefresh() {

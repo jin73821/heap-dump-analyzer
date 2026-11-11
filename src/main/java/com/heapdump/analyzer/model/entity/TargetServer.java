@@ -34,12 +34,12 @@ public class TargetServer {
     @Column(name = "ssh_user", nullable = false, length = 50)
     private String sshUser = "sscuser";
 
-    /** 덤프 파일 경로 — 1~5개. 다중 경로는 줄바꿈(\n)으로 구분 저장. */
+    /** 덤프 파일 경로 — 1~10개. 다중 경로는 줄바꿈(\n)으로 구분 저장. */
     @Column(name = "dump_path", nullable = false, length = 2500)
     private String dumpPath;
 
     /** 다중 경로 최대 개수 — UI/서비스 공용 상한. */
-    public static final int MAX_DUMP_PATHS = 5;
+    public static final int MAX_DUMP_PATHS = 10;   // 2026-11-11 5→10. 컬럼 2500자 = 경로당 평균 ~240자
 
     /** dumpPath를 줄바꿈 기준으로 분리 — 빈/공백 제거, 최대 MAX_DUMP_PATHS개. */
     @Transient
@@ -68,7 +68,7 @@ public class TargetServer {
     @Column(name = "scan_executable")
     private Boolean scanExecutable;
 
-    /** 코어파일 탐지 경로 — 1~5개. 다중 경로는 줄바꿈(\n)으로 구분 저장. */
+    /** 코어파일 탐지 경로 — 1~10개. 다중 경로는 줄바꿈(\n)으로 구분 저장. */
     @Column(name = "core_dump_path", length = 2500)
     private String coreDumpPath;
 
@@ -76,7 +76,7 @@ public class TargetServer {
     @Column(name = "scan_gclog")
     private Boolean scanGcLog;
 
-    /** GC 로그 탐지 경로 — 1~5개. 다중 경로는 줄바꿈(\n)으로 구분 저장. */
+    /** GC 로그 탐지 경로 — 1~10개. 다중 경로는 줄바꿈(\n)으로 구분 저장. */
     @Column(name = "gc_log_path", length = 2500)
     private String gcLogPath;
 

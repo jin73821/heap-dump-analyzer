@@ -460,7 +460,7 @@ sleep 18 && grep -E "Started HeapAnalyzerApplication|FAILED|Exception in thread"
 3. [Test Connection] → 도큐먼트 수 확인
 4. AI 채팅에서 RAG 토글 ON으로 답변 품질 검증
 
-자세한 매핑 예시는 `RAG_PHASE2_PLAN.md` 및 `rag-data/README.md` 참조.
+자세한 매핑 예시는 `old/RAG_PHASE2_PLAN.md` 및 `rag-data/README.md` 참조.
 
 ### 7.4 원격 SSH/SCP 자동 수집 활성화
 

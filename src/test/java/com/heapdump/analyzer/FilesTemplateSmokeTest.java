@@ -147,6 +147,57 @@ class FilesTemplateSmokeTest {
     }
 
     @Test
+    @DisplayName("★ 서랍을 펼쳐도 표가 흔들리지 않는다 — 열 폭은 헤더가 정하고, 펼침·접힘은 연출 뒤 원래 DOM 으로 돌아온다")
+    void drawerKeepsTableStableAndAnimates() {
+        String h = render("files", gcGroupModel());
+
+        // 자동 레이아웃으로 돌아가면 구성 파일의 긴 이름이 파일명 열을 키워 나머지 열이 전부 움직인다
+        assertTrue(h.contains("table-layout: fixed"), "열 폭이 내용을 따라간다 — 서랍을 펼칠 때 열이 흔들린다");
+        for (String col : List.of("td-seq", "col-osize", "col-compressed", "col-ai", "col-hide-sm", "col-date", "col-actions")) {
+            assertTrue(h.contains(".ftable th." + col), "헤더 폭이 없다: " + col);
+        }
+        assertTrue(h.contains("<th class=\"col-osize sortable\""), "원본 크기 헤더가 폭 규칙에 연결되지 않았다");
+        assertTrue(h.contains("<th class=\"col-actions\">"), "작업 헤더가 폭 규칙에 연결되지 않았다");
+
+        // 파일명 칸은 한 줄 — 줄바꿈되면 행 높이가 행마다 달라진다. 잘린 이름은 title 로 볼 수 있어야 한다
+        assertTrue(h.contains("<div class=\"fname-line\">"), "파일명 칸이 한 줄 구조가 아니다");
+        assertTrue(h.contains("/js/name-tip.js"), "말줄임된 파일명의 전체 이름을 볼 방법이 없다");
+        assertTrue(h.contains("NameTip.attach("), "이름 툴팁이 표에 연결되지 않았다");
+        assertFalse(h.contains("title=\"gc.log.3\""), "네이티브 title 이 이름 툴팁과 겹쳐 뜬다");
+        assertTrue(h.contains(".fname-line { display: contents; }"), "모바일 카드에서 flex 항목 구조가 깨진다");
+
+        // 구성 파일 행 색은 일반 행 hover(#F9FAFB)와 달라야 하고, !important 라 hover 도 같이 줘야 바뀐다
+        assertTrue(h.contains(".gclog-subrow { background: #EEF2FF !important; }"), "구성 파일 행 배경이 hover 색과 구분되지 않는다");
+        assertTrue(h.contains(".gclog-subrow:hover { background: #E0E7FF !important; }"), "구성 파일 행에 마우스를 올려도 색이 바뀌지 않는다");
+
+        // 서랍 안에서만 '→ 대표' 를 숨긴다 — 고아 행은 어느 묶음 소속인지 알 방법이 그 배지뿐이다
+        assertTrue(h.contains(".in-drawer .gclog-partof-badge { display: none; }"), "서랍 안 중복 배지가 폭을 차지한다");
+        assertTrue(h.contains("r.classList.add('in-drawer')"), "서랍 행 표시가 없다");
+
+        // 연출 배선 — 재렌더 전에 마감해야 감싼 셀이 남지 않고, 숨은 탭에서도 끝나야 한다
+        assertTrue(h.contains("drawerSlide(name, tr, open);"), "토글이 연출을 거치지 않는다");
+        assertTrue(h.contains("drawerFlush();   // 연출 중인 행을 먼저 마감한다"), "재렌더가 연출 중인 셀을 건드린다");
+        assertTrue(h.contains("Common.reduceMotion()"), "동작 줄이기를 따르지 않는다");
+        assertTrue(h.contains("Common.afterMotion(watched, 'transitionend', DRAWER_MS"), "끝 이벤트 상한이 없다 — 숨은 탭에서 멈춘다");
+        assertTrue(h.contains("!== 'table-row'"), "모바일 카드에서 셀을 감싸 레이아웃이 깨진다");
+    }
+
+    @Test
+    @DisplayName("이름 툴팁: 사내 HTTP 에서도 복사되고, 팝오버는 표에 잘리지 않는다")
+    void nameTipContracts() throws Exception {
+        String js = new String(FilesTemplateSmokeTest.class.getResourceAsStream("/static/js/name-tip.js").readAllBytes(),
+                java.nio.charset.StandardCharsets.UTF_8);
+        // ⚠ navigator.clipboard 는 보안 컨텍스트 전용이다 — 폴백이 없으면 HTTP 운영에서 복사 버튼이 죽는다
+        assertTrue(js.contains("document.execCommand('copy')"), "HTTP 환경 복사 폴백이 없다");
+        assertTrue(js.contains("navigator.clipboard && navigator.clipboard.writeText"), "clipboard API 존재 확인이 없다");
+        // 표가 overflow 컨테이너 안이라 body 직속이어야 잘리지 않는다
+        assertTrue(js.contains("document.body.appendChild(el)"), "팝오버가 표 안에 있으면 잘린다");
+        // 잘리지 않은 이름에는 뜨지 않아야 한다
+        assertTrue(js.contains("isTruncated(node)"), "잘린 이름만 고르는 판정이 없다");
+        assertTrue(js.contains("el.classList.toggle('pinned', on)"), "고정 상태가 없다");
+    }
+
+    @Test
     @DisplayName("files: 끝까지 렌더되고 목록 로딩 스피너가 별도 tbody 로 들어간다")
     void filesRendersWithLoadingSpinner() {
         String h = render("files", emptyModel());

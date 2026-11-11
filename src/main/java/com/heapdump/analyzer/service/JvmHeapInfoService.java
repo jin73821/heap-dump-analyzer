@@ -209,6 +209,28 @@ public class JvmHeapInfoService {
         return summaryText(e.getJvmXmsBytes(), e.getJvmXmxBytes(), e.getJvmHeapSource(), splitFlags(e.getJvmHeapFlags()));
     }
 
+    /**
+     * PDF 환경 카드(제목·값) — 자동 수집값이면 제목을 {@code JVM Heap(자동 수집)} 으로 바꾸고 값에서는 출처 태그를 뺀다
+     * (제목과 값에 같은 말이 두 번 찍히지 않게). 수동 입력·후보 선택은 종전처럼 값 괄호에 출처를 둔다(2026-11-11).
+     * 신뢰도 플래그({@code 재기동 후} 등)는 PDF 카드에서 쓰지 않는다 — 화면 칩 ⓘ 툴팁에만 남는다(사용자 요청, 2026-11-11).
+     */
+    public record EnvCard(String title, String value) {}
+
+    public static final String ENV_CARD_TITLE = "JVM Heap";
+
+    public EnvCard envCard(String filename) {
+        return envCardOf(find(filename));
+    }
+
+    static EnvCard envCardOf(AnalysisHistoryEntity e) {
+        if (e == null) return new EnvCard(ENV_CARD_TITLE, "미지정");
+        Long xms = e.getJvmXmsBytes(), xmx = e.getJvmXmxBytes();
+        List<String> noFlags = List.of();
+        boolean auto = SOURCE_AUTO.equals(e.getJvmHeapSource()) && (xms != null || xmx != null);
+        if (!auto) return new EnvCard(ENV_CARD_TITLE, summaryText(xms, xmx, e.getJvmHeapSource(), noFlags));
+        return new EnvCard(ENV_CARD_TITLE + "(" + sourceLabel(SOURCE_AUTO) + ")", summaryText(xms, xmx, null, noFlags));
+    }
+
     private static String summaryText(Long xms, Long xmx, String source, List<String> flags) {
         if (xms == null && xmx == null) return "미지정";
         StringBuilder sb = new StringBuilder();

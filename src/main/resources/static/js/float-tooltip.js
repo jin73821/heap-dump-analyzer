@@ -1,6 +1,7 @@
 /* float-tooltip.js — [data-tooltip] 플로팅 툴팁 공통 (2026-08-02)
  * servers.html / server-detail.html 에 복붙돼 있던 IIFE 통합 (servers 판 기준 —
- * 모바일 터치 토글/스크롤 dismiss 포함 상위 버전). 로드만 하면 자동 활성. */
+ * 모바일 터치 토글/스크롤 dismiss 포함 상위 버전). 로드만 하면 자동 활성.
+ * 트리거를 다시 그리는 화면은 FloatTooltip.hide() — 교체된 요소에서는 mouseout 이 오지 않는다. */
 // ── 플로팅 툴팁 ([data-tooltip] 속성 공통) ──────────────────────
 (function() {
     var tip = document.createElement('div');
@@ -16,6 +17,7 @@
         tip.style.display = 'none';
         _activeTipEl = null;
     }
+    window.FloatTooltip = { hide: hideTip };
     function showTipFor(el) {
         _activeTipEl = el;
         tip.textContent = el.getAttribute('data-tooltip');

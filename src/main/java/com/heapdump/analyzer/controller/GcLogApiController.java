@@ -95,7 +95,10 @@ public class GcLogApiController {
         File dir = service.dumpFilesDir();
         dir.mkdirs();
         File dest = new File(dir, safe);
-        if (dest.exists()) return ResponseEntity.status(409).body(err("DUPLICATE_NAME", "같은 이름의 GC 로그가 이미 있습니다: " + safe));
+        if (dest.exists()) {
+            logger.warn("[GcLog] action=upload-rejected file={} reason=DUPLICATE_NAME by={}", safe, who(principal));
+            return ResponseEntity.status(409).body(err("DUPLICATE_NAME", "같은 이름의 GC 로그가 이미 있습니다: " + safe));
+        }
         try {
             file.transferTo(dest);
             GcLogFormat fmt = service.sniffFormat(dest);

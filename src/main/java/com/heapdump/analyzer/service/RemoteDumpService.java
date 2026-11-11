@@ -230,7 +230,7 @@ public class RemoteDumpService {
     }
 
     /**
-     * 원격 서버에서 힙 덤프 + 코어파일 목록 스캔 — 다중 경로(최대 5개) 모두 순회.
+     * 원격 서버에서 힙 덤프 + 코어파일 목록 스캔 — 다중 경로(최대 TargetServer.MAX_DUMP_PATHS=10개) 모두 순회.
      * - 모든 경로가 같은 종류(NOT_FOUND / NOT_READABLE / SSH_ERROR)로 실패하면 그 errorCode 반환
      * - 일부만 실패하면 partial 성공: 성공한 경로의 파일은 반환, 실패 경로는 pathErrors에 기록
      * - 한 경로라도 성공하면 서버 상태는 OK

@@ -129,6 +129,7 @@ public class ServerController {
             if (body.containsKey("scanGcLog"))      server.setScanGcLog(Boolean.TRUE.equals(body.get("scanGcLog")));
             if (body.containsKey("gcLogPath"))      server.setGcLogPath((String) body.get("gcLogPath"));
             server.setEnabled(true);
+            checkPathColumns(server);
             serverRepository.save(server);
             logger.info("[Server] action=create id={} name='{}' host='{}' port={} sshUser='{}' autoDetect={} scanHeap={} scanCore={} scanGcLog={} by={}",
                     server.getId(), server.getName(), server.getHost(), server.getPort(),
@@ -140,6 +141,22 @@ public class ServerController {
             logger.warn("[Server] action=create FAILED name='{}' host='{}' by={} error={}",
                     body.get("name"), body.get("host"), who(auth), e.getMessage());
             return fail(e);
+        }
+    }
+
+    /** 경로 컬럼(dump_path·core_dump_path·gc_log_path) 길이 — 엔티티 @Column(length) 와 같다. */
+    static final int PATH_COLUMN_MAX = 2500;
+
+    /**
+     * 경로 상한을 10개로 늘리며(2026-11-11) 긴 경로 10개면 컬럼 2500자를 넘을 수 있다 — DB 오류 문구 대신 알아볼 수 있는 400 으로 막는다.
+     */
+    static void checkPathColumns(TargetServer s) {
+        String[][] cols = {{"힙덤프 경로", s.getDumpPath()}, {"코어파일 경로", s.getCoreDumpPath()}, {"GC 로그 경로", s.getGcLogPath()}};
+        for (String[] c : cols) {
+            if (c[1] != null && c[1].length() > PATH_COLUMN_MAX) {
+                throw new IllegalArgumentException(c[0] + " 전체 길이가 " + PATH_COLUMN_MAX + "자를 넘습니다(" + c[1].length()
+                        + "자). 경로 수를 줄이거나 짧은 상위 경로로 지정하세요.");
+            }
         }
     }
 
@@ -171,6 +188,7 @@ public class ServerController {
             if (body.containsKey("coreDumpPath")) { server.setCoreDumpPath((String) body.get("coreDumpPath")); changed.add("coreDumpPath"); }
             if (body.containsKey("scanGcLog")) { server.setScanGcLog(Boolean.TRUE.equals(body.get("scanGcLog"))); changed.add("scanGcLog"); }
             if (body.containsKey("gcLogPath")) { server.setGcLogPath((String) body.get("gcLogPath")); changed.add("gcLogPath"); }
+            checkPathColumns(server);
             serverRepository.save(server);
             logger.info("[Server] action=update id={} name='{}'->'{}' host='{}'->'{}' port={}->{} autoDetect={}->{} enabled={}->{} fields={} by={}",
                     id, oldName, server.getName(), oldHost, server.getHost(), oldPort, server.getPort(),

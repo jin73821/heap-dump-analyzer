@@ -27,6 +27,14 @@
         .sidebar-section:last-child { border-bottom: none; }
         .s-title { font-size: 10px; font-weight: 600; color: #9CA3AF;
                    text-transform: uppercase; letter-spacing: .07em; margin-bottom: 10px; }
+        /* Recent Files 제목 우측 '전체 보기' — 제목의 대문자·자간을 물려받지 않게 되돌린다 */
+        .s-title-link { float: right; display: inline-flex; align-items: center; gap: 2px;
+                        font-size: 11px; font-weight: 600; color: #2563EB; text-decoration: none;
+                        text-transform: none; letter-spacing: 0; padding: 1px 6px; margin: -2px -6px 0 0;
+                        border-radius: 5px; }
+        .s-title-link:hover { background: #EFF6FF; color: #1D4ED8; }
+        .s-title-link svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.8;
+                            stroke-linecap: round; stroke-linejoin: round; }
         .upload-zone { border: 1.5px dashed #93C5FD; border-radius: 10px;
                        padding: 18px 14px; text-align: center; background: #F8FAFF; }
         .upload-icon { width: 38px; height: 38px; background: #DBEAFE; border-radius: 8px;
@@ -666,7 +674,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.6.1 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.6.2 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -695,6 +703,9 @@
             <div class="s-title">Recent Files
                 <span th:if="${recentCount &gt; 5}" th:text="'(' + ${#lists.size(recentFiles)} + ' / ' + ${recentCount} + ')'">(5 / 12)</span>
                 <span th:unless="${recentCount &gt; 5}" th:text="'(' + ${recentCount} + ')'">(0)</span>
+                <!-- 전체 보기(2026-11-11) — /files 는 힙·코어·GC 로그를 모두 보여준다 -->
+                <a href="/files" class="s-title-link" title="전체 파일 목록으로 이동">전체 보기
+                    <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4.5 2.5L8 6l-3.5 3.5"/></svg></a>
             </div>
 
             <div th:if="${#lists.isEmpty(recentFiles)}" class="empty-files">

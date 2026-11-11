@@ -26,8 +26,10 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Controller
 @PreAuthorize("hasRole('ADMIN')")
@@ -36,6 +38,9 @@ public class AdminController {
     private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(AdminController.class);
 
     private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /** 일괄 세션 종료 1회 상한 — 화면은 활성 세션 목록 안에서만 고르므로 정상 사용에서는 닿지 않는다 */
+    private static final int MAX_BULK_TERMINATE = 500;
 
     /** 감사 로깅용 수행자 식별 (LeakRuleAdminController 컨벤션) */
     private static String who(org.springframework.security.core.Authentication auth) {
@@ -386,34 +391,19 @@ public class AdminController {
     @DeleteMapping("/api/admin/active-sessions/{sessionId}")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> terminateSession(@PathVariable String sessionId,
-                                                                HttpServletRequest request) {
+                                                                HttpServletRequest request,
+                                                                org.springframework.security.core.Authentication auth) {
         Map<String, Object> result = new HashMap<>();
         try {
-            String currentSessionId = (request.getSession(false) != null)
-                    ? request.getSession(false).getId() : null;
-            if (sessionId.equals(currentSessionId)) {
+            if (sessionId.equals(currentSessionId(request))) {
                 result.put("success", false);
                 result.put("message", "본인의 세션은 강제 종료할 수 없습니다.");
                 return ResponseEntity.badRequest().body(result);
             }
 
-            int deleted;
-            if (sessionRepository != null) {
-                // Spring Session 표준 경로 (속성 테이블까지 정합성 유지)
-                sessionRepository.deleteById(sessionId);
-                deleted = 1;
-            } else {
-                // 폴백: 직접 삭제 (자식 → 부모 순)
-                jdbcTemplate.update(
-                        "DELETE FROM SPRING_SESSION_ATTRIBUTES WHERE SESSION_PRIMARY_ID IN " +
-                                "(SELECT PRIMARY_ID FROM SPRING_SESSION WHERE SESSION_ID = ?)",
-                        sessionId);
-                deleted = jdbcTemplate.update(
-                        "DELETE FROM SPRING_SESSION WHERE SESSION_ID = ?", sessionId);
-            }
-
-            result.put("success", deleted > 0);
-            if (deleted == 0) {
+            boolean deleted = terminateOne(sessionId, who(auth));
+            result.put("success", deleted);
+            if (!deleted) {
                 result.put("message", "이미 만료되었거나 존재하지 않는 세션입니다.");
             }
             return ResponseEntity.ok(result);
@@ -422,5 +412,80 @@ public class AdminController {
             result.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(result);
         }
+    }
+
+    /**
+     * 다중 선택 세션 종료. 본인 세션은 화면과 무관하게 여기서 건너뛴다(함정 2).
+     * 한 건이 실패해도 나머지는 계속 종료하고 건수로 알린다 — {@code success} 는 실패가 없을 때만 true.
+     */
+    @PostMapping("/api/admin/active-sessions/terminate")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> terminateSessions(@RequestBody(required = false) Map<String, Object> body,
+                                                                 HttpServletRequest request,
+                                                                 org.springframework.security.core.Authentication auth) {
+        Map<String, Object> result = new HashMap<>();
+        Object raw = body == null ? null : body.get("sessionIds");
+        Set<String> ids = new LinkedHashSet<>();
+        if (raw instanceof List) {
+            for (Object o : (List<?>) raw) {
+                if (o != null && !o.toString().isEmpty()) ids.add(o.toString());
+            }
+        }
+        if (ids.isEmpty() || ids.size() > MAX_BULK_TERMINATE) {
+            result.put("success", false);
+            result.put("message", ids.isEmpty() ? "종료할 세션을 선택하세요."
+                    : "한 번에 " + MAX_BULK_TERMINATE + "개까지 종료할 수 있습니다.");
+            return ResponseEntity.badRequest().body(result);
+        }
+
+        String by = who(auth);
+        String current = currentSessionId(request);
+        int terminated = 0, alreadyGone = 0, skippedSelf = 0, failed = 0;
+        for (String id : ids) {
+            if (id.equals(current)) { skippedSelf++; continue; }
+            try {
+                if (terminateOne(id, by)) terminated++; else alreadyGone++;
+            } catch (Exception e) {
+                failed++;
+                logger.warn("[Session] action=terminate 실패 by={}: {}", by, e.getMessage());
+            }
+        }
+        logger.info("[Session] action=bulk-terminate requested={} terminated={} alreadyGone={} skippedSelf={} failed={} by={}",
+                ids.size(), terminated, alreadyGone, skippedSelf, failed, by);
+
+        result.put("success", failed == 0);
+        result.put("terminated", terminated);
+        result.put("alreadyGone", alreadyGone);
+        result.put("skippedSelf", skippedSelf);
+        result.put("failed", failed);
+        return ResponseEntity.ok(result);
+    }
+
+    private static String currentSessionId(HttpServletRequest request) {
+        return request.getSession(false) != null ? request.getSession(false).getId() : null;
+    }
+
+    /**
+     * 세션 1건 종료 — 단건·일괄 공용. 이미 없는 세션이면 false.
+     * 소유자는 삭제 전에 잡아 감사 로그에 남긴다. 세션 ID 는 그 자체가 자격이므로 로그에 쓰지 않는다.
+     */
+    private boolean terminateOne(String sessionId, String by) {
+        List<String> owner = jdbcTemplate.queryForList(
+                "SELECT PRINCIPAL_NAME FROM SPRING_SESSION WHERE SESSION_ID = ?", String.class, sessionId);
+        if (owner.isEmpty()) return false;
+
+        if (sessionRepository != null) {
+            // Spring Session 표준 경로 (속성 테이블까지 정합성 유지)
+            sessionRepository.deleteById(sessionId);
+        } else {
+            // 폴백: 직접 삭제 (자식 → 부모 순)
+            jdbcTemplate.update(
+                    "DELETE FROM SPRING_SESSION_ATTRIBUTES WHERE SESSION_PRIMARY_ID IN " +
+                            "(SELECT PRIMARY_ID FROM SPRING_SESSION WHERE SESSION_ID = ?)",
+                    sessionId);
+            jdbcTemplate.update("DELETE FROM SPRING_SESSION WHERE SESSION_ID = ?", sessionId);
+        }
+        logger.info("[Session] action=terminate target={} by={}", owner.get(0), by);
+        return true;
     }
 }

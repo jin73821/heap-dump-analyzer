@@ -208,7 +208,7 @@ public class FileManagementService {
                     if (existingHash.equals(partialHash)) {
                         result.put("status", "DUPLICATE_CONTENT");
                         result.put("existingFilename", existingDisplayName);
-                        logger.info("[Upload Check] Duplicate content: '{}' matches '{}'", filename, existingDisplayName);
+                        logger.debug("[Upload Check] Duplicate content: '{}' matches '{}'", filename, existingDisplayName);
                         return result;
                     }
                 } catch (Exception e) {
@@ -221,7 +221,9 @@ public class FileManagementService {
             result.put("status", "DUPLICATE_NAME");
             result.put("existingFilename", filename);
             result.put("suggestedName", generateUniqueName(filename, dir));
-            logger.info("[Upload Check] Name conflict: '{}', suggested: '{}'", filename, result.get("suggestedName"));
+            // suggestedName 은 2026-05-06 정책 변경(동일 이름 차단) 이후 클라이언트가 쓰지 않는다(자동 이름 변경 없음).
+            // 운영 로그(사용자 포함)는 HeapFileApiController.checkUploadDuplicate 가 남긴다 — 여기는 상세만.
+            logger.debug("[Upload Check] Name conflict: '{}' (suggestedName={} — unused by client)", filename, result.get("suggestedName"));
             return result;
         }
 
@@ -314,7 +316,8 @@ public class FileManagementService {
 
         if (Files.exists(dumpDir.toPath().resolve(filename))
                 || Files.exists(dumpDir.toPath().resolve(filename + ".gz"))) {
-            logger.warn("[Upload] Rejected: same filename already exists '{}'", filename);
+            logger.warn("[Upload] Rejected: same filename already exists '{}' (dumpfiles{}) — not renamed, not overwritten",
+                    filename, Files.exists(dumpDir.toPath().resolve(filename)) ? "" : ", as .gz");
             throw new IllegalArgumentException(
                     "동일한 이름의 파일이 이미 존재합니다: '" + filename + "'. 다른 이름으로 변경 후 업로드해 주세요.");
         }
