@@ -547,3 +547,17 @@
 .hi-menu-item.danger:hover, .hi-menu-item.danger:focus-visible { background: #FEF2F2; color: #991B1B; }
 .hi-menu-sep { height: 1px; margin: 4px 2px; background: #F3F4F6; }
 @media (prefers-reduced-motion: reduce) { .hi-menu { animation: none; } }
+
+/* 이력 표 'ⓘ' 세부 정보(2026-11-24) — 수집기·JDK·최대 pause 두 열을 접어 표 밀도를 높였다.
+   말풍선 껍데기는 ⋯ 메뉴(.hi-menu)를 그대로 쓰고 안쪽만 정의 목록으로 채운다. 열은 아이콘 폭만큼만 차지한다. */
+.hi-table th.hi-col-info, .hi-table td.hi-col-info { width: 1%; padding-left: 4px; padding-right: 4px; text-align: center; }
+.hi-info-btn { width: 28px; padding: 0; color: var(--cd-text-3, #6B7280); }
+.hi-info-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.hi-info-btn svg .dot { fill: currentColor; stroke: none; }
+.hi-info-btn:hover:not(:disabled) { color: var(--cd-text, #111827); }
+.hi-info-btn[aria-expanded="true"] { background: #EFF6FF; border-color: #93C5FD; color: #1D4ED8; }
+.hi-info { min-width: 200px; padding: 10px 12px; }
+.hi-info-list { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: 12.5px; align-items: baseline; }
+.hi-info-list dt { color: #6B7280; white-space: nowrap; }
+.hi-info-list dd { margin: 0; color: #111827; font-weight: 600; overflow-wrap: anywhere; }
+.hi-info-list dd .hi-mono { font-size: 12px; }

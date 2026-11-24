@@ -123,10 +123,15 @@ public class CoreDumpApiController {
     // ── 다운로드 ──────────────────────────────────────────────────
 
     @GetMapping("/api/core-dump/download/{filename:.+}")
-    public ResponseEntity<Resource> download(@PathVariable String filename) {
+    public ResponseEntity<Resource> download(@PathVariable String filename, Principal principal) {
         String safe = analyzerService.validateCoreDumpFilename(filename);
+        String who = principal != null ? principal.getName() : "unknown";
         File file = new File(analyzerService.dumpFilesDir(), safe);
-        if (!file.exists() || !file.isFile()) return ResponseEntity.notFound().build();
+        if (!file.exists() || !file.isFile()) {
+            logger.warn("[CoreDump] action=download FAILED filename={} reason=NOT_FOUND by={}", safe, who);
+            return ResponseEntity.notFound().build();
+        }
+        logger.info("[CoreDump] action=download filename={} size={} by={}", safe, FormatUtils.formatBytes(file.length()), who);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment(safe))   // 함정 71
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
@@ -215,6 +220,7 @@ public class CoreDumpApiController {
         long timeoutMs = config.getCoreDumpTimeoutMinutes() * 60L * 1000;
         SseEmitter emitter = new SseEmitter(timeoutMs);
 
+        logger.info("[CoreDump] action=analyze-request filename={} by={}", safe, who);
         Future<?> task = analyzerService.analyzeWithProgress(safe, emitter, who);
         Runnable cancel = () -> {
             if (task != null && !task.isDone()) task.cancel(true);
@@ -413,7 +419,7 @@ public class CoreDumpApiController {
             logger.info("[CoreDump] action=unpair-exec, filename={}, by={}", safe, who);
             return ResponseEntity.ok(Map.of("status", "ok", "filename", safe));
         } catch (java.io.IOException e) {
-            logger.error("[CoreDump] exec 페어링 해제 실패: filename={}, reason={}", safe, e.getMessage());
+            logger.error("[CoreDump] exec 페어링 해제 실패: filename={}, by={}, reason={}", safe, who, e.getMessage());
             return ResponseEntity.internalServerError().body(
                     Map.of("status", "error", "message", "페어링 해제 실패: " + e.getMessage()));
         }

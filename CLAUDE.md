@@ -53,7 +53,7 @@ Java Spring Boot **4.1.1** + Java **17** (런타임 OpenJDK 21) 웹앱. 분석 �
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
-mvn test                                 # 단위 테스트 전체 1085건 (라이브 4건 기본 skip, 약 35초). 영역별 내역은 docs/guide/TEST_INVENTORY.md
+mvn test                                 # 단위 테스트 전체 1088건 (라이브 4건 기본 skip, 약 35초). 영역별 내역은 docs/guide/TEST_INVENTORY.md
 mvn test -Dtest=HttpHeaderValuesTest     # 단일 클래스
 mvn test -Dtest='HttpHeaderValuesTest#메서드명'   # 단일 메서드
 mvn test -Dtest=ChromaLiveIntegrationTest -Dchroma.live=true   # Chroma 라이브 통합 (실행 중인 Chroma 스택 필요)
@@ -102,6 +102,7 @@ Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터 + 분석
 - **운영 MariaDB 는 읽기 전용으로 검증한다.** UNIQUE 키에 `ON DUPLICATE KEY UPDATE` 금지 (함정 20).
 - **재기동은 JAR 이름이 들어가지 않은 단독 명령으로 실행한다.** `stop_app` 이 JAR 이름이 든 명령줄의 프로세스를 호출 셸까지 죽인다 (함정 45).
 - **새 ADMIN 변경 API:** `SecurityConfig` 의 authorize 와 CSRF 두 곳을 함께 고친다. 관리·변경 작업은 `[Domain] action=… by={who}` 감사 로그를 남긴다.
+- **파일 조작(업로드·삭제·다운로드·분류·페어링·전송·분석 시작/취소) 핸들러는 `Authentication`/`Principal` 을 받아 `by=AuthUtil.who(…)` 를 남긴다.** 별도 스레드에서 끝나는 작업은 요청 스레드에서 수행자를 잡아 넘긴다. `FileOpAuditActorTest` 가 파일 컨트롤러 6종의 POST/DELETE·다운로드 핸들러를 검사한다.
 - **빈 catch 금지.** JS 는 `Common.logIgnored`/`logError`, Java 는 `logger.debug`/`warn` 을 쓴다.
 - **런타임 설정 추가는 5곳 동기화** (`HeapDumpConfig` `@Value` · `init()` · 3-hook). 변경은 `HeapDumpAnalyzerService` setter 를 거친다 (함정 40).
 - **새 MAT 호출은 `runMatSingleQuery`/`runMatCliWithProgress` 경유,** 새 LLM 호출은 `acquireGate` + `Lease` 를 거친다.

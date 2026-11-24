@@ -501,7 +501,6 @@
         el.appendChild(tpl.content.cloneNode(true));
         tidySeparators(el);
         if (!el.querySelector('.hi-menu-item')) return;
-        document.body.appendChild(el);
 
         // 항목을 누르면 실행(항목 onclick) 뒤에 닫는다. 포커스는 먼저 ⋯ 로 돌려 둔다 —
         // 이어서 열리는 확인 모달이 닫힐 때 그 자리(⋯)로 돌아오게(AnalyzeConfirm 은 열 때의 activeElement 를 기억한다).
@@ -514,19 +513,48 @@
             setTimeout(function () { if (_menu && _menu.el === el) closeRowMenu(false); }, 0);
         }, true);
 
+        mountBubble(el, btn, function (ev) {
+            var items = menuItems(el);
+            var idx = items.indexOf(document.activeElement);
+            if (ev.key === 'Escape') { ev.preventDefault(); closeRowMenu(true); }
+            else if (ev.key === 'Tab') { closeRowMenu(true); }   // 기본 동작은 막지 않는다 — ⋯ 다음 요소로 이어서 간다
+            else if (!el.contains(document.activeElement)) return;
+            else if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(idx + 1) % items.length].focus(); }
+            else if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(idx - 1 + items.length) % items.length].focus(); }
+            else if (ev.key === 'Home') { ev.preventDefault(); items[0].focus(); }
+            else if (ev.key === 'End') { ev.preventDefault(); items[items.length - 1].focus(); }
+        });
+        menuItems(el)[0].focus();
+    }
+
+    // ── 이력 표 'ⓘ' 세부 정보 말풍선 (2026-11-24) ─────────────
+    // 수집기·JDK·최대 pause 두 열을 접어 표 밀도를 높였다. 내용은 행의 <template class="hi-info-tpl"> 에 서버가 렌더해 둔다.
+    // ⋯ 메뉴와 같은 말풍선 상태(_menu)를 쓴다 — 한 번에 하나만 열리고, 표 다시 그리기·바깥 누름·Esc·Tab 에 같이 닫힌다.
+    // 읽기 전용이라 포커스는 ⓘ 에 그대로 둔다(옮길 항목이 없다).
+    function glOpenRowInfo(e, btn) {
+        if (e) e.stopPropagation();
+        if (_menu && _menu.trigger === btn) { closeRowMenu(true); return; }
+        closeRowMenu(false);
+        var tpl = btn.parentNode && btn.parentNode.querySelector('template.hi-info-tpl');
+        if (!tpl) return;
+
+        var el = document.createElement('div');
+        el.className = 'hi-menu hi-info';
+        el.setAttribute('role', 'dialog');
+        el.setAttribute('aria-label', btn.getAttribute('aria-label') || '세부 정보');
+        el.appendChild(tpl.content.cloneNode(true));
+        mountBubble(el, btn, function (ev) {
+            if (ev.key === 'Escape') { ev.preventDefault(); closeRowMenu(true); }
+            else if (ev.key === 'Tab') { closeRowMenu(false); }   // 포커스는 ⓘ 에 있다 — 기본 동작대로 다음 요소로
+        });
+    }
+
+    /** 말풍선(⋯ 메뉴·ⓘ 세부 정보) 공통 수명 — body 에 붙이고 닫기 조건(키·바깥 누름·스크롤/리사이즈 추적)을 건다. */
+    function mountBubble(el, btn, onKey) {
+        document.body.appendChild(el);
         var m = {
             el: el, trigger: btn,
-            onKey: function (ev) {
-                var items = menuItems(el);
-                var idx = items.indexOf(document.activeElement);
-                if (ev.key === 'Escape') { ev.preventDefault(); closeRowMenu(true); }
-                else if (ev.key === 'Tab') { closeRowMenu(true); }   // 기본 동작은 막지 않는다 — ⋯ 다음 요소로 이어서 간다
-                else if (!el.contains(document.activeElement)) return;
-                else if (ev.key === 'ArrowDown') { ev.preventDefault(); items[(idx + 1) % items.length].focus(); }
-                else if (ev.key === 'ArrowUp') { ev.preventDefault(); items[(idx - 1 + items.length) % items.length].focus(); }
-                else if (ev.key === 'Home') { ev.preventDefault(); items[0].focus(); }
-                else if (ev.key === 'End') { ev.preventDefault(); items[items.length - 1].focus(); }
-            },
+            onKey: onKey,
             onDown: function (ev) {
                 if (el.contains(ev.target) || btn.contains(ev.target)) return;
                 closeRowMenu(false);
@@ -545,7 +573,6 @@
         window.addEventListener('scroll', m.onReflow, true);
         btn.setAttribute('aria-expanded', 'true');
         placeRowMenu(el, btn);
-        menuItems(el)[0].focus();
     }
 
     function downloadFromMenu(a) {
@@ -1019,4 +1046,5 @@
     window.closeGroupResult = closeGroupResult;
     window.glToggleSideGroup = glToggleSideGroup;
     window.glOpenRowMenu = glOpenRowMenu;
+    window.glOpenRowInfo = glOpenRowInfo;
 })();

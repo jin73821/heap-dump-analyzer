@@ -1,5 +1,29 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-11-24] GC 로그 분석 이력 표 — 수집기·최대 pause 를 ⓘ 세부 정보 말풍선으로
+
+**버전:** 변경 없음(2.6.2). **대상:** `templates/gc-log/index.html`, `static/js/gc-log-index.js`, `static/css/gc-log.css`, `GcLogDrawerTemplateSmokeTest`(+1), `docs/guide/GC_LOG.md`, `docs/guide/TEST_INVENTORY.md`, `CLAUDE.md`(건수).
+
+- **표 밀도:** `수집기`·`최대 pause` 두 열을 빼고 `Full GC`·`심각도` 사이에 아이콘 폭(`width:1%`, 좌우 패딩 4px)짜리 `상세` 열을 넣었다. 구성 파일 행의 `–` 칸도 2→1 로 맞췄다(헤더와 칸 수 일치 테스트 통과).
+- **ⓘ 세부 정보 말풍선:** 수집기 · JDK 버전 · 최대 pause(`1,235 ms` 처럼 천 단위 쉼표) 를 정의 목록으로 보여 준다. JDK 는 종전 수집기 칸의 `title` 툴팁에만 있던 값이다. 값이 하나도 없는 행(미분석·옛 결과)은 아이콘 없이 `–`.
+- **구현:** 내용은 행별 `<template class="hi-info-tpl">` 에 서버 렌더(⋯ 메뉴와 같은 방식), `glOpenRowInfo` 가 복제해 body 에 fixed 말풍선으로 띄운다. ⋯ 메뉴의 말풍선 수명 처리를 `mountBubble` 로 뽑아 둘이 공유한다 — 한 번에 하나만 열리고 바깥 누름·Esc(ⓘ 로 포커스 복귀)·Tab·표 다시 그리기에 닫히며 스크롤·리사이즈를 따라간다. 클릭이 행 이동(`glRowAction`)으로 새지 않는다.
+- **좁은 화면:** 종전 두 열은 `hi-hide-sm`(760px 이하 숨김)이라 모바일에선 볼 방법이 없었다. `상세` 열은 숨기지 않아 이제 좁은 화면에서도 확인할 수 있다.
+- **캐시 버스터:** `gc-log.css?v=2026-11-24`, `gc-log-index.js?v=2026-11-24`.
+- **검증:** `mvn test` 1088건 실패 0. 실제 템플릿을 Thymeleaf 로 렌더한 픽스처를 헤드리스 Chrome(puppeteer)으로 실측 — ⓘ 3개(미분석 행 제외), 클릭 시 말풍선 `수집기 G1 / JDK 21.0.5+11-LTS-2513 / 최대 pause 1,235 ms`, 페이지 이동 없음, Esc 후 말풍선 닫힘·포커스 ⓘ 복귀, ⓘ 연 상태에서 ⋯ 누르면 말풍선 1개만, 720px 폭에서 ⓘ 노출, JS 오류 0.
+
+## [2026-11-11] 파일 조작 로그에 수행 사용자(by=) 기록
+
+**버전:** 변경 없음(2.6.2). **대상:** `AuthUtil`(+`who`), `HeapFileApiController`, `HeapDumpViewController`, `HeapHistoryApiController`, `HeapAnalysisApiController`, `CoreDumpApiController`, `GcLogApiController`, `ServerController`, `FileOpAuditActorTest`(신규 2), `CLAUDE.md`(규칙·건수), `docs/guide/TEST_INVENTORY.md`.
+
+- **공용 헬퍼:** `AuthUtil.who(Principal)` — 인증 없으면 `unknown`. `Authentication` 도 `Principal` 이라 하나로 받는다.
+- **힙덤프:** 폼 업로드(`/upload`)·삭제(`/delete`)·히스토리 삭제·재분석(`/analyze/rerun`) 요청/성공/실패, 일괄 파일·히스토리 삭제(요청 건수 + **파일별** `action=delete file=… by=`), 다운로드(`[Download] action=download file= size= by=`, 신규), 분석 시작(`[Analyze] action=analyze-request … running= by=`, 진행 화면 진입 시 — 이미 돌고 있으면 구독만), 분석 취소, 분류·페어링 실패 로그, 업로드 API 실패 로그, 전체 결과 비우기(`[ClearResults]`), 호스트명·JEUS 메타 수정.
+- **코어 덤프:** 다운로드(신규)·분석 시작(신규)·exec 페어링 해제 실패에 by= 추가(업로드·삭제·재분석·exec·라이브러리는 기존에 있음).
+- **GC 로그:** 다운로드(신규)·크기 초과 거부(신규)에 by= 추가(업로드·분석·삭제·이어붙이기는 기존에 있음).
+- **원격 서버:** 스캔(`[Server] action=scan … by=`), SCP 전송 시작·완료·실패(`[Transfer] action=transfer-start|transfer-done …`) — SSE 전송은 작업 스레드에서 끝나므로 요청 스레드에서 수행자를 잡아 넘긴다. 코어-실행파일 자동 페어링에도 by=.
+- **가드:** `FileOpAuditActorTest` — 파일 컨트롤러 6종의 POST/DELETE·다운로드(`download`·`print-pdf`) 핸들러가 인증 파라미터를 받는지 리플렉션으로 검사(인증 파라미터가 없으면 by= 를 쓸 방법이 없다). 예외는 순서 계산만 하는 `combinePreview` 1건.
+- **남는 한계:** 서비스 내부 로그(`FileManagementService` 의 `[Delete] Started` 등)에는 사용자가 없다 — 같은 요청의 컨트롤러 줄(같은 스레드명 `http-nio-…-exec-N`)과 짝지어 읽는다. 자동 탐지·자동 압축 등 시스템 작업은 수행자가 없다.
+- **검증:** `mvn test` 1087건 실패 0, 운영 재기동 정상.
+
 ## [2026-11-11] PDF JVM Heap 플래그 제거 + Target Servers 스캔 말풍선 경로 넘침 수정 + 스캔 경로 상한 5→10
 
 **버전:** 2.6.1 → **2.6.2**(`pom.xml`, `fragments/banner.html`·`index.html`·`progress.html`, `CLAUDE.md`). **대상:** `JvmHeapInfoService`, `JvmHeapInfoServiceTest`, `static/js/server-scan.js`, `templates/servers.html`, `templates/server-detail.html`, `TargetServer`, `ServerController`, `RemoteDumpService`(주석).

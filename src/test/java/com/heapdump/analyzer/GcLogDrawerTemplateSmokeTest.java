@@ -275,6 +275,44 @@ class GcLogDrawerTemplateSmokeTest {
     }
 
     @Test
+    @DisplayName("수집기·최대 pause 는 열이 아니라 ⓘ 세부 정보 말풍선에 있다 — 값이 없으면 아이콘도 없다 (2026-11-24)")
+    void collectorAndMaxPauseFoldIntoInfoPopover() throws IOException {
+        Map<String, Object> model = groupedModel();
+        @SuppressWarnings("unchecked")
+        List<GcLogAnalysisEntity> history = (List<GcLogAnalysisEntity>) model.get("history");
+        GcLogAnalysisEntity solo = history.get(3);   // other.log (SUCCESS)
+        solo.setCollector("G1");
+        solo.setJdkVersion("21+35-2513");
+        solo.setMaxPauseMs(1234.6);
+        model.put("claimed", java.util.Set.of("gc.log.0", "gc.log.1"));
+        String html = render("gc-log/index", model);
+
+        String head = html.substring(html.indexOf("<thead>"), html.indexOf("</thead>"));
+        assertFalse(head.contains(">수집기<"), "수집기 열이 남았다");
+        assertFalse(head.contains(">최대 pause<"), "최대 pause 열이 남았다");
+        assertEquals(1, count(head, "class=\"hi-col-info\""), "세부 정보 열 머리가 하나여야 한다");
+
+        String body = tbody(html);
+        // 값이 있는 행(other.log)만 ⓘ + 템플릿. 미분석 대표(gc.log)는 '–'
+        assertEquals(1, count(body, "class=\"btn btn-sm btn-ghost hi-info-btn\""), "ⓘ 는 값이 있는 행에만 있어야 한다");
+        assertEquals(1, count(body, "<template class=\"hi-info-tpl\">"));
+        assertTrue(body.contains("glOpenRowInfo(event, this)") && body.contains("aria-haspopup=\"dialog\""), "ⓘ 배선");
+
+        String tpl = body.substring(body.indexOf("<template class=\"hi-info-tpl\">"), body.indexOf("</template>", body.indexOf("hi-info-tpl")));
+        assertTrue(tpl.contains(">G1<"), "수집기 값이 말풍선에 없다");
+        assertTrue(tpl.contains(">21+35-2513<"), "JDK 값이 말풍선에 없다");
+        assertTrue(tpl.contains(">1,235 ms<"), "최대 pause 값이 말풍선에 없다: " + tpl);
+
+        // 말풍선 밖에는 수집기·pause 값이 남지 않는다(열을 정말로 접었는지)
+        String outside = body.replaceAll("(?s)<template class=\"hi-info-tpl\">.*?</template>", "");
+        assertFalse(outside.contains(">G1<") || outside.contains("1,235 ms"), "열 밖에 값이 남았다");
+
+        String js = Files.readString(Path.of("src/main/resources/static/js/gc-log-index.js"), StandardCharsets.UTF_8);
+        assertTrue(js.contains("window.glOpenRowInfo = glOpenRowInfo"), "ⓘ 인라인 핸들러용 전역 노출이 빠졌다");
+        assertTrue(js.contains("template.hi-info-tpl"), "ⓘ 가 템플릿을 복제하지 않는다");
+    }
+
+    @Test
     @DisplayName("CSS·JS 계약 — 화면을 봐야만 드러나는 부류(배지 구분·서랍 납작해짐·hidden 무력화·말풍선 잘림)")
     void drawerMenuAndBadgeStylesAreWired() throws IOException {
         String css = Files.readString(Path.of("src/main/resources/static/css/gc-log.css"), StandardCharsets.UTF_8);

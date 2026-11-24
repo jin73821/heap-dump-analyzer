@@ -137,25 +137,30 @@ public class HeapHistoryApiController {
 
     @PostMapping("/api/history/bulk-delete")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> bulkDeleteHistory(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> bulkDeleteHistory(@RequestBody Map<String, Object> body,
+                                                                 Authentication auth) {
         @SuppressWarnings("unchecked")
         List<String> filenames = (List<String>) body.getOrDefault("filenames", Collections.emptyList());
         boolean deleteHeapDump = Boolean.TRUE.equals(body.get("deleteHeapDump"));
         boolean deleteAiChat   = Boolean.TRUE.equals(body.get("deleteAiChat"));
+        String by = who(auth);
+        logger.info("[BulkDeleteHistory] action=bulk-delete requested={} deleteHeapDump={} deleteAiChat={} by={}",
+                filenames.size(), deleteHeapDump, deleteAiChat, by);
         int success = 0, failed = 0;
         List<String> errors = new ArrayList<>();
         for (String raw : filenames) {
             try {
                 String safe = FilenameValidator.validate(raw);
                 analyzerService.deleteHistory(safe, deleteHeapDump, deleteAiChat);
+                logger.info("[BulkDeleteHistory] action=delete file={} deleteHeapDump={} by={}", safe, deleteHeapDump, by);
                 success++;
             } catch (Exception e) {
                 failed++;
                 errors.add(raw + ": " + e.getMessage());
-                logger.warn("[BulkDeleteHistory] Failed for '{}': {}", raw, e.getMessage());
+                logger.warn("[BulkDeleteHistory] action=delete FAILED file='{}' by={} — {}", raw, by, e.getMessage());
             }
         }
-        logger.info("[BulkDeleteHistory] success={}, failed={}, deleteHeapDump={}, deleteAiChat={}", success, failed, deleteHeapDump, deleteAiChat);
+        logger.info("[BulkDeleteHistory] action=bulk-delete success={} failed={} deleteHeapDump={} deleteAiChat={} by={}", success, failed, deleteHeapDump, deleteAiChat, by);
         Map<String, Object> resp = new HashMap<>();
         resp.put("success", success);
         resp.put("failed", failed);
@@ -172,7 +177,7 @@ public class HeapHistoryApiController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> updateHostname(
             @org.springframework.web.bind.annotation.PathVariable String filename,
-            @RequestBody Map<String, Object> body) {
+            @RequestBody Map<String, Object> body, Authentication auth) {
         String safe = FilenameValidator.validate(filename);
         Object hv = body.get("hostname");
         String hostname = hv != null ? hv.toString() : "";
@@ -183,7 +188,7 @@ public class HeapHistoryApiController {
             resp.put("error", "분석 이력 레코드를 찾을 수 없습니다: " + safe);
             return ResponseEntity.status(404).body(resp);
         }
-        logger.info("[Hostname] Updated for '{}': '{}'", safe, saved);
+        logger.info("[Hostname] Updated for '{}': '{}' by={}", safe, saved, who(auth));
         resp.put("success", true);
         resp.put("hostname", saved);
         return ResponseEntity.ok(resp);
@@ -198,7 +203,7 @@ public class HeapHistoryApiController {
     @ResponseBody
     public ResponseEntity<Map<String, Object>> updateJeusMeta(
             @org.springframework.web.bind.annotation.PathVariable String filename,
-            @RequestBody Map<String, Object> body) {
+            @RequestBody Map<String, Object> body, Authentication auth) {
         String safe = FilenameValidator.validate(filename);
         String instance = body.containsKey("instance") && body.get("instance") != null
                 ? body.get("instance").toString() : null;
@@ -211,8 +216,8 @@ public class HeapHistoryApiController {
             resp.put("error", "분석 이력 레코드를 찾을 수 없습니다: " + safe);
             return ResponseEntity.status(404).body(resp);
         }
-        logger.info("[JeusMeta] Updated for '{}': instance='{}' domain='{}'",
-                safe, saved.get("instance"), saved.get("domain"));
+        logger.info("[JeusMeta] Updated for '{}': instance='{}' domain='{}' by={}",
+                safe, saved.get("instance"), saved.get("domain"), who(auth));
         resp.put("success", true);
         resp.put("instance", saved.get("instance"));
         resp.put("domain", saved.get("domain"));
@@ -449,7 +454,7 @@ public class HeapHistoryApiController {
 
     @PostMapping({"/api/results/clear", "/api/cache/clear"})
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> clearAllResults() {
+    public ResponseEntity<Map<String, Object>> clearAllResults(Authentication auth) {
         Set<String> keys = new HashSet<>(analyzerService.getCacheKeys());
         int cleared = 0;
         for (String key : keys) {
@@ -459,7 +464,7 @@ public class HeapHistoryApiController {
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("cleared", cleared);
         resp.put("message", "Cleared results for " + cleared + " files");
-        logger.info("All saved results cleared: {} files", cleared);
+        logger.info("[ClearResults] action=clear-all-results cleared={} files by={}", cleared, who(auth));
         return ResponseEntity.ok(resp);
     }
 

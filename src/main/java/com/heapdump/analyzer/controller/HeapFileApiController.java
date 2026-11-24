@@ -2,6 +2,7 @@ package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.util.AuthUtil;
 import com.heapdump.analyzer.util.FilenameValidator;
 import com.heapdump.analyzer.util.FormatUtils;
 import com.heapdump.analyzer.util.HttpHeaderValues;
@@ -57,23 +58,27 @@ public class HeapFileApiController {
 
     @PostMapping("/api/files/bulk-delete")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> bulkDeleteFiles(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> bulkDeleteFiles(@RequestBody Map<String, Object> body,
+                                                               Authentication authentication) {
         @SuppressWarnings("unchecked")
         List<String> filenames = (List<String>) body.getOrDefault("filenames", Collections.emptyList());
+        String who = AuthUtil.who(authentication);
+        logger.info("[BulkDeleteFile] action=bulk-delete requested={} by={}", filenames.size(), who);
         int success = 0, failed = 0;
         List<String> errors = new ArrayList<>();
         for (String raw : filenames) {
             try {
                 String safe = FilenameValidator.validate(raw);
                 analyzerService.deleteFile(safe);
+                logger.info("[BulkDeleteFile] action=delete file={} by={}", safe, who);
                 success++;
             } catch (Exception e) {
                 failed++;
                 errors.add(raw + ": " + e.getMessage());
-                logger.warn("[BulkDeleteFile] Failed for '{}': {}", raw, e.getMessage());
+                logger.warn("[BulkDeleteFile] action=delete FAILED file='{}' by={} — {}", raw, who, e.getMessage());
             }
         }
-        logger.info("[BulkDeleteFile] success={}, failed={}", success, failed);
+        logger.info("[BulkDeleteFile] action=bulk-delete success={} failed={} by={}", success, failed, who);
         Map<String, Object> resp = new HashMap<>();
         resp.put("success", success);
         resp.put("failed", failed);
@@ -114,12 +119,12 @@ public class HeapFileApiController {
             logger.info("[Upload API] Success: {} (by={})", filename, who);
             return ResponseEntity.ok(resp);
         } catch (IllegalArgumentException e) {
-            logger.warn("[Upload API] Validation failed for '{}': {}", originalName, e.getMessage());
+            logger.warn("[Upload API] Validation failed for '{}' by={}: {}", originalName, who, e.getMessage());
             resp.put("status", "error");
             resp.put("message", e.getMessage());
             return ResponseEntity.badRequest().body(resp);
         } catch (IOException e) {
-            logger.error("[Upload API] IO error for '{}': {}", originalName, e.getMessage(), e);
+            logger.error("[Upload API] IO error for '{}' by={}: {}", originalName, who, e.getMessage(), e);
             resp.put("status", "error");
             resp.put("message", "Upload failed: " + e.getMessage());
             return ResponseEntity.status(500).body(resp);
@@ -215,7 +220,7 @@ public class HeapFileApiController {
         } catch (IllegalArgumentException e) {
             return classifyError(400, e.getMessage());
         } catch (IOException e) {
-            logger.error("[ClassifyFile] 파일 이동 실패 file={} type={} — {}", filename, fileType, e.getMessage());
+            logger.error("[ClassifyFile] 파일 이동 실패 file={} type={} by={} — {}", filename, fileType, who0, e.getMessage());
             return classifyError(500, "파일을 옮기지 못했습니다: " + e.getMessage());
         }
         try {
@@ -228,7 +233,7 @@ public class HeapFileApiController {
             resp.put("fileType", fileType);
             return ResponseEntity.ok(resp);
         } catch (IOException e) {
-            logger.error("[ClassifyFile] Failed for '{}': {}", filename, e.getMessage());
+            logger.error("[ClassifyFile] Failed for '{}' type={} by={}: {}", filename, fileType, who0, e.getMessage());
             Map<String, Object> err = new HashMap<>();
             err.put("status", "error");
             err.put("message", "분류 저장 실패: " + e.getMessage());
@@ -282,7 +287,7 @@ public class HeapFileApiController {
             }
             return ResponseEntity.ok(resp);
         } catch (IOException e) {
-            logger.error("[FilePair] Failed for '{}': {}", filename, e.getMessage());
+            logger.error("[FilePair] Failed for '{}' by={}: {}", filename, AuthUtil.who(authentication), e.getMessage());
             resp.put("status", "error");
             resp.put("message", "페어링 저장 실패: " + e.getMessage());
             return ResponseEntity.status(500).body(resp);
@@ -304,7 +309,7 @@ public class HeapFileApiController {
             resp.put("status", "ok");
             return ResponseEntity.ok(resp);
         } catch (IOException e) {
-            logger.error("[FilePair] Unpair failed for '{}': {}", filename, e.getMessage());
+            logger.error("[FilePair] Unpair failed for '{}' by={}: {}", filename, who, e.getMessage());
             resp.put("status", "error");
             resp.put("message", "페어링 해제 실패: " + e.getMessage());
             return ResponseEntity.status(500).body(resp);
@@ -352,10 +357,12 @@ public class HeapFileApiController {
     }
 
     @GetMapping("/download/{filename:.+}")
-    public ResponseEntity<Resource> downloadFile(@PathVariable String filename) {
+    public ResponseEntity<Resource> downloadFile(@PathVariable String filename, Authentication authentication) {
         filename = FilenameValidator.validate(filename);
+        String who = AuthUtil.who(authentication);
         try {
             File file = analyzerService.getFile(filename);
+            logger.info("[Download] action=download file={} size={} by={}", file.getName(), FormatUtils.formatBytes(file.length()), who);
             // 파일명은 반드시 HttpHeaderValues 경유 — 한글을 그대로 넣으면 Tomcat 이 헤더를 지운다(함정 71)
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment(file.getName()))
@@ -363,6 +370,7 @@ public class HeapFileApiController {
                     .contentLength(file.length())
                     .body(new FileSystemResource(file));
         } catch (IOException e) {
+            logger.warn("[Download] action=download FAILED file={} by={} — {}", filename, who, e.getMessage());
             return ResponseEntity.notFound().build();
         }
     }

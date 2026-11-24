@@ -90,6 +90,7 @@ public class GcLogApiController {
         if (file == null || file.isEmpty()) return ResponseEntity.badRequest().body(err("EMPTY", "GC 로그 파일이 필요합니다."));
         String safe = service.validateGcLogFilename(file.getOriginalFilename());
         if (file.getSize() > config.getGcLogMaxFileBytes()) {
+            logger.warn("[GcLog] action=upload-rejected file={} reason=TOO_LARGE size={} by={}", safe, file.getSize(), who(principal));
             return ResponseEntity.status(413).body(err("TOO_LARGE", "파일이 상한(" + (config.getGcLogMaxFileBytes() >> 20) + " MB)을 넘습니다."));
         }
         File dir = service.dumpFilesDir();
@@ -200,10 +201,14 @@ public class GcLogApiController {
 
     /** 원본 다운로드 — Files 페이지 GC Log 탭·일괄 다운로드용(코어 덤프 다운로드와 대칭). */
     @GetMapping("/api/gc-log/download/{filename:.+}")
-    public ResponseEntity<org.springframework.core.io.Resource> download(@PathVariable String filename) {
+    public ResponseEntity<org.springframework.core.io.Resource> download(@PathVariable String filename, Principal principal) {
         String safe = service.validateGcLogFilename(filename);
         File file = service.fileOf(safe);
-        if (!file.isFile()) return ResponseEntity.notFound().build();
+        if (!file.isFile()) {
+            logger.warn("[GcLog] action=download FAILED file={} reason=NOT_FOUND by={}", safe, who(principal));
+            return ResponseEntity.notFound().build();
+        }
+        logger.info("[GcLog] action=download file={} size={} by={}", safe, file.length(), who(principal));
         return ResponseEntity.ok()
                 .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION, HttpHeaderValues.attachment(safe))   // 함정 71
                 .contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)

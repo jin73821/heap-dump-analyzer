@@ -3,6 +3,7 @@ package com.heapdump.analyzer.controller;
 import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.AnalysisProgress;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
+import com.heapdump.analyzer.util.AuthUtil;
 import com.heapdump.analyzer.util.FilenameValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,8 +41,11 @@ public class HeapAnalysisApiController {
     @GetMapping(value = "/analyze/progress/{filename:.+}",
                 produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @ResponseBody
-    public SseEmitter streamProgress(@PathVariable String filename) {
+    public SseEmitter streamProgress(@PathVariable String filename, java.security.Principal principal) {
         final String safe = FilenameValidator.validate(filename);
+        // 진행 화면 진입 = 분석 시작(이미 돌고 있으면 구독만) — 누가 시작했는지 남긴다
+        logger.info("[Analyze] action=analyze-request file={} running={} by={}",
+                safe, analyzerService.isInProgress(safe), AuthUtil.who(principal));
         SseEmitter emitter = new SseEmitter(config.getSseEmitterTimeoutMinutes() * 60L * 1000);
         analyzerService.analyzeWithProgress(safe, emitter);
 
@@ -57,10 +61,12 @@ public class HeapAnalysisApiController {
 
     @PostMapping("/api/analyze/cancel/{filename:.+}")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> cancelAnalysis(@PathVariable String filename) {
+    public ResponseEntity<Map<String, Object>> cancelAnalysis(@PathVariable String filename, java.security.Principal principal) {
         String safe = FilenameValidator.validate(filename);
-        logger.info("[Cancel] Cancel requested for: {}", safe);
+        String who = AuthUtil.who(principal);
+        logger.info("[Cancel] Cancel requested for: {} by={}", safe, who);
         boolean cancelled = analyzerService.cancelAnalysis(safe);
+        logger.info("[Cancel] action=cancel file={} cancelled={} by={}", safe, cancelled, who);
         Map<String, Object> resp = new HashMap<>();
         resp.put("cancelled", cancelled);
         resp.put("filename", safe);

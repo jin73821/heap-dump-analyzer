@@ -641,15 +641,17 @@ public class HeapDumpViewController {
                                 @RequestParam(value = "deleteHeapDump", defaultValue = "false") boolean deleteHeapDump,
                                 @RequestParam(value = "deleteAiChat", defaultValue = "false") boolean deleteAiChat,
                                 @RequestHeader(value = "Referer", required = false) String referer,
-                                RedirectAttributes redirectAttributes) {
+                                RedirectAttributes redirectAttributes,
+                                Authentication authentication) {
         filename = FilenameValidator.validate(filename);
-        logger.info("[DeleteHistory] Request received: filename={}, deleteHeapDump={}, deleteAiChat={}", filename, deleteHeapDump, deleteAiChat);
+        String who = AuthUtil.who(authentication);
+        logger.info("[DeleteHistory] Request received: filename={}, deleteHeapDump={}, deleteAiChat={}, by={}", filename, deleteHeapDump, deleteAiChat, who);
         try {
             analyzerService.deleteHistory(filename, deleteHeapDump, deleteAiChat);
-            logger.info("[DeleteHistory] Success: {}", filename);
+            logger.info("[DeleteHistory] Success: {} (deleteHeapDump={}, by={})", filename, deleteHeapDump, who);
             redirectAttributes.addFlashAttribute("success", "히스토리 삭제 완료: " + filename);
         } catch (IOException e) {
-            logger.error("[DeleteHistory] Failed for '{}': {}", filename, e.getMessage());
+            logger.error("[DeleteHistory] Failed for '{}' by={}: {}", filename, who, e.getMessage());
             redirectAttributes.addFlashAttribute("error", "히스토리 삭제 실패: " + e.getMessage());
         }
         if (referer != null && referer.contains("/files")) {
@@ -665,18 +667,19 @@ public class HeapDumpViewController {
                              RedirectAttributes redirectAttributes,
                              Authentication authentication) {
         String originalName = file.getOriginalFilename();
-        logger.info("[Upload] Request received: filename={}, size={}", originalName, FormatUtils.formatBytes(file.getSize()));
+        String who = AuthUtil.who(authentication);
+        logger.info("[Upload] Request received: filename={}, size={}, by={}", originalName, FormatUtils.formatBytes(file.getSize()), who);
 
         try {
             if (file.isEmpty()) {
-                logger.warn("[Upload] Rejected: empty file submitted");
+                logger.warn("[Upload] Rejected: empty file submitted, by={}", who);
                 redirectAttributes.addFlashAttribute("error", "Please select a file to upload");
                 return "redirect:/";
             }
             String filename = analyzerService.uploadFile(file);
             String uploadedBy = authentication != null ? authentication.getName() : null;
             analyzerService.saveUploadRecord(filename, file.getSize(), uploadedBy);
-            logger.info("[Upload] Success: {}", filename);
+            logger.info("[Upload] Success: {} (by={})", filename, who);
             String successMsg = "Uploaded: " + filename + " (" + FormatUtils.formatBytes(file.getSize()) + ")";
             redirectAttributes.addFlashAttribute("success", successMsg);
 
@@ -697,10 +700,10 @@ public class HeapDumpViewController {
                 logger.debug("[Upload] Failed to check disk usage", ex);
             }
         } catch (IllegalArgumentException e) {
-            logger.warn("[Upload] Validation failed for '{}': {}", originalName, e.getMessage());
+            logger.warn("[Upload] Validation failed for '{}' by={}: {}", originalName, who, e.getMessage());
             redirectAttributes.addFlashAttribute("error", e.getMessage());
         } catch (IOException e) {
-            logger.error("[Upload] IO error for '{}': {}", originalName, e.getMessage(), e);
+            logger.error("[Upload] IO error for '{}' by={}: {}", originalName, who, e.getMessage(), e);
             redirectAttributes.addFlashAttribute("error", "Upload failed: " + e.getMessage());
         }
         return "redirect:/";
@@ -723,21 +726,23 @@ public class HeapDumpViewController {
     // ── 재분석 (form POST → redirect) ──────────────────────────
 
     @PostMapping("/analyze/rerun/{filename:.+}")
-    public String rerunAnalysis(@PathVariable String filename, RedirectAttributes redirectAttributes) {
+    public String rerunAnalysis(@PathVariable String filename, RedirectAttributes redirectAttributes,
+                                Authentication authentication) {
         filename = FilenameValidator.validate(filename);
+        String who = AuthUtil.who(authentication);
 
         File sourceFile = new File(config.getDumpFilesDirectory(), filename);
         File gzFile = new File(config.getDumpFilesDirectory(), filename + ".gz");
         File legacyFile = new File(config.getHeapDumpDirectory(), filename);
         if (!sourceFile.exists() && !gzFile.exists() && !legacyFile.exists()) {
-            logger.warn("[Rerun] Dump file not found: {}. Preserving existing analysis data.", filename);
+            logger.warn("[Rerun] Dump file not found: {}. Preserving existing analysis data. by={}", filename, who);
             redirectAttributes.addFlashAttribute("rerunError",
                     "덤프 파일이 존재하지 않아 재분석할 수 없습니다. 기존 분석 결과는 유지됩니다.");
             return "redirect:/analyze/result/" + HttpHeaderValues.pathSegment(filename);
         }
 
         analyzerService.clearCache(filename);
-        logger.info("Cache cleared for {} → restarting", filename);
+        logger.info("[Rerun] action=reanalyze file={} — cache cleared, restarting by={}", filename, who);
         return "redirect:/analyze/" + HttpHeaderValues.pathSegment(filename);
     }
 
@@ -935,15 +940,17 @@ public class HeapDumpViewController {
     @PostMapping("/delete/{filename:.+}")
     public String deleteFile(@PathVariable String filename,
                              @RequestHeader(value = "Referer", required = false) String referer,
-                             RedirectAttributes redirectAttributes) {
+                             RedirectAttributes redirectAttributes,
+                             Authentication authentication) {
         filename = FilenameValidator.validate(filename);
-        logger.info("[Delete] Request received: filename={}", filename);
+        String who = AuthUtil.who(authentication);
+        logger.info("[Delete] Request received: filename={}, by={}", filename, who);
         try {
             analyzerService.deleteFile(filename);
-            logger.info("[Delete] Success: {}", filename);
+            logger.info("[Delete] Success: {} (by={})", filename, who);
             redirectAttributes.addFlashAttribute("success", "Deleted: " + filename);
         } catch (IOException e) {
-            logger.error("[Delete] Failed for '{}': {}", filename, e.getMessage());
+            logger.error("[Delete] Failed for '{}' by={}: {}", filename, who, e.getMessage());
             redirectAttributes.addFlashAttribute("error", "Delete failed: " + e.getMessage());
         }
         if (referer != null && referer.contains("/files")) {

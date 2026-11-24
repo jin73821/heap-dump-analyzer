@@ -252,13 +252,17 @@ public class ServerController {
     @PostMapping("/api/servers/{id}/scan")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> scanServer(@PathVariable Long id,
-                                                          @RequestParam(value = "types", required = false) String types) {
+                                                          @RequestParam(value = "types", required = false) String types,
+                                                          Authentication auth) {
         Map<String, Object> result = new HashMap<>();
         try {
             Set<String> selected = parseScanTypes(types);
             TargetServer server = serverRepository.findById(id)
                     .orElseThrow(() -> new IllegalArgumentException("서버를 찾을 수 없습니다: " + id));
             Map<String, Object> scanResult = remoteDumpService.scanRemoteDumpsWithStatus(server, selected);
+            logger.info("[Server] action=scan server='{}' types={} count={} error={} by={}", server.getName(),
+                    selected == null ? "all" : selected, scanResult.getOrDefault("count", 0),
+                    scanResult.getOrDefault("errorCode", "-"), who(auth));
             result.put("types", selected == null ? RemoteDumpService.SCAN_TYPES : selected);
             result.put("success", !scanResult.containsKey("error"));
             result.put("files", scanResult.getOrDefault("files", java.util.Collections.emptyList()));
@@ -285,14 +289,19 @@ public class ServerController {
     @PostMapping("/api/servers/{id}/transfer")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> transferFile(@PathVariable Long id,
-                                                            @RequestBody Map<String, String> body) {
+                                                            @RequestBody Map<String, String> body,
+                                                            Authentication auth) {
         Map<String, Object> result = new HashMap<>();
+        String by = who(auth);
         try {
             TargetServer server = serverRepository.findById(id)
                     .orElseThrow(() -> new IllegalArgumentException("서버를 찾을 수 없습니다: " + id));
             String remotePath = body.get("remotePath");
             String fileType = body.getOrDefault("fileType", "heap");
+            logger.info("[Transfer] action=transfer-start server='{}' remotePath={} type={} by={}", server.getName(), remotePath, fileType, by);
             DumpTransferLog log = remoteDumpService.transferFile(server, remotePath, fileType);
+            logger.info("[Transfer] action=transfer-done server='{}' remotePath={} file={} status={} size={} by={}",
+                    server.getName(), remotePath, log.getFilename(), log.getTransferStatus(), log.getFileSize(), by);
             result.put("success", "SUCCESS".equals(log.getTransferStatus()));
             result.put("filename", log.getFilename());
             result.put("status", log.getTransferStatus());
@@ -300,6 +309,7 @@ public class ServerController {
             if (log.getJvmInfo() != null) result.put("jvm", com.heapdump.analyzer.service.JvmHeapInfoService.summaryForClient(log.getJvmInfo()));
             return ResponseEntity.ok(result);
         } catch (Exception e) {
+            logger.warn("[Transfer] action=transfer FAILED serverId={} remotePath={} by={} — {}", id, body.get("remotePath"), by, e.getMessage());
             return fail(e);
         }
     }
@@ -312,7 +322,10 @@ public class ServerController {
     public org.springframework.web.servlet.mvc.method.annotation.SseEmitter transferStream(
             @PathVariable Long id, @RequestParam("remotePath") String remotePath,
             @RequestParam(value = "fileType", defaultValue = "heap") String fileType,
-            @RequestParam(value = "pairCore", required = false) String pairCore) {
+            @RequestParam(value = "pairCore", required = false) String pairCore,
+            Authentication auth) {
+        // 전송은 별도 스레드에서 끝나므로 요청 스레드에서 수행자를 잡아 둔다
+        final String by = who(auth);
         // 11분 — SCP timeout(10분)보다 약간 길게
         org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter =
                 new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(11L * 60 * 1000);
@@ -345,6 +358,7 @@ public class ServerController {
         }
         // 원본명 유지 — targetFilename 미지정(null) → RemoteDumpService 가 원격 원본명을 그대로 사용.
         final String targetFilename = null;
+        logger.info("[Transfer] action=transfer-start server='{}' remotePath={} type={} by={}", server.getName(), remotePath, fileType, by);
 
         Thread worker = new Thread(() -> {
             try {
@@ -363,13 +377,15 @@ public class ServerController {
                 if (coreLocalForPair != null && "SUCCESS".equals(log.getTransferStatus())) {
                     try {
                         analyzerService.saveCoreExecPairing(coreLocalForPair, log.getFilename());
-                        logger.info("[FilePair] action=pair source=coreexec-transfer core={} exec={}",
-                                coreLocalForPair, log.getFilename());
+                        logger.info("[FilePair] action=pair source=coreexec-transfer core={} exec={} by={}",
+                                coreLocalForPair, log.getFilename(), by);
                     } catch (Exception e) {
                         logger.warn("[FilePair] core-exec 페어링 저장 실패: core={} exec={} — {}",
                                 coreLocalForPair, log.getFilename(), e.getMessage());
                     }
                 }
+                logger.info("[Transfer] action=transfer-done server='{}' remotePath={} file={} status={} size={} by={}",
+                        server.getName(), remotePath, log.getFilename(), log.getTransferStatus(), log.getFileSize(), by);
                 Map<String, Object> done = new LinkedHashMap<>();
                 done.put("success", "SUCCESS".equals(log.getTransferStatus()));
                 done.put("filename", log.getFilename());
@@ -386,6 +402,7 @@ public class ServerController {
                 }
                 emitter.complete();
             } catch (Exception e) {
+                logger.warn("[Transfer] action=transfer FAILED server='{}' remotePath={} by={} — {}", server.getName(), remotePath, by, e.getMessage());
                 Map<String, Object> err = new LinkedHashMap<>();
                 err.put("success", false);
                 err.put("message", e.getMessage() != null ? e.getMessage() : "전송 오류");
