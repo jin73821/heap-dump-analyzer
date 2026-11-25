@@ -1,5 +1,15 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-11-25] 모바일 Files — 유형 탭 좌우 스크롤 · 업로드 카드 아이콘 옆 문구 · 파일 카드 2열
+
+**버전:** 변경 없음(2.6.2). **대상:** `templates/files.html`, `docs/guide/FRONTEND.md`.
+
+- **유형 탭(ALL/Heapdump/Corefile/GC Log/Others) 좌우 스크롤:** 390px 에서 탭 줄이 406px 로 넘쳐 문서 폭이 421px 로 늘고 탭 글자가 2줄로 꺾였다. 이제 `flex-wrap:nowrap` + `overflow-x:auto`(스크롤바 숨김) + 탭 `flex:0 0 auto; white-space:nowrap`. 밑줄은 `border-bottom` + 탭 `margin-bottom:-2px` 대신 부모 `box-shadow: inset 0 -2px 0` — overflow 를 걸면 음수 margin 으로 내려간 활성 밑줄이 잘리고 세로 스크롤이 생긴다. 탭 `background-clip:padding-box` 로 hover 배경이 밑줄을 덮지 않는다. 넘친 쪽 가장자리에 페이드(`.fade-l`/`.fade-r`, `syncTypeTabsFade` — 스크롤·리사이즈·건수 갱신 시), 탭을 누르거나 저장된 탭으로 열 때 가장자리에 잘린 탭이면 탭 줄만 밀어 보인다(`revealTypeTab`, 페이지 세로 위치 불변). 모바일(≤640px) 탭 좌우 패딩 18→14px.
+- **업로드 카드:** 모바일에서 제목·설명이 아이콘 아래 줄로 떨어지던 것을 아이콘 오른쪽에 둔다(`.upload-text { flex:1 1 0 }` — `auto` 면 설명문 한 줄 폭이 기준이 되어 줄바꿈된다). Choose files 버튼은 종전대로 아래 전폭.
+- **파일 카드 2열:** 원본·압축·AI·서버·날짜 5칸이 한 줄씩 쌓이던 것을 `tr` `display:grid`(2열)로 바꿨다 — 파일명·작업 행은 `grid-column:1/-1`, 데이터 칸은 라벨 위·값 아래 좌측 정렬, 서버 칩은 칸 폭에서 말줄임. GC Log·Others 탭(AI 열 숨김)은 4칸으로 2×2. 로딩 행은 `display:block` 유지.
+- **데스크톱 무변경:** 1280px 탭 줄 높이·폭·hover 모습 변경 전과 동일(스크린샷 대조).
+- **검증:** `mvn test` 실패 0, 운영 재기동 정상. 원형 템플릿을 헤드리스 Chrome(390px, 터치)으로 실측 — 문서 폭 421→390px, 탭 줄 높이 63→33px(한 줄)·`scrollWidth` 534 > `clientWidth` 362, 초기 `fade-r`, Others 탭 탭 → `scrollLeft` 172·`fade-l`·`scrollY` 0, 업로드 아이콘 우측(x 77)에 문구, 데이터 칸 x 29/203 두 열(폭 158).
+
 ## [2026-11-24] GC 로그 분석 이력 표 — 수집기·최대 pause 를 ⓘ 세부 정보 말풍선으로
 
 **버전:** 변경 없음(2.6.2). **대상:** `templates/gc-log/index.html`, `static/js/gc-log-index.js`, `static/css/gc-log.css`, `GcLogDrawerTemplateSmokeTest`(+1), `docs/guide/GC_LOG.md`, `docs/guide/TEST_INVENTORY.md`, `CLAUDE.md`(건수).

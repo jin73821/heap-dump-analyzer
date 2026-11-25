@@ -203,10 +203,25 @@
         .ai-none { font-size: 11px; color: #D1D5DB; }
         .col-compressed { white-space: nowrap; }
         /* ── 파일 타입 탭 ─────────────────────────────────────────── */
-        .type-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 2px solid #E5E7EB; }
-        .type-tab { padding: 8px 18px; font-size: 13px; font-weight: 600; color: #6B7280; cursor: pointer;
+        /* 탭이 폭을 넘으면 좌우 스크롤(모바일). 밑줄은 border+음수 margin 대신 inset 그림자 —
+           overflow 를 걸면 -2px 로 내려간 활성 밑줄이 잘리고 세로 스크롤이 생긴다.
+           가장자리 페이드(.fade-l/.fade-r)는 syncTypeTabsFade() 가 스크롤 위치로 붙인다. */
+        .type-tabs { display: flex; flex-wrap: nowrap; gap: 4px; margin-bottom: 14px;
+                     box-shadow: inset 0 -2px 0 #E5E7EB;
+                     overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch;
+                     overscroll-behavior-x: contain; scrollbar-width: none; }
+        .type-tabs::-webkit-scrollbar { display: none; }
+        .type-tabs.fade-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
+                                    mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+        .type-tabs.fade-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px);
+                                    mask-image: linear-gradient(to right, transparent, #000 32px); }
+        .type-tabs.fade-l.fade-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent);
+                                           mask-image: linear-gradient(to right, transparent, #000 32px, #000 calc(100% - 32px), transparent); }
+        .type-tab { flex: 0 0 auto; white-space: nowrap;
+                    padding: 8px 18px; font-size: 13px; font-weight: 600; color: #6B7280; cursor: pointer;
                     border: none; background: transparent; border-bottom: 2px solid transparent;
-                    margin-bottom: -2px; border-radius: 6px 6px 0 0; transition: color .15s; }
+                    background-clip: padding-box;   /* hover 배경이 밑줄(부모 inset 그림자)을 덮지 않게 */
+                    border-radius: 6px 6px 0 0; transition: color .15s; }
         .type-tab:hover { color: #374151; background: #F9FAFB; }
         .type-tab.active { color: #2563EB; border-bottom-color: #2563EB; background: transparent; }
         .type-tab .tab-count { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700;
@@ -365,7 +380,11 @@
         @media (max-width: 640px) {
             /* 업로드 카드 모바일 */
             .upload-card { flex-wrap: wrap; padding: 12px; }
+            /* 기준 폭 0 — auto 면 설명문 한 줄 폭이 기준이 되어 아이콘 아래 줄로 밀린다 */
+            .upload-card .upload-text { flex: 1 1 0; }
             .upload-card .upload-zone-btn { flex: 1 1 100%; padding: 10px; font-size: 13px; }
+            /* (a2) 파일 타입 탭 — 좌우 스크롤 탭 간격 */
+            .type-tab { padding: 8px 14px; }
             /* (a) 페이지 헤더 */
             .container { padding: 60px 14px 80px; }
             .page-hdr { flex-direction: column; align-items: flex-start; gap: 8px; margin-bottom: 14px; }
@@ -406,7 +425,8 @@
             .ftable thead { display: none; }
             .ftable tbody { display: block; }
             .ftable tr {
-                display: block; background: #fff; border: 1px solid #E5E7EB;
+                display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 16px;
+                background: #fff; border: 1px solid #E5E7EB;
                 border-radius: 10px; padding: 10px 14px; margin-bottom: 10px;
                 box-shadow: 0 1px 2px rgba(0,0,0,.04); position: relative;
             }
@@ -427,7 +447,7 @@
 
             /* 로딩 행은 카드 변환 대상이 아니다 — data-label 이 없어 ::before 가 빈 56px
                칸을 만들고 그만큼 스피너가 왼쪽으로 밀린다. */
-            .ftable tr.tb-loading-row { background: transparent; border: none;
+            .ftable tr.tb-loading-row { display: block; background: transparent; border: none;
                                         box-shadow: none; padding: 0; margin-bottom: 0; }
             .ftable td.tb-loading-cell { display: block; text-align: center; border-bottom: none; }
             .ftable td.tb-loading-cell::before { content: none; }
@@ -438,6 +458,7 @@
             /* (d-2) 파일명 = 카드 헤더 */
             .fname-line { display: contents; }
             .ftable .col-fname {
+                grid-column: 1 / -1;
                 padding: 4px 0 10px 0; border-bottom: 1px solid #E5E7EB;
                 flex-wrap: wrap; gap: 6px; padding-right: 40px;
             }
@@ -467,12 +488,22 @@
             .ftable.select-mode .col-fname { padding-left: 28px; }
             .ftable .row-check { width: 18px; height: 18px; }
 
+            /* (d-4b) 데이터 칸(원본·압축·AI·서버·날짜) 2열 — 라벨 위 / 값 아래, 좌측 정렬 */
+            .ftable td.col-osize, .ftable td.col-compressed, .ftable td.col-ai,
+            .ftable td.col-server, .ftable td.col-date {
+                flex-direction: column; align-items: flex-start; justify-content: flex-start;
+                gap: 3px; min-width: 0; padding: 9px 0 5px; border-bottom: none; text-align: left;
+            }
+            .ftable td.col-osize::before, .ftable td.col-compressed::before, .ftable td.col-ai::before,
+            .ftable td.col-server::before, .ftable td.col-date::before { min-width: 0; }
+            .ftable td.col-server > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
             /* (d-5) 서버 chip 정렬 */
             .ftable .col-server span { display: inline-block; }
 
             /* (d-6) 액션 행 — 풀폭 + 큰 탭 타깃 */
             .ftable .col-actions {
-                justify-content: flex-end; padding-top: 12px;
+                grid-column: 1 / -1; justify-content: flex-end; padding-top: 12px;
                 border-top: 1px solid #F3F4F6; border-bottom: none; margin-top: 4px;
             }
             .ftable .col-actions::before { display: none; }
@@ -1442,6 +1473,7 @@ function onTabClick(btn) {
     localStorage.setItem('filesActiveTab', _activeTab);
     document.querySelectorAll('.type-tab').forEach(function(t) { t.classList.remove('active'); });
     btn.classList.add('active');
+    revealTypeTab(btn);
     var modeMap = { all: 'auto', heapdump: 'heapdump', coredump: 'coredump', gclog: 'gclog', others: 'auto' };
     if (typeof UploadQueue !== 'undefined') UploadQueue.setUploadMode(modeMap[_activeTab] || 'auto');
     var fi = document.querySelectorAll('#fileInput, #fileInputBanner');
@@ -1454,6 +1486,33 @@ function onTabClick(btn) {
     }
     applyFilter();
 }
+
+/** 좌우 스크롤 탭 — 고른 탭이 가장자리에 잘려 있으면 보이도록 탭 줄만 민다(페이지 세로 위치는 건드리지 않음). */
+function revealTypeTab(btn) {
+    var bar = document.getElementById('typeTabs');
+    if (!bar || !btn || bar.scrollWidth <= bar.clientWidth) return;
+    var pad = 24, br = bar.getBoundingClientRect(), tr = btn.getBoundingClientRect();
+    var left = tr.left - br.left + bar.scrollLeft, right = left + tr.width;
+    if (left - pad < bar.scrollLeft) bar.scrollLeft = Math.max(0, left - pad);
+    else if (right + pad > bar.scrollLeft + bar.clientWidth) bar.scrollLeft = right + pad - bar.clientWidth;
+    syncTypeTabsFade();
+}
+/** 넘친 쪽 가장자리에만 페이드 — 스크롤바를 감췄으므로 더 있다는 표시 */
+function syncTypeTabsFade() {
+    var bar = document.getElementById('typeTabs');
+    if (!bar) return;
+    var max = bar.scrollWidth - bar.clientWidth;
+    var l = max > 1 && bar.scrollLeft > 1, r = max > 1 && bar.scrollLeft < max - 1;
+    if (bar.classList.contains('fade-l') !== l) bar.classList.toggle('fade-l', l);
+    if (bar.classList.contains('fade-r') !== r) bar.classList.toggle('fade-r', r);
+}
+(function() {
+    var bar = document.getElementById('typeTabs');
+    if (!bar) return;
+    bar.addEventListener('scroll', syncTypeTabsFade, { passive: true });
+    window.addEventListener('resize', syncTypeTabsFade);
+    syncTypeTabsFade();
+})();
 
 /** 탭별 파일 선택 필터 — 코어·GC 로그 탭은 확장자가 제각각(core.1234, gc.log.3)이라 제한하지 않는다. */
 function acceptForTab(tab) {
@@ -1475,6 +1534,7 @@ function updateTabCounts(rows) {
     document.getElementById('tabCntCore').textContent   = core;
     document.getElementById('tabCntGc').textContent     = gc;
     document.getElementById('tabCntOthers').textContent = others;
+    if (typeof syncTypeTabsFade === 'function') syncTypeTabsFade();   // 건수 자릿수로 탭 폭이 바뀐다
 }
 
 // ── 파일 분류 모달 ────────────────────────────────────────────
@@ -1869,6 +1929,7 @@ function initRows() {
         _activeTab = savedTab;
         document.querySelectorAll('.type-tab').forEach(function(t) { t.classList.remove('active'); });
         savedTabBtn.classList.add('active');
+        revealTypeTab(savedTabBtn);
         var modeMap = { heapdump: 'heapdump', coredump: 'coredump', gclog: 'gclog', others: 'auto' };
         if (typeof UploadQueue !== 'undefined') UploadQueue.setUploadMode(modeMap[_activeTab] || 'auto');
         document.querySelectorAll('#fileInput, #fileInputBanner').forEach(function(el) {
