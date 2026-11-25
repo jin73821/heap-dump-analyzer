@@ -9,7 +9,7 @@
     <title th:text="'GC 로그 결과 - ' + ${filename}">GC 로그 결과</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-09-20}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-20}">
-    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-10-22b}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-11-25}">
     <script th:src="@{/js/lib/chart.umd.min.js}"></script>
 </head>
 <body>
@@ -171,11 +171,13 @@
 
         <div class="gcl-charts">
             <div class="gcl-chart-card">
-                <div class="gcl-chart-title">힙 사용량 추이 <span class="gcl-chart-note" id="gclHeapChartNote">GC 직후 사용량 · 총 용량 (x = 기동 후 경과)</span></div>
+                <div class="gcl-chart-title"><span>힙 사용량 추이</span> <span class="gcl-chart-note" id="gclHeapChartNote">GC 직후 사용량 · 총 용량 (x = 기동 후 경과)</span>
+                    <button type="button" class="gcl-chart-expand" aria-label="힙 사용량 차트 확대" title="크게 보기 · 구간 확대" onclick="openChartModal('heap')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg></button></div>
                 <div class="gcl-chart-box"><canvas id="gclHeapChart"></canvas></div>
             </div>
             <div class="gcl-chart-card">
-                <div class="gcl-chart-title">일시정지 시간 <span class="gcl-chart-note" id="gclPauseChartNote">이벤트별 STW ms (x = 기동 후 경과)</span></div>
+                <div class="gcl-chart-title"><span>일시정지 시간</span> <span class="gcl-chart-note" id="gclPauseChartNote">이벤트별 STW ms (x = 기동 후 경과)</span>
+                    <button type="button" class="gcl-chart-expand" aria-label="일시정지 차트 확대" title="크게 보기 · 구간 확대" onclick="openChartModal('pause')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg></button></div>
                 <div class="gcl-chart-box"><canvas id="gclPauseChart"></canvas></div>
             </div>
         </div>
@@ -302,6 +304,28 @@
     </div>
 </div>
 
+<!-- 차트 확대 모달(2026-11-25) — 힙·일시정지를 위아래로 크게, x 범위 연동. 드래그 = 구간 확대, 더블클릭·'전체 보기' = 되돌리기.
+     골격은 gc-log.css .gcl-chart-modal-box(함정 17). 열고 닫기는 showModal/hideModal 경유(ModalMotionTest) -->
+<div id="gclChartModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="gclChartTitle" onclick="if(event.target===this)closeChartModal()">
+    <div class="modal-box gcl-chart-modal-box">
+        <div class="gcl-chart-modal-head">
+            <div class="modal-title" id="gclChartTitle">GC 그래프 확대</div>
+            <span class="gcl-chart-range" id="gclChartRange" aria-live="polite">전체 구간</span>
+            <span class="gcl-chart-modal-hint">드래그해 구간 확대 · 더블클릭으로 전체 보기 · Esc 닫기</span>
+            <button type="button" class="gcl-chart-reset" id="gclChartReset" onclick="resetChartZoom()" disabled>전체 보기</button>
+            <button type="button" class="gcl-chart-close" id="gclChartClose" aria-label="닫기" onclick="closeChartModal()">×</button>
+        </div>
+        <div class="gcl-chart-big heap" data-chart="heap">
+            <div class="gcl-chart-title"><span>힙 사용량 추이</span> <span class="gcl-chart-note" id="gclHeapChartBigNote"></span></div>
+            <div class="gcl-chart-box big"><canvas id="gclHeapChartBig"></canvas><div class="gcl-zoom-sel" hidden></div></div>
+        </div>
+        <div class="gcl-chart-big pause" data-chart="pause">
+            <div class="gcl-chart-title"><span>일시정지 시간</span> <span class="gcl-chart-note" id="gclPauseChartBigNote"></span></div>
+            <div class="gcl-chart-box big"><canvas id="gclPauseChartBig"></canvas><div class="gcl-zoom-sel" hidden></div></div>
+        </div>
+    </div>
+</div>
+
 <!-- 재분석 확인 모달(2026-09-16) — 저장된 결과가 새 결과로 바뀌므로 버튼 한 번에 바로 시작하지 않는다. 문구는 openReanalyzeConfirm 이 상태에 맞춘다 -->
 <div id="reanalyzeModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="reanalyzeTitle" onclick="if(event.target===this)closeReanalyzeConfirm()">
     <div class="modal-box">
@@ -381,7 +405,7 @@
     };
 </script>
 <script th:src="@{/js/table-grid.js?v=2026-09-13}"></script>
-<script th:src="@{/js/gc-log-analyze.js?v=2026-10-22b}"></script>
+<script th:src="@{/js/gc-log-analyze.js?v=2026-11-25}"></script>
 
 </body>
 </html>

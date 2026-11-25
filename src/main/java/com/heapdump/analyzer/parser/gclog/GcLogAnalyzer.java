@@ -65,6 +65,8 @@ public final class GcLogAnalyzer implements GcEventSink {
     static final double INTERVAL_STRONG_SHRINK_RATIO = 0.25;
     static final int WORST_CAP = 5;
     static final int PRESSURE_POINTS_CAP = 500;
+    /** 차트 세로선용 Full GC 마커 — 종류당 상한. 종류별로 따로 솎아 명시적 Full(RMI 1시간 주기 등)이 압박 마커를 밀어내지 않게 한다(2026-11-25). */
+    static final int FULL_MARKS_PER_KIND_CAP = 250;
 
     // ── 메타 ────────────────────────────────────────────────────
     private String collector, jdkVersion, decorations, jvmOptionsLine;
@@ -149,6 +151,8 @@ public final class GcLogAnalyzer implements GcEventSink {
     private Double reclaimMin, reclaimLast;
     private final List<Double> pressureIntervals = new ArrayList<>();
     private final List<double[]> pressurePoints = new ArrayList<>();       // x, after, before
+    private final Map<FullGcKind, List<double[]>> fullMarks = new EnumMap<>(FullGcKind.class);   // x, pause, before, after (-1 = 없음)
+    private boolean fullMarksThinned;
     private final List<GcLogResult.FullGcSample> worstReclaim = new ArrayList<>();
 
     // ── CMS Old 포화 ────────────────────────────────────────────
@@ -249,6 +253,7 @@ public final class GcLogAnalyzer implements GcEventSink {
             if (x != null) { if (firstFullX == null) firstFullX = x; lastFullX = x; }
             kind = FullGcKind.of(ev);
             fullByKind.merge(kind, 1, Integer::sum);
+            addFullMark(kind, ev, x == null ? eventCount : x);
             if (kind == FullGcKind.HEAP_PRESSURE) {
                 onPressureFull(ev, x);
                 maxConsecutivePressure = Math.max(maxConsecutivePressure, ++consecutivePressure);
@@ -430,6 +435,20 @@ public final class GcLogAnalyzer implements GcEventSink {
         }
     }
 
+    /** 종류별 Full GC 마커 — 버퍼가 {@link #TREND_CAP} 에 닿으면 반으로 솎는다(상수 메모리). 조립 때 종류당 {@link #FULL_MARKS_PER_KIND_CAP} 로 줄인다. */
+    private void addFullMark(FullGcKind kind, GcEvent ev, double x) {
+        List<double[]> list = fullMarks.computeIfAbsent(kind, k -> new ArrayList<>());
+        if (list.size() >= TREND_CAP) {
+            List<double[]> thin = new ArrayList<>(list.size() / 2 + 1);
+            for (int i = 0; i < list.size(); i += 2) thin.add(list.get(i));
+            list.clear();
+            list.addAll(thin);
+            fullMarksThinned = true;
+        }
+        list.add(new double[]{x, ev.pauseMs == null ? -1 : ev.pauseMs,
+                ev.heapBefore == null ? -1 : ev.heapBefore, ev.heapAfter == null ? -1 : ev.heapAfter});
+    }
+
     /** {@link GcLogResult.FullGcSummary} 조립 — 파싱만 되면 늘 만든다(Full 0회여도 total=0). 옛 JSON(null)과 구분하기 위해서다. */
     private GcLogResult.FullGcSummary buildFullGcSummary(double durationSec, long capBytes) {
         GcLogResult.FullGcSummary s = new GcLogResult.FullGcSummary();
@@ -475,6 +494,17 @@ public final class GcLogAnalyzer implements GcEventSink {
         }
         s.setPoints(pressurePoints.size() > PRESSURE_POINTS_CAP ? thin(pressurePoints, PRESSURE_POINTS_CAP) : new ArrayList<>(pressurePoints));
         s.setWorstReclaim(new ArrayList<>(worstReclaim));
+        // 전 종류 Full GC 마커(차트 세로선) — Full 0회여도 빈 맵을 둔다(옛 결과 null 과 구분, 함정 58)
+        Map<String, List<double[]>> marks = new LinkedHashMap<>();
+        boolean thinned = fullMarksThinned;
+        for (FullGcKind k : FullGcKind.values()) {
+            List<double[]> list = fullMarks.get(k);
+            if (list == null || list.isEmpty()) continue;
+            if (list.size() > FULL_MARKS_PER_KIND_CAP) { marks.put(k.name(), thin(list, FULL_MARKS_PER_KIND_CAP)); thinned = true; }
+            else marks.put(k.name(), new ArrayList<>(list));
+        }
+        s.setMarksByKind(marks);
+        if (thinned) s.setMarksThinned(true);
         if (pressure > 0 && reclaimSamples == 0) s.setNote("힙 크기 전후 값이 없어 회수율을 계산하지 않았습니다.");
         else if (pressure > 0 && lastPressureTotal == null) s.setNote("힙 총량이 없어 직후 점유율을 계산하지 않았습니다.");
         return s;

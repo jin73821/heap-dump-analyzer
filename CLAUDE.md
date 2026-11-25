@@ -53,7 +53,7 @@ Java Spring Boot **4.1.1** + Java **17** (런타임 OpenJDK 21) 웹앱. 분석 �
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
-mvn test                                 # 단위 테스트 전체 1088건 (라이브 4건 기본 skip, 약 35초). 영역별 내역은 docs/guide/TEST_INVENTORY.md
+mvn test                                 # 단위 테스트 전체 1093건 (라이브 4건 기본 skip, 약 35초). 영역별 내역은 docs/guide/TEST_INVENTORY.md
 mvn test -Dtest=HttpHeaderValuesTest     # 단일 클래스
 mvn test -Dtest='HttpHeaderValuesTest#메서드명'   # 단일 메서드
 mvn test -Dtest=ChromaLiveIntegrationTest -Dchroma.live=true   # Chroma 라이브 통합 (실행 중인 Chroma 스택 필요)

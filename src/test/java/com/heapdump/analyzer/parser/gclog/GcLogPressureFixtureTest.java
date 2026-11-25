@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -98,6 +99,10 @@ class GcLogPressureFixtureTest {
         assertEquals(1500.0, s.getIntervalMedianFirstHalfSec(), 1e-6);
         assertEquals(300.0, s.getIntervalMedianSecondHalfSec(), 1e-6);
         assertEquals(9, s.getPoints().size());
+        assertEquals(9, s.getMarksByKind().get("HEAP_PRESSURE").size(), "차트 세로선 — 압박");
+        assertEquals(2, s.getMarksByKind().get("EXPLICIT").size(), "차트 세로선 — 명시적");
+        for (Map.Entry<String, Integer> e : s.getByKind().entrySet())
+            assertEquals((int) e.getValue(), s.getMarksByKind().containsKey(e.getKey()) ? s.getMarksByKind().get(e.getKey()).size() : 0, e.getKey());
         assertEquals(5, s.getWorstReclaim().size());
         assertEquals(6900.0, s.getWorstReclaim().get(0).getUptimeSec(), 1e-6, "최저 회수율은 마지막 Allocation Failure Full");
         assertTrue(s.getWorstReclaim().get(0).getReclaimPct() < s.getWorstReclaim().get(4).getReclaimPct());

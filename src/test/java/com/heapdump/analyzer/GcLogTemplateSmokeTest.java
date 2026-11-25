@@ -546,8 +546,8 @@ class GcLogTemplateSmokeTest {
     void chartXAxisIsBoundToData() throws IOException {
         String js = js("gc-log-analyze.js");
 
-        // 두 차트(힙 사용량·일시정지)가 공유하는 x 축 정의는 common.scales 한 곳이다.
-        int x = js.indexOf("scales: { x: { type: 'linear'");
+        // 두 차트(힙 사용량·일시정지)와 확대 모달이 공유하는 x 축 정의는 xScale() 한 곳이다(2026-11-25 — 차트마다 새 객체를 만든다).
+        int x = js.indexOf("type: 'linear'", js.indexOf("var xScale = function () {"));
         assertTrue(x > 0, "공유 x 축 정의를 찾지 못했다");
         String axis = js.substring(x, js.indexOf("}", js.indexOf("grid:", x)));
 
@@ -560,5 +560,37 @@ class GcLogTemplateSmokeTest {
         // 축은 반드시 공유 정의 하나여야 두 차트의 세로 정렬이 유지된다.
         assertEquals(1, js.split("type: 'linear'", -1).length - 1,
                 "linear x 축 정의가 둘 이상 — 차트마다 범위가 갈려 세로 정렬이 어긋난다");
+    }
+
+    @Test
+    @DisplayName("차트 확대 모달·Full GC 세로선(2026-11-25): 버튼 2개 · 모달 골격 · showModal 경유 · 플러그인 · Esc · 옛 결과 폴백")
+    void chartZoomModalAndFullGcLines() throws IOException {
+        String js = js("gc-log-analyze.js");
+        String html = Files.readString(Path.of("src/main/resources/templates/gc-log/analyze.html"), StandardCharsets.UTF_8);
+        String css = Files.readString(Path.of("src/main/resources/static/css/gc-log.css"), StandardCharsets.UTF_8);
+
+        assertTrue(html.contains("onclick=\"openChartModal('heap')\"") && html.contains("onclick=\"openChartModal('pause')\""), "카드마다 확대 버튼");
+        assertTrue(html.contains("<div id=\"gclChartModal\" class=\"modal-ov gcl-modal\"") && html.contains("id=\"gclHeapChartBig\"")
+                && html.contains("id=\"gclPauseChartBig\"") && html.contains("id=\"gclChartReset\""), "확대 모달 골격(연출 대상 .gcl-modal)");
+        assertTrue(css.contains(".gcl-modal .modal-box.gcl-chart-modal-box {"), "560px 기본 폭을 이기는 특정도");
+
+        int open = js.indexOf("function openChartModal(which) {");
+        assertTrue(open > 0, "확대 모달 열기 함수");
+        String body = js.substring(open, js.indexOf("function closeChartModal()", open));
+        assertTrue(body.contains("showModal(ov);") && body.contains("destroyBigCharts();"), "열기는 연출 헬퍼 경유 + 직전 차트 정리");
+        assertTrue(body.contains("chartConfigs(R, true,"), "카드와 같은 구성 함수를 쓴다");
+        assertTrue(js.contains("closeAiConfirm(); closeReanalyzeConfirm(); closeChartModal();"), "Esc 로 닫힌다");
+        assertTrue(js.contains("window.openChartModal = openChartModal;") && js.contains("window.closeChartModal = closeChartModal;")
+                && js.contains("window.resetChartZoom = resetChartZoom;"), "인라인 핸들러 전역 노출");
+        // 구간 확대는 두 차트에 같은 x 범위를 넣는다(연동)
+        int apply = js.indexOf("function applyZoom(range) {");
+        assertTrue(apply > 0 && js.substring(apply, js.indexOf("\n    }\n", apply)).contains("_bigCharts.forEach("), "x 범위 연동");
+
+        // 세로선 플러그인 — 보이는 데이터셋만(범례로 끄면 선도 사라진다)
+        assertTrue(js.contains("id: 'gclFullLines'") && js.contains("if (!ds._fullKind || !ds._marks || !chart.isDatasetVisible(i)) return;"), "Full GC 세로선");
+        assertEquals(2, js.split("plugins: \\[FULL_LINES_PLUGIN\\]", -1).length - 1, "두 차트 모두 세로선");
+        // 옛 결과(marksByKind 없음)는 압박 점으로 폴백 + 재분석 안내(함정 58)
+        assertTrue(js.contains("if (fs && fs.marksByKind) {") && js.contains("out.kinds.HEAP_PRESSURE = fs.points.map("), "옛 결과 폴백");
+        assertTrue(js.contains("옛 결과 — 재분석하면 모든 Full GC 종류가 표시됩니다"), "옛 결과 안내 문구");
     }
 }

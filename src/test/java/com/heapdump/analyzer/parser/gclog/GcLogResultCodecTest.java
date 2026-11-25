@@ -68,6 +68,26 @@ class GcLogResultCodecTest {
     }
 
     @Test
+    void fullMarksRoundTripAndOldJsonLeavesThemNull() {
+        // 차트 세로선 마커(2026-11-25) — 옛 결과(키 없음)는 null 이어야 화면이 압박 ▲ 폴백 + 재분석 안내를 보인다(함정 58)
+        GcLogResult r = new GcLogResult();
+        GcLogResult.FullGcSummary s = new GcLogResult.FullGcSummary();
+        s.setTotal(1); s.getByKind().put("EXPLICIT", 1);
+        java.util.Map<String, List<double[]>> m = new java.util.LinkedHashMap<>();
+        m.put("EXPLICIT", new ArrayList<>(List.of(new double[]{3600, 110.5, 2048, 1024})));
+        s.setMarksByKind(m);
+        r.setFullGcSummary(s);
+        GcLogResult back = GcLogResultCodec.fromJson(GcLogResultCodec.toJson(r));
+        assertEquals(110.5, back.getFullGcSummary().getMarksByKind().get("EXPLICIT").get(0)[1]);
+        assertNull(back.getFullGcSummary().getMarksThinned());
+
+        GcLogResult legacy = GcLogResultCodec.fromJson("{\"fullGcSummary\":{\"total\":2,\"points\":[[1,2,3]]}}");
+        assertNotNull(legacy);
+        assertNull(legacy.getFullGcSummary().getMarksByKind(), "= new 로 초기화하면 옛 결과가 'Full GC 표시 없음'으로 오판된다");
+        assertNull(new GcLogResult.FullGcSummary().getMarksByKind());
+    }
+
+    @Test
     void oversizedResultIsTrimmedUnderCapWithFindingAndSummaryIntact() {
         GcLogResult r = new GcLogResult();
         r.getKpi().setEventCount(123456);

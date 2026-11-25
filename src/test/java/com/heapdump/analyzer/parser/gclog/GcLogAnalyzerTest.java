@@ -558,6 +558,59 @@ class GcLogAnalyzerTest {
     }
 
     @Test
+    void fullMarksCoverEveryKindForChartLines() throws Exception {
+        // 차트 세로선(2026-11-25): 압박뿐 아니라 명시적·Metaspace Full 도 시점·pause·전후 힙을 남긴다
+        StringBuilder sb = new StringBuilder();
+        long total = 1_000_000;
+        for (int i = 0; i < 6; i++) sb.append(full(600 + i * 600, 500_000, 300_000, total, 0.3, true, "Ergonomics")).append('\n');
+        sb.append(full(700, 400_000, 300_000, total, 0.2, true, "System.gc()")).append('\n');
+        sb.append(full(1900, 400_000, 300_000, total, 0.2, true, "Metadata GC Threshold")).append('\n');
+        String text = sb.toString().lines().sorted((a, b) -> a.substring(0, 28).compareTo(b.substring(0, 28))).reduce("", (a, b) -> a + b + "\n");
+        GcLogResult.FullGcSummary s = engine(text).getFullGcSummary();
+        Map<String, List<double[]>> m = s.getMarksByKind();
+        assertNotNull(m);
+        assertEquals(6, m.get("HEAP_PRESSURE").size());
+        assertEquals(1, m.get("EXPLICIT").size());
+        assertEquals(1, m.get("METASPACE").size());
+        assertFalse(m.containsKey("GC_LOCKER"), "0회 종류는 키가 없다");
+        for (Map.Entry<String, Integer> e : s.getByKind().entrySet())
+            assertEquals((int) e.getValue(), m.containsKey(e.getKey()) ? m.get(e.getKey()).size() : 0, e.getKey());
+        double[] ex = m.get("EXPLICIT").get(0);
+        assertEquals(700.0, ex[0], 1e-6, "x = uptime");
+        assertEquals(200.0, ex[1], 1e-6, "pause ms");
+        assertEquals(400_000L << 10, (long) ex[2]);
+        assertEquals(300_000L << 10, (long) ex[3]);
+        assertNull(s.getMarksThinned());
+    }
+
+    @Test
+    void fullMarksQuotaKeepsPressureAmongManyExplicit() throws Exception {
+        // 종류별 쿼터 — 명시적 Full 3000회가 압박 5회의 선을 솎아 없애면 안 된다
+        StringBuilder sb = new StringBuilder();
+        long total = 1_000_000;
+        for (int i = 0; i < 3000; i++) {
+            double up = 10 + i * 10.0;
+            sb.append(full(up, 400_000, 300_000, total, 0.1, false, "System.gc()")).append('\n');
+            if (i % 600 == 300) sb.append(full(up + 5, 900_000, 800_000, total, 0.5, false, "Allocation Failure")).append('\n');
+        }
+        GcLogResult.FullGcSummary s = engine(sb.toString()).getFullGcSummary();
+        assertEquals(5, s.getHeapPressureCount());
+        assertEquals(5, s.getMarksByKind().get("HEAP_PRESSURE").size());
+        assertEquals(GcLogAnalyzer.FULL_MARKS_PER_KIND_CAP, s.getMarksByKind().get("EXPLICIT").size());
+        assertEquals(Boolean.TRUE, s.getMarksThinned());
+    }
+
+    @Test
+    void fullMarksEmptyMapWhenNoFullGc() throws Exception {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 20; i++) sb.append(young(10 + i * 10.0, 600_000, 100_000, 2_000_000, 0.02, false)).append('\n');
+        GcLogResult.FullGcSummary s = engine(sb.toString()).getFullGcSummary();
+        assertEquals(0, s.getTotal());
+        assertNotNull(s.getMarksByKind(), "엔진 결과는 빈 맵 — 옛 결과(null)와 구분된다");
+        assertTrue(s.getMarksByKind().isEmpty());
+    }
+
+    @Test
     void pressureSummaryStaysBounded() throws Exception {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 20_000; i++) sb.append(full(1.0 + i, 500_000 + (i % 7) * 1000, 300_000 + (i % 5) * 1000, 1_000_000, 0.1, false, "Allocation Failure")).append('\n');
@@ -565,6 +618,8 @@ class GcLogAnalyzerTest {
         GcLogResult.FullGcSummary s = r.getFullGcSummary();
         assertEquals(20_000, s.getHeapPressureCount());
         assertTrue(s.getPoints().size() <= GcLogAnalyzer.PRESSURE_POINTS_CAP, "points=" + s.getPoints().size());
+        assertEquals(GcLogAnalyzer.FULL_MARKS_PER_KIND_CAP, s.getMarksByKind().get("HEAP_PRESSURE").size());
+        assertEquals(Boolean.TRUE, s.getMarksThinned());
         assertTrue(s.getWorstReclaim().size() <= GcLogAnalyzer.WORST_CAP);
         assertTrue(s.getIntervalCount() > 0 && s.getIntervalCount() <= GcLogAnalyzer.CALL_INTERVAL_CAP);
         assertNotNull(s.getReclaimPctMedian());

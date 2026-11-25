@@ -1,5 +1,26 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-11-25] GC 로그 결과 — 그래프 확대 모달 · Full GC 시점 세로선(전 종류)
+
+**버전:** 변경 없음(2.6.2). **대상:** `model/GcLogResult.java`(`FullGcSummary.marksByKind`·`marksThinned`), `parser/gclog/GcLogAnalyzer.java`(`addFullMark`·`FULL_MARKS_PER_KIND_CAP`), `templates/gc-log/analyze.html`, `templates/gc-log/index.html`(css 캐시 버스터), `static/js/gc-log-analyze.js`, `static/css/gc-log.css`, `GcLogAnalyzerTest`(+3·단언 보강), `GcLogPressureFixtureTest`(단언 보강), `GcLogResultCodecTest`(+1), `GcLogTemplateSmokeTest`(+1·x 축 계약 갱신), `docs/guide/GC_LOG.md`, `docs/guide/TEST_INVENTORY.md`, `CLAUDE.md`(건수).
+
+- **Full GC 세로선(전 종류):** 종전에는 힙 차트에 압박 Full GC ▲ 만 찍혔고 System.gc()·Metaspace·GCLocker Full GC 는 보이지 않았다. 이제 Full GC 마다 **힙·일시정지 두 차트에 같은 x 의 세로선**을 긋는다. 색은 압박 빨강 · 명시적 회색 · Metaspace 보라 · GCLocker 주황 · 기타 연회색이다. 마커는 힙 차트에 직후 사용량(압박 ▲ / 그 밖 ◆), 일시정지 차트에 pause ▲ 로 찍는다. 호버하면 `압박 Full GC · pause 1.00 s · 980 MB → 764 MB (회수 22%)` 처럼 보인다. **범례를 누르면 두 차트에서 그 종류가 함께 꺼지고 선도 사라진다.**
+- **백엔드:** `fullGcSummary.marksByKind`(종류 → `[x, pauseMs, before, after]`, 종류당 ≤250, null 기본값 — 함정 58)를 둔다. 종류별로 따로 솎아서 명시적 Full 수천 회가 압박 마커를 밀어내지 않는다. **옛 결과는 재분석 전까지** 압박 ▲ 만 보이고 "옛 결과 — 재분석하면 모든 Full GC 종류가 표시됩니다" 안내가 붙는다.
+- **그래프 확대 모달:** 차트 카드 제목줄의 확대 버튼으로 연다. 힙·일시정지를 위아래로 크게(1280px×90vh) 그리고 x 축을 연동한다. **드래그로 구간을 확대하면 두 차트가 같은 구간으로 맞춰지고 y 축도 그 구간에 맞게 다시 잡힌다.** 더블클릭·`전체 보기`·다시 열기로 전체 구간에 돌아간다. 현재 구간은 머리줄 배지(`47m54 ~ 1h05`)에 보인다. Esc·바깥 클릭·× 로 닫히고(GC 화면 모달 연출 헬퍼 경유), 닫으면 확대 버튼으로 포커스가 돌아간다. 좁은 화면(≤600px)은 96vw×92vh 다. zoom 플러그인은 폐쇄망이라 넣지 않고 포인터 이벤트로 직접 구현했다.
+- **구성 공용화:** 카드와 모달이 같은 `chartConfigs(r, big, group)` 를 쓴다. x 축 객체는 `xScale()` 로 차트마다 새로 만든다(공유하면 모달의 확대 범위가 다른 차트에 번진다).
+- **캐시 버스터:** `gc-log.css?v=2026-11-25`(결과·목록), `gc-log-analyze.js?v=2026-11-25`.
+- **검증:** `mvn test` 1093건 실패 0(라이브 4 skip). 운영 재기동 정상. 실제 템플릿을 Thymeleaf 로 렌더하고 합성 픽스처(`synthetic-jdk8-parallel-pressure.log` — 압박 9·명시적 2·Metaspace 2)의 엔진 결과를 실은 페이지를 헤드리스 Chrome(puppeteer)으로 실측했다. 결과는 다음과 같다.
+  - 세로선 픽셀 `rgba(220,38,38,.45)` 를 확인했다.
+  - 범례 '명시적' 클릭 → 두 차트 모두 EXPLICIT 숨김.
+  - 모달 1280×900, 힙 1218×410 · 일시정지 1218×330, 누른 쪽 강조, 포커스 ×.
+  - 40~55% 드래그 → 두 차트 x 2873.8~3950.4 동일, 일시정지 y max 2500→1200.
+  - 3px 끌기는 무시된다.
+  - 더블클릭·전체 보기 → 3~7180.
+  - Esc → 닫힘·포커스 복귀.
+  - 옛 결과 → 압박만 + 안내 문구.
+  - 390px → 모달 374×776·문서 폭 390.
+  - JS 오류 0.
+
 ## [2026-11-25] 모바일 Files — 유형 탭 좌우 스크롤 · 업로드 카드 아이콘 옆 문구 · 파일 카드 2열
 
 **버전:** 변경 없음(2.6.2). **대상:** `templates/files.html`, `docs/guide/FRONTEND.md`.

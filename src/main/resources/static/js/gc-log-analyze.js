@@ -517,7 +517,16 @@
     }
 
     // ── 차트 ─────────────────────────────────────────────────
+    // 카드 2개(_charts)와 확대 모달 2개(_bigCharts)가 같은 구성(chartConfigs)을 쓴다. Full GC 는 종류별 색 세로선(gclFullLines
+    // 플러그인) + 마커 데이터셋 — 범례로 끄면 같은 묶음의 두 차트에서 함께 꺼지고 선도 사라진다(2026-11-25).
     var _charts = [];
+    var _bigCharts = [];
+    var FULL_KIND_ORDER = ['HEAP_PRESSURE', 'EXPLICIT', 'METASPACE', 'GC_LOCKER', 'OTHER'];
+    var FULL_KIND_COLOR = { HEAP_PRESSURE: '#DC2626', EXPLICIT: '#6B7280', METASPACE: '#7C3AED', GC_LOCKER: '#D97706', OTHER: '#9CA3AF' };
+    var FULL_LINE_COLOR = { HEAP_PRESSURE: 'rgba(220,38,38,.45)', EXPLICIT: 'rgba(107,114,128,.30)', METASPACE: 'rgba(124,58,237,.32)', GC_LOCKER: 'rgba(217,119,6,.32)', OTHER: 'rgba(156,163,175,.30)' };
+    // 힙 차트 마커 모양 — 압박은 종전 ▲ 데이터셋 그대로(2026-09-16), 나머지 종류는 작은 ◆
+    var HEAP_MARK_STYLE = { HEAP_PRESSURE: { label: '압박 Full GC 직후', pointStyle: 'triangle', pointRadius: 5, pointHoverRadius: 7 } };
+    var FULL_LEGACY_NOTE = '옛 결과 — 재분석하면 모든 Full GC 종류가 표시됩니다';
     function xTick(v) {
         var s = Math.round(v);
         if (s >= 3600) return Math.floor(s / 3600) + 'h' + ('0' + Math.floor((s % 3600) / 60)).slice(-2);
@@ -529,8 +538,80 @@
         if (r.segments && r.segments.length > 1) return '로그 시작 후 경과';
         return r.meta.firstUptimeSec != null ? 'JVM 기동 후 경과' : '이벤트 순서';
     }
-    function renderCharts(r) {
-        if (typeof Chart === 'undefined') return;
+
+    /**
+     * Full GC 마커 — fullGcSummary.marksByKind([x, pause, before, after], -1 = 없음). 옛 결과(marksByKind 없음)는 압박 점(points)만
+     * HEAP_PRESSURE 로 폴백하고 legacy 로 표시한다(함정 58 — null 은 "분류한 적 없음"이지 "Full 없음"이 아니다).
+     */
+    function fullMarks(r) {
+        var fs = r.fullGcSummary, out = { kinds: {}, total: 0, legacy: false, thinned: false };
+        var num = function (v) { return v == null || v < 0 ? null : v; };
+        if (fs && fs.marksByKind) {
+            FULL_KIND_ORDER.forEach(function (k) {
+                var list = fs.marksByKind[k];
+                if (!list || !list.length) return;
+                out.kinds[k] = list.map(function (p) { return { x: p[0], pause: num(p[1]), before: num(p[2]), after: num(p[3]) }; });
+                out.total += list.length;
+            });
+            out.thinned = fs.marksThinned === true;
+            return out;
+        }
+        out.legacy = !!(r.kpi && r.kpi.fullCount > 0);
+        if (fs && fs.points && fs.points.length) {
+            out.kinds.HEAP_PRESSURE = fs.points.map(function (p) { return { x: p[0], pause: null, after: num(p[1]), before: num(p[2]) }; });
+            out.total = fs.points.length;
+        }
+        return out;
+    }
+    function markLabel(kind, m) {
+        var t = (KIND_LABEL[kind] || kind) + ' Full GC';
+        if (m.pause != null) t += ' · pause ' + fmtMs(m.pause);
+        if (m.before != null && m.after != null) {
+            t += ' · ' + fmtBytes(m.before) + ' → ' + fmtBytes(m.after);
+            if (m.before > 0) t += ' (회수 ' + Math.max(0, Math.round(100 * (m.before - m.after) / m.before)) + '%)';
+        } else if (m.after != null) t += ' · 직후 ' + fmtBytes(m.after);
+        return t;
+    }
+    // 세로선 — annotation 플러그인이 없어(폐쇄망, 함정 51) 직접 그린다. 데이터셋보다 먼저 그려 선이 점을 가리지 않게 한다.
+    var FULL_LINES_PLUGIN = {
+        id: 'gclFullLines',
+        beforeDatasetsDraw: function (chart) {
+            var xs = chart.scales.x, area = chart.chartArea;
+            if (!xs || !area) return;
+            var ctx = chart.ctx;
+            ctx.save();
+            ctx.lineWidth = 1;
+            chart.data.datasets.forEach(function (ds, i) {
+                if (!ds._fullKind || !ds._marks || !chart.isDatasetVisible(i)) return;
+                ctx.strokeStyle = FULL_LINE_COLOR[ds._fullKind] || FULL_LINE_COLOR.OTHER;
+                ctx.beginPath();
+                ds._marks.forEach(function (m) {
+                    if (m.x < xs.min || m.x > xs.max) return;
+                    var px = Math.round(xs.getPixelForValue(m.x)) + 0.5;
+                    ctx.moveTo(px, area.top);
+                    ctx.lineTo(px, area.bottom);
+                });
+                ctx.stroke();
+            });
+            ctx.restore();
+        }
+    };
+    // 범례 클릭 — Full GC 종류는 같은 묶음(카드 둘 / 모달 둘)의 두 차트에서 함께 켜고 끈다
+    function legendClick(group) {
+        return function (e, item, legend) {
+            var ch = legend.chart, ds = ch.data.datasets[item.datasetIndex];
+            var vis = !ch.isDatasetVisible(item.datasetIndex);
+            if (!ds || !ds._fullKind) { ch.setDatasetVisibility(item.datasetIndex, vis); ch.update('none'); return; }
+            group().forEach(function (c) {
+                c.data.datasets.forEach(function (d, i) { if (d._fullKind === ds._fullKind) c.setDatasetVisibility(i, vis); });
+                c.update('none');
+            });
+        };
+    }
+    function byIndex(a, b) { return a.datasetIndex - b.datasetIndex; }
+
+    /** 힙·일시정지 차트 구성 — big = 확대 모달용(글자·눈금 조금 크게). group() 은 범례 연동 대상 차트 배열. */
+    function chartConfigs(r, big, group) {
         var s = r.series;
         var n = s.uptimeSec.length;
         var TYPE_COLOR = { YOUNG: '#60A5FA', MIXED: '#818CF8', FULL: '#DC2626', REMARK: '#F59E0B', CLEANUP: '#FBBF24', CMS_INITIAL_MARK: '#F59E0B', CMS_FINAL_REMARK: '#F59E0B', OTHER: '#9CA3AF' };
@@ -542,52 +623,173 @@
             pauses.push({ x: s.uptimeSec[i], y: s.pauseMs[i] });
             pauseColors.push(TYPE_COLOR[s.type[i]] || '#9CA3AF');
         }
+        var fm = fullMarks(r);
+        var fs1 = big ? 12 : 11, fs2 = big ? 11 : 10;
         var mb = function (v) { return (v / 1048576).toFixed(0) + ' MB'; };
-        var common = {
-            responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'nearest', intersect: false },
-            // ⚠ bounds:'data' 필수 — Chart.js 4 의 linear 축 기본값은 'ticks' 라 축 범위를
-            //    "눈금이 다 보이도록" 바깥의 둥근 눈금까지 넓힌다(예: 마지막 이벤트 255,000s →
-            //    축 max 300,000s). 그러면 선이 오른쪽 끝에 닿지 못하고 애매한 위치에서 끊긴 것처럼
-            //    보인다(데이터가 끝난 것인지 잘린 것인지 구분되지 않는다). 'data' 는 축을 실제
-            //    데이터 구간에 맞추고 범위 밖 눈금만 지운다. 두 차트가 같은 x 데이터를 쓰므로
-            //    세로 정렬도 그대로 유지된다.
-            scales: { x: { type: 'linear', bounds: 'data', title: { display: true, text: xTitle(r), font: { size: 11 } }, ticks: { callback: xTick, maxTicksLimit: 10, font: { size: 10 } }, grid: { color: '#F3F4F6' } } },
-            plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } }
+        var tipTitle = function (it) { return it.length ? 'uptime ' + xTick(it[0].parsed.x) : ''; };
+        // ⚠ bounds:'data' 필수 — Chart.js 4 의 linear 축 기본값은 'ticks' 라 축 범위를
+        //    "눈금이 다 보이도록" 바깥의 둥근 눈금까지 넓힌다(예: 마지막 이벤트 255,000s →
+        //    축 max 300,000s). 그러면 선이 오른쪽 끝에 닿지 못하고 애매한 위치에서 끊긴 것처럼
+        //    보인다(데이터가 끝난 것인지 잘린 것인지 구분되지 않는다). 'data' 는 축을 실제
+        //    데이터 구간에 맞추고 범위 밖 눈금만 지운다. 두 차트가 같은 x 데이터를 쓰므로
+        //    세로 정렬도 그대로 유지된다.
+        // ⚠ x 축 객체는 차트마다 새로 만든다 — 공유하면 확대 모달의 min/max 가 다른 차트 옵션에 번진다.
+        var xScale = function () {
+            return { type: 'linear', bounds: 'data', title: { display: true, text: xTitle(r), font: { size: fs1 } }, ticks: { callback: xTick, maxTicksLimit: big ? 16 : 10, font: { size: fs2 } }, grid: { color: '#F3F4F6' } };
         };
-        var heapCtx = document.getElementById('gclHeapChart');
-        if (heapCtx) {
-            var datasets = [
-                { label: 'GC 직후 사용량', data: after, borderColor: '#2563EB', backgroundColor: 'rgba(37,99,235,.10)', fill: true, borderWidth: 1.5, pointRadius: n > 300 ? 0 : 2, tension: 0.1 },
-                { label: 'GC 직전 사용량', data: before, borderColor: '#93C5FD', borderWidth: 1, pointRadius: 0, borderDash: [3, 3], tension: 0.1 }
-            ];
-            if (total.length) datasets.push({ label: '총 용량', data: total, borderColor: '#6B7280', borderWidth: 1, pointRadius: 0, stepped: true });
-            if (r.trend && r.trend.afterPoints && r.trend.afterPoints.length >= 2) {
-                datasets.push({ label: (r.trend.basis === 'full' ? 'Full GC' : r.trend.basis === 'remark' ? 'Remark' : 'Mixed') + ' 직후', data: r.trend.afterPoints.map(function (p) { return { x: p[0], y: p[1] }; }),
-                    borderColor: '#DC2626', backgroundColor: '#DC2626', showLine: true, borderWidth: 1.5, pointRadius: 3, tension: 0 });
-            }
-            // 압박 Full GC 만 ▲ — Series 는 병합 시 유형이 FULL 로 뭉개져 압박/명시적을 못 가르므로 분류 블록의 점을 쓴다(2026-09-16)
-            if (r.fullGcSummary && r.fullGcSummary.points && r.fullGcSummary.points.length) {
-                datasets.push({ label: '압박 Full GC 직후', data: r.fullGcSummary.points.map(function (p) { return { x: p[0], y: p[1] }; }),
-                    borderColor: '#DC2626', backgroundColor: '#DC2626', showLine: false, pointStyle: 'triangle', pointRadius: 5, pointHoverRadius: 7 });
-            }
-            _charts.push(new Chart(heapCtx, { type: 'line', data: { datasets: datasets }, options: Object.assign({}, common, {
-                scales: Object.assign({}, common.scales, { y: { beginAtZero: true, ticks: { callback: mb, font: { size: 10 } }, grid: { color: '#F3F4F6' } } }),
-                plugins: Object.assign({}, common.plugins, { tooltip: { callbacks: { title: function (it) { return it.length ? 'uptime ' + xTick(it[0].parsed.x) : ''; }, label: function (it) { return it.dataset.label + ': ' + fmtBytes(it.parsed.y); } } } })
-            }) }));
+        var base = { responsive: true, maintainAspectRatio: false, animation: false, interaction: { mode: 'nearest', intersect: false } };
+
+        var heapSets = [
+            { label: 'GC 직후 사용량', data: after, borderColor: '#2563EB', backgroundColor: 'rgba(37,99,235,.10)', fill: true, borderWidth: 1.5, pointRadius: n > (big ? 600 : 300) ? 0 : 2, tension: 0.1 },
+            { label: 'GC 직전 사용량', data: before, borderColor: '#93C5FD', borderWidth: 1, pointRadius: 0, borderDash: [3, 3], tension: 0.1 }
+        ];
+        if (total.length) heapSets.push({ label: '총 용량', data: total, borderColor: '#6B7280', borderWidth: 1, pointRadius: 0, stepped: true });
+        if (r.trend && r.trend.afterPoints && r.trend.afterPoints.length >= 2) {
+            heapSets.push({ label: (r.trend.basis === 'full' ? 'Full GC' : r.trend.basis === 'remark' ? 'Remark' : 'Mixed') + ' 직후', data: r.trend.afterPoints.map(function (p) { return { x: p[0], y: p[1] }; }),
+                borderColor: '#DC2626', backgroundColor: '#DC2626', showLine: true, borderWidth: 1.5, pointRadius: 3, tension: 0 });
         }
+        var pauseSets = [{ label: '일시정지(ms)', data: pauses, pointBackgroundColor: pauseColors, pointBorderColor: pauseColors, pointRadius: n > 500 ? 2 : 3 }];
+        // Full GC 마커 — 압박 ▲ 는 Series 가 아니라 분류 블록의 점이다(Series 는 병합 시 유형이 FULL 로 뭉개져 압박/명시적을 못 가른다, 2026-09-16)
+        FULL_KIND_ORDER.forEach(function (k) {
+            var marks = fm.kinds[k];
+            if (!marks) return;
+            var c = FULL_KIND_COLOR[k], st = HEAP_MARK_STYLE[k] || { label: 'Full GC · ' + (KIND_LABEL[k] || k), pointStyle: 'rectRot', pointRadius: 4, pointHoverRadius: 6 };
+            heapSets.push({ label: st.label, _fullKind: k, _marks: marks, order: -1,
+                data: marks.filter(function (m) { return m.after != null; }).map(function (m) { return { x: m.x, y: m.after, m: m }; }),
+                borderColor: c, backgroundColor: c, showLine: false, pointStyle: st.pointStyle, pointRadius: st.pointRadius, pointHoverRadius: st.pointHoverRadius });
+            pauseSets.push({ label: (KIND_LABEL[k] || k) + ' Full GC', _fullKind: k, _marks: marks, order: -1,
+                data: marks.filter(function (m) { return m.pause != null; }).map(function (m) { return { x: m.x, y: m.pause, m: m }; }),
+                borderColor: c, backgroundColor: c, pointStyle: 'triangle', pointRadius: 6, pointHoverRadius: 8 });
+        });
+        var markTip = function (it) { return it.dataset._fullKind && it.raw && it.raw.m ? markLabel(it.dataset._fullKind, it.raw.m) : null; };
+
+        var heap = { type: 'line', data: { datasets: heapSets }, plugins: [FULL_LINES_PLUGIN], options: Object.assign({}, base, {
+            scales: { x: xScale(), y: { beginAtZero: true, ticks: { callback: mb, font: { size: fs2 } }, grid: { color: '#F3F4F6' } } },
+            plugins: {
+                legend: { labels: { boxWidth: 12, font: { size: fs1 }, sort: byIndex }, onClick: legendClick(group) },
+                tooltip: { callbacks: { title: tipTitle, label: function (it) { return markTip(it) || (it.dataset.label + ': ' + fmtBytes(it.parsed.y)); } } }
+            }
+        }) };
+        var pause = { type: 'scatter', data: { datasets: pauseSets }, plugins: [FULL_LINES_PLUGIN], options: Object.assign({}, base, {
+            scales: { x: xScale(), y: { beginAtZero: true, title: { display: true, text: 'ms', font: { size: fs1 } }, ticks: { font: { size: fs2 } }, grid: { color: '#F3F4F6' } } },
+            plugins: {
+                // 범례는 Full GC 종류만(일시정지 점의 유형 색은 노트가 말한다)
+                legend: { display: pauseSets.length > 1, labels: { boxWidth: 12, font: { size: fs1 }, sort: byIndex, filter: function (item, data) { return !!data.datasets[item.datasetIndex]._fullKind; } }, onClick: legendClick(group) },
+                tooltip: { callbacks: { title: tipTitle, label: function (it) { return markTip(it) || ((s.type[it.dataIndex] || '') + ' ' + fmtMs(it.parsed.y)); } } }
+            }
+        }) };
+
+        var heapNote = [], pauseNote = '<span style="color:#60A5FA">●</span> Young <span style="color:#818CF8">●</span> Mixed <span style="color:#DC2626">●</span> Full <span style="color:#F59E0B">●</span> Remark/Cleanup';
+        if (s.mergeFactor > 1) { heapNote.push('표시 점은 ' + s.mergeFactor + '건씩 병합(직전=최대, 직후=마지막)'); pauseNote += ' · ' + s.mergeFactor + '건씩 병합(최대값)'; }
+        if (fm.total) { heapNote.push('세로선 = Full GC(▲ 압박)'); pauseNote += ' · ▲ 세로선 = Full GC'; }
+        if (fm.thinned) { heapNote.push('Full GC 표시 일부 생략(종류당 250개)'); pauseNote += ' · Full GC 표시 일부 생략'; }
+        if (fm.legacy) { heapNote.push(FULL_LEGACY_NOTE); pauseNote += ' · ' + esc(FULL_LEGACY_NOTE); }
+        return { heap: heap, pause: pause, heapNote: heapNote.join(' · '), pauseNote: pauseNote };
+    }
+
+    function renderCharts(r) {
+        if (typeof Chart === 'undefined') return;
+        var cfg = chartConfigs(r, false, function () { return _charts; });
+        var heapCtx = document.getElementById('gclHeapChart');
+        if (heapCtx) _charts.push(new Chart(heapCtx, cfg.heap));
         var pauseCtx = document.getElementById('gclPauseChart');
         if (pauseCtx) {
-            _charts.push(new Chart(pauseCtx, { type: 'scatter', data: { datasets: [{ label: '일시정지(ms)', data: pauses, pointBackgroundColor: pauseColors, pointBorderColor: pauseColors, pointRadius: n > 500 ? 2 : 3 }] },
-                options: Object.assign({}, common, {
-                    scales: Object.assign({}, common.scales, { y: { beginAtZero: true, title: { display: true, text: 'ms', font: { size: 11 } }, ticks: { font: { size: 10 } }, grid: { color: '#F3F4F6' } } }),
-                    plugins: { legend: { display: false }, tooltip: { callbacks: { title: function (it) { return it.length ? 'uptime ' + xTick(it[0].parsed.x) : ''; }, label: function (it) { return (s.type[it.dataIndex] || '') + ' ' + fmtMs(it.parsed.y); } } } }
-                }) }));
+            _charts.push(new Chart(pauseCtx, cfg.pause));
             var note = document.getElementById('gclPauseChartNote');
-            if (note) note.innerHTML = '<span style="color:#60A5FA">●</span> Young <span style="color:#818CF8">●</span> Mixed <span style="color:#DC2626">●</span> Full <span style="color:#F59E0B">●</span> Remark/Cleanup' + (s.mergeFactor > 1 ? ' · ' + s.mergeFactor + '건씩 병합(최대값)' : '');
+            if (note) note.innerHTML = cfg.pauseNote;
         }
         var hn = document.getElementById('gclHeapChartNote');
-        if (hn && s.mergeFactor > 1) hn.textContent = '표시 점은 ' + s.mergeFactor + '건씩 병합(직전=최대, 직후=마지막)';
-        if (hn && r.fullGcSummary && r.fullGcSummary.points && r.fullGcSummary.points.length) hn.textContent += ' · ▲ 압박 Full GC';
+        if (hn && cfg.heapNote) hn.textContent = cfg.heapNote;
+    }
+
+    // ── 차트 확대 모달 (2026-11-25) ──────────────────────────────
+    // 힙·일시정지를 위아래로 크게 그리고 x 범위를 연동한다. 구간 확대는 zoom 플러그인 없이(폐쇄망) 드래그 띠로 직접 —
+    // x min/max 를 두 차트에 같이 넣으면 Chart.js 4 가 범위 밖 점을 y 계산에서 빼 y 축도 다시 맞춘다.
+    // 열고 닫기는 showModal/hideModal 만(.open 직접 조작 금지 — ModalMotionTest). 차트는 다음 열기 때 destroy(사라지는 연출 중 빈 캔버스 방지).
+    var _zoom = null, _chartOpener = null;
+    function destroyBigCharts() {
+        _bigCharts.forEach(function (c) { try { c.destroy(); } catch (e) { ignored('확대 차트 정리', e); } });
+        _bigCharts = [];
+    }
+    function updateZoomUi() {
+        var lab = document.getElementById('gclChartRange'), btn = document.getElementById('gclChartReset');
+        if (lab) lab.textContent = _zoom ? xTick(_zoom.min) + ' ~ ' + xTick(_zoom.max) : '전체 구간';
+        if (btn) btn.disabled = !_zoom;
+    }
+    function applyZoom(range) {
+        _zoom = range;
+        _bigCharts.forEach(function (c) {
+            var x = c.options.scales.x;
+            if (range) { x.min = range.min; x.max = range.max; } else { delete x.min; delete x.max; }
+            c.update('none');
+        });
+        updateZoomUi();
+    }
+    function resetChartZoom() { applyZoom(null); }
+    // 캔버스는 열 때마다 재사용하므로 한 번만 묶고, 이벤트 때 Chart.getChart 로 현재 차트를 찾는다
+    function bindZoomDrag(canvas) {
+        if (!canvas || canvas._gclZoomBound) return;
+        canvas._gclZoomBound = true;
+        var box = canvas.parentNode, sel = box.querySelector('.gcl-zoom-sel'), start = null;
+        var localX = function (ev) { return ev.clientX - canvas.getBoundingClientRect().left; };
+        canvas.addEventListener('pointerdown', function (ev) {
+            var ch = Chart.getChart(canvas);
+            if (!ch || ev.button !== 0) return;
+            var a = ch.chartArea, rect = canvas.getBoundingClientRect(), px = ev.clientX - rect.left, py = ev.clientY - rect.top;
+            if (px < a.left || px > a.right || py < a.top || py > a.bottom) return;
+            start = px;
+            try { canvas.setPointerCapture(ev.pointerId); } catch (e) { ignored('포인터 캡처', e); }
+            if (sel) { sel.style.left = px + 'px'; sel.style.width = '0px'; sel.style.top = a.top + 'px'; sel.style.height = (a.bottom - a.top) + 'px'; sel.hidden = false; }
+        });
+        canvas.addEventListener('pointermove', function (ev) {
+            var ch = Chart.getChart(canvas);
+            if (start == null || !ch || !sel) return;
+            var a = ch.chartArea, cur = Math.max(a.left, Math.min(a.right, localX(ev)));
+            sel.style.left = Math.min(start, cur) + 'px';
+            sel.style.width = Math.abs(cur - start) + 'px';
+        });
+        var finish = function (ev, apply) {
+            if (start == null) return;
+            var ch = Chart.getChart(canvas), s0 = start;
+            start = null;
+            if (sel) sel.hidden = true;
+            if (!apply || !ch) return;
+            var a = ch.chartArea, cur = Math.max(a.left, Math.min(a.right, localX(ev)));
+            if (Math.abs(cur - s0) < 6) return;   // 클릭·미세한 흔들림은 확대가 아니다(툴팁 보기)
+            var x1 = ch.scales.x.getValueForPixel(Math.min(s0, cur)), x2 = ch.scales.x.getValueForPixel(Math.max(s0, cur));
+            if (x2 > x1) applyZoom({ min: x1, max: x2 });
+        };
+        canvas.addEventListener('pointerup', function (ev) { finish(ev, true); });
+        canvas.addEventListener('pointercancel', function (ev) { finish(ev, false); });
+        canvas.addEventListener('dblclick', function () { applyZoom(null); });
+    }
+    function openChartModal(which) {
+        var ov = document.getElementById('gclChartModal');
+        if (!ov || !R || !R.series || typeof Chart === 'undefined') return;
+        _chartOpener = document.activeElement;
+        destroyBigCharts();
+        _zoom = null;
+        showModal(ov);
+        var cfg = chartConfigs(R, true, function () { return _bigCharts; });
+        var hc = document.getElementById('gclHeapChartBig'), pc = document.getElementById('gclPauseChartBig');
+        if (hc) { _bigCharts.push(new Chart(hc, cfg.heap)); bindZoomDrag(hc); }
+        if (pc) { _bigCharts.push(new Chart(pc, cfg.pause)); bindZoomDrag(pc); }
+        var hn = document.getElementById('gclHeapChartBigNote'), pn = document.getElementById('gclPauseChartBigNote');
+        if (hn) hn.textContent = cfg.heapNote || 'GC 직후 사용량 · 총 용량';
+        if (pn) pn.innerHTML = cfg.pauseNote;
+        Array.prototype.forEach.call(ov.querySelectorAll('.gcl-chart-big'), function (el) {
+            el.classList.toggle('is-focus', el.getAttribute('data-chart') === which);
+        });
+        updateZoomUi();
+        var close = document.getElementById('gclChartClose');
+        if (close) close.focus();
+    }
+    function closeChartModal() {
+        var ov = document.getElementById('gclChartModal');
+        if (!isModalOpen(ov)) return;
+        hideModal(ov);
+        if (_chartOpener && _chartOpener.focus) { try { _chartOpener.focus(); } catch (e) { ignored('확대 버튼 포커스 복귀', e); } }
+        _chartOpener = null;
     }
 
     // ── 소견 ─────────────────────────────────────────────────
@@ -1259,7 +1461,7 @@
 
         var search = document.getElementById('matchPickSearch');
         if (search) search.addEventListener('input', function () { renderPickList(search.value); });
-        document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { closeAiConfirm(); closeReanalyzeConfirm(); } });
+        document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { closeAiConfirm(); closeReanalyzeConfirm(); closeChartModal(); } });
 
         if (GC_STATUS === 'SUCCESS') {
             R = loadResult();
@@ -1311,6 +1513,9 @@
     window.closeGcDeleteModal = closeGcDeleteModal;
     window.confirmGcDelete = confirmGcDelete;
     window.showPressureEvents = showPressureEvents;
+    window.openChartModal = openChartModal;
+    window.closeChartModal = closeChartModal;
+    window.resetChartZoom = resetChartZoom;
     window.toggleSegPanel = toggleSegPanel;
     window.filterBySegment = filterBySegment;
     window.openCombineModal = openCombineModal;

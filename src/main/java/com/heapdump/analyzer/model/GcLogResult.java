@@ -290,6 +290,13 @@ public class GcLogResult {
         private Boolean intervalShrinking;
         /** 압박 Full GC 만 — [x, heapAfter, heapBefore], ≤500 점(차트 ▲ 표시용). */
         private List<double[]> points = new ArrayList<>();
+        /**
+         * 전 종류 Full GC 마커(차트 세로선, 2026-11-25) — 키 {@code FullGcKind.name()}, 값 [x, pauseMs, heapBefore, heapAfter](없으면 -1),
+         * 종류당 ≤250 점. ⚠ {@code = new} 로 초기화하지 말 것(함정 58) — 옛 JSON 은 null 로 남아 화면이 압박 ▲ 만으로 폴백하고 재분석을 안내한다.
+         */
+        private Map<String, List<double[]>> marksByKind;
+        /** 마커를 솎아냈으면 true(일부 Full GC 만 선으로 보인다). 아니면 null. */
+        private Boolean marksThinned;
         /** 회수율이 가장 낮은 압박 Full GC ≤5 건. */
         private List<FullGcSample> worstReclaim = new ArrayList<>();
         private String note;
