@@ -345,6 +345,69 @@ class ThreadDumpCombineLinkServiceTest {
         assertNull(rows.get("a-part.txt").getPartOf());
     }
 
+    // ── 힙 덤프 → 스레드 덤프 파일 내보내기 ─────────────────────
+
+    private HeapThreadService exportMock() throws IOException {
+        String overview = fixture("heap/synthetic-overview.html");
+        String threads = fixture("heap/synthetic.threads");
+        HeapThreadExtractor.Extract x = HeapThreadExtractor.extract(overview, threads, "2026-11-26 10:00:00");
+        HeapThreadService h = Mockito.mock(HeapThreadService.class);
+        Mockito.when(h.exportSource("app.hprof"))
+                .thenReturn(new HeapThreadService.ExportSource("app.hprof", "app", x.dumpText(), x.threads().size(), "was01"));
+        return h;
+    }
+
+    @Test
+    void 힙_덤프_스레드를_파일로_내보내면_분석까지_마친_채_연결되어_목록에_오른다() throws Exception {
+        service.heapThreads = exportMock();
+        ThreadDumpAnalyzerService.HeapExport x = service.exportFromHeap("app.hprof", false, "tester");
+        assertEquals("app_threads.txt", x.filename());
+        Path f = root.resolve("dumpfiles").resolve("app_threads.txt");
+        assertTrue(Files.isRegularFile(f));
+        assertEquals(Files.size(f), x.size());
+        assertTrue(Files.readString(f).contains(HeapThreadExtractor.VM_LINE));
+        ThreadDumpAnalysisEntity e = rows.get("app_threads.txt");
+        // 힙 화면에서 이미 분석을 본 상태 — 목록에 '미분석' 으로 올려 같은 분석을 다시 시작하게 하지 않는다
+        assertEquals(ThreadDumpAnalysisEntity.STATUS_SUCCESS, x.status(), x.error());
+        assertEquals(ThreadDumpAnalysisEntity.STATUS_SUCCESS, e.getStatus(), e.getErrorMessage());
+        assertNull(x.error());
+        assertEquals("app.hprof", e.getLinkedHeapFilename(), "같은 덤프에서 나온 파일이라 연결된 채로 등록하고, 분석 뒤에도 유지한다");
+        assertEquals("tester", e.getLinkedBy());
+        assertEquals("tester", e.getUploadedBy());
+        assertEquals("was01", e.getServerName());
+        assertTrue(service.history().stream().anyMatch(r -> "app_threads.txt".equals(r.getFilename())), "스레드 덤프 목록에 보여야 한다");
+        try (var tmp = Files.list(root.resolve("tmp"))) { assertEquals(0, tmp.count(), "임시 파일이 남았다"); }
+
+        assertEquals(x.threads(), e.getThreadCount());
+        ThreadDumpResult r = service.loadResult("app_threads.txt").orElseThrow();
+        assertTrue(r.getFindings().stream().anyMatch(fd -> "HEAP_DERIVED".equals(fd.getCode())), "힙에서 내보낸 파일이라는 안내가 없다");
+        assertTrue(r.getFindings().stream().noneMatch(fd -> "SINGLE_SNAPSHOT".equals(fd.getCode())), "한 시점이 전제인데 스냅샷 1개 소견이 나왔다");
+        assertNotEquals("heap", r.getMeta().getSource(), "파일로 올린 분석은 스레드 덤프 결과다");
+    }
+
+    @Test
+    void 이미_내보낸_파일이_있으면_덮어쓰지_않고_새_이름은_번호를_붙인다() throws Exception {
+        service.heapThreads = exportMock();
+        service.exportFromHeap("app.hprof", false, "tester");
+        Path f = root.resolve("dumpfiles").resolve("app_threads.txt");
+        Files.writeString(f, Files.readString(f) + "\n# 사용자가 고친 내용\n");
+        long before = Files.size(f);
+
+        ThreadDumpAnalyzerService.ExportExistsException ex = assertThrows(ThreadDumpAnalyzerService.ExportExistsException.class,
+                () -> service.exportFromHeap("app.hprof", false, "tester"));
+        assertEquals("app_threads.txt", ex.filename());
+        assertEquals(before, Files.size(f), "기존 파일을 건드리지 않는다");
+
+        assertEquals("app_threads-2.txt", service.exportFromHeap("app.hprof", true, "tester").filename());
+        assertEquals("app_threads-3.txt", service.exportFromHeap("app.hprof", true, "tester").filename());
+        try (var tmp = Files.list(root.resolve("tmp"))) { assertEquals(0, tmp.count()); }
+    }
+
+    @Test
+    void 힙_연계가_없으면_내보낼_수_없다() {
+        assertThrows(IllegalArgumentException.class, () -> service.exportFromHeap("app.hprof", false, "tester"));
+    }
+
     @Test
     void 시각_차이_계산() {
         assertEquals(0L, ThreadDumpAnalyzerService.gapMs(1500L, 1000L, 2000L));

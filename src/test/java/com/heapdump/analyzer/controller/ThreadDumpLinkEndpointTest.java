@@ -189,6 +189,46 @@ class ThreadDumpLinkEndpointTest {
     }
 
     @Test
+    @DisplayName("스레드 덤프 파일로 내보내기 — 성공은 파일명·목록 링크, 이미 있으면 409 EXPORT_EXISTS + 이름, newName 전달, 실패 코드 유지")
+    void heapExport() throws Exception {
+        Mockito.when(service.exportFromHeap("app 1.hprof", false, "kim"))
+                .thenReturn(new ThreadDumpAnalyzerService.HeapExport("app 1_threads.txt", "app 1.hprof", 160, 52_000L, "SUCCESS", null));
+        mvc.perform(post("/api/thread-dump/heap/app 1.hprof/export").principal(user))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.filename").value("app 1_threads.txt"))
+                .andExpect(jsonPath("$.threads").value(160))
+                .andExpect(jsonPath("$.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.analysisError").doesNotExist())
+                .andExpect(jsonPath("$.listUrl").value("/thread-dump?file=app%201_threads.txt"))
+                .andExpect(jsonPath("$.analyzeUrl").value("/thread-dump/analyze/app%201_threads.txt"));
+
+        Mockito.when(service.exportFromHeap("b.hprof", false, "kim")).thenThrow(new ThreadDumpAnalyzerService.ExportExistsException("b_threads.txt"));
+        mvc.perform(post("/api/thread-dump/heap/b.hprof/export").principal(user))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.code").value("EXPORT_EXISTS"))
+                .andExpect(jsonPath("$.filename").value("b_threads.txt"));
+
+        Mockito.when(service.exportFromHeap("b.hprof", true, "kim"))
+                .thenReturn(new ThreadDumpAnalyzerService.HeapExport("b_threads-2.txt", "b.hprof", 3, 100L, "ERROR", "NOT_THREAD_DUMP: x"));
+        mvc.perform(post("/api/thread-dump/heap/b.hprof/export").param("newName", "true").principal(user))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.filename").value("b_threads-2.txt"))
+                .andExpect(jsonPath("$.status").value("ERROR"))
+                .andExpect(jsonPath("$.analysisError").value("NOT_THREAD_DUMP: x"));
+
+        Mockito.when(service.exportFromHeap("c.hprof", false, "kim")).thenThrow(new ThreadDumpException("HEAP_NOT_ANALYZED", "분석이 끝나지 않았습니다"));
+        mvc.perform(post("/api/thread-dump/heap/c.hprof/export").principal(user))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("HEAP_NOT_ANALYZED"));
+        Mockito.when(service.exportFromHeap("d.hprof", false, "kim")).thenThrow(new ThreadDumpException("HEAP_THREADS_UNAVAILABLE", "산출물 없음"));
+        mvc.perform(post("/api/thread-dump/heap/d.hprof/export").principal(user))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("HEAP_THREADS_UNAVAILABLE"));
+    }
+
+    @Test
     @DisplayName("힙 스레드 서비스가 없으면 힙 경로는 404 코드로 답한다")
     void heapUnavailable() throws Exception {
         controller.heapThreads = null;

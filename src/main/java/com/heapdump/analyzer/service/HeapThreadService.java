@@ -102,13 +102,48 @@ public class HeapThreadService {
      * {@code HEAP_NOT_FOUND}(기록 없음) · {@code HEAP_NOT_ANALYZED}(분석 완료 전) · {@code HEAP_THREADS_UNAVAILABLE}(산출물 없음) ·
      * {@code IO_ERROR} · {@code INTERNAL}.
      */
-    public Loaded load(String heapFilename) {
-        String safe = validateFilename(heapFilename);
+    /** 분석이 끝난 힙 덤프의 기록 — 없거나 끝나지 않았으면 코드가 붙은 예외. */
+    private AnalysisHistoryEntity analyzedEntity(String safe) {
         AnalysisHistoryEntity e = heap.findHistoryEntity(safe)
                 .orElseThrow(() -> new ThreadDumpException("HEAP_NOT_FOUND", "힙 덤프 분석 기록이 없습니다: " + safe));
         if (!"SUCCESS".equals(e.getStatus())) {
             throw new ThreadDumpException("HEAP_NOT_ANALYZED", "힙 덤프 분석이 끝나지 않았습니다(상태 " + e.getStatus() + "). 분석이 끝난 뒤 다시 보세요.");
         }
+        return e;
+    }
+
+    /** MAT 산출물(.threads + Thread Overview)을 읽어 스레드 덤프 텍스트로 바꾼다. */
+    private HeapThreadExtractor.Extract readExtract(String safe, AnalysisHistoryEntity e, File threads, File zip) throws IOException {
+        String overview = zip == null ? null : threadOverviewPage(zip);
+        String stacks = threads == null ? null : Files.readString(threads.toPath(), StandardCharsets.UTF_8);
+        return HeapThreadExtractor.extract(overview, stacks, e.getDumpCreationTime());
+    }
+
+    /**
+     * '스레드 덤프 파일로 내보내기' 원본 — 힙 덤프의 스레드를 jstack 형식 텍스트로 만든다(저장은 호출자).
+     * 화면 분석과 같은 변환이라 내보낸 파일을 스레드 덤프로 분석하면 같은 스레드·스택이 나온다.
+     *
+     * @param baseName 힙 덤프 파일명에서 확장자를 뗀 이름(내보낼 파일명의 앞부분)
+     */
+    public record ExportSource(String heapFilename, String baseName, String text, int threads, String serverName) {}
+
+    public ExportSource exportSource(String heapFilename) {
+        String safe = validateFilename(heapFilename);
+        AnalysisHistoryEntity e = analyzedEntity(safe);
+        try {
+            HeapThreadExtractor.Extract x = readExtract(safe, e, threadsFile(safe), overviewZip(safe));
+            String base = heap.stripExtensionPublic(safe);
+            if (base == null || base.isBlank()) base = safe;
+            return new ExportSource(safe, base, x.dumpText(), x.threads().size(), e.getServerName());
+        } catch (IOException ex) {
+            logger.error("[HeapThreads] action=export-source result=FAIL file={} code=IO_ERROR — {}", safe, ex.getMessage(), ex);
+            throw new ThreadDumpException("IO_ERROR", "힙 덤프 산출물을 읽지 못했습니다 (" + ex.getMessage() + ")");
+        }
+    }
+
+    public Loaded load(String heapFilename) {
+        String safe = validateFilename(heapFilename);
+        AnalysisHistoryEntity e = analyzedEntity(safe);
         File threads = threadsFile(safe);
         File zip = overviewZip(safe);
         String sig = sig(threads) + "|" + sig(zip) + "|" + e.getDumpCreationTime();
@@ -116,9 +151,7 @@ public class HeapThreadService {
         if (hit != null && hit.signature().equals(sig)) return hit;
         long t0 = System.currentTimeMillis();
         try {
-            String overview = zip == null ? null : threadOverviewPage(zip);
-            String stacks = threads == null ? null : Files.readString(threads.toPath(), StandardCharsets.UTF_8);
-            HeapThreadExtractor.Extract x = HeapThreadExtractor.extract(overview, stacks, e.getDumpCreationTime());
+            HeapThreadExtractor.Extract x = readExtract(safe, e, threads, zip);
             ThreadDumpLimits limits = new ThreadDumpLimits(config.getThreadDumpMaxFileBytes(), config.getThreadDumpMaxLineChars(),
                     config.getThreadDumpMaxThreadsPerSnapshot(), 1);
             ThreadDumpResult r = HeapThreadExtractor.analyze(x, limits, safe);
@@ -134,7 +167,7 @@ public class HeapThreadService {
             Loaded l = new Loaded(safe, r, json, e, byName, dup, sig);
             cache.put(safe, l);
             logger.info("[HeapThreads] action=extract file={} threads={} overview={} stacks={} findings={} elapsed={}ms",
-                    safe, x.threads().size(), overview != null, stacks != null, r.getFindings().size(), System.currentTimeMillis() - t0);
+                    safe, x.threads().size(), zip != null, threads != null, r.getFindings().size(), System.currentTimeMillis() - t0);
             return l;
         } catch (ThreadDumpException ex) {
             logger.warn("[HeapThreads] action=extract result=FAIL file={} code={} — {}", safe, ex.code(), ex.getMessage());

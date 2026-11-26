@@ -10,7 +10,7 @@
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-09-20}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-20}">
     <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-11-25}">
-    <link rel="stylesheet" th:href="@{/css/thread-dump.css?v=2026-11-26c}">
+    <link rel="stylesheet" th:href="@{/css/thread-dump.css?v=2026-11-26f}">
     <script th:src="@{/js/lib/chart.umd.min.js}"></script>
 </head>
 <body>
@@ -75,6 +75,8 @@
             </div>
             <div class="gcl-head-actions">
                 <button type="button" class="btn btn-sm btn-soft" id="thdBtnAi" onclick="thdRunAi()" th:disabled="${status != 'SUCCESS'}">AI 분석</button>
+                <button type="button" class="btn btn-sm btn-ghost" id="thdBtnExport" th:if="${hm}" onclick="thdOpenExport()"
+                        title="이 힙 덤프의 스레드를 jstack 형식 텍스트로 저장해 스레드 덤프 목록에 등록합니다">스레드 덤프로 내보내기</button>
                 <th:block th:unless="${hm}">
                 <button type="button" class="btn btn-sm btn-ghost" id="thdBtnReanalyze" onclick="thdOpenReanalyze()" th:disabled="${status == 'ANALYZING' or !fileExists}">재분석</button>
                 <button type="button" class="btn btn-sm btn-ghost" onclick="thdDownloadOriginal()" th:disabled="${!fileExists}">원본 다운로드</button>
@@ -124,6 +126,7 @@
             <button type="button" class="thd-tab active" role="tab" data-tab="summary" aria-selected="true" onclick="thdTab('summary')">요약</button>
             <button type="button" class="thd-tab" role="tab" data-tab="locks" aria-selected="false" onclick="thdTab('locks')">락·정체<span class="cnt" id="thdTabLocksCnt"></span></button>
             <button type="button" class="thd-tab" role="tab" data-tab="threads" aria-selected="false" onclick="thdTab('threads')">스레드<span class="cnt" id="thdTabThreadsCnt"></span></button>
+            <button type="button" class="thd-tab" role="tab" data-tab="ai" aria-selected="false" onclick="thdTab('ai')">AI 분석<span class="thd-tab-sev" id="thdTabAiSev"></span></button>
             <button type="button" class="thd-tab" role="tab" data-tab="report" aria-selected="false" onclick="thdTab('report')">리포트</button>
         </div>
 
@@ -180,12 +183,14 @@
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"></path><rect x="4" y="12" width="16" height="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>
                     AI 분석
                     <span class="card-actions">
+                        <button type="button" class="btn btn-sm btn-ghost" id="thdAiDetailBtn" onclick="thdTab('ai')" style="display:none">상세보기</button>
                         <button type="button" class="btn btn-sm btn-primary" id="thdAiRunBtn" onclick="thdRunAi()">
                             <span id="thdAiRunLabel">분석</span>
                         </button>
                     </span>
                 </div>
-                <div class="gcl-ai-body" id="thdAiBody"></div>
+                <!-- 요약 탭에는 심각도 띠(.gcl-ai-sev)만 — 요약·근본 원인·권장 조치는 'AI 분석' 탭(#thdAiFull) -->
+                <div class="gcl-ai-body thd-ai-brief" id="thdAiBody"></div>
             </div>
 
             <div class="content-card">
@@ -290,6 +295,22 @@
             </div>
         </div>
 
+        <!-- ── AI 분석 ── -->
+        <div class="thd-panel" id="thdPanel-ai" role="tabpanel" hidden>
+            <div class="content-card">
+                <div class="content-card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"></path><rect x="4" y="12" width="16" height="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>
+                    AI 분석
+                    <span class="card-actions">
+                        <button type="button" class="btn btn-sm btn-primary" id="thdAiRunBtn2" onclick="thdRunAi()">
+                            <span id="thdAiRunLabel2">분석</span>
+                        </button>
+                    </span>
+                </div>
+                <div class="gcl-ai-body" id="thdAiFull"></div>
+            </div>
+        </div>
+
         <!-- ── 리포트 ── -->
         <div class="thd-panel" id="thdPanel-report" role="tabpanel" hidden>
             <div class="content-card">
@@ -329,6 +350,30 @@
 </div>
 
 <!-- AI 분석 확인 -->
+<!-- 힙 모드 — 스레드 덤프 파일로 내보내기(확인 → 진행 → 완료/이미 있음/실패). 버튼 구성은 thread-dump-analyze.js exportState 가 바꾼다 -->
+<div id="thdExportModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="thdExportTitle" th:if="${hm}" onclick="if(event.target===this)thdCloseExport()">
+    <div class="modal-box">
+        <div class="modal-title" id="thdExportTitle">스레드 덤프 파일로 내보내기</div>
+        <div class="modal-body">
+            <p class="gcl-ai-confirm-desc">이 힙 덤프의 스레드를 jstack 형식 텍스트 파일로 저장하고, 스레드 덤프로 분석까지 마쳐 <b>스레드 덤프 목록</b>에 올립니다.</p>
+            <span class="modal-filename" id="thdExportName" th:text="${filename}"></span>
+            <ul class="gcl-ai-confirm-list" id="thdExportInfo">
+                <li>파일 이름은 <b>&lt;힙 덤프 이름&gt;_threads.txt</b> 입니다. 같은 이름이 있으면 덮어쓰지 않고 물어봅니다.</li>
+                <li>내보낸 파일은 이 힙 덤프와 <b>연결된 상태</b>로 등록됩니다 — 스레드 표에 힙 점유가 붙습니다.</li>
+                <li>내보낸 뒤 <b>바로 분석</b>하므로 목록에 '완료' 로 올라갑니다. 힙 덤프에 없는 정보(CPU·락 관계·스냅샷 비교)는 파일에도 없습니다.</li>
+            </ul>
+            <div class="thd-export-msg" id="thdExportMsg" role="status" hidden></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" id="thdExportCancel" onclick="thdCloseExport()">취소</button>
+            <button type="button" class="mbtn-cancel" id="thdExportList" data-href="/thread-dump" onclick="location.href=this.dataset.href" hidden>목록에서 보기</button>
+            <button type="button" class="mbtn-cancel" id="thdExportNew" onclick="thdRunExport(true)" hidden>새 이름으로 내보내기</button>
+            <button type="button" class="mbtn-save" id="thdExportGo" onclick="thdRunExport(false)">내보내기</button>
+            <button type="button" class="mbtn-save" id="thdExportOpen" data-href="/thread-dump" onclick="location.href=this.dataset.href" hidden>결과 보기</button>
+        </div>
+    </div>
+</div>
+
 <div id="thdAiModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="thdAiTitle" onclick="if(event.target===this)thdCloseAi()">
     <div class="modal-box">
         <div class="modal-title" id="thdAiTitle">AI 분석 시작</div>
@@ -432,7 +477,7 @@
     var THD_MODE = /*[[${hm} ? 'heap' : 'dump']]*/ 'dump';
 </script>
 <script th:src="@{/js/table-grid.js?v=2026-09-20}"></script>
-<script th:src="@{/js/thread-dump-analyze.js?v=2026-11-26c}"></script>
+<script th:src="@{/js/thread-dump-analyze.js?v=2026-11-26f}"></script>
 
 </body>
 </html>

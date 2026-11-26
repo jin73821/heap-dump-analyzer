@@ -193,6 +193,10 @@ class ThreadDumpTemplateSmokeTest {
         assertFalse(ok.contains("미들웨어") || ok.contains(">Tomcat<"), "스레드 덤프 결과 화면에 추정 미들웨어가 보인다");
         // 스냅샷이 1개면 AI 카드가 추이 카드 자리(#thdSide)로 옮겨 간다 — 옮길 곳과 돌아올 곳이 있어야 한다
         assertTrue(ok.indexOf("id=\"thdSide\"") < ok.indexOf("id=\"thdAiHome\"") && ok.indexOf("id=\"thdAiHome\"") < ok.indexOf("id=\"thdAiCard\""));
+        // 요약 탭 AI 카드는 심각도 띠만 — 전체는 'AI 분석' 탭, 상세보기 버튼이 그 탭으로 보낸다
+        assertTrue(ok.contains("data-tab=\"ai\"") && ok.contains("id=\"thdPanel-ai\"") && ok.contains("id=\"thdAiFull\""), "AI 분석 탭이 없다");
+        assertTrue(ok.contains("id=\"thdAiDetailBtn\" onclick=\"thdTab('ai')\""), "요약 AI 카드에 상세보기 → AI 분석 탭 버튼이 없다");
+        assertTrue(ok.indexOf("data-tab=\"threads\"") < ok.indexOf("data-tab=\"ai\"") && ok.indexOf("data-tab=\"ai\"") < ok.indexOf("data-tab=\"report\""));
 
         String running = render("thread-dump/analyze", analyzeModel("ANALYZING", true, true));
         assertTrue(running.contains("스레드 덤프를 분석하는 중입니다"));
@@ -330,9 +334,13 @@ class ThreadDumpTemplateSmokeTest {
         assertFalse(html.contains("id=\"thdBtnReanalyze\""), "힙 모드에 재분석 버튼이 있다");
         assertFalse(html.contains("thdOpenDelete()"), "힙 모드에 삭제 버튼이 있다");
         assertFalse(html.contains("id=\"thdHeapLinkChip\""), "힙 모드에 힙 연결 칩이 있다");
+        // 스레드 덤프 파일로 내보내기 — 힙 모드에만 버튼·모달이 있다
+        assertTrue(html.contains("id=\"thdBtnExport\"") && html.contains("id=\"thdExportModal\""), "힙 모드에 스레드 덤프로 내보내기가 없다");
+        assertTrue(html.contains("onclick=\"thdRunExport(true)\""), "이미 있을 때 새 이름으로 내보내기 버튼이 없다");
 
         String dump = render("thread-dump/analyze", analyzeModel("SUCCESS", true, true));
         assertTrue(dump.contains("var THD_MODE = \"dump\""), "heapMode 가 없으면 스레드 덤프 모드다");
+        assertFalse(dump.contains("id=\"thdBtnExport\"") || dump.contains("id=\"thdExportModal\""), "스레드 덤프 결과에 힙 내보내기가 있다");
         for (String id : new String[]{"thdHeapLinkChip", "thdHeapLinkModal", "thdHeapCandList", "thdMembersCard", "thdMemCard", "thdUngroupModal"}) {
             assertTrue(dump.contains("id=\"" + id + "\""), "#" + id + " 가 없다");
         }
@@ -460,6 +468,8 @@ class ThreadDumpTemplateSmokeTest {
         String an = resource("/static/js/thread-dump-analyze.js");
         assertFalse(an.contains("m.middleware"), "옛 결과의 추정 미들웨어를 화면에 쓴다");
         assertTrue(an.contains("placeAiCard(R.snapshots.length > 1)"), "스냅샷 1개일 때 AI 카드를 추이 자리로 옮기지 않는다");
+        assertTrue(an.contains("var TABS = ['summary', 'locks', 'threads', 'ai', 'report'];"), "AI 분석 탭이 탭 목록에 없다(해시 이동·전환 불가)");
+        assertTrue(an.contains("setAiBodies(sevHtml, h);"), "요약 탭에는 심각도 띠만, AI 탭에는 전체를 그리지 않는다");
         // 화면이 아는 실패 코드 = 서버가 내는 실패 코드
         for (String code : new String[]{"NOT_THREAD_DUMP", "UNSUPPORTED_FORMAT", "EMPTY", "TOO_LARGE", "TIMEOUT", "CANCELLED", "FILE_MISSING",
                 "IO_ERROR", "OUT_OF_MEMORY", "INTERNAL", "INTERRUPTED"}) {

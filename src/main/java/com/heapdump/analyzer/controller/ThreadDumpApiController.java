@@ -81,6 +81,14 @@ public class ThreadDumpApiController {
         return ResponseEntity.status(409).body(err("CONFLICT", e.getMessage()));
     }
 
+    /** 힙 덤프에서 내보낼 이름의 파일이 이미 있음 — 화면이 "목록에서 보기 / 새 이름으로" 를 고르도록 이름을 함께 준다. */
+    @ExceptionHandler(ThreadDumpAnalyzerService.ExportExistsException.class)
+    public ResponseEntity<Map<String, Object>> exportExists(ThreadDumpAnalyzerService.ExportExistsException e) {
+        Map<String, Object> m = err("EXPORT_EXISTS", e.getMessage());
+        m.put("filename", e.filename());
+        return ResponseEntity.status(409).body(m);
+    }
+
     /** 분석 실패 코드가 붙은 예외(주로 힙 덤프 추출) — 코드로 HTTP 상태를 정한다. */
     @ExceptionHandler(ThreadDumpException.class)
     public ResponseEntity<Map<String, Object>> analysisError(ThreadDumpException e) {
@@ -483,6 +491,42 @@ public class ThreadDumpApiController {
         m.put("linkedThreadDumps", service.linkedToHeap(safe));
         m.put("success", true);
         return ResponseEntity.ok(m);
+    }
+
+    /**
+     * 힙 덤프의 스레드를 스레드 덤프 파일({@code <이름>_threads.txt})로 내보내 스레드 덤프 목록에 등록한다.
+     * 이미 있으면 409 {@code EXPORT_EXISTS}(+filename) — {@code ?newName=true} 면 {@code _threads-2.txt} 처럼 새 이름으로.
+     * 내보낸 파일은 그 힙 덤프와 연결된 상태로 등록되고 바로 분석된다({@code status} — SUCCESS · ANALYZING · ERROR).
+     */
+    @PostMapping("/api/thread-dump/heap/{filename:.+}/export")
+    public ResponseEntity<Map<String, Object>> heapExport(@PathVariable String filename,
+                                                          @RequestParam(name = "newName", defaultValue = "false") boolean newName,
+                                                          Principal principal) throws IOException {
+        String safe = heap().validateFilename(filename);
+        String who = AuthUtil.who(principal);
+        try {
+            ThreadDumpAnalyzerService.HeapExport x = service.exportFromHeap(safe, newName, who);
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("success", true);
+            m.put("filename", x.filename());
+            m.put("heapFilename", x.heapFilename());
+            m.put("threads", x.threads());
+            m.put("size", x.size());
+            m.put("status", x.status());
+            if (x.error() != null) m.put("analysisError", x.error());
+            m.put("listUrl", "/thread-dump?file=" + java.net.URLEncoder.encode(x.filename(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+            m.put("analyzeUrl", "/thread-dump/analyze/" + java.net.URLEncoder.encode(x.filename(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20"));
+            return ResponseEntity.ok(m);
+        } catch (ThreadDumpAnalyzerService.ExportExistsException e) {
+            logger.info("[ThreadDump] action=export-from-heap result=EXISTS heap={} file={} by={}", safe, e.filename(), who);
+            throw e;
+        } catch (ThreadDumpException e) {
+            logger.warn("[ThreadDump] action=export-from-heap result=FAIL heap={} code={} by={} — {}", safe, e.code(), who, e.getMessage());
+            throw e;
+        } catch (IOException | RuntimeException e) {
+            logger.error("[ThreadDump] action=export-from-heap result=FAIL heap={} by={} — {}", safe, who, e.toString(), e);
+            throw e;
+        }
     }
 
     @PostMapping("/api/thread-dump/heap/{filename:.+}/ai-analyze")

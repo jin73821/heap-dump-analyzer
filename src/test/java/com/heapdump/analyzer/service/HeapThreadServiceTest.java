@@ -153,6 +153,19 @@ class HeapThreadServiceTest {
     }
 
     @Test
+    void 내보내기_원본은_화면_분석과_같은_변환이다() throws Exception {
+        placeAll();
+        HeapThreadService.ExportSource src = svc.exportSource("app.hprof");
+        assertEquals("app.hprof", src.heapFilename());
+        assertEquals("app", src.baseName());
+        assertTrue(src.text().contains(com.heapdump.analyzer.parser.threaddump.HeapThreadExtractor.VM_LINE));
+        assertTrue(src.text().startsWith("2026-11-26 10:00:00\n"), "덤프 시각 줄이 맨 앞에 있어야 스레드 덤프 분석이 시각을 안다");
+        assertEquals(svc.load("app.hprof").result().getSnapshots().get(0).getThreads(), src.threads());
+        entity.setStatus("ANALYZING");
+        assertEquals("HEAP_NOT_ANALYZED", assertThrows(ThreadDumpException.class, () -> svc.exportSource("app.hprof")).code());
+    }
+
+    @Test
     void 스택만_있어도_분석한다() throws Exception {
         Files.write(new File(resultDir, "app.threads").toPath(), fixture("synthetic.threads"));
         HeapThreadService.Loaded l = svc.load("app.hprof");

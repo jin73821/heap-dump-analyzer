@@ -84,6 +84,19 @@ public class ThreadDumpAnalyzerService {
     public static class BusyException extends RuntimeException {
         public BusyException(String message) { super(message); }
     }
+    /** 힙 덤프에서 내보낼 이름의 파일이 이미 있다 — 화면이 "목록에서 보기 / 새 이름으로" 를 고르게 이름을 싣는다(409). */
+    public static class ExportExistsException extends RuntimeException {
+        private final String filename;
+        public ExportExistsException(String filename) {
+            super("이미 내보낸 스레드 덤프 파일이 있습니다: " + filename);
+            this.filename = filename;
+        }
+        public String filename() { return filename; }
+    }
+    /** 같은 힙 덤프를 '새 이름으로' 여러 번 내보낼 때 붙이는 번호의 상한(_threads-2 … _threads-99). */
+    static final int EXPORT_NAME_MAX_SUFFIX = 99;
+    /** 내보낸 직후 분석을 기다리는 시간 — 힙 덤프 스레드 텍스트는 작아 보통 1초 안에 끝난다. 앞선 큰 분석이 실행기를 잡고 있으면 '분석 중' 으로 답한다. */
+    static long exportAnalyzeWaitSeconds = 15;
     /** 묶음 제안을 위해 미리 분석해 보는 파일 크기 상한 — 이보다 크면 제안에서 뺀다(업로드 직후 화면을 붙잡지 않게). */
     static final long SUGGEST_MAX_BYTES = 64L * 1024 * 1024;
 
@@ -219,9 +232,13 @@ public class ThreadDumpAnalyzerService {
     }
 
     public ThreadDumpAnalysisEntity registerUploaded(String safeFilename, long size, String who, String serverName) {
+        return register(safeFilename, size, who, serverName, "upload");
+    }
+
+    private ThreadDumpAnalysisEntity register(String safeFilename, long size, String who, String serverName, String source) {
         ThreadDumpAnalysisEntity e = repository.findByFilename(safeFilename).orElseGet(ThreadDumpAnalysisEntity::new);
         // 업로드는 같은 이름 파일이 없을 때만 허용되므로 늘 새 파일이다 — 파일 없이 남은 옛 기록의 결과를 붙이지 않는다
-        if (e.getId() != null) forgetAnalysis(e, "upload");
+        if (e.getId() != null) forgetAnalysis(e, source);
         e.setFilename(safeFilename);
         e.setStatus(ThreadDumpAnalysisEntity.STATUS_NOT_ANALYZED);
         e.setFileSize(size);
@@ -230,8 +247,86 @@ public class ThreadDumpAnalyzerService {
         e.setUploadedBy(who);
         e.setServerName(cleanServerName(serverName));
         e = repository.save(e);
-        logger.info("[ThreadDump] action=register source=upload file={} size={} server={} by={}", safeFilename, size, e.getServerName(), who);
+        logger.info("[ThreadDump] action=register source={} file={} size={} server={} by={}", source, safeFilename, size, e.getServerName(), who);
         return e;
+    }
+
+    // ── 힙 덤프 → 스레드 덤프 파일 내보내기 (2.7.1) ─────────────────
+
+    /** @param status 내보낸 뒤 분석 상태 — SUCCESS · ANALYZING(기다리는 동안 안 끝남) · ERROR(이때 {@code error} 에 사유) */
+    public record HeapExport(String filename, String heapFilename, int threads, long size, String status, String error) {}
+
+    /**
+     * 힙 덤프의 스레드(MAT 산출물을 바꾼 jstack 형식 텍스트)를 스레드 덤프 저장소에 파일로 저장하고 목록에 등록한다.
+     * 파일명은 {@code <힙 덤프 이름>_threads.txt}. 이미 있으면 {@code newName=false} 는 {@link ExportExistsException}(409),
+     * {@code newName=true} 는 {@code _threads-2.txt} 부터 비어 있는 이름을 쓴다(기존 파일·분석 결과는 건드리지 않는다).
+     * 내보낸 파일은 원래 힙 덤프와 <b>연결된 상태</b>로 등록된다 — 같은 덤프에서 나온 것이 확실하므로 추정 연결이 아니다.
+     * 힙 화면에서 이미 분석을 본 상태이므로 등록 직후 <b>바로 스레드 덤프로 분석</b>하고 끝나기를 잠시 기다린다
+     * — 목록에 '미분석' 으로 올라가 같은 분석을 한 번 더 시작하게 하지 않는다.
+     * 임시 파일(tmp/)에 다 쓴 뒤 옮겨 넣어, 목록에 반쯤 쓴 파일이 보이지 않게 한다.
+     */
+    public HeapExport exportFromHeap(String heapFilename, boolean newName, String who) throws IOException {
+        if (heapThreads == null) throw new IllegalArgumentException("힙 덤프 스레드 내보내기를 사용할 수 없습니다.");
+        HeapThreadService.ExportSource src = heapThreads.exportSource(heapFilename);
+        byte[] bytes = src.text().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        File dir = dumpFilesDir();
+        if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("저장 디렉토리를 만들 수 없습니다: " + dir);
+        File tmpDir = tmpDir();
+        if (!tmpDir.isDirectory() && !tmpDir.mkdirs()) throw new IOException("임시 디렉토리를 만들 수 없습니다: " + tmpDir);
+        File tmp = new File(tmpDir, "export-" + UUID.randomUUID() + ".part");
+        String first = validateFilename(exportName(src.baseName(), 1));
+        try {
+            Files.write(tmp.toPath(), bytes);
+            String chosen = null;
+            for (int n = 1; n <= (newName ? EXPORT_NAME_MAX_SUFFIX : 1); n++) {
+                String name = validateFilename(exportName(src.baseName(), n));
+                try {
+                    Files.move(tmp.toPath(), fileOf(name).toPath());   // REPLACE 없음 — 있으면 FileAlreadyExistsException
+                    chosen = name;
+                    break;
+                } catch (FileAlreadyExistsException ex) {
+                    logger.debug("[ThreadDump] export 이름 사용 중: {}", name);
+                }
+            }
+            if (chosen == null) {
+                if (!newName) throw new ExportExistsException(first);
+                throw new IllegalArgumentException("내보낼 이름을 찾지 못했습니다(" + src.baseName() + "_threads-2~" + EXPORT_NAME_MAX_SUFFIX + ".txt 모두 사용 중).");
+            }
+            ThreadDumpAnalysisEntity e = register(chosen, bytes.length, who, src.serverName(), "heap-export");
+            e.setLinkedHeapFilename(src.heapFilename());
+            e.setLinkedAt(LocalDateTime.now());
+            e.setLinkedBy(who);
+            repository.save(e);
+            JobProgress job = submitAnalysis(chosen, who);
+            awaitQuietly(job, chosen);
+            ThreadDumpAnalysisEntity after = repository.findByFilename(chosen).orElse(e);
+            String status = after.getStatus();
+            logger.info("[ThreadDump] action=export-from-heap heap={} file={} threads={} size={} status={} by={}",
+                    src.heapFilename(), chosen, src.threads(), bytes.length, status, who);
+            return new HeapExport(chosen, src.heapFilename(), src.threads(), bytes.length, status,
+                    ThreadDumpAnalysisEntity.STATUS_ERROR.equals(status) ? after.getErrorMessage() : null);
+        } finally {
+            if (tmp.exists() && !tmp.delete()) logger.warn("[ThreadDump] 임시 파일 삭제 실패: {}", tmp);
+        }
+    }
+
+    /** 분석이 끝나기를 잠시 기다린다 — 시간 안에 안 끝나면 그대로 두고(실행은 계속된다) 호출자는 '분석 중' 으로 답한다. */
+    private void awaitQuietly(JobProgress job, String filename) {
+        if (job == null || job.future == null) return;
+        try {
+            job.future.get(exportAnalyzeWaitSeconds, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException ex) {
+            logger.info("[ThreadDump] export 후 분석이 {}초 안에 끝나지 않음 — 계속 진행 file={}", exportAnalyzeWaitSeconds, filename);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            logger.warn("[ThreadDump] export 후 분석 대기 중 인터럽트 file={}", filename);
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.CancellationException ex) {
+            logger.warn("[ThreadDump] export 후 분석 작업 예외 file={} — {}", filename, ex.toString());
+        }
+    }
+
+    static String exportName(String base, int n) {
+        return base + "_threads" + (n <= 1 ? "" : "-" + n) + ".txt";
     }
 
     // ── 파일 분류 이동 (Files 페이지 '파일 분류 설정') ─────────────

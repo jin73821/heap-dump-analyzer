@@ -209,7 +209,11 @@ public final class ThreadDumpEngine {
         final int fSeen = seen, fThreads = threadsDone;
         Runnable checkpoint = progress == null ? null : () -> progress.report(fRaw, fLines, fSeen, fThreads);
         diag.setDumpLines(Math.max(0, lines - diag.getNoiseLines()));
-        ThreadDumpResult result = new ThreadDumpAnalyzer(all, seen, table, diag, checkpoint, heapDerived).analyze();
+        // 힙 덤프에서 내보낸 파일(VM 줄이 HeapThreadExtractor.VM_LINE)은 스레드 덤프로 올려 분석해도 한 시점·락 줄 없음이 전제다 —
+        // 소견은 힙 입력과 같게(HEAP_DERIVED 안내, SINGLE_SNAPSHOT·NO_TIMESTAMP 생략) 내고, meta.source 는 파일 그대로 둔다
+        boolean exportedFromHeap = !heapDerived && !all.isEmpty()
+                && all.stream().allMatch(ps -> HeapThreadExtractor.VM_LINE.equals(ps.vmLine));
+        ThreadDumpResult result = new ThreadDumpAnalyzer(all, seen, table, diag, checkpoint, heapDerived || exportedFromHeap).analyze();
 
         ThreadDumpResult.Meta meta = result.getMeta();
         meta.setBytes(rawBytes);

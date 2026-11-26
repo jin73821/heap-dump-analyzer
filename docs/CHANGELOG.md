@@ -1,5 +1,26 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-11-26] v2.7.1 보완 — 힙 덤프의 스레드를 스레드 덤프 파일로 내보내기
+
+**대상:** `service/{ThreadDumpAnalyzerService,HeapThreadService}.java`, `controller/ThreadDumpApiController.java`, `parser/threaddump/ThreadDumpEngine.java`, `templates/thread-dump/analyze.html`, `templates/analyze.html`, `static/js/{thread-dump-analyze,heap-threads-card}.js`, `static/css/thread-dump.css`, 테스트 `ThreadDumpCombineLinkServiceTest`(+3)·`HeapThreadServiceTest`(+1)·`ThreadDumpLinkEndpointTest`(+1)·`ThreadDumpTemplateSmokeTest`, `docs/guide/THREAD_DUMP.md`.
+
+- **'스레드 덤프로 내보내기' 버튼**을 힙 덤프 스레드 분석 화면(`/thread-dump/heap/{fn}`) 머리와, 힙 결과 화면의 '스레드 분석 요약' 카드에 추가했다. 누르면 힙 덤프의 스레드를 jstack 형식 텍스트 `<힙 덤프 이름>_threads.txt` 로 스레드 덤프 저장소에 저장하고 **스레드 덤프 목록에 등록**한다. 완료되면 '목록에서 보기'(`/thread-dump?file=`)·'결과 보기' 로 바로 간다.
+  - 내보낸 파일은 원래 힙 덤프와 **연결된 상태**로 등록된다(같은 덤프에서 나온 파일이라 추정 연결이 아니다) — 분석하면 스레드 표에 힙 점유가 붙고, 힙 결과 화면의 '연결된 스레드 덤프' 에 보인다.
+  - **내보내면 바로 분석까지 한다**(최대 15초 대기). 힙 화면에서 이미 분석을 본 상태인데 목록에 '미분석' 으로 올라가 '분석' 버튼을 다시 눌러야 하던 순서를 바로잡았다 — 목록에는 '완료' 로 올라가고, 모달·카드의 버튼은 '목록에서 보기'·'결과 보기' 다. 앞선 큰 분석 때문에 시간 안에 못 끝나면 '분석 중' 으로 알리고 결과 화면이 이어서 보여 준다. 분석이 실패하면 사유를 보이고 결과 화면에서 다시 분석할 수 있다.
+  - 같은 이름이 이미 있으면 **덮어쓰지 않고** 묻는다: 목록에서 그 파일 보기 / 새 이름(`_threads-2.txt` …)으로 내보내기(409 `EXPORT_EXISTS`).
+  - 임시 파일에 다 쓴 뒤 옮겨 넣어 목록에 반쯤 쓴 파일이 보이지 않는다. 로그 `[ThreadDump] action=export-from-heap heap= file= threads= size= by=`.
+- 내보낸 파일을 스레드 덤프로 분석하면 VM 줄(`(heap dump derived)`)로 알아보고 힙 입력과 같은 안내(`HEAP_DERIVED` — 한 시점·락 관계 없음)를 내며, '스냅샷 1개'·'시각 없음' 소견은 내지 않는다.
+- 검증: 단위·계약 테스트 추가(내보내기 → 파일·등록·연결·목록 노출·즉시 분석 완료(연결 유지), 이미 있음·새 이름 번호, 응답 status·analysisError, 409/404 코드). 실제 `heapdump_gmadomain_2` 로 내보낸 텍스트(109 KB)를 엔진으로 분석해 스레드 160개·해석 못 한 줄 0·덤프 시각 인식 확인. 헤드리스 Chrome 으로 모달(확인→진행→완료, 이미 있음→새 이름)과 힙 결과 카드 흐름 확인.
+
+## [2026-11-26] v2.7.1 보완 — 스레드 덤프 AI 분석: 요약 탭은 심각도만, 전체는 'AI 분석' 탭
+
+**대상:** `templates/thread-dump/analyze.html`, `static/js/thread-dump-analyze.js`, `static/css/thread-dump.css`, `ThreadDumpTemplateSmokeTest`, `docs/guide/THREAD_DUMP.md`.
+
+- 결과 화면에 **'AI 분석' 탭**을 추가했다(스레드와 리포트 사이). 요약·근본 원인·권장 조치·수정 지점·모델/분석 시각·삭제는 이 탭에서 본다. 탭 이름 옆에 AI 심각도 꼬리표(Critical/High/Medium/Low)가 붙고, 주소 `#ai` 로 바로 열린다.
+- **요약 탭 AI 카드는 심각도 띠(등급 배지 + 근거 한 줄)만** 보이고, 머리의 **상세보기** 버튼(결과가 있을 때만)으로 'AI 분석' 탭으로 이동한다. 분석·재분석 버튼은 두 곳 모두에 있다. 'AI 분석' 탭에서 실행하면 그 탭에 머물러 진행을 보이고, 다른 탭에서 실행하면 요약 탭으로 온다. 실패하면 두 곳 모두 오류를 위에 얹고 직전 결과를 둔다.
+- 요약 카드가 짧아져 스냅샷 1개일 때 옆 칸(추이 한 줄 + AI 카드)이 상태 분포 차트 높이와 맞는다 — 앞서 둔 AI 본문 420px 스크롤은 없앴다. 힙 모드도 같다.
+- 검증: 헤드리스 Chrome(실제 템플릿 + 가짜 API) — 결과 있음/없음, 스냅샷 1개·여러 개·힙 모드, 상세보기 → `#ai`, AI 탭에서 실행 → 진행·완료 후 두 곳 갱신, 390px 모바일. 콘솔 오류·가로 넘침 없음.
+
 ## [2026-11-26] v2.7.1 보완 — 스레드 덤프 결과: 추이 없으면 AI 분석을 그 자리에 · 추정 미들웨어 제거
 
 **대상:** `templates/thread-dump/{analyze,analyze-print}.html`, `static/js/thread-dump-analyze.js`, `static/css/thread-dump.css`, `parser/threaddump/ThreadDumpAnalyzer.java`, `service/{ThreadDumpAnalyzerService,ThreadDumpPdfReportService,ThreadDumpPromptBuilder}.java`, `ThreadDumpTemplateSmokeTest`, `docs/guide/THREAD_DUMP.md`.

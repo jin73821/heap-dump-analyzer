@@ -207,7 +207,7 @@
     function reanalyze() {
         setRetryDisabled(true);
         Common.fetchJSON('/api/thread-dump/reanalyze/' + encodeURIComponent(THD_FILENAME), { method: 'POST' })
-            .then(function () { _aiHtml = null; showRunning(); startPolling(); })
+            .then(function () { _aiHtml = null; _aiSevHtml = null; showRunning(); startPolling(); })
             .catch(function (e) { failed('재분석 요청 실패', e); setRetryDisabled(false); toast('재분석 실패: ' + errMsg(e, ''), 'danger'); });
     }
     function thdCancel() {
@@ -319,7 +319,7 @@
     }
 
     // ── 탭 ────────────────────────────────────────────────────
-    var TABS = ['summary', 'locks', 'threads', 'report'];
+    var TABS = ['summary', 'locks', 'threads', 'ai', 'report'];
     function thdTab(name) {
         if (TABS.indexOf(name) < 0) name = 'summary';
         TABS.forEach(function (t) {
@@ -873,13 +873,28 @@
     }
     function aiMeta(k, v) { return '<span class="gcl-ai-meta-item"><span class="gcl-ai-meta-k">' + esc(k) + '</span><span class="gcl-ai-meta-v">' + esc(v) + '</span></span>'; }
 
+    // 요약 탭(#thdAiBody)에는 심각도 띠만, 'AI 분석' 탭(#thdAiFull)에는 전체를 그린다.
+    // _aiHtml = 전체(있으면 "재분석"), _aiSevHtml = 심각도 띠 — 실패 시 직전 결과를 되살리는 데 쓴다.
+    var _aiSevHtml = null;
+    function setAiBodies(brief, full) {
+        var b = byId('thdAiBody'), f = byId('thdAiFull');
+        if (b) b.innerHTML = brief;
+        if (f) f.innerHTML = full;
+    }
+    function aiEmptyHtml() { return THD_LLM_ENABLED ? AI_EMPTY : AI_OFF; }
+    function setAiTabSev(sev) {
+        var el = byId('thdTabAiSev');
+        if (!el) return;
+        el.className = 'thd-tab-sev' + (sev ? ' sev-' + sev : '');
+        el.textContent = sev || '';
+    }
     function renderAi(d) {
-        var body = byId('thdAiBody');
         if (!d || d.found === false) return;
         var data = d.data || d;
         var sev = data.severity || 'Unknown';
-        var h = '<div class="gcl-ai-sev sev-' + esc(sev) + '"><span class="gcl-ai-sev-badge">' + esc(sev) + '</span>'
+        var sevHtml = '<div class="gcl-ai-sev sev-' + esc(sev) + '"><span class="gcl-ai-sev-badge">' + esc(sev) + '</span>'
             + (data.severityDesc ? '<span class="gcl-ai-sev-desc">' + esc(data.severityDesc) + '</span>' : '') + '</div>';
+        var h = sevHtml;
         if (Array.isArray(data.warnings) && data.warnings.length) h += '<div class="gcl-ai-warn">응답 정규화: ' + esc(data.warnings.join(' · ')) + '</div>';
         h += '<div class="gcl-ai-blocks">';
         if (data.summary) h += aiBlock('요약', '<div class="gcl-ai-block-text">' + esc(data.summary) + '</div>');
@@ -899,22 +914,27 @@
             + (latency != null && !isNaN(latency) ? aiMeta('소요', (latency / 1000).toFixed(1) + '초') : '')
             + (d.saved === false ? '<span class="gcl-ai-meta-warn">저장 실패: ' + esc(d.saveError || '') + ' — 화면을 벗어나면 이 결과는 사라집니다</span>' : '')
             + '<button type="button" class="btn btn-sm btn-ghost" onclick="thdDeleteAi()">삭제</button></div>';
-        body.innerHTML = h;
         _aiHtml = h;
+        _aiSevHtml = sevHtml;
+        setAiBodies(sevHtml, h);
+        setAiTabSev(/^(Critical|High|Medium|Low)$/.test(sev) ? sev : '');
         syncAiButtons();
     }
     function loadAi() {
-        var body = byId('thdAiBody');
-        if (body && !_aiHtml) body.innerHTML = THD_LLM_ENABLED ? AI_EMPTY : AI_OFF;
+        if (!_aiHtml) { setAiBodies(aiEmptyHtml(), aiEmptyHtml()); setAiTabSev(''); }
         Common.fetchJSON(api('/ai-insight')).then(function (d) { if (d && d.found) renderAi(d); }).catch(function (e) { ignored('AI 해석 조회', e); });
     }
     function syncAiButtons() {
         var ok = THD_STATUS === 'SUCCESS' && THD_LLM_ENABLED;
         var top = byId('thdBtnAi');
         if (top) { top.disabled = _aiRunning || !ok; top.textContent = _aiRunning ? 'AI 분석 중…' : 'AI 분석'; top.title = THD_LLM_ENABLED ? '' : 'AI 분석이 꺼져 있습니다(Settings → LLM)'; }
-        var run = byId('thdAiRunBtn'), label = byId('thdAiRunLabel');
-        if (run) run.disabled = _aiRunning || !ok;
-        if (label) label.textContent = _aiRunning ? '분석 중…' : (_aiHtml ? '재분석' : '분석');
+        [['thdAiRunBtn', 'thdAiRunLabel'], ['thdAiRunBtn2', 'thdAiRunLabel2']].forEach(function (p) {
+            var run = byId(p[0]), label = byId(p[1]);
+            if (run) run.disabled = _aiRunning || !ok;
+            if (label) label.textContent = _aiRunning ? '분석 중…' : (_aiHtml ? '재분석' : '분석');
+        });
+        var detail = byId('thdAiDetailBtn');
+        if (detail) detail.style.display = _aiHtml && !_aiRunning ? '' : 'none';
     }
     function thdRunAi() {
         if (_aiRunning || THD_STATUS !== 'SUCCESS') return;
@@ -935,14 +955,18 @@
             _aiGuarded = true;
         }
         syncAiButtons();
-        thdTab('summary');
-        var body = byId('thdAiBody');
-        body.innerHTML = '<div class="gcl-ai-loading"><div class="gcl-ai-loading-row"><span class="gcl-ai-loading-spin" aria-hidden="true"></span>'
+        // 'AI 분석' 탭에서 시작했으면 그 탭에 머문다 — 다른 탭이면 요약으로 와서 진행을 보인다
+        var onAiTab = !byId('thdPanel-ai').hidden;
+        if (!onAiTab) thdTab('summary');
+        var loading = '<div class="gcl-ai-loading"><div class="gcl-ai-loading-row"><span class="gcl-ai-loading-spin" aria-hidden="true"></span>'
             + '<div class="gcl-ai-loading-text"><div class="gcl-ai-loading-title" role="status">AI 분석 중입니다</div>'
             + '<div class="gcl-ai-loading-desc">모델에 따라 15~40초 걸릴 수 있습니다.</div></div>'
             + '<span class="gcl-ai-elapsed" aria-label="경과 시간"><span class="gcl-ai-elapsed-k">경과</span><span class="gcl-ai-elapsed-v" id="thdAiElapsed">0</span>초</span></div>'
             + '<div class="gcl-ai-loading-track" aria-hidden="true"><div class="gcl-ai-loading-fill"></div></div></div>';
-        body.scrollIntoView({ block: 'center' });
+        // 경과 시계(#thdAiElapsed)는 보이는 쪽 하나에만 둔다 — id 가 둘이 되지 않게
+        var idle = loading.replace(' id="thdAiElapsed"', '').replace(' role="status"', '');   // 알림 영역도 하나만
+        if (onAiTab) setAiBodies(idle, loading); else setAiBodies(loading, idle);
+        byId(onAiTab ? 'thdAiFull' : 'thdAiBody').scrollIntoView({ block: 'center' });
         var t0 = Date.now();
         stopAiTimer();
         _aiTimer = setInterval(function () {   // 화면 안 시계일 뿐 요청을 보내지 않는다 — managedInterval 대상 아님
@@ -951,7 +975,10 @@
         }, 1000);
         var done = function () { _aiRunning = false; stopAiTimer(); syncAiButtons(); };
         // 실패하면 오류를 위에 얹고 직전 결과는 그대로 둔다(저장된 옛 결과는 지워지지 않았다)
-        var showErr = function (msg) { body.innerHTML = '<div class="gcl-ai-err" role="alert">' + esc(msg) + '</div>' + (_aiHtml || AI_EMPTY); };
+        var showErr = function (msg) {
+            var err = '<div class="gcl-ai-err" role="alert">' + esc(msg) + '</div>';
+            setAiBodies(err + (_aiSevHtml || AI_EMPTY), err.replace(' role="alert"', '') + (_aiHtml || AI_EMPTY));
+        };
         Common.fetchJSON(api('/ai-analyze'), { method: 'POST' })
             .then(function (d) {
                 done();
@@ -968,7 +995,7 @@
     function thdDeleteAi() {
         if (!confirm('AI 분석 결과를 삭제할까요?')) return;
         Common.fetchJSON(api('/ai-insight'), { method: 'DELETE' })
-            .then(function () { _aiHtml = null; byId('thdAiBody').innerHTML = AI_EMPTY; syncAiButtons(); })
+            .then(function () { _aiHtml = null; _aiSevHtml = null; setAiBodies(AI_EMPTY, AI_EMPTY); setAiTabSev(''); syncAiButtons(); })
             .catch(function (e) { toast('삭제 실패: ' + errMsg(e, ''), 'danger'); });
     }
 
@@ -1162,7 +1189,7 @@
         } catch (e) { ignored('start 파라미터 처리', e); }
 
         document.addEventListener('keydown', function (ev) {
-            if (ev.key === 'Escape') { thdCloseAi(); thdCloseReanalyze(); thdCloseDelete(); thdCloseServerEdit(); thdCloseHeapLink(); thdCloseUngroup(); }
+            if (ev.key === 'Escape') { thdCloseAi(); thdCloseReanalyze(); thdCloseDelete(); thdCloseServerEdit(); thdCloseHeapLink(); thdCloseUngroup(); thdCloseExport(); }
         });
         var serverInput = byId('thdServerInput');
         if (serverInput) serverInput.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') thdSaveServer(); });
@@ -1177,6 +1204,77 @@
         syncAiButtons();
     });
 
+    // ── 힙 모드: 스레드 덤프 파일로 내보내기 ─────────────────────
+    // POST /api/thread-dump/heap/{fn}/export[?newName=true] → 스레드 덤프 저장소에 <이름>_threads.txt 로 저장·등록(이 힙 덤프와 연결됨).
+    // 모달 한 개가 확인 → 진행 → 완료 / 이미 있음(409 EXPORT_EXISTS) / 실패 상태를 오간다.
+    var _exporting = false;
+    function tdUrl(kind, name) {
+        var enc = encodeURIComponent(name);
+        return kind === 'list' ? '/thread-dump?file=' + enc : '/thread-dump/analyze/' + enc;
+    }
+    function exportState(state, msg, name) {
+        var box = byId('thdExportMsg');
+        var show = function (id, on) { var el = byId(id); if (el) el.hidden = !on; };
+        box.hidden = !msg;
+        box.className = 'thd-export-msg' + (state === 'done' ? ' ok' : state === 'exists' ? ' warn' : state === 'error' ? ' bad' : '');
+        box.innerHTML = msg || '';
+        byId('thdExportInfo').hidden = state === 'done' || state === 'exists';
+        show('thdExportGo', state === 'confirm' || state === 'working' || state === 'error');
+        show('thdExportNew', state === 'exists');
+        show('thdExportList', (state === 'done' || state === 'exists') && !!name);
+        show('thdExportOpen', state === 'done' && !!name);
+        if (name) { byId('thdExportList').dataset.href = tdUrl('list', name); byId('thdExportOpen').dataset.href = tdUrl('analyze', name); }
+        byId('thdExportGo').disabled = state === 'working';
+        byId('thdExportNew').disabled = state === 'working';
+        byId('thdExportGo').textContent = state === 'working' ? '내보내는 중…' : (state === 'error' ? '다시 시도' : '내보내기');
+        byId('thdExportCancel').textContent = state === 'done' || state === 'exists' ? '닫기' : '취소';
+    }
+    function thdOpenExport() {
+        var ov = byId('thdExportModal');
+        if (!ov || _exporting) return;
+        exportState('confirm', '', null);
+        showModal(ov);
+        byId('thdExportGo').focus();
+    }
+    function thdCloseExport() {
+        var ov = byId('thdExportModal');
+        if (ov && !_exporting) hideModal(ov);
+    }
+    function thdRunExport(newName) {
+        if (_exporting) return;
+        _exporting = true;
+        exportState('working', '<span class="gcl-spinner" aria-hidden="true"></span> 스레드 덤프 파일을 만드는 중입니다…', null);
+        Common.fetchJSON(api('/export') + (newName ? '?newName=true' : ''), { method: 'POST' })
+            .then(function (d) {
+                _exporting = false;
+                var head = '<b>' + esc(d.filename) + '</b> (스레드 ' + fmtNum(d.threads) + '개, ' + esc(fmtBytes(d.size)) + ')<br>';
+                if (d.status === 'SUCCESS') {
+                    exportState('done', '내보내고 분석까지 마쳤습니다 — ' + head + '스레드 덤프 목록에 <b>완료</b> 상태로 올라갔고 이 힙 덤프와 연결돼 있습니다.', d.filename);
+                } else if (d.status === 'ERROR') {
+                    exportState('done', '파일은 내보냈지만 분석에 실패했습니다 — ' + head + esc(d.analysisError || '') + ' 결과 화면에서 다시 분석할 수 있습니다.', d.filename);
+                    byId('thdExportMsg').className = 'thd-export-msg warn';
+                } else {
+                    exportState('done', '내보냈고 분석 중입니다 — ' + head + '앞선 분석이 끝나는 대로 이어서 분석합니다. 결과 화면에서 진행을 볼 수 있습니다.', d.filename);
+                }
+                byId('thdExportOpen').focus();
+            })
+            .catch(function (e) {
+                _exporting = false;
+                var body = null;
+                try { body = e && e.body ? JSON.parse(e.body) : null; } catch (x) { ignored('내보내기 오류 본문 파싱', x); }
+                if (body && body.code === 'EXPORT_EXISTS') {
+                    exportState('exists', '이미 내보낸 파일이 있습니다 — <b>' + esc(body.filename) + '</b><br>'
+                        + '목록에서 그 파일을 보거나, 새 이름(<code>_threads-2.txt</code> …)으로 한 번 더 내보낼 수 있습니다. 기존 파일은 건드리지 않습니다.', body.filename);
+                    return;
+                }
+                failed('스레드 덤프 내보내기 실패', e);
+                exportState('error', esc(errMsg(e, '내보내지 못했습니다.')), null);
+            });
+    }
+
+    window.thdOpenExport = thdOpenExport;
+    window.thdCloseExport = thdCloseExport;
+    window.thdRunExport = thdRunExport;
     window.thdTab = thdTab;
     window.thdCancel = thdCancel;
     window.thdOpenReanalyze = thdOpenReanalyze;
