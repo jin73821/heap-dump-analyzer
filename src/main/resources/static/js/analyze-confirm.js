@@ -11,7 +11,7 @@
  * API
  *   AnalyzeConfirm.open({
  *       filename:  '로컬 파일명',                 // 필수 — dumpfiles/ 기준 이름(원격 원본명 아님)
- *       kind:      'heap' | 'core' | 'gclog' | 'others',   // 기본 heap
+ *       kind:      'heap' | 'core' | 'gclog' | 'threaddump' | 'others',   // 기본 heap
  *       size:      '157 MB',                     // 선택 — 표시용
  *       source:    'WAS-01',                     // 선택 — 출처 서버
  *       note:      '추가 안내 문구',               // 선택 — 코어 실행파일 미전송 경고 등
@@ -40,7 +40,12 @@
     function ignored(tag, e) { if (global.Common) global.Common.logIgnored('[AnalyzeConfirm] ' + tag, e); }
     function failed(tag, e) { if (global.Common) global.Common.logError('[AnalyzeConfirm] ' + tag, e); }
 
-    var KIND_LABEL = { heap: '힙 덤프', core: '코어 덤프', gclog: 'GC 로그', others: '기타(Others)' };
+    var KIND_LABEL = { heap: '힙 덤프', core: '코어 덤프', gclog: 'GC 로그', threaddump: '스레드 덤프', others: '기타(Others)' };
+    /**
+     * MAT 을 거치지 않고 자체 실행기로 분석하는 종류(2026-11-26). 이 종류는 힙 덤프 확장자 경고를 내지 않고 MAT 대기열 패널도 보이지 않는다.
+     * 새 분석 종류를 추가하면 여기 한 줄이면 된다 — 종전엔 조건식 세 곳에 kind 를 일일이 이어 붙였다.
+     */
+    var OWN_RUNNER = { core: 1, gclog: 1, threaddump: 1 };
 
     /**
      * 힙 덤프 확장자 — .hprof/.bin/.dump/.dmp (+ .gz 압축). 업로드 큐(_HEAP_EXTS)·FilenameValidator 와 같은 목록이다.
@@ -79,6 +84,7 @@
             '.ac-kind.heap{background:#DBEAFE;color:#1E40AF}' +
             '.ac-kind.core{background:#FEF3C7;color:#92400E}' +
             '.ac-kind.gclog{background:#DCFCE7;color:#166534}' +
+            '.ac-kind.threaddump{background:#E0F2FE;color:#075985}' +
             '.ac-kind.others{background:#F3F4F6;color:#4B5563}' +
             '.ac-queue{font-size:12px;line-height:1.55;border-radius:8px;padding:9px 12px;margin-bottom:12px;' +
             'background:#F0FDF4;color:#166534;border-left:3px solid #22C55E}' +
@@ -253,6 +259,7 @@
         // (2026-09-14: 실패 행에서 '분석'을 눌러도 옛 오류만 다시 보이고 요청이 나가지 않았다).
         if (kind === 'core') return '/core-dump/progress/' + encodeURIComponent(filename);
         if (kind === 'gclog') return '/gc-log/analyze/' + encodeURIComponent(filename) + '?start=1';
+        if (kind === 'threaddump') return '/thread-dump/analyze/' + encodeURIComponent(filename) + '?start=1';
         return '/analyze/' + encodeURIComponent(filename);
     }
 
@@ -310,10 +317,12 @@
             ? '아래 코어 덤프의 GDB 분석을 시작합니다.'
             : kind === 'gclog'
             ? '아래 GC 로그를 파싱해 일시정지·처리량·힙 추세를 분석합니다. 수 초에서 수십 초 걸립니다.'
+            : kind === 'threaddump'
+            ? '아래 스레드 덤프에서 교착·락 경합·멈춘 스레드를 찾습니다. 수 초에서 수십 초 걸립니다.'
             : '아래 파일의 Eclipse MAT 분석을 시작합니다. 덤프 크기에 따라 수 분 이상 걸릴 수 있습니다.';
 
-        // 코어 파일은 원래 확장자가 없고(core, core.1234) GC 로그는 .log/.log.N/.gz 다 — 확장자 경고는 MAT 로 가는 힙·기타에만
-        var extWarn = kind !== 'core' && kind !== 'gclog' && !hasHeapDumpExtension(opts.filename);
+        // 코어 파일은 원래 확장자가 없고(core, core.1234) GC 로그·스레드 덤프는 .log/.out/.txt/.gz 다 — 확장자 경고는 MAT 로 가는 힙·기타에만
+        var extWarn = !OWN_RUNNER[kind] && !hasHeapDumpExtension(opts.filename);
         state.extWarn = extWarn;
         if (extWarn) {
             var esc = global.Common.escHtml;
@@ -337,7 +346,7 @@
         els.btns.classList.remove('has-alt');
         els.group.hidden = true;
         els.group.innerHTML = '';
-        if (kind === 'core' || kind === 'gclog') { queueSeq++; els.queue.hidden = true; }   // 별도 실행기 — MAT 대기열과 무관
+        if (OWN_RUNNER[kind]) { queueSeq++; els.queue.hidden = true; }   // 별도 실행기 — MAT 대기열과 무관
         else loadQueue(opts.filename);
         els.origin.hidden = true;
         if (kind === 'gclog') {

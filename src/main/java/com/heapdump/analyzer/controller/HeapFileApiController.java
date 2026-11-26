@@ -48,6 +48,13 @@ public class HeapFileApiController {
     private final CoreDumpAnalyzerService coreDumpService;
     private final com.heapdump.analyzer.service.GcLogAnalyzerService gcLogService;
 
+    /**
+     * 스레드 덤프 저장소(2026-11-26) — 선택 주입. 생성자를 바꾸지 않은 것은 이 컨트롤러를 3-인자로 직접 만드는 테스트가 여럿이라서다.
+     * null 이면 스레드 덤프 분류는 거부된다.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.heapdump.analyzer.service.ThreadDumpAnalyzerService threadDumpService;
+
     public HeapFileApiController(HeapDumpAnalyzerService analyzerService,
                                  CoreDumpAnalyzerService coreDumpService,
                                  com.heapdump.analyzer.service.GcLogAnalyzerService gcLogService) {
@@ -170,42 +177,64 @@ public class HeapFileApiController {
             Authentication authentication) {
         filename = FilenameValidator.validateSafe(filename);
         String fileType = body.get("fileType");
-        Set<String> allowed = Set.of("core", "exec", "heapdump", "others", "gclog");
+        Set<String> allowed = Set.of("core", "exec", "heapdump", "others", "gclog", "threaddump");
         if (fileType == null || !allowed.contains(fileType)) {
             Map<String, Object> err = new HashMap<>();
             err.put("status", "error");
-            err.put("message", "유효하지 않은 파일 유형입니다. (core|exec|heapdump|others|gclog)");
+            err.put("message", "유효하지 않은 파일 유형입니다. (core|exec|heapdump|others|gclog|threaddump)");
             return ResponseEntity.badRequest().body(err);
         }
-        String who0 = authentication != null ? authentication.getName() : "unknown";
-        // GC 로그는 라벨이 아니라 '저장소' 가 다르다 — 분석기가 GC 로그 저장소의 파일만 읽으므로 분류를 바꾸면 파일을 옮긴다(2026-09-14)
+        String who0 = com.heapdump.analyzer.util.AuthUtil.who(authentication);
+        // GC 로그·스레드 덤프는 라벨이 아니라 '저장소' 가 다르다 — 분석기가 자기 저장소의 파일만 읽으므로 분류를 바꾸면 파일을 옮긴다.
+        // 규칙(2026-11-26): 대상 저장소가 편입(형식 검사 → 이동 → 등록)하고 원 저장소는 기록만 정리한다.
+        //   형식 검사가 이동보다 먼저라 거부되면 파일은 제자리에 있다. 서비스끼리 주입하면 기동 순환이라 조율은 여기서 한다.
         File heapFile = new File(analyzerService.heapDumpFilesDirectory(), filename);
         File coreFile = new File(coreDumpService.dumpFilesDir(), filename);
         File gcFile = gcLogService.fileOf(filename);
-        boolean inHeap = heapFile.isFile(), inCore = coreFile.isFile(), inGc = gcFile.isFile();
+        File tdFile = threadDumpService == null ? null : threadDumpService.fileOf(filename);
+        boolean inHeap = heapFile.isFile(), inCore = coreFile.isFile(), inGc = gcFile.isFile(), inTd = tdFile != null && tdFile.isFile();
         try {
-            if ("gclog".equals(fileType)) {
-                if (inGc && !inHeap && !inCore) return classifyOk(filename, fileType, false);   // 이미 GC 로그
-                if (inHeap && inCore) return classifyError(409, "힙덤프·코어 저장소에 같은 이름의 파일이 모두 있어 어느 것을 옮길지 정할 수 없습니다: " + filename);
-                if (!inHeap && !inCore) return classifyError(404, "파일을 찾을 수 없습니다: " + filename);
-                String blocked = inHeap
-                        ? analyzerService.findHistoryEntity(filename).map(h -> h.getStatus()).filter(st -> "SUCCESS".equals(st) || "ANALYZING".equals(st)).orElse(null)
-                        : coreDumpService.getEntity(filename).map(c -> c.getStatus()).filter(st -> "SUCCESS".equals(st) || "ANALYZING".equals(st)).orElse(null);
-                if (blocked != null) {
-                    return classifyError(400, ("SUCCESS".equals(blocked) ? (inHeap ? "힙 덤프" : "코어 덤프") + " 분석 결과가 있는 파일은 GC 로그로 분류할 수 없습니다. 분석 기록을 먼저 삭제하세요."
-                            : "분석이 진행 중인 파일은 분류를 바꿀 수 없습니다."));
+            if ("gclog".equals(fileType) || "threaddump".equals(fileType)) {
+                boolean toGc = "gclog".equals(fileType);
+                String targetName = toGc ? "GC 로그" : "스레드 덤프";
+                if (!toGc && threadDumpService == null) return classifyError(400, "스레드 덤프 저장소를 사용할 수 없습니다.");
+                // 출처 — 화면이 보낸 현재 유형(from)을 우선하고, 없으면 파일이 '정확히 한 저장소' 에만 있어야 한다
+                String from = sourceStore(body.get("from"), inHeap, inCore, inGc, inTd, toGc ? "gclog" : "threaddump");
+                if (from == null) {
+                    int n = (inHeap ? 1 : 0) + (inCore ? 1 : 0) + (inGc ? 1 : 0) + (inTd ? 1 : 0);
+                    if (n == 0) return classifyError(404, "파일을 찾을 수 없습니다: " + filename);
+                    if ((toGc ? inGc : inTd) && n == 1) return classifyOk(filename, fileType, false);   // 이미 그 유형
+                    return classifyError(409, "같은 이름의 파일이 여러 저장소에 있어 어느 것을 옮길지 정할 수 없습니다: " + filename);
                 }
-                String serverName = analyzerService.resolveServerNameByFilename(filename);
-                gcLogService.adoptFile(inHeap ? heapFile : coreFile, who0, serverName);
+                // 옮기면 원 저장소의 분석 결과가 사라진다 — 힙·코어는 결과가 있으면 막고(현행), 분석 중은 어디든 막는다
+                String blocked = switch (from) {
+                    case "heap" -> analyzerService.findHistoryEntity(filename).map(h -> h.getStatus()).filter(st -> "SUCCESS".equals(st) || "ANALYZING".equals(st)).orElse(null);
+                    case "core" -> coreDumpService.getEntity(filename).map(c -> c.getStatus()).filter(st -> "SUCCESS".equals(st) || "ANALYZING".equals(st)).orElse(null);
+                    case "gclog" -> gcLogService.isAnalyzing(filename) ? "ANALYZING" : null;
+                    default -> threadDumpService.isAnalyzing(filename) ? "ANALYZING" : null;
+                };
+                if (blocked != null) {
+                    if ("ANALYZING".equals(blocked)) return classifyError("heap".equals(from) || "core".equals(from) ? 400 : 409, "분석이 진행 중인 파일은 분류를 바꿀 수 없습니다.");
+                    return classifyError(400, ("heap".equals(from) ? "힙 덤프" : "코어 덤프") + " 분석 결과가 있는 파일은 " + targetName
+                            + "로 분류할 수 없습니다. 분석 기록을 먼저 삭제하세요.");
+                }
+                File src = switch (from) { case "heap" -> heapFile; case "core" -> coreFile; case "gclog" -> gcFile; default -> tdFile; };
+                String serverName = "heap".equals(from) ? analyzerService.resolveServerNameByFilename(filename) : null;
+                if (toGc) gcLogService.adoptFile(src, who0, serverName);
+                else threadDumpService.adoptFile(src, who0, serverName);
                 // 원래 저장소에 남은 기록·라벨 정리 — 파일은 이미 옮겼으므로 실패해도 분류 자체는 성공으로 둔다(WARN)
                 try {
-                    if (inHeap) analyzerService.deleteHistoryRecordOnly(filename);
-                    else coreDumpService.deleteHistoryOnly(filename);
+                    switch (from) {
+                        case "heap" -> analyzerService.deleteHistoryRecordOnly(filename);   // deleteHistory 는 이름 접두로 형제 파일까지 지운다 — 쓰지 않는다
+                        case "core" -> coreDumpService.deleteHistoryOnly(filename);
+                        case "gclog" -> gcLogService.forgetMovedFile(filename, who0);
+                        default -> threadDumpService.forgetMovedFile(filename, who0);
+                    }
                     analyzerService.removeFileClassification(filename);
                 } catch (Exception cleanup) {
-                    logger.warn("[ClassifyFile] 원래 저장소 기록 정리 실패 file={} — {}", filename, cleanup.getMessage());
+                    logger.warn("[ClassifyFile] 원래 저장소 기록 정리 실패 file={} from={} — {}", filename, from, cleanup.getMessage());
                 }
-                logger.info("[ClassifyFile] action=classify file={} type=gclog moved-from={} by={}", filename, inHeap ? "heap" : "core", who0);
+                logger.info("[ClassifyFile] action=classify file={} type={} moved-from={} by={}", filename, fileType, from, who0);
                 return classifyOk(filename, fileType, true);
             }
             if (inGc && !inHeap && !inCore) {
@@ -215,9 +244,18 @@ public class HeapFileApiController {
                 logger.info("[ClassifyFile] action=classify file={} type={} moved-from=gclog by={}", filename, fileType, who0);
                 return classifyOk(filename, fileType, true);
             }
+            if (inTd && !inHeap && !inCore) {
+                // 스레드 덤프 → 다른 유형: 같은 방식
+                threadDumpService.releaseFile(filename, analyzerService.heapDumpFilesDirectory(), who0);
+                analyzerService.saveFileClassification(filename, fileType);
+                logger.info("[ClassifyFile] action=classify file={} type={} moved-from=threaddump by={}", filename, fileType, who0);
+                return classifyOk(filename, fileType, true);
+            }
         } catch (IllegalStateException e) {
+            logger.warn("[ClassifyFile] action=classify-rejected file={} type={} reason=CONFLICT by={} — {}", filename, fileType, who0, e.getMessage());
             return classifyError(409, e.getMessage());
         } catch (IllegalArgumentException e) {
+            logger.warn("[ClassifyFile] action=classify-rejected file={} type={} reason=INVALID by={} — {}", filename, fileType, who0, e.getMessage());
             return classifyError(400, e.getMessage());
         } catch (IOException e) {
             logger.error("[ClassifyFile] 파일 이동 실패 file={} type={} by={} — {}", filename, fileType, who0, e.getMessage());
@@ -239,6 +277,29 @@ public class HeapFileApiController {
             err.put("message", "분류 저장 실패: " + e.getMessage());
             return ResponseEntity.status(500).body(err);
         }
+    }
+
+    /**
+     * 옮길 파일이 있는 저장소(heap·core·gclog·threaddump). 화면이 보낸 현재 유형이 실제 파일 위치와 맞으면 그것을,
+     * 아니면 대상이 아닌 저장소 중 파일이 있는 곳이 하나뿐일 때 그것을 돌려준다. 정할 수 없으면 null.
+     */
+    static String sourceStore(String fromHint, boolean inHeap, boolean inCore, boolean inGc, boolean inTd, String target) {
+        String hinted = fromHint == null ? null : switch (fromHint) {
+            case "gclog" -> inGc ? "gclog" : null;
+            case "threaddump" -> inTd ? "threaddump" : null;
+            case "core", "coredump", "exec", "coreexec" -> inCore ? "core" : (inHeap ? "heap" : null);   // 확장자 없는 파일의 core 라벨은 힙 저장소에 있다
+            case "heapdump", "others" -> inHeap ? "heap" : null;
+            default -> null;
+        };
+        if (hinted != null && !hinted.equals(target)) return hinted;
+        String only = null;
+        int n = 0;
+        if (inHeap && !"heap".equals(target)) { only = "heap"; n++; }
+        if (inCore && !"core".equals(target)) { only = "core"; n++; }
+        if (inGc && !"gclog".equals(target)) { only = "gclog"; n++; }
+        if (inTd && !"threaddump".equals(target)) { only = "threaddump"; n++; }
+        boolean alreadyThere = "gclog".equals(target) ? inGc : inTd;
+        return n == 1 && !alreadyThere ? only : null;
     }
 
     private static ResponseEntity<Map<String, Object>> classifyOk(String filename, String fileType, boolean moved) {

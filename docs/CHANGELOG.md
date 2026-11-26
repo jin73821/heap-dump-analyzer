@@ -1,5 +1,79 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-11-26] v2.7.1 보완 — 스레드 덤프 결과: 추이 없으면 AI 분석을 그 자리에 · 추정 미들웨어 제거
+
+**대상:** `templates/thread-dump/{analyze,analyze-print}.html`, `static/js/thread-dump-analyze.js`, `static/css/thread-dump.css`, `parser/threaddump/ThreadDumpAnalyzer.java`, `service/{ThreadDumpAnalyzerService,ThreadDumpPdfReportService,ThreadDumpPromptBuilder}.java`, `ThreadDumpTemplateSmokeTest`, `docs/guide/THREAD_DUMP.md`.
+
+- **스냅샷이 1개면(힙 모드 포함) '스냅샷별 추이' 카드를 제목 한 줄("스냅샷이 1개라 추이가 없습니다")로 줄이고, 그 아래 빈자리에 AI 분석 카드를 옮겨 보여 준다.** 왼쪽 '스레드 상태 분포' 카드는 오른쪽 높이에 맞춰 늘어나 빈 공간이 남지 않는다. AI 본문이 길면 옆 칸 안에서 최대 420px 로 스크롤되고, 좁은 화면(900px 이하 1단)에서는 그대로 펼친다. 스냅샷이 여럿이면 종전 배치 그대로다.
+- **JVM 카드의 "TmaxSoft JEUS (추정)" 등 미들웨어 추정 표시를 없앴다.** 스레드 덤프만으로는 WAS 를 확정할 수 없으므로(System Properties 없음, 스택 패키지 이름뿐) 판정 자체를 하지 않는다 — 결과 화면 헤더의 '미들웨어' 칩, PDF 의 '미들웨어 (스택 기준 추정)' 행, AI 프롬프트의 '미들웨어(추정)' 줄도 함께 뺐다. 이미 분석된 결과에 남은 값도 화면에 쓰지 않는다. JVM 카드 보조 문구는 재기동이 있을 때만 "재기동 N회 포함".
+- 검증: `ThreadDump*`·`HeapThread*` 테스트 163건 통과(스모크에 "옛 행의 미들웨어가 보이지 않음"·"AI 카드 이동 자리" 단언 추가). 헤드리스 Chrome(실제 템플릿 + 가짜 API)으로 1440·1024·390px 에서 스냅샷 1개·힙 모드·여러 스냅샷 배치와 AI 결과 유무를 확인 — 콘솔 오류·가로 넘침 없음.
+
+## [2026-11-26] v2.7.1 — 스레드 덤프 ↔ 힙 덤프 연계 · 힙 덤프만으로 스레드 분석 · 여러 스레드 덤프 이어 붙이기
+
+**버전:** 2.7.0 → **2.7.1**(`pom.xml`, `fragments/banner.html`·`index.html`·`progress.html`, `CLAUDE.md`). **대상(신규):** `parser/threaddump/HeapThreadExtractor.java`, `service/HeapThreadService.java`, `static/js/heap-threads-card.js`, 테스트 `HeapThreadExtractorTest`·`ThreadDumpCombineEngineTest`·`ThreadDumpCombineLinkServiceTest`·`HeapThreadServiceTest`·`ThreadDumpLinkEndpointTest`, 합성 픽스처 `src/test/resources/threaddump/heap/*`. **대상(수정):** `model/ThreadDumpResult.java`(`meta.source/heapFilename/files`, 스냅샷 `file`, 트랙 `hr/hl/hc`, 진단 4종), `parser/threaddump/{ThreadDumpEngine,ThreadDumpParser,ThreadDumpAnalyzer,ThreadDumpRules}.java`, `model/entity/ThreadDumpAnalysisEntity.java`(6컬럼), `repository/ThreadDumpAnalysisRepository.java`, `service/{ThreadDumpAnalyzerService,ThreadDumpPdfReportService,ThreadDumpPromptBuilder}.java`, `controller/{ThreadDumpApiController,ThreadDumpViewController,HeapDumpViewController,HeapAiApiController}.java`, `config/HeapDumpConfig.java`·`application.properties`(`threaddump.match.tolerance-min`), `templates/thread-dump/{index,analyze,analyze-print}.html`, `templates/analyze.html`, `templates/index.html`(`onUploadQueueDone`), `static/js/thread-dump-{index,analyze}.js`, `static/css/thread-dump.css`, `ThreadDumpEndpointTest`·`ThreadDumpTemplateSmokeTest`, `docs/guide/{THREAD_DUMP,ARCHITECTURE,FRONTEND,TEST_INVENTORY,DEPLOYMENT}.md`, `CLAUDE.md`.
+
+### 무엇이 생겼나
+
+- **힙 덤프만으로 스레드 분석.** 힙 분석이 이미 남긴 MAT 산출물(`.threads` 스택 + Overview ZIP 의 Thread Overview 표)을 스레드 덤프 형태로 바꿔 같은 분석기로 돌린다 — **이미 분석된 힙 덤프도 재분석 없이** 된다. 힙 결과 화면 헤더에 **Threads 칩**, Thread Overview 탭 맨 위에 **스레드 분석 요약 카드**(상태 분포·소견·힙 점유 상위·같은 곳에 모인 스레드)가 생겼고, "자세히 보기" 는 스레드 덤프 결과 화면을 **힙 모드**로 연다(`/thread-dump/heap/{fn}` — 요약/락·정체/스레드/리포트 탭, '힙 점유' 열, PDF, AI). 힙 덤프 AI 분석 프롬프트에도 스레드 상태 요약이 들어간다.
+  - 힙 덤프에 없는 것(스냅샷 비교·CPU·synchronized 락 관계)은 판정하지 않고 `HEAP_DERIVED` 소견으로 알린다. 실측: `heapdump_gmadomain_2.hprof` 에서 살아 있는 스레드 160개(종료·미시작 12개 제외), JEUS 요청 풀 `http-#` 100개를 요청 처리 풀로 인식.
+- **스레드 덤프 ↔ 힙 덤프 연결(수동).** 스레드 덤프 결과 화면 헤더의 '힙 덤프' 칩 → 후보 모달(같은 서버·덤프 시각 ±10분·스레드 이름 일치로 위에 올릴 뿐, 자동으로 잇지 않는다) → 선택. 연결하면 스레드 표에 **스레드별 힙 점유** 열과 "힙 점유가 큰 스레드" 카드가 생기고, PDF·AI 프롬프트에 연결된 힙 덤프 정보가 들어간다. 힙 결과 화면 칩에는 연결된 스레드 덤프가 보인다.
+- **여러 스레드 덤프 이어 붙이기.** 목록에서 2개 이상 골라 "이어 붙여 분석" → 미리보기(순서·스냅샷 수·문제) → 한 분석으로 묶어 파일 경계를 넘어 스냅샷을 비교한다(덤프 시각이 모두 있으면 시각순). 결과는 대표 파일에 붙고, 결과 화면에 "이어 붙인 구성 파일" 카드와 "묶음 해제" 가 있다. 여러 파일을 올리면(스레드 덤프 화면·대시보드) 목록이 열릴 때 **같은 JVM 으로 보이는 묶음을 제안**한다(묶지는 않는다).
+
+### 오류 보완·로깅
+
+- 이어 붙인 파일 중 빈 파일·gzip 손상·덤프 없는 파일은 빼고 분석하며 `MEMBER_NO_DUMP` 소견과 파싱 진단에 이름과 사유를 남긴다. 구성 파일이 사라진 묶음을 다시 분석하면 `FILE_MISSING` 이 그 파일 이름을 알린다.
+- 구성 파일 삭제·저장소 이동·같은 이름 재등록 때 묶음 참조만 정리한다(다른 파일은 건드리지 않음, 정리 실패가 삭제를 막지 않음 — 함정 78).
+- 힙 추출 실패는 `HEAP_NOT_FOUND`·`HEAP_NOT_ANALYZED`·`HEAP_THREADS_UNAVAILABLE`·`IO_ERROR`·`INTERNAL` 코드로 답하고, 요약 카드는 실패해도 사유만 보인다. 힙 AI 프롬프트 주입은 실패해도 힙 AI 를 막지 않는다.
+- 분석 중인 파일을 묶거나 풀면 409 `CONFLICT`(전용 예외 — 예상 못 한 오류의 내부 메시지는 계속 숨긴다, 함정 79).
+- 로그: `[ThreadDump] action=combine|ungroup|detach-group|group-suggest|heap-link|heap-unlink … by=`, `[HeapThreads] action=extract file= threads= … elapsed=`(실패 `result=FAIL code=`), `[HeapThreads-PDF]`, `[HeapThreads-AI]`, `[AI-Insight] Thread context injected`.
+
+### 그 밖
+
+- JEUS·Tomcat·Jetty·WebLogic·Undertow·WebSphere 요청 풀 실행기(`WebThreadPoolExecutor` 등)를 스택으로도 요청 처리 풀로 인식한다(이름 규칙에 안 맞는 JEUS `http-#` 대응).
+- DB: `thread_dump_analysis` 에 `linked_heap_filename`·`linked_at`·`linked_by`·`member_files`·`member_count`·`part_of` 6컬럼(`ddl-auto=update` — 운영 재기동 때 스키마 갱신 오류 로그는 없었다. DB 를 직접 조회해 확인하지는 못했다).
+- 테스트 1220 → **1266**(+46, 실패 0). 함정 77~80 추가.
+
+## [2026-11-26] v2.7.0 — 스레드 덤프 분석 신규 (범주·업로드 자동 분류 · 스냅샷 비교 분석 · PDF/화면 리포트 · AI · 오류 보완·로깅)
+
+**버전:** 2.6.2 → **2.7.0**(`pom.xml`, `fragments/banner.html`·`index.html`·`progress.html`, `CLAUDE.md`). **대상(신규):** `model/ThreadDumpResult.java`, `parser/threaddump/{ThreadDumpFormatDetector,ThreadDumpLimits,ThreadDumpException,ThreadDumpParser,StackTable,ThreadDumpRules,ThreadDumpAnalyzer,ThreadDumpEngine,ThreadDumpResultCodec}.java`, `model/entity/{ThreadDumpAnalysisEntity,ThreadDumpResultDetailEntity}.java`, `repository/ThreadDump{Analysis,ResultDetail}Repository.java`, `service/{ThreadDumpAnalyzerService,ThreadDumpPdfReportService,ThreadDumpPromptBuilder,ThreadDumpAiResponseNormalizer}.java`, `controller/{ThreadDumpApiController,ThreadDumpViewController}.java`, `templates/thread-dump/{index,analyze,analyze-print}.html`, `static/js/thread-dump-{index,analyze}.js`, `static/css/thread-dump.css`, `src/test/resources/threaddump/*`(실측 픽스처 5), 테스트 11클래스(+127), `docs/guide/THREAD_DUMP.md`. **대상(수정):** `config/HeapDumpConfig.java`, `application.properties`, `controller/HeapFileApiController.java`(`classifyFile`), `controller/HeapDumpViewController.java`(`filesPage`), `service/GcLogAnalyzerService.java`(`forgetMovedFile` 추출), `templates/files.html`, `templates/index.html`(`onUploadQueueDone`), `templates/fragments/banner.html`, `static/js/upload-queue.js`, `static/js/analyze-confirm.js`, `FileOpAuditActorTest`·`GcLogTemplateSmokeTest`·`AnalyzeConfirmTemplateSmokeTest`(단언 갱신), `docs/guide/{ARCHITECTURE,BACKEND_NOTES,FRONTEND,GC_LOG,TEST_INVENTORY,DEPLOYMENT}.md`, `CLAUDE.md`.
+
+### 무엇이 생겼나
+
+- **네 번째 분석 대상 — 스레드 덤프.** HotSpot 계열 JVM 의 `jstack` · `kill -3` · `jcmd Thread.print` 출력을 분석한다. 서버 stdout 로그에 섞인 덤프와 `.gz` 도 받는다. IBM javacore·`Thread.dump_to_file` 은 지원하지 않고 "미지원 형식" 으로 안내한다.
+- **새 파일 범주 `threaddump`.** 저장소는 `threaddump.directory=/opt/threaddumps`(기동 시 자동 생성)이고 DB 테이블 `thread_dump_analysis`·`thread_dump_result_detail` 이 `ddl-auto=update` 로 생긴다. Files 화면에 `Thread Dump` 탭·`THREAD` 배지·순번 접두 `T`·분류 옵션이 생겼고, 좌측 메뉴에 "스레드 덤프"(`/thread-dump`)가 생겼다.
+- **업로드하면 그 범주로 들어간다.** 대시보드·Files 업로드 큐가 이름(`threaddump*.txt`·`jstack.*`·`*.tdump` …)과 **내용**(앞 64KB + 뒤 64KB 의 `Full thread dump` 헤더·스레드 줄)으로 자동 분류해 `POST /api/thread-dump/upload` 로 보낸다. 서버는 파일 전체를 훑어 스레드 덤프가 하나도 없으면 400 `NOT_THREAD_DUMP` 로 거부한다.
+- **한 파일 안의 스냅샷을 비교한다.** 스냅샷마다 상태 분포·락 그래프를 만들고, 연속한 스냅샷에서 스택이 바뀌지 않은 스레드(정체), 스레드 수 증가, CPU 누적값 증가(JDK 11+)를 찾는다.
+- **소견 17종 + 진단 11종.** 교착(JVM 보고 + 락 대기 그래프 순환) · 락 경합과 소유 스레드 정체 · BLOCKED 비율 · 정체 스레드 · CPU 점유 · 요청 풀 유휴 없음 · 커넥션 풀 대기 · DB/외부 호출 응답 대기 집중 · 스레드 수 과다/증가 · Executor 반복 생성 · Finalizer 정체 · WebLogic STUCK · 로그의 OOM.
+- **리포트.** 결과 화면 "리포트" 탭에서 HTML/PDF 미리보기와 PDF 다운로드(`GET /thread-dump/analyze/{fn}/print-pdf`). 머리말 → KPI → 상태 분포 → 소견 → 교착 사슬 → 락 경합 → 정체 스레드 → CPU → 풀 → 스택 묶음 → 스냅샷 → AI 요약 → 파싱 진단.
+- **AI 분석.** 기존 LLM 게이트(`callLlmAnalysis`)를 그대로 쓰고 `ai_insights` 에 `__threaddump__:{파일명}` 으로 저장한다. 덤프 원문은 보내지 않는다.
+
+### 오류 보완·로깅
+
+- **입력이 지저분해도 읽힌 만큼으로 결과를 만든다.** 도중에 잘린 덤프, 덤프 사이에 끼어든 로그 줄, 깨진 바이트, ANSI 이스케이프·제어문자, 지나치게 긴 줄, 끊긴 gzip, 크기·스냅샷·스레드 상한 도달을 실패로 끝내지 않고 **파싱 진단**(건수 + 해석 못 한 줄 앞 20개)으로 화면·PDF 에 보여 준다.
+- **분석 규칙을 격리했다.** 규칙 하나가 예외를 던져도 `RULE_FAILED` 로 남기고 나머지 분석은 끝난다.
+- **실패는 코드와 함께 남는다.** `NOT_THREAD_DUMP`·`UNSUPPORTED_FORMAT`·`EMPTY`·`TOO_LARGE`·`TIMEOUT`·`CANCELLED`·`FILE_MISSING`·`IO_ERROR`·`OUT_OF_MEMORY`·`INTERNAL`·`INTERRUPTED` — `error_code` 컬럼과 `[ThreadDump] action=analyze-failed file= code= elapsed= by=` 로그에 남고, 결과 화면이 코드별 안내문을 보인다. 조사해야 하는 실패는 스택 트레이스와 함께 ERROR 로 남긴다.
+- **행이 "분석 중" 에 영원히 남지 않게 했다.** 실행기가 `Throwable` 을 잡고(OOM 포함), 대기 중 취소는 직접 `CANCELLED` 를 쓰고, 기동 직후 남은 `ANALYZING` 을 `INTERRUPTED` 로 돌리고, 상태 조회가 고아 행을 고친다(함정 76 — GC 로그 서비스에는 같은 구멍이 남아 있다).
+- **업로드는 임시 파일에 받아 확인한 뒤에만 저장소로 옮긴다.** 거부된 파일의 흔적이나 전송 중인 부분 파일이 목록에 남지 않는다.
+- 업로드 거부·분류 거부·다운로드·삭제·PDF·AI 가 모두 수행자(`by=`)와 함께 로그에 남는다.
+
+### 기존 동작에서 바뀐 것
+
+- **GC 줄과 스레드 덤프가 함께 든 서버 stdout 로그는 이제 `스레드 덤프` 로 자동 분류된다**(종전 `GC 로그`). GC 로그 이름 규칙에 맞는 파일은 그대로다. 원하는 범주가 아니면 Files 의 분류 모달로 바꾼다.
+- **분류 = 저장소 이동 규칙을 일반화했다.** "대상 저장소가 편입하고 원 저장소는 기록만 정리" — 형식 검사가 이동보다 먼저라 거부되면 파일은 제자리에 있다. 분류 요청이 현재 유형(`from`)을 함께 보낸다(같은 이름이 두 저장소에 있을 때의 모호성 제거).
+- `analyze-confirm.js` 의 종류별 조건식 나열을 `OWN_RUNNER` 맵으로, `upload-queue.js` 에 두 번 복붙돼 있던 유형 배지를 `typeBadgeHtml` 로 정리했다.
+
+### 범위 밖(후속)
+
+- 대시보드 Recent Files·탐지 카드, 현황판 도메인, 서버 스캔 원격 수집, 힙 덤프 매칭에는 스레드 덤프를 넣지 않았다(요청 범위 = 최소 통합).
+- **k8s 패키지(`heapApp_k8s`)에는 반영하지 않았다.** 다음 리패키징 때 `threaddump.directory=/data/heapdumps/threaddumps` 등 6키를 넣어야 한다 — 빠지면 Pod 재시작 때 업로드한 덤프가 사라진다(`docs/guide/DEPLOYMENT.md`).
+
+### 검증
+
+- `mvn test` 1220건 실패 0(라이브 4 skip) — 기존 1093 + 신규 127.
+- 운영 재기동 정상(2.7.0). `/thread-dump`·`/thread-dump/analyze/*` 는 로그인으로 리다이렉트, `/api/thread-dump/*` 는 401, 새 정적 자원 200, 기동 로그에 `[Config] Thread dump directory: /opt/threaddumps`.
+- 실제 템플릿 + 실측 분석 결과(JDK 8·21 덤프, 잘린 덤프, 스레드 3,000개 × 스냅샷 4개 합성본)를 헤드리스 Chrome 으로 구동: 탭 전환·상태 필터·검색·소견의 스레드 링크 → 스택 펼침·리포트 미리보기, 콘솔 오류 0. 1440·1024·390px 에서 넘침 없음. PDF 는 A4 3쪽, 한글·막대·소견 정상.
+- **하지 못한 것:** 운영 앱에 로그인해 실제 업로드 → 분석 → PDF → 분류 왕복을 하는 종단 확인과 운영 DB 의 새 테이블 조회(자격증명이 필요해 수행하지 않았다). 같은 경로는 단위 테스트(실제 실행기·실제 PDF 렌더)와 위 화면 구동으로 대신했다.
+
 ## [2026-11-25] GC 로그 결과 — 그래프 확대 모달 · Full GC 시점 세로선(전 종류)
 
 **버전:** 변경 없음(2.6.2). **대상:** `model/GcLogResult.java`(`FullGcSummary.marksByKind`·`marksThinned`), `parser/gclog/GcLogAnalyzer.java`(`addFullMark`·`FULL_MARKS_PER_KIND_CAP`), `templates/gc-log/analyze.html`, `templates/gc-log/index.html`(css 캐시 버스터), `static/js/gc-log-analyze.js`, `static/css/gc-log.css`, `GcLogAnalyzerTest`(+3·단언 보강), `GcLogPressureFixtureTest`(단언 보강), `GcLogResultCodecTest`(+1), `GcLogTemplateSmokeTest`(+1·x 축 계약 갱신), `docs/guide/GC_LOG.md`, `docs/guide/TEST_INVENTORY.md`, `CLAUDE.md`(건수).

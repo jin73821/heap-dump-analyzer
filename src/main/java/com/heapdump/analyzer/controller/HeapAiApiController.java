@@ -46,6 +46,13 @@ public class HeapAiApiController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.heapdump.analyzer.service.GcLogAnalyzerService gcLogAnalyzerService;
 
+    /** 스레드 요약 주입(2.7.1) — 힙 덤프의 스레드 정보 · 연결된 스레드 덤프. 선택 주입. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.service.HeapThreadService heapThreadService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.service.ThreadDumpAnalyzerService threadDumpAnalyzerService;
+
 
     private static final Logger logger = LoggerFactory.getLogger(HeapAiApiController.class);
 
@@ -80,6 +87,23 @@ public class HeapAiApiController {
         this.embeddingService = embeddingService;
         this.chromaSearchService = chromaSearchService;
         this.knowledgeExport = knowledgeExport;
+    }
+
+    /** 힙 AI 프롬프트용 스레드 요약 — 실패해도 빈 문자열(힙 AI 분석을 막지 않는다). */
+    String threadPromptSection(String filename) {
+        if (filename == null || filename.isBlank()) return "";
+        StringBuilder sb = new StringBuilder();
+        try {
+            if (heapThreadService != null) sb.append(heapThreadService.promptSectionForHeapAi(filename));
+            if (threadDumpAnalyzerService != null) {
+                String linked = threadDumpAnalyzerService.promptSectionForHeap(filename);
+                if (!linked.isEmpty()) sb.append(sb.length() > 0 ? "\n" : "").append(linked);
+            }
+        } catch (RuntimeException e) {
+            logger.warn("[AI-Insight] 스레드 요약 생략 file={} — {}", filename, e.toString());
+            return "";
+        }
+        return sb.toString().trim();
     }
 
     // ── LLM 기본 설정/연결 ────────────────────────────────────────
@@ -192,6 +216,17 @@ public class HeapAiApiController {
                 prompt = prompt + "\n\n" + gcSection;
             }
             logger.info("[AI-Insight] GC context injected: {} char(s)", gcSection.length());
+        }
+        // 스레드 요약(2.7.1) — 힙 덤프 시점의 스레드 상태 + 사용자가 연결한 스레드 덤프의 소견. 같은 자리에 끼운다.
+        String threadSection = threadPromptSection(filename);
+        if (!threadSection.isEmpty()) {
+            int firstSection = prompt.indexOf("\n== ");
+            if (firstSection > 0) {
+                prompt = prompt.substring(0, firstSection) + "\n\n" + threadSection + prompt.substring(firstSection);
+            } else {
+                prompt = prompt + "\n\n" + threadSection;
+            }
+            logger.info("[AI-Insight] Thread context injected: {} char(s)", threadSection.length());
         }
 
         logger.info("[AI-Insight][REQ] 분석 요청 수신 — file='{}', promptLen={} chars, save={}, provider={}",

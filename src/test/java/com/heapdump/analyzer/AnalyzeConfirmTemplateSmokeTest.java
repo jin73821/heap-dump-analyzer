@@ -150,7 +150,7 @@ class AnalyzeConfirmTemplateSmokeTest {
         String js = Files.readString(Path.of("src/main/resources/static/js/analyze-confirm.js"), StandardCharsets.UTF_8);
         assertTrue(js.contains("var HEAP_EXT_RE = /\\.(hprof|bin|dump|dmp)(\\.gz)?$/i;"),
                 "힙 덤프 확장자 목록이 업로드 큐·FilenameValidator 와 어긋났다 (단독 .gz 는 인정하지 않는다)");
-        assertTrue(js.contains("var extWarn = kind !== 'core' && kind !== 'gclog' && !hasHeapDumpExtension(opts.filename);"),
+        assertTrue(js.contains("var extWarn = !OWN_RUNNER[kind] && !hasHeapDumpExtension(opts.filename);"),
                 "경고 조건이 kind==='others' 로 되돌아가면 '파일 분류'로 heapdump 가 된 비-덤프 파일에서 경고가 빠진다");
         assertTrue(js.contains("덤프 파일 확장자가 아닌데 분석을 진행하시겠습니까?"), "진행 여부를 묻는 문구가 없다");
         assertTrue(js.contains("'그래도 분석 시작'"), "되묻는 경우의 확인 버튼 문구");
@@ -163,7 +163,7 @@ class AnalyzeConfirmTemplateSmokeTest {
     void filesAnalyzeButtonsOpenConfirmModal() throws IOException {
         // files.html 은 모델이 커서 소스 계약만 본다 — 렌더는 기존 운영 경로에서 검증됨
         String src = source("files.html");
-        assertEquals(3, count(src, ONCLICK), "heapdump NOT_ANALYZED · others/exec NOT_ANALYZED · gclog 미분석/실패 세 곳");
+        assertEquals(4, count(src, ONCLICK), "heapdump NOT_ANALYZED · others/exec NOT_ANALYZED · gclog 미분석/실패 · threaddump 미분석/실패 네 곳");
         assertTrue(src.contains("th:data-filename=\"${h.filename}\" data-kind=\"heap\""), "heapdump 버튼 kind");
         assertTrue(src.contains("th:data-filename=\"${h.filename}\" data-kind=\"others\""), "others/exec 버튼 kind");
         assertTrue(src.contains("th:data-filename=\"${h.filename}\" data-kind=\"gclog\""), "GC Log 탭 분석 버튼 kind (2026-09-14)");

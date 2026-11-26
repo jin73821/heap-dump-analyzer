@@ -47,6 +47,8 @@ Thymeleaf + vanilla JS + Chart.js. 빌드 도구 없음.
 
 **Topbar 줄바꿈 방지 규약:** 페이지 topbar 가 `position: fixed` + `display: flex; justify-content: space-between` 구조에서 햄버거 + 타이틀이 우측 버튼 폭 압력으로 줄바꿈되는 사례 다수. `.topbar-brand` 에 명시적 `display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto` + `.topbar-title` 에 `white-space: nowrap; overflow: hidden; text-overflow: ellipsis` + `.topbar-right { flex-shrink: 0 }` 패턴 필수. 새 페이지 작성 시 `files.html` / `history.html` 패턴 그대로 복사.
 
+- **스레드 덤프 화면(2026-11-26, 상세 `THREAD_DUMP.md`):** `thread-dump/{index,analyze}.html` 은 `.gcl-page` 단일 열 레이아웃이다(GC 목록의 좌측 파일 패널 없음). CSS 는 common → core-dump → gc-log → `thread-dump.css` 순서로 싣고 `.thd-*` 만 새로 둔다. 목록 표는 폭이 줄면 덜 중요한 열부터 접는다(≤1200px 서버·스냅샷·스레드 숨김 → ≤760px 행을 카드로) — **셀에 `white-space: nowrap` 인 긴 문장을 두면 그 길이가 열의 최소 폭이 되어 작업 버튼이 카드 밖으로 밀린다**(실패 사유는 2줄 clamp). 행 펼침·묶음 펼침의 클래스는 `expanded` 다 — `open` 은 모달 전용으로 남겨 둔다(`classList.add('open')` 이 `showModal` 한 곳뿐이라는 계약을 테스트가 본다). 분석 종류별 분기는 `analyze-confirm.js` 의 `OWN_RUNNER`(자체 실행기 종류) 한 곳에서 정한다. **2.7.1:** 결과 화면은 `THD_MODE`('dump'|'heap')로 두 모드를 그린다 — 힙 모드는 API 앞에 `heap/` 를 붙이고 분석·삭제·폴링을 하지 않는다. 모드 플래그는 `<html th:with="hm=${heapMode == true}">` 로만 읽는다(함정 80). '힙 점유' 열(`.thd-mem-col`)은 값이 하나라도 있을 때 표에 `thd-has-mem` 을 붙여 보인다. 힙 연결 후보 모달(`.thd-cand`)·묶음 해제 모달, 목록의 선택 체크박스(`.thd-sel` — detach 표라 `grid.allRows` 에서 읽는다)·이어 붙이기 바·미리보기·제안 모달(sessionStorage `thdSuggest`, 대시보드 `onUploadQueueDone` 도 남긴다). 힙 결과 화면(`analyze.html`)의 Threads 칩·요약 카드(`.htc-*`, 좌측 색 띠 없음)는 `static/js/heap-threads-card.js` 가 한 번 조회로 채운다(폴링 없음).
+
 ## 함정
 
 4. **Thymeleaf `th:onclick` 문자열 변수 차단** — restricted expression policy. `th:data-*` + 일반 `onclick="fn(this.dataset.x)"` 패턴 사용.

@@ -337,6 +337,33 @@ public class HeapDumpConfig {
     @Value("${coredump.timeout.minutes:10}")
     private int coreDumpTimeoutMinutes;
 
+    // ── 스레드 덤프 설정 (2026-11-26) — @Value 전용: 런타임 변경 없음(gclog.* 와 같은 정책, 5-place 미적용) ──
+    @Value("${threaddump.directory:/opt/threaddumps}")
+    private String threadDumpDirectory;
+
+    /** 업로드·분석 상한(바이트, gz 는 해제 후 기준). 기본 1GB. */
+    @Value("${threaddump.max-file-bytes:1073741824}")
+    private long threadDumpMaxFileBytes;
+
+    /** 한 줄 상한(문자). 넘는 부분은 잘라 내고 센다. */
+    @Value("${threaddump.max-line-chars:4096}")
+    private int threadDumpMaxLineChars;
+
+    /** 스냅샷 하나에서 읽는 스레드 상한. 넘는 스레드는 건너뛰고 센다. */
+    @Value("${threaddump.max-threads-per-snapshot:20000}")
+    private int threadDumpMaxThreadsPerSnapshot;
+
+    /** 한 파일에서 분석하는 스냅샷 상한. 넘으면 마지막 N개만 남긴다. */
+    @Value("${threaddump.max-snapshots:30}")
+    private int threadDumpMaxSnapshots;
+
+    @Value("${threaddump.analysis.timeout-minutes:10}")
+    private int threadDumpAnalysisTimeoutMinutes;
+
+    /** 힙 덤프 연결 후보 — 덤프 시각이 스냅샷 구간에서 이만큼(분) 안이면 '시각 일치' 점수를 준다(자동 연결은 하지 않는다). */
+    @Value("${threaddump.match.tolerance-min:10}")
+    private int threadDumpMatchToleranceMin;
+
     // ── GC 로그 설정 (2026-09-14) — @Value 전용: 런타임 변경 없음(coredump.directory 와 같은 정책, 5-place 미적용) ──
     @Value("${gclog.directory:/opt/gclogs}")
     private String gcLogDirectory;
@@ -405,6 +432,9 @@ public class HeapDumpConfig {
         // ── 2-1. GC 로그 디렉토리 초기화 ──────────────────────
         initGcLogDirectory();
 
+        // ── 2-2. 스레드 덤프 디렉토리 초기화 ──────────────────
+        initThreadDumpDirectory();
+
         // ── 3. MAT CLI 검증 ───────────────────────────────────
         validateMatCli();
 
@@ -456,6 +486,24 @@ public class HeapDumpConfig {
             }
         } catch (IOException e) {
             logger.error("[Config] Failed to create GC log directory: {} — {}", gcLogDirectory, e.getMessage());
+        }
+    }
+
+    private void initThreadDumpDirectory() {
+        logger.info("[Config] Thread dump directory: {}", threadDumpDirectory);
+        try {
+            for (String sub : new String[]{"", "dumpfiles", "tmp"}) {
+                Path p = sub.isEmpty() ? Paths.get(threadDumpDirectory) : Paths.get(threadDumpDirectory, sub);
+                if (!Files.exists(p)) {
+                    Files.createDirectories(p);
+                    logger.info("[Config] Created thread dump directory: {}", p);
+                }
+            }
+            if (!new File(threadDumpDirectory).canWrite()) {
+                logger.warn("[Config] Thread dump directory is NOT writable: {}", threadDumpDirectory);
+            }
+        } catch (IOException e) {
+            logger.error("[Config] Failed to create thread dump directory: {} — {}", threadDumpDirectory, e.getMessage());
         }
     }
 
@@ -668,6 +716,17 @@ public class HeapDumpConfig {
     public boolean isGdbCliReady()               { return gdbCliReady; }
     public String  getGdbCliStatusMessage()      { return gdbCliStatusMessage; }
     public int     getCoreDumpTimeoutMinutes()   { return coreDumpTimeoutMinutes; }
+
+    // ── 스레드 덤프 getters ───────────────────────────────────────
+    public String  getThreadDumpDirectory()              { return threadDumpDirectory; }
+    public String  getThreadDumpDumpFilesDirectory()     { return threadDumpDirectory + File.separator + "dumpfiles"; }
+    public String  getThreadDumpTmpDirectory()           { return threadDumpDirectory + File.separator + "tmp"; }
+    public long    getThreadDumpMaxFileBytes()           { return threadDumpMaxFileBytes; }
+    public int     getThreadDumpMaxLineChars()           { return threadDumpMaxLineChars; }
+    public int     getThreadDumpMaxThreadsPerSnapshot()  { return threadDumpMaxThreadsPerSnapshot; }
+    public int     getThreadDumpMaxSnapshots()           { return threadDumpMaxSnapshots; }
+    public int     getThreadDumpAnalysisTimeoutMinutes() { return threadDumpAnalysisTimeoutMinutes; }
+    public int     getThreadDumpMatchToleranceMin()      { return threadDumpMatchToleranceMin; }
 
     // ── GC 로그 getters ───────────────────────────────────────────
     public String  getGcLogDirectory()             { return gcLogDirectory; }

@@ -588,6 +588,33 @@ function loadFullErrorLog() {
             .host-chip-edit{border:none;background:transparent;cursor:pointer;font-size:13px;color:#64748b;
                 padding:2px 5px;border-radius:6px;line-height:1}
             .host-chip-edit:hover{background:#e2e8f0;color:#1e293b}
+            a.host-chip-edit{text-decoration:none}
+            .tdlink-chip .host-chip-name{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+            .tdlink-chip .tdlink-open{font-size:12px;font-weight:600;color:#4338ca}
+            /* 스레드 분석 요약 카드 (2.7.1) — 좌측 색 띠 없이 옅은 배경 + 1px 테두리 + 배지만 */
+            .htc-card .card-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+            .htc-src{font-size:11px;font-weight:500;color:var(--text-secondary,#64748b)}
+            .htc-open{margin-left:auto;text-decoration:none}
+            .htc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+            .htc-kpi{border:1px solid #e2e8f0;border-radius:10px;padding:9px 12px;background:#f8fafc;min-width:0}
+            .htc-kpi .k{font-size:11px;color:#64748b}
+            .htc-kpi .v{font-size:17px;font-weight:700;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+            .htc-kpi .s{font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+            .htc-sec{font-size:12px;font-weight:700;color:#334155;margin:12px 0 6px}
+            .htc-find{display:flex;gap:8px;align-items:baseline;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;margin-bottom:5px;font-size:12.5px;background:#fff}
+            .htc-find.sev-Critical,.htc-find.sev-High{background:#fef2f2;border-color:#fecaca}
+            .htc-find.sev-Medium{background:#fffbeb;border-color:#fde68a}
+            .htc-sev{flex:none;font-size:10px;font-weight:700;padding:1px 6px;border-radius:6px;background:#e2e8f0;color:#475569}
+            .htc-find.sev-Critical .htc-sev,.htc-find.sev-High .htc-sev{background:#fee2e2;color:#b91c1c}
+            .htc-find.sev-Medium .htc-sev{background:#fef3c7;color:#b45309}
+            .htc-table{width:100%;border-collapse:collapse;font-size:12px}
+            .htc-table th,.htc-table td{padding:5px 8px;border-bottom:1px solid #f1f5f9;text-align:left;vertical-align:top}
+            .htc-table th{color:#64748b;font-weight:600;font-size:11px}
+            .htc-table td.num,.htc-table th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+            .htc-table td.fr{font-family:var(--font-mono);font-size:11px;color:#475569;word-break:break-all}
+            .htc-empty{font-size:12.5px;color:#64748b;padding:6px 0}
+            .htc-links{font-size:12px;color:#475569;margin-top:10px}
+            .htc-links a{color:#4338ca}
             .host-chip-input{font-size:13px;padding:3px 7px;border:1px solid #cbd5e1;border-radius:8px;
                 width:150px;font-family:inherit}
             .host-chip-save,.host-chip-cancel{border:none;cursor:pointer;font-size:12px;padding:4px 9px;
@@ -709,6 +736,18 @@ function loadFullErrorLog() {
                 <button type="button" class="host-chip-edit" onclick="openGcLogPickModal()" title="GC 로그 연결/변경">&#9776;</button>
                 <button type="button" class="host-chip-edit" id="gcLogChipUnlink" onclick="unlinkGcLog()" title="연결 해제(이후 자동 매칭 안 함)"
                         th:style="${gcLog.hasMatch} ? '' : 'display:none'">&#10005;</button>
+            </div>
+            <!-- 스레드 칩 (2.7.1) — 힙 덤프의 스레드 정보로 만든 분석(전용 화면) + 사용자가 연결한 스레드 덤프. 연결은 스레드 덤프 화면에서 한다(수동). -->
+            <div class="host-chip tdlink-chip" id="tdLinkChip" th:if="${threadDumpEnabled}">
+                <span class="host-chip-icon">&#129525;</span>
+                <span class="host-chip-label">Threads</span>
+                <span class="host-chip-name" id="tdLinkChipName"
+                      th:classappend="${#lists.isEmpty(threadDumpLinks)} ? ' host-chip-empty'"
+                      th:text="${#lists.isEmpty(threadDumpLinks)} ? '연결된 스레드 덤프 없음' : (${threadDumpLinks[0].filename} + (${#lists.size(threadDumpLinks) > 1} ? ' 외 ' + (${#lists.size(threadDumpLinks)} - 1) : ''))">jstack.txt</span>
+                <a class="host-chip-edit" th:if="${!#lists.isEmpty(threadDumpLinks)}" th:href="@{/thread-dump/analyze/{fn}(fn=${threadDumpLinks[0].filename})}"
+                   title="연결된 스레드 덤프 결과 열기">&#8599;</a>
+                <a class="host-chip-edit tdlink-open" th:href="@{/thread-dump/heap/{fn}(fn=${result.filename})}"
+                   title="힙 덤프에 남은 스레드 정보로 스레드 분석 화면 열기">스레드 분석</a>
             </div>
         </div>
 
@@ -1304,6 +1343,14 @@ function loadFullErrorLog() {
 
     <!-- ▌ THREAD OVERVIEW PANEL ▌ -->
     <div id="panel-threads" class="panel" th:if="${hasThreadOverview}">
+        <!-- 스레드 분석 요약 (2.7.1) — heap-threads-card.js 가 /api/thread-dump/heap/{fn}/summary 로 채운다 -->
+        <div class="card htc-card" id="htcCard" th:if="${threadDumpEnabled}" style="display:none">
+            <div class="card-title"><span class="card-icon">&#129525;</span> 스레드 분석 요약
+                <span class="htc-src">힙 덤프 시점 1회 · 스레드 덤프 규칙으로 분석</span>
+                <a class="btn btn-sm btn-soft htc-open" th:href="@{/thread-dump/heap/{fn}(fn=${result.filename})}">자세히 보기 &#8599;</a>
+            </div>
+            <div id="htcBody"></div>
+        </div>
         <div class="card">
             <div class="card-title"><span class="card-icon">&#128279;</span> Thread Overview
                 <span th:if="${oomThreadCount > 0}" class="oom-title-badge"
@@ -1700,6 +1747,7 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
 <script src="/js/krds-tooltip.js?v=2026-10-31"></script>
 <script src="/js/table-grid.js?v=2026-09-13"></script>
 <script src="/js/analyze.js?v=2026-10-29"></script>
+<script src="/js/heap-threads-card.js?v=2026-11-26"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">
     <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>

@@ -255,8 +255,10 @@ class GcLogTemplateSmokeTest {
         assertTrue(ac.contains("gclog: 'GC 로그'"), "KIND_LABEL.gclog");
         assertTrue(ac.contains("if (kind === 'gclog') return '/gc-log/analyze/' + encodeURIComponent(filename) + '?start=1';"),
                 "gclog 는 결과 페이지로 + ?start=1 — 없으면 실패(ERROR) 파일은 옛 오류만 보이고 분석 요청이 나가지 않는다(2026-09-14 실제 결함)");
-        assertTrue(ac.contains("kind !== 'core' && kind !== 'gclog' && !hasHeapDumpExtension"), "GC 로그는 확장자 경고 제외");
-        assertTrue(ac.contains("if (kind === 'core' || kind === 'gclog') { queueSeq++; els.queue.hidden = true; }"), "MAT 대기열 패널 숨김");
+        // 자체 실행기 종류는 OWN_RUNNER 한 곳에서 정한다(2026-11-26, 스레드 덤프 추가로 조건식 나열을 맵으로 바꿨다)
+        assertTrue(ac.contains("var OWN_RUNNER = { core: 1, gclog: 1, threaddump: 1 };"), "자체 실행기 종류 목록");
+        assertTrue(ac.contains("!OWN_RUNNER[kind] && !hasHeapDumpExtension"), "GC 로그는 확장자 경고 제외");
+        assertTrue(ac.contains("if (OWN_RUNNER[kind]) { queueSeq++; els.queue.hidden = true; }"), "MAT 대기열 패널 숨김");
 
         String scan = js("server-scan.js");
         assertTrue(scan.contains("var isGc = f.fileType === 'gclog';") && scan.contains("kind: isCore ? 'core' : isGc ? 'gclog' : 'heap'"), "스캔 패널 kind 분기");
@@ -478,7 +480,10 @@ class GcLogTemplateSmokeTest {
         assertTrue(f.contains("th:if=\"${h.fileType == 'gclog'}\" class=\"gclog-badge\">GC LOG</span>"), "GC LOG 배지");
         assertTrue(f.contains("@{/gc-log/analyze/{f}(f=${h.filename},start=1)}"), "미분석·실패 분석 버튼은 ?start=1 (모듈 미로드 폴백 포함)");
         assertTrue(f.contains("'/api/gc-log/download/' + encodeURIComponent("), "GC 로그 다운로드는 GC 저장소 엔드포인트 — 힙 /download 는 파일을 못 찾는다");
-        assertTrue(f.contains("function confirmGcLogDelete(") && f.contains("'/api/gc-log/' + encodeURIComponent(") && f.contains("?deleteFile=true"),
+        // 삭제 API 는 저장소별로 고른다(2026-11-26, 스레드 덤프 추가) — GC 로그 행은 여전히 GC API 로 간다
+        assertTrue(f.contains("function confirmGcLogDelete(") && f.contains("_delStoreApi = '/api/gc-log/'; _delStoreLabel = 'GC 로그';")
+                        && f.contains("_delStoreApi + encodeURIComponent(gcTarget) + '?deleteFile=true'")
+                        && f.contains("isTdRow(c) ? '/api/thread-dump/' : '/api/gc-log/'"),
                 "GC 로그 삭제는 GC API — 힙 bulk-delete 는 dumpfiles 만 본다");
         assertTrue(f.contains("<option value=\"gclog\">GC로그</option>"), "파일 분류 설정 'GC로그' 옵션");
         assertTrue(f.contains("id=\"classifyGcIn\"") && f.contains("id=\"classifyGcOut\"") && f.contains("function onClassifyTypeChange"),

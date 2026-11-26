@@ -71,6 +71,10 @@ public class HeapDumpViewController {
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private com.heapdump.analyzer.service.GcLogAnalyzerService gcLogAnalyzerService;
 
+    /** Files 페이지 스레드 덤프 탭(2026-11-26) — 선택 주입. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.service.ThreadDumpAnalyzerService threadDumpAnalyzerService;
+
     public HeapDumpViewController(HeapDumpAnalyzerService analyzerService,
                                   LlmConfigService llmConfig,
                                   HeapDumpConfig config,
@@ -259,6 +263,8 @@ public class HeapDumpViewController {
         combined.addAll(coreItems);
         // GC 로그 항목 병합(2026-09-14) — fileType "gclog". 아래 분류 루프는 heapdump/coredump 만 건드리므로 영향 없음
         combined.addAll(buildGcLogHistory(isAdmin));
+        // 스레드 덤프 항목 병합(2026-11-26) — fileType "threaddump"
+        combined.addAll(buildThreadDumpHistory(isAdmin));
 
         // 확장자 없는 파일에 사용자 분류 적용 (allowAllExtensions=true 일 때만 유효)
         if (analyzerService.isAllowAllExtensions()) {
@@ -480,6 +486,47 @@ public class HeapDumpViewController {
             }
         } catch (Exception ex) {
             logger.warn("[Files] GC 로그 목록 병합 실패 — GC Log 탭이 비어 보인다: {}", ex.getMessage());
+        }
+        return result;
+    }
+
+    private List<AnalysisHistoryItem> buildThreadDumpHistory(boolean isAdmin) {
+        List<AnalysisHistoryItem> result = new ArrayList<>();
+        if (threadDumpAnalyzerService == null) return result;
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+        try {
+            threadDumpAnalyzerService.syncWithDisk();   // 디스크 ↔ 기록 동기화(미등록 파일 등록·사라진 파일 fileDeleted 표시)
+            for (com.heapdump.analyzer.model.entity.ThreadDumpAnalysisEntity e : threadDumpAnalyzerService.history()) {
+                File f = threadDumpAnalyzerService.fileOf(e.getFilename());
+                boolean deleted = e.isFileDeleted() || !f.isFile();
+                if (!isAdmin && deleted) continue;
+                AnalysisHistoryItem item = new AnalysisHistoryItem();
+                item.setFileType("threaddump");
+                item.setId(e.getId());
+                item.setFilename(e.getFilename());
+                item.setStatus(e.getStatus());
+                item.setFileDeleted(deleted);
+                item.setServerName(e.getServerName());
+                if (e.getAnalysisTimeMs() != null) item.setAnalysisTime(e.getAnalysisTimeMs());
+                if (!deleted) {
+                    item.setSizeBytes(f.length());
+                    item.setOriginalSizeBytes(f.length());
+                    item.setFormattedSize(FormatUtils.formatBytes(f.length()));
+                    item.setFormattedDate(sdf.format(new Date(f.lastModified())));
+                    item.setLastModified(f.lastModified());
+                } else {
+                    long fb = e.getFileSize() != null ? e.getFileSize() : 0;
+                    item.setSizeBytes(fb);
+                    item.setFormattedSize(fb > 0 ? FormatUtils.formatBytes(fb) : "-");
+                    if (e.getCreatedAt() != null) {
+                        item.setFormattedDate(e.getCreatedAt().format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
+                        item.setLastModified(e.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli());
+                    }
+                }
+                result.add(item);
+            }
+        } catch (Exception ex) {
+            logger.warn("[Files] 스레드 덤프 목록 병합 실패 — 스레드 덤프 탭이 비어 보인다: {}", ex.getMessage());
         }
         return result;
     }
@@ -875,6 +922,18 @@ public class HeapDumpViewController {
         // GC 로그 연결 상태(2026-09-14) — 항상 Map(matched/candidates/count/hasMatch). 칩 + 'gc-log' 패널이 읽는다.
         model.addAttribute("gcLog", gcLogMatchService != null ? gcLogMatchService.viewForDump(filename)
                 : java.util.Map.of("matched", java.util.List.of(), "candidates", java.util.List.of(), "count", 0, "candidateCount", 0, "hasMatch", false));
+
+        // 스레드 덤프 연계(2.7.1) — 이 힙 덤프에 사용자가 연결한 스레드 덤프. 칩이 읽는다(스레드 분석 요약은 JS 가 따로 받는다)
+        java.util.List<java.util.Map<String, Object>> tdLinks = java.util.List.of();
+        if (threadDumpAnalyzerService != null) {
+            try {
+                tdLinks = threadDumpAnalyzerService.linkedToHeap(filename);
+            } catch (RuntimeException e) {
+                logger.warn("[ThreadDump] action=linked-to-heap-failed heap={} — {}", filename, e.toString());
+            }
+        }
+        model.addAttribute("threadDumpLinks", tdLinks);
+        model.addAttribute("threadDumpEnabled", threadDumpAnalyzerService != null);
 
         // Instance/Domain — System Properties 자동 식별 + 수동 편집.
         // Instance 는 jeus.server.name → weblogic.Name(WasInstanceName), Domain 은 jeus.domain.name.

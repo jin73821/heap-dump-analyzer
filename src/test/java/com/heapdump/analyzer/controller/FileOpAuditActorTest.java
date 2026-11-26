@@ -31,7 +31,8 @@ class FileOpAuditActorTest {
     /** 파일 업로드·삭제·분류·페어링·다운로드·전송을 다루는 컨트롤러. */
     private static final List<Class<?>> FILE_CONTROLLERS = List.of(
             HeapFileApiController.class, HeapDumpViewController.class, HeapHistoryApiController.class,
-            HeapAnalysisApiController.class, CoreDumpApiController.class, GcLogApiController.class);
+            HeapAnalysisApiController.class, CoreDumpApiController.class, GcLogApiController.class,
+            ThreadDumpApiController.class);
 
     /** 조회만 하는 GET 은 대상이 아니다 — 다운로드(원본 파일을 밖으로 내보냄)만 감사 대상. */
     private static final Set<String> DOWNLOAD_PATH_HINTS = Set.of("download", "print-pdf");

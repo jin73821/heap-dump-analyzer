@@ -26,7 +26,7 @@
     var _uploading = false;
     var _uploadCancelled = false;
     var _currentXhr = null;
-    var _uploadMode = 'auto'; // 'auto' | 'heapdump' | 'coredump' | 'gclog'
+    var _uploadMode = 'auto'; // 'auto' | 'heapdump' | 'coredump' | 'gclog' | 'threaddump'
 
     /* ── 작은 유틸 ── */
     function fmtB(b) {
@@ -128,6 +128,48 @@
         }
         return false;
     }
+    /* ── 스레드 덤프 판별 (2026-11-26) — 서버 ThreadDumpFormatDetector 와 같은 규칙.
+     *    ⚠ 아래 정규식 4개는 Java 쪽 NAME_RE·HEADER_RE·THREAD_RE·STATE_RE 와 글자 그대로 같아야 한다(ThreadDumpUploadContractTest 가 대조).
+     *    브라우저가 스레드 덤프로 보낸 파일을 서버가 거부하면 업로드가 실패로 끝난다.
+     *    이름: threaddump.txt / thread_dump_20261126.log.gz / jstack.12345 / was1-jstack-3.out / x.tdump */
+    var _TD_NAME_RE = /(^|[-_.])(thread[-_.]?dumps?|tdump|jstack|stack[-_.]?dump)([-_.][^\/]*)?(\.(txt|log|out|dump|tdump))?(\.\d+)?(\.gz)?$|\.(tdump|threaddump|jstack)(\.gz)?$/i;
+    var _TD_HEADER = /Full thread dump .*VM \(.*\):/;
+    var _TD_THREAD = /^".+" .*\btid=0x[0-9a-f]+ nid=(?:0x[0-9a-f]+|\d+)\b/;
+    var _TD_STATE = /^\s+java\.lang\.Thread\.State: [A-Z_]+/;
+    function isThreadDumpFilename(name) {
+        var base = (name || '').split('/').pop();
+        return _TD_NAME_RE.test(base);
+    }
+    /** (헤더 그리고 스레드 줄 ≥1) 또는 (스레드 줄 ≥3 그리고 상태 줄 ≥1 — 머리가 잘린 덤프). */
+    function looksLikeThreadDumpText(text) {
+        var lines = String(text || '').split(/\r?\n/);
+        var header = false, threads = 0, states = 0;
+        for (var i = 0; i < lines.length; i++) {
+            var l = lines[i];
+            if (!l) continue;
+            if (l.length > 1000) l = l.substring(0, 1000);
+            if (!header && _TD_HEADER.test(l)) header = true;
+            else if (_TD_THREAD.test(l)) threads++;
+            else if (states === 0 && _TD_STATE.test(l)) states++;
+            if ((header && threads >= 1) || (threads >= 3 && states >= 1)) return true;
+        }
+        return false;
+    }
+    var _tdByContent = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
+    /** 스레드 덤프 내용 판별 대상 — 코어 이름·GC 로그 이름·압축본은 읽지 않는다. 힙 확장자는 이름이 스레드 덤프 규칙에 맞을 때만(thread_dump.dump). */
+    function needsThreadDumpSniff(file) {
+        var n = file.name || '';
+        if (!file.slice || !file.size) return false;
+        if (isCoreDumpFilename(n) || isGcLogFilename(n)) return false;
+        if (/\.gz$/i.test(n)) return false;
+        if (isRecognizedHeapExt(n) && !isThreadDumpFilename(n)) return false;
+        return true;
+    }
+    function readSlice(blob) {
+        return blob.text ? blob.text() : new Promise(function (res, rej) {
+            var fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.onerror = function () { rej(fr.error); }; fr.readAsText(blob);
+        });
+    }
     var _gcByContent = (typeof WeakSet !== 'undefined') ? new WeakSet() : null;
     function needsSniff(file) {
         var n = file.name || '';
@@ -142,13 +184,21 @@
         var jobs = [];
         for (var i = 0; i < files.length; i++) {
             (function (f) {
-                if (!needsSniff(f)) return;
+                var gc = needsSniff(f), td = !!_tdByContent && needsThreadDumpSniff(f);
+                if (!gc && !td) return;
                 var blob = f.slice(0, _SNIFF_BYTES);
-                var read = blob.text ? blob.text() : new Promise(function (res, rej) {
-                    var fr = new FileReader(); fr.onload = function () { res(fr.result); }; fr.onerror = function () { rej(fr.error); }; fr.readAsText(blob);
-                });
-                jobs.push(read.then(function (t) { if (looksLikeGcLogText(t)) _gcByContent.add(f); })
-                    .catch(function (e) { if (global.Common) global.Common.logIgnored('[UploadQueue] GC 로그 내용 판별 실패 — 이름 규칙만 사용: ' + f.name, e); }));
+                jobs.push(readSlice(blob).then(function (t) {
+                    // 스레드 덤프 마커가 더 특정적이다 — GC 줄과 덤프가 함께 든 서버 stdout 은 스레드 덤프로 본다
+                    if (td && looksLikeThreadDumpText(t)) { _tdByContent.add(f); return null; }
+                    if (gc && looksLikeGcLogText(t)) _gcByContent.add(f);
+                    // kill -3 덤프는 로그 끝에 붙는 경우가 많다 — 앞에서 못 찾았으면 뒤 64KB 도 본다
+                    if (td && f.size > _SNIFF_BYTES) {
+                        return readSlice(f.slice(Math.max(0, f.size - _SNIFF_BYTES))).then(function (tail) {
+                            if (looksLikeThreadDumpText(tail)) _tdByContent.add(f);
+                        });
+                    }
+                    return null;
+                }).catch(function (e) { if (global.Common) global.Common.logIgnored('[UploadQueue] 내용 판별 실패 — 이름 규칙만 사용: ' + f.name, e); }));
             })(files[i]);
         }
         return Promise.all(jobs);
@@ -158,13 +208,31 @@
         if (_uploadMode === 'heapdump') return 'heapdump';
         if (_uploadMode === 'coredump') return 'coredump';
         if (_uploadMode === 'gclog') return 'gclog';
-        // auto: 코어 이름 → 힙 확장자 → GC 로그(이름 규칙 또는 내용) → 기타
+        if (_uploadMode === 'threaddump') return 'threaddump';
+        // auto: 코어 이름 → 스레드 덤프(내용) → 힙 확장자 → GC 로그(이름) → 스레드 덤프(이름) → GC 로그(내용) → 기타
         if (isCoreDumpFilename(name)) return 'coredump';
+        if (_tdByContent && typeof file !== 'string' && _tdByContent.has(file)) return 'threaddump';
         if (isRecognizedHeapExt(name)) return 'heapdump';
         if (isGcLogFilename(name)) return 'gclog';
+        if (isThreadDumpFilename(name)) return 'threaddump';
         if (_gcByContent && typeof file !== 'string' && _gcByContent.has(file)) return 'gclog';
         if (hasNoExtension(name)) return 'others';
         return 'heapdump';
+    }
+
+    /* ── 업로드 목록의 유형 배지 — 진행 목록과 준비 목록이 같은 것을 쓴다(2026-11-26, 종전엔 두 곳에 복붙) ── */
+    var _TYPE_BADGE = {
+        coredump:   { label: 'CORE',   bg: '#FEF3C7', fg: '#92400E' },
+        gclog:      { label: 'GC LOG', bg: '#DCFCE7', fg: '#166534' },
+        threaddump: { label: 'THREAD', bg: '#E0F2FE', fg: '#075985' },
+        exec:       { label: 'EXEC',   bg: '#EDE9FE', fg: '#5B21B6' },
+        others:     { label: '?',      bg: '#F3F4F6', fg: '#6B7280' }
+    };
+    function typeBadgeHtml(type) {
+        var b = _TYPE_BADGE[type];
+        if (!b) return '';
+        return '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:' + b.bg + ';color:' + b.fg
+            + ';font-weight:700;margin-left:4px;vertical-align:middle">' + b.label + '</span>';
     }
 
     /* ── 확장자 경고 모달 ── */
@@ -210,8 +278,8 @@
             var ftype = resolveFileType(files[i]);
             var lower = files[i].name.toLowerCase();
             var extOk;
-            if (ftype === 'coredump' || ftype === 'gclog') {
-                extOk = true; // 코어 덤프·GC 로그는 확장자가 제각각(core.1234, gc.log.3) — 서버가 형식을 다시 검사한다
+            if (ftype === 'coredump' || ftype === 'gclog' || ftype === 'threaddump') {
+                extOk = true; // 코어 덤프·GC 로그·스레드 덤프는 확장자가 제각각(core.1234, gc.log.3, jstack.out) — 서버가 형식을 다시 검사한다
             } else {
                 extOk = global.ALLOW_ALL_EXT || heapExts.some(function(ext) { return lower.endsWith(ext); });
             }
@@ -298,8 +366,8 @@
     function startDuplicateChecks(idx) {
         if (idx >= _uploadQueue.length) { showStagedModal(); return; }
         var item = _uploadQueue[idx];
-        // 힙 중복 검사는 힙덤프 저장소 기준 — 코어·GC 로그는 저장소가 달라 검사하지 않는다(GC 로그는 서버가 같은 이름을 409 로 거부)
-        if (item.status === 'skipped' || item.fileType === 'coredump' || item.fileType === 'gclog') { startDuplicateChecks(idx + 1); return; }
+        // 힙 중복 검사는 힙덤프 저장소 기준 — 코어·GC 로그·스레드 덤프는 저장소가 달라 검사하지 않는다(서버가 같은 이름을 409 로 거부)
+        if (item.status === 'skipped' || item.fileType === 'coredump' || item.fileType === 'gclog' || item.fileType === 'threaddump') { startDuplicateChecks(idx + 1); return; }
         computePartialHash(item.file).then(function(hash) {
             item._hash = hash;
             fetch('/api/upload/check', {
@@ -412,16 +480,7 @@
             else if (q.status === 'error') { icon = _UQ_ICON.error; cls = 'error'; label = q._error ? q._error : '실패'; }
             else if (q.status === 'cancelled') { icon = _UQ_ICON.cancelled; cls = 'skipped'; label = '취소됨'; }
             else { icon = _UQ_ICON.pending; cls = 'pending'; label = '대기'; }
-            var typeBadge = '';
-            if (q.fileType === 'coredump') {
-                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#FEF3C7;color:#92400E;font-weight:700;margin-left:4px;vertical-align:middle">CORE</span>';
-            } else if (q.fileType === 'gclog') {
-                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#DCFCE7;color:#166534;font-weight:700;margin-left:4px;vertical-align:middle">GC LOG</span>';
-            } else if (q.fileType === 'exec') {
-                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#EDE9FE;color:#5B21B6;font-weight:700;margin-left:4px;vertical-align:middle">EXEC</span>';
-            } else if (q.fileType === 'others') {
-                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#F3F4F6;color:#6B7280;font-weight:700;margin-left:4px;vertical-align:middle">?</span>';
-            }
+            var typeBadge = typeBadgeHtml(q.fileType);
             html += '<div class="uq-item" id="uqi' + i + '">'
                 + '<span class="uq-icon">' + icon + '</span>'
                 + '<span class="uq-name" title="' + escapeHtml(q.uploadName) + '">' + escapeHtml(q.uploadName) + typeBadge + ' <span style="color:#9CA3AF;font-size:13px">' + fmtB(q.file.size) + '</span></span>'
@@ -490,14 +549,7 @@
 
         var listHtml = '';
         pending.forEach(function(q) {
-            var typeBadge = '';
-            if (q.fileType === 'coredump') {
-                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#FEF3C7;color:#92400E;font-weight:700;margin-left:4px;vertical-align:middle">CORE</span>';
-            } else if (q.fileType === 'gclog') {
-                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#DCFCE7;color:#166534;font-weight:700;margin-left:4px;vertical-align:middle">GC LOG</span>';
-            } else if (q.fileType === 'others') {
-                typeBadge = '<span style="display:inline-block;font-size:10px;padding:1px 5px;border-radius:3px;background:#F3F4F6;color:#6B7280;font-weight:700;margin-left:4px;vertical-align:middle">?</span>';
-            }
+            var typeBadge = typeBadgeHtml(q.fileType);
             listHtml += '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #F3F4F6">'
                 + '<svg viewBox="0 0 24 24" fill="none" stroke="#9CA3AF" stroke-width="1.5" style="width:16px;height:16px;flex-shrink:0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'
                 + '<span style="flex:1;font-size:13px;color:#1F2937;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="' + escapeHtml(q.uploadName) + '">' + escapeHtml(q.uploadName) + typeBadge + '</span>'
@@ -718,6 +770,12 @@
             if (_gcOrigin.serverName) fdg.append('serverName', _gcOrigin.serverName);
             if (_gcOrigin.instanceName) fdg.append('instanceName', _gcOrigin.instanceName);
             xhr.send(fdg);
+        } else if (item.fileType === 'threaddump') {
+            // 서버가 파일 전체를 훑어 스레드 덤프인지 다시 확인한다 — 아니면 400 NOT_THREAD_DUMP
+            xhr.open('POST', '/api/thread-dump/upload');
+            var fdt = new FormData();
+            fdt.append('threadDumpFile', item.file, item.uploadName);
+            xhr.send(fdt);
         } else {
             xhr.open('POST', '/api/upload');
             var fd = new FormData();
@@ -848,6 +906,8 @@
         /** 테스트·진단용 — 파일 하나의 업로드 분류를 돌려준다(내용 판별 포함). */
         detectFileType: function(file) { return sniffGcLogs([file]).then(function () { return resolveFileType(file); }); },
         looksLikeGcLogText: looksLikeGcLogText,
+        looksLikeThreadDumpText: looksLikeThreadDumpText,
+        isThreadDumpFilename: isThreadDumpFilename,
         setUploadMode: function(mode) { _uploadMode = mode; },
         getLastQueueTypes: function() {
             return _uploadQueue.map(function(item) {

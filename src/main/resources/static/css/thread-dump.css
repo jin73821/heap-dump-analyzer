@@ -1,0 +1,266 @@
+/* thread-dump.css — 스레드 덤프 목록·결과 화면 (2026-11-26)
+ * 로드 순서: common.css → core-dump.css → gc-log.css → 이 파일. 레이아웃·카드·모달·KPI·소견은 gc-log.css(.gcl-*)를 그대로 쓰고
+ * 여기에는 스레드 덤프에만 있는 것(탭·상태 배지·스택·교착 사슬·스레드 표·리포트 탭)만 둔다.
+ * ⚠ 글꼴 변수(--font-sans/--font-mono)를 다시 선언하지 말 것(common.css 한 곳 — PageFontSourceTest).
+ * ⚠ 카드·알림에 좌측 색 띠를 쓰지 않는다 — 심각도는 옅은 배경 + 1px 테두리 + 배지로만 표현한다. */
+
+:root {
+    --thd-st-r: #16A34A; --thd-st-r-bg: #F0FDF4;
+    --thd-st-b: #DC2626; --thd-st-b-bg: #FEF2F2;
+    --thd-st-w: #D97706; --thd-st-w-bg: #FFFBEB;
+    --thd-st-t: #A16207; --thd-st-t-bg: #FEFCE8;
+    --thd-st-v: #64748B; --thd-st-v-bg: #F1F5F9;
+    --thd-st-x: #9CA3AF; --thd-st-x-bg: #F9FAFB;
+}
+
+/* ── 목록 화면 ─────────────────────────────────────────────── */
+.thd-upload-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr); gap: 14px 18px; align-items: start; }
+.thd-upload-side label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 5px; }
+.thd-upload-side .cd-input { width: 100%; }
+.thd-upload-hint { font-size: 11px; color: #9CA3AF; line-height: 1.5; margin-top: 5px; }
+.thd-upload-cta { grid-column: 1; }
+@media (max-width: 900px) { .thd-upload-grid { grid-template-columns: 1fr; } }
+.thd-upload-err { display: none; margin-top: 12px; background: var(--dn-bg, #FEF2F2); border: 1px solid var(--dn-border, #FECACA); border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #991B1B; line-height: 1.55; }
+.thd-upload-err.visible { display: block; }
+.thd-upload-err b { display: block; margin-bottom: 2px; }
+.thd-upload-list { margin: 6px 0 0; padding: 0; list-style: none; font-size: 12px; }
+.thd-upload-list li { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
+.thd-upload-list .ok { color: #15803D; font-weight: 600; }
+.thd-upload-list .ng { color: #B91C1C; font-weight: 600; }
+.thd-upload-list .nm { font-family: var(--font-mono); word-break: break-all; }
+
+.thd-controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.thd-controls .cd-input { width: 260px; max-width: 100%; }
+.thd-controls .spacer { margin-left: auto; font-size: 12px; color: #6B7280; }
+.thd-num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.thd-num.bad { color: var(--gcl-sev-critical); font-weight: 700; }
+.thd-row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: nowrap; }
+.thd-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border-radius: 6px; border: 1px solid #E5E7EB; background: #fff; color: #4B5563; cursor: pointer; }
+.thd-icon-btn:hover { background: #F3F4F6; color: #111827; }
+.thd-icon-btn.danger:hover { background: #FEF2F2; color: #B91C1C; border-color: #FECACA; }
+.thd-icon-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* 실패 사유는 두 줄까지 — nowrap 으로 두면 이 문장 길이가 파일 열의 최소 폭이 되어 작업 버튼을 카드 밖으로 민다 */
+.thd-err-note { font-size: 11px; color: #B91C1C; margin-top: 2px; line-height: 1.45; overflow: hidden; word-break: break-all;
+                display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+/* 파일명은 자르지 않고 줄바꿈한다(이름이 식별자다). 폭이 줄면 덜 중요한 열부터 접어 작업 버튼이 카드 밖으로 밀려나지 않게 한다:
+   ≤1200px 서버·스냅샷·스레드·등록자 숨김 → ≤760px 행을 카드로(파일명 한 줄 + 상태·심각도·교착·작업 한 줄) */
+#thdTable td.thd-col-file { min-width: 180px; }
+#thdTable td.thd-col-file .hi-filename { word-break: break-all; color: inherit; text-decoration: none; }
+#thdTable td.thd-col-file .hi-filename:hover { text-decoration: underline; }
+#thdTable td.thd-nowrap, #thdTable th { white-space: nowrap; }
+#thdTable td, #thdTable th { padding-left: 10px; padding-right: 10px; }
+@media (max-width: 1200px) { #thdTable .thd-hide-md { display: none; } }
+@media (max-width: 760px) {
+    #thdTable thead { display: none; }
+    #thdTable, #thdTable tbody { display: block; }
+    #thdTable tr { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; border: 1px solid #E5E7EB; border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; background: #fff; }
+    #thdTable td { display: block; border: 0; padding: 0; min-width: 0; }
+    #thdTable td.thd-col-file { flex: 1 1 100%; }
+    #thdTable td.thd-col-dl::before { content: '교착 '; color: #6B7280; font-weight: 400; }
+    #thdTable td.thd-col-actions { margin-left: auto; }
+    .thd-controls .cd-input { width: 100%; }
+}
+
+/* 심각도 배지 — 색은 gc-log.css 의 --gcl-sev-* */
+.thd-sev { display: inline-block; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 8px; letter-spacing: .04em; color: #fff; background: var(--gcl-sev-info); white-space: nowrap; }
+.thd-sev.sev-Critical { background: var(--gcl-sev-critical); }
+.thd-sev.sev-High { background: var(--gcl-sev-high); }
+.thd-sev.sev-Medium { background: var(--gcl-sev-medium); }
+.thd-sev.sev-Low { background: var(--gcl-sev-low); }
+
+/* ── 결과 화면: 탭 ─────────────────────────────────────────── */
+.thd-tabs { display: flex; gap: 2px; border-bottom: 1px solid #E5E7EB; margin: 0 0 16px; overflow-x: auto; scrollbar-width: none; }
+.thd-tabs::-webkit-scrollbar { display: none; }
+.thd-tab { appearance: none; border: 0; background: none; padding: 10px 16px; font: inherit; font-size: 13px; font-weight: 600; color: #6B7280; cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.thd-tab:hover { color: #111827; }
+.thd-tab.active { color: var(--pri-600, #2563EB); border-bottom-color: var(--pri-600, #2563EB); }
+.thd-tab .cnt { font-weight: 500; color: #9CA3AF; margin-left: 4px; font-variant-numeric: tabular-nums; }
+.thd-panel[hidden] { display: none; }
+
+/* 종합 배너 */
+.thd-banner { border: 1px solid #E5E7EB; border-radius: 12px; padding: 14px 18px; margin-bottom: 16px; background: #fff; display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.thd-banner.sev-Critical { border-color: #FECACA; background: var(--gcl-sev-critical-bg); }
+.thd-banner.sev-High { border-color: #FED7AA; background: var(--gcl-sev-high-bg); }
+.thd-banner.sev-Medium { border-color: #FDE68A; background: var(--gcl-sev-medium-bg); }
+.thd-banner.sev-Low { border-color: #BFDBFE; background: var(--gcl-sev-low-bg); }
+.thd-banner.ok { border-color: #BBF7D0; background: #F0FDF4; }
+.thd-banner-title { font-size: 15px; font-weight: 700; color: #111827; }
+.thd-banner-text { font-size: 13px; color: #374151; line-height: 1.55; margin-top: 3px; }
+.thd-banner-main { flex: 1 1 320px; min-width: 0; }
+
+/* 상태 배지·이력 */
+.thd-state { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 6px; border: 1px solid transparent; white-space: nowrap; font-family: var(--font-mono); }
+.thd-state.st-R { color: var(--thd-st-r); background: var(--thd-st-r-bg); border-color: #BBF7D0; }
+.thd-state.st-B { color: var(--thd-st-b); background: var(--thd-st-b-bg); border-color: #FECACA; }
+.thd-state.st-W { color: var(--thd-st-w); background: var(--thd-st-w-bg); border-color: #FDE68A; }
+.thd-state.st-T { color: var(--thd-st-t); background: var(--thd-st-t-bg); border-color: #FEF08A; }
+.thd-state.st-V { color: var(--thd-st-v); background: var(--thd-st-v-bg); border-color: #E2E8F0; }
+.thd-state.st-N, .thd-state.st-X, .thd-state.st-U { color: var(--thd-st-x); background: var(--thd-st-x-bg); border-color: #E5E7EB; }
+.thd-hist { display: inline-flex; gap: 2px; vertical-align: middle; }
+.thd-hist i { display: inline-block; width: 7px; height: 12px; border-radius: 2px; background: #E5E7EB; }
+.thd-hist i.st-R { background: var(--thd-st-r); } .thd-hist i.st-B { background: var(--thd-st-b); }
+.thd-hist i.st-W { background: var(--thd-st-w); } .thd-hist i.st-T { background: #EAB308; }
+.thd-hist i.st-V { background: var(--thd-st-v); } .thd-hist i.st-absent { background: transparent; outline: 1px dashed #D1D5DB; outline-offset: -1px; }
+.thd-hist i.cur { box-shadow: 0 0 0 1.5px #111827; }
+.thd-tag { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: #F3F4F6; color: #4B5563; border: 1px solid #E5E7EB; white-space: nowrap; }
+.thd-tag.idle { color: #6B7280; }
+.thd-tag.sys { color: #64748B; background: #F1F5F9; }
+.thd-tag.dl { color: #B91C1C; background: #FEF2F2; border-color: #FECACA; }
+.thd-tag.worker { color: #1D4ED8; background: #EFF6FF; border-color: #BFDBFE; }
+
+/* 표 공통(gcl-table 위에 얹는다) */
+.thd-table td.name { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: #111827; }
+.thd-table td.frame { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 12px; color: #374151; }
+.thd-table td.num, .thd-table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.thd-table tbody tr.clickable { cursor: pointer; }
+.thd-table tbody tr.clickable:hover td { background: #F9FAFB; }
+.thd-table tbody tr.expanded td { background: #EFF6FF; }
+.thd-table tr.thd-detail-row td { background: #F8FAFC; padding: 0; }
+.thd-link { appearance: none; border: 0; background: none; padding: 0; font: inherit; color: var(--pri-600, #2563EB); cursor: pointer; text-align: left; }
+.thd-link:hover { text-decoration: underline; }
+
+/* 스레드 상세·스택 */
+.thd-detail { padding: 12px 16px 14px; }
+.thd-detail-head { display: flex; gap: 8px 14px; align-items: center; flex-wrap: wrap; font-size: 12px; color: #4B5563; margin-bottom: 8px; }
+.thd-detail-head b { color: #111827; font-size: 13px; word-break: break-all; }
+.thd-snap-pick { display: inline-flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.thd-snap-btn { appearance: none; border: 1px solid #D1D5DB; background: #fff; border-radius: 6px; padding: 2px 8px; font: inherit; font-size: 11px; color: #374151; cursor: pointer; font-variant-numeric: tabular-nums; }
+.thd-snap-btn.active { background: #111827; color: #fff; border-color: #111827; }
+.thd-snap-btn:disabled { opacity: .35; cursor: default; }
+.thd-stack { margin: 0; padding: 10px 12px; background: #0F172A; color: #E2E8F0; border-radius: 8px; font-family: var(--font-mono); font-size: 12px; line-height: 1.6; overflow-x: auto; white-space: pre; max-height: 420px; }
+.thd-stack .fr-app { color: #F8FAFC; font-weight: 600; }
+.thd-stack .fr-lib { color: #94A3B8; }
+.thd-stack .op { color: #FBBF24; }
+.thd-stack .op.wait { color: #F87171; }
+.thd-stack .cut { color: #64748B; font-style: italic; }
+.thd-stack .none { color: #64748B; }
+.thd-stack-note { font-size: 11px; color: #6B7280; margin-top: 6px; }
+
+/* 교착 */
+.thd-dl { border: 1px solid #FECACA; background: var(--gcl-sev-critical-bg); border-radius: 10px; padding: 12px 16px; margin-bottom: 10px; }
+.thd-dl-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 14px; font-weight: 700; color: #991B1B; }
+.thd-dl-head .src { font-size: 11px; font-weight: 500; color: #6B7280; }
+.thd-chain { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.thd-chain li { background: #fff; border: 1px solid #FECACA; border-radius: 8px; padding: 8px 12px; font-size: 13px; color: #111827; line-height: 1.55; word-break: break-all; }
+.thd-chain .arrow { color: #B91C1C; font-weight: 700; margin: 0 4px; }
+.thd-chain .lock { font-family: var(--font-mono); font-size: 12px; color: #4B5563; }
+.thd-raw-toggle { margin-top: 8px; }
+
+/* 스택 묶음 */
+.thd-group { border: 1px solid #E5E7EB; border-radius: 10px; padding: 10px 14px; margin-bottom: 8px; background: #fff; }
+.thd-group-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; font-weight: 700; color: #111827; cursor: pointer; }
+.thd-group-head .names { font-weight: 400; font-size: 12px; color: #6B7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 200px; }
+.thd-group .thd-stack { margin-top: 8px; max-height: 260px; }
+.thd-chev { display: inline-block; transition: transform .15s ease; color: #9CA3AF; }
+.thd-group.expanded .thd-chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .thd-chev { transition: none; } }
+
+/* 파싱 진단 */
+.thd-diag-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+.thd-diag-item { border: 1px solid #E5E7EB; border-radius: 8px; padding: 8px 12px; background: #fff; }
+.thd-diag-item.warn { border-color: #FDE68A; background: #FFFBEB; }
+.thd-diag-k { font-size: 11px; color: #6B7280; }
+.thd-diag-v { font-size: 16px; font-weight: 700; color: #111827; font-variant-numeric: tabular-nums; margin-top: 2px; word-break: break-all; }
+.thd-diag-note { font-size: 12px; color: #6B7280; line-height: 1.6; margin: 10px 0 6px; }
+
+/* 스레드 표 도구줄 */
+.thd-tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; font-size: 12px; color: #4B5563; }
+.thd-tools .cd-input { width: 240px; max-width: 100%; }
+.thd-tools label { display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; }
+.thd-tools .right { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
+.thd-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
+.thd-chip { appearance: none; border: 1px solid #E5E7EB; background: #fff; border-radius: 999px; padding: 3px 10px; font: inherit; font-size: 12px; color: #374151; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.thd-chip .cnt { font-variant-numeric: tabular-nums; color: #9CA3AF; }
+.thd-chip.active { background: #111827; border-color: #111827; color: #fff; }
+.thd-chip.active .cnt { color: #D1D5DB; }
+
+/* 리포트 탭 */
+.thd-report-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.thd-report-bar .note { font-size: 12px; color: #6B7280; margin-right: auto; }
+.thd-report-frame { width: 100%; height: min(1100px, calc(100vh - 220px)); min-height: 520px; border: 1px solid #E5E7EB; border-radius: 10px; background: #F3F4F6; }
+.thd-seg { display: inline-flex; border: 1px solid #D1D5DB; border-radius: 8px; overflow: hidden; }
+.thd-seg button { appearance: none; border: 0; background: #fff; padding: 5px 12px; font: inherit; font-size: 12px; font-weight: 600; color: #4B5563; cursor: pointer; }
+.thd-seg button.active { background: #111827; color: #fff; }
+
+/* KPI 6장을 한 줄에(좁으면 3·2열로 접힌다) — gc-log 의 minmax(200px) 로는 6번째가 혼자 다음 줄로 떨어진다 */
+.thd-kpi-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+@media (max-width: 1280px) { .thd-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .thd-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* 차트 2단 */
+.thd-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 900px) { .thd-charts { grid-template-columns: 1fr; } }
+/* 오른쪽 칸: 평소엔 추이 카드 하나. 스냅샷이 1개면 추이 카드를 제목 한 줄로 줄이고 그 아래 AI 분석 카드를 둔다(2.7.1) */
+.thd-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.thd-side > .gcl-chart-card { flex: 1 1 auto; }
+.thd-trend-none { display: none; }
+.thd-trend-compact { flex: none !important; padding-bottom: 12px; }
+.thd-trend-compact .gcl-chart-title { margin-bottom: 0; }
+.thd-trend-compact .gcl-chart-box, .thd-trend-compact .thd-trend-note { display: none; }
+.thd-trend-compact .thd-trend-none { display: inline; }
+/* 왼쪽 상태 분포 카드는 오른쪽 칸 높이까지 늘리고 차트가 그만큼 채운다 — 아래 빈 공간을 남기지 않는다.
+   canvas 를 absolute 로 띄워 Chart.js 가 잰 크기가 다시 칸 높이를 밀어 올리는 되먹임을 막는다 */
+.thd-charts-notrend .thd-state-card { display: flex; flex-direction: column; }
+.thd-charts-notrend .thd-state-card .gcl-chart-box { flex: 1 1 auto; height: auto; min-height: 240px; }
+.thd-charts-notrend .thd-state-card .gcl-chart-box canvas { position: absolute; left: 0; top: 0; }
+.thd-ai-side { margin-bottom: 0 !important; min-width: 0; }
+/* 옆 칸에서는 상태 분포 차트와 높이를 크게 벌리지 않게 본문만 스크롤한다 — 좁은 화면(1단)에서는 풀어 준다 */
+.thd-ai-side .gcl-ai-body { max-height: 420px; overflow-y: auto; }
+@media (max-width: 900px) { .thd-ai-side .gcl-ai-body { max-height: none; overflow: visible; } }
+
+.thd-sub { font-size: 12px; color: #6B7280; margin: -4px 0 10px; line-height: 1.55; }
+.thd-more { font-size: 12px; color: #9CA3AF; margin-top: 6px; }
+
+@media (max-width: 760px) {
+    .thd-hide-sm { display: none; }
+    .thd-table td.name { max-width: 180px; }
+    .thd-table td.frame { max-width: 200px; }
+    .thd-tab { padding: 9px 12px; }
+    .thd-stack { font-size: 11px; }
+}
+
+/* 정렬 표시(목록 표·스레드 표 공통) — table-grid.js 가 .sort-active 와 ▲/▼ 글자를 바꾼다 */
+#thdTable th.sortable .sort-arrow, .thd-table th.sortable .sort-arrow { font-size: 9px; margin-left: 3px; opacity: .25; }
+#thdTable th.sortable.sort-active .sort-arrow, .thd-table th.sortable.sort-active .sort-arrow { opacity: 1; color: var(--pri-600, #2563EB); }
+#thdTable th.thd-num { text-align: right; }
+
+/* ── 2.7.1 힙 덤프 연계 · 이어 붙이기 ─────────────────────────── */
+.thd-src-badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #F5F3FF; color: #6D28D9; border: 1px solid #DDD6FE; white-space: nowrap; }
+/* 힙 점유 열 — 값이 하나라도 있을 때만(표에 thd-has-mem) */
+#thdThreadTable .thd-mem-col { display: none; }
+#thdThreadTable.thd-has-mem .thd-mem-col { display: table-cell; }
+.thd-heaplink .gcl-meta-v { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1D4ED8; text-decoration: none; }
+.thd-heaplink a.gcl-meta-v[href]:hover { text-decoration: underline; }
+.thd-heaplink .gcl-meta-v.empty { color: #9CA3AF; }
+.thd-heaplink-btn { width: auto; padding: 0 6px; font-size: 11px; }
+.modal-box.thd-modal-wide { max-width: 640px; width: calc(100vw - 32px); }
+.thd-cand-list { display: flex; flex-direction: column; gap: 6px; max-height: 52vh; overflow-y: auto; margin-top: 8px; }
+.thd-cand { display: flex; flex-direction: column; gap: 3px; text-align: left; width: 100%; padding: 9px 12px; border: 1px solid #E5E7EB; border-radius: 8px; background: #fff; cursor: pointer; font: inherit; color: inherit; }
+.thd-cand:hover, .thd-cand:focus-visible { background: #F9FAFB; border-color: #C7D2FE; }
+.thd-cand.scored { background: #F8FAFF; }
+.thd-cand.current { border-color: #93C5FD; background: #EFF6FF; }
+.thd-cand-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.thd-cand-name { font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; word-break: break-all; }
+.thd-cand-score { margin-left: auto; flex: none; min-width: 20px; height: 20px; border-radius: 10px; background: #DBEAFE; color: #1D4ED8; font-size: 11px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.thd-cand-sub { font-size: 11.5px; color: #6B7280; }
+.thd-cand-why { font-size: 11.5px; color: #15803D; }
+.thd-cand-why.none { color: #9CA3AF; }
+/* 목록 — 이어 붙이기 선택·묶음 표시 */
+.thd-group-badge { display: inline-block; margin-left: 6px; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 6px; background: #F5F3FF; color: #6D28D9; border: 1px solid #DDD6FE; white-space: nowrap; vertical-align: 1px; }
+.thd-member-note { font-size: 11px; color: #6B7280; margin-top: 2px; }
+.thd-member-note a { color: #6D28D9; }
+.thd-combine-bar { display: none; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; margin-bottom: 10px; border: 1px solid #DDD6FE; background: #F5F3FF; border-radius: 8px; font-size: 13px; color: #4C1D95; }
+.thd-combine-bar.show { display: flex; }
+.thd-combine-bar .spacer { margin-left: auto; }
+.thd-combine-list { margin: 8px 0 0; padding: 0; list-style: none; counter-reset: cmb; }
+.thd-combine-list li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 4px 8px; align-items: baseline; padding: 6px 0; border-top: 1px solid #F3F4F6; font-size: 12.5px; }
+.thd-combine-list li:first-child { border-top: 0; }
+.thd-combine-list li::before { counter-increment: cmb; content: counter(cmb); color: #9CA3AF; font-variant-numeric: tabular-nums; text-align: right; }
+.thd-combine-list .nm { font-family: var(--font-mono); word-break: break-all; }
+.thd-combine-list .meta { color: #6B7280; white-space: nowrap; font-size: 11.5px; }
+.thd-combine-list .note { grid-column: 2 / 4; font-size: 11.5px; color: #B45309; }
+.thd-combine-summary { font-size: 12.5px; color: #374151; margin-top: 8px; }
+.thd-combine-summary.warn { color: #B45309; }
+.thd-suggest-group { border: 1px solid #E5E7EB; border-radius: 8px; padding: 8px 12px; margin-top: 8px; }
+.thd-suggest-group label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-size: 12.5px; }
+.thd-suggest-group .why { font-size: 11.5px; color: #6B7280; margin: 2px 0 0 24px; }

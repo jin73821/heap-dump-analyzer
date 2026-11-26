@@ -1,0 +1,188 @@
+Thread 0xc1201000
+  at sun.misc.Unsafe.park(ZJ)V (Unsafe.java(Native Method))
+  at java.util.concurrent.locks.LockSupport.park(Ljava/lang/Object;)V (LockSupport.java:175)
+  at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await()V (AbstractQueuedSynchronizer.java:2039)
+  at jeus.util.pool.auto.LinkedBlockingQueue.take()Ljava/lang/Object; (LinkedBlockingQueue.java:450)
+  at jeus.util.pool.ThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (ThreadPoolExecutor.java:1418)
+  at jeus.servlet.engine.WebThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (WebThreadPoolExecutor.java:91)
+  at jeus.util.pool.ThreadPoolExecutor$Worker.run()V (ThreadPoolExecutor.java:1340)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201000, line=1
+
+Thread 0xc1201100
+  at sun.misc.Unsafe.park(ZJ)V (Unsafe.java(Native Method))
+  at java.util.concurrent.locks.LockSupport.park(Ljava/lang/Object;)V (LockSupport.java:175)
+  at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await()V (AbstractQueuedSynchronizer.java:2039)
+  at jeus.util.pool.auto.LinkedBlockingQueue.take()Ljava/lang/Object; (LinkedBlockingQueue.java:450)
+  at jeus.util.pool.ThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (ThreadPoolExecutor.java:1418)
+  at jeus.servlet.engine.WebThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (WebThreadPoolExecutor.java:91)
+  at jeus.util.pool.ThreadPoolExecutor$Worker.run()V (ThreadPoolExecutor.java:1340)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201100, line=1
+
+Thread 0xc1201200
+  at sun.misc.Unsafe.park(ZJ)V (Unsafe.java(Native Method))
+  at java.util.concurrent.locks.LockSupport.park(Ljava/lang/Object;)V (LockSupport.java:175)
+  at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await()V (AbstractQueuedSynchronizer.java:2039)
+  at jeus.util.pool.auto.LinkedBlockingQueue.take()Ljava/lang/Object; (LinkedBlockingQueue.java:450)
+  at jeus.util.pool.ThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (ThreadPoolExecutor.java:1418)
+  at jeus.servlet.engine.WebThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (WebThreadPoolExecutor.java:91)
+  at jeus.util.pool.ThreadPoolExecutor$Worker.run()V (ThreadPoolExecutor.java:1340)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201200, line=1
+
+Thread 0xc1201300
+  at sun.misc.Unsafe.park(ZJ)V (Unsafe.java(Native Method))
+  at java.util.concurrent.locks.LockSupport.park(Ljava/lang/Object;)V (LockSupport.java:175)
+  at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await()V (AbstractQueuedSynchronizer.java:2039)
+  at jeus.util.pool.auto.LinkedBlockingQueue.take()Ljava/lang/Object; (LinkedBlockingQueue.java:450)
+  at jeus.util.pool.ThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (ThreadPoolExecutor.java:1418)
+  at jeus.servlet.engine.WebThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (WebThreadPoolExecutor.java:91)
+  at jeus.util.pool.ThreadPoolExecutor$Worker.run()V (ThreadPoolExecutor.java:1340)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201300, line=1
+
+Thread 0xc1201400
+  at sun.misc.Unsafe.park(ZJ)V (Unsafe.java(Native Method))
+  at java.util.concurrent.locks.LockSupport.park(Ljava/lang/Object;)V (LockSupport.java:175)
+  at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await()V (AbstractQueuedSynchronizer.java:2039)
+  at jeus.util.pool.auto.LinkedBlockingQueue.take()Ljava/lang/Object; (LinkedBlockingQueue.java:450)
+  at jeus.util.pool.ThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (ThreadPoolExecutor.java:1418)
+  at jeus.servlet.engine.WebThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (WebThreadPoolExecutor.java:91)
+  at jeus.util.pool.ThreadPoolExecutor$Worker.run()V (ThreadPoolExecutor.java:1340)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201400, line=1
+
+Thread 0xc1201500
+  at sun.misc.Unsafe.park(ZJ)V (Unsafe.java(Native Method))
+  at java.util.concurrent.locks.LockSupport.park(Ljava/lang/Object;)V (LockSupport.java:175)
+  at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await()V (AbstractQueuedSynchronizer.java:2039)
+  at jeus.util.pool.auto.LinkedBlockingQueue.take()Ljava/lang/Object; (LinkedBlockingQueue.java:450)
+  at jeus.util.pool.ThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (ThreadPoolExecutor.java:1418)
+  at jeus.servlet.engine.WebThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (WebThreadPoolExecutor.java:91)
+  at jeus.util.pool.ThreadPoolExecutor$Worker.run()V (ThreadPoolExecutor.java:1340)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201500, line=1
+
+Thread 0xc1201600
+  at sun.misc.Unsafe.park(ZJ)V (Unsafe.java(Native Method))
+  at java.util.concurrent.locks.LockSupport.park(Ljava/lang/Object;)V (LockSupport.java:175)
+  at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await()V (AbstractQueuedSynchronizer.java:2039)
+  at jeus.util.pool.auto.LinkedBlockingQueue.take()Ljava/lang/Object; (LinkedBlockingQueue.java:450)
+  at jeus.util.pool.ThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (ThreadPoolExecutor.java:1418)
+  at jeus.servlet.engine.WebThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (WebThreadPoolExecutor.java:91)
+  at jeus.util.pool.ThreadPoolExecutor$Worker.run()V (ThreadPoolExecutor.java:1340)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201600, line=1
+
+Thread 0xc1201700
+  at sun.misc.Unsafe.park(ZJ)V (Unsafe.java(Native Method))
+  at java.util.concurrent.locks.LockSupport.park(Ljava/lang/Object;)V (LockSupport.java:175)
+  at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await()V (AbstractQueuedSynchronizer.java:2039)
+  at jeus.util.pool.auto.LinkedBlockingQueue.take()Ljava/lang/Object; (LinkedBlockingQueue.java:450)
+  at jeus.util.pool.ThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (ThreadPoolExecutor.java:1418)
+  at jeus.servlet.engine.WebThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (WebThreadPoolExecutor.java:91)
+  at jeus.util.pool.ThreadPoolExecutor$Worker.run()V (ThreadPoolExecutor.java:1340)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201700, line=1
+
+Thread 0xc1201800
+  at sun.misc.Unsafe.park(ZJ)V (Unsafe.java(Native Method))
+  at java.util.concurrent.locks.LockSupport.park(Ljava/lang/Object;)V (LockSupport.java:175)
+  at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await()V (AbstractQueuedSynchronizer.java:2039)
+  at jeus.util.pool.auto.LinkedBlockingQueue.take()Ljava/lang/Object; (LinkedBlockingQueue.java:450)
+  at jeus.util.pool.ThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (ThreadPoolExecutor.java:1418)
+  at jeus.servlet.engine.WebThreadPoolExecutor.getTask(Ljeus/util/pool/ThreadPoolExecutor$Worker;)Ljava/lang/Runnable; (WebThreadPoolExecutor.java:91)
+  at jeus.util.pool.ThreadPoolExecutor$Worker.run()V (ThreadPoolExecutor.java:1340)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201800, line=1
+
+Thread 0xc1201900
+  at java.net.SocketInputStream.socketRead0(Ljava/io/FileDescriptor;[BIII)I (SocketInputStream.java(Native Method))
+  at java.net.SocketInputStream.read([BIII)I (SocketInputStream.java:171)
+  at oracle.jdbc.driver.T4CMAREngine.unmarshalUB1()S (T4CMAREngine.java:1104)
+  at oracle.jdbc.driver.OraclePreparedStatement.executeQuery()Ljava/sql/ResultSet; (OraclePreparedStatement.java:3628)
+  at com.example.order.OrderDao.findAll()Ljava/util/List; (OrderDao.java:88)
+  at javax.servlet.http.HttpServlet.service(Ljavax/servlet/ServletRequest;Ljavax/servlet/ServletResponse;)V (HttpServlet.java:790)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201900, line=1
+
+Thread 0xc1201a00
+  at java.net.SocketInputStream.socketRead0(Ljava/io/FileDescriptor;[BIII)I (SocketInputStream.java(Native Method))
+  at java.net.SocketInputStream.read([BIII)I (SocketInputStream.java:171)
+  at oracle.jdbc.driver.T4CMAREngine.unmarshalUB1()S (T4CMAREngine.java:1104)
+  at oracle.jdbc.driver.OraclePreparedStatement.executeQuery()Ljava/sql/ResultSet; (OraclePreparedStatement.java:3628)
+  at com.example.order.OrderDao.findAll()Ljava/util/List; (OrderDao.java:88)
+  at javax.servlet.http.HttpServlet.service(Ljavax/servlet/ServletRequest;Ljavax/servlet/ServletResponse;)V (HttpServlet.java:790)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201a00, line=1
+
+Thread 0xc1201b00
+  at com.example.cache.LocalCache.get(Ljava/lang/String;)Ljava/lang/Object; (LocalCache.java:41)
+  at javax.servlet.http.HttpServlet.service(Ljavax/servlet/ServletRequest;Ljavax/servlet/ServletResponse;)V (HttpServlet.java:790)
+  at jeus.servlet.engine.WebThreadPoolExecutor$WebRequestWorker.run()V (WebThreadPoolExecutor.java:201)
+  at java.lang.Thread.run()V (Thread.java:750)
+
+  locals:
+    objectId=0xc1201b00, line=1
+
+Thread 0xc1400000
+  at java.lang.Thread.sleep(J)V (Thread.java(Native Method))
+  at com.example.Main.main([Ljava/lang/String;)V (Main.java:20)
+
+  locals:
+    objectId=0xc1400000, line=1
+
+Thread 0xc1400100
+  at java.lang.Object.wait(J)V (Object.java(Native Method))
+  at java.lang.Object.wait()V (Object.java:502)
+  at com.example.batch.Worker.run()V (Worker.java:33)
+
+  locals:
+    objectId=0xc1400100, line=1
+
+Thread 0xc1400200
+  at sun.net.www.http.KeepAliveCache.run()V (KeepAliveCache.java:172)
+
+  locals:
+    objectId=0xc1400200, line=1
+
+Thread 0xc1500000
+  at com.example.Orphan.run()V (Unknown Source)
+
+  locals:
+    objectId=0xc1500000, line=1
+

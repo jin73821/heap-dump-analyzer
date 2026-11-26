@@ -261,13 +261,24 @@ public class GcLogAnalyzerService {
         if (target.exists()) throw new IllegalStateException("대상 저장소에 같은 이름의 파일이 이미 있습니다: " + safe);
         targetDir.mkdirs();
         java.nio.file.Files.move(source.toPath(), target.toPath());
+        forgetMovedFile(safe, who);
+        logger.info("[GcLog] action=release file={} to={} by={}", safe, targetDir, who);
+    }
+
+    /**
+     * 파일이 <b>이미 다른 저장소로 옮겨진 뒤</b> 이쪽에 남은 기록·결과·AI 해석·묶음 참조를 지운다(2026-11-26).
+     * {@link #releaseFile} 의 뒷부분이며, 다른 저장소가 직접 편입해 간 경우(GC 로그 → 스레드 덤프 분류)에는 컨트롤러가 이것만 부른다.
+     * 분석 중 여부는 호출자가 이동 전에 확인한다.
+     */
+    public void forgetMovedFile(String safeFilename, String who) {
+        String safe = validateGcLogFilename(safeFilename);
         jobs.remove(safe);
         resultCache.remove(safe);
         detailRepository.deleteByFilename(safe);
         aiInsight.deleteAiInsight(gcInsightKey(safe));
         repository.findByFilename(safe).ifPresent(x -> { clearMemberLinks(x); repository.delete(x); });
         detachFromGroup(safe);
-        logger.info("[GcLog] action=release file={} to={} by={}", safe, targetDir, who);
+        logger.info("[GcLog] action=forget-moved file={} by={}", safe, who);
     }
 
     /**

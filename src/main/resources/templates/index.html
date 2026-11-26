@@ -674,7 +674,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.6.2 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.7.1 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -1383,6 +1383,19 @@ window.onUploadQueueDone = function() {
     var doneCore = items.filter(function(i) { return i.fileType === 'coredump' && i.status === 'done'; });
     var doneHeap = items.filter(function(i) { return i.fileType === 'heapdump' && i.status === 'done'; });
     var doneGc = items.filter(function(i) { return i.fileType === 'gclog' && i.status === 'done'; });
+    var doneTd = items.filter(function(i) { return i.fileType === 'threaddump' && i.status === 'done'; });
+    // 스레드 덤프를 여러 개 올렸으면 목록 화면이 열릴 때 '이어 붙여 분석' 을 제안한다(2.7.1 — 자동으로 묶지 않는다)
+    if (doneTd.length > 1) {
+        try { sessionStorage.setItem('thdSuggest', JSON.stringify(doneTd.map(function(i) { return i.filename; }))); }
+        catch (e) { if (window.Common) Common.logIgnored('[Dashboard] 이어 붙이기 제안 저장', e); }
+    }
+    // 스레드 덤프는 대시보드 목록에 나오지 않는다 — 그것만 올렸으면 전용 화면으로 보낸다(올린 파일이 사라져 보이지 않게)
+    if (doneTd.length > 0 && doneHeap.length === 0 && doneCore.length === 0 && doneGc.length === 0) {
+        var turl = '/thread-dump';
+        if (doneTd.length === 1) turl += '?file=' + encodeURIComponent(doneTd[0].filename);
+        window.location.href = turl;
+        return;
+    }
     if (doneCore.length > 0 && doneHeap.length === 0 && doneGc.length === 0) {
         var url = '/core-dump';
         if (doneCore.length === 1) url += '?file=' + encodeURIComponent(doneCore[0].filename);

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko" th:with="hm=${heapMode == true}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="_csrf" th:content="${_csrf.token}">
+    <meta name="_csrf_header" th:content="${_csrf.headerName}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <title th:text="(${hm} ? '힙 덤프 스레드 분석 - ' : '스레드 덤프 결과 - ') + ${filename}">스레드 덤프 결과</title>
+    <link rel="stylesheet" th:href="@{/css/common.css?v=2026-09-20}">
+    <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-20}">
+    <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-11-25}">
+    <link rel="stylesheet" th:href="@{/css/thread-dump.css?v=2026-11-26c}">
+    <script th:src="@{/js/lib/chart.umd.min.js}"></script>
+</head>
+<body>
+
+<div th:replace="~{fragments/banner :: banner}"></div>
+
+<div class="cd-topbar">
+    <div class="topbar-brand">
+        <button class="gb-menu-btn" id="menuBtn" onclick="toggleMobileBanner()" aria-label="Menu"><span></span><span></span><span></span></button>
+        <span class="topbar-title" th:text="${hm} ? '힙 덤프 스레드 분석' : '스레드 덤프 분석 결과'">스레드 덤프 분석 결과</span>
+    </div>
+    <nav class="cd-steps" aria-label="분석 단계" th:unless="${hm}">
+        <span class="cd-step"><span class="cd-step-dot"></span><span class="cd-step-label">파일</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step" th:classappend="${status == 'ANALYZING'} ? 'is-current'"><span class="cd-step-dot"></span><span class="cd-step-label">분석</span></span>
+        <span class="cd-step-sep">›</span>
+        <span class="cd-step" th:classappend="${status == 'SUCCESS'} ? 'is-current'"><span class="cd-step-dot"></span><span class="cd-step-label">결과</span></span>
+    </nav>
+    <div class="topbar-right">
+        <a th:if="${hm}" th:href="@{/analyze/{fn}(fn=${filename})}" class="topbar-btn">힙 덤프 결과로</a>
+        <a href="/thread-dump" class="topbar-btn">스레드 덤프 목록</a>
+    </div>
+</div>
+
+<div class="gcl-page"><div class="gcl-page-inner">
+
+    <!-- 헤더 카드: 파일·상태·메타·액션 -->
+    <section class="gcl-headcard" aria-labelledby="thdFileTitle">
+        <div class="gcl-head">
+            <div class="gcl-head-main">
+                <div class="gcl-title-row">
+                    <span class="gcl-title-icon" aria-hidden="true">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="4" x2="5" y2="20"></line><line x1="12" y1="4" x2="12" y2="20"></line><line x1="19" y1="4" x2="19" y2="20"></line><circle cx="5" cy="9" r="1.6"></circle><circle cx="12" cy="15" r="1.6"></circle><circle cx="19" cy="7" r="1.6"></circle></svg>
+                    </span>
+                    <h1 class="gcl-file" id="thdFileTitle" th:text="${filename}" th:title="${filename}">threaddump.txt</h1>
+                    <span class="thd-src-badge" th:if="${hm}" title="스레드 덤프가 아니라 힙 덤프에 남은 스레드 정보로 분석했습니다">힙 덤프에서 추출</span>
+                    <span class="thd-src-badge" th:if="${entity != null and entity.combined}" th:text="'이어 붙임 ' + ${entity.memberCount} + '개'">이어 붙임 3개</span>
+                    <span class="status-badge" th:unless="${hm}"
+                          th:classappend="${status == 'SUCCESS'} ? 'status-success' : (${status == 'ERROR'} ? 'status-error' : (${status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
+                          th:text="${status == 'SUCCESS'} ? '완료' : (${status == 'ERROR'} ? '실패' : (${status == 'ANALYZING'} ? '분석 중' : (${status == 'MISSING'} ? '파일 없음' : '미분석')))">완료</span>
+                </div>
+                <div class="gcl-meta" th:if="${entity != null}">
+                    <span class="gcl-meta-item" title="덤프를 받은 서버 — 리포트 머리말에 표시됩니다"><span class="gcl-meta-k">서버</span><span class="gcl-meta-v" id="thdServerValue"
+                          th:classappend="${entity.serverName == null} ? 'empty'"
+                          th:text="${entity.serverName != null} ? ${entity.serverName} : '미지정'">was01</span><button type="button" class="gcl-meta-edit"
+                          onclick="thdOpenServerEdit()" title="서버 이름 편집" aria-label="서버 이름 편집">&#9998;</button></span>
+                    <span class="gcl-meta-item" th:if="${entity.fileSize != null}"><span class="gcl-meta-k">크기</span><span class="gcl-meta-v" th:text="${entity.formattedSize}">52.0 KB</span></span>
+                    <span class="gcl-meta-item" th:if="${entity.jdkMajor != null}"><span class="gcl-meta-k">JDK</span><span class="gcl-meta-v" th:text="${entity.jdkMajor}">8</span></span>
+                    <span class="gcl-meta-item" th:if="${entity.uploadedBy != null}"><span class="gcl-meta-k">등록</span><span class="gcl-meta-v" th:text="${entity.uploadedBy}">admin</span></span>
+                    <span class="gcl-meta-item" th:if="${entity.analyzedAt != null}"><span class="gcl-meta-k">분석</span><span class="gcl-meta-v" th:text="${#temporals.format(entity.analyzedAt, 'yyyy-MM-dd HH:mm')}">2026-11-26 14:03</span></span>
+                    <span class="gcl-meta-item" th:if="${entity.analysisTimeMs != null and status == 'SUCCESS'}"><span class="gcl-meta-k">소요</span><span class="gcl-meta-v" th:text="${entity.analysisTimeMs} + 'ms'">120ms</span></span>
+                    <span class="gcl-meta-item" th:if="${entity.partOf != null}" title="이 파일은 이어 붙인 묶음의 구성 파일입니다. 결과는 대표 파일에 있습니다"><span class="gcl-meta-k">묶음</span><a class="gcl-meta-v" th:href="@{/thread-dump/analyze/{fn}(fn=${entity.partOf})}" th:text="${entity.partOf}">rep.txt</a></span>
+                    <span class="gcl-meta-item thd-heaplink" id="thdHeapLinkChip" style="display:none" title="같은 장애 시점의 힙 덤프를 연결하면 스레드마다 힙 점유가 붙습니다(자동으로 연결하지 않습니다)"><span class="gcl-meta-k">힙 덤프</span><a class="gcl-meta-v empty" id="thdHeapLinkValue">연결 안 됨</a><button type="button" class="gcl-meta-edit thd-heaplink-btn"
+                          id="thdHeapLinkEdit" onclick="thdOpenHeapLink()" aria-label="힙 덤프 연결">연결</button></span>
+                </div>
+                <div class="gcl-meta" th:if="${heapEntity != null}">
+                    <span class="gcl-meta-item" th:if="${heapEntity.serverName != null}"><span class="gcl-meta-k">서버</span><span class="gcl-meta-v" th:text="${heapEntity.serverName}">was01</span></span>
+                    <span class="gcl-meta-item" th:if="${heapEntity.dumpCreationTime != null}"><span class="gcl-meta-k">덤프 시각</span><span class="gcl-meta-v" th:text="${heapEntity.dumpCreationTime}">2026-11-26 10:00:00</span></span>
+                    <span class="gcl-meta-item" th:if="${heapUsedText != null}"><span class="gcl-meta-k">사용 힙</span><span class="gcl-meta-v" th:text="${heapUsedText}">512 MB</span></span>
+                    <span class="gcl-meta-item" th:if="${heapEntity.suspectCount != null}"><span class="gcl-meta-k">Leak Suspects</span><span class="gcl-meta-v" th:text="${heapEntity.suspectCount} + '건'">2건</span></span>
+                </div>
+            </div>
+            <div class="gcl-head-actions">
+                <button type="button" class="btn btn-sm btn-soft" id="thdBtnAi" onclick="thdRunAi()" th:disabled="${status != 'SUCCESS'}">AI 분석</button>
+                <th:block th:unless="${hm}">
+                <button type="button" class="btn btn-sm btn-ghost" id="thdBtnReanalyze" onclick="thdOpenReanalyze()" th:disabled="${status == 'ANALYZING' or !fileExists}">재분석</button>
+                <button type="button" class="btn btn-sm btn-ghost" onclick="thdDownloadOriginal()" th:disabled="${!fileExists}">원본 다운로드</button>
+                <button type="button" class="btn btn-sm btn-soft soft-danger" onclick="thdOpenDelete()">삭제</button>
+                </th:block>
+            </div>
+        </div>
+    </section>
+
+    <!-- 분석 중 / 미분석 -->
+    <div class="gcl-progress" id="thdProgress" th:style="${status == 'SUCCESS' or status == 'ERROR' or hm} ? 'display:none' : ''">
+        <div class="gcl-progress-title">
+            <span class="gcl-spinner" id="thdSpinner" th:style="${status == 'ANALYZING'} ? '' : 'display:none'"></span>
+            <span id="thdProgressTitle"
+                  th:text="${status == 'ANALYZING'} ? '스레드 덤프를 분석하는 중입니다'
+                         : (${status == 'MISSING'} ? '파일이 없습니다' : '스레드 덤프 분석을 시작합니다')">분석 중</span>
+        </div>
+        <div class="gcl-progress-track"><div class="gcl-progress-fill" id="thdProgressFill"></div></div>
+        <div class="gcl-progress-meta">
+            <span id="thdProgressPct">0%</span>
+            <span id="thdProgressLines"></span>
+            <span id="thdProgressSnaps"></span>
+            <span id="thdProgressPhase"></span>
+        </div>
+        <div class="gcl-progress-actions">
+            <button type="button" class="btn btn-sm btn-ghost" id="thdCancelBtn" onclick="thdCancel()" th:style="${status == 'ANALYZING'} ? '' : 'display:none'">취소</button>
+        </div>
+    </div>
+
+    <!-- 실패 — 코드별 안내는 JS(thdErrorHint)가 채운다 -->
+    <div class="gcl-error" id="thdError" th:style="${status == 'ERROR'} ? '' : 'display:none'">
+        <div class="gcl-error-title" th:text="${hm} ? '스레드 정보를 만들지 못했습니다' : '분석 실패'">분석 실패</div>
+        <div class="gcl-error-msg" id="thdErrorMsg" th:text="${entity != null ? entity.errorMessage : ''}"></div>
+        <div class="thd-sub" id="thdErrorHint" style="margin:8px 0 0"></div>
+        <div class="gcl-error-actions" th:if="${fileExists and !hm}">
+            <button type="button" class="btn btn-sm btn-primary" id="thdRetryBtn" onclick="thdOpenReanalyze()">다시 분석</button>
+            <span class="gcl-error-hint">위 오류는 마지막 분석 기록입니다. 파일을 바꿨거나 원인을 고쳤다면 다시 분석하세요.</span>
+        </div>
+    </div>
+
+    <!-- 결과 본문 — JS 가 /api/thread-dump/{fn}/result 로 받아 그린다 -->
+    <div id="thdResult" style="display:none">
+
+        <div class="thd-banner" id="thdBanner" role="status"></div>
+
+        <div class="thd-tabs" role="tablist" aria-label="결과 구분">
+            <button type="button" class="thd-tab active" role="tab" data-tab="summary" aria-selected="true" onclick="thdTab('summary')">요약</button>
+            <button type="button" class="thd-tab" role="tab" data-tab="locks" aria-selected="false" onclick="thdTab('locks')">락·정체<span class="cnt" id="thdTabLocksCnt"></span></button>
+            <button type="button" class="thd-tab" role="tab" data-tab="threads" aria-selected="false" onclick="thdTab('threads')">스레드<span class="cnt" id="thdTabThreadsCnt"></span></button>
+            <button type="button" class="thd-tab" role="tab" data-tab="report" aria-selected="false" onclick="thdTab('report')">리포트</button>
+        </div>
+
+        <!-- ── 요약 ── -->
+        <div class="thd-panel" id="thdPanel-summary" role="tabpanel">
+            <div class="gcl-kpi-grid thd-kpi-grid" id="thdKpi"></div>
+
+            <!-- 스냅샷이 1개면 추이 카드는 제목 한 줄로 줄고 #thdAiCard 가 #thdSide 로 옮겨 온다(thread-dump-analyze.js placeAiCard) -->
+            <div class="thd-charts" id="thdCharts">
+                <div class="gcl-chart-card thd-state-card">
+                    <div class="gcl-chart-title"><span>스레드 상태 분포</span> <span class="gcl-chart-note" id="thdStateNote"></span></div>
+                    <div class="gcl-chart-box"><canvas id="thdStateChart"></canvas></div>
+                </div>
+                <div class="thd-side" id="thdSide">
+                    <div class="gcl-chart-card" id="thdTrendCard">
+                        <div class="gcl-chart-title"><span>스냅샷별 추이</span> <span class="gcl-chart-note thd-trend-note" id="thdTrendNote">스냅샷마다 상태별 스레드 수</span><span class="gcl-chart-note thd-trend-none">스냅샷이 1개라 추이가 없습니다</span></div>
+                        <div class="gcl-chart-box"><canvas id="thdTrendChart"></canvas><div class="gcl-empty" id="thdTrendEmpty" style="display:none">스냅샷이 1개라 추이를 그릴 수 없습니다.</div></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="content-card">
+                <div class="content-card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                    소견
+                    <span class="title-count" id="thdFindingsCount"></span>
+                </div>
+                <div class="gcl-findings" id="thdFindings"></div>
+            </div>
+
+            <div class="content-card" id="thdMemCard" style="display:none">
+                <div class="content-card-title">힙 점유가 큰 스레드</div>
+                <div class="thd-sub" id="thdMemNote"></div>
+                <div class="gcl-table-wrap"><table class="gcl-table thd-table">
+                    <thead><tr><th>스레드</th><th>상태</th><th class="num">Retained</th><th class="num thd-hide-sm">지역 변수 최대</th><th>위치</th></tr></thead>
+                    <tbody id="thdMemBody"></tbody>
+                </table></div>
+            </div>
+
+            <div class="content-card" id="thdMembersCard" style="display:none">
+                <div class="content-card-title">이어 붙인 구성 파일 <span class="title-count" id="thdMembersCount"></span>
+                    <span class="card-actions" th:unless="${hm}"><button type="button" class="btn btn-sm btn-ghost" onclick="thdOpenUngroup()">묶음 해제</button></span>
+                </div>
+                <div class="thd-sub">덤프 시각이 모두 있으면 시각순, 아니면 고른 순서로 이어 붙였습니다. 스냅샷 비교는 파일 경계를 넘어 이어집니다(JVM 이 재기동됐으면 끊습니다).</div>
+                <div class="gcl-table-wrap"><table class="gcl-table thd-table">
+                    <thead><tr><th class="num">#</th><th>파일</th><th class="num">스냅샷</th><th>상태</th></tr></thead>
+                    <tbody id="thdMembersBody"></tbody>
+                </table></div>
+            </div>
+
+            <div id="thdAiHome" hidden></div>
+            <div class="content-card" id="thdAiCard">
+                <div class="content-card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"></path><rect x="4" y="12" width="16" height="8" rx="2"></rect><path d="M2 14h2"></path><path d="M20 14h2"></path><path d="M15 13v2"></path><path d="M9 13v2"></path></svg>
+                    AI 분석
+                    <span class="card-actions">
+                        <button type="button" class="btn btn-sm btn-primary" id="thdAiRunBtn" onclick="thdRunAi()">
+                            <span id="thdAiRunLabel">분석</span>
+                        </button>
+                    </span>
+                </div>
+                <div class="gcl-ai-body" id="thdAiBody"></div>
+            </div>
+
+            <div class="content-card">
+                <div class="content-card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                    파싱 진단
+                    <span class="title-count" id="thdDiagCount"></span>
+                </div>
+                <div class="thd-sub">입력이 지저분해도 분석을 멈추지 않고 읽힌 만큼으로 결과를 만듭니다. 그 과정에서 건너뛰거나 고친 내역입니다.</div>
+                <div class="thd-diag-grid" id="thdDiag"></div>
+                <div id="thdDiagExtra"></div>
+            </div>
+        </div>
+
+        <!-- ── 락·정체 ── -->
+        <div class="thd-panel" id="thdPanel-locks" role="tabpanel" hidden>
+            <div class="content-card" id="thdDeadlockCard">
+                <div class="content-card-title">교착 (Deadlock) <span class="title-count" id="thdDeadlockCount"></span></div>
+                <div id="thdDeadlocks"></div>
+            </div>
+            <div class="content-card">
+                <div class="content-card-title">락 경합 <span class="title-count" id="thdLockCount"></span></div>
+                <div class="thd-sub" id="thdLockNote"></div>
+                <div class="gcl-table-wrap"><table class="gcl-table thd-table">
+                    <thead><tr><th>락</th><th>종류</th><th class="num">대기</th><th>소유 스레드</th><th>소유 스레드의 현재 위치</th><th class="thd-hide-sm">사슬의 끝</th></tr></thead>
+                    <tbody id="thdLockBody"></tbody>
+                </table></div>
+            </div>
+            <div class="content-card">
+                <div class="content-card-title">같은 스택에 머문 스레드 <span class="title-count" id="thdStuckCount"></span></div>
+                <div class="thd-sub">연속한 스냅샷에서 스택이 바뀌지 않은 스레드입니다. 유휴 스레드·수신 대기·풀 밖 스레드의 평범한 대기는 넣지 않았습니다.</div>
+                <div class="gcl-table-wrap"><table class="gcl-table thd-table">
+                    <thead><tr><th>스레드</th><th>분류</th><th class="num">스냅샷</th><th class="num thd-hide-sm">지속</th><th>머문 위치</th><th class="num thd-hide-sm">CPU 증가</th></tr></thead>
+                    <tbody id="thdStuckBody"></tbody>
+                </table></div>
+                <div class="thd-more" id="thdStuckMore"></div>
+            </div>
+            <div class="content-card" id="thdCpuCard">
+                <div class="content-card-title">CPU 사용 상위 <span class="title-count" id="thdCpuCount"></span></div>
+                <div class="thd-sub">스냅샷 사이에 늘어난 누적 CPU 시간입니다(JDK 11 이상의 덤프에만 값이 있습니다). 100% = 코어 하나를 계속 쓴 것.</div>
+                <div class="gcl-table-wrap"><table class="gcl-table thd-table">
+                    <thead><tr><th>스레드</th><th class="num">CPU 증가</th><th class="num">코어 대비</th><th class="num">구간</th><th>위치</th></tr></thead>
+                    <tbody id="thdCpuBody"></tbody>
+                </table></div>
+            </div>
+        </div>
+
+        <!-- ── 스레드 ── -->
+        <div class="thd-panel" id="thdPanel-threads" role="tabpanel" hidden>
+            <div class="content-card">
+                <div class="content-card-title">스레드 <span class="title-count" id="thdThreadCount"></span></div>
+                <div class="thd-chips" id="thdStateChips" role="group" aria-label="상태 필터"></div>
+                <div class="thd-tools">
+                    <input type="text" id="thdThreadSearch" class="cd-input" placeholder="이름·프레임 검색…" autocomplete="off">
+                    <label>스냅샷 <select id="thdSnapSelect" class="cd-select" aria-label="스냅샷 선택"></select></label>
+                    <label>풀 <select id="thdPoolSelect" class="cd-select" aria-label="풀 선택"><option value="">전체</option></select></label>
+                    <label><input type="checkbox" id="thdHideIdle"> 유휴 숨김</label>
+                    <label><input type="checkbox" id="thdHideSys" checked> JVM 내부 숨김</label>
+                    <span class="right">행 표시
+                        <select id="thdThreadPageSize" class="cd-select" onchange="thdThreadGrid.onPageSizeChange()">
+                            <option value="25">25</option><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option>
+                        </select>
+                    </span>
+                </div>
+                <div class="gcl-table-wrap">
+                    <table class="gcl-table thd-table" id="thdThreadTable">
+                        <thead><tr>
+                            <th class="sortable" data-sort-key="name" data-sort-type="str" onclick="thdThreadGrid.onHeaderSort(this)">이름 <span class="sort-arrow">▲</span></th>
+                            <th class="sortable" data-sort-key="state" data-sort-type="str" onclick="thdThreadGrid.onHeaderSort(this)">상태 <span class="sort-arrow">▲</span></th>
+                            <th class="thd-hide-sm">스냅샷별 상태</th>
+                            <th class="sortable" data-sort-key="top" data-sort-type="str" onclick="thdThreadGrid.onHeaderSort(this)">위치 <span class="sort-arrow">▲</span></th>
+                            <th class="num thd-hide-sm sortable" data-sort-key="depth" data-sort-type="num" onclick="thdThreadGrid.onHeaderSort(this)">깊이 <span class="sort-arrow">▲</span></th>
+                            <th class="num thd-hide-sm sortable" data-sort-key="cpu" data-sort-type="num" onclick="thdThreadGrid.onHeaderSort(this)">CPU ms <span class="sort-arrow">▲</span></th>
+                            <th class="num thd-mem-col sortable" data-sort-key="mem" data-sort-type="num" onclick="thdThreadGrid.onHeaderSort(this)" title="힙 덤프의 스레드별 Retained Heap">힙 점유 <span class="sort-arrow">▲</span></th>
+                        </tr></thead>
+                        <tbody id="thdThreadBody"></tbody>
+                    </table>
+                    <div id="thdThreadNoMatch" class="gcl-empty" style="display:none">조건에 맞는 스레드가 없습니다.</div>
+                </div>
+                <div class="pagination-bar" id="thdThreadPg"><div id="thdThreadPgList" style="display:flex;gap:4px;flex-wrap:wrap"></div><span class="pg-info" id="thdThreadPgInfo"></span></div>
+                <div class="thd-more" id="thdThreadTrimNote"></div>
+            </div>
+
+            <div class="content-card">
+                <div class="content-card-title">같은 스택을 가진 스레드 묶음 <span class="title-count" id="thdGroupCount"></span></div>
+                <div class="thd-sub">스레드 여러 개가 같은 곳에 모여 있으면 그 지점이 병목일 가능성이 큽니다. 제목을 누르면 스택이 펼쳐집니다.</div>
+                <div id="thdGroups"></div>
+            </div>
+
+            <div class="content-card">
+                <div class="content-card-title">스레드 풀 <span class="title-count" id="thdPoolCount"></span></div>
+                <div class="thd-sub">이름의 숫자를 # 로 바꿔 묶었습니다. '요청 처리' 는 이름이나 서블릿 실행 여부로 확인된 풀입니다.</div>
+                <div class="gcl-table-wrap"><table class="gcl-table thd-table">
+                    <thead><tr><th>이름 줄기</th><th>용도</th><th class="num">크기</th><th class="num">유휴</th><th class="num">작업 중</th><th class="num thd-hide-sm">스냅샷별 크기</th></tr></thead>
+                    <tbody id="thdPoolBody"></tbody>
+                </table></div>
+            </div>
+
+            <div class="content-card">
+                <div class="content-card-title">원문 앞부분</div>
+                <pre class="gcl-pre" id="thdRaw"></pre>
+            </div>
+        </div>
+
+        <!-- ── 리포트 ── -->
+        <div class="thd-panel" id="thdPanel-report" role="tabpanel" hidden>
+            <div class="content-card">
+                <div class="content-card-title">분석 리포트</div>
+                <div class="thd-report-bar">
+                    <span class="note" id="thdReportNote">요약 리포트입니다. 스레드 전체 목록은 '스레드' 탭에서 봅니다.</span>
+                    <div class="thd-seg" role="group" aria-label="미리보기 형식">
+                        <button type="button" id="thdReportHtmlBtn" class="active" onclick="thdReportMode('html')">HTML</button>
+                        <button type="button" id="thdReportPdfBtn" onclick="thdReportMode('pdf')">PDF</button>
+                    </div>
+                    <a class="btn btn-primary btn-sm" id="thdPdfDownload" download
+                       th:href="${hm} ? @{/thread-dump/heap/{fn}/print-pdf(fn=${filename}, mode='download')} : @{/thread-dump/analyze/{fn}/print-pdf(fn=${filename}, mode='download')}">&#8595; PDF 다운로드</a>
+                </div>
+                <iframe class="thd-report-frame" id="thdReportFrame" referrerpolicy="no-referrer" title="분석 리포트 미리보기"></iframe>
+            </div>
+        </div>
+    </div>
+</div></div>
+
+<!-- 재분석 확인 -->
+<div id="thdReanalyzeModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="thdReanalyzeTitle" onclick="if(event.target===this)thdCloseReanalyze()">
+    <div class="modal-box">
+        <div class="modal-title" id="thdReanalyzeTitle">스레드 덤프 재분석</div>
+        <div class="modal-body">
+            <p class="gcl-ai-confirm-desc" id="thdReanalyzeDesc">이 스레드 덤프를 처음부터 다시 분석합니다.</p>
+            <span class="modal-filename" th:text="${filename}"></span>
+            <ul class="gcl-ai-confirm-list">
+                <li id="thdReanalyzeReplace">기존 분석 결과가 <b>새 결과로 대체</b>됩니다.</li>
+                <li id="thdReanalyzeAi" style="display:none">저장된 <b>AI 분석 결과는 지워집니다</b>(새 결과와 맞지 않으므로).</li>
+            </ul>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="thdCloseReanalyze()">취소</button>
+            <button type="button" class="mbtn-save" id="thdReanalyzeBtn" onclick="thdConfirmReanalyze()">재분석</button>
+        </div>
+    </div>
+</div>
+
+<!-- AI 분석 확인 -->
+<div id="thdAiModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="thdAiTitle" onclick="if(event.target===this)thdCloseAi()">
+    <div class="modal-box">
+        <div class="modal-title" id="thdAiTitle">AI 분석 시작</div>
+        <div class="modal-body">
+            <p class="gcl-ai-confirm-desc">LLM 이 소견·교착 사슬·락 경합·정체 스레드의 스택을 종합해 근본 원인과 조치를 제시합니다.</p>
+            <span class="modal-filename" th:text="${filename}"></span>
+            <ul class="gcl-ai-confirm-list">
+                <li>외부 LLM API 를 호출하므로 <b>API 비용이 발생</b>할 수 있습니다.</li>
+                <li>분석 요약과 <b>스택의 클래스·메서드 이름이 LLM 으로 전송</b>됩니다. 덤프 원문 전체는 보내지 않습니다.</li>
+                <li>모델에 따라 <b>15~40초</b> 정도 걸립니다.</li>
+                <li id="thdAiReplace" style="display:none">기존 AI 분석 결과가 <b>새 결과로 대체</b>됩니다.</li>
+            </ul>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="thdCloseAi()">취소</button>
+            <button type="button" class="mbtn-save" id="thdAiConfirmBtn" onclick="thdConfirmAi()">분석 시작</button>
+        </div>
+    </div>
+</div>
+
+<!-- 서버 이름 편집 -->
+<div id="thdServerModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="thdServerTitle" onclick="if(event.target===this)thdCloseServerEdit()">
+    <div class="modal-box">
+        <div class="modal-title" id="thdServerTitle">서버 이름</div>
+        <div class="modal-body">
+            <input type="text" id="thdServerInput" class="cd-input" style="width:100%" maxlength="100" placeholder="예: was01" autocomplete="off">
+            <div class="thd-upload-hint">덤프를 받은 서버. 비워 두면 지웁니다.</div>
+            <div class="modal-err" id="thdServerErr"></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="thdCloseServerEdit()">취소</button>
+            <button type="button" class="mbtn-save" id="thdServerSaveBtn" onclick="thdSaveServer()">저장</button>
+        </div>
+    </div>
+</div>
+
+<!-- 삭제 확인 -->
+<div id="thdDeleteModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="thdDeleteTitle" onclick="if(event.target===this)thdCloseDelete()">
+    <div class="modal-box">
+        <div class="modal-title" id="thdDeleteTitle">스레드 덤프 삭제</div>
+        <div class="modal-body">
+            <span class="modal-filename" th:text="${filename}"></span>
+            <div class="modal-check-row" th:if="${fileExists}">
+                <input type="checkbox" id="thdDeleteFileChk" checked>
+                <div>
+                    <label class="modal-check-label" for="thdDeleteFileChk">원본 파일도 삭제</label>
+                    <div class="modal-check-desc">체크 해제 시 분석 결과만 지우고 원본 파일은 보존합니다(미분석 상태로 돌아갑니다).</div>
+                </div>
+            </div>
+            <div class="modal-err" id="thdDeleteErr"></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="thdCloseDelete()">취소</button>
+            <button type="button" class="mbtn-del" id="thdDeleteBtn" onclick="thdConfirmDelete()">삭제</button>
+        </div>
+    </div>
+</div>
+
+<!-- 힙 덤프 연결 (2.7.1, 수동) -->
+<div id="thdHeapLinkModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="thdHeapLinkTitle" onclick="if(event.target===this)thdCloseHeapLink()">
+    <div class="modal-box thd-modal-wide">
+        <div class="modal-title" id="thdHeapLinkTitle">힙 덤프 연결</div>
+        <div class="modal-body">
+            <p class="gcl-ai-confirm-desc">같은 장애 시점에 받은 힙 덤프를 고르세요. 같은 서버·가까운 덤프 시각·스레드 이름 일치를 근거로 위에 올렸을 뿐, 자동으로 연결하지 않습니다.</p>
+            <div class="thd-cand-list" id="thdHeapCandList"></div>
+            <div class="modal-err" id="thdHeapLinkErr"></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" id="thdHeapUnlinkBtn" style="display:none" onclick="thdUnlinkHeap()">연결 끊기</button>
+            <button type="button" class="mbtn-cancel" onclick="thdCloseHeapLink()">닫기</button>
+        </div>
+    </div>
+</div>
+
+<!-- 묶음 해제 -->
+<div id="thdUngroupModal" class="modal-ov gcl-modal" role="dialog" aria-modal="true" aria-labelledby="thdUngroupTitle" onclick="if(event.target===this)thdCloseUngroup()">
+    <div class="modal-box">
+        <div class="modal-title" id="thdUngroupTitle">묶음 해제</div>
+        <div class="modal-body">
+            <span class="modal-filename" th:text="${filename}"></span>
+            <ul class="gcl-ai-confirm-list">
+                <li>구성 파일은 지워지지 않고 <b>각자 단독 파일</b>로 돌아갑니다.</li>
+                <li>이어 붙여 만든 <b>분석 결과와 AI 해석은 지워집니다</b>(이 파일을 다시 열면 단독으로 분석합니다).</li>
+            </ul>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" onclick="thdCloseUngroup()">취소</button>
+            <button type="button" class="mbtn-del" id="thdUngroupBtn" onclick="thdConfirmUngroup()">해제</button>
+        </div>
+    </div>
+</div>
+
+<div class="cd-toast-wrap" id="cdToastWrap"></div>
+
+<script th:inline="javascript">
+    var THD_FILENAME = /*[[${filename}]]*/ '';
+    var THD_STATUS = /*[[${status}]]*/ 'NOT_ANALYZED';
+    var THD_FILE_EXISTS = /*[[${fileExists}]]*/ false;
+    var THD_LLM_ENABLED = /*[[${llmEnabled}]]*/ false;
+    var THD_ERROR_CODE = /*[[${entity != null ? entity.errorCode : null}]]*/ null;
+    var THD_MODE = /*[[${hm} ? 'heap' : 'dump']]*/ 'dump';
+</script>
+<script th:src="@{/js/table-grid.js?v=2026-09-20}"></script>
+<script th:src="@{/js/thread-dump-analyze.js?v=2026-11-26c}"></script>
+
+</body>
+</html>

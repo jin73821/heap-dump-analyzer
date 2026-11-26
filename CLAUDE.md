@@ -18,6 +18,7 @@ Always respond in Korean (한국어). Code and technical identifiers remain in E
 | LLM·RAG·Chroma | `docs/guide/LLM_RAG.md` |
 | 로그인·세션·CSRF·2FA·계정 정책·DB 장애 표시 | `docs/guide/AUTH_SECURITY.md` |
 | GC 로그 | `docs/guide/GC_LOG.md` |
+| 스레드 덤프 | `docs/guide/THREAD_DUMP.md` |
 | Kubernetes·폐쇄망 설치 패키지 | `docs/guide/DEPLOYMENT.md` |
 | 테스트 영역별 건수 | `docs/guide/TEST_INVENTORY.md` |
 | 완료된 계획·과거 보고서 | `docs/old/` |
@@ -31,12 +32,13 @@ Always respond in Korean (한국어). Code and technical identifiers remain in E
 | `BACKEND_NOTES.md` | 5 · 9 · 10 · 16 · 20 · 24 · 25 · 28 · 29 · 34 · 37 · 45 · 46 · 48 · 56 · 71 |
 | `LLM_RAG.md` | 31 · 32 · 39 · 40 · 41 · 42 · 43 · 44 |
 | `GC_LOG.md` | 49 · 50 · 51 · 52 · 53 · 54 · 55 · 57 · 58 · 60 · 61 · 62 · 63 · 64 · 66 · 67 · 68 |
+| `THREAD_DUMP.md` | 72 · 73 · 74 · 75 · 76 · 77 · 78 · 79 · 80 |
 
 새 규약·함정은 해당 영역 문서에 넣는다. 함정은 마지막 번호 다음 번호를 쓰고 위 색인에도 추가한다. 소스 주석이 번호로 참조하므로 **기존 번호를 바꾸거나 재사용하지 말 것.**
 
 ## Project Overview
 
-Java Spring Boot **4.1.1** + Java **17** (런타임 OpenJDK 21) 웹앱. 분석 대상 3종: 힙 덤프(Eclipse MAT CLI — .hprof/.bin/.dump) · 코어 덤프(gdb) · GC 로그(자체 파서). MariaDB(`192.168.56.9:3306/HEAPDB`) + Spring Security **7.1** 세션 기반(Spring Session **4.1** JDBC). Spring Framework **7.0** · Hibernate **7.4** · Tomcat **11** · **Jackson 3**(`tools.jackson.*`) + jakarta 네임스페이스. 이력: 2026-05-19 Boot 2.7→3.5(`docs/old/BOOT3_MIGRATION_PLAN.md`), **2026-09-11 Boot 3.5→4.1**(`docs/BOOT4_MIGRATION_PLAN.md` — 사내 CVSS 점검 조치 2단계).
+Java Spring Boot **4.1.1** + Java **17** (런타임 OpenJDK 21) 웹앱. 분석 대상 4종: 힙 덤프(Eclipse MAT CLI — .hprof/.bin/.dump) · 코어 덤프(gdb) · GC 로그(자체 파서) · 스레드 덤프(자체 파서 — jstack/kill -3/jcmd Thread.print, 2026-11-26 v2.7.0. v2.7.1 힙 덤프 연계·힙 덤프의 스레드 분석·여러 파일 이어 붙이기). MariaDB(`192.168.56.9:3306/HEAPDB`) + Spring Security **7.1** 세션 기반(Spring Session **4.1** JDBC). Spring Framework **7.0** · Hibernate **7.4** · Tomcat **11** · **Jackson 3**(`tools.jackson.*`) + jakarta 네임스페이스. 이력: 2026-05-19 Boot 2.7→3.5(`docs/old/BOOT3_MIGRATION_PLAN.md`), **2026-09-11 Boot 3.5→4.1**(`docs/BOOT4_MIGRATION_PLAN.md` — 사내 CVSS 점검 조치 2단계).
 
 **오픈소스 취약점 조치 (2026-09-11, `docs/SECURITY_AUDIT_OSS_CVE.md`):** 기준은 **사내 점검표에 기재된 "최신 버전" 이상**이다(최소 수정 버전이 아니다).
 - `pom.xml` `<properties>` 의 BOM 오버라이드 2종 — `tomcat.version` 11.0.25 / `logback.version` 1.6.3 — 은 **점검 기준 충족용**이다. 지우면 Boot 관리값(11.0.24 / 1.5.38)으로 내려간다.
@@ -53,11 +55,11 @@ Java Spring Boot **4.1.1** + Java **17** (런타임 OpenJDK 21) 웹앱. 분석 �
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
-mvn test                                 # 단위 테스트 전체 1093건 (라이브 4건 기본 skip, 약 35초). 영역별 내역은 docs/guide/TEST_INVENTORY.md
+mvn test                                 # 단위 테스트 전체 1266건 (라이브 4건 기본 skip, 약 35초). 영역별 내역은 docs/guide/TEST_INVENTORY.md
 mvn test -Dtest=HttpHeaderValuesTest     # 단일 클래스
 mvn test -Dtest='HttpHeaderValuesTest#메서드명'   # 단일 메서드
 mvn test -Dtest=ChromaLiveIntegrationTest -Dchroma.live=true   # Chroma 라이브 통합 (실행 중인 Chroma 스택 필요)
-java -jar target/heap-analyzer-2.6.2.jar   # 버전은 pom.xml <version>과 항상 일치
+java -jar target/heap-analyzer-2.7.1.jar   # 버전은 pom.xml <version>과 항상 일치
 bash restart.sh                          # 운영(18080) 재기동
 ```
 
@@ -102,7 +104,7 @@ Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터 + 분석
 - **운영 MariaDB 는 읽기 전용으로 검증한다.** UNIQUE 키에 `ON DUPLICATE KEY UPDATE` 금지 (함정 20).
 - **재기동은 JAR 이름이 들어가지 않은 단독 명령으로 실행한다.** `stop_app` 이 JAR 이름이 든 명령줄의 프로세스를 호출 셸까지 죽인다 (함정 45).
 - **새 ADMIN 변경 API:** `SecurityConfig` 의 authorize 와 CSRF 두 곳을 함께 고친다. 관리·변경 작업은 `[Domain] action=… by={who}` 감사 로그를 남긴다.
-- **파일 조작(업로드·삭제·다운로드·분류·페어링·전송·분석 시작/취소) 핸들러는 `Authentication`/`Principal` 을 받아 `by=AuthUtil.who(…)` 를 남긴다.** 별도 스레드에서 끝나는 작업은 요청 스레드에서 수행자를 잡아 넘긴다. `FileOpAuditActorTest` 가 파일 컨트롤러 6종의 POST/DELETE·다운로드 핸들러를 검사한다.
+- **파일 조작(업로드·삭제·다운로드·분류·페어링·전송·분석 시작/취소) 핸들러는 `Authentication`/`Principal` 을 받아 `by=AuthUtil.who(…)` 를 남긴다.** 별도 스레드에서 끝나는 작업은 요청 스레드에서 수행자를 잡아 넘긴다. `FileOpAuditActorTest` 가 파일 컨트롤러 7종의 POST/DELETE·다운로드 핸들러를 검사한다.
 - **빈 catch 금지.** JS 는 `Common.logIgnored`/`logError`, Java 는 `logger.debug`/`warn` 을 쓴다.
 - **런타임 설정 추가는 5곳 동기화** (`HeapDumpConfig` `@Value` · `init()` · 3-hook). 변경은 `HeapDumpAnalyzerService` setter 를 거친다 (함정 40).
 - **새 MAT 호출은 `runMatSingleQuery`/`runMatCliWithProgress` 경유,** 새 LLM 호출은 `acquireGate` + `Lease` 를 거친다.
