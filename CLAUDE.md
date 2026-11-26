@@ -15,7 +15,7 @@ Always respond in Korean (한국어). Code and technical identifiers remain in E
 | 컨트롤러·서비스·DTO·유틸 위치, 라우트, 리팩토링 이력 | `docs/guide/ARCHITECTURE.md` |
 | MAT 분석·저장·캐시·설정 영속화·시크릿·코어 덤프·PDF·원격 전송 | `docs/guide/BACKEND_NOTES.md` |
 | 템플릿·CSS·JS 공통 모듈, 화면별 규약 | `docs/guide/FRONTEND.md` |
-| LLM·RAG·Chroma | `docs/guide/LLM_RAG.md` |
+| LLM·RAG·Chroma·민감정보 탐지(LLM Guard) | `docs/guide/LLM_RAG.md` |
 | 로그인·세션·CSRF·2FA·계정 정책·DB 장애 표시 | `docs/guide/AUTH_SECURITY.md` |
 | GC 로그 | `docs/guide/GC_LOG.md` |
 | 스레드 덤프 | `docs/guide/THREAD_DUMP.md` |
@@ -30,7 +30,7 @@ Always respond in Korean (한국어). Code and technical identifiers remain in E
 | `FRONTEND.md` | 4 · 6 · 7 · 8 · 11 · 12 · 13 · 14 · 17 · 18 · 19 · 22 · 23 · 26 · 30 · 33 · 35 · 36 · 59 · 65 |
 | `AUTH_SECURITY.md` | 1 · 2 · 3 · 15 · 21 · 27 · 38 · 47 · 69 · 70 |
 | `BACKEND_NOTES.md` | 5 · 9 · 10 · 16 · 20 · 24 · 25 · 28 · 29 · 34 · 37 · 45 · 46 · 48 · 56 · 71 |
-| `LLM_RAG.md` | 31 · 32 · 39 · 40 · 41 · 42 · 43 · 44 |
+| `LLM_RAG.md` | 31 · 32 · 39 · 40 · 41 · 42 · 43 · 44 · 81 · 82 · 83 · 84 · 85 · 86 · 87 · 88 · 89 |
 | `GC_LOG.md` | 49 · 50 · 51 · 52 · 53 · 54 · 55 · 57 · 58 · 60 · 61 · 62 · 63 · 64 · 66 · 67 · 68 |
 | `THREAD_DUMP.md` | 72 · 73 · 74 · 75 · 76 · 77 · 78 · 79 · 80 |
 
@@ -38,7 +38,7 @@ Always respond in Korean (한국어). Code and technical identifiers remain in E
 
 ## Project Overview
 
-Java Spring Boot **4.1.1** + Java **17** (런타임 OpenJDK 21) 웹앱. 분석 대상 4종: 힙 덤프(Eclipse MAT CLI — .hprof/.bin/.dump) · 코어 덤프(gdb) · GC 로그(자체 파서) · 스레드 덤프(자체 파서 — jstack/kill -3/jcmd Thread.print, 2026-11-26 v2.7.0. v2.7.1 힙 덤프 연계·힙 덤프의 스레드 분석·여러 파일 이어 붙이기). MariaDB(`192.168.56.9:3306/HEAPDB`) + Spring Security **7.1** 세션 기반(Spring Session **4.1** JDBC). Spring Framework **7.0** · Hibernate **7.4** · Tomcat **11** · **Jackson 3**(`tools.jackson.*`) + jakarta 네임스페이스. 이력: 2026-05-19 Boot 2.7→3.5(`docs/old/BOOT3_MIGRATION_PLAN.md`), **2026-09-11 Boot 3.5→4.1**(`docs/BOOT4_MIGRATION_PLAN.md` — 사내 CVSS 점검 조치 2단계).
+Java Spring Boot **4.1.1** + Java **17** (런타임 OpenJDK 21) 웹앱. 분석 대상 4종: 힙 덤프(Eclipse MAT CLI — .hprof/.bin/.dump) · 코어 덤프(gdb) · GC 로그(자체 파서) · 스레드 덤프(자체 파서 — jstack/kill -3/jcmd Thread.print, 2026-11-26 v2.7.0. v2.7.1 힙 덤프 연계·힙 덤프의 스레드 분석·여러 파일 이어 붙이기). **v2.7.2 AI 입·출력 민감정보 탐지(LLM Guard)** — 입력 확인/차단·출력 서버 가림·관리자 탭·탐지 이력 1년 보관(`docs/guide/LLM_RAG.md`). MariaDB(`192.168.56.9:3306/HEAPDB`) + Spring Security **7.1** 세션 기반(Spring Session **4.1** JDBC). Spring Framework **7.0** · Hibernate **7.4** · Tomcat **11** · **Jackson 3**(`tools.jackson.*`) + jakarta 네임스페이스. 이력: 2026-05-19 Boot 2.7→3.5(`docs/old/BOOT3_MIGRATION_PLAN.md`), **2026-09-11 Boot 3.5→4.1**(`docs/BOOT4_MIGRATION_PLAN.md` — 사내 CVSS 점검 조치 2단계).
 
 **오픈소스 취약점 조치 (2026-09-11, `docs/SECURITY_AUDIT_OSS_CVE.md`):** 기준은 **사내 점검표에 기재된 "최신 버전" 이상**이다(최소 수정 버전이 아니다).
 - `pom.xml` `<properties>` 의 BOM 오버라이드 2종 — `tomcat.version` 11.0.25 / `logback.version` 1.6.3 — 은 **점검 기준 충족용**이다. 지우면 Boot 관리값(11.0.24 / 1.5.38)으로 내려간다.
@@ -55,11 +55,11 @@ Java Spring Boot **4.1.1** + Java **17** (런타임 OpenJDK 21) 웹앱. 분석 �
 
 ```bash
 mvn clean package -DskipTests           # 빌드 (10~13초)
-mvn test                                 # 단위 테스트 전체 1271건 (라이브 4건 기본 skip, 약 35초). 영역별 내역은 docs/guide/TEST_INVENTORY.md
+mvn test                                 # 단위 테스트 전체 1344건 (라이브 4건 기본 skip, 약 35초). 영역별 내역은 docs/guide/TEST_INVENTORY.md
 mvn test -Dtest=HttpHeaderValuesTest     # 단일 클래스
 mvn test -Dtest='HttpHeaderValuesTest#메서드명'   # 단일 메서드
 mvn test -Dtest=ChromaLiveIntegrationTest -Dchroma.live=true   # Chroma 라이브 통합 (실행 중인 Chroma 스택 필요)
-java -jar target/heap-analyzer-2.7.1.jar   # 버전은 pom.xml <version>과 항상 일치
+java -jar target/heap-analyzer-2.7.3.jar   # 버전은 pom.xml <version>과 항상 일치
 bash restart.sh                          # 운영(18080) 재기동
 ```
 
@@ -111,6 +111,8 @@ Spring MVC + JPA + MariaDB. **하이브리드 저장**: 메타데이터 + 분석
 - **새 배경 폴러는 `SessionTimeout.managedInterval` 경유,** 자동 갱신에 `location.reload()` 금지 (함정 38·69).
 - **파일명을 응답 헤더·`redirect:` 에 직접 붙이지 말고 `HttpHeaderValues` 를 쓴다** (함정 71).
 - **새 시크릿 필드는 `SecretValue` + `putSecret()` 패턴을 쓴다.**
+- **사용자가 입력한 내용을 LLM 에 보내는 새 경로는 저장·RAG·게이트보다 앞에서 `LlmGuardService.checkInput` 을 거친다** (함정 85).
+- **LLM 출력은 `LlmConfigService` 게이트 지점이 가린다 — 결과를 따로 저장·조회하는 우회 경로를 만들지 말고, 만들면 다시 가린다** (함정 81·89).
 
 ## Changelog
 

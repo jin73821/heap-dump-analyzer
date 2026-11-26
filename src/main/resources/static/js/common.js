@@ -116,8 +116,32 @@
             }
             if (_dbDownSeen) Common.noteDbAvailable();   // 장애 뒤 첫 성공 — 배너 스트립을 바로 내린다
             var ct = r.headers.get('content-type') || '';
-            return ct.indexOf('application/json') >= 0 ? r.json() : r.text();
+            if (ct.indexOf('application/json') < 0) return r.text();
+            return r.json().then(function (d) {
+                Common.noteOutputGuard(d);
+                return d;
+            });
         });
+    };
+
+    /**
+     * AI 응답의 민감정보 출력 가림 안내(LLM Guard, 2026-11-26) — 서버가 응답에 outputGuard 를 실으면
+     * 한 번 알린다. gc·thread·core 의 AI 결과가 fetchJSON 을 거치므로 여기 한 곳에 둔다.
+     * llm-guard.js 가 실린 화면(analyze·compare·ai-chat — common.css 없는 화면 포함)은 그 자체 토스트를,
+     * 아니면 Common.toast 를 쓴다. 표시만 하고 던지지 않는다.
+     */
+    Common.noteOutputGuard = function (d) {
+        try {
+            var og = d && typeof d === 'object' ? d.outputGuard : null;
+            if (!og || !og.count) return false;
+            if (window.LlmGuard && typeof window.LlmGuard.noteOutput === 'function') return window.LlmGuard.noteOutput(d);
+            Common.toast((og.message || ('개인정보로 보이는 ' + og.count + '건을 가렸습니다'))
+                + ' — AI 응답에서 개인정보로 보이는 값을 서버가 가렸습니다.', 'success');
+            return true;
+        } catch (e) {
+            ignored('출력 가림 안내 표시 실패 — 응답 처리는 계속', e);
+            return false;
+        }
     };
 
     /* ── DB 연결 불가 신호 (2026-09-26) ──

@@ -206,6 +206,24 @@
         .lh-pager .ellipsis { padding: 6px 4px; color: #9CA3AF; font-size: 12px; }
         .lh-summary { padding: 8px 16px; font-size: 12px; color: #6B7280; border-top: 1px solid #F3F4F6; }
         .lh-empty { padding: 40px 20px; text-align: center; color: #9CA3AF; font-size: 13px; }
+        /* 표 로딩 스피너(2026-11-27) — Files 목록(files.html .tb-spinner)과 같은 모양·값.
+           showTableLoading() 이 행을 이 한 줄로 바꾸고, 응답이 오면 행 렌더가 덮어쓴다(끄는 지점 = 행을 그리는 지점).
+           ⚠ 사용자·현재 접속 탭은 #panel-users .utable td 가 칸 여백을 5px 로 덮으므로 같은 id 명시도로 되돌린다. */
+        #panel-users .utable td.lh-loading, #panel-active .utable td.lh-loading,
+        #panel-requests .utable td.lh-loading, #panel-history .utable td.lh-loading {
+            padding: 40px 20px; text-align: center; vertical-align: middle; white-space: normal; border-bottom: none;
+        }
+        .tb-loading-wrap { display: inline-flex; align-items: center; gap: 10px; color: #6B7280; font-size: 13px;
+                           /* 빠른 응답에서 깜빡이지 않게 150ms 뒤에야 나타난다(Files 와 같다) */
+                           animation: tbFadeIn .2s ease-out .15s both; }
+        .tb-spinner { width: 18px; height: 18px; border: 2px solid #E5E7EB; border-top-color: #2563EB;
+                      border-radius: 50%; animation: tb-spin .8s linear infinite; flex-shrink: 0; }
+        @keyframes tb-spin { to { transform: rotate(360deg); } }
+        @keyframes tbFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @media (prefers-reduced-motion: reduce) {
+            .tb-spinner { animation-duration: 1.6s; }   /* 멈추면 '로딩 중' 신호가 사라진다 — 느리게만 */
+            .tb-loading-wrap { animation: none; }
+        }
 
         /* IP/UA cell */
         .lh-ua { font-size: 11px; color: #9CA3AF; max-width: 280px; overflow: hidden;
@@ -373,7 +391,7 @@
                 </thead>
                 <!-- 행은 loadUsers()(/api/admin/users) 가 JS 로 채운다 — 서버 렌더 단일화(필터 정합성 보장) -->
                 <tbody id="userBody">
-                    <tr><td colspan="8" class="lh-empty">불러오는 중&hellip;</td></tr>
+                    <tr class="tb-loading-row"><td colspan="8" class="lh-empty lh-loading"><span class="tb-loading-wrap" role="status"><span class="tb-spinner" aria-hidden="true"></span>사용자 목록을 불러오는 중…</span></td></tr>
                 </tbody>
             </table>
           </div>
@@ -413,7 +431,7 @@
                     </tr>
                 </thead>
                 <tbody id="asBody">
-                    <tr><td colspan="10" class="lh-empty">데이터를 불러오는 중...</td></tr>
+                    <tr class="tb-loading-row"><td colspan="10" class="lh-empty lh-loading"><span class="tb-loading-wrap" role="status"><span class="tb-spinner" aria-hidden="true"></span>접속 중인 세션을 불러오는 중…</span></td></tr>
                 </tbody>
             </table>
           </div>
@@ -460,7 +478,7 @@
                     </tr>
                 </thead>
                 <tbody id="reqBody">
-                    <tr><td colspan="9" class="lh-empty">데이터를 불러오는 중...</td></tr>
+                    <tr class="tb-loading-row"><td colspan="9" class="lh-empty lh-loading"><span class="tb-loading-wrap" role="status"><span class="tb-spinner" aria-hidden="true"></span>계정 신청을 불러오는 중…</span></td></tr>
                 </tbody>
             </table>
           </div>
@@ -504,7 +522,7 @@
                     </tr>
                 </thead>
                 <tbody id="lhBody">
-                    <tr><td colspan="6" class="lh-empty">데이터를 불러오는 중...</td></tr>
+                    <tr class="tb-loading-row"><td colspan="6" class="lh-empty lh-loading"><span class="tb-loading-wrap" role="status"><span class="tb-spinner" aria-hidden="true"></span>접속 이력을 불러오는 중…</span></td></tr>
                 </tbody>
             </table>
           </div>
@@ -1127,6 +1145,20 @@ function submitOtpReset() {
 }
 
 // ── 탭 전환 ─────────────────────────────────────────────────
+/**
+ * 표 로딩 표시 — 행을 스피너 한 줄로 바꾼다(2026-11-27). 응답이 오면 각 render 가 덮어쓴다.
+ * 이미 행이 있던 표(새로고침·작업 뒤 다시 읽기)는 그 높이를 잠깐 유지해 패널이 접혔다 펴지며 튀지 않게 한다.
+ * 자동 갱신(현재 접속 10초)은 부르지 않는다 — 10초마다 표가 스피너로 바뀌면 읽던 행이 사라진다.
+ */
+function showTableLoading(body, cols, text) {
+    if (!body) return;
+    var h = body.offsetHeight;   // 숨은 탭이면 0 — 기본 높이
+    var style = h > 100 ? ' style="height:' + Math.min(h, 480) + 'px"' : '';
+    body.innerHTML = '<tr class="tb-loading-row"><td colspan="' + cols + '" class="lh-empty lh-loading"' + style + '>'
+        + '<span class="tb-loading-wrap" role="status"><span class="tb-spinner" aria-hidden="true"></span>'
+        + escHtml(text) + '</span></td></tr>';
+}
+
 function switchTab(name) {
     closeUserMenu(false);
     document.querySelectorAll('.tab').forEach(function(t) {
@@ -1220,6 +1252,7 @@ function loadUsers() {
     var body = document.querySelector('#panel-users tbody');
     if (!body) return;
     closeUserMenu();
+    showTableLoading(body, 8, '사용자 목록을 불러오는 중…');
     Common.fetchJSON('/api/admin/users')
         .then(function(list) {
             _allUsers = list || [];
@@ -1460,7 +1493,7 @@ function loadRequests(page) {
     if (status) url += '&status=' + status;
 
     var body = document.getElementById('reqBody');
-    body.innerHTML = '<tr><td colspan="9" class="lh-empty">데이터를 불러오는 중...</td></tr>';
+    showTableLoading(body, 9, '계정 신청을 불러오는 중…');
 
     Common.fetchJSON(url)
         .then(function(d) {
@@ -1677,7 +1710,7 @@ function loadHistory(page) {
     if (status) url += '&status=' + status;
 
     var body = document.getElementById('lhBody');
-    body.innerHTML = '<tr><td colspan="6" class="lh-empty">데이터를 불러오는 중...</td></tr>';
+    showTableLoading(body, 6, '접속 이력을 불러오는 중…');
 
     Common.fetchJSON(url)
         .then(function(d) {
@@ -1771,8 +1804,10 @@ function fmtIdle(sec) {
     return h + '시간 ' + m + '분';
 }
 
-function loadActive() {
+/** opts.silent — 자동 갱신(10초). 스피너 없이 행을 그대로 둔 채 새 응답으로 바꾼다. */
+function loadActive(opts) {
     var body = document.getElementById('asBody');
+    if (!(opts && opts.silent)) showTableLoading(body, 10, '접속 중인 세션을 불러오는 중…');
     Common.fetchJSON('/api/admin/active-sessions')
         .then(function(d) { renderActive(d); })
         .catch(function(e) {
@@ -1889,9 +1924,10 @@ function toggleAutoRefresh() {
         loadActive();
         /* 10초 주기라 켜둔 채 자리를 비우면 배너 폴링보다 6배 빠르게 세션을 살려둔다.
            managedInterval 이 유휴 시 스스로 멈춘다. */
+        var tick = function() { loadActive({ silent: true }); };
         _asAutoTimer = window.SessionTimeout
-            ? window.SessionTimeout.managedInterval(loadActive, 10000)
-            : { stop: (function() { var t = setInterval(loadActive, 10000); return function() { clearInterval(t); }; })() };
+            ? window.SessionTimeout.managedInterval(tick, 10000)
+            : { stop: (function() { var t = setInterval(tick, 10000); return function() { clearInterval(t); }; })() };
     } else {
         stopAutoRefresh();
     }

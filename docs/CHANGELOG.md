@@ -1,5 +1,149 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-11-27] v2.7.3 — 코어 덤프 업로드 카드 제목 · 펼친 행 구분
+
+**대상:** `pom.xml`(2.7.2 → **2.7.3**), `templates/{fragments/banner,index,progress}.html`(버전 표기), `templates/core-dump/index.html`(`core-dump-index.css?v=2026-11-27c`), `static/css/core-dump-index.css`, 테스트 `CoreFilesPageSmokeTest`(제목 줄 단언 추가, 건수 무변경), `docs/guide/FRONTEND.md`, `CLAUDE.md`(JAR 이름). 사용자 요청: "코어 덤프 업로드 카드의 제목을 스레드 덤프의 업로드 카드의 디자인을 참고하여 수정", "세부정보 열기시 파일이름 라인의 배경색도 세부정보 배경색과 동일하여 여러개의 파일의 세부정보 열람시 구분이 힘듭니다", "2.7.3 버전으로 배포 후 모두 커밋, 푸시".
+
+- **업로드 카드 제목** — 스레드 덤프 업로드 카드의 제목 줄과 같은 모양으로: 업로드 아이콘(16px) + '코어 덤프 업로드'(14px 700 #1F2937) + 아랫선(#F3F4F6), 카드 폭 전체 한 줄. 종전엔 넓은 화면에서 제목과 설명이 왼쪽 칸에 함께 쌓여 있었다. 설명 문구는 제목 아래로 내려, 넓은 화면(본문 ≥1040px)에서는 [설명 | 코어 파일 | 실행 파일 | GDB 분석 시작] 한 줄, 그보다 좁으면 설명 한 줄 + 버튼 줄. `cf-new-intro` 묶음은 없앴다(JS 참조 없음).
+- **펼친 행 구분** — 파일명 줄과 상세가 같은 바탕(#F5F8FE)이라 여러 개를 펼치면 경계가 보이지 않았다. 파일명 줄은 진한 바탕(#E6EEFB, 마우스 #DCE7FA) + 윗선(#C9D7F0), 상세는 옅은 바탕(#F8FAFE) + 아랫선(#C9D7F0, 표의 마지막 행이면 페이지 줄 윗선과 겹치지 않게 생략). 좁은 본문(<900px)의 두 줄 행은 칸 대신 행이 윗선을 그린다. 좌측 색 띠는 쓰지 않았다.
+- **검증:** 실제 업로드 카드 마크업 + 펼친 행 2개·닫힌 행 2개 픽스처를 헤드리스 Chrome 으로 1440·1000px 스크린샷 확인. `mvn test` 1344건.
+
+## [2026-11-27] 민감정보 탭 탐지 규칙 표 — 열 너비 · 내장 규칙에도 삭제 버튼 / 스레드 덤프 업로드 버튼 간격
+
+**대상:** `templates/llm-settings.html`(머리글 `lg-c-out`, `?v=2026-11-27`), `static/css/llm-guard-admin.css`, `static/js/llm-guard-admin.js`, `templates/thread-dump/{index,analyze}.html`(`thread-dump.css?v=2026-11-27`), `static/css/thread-dump.css`. **버전 무변경**(v2.7.2). 사용자 요청: "탐지규칙 테이블에서 출력 가림 칼럼의 너비를 줄이고, 사용 칼럼의 너비를 약간 늘리세요. 삭제 버튼도 추가하세요", "스레드 덤프 페이지의 submit 버튼이 Fileinput과 사이의 공백이 너무 많습니다".
+
+- **탐지 규칙 표 열 너비** — '출력 가림' 열에 `lg-c-out`(76px, 줄바꿈 없음)을 주고 '사용' 열을 52 → 64px 로. 실측(표 폭 1020px): 출력 가림 141 → 76px, 사용 52 → 64px, 남은 폭은 이름·분류·유형·입력 조치 열로 갔다.
+- **삭제 버튼** — 이미 사용자 규칙 행에는 있었지만, 기본으로 있는 규칙이 내장 11종뿐이라 화면에 하나도 보이지 않았다. 이제 내장 규칙 행에도 '삭제' 버튼을 흐리게(`aria-disabled`) 보이고, 누르면 "내장 규칙은 삭제할 수 없습니다. 쓰지 않으려면 사용을 끄세요" 안내 토스트를 띄운다(요청은 보내지 않는다). 내장 규칙 삭제는 서버가 계속 `BUILTIN_READONLY` 로 거부한다 — 시더가 재기동 때 빠진 내장 규칙을 다시 넣기 때문이다.
+- **스레드 덤프 업로드 버튼 간격** — 업로드 그리드 1행에 드롭존과 오른쪽 안내 칸(힌트 3개)이 같이 있어 행 높이가 안내 칸을 따라갔고, 2행의 버튼이 드롭존 아래 81px 떨어져 있었다. 안내 칸을 두 행에 걸치게(`grid-template-areas: "zone side" "cta side"`, 행 `auto 1fr`) 바꿔 버튼이 드롭존 바로 아래(14px)에 붙는다. 900px 이하는 종전처럼 드롭존 → 안내 → 버튼 한 열.
+- **검증:** 실제 CSS 를 싣은 정적 픽스처를 헤드리스 Chrome 으로 측정(위 수치). `mvn test` 1344건(실패 0, 라이브 4건 skip), 재기동 후 서빙 CSS 반영 확인.
+
+## [2026-11-27] Accounts — 탭마다 표를 불러오는 동안 스피너
+
+**대상:** `templates/admin/users.html`(스타일·자리표시 행·`showTableLoading`·네 적재 함수·자동 갱신), 테스트 `AdminUsersTemplateSmokeTest`(+1 → 6, 기존 '현재 접속' 자리표시 단언 갱신), `docs/guide/{FRONTEND,TEST_INVENTORY}.md`, `CLAUDE.md`(테스트 건수 1343 → 1344). **버전 무변경**(v2.7.2). 사용자 요청: "Accounts 페이지 각 탭에서 테이블 로딩시 스피너가 돌아가도록".
+
+- **사용자 목록 · 현재 접속 · 접속 이력 · 계정 신청** 네 탭의 표가 불러오는 동안 스피너 + "…을 불러오는 중…" 한 줄을 보인다. 종전엔 사용자 목록·현재 접속은 다시 읽는 동안 옛 행이 그대로 있어 로딩인지 알 수 없었고, 접속 이력·계정 신청은 글자("데이터를 불러오는 중...")만 있었다.
+- 언제: 첫 화면, 탭 전환, '새로고침', 검색·필터·페이지 이동, 작업(잠금 해제·삭제·승인 등) 뒤 다시 읽기. 응답이 오면 행이 스피너를 덮어쓴다(실패하면 '불러오기 실패' 행).
+- 모양은 Files 목록 스피너와 같다(18px 원, 150ms 뒤 페이드인이라 빠른 응답에선 보이지 않는다). 이미 행이 있던 표는 다시 읽는 동안 직전 높이(최대 480px)를 유지해 패널이 접혔다 펴지며 튀지 않는다.
+- **현재 접속의 10초 자동 갱신은 스피너를 띄우지 않는다**(`loadActive({ silent: true })`) — 10초마다 표가 스피너로 바뀌면 읽던 행과 선택 표시가 사라진다.
+- 사용자·현재 접속 탭은 칸 여백 규칙(`#panel-users .utable td` 5px)이 빈 행 여백을 덮고 있어, 로딩 행은 같은 명시도 선택자로 여백(40px)을 되돌렸다.
+- '동작 줄이기' 설정이면 스피너는 멈추지 않고 느리게 돈다(멈추면 로딩 신호가 사라진다).
+- **검증:** 템플릿 렌더 + API 응답을 1.5초 늦춘 스텁 서버로 헤드리스 Chrome 측정 — 네 탭 모두 로딩 중 `tb-spin` 회전·여백 40px, 응답 뒤 스피너 제거, 사용자 목록 재적재 중 높이 444px 유지, 자동 갱신(silent) 때 스피너 없음, 페이지 오류 0. `mvn test` 1344건.
+
+## [2026-11-27] 코어 파일 화면 — 표를 Files 디자인으로 · 삭제 경로 정리 · 삭제 모달 연출 · 업로드 카드 높이 · '소스 라인'
+
+**대상:** `templates/core-dump/index.html`, `static/css/core-dump-index.css`, `static/js/core-dump-index.js`, 테스트 `CoreFilesPageSmokeTest`(+1 → 5), `docs/guide/{FRONTEND,TEST_INVENTORY}.md`, `CLAUDE.md`(테스트 건수 1342 → 1343). **버전 무변경**(v2.7.2). 사용자 요청 6건.
+
+1. **업로드 카드 세로 폭** — 카드 여백 16 → 20px, 업로드 버튼 높이 60 → 70px(아이콘 타일 40px), 'GDB 분석 시작' 도 같은 높이. 업로드 버튼 안내 문구는 좁은 폭에서 말줄임 대신 두 줄까지 줄바꿈(1024px 화면·휴대폰에서 뒷부분이 잘렸다).
+2. **'소스 줄' → '소스 라인'** — 카드 안내와 실행 파일 버튼 안내.
+3. **표를 Files 의 표 디자인으로** — `class="ftable"` 로 공용 표 규칙(머리글 바탕·11px 회색 머리글·행 구분선·마우스 바탕)을 쓰고, Files 가 덧씌운 값(칸 여백 10px 12px, 정렬 ▲▼ 표시, 26px 아이콘 작업 버튼, 바닥 페이지 줄·페이지 버튼·'한 페이지에' 선택 상자)을 옮겼다. 작업 칸은 글자 버튼('결과 →'·'진행'·'재분석'·'분석')에서 Files 와 같은 색 아이콘 버튼으로: 초록 = 결과, 파랑 = 분석, 파랑 회전 = 진행, 빨강 = 재분석, 휴지통 = 삭제(마우스를 올려야 보이던 것을 항상 보이게). 파일명은 Files 처럼 본문 글꼴 500, 크기·업로드 시각은 12px 회색. 크기·작업 열은 Files 처럼 왼쪽 정렬. 칸 여백이 늘어난 만큼 열 폭을 다시 나눠 크래시 지점 칸(292px @1440)의 소스 위치가 잘리지 않게 했다.
+4. **Delete 키 삭제 제거** — 행에서 Delete 를 눌러도 아무 일도 없다. 바닥의 단축키 안내에서도 뺐다.
+5. **펼친 상세의 '삭제…' 버튼 제거** — 삭제는 작업 칸의 휴지통 버튼 하나로.
+6. **삭제 모달 연출** — 열 때 배경이 페이드인되고 상자가 살짝 올라오며 커진다(.22s), 닫을 때 짧게 사라진다(.14s, 그동안 클릭 차단). GC 로그 화면 모달과 같은 값·같은 방식(`Common.afterMotion`)이고, 같은 화면의 재분석 모달에도 같이 걸었다. '동작 줄이기' 설정이면 연출 없이 바로 열고 닫는다.
+
+- 아이콘 버튼으로 재분석을 누르면 글자 대신 아이콘이 돌며 요청 중을 표시한다(종전 글자 버튼 방식대로 `textContent` 를 바꾸면 아이콘이 지워진다).
+- **검증:** 실제 템플릿 렌더 + 헤드리스 Chrome — 모달 열기(애니메이션 `cfOvIn`/`cfBoxIn`, 60ms 시점 불투명도 0.73)·Esc 닫기(`.closing` → 연출 뒤 `display:none`, 휴지통 버튼으로 초점 복귀)·닫히는 사이 다시 열기, Delete 키 무반응, 상세 삭제 버튼 0개, 재분석 실패 시 아이콘 유지, 폭별(1440/1280/1180/1024/390) 가로 넘침 0·작업 버튼이 카드 안·소스 위치 잘림 없음, 정렬·탭·검색·캘린더 회귀 없음. `mvn test` 1343건.
+
+## [2026-11-27] 코어 파일 화면 — 카드 모서리 10px · 카드 제목 '코어 덤프 업로드' · 업로드 버튼 디자인
+
+**대상:** `static/css/core-dump-index.css`, `templates/core-dump/index.html`(업로드 카드 마크업·제목), 테스트 `CoreFilesPageSmokeTest`(단언 보강, 건수 무변경), `docs/guide/FRONTEND.md`. **버전 무변경**(v2.7.2). 사용자 요청 3건.
+
+- **카드 모서리** 4px → **10px** — Dashboard·Files·History 의 `.panel` 과 같은 값(GC 로그·스레드 덤프 화면의 `content-card` 는 12px). 업로드 카드·목록 카드 둘 다. 안쪽 요소는 그보다 작게 둔다(업로드 버튼 8px, 일반 버튼 4px).
+- **카드 제목** '새로 분석' → **'코어 덤프 업로드'**. 실행 파일 행 버튼 툴팁도 같이 바꿨다. 재분석 모달의 '새로 분석' 버튼은 다른 뜻(새 리비전으로 분석)이라 그대로다.
+- **코어 파일·실행 파일 업로드 버튼** — 카드를 세로 선으로 나눈 밋밋한 구역에서, 테두리 있는 버튼 두 개로 바꿨다: 아이콘 타일(코어 = 문서+번개, 실행 파일 = 터미널) + 이름표('코어 파일 필수' / '실행 파일 선택') + 안내 한 줄 + 오른쪽 '파일 선택'. 마우스를 올리면 테두리·아이콘·'파일 선택' 이 파랗게, 파일을 끌어 올리면 점선, 고르면 옅은 초록 테두리 + 체크 아이콘 + 파일명·크기 + 해제(×). 'GDB 분석 시작' 은 버튼과 같은 높이(60px)로 나란히. 실행 파일 제안·오류 줄은 카드 안의 둥근 띠로.
+- 칸 id·상태 클래스·업로드 흐름은 그대로다(JS 무변경).
+- **검증:** 실제 템플릿 렌더 + 헤드리스 Chrome 으로 버튼 상태(빈 칸·호버·끌어 올림·코어만+제안·둘 다·오류+진행률)와 1920/1440/1180/390px 확인. 표 회귀(폭별 열 접기·colspan·작업 열 위치) 없음. `mvn test` 1342건.
+
+## [2026-11-27] 업로드 자동 분류 — 스레드 덤프 이름 규칙에 `thread` 추가
+
+**대상:** `parser/threaddump/ThreadDumpFormatDetector.java`(`NAME_RE`), `static/js/upload-queue.js`(`_TD_NAME_RE` — 서버와 글자 그대로 같게), `templates/{index,files}.html`(`upload-queue.js?v=2026-11-27` — 종전 `2026-09-26` 그대로라 브라우저가 옛 규칙을 쓸 수 있었다), 테스트 `ThreadDumpFormatDetectorTest`(이름 예시 보강, 건수 무변경), `docs/guide/THREAD_DUMP.md`. **버전 무변경**(v2.7.2). 사용자 요청: "이름에 thread 글자도 포함하세요".
+
+- 대시보드·Files ALL(·Others) 탭의 자동 분류에서 스레드 덤프로 보는 이름에 **`thread`** 를 더했다. 종전 낱말(`thread_dump`·`tdump`·`jstack`·`stack_dump`)과 같은 방식으로, 구분자(`-` `_` `.` 또는 처음·끝)로 떨어진 낱말일 때만 맞는다. `threads`, 숫자가 바로 붙은 `thread1` 도 포함. 예: `thread.txt`, `was1_thread_20261127.log`, `thread1.out`, `jeus-THREAD-1127.txt`. 낱말 안에 든 `mythread.log`·`threadpool.xml`·`threading.txt` 는 맞지 않는다.
+- 분류 순서는 그대로다(코어 이름 → 스레드 덤프 내용 → 힙 확장자 → GC 이름 → 스레드 덤프 이름 → GC 내용 → …). 그래서 `gc_thread.log` 는 GC 로그, `threads.hprof` 는 내용에 덤프가 없으면 힙 덤프로 남는다.
+- 서버는 종전대로 파일 전체를 훑어 덤프가 없으면 `NOT_THREAD_DUMP`(400)로 거부한다. 이름만 맞고 덤프가 아닌 파일(`thread_pool.xml` 등)은 이제 자동 분류로는 올라가지 않는다 — Files 의 해당 유형 탭에서 올린다.
+- 서버의 `isThreadDumpFilename` 은 테스트에서만 쓰여(분류는 브라우저가 한다) 이 변경이 기존 저장 파일의 유형을 바꾸지 않는다.
+- **검증:** 같은 이름 목록(양성 13·음성 9)을 브라우저 정규식(node)과 서버 정규식(JUnit)으로 각각 판정해 일치. 계약 테스트(정규식 글자 일치·분류 순서) 통과. `mvn test` 1342건.
+
+## [2026-11-26] 코어 파일 화면(/core-dump) — 본문 가운데 정렬 · '새로 분석' 카드 재구성
+
+**대상:** `static/css/core-dump-index.css`, `templates/core-dump/index.html`(업로드 카드 마크업 — 상단바·배너·표·모달 그대로), `static/js/core-dump-index.js`(`setNameParts`), 테스트 `CoreFilesPageSmokeTest`(단언 보강, 건수 무변경), `docs/guide/FRONTEND.md`. **버전 무변경**(v2.7.2). 사용자 요청: "본문이 좌측 상단에 위치해 있다 — 레이아웃 재조정", "'새로 분석' 카드를 세련되게".
+
+- **본문 가운데 정렬** — `.cf-page` 가 `margin-left: var(--banner-w)` + `max-width: 1440px` 라 1440px 보다 넓은 화면에서 본문이 배너에 붙고 오른쪽만 비었다(실측: 1920px 에서 왼쪽 0 / 오른쪽 260px, 2560px 에서 오른쪽 900px). `margin-left: max(배너 폭, (100% + 배너 폭 − 1440px) / 2)` 로 배너 오른쪽 영역의 가운데에 둔다(1920px 에서 좌우 130px). 좁은 화면은 종전과 같다. 본문이 넓을 때(≥1300px) 파일명 열을 20 → 24% 로 넓혀 긴 코어 이름이 통째로 들어간다.
+- **'새로 분석' 카드** — 점선 상자 두 개 + 버튼이 나란히 놓인 모양(상자 안의 상자)에서, 카드 하나를 세로 선으로 나눈 입력 줄로 바꿨다: `[안내 | 코어 파일 | 실행 파일 | GDB 분석 시작]`. 칸은 두 줄(이름표 '코어 파일 필수' / 값 '끌어다 놓거나 찾아보기' 또는 파일명·크기)이고 구역 전체가 놓는 자리다. 점선은 파일을 끌어 올렸을 때만 나타난다. 안내 구역은 옅은 바탕, 입력 칸은 흰색. 실행 파일 제안·안내·오류는 카드 아래로 이어지는 줄. 칸의 긴 파일명도 표처럼 가운데 말줄임.
+- 폭 단계(본문 기준): ≥1040 한 줄 · 620~1039 안내 줄 + [칸|칸|시작] · <620 한 열(시작 버튼 카드 폭 전체).
+- 칸 id·상태 클래스(`has-file`/`dragover`/`is-flash`)·업로드 흐름은 그대로다 — 스모크 테스트가 카드 id 14개와 `.cf-pair` 묶음, 가운데 정렬 식을 고정한다.
+- **검증:** 실제 템플릿 렌더 + 헤드리스 Chrome 으로 카드 6상태(빈 칸·호버·끌어 올림·코어만+제안·둘 다·오류+진행률)와 1920/1440/1180/390px 를 찍어 확인. 가로 넘침 0, 표·펼치기·정렬·검색·캘린더 회귀 없음. `mvn test` 1342건.
+
+## [2026-11-26] 코어 파일 화면(/core-dump) 디자인 점검 — 중간 폭에서 작업 열이 밀리던 문제 등 9건
+
+**대상:** `templates/core-dump/index.html`(본문만 — 상단바·배너·모달 그대로), `static/css/core-dump-index.css`, `static/js/core-dump-index.js`(`syncDetailSpan`), `model/dto/CoreFileRow.java`(`getNameHead/Tail`·`shortLocation`), `service/CoreFileListBuilder.java`(`RepeatGroup.getLocationShort`), 테스트 `CoreFileListBuilderTest`(+2 → 7)·`CoreFilesPageSmokeTest`(+2 → 4), `docs/guide/{FRONTEND,TEST_INVENTORY}.md`, `CLAUDE.md`(테스트 건수 1338 → 1342). **버전 무변경**(v2.7.2). 같은 날 개편(아래 항목)의 구조·색·상단바는 그대로 두고, 실제 템플릿을 까다로운 데이터(긴 C++ 심볼·긴 파일명·여러 폭)로 렌더해 찾은 문제만 고쳤다.
+
+1. **중간 폭에서 '작업' 열이 화면 밖** — 표가 `min-width: 1060px` 고정이라 배너를 편 1330px 이하 화면(1280px 노트북 포함)에서 결과·분석 버튼과 휴지통이 가로 스크롤 뒤에 있었다. 본문 폭 기준 컨테이너 쿼리(`@container cfpage`)로 덜 중요한 열부터 접는다: <1100 실행 파일 · <1000 크기 · **<900 한 파일을 두 줄 행으로**(가로 스크롤 없음, 머리글은 정렬 버튼 한 줄). 뷰포트가 아니라 본문 폭이 기준이라 배너를 접으면 그만큼 열이 돌아온다.
+2. **긴 파일명의 구분되는 끝이 잘림** — `core.tmaxsvr_gw01.20261125-031455.18822` 류가 셋 다 `core.tmaxsvr_gw01.2026…` 로 보였다. 가운데 말줄임으로 끝 12자(pid·시각)를 남긴다.
+3. **소스 위치에서 정작 파일명:줄이 잘림** — `/usr/include/c++/8/bits/hashta…`. 표 칸과 '반복된 종료' 안내 줄은 `파일명:줄` 만 보이고 전체 경로는 툴팁·백트레이스에 둔다. '같은 지점' 판정 키는 전체 경로 그대로다.
+4. **펼친 상세의 들여쓰기가 적용되지 않음** — `.cf-detail > td` 가 `.cf-table td:first-child` 에 특이도로 져서 상세가 펼치기 화살표 아래에서 시작했다. 상태 칸 글자 시작에 맞췄다.
+5. **긴 백트레이스 프레임이 가로 스크롤 속** — C++ 템플릿 심볼이면 맨 끝의 소스 위치가 안 보였다. 내어쓰기로 줄을 바꾼다.
+6. **상태 이중 표기** — 상태 칸 '실패' 옆에 다시 굵은 빨강 '분석 실패', '분석 중' 옆에 굵은 파랑 'GDB 실행 중', '미분석' 옆에 '아직 분석하지 않음'. 크래시 지점 칸은 실패 사유만(미분석은 줄표) 남겼다.
+7. **행마다 호박색 상자 배지** — '같은 지점 N회' 가 반복이 많은 목록에서 거의 모든 행에 섰다. 행에서는 상자 없는 글자로, 상자는 표 위 안내 줄에만 둔다.
+8. **'새로 분석' 영역 줄바꿈** — flex-wrap 이라 1180px 에서 시작 버튼만 다음 줄 왼쪽에 떨어지고 1024px 에서 두 칸이 서로 다른 줄로 갈라졌다. grid 로 바꿔 넓으면 한 줄, 중간이면 안내 한 줄 + [칸][칸][버튼], 좁으면 한 열.
+9. **자잘한 것** — 도구줄 컨트롤 높이 32/33/31px → 32px 통일 · 실행 파일 칸 강조 때 점선 테두리 + 포커스 링이 겹치던 것을 실선으로 · 실행 파일 행 버튼 '실행 파일 칸에' → '위 칸에 넣기' · 실행 파일 열 118 → 140px.
+
+- ⚠ 열을 `display:none` 으로 접으면 상세 칸 `colspan="9"` 가 '없는 열'을 만들어 `table-layout: fixed` 가 남는 폭을 크래시 지점 열과 나눠 준다(표 오른쪽이 비었다) — `syncDetailSpan()` 이 보이는 열 수로 맞춘다(ResizeObserver).
+- **검증:** 실제 템플릿 + `CoreFileListBuilder` 를 픽스처 3종(혼합 16행·56행·0행)으로 렌더해 헤드리스 Chrome 에서 1440/1280/1180/1024/900/390px 를 찍었다. 모든 폭에서 가로 넘침 0, '결과' 링크가 목록 상자 안, 크래시 지점 칸 276~538px(위치·같은 지점 잘림 없음), colspan 9/8/7 추종, 두 줄 행 모드에서 펼치기·정렬·탭·검색·키보드 동작, 캘린더 팝업이 컨테이너 containment 에 잘리지 않음. `mvn test` 1342건.
+- **확인하지 못한 것:** 로그인이 필요해 운영 데이터 화면은 직접 보지 못했다(픽스처 렌더로 대체). 컨테이너 쿼리 미지원 브라우저(2023년 이전)는 종전처럼 표가 가로로 밀린다.
+
+## [2026-11-26] 코어 파일 화면(/core-dump) 개편 — 서버 파일·분석 이력을 한 표로 (시안 A '한 표 작업대')
+
+**대상:** `templates/core-dump/index.html`(본문만 — 상단바 `.cd-topbar`·배너·모달 마크업은 그대로), `static/js/core-dump-index.js`, `static/css/core-dump-index.css`(신규), `controller/CoreDumpViewController.java`, `model/dto/CoreFileRow.java`(신규), `service/CoreFileListBuilder.java`(신규), 테스트 `CoreFileListBuilderTest`(신규 5)·`CoreFilesPageSmokeTest`(신규 2)·`CoreDumpHistoryCalendarSmokeTest`(모델 보정), `docs/guide/{FRONTEND,ARCHITECTURE,TEST_INVENTORY}.md`, `CLAUDE.md`(테스트 건수). **버전 무변경**(v2.7.2 — 화면 재배치).
+
+시안 두 개(A 한 표 작업대 / B 날짜별 크래시 일지)를 캔버스로 보인 뒤 사용자가 A 를 골랐다. 요구: AI 가 만든 디자인처럼 보이지 않게, 코어 파일 페이지 내부만(네비게이션·상단바 수정 금지).
+
+- **한 표로 합침** — 좌측 '서버 코어 파일' 목록과 '분석 이력' 표에 같은 파일이 두 번 보이던 구조를 없앴다. 열: 상태 · 코어 파일 · 시그널 · 크래시 지점 · 실행 파일 · 크기 · 업로드 · 작업. 조립은 `CoreFileListBuilder`(디스크 코어 = 행, 이력만 있는 코어 = '원본 없음' 행, 연결 안 된 실행 파일 = '실행 파일 표시' 를 켜면 보이는 행). 모델은 `history`·`coreDumpFiles` → `coreFiles`·`coreRepeatGroups`.
+- **크래시 지점** — DB 에 이미 있던 `crashSummary`(해석된 상위 5프레임)를 읽어 표에 함수 이름 + 소스 위치(두 줄)를 보인다. 백엔드 저장 형식은 바꾸지 않았다. 행을 펼치면 상위 프레임·시그널 풀이(`SIGSEGV (11) · 잘못된 메모리 접근`)·실행 파일·업로드·분석 소요 시간과 상태별 버튼이 나온다.
+- **같은 지점 반복** — 함수 + `file:line` 이 같은 완료 코어를 묶어 표 위에 '같은 지점 N회 · httpd · mod_proxy_http.c:1478 [모아 보기]' 로 보이고, 행에도 표시한다. 위치 없는 라이브러리 프레임(`raise` 등)은 원인이 달라도 같아 보여 묶지 않는다.
+- **상태 탭(건수)·함수 이름 검색·업로드일 기간(종전 캘린더 그대로)·정렬 버튼(aria-sort)·페이지 크기(20/50/100, localStorage)·키보드(↑↓·Enter·Delete)**.
+- **버튼 정리** — 완료 행은 테두리 버튼 대신 `결과 →` 글자 링크, 테두리 버튼은 손이 가야 하는 행(실패 '재분석' · 미분석 '분석' · 분석 중 '진행')에만. 휴지통은 올린 행·초점 행·펼친 행에만 보인다(터치 기기는 항상). 미분석 '분석' 은 공통 `AnalyzeConfirm`(kind=core)을 거친다(FRONTEND 규약 — 종전엔 확인 없이 바로 시작).
+- **업로드 한 줄** — 큰 점선 상자 두 개를 '새로 분석' 한 줄(코어 칸 · 실행 파일 칸 · 시작 버튼)로 줄였다. 코어 이름(`core.<프로그램>.<pid>`)과 맞는, 어느 코어에도 연결되지 않은 서버 실행 파일이 있으면 '이걸로 연결' 을 제안한다. 이미 연결된 실행 파일은 제안하지 않는다(코어 삭제가 연결된 실행 파일까지 지워 공유가 깨진다 — `deleteDump`).
+- **결함 수정** — 로컬 코어 + 서버에 있는 실행 파일을 고르고 올리면 실행 파일이 조용히 빠지던 것(업로드 API 가 파일만 받음)을, 업로드 뒤 `POST /api/core-dump/{core}/exec`(execFilename)로 연결하도록 고쳤다. 연결이 실패하면 진행 화면으로 가지 않고 같은 버튼으로 다시 시도한다.
+- **AI 티 걷어내기** — 그림자 카드·12~16px 둥근 모서리·필 배지·큰 아이콘 빈 상태·좌측 색 띠(이 화면 모달의 inset 레일 포함)를 없앴다. 구분은 1px 선, 모서리 4px, 상태는 작은 사각 점 + 글자(완료는 회색으로 조용히, 실패·분석 중만 굵은 색), 파일명·시그널·함수는 고정폭.
+- **CSS 분리** — `core-dump.css` 는 GC 로그·스레드 덤프 화면도 싣는 공용이라 손대지 않고 이 화면 규칙은 `core-dump-index.css`(접두 `cf-`)에만 넣었다. 옛 사이드바·이력 표 규칙(`.cd-sidebar`·`.hi-table` 등)은 다른 화면이 쓰는지 확인 전이라 남겨 두었다.
+- **검증:** `mvn test` 1338건 통과(skip 4, +7). 실제 템플릿을 렌더한 픽스처(완료·실패·분석 중·미분석·원본 없음·실행 파일·같은 지점 2건)를 헤드리스 Chrome 으로 띄워 펼치기·같은 지점 모아 보기·상태 탭·실행 파일 표시(건수 문구)·함수 이름 검색·크기 정렬·키보드 이동/펼치기·'실행 파일 연결'(코어 칸 프리로드 + 크기 표시 + 버튼 활성) 동작과 1440·1100·900·390px 레이아웃(페이지 가로 넘침 없음, 크래시 위치가 칸 안에 보임)을 확인. 재빌드·재기동 정상, `/core-dump` 302(로그인)·새 CSS/JS 200.
+- **미검증:** 로그인이 필요해 운영 데이터로 렌더된 화면은 직접 보지 못했다 — 실제 `crashSummary` 가 코드의 형식(`#N 주소 in 함수 at 파일:줄`)과 다르면 해당 줄은 함수 칸에 원문 그대로 나온다(파싱 실패 시 폴백).
+
+## [2026-11-26] v2.7.2 보완 — 민감정보 탐지 규칙 표: '내장' 배지 제거 · 유형 열로 내장 여부 표시
+
+**대상:** `static/js/llm-guard-admin.js`, `static/css/llm-guard-admin.css`, `templates/llm-settings.html`(캐시 키 `?v=2026-11-26b`).
+
+- 규칙 표 이름 옆 **'내장' 배지를 뺐다** — 기본 규칙 11개가 전부 내장이라 모든 행에 같은 배지가 붙어 변별력이 없었다. 내장 여부는 유형 열·삭제 버튼 유무·표 위 안내문으로 이미 드러난다.
+- **유형 열을 4가지로 나눴다:** 내장 검증 / **내장 키워드** / 정규식 / 키워드. 내장 키워드 규칙 2개(개인신용정보·중요정보 키워드)는 `matchType` 이 KEYWORD 라 배지를 빼면 사용자 키워드 규칙과 구분되지 않았기 때문이다(`typeLabel()`).
+- 규칙 모달 제목을 내장 규칙일 때 **'내장 규칙 수정'** 으로 바꿨다 — 분류·유형·설명 칸이 왜 잠겨 있는지 알린다(사용자 규칙은 '규칙 수정', 새 규칙은 '규칙 추가'). 쓰지 않게 된 `.lg-b-builtin` 스타일은 지웠다.
+- 검증: 헤드리스 Chrome 으로 배지 0개, 유형 열(내장 검증 9 · 내장 키워드 2 · 사용자 키워드·정규식), 내장 규칙 삭제 버튼 없음, 모달 제목 3종과 내장 규칙의 분류·유형 잠김 확인. `LlmSettingsTemplateSmokeTest`·`EmptyCatchGuardTest` 통과, 재빌드·재기동 정상.
+
+## [2026-11-26] v2.7.2 보완 — LLM 설정 화면 좌우 폭 확대
+
+**대상:** `templates/llm-settings.html`.
+
+- `.container` 의 `max-width` 를 1080px → **1320px** 로 늘렸다. 이 값은 배너 여백(240+20px)을 포함하므로 실제 콘텐츠 폭은 820px → **1060px** 이다(General 1280 · Accounts 1400 사이). 탐지 이력 표(최소 720px)가 이제 가로 스크롤 없이 들어간다.
+- 검증: 헤드리스 Chrome 으로 1920·1440·1280·1024px 에서 콘텐츠 폭(1060·1060·1020·764px)과 페이지 가로 넘침 없음, 이력 표 가로 스크롤 없음을 확인. `LlmSettingsTemplateSmokeTest` 5건 통과, 재빌드·재기동 정상.
+
+## [2026-11-26] v2.7.2 — AI 입·출력 민감정보 탐지(LLM Guard) + 관리자 탭 + 탐지 이력(1년 보관)
+
+**버전:** 2.7.1 → **2.7.2**(`pom.xml`, `fragments/banner.html`·`index.html`·`progress.html`, `CLAUDE.md`). **대상(신규):** `service/llmguard/{LlmGuardService,BuiltinDetectors,CompiledRule,GuardEngine,Hit,StreamingMasker,AckToken,InputVerdict,MaskResult,LlmGuardLogService}.java`, `util/{LlmGuardContext,DeadlineCharSequence}.java`, `model/entity/{LlmGuardRule,LlmGuardLog}.java`, `repository/{LlmGuardRuleRepository,LlmGuardLogRepository}.java`, `config/LlmGuardRuleSeeder.java`, `controller/LlmGuardAdminController.java`, `static/js/{llm-guard,llm-guard-admin}.js`, `static/css/{llm-guard,llm-guard-admin}.css`, 테스트 10종(아래). **대상(수정):** `service/LlmConfigService.java`(게이트 4지점 출력 가림·기본 분석 프롬프트 상수화·`decodeAttachmentText` public static·생성자), `controller/{AiChatController,HeapAiApiController}.java`, `util/SseJson.java`(`done`·`guard`·`sendGuard`), `config/HeapDumpConfig.java`, `service/{HeapDumpAnalyzerService,AiInsightManager,PdfReportService}.java`, `templates/{llm-settings,analyze,ai-chat,compare}.html`, `static/js/{analyze,common}.js`, `fragments/banner.html`·`common.js` 캐시 키, `application.properties`(앱·k8s `heapApp_k8s/config`), `docs/guide/{LLM_RAG,FRONTEND,ARCHITECTURE,TEST_INVENTORY}.md`, `CLAUDE.md`.
+
+사내 점검 요구 3건(AI 입력의 개인신용정보·중요정보 탐지·경고 / AI 출력의 개인 식별 정보 점검·보완 / 관리자 전용 규칙 조작)과 추가 요구(탐지 기록·열람·1년 보관)를 반영했다.
+
+- **입력 점검** — 사용자가 직접 입력한 내용만 본다: 마지막 user 메시지·텍스트 첨부·첨부 파일명(이미지는 점검하지 않고 안내). 저장·RAG·호출량 게이트보다 앞이라 거부돼도 호출량을 차감하지 않는다. 규칙마다 관리자가 고른 조치를 따른다 — **확인 후 전송**(경고 창 → '그래도 전송'/'취소') · **차단**(전송하지 않고 경고), 함께 걸리면 차단 우선. '그래도 전송' 은 서버가 문구·사용자에 묶어 발급한 10분짜리 토큰(`sensitiveAck`)으로 같은 문구를 다시 보낸다. 우회 저장 경로 `POST /api/ai-chat/sessions/{id}/messages`(role=user)에도 같은 판정(400 + guard).
+- **출력 가림** — `LlmConfigService` 게이트 지점에서 정확히 1회. analyze·chat 결과는 재귀로 가리고 `outputGuard` 를 싣는다(응답·`ai_insights` 저장값 모두 가린 값). 스트림은 base·Vision 두 곳만 `StreamingMasker`(홀드백 128자·PEM 블록 통째 보류·fail-closed)로 감싸고, 끝에서 붙잡아 둔 꼬리를 **onDone 보다 먼저 onChunk 로** 내보낸다. 시스템 프롬프트에 개인 식별 정보 출력 금지 지시를 덧붙인다. `/api/llm/insight/save` 의 `retryPayload`·`saveMessage` 의 assistant 는 다시 가린다. 배포 이전에 저장된 AI 결과·대화는 **읽을 때 가려** 보여 준다(DB 값은 그대로, 기록 없음 — `AiInsightManager.loadAiInsight`·힙 PDF·채팅 이력 GET).
+- **내장 규칙 11종**(시드는 `builtin_key` 없는 것만 INSERT): 주민·외국인등록번호(생년월일 검증, 차단) · 신용카드(Luhn·카드사 번호대, 차단) · 계좌 · 휴대전화 · 이메일 · 여권 · 운전면허 · 비밀번호·키 값 · PEM 개인키(차단) · 개인신용/중요정보 키워드. 사용자 규칙은 정규식(`(?<v>…)` 부분 가림, 500자, 실행 200ms 제한 — 입력은 초과 시 확인 후 전송, 출력은 건너뜀)·키워드.
+- **기록** — `llm_guard_rule`·`llm_guard_log` 신규 테이블. 원문은 저장하지 않고 가린 ±20자 발췌만. 1년(하한 365일) 지나면 매일 03:50 자동 삭제, **이력 삭제 API 없음**. 앱 로그 `[LlmGuard] action=input-confirm|input-confirmed|input-block|output-mask … rules=RRN×1`.
+- **관리자 화면** — `/settings/llm` 에 `LLM 설정 | 민감정보 탐지 | 탐지 이력` 탭. 탐지 설정 토글 3종·규칙 표(사용 토글·입력 조치 배지·내장 배지·수정/삭제)·규칙 모달(초안 시험)·규칙 시험, 이력 탭은 30일 통계·필터(기간·사용자·구분·조치·규칙)·서버 페이저·CSV(엑셀 수식 주입 방지). **일반 사용자 HTML 에는 탭 마크업·스크립트·스타일·API 경로가 0건**(렌더 스모크로 고정), 설정 패널은 서버에서 active 로 렌더돼 종전 화면 그대로다.
+- **사용자 화면** — analyze 플로팅 채팅·AI Chat: 거부 시 user 말풍선을 지우고 첨부·문구를 되돌린 뒤 확인/차단 창(포커스 가둠·Esc·복원), 이력은 한 번만 되돌린다(직전 assistant 턴 보존). 응답에서 가린 값이 있으면 말풍선 아래 "개인정보로 보이는 n건을 가렸습니다(이메일 1·휴대전화번호 1)" 배지. JSON AI 결과(heap·compare·gc·thread·core)는 안내 토스트(`Common.fetchJSON` 훅 + analyze·compare 직접 호출). 가린 값의 별표가 채팅 마크다운 굵게(`**…**`)로 먹혀 `ab*@corp.com` 처럼 보이던 것을 렌더러 두 곳에서 막았다(3개 이상 또는 `-`·`@` 옆 2개만 — `**굵게**가` 는 그대로).
+- **런타임 설정 3키**(`llm.guard.input-check.enabled`·`output-mask.enabled`·`output-instruction.enabled`)는 함정 40 의 5곳 + facade `setLlmGuardSettings()`. 보관 키 `llm.guard.log.retention-days`·`purge-cron`. 앱·k8s properties 양쪽에 키 추가.
+- **함정 81~89 신설**(`docs/guide/LLM_RAG.md` — 스트림은 게이트 지점에서만, onDone 순서, 홀드백·PEM·자르는 지점, 원문 미저장, 마지막 user 메시지·한 번만 pop, 확인 토큰, BLOCK 우선·시간 초과 fail-safe·JDK 정규식 최적화, `context`/`prompt` 미점검, 우회 저장 경로). `CLAUDE.md` '어디서든 지킬 규칙' 2줄 추가.
+- **테스트 +60(1271 → 1331, 전부 통과):** `LlmGuardDetectorsTest`(16) · `StreamingMaskerTest`(7 — 모든 분할 위치·한 글자씩·PEM 무유출) · `RegexDeadlineTest`(4) · `AckTokenTest`(4) · `LlmConfigServiceOutputGuardTest`(6 — JDK HttpServer 가짜 LLM 으로 analyze·chat·stream base·텍스트 첨부 위임·빈 첨부 위임·vision 각각 MASKED 기록 1회·지시문 1회·꼬리 전송) · `AiChatGuardFlowTest`(7) · `LlmGuardAdminControllerTest`(7) · `LlmGuardSettingsPersistTest`(3) · `LlmGuardLogPurgeTest`(4) · `LlmSettingsTemplateSmokeTest`(+2). 기존 `LlmApiKeySecretTest`·`RagEnabledEndpointTest` 생성자 보정.
+- **검증:** `mvn test` 1331건 통과(skip 4). 재빌드·재기동 정상, 운영 DB 는 읽기 전용으로 `SHOW CREATE TABLE llm_guard_rule/llm_guard_log`(인덱스 2종·`builtin_key` unique)·시드 11건 확인, 재기동 시 시드 0건 추가(보존). 비로그인 관리 API 401·페이지 302. 헤드리스 Chrome(실제 템플릿 렌더 + 실제 엔진이 만든 거부·가림 응답을 돌려주는 스텁 서버): 관리자 탭 3개·해시 진입·규칙 추가(잘못된 정규식 400 표시)·초안 시험·사용 토글·설정 저장·이력 필터/페이저/CSV, 일반 사용자 화면 탭·패널·스크립트 0, analyze 플로팅·AI Chat 양쪽에서 주민번호 → 차단 창·문구/첨부 복원, 휴대전화 → 확인 창 → '그래도 전송' 시 토큰 동봉 재전송 → 가린 응답·배지, 완료된 턴 뒤 재거부 시 직전 assistant 턴 보존, 390px 에서 확인 창·규칙 모달·표 가로 넘침 없음.
+- **미검증:** 로그인한 일반 사용자(USER)로 `/api/admin/llm-guard/rules` 403 실측과 운영 LLM 을 거친 실제 응답 가림은 자격 증명 없이 할 수 없어 하지 않았다(각각 `/api/admin/**` ADMIN 매처 + `@PreAuthorize`·매핑 계약 테스트, 가짜 LLM HTTP 통합 테스트로 대신했다).
+- **범위 밖(별건 보고):** `/opt/chroma/app/sources.py` 가 `ai_chat_messages` 의 질문 원문 앞 300자를 마스킹 없이 Chroma 메타로 색인한다 — 사용자가 '그래도 전송' 한 개인정보가 Chroma 에 남을 수 있다. 분석 프롬프트(`/api/llm/analyze`·`compare` 의 `prompt`)와 채팅 `context` 는 사용자 결정에 따라 점검하지 않는다(함정 88).
+
 ## [2026-11-26] v2.7.1 보완 — 힙 덤프의 스레드를 스레드 덤프 파일로 내보내기
 
 **대상:** `service/{ThreadDumpAnalyzerService,HeapThreadService}.java`, `controller/ThreadDumpApiController.java`, `parser/threaddump/ThreadDumpEngine.java`, `templates/thread-dump/analyze.html`, `templates/analyze.html`, `static/js/{thread-dump-analyze,heap-threads-card}.js`, `static/css/thread-dump.css`, 테스트 `ThreadDumpCombineLinkServiceTest`(+3)·`HeapThreadServiceTest`(+1)·`ThreadDumpLinkEndpointTest`(+1)·`ThreadDumpTemplateSmokeTest`, `docs/guide/THREAD_DUMP.md`.

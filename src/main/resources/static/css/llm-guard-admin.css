@@ -1,0 +1,144 @@
+/* ──────────────────────────────────────────────────────────────
+ * 민감정보 탐지(LLM Guard) 관리 탭 — /settings/llm 관리자 전용 (2026-11-26)
+ * 일반 사용자 HTML 에는 링크되지 않는다(th:if isAdmin).
+ * 표현 규약: 옅은 배경 + 1px 테두리 + 배지. 좌측 색 띠(border-left/inset 레일) 금지.
+ * ────────────────────────────────────────────────────────────── */
+
+.lg-card-hd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+              flex-wrap: wrap; margin-bottom: 10px; }
+.lg-h3 { margin: 0; font-size: 15px; font-weight: 700; color: #111827; }
+.lg-muted { font-size: 12px; color: #6B7280; font-weight: 400; }
+.lg-note { margin: 0 0 12px; padding: 10px 12px; font-size: 12.5px; line-height: 1.6; color: #374151;
+           background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; }
+.lg-info { margin-bottom: 14px; padding: 10px 14px; font-size: 13px; color: #1E3A8A;
+           background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 8px; }
+.lg-switch { flex-shrink: 0; position: relative; display: inline-flex; }
+/* common.css 의 .tog 는 display:none 이라 키보드로 닿지 않는다 — 여기서는 시각적 숨김으로 포커스를 살린다 */
+.lg-switch .tog { display: block; position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.lg-switch .tog:checked + .tog-track { background: #2563EB; }
+.lg-switch .tog:focus-visible + .tog-track { outline: 2px solid #93C5FD; outline-offset: 2px; }
+
+/* 표 */
+.lg-table-wrap { overflow-x: auto; border: 1px solid #E5E7EB; border-radius: 8px; }
+.lg-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lg-table th { background: #F9FAFB; color: #6B7280; font-weight: 600; font-size: 12px; text-align: left;
+               padding: 9px 10px; border-bottom: 1px solid #E5E7EB; white-space: nowrap; }
+.lg-table td { padding: 9px 10px; border-bottom: 1px solid #F3F4F6; vertical-align: middle; color: #374151; }
+.lg-table tbody tr:last-child td { border-bottom: none; }
+.lg-table tbody tr:hover td { background: #FAFAFA; }
+.lg-table tr.lg-off td { color: #9CA3AF; }
+.lg-c-on { width: 64px; }
+/* 출력 가림 — 배지(가림/안 함) 하나뿐이라 머리글 폭에 맞춰 좁힌다. 남는 폭은 너비 미지정 열(이름 등)이 가져간다 */
+.lg-c-out { width: 76px; white-space: nowrap; }
+.lg-c-act { width: 120px; text-align: right; }
+.lg-table th.lg-c-act, .lg-table td.lg-c-act { text-align: right; white-space: nowrap; }
+.lg-num { text-align: right; }
+.lg-table th.lg-num, .lg-table td.lg-num { text-align: right; font-variant-numeric: tabular-nums; }
+.lg-empty { text-align: center; color: #9CA3AF; padding: 28px 10px !important; }
+.lg-rule-name { font-weight: 600; color: #111827; }
+.lg-rule-desc { font-size: 11.5px; color: #9CA3AF; margin-top: 2px; }
+.lg-table tr.lg-off .lg-rule-name { color: #9CA3AF; }
+.lg-log-table { min-width: 720px; }
+.lg-log-table td { font-size: 12.5px; }
+.lg-sample { font-family: var(--font-mono, monospace); font-size: 12px; color: #374151;
+             word-break: break-all; max-width: 360px; }
+.lg-time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* 배지 */
+.lg-badge { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600;
+            line-height: 18px; border: 1px solid transparent; white-space: nowrap; }
+.lg-b-block { background: #FEF2F2; color: #B91C1C; border-color: #FECACA; }
+.lg-b-confirm { background: #FFFBEB; color: #92400E; border-color: #FDE68A; }
+.lg-b-off { background: #F3F4F6; color: #6B7280; border-color: #E5E7EB; }
+.lg-b-mask { background: #EFF6FF; color: #1D4ED8; border-color: #BFDBFE; }
+.lg-b-ok { background: #ECFDF5; color: #047857; border-color: #A7F3D0; }
+.lg-b-in { background: #F0F9FF; color: #0369A1; border-color: #BAE6FD; }
+.lg-b-out { background: #F5F5F4; color: #44403C; border-color: #D6D3D1; }
+
+/* 작은 버튼 */
+.lg-btn-sm { padding: 3px 10px; font-size: 12px; line-height: 18px; border-radius: 6px; cursor: pointer;
+             font-family: inherit; border: 1px solid #D1D5DB; background: #fff; color: #374151; }
+.lg-btn-sm:hover { background: #F3F4F6; }
+.lg-btn-sm.lg-danger { color: #B91C1C; border-color: #FECACA; }
+.lg-btn-sm.lg-danger:hover { background: #FEF2F2; }
+.lg-btn-sm:disabled, .lg-btn-sm[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.lg-btn-sm.lg-danger[aria-disabled="true"]:hover { background: #fff; }
+.lg-btn-sm + .lg-btn-sm { margin-left: 4px; }
+
+/* 시험 */
+.lg-textarea { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid #D1D5DB; border-radius: 6px;
+               font-family: inherit; font-size: 13px; line-height: 1.5; resize: vertical; }
+.lg-textarea:focus, .lg-modal input[type=text]:focus, .lg-modal select:focus, .lg-filters input:focus,
+.lg-filters select:focus { outline: 2px solid #93C5FD; outline-offset: 0; border-color: #60A5FA; }
+.lg-test-result { margin-top: 10px; padding: 10px 12px; font-size: 13px; line-height: 1.6;
+                  background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; }
+.lg-test-result[hidden] { display: none; }
+.lg-test-result pre { margin: 6px 0 0; padding: 8px 10px; background: #fff; border: 1px solid #E5E7EB;
+                      border-radius: 6px; white-space: pre-wrap; word-break: break-all;
+                      font-family: var(--font-mono, monospace); font-size: 12px; max-height: 240px; overflow: auto; }
+.lg-test-result ul { margin: 4px 0 0; padding-left: 18px; }
+.lg-test-k { font-weight: 600; color: #111827; margin-right: 6px; }
+
+/* 통계 */
+.lg-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.lg-stat { background: #fff; border: 1px solid #E5E7EB; border-radius: 10px; padding: 12px 14px; }
+.lg-stat-k { font-size: 12px; color: #6B7280; }
+.lg-stat-v { font-size: 22px; font-weight: 700; color: #111827; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+/* 필터 */
+.lg-filters { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; font-size: 12.5px; color: #374151; }
+.lg-filters label { display: inline-flex; align-items: center; gap: 6px; }
+.lg-filters input, .lg-filters select { padding: 5px 8px; border: 1px solid #D1D5DB; border-radius: 6px;
+                                         font-family: inherit; font-size: 12.5px; background: #fff; }
+.lg-filters input[type=text] { width: 110px; }
+.lg-filter-btns { display: inline-flex; gap: 6px; margin-left: auto; }
+.lg-summary { padding: 8px 2px; font-size: 12px; color: #6B7280; }
+.lg-pager { display: flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 0 2px; flex-wrap: wrap; }
+.lg-pager button { min-width: 32px; padding: 6px 10px; border: 1px solid #E5E7EB; border-radius: 6px; background: #fff;
+                   font-size: 12px; cursor: pointer; color: #374151; font-family: inherit; }
+.lg-pager button:hover:not(:disabled) { background: #F9FAFB; border-color: #93C5FD; }
+.lg-pager button.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+.lg-pager button:disabled { opacity: .4; cursor: not-allowed; }
+.lg-pager .ellipsis { padding: 6px 4px; color: #9CA3AF; font-size: 12px; }
+
+/* 규칙 모달 — common.css 는 .modal-ov/.modal-box 까지만 준다(함정 17: 골격은 페이지 몫) */
+.lg-modal { width: 560px; max-width: calc(100vw - 32px); max-height: calc(100vh - 40px); overflow-y: auto;
+            box-sizing: border-box; animation: modalIn .18s ease-out; }
+.lg-modal .modal-title { font-size: 16px; font-weight: 700; color: #111827; margin-bottom: 14px; }
+.lg-modal .modal-body { font-size: 13px; color: #374151; }
+.lg-modal .modal-btns { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.lg-modal .modal-btns button { padding: 8px 18px; border: none; border-radius: 6px; font-family: inherit;
+                               font-size: 13px; font-weight: 600; cursor: pointer; line-height: 18px; }
+.lg-modal .modal-btns button:disabled { opacity: .5; cursor: not-allowed; }
+.lg-form-row { margin-bottom: 12px; }
+.lg-form-row > label, .lg-label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+.lg-form-row input[type=text], .lg-form-row select { width: 100%; box-sizing: border-box; padding: 7px 10px;
+        border: 1px solid #D1D5DB; border-radius: 6px; font-family: inherit; font-size: 13px; background: #fff; }
+.lg-form-row input:disabled, .lg-form-row select:disabled, .lg-form-row textarea[readonly] { background: #F9FAFB; color: #6B7280; }
+.lg-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.lg-2col > div > label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+.lg-checks { display: flex; gap: 16px; flex-wrap: wrap; }
+.lg-checks label, .lg-radios label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+.lg-radios { display: flex; flex-direction: column; gap: 6px; }
+.lg-hint { margin-top: 6px; font-size: 11.5px; line-height: 1.55; color: #6B7280; }
+.lg-hint code { font-family: var(--font-mono, monospace); background: #F3F4F6; border: 1px solid #E5E7EB;
+                border-radius: 4px; padding: 0 4px; font-size: 11.5px; }
+.lg-draft { padding: 10px 12px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px; }
+.lg-draft-row { display: flex; gap: 6px; }
+.lg-draft-row input { flex: 1; min-width: 0; }
+.lg-err { margin-top: 4px; padding: 8px 10px; font-size: 12.5px; color: #991B1B; background: #FEF2F2;
+          border: 1px solid #FECACA; border-radius: 6px; }
+.lg-err[hidden] { display: none; }
+
+@media (max-width: 768px) {
+    .lg-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .lg-filter-btns { margin-left: 0; width: 100%; }
+    .lg-filters input[type=date] { width: 132px; }
+    .lg-c-act { width: auto; }
+    .lg-2col { grid-template-columns: 1fr; }
+    #lgRuleTable th:nth-child(3), #lgRuleTable td:nth-child(3),
+    #lgRuleTable th:nth-child(4), #lgRuleTable td:nth-child(4) { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .lg-modal { animation: none; }
+}

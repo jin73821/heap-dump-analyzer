@@ -35,7 +35,8 @@ class LlmApiKeySecretTest {
 
     @BeforeEach
     void setUp() {
-        llm = new LlmConfigService(new HeapDumpConfig(), new LlmRateLimitService(new HeapDumpConfig()));
+        llm = new LlmConfigService(new HeapDumpConfig(), new LlmRateLimitService(new HeapDumpConfig()),
+                new com.heapdump.analyzer.service.llmguard.LlmGuardService(null, null, null));
     }
 
     private static Map<String, Object> settingsWith(String value) {

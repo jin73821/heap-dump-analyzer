@@ -199,6 +199,14 @@ public class HeapDumpConfig {
     @Value("${llm.ratelimit.concurrent:3}")
     private int llmRateLimitConcurrent;
 
+    // ── LLM Guard (AI 입·출력 민감정보 탐지, 2026-11-26) — 함정 40: 5곳 동기화 ──
+    @Value("${llm.guard.input-check.enabled:true}")
+    private boolean llmGuardInputCheckEnabled;
+    @Value("${llm.guard.output-mask.enabled:true}")
+    private boolean llmGuardOutputMaskEnabled;
+    @Value("${llm.guard.output-instruction.enabled:true}")
+    private boolean llmGuardOutputInstructionEnabled;
+
     // ── RAG (Elasticsearch) 설정 ─────────────────────────────
     @Value("${rag.enabled:false}")
     private boolean ragEnabled;
@@ -756,6 +764,9 @@ public class HeapDumpConfig {
     public int     getLlmRateLimitPerMinute()   { return llmRateLimitPerMinute; }
     public int     getLlmRateLimitPerDay()      { return llmRateLimitPerDay; }
     public int     getLlmRateLimitConcurrent()  { return llmRateLimitConcurrent; }
+    public boolean isLlmGuardInputCheckEnabled()        { return llmGuardInputCheckEnabled; }
+    public boolean isLlmGuardOutputMaskEnabled()        { return llmGuardOutputMaskEnabled; }
+    public boolean isLlmGuardOutputInstructionEnabled() { return llmGuardOutputInstructionEnabled; }
 
     // ── RAG getters ────────────────────────────────────────────
     public boolean isRagEnabled()           { return ragEnabled; }

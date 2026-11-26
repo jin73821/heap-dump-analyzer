@@ -131,8 +131,10 @@
     /* ── 스레드 덤프 판별 (2026-11-26) — 서버 ThreadDumpFormatDetector 와 같은 규칙.
      *    ⚠ 아래 정규식 4개는 Java 쪽 NAME_RE·HEADER_RE·THREAD_RE·STATE_RE 와 글자 그대로 같아야 한다(ThreadDumpUploadContractTest 가 대조).
      *    브라우저가 스레드 덤프로 보낸 파일을 서버가 거부하면 업로드가 실패로 끝난다.
-     *    이름: threaddump.txt / thread_dump_20261126.log.gz / jstack.12345 / was1-jstack-3.out / x.tdump */
-    var _TD_NAME_RE = /(^|[-_.])(thread[-_.]?dumps?|tdump|jstack|stack[-_.]?dump)([-_.][^\/]*)?(\.(txt|log|out|dump|tdump))?(\.\d+)?(\.gz)?$|\.(tdump|threaddump|jstack)(\.gz)?$/i;
+     *    이름: threaddump.txt / thread_dump_20261126.log.gz / jstack.12345 / was1-jstack-3.out / x.tdump
+     *          / thread.txt / was1_thread_20261127.log / thread1.out / threads.log (2026-11-27 — 구분자로 떨어진 낱말 thread)
+     *    mythread.log · threadpool.xml 처럼 낱말 안에 든 thread 는 맞지 않는다. */
+    var _TD_NAME_RE = /(^|[-_.])(thread[-_.]?dumps?|threads?\d*|tdump|jstack|stack[-_.]?dump)([-_.][^\/]*)?(\.(txt|log|out|dump|tdump))?(\.\d+)?(\.gz)?$|\.(tdump|threaddump|jstack)(\.gz)?$/i;
     var _TD_HEADER = /Full thread dump .*VM \(.*\):/;
     var _TD_THREAD = /^".+" .*\btid=0x[0-9a-f]+ nid=(?:0x[0-9a-f]+|\d+)\b/;
     var _TD_STATE = /^\s+java\.lang\.Thread\.State: [A-Z_]+/;

@@ -6,6 +6,7 @@
     <meta name="_csrf" th:content="${_csrf.token}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/common.css?v=2026-09-20">
+    <link rel="stylesheet" href="/css/llm-guard.css?v=2026-11-26">
     <title>AI Chat — Heap Dump Analyzer</title>
     <style>
         body { overflow: hidden; }  /* AI Chat 페이지 전용 */
@@ -311,6 +312,8 @@
     </div>
 </div>
 
+<!-- 민감정보 확인 창·출력 가림 배지 (window.LlmGuard) -->
+<script src="/js/llm-guard.js?v=2026-11-26"></script>
 <script>
 var _sessions = [];
 var _activeSessionId = null;
@@ -719,6 +722,7 @@ function appendMsg(role, content, createdAt, attachments) {
         wrapper.appendChild(timeDiv);
     }
     container.appendChild(wrapper);
+    return wrapper;   // 민감정보 입력 점검 거부 시 이 말풍선을 지운다
 }
 
 // ── File Attach Functions ────────────────────────────
@@ -820,6 +824,7 @@ function appendDateSep(dateStr) {
     sep.className = 'chat-date-sep';
     sep.innerHTML = '<span class="chat-date-label">' + escHtml(dateStr) + '</span>';
     container.appendChild(sep);
+    return sep;
 }
 
 function extractDate(dt) {
@@ -846,23 +851,34 @@ function extractTime(dt) {
 
 function sendMessage() {
     if (_sending || !_activeSessionId) return;
+    if (window.LlmGuard && LlmGuard.isOpen()) return;   // 민감정보 확인 창이 떠 있는 동안은 보내지 않는다
     var input = document.getElementById('chatInput');
     var text = input.value.trim();
     if (!text) return;
 
+    var currentAttachments = _attachedFiles.slice();
+    _attachedFiles = [];
+    renderAttachBar();
+    input.value = '';
+    input.style.height = 'auto';
+    _send(text, currentAttachments, null);
+}
+
+/**
+ * 한 턴 보내기. ack 는 민감정보 '그래도 전송' 확인 토큰(서버가 문구·첨부에 묶어 발급).
+ * 입력 점검에서 거부되면 user 말풍선·이번 턴에 붙인 날짜 구분선을 지우고 문구·첨부를 되돌린 뒤 확인 창을 띄운다.
+ */
+function _send(text, currentAttachments, ack) {
     var now = new Date().toISOString();
     var todayDate = extractDate(now);
     var dateSeps = document.getElementById('chatMessages').querySelectorAll('.chat-date-label');
     var lastDateText = dateSeps.length ? dateSeps[dateSeps.length - 1].textContent : '';
-    if (todayDate && todayDate !== lastDateText) appendDateSep(todayDate);
-    var currentAttachments = _attachedFiles.slice();
-    _attachedFiles = [];
-    renderAttachBar();
+    var sepNode = (todayDate && todayDate !== lastDateText) ? appendDateSep(todayDate) : null;
 
     _messages.push({ role: 'user', content: text });
-    appendMsg('user', text, now, currentAttachments);
-    input.value = '';
-    input.style.height = 'auto';
+    var userWrapper = appendMsg('user', text, now, currentAttachments);
+    var pendingGuard = null;   // 입력 점검 거부(SENSITIVE_INPUT_*) — finish() 뒤에 확인 창
+    var outputGuard = null;    // done 의 출력 가림 결과 — 말풍선 아래 배지
 
     _sending = true;
     document.getElementById('chatSendBtn').disabled = true;
@@ -888,7 +904,8 @@ function sendMessage() {
     fetch('/api/ai-chat/sessions/' + _activeSessionId + '/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: _messages, context: '', filename: '', attachments: currentAttachments })
+        body: JSON.stringify({ messages: _messages, context: '', filename: '', attachments: currentAttachments,
+                               sensitiveAck: ack || undefined })
     })
     .then(function(response) {
         checkAuth(response);
@@ -929,6 +946,13 @@ function sendMessage() {
                                         _chatSmartScroll(container);
                                     });
                                 }
+                            } else if (currentEvent === 'done') {
+                                if (d.outputGuard) outputGuard = d.outputGuard;
+                            } else if (currentEvent === 'error' && window.LlmGuard && LlmGuard.isGuardCode(d.errorCode)) {
+                                // 민감정보 입력 점검 거부 — 아래 일반 오류 분기보다 앞에서 처리한다.
+                                // user 턴 pop 은 여기서 한 번만(finish 는 pop 하지 않는다), 오류 말풍선은 그리지 않는다.
+                                pendingGuard = d;
+                                _messages.pop();
                             } else if (currentEvent === 'error') {
                                 var errMsg = d.error || 'Error';
                                 var friendlyMap = {
@@ -969,6 +993,7 @@ function sendMessage() {
                 timeDiv.className = 'chat-msg-time';
                 timeDiv.textContent = extractTime(new Date().toISOString());
                 bubbleWrapper.appendChild(timeDiv);
+                if (outputGuard && window.LlmGuard) LlmGuard.attachBadge(bubbleWrapper, outputGuard);
             } else if (bubbleWrapper.parentNode) {
                 bubbleWrapper.parentNode.removeChild(bubbleWrapper);
             }
@@ -976,6 +1001,32 @@ function sendMessage() {
             document.getElementById('chatSendBtn').disabled = false;
             document.getElementById('chatInput').focus();
             loadSessions(); // 세션 목록 갱신 (제목/시간)
+            // 확인 창은 반드시 여기(전송 상태 해제·포커스 이동 뒤)에서
+            if (pendingGuard) onGuardRejected(pendingGuard);
+        }
+
+        function onGuardRejected(g) {
+            var guard = g.guard || {};
+            if (userWrapper && userWrapper.parentNode) userWrapper.parentNode.removeChild(userWrapper);
+            if (sepNode && sepNode.parentNode) sepNode.parentNode.removeChild(sepNode);
+            if (currentAttachments.length) {
+                _attachedFiles = currentAttachments.concat(_attachedFiles);
+                renderAttachBar();
+            }
+            var inp = document.getElementById('chatInput');
+            if (inp && !inp.value.trim()) {
+                inp.value = text;
+                try { inp.dispatchEvent(new Event('input')); }
+                catch (e) { if (window.Common) Common.logIgnored('[AI-Chat] 입력창 높이 갱신 이벤트 실패', e); }
+            }
+            LlmGuard.confirmInput(guard).then(function(go) {
+                if (!go || guard.verdict !== 'CONFIRM' || !guard.ackToken || _sending) return;
+                var i2 = document.getElementById('chatInput');
+                if (i2 && i2.value.trim() === text) { i2.value = ''; i2.style.height = 'auto'; }
+                _attachedFiles = _attachedFiles.filter(function(a) { return currentAttachments.indexOf(a) < 0; });
+                renderAttachBar();
+                _send(text, currentAttachments, guard.ackToken);
+            });
         }
 
         return process();
@@ -1021,6 +1072,15 @@ function mdRender(text) {
         return '<pre><code>' + code.trim() + '</code></pre>';
     });
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    // 서버가 가린 값의 별표(900101-1******·ab***@corp.com·010-****-5678)가 굵게 표지로 먹히지 않게 먼저 엔티티로 바꾼다
+    // (LLM Guard) — 3개 이상, 또는 '-'·'@' 옆의 2개(11-**-…, ab**@…)만 가림 표시로 본다.
+    // 2개를 넓게 잡으면 '**굵게**가' 처럼 조사가 바로 붙는 한국어 굵게가 깨진다.
+    s = s.replace(/\*{2,}/g, function(m, off, str) {
+        var prev = off > 0 ? str.charAt(off - 1) : '';
+        var next = str.charAt(off + m.length);
+        var masked = m.length >= 3 || prev === '-' || next === '-' || next === '@';
+        return masked ? m.replace(/\*/g, '&#42;') : m;
+    });
     s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     s = s.replace(/\n/g, '<br>');
     s = s.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, function(m,c) {

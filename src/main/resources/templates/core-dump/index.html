@@ -9,6 +9,7 @@
     <title>코어 덤프 분석 - Heap Dump Analyzer</title>
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-09-20}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-20}">
+    <link rel="stylesheet" th:href="@{/css/core-dump-index.css?v=2026-11-27c}">
 </head>
 <body>
 
@@ -31,171 +32,103 @@
     </div>
 </div>
 
-<div class="cd-app-layout">
-  <aside class="cd-sidebar">
-    <div class="cd-side-section cd-side-files">
-        <div class="cd-file-panel-head">
-            서버 코어 파일
-            <span class="cd-file-panel-count" id="cdFileCount" th:text="${#lists.size(coreDumpFiles)}">0</span>
-        </div>
-        <div class="cd-side-hint">파일을 클릭하거나 업로드 존으로 끌어다 놓으면 분석이 준비됩니다.</div>
+<!-- 코어 파일 본문 (2026-11-26 개편 — 시안 A '한 표 작업대').
+     예전의 좌측 '서버 코어 파일' 목록과 '분석 이력' 표를 한 표로 합쳤다(행 조립: CoreFileListBuilder).
+     상단바(.cd-topbar)·배너는 위 그대로다. 이 본문 스타일은 /css/core-dump-index.css 에만 있다
+     (core-dump.css 는 GC 로그·스레드 덤프 화면도 싣는 공용이라 건드리지 않는다). -->
+<main class="cf-page" id="cfPage">
 
-        <div class="cd-file-search" id="cdFileSearchWrap">
-            <span class="cd-file-search-icon" aria-hidden="true">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
-            </span>
-            <input type="text" id="cdFileSearch" placeholder="파일명 검색..." autocomplete="off">
-            <button type="button" class="cd-file-search-clear" id="cdFileSearchClear" aria-label="검색 지우기">&times;</button>
+    <section class="cf-box cf-new" aria-labelledby="cfNewTitle">
+        <!-- 카드 제목은 스레드 덤프·GC 로그 업로드 카드(.content-card-title)와 같은 모양 — 아이콘 + 제목 + 아랫선 (2026-11-27) -->
+        <div class="cf-new-title">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M17 8l-5-5-5 5"></path><path d="M12 3v12"></path></svg>
+            <h2 class="cf-h2" id="cfNewTitle">코어 덤프 업로드</h2>
         </div>
-        <div class="cd-file-filter">
-            <select id="cdFileStatusFilter" class="cd-select" aria-label="상태 필터">
-                <option value="all">상태: 전체</option>
-                <option value="SUCCESS">완료</option>
-                <option value="ERROR">실패</option>
-                <option value="NOT_ANALYZED">미분석</option>
-            </select>
-            <select id="cdFileTypeFilter" class="cd-select" aria-label="유형 필터">
-                <option value="all">유형: 전체</option>
-                <option value="coredump">코어</option>
-                <option value="exec">실행파일</option>
-            </select>
-        </div>
-
-        <div th:if="${#lists.isEmpty(coreDumpFiles)}" class="cd-file-empty">
-            서버에 코어 파일이 없습니다.
-        </div>
-
-        <div th:if="${!#lists.isEmpty(coreDumpFiles)}" class="cd-file-list" id="cdFileList">
-            <div th:each="f : ${coreDumpFiles}"
-                 class="cd-file-item" draggable="true" tabindex="0" role="button"
-                 th:classappend="${f.pairedExecFilename != null and !#strings.isEmpty(f.pairedExecFilename)} ? 'is-paired'"
-                 th:data-filename="${f.filename}"
-                 th:data-exec="${f.pairedExecFilename != null ? f.pairedExecFilename : ''}"
-                 th:data-status="${f.status}"
-                 th:data-type="${f.fileType}"
-                 th:title="${f.filename}">
-                <div class="cd-finfo">
-                    <div class="cd-file-name" th:text="${f.filename}"></div>
-                    <div class="cd-fmeta">
-                        <span class="cd-file-size" th:text="${f.formattedSize}"></span>
-                        <span class="status-badge"
-                              th:classappend="${f.status == 'SUCCESS'} ? 'status-success'
-                                             : (${f.status == 'ERROR'} ? 'status-error'
-                                             : (${f.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
-                              th:text="${f.status == 'SUCCESS'} ? '완료'
-                                       : (${f.status == 'ERROR'} ? '실패'
-                                       : (${f.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
-                    </div>
-                    <div th:if="${f.pairedExecFilename != null and !#strings.isEmpty(f.pairedExecFilename)}"
-                         class="cd-pair-chip" th:title="'페어 실행 파일: ' + ${f.pairedExecFilename}">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"></path><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"></path></svg>
-                        <span th:text="${f.pairedExecFilename}"></span>
-                    </div>
-                </div>
-                <span class="cd-file-grip" aria-hidden="true">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"></circle><circle cx="15" cy="6" r="1.6"></circle><circle cx="9" cy="12" r="1.6"></circle><circle cx="15" cy="12" r="1.6"></circle><circle cx="9" cy="18" r="1.6"></circle><circle cx="15" cy="18" r="1.6"></circle></svg>
+        <p class="cf-new-desc">코어를 만든 프로그램의 실행 파일을 함께 올리면 함수 이름과 소스 라인까지 나옵니다.</p>
+        <!-- 업로드 버튼 두 개(.cf-slot) — 버튼 전체가 누르는 자리이자 끌어다 놓는 자리다(투명 input 이 덮는다).
+             '파일 선택' 은 모양만(aria-hidden). 칸 id·has-file/dragover/is-flash 클래스는 JS 계약 -->
+        <div class="cf-pair">
+            <div class="cf-slot" id="coreDropZone">
+                <span class="cf-slot-ic" aria-hidden="true"><span class="cf-slot-ic-idle"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path><path d="M12.5 11l-2.5 3.5h4L11.5 18"></path></svg></span><span class="cf-slot-ic-ok"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span></span>
+                <span class="cf-slot-body">
+                    <span class="cf-slot-lbl">코어 파일<span class="cf-req">필수</span></span>
+                    <span class="cf-slot-empty">끌어다 놓거나 눌러서 선택</span>
+                    <span class="cf-slot-picked"><span class="cf-slot-file" id="coreFileName"></span><span class="cf-slot-size" id="coreFileSize"></span></span>
                 </span>
+                <span class="cf-slot-pick" aria-hidden="true">파일 선택</span>
+                <input type="file" id="coreFileInput" onchange="onCoreFileSelect(this)" aria-label="코어 파일 선택">
+                <button type="button" class="cf-slot-clear" id="coreClearBtn"
+                        aria-label="코어 파일 선택 해제" title="선택 해제" onclick="clearCoreZone(event)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+                </button>
+            </div>
+            <div class="cf-slot" id="execDropZone">
+                <span class="cf-slot-ic" aria-hidden="true"><span class="cf-slot-ic-idle"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M7 9.5l3 2.5-3 2.5"></path><path d="M12.5 15H17"></path></svg></span><span class="cf-slot-ic-ok"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg></span></span>
+                <span class="cf-slot-body">
+                    <span class="cf-slot-lbl">실행 파일<span class="cf-slot-opt">선택</span></span>
+                    <span class="cf-slot-empty">함께 올리면 함수 이름·소스 라인까지</span>
+                    <span class="cf-slot-picked"><span class="cf-slot-file" id="execFileName"></span><span class="cf-slot-size" id="execFileSize"></span></span>
+                </span>
+                <span class="cf-slot-pick" aria-hidden="true">파일 선택</span>
+                <input type="file" id="execFileInput" onchange="onExecFileSelect(this)" aria-label="실행 파일 선택">
+                <button type="button" class="cf-slot-clear" id="execClearBtn"
+                        aria-label="실행 파일 선택 해제" title="선택 해제" onclick="clearExecZone(event)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+                </button>
             </div>
         </div>
-        <div th:if="${!#lists.isEmpty(coreDumpFiles)}" class="cd-file-noresult" id="cdFileNoResult">검색 결과가 없습니다.</div>
-        <div class="cd-pg" id="cdFilePg">
-            <div class="cd-pg-list" id="cdFilePgList"></div>
-            <div class="cd-pg-info" id="cdFilePgInfo"></div>
+        <div class="cf-new-go">
+            <button type="button" class="cf-btn cf-btn-primary cf-submit" id="uploadBtn" onclick="startUpload()" disabled>
+                <span class="usb-progress" id="uploadProgressFill"></span>
+                <span class="usb-label" id="uploadBtnLabel">GDB 분석 시작</span>
+            </button>
         </div>
-    </div>
-  </aside>
+        <!-- 서버에 있는 (어느 코어에도 연결되지 않은) 실행 파일 중 코어 이름과 맞는 것을 제안 — core-dump-index.js updateExecSuggest() -->
+        <div class="cf-suggest" id="cfExecSuggest" hidden>
+            <span>서버에 실행 파일 <b class="cf-mono" id="cfExecSuggestName"></b><span id="cfExecSuggestSize"></span> 가 있습니다.</span>
+            <button type="button" class="cf-linkbtn" id="cfExecSuggestBtn">이걸로 연결</button>
+        </div>
+        <div class="cf-upload-status" id="uploadStatus" role="status"></div>
+        <div class="cf-upload-error" id="uploadErrorBox" role="alert">
+            <div class="cf-upload-error-title">업로드하지 못했습니다</div>
+            <div id="uploadErrorMsg"></div>
+        </div>
+    </section>
 
-  <main class="cd-main">
+    <section class="cf-box cf-list" aria-labelledby="cfListTitle">
+        <h2 class="sr-only" id="cfListTitle">코어 파일 목록</h2>
 
-    <!-- 컨텍스트 스트립: 진행 중인 분석으로 복귀하는 안내.
-         (최근 완료 건 스트립은 아래 분석 이력 표의 '결과 보기' 와 중복이라 제거) -->
-    <div th:with="analyzing=${history.?[status == 'ANALYZING']}">
-        <div th:if="${analyzing != null and !#lists.isEmpty(analyzing)}"
-             th:with="a=${analyzing[0]}"
-             class="cd-context-strip rail-info">
-            <span class="status-badge status-analyzing">분석 중</span>
-            <div class="ctx-body">
-                <span class="ctx-name" th:text="${a.filename}"></span>
-                <span class="ctx-desc">GDB 분석이 진행 중입니다.</span>
+        <!-- 같은 함수·같은 소스 라인에서 두 번 이상 종료한 코어 묶음(큰 묶음 3개까지) -->
+        <div class="cf-repeat" th:if="${!#lists.isEmpty(coreRepeatGroups)}">
+            <span class="cf-repeat-lbl">반복된 종료</span>
+            <th:block th:each="g, gs : ${coreRepeatGroups}">
+                <button type="button" class="cf-repeat-btn" th:if="${gs.index < 3}"
+                        th:data-repeat-key="${g.key}" aria-pressed="false"
+                        th:title="|${g.function} · ${g.location}|">
+                    <span class="cf-repeat-n" th:text="|같은 지점 ${g.count}회|">같은 지점 2회</span>
+                    <span class="cf-repeat-where"
+                          th:text="${g.execName != null} ? |${g.execName} · ${g.locationShort}| : |${g.function} · ${g.locationShort}|"></span>
+                    <span class="cf-repeat-act">모아 보기</span>
+                </button>
+            </th:block>
+        </div>
+
+        <div class="cf-toolbar">
+            <div class="cf-tabs" role="group" aria-label="상태로 거르기">
+                <button type="button" class="cf-tab" data-status="all" aria-pressed="true">전체<span class="cf-tab-n" data-count="all"></span></button>
+                <button type="button" class="cf-tab" data-status="SUCCESS" aria-pressed="false">완료<span class="cf-tab-n" data-count="SUCCESS"></span></button>
+                <button type="button" class="cf-tab" data-status="ERROR" aria-pressed="false">실패<span class="cf-tab-n" data-count="ERROR"></span></button>
+                <button type="button" class="cf-tab" data-status="ANALYZING" aria-pressed="false">분석 중<span class="cf-tab-n" data-count="ANALYZING"></span></button>
+                <button type="button" class="cf-tab" data-status="NOT_ANALYZED" aria-pressed="false">미분석<span class="cf-tab-n" data-count="NOT_ANALYZED"></span></button>
             </div>
-            <a th:href="@{/core-dump/progress/{fn}(fn=${a.filename})}" class="btn btn-sm btn-soft soft-success">진행 확인</a>
-        </div>
-    </div>
-
-    <!-- 업로드 카드 -->
-    <div class="content-card">
-        <div class="content-card-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><path d="M17 8l-5-5-5 5"></path><path d="M12 3v12"></path></svg>
-            코어 파일 업로드
-        </div>
-        <div class="upload-grid">
-            <div>
-                <div class="upload-zone-label">코어 파일 <span class="required-badge">필수</span></div>
-                <div class="upload-zone" id="coreDropZone">
-                    <input type="file" id="coreFileInput" onchange="onCoreFileSelect(this)" aria-label="코어 파일 선택">
-                    <span class="upload-zone-icon">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path></svg>
-                    </span>
-                    <div class="upload-zone-text">파일 선택 또는 드래그</div>
-                    <div class="upload-zone-sub">core, core.PID, core.PROG 등</div>
-                    <div class="upload-zone-file" id="coreFileName"></div>
-                    <button type="button" class="upload-zone-clear" id="coreClearBtn"
-                            title="선택 해제" aria-label="코어 파일 선택 해제"
-                            onclick="clearCoreZone(event)">&times;</button>
-                </div>
-            </div>
-            <div>
-                <div class="upload-zone-label">실행 파일 <span class="optional-badge">선택</span></div>
-                <div class="upload-zone" id="execDropZone">
-                    <input type="file" id="execFileInput" onchange="onExecFileSelect(this)" aria-label="실행 파일 선택">
-                    <span class="upload-zone-icon">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                    </span>
-                    <div class="upload-zone-text">파일 선택 또는 드래그</div>
-                    <div class="upload-zone-sub">코어 파일과 함께 이 슬롯에 업로드해야 반영</div>
-                    <div class="upload-zone-file" id="execFileName"></div>
-                    <button type="button" class="upload-zone-clear" id="execClearBtn"
-                            title="선택 해제" aria-label="실행 파일 선택 해제"
-                            onclick="clearExecZone(event)">&times;</button>
-                </div>
-            </div>
-        </div>
-        <button class="btn btn-primary btn-lg upload-submit-btn" id="uploadBtn" onclick="startUpload()" disabled>
-            <span class="usb-progress" id="uploadProgressFill"></span>
-            <span class="usb-label" id="uploadBtnLabel">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
-                GDB 분석 시작
-            </span>
-        </button>
-        <div class="upload-status" id="uploadStatus"></div>
-        <div class="upload-error-box" id="uploadErrorBox">
-            <div class="upload-error-title">✕ 업로드 실패</div>
-            <div class="upload-error-msg" id="uploadErrorMsg"></div>
-        </div>
-    </div>
-
-    <!-- 분석 이력 카드 -->
-    <div class="content-card">
-        <div class="content-card-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"></path><path d="M7 15l4-4 3 3 5-6"></path></svg>
-            분석 이력
-            <span class="title-count" id="hiCount" th:text="${#lists.size(history)} + '건'"></span>
-        </div>
-
-        <div th:if="${#lists.isEmpty(history)}" class="empty-state">
-            <div class="empty-state-icon">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M9 15h6"></path></svg>
-            </div>
-            <div class="empty-state-title">분석 이력이 없습니다</div>
-            <div class="empty-state-text">코어 덤프 파일을 업로드하여 분석을 시작하세요.</div>
-            <button type="button" class="btn btn-ghost btn-sm" onclick="focusUpload()">코어 파일 업로드하기</button>
-        </div>
-
-        <div th:if="${!#lists.isEmpty(history)}">
             <div class="hi-controls">
-                <input type="text" id="hiSearch" class="cd-input" placeholder="파일명 검색..." autocomplete="off">
+                <label class="cf-check"><input type="checkbox" id="cfShowExec">실행 파일 표시</label>
+                <div class="cf-search">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+                    <input type="search" id="hiSearch" placeholder="파일명 · 함수 이름" autocomplete="off" aria-label="파일명 또는 크래시 함수 이름 검색">
+                </div>
                 <!-- 기간 필터 — Files 와 같은 KRDS 캘린더 위젯(calendar.js, 배너 전역 로드 + common.css 스타일).
-                     기준은 표의 '업로드' 일시(createdAt). 페이지당 인스턴스 1개라 이 페이지에서 Calendar.attach 는 여기뿐이어야 한다 -->
+                     기준은 표의 '업로드' 일시. 페이지당 인스턴스 1개라 이 페이지에서 Calendar.attach 는 여기뿐이어야 한다 -->
                 <div class="hi-date" role="group" aria-labelledby="hiDateLbl">
                     <span class="hi-date-lbl" id="hiDateLbl">업로드일</span>
                     <div class="calendar-range">
@@ -211,102 +144,227 @@
                     <button type="button" class="date-clear-btn-row" onclick="Calendar.clear()" title="기간 지우기">지우기</button>
                 </div>
             </div>
-            <div class="hi-table-wrap">
-                <table class="hi-table" id="hiTable">
-                    <thead>
-                        <tr>
-                            <th class="hi-col-num">#</th>
-                            <th class="sortable" data-sort-key="fname" data-sort-type="str">파일명 <span class="hi-sort-ind"></span></th>
-                            <th class="hi-hide-sm sortable" data-sort-key="uploaded" data-sort-type="str">업로드 <span class="hi-sort-ind"></span></th>
-                            <th class="sortable" data-sort-key="status" data-sort-type="str">상태 <span class="hi-sort-ind"></span></th>
-                            <th class="hi-hide-sm sortable" data-sort-key="analyzed" data-sort-type="str">분석 시각 <span class="hi-sort-ind"></span></th>
-                            <th>액션</th>
-                        </tr>
-                    </thead>
-                    <tbody id="hiTbody">
-                        <tr th:each="item, stat : ${history}"
-                            th:classappend="${item.status == 'SUCCESS'} ? 'hi-success'
-                                           : (${item.status == 'ERROR'} ? 'hi-error'
-                                           : (${item.status == 'ANALYZING'} ? 'hi-analyzing' : ''))"
-                            th:data-filename="${item.filename}"
-                            th:data-status="${item.status}"
-                            th:data-fname="${item.filename}"
-                            th:data-uploaded="${item.createdAt}"
-                            th:data-analyzed="${item.analyzedAt}"
-                            tabindex="0"
-                            onclick="cdRowAction(event, this)">
+        </div>
 
-                            <td class="hi-col-num" th:text="${stat.count}"></td>
-
-                            <td>
-                                <div class="hi-fname-cell">
-                                    <span class="hi-filename" th:text="${item.filename}" th:title="${item.filename}"></span>
-                                    <span th:if="${item.executableName != null}" class="tag-badge tag-exec">EXEC</span>
-                                    <span th:if="${item.crashSignal != null}"
-                                          class="signal-chip"
-                                          th:classappend="${item.crashSignal == 'SIGSEGV' or item.crashSignal == 'SIGBUS' or item.crashSignal == 'SIGILL'} ? 'chip-fatal'
-                                                         : (${item.crashSignal == 'SIGABRT' or item.crashSignal == 'SIGFPE'} ? 'chip-warn' : 'chip-neutral')"
-                                          th:text="${item.crashSignal}"></span>
+        <div class="cf-table-wrap">
+            <table class="cf-table ftable" id="hiTable">
+                <thead>
+                    <tr>
+                        <th class="cf-c-chev"><span class="sr-only">펼치기</span></th>
+                        <th class="cf-c-st" data-sort-key="status"><button type="button" class="cf-sortbtn">상태<span class="cf-sort-ind" aria-hidden="true">▲</span></button></th>
+                        <th class="cf-c-file" data-sort-key="fname"><button type="button" class="cf-sortbtn">코어 파일<span class="cf-sort-ind" aria-hidden="true">▲</span></button></th>
+                        <th class="cf-c-sig" data-sort-key="signal"><button type="button" class="cf-sortbtn">시그널<span class="cf-sort-ind" aria-hidden="true">▲</span></button></th>
+                        <th class="cf-c-where">크래시 지점</th>
+                        <th class="cf-c-exec">실행 파일</th>
+                        <th class="cf-c-size" data-sort-key="size"><button type="button" class="cf-sortbtn">크기<span class="cf-sort-ind" aria-hidden="true">▲</span></button></th>
+                        <th class="cf-c-up sort-active" data-sort-key="uploaded" aria-sort="descending"><button type="button" class="cf-sortbtn">업로드<span class="cf-sort-ind" aria-hidden="true">▼</span></button></th>
+                        <th class="cf-c-act">작업</th>
+                    </tr>
+                </thead>
+                <tbody id="hiTbody">
+                    <th:block th:each="r, st : ${coreFiles}">
+                    <tr class="cf-row" tabindex="0"
+                        th:id="|cfr-${st.index}|"
+                        th:data-filename="${r.filename}"
+                        th:data-status="${r.status}"
+                        th:data-type="${r.fileType}"
+                        th:data-fname="${r.filename}"
+                        th:data-fn="${r.crashFunction}"
+                        th:data-signal="${r.crashSignal}"
+                        th:data-size="${r.sizeBytes}"
+                        th:data-size-label="${r.formattedSize}"
+                        th:data-uploaded="${r.uploadedAt}"
+                        th:data-exec="${r.execName}"
+                        th:data-repeat="${r.repeated} ? ${r.repeatKey} : null"
+                        th:data-missing="${r.fileMissing} ? 'true' : null">
+                        <td class="cf-td-chev">
+                            <button type="button" class="cf-chev" th:unless="${r.exec}" aria-expanded="false"
+                                    th:aria-controls="|cfd-${st.index}|" th:aria-label="|${r.filename} 상세|">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+                            </button>
+                        </td>
+                        <td class="cf-td-st">
+                            <span class="cf-st"
+                                  th:classappend="${r.success} ? 'cf-st-ok' : (${r.error} ? 'cf-st-err' : (${r.analyzing} ? 'cf-st-run' : (${r.exec} ? 'cf-st-exec' : 'cf-st-new')))"><i aria-hidden="true"></i><span
+                                  th:text="${r.success} ? '완료' : (${r.error} ? '실패' : (${r.analyzing} ? '분석 중' : (${r.exec} ? '실행 파일' : '미분석')))">미분석</span></span>
+                        </td>
+                        <td class="cf-td-file">
+                            <!-- 파일명은 가운데 말줄임 — 앞(cf-fname-h)만 줄고 끝(cf-fname-t, pid·시각)은 항상 보인다 -->
+                            <div class="cf-fcell">
+                                <button type="button" class="cf-fname" th:unless="${r.exec}" th:title="${r.filename}"><span class="cf-fname-h" th:text="${r.nameHead}"></span><span class="cf-fname-t" th:if="${r.nameTail != null}" th:text="${r.nameTail}"></span></button>
+                                <span class="cf-fname is-static" th:if="${r.exec}" th:title="${r.filename}"><span class="cf-fname-h" th:text="${r.nameHead}"></span><span class="cf-fname-t" th:if="${r.nameTail != null}" th:text="${r.nameTail}"></span></span>
+                                <span class="cf-tag" th:if="${r.fileMissing}" title="이력은 있지만 원본 파일이 서버에 없습니다">원본 없음</span>
+                            </div>
+                        </td>
+                        <td class="cf-td-sig">
+                            <span class="cf-sig" th:if="${r.crashSignal != null}" th:classappend="|tone-${r.signalTone}|"
+                                  th:text="${r.crashSignal}" th:title="${r.signalDescription}"></span>
+                            <span class="cf-none" th:if="${r.crashSignal == null}">—</span>
+                        </td>
+                        <td class="cf-td-where">
+                            <!-- 완료: 1줄 함수 이름(말줄임) · 2줄 소스 위치(파일명:줄) + 같은 지점. 그 밖의 상태는 한 줄 설명.
+                                 상태 칸이 이미 말하는 것(실패·분석 중·미분석)을 여기서 되풀이하지 않는다 -->
+                            <div class="cf-where2" th:if="${r.success and r.crashFunction != null}"
+                                 th:title="${r.crashLocation != null} ? |${r.crashFunction} at ${r.crashLocation}| : ${r.crashFunction}">
+                                <b class="cf-where-fn" th:text="${r.crashFunction}"></b>
+                                <span class="cf-where-sub" th:if="${r.crashLocation != null or r.repeated}"><span class="cf-where-loc" th:if="${r.crashLocation != null}" th:text="${r.crashLocationShort}"></span><span class="cf-rep" th:if="${r.repeated}" th:text="|같은 지점 ${r.repeatCount}회|"></span></span>
+                            </div>
+                            <div class="cf-where" th:unless="${r.success and r.crashFunction != null}">
+                                <span class="cf-where-note" th:if="${r.success}">백트레이스 요약 없음</span>
+                                <span class="cf-where-note cf-where-err" th:if="${r.error}" th:title="${r.errorMessage}"
+                                      th:text="${r.errorMessage != null} ? ${r.errorMessage} : '오류 메시지 없음'"></span>
+                                <span class="cf-where-note" th:if="${r.analyzing}">GDB 실행 중</span>
+                                <span class="cf-none" th:if="${r.notAnalyzed}">—</span>
+                                <span class="cf-where-note" th:if="${r.exec}">코어에 연결되지 않은 실행 파일</span>
+                            </div>
+                        </td>
+                        <td class="cf-td-exec">
+                            <span class="cf-exec" th:if="${r.execName != null}" th:text="${r.execName}" th:title="${r.execName}"></span>
+                            <span class="cf-none" th:if="${r.execName == null}" th:text="${r.exec} ? '—' : '없음'">없음</span>
+                        </td>
+                        <td class="cf-td-size" th:text="${r.formattedSize != null} ? ${r.formattedSize} : '—'"></td>
+                        <td class="cf-td-up">
+                            <span class="cf-up">
+                                <span class="cf-up-t" th:text="${r.uploadedLabel != null} ? ${r.uploadedLabel} : '—'"></span>
+                                <span class="cf-up-by" th:if="${r.uploadedBy != null}" th:text="${r.uploadedBy}"></span>
+                            </span>
+                        </td>
+                        <td class="cf-td-act">
+                            <!-- Files 와 같은 아이콘 버튼(.fb) — 초록 = 결과, 파랑 = 분석/진행, 빨강 = 실패 재분석, 휴지통 = 삭제 -->
+                            <div class="cf-acts file-actions">
+                                <a class="fb v" th:if="${r.success}" th:href="@{/core-dump/analyze/{fn}(fn=${r.filename})}"
+                                   title="결과 보기" aria-label="결과 보기"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 6s2-4 5-4 5 4 5 4-2 4-5 4-5-4-5-4z"/><circle cx="6" cy="6" r="1.5"/></svg></a>
+                                <a class="fb analyzing" th:if="${r.analyzing}" th:href="@{/core-dump/progress/{fn}(fn=${r.filename})}"
+                                   title="진행 보기" aria-label="진행 보기"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 1a5 5 0 1 0 5 5"/></svg></a>
+                                <button type="button" class="fb e" th:if="${r.error and !r.fileMissing}"
+                                        th:data-filename="${r.filename}" onclick="reanalyze(this.dataset.filename, this)"
+                                        title="재분석" aria-label="재분석"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 6a4.5 4.5 0 1 0 1.3-3.2"/><path d="M1.5 1v2.5H4"/></svg></button>
+                                <a class="fb p" th:if="${r.notAnalyzed and !r.fileMissing}"
+                                   th:href="@{/core-dump/progress/{fn}(fn=${r.filename})}"
+                                   th:data-filename="${r.filename}" data-kind="core"
+                                   th:data-size="${r.formattedSize}"
+                                   onclick="return window.AnalyzeConfirm ? AnalyzeConfirm.fromLink(this) : true;"
+                                   title="분석" aria-label="분석"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="5" cy="5" r="4"/><path d="M8 8l3 3"/></svg></a>
+                                <button type="button" class="fb" th:if="${r.exec}"
+                                        th:data-filename="${r.filename}" title="위 '코어 덤프 업로드' 의 실행 파일 칸에 넣기" aria-label="실행 파일 칸에 넣기"
+                                        onclick="cfUseExec(this.dataset.filename)"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 8V1.5"/><path d="M3.5 4L6 1.5 8.5 4"/><path d="M1.5 8.5v1.5h9V8.5"/></svg></button>
+                                <button type="button" class="fb d" th:unless="${r.exec}"
+                                        th:data-filename="${r.filename}" th:aria-label="|삭제: ${r.filename}|" title="삭제"
+                                        onclick="deleteDump(this.dataset.filename)"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1.5 3h9"/><path d="M4.5 3V1.5h3V3"/><path d="M2.5 3l.6 7.5h5.8L9.5 3"/></svg></button>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr class="cf-detail" th:unless="${r.exec}" th:id="|cfd-${st.index}|" hidden>
+                        <td colspan="9">
+                            <div class="cf-dt">
+                                <div class="cf-dt-main">
+                                    <th:block th:if="${r.fileMissing}">
+                                        <p class="cf-dt-p cf-dt-missing">원본 파일이 서버에 없습니다. 기록된 결과는 볼 수 있지만 다시 분석할 수는 없습니다.</p>
+                                    </th:block>
+                                    <th:block th:if="${r.success and !#lists.isEmpty(r.frames)}">
+                                        <div class="cf-dt-head">
+                                            <h3 class="cf-h3">백트레이스 <span class="cf-h3-sub" th:text="|해석된 상위 ${#lists.size(r.frames)}프레임|"></span></h3>
+                                            <a class="cf-dt-more" th:href="@{/core-dump/analyze/{fn}(fn=${r.filename})}">스레드 · 레지스터 · 공유 라이브러리는 결과 화면에서</a>
+                                        </div>
+                                        <div class="cf-bt">
+                                            <th:block th:each="f : ${r.frames}"><div class="cf-bt-line"><span class="cf-bt-n" th:if="${f.num != null}" th:text="|${f.num}  |"></span><span class="cf-bt-a" th:if="${f.addr != null}" th:text="|${f.addr} in |"></span><span class="cf-bt-fn" th:text="${f.fn}"></span><span class="cf-bt-at" th:if="${f.loc != null}"> at </span><span class="cf-bt-loc" th:if="${f.loc != null}" th:text="${f.loc}"></span></div></th:block>
+                                        </div>
+                                    </th:block>
+                                    <th:block th:if="${r.success and #lists.isEmpty(r.frames)}">
+                                        <h3 class="cf-h3">백트레이스</h3>
+                                        <p class="cf-dt-p">이 분석에는 백트레이스 요약이 저장돼 있지 않습니다. 결과 화면에서 전체 백트레이스를 볼 수 있습니다.</p>
+                                    </th:block>
+                                    <th:block th:if="${r.error}">
+                                        <h3 class="cf-h3 is-err">분석이 끝나지 않았습니다</h3>
+                                        <div class="cf-dt-err" th:text="${r.errorMessage != null} ? ${r.errorMessage} : '오류 메시지가 기록되지 않았습니다.'"></div>
+                                    </th:block>
+                                    <th:block th:if="${r.notAnalyzed}">
+                                        <h3 class="cf-h3">아직 분석하지 않은 파일</h3>
+                                        <p class="cf-dt-p" th:if="${r.execName == null}">실행 파일 없이 분석하면 프로그램 쪽 프레임이 <span class="cf-mono">??</span> 로 나옵니다. 같은 빌드의 실행 파일이 있으면 먼저 연결하세요.</p>
+                                        <p class="cf-dt-p" th:if="${r.execName != null}">실행 파일 <span class="cf-mono" th:text="${r.execName}"></span> 와 연결돼 있어 분석할 때 함께 씁니다.</p>
+                                    </th:block>
+                                    <th:block th:if="${r.analyzing}">
+                                        <h3 class="cf-h3 is-run">GDB 분석 중</h3>
+                                        <p class="cf-dt-p">끝나면 크래시 지점과 백트레이스가 여기에 나옵니다. 단계별 진행은 진행 화면에서 볼 수 있습니다.</p>
+                                    </th:block>
                                 </div>
-                            </td>
-
-                            <td class="hi-hide-sm">
-                                <span class="hi-time" th:if="${item.createdAt != null}"
-                                      th:text="${#temporals.format(item.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
-                                <span th:unless="${item.createdAt != null}" class="hi-muted">–</span>
-                            </td>
-
-                            <td>
-                                <span class="status-badge"
-                                      th:classappend="${item.status == 'SUCCESS'} ? 'status-success'
-                                                     : (${item.status == 'ERROR'} ? 'status-error'
-                                                     : (${item.status == 'ANALYZING'} ? 'status-analyzing' : 'status-not-analyzed'))"
-                                      th:text="${item.status == 'SUCCESS'} ? '완료'
-                                               : (${item.status == 'ERROR'} ? '실패'
-                                               : (${item.status == 'ANALYZING'} ? '분석 중' : '미분석'))"></span>
-                            </td>
-
-                            <td class="hi-hide-sm">
-                                <span class="hi-analyzed-time" th:if="${item.analyzedAt != null}"
-                                      th:text="${#temporals.format(item.analyzedAt, 'MM-dd HH:mm')}"></span>
-                                <span th:unless="${item.analyzedAt != null}" class="hi-muted">–</span>
-                            </td>
-
-                            <td>
-                                <div class="hi-actions">
-                                    <a th:if="${item.status == 'SUCCESS'}"
-                                       th:href="@{/core-dump/analyze/{fn}(fn=${item.filename})}"
-                                       class="btn btn-sm btn-soft" onclick="event.stopPropagation()">결과 보기</a>
-                                    <a th:if="${item.status == 'ANALYZING'}"
-                                       th:href="@{/core-dump/progress/{fn}(fn=${item.filename})}"
-                                       class="btn btn-sm btn-soft soft-success" onclick="event.stopPropagation()">진행 확인</a>
-                                    <button th:if="${item.status == 'ERROR' or item.status == 'NOT_ANALYZED'}"
-                                            class="btn btn-sm btn-ghost"
-                                            th:data-filename="${item.filename}"
-                                            onclick="event.stopPropagation(); reanalyze(this.dataset.filename, this)">재분석</button>
-                                    <button class="btn btn-sm btn-soft soft-danger"
-                                            th:data-filename="${item.filename}"
-                                            onclick="event.stopPropagation(); deleteDump(this.dataset.filename)">삭제</button>
-                                    <span class="hi-row-chevron" aria-hidden="true">›</span>
+                                <div class="cf-dt-side">
+                                    <dl class="cf-meta">
+                                        <div th:if="${r.crashSignal != null}">
+                                            <dt>시그널</dt>
+                                            <dd><span class="cf-mono" th:text="${r.crashSignal}"></span><span th:if="${r.signalNumber != null}" th:text="| (${r.signalNumber})|"></span><span th:if="${r.signalMeaning != null}" th:text="| · ${r.signalMeaning}|"></span><span class="cf-dd-sub" th:if="${r.signalDescription != null}" th:text="${r.signalDescription}"></span></dd>
+                                        </div>
+                                        <div>
+                                            <dt>실행 파일</dt>
+                                            <dd th:if="${r.execName != null}"><span class="cf-mono" th:text="${r.execName}"></span><span th:if="${r.execFormattedSize != null}" th:text="| · ${r.execFormattedSize}|"></span></dd>
+                                            <dd th:if="${r.execName == null}">없음</dd>
+                                        </div>
+                                        <div>
+                                            <dt>크기</dt>
+                                            <dd th:text="${r.formattedSize != null} ? ${r.formattedSize} : '—'"></dd>
+                                        </div>
+                                        <div>
+                                            <dt>업로드</dt>
+                                            <dd><span th:text="${r.uploadedAt != null} ? ${#temporals.format(r.uploadedAt, 'yyyy-MM-dd HH:mm')} : '—'"></span><span th:if="${r.uploadedBy != null}" th:text="| · ${r.uploadedBy}|"></span></dd>
+                                        </div>
+                                        <div th:if="${r.analyzedAt != null}">
+                                            <dt>분석</dt>
+                                            <dd><span th:text="${#temporals.format(r.analyzedAt, 'MM-dd HH:mm')}"></span><span th:text="${r.success} ? ' 완료' : (${r.error} ? ' 실패' : '')"></span><span th:if="${r.formattedAnalysisTime != null}" th:text="| · ${r.formattedAnalysisTime}|"></span></dd>
+                                        </div>
+                                        <div th:if="${r.repeated}">
+                                            <dt>같은 지점</dt>
+                                            <dd th:text="${#strings.listJoin(r.repeatOthers, ' · ')}"></dd>
+                                        </div>
+                                    </dl>
+                                    <div class="cf-dt-acts">
+                                        <a class="cf-btn cf-btn-primary" th:if="${r.success}" th:href="@{/core-dump/analyze/{fn}(fn=${r.filename})}">결과 열기</a>
+                                        <a class="cf-btn cf-btn-primary" th:if="${r.analyzing}" th:href="@{/core-dump/progress/{fn}(fn=${r.filename})}">진행 화면 열기</a>
+                                        <button type="button" class="cf-btn cf-btn-primary" th:if="${r.error and !r.fileMissing}"
+                                                th:data-filename="${r.filename}" onclick="reanalyze(this.dataset.filename, this)">다시 분석</button>
+                                        <a class="cf-btn cf-btn-primary" th:if="${r.notAnalyzed and !r.fileMissing}"
+                                           th:href="@{/core-dump/progress/{fn}(fn=${r.filename})}"
+                                           th:data-filename="${r.filename}" data-kind="core"
+                                           th:data-size="${r.formattedSize}"
+                                           onclick="return window.AnalyzeConfirm ? AnalyzeConfirm.fromLink(this) : true;">분석 시작</a>
+                                        <button type="button" class="cf-btn" th:if="${!r.analyzing and !r.fileMissing}"
+                                                th:data-filename="${r.filename}" th:data-exec="${r.execName}"
+                                                onclick="cfPrepareExec(this.dataset.filename, this.dataset.exec)"
+                                                th:text="${r.success} ? '실행 파일 바꿔 재분석' : (${r.execName != null} ? '실행 파일 바꾸기' : '실행 파일 연결')">실행 파일 연결</button>
+                                    </div>
                                 </div>
-                            </td>
-                        </tr>
-                    </tbody>
-                </table>
+                            </div>
+                        </td>
+                    </tr>
+                    </th:block>
+                </tbody>
+            </table>
+            <div class="cf-empty" th:if="${#lists.isEmpty(coreFiles)}">
+                서버에 코어 파일이 없습니다. 위에서 코어 파일을 올리면 여기에 나타납니다.
             </div>
-            <div class="cd-file-noresult" id="hiNoResult">조건에 맞는 분석 이력이 없습니다.</div>
+            <div class="cf-noresult" id="hiNoResult" hidden>조건에 맞는 파일이 없습니다.</div>
+        </div>
+
+        <div class="cf-foot">
+            <span id="hiCount"></span>
+            <span class="cf-keys"><kbd>↑</kbd><kbd>↓</kbd> 행 이동 · <kbd>Enter</kbd> 펼치기</span>
             <div class="cd-pg" id="hiPg">
                 <div class="cd-pg-list" id="hiPgList"></div>
                 <div class="cd-pg-info" id="hiPgInfo"></div>
             </div>
+            <label class="cf-psize">한 페이지에
+                <select id="cfPageSize">
+                    <option value="20">20개</option>
+                    <option value="50">50개</option>
+                    <option value="100">100개</option>
+                </select>
+            </label>
         </div>
-    </div>
+    </section>
 
-    </main>
-</div>
+</main>
 
 <!-- 재분석 확인 모달 — 이미 분석된 코어에 실행 파일 구성이 바뀐 채로 분석을 시작할 때 -->
-<div id="reanalyzeModal" class="modal-ov" onclick="if(event.target===this)closeReanalyzeModal()">
+<div id="reanalyzeModal" class="modal-ov cf-modal" onclick="if(event.target===this)closeReanalyzeModal()">
     <div class="modal-box">
         <div class="modal-title">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"></path><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path><path d="M12 7v5l4 2"></path></svg>
@@ -330,7 +388,7 @@
 </div>
 
 <!-- 삭제 확인 모달 -->
-<div id="deleteDumpModal" class="modal-ov" onclick="if(event.target===this)closeDumpDeleteModal()">
+<div id="deleteDumpModal" class="modal-ov cf-modal" onclick="if(event.target===this)closeDumpDeleteModal()">
     <div class="modal-box">
         <div class="modal-title">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
@@ -353,7 +411,8 @@
 
 <div class="cd-toast-wrap" id="cdToastWrap"></div>
 
-<script th:src="@{/js/core-dump-index.js?v=2026-09-14}"></script>
+<script th:src="@{/js/analyze-confirm.js?v=2026-09-26}"></script>
+<script th:src="@{/js/core-dump-index.js?v=2026-11-27}"></script>
 
 </body>
 </html>

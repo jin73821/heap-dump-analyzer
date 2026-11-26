@@ -8,6 +8,8 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <title th:text="${result != null ? result.filename + ' - Heap Analysis' : 'Heap Analysis'}">Heap Analysis</title>
     <link rel="stylesheet" href="/css/analyze.css?v=2026-09-13">
+    <!-- 민감정보 확인 창·출력 가림 안내 — analyze 는 common.css 를 싣지 않아 전용 CSS 가 홀로 완결된다 -->
+    <link rel="stylesheet" href="/css/llm-guard.css?v=2026-11-26">
     <script src="/js/lib/chart.umd.min.js"></script>
 </head>
 <body>
@@ -1758,7 +1760,8 @@ var LLM_CHAT_RESTORE_INCLUDE_HISTORY = /*[[${llmChatRestoreIncludeHistory}]]*/ t
      ⚠ float-tooltip.js([data-tooltip] 커서 추종형)와 한 페이지에 같이 싣지 말 것 — 동작은 하지만 디자인이 섞인다. -->
 <script src="/js/krds-tooltip.js?v=2026-10-31"></script>
 <script src="/js/table-grid.js?v=2026-09-13"></script>
-<script src="/js/analyze.js?v=2026-10-29"></script>
+<script src="/js/llm-guard.js?v=2026-11-26"></script>
+<script src="/js/analyze.js?v=2026-11-26"></script>
 <script src="/js/heap-threads-card.js?v=2026-11-26f"></script>
 <!-- ── AI 플로팅 채팅 ────────────────────────────────────── -->
 <button class="ai-chat-fab" id="aiChatFab" onclick="toggleAiChat()" style="display:none" title="AI 채팅">

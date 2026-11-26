@@ -1,6 +1,8 @@
 package com.heapdump.analyzer;
 
+import com.heapdump.analyzer.model.dto.CoreFileRow;
 import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
+import com.heapdump.analyzer.service.CoreFileListBuilder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.support.StaticApplicationContext;
@@ -19,6 +21,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -75,11 +78,14 @@ class CoreDumpHistoryCalendarSmokeTest {
 
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("_csrf", new CsrfStub());
-        m.put("coreDumpFiles", Collections.emptyList());
-        m.put("history", List.of(
+        // 2026-11-26 개편: 서버 파일과 이력을 합친 행(coreFiles)을 받는다 — 여기선 이력만 넣어 '원본 없음' 행으로 렌더된다
+        List<CoreFileRow> rows = CoreFileListBuilder.build(Collections.emptyList(), List.of(
                 item("core.1001", "SUCCESS", LocalDateTime.of(2026, 9, 1, 9, 30), LocalDateTime.of(2026, 9, 1, 9, 40)),
                 item("core.1002", "ERROR", LocalDateTime.of(2026, 9, 10, 23, 59, 59), LocalDateTime.of(2026, 9, 11, 0, 5)),
-                item("core.1003", "NOT_ANALYZED", LocalDateTime.of(2026, 9, 13, 0, 0), null)));
+                item("core.1003", "NOT_ANALYZED", LocalDateTime.of(2026, 9, 13, 0, 0), null)),
+                n -> null, LocalDate.of(2026, 9, 14));
+        m.put("coreFiles", rows);
+        m.put("coreRepeatGroups", CoreFileListBuilder.repeatGroups(rows));
         m.forEach(ctx::setVariable);
         return engine.process("core-dump/index", ctx);
     }
@@ -96,7 +102,7 @@ class CoreDumpHistoryCalendarSmokeTest {
         int table = html.indexOf("id=\"hiTable\"");
         assertTrue(controls > 0 && table > controls, "이력 검색줄이 없다");
         String bar = html.substring(controls, table);
-        assertTrue(bar.contains("id=\"hiSearch\""), "파일명 검색");
+        assertTrue(bar.contains("id=\"hiSearch\""), "파일명·함수 검색");
         assertTrue(bar.contains("<span class=\"hi-date-lbl\" id=\"hiDateLbl\">업로드일</span>"), "기준(업로드일) 라벨");
         assertTrue(bar.contains("class=\"calendar-range\""), "Files 와 같은 캘린더 박스(common.css)가 아니다");
         assertTrue(bar.contains("id=\"hiDateStart\"") && bar.contains("id=\"hiDateEnd\"") && bar.contains("id=\"hiCalArea\""),

@@ -5,6 +5,7 @@ import com.heapdump.analyzer.config.HeapDumpConfig;
 import com.heapdump.analyzer.model.HeapAnalysisResult;
 import com.heapdump.analyzer.model.entity.AiInsightEntity;
 import com.heapdump.analyzer.repository.AiInsightRepository;
+import com.heapdump.analyzer.service.llmguard.LlmGuardService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -40,13 +41,26 @@ public class AiInsightManager {
     private final FileManagementService fileMgmt;
     private final HeapDumpConfig config;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    /** 읽기 시점 가림 — 배포 이전에 저장된 AI 결과(LLM Guard). */
+    private final LlmGuardService guard;
 
     public AiInsightManager(AiInsightRepository aiInsightRepository,
                             FileManagementService fileMgmt,
-                            HeapDumpConfig config) {
+                            HeapDumpConfig config,
+                            LlmGuardService guard) {
         this.aiInsightRepository = aiInsightRepository;
         this.fileMgmt = fileMgmt;
         this.config = config;
+        this.guard = guard;
+    }
+
+    /**
+     * 조회 결과를 가려서 돌려준다 — heap·gc·thread·core·compare 의 {@code /ai-insight} GET 과 PDF 가 모두 이 경로로 읽는다.
+     * 기록하지 않고 DB 값도 바꾸지 않는다(파싱한 복사본만 가린다). 새로 저장되는 값은 게이트 지점에서 이미 가려져 있다.
+     */
+    private Map<String, Object> maskedForDisplay(Map<String, Object> data) {
+        if (data != null && guard != null) guard.maskInPlace(data);
+        return data;
     }
 
     /**
@@ -104,7 +118,7 @@ public class AiInsightManager {
             if (opt.isPresent()) {
                 Map<String, Object> data = objectMapper.readValue(opt.get().getInsightData(), Map.class);
                 logger.info("[AI-Insight] Loaded from DB for '{}' (analysedAt={})", filename, data.get("analysedAt"));
-                return data;
+                return maskedForDisplay(data);
             }
             File target = new File(fileMgmt.resultDirectory(filename), AI_INSIGHT_FILE);
             if (target.exists()) {
@@ -112,7 +126,7 @@ public class AiInsightManager {
                 logger.info("[AI-Insight] Loaded from file for '{}', migrating to DB", filename);
                 persistInsight(filename, data, false);   // 원본 분석 시각 보존
                 discardMigratedFile(target, filename);   // DB 저장 성공 후에만 도달
-                return data;
+                return maskedForDisplay(data);
             }
             logger.debug("[AI-Insight] No saved insight for '{}'", filename);
             return null;

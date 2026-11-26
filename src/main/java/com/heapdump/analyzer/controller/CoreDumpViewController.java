@@ -2,9 +2,11 @@ package com.heapdump.analyzer.controller;
 
 import com.heapdump.analyzer.model.CoreDumpAnalysisResult;
 import com.heapdump.analyzer.model.dto.CoreDumpRevision;
+import com.heapdump.analyzer.model.dto.CoreFileRow;
 import com.heapdump.analyzer.model.entity.CoreDumpAnalysisEntity;
 import com.heapdump.analyzer.service.CoreDumpAnalyzerService;
 import com.heapdump.analyzer.service.CoreDumpPdfReportService;
+import com.heapdump.analyzer.service.CoreFileListBuilder;
 import com.heapdump.analyzer.util.HttpHeaderValues;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,11 +35,21 @@ public class CoreDumpViewController {
         this.pdfReportService = pdfReportService;
     }
 
+    /**
+     * 코어 파일 목록 — 서버 파일과 분석 이력을 한 표로 합친 행(2026-11-26 개편).
+     * 실행 파일 크기는 dumpfiles/ 에서 직접 잰다(연결된 실행 파일은 목록에서 빠져 크기를 따로 알 수 없다).
+     */
     @GetMapping
     public String indexPage(Model model) {
         List<CoreDumpAnalysisEntity> history = analyzerService.getHistory();
-        model.addAttribute("history", history);
-        model.addAttribute("coreDumpFiles", analyzerService.listExistingDumpFiles());
+        java.io.File dir = analyzerService.dumpFilesDir();
+        List<CoreFileRow> rows = CoreFileListBuilder.build(analyzerService.listExistingDumpFiles(), history,
+                name -> {
+                    java.io.File f = new java.io.File(dir, name);
+                    return f.isFile() ? f.length() : null;
+                });
+        model.addAttribute("coreFiles", rows);
+        model.addAttribute("coreRepeatGroups", CoreFileListBuilder.repeatGroups(rows));
         return "core-dump/index";
     }
 

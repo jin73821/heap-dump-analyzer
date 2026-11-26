@@ -52,6 +52,16 @@ public class PdfReportService {
     /** JVM 힙 설정 한 줄(환경 스트립). 필드 주입 — 테스트가 3-인자 생성자를 직접 부르므로 null 가드. */
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private JvmHeapInfoService jvmHeapInfoService;
+    /**
+     * 읽기 시점 가림(LLM Guard) — 힙 PDF 는 ai_insights 를 리포지토리로 직접 읽어 AiInsightManager 를 거치지 않는다.
+     * 필드 주입인 이유는 jvmHeapInfoService 와 같다(테스트가 3-인자 생성자를 직접 부른다). 운영에서는 항상 주입된다.
+     */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.heapdump.analyzer.service.llmguard.LlmGuardService llmGuard;
+
+    private String maskForDisplay(String s) {
+        return (s == null || llmGuard == null) ? s : llmGuard.maskForDisplay(s);
+    }
 
     public PdfReportService(TemplateEngine templateEngine,
                             AiInsightRepository aiInsightRepository,
@@ -233,18 +243,19 @@ public class PdfReportService {
         try {
             JsonNode n = jsonMapper.readTree(e.getInsightData());
             if (d.severity == null) d.severity = textOf(n, "severity");
-            d.summary = clip(textOf(n, "summary"), SUMMARY_MAX_CHARS);
+            // 자르기 전에 가린다 — 잘린 경계의 값은 일부만 남아 일치하지 않는다
+            d.summary = clip(maskForDisplay(textOf(n, "summary")), SUMMARY_MAX_CHARS);
             JsonNode rec = n.get("recommendations");
             if (rec != null && rec.isArray() && rec.size() > 0) {
                 List<String> items = new ArrayList<>();
                 rec.forEach(x -> items.add(x.asText()));
-                d.recommendations = clip(String.join(" / ", items), RECOMMEND_MAX_CHARS);
+                d.recommendations = clip(maskForDisplay(String.join(" / ", items)), RECOMMEND_MAX_CHARS);
             } else if (rec != null && rec.isTextual()) {
-                d.recommendations = clip(rec.asText(), RECOMMEND_MAX_CHARS);
+                d.recommendations = clip(maskForDisplay(rec.asText()), RECOMMEND_MAX_CHARS);
             }
             if (d.summary == null || d.summary.isEmpty()) {
                 String rc = textOf(n, "rootCause");
-                if (rc != null) d.summary = clip(rc, SUMMARY_MAX_CHARS);
+                if (rc != null) d.summary = clip(maskForDisplay(rc), SUMMARY_MAX_CHARS);
             }
         } catch (Exception ex) {
             logger.warn("[PDF] AI insightData JSON 파싱 실패 (filename={}): {}", e.getFilename(), ex.getMessage());

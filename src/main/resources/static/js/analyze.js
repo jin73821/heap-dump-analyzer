@@ -3925,6 +3925,8 @@ function requestAiAnalysis(data, prompt) {
                 // [1] 저장 경로 보관
                 if (result.savedTo || result.savedPath) _aiSavedPath = result.savedTo || result.savedPath;
                 showAiResult(result, !!result.saved);
+                // 서버가 AI 응답의 개인정보를 가렸으면 안내(analyze 는 common.css 가 없어 LlmGuard 자체 토스트)
+                if (window.LlmGuard) LlmGuard.noteOutput(result);
                 // [5] 성공 로그
                 var data_map = result.data || {};
                 console.log('[AI-Insight] 분석 성공 — severity=' + data_map.severity +
@@ -4613,6 +4615,7 @@ function removeAiAttachment(idx) {
 
 function sendChatMessage() {
     if (_aiChatSending) return;
+    if (window.LlmGuard && LlmGuard.isOpen()) return;   // 민감정보 확인 창이 떠 있는 동안은 보내지 않는다
     var input = getChatInput();
     var text = input.value.trim();
     if (!text) return;
@@ -4620,12 +4623,19 @@ function sendChatMessage() {
     var currentAttachments = _aiChatAttachments.slice();
     _aiChatAttachments = [];
     renderAnalyzeAttachBar();
-
-    // user 메시지 추가
-    _aiChatMessages.push({ role: 'user', content: text });
-    renderChatMessage('user', text, currentAttachments);
     input.value = '';
     input.style.height = 'auto';
+    _sendChatTurn(text, currentAttachments, null);
+}
+
+/**
+ * 한 턴 보내기. ackToken 은 민감정보 '그래도 전송' 확인 토큰(서버가 문구에 묶어 발급 — 같은 문구·첨부로만 유효).
+ * turn 은 입력 점검 거부 시 되돌릴 상태(user 말풍선·문구·첨부).
+ */
+function _sendChatTurn(text, currentAttachments, ackToken) {
+    // user 메시지 추가
+    _aiChatMessages.push({ role: 'user', content: text });
+    var userWrapper = renderChatMessage('user', text, currentAttachments);
 
     // 토큰 관리: 오래된 메시지 제거
     trimChatMessages();
@@ -4634,10 +4644,11 @@ function sendChatMessage() {
     _aiChatSending = true;
     getChatSendBtn().disabled = true;
     var typing = showChatTyping();
+    var turn = { text: text, attachments: currentAttachments, wrapper: userWrapper };
 
     // 세션 자동 생성 후 스트리밍 시작
     ensureChatSession().then(function() {
-        doStreamRequest(typing, currentAttachments);
+        doStreamRequest(typing, currentAttachments, ackToken, turn);
     }).catch(function(e) {
         hideChatTyping(typing);
         renderChatError('세션 생성 실패: ' + e.message);
@@ -4676,10 +4687,12 @@ function ensureChatSession() {
     });
 }
 
-function doStreamRequest(typing, attachments) {
+function doStreamRequest(typing, attachments, ackToken, turn) {
     // 스트리밍 assistant 메시지 버블 미리 생성
     var streamBubble = createStreamBubble();
     var fullText = '';
+    var pendingGuard = null;    // 입력 점검 거부(SENSITIVE_INPUT_*) — finishStream 뒤에 확인 창을 띄운다
+    var outputGuard = null;     // done 의 출력 가림 결과 — 말풍선 아래 배지
     var streamUrl = _aiChatSessionId
         ? '/api/ai-chat/sessions/' + _aiChatSessionId + '/stream'
         : '/api/llm/chat/stream';
@@ -4691,7 +4704,8 @@ function doStreamRequest(typing, attachments) {
             messages: _aiChatMessages,
             context: _aiChatContextBuilt || '',
             filename: typeof FILENAME !== 'undefined' ? FILENAME : '',
-            attachments: attachments || []
+            attachments: attachments || [],
+            sensitiveAck: ackToken || undefined
         })
     })
     .then(function(response) {
@@ -4755,7 +4769,14 @@ function doStreamRequest(typing, attachments) {
                     }
                 } else if (event === 'done') {
                     // 완료 처리는 finishStream에서
+                    if (parsed.outputGuard) outputGuard = parsed.outputGuard;
                 } else if (event === 'error') {
+                    // 민감정보 입력 점검 거부 — 맨 앞에서 기록만 하고 빠진다. 아래의 pop·오류 출력은 하지 않는다:
+                    // 말풍선 제거와 user 턴 pop 은 finishStream 이 한 번만 한다(두 번 pop 하면 직전 assistant 턴이 지워진다).
+                    if (window.LlmGuard && LlmGuard.isGuardCode(parsed.errorCode)) {
+                        pendingGuard = parsed;
+                        return;
+                    }
                     removeStreamBubble(streamBubble);
                     streamBubble = null;
                     var errMsg = parsed.error || 'Unknown error';
@@ -4782,6 +4803,7 @@ function doStreamRequest(typing, attachments) {
             if (fullText && streamBubble) {
                 // 최종 마크다운 렌더링 (커서 제거)
                 streamBubble.innerHTML = renderChatMarkdown(fullText);
+                if (outputGuard && window.LlmGuard) LlmGuard.attachBadge(streamBubble.parentNode, outputGuard);
                 var fc = getChatContainer();
                 if (fc) fc.scrollTop = fc.scrollHeight;
                 _aiChatMessages.push({ role: 'assistant', content: fullText });
@@ -4795,6 +4817,8 @@ function doStreamRequest(typing, attachments) {
             getChatSendBtn().disabled = false;
             var inp = getChatInput();
             if (inp) inp.focus();
+            // 확인 창은 반드시 여기(전송 상태 해제·포커스 이동 뒤)에서 — 앞에서 띄우면 focus() 가 창의 포커스를 빼앗는다
+            if (pendingGuard) _onChatGuardRejected(pendingGuard, turn);
         }
 
         return processStream();
@@ -4806,6 +4830,34 @@ function doStreamRequest(typing, attachments) {
         _aiChatMessages.pop();
         _aiChatSending = false;
         getChatSendBtn().disabled = false;
+    });
+}
+
+/**
+ * 민감정보 입력 점검 거부 처리 — user 말풍선을 지우고, 첨부를 되돌리고, 입력창이 비어 있으면 문구를 복원한 뒤
+ * 확인 창을 띄운다. CONFIRM 에서 '그래도 전송' 을 고르면 같은 문구·첨부로 확인 토큰과 함께 다시 보낸다.
+ * (_aiChatMessages 의 user 턴은 finishStream 이 이미 pop 했다.)
+ */
+function _onChatGuardRejected(parsed, turn) {
+    var guard = parsed.guard || {};
+    if (turn && turn.wrapper && turn.wrapper.parentNode) turn.wrapper.parentNode.removeChild(turn.wrapper);
+    if (turn && turn.attachments && turn.attachments.length) {
+        _aiChatAttachments = turn.attachments.concat(_aiChatAttachments);
+        renderAnalyzeAttachBar();
+    }
+    var input = getChatInput();
+    if (input && turn && !input.value.trim()) {
+        input.value = turn.text;
+        try { input.dispatchEvent(new Event('input')); } catch (e) { _azIgnored('입력창 높이 갱신 이벤트 실패', e); }
+    }
+    LlmGuard.confirmInput(guard).then(function(go) {
+        if (!go || guard.verdict !== 'CONFIRM' || !guard.ackToken || !turn) return;
+        if (_aiChatSending) return;
+        var inp = getChatInput();
+        if (inp && inp.value.trim() === turn.text) { inp.value = ''; inp.style.height = 'auto'; }
+        _aiChatAttachments = _aiChatAttachments.filter(function(a) { return turn.attachments.indexOf(a) < 0; });
+        renderAnalyzeAttachBar();
+        _sendChatTurn(turn.text, turn.attachments, guard.ackToken);
     });
 }
 
@@ -4909,6 +4961,7 @@ function renderChatMessage(role, content, attachments) {
     wrapper.appendChild(timeDiv);
     container.appendChild(wrapper);
     container.scrollTop = container.scrollHeight;
+    return wrapper;   // 민감정보 입력 점검 거부 시 이 말풍선을 지운다
 }
 
 function renderChatError(msg) {
@@ -4946,6 +4999,15 @@ function renderChatMarkdown(text) {
     // 인라인 코드
     s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
     // bold
+    // 서버가 가린 값의 별표(900101-1******·ab***@corp.com·010-****-5678)가 굵게 표지로 먹히지 않게 먼저 엔티티로 바꾼다
+    // (LLM Guard) — 3개 이상, 또는 '-'·'@' 옆의 2개(11-**-…, ab**@…)만 가림 표시로 본다.
+    // 2개를 넓게 잡으면 '**굵게**가' 처럼 조사가 바로 붙는 한국어 굵게가 깨진다.
+    s = s.replace(/\*{2,}/g, function(m, off, str) {
+        var prev = off > 0 ? str.charAt(off - 1) : '';
+        var next = str.charAt(off + m.length);
+        var masked = m.length >= 3 || prev === '-' || next === '-' || next === '@';
+        return masked ? m.replace(/\*/g, '&#42;') : m;
+    });
     s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     // 줄바꿈
     s = s.replace(/\n/g, '<br>');

@@ -83,6 +83,8 @@ public class HeapDumpAnalyzerService {
     private final TwoFactorConfigService twoFactorConfig;
     private final PasswordPolicyConfigService passwordPolicyConfig;
     private final AccountLockPolicyConfigService accountLockPolicyConfig;
+    /** AI 입·출력 민감정보 탐지 토글 3종 — 영속화만 여기서 트리거(함정 40). */
+    private final com.heapdump.analyzer.service.llmguard.LlmGuardService llmGuard;
     private final RemoteDumpService remoteDumpService;
     private final AiInsightManager aiInsight;
 
@@ -192,6 +194,7 @@ public class HeapDumpAnalyzerService {
                                    TwoFactorConfigService twoFactorConfig,
                                    PasswordPolicyConfigService passwordPolicyConfig,
                                    AccountLockPolicyConfigService accountLockPolicyConfig,
+                                   com.heapdump.analyzer.service.llmguard.LlmGuardService llmGuard,
                                    RemoteDumpService remoteDumpService,
                                    AiInsightManager aiInsight,
                                    MultipartProperties multipartProperties) {
@@ -213,6 +216,7 @@ public class HeapDumpAnalyzerService {
         this.twoFactorConfig = twoFactorConfig;
         this.passwordPolicyConfig = passwordPolicyConfig;
         this.accountLockPolicyConfig = accountLockPolicyConfig;
+        this.llmGuard = llmGuard;
         this.remoteDumpService = remoteDumpService;
         this.aiInsight = aiInsight;
         this.keepUnreachableObjects = config.isKeepUnreachableObjects();
@@ -1877,6 +1881,7 @@ public class HeapDumpAnalyzerService {
         applyStep(failed, "twoFactor",      () -> twoFactorConfig.applyFromSettings(saved));
         applyStep(failed, "passwordPolicy", () -> passwordPolicyConfig.applyFromSettings(saved));
         applyStep(failed, "accountLock",    () -> accountLockPolicyConfig.applyFromSettings(saved));
+        applyStep(failed, "llmGuard",       () -> llmGuard.applyFromSettings(saved));
         applyStep(failed, "remote",         () -> remoteDumpService.applyFromSettings(saved));
 
         if (ragConfig.isRagEnabled()) {
@@ -2066,6 +2071,7 @@ public class HeapDumpAnalyzerService {
             twoFactorConfig.collectSettings(settings);
             passwordPolicyConfig.collectSettings(settings);
             accountLockPolicyConfig.collectSettings(settings);
+            llmGuard.collectSettings(settings);
             remoteDumpService.collectSettings(settings);
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(file, settings);
             persisted = true;
@@ -2112,6 +2118,7 @@ public class HeapDumpAnalyzerService {
             twoFactorConfig.collectApplicationProperties(updates);
             passwordPolicyConfig.collectApplicationProperties(updates);
             accountLockPolicyConfig.collectApplicationProperties(updates);
+            llmGuard.collectApplicationProperties(updates);
             remoteDumpService.collectApplicationProperties(updates);
             List<String> newLines = new ArrayList<>();
             for (String line : lines) {
@@ -2227,6 +2234,15 @@ public class HeapDumpAnalyzerService {
     public void setLlmSslVerify(boolean sslVerify) {
         llmConfig.setLlmSslVerify(sslVerify);
         persistSettings();
+    }
+
+    /**
+     * AI 입·출력 민감정보 탐지 토글 — LlmGuardService 위임 + persistSettings 부수효과.
+     * @return settings.json 기록 성공 여부
+     */
+    public boolean setLlmGuardSettings(boolean inputCheck, boolean outputMask, boolean outputInstruction) {
+        llmGuard.setSettings(inputCheck, outputMask, outputInstruction);
+        return persistSettings();
     }
 
     /** LLM 호출량 제한 — LlmRateLimitService 위임 + persistSettings 부수효과. */

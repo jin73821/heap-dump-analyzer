@@ -120,4 +120,46 @@ class LlmSettingsTemplateSmokeTest {
         assertTrue(html.contains("읽기 전용"), "비-ADMIN 안내 배너가 없다");
         assertTrue(html.contains("Rate Limit"));
     }
+
+    @Test
+    @DisplayName("관리자 화면 — 탭 3개·민감정보 탐지/탐지 이력 패널·규칙 모달·관리 스크립트가 렌더된다")
+    void adminHasGuardTabs() {
+        Map<String, Object> model = new LinkedHashMap<>();
+        model.put("_csrf", new CsrfStub());
+        model.put("isAdmin", true);
+        String html = render("llm-settings", model);
+
+        assertTrue(html.contains("id=\"tab-config\"") && html.contains("id=\"tab-guard\"")
+                && html.contains("id=\"tab-guard-log\""), "탭 3개가 없다");
+        assertTrue(html.contains("id=\"panel-guard\""), "민감정보 탐지 패널이 없다");
+        assertTrue(html.contains("id=\"panel-guard-log\""), "탐지 이력 패널이 없다");
+        assertTrue(html.contains("id=\"lgRuleModal\""), "규칙 모달이 없다");
+        assertTrue(html.contains("/js/llm-guard-admin.js"), "관리 스크립트가 없다");
+        assertTrue(html.contains("/css/llm-guard-admin.css"), "관리 스타일이 없다");
+        assertTrue(html.contains("1년 보관 후 자동 삭제"), "보관 안내가 없다");
+        assertTrue(html.matches("(?s).*<div id=\"panel-config\" class=\"tab-panel active\".*"),
+                "설정 패널이 서버에서 active 로 렌더되지 않았다");
+        // 규칙 모달은 .container 밖 — 비-ADMIN 읽기 전용 IIFE 와 무관해야 한다
+        int containerEnd = html.indexOf("<!-- 규칙 모달");
+        assertTrue(containerEnd > html.indexOf("id=\"panel-guard-log\""));
+        assertTrue(html.trim().endsWith("</html>"), "문서 끝까지 렌더되지 않았다");
+    }
+
+    @Test
+    @DisplayName("일반 사용자 HTML 에는 민감정보 탐지 탭의 마크업·스크립트·API 경로가 0건이고 설정 패널은 active")
+    void nonAdminHasNoGuardMarkup() {
+        Map<String, Object> model = new LinkedHashMap<>();
+        model.put("_csrf", new CsrfStub());
+        model.put("isAdmin", false);
+        String html = render("llm-settings", model);
+
+        assertFalse(html.contains("llm-guard-admin"), "관리 스크립트·스타일이 일반 사용자에게 내려간다");
+        assertFalse(html.contains("/api/admin/llm-guard"), "관리 API 경로가 일반 사용자 HTML 에 있다");
+        assertFalse(html.contains("panel-guard"), "탐지 패널 마크업이 일반 사용자 HTML 에 있다");
+        assertFalse(html.contains("lgRuleModal"), "규칙 모달이 일반 사용자 HTML 에 있다");
+        assertFalse(html.contains("role=\"tablist\""), "탭 바가 일반 사용자 HTML 에 있다");
+        assertTrue(html.matches("(?s).*<div id=\"panel-config\" class=\"tab-panel active\".*"),
+                "일반 사용자 설정 패널이 active 가 아니다 — JS 없이 빈 화면이 된다");
+        assertTrue(html.trim().endsWith("</html>"));
+    }
 }

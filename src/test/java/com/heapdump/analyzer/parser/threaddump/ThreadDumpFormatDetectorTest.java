@@ -15,13 +15,21 @@ class ThreadDumpFormatDetectorTest {
     @Test
     void 파일명_규칙() {
         for (String ok : List.of("threaddump.txt", "thread_dump_20261126.log.gz", "jstack.12345", "was1-jstack-3.out",
-                "x.tdump", "ThreadDump-prod.txt", "app.threaddump", "stackdump_1.txt", "tdump.txt.gz", "thread-dumps.log")) {
+                "x.tdump", "ThreadDump-prod.txt", "app.threaddump", "stackdump_1.txt", "tdump.txt.gz", "thread-dumps.log",
+                // 2026-11-27 — 구분자로 떨어진 낱말 thread(threads, 숫자가 바로 붙은 thread1 포함)
+                "thread", "thread.txt", "Thread.log", "was1_thread_20261127.log", "thread-prod.out.gz", "app.thread.3",
+                "thread1.txt", "thread_01.log", "threads.log", "jeus-THREAD-1127.txt")) {
             assertTrue(ThreadDumpFormatDetector.isThreadDumpFilename(ok), ok);
         }
-        for (String no : List.of("catalina.out", "server.log", "gc.log", "threads.hprof", "heapdump.hprof", "core.1234",
-                "mythreaddumper.jar.txt2", "jstacked.bin")) {
+        for (String no : List.of("catalina.out", "server.log", "gc.log", "heapdump.hprof", "core.1234",
+                "mythreaddumper.jar.txt2", "jstacked.bin",
+                // 낱말 안에 든 thread 는 아니다
+                "mythread.log", "AppThread.log", "threadpool.xml", "spring-threadpool-config.xml", "threading.txt", "rethread.out")) {
             assertFalse(ThreadDumpFormatDetector.isThreadDumpFilename(no), no);
         }
+        // 힙 확장자도 이름은 맞는다 — 분류는 브라우저 순서(힙 확장자 → … → 스레드 덤프 이름)가 정하고,
+        // 내용에 덤프가 없으면 힙 덤프로 남는다(ThreadDumpUploadContractTest.resolveOrder 가 순서를 고정)
+        assertTrue(ThreadDumpFormatDetector.isThreadDumpFilename("threads.hprof"));
         assertTrue(ThreadDumpFormatDetector.isThreadDumpFilename("/var/log/jstack.out"), "경로가 붙어도 파일명만 본다");
         assertFalse(ThreadDumpFormatDetector.isThreadDumpFilename(null));
     }

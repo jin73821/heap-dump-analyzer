@@ -563,6 +563,9 @@
             .cmp-result-summary { gap: 10px; margin-bottom: 10px; }
         }
     </style>
+    <!-- 출력 가림 안내 토스트 (window.LlmGuard) — common.css 없이 홀로 완결 -->
+    <link rel="stylesheet" href="/css/llm-guard.css?v=2026-11-26">
+    <script src="/js/llm-guard.js?v=2026-11-26" defer></script>
 </head>
 <body>
 
@@ -1913,6 +1916,8 @@
             _cmpAiInFlight = false;
             if (result && result.success) {
                 cmpAiShowResult(result, !!result.saved);
+                // 서버가 AI 응답의 개인정보를 가렸으면 안내(compare 는 common.css 가 없어 LlmGuard 자체 토스트)
+                if (window.LlmGuard) LlmGuard.noteOutput(result);
             } else {
                 cmpAiShowError(result);
             }

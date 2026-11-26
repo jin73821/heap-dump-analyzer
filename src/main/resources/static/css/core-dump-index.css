@@ -1,0 +1,568 @@
+/* ============================================================================
+ * core-dump-index.css — 코어 파일 화면(/core-dump) 본문 전용 (2026-11-26 개편, 시안 A '한 표 작업대')
+ *
+ * core-dump.css 는 GC 로그·스레드 덤프 화면도 싣는 공용이라, 이 화면에서만 쓰는 규칙은 여기에 둔다.
+ * 상단바(.cd-topbar)·배너는 core-dump.css·banner.html 그대로 — 이 파일은 그 아래 본문과
+ * 이 화면 모달의 색 띠 제거만 다룬다. 클래스 접두는 cf-(core files).
+ *
+ * 원칙: 구분은 1px 선, 카드 모서리 10px(Dashboard·Files·History 의 .panel 과 같다 — 2026-11-27), 안쪽 요소는 그보다 작게,
+ *       그림자·좌측 색 띠 없음. 상태는 작은 사각 점 + 글자,
+ *       파일명·시그널·함수 같은 기계 값은 고정폭. 손이 가야 하는 행(실패·미분석·분석 중)만 테두리 버튼.
+ *
+ * 폭 대응은 뷰포트가 아니라 본문 폭 기준이다(@container cfpage) — 좌측 배너가 220↔44px 로 접히므로
+ * 같은 뷰포트에서도 본문 폭이 176px 달라진다. 단계: ≥1100 전 열 · <1100 실행 파일 열 접음 · <1000 크기 열도 접음 ·
+ * <900 표를 두 줄 행으로(가로 스크롤 없음) · <520 크래시 지점이 오른쪽 끝까지. 기준은 '크래시 지점' 열이 함수 이름과
+ * 파일명:줄 + 같은 지점을 자르지 않고 담는 폭(약 270px)이다. 표에 min-width 를 다시 주지 말 것 —
+ * 1280px 화면에서 '작업' 열이 가로 스크롤 밖으로 밀려 결과·분석 버튼이 보이지 않았다.
+ * ==========================================================================*/
+
+.cf-page {
+    --cf-line: #E3E5E8;
+    --cf-line-soft: #EEF0F2;
+    --cf-line-strong: #CDD1D6;
+    --cf-text: #111827;
+    --cf-text-2: #374151;
+    --cf-text-3: #4B5563;
+    --cf-muted: #6B7280;
+    --cf-blue: #2563EB;
+    --cf-blue-t: #1D4ED8;
+    --cf-red-t: #B91C1C;
+    --cf-focus: #93B4F5;
+
+    /* 배너 오른쪽 영역의 가운데에 둔다. margin-left 를 배너 폭으로만 주던 때는 1440px 보다 넓은 화면에서
+       본문이 왼쪽에 붙고 오른쪽만 비었다(1920px 에서 260px, 2560px 에서 900px). % 는 뷰포트 폭 기준이다. */
+    margin-left: max(var(--banner-w, 220px), calc((100% + var(--banner-w, 220px) - 1440px) / 2));
+    margin-top: 52px;
+    max-width: 1440px;
+    padding: 20px 24px 40px;
+    box-sizing: border-box;
+    container: cfpage / inline-size;
+    display: flex; flex-direction: column; gap: 14px;
+    font-size: 13px; line-height: 1.45; color: var(--cf-text);
+    transition: margin-left .25s cubic-bezier(.4,0,.2,1);
+}
+.cf-mono { font-family: var(--font-mono); font-size: .94em; }
+.cf-box { background: #fff; border: 1px solid var(--cf-line); border-radius: 10px; min-width: 0; }
+.cf-h2 { margin: 0; font-size: 13px; font-weight: 700; color: var(--cf-text); }
+.cf-h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 700; color: var(--cf-text); }
+.cf-h3.is-err { color: #991B1B; }
+.cf-h3.is-run { color: var(--cf-blue-t); }
+.cf-h3-sub { font-weight: 400; color: var(--cf-text-3); }
+
+/* ── 버튼 ─────────────────────────────────────────────────────────────── */
+.cf-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    height: 32px; padding: 0 12px; box-sizing: border-box;
+    border: 1px solid var(--cf-line-strong); border-radius: 4px; background: #fff;
+    color: var(--cf-text); font: inherit; font-size: 12.5px; font-weight: 600;
+    text-decoration: none; white-space: nowrap; cursor: pointer;
+}
+.cf-btn:hover { background: #F3F4F6; color: var(--cf-text); text-decoration: none; }
+.cf-btn:disabled { opacity: .55; cursor: default; }
+.cf-btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+.cf-btn-primary { background: var(--cf-blue); border-color: var(--cf-blue); color: #fff; }
+.cf-btn-primary:hover:not(:disabled) { background: #1D4ED8; border-color: #1D4ED8; color: #fff; }
+.cf-btn-primary:disabled { background: #E5E7EB; border-color: #E5E7EB; color: var(--cf-muted); opacity: 1; }
+.cf-linkbtn {
+    background: none; border: 0; padding: 0 2px; min-height: 28px;
+    font: inherit; font-size: 12px; font-weight: 600; color: var(--cf-blue-t); cursor: pointer;
+}
+.cf-linkbtn:hover { text-decoration: underline; }
+.cf-btn:focus-visible, .cf-linkbtn:focus-visible, .cf-chev:focus-visible,
+.cf-fname:focus-visible, .cf-table .fb:focus-visible, .cf-tab:focus-visible, .cf-sortbtn:focus-visible,
+.cf-repeat-btn:focus-visible, .cf-slot-clear:focus-visible {
+    outline: 2px solid var(--cf-focus); outline-offset: 1px;
+}
+
+/* ── 코어 덤프 업로드 ─────────────────────────────────────────────────────
+ * [안내 | 코어 파일 버튼 | 실행 파일 버튼 | GDB 분석 시작]. 업로드 버튼(.cf-slot)은 아이콘 타일 + 두 줄(이름표 / 안내 또는
+ * 고른 파일) + 오른쪽 '파일 선택'. 버튼 전체를 투명 input 이 덮어 누르는 자리이자 끌어다 놓는 자리다.
+ * 고르면 아이콘이 체크로 바뀌고 '파일 선택' 자리에 해제(×)가 선다. 점선은 파일을 끌어 올렸을 때만.
+ * 폭 단계는 아래 @container: 넓으면 한 줄 · 중간이면 안내 줄 + [버튼|버튼|시작] · 좁으면 한 열. */
+.cf-new {
+    padding: 20px; display: grid; align-items: center; gap: 14px 12px;
+    grid-template-columns: minmax(0, 1fr) auto;
+}
+/* 제목 줄 — 스레드 덤프·GC 로그 업로드 카드의 .content-card-title 과 같은 값(14px 700 · 아이콘 16px · 아랫선 · 아래 여백 16px).
+   이 카드는 grid 라 아래 여백은 행 간격(14px) + margin 2px 로 맞춘다 */
+.cf-new-title {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-width: 0;
+    margin-bottom: 2px; padding-bottom: 10px; border-bottom: 1px solid var(--cd-divider, #F3F4F6); color: #1F2937;
+}
+.cf-new-title svg { flex-shrink: 0; }
+.cf-new-title .cf-h2 { font-size: 14px; color: #1F2937; }
+.cf-new-desc { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.5; color: var(--cf-text-3); word-break: keep-all; }   /* 한글 낱말 중간에서 줄을 바꾸지 않는다 */
+
+.cf-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; min-width: 0; }
+.cf-slot {
+    --cf-slot-accent: var(--cf-blue);
+    position: relative; min-width: 0; min-height: 70px; box-sizing: border-box; padding: 12px 14px;
+    display: flex; align-items: center; gap: 12px;
+    background: #fff; border: 1px solid var(--cf-line-strong); border-radius: 8px; cursor: pointer;
+    transition: border-color .15s, background-color .15s;
+}
+.cf-slot:hover { border-color: #93B4F5; background: #F8FAFF; }
+.cf-slot:focus-within { outline: 2px solid var(--cf-focus); outline-offset: 1px; }
+.cf-slot.dragover { border-style: dashed; border-color: var(--cf-blue); background: #F1F6FF; }
+.cf-slot.is-flash { border-color: var(--cf-blue); background: #F1F6FF; }
+.cf-slot input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+
+/* 아이콘 타일 — 비었을 때 파일 종류 아이콘(옅은 파랑), 고르면 체크(옅은 초록) */
+.cf-slot-ic {
+    flex-shrink: 0; width: 40px; height: 40px; border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: #EEF3FD; color: #2F5FD0; transition: background-color .15s, color .15s;
+}
+.cf-slot-ic > span { display: flex; }
+.cf-slot-ic-ok { display: none !important; }
+/* 선택 사항은 한 단계 조용하게 — 마우스·끌어 올림·고른 뒤에는 코어 칸과 같은 색(id 우선순위가 그 규칙들을 덮지 않게 :not 으로 한정) */
+#execDropZone:not(:hover):not(.dragover):not(.has-file) .cf-slot-ic { background: #F1F2F4; color: #4B5563; }
+.cf-slot:hover .cf-slot-ic, .cf-slot.dragover .cf-slot-ic { background: #DDE8FC; color: #1D4ED8; }
+
+.cf-slot-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.cf-slot-lbl { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 13px; font-weight: 700; color: var(--cf-text); white-space: nowrap; }
+.cf-req, .cf-slot-opt { font-size: 11.5px; font-weight: 500; }
+.cf-req { color: var(--cf-red-t); }
+.cf-slot-opt { color: var(--cf-muted); }
+/* 안내는 좁으면 두 줄까지 — 한 줄 말줄임이면 중간 폭(1024px 화면)·휴대폰에서 안내의 뒷부분이 잘렸다 */
+.cf-slot-empty {
+    min-width: 0; font-size: 12px; line-height: 1.4; color: var(--cf-text-3); word-break: keep-all;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
+.cf-slot-picked { display: none; align-items: baseline; gap: 8px; min-width: 0; }
+.cf-slot-file {
+    display: flex; min-width: 0;   /* 가운데 말줄임(.cf-fname-h/.cf-fname-t) — JS setNameParts */
+    font-family: var(--font-mono); font-size: 12.5px; font-weight: 600; color: var(--cf-text); white-space: nowrap;
+}
+.cf-slot-size { flex-shrink: 0; font-size: 12px; color: var(--cf-text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* 오른쪽 '파일 선택' — 모양만 버튼(누르는 건 input). 버튼 전체에 마우스를 올리면 함께 진해진다 */
+.cf-slot-pick {
+    flex-shrink: 0; display: inline-flex; align-items: center; height: 30px; padding: 0 12px; box-sizing: border-box;
+    border: 1px solid var(--cf-line-strong); border-radius: 6px; background: #fff;
+    font-size: 12px; font-weight: 600; color: var(--cf-text-2); white-space: nowrap;
+    transition: border-color .15s, color .15s;
+}
+.cf-slot:hover .cf-slot-pick { border-color: var(--cf-blue); color: var(--cf-blue-t); }
+.cf-slot-clear {
+    display: none; position: relative; z-index: 2; flex-shrink: 0;
+    width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent;
+    color: var(--cf-text-3); cursor: pointer; align-items: center; justify-content: center;
+}
+.cf-slot-clear:hover { background: #FDECEC; color: var(--cf-red-t); }
+
+/* 고른 뒤 */
+.cf-slot.has-file { border-color: #A7D7BF; background: #FBFEFC; }
+.cf-slot.has-file:hover { border-color: #6FC09A; background: #F4FBF7; }
+.cf-slot.has-file .cf-slot-ic, .cf-slot.has-file:hover .cf-slot-ic { background: #E3F4EA; color: #047857; }
+.cf-slot.has-file .cf-slot-ic-idle { display: none; }
+.cf-slot.has-file .cf-slot-ic-ok { display: flex !important; }
+.cf-slot.has-file .cf-slot-empty, .cf-slot.has-file .cf-slot-pick { display: none; }
+.cf-slot.has-file .cf-slot-picked { display: flex; }
+.cf-slot.has-file .cf-slot-clear { display: flex; }
+
+.cf-new-go { display: flex; align-self: stretch; }
+.cf-submit {
+    height: auto; min-height: 70px; min-width: 140px; padding: 0 22px; border-radius: 8px;
+    font-size: 13.5px; position: relative; overflow: hidden;
+}
+.cf-submit .usb-progress {
+    position: absolute; inset: 0; width: 0; background: rgba(255,255,255,.22);
+    transition: width .2s ease; pointer-events: none;
+}
+.cf-submit .usb-label { position: relative; }
+
+/* 카드 아래 줄(실행 파일 제안 · 안내 · 오류) — 카드 폭 전체 */
+.cf-new > .cf-suggest, .cf-new > .cf-upload-status, .cf-new > .cf-upload-error { grid-column: 1 / -1; }
+.cf-suggest {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 8px 12px;
+    background: #F7F8FA; border-radius: 6px; font-size: 12px; color: var(--cf-text-2);
+}
+.cf-suggest[hidden] { display: none; }
+.cf-suggest b { font-weight: 600; color: var(--cf-text); }
+.cf-upload-status { font-size: 12px; color: var(--cf-text-3); }
+.cf-upload-status:empty { display: none; }
+.cf-upload-error {
+    display: none; padding: 10px 12px; background: #FEF6F6; border: 1px solid #F3C4C4; border-radius: 6px;
+    font-size: 12px; color: #8F1D1D; overflow-wrap: anywhere;
+}
+.cf-upload-error.visible { display: block; }
+.cf-upload-error-title { font-weight: 700; margin-bottom: 2px; }
+
+/* ── 목록: 반복 안내 · 도구줄 ────────────────────────────────────────────── */
+.cf-repeat {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+    padding: 10px 12px; border-bottom: 1px solid var(--cf-line);
+    font-size: 12px; color: var(--cf-text-3);
+}
+.cf-repeat-lbl { font-weight: 600; color: var(--cf-text-2); margin-right: 2px; }
+.cf-repeat-btn {
+    display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 8px;
+    min-height: 28px; padding: 0 9px; max-width: 100%;
+    border: 1px solid #E5C27A; border-radius: 3px; background: #FFF8E6; color: #7A4306;
+    font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
+.cf-repeat-btn:hover { background: #FDF0CF; }
+.cf-repeat-btn[aria-pressed="true"] { background: #FBE6B0; border-color: #C9962F; }
+.cf-repeat-n { font-weight: 700; }
+.cf-repeat-where { font-family: var(--font-mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.cf-repeat-act { color: var(--cf-blue-t); font-weight: 600; }
+
+.cf-toolbar {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+    padding: 0 12px; min-height: 48px; border-bottom: 1px solid var(--cf-line);
+}
+.cf-tabs { display: flex; flex-wrap: wrap; gap: 2px; align-self: stretch; }
+.cf-tab {
+    display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 0 10px; margin-bottom: -1px;
+    background: none; border: 0; border-bottom: 2px solid transparent;
+    font: inherit; font-size: 13px; font-weight: 500; color: var(--cf-text-3); cursor: pointer;
+}
+.cf-tab:hover { color: var(--cf-text); }
+.cf-tab[aria-pressed="true"] { color: var(--cf-text); font-weight: 700; border-bottom-color: var(--cf-text); }
+.cf-tab-n { font-size: 12px; font-weight: 500; color: var(--cf-text-3); font-variant-numeric: tabular-nums; }
+
+/* .hi-controls/.hi-date 는 core-dump.css 기본값 위에 이 도구줄 모양만 덧씌운다(테스트 계약: 클래스·id 유지) */
+.cf-toolbar .hi-controls { margin: 0 0 0 auto; gap: 8px 14px; padding: 8px 0; }
+.cf-check { display: flex; align-items: center; gap: 6px; min-height: 32px; font-size: 12.5px; color: var(--cf-text-2); white-space: nowrap; cursor: pointer; }
+.cf-check input { margin: 0; }
+.cf-search { position: relative; display: flex; align-items: center; }
+.cf-search svg { position: absolute; left: 10px; color: var(--cf-muted); pointer-events: none; }
+.cf-search input {
+    height: 32px; width: 210px; box-sizing: border-box; padding: 0 10px 0 30px;
+    border: 1px solid var(--cf-line-strong); border-radius: 4px; background: #fff;
+    font: inherit; font-size: 12.5px; color: var(--cf-text);
+}
+.cf-search input:focus { outline: none; border-color: var(--cf-blue); box-shadow: 0 0 0 2px rgba(37,99,235,.15); }
+/* 검색 칸·기간 칸·지우기 버튼 높이를 32px 로 맞춘다(종전 32/33/31px 로 한 줄에서 어긋났다) */
+.cf-toolbar .hi-date .calendar-range { height: 32px; box-sizing: border-box; border-color: var(--cf-line-strong); border-radius: 4px; }
+.cf-toolbar .hi-date .cal-text { padding: 0 6px; font-size: 12.5px; }
+.cf-toolbar .hi-date .date-clear-btn-row { height: 32px; box-sizing: border-box; padding: 0 10px; border-color: var(--cf-line-strong); border-radius: 4px; }
+
+/* ── 표 — Files 의 표(.ftable) 디자인 (2026-11-27) ────────────────────────────
+ * 머리글·행 바탕·구분선·글자 크기는 common.css 의 공용 .ftable 규칙을 그대로 쓰고(마크업에 class="ftable"),
+ * 여기서는 Files(files.html) 가 덧씌운 값(칸 여백 10px 12px · 머리글 11px · 정렬 ▲▼ · 작업 칸 .fb 아이콘 버튼 ·
+ * 바닥 페이지 줄)을 이 화면에 옮긴다. 펼치기·상태·크래시 지점(두 줄) 같은 이 화면 고유 칸은 그대로 둔다. */
+.cf-table-wrap { overflow-x: auto; }   /* 평소엔 넘치지 않는다 — 컨테이너 쿼리가 없는 브라우저용 안전망 */
+.cf-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 13px; }
+.cf-c-chev { width: 44px; }
+.cf-c-st   { width: 90px; }
+.cf-c-file { width: 20%; }
+.cf-c-sig  { width: 92px; }
+.cf-c-exec { width: 130px; }
+.cf-c-size { width: 84px; }
+.cf-c-up   { width: 120px; }
+.cf-c-act  { width: 84px; }   /* 아이콘 버튼 2개(26 + 3 + 26) + 칸 여백 */
+.cf-table thead th { padding: 10px 12px; font-size: 11px; }   /* 색·대문자·자간·아랫선은 .ftable th */
+.cf-table th.cf-c-chev, .cf-table td.cf-td-chev { padding: 0 0 0 8px; }
+.cf-table .cf-num { text-align: right; font-variant-numeric: tabular-nums; }
+.cf-table th[data-sort-key] { cursor: pointer; user-select: none; }
+.cf-table th[data-sort-key]:hover { background: #F3F4F6; }
+.cf-sortbtn {
+    display: inline-flex; align-items: center; padding: 0; background: none; border: 0;
+    font: inherit; font-weight: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit; cursor: pointer;
+}
+.cf-table th.cf-num .cf-sortbtn { flex-direction: row; }
+/* 정렬 표시 — Files 와 같다: 비활성 ▲ 흐리게, 활성 파랑 ▲(오름)·▼(내림) */
+.cf-sort-ind { display: inline-block; margin-left: 4px; font-size: 9px; opacity: .3; transition: opacity .15s; }
+.cf-table th.sort-active .cf-sort-ind { opacity: 1; color: #2563EB; }
+
+/* 행 — 구분선(#F3F4F6)·마우스 바탕(#F9FAFB)은 .ftable. 높이는 두 줄 칸(크래시 지점·업로드)이 들어가게 고정 */
+.cf-table td { height: 50px; padding: 6px 12px; vertical-align: middle; }
+.cf-row { cursor: pointer; }
+.cf-row:focus-visible { outline: 2px solid var(--cf-focus); outline-offset: -2px; }
+/* 펼친 행: 파일명 줄은 진한 바탕 + 윗선, 상세는 옅은 바탕 + 아랫선 — 두 줄의 바탕이 같으면 여러 개를 펼쳤을 때
+   어디서 한 파일이 끝나고 다음 파일이 시작하는지 보이지 않았다(2026-11-27). 좌측 색 띠는 쓰지 않는다 */
+.cf-row.is-open { background: #E6EEFB; }
+.cf-row.is-open:hover { background: #DCE7FA; }
+.cf-row.is-open > td { border-top: 1px solid #C9D7F0; }
+.cf-row.is-open + .cf-detail { background: #F8FAFE; }
+.cf-table .cf-row.is-open + .cf-detail:not(:last-child) > td { border-bottom: 1px solid #C9D7F0; }   /* 마지막 행은 바닥 페이지 줄 윗선과 겹치지 않게 */
+/* 마지막으로 보이는 행은 아랫선이 없다(바닥 페이지 줄의 윗선과 겹치지 않게). 펼치지 않은 상세 행이 마지막 자식인 경우도 */
+.cf-table tbody tr.cf-row:has(+ tr.cf-detail[hidden]:last-child) > td { border-bottom: 0; }
+
+.cf-chev {
+    width: 32px; height: 32px; border: 0; border-radius: 4px; background: transparent;
+    color: var(--cf-text-3); display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.cf-chev:hover { background: #EEF0F3; color: var(--cf-text); }
+.cf-chev svg { transition: transform .15s; }
+.cf-row.is-open .cf-chev svg { transform: rotate(90deg); }
+
+/* 상태 — 완료는 조용히(회색 글자), 실패·분석 중만 굵은 색 글자, 미분석은 속이 빈 점 */
+.cf-st { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.cf-st i { width: 8px; height: 8px; box-sizing: border-box; border-radius: 2px; flex-shrink: 0; border: 1.5px solid; }
+.cf-st-ok   { color: var(--cf-text-3); font-weight: 500; }
+.cf-st-ok i { background: #059669; border-color: #059669; }
+.cf-st-err  { color: var(--cf-red-t); font-weight: 700; }
+.cf-st-err i { background: #DC2626; border-color: #DC2626; }
+.cf-st-run  { color: var(--cf-blue-t); font-weight: 700; }
+.cf-st-run i { background: #2563EB; border-color: #2563EB; }
+.cf-st-new  { color: var(--cf-text); }
+.cf-st-new i { background: transparent; border-color: var(--cf-text-3); }
+.cf-st-exec { color: var(--cf-muted); font-weight: 500; }
+.cf-st-exec i { background: #E5E7EB; border-color: #9CA3AF; }
+
+.cf-fcell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* 가운데 말줄임 — 앞(.cf-fname-h)만 줄고 끝(.cf-fname-t)은 남는다. 코어 이름은 끝의 pid·시각이 서로를 가르는데
+   끝을 자르면 같은 프로그램의 코어 여러 개가 똑같은 글자(core.tmaxsvr_gw01.2026…)로 보였다. 나누는 기준은 CoreFileRow. */
+.cf-fname {   /* Files 의 .fname 과 같이 본문 글꼴 500 */
+    display: flex; min-width: 0; max-width: 100%; padding: 0; background: none; border: 0;
+    font: inherit; font-size: 13px; font-weight: 500; color: #1F2937;
+    text-align: left; white-space: nowrap; cursor: pointer;
+}
+.cf-fname-h { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.cf-fname-t { flex: none; }
+.cf-fname:hover > span { text-decoration: underline; }
+.cf-fname.is-static { cursor: default; font-weight: 400; color: var(--cf-text-2); }
+.cf-fname.is-static:hover > span { text-decoration: none; }
+.cf-tag {   /* Files 의 deleted 배지와 같은 모양 */
+    flex-shrink: 0; padding: 1px 6px; border-radius: 4px;
+    background: #F3F4F6; font-size: 10px; font-weight: 600; color: #6B7280; white-space: nowrap;
+}
+.cf-sig { font-family: var(--font-mono); font-size: 12px; font-weight: 700; }
+.cf-sig.tone-fatal   { color: #B91C1C; }
+.cf-sig.tone-warn    { color: #A14F06; }
+.cf-sig.tone-neutral { color: var(--cf-text-2); }
+.cf-none { color: var(--cf-muted); }
+
+.cf-where { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cf-where-note {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 12px; color: var(--cf-text-3);
+}
+/* 완료 행은 두 줄 — 함수 이름은 칸 폭 전부를 쓰고(넘치면 말줄임), 소스 위치(file:line)는 아랫줄에 항상 보인다.
+   한 줄에 함께 두면 긴 C++/모듈 함수 이름에 위치가 밀려 사라졌다(같은 함수라도 위치가 원인을 가른다). */
+.cf-where2 { display: flex; flex-direction: column; justify-content: center; min-width: 0; line-height: 1.35; font-family: var(--font-mono); font-size: 12px; }
+.cf-where-fn { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--cf-text); }
+.cf-where-sub { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--cf-text-3); }
+.cf-where-loc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 실패 사유는 내용이라 한 단계 진하게. '분석 실패'·'GDB 실행 중' 같은 굵은 색 글자는 두지 않는다 — 상태 칸이 이미 말한다 */
+.cf-where-err { color: var(--cf-text-2); }
+/* 같은 지점 — 행마다 상자 배지가 서면 표가 호박색 딱지로 덮인다. 행에서는 글자만, 상자는 표 위 안내 줄(.cf-repeat-btn)에만 */
+.cf-rep { flex-shrink: 0; font-family: var(--font-sans); font-size: 11.5px; font-weight: 600; color: #8A4B08; white-space: nowrap; }
+.cf-where-loc + .cf-rep::before { content: '·'; margin-right: 8px; font-weight: 400; color: var(--cf-muted); }
+.cf-exec { display: block; font-family: var(--font-mono); font-size: 12px; color: var(--cf-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-up { display: flex; flex-direction: column; line-height: 1.35; min-width: 0; }
+.cf-up-t { font-size: 12px; color: #4B5563; font-variant-numeric: tabular-nums; white-space: nowrap; }   /* Files .fdate */
+.cf-up-by { font-size: 11.5px; color: #9CA3AF; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-td-size { font-size: 12px; color: #6B7280; white-space: nowrap; }   /* Files .fsize */
+
+/* 작업 칸 — Files 의 .file-actions/.fb 와 같은 26px 아이콘 버튼(값은 files.html 인라인 스타일을 옮김) */
+.cf-acts { display: flex; align-items: center; gap: 3px; }
+.cf-table .fb {
+    width: 26px; height: 26px; padding: 0; box-sizing: border-box; flex-shrink: 0;
+    border: 1px solid #E5E7EB; border-radius: 5px; background: transparent;
+    display: flex; align-items: center; justify-content: center; cursor: pointer; text-decoration: none;
+}
+.cf-table .fb:hover { border-color: #93C5FD; }
+.cf-table .fb svg { width: 12px; height: 12px; stroke: #6B7280; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.cf-table .fb.v { background: #059669; border-color: #059669; }
+.cf-table .fb.v:hover { background: #047857; }
+.cf-table .fb.p, .cf-table .fb.analyzing { background: #2563EB; border-color: #2563EB; }
+.cf-table .fb.p:hover, .cf-table .fb.analyzing:hover { background: #1D4ED8; }
+.cf-table .fb.e { background: #EF4444; border-color: #EF4444; }
+.cf-table .fb.e:hover { background: #DC2626; }
+.cf-table .fb.v svg, .cf-table .fb.p svg, .cf-table .fb.e svg, .cf-table .fb.analyzing svg { stroke: #fff; }
+.cf-table .fb.d:hover { border-color: #FCA5A5; background: #FEF2F2; }
+.cf-table .fb.d:hover svg { stroke: #EF4444; }
+.cf-table .fb:disabled { opacity: .6; cursor: default; }
+.cf-table .fb.analyzing svg, .cf-table .fb.is-busy svg { animation: cfSpin .8s linear infinite; }
+@keyframes cfSpin { to { transform: rotate(360deg); } }
+
+/* ── 펼친 상세 ─────────────────────────────────────────────────────────── */
+/* 상세는 상태 칸 글자 시작(펼치기 열 44px + 칸 여백 12px = 56px)에 맞춰 들여 쓴다. 선택자를 .cf-detail > td 로만 쓰면
+   .cf-table td:first-child 의 padding-left: 12px 에 져서 들여쓰기가 사라진다(실제로 그랬다).
+   colspan 은 JS(syncDetailSpan)가 보이는 열 수로 맞춘다 — 9 로 고정이면 열을 접을 때 '없는 열'이 폭을 나눠 가진다. */
+.cf-table .cf-detail > td { height: auto; padding: 14px 16px 20px 56px; border-top: 1px dashed #D3DCEC; cursor: default; }
+.cf-dt { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+.cf-dt-main { min-width: 0; }
+.cf-dt-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 12px; margin-bottom: 8px; }
+.cf-dt-head .cf-h3 { margin: 0; }
+.cf-dt-more { font-size: 12px; color: var(--cf-blue-t); }
+.cf-bt {
+    padding: 10px 12px; background: #fff; border: 1px solid var(--cf-line); border-radius: 3px;
+    font-family: var(--font-mono); font-size: 12px; line-height: 1.7;
+}
+/* 긴 프레임(C++ 템플릿 심볼)은 가로 스크롤 대신 줄을 바꾼다 — 스크롤이면 맨 끝의 소스 위치가 가려진다.
+   이어지는 줄은 프레임 번호('#0  ' 4칸) 뒤에 맞춘다(내어쓰기). */
+.cf-bt-line { white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 4ch; text-indent: -4ch; }
+.cf-bt-line + .cf-bt-line { margin-top: 1px; }
+.cf-bt-n, .cf-bt-a, .cf-bt-at { color: var(--cf-muted); }
+.cf-bt-fn { font-weight: 600; color: var(--cf-text); }
+.cf-bt-loc { color: #047857; }
+.cf-dt-p { margin: 0; max-width: 640px; font-size: 12.5px; line-height: 1.6; color: var(--cf-text-2); }
+.cf-dt-p + .cf-h3, .cf-dt-missing { margin-bottom: 10px; }
+.cf-dt-err {
+    max-height: 160px; overflow: auto; padding: 10px 12px;
+    background: #FEF6F6; border: 1px solid #F3C4C4; border-radius: 3px;
+    font-size: 12.5px; color: #8F1D1D; white-space: pre-wrap; overflow-wrap: anywhere;   /* 오류 문구는 대개 한글 — 고정폭이면 자간이 벌어진다 */
+}
+.cf-meta { margin: 0; display: flex; flex-direction: column; gap: 7px; font-size: 12.5px; }
+.cf-meta > div { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 12px; }
+.cf-meta dt { color: var(--cf-text-3); }
+.cf-meta dd { margin: 0; color: var(--cf-text); overflow-wrap: anywhere; }
+.cf-dd-sub { display: block; font-size: 12px; color: var(--cf-text-3); }
+.cf-dt-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 16px; }
+
+/* ── 빈 상태 · 바닥줄 ──────────────────────────────────────────────────── */
+.cf-empty, .cf-noresult { padding: 32px 16px; text-align: center; font-size: 13px; color: #9CA3AF; }   /* Files .no-match */
+.cf-noresult[hidden] { display: none; }
+/* 바닥 줄 — Files 의 .pagination-bar·.pg-btn·.page-size-select 와 같은 모양 */
+.cf-foot {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
+    padding: 12px 16px; border-top: 1px solid #E5E7EB; background: #FAFBFC; border-radius: 0 0 10px 10px;
+    font-size: 12px; color: #6B7280;
+}
+.cf-keys { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 12px; }
+.cf-keys kbd {
+    padding: 0 4px; line-height: 16px; border: 1px solid var(--cf-line-strong); border-bottom-width: 2px; border-radius: 3px;
+    background: #fff; font-family: var(--font-mono); font-size: 11px; color: var(--cf-text-2);
+}
+.cf-foot .cd-pg { margin: 0; padding: 0; border: 0; flex-direction: row; align-items: center; gap: 10px; }
+.cf-foot .cd-pg-list { gap: 4px; }
+.cf-foot .cd-pg-btn {
+    min-width: 32px; height: 32px; padding: 0 8px; border: 1px solid #E5E7EB; border-radius: 6px;
+    background: #fff; color: #374151; font-family: inherit; font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums;
+}
+.cf-foot .cd-pg-btn:hover:not(:disabled):not(.active) { background: #F9FAFB; }
+.cf-foot .cd-pg-btn.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+.cf-foot .cd-pg-btn:disabled { color: #D1D5DB; background: #F9FAFB; opacity: 1; }
+.cf-foot .cd-pg-ellipsis { padding: 0 4px; color: #9CA3AF; font-size: 12px; }
+.cf-foot .cd-pg-info { font-family: inherit; font-size: 12px; color: #6B7280; }
+.cf-psize { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #6B7280; white-space: nowrap; }
+.cf-psize select {
+    padding: 8px 28px 8px 10px; font: inherit; font-size: 13px; color: #1F2937;
+    border: 1px solid #E5E7EB; border-radius: 8px; background-color: #fff; cursor: pointer; outline: none;
+    appearance: none; -webkit-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' stroke='%236B7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+    background-repeat: no-repeat; background-position: right 10px center;
+}
+.cf-psize select:focus-visible { border-color: var(--cf-blue); box-shadow: 0 0 0 2px rgba(37,99,235,.15); }
+
+/* ── 이 화면 모달 — 열기·닫기 연출(2026-11-27, GC 로그 화면 .gcl-modal 과 같은 값) ─────────
+ * JS showModal/hideModal 이 .open 과 .closing 을 붙인다. .closing 은 .open 이 붙은 채 오므로 뒤에 둬야 이긴다. */
+.cf-modal.open { animation: cfOvIn .16s ease both; }
+.cf-modal.open .modal-box { animation: cfBoxIn .22s cubic-bezier(.2, .8, .2, 1) both; }
+.cf-modal.closing { animation: cfOvOut .14s ease-in both; pointer-events: none; }
+.cf-modal.closing .modal-box { animation: cfBoxOut .14s ease-in both; }
+@keyframes cfOvIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cfOvOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes cfBoxIn { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes cfBoxOut { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(6px) scale(.98); } }
+
+/* ── 이 화면 모달 — 좌측 색 띠(inset 레일) 제거 ─────── */
+#deleteDumpModal .modal-box, #reanalyzeModal .modal-box { border-radius: 6px; }
+#deleteDumpModal .modal-check-row, #reanalyzeModal .modal-note { box-shadow: none; border-radius: 4px; }
+#deleteDumpModal .modal-btns button, #reanalyzeModal .modal-btns button { border-radius: 4px; }
+
+/* ── 반응형 — 본문 폭(@container cfpage) 기준 ─────────────────────────────── */
+@media (hover: none) {
+    .cf-keys { display: none; }
+}
+
+/* 코어 덤프 업로드: 넓으면 [안내 | 버튼 | 버튼 | 시작] 한 줄 */
+@container cfpage (min-width: 1040px) {
+    .cf-new { grid-template-columns: minmax(190px, 240px) minmax(0, 1fr) auto; }
+    .cf-new-desc { grid-column: auto; }   /* 넓으면 [설명 | 버튼 | 버튼 | 시작] 한 줄 — 제목은 그 위 한 줄 전체 */
+}
+/* 좁으면 한 열 — 버튼이 세로로 쌓이고 시작 버튼은 카드 폭 전체 */
+@container cfpage (max-width: 619px) {
+    .cf-new { grid-template-columns: minmax(0, 1fr); padding: 14px; }
+    .cf-pair { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    .cf-submit { width: 100%; min-height: 44px; }
+}
+
+/* 펼친 상세: 넓을 때만 백트레이스 | 정보 두 단 */
+@container cfpage (min-width: 980px) {
+    .cf-dt { grid-template-columns: minmax(0, 1.65fr) minmax(260px, 1fr); gap: 28px; }
+}
+
+/* 표: 넓으면 파일명 열에 폭을 더 준다(긴 코어 이름이 통째로 들어간다), 좁아지면 덜 중요한 열부터 접는다(둘 다 펼친 상세에 있다) */
+@container cfpage (min-width: 1300px) {
+    .cf-c-file { width: 24%; }
+}
+@container cfpage (max-width: 1099px) {
+    .cf-table .cf-c-exec, .cf-table .cf-td-exec { display: none; }
+}
+@container cfpage (max-width: 999px) {
+    .cf-table .cf-c-size, .cf-table .cf-td-size { display: none; }
+}
+
+/* 좁은 본문(<900px — 배너를 편 1160px 이하 화면부터 휴대폰까지): 가로 스크롤 대신 한 파일을 두 줄로.
+     1줄  [펼치기] [상태] [파일명 ........] [작업]
+     2줄            [시그널] [크래시 지점 ..] [업로드]
+   머리글은 정렬 버튼만 한 줄로 남긴다. 행마다 격자가 따로라 열 폭은 고정값이어야 세로로 맞는다. */
+@container cfpage (max-width: 899px) {
+    .cf-table, .cf-table tbody { display: block; }
+    .cf-table thead { display: block; }
+    .cf-table thead tr {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 0 16px;
+        padding: 0 12px; background: #F9FAFB; border-bottom: 1px solid #E5E7EB;
+    }
+    .cf-table thead tr::before { content: '정렬'; font-size: 12px; color: var(--cf-muted); }
+    .cf-table thead th { display: none; }
+    .cf-table thead th[data-sort-key] { display: block; width: auto; height: auto; padding: 8px 0; border: 0; background: none; }
+
+    .cf-table tr.cf-row {
+        display: grid; grid-template-columns: 40px 80px minmax(0, 1fr) auto;
+        grid-template-areas: "chev st file act" ". sig where up";
+        align-items: center; padding: 6px 12px 8px 4px; border-top: 1px solid #F3F4F6;
+    }
+    .cf-table tbody tr.cf-row:first-child { border-top: 0; }
+    .cf-table tbody tr.cf-row.is-open:not(:first-child) { border-top-color: #C9D7F0; }   /* 두 줄 행은 칸 대신 행이 윗선을 그린다 */
+    .cf-table tr.cf-row > td { display: block; height: auto; padding: 0; border: 0; min-width: 0; }
+    .cf-table th.cf-c-chev, .cf-table td.cf-td-chev { padding: 0; }
+    .cf-table tr.cf-row > .cf-td-chev  { grid-area: chev; }
+    .cf-table tr.cf-row > .cf-td-st    { grid-area: st; }
+    .cf-table tr.cf-row > .cf-td-file  { grid-area: file; padding-right: 10px; }
+    .cf-table tr.cf-row > .cf-td-act   { grid-area: act; }
+    .cf-table tr.cf-row > .cf-td-sig   { grid-area: sig; align-self: start; line-height: 1.35; }
+    .cf-table tr.cf-row > .cf-td-where { grid-area: where; align-self: start; padding-right: 10px; }
+    .cf-table tr.cf-row > .cf-td-up    { grid-area: up; align-self: start; text-align: right; }
+    .cf-table tr.cf-row > .cf-td-exec, .cf-table tr.cf-row > .cf-td-size { display: none; }
+    .cf-table tr.cf-row > .cf-td-st, .cf-table tr.cf-row > .cf-td-file, .cf-table tr.cf-row > .cf-td-act {
+        min-height: 32px; display: flex; align-items: center;
+    }
+    .cf-table tr.cf-row > .cf-td-act { justify-content: flex-end; }   /* 넷째 열 폭은 작업·업로드 중 넓은 쪽 — 버튼은 오른쪽 끝에 */
+    .cf-td-up .cf-up { align-items: flex-end; font-size: 12px; }
+    /* 둘째 줄에 쓸 말이 없으면 빈 줄표(—)를 세우지 않는다 */
+    .cf-td-sig .cf-none, .cf-td-where .cf-none { display: none; }
+
+    .cf-table tr.cf-detail:not([hidden]) { display: block; }
+    .cf-table .cf-detail > td { display: block; padding: 12px 12px 16px 44px; }
+    .cf-empty, .cf-noresult { border-top: 0; }
+
+    .cf-toolbar .hi-controls { margin-left: 0; width: 100%; }
+    .cf-search { flex: 1 1 200px; }
+    .cf-search input { width: 100%; }
+}
+@container cfpage (max-width: 519px) {
+    .cf-table tr.cf-row { grid-template-areas: "chev st file act" ". sig where where" ". . up up"; }
+    .cf-table tr.cf-row > .cf-td-where { padding-right: 0; }
+    .cf-table tr.cf-row > .cf-td-up { text-align: left; padding-top: 2px; }
+    .cf-td-up .cf-up { flex-direction: row; align-items: baseline; gap: 8px; color: var(--cf-text-3); }
+    /* 위치와 '같은 지점' 이 한 줄에 안 들어가면 위치를 자르지 않고 줄을 바꾼다(가운뎃점은 줄 앞에 홀로 남아 뺀다) */
+    .cf-where-sub { flex-wrap: wrap; gap: 0 8px; }
+    .cf-where-loc + .cf-rep::before { content: none; }
+    .cf-table .cf-detail > td { padding: 12px 12px 16px; }
+    .cf-search { flex-basis: 100%; }
+}
+@media (max-width: 760px) {
+    .cf-page { padding: 14px 12px 32px; }
+}
+
+/* 컨테이너 쿼리가 없는 브라우저(2023년 이전): 종전처럼 표를 가로로 민다 */
+@supports not (container-type: inline-size) {
+    .cf-table { min-width: 1060px; }
+    @media (max-width: 760px) {
+        .cf-new, .cf-pair { grid-template-columns: minmax(0, 1fr); }
+        .cf-submit { width: 100%; min-height: 44px; }
+        .cf-toolbar .hi-controls { margin-left: 0; width: 100%; }
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .cf-page, .cf-chev svg, .cf-slot, .cf-slot-ic, .cf-slot-pick, .cf-sort-ind { transition: none; }
+    .cf-modal.open, .cf-modal.open .modal-box, .cf-modal.closing, .cf-modal.closing .modal-box { animation: none; }
+    .cf-table .fb.analyzing svg, .cf-table .fb.is-busy svg { animation: none; }
+}

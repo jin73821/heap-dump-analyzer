@@ -54,7 +54,8 @@ class RagEnabledEndpointTest {
                 Mockito.mock(RagService.class),
                 Mockito.mock(EmbeddingService.class),
                 Mockito.mock(ChromaSearchService.class),
-                Mockito.mock(RagKnowledgeExportService.class));
+                Mockito.mock(RagKnowledgeExportService.class),
+                Mockito.mock(com.heapdump.analyzer.service.llmguard.LlmGuardService.class));
         mvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
 

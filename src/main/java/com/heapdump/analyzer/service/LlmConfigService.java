@@ -2,6 +2,10 @@ package com.heapdump.analyzer.service;
 
 import tools.jackson.databind.ObjectMapper;
 import com.heapdump.analyzer.config.HeapDumpConfig;
+import com.heapdump.analyzer.service.llmguard.LlmGuardService;
+import com.heapdump.analyzer.service.llmguard.MaskResult;
+import com.heapdump.analyzer.service.llmguard.StreamingMasker;
+import com.heapdump.analyzer.util.LlmGuardContext;
 import com.heapdump.analyzer.util.SecretValue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +40,11 @@ import java.util.Map;
  * 컨트롤러마다 거는 방식은 새 엔드포인트가 추가될 때 누락되기 쉽다.
  * <b>새 LLM 호출 메서드를 추가하면 반드시 {@code acquireGate(scope)} 로 감쌀 것.</b>
  *
+ * <p><b>출력 민감정보 가림(LLM Guard, 2026-11-26)도 같은 게이트 지점에서 정확히 1회</b> 한다 —
+ * analyze·chat 은 결과 문자열을 재귀로 가리고 {@code result.outputGuard} 를 넣는다. 스트림은 <b>게이트가 있는 두 곳
+ * (base · Vision)에서만</b> {@link StreamingMasker} 로 감싼다. 첨부 오버로드의 위임 분기를 또 감싸면 마스커가 겹쳐
+ * 홀드백이 256자가 되고 가짜 건수가 생기며 지시문이 두 번 붙는다.
+ *
  * <p>⚠ 게이트는 {@link SecurityContextHolder} 로 호출자를 식별한다. SSE 처럼 별도 스레드에서
  * 호출하는 경로는 스레드 spawn 시 {@code DelegatingSecurityContextRunnable} 로 감싸야 사용자별
  * 버킷이 제대로 잡힌다 (안 감싸면 전원이 "system" 버킷을 공유한다).
@@ -49,6 +58,19 @@ public class LlmConfigService {
         "당신은 Java 힙 덤프 분석 전문가입니다. 사용자가 제공한 힙 덤프 분석 결과에 대해 "
         + "대화형으로 질문에 답합니다. 메모리 누수 원인, JVM 튜닝, 코드 수정 방안 등을 "
         + "한국어로 상세히 설명합니다. 마크다운 형식으로 응답하되, 간결하고 실행 가능한 조언을 제공하세요.";
+
+    /** 힙 덤프 AI 분석(원샷 JSON)의 기본 시스템 프롬프트. */
+    static final String DEFAULT_ANALYSIS_SYSTEM_PROMPT =
+        "당신은 Java 힙 덤프 분석 전문가입니다. "
+        + "Eclipse MAT 분석 결과를 해석하여 메모리 누수의 근본 원인을 진단하고 "
+        + "실행 가능한 조치를 한국어로 제안합니다. "
+        + "JVM 힙 설정(-Xms, -Xmx)이 제공되면 실제 힙 사용량과 비교하여 "
+        + "힙 여유 공간 비율, 메모리 압박 수준, Xmx 증설 또는 축소 필요 여부를 반드시 판단하세요. "
+        + "권장 조치(recommendations)는 효과/시급성 기준으로 가장 우선순위가 높은 최우선 조치 3개만 "
+        + "1. 2. 3. 순서로 제시하세요 (4개 이상 금지). OutOfMemoryError 가 감지된 경우 "
+        + "해당 OOM 종류에 직결되는 조치를 1순위로 두세요. "
+        + "응답은 반드시 마크다운 없이 순수 JSON 형태로만 반환하세요. "
+        + "코드블록(```)을 절대 사용하지 마세요.";
 
     /** Genspark 허용 모델 목록 */
     public static final List<String> GENSPARK_MODELS = Arrays.asList(
@@ -66,6 +88,8 @@ public class LlmConfigService {
 
     private final HeapDumpConfig config;
     private final LlmRateLimitService rateLimit;
+    /** 출력 가림·지시문(보안 통제 — required=false 로 두지 않는다). */
+    private final LlmGuardService guard;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // ── 런타임 설정 (12 개 필드) ─────────────────────────────────
@@ -89,9 +113,10 @@ public class LlmConfigService {
     /** Vision API를 기본 지원하는 provider 목록 */
     public static final List<String> VISION_SUPPORTED_PROVIDERS = Arrays.asList("claude", "gpt");
 
-    public LlmConfigService(HeapDumpConfig config, LlmRateLimitService rateLimit) {
+    public LlmConfigService(HeapDumpConfig config, LlmRateLimitService rateLimit, LlmGuardService guard) {
         this.config = config;
         this.rateLimit = rateLimit;
+        this.guard = guard;
     }
 
     @PostConstruct
@@ -439,6 +464,82 @@ public class LlmConfigService {
         return normalized;
     }
 
+    // ── 출력 가림(LLM Guard) ──────────────────────────────────────
+
+    /** 스트림 본문 호출 — 최종 시스템 프롬프트와 감싼 콜백을 받는다. */
+    @FunctionalInterface
+    private interface StreamCall {
+        void run(String systemPrompt,
+                 java.util.function.Consumer<String> onChunk,
+                 java.util.function.BiConsumer<String, Long> onDone,
+                 java.util.function.BiConsumer<String, String> onError);
+    }
+
+    /**
+     * 스트림 콜백을 {@link StreamingMasker} 로 감싼다. <b>게이트가 있는 두 지점에서만</b> 부를 것.
+     *
+     * <p>감싼 onDone 순서가 중요하다: ① 붙잡아 둔 꼬리({@code flush})를 <b>원래 onChunk 로</b> 먼저 내보낸다 —
+     * 컨트롤러는 onChunk 로 받은 조각을 이어 붙여 저장하므로, 순서가 틀리면 끝 128자가 화면과 DB 양쪽에서 빠진다.
+     * ② 출력 가림 결과를 {@link LlmGuardContext} 에 둔다(컨트롤러가 done 이벤트에 싣는다) ③ do* 가 넘긴 원문 대신
+     * <b>가린 전문</b>으로 원래 onDone ④ 기록은 그 뒤(기록 때문에 done 이 늦지 않게).
+     *
+     * <p>감싼 onError 는 홀드백을 버린다(flush 하지 않는다 — sendError 가 스트림을 닫는다). 이미 가린 탐지는 기록한다.
+     */
+    private void guardedStream(StreamCall call, String systemPrompt,
+                               java.util.function.Consumer<String> onChunk,
+                               java.util.function.BiConsumer<String, Long> onDone,
+                               java.util.function.BiConsumer<String, String> onError) {
+        final String user = currentUser();
+        final StreamingMasker masker = guard.newStreamMasker();
+        java.util.function.Consumer<String> wChunk = chunk -> {
+            String out = masker.push(chunk);
+            if (!out.isEmpty()) onChunk.accept(out);
+        };
+        java.util.function.BiConsumer<String, Long> wDone = (rawFullText, latencyMs) -> {
+            String tail = masker.flush();
+            if (!tail.isEmpty()) onChunk.accept(tail);
+            MaskResult r = masker.result();
+            LlmGuardContext.setLastOutputGuard(r.toOutputGuard());
+            onDone.accept(masker.maskedText(), latencyMs);
+            guard.recordOutput(user, r);
+        };
+        java.util.function.BiConsumer<String, String> wError = (code, msg) -> {
+            onError.accept(code, msg);
+            guard.recordOutput(user, masker.result());
+        };
+        call.run(guard.decorateSystemPrompt(systemPrompt), wChunk, wDone, wError);
+    }
+
+    /**
+     * 원샷 결과의 {@code key}(analyze=data 맵, chat=text 문자열)를 가리고 {@code outputGuard} 를 넣는다.
+     * 가림 자체가 실패하면 결과를 내보내지 않는다(fail-closed) — 가리지 않은 응답이 화면·DB 로 가는 것보다 낫다.
+     */
+    private void guardOutput(Map<String, Object> result, String key) {
+        if (result == null || !Boolean.TRUE.equals(result.get("success"))) return;
+        MaskResult r;
+        try {
+            Object v = result.get(key);
+            if (v instanceof String) {
+                r = guard.maskText((String) v);
+                if (!r.isEmpty()) result.put(key, r.text());
+            } else {
+                r = guard.maskInPlace(v);
+            }
+        } catch (RuntimeException e) {
+            logger.error("[LlmGuard] 출력 가림 실패 — 결과를 내보내지 않음(fail-closed): {}", e.toString(), e);
+            result.clear();
+            result.put("success", false);
+            result.put("errorCode", "OUTPUT_GUARD_ERROR");
+            result.put("error", "AI 응답의 개인정보 점검 중 오류가 발생해 결과를 표시하지 않았습니다. 관리자에게 문의하세요.");
+            return;
+        }
+        Map<String, Object> og = r.toOutputGuard();
+        if (og != null) {
+            result.put("outputGuard", og);
+            guard.recordOutput(currentUser(), r);
+        }
+    }
+
     // ── 호출 메서드 ──────────────────────────────────────────────
 
     /**
@@ -601,14 +702,19 @@ public class LlmConfigService {
         LlmRateLimitService.Lease lease = acquireGate("analyze");
         if (!lease.allowed()) return rateLimitResult(lease);
         try {
-            return doCallLlmAnalysis(prompt, systemPromptOverride);
+            String systemPrompt = guard.decorateSystemPrompt(
+                    systemPromptOverride != null ? systemPromptOverride : DEFAULT_ANALYSIS_SYSTEM_PROMPT);
+            Map<String, Object> result = doCallLlmAnalysis(prompt, systemPrompt);
+            guardOutput(result, "data");
+            return result;
         } finally {
             lease.close();
         }
     }
 
+    /** @param systemPrompt 지시문까지 붙은 최종 시스템 프롬프트(게이트 지점에서 정한다). */
     @SuppressWarnings("unchecked")
-    private Map<String, Object> doCallLlmAnalysis(String prompt, String systemPromptOverride) {
+    private Map<String, Object> doCallLlmAnalysis(String prompt, String systemPrompt) {
         Map<String, Object> result = new LinkedHashMap<>();
 
         if (!llmEnabled) {
@@ -666,18 +772,6 @@ public class LlmConfigService {
             conn.setConnectTimeout(llmTimeoutConnectSeconds * 1000);
             conn.setReadTimeout(llmTimeoutReadSeconds * 1000);
             conn.setRequestProperty("Content-Type", "application/json");
-
-            String systemPrompt = systemPromptOverride != null ? systemPromptOverride
-                : "당신은 Java 힙 덤프 분석 전문가입니다. "
-                + "Eclipse MAT 분석 결과를 해석하여 메모리 누수의 근본 원인을 진단하고 "
-                + "실행 가능한 조치를 한국어로 제안합니다. "
-                + "JVM 힙 설정(-Xms, -Xmx)이 제공되면 실제 힙 사용량과 비교하여 "
-                + "힙 여유 공간 비율, 메모리 압박 수준, Xmx 증설 또는 축소 필요 여부를 반드시 판단하세요. "
-                + "권장 조치(recommendations)는 효과/시급성 기준으로 가장 우선순위가 높은 최우선 조치 3개만 "
-                + "1. 2. 3. 순서로 제시하세요 (4개 이상 금지). OutOfMemoryError 가 감지된 경우 "
-                + "해당 OOM 종류에 직결되는 조치를 1순위로 두세요. "
-                + "응답은 반드시 마크다운 없이 순수 JSON 형태로만 반환하세요. "
-                + "코드블록(```)을 절대 사용하지 마세요.";
 
             String body;
             if ("claude".equals(llmProvider)) {
@@ -813,7 +907,9 @@ public class LlmConfigService {
         LlmRateLimitService.Lease lease = acquireGate("chat");
         if (!lease.allowed()) return rateLimitResult(lease);
         try {
-            return doCallLlmChat(messages, systemPrompt);
+            Map<String, Object> result = doCallLlmChat(messages, guard.decorateSystemPrompt(systemPrompt));
+            guardOutput(result, "text");
+            return result;
         } finally {
             lease.close();
         }
@@ -1006,7 +1102,8 @@ public class LlmConfigService {
         LlmRateLimitService.Lease lease = acquireGate("chat-stream");
         if (!lease.allowed()) { onError.accept(lease.code(), lease.message()); return; }
         try {
-            doCallLlmChatStream(messages, systemPrompt, onChunk, onDone, onError);
+            guardedStream((sp, c, d, e) -> doCallLlmChatStream(messages, sp, c, d, e),
+                    systemPrompt, onChunk, onDone, onError);
         } finally {
             lease.close();
         }
@@ -1193,6 +1290,7 @@ public class LlmConfigService {
                                    java.util.function.Consumer<String> onChunk,
                                    java.util.function.BiConsumer<String, Long> onDone,
                                    java.util.function.BiConsumer<String, String> onError) {
+        // ⚠ 아래 두 위임 분기는 출력 가림으로 감싸지 않는다 — base overload 가 이미 감싼다(이중 마스킹 방지).
         if (attachments == null || attachments.isEmpty()) {
             callLlmChatStream(messages, systemPrompt, onChunk, onDone, onError);
             return;
@@ -1230,7 +1328,9 @@ public class LlmConfigService {
         LlmRateLimitService.Lease lease = acquireGate("chat-stream-vision");
         if (!lease.allowed()) { onError.accept(lease.code(), lease.message()); return; }
         try {
-            doVisionChatStream(messages, systemPrompt, imageAtts, onChunk, onDone, onError);
+            final List<Map<String, String>> visionMessages = messages;
+            guardedStream((sp, c, d, e) -> doVisionChatStream(visionMessages, sp, imageAtts, c, d, e),
+                    systemPrompt, onChunk, onDone, onError);
         } finally {
             lease.close();
         }
@@ -1389,8 +1489,11 @@ public class LlmConfigService {
     /** 텍스트/로그 첨부 본문 주입 시 컨텍스트 보호용 문자 상한(약 50K 토큰). 초과분은 잘라낸다. */
     private static final int MAX_ATTACH_TEXT_CHARS = 200_000;
 
-    /** 첨부 텍스트(base64) 를 UTF-8 로 디코드. 과대 입력은 잘라 컨텍스트 보호. 실패 시 null. */
-    private String decodeAttachmentText(String base64) {
+    /**
+     * 첨부 텍스트(base64) 를 UTF-8 로 디코드. 과대 입력은 잘라 컨텍스트 보호. 실패 시 null.
+     * 입력 점검(LlmGuardService)도 이 함수로 디코드해야 LLM 이 받는 텍스트와 점검한 텍스트가 같다.
+     */
+    public static String decodeAttachmentText(String base64) {
         if (base64 == null || base64.isEmpty()) return null;
         try {
             byte[] raw = java.util.Base64.getDecoder().decode(base64);

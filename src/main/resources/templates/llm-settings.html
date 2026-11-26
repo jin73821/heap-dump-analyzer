@@ -7,12 +7,16 @@
     <meta name="_csrf_header" th:content="${_csrf.headerName}">
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/css/common.css?v=2026-09-20">
+    <!-- 민감정보 탐지 관리 탭 전용 — 관리자에게만 내려간다(일반 사용자 HTML 에는 마크업·스크립트·스타일 모두 없다) -->
+    <link th:if="${isAdmin}" rel="stylesheet" href="/css/llm-guard-admin.css?v=2026-11-27">
     <title>AI / LLM Settings — Heap Dump Analyzer</title>
     <style>
         body { overflow-x: hidden; }  /* LLM Settings 페이지 전용 */
 
         /* ── Layout ──────────────────────────────────────── */
-        .container { max-width: 1080px; margin: 0 auto; padding: 68px 20px 40px;
+        /* max-width 는 배너 여백(240+20)을 포함한다 — 콘텐츠 폭 1060px.
+           General(1280)·Accounts(1400) 사이 값. 탐지 이력 표(최소 720px)가 가로 스크롤 없이 들어간다(2026-11-26, 종전 1080). */
+        .container { max-width: 1320px; margin: 0 auto; padding: 68px 20px 40px;
                      padding-left: calc(var(--banner-w, 220px) + 20px);
                      transition: padding-left .25s cubic-bezier(.4,0,.2,1); }
         .page-hdr { display: flex; align-items: center; justify-content: space-between;
@@ -85,6 +89,19 @@
             .s-key { font-size: 12px; }
             .setting-label { font-size: 13px; }
         }
+        /* ── 탭 (rag-settings.html 과 같은 클래스명) — 탭 바는 관리자에게만 렌더된다 ── */
+        .tabs { display: flex; gap: 4px; border-bottom: 1px solid #E5E7EB; margin-bottom: 18px;
+                overflow-x: auto; scrollbar-width: none; }
+        .tabs::-webkit-scrollbar { display: none; }
+        .tab { padding: 10px 18px; border: none; background: transparent; cursor: pointer; white-space: nowrap;
+               font-size: 13px; font-weight: 600; color: #6B7280; border-bottom: 2px solid transparent;
+               margin-bottom: -1px; font-family: inherit; line-height: 18px; }
+        .tab:hover { color: #2563EB; }
+        .tab.active { color: #2563EB; border-bottom-color: #2563EB; }
+        .tab:focus-visible { outline: 2px solid #93C5FD; outline-offset: -2px; border-radius: 4px; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
+
         /* Test Connection 진행 스피너 */
         @keyframes spinTC { to { transform: rotate(360deg); } }
         .spinner-tc {
@@ -131,6 +148,19 @@
             <span id="llmStatusBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;background:#F3F4F6;color:#9CA3AF;border:1px solid #E5E7EB">OFF</span>
         </div>
     </div>
+
+    <!-- 탭 바 — 관리자 전용(일반 사용자는 탭 없이 설정 카드만 본다) -->
+    <div th:if="${isAdmin}" class="tabs" role="tablist" aria-label="AI 설정 탭">
+        <button type="button" class="tab active" role="tab" id="tab-config" data-tab="config"
+                aria-controls="panel-config" aria-selected="true">LLM 설정</button>
+        <button type="button" class="tab" role="tab" id="tab-guard" data-tab="guard"
+                aria-controls="panel-guard" aria-selected="false" tabindex="-1">민감정보 탐지</button>
+        <button type="button" class="tab" role="tab" id="tab-guard-log" data-tab="guard-log"
+                aria-controls="panel-guard-log" aria-selected="false" tabindex="-1">탐지 이력</button>
+    </div>
+
+    <!-- 설정 탭 — 서버에서 active 로 렌더하므로 일반 사용자는 JS 없이도 종전과 같은 화면을 본다 -->
+    <div id="panel-config" class="tab-panel active" role="tabpanel" aria-labelledby="tab-config">
 
     <!-- Enable / Disable -->
     <div class="card">
@@ -387,6 +417,156 @@
         <div id="llmTestResult" style="margin-top:10px;font-size:13.5px;line-height:1.5;display:none"></div>
     </div>
 
+    </div><!-- /panel-config -->
+
+    <th:block th:if="${isAdmin}">
+    <!-- ── 민감정보 탐지 탭 ─────────────────────────────── -->
+    <div id="panel-guard" class="tab-panel" role="tabpanel" aria-labelledby="tab-guard">
+        <div class="card">
+            <div class="lg-card-hd">
+                <h3 class="lg-h3">탐지 설정</h3>
+                <span class="lg-muted">AI 에 보내는 입력과 AI 가 돌려준 출력에서 개인신용정보·중요정보를 찾습니다.</span>
+            </div>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">입력 점검</div>
+                    <div class="setting-desc">사용자가 직접 입력한 채팅 메시지·텍스트 첨부·첨부 파일명을 보내기 전에 점검합니다. 이미지 내용은 점검하지 않습니다.</div>
+                </div>
+                <label class="lg-switch"><input type="checkbox" class="tog" id="lgInputCheck"><span class="tog-track"></span></label>
+            </div>
+            <div class="setting-row">
+                <div>
+                    <div class="setting-label">출력 가림</div>
+                    <div class="setting-desc">AI 응답을 화면에 보내고 저장하기 전에 서버에서 가립니다. 가린 건수는 사용자에게 안내합니다.</div>
+                </div>
+                <label class="lg-switch"><input type="checkbox" class="tog" id="lgOutputMask"><span class="tog-track"></span></label>
+            </div>
+            <div class="setting-row" style="border-bottom:none">
+                <div>
+                    <div class="setting-label">출력 금지 지시</div>
+                    <div class="setting-desc">AI 에게 개인 식별 정보를 출력하지 말라는 지시를 시스템 프롬프트에 덧붙입니다.</div>
+                </div>
+                <label class="lg-switch"><input type="checkbox" class="tog" id="lgOutputInstr"><span class="tog-track"></span></label>
+            </div>
+            <div style="margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                <button type="button" class="btn-primary btn-act" id="lgSaveSettings">설정 저장</button>
+                <span class="lg-muted" id="lgSettingsState"></span>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="lg-card-hd">
+                <h3 class="lg-h3">탐지 규칙</h3>
+                <button type="button" class="btn-secondary" id="lgAddRule">+ 규칙 추가</button>
+            </div>
+            <p class="lg-note">실명처럼 패턴으로 잡을 수 없는 값은 <b>키워드 규칙</b>으로 등록하세요. 내장 규칙은 삭제할 수 없고 판정 방식도 바꿀 수 없습니다(이름·사용 여부·적용 범위·입력 조치는 바꿀 수 있습니다).
+                두 규칙이 함께 걸리면 <b>차단</b>이 <b>확인 후 전송</b>보다 우선합니다.</p>
+            <div class="lg-table-wrap">
+                <table class="lg-table" id="lgRuleTable">
+                    <thead><tr>
+                        <th class="lg-c-on">사용</th><th>이름</th><th>분류</th><th>유형</th>
+                        <th>입력 조치</th><th class="lg-c-out">출력 가림</th><th class="lg-c-act">작업</th>
+                    </tr></thead>
+                    <tbody id="lgRuleBody"><tr><td colspan="7" class="lg-empty">불러오는 중…</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="lg-card-hd">
+                <h3 class="lg-h3">규칙 시험</h3>
+                <span class="lg-muted">저장된 규칙 전체로 입력 판정과 출력 가림을 미리 봅니다. 기록하지 않습니다.</span>
+            </div>
+            <textarea id="lgTestText" class="lg-textarea" rows="4" maxlength="20000"
+                      placeholder="예) 연락처 010-1234-5678, 메일 abcde@corp.com"></textarea>
+            <div style="margin-top:8px"><button type="button" class="btn-secondary btn-act" id="lgRunTest">시험</button></div>
+            <div id="lgTestResult" class="lg-test-result" hidden></div>
+        </div>
+    </div>
+
+    <!-- ── 탐지 이력 탭 ─────────────────────────────────── -->
+    <div id="panel-guard-log" class="tab-panel" role="tabpanel" aria-labelledby="tab-guard-log">
+        <div class="lg-info">1년 보관 후 자동 삭제됩니다 · 원문은 저장하지 않고 가린 발췌만 남깁니다 · 이력은 지울 수 없습니다</div>
+        <div class="lg-stats" id="lgStats">
+            <div class="lg-stat"><div class="lg-stat-k">확인 요청</div><div class="lg-stat-v" id="lgStatConfirm">–</div></div>
+            <div class="lg-stat"><div class="lg-stat-k">확인 후 전송</div><div class="lg-stat-v" id="lgStatConfirmed">–</div></div>
+            <div class="lg-stat"><div class="lg-stat-k">차단</div><div class="lg-stat-v" id="lgStatBlocked">–</div></div>
+            <div class="lg-stat"><div class="lg-stat-k">출력 가림</div><div class="lg-stat-v" id="lgStatMasked">–</div></div>
+        </div>
+        <div class="lg-muted" style="margin:-8px 0 14px">최근 30일, 탐지 건(묶음) 기준</div>
+
+        <div class="card">
+            <form class="lg-filters" id="lgLogFilter" autocomplete="off">
+                <label>기간 <input type="date" id="lgFrom"> ~ <input type="date" id="lgTo"></label>
+                <label>사용자 <input type="text" id="lgUser" maxlength="50" placeholder="아이디"></label>
+                <label>구분 <select id="lgDir"><option value="">전체</option><option value="INPUT">입력</option><option value="OUTPUT">출력</option></select></label>
+                <label>조치 <select id="lgAction"><option value="">전체</option>
+                    <option value="CONFIRM_REQUESTED">확인 요청</option><option value="CONFIRMED">확인 후 전송</option>
+                    <option value="BLOCKED">차단</option><option value="MASKED">출력 가림</option></select></label>
+                <label>규칙 <select id="lgRule"><option value="">전체</option></select></label>
+                <span class="lg-filter-btns">
+                    <button type="submit" class="btn-primary">조회</button>
+                    <button type="button" class="btn-secondary" id="lgReset">초기화</button>
+                    <button type="button" class="btn-secondary" id="lgExport">CSV</button>
+                </span>
+            </form>
+            <div class="lg-table-wrap">
+                <table class="lg-table lg-log-table">
+                    <thead><tr>
+                        <th>탐지 시각</th><th>사용자</th><th>구분</th><th>조치</th><th>기능</th>
+                        <th>규칙</th><th class="lg-num">건수</th><th>발췌(가린 값)</th>
+                    </tr></thead>
+                    <tbody id="lgLogBody"><tr><td colspan="8" class="lg-empty">탭을 열면 불러옵니다.</td></tr></tbody>
+                </table>
+            </div>
+            <div class="lg-summary" id="lgLogSummary"></div>
+            <div class="lg-pager" id="lgLogPager"></div>
+        </div>
+    </div>
+    </th:block>
+
+</div>
+
+<!-- 규칙 모달 — .container 밖(비-ADMIN 읽기 전용 IIFE 범위 밖), 관리자 전용 -->
+<div th:if="${isAdmin}" class="modal-ov" id="lgRuleModal" role="dialog" aria-modal="true" aria-labelledby="lgRuleTitle">
+    <div class="modal-box lg-modal">
+        <div class="modal-title" id="lgRuleTitle">규칙 추가</div>
+        <div class="modal-body">
+            <input type="hidden" id="lgRuleId">
+            <div class="lg-form-row"><label for="lgRuleName">이름</label><input type="text" id="lgRuleName" maxlength="100"></div>
+            <div class="lg-form-row lg-2col">
+                <div><label for="lgRuleCat">분류</label>
+                    <select id="lgRuleCat"><option>개인식별</option><option>개인신용</option><option>중요정보</option><option>기타</option></select></div>
+                <div><label for="lgRuleType">유형</label>
+                    <select id="lgRuleType"><option value="KEYWORD">키워드</option><option value="REGEX">정규식</option></select></div>
+            </div>
+            <div class="lg-form-row"><label for="lgRulePattern" id="lgRulePatternLabel">단어 목록 (한 줄에 하나)</label>
+                <textarea id="lgRulePattern" rows="5" class="lg-textarea"></textarea>
+                <div class="lg-hint" id="lgRuleHint"></div></div>
+            <div class="lg-form-row lg-checks">
+                <label><input type="checkbox" id="lgRuleEnabled" checked> 사용</label>
+                <label><input type="checkbox" id="lgRuleIn" checked> 입력 점검</label>
+                <label><input type="checkbox" id="lgRuleOut" checked> 출력 가림</label>
+            </div>
+            <div class="lg-form-row"><span class="lg-label">입력 조치</span>
+                <div class="lg-radios">
+                    <label><input type="radio" name="lgRuleAction" value="CONFIRM" checked> 확인 후 전송 <span class="lg-muted">경고 후 사용자가 고름</span></label>
+                    <label><input type="radio" name="lgRuleAction" value="BLOCK"> 차단 <span class="lg-muted">전송하지 않음</span></label>
+                </div></div>
+            <div class="lg-form-row"><label for="lgRuleDesc">설명</label><input type="text" id="lgRuleDesc" maxlength="255"></div>
+            <div class="lg-form-row lg-draft">
+                <label for="lgDraftText">초안 시험 <span class="lg-muted">저장 전에 이 규칙만으로 시험합니다</span></label>
+                <div class="lg-draft-row"><input type="text" id="lgDraftText" maxlength="2000" placeholder="시험할 문장">
+                    <button type="button" class="btn-secondary" id="lgDraftRun">시험</button></div>
+                <div id="lgDraftResult" class="lg-test-result" hidden></div>
+            </div>
+            <div class="lg-err" id="lgRuleErr" role="alert" hidden></div>
+        </div>
+        <div class="modal-btns">
+            <button type="button" class="mbtn-cancel" id="lgRuleCancel">취소</button>
+            <button type="button" class="mbtn-save" id="lgRuleSave">저장</button>
+        </div>
+    </div>
 </div>
 
 <!-- ── JavaScript ─────────────────────────────────────────── -->
@@ -774,6 +954,8 @@ document.addEventListener('DOMContentLoaded', function() {
     loadLlmSettings();
 });
 </script>
+<!-- 탭 전환·민감정보 탐지 관리 — 관리자 전용(일반 사용자 HTML 에는 이 스크립트가 없다) -->
+<script th:if="${isAdmin}" src="/js/llm-guard-admin.js?v=2026-11-27"></script>
 
 </body>
 </html>

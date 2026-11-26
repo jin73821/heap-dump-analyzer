@@ -10,7 +10,12 @@ import com.heapdump.analyzer.service.LlmConfigService;
 import com.heapdump.analyzer.service.LlmRateLimitService;
 import com.heapdump.analyzer.service.RagConfigService;
 import com.heapdump.analyzer.service.RagService;
+import com.heapdump.analyzer.service.llmguard.InputVerdict;
+import com.heapdump.analyzer.service.llmguard.LlmGuardService;
+import com.heapdump.analyzer.service.llmguard.MaskResult;
+import com.heapdump.analyzer.util.AuthUtil;
 import com.heapdump.analyzer.util.FilenameValidator;
+import com.heapdump.analyzer.util.LlmGuardContext;
 import com.heapdump.analyzer.util.SseJson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +71,8 @@ public class HeapAiApiController {
     private final EmbeddingService embeddingService;
     private final ChromaSearchService chromaSearchService;
     private final RagKnowledgeExportService knowledgeExport;
+    /** 입력 점검·우회 저장 경로 재가림 (LLM Guard). */
+    private final LlmGuardService guard;
 
     public HeapAiApiController(HeapDumpAnalyzerService analyzerService,
                                LlmConfigService llmConfig,
@@ -76,7 +83,8 @@ public class HeapAiApiController {
                                RagService ragService,
                                EmbeddingService embeddingService,
                                ChromaSearchService chromaSearchService,
-                               RagKnowledgeExportService knowledgeExport) {
+                               RagKnowledgeExportService knowledgeExport,
+                               LlmGuardService guard) {
         this.analyzerService = analyzerService;
         this.llmConfig = llmConfig;
         this.rateLimitService = rateLimitService;
@@ -87,6 +95,7 @@ public class HeapAiApiController {
         this.embeddingService = embeddingService;
         this.chromaSearchService = chromaSearchService;
         this.knowledgeExport = knowledgeExport;
+        this.guard = guard;
     }
 
     /** 힙 AI 프롬프트용 스레드 요약 — 실패해도 빈 문자열(힙 AI 분석을 막지 않는다). */
@@ -286,7 +295,8 @@ public class HeapAiApiController {
      */
     @PostMapping("/api/llm/insight/save")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> saveAiInsightManual(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> saveAiInsightManual(@RequestBody Map<String, Object> body,
+                                                                   Authentication authentication) {
         Map<String, Object> resp = new LinkedHashMap<>();
         String filename = (String) body.get("filename");
         Object dataObj = body.get("insightData");
@@ -307,6 +317,9 @@ public class HeapAiApiController {
         }
         @SuppressWarnings("unchecked")
         Map<String, Object> insightData = (Map<String, Object>) dataObj;
+        // ⚠ 우회 저장 경로 — retryPayload 는 클라이언트가 돌려보내는 값이라 다시 가린다(이미 가린 값은 건수 0).
+        MaskResult remasked = guard.maskInPlace(insightData);
+        if (!remasked.isEmpty()) guard.recordOutput(AuthUtil.who(authentication), remasked);
 
         logger.info("[AI-Insight][SAVE-RETRY] 수동 저장 요청 — file='{}', severity={}, model={}",
             filename, insightData.get("severity"), insightData.get("model"));
@@ -507,7 +520,8 @@ public class HeapAiApiController {
     @SuppressWarnings("unchecked")
     @PostMapping("/api/llm/chat")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> aiChat(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<Map<String, Object>> aiChat(@RequestBody Map<String, Object> body,
+                                                      Authentication authentication) {
         List<Map<String, String>> messages = (List<Map<String, String>>) body.get("messages");
         String context = body.get("context") != null ? String.valueOf(body.get("context")) : "";
         String filename = body.get("filename") != null ? String.valueOf(body.get("filename")) : "";
@@ -519,6 +533,11 @@ public class HeapAiApiController {
             err.put("error", "메시지가 비어있습니다.");
             return ResponseEntity.badRequest().body(err);
         }
+
+        // 민감정보 입력 점검 — RAG·호출량 게이트보다 앞. 비-레이트리밋 코드는 200 유지 규약.
+        String sensitiveAck = body.get("sensitiveAck") instanceof String ? (String) body.get("sensitiveAck") : null;
+        InputVerdict verdict = guard.checkInput(AuthUtil.who(authentication), messages, null, sensitiveAck);
+        if (!verdict.passes()) return ResponseEntity.ok(verdict.toJsonError());
 
         logger.info("[AI-Chat][REQ] 채팅 요청 — file='{}', messageCount={}, contextLen={}",
             filename, messages.size(), context.length());
@@ -555,7 +574,7 @@ public class HeapAiApiController {
     @SuppressWarnings("unchecked")
     @PostMapping(value = "/api/llm/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @ResponseBody
-    public SseEmitter aiChatStream(@RequestBody Map<String, Object> body) {
+    public SseEmitter aiChatStream(@RequestBody Map<String, Object> body, Authentication authentication) {
         List<Map<String, String>> messages = (List<Map<String, String>>) body.get("messages");
         String context = body.get("context") != null ? String.valueOf(body.get("context")) : "";
         String filename = body.get("filename") != null ? String.valueOf(body.get("filename")) : "";
@@ -564,6 +583,14 @@ public class HeapAiApiController {
 
         if (messages == null || messages.isEmpty()) {
             SseJson.sendError(emitter, "EMPTY_MESSAGES", "메시지가 비어있습니다.");
+            return emitter;
+        }
+
+        // 민감정보 입력 점검 — RAG·호출량 게이트보다 앞
+        String sensitiveAck = body.get("sensitiveAck") instanceof String ? (String) body.get("sensitiveAck") : null;
+        InputVerdict verdict = guard.checkInput(AuthUtil.who(authentication), messages, null, sensitiveAck);
+        if (!verdict.passes()) {
+            SseJson.sendGuard(emitter, verdict);
             return emitter;
         }
 
@@ -587,11 +614,13 @@ public class HeapAiApiController {
 
         final String finalSystemPrompt = systemPrompt;
         final String model = llmConfig.getLlmModel();
+        final LlmGuardContext.Snapshot guardCtx = LlmGuardContext.capture();
 
         // ⚠ DelegatingSecurityContextRunnable 필수 — 호출량 게이트가 SecurityContextHolder 로
         //   사용자를 식별하는데, 맨 Runnable 로 스레드를 띄우면 컨텍스트가 전파되지 않아
         //   모든 사용자가 "system" 버킷을 공유하게 된다.
         new Thread(new org.springframework.security.concurrent.DelegatingSecurityContextRunnable(() -> {
+            LlmGuardContext.bind(guardCtx);
             try {
                 emitter.send(SseEmitter.event().name("start")
                     .data("{\"model\":\"" + (model != null ? model : "") + "\"}"));
@@ -607,7 +636,7 @@ public class HeapAiApiController {
                     (fullText, latencyMs) -> {
                         try {
                             emitter.send(SseEmitter.event().name("done")
-                                .data("{\"latencyMs\":" + latencyMs + "}"));
+                                .data(SseJson.done(latencyMs, null, LlmGuardContext.takeLastOutputGuard())));
                             emitter.complete();
                         } catch (Exception e) {
                             logger.debug("[AI-Chat SSE] done 전송 실패(클라이언트 disconnect 추정): {}", e.toString());
@@ -617,6 +646,8 @@ public class HeapAiApiController {
                 );
             } catch (Exception e) {
                 SseJson.sendError(emitter, "INTERNAL_ERROR", e.getMessage());
+            } finally {
+                LlmGuardContext.clear();
             }
         }), "ai-chat-stream-" + System.currentTimeMillis()).start();
 

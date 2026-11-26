@@ -14,12 +14,17 @@
 }
 
 /* ── 목록 화면 ─────────────────────────────────────────────── */
-.thd-upload-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr); gap: 14px 18px; align-items: start; }
+/* 오른쪽 안내 칸은 두 행에 걸친다 — 1행에 같이 두면 행 높이가 안내 칸(힌트 3개)을 따라가
+   버튼이 드롭존에서 멀리 떨어졌다(2026-11-27). 남는 높이는 2행(1fr)이 받아 버튼은 드롭존 바로 아래에 붙는다 */
+.thd-upload-grid { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(220px, 1fr); grid-template-rows: auto 1fr;
+                   grid-template-areas: "zone side" "cta side"; gap: 12px 18px; align-items: start; }
+.thd-upload-grid > :first-child { grid-area: zone; min-width: 0; }
+.thd-upload-side { grid-area: side; }
 .thd-upload-side label { display: block; font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 5px; }
 .thd-upload-side .cd-input { width: 100%; }
 .thd-upload-hint { font-size: 11px; color: #9CA3AF; line-height: 1.5; margin-top: 5px; }
-.thd-upload-cta { grid-column: 1; }
-@media (max-width: 900px) { .thd-upload-grid { grid-template-columns: 1fr; } }
+.thd-upload-cta { grid-area: cta; min-width: 0; }
+@media (max-width: 900px) { .thd-upload-grid { grid-template-columns: 1fr; grid-template-rows: auto; grid-template-areas: "zone" "side" "cta"; } }
 .thd-upload-err { display: none; margin-top: 12px; background: var(--dn-bg, #FEF2F2); border: 1px solid var(--dn-border, #FECACA); border-radius: 8px; padding: 10px 14px; font-size: 13px; color: #991B1B; line-height: 1.55; }
 .thd-upload-err.visible { display: block; }
 .thd-upload-err b { display: block; margin-bottom: 2px; }

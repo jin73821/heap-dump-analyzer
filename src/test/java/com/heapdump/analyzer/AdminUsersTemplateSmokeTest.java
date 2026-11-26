@@ -151,7 +151,8 @@ class AdminUsersTemplateSmokeTest {
         int browser = html.indexOf("<th class=\"as-ua-h\">브라우저</th>");
         int action = html.indexOf("<th class=\"u-act-h\">작업</th>", expires);
         assertTrue(expires > 0 && expires < browser && browser < action, "브라우저 열이 만료 예정과 작업 사이가 아니다");
-        assertTrue(html.contains("<td colspan=\"10\" class=\"lh-empty\">데이터를 불러오는 중"), "현재 접속 빈 행 colspan 이 10열이 아니다");
+        assertTrue(html.contains("<td colspan=\"10\" class=\"lh-empty lh-loading\"><span class=\"tb-loading-wrap\" role=\"status\"><span class=\"tb-spinner\""),
+                "현재 접속 로딩 행 colspan 이 10열이 아니다");
 
         // 본인 행은 체크박스가 없어야 한다 — 전체 선택은 disabled 를 보지 않고 모든 .row-check 를 켠다
         assertTrue(html.contains("var check = it.isCurrent ? '' :"), "본인 세션이 선택 대상에 들어간다");
@@ -169,5 +170,38 @@ class AdminUsersTemplateSmokeTest {
         assertTrue(html.contains("id=\"ulReason\""), "잠금 사유 표시 자리가 없다");
         assertFalse(html.contains("잠금(OTP 반복 실패)을 해제"),
                 "사유가 OTP 로 고정된 옛 문구가 남아 있다 (비밀번호 잠금에 거짓 안내)");
+    }
+
+    @Test
+    @DisplayName("탭마다 표를 불러오는 동안 스피너 — 첫 화면·탭 전환·새로고침은 스피너, 현재 접속 10초 자동 갱신은 조용히 (2026-11-27)")
+    void tablesShowSpinnerWhileLoading() {
+        String html = render(model(false, 10, true));
+
+        // 첫 렌더의 자리표시 행 — 탭마다 열 수에 맞는 colspan 의 스피너
+        String[][] tabs = { {"userBody", "8"}, {"asBody", "10"}, {"reqBody", "9"}, {"lhBody", "6"} };
+        for (String[] t : tabs) {
+            int at = html.indexOf("<tbody id=\"" + t[0] + "\">");
+            assertTrue(at > 0, t[0] + " 가 없다");
+            String first = html.substring(at, html.indexOf("</tr>", at));
+            assertTrue(first.contains("<tr class=\"tb-loading-row\"><td colspan=\"" + t[1] + "\" class=\"lh-empty lh-loading\">")
+                    && first.contains("<span class=\"tb-spinner\" aria-hidden=\"true\"></span>"), t[0] + " 첫 행이 스피너가 아니다");
+        }
+        assertFalse(html.contains("데이터를 불러오는 중..."), "스피너 없는 옛 로딩 문구가 남아 있다");
+
+        // 다시 불러올 때도 스피너 — 네 적재 함수가 모두 같은 헬퍼를 거친다
+        assertTrue(html.contains("function showTableLoading(body, cols, text) {"), "로딩 헬퍼가 없다");
+        assertTrue(html.contains("showTableLoading(body, 8, '사용자 목록을 불러오는 중…');"), "사용자 목록 로딩 스피너");
+        assertTrue(html.contains("showTableLoading(body, 9, '계정 신청을 불러오는 중…');"), "계정 신청 로딩 스피너");
+        assertTrue(html.contains("showTableLoading(body, 6, '접속 이력을 불러오는 중…');"), "접속 이력 로딩 스피너");
+        assertTrue(html.contains("if (!(opts && opts.silent)) showTableLoading(body, 10, '접속 중인 세션을 불러오는 중…');"), "현재 접속 로딩 스피너");
+
+        // 자동 갱신은 조용히 — 10초마다 표가 스피너로 바뀌면 읽던 행이 사라진다
+        assertTrue(html.contains("var tick = function() { loadActive({ silent: true }); };"), "자동 갱신이 스피너를 띄운다");
+        assertTrue(html.contains("managedInterval(tick, 10000)"), "자동 갱신이 조용한 경로를 쓰지 않는다");
+        assertFalse(html.contains("managedInterval(loadActive, 10000)"), "자동 갱신이 스피너 경로(loadActive())를 직접 부른다");
+
+        // 사용자·현재 접속 탭은 id 선택자가 칸 여백을 5px 로 덮는다 — 로딩 행 여백은 같은 명시도로 되돌린다
+        assertTrue(html.contains("#panel-users .utable td.lh-loading, #panel-active .utable td.lh-loading,"), "로딩 행 여백이 덮인다");
+        assertTrue(html.contains("@keyframes tb-spin"), "스피너 회전 애니메이션이 없다");
     }
 }

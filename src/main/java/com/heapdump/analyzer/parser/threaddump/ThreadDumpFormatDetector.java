@@ -19,8 +19,14 @@ public final class ThreadDumpFormatDetector {
 
     private ThreadDumpFormatDetector() {}
 
+    /**
+     * 파일명 규칙 — {@code thread_dump}·{@code tdump}·{@code jstack}·{@code stack_dump}, 그리고 2026-11-27 부터 <b>{@code thread}</b>
+     * ({@code threads}, 숫자가 바로 붙은 {@code thread1} 포함)가 앞뒤 구분자({@code - _ .} 또는 처음·끝)로 떨어진 낱말일 때.
+     * {@code mythread.log}·{@code threadpool.xml} 처럼 낱말 안에 든 thread 는 맞지 않는다. {@code threads.hprof} 같은 힙 확장자는
+     * 이름이 맞아도 브라우저 분류 순서(힙 확장자가 스레드 덤프 이름보다 앞)상 내용에 덤프가 없으면 힙 덤프로 남는다.
+     */
     public static final String NAME_RE =
-            "(^|[-_.])(thread[-_.]?dumps?|tdump|jstack|stack[-_.]?dump)([-_.][^\\/]*)?(\\.(txt|log|out|dump|tdump))?(\\.\\d+)?(\\.gz)?$|\\.(tdump|threaddump|jstack)(\\.gz)?$";
+            "(^|[-_.])(thread[-_.]?dumps?|threads?\\d*|tdump|jstack|stack[-_.]?dump)([-_.][^\\/]*)?(\\.(txt|log|out|dump|tdump))?(\\.\\d+)?(\\.gz)?$|\\.(tdump|threaddump|jstack)(\\.gz)?$";
     public static final String HEADER_RE = "Full thread dump .*VM \\(.*\\):";
     public static final String THREAD_RE = "^\".+\" .*\\btid=0x[0-9a-f]+ nid=(?:0x[0-9a-f]+|\\d+)\\b";
     public static final String STATE_RE = "^\\s+java\\.lang\\.Thread\\.State: [A-Z_]+";

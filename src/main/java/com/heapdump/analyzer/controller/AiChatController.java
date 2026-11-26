@@ -9,6 +9,11 @@ import com.heapdump.analyzer.repository.AnalysisHistoryRepository;
 import com.heapdump.analyzer.service.HeapDumpAnalyzerService;
 import com.heapdump.analyzer.service.LlmConfigService;
 import com.heapdump.analyzer.service.RagService;
+import com.heapdump.analyzer.service.llmguard.InputVerdict;
+import com.heapdump.analyzer.service.llmguard.LlmGuardService;
+import com.heapdump.analyzer.service.llmguard.MaskResult;
+import com.heapdump.analyzer.util.AuthUtil;
+import com.heapdump.analyzer.util.LlmGuardContext;
 import com.heapdump.analyzer.util.SseJson;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,6 +40,8 @@ public class AiChatController {
     private final LlmConfigService llmConfig;
     private final com.heapdump.analyzer.config.HeapDumpConfig config;
     private final RagService ragService;
+    /** 입력 점검·우회 저장 경로 재가림·읽기 시점 가림 (LLM Guard). */
+    private final LlmGuardService guard;
 
     public AiChatController(AiChatSessionRepository sessionRepo,
                             AiChatMessageRepository messageRepo,
@@ -42,7 +49,8 @@ public class AiChatController {
                             HeapDumpAnalyzerService analyzerService,
                             LlmConfigService llmConfig,
                             com.heapdump.analyzer.config.HeapDumpConfig config,
-                            RagService ragService) {
+                            RagService ragService,
+                            LlmGuardService guard) {
         this.sessionRepo = sessionRepo;
         this.messageRepo = messageRepo;
         this.historyRepo = historyRepo;
@@ -50,6 +58,7 @@ public class AiChatController {
         this.llmConfig = llmConfig;
         this.config = config;
         this.ragService = ragService;
+        this.guard = guard;
     }
 
     // ── 페이지 라우팅 ────────────────────────────────────────────
@@ -251,7 +260,8 @@ public class AiChatController {
             Map<String, Object> map = new LinkedHashMap<>();
             map.put("id", m.getId());
             map.put("role", m.getRole());
-            map.put("content", m.getContent());
+            // 읽기 시점 가림 — 배포 이전에 저장된 assistant 응답(기록 없음, DB 값은 바꾸지 않는다)
+            map.put("content", "assistant".equals(m.getRole()) ? guard.maskForDisplay(m.getContent()) : m.getContent());
             map.put("createdAt", m.getCreatedAt() != null ? m.getCreatedAt().toString() : null);
             return map;
         }).collect(Collectors.toList());
@@ -274,6 +284,20 @@ public class AiChatController {
         String content = body.get("content");
         if (role == null || content == null || content.trim().isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "error", "role/content 필수"));
+        }
+        // ⚠ 우회 저장 경로 — 화면은 이 API 를 부르지 않지만, ai-chat.html 이 저장된 이력을 다음 턴에 다시 보내므로
+        //   여기 저장된 user 메시지는 점검 없이 LLM 으로 간다(이력은 다시 점검하지 않는다). 그래서 같은 판정을 건다.
+        if ("assistant".equals(role)) {
+            MaskResult masked = guard.maskText(content);
+            if (!masked.isEmpty()) {
+                content = masked.text();
+                guard.recordOutput(AuthUtil.who(authentication), masked);
+            }
+        } else {
+            InputVerdict verdict = guard.checkText(AuthUtil.who(authentication), content, body.get("sensitiveAck"));
+            if (!verdict.passes()) {
+                return ResponseEntity.badRequest().body(verdict.toJsonError());
+            }
         }
 
         AiChatMessage msg = new AiChatMessage();
@@ -367,6 +391,14 @@ public class AiChatController {
             logger.info("[AI-Chat-Attach] 첨부 파일 {}개 검증 완료 — sessionId={}, provider={}, hasImage={}", attachments.size(), sessionId, llmConfig.getLlmProvider(), hasImage);
         }
 
+        // 민감정보 입력 점검 — 저장·RAG·호출량 게이트보다 앞(거부돼도 호출량을 차감하지 않는다)
+        String sensitiveAck = body.get("sensitiveAck") instanceof String ? (String) body.get("sensitiveAck") : null;
+        InputVerdict verdict = guard.checkInput(AuthUtil.who(authentication), messages, attachments, sensitiveAck);
+        if (!verdict.passes()) {
+            SseJson.sendGuard(emitter, verdict);
+            return emitter;
+        }
+
         // 마지막 user 메시지 DB 저장
         Map<String, String> lastUserMsg = messages.get(messages.size() - 1);
         if ("user".equals(lastUserMsg.get("role"))) {
@@ -421,15 +453,20 @@ public class AiChatController {
         final String model = llmConfig.getLlmModel();
         final Long sid = sessionId;
         final List<Map<String, Object>> finalAttachments = attachments;
+        // 기록용 요청 맥락 — 스레드에서는 RequestContextHolder 가 비므로 여기서 잡아 넘긴다
+        final LlmGuardContext.Snapshot guardCtx = LlmGuardContext.capture();
 
         // ⚠ DelegatingSecurityContextRunnable 필수 — 호출량 게이트가 SecurityContextHolder 로
         //   사용자를 식별하는데, 맨 Runnable 로 스레드를 띄우면 컨텍스트가 전파되지 않아
         //   모든 사용자가 "system" 버킷을 공유하게 된다.
         new Thread(new org.springframework.security.concurrent.DelegatingSecurityContextRunnable(() -> {
+            LlmGuardContext.bind(guardCtx);
             try {
                 emitter.send(SseEmitter.event().name("start")
                     .data("{\"model\":\"" + (model != null ? model : "") + "\"}"));
 
+                // onChunk 로 받은 조각(이미 가린 값)을 이어 붙여 저장한다 — LlmConfigService 가 끝부분(홀드백)을
+                // onDone 보다 먼저 onChunk 로 내보내므로 여기서 빠지지 않는다.
                 StringBuilder fullText = new StringBuilder();
 
                 llmConfig.callLlmChatStream(messages, finalSystemPrompt, finalAttachments,
@@ -482,7 +519,7 @@ public class AiChatController {
 
                         try {
                             emitter.send(SseEmitter.event().name("done")
-                                .data("{\"latencyMs\":" + latencyMs + ",\"saved\":" + saved + "}"));
+                                .data(SseJson.done(latencyMs, saved, LlmGuardContext.takeLastOutputGuard())));
                             emitter.complete();
                         } catch (Exception e) {
                             logger.warn("[AI-Chat-Stream] SSE done 이벤트 전송 실패 — sessionId={}", sid);
@@ -496,6 +533,8 @@ public class AiChatController {
             } catch (Exception e) {
                 logger.error("[AI-Chat-Stream] 스트리밍 스레드 에러 — sessionId={}, error={}", sid, e.getMessage(), e);
                 SseJson.sendError(emitter, "INTERNAL_ERROR", e.getMessage());
+            } finally {
+                LlmGuardContext.clear();
             }
         }), "ai-chat-session-stream-" + System.currentTimeMillis()).start();
 
