@@ -89,6 +89,14 @@ public class PasswordPolicyConfigService {
     }
 
     /**
+     * 로그인 직후 새 비밀번호를 정해야 하는가 — 관리자 '비밀번호 초기화' 표시 또는 만료(2026-11-27).
+     * 초기화 표시는 만료 정책 활성·관리자 예외와 무관하다(관리자가 그 계정을 골라 요청한 것이므로).
+     */
+    public boolean mustChangeAtLogin(User user) {
+        return user != null && (user.isPasswordChangeRequiredFlag() || isExpired(user));
+    }
+
+    /**
      * 만료까지 남은 일수. 만료됨이면 음수, 정책 비활성/예외/기준없음이면 null(판정 불가).
      * UI 배지(D-n) 및 만료 예정일 표기에 사용.
      */

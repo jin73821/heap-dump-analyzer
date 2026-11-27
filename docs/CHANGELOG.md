@@ -1,5 +1,129 @@
 # Heap Dump Analyzer — 변경 이력 (CHANGELOG)
 
+## [2026-11-27] v2.7.7 — 코어 파일 화면: 업로드 버튼 배경색 · 도구줄 높이 · 업로드 시각 연도 표기
+
+**요청:** ① 코어 파일·실행 파일 버튼 배경색을 칠한다 ② 도구줄 세로 너비를 약간 늘린다 ③ 업로드 시간을 연도까지 표기한다 ④ 2.7.7 로 배포하고 모두 커밋·푸시한다.
+
+**대상:** `pom.xml`(2.7.6 → **2.7.7**), `templates/{fragments/banner,index,progress}.html`(버전 표기), `static/css/core-dump-index.css`, `templates/core-dump/index.html`(CSS 캐시 키 `2026-11-27d`), `service/CoreFileListBuilder.java`, `model/dto/CoreFileRow.java`(주석), 테스트 `CoreFileListBuilderTest`(표기 기대값), `CLAUDE.md`(JAR 버전).
+
+### 변경
+- **업로드 버튼(`.cf-slot`) 배경색.**
+  - 흰 바탕을 두 버튼 모두 옅은 파랑(`#EEF3FD`, 테두리 `#C7D6F5`)으로 칠했다. 마우스를 올리면 `#E3ECFC`, 끌어 올림·깜빡임은 `#DCE7FB`, 고른 뒤는 옅은 초록(`#EAF7F0`)이다.
+  - 아이콘 타일과 '파일 선택' 은 흰 바탕으로 바꿔 칠한 면 위에서 떠 보이게 했다.
+  - 실행 파일 칸을 회색으로 칠해 본 시안은 옆의 비활성 'GDB 분석 시작'(회색)과 같은 꼴이라 눌리지 않는 버튼처럼 보여 버렸다. 선택 사항은 아이콘 색만 한 단계 조용하게 둔다.
+- **도구줄(`.cf-toolbar` — 상태 탭·검색·기간)** 최소 높이 48 → 56px(탭 높이 같이), 오른쪽 컨트롤 위아래 여백 8 → 12px.
+- **업로드 시각**은 항상 `yyyy-MM-dd HH:mm` 이다(종전 오늘/어제/`MM-dd HH:mm`/지난해는 날짜만). 표의 업로드 칸 폭 120 → 132px.
+
+### 검증
+- `mvn test` 1387건 통과(라이브 4 skip). 빌드 후 `restart.sh` 로 운영 재기동(v2.7.7), 운영에서 새 CSS 서빙 확인.
+- 실제 템플릿에서 업로드 카드·도구줄을 뽑은 픽스처(실제 CSS 3종)로 헤드리스 스크린샷을 찍었다. 기본·파일 고른 뒤 상태의 색과 도구줄 높이, 업로드 칸 `2026-11-27 14:32` 한 줄 표시를 확인했다. 로그인이 필요한 운영 화면 자체는 보지 못했다.
+
+## [2026-11-27] v2.7.6 — 계정 관리 비밀번호 초기화·수정 말풍선 + 초기화 뒤 로그인 시 새 비밀번호 모달
+
+**요청:** 계정 관리 사용자 목록 탭에서 비밀번호 버튼을 누르면 '비밀번호 초기화'·'비밀번호 수정' 을 말풍선으로 보여 준다. 비밀번호를 초기화한 뒤 사용자가 로그인하면 비밀번호를 입력하는 모달이 떠야 한다.
+**결정(사용자 답변):**
+- 초기화 = 사용자가 새 비밀번호를 직접 정한다. 기존 비밀번호로 로그인한다.
+- 모달 입력: 관리자 초기화 뒤 로그인은 새 + 확인만, 이미 로그인한 상태에서 초기화되면 현재 + 새 + 확인.
+- 비밀번호 만료 강제 변경도 같은 모달로 통일한다.
+
+**대상:** `pom.xml`(2.7.5 → **2.7.6**), `templates/{fragments/banner,index,progress}.html`(버전 표기), `model/entity/User.java`(`password_change_required`), `service/{UserService,PasswordPolicyConfigService,TwoFactorService}.java`, `controller/{AdminController,PasswordChangeController,HeapSystemApiController}.java`, `templates/admin/users.html`, `templates/login-password-expired.html`(모달로 재작성), `templates/fragments/banner.html`, `static/js/pw-change-gate.js`(신규), 테스트 `PasswordResetRequiredTest`(8)·`PasswordResetUiTest`(5), 문서 `docs/guide/AUTH_SECURITY.md`(규약 + 함정 93)·`CLAUDE.md`·`docs/guide/TEST_INVENTORY.md`.
+
+### 계정 관리 — 비밀번호 말풍선
+- `비밀번호` 버튼이 `[⋯]` 와 같은 말풍선 메뉴(`.u-menu` 싱글턴, 키보드 이동·바깥 클릭 닫기 그대로)를 연다. `openUserMenu(btn, u, kind)` 로 일반화하고 `passwordMenuHtml(u)` 를 추가했다.
+- **비밀번호 초기화** → 확인 모달 → `POST /api/admin/users/{id}/require-password-change`. 비밀번호는 바꾸지 않고 '새 비밀번호를 직접 정해야 함' 표시만 켠다. 이미 초기화된 계정은 메뉴 항목이 비활성(`변경 대기`)이다.
+- **비밀번호 수정** → 종전의 관리자 직접 지정 모달. 제목을 '비밀번호 수정' 으로 바꾸고 대상 계정명을 표시한다. 강제 변경은 없고, 표시도 해제한다.
+- 목록 상태 배지 `변경 대기`, 감사 로그 `[User] action=password-reset-required|password-set target= by=`(종전 비밀번호 지정은 감사 로그가 없었다).
+
+### 로그인 — 강제 변경 모달
+- 로그인 게이트 `PasswordPolicyConfigService.mustChangeAtLogin` = 초기화 표시 ∨ 만료. 표시는 만료 정책 비활성·관리자 예외와 무관하다. OTP 모드는 OTP 통과 뒤, 그 밖의 모드는 1차 인증 뒤 `ROLE_PWD_EXPIRED` 부분 인증으로 `/login/password` 에 보낸다(기존 흐름 재사용).
+- `/login/password` 는 로그인 카드 위의 닫을 수 없는 모달이다(바깥 클릭·Esc 없음, '다른 계정으로 로그인' 만). 사유는 매 요청 DB 에서 판정한다.
+  - `reset`: 새 + 확인 → `setNewPasswordAfterReset`(복잡도·기존과 다름·표시가 없으면 거부).
+  - `expired`: 현재 + 새 + 확인 → `changeOwnPassword`(종전).
+- 대기 중 사유가 사라지면(관리자 '수정'·정책 끔) 바로 승격한다. 종전 조건 '정책 비활성이면 승격' 을 일반화했다(함정 93).
+
+### 접속 중 — 배너 모달
+- `/api/system/status` 에 현재 사용자의 `passwordChangeRequired` 를 실었다(DB 장애 때는 조회하지 않음).
+- 배너가 **새 응답에서만** `pw-change-gate.js` 모달(현재 + 새 + 확인 → `/api/account/password`, 표시 해제)을 띄운다. 캐시로 켜지 않는 이유는 함정 93 에 적었다.
+- 모달은 닫을 수 없고, 로그아웃 버튼과 Tab 순환이 있다. 스타일은 common.css 가 없는 화면을 위해 banner.html 의 `.gb-pw-*` 에 둔다.
+
+### 검증
+- `mvn test` 1387건 통과(새 13건, 라이브 4 skip). 빌드 후 `restart.sh` 로 운영 재기동, 기동 로그에 SQL 오류 없음, `/js/pw-change-gate.js` 서빙 확인.
+- **헤드리스 Chrome 스크린샷.**
+  - 실제 템플릿을 Thymeleaf 로 렌더한 강제 변경 모달 두 사유(reset: 새 + 확인 / expired: 현재 + 새 + 확인 + 오류 문구), 900px·390px.
+  - users.html 에서 뽑은 실제 메뉴 함수·CSS 픽스처: 말풍선 2항목, 대기 계정은 초기화 비활성 + `변경 대기`.
+  - 접속 중 모달: 390px 에서 넘침을 발견해 `.gb-pw-box` 에 `box-sizing: border-box` 를 넣었다.
+- ⚠ **미검증:**
+  - 실제 로그인 흐름 클릭 검증(관리자 자격증명을 쓸 수 없음 — 컨트롤러 분기는 단위 테스트로 대신했다).
+  - 운영 DB 의 `password_change_required` 컬럼 추가를 DB 로 직접 확인하지 못했다(ddl-auto=update, 기동 로그에 SQL 오류 없음).
+  - 접속 중 모달은 화면 쪽 차단이라 서버가 그 세션의 다른 요청을 막지는 않는다. 다음 로그인에서는 게이트가 막는다.
+
+## [2026-11-27] v2.7.5 — 프록시(/dump) 경유 시 스레드 덤프 화면 주소 보정
+
+**요청:** 스레드 덤프를 분석하면 주소가 `/thread-dump` 로 이동해 오류가 난다. 내부망은 프록시를 써서 `/dump/thread-dump` 가 되어야 한다. 프록시를 쓰지 않는 환경에서는 `/thread-dump` 그대로여야 한다.
+
+**대상:** `pom.xml`(2.7.4 → **2.7.5**), `templates/{fragments/banner,index,progress}.html`(버전 표기), `static/js/common.js`, `static/js/{thread-dump-index,thread-dump-analyze,analyze-confirm,heap-threads-card}.js`, `templates/index.html`, `templates/fragments/banner.html`, `controller/ThreadDumpViewController.java`, JS 캐시 키(`?v=2026-11-27p` — common·analyze-confirm·heap-threads-card·thread-dump-index·thread-dump-analyze 를 싣는 템플릿 11개), 테스트 `ProxyPrefixPathTest`(신규 4) · `ThreadDumpUploadContractTest`(리터럴 2건 갱신), 문서 `docs/guide/FRONTEND.md`(함정 92) · `CLAUDE.md` · `docs/guide/TEST_INVENTORY.md`.
+
+### 원인
+- 내부망 프록시는 `/dump/*` 를 **접두사를 떼고** 앱에 넘긴다. 그래서 서버는 접두사를 모른다(`context-path` 없음).
+- 앱은 모든 모듈이 루트 절대경로를 쓰고, GC 로그·코어 파일 등 기존 경로는 프록시가 보정해 주어 `/dump/gc-log` 로 동작한다. **v2.7.0 에 생긴 `/thread-dump` 는 보정 대상에 없어서** 분석 시작(`analyze-confirm.js`)·업로드 뒤 이동·목록 링크가 `/thread-dump` 로 가서 오류가 났다.
+
+### 수정
+- **`common.js` — `Common.APP_PREFIX` / `appPath(path)` / `stripAppPrefix(path)`.** 지금 주소가 `/dump` 또는 `/dump/…` 이면 접두사 `'/dump'`(`/dumpx` 는 아님), 직접 접속이면 `''`. `appPath` 는 이미 `/dump/` 로 시작하는 경로에 다시 붙이지 않는다. 그래서 나중에 프록시 규칙에 `/thread-dump` 가 추가돼도 `/dump/dump` 가 되지 않는다.
+- **템플릿 고정 링크 일괄 보정.** `href`·`data-href` 가 `/thread-dump` 로 시작하는 요소(배너 메뉴·접힌 아이콘, 결과 화면 '스레드 덤프 목록', 내보내기 모달 버튼)는 `common.js` 가 DOMContentLoaded 에 접두사를 붙인다.
+- **JS 이동·링크 13곳**을 `Common.appPath` 로 감쌌다: 목록·결과 이동, 삭제·묶음 해제 후 이동, 이어 붙이기, PDF/HTML 미리보기 iframe, 분석 시작(`?start=1` 유지), 힙 덤프 카드의 '연결된 스레드 덤프'·'결과 보기', 대시보드 업로드 뒤 이동. `/api/thread-dump/**` 는 현재 동작하므로 건드리지 않았다.
+- **배너 메뉴 활성 표시**는 접두사를 떼고 비교한다(다른 메뉴는 그대로).
+- **`ThreadDumpViewController` 리다이렉트 4곳을 상대 경로로 바꿨다**(`redirect:../{fn}`, `redirect:../../thread-dump`, `redirect:../../../thread-dump`). 브라우저가 지금 주소(`/dump/…` 포함)를 기준으로 푼다.
+
+### 검증
+- `mvn test` 1374건 통과(라이브 4 skip). 빌드 후 `restart.sh` 로 운영 재기동, 기동 로그와 운영 18080 의 새 JS 5종 서빙 확인.
+- **헤드리스 Chrome + 스텁 서버로 실제 `common.js` 를 같은 픽스처에 세 주소로 실었다.**
+  - `/thread-dump/analyze/a.txt`: 접두사 없음. 링크는 `/thread-dump` 그대로다.
+  - `/dump/thread-dump/analyze/a.txt`: 링크·data-href·`appPath` 결과가 모두 `/dump/thread-dump…` 가 된다. `/gc-log` 링크는 그대로이고, 이미 붙은 `/dump/thread-dump` 는 중복되지 않는다. 메뉴 활성 판정은 참이다.
+  - `/dumpx/…`: 접두사로 판별하지 않는다.
+- **Tomcat 11.0.25 임베디드로 실측했다.** `sendRedirect("../a%20b.txt")`·`("../../thread-dump")`·`("../../../thread-dump")` 의 Location 이 상대 경로 그대로 나간다.
+- ⚠ **미검증:** 실제 내부망 프록시 경유 화면(이 환경에서 접근 불가). 로그인이 필요한 실제 화면의 클릭 이동은 관리자 자격증명을 쓸 수 없어 픽스처로 대신했다.
+- ⚠ k8s 패키지처럼 `server.forward-headers-strategy=framework` 인 환경은 `ForwardedHeaderFilter` 가 상대 Location 을 절대 URL 로 바꾼다. 그 환경의 서버 리다이렉트(예외 경로뿐)에 접두사가 필요하면 프록시가 `X-Forwarded-Prefix` 를 보내야 한다. JS 쪽 보정은 영향이 없다.
+
+## [2026-11-27] v2.7.4 — 스레드 덤프 소견 점검 · 분석 소견 고도화
+
+**대상:** `pom.xml`(2.7.3 → **2.7.4**), `templates/{fragments/banner,index,progress}.html`(버전 표기), `parser/threaddump/{ThreadDumpRules,ThreadDumpAnalyzer}.java`, `model/ThreadDumpResult.java`, `service/{ThreadDumpPromptBuilder,ThreadDumpPdfReportService,ThreadDumpAnalyzerService,HeapThreadService}.java`, `static/js/thread-dump-analyze.js`(`?v=2026-11-27`), `static/css/thread-dump.css`(`?v=2026-11-27b`), `templates/thread-dump/{analyze,analyze-print,index}.html`, 테스트 `ThreadDumpFindingInsightTest`(신규 24) · `ThreadDumpAnalyzerServiceTest`(+1, 절단 테스트 기대값 변경) · `ThreadDumpTemplateSmokeTest`(+1) · `ThreadDumpTestSupport`(헬퍼), 문서 `docs/guide/{THREAD_DUMP,TEST_INVENTORY}.md`(함정 90·91), `CLAUDE.md`(함정 색인·테스트 건수 1344 → 1370·JAR 이름). 사용자 요청: "스레드 덤프 소견을 점검하고 분석 소견을 고도화 하세요". 범위는 사용자가 **전체**(판정 교정 + 근거·원인 연결 + 새 소견 + 화면·PDF·AI)로 정했고, JEUS·WebLogic 실측 덤프는 없어 **합성 텍스트로 검증**하기로 했다.
+
+### 점검 결과 — 틀리게 말하던 것
+- **커넥션 풀 대기 스레드를 유휴로 셌다.** HikariCP 대기(`ConcurrentBag.borrow` → `SynchronousQueue`)는 유휴 시그니처에도 맞는데 유휴 판정이 먼저였다. 풀이 커넥션 대기로 꽉 차도 '유휴 없음' 소견이 나지 않고, 화면에는 '유휴' 로 표시되고, 정체·I/O 분모에서 빠졌다(함정 90).
+- **HTTP 커넥션 풀·범용 객체 풀(commons-pool — Redis 등) 대기를 DB 문구로 안내했다.** 풀 종류별(DB / HTTP / 객체 풀) 소견으로 나눴다.
+- **JMX 등 RMI 연결 스레드가 '정체(I/O)' 로 잡혔다.** 다음 호출을 기다리며 소켓을 읽는 정상 상태다(이 호스트 JDK 8·21 로 실측).
+- **정체 판정이 관측 시간을 보지 않았다.** 1초 간격 3회(2초)도 5개 이상이면 High 였다. 지속을 알고 10초 미만이면 High 로 올리지 않고 "관측 구간이 짧음" 을 근거로 남긴다.
+- **Finalizer 정체가 인접 스냅샷 2개만으로 났다.** 정체와 같은 기준(3개 또는 30초)으로 바꿨다.
+- **풀 '유휴 없음' 이 "새 요청은 큐에서 기다리거나 거부됩니다" 라고 단정했다.** 풀 최대 크기는 덤프에 없다 — 그렇게 밝힌다.
+- **I/O 대기 묶음·커넥션 풀 대기의 세는 기준과 관련 스레드 기준이 달랐다.** 한 목록으로 통일.
+- **WebLogic Muxer 를 요청 처리 풀로 취급했다**(이름·실행기 프레임이 요청 풀 규칙에 맞음). 이름으로 수신 스레드 처리 — **실측 미검증**(함정 91).
+- '스레드 수 과다' 는 Java 스레드 기준인데 화면 KPI 는 전체라 숫자가 달랐다 — 근거에 차이를 밝힌다.
+
+### 점검 결과 — 놓치던 것
+- **락 경합:** 임계가 Java 스레드 수 비율뿐이라 스레드 3,000개 JVM 은 대기 300개 미만이면 소견이 없었다. 절대 상한(대기 30개 Medium, 100개 High)을 뒀다.
+- **JIT 컴파일러 등 상태 줄이 있는 JVM 스레드의 CPU 과다**는 어느 소견에도 들지 않았다.
+- **스냅샷 1개인 덤프의 CPU.** JDK 11+ 의 `cpu= ÷ elapsed=` 로 생성 이후 평균을 본다(평균이라 Medium 고정).
+- **풀 유휴 5% 이하**(유휴 1~2개)도 소견으로 낸다.
+- **새 소견 3종:** `BUSY_LOOP_SUSPECT`(같은 스택 + 그 구간 CPU ≥80%) · `SOCKET_WAIT_CLUSTER`(JDBC·HTTP 가 아닌 소켓 응답 대기 집중) · `CONNECT_WAIT`(연결 수립·DNS 에서 멈춤).
+
+### 고도화 — 근거 줄 · 원인 연결 · 종합 진단
+- 소견마다 **근거 줄**(규칙이 센 수치를 문장으로): 대기 지점·호출 지점(JDK·드라이버 밖 첫 프레임)·같은 스택 개수·지속 시간·활동 분해 등.
+- **락의 종류**(콘솔 출력·로깅·클래스 로딩·DNS·JDBC 객체 공유)를 대기 지점 프레임으로 가려 종류별 권고를 낸다. JDK 21 은 `System.out`·JUL 이 ReentrantLock 이라 락 클래스로는 알 수 없다.
+- **원인 연결:** 풀의 작업 중 스레드를 활동별로 분해해 절반 넘는 활동의 소견과 잇고, 락은 소유 스레드가 하고 있는 일(DB 응답 대기·sleep·실행 중)을 말하고, DB 커넥션 풀 대기는 JDBC 를 쓰는 스레드가 있는지 센다(0개면 반납 누락 의심). 교착은 뒤에 막힌 스레드 수를 센다.
+- **종합 진단:** 최고 등급 소견에서 이어진 소견을 따라 한 줄 + 근거로 묶어 화면 배너·PDF·AI 프롬프트에 싣는다. 이어진 소견이 없으면 만들지 않는다.
+- 화면: 소견 카드에 근거 줄·연관 소견 링크, 소견의 스레드 링크는 **그 소견이 본 스냅샷**으로 연다(종전엔 표에 떠 있던 스냅샷). AI 프롬프트는 소견 섹션에 상한(20건·3,000자)을 둬 뒤 섹션이 밀려 잘리지 않는다.
+
+### 호환
+- 결과 JSON schema 는 1 그대로, 새 필드(`basis`·`related`·`verdict`·`meta.ruleset`)는 추가만 했다. **이미 저장된 결과는 그대로 열리고**, 소견 카드에 "이전 규칙으로 분석된 결과" 안내가 뜬다 — **파일마다 재분석해야 바뀐 판정과 근거가 나온다**(일괄 재분석 없음).
+- 같은 덤프라도 재분석하면 등급이 달라질 수 있다: 관측 구간이 10초 미만인 정체는 High → Medium, 커넥션 풀 대기가 있던 덤프는 '유휴 없음' 이 새로 나온다.
+
+### 검증
+- `mvn test` 1370건(실패 0, 라이브 4건 skip) — 기존 1344건의 기대값 변경은 프롬프트 절단 테스트 1건뿐.
+- 이 호스트 JDK 8·21 로 데모(연결 대기·DNS·콘솔/JUL 경합·JMX 연결)를 돌려 받은 덤프로 새 시그니처를 확인.
+- `/opt/threaddumps/dumpfiles` 의 3개 파일을 새 분석기로 직접 돌려 확인: `jstack-demo-was01` 은 종전 소견 + 무한 루프 의심·근거 줄, `veritasApp`·`heap_dump_11410_threads` 는 오탐 없이 안내 소견만.
+- 실제 템플릿·CSS·JS + 새 분석 결과를 헤드리스 Chrome 으로 구동: 종합 진단 배너, 근거 줄, 연관 소견 링크(이동·강조), 스레드 링크의 스냅샷 전환(3번 → 1번), 옛 결과의 재분석 안내, 1440·1000·600px 넘침 0, 리포트의 종합 진단·근거 줄, 페이지 오류 0.
+- **하지 못한 것:** 운영 화면에 로그인해 저장된 3건을 재분석하는 확인(자격 증명 없이 진행). WebLogic·JEUS 실측 덤프 검증.
+
 ## [2026-11-27] v2.7.3 — 코어 덤프 업로드 카드 제목 · 펼친 행 구분
 
 **대상:** `pom.xml`(2.7.2 → **2.7.3**), `templates/{fragments/banner,index,progress}.html`(버전 표기), `templates/core-dump/index.html`(`core-dump-index.css?v=2026-11-27c`), `static/css/core-dump-index.css`, 테스트 `CoreFilesPageSmokeTest`(제목 줄 단언 추가, 건수 무변경), `docs/guide/FRONTEND.md`, `CLAUDE.md`(JAR 이름). 사용자 요청: "코어 덤프 업로드 카드의 제목을 스레드 덤프의 업로드 카드의 디자인을 참고하여 수정", "세부정보 열기시 파일이름 라인의 배경색도 세부정보 배경색과 동일하여 여러개의 파일의 세부정보 열람시 구분이 힘듭니다", "2.7.3 버전으로 배포 후 모두 커밋, 푸시".

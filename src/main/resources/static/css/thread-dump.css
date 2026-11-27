@@ -92,6 +92,18 @@
 .thd-banner-title { font-size: 15px; font-weight: 700; color: #111827; }
 .thd-banner-text { font-size: 13px; color: #374151; line-height: 1.55; margin-top: 3px; }
 .thd-banner-main { flex: 1 1 320px; min-width: 0; }
+.thd-verdict-point { overflow-wrap: anywhere; }
+.thd-verdict-arrow { color: #6B7280; }
+.thd-banner-title { overflow-wrap: anywhere; }
+
+/* 소견의 근거 줄·연관 소견(2.7.4) — 좌측 색 띠 없이 옅은 배경과 1px 테두리만 쓴다 */
+.thd-basis { list-style: disc; margin: 6px 0 0; padding: 6px 10px 6px 26px; background: rgba(255,255,255,.7); border: 1px solid rgba(0,0,0,.08); border-radius: 6px; }
+.thd-basis li { font-size: 12px; color: #374151; line-height: 1.6; overflow-wrap: anywhere; }
+.thd-related { font-size: 12px; color: #6B7280; }
+.thd-ruleset-note { font-size: 12px; color: #6B7280; margin: -4px 0 10px; line-height: 1.5; }
+.thd-finding-flash { animation: thd-finding-flash 1.2s ease-out 1; }
+@keyframes thd-finding-flash { 0% { box-shadow: 0 0 0 3px rgba(37,99,235,.35); } 100% { box-shadow: 0 0 0 3px rgba(37,99,235,0); } }
+@media (prefers-reduced-motion: reduce) { .thd-finding-flash { animation: none; outline: 2px solid rgba(37,99,235,.5); outline-offset: 1px; } }
 
 /* 상태 배지·이력 */
 .thd-state { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 6px; border: 1px solid transparent; white-space: nowrap; font-family: var(--font-mono); }

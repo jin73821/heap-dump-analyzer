@@ -428,6 +428,37 @@ class ThreadDumpTemplateSmokeTest {
         assertEquals("%PDF-", new String(pdf, 0, 5, StandardCharsets.US_ASCII));
     }
 
+    @Test
+    @DisplayName("리포트 — 근거 줄과 종합 진단을 싣고, 옛 결과(둘 다 없음)도 그대로 그린다 (2.7.4)")
+    void printBasisAndVerdict() throws IOException {
+        ThreadDumpResult r = fixture("jdk8-deadlock-3snap.txt");
+        Map<String, Object> model = new ThreadDumpPdfReportService(null).buildPrintModel("a.txt", null, r, null);
+        String html = render("thread-dump/analyze-print", model);
+        assertTrue(html.contains("class=\"fb\""), "소견의 근거 줄 블록이 없다");
+        assertTrue(html.contains("대기 지점 DeadlockDemo.waitHot"), "락 경합의 근거 줄(대기 지점)이 없다");
+        assertFalse(html.contains("class=\"verdict\""), "이어진 최고 등급 소견이 없으면 종합 진단 블록을 그리지 않는다");
+
+        // 종합 진단이 있는 결과 — 이름에 마크업이 섞여도 이스케이프된다(th:text)
+        ThreadDumpResult.Verdict v = new ThreadDumpResult.Verdict();
+        v.setHeadline("요청 처리 풀에 유휴 스레드 없음 — 풀 \"<b>x</b>\" 작업 중 200개");
+        v.getPoints().add("락 경합 — 142개 스레드가 같은 락 대기");
+        r.setVerdict(v);
+        String withVerdict = render("thread-dump/analyze-print", new ThreadDumpPdfReportService(null).buildPrintModel("a.txt", null, r, null));
+        assertTrue(withVerdict.contains("class=\"verdict\"") && withVerdict.contains("종합 진단"));
+        assertTrue(withVerdict.contains("&lt;b&gt;x&lt;/b&gt;") && !withVerdict.contains("<b>x</b>"));
+        assertTrue(withVerdict.contains("락 경합 — 142개 스레드가 같은 락 대기"));
+        byte[] pdf = new ThreadDumpPdfReportService(new PdfReportService(engine(), null, null)).renderPdf("a.txt", null, r, null);
+        assertEquals("%PDF-", new String(pdf, 0, 5, StandardCharsets.US_ASCII));
+
+        // 옛 결과 — basis·related·verdict 키가 없다. 템플릿이 null 을 만나 끊기면 안 된다(함정 23)
+        r.setVerdict(null);
+        for (ThreadDumpResult.Finding f : r.getFindings()) { f.setBasis(null); f.setRelated(null); }
+        r.getMeta().setRuleset(null);
+        String old = render("thread-dump/analyze-print", new ThreadDumpPdfReportService(null).buildPrintModel("a.txt", null, r, null));
+        assertFalse(old.contains("class=\"fb\"") || old.contains("class=\"verdict\""));
+        assertTrue(old.contains("교착 상태(Deadlock) 1건"));
+    }
+
     // ── 화면 규약 ───────────────────────────────────────────────
 
     @Test
@@ -475,8 +506,16 @@ class ThreadDumpTemplateSmokeTest {
                 "IO_ERROR", "OUT_OF_MEMORY", "INTERNAL", "INTERRUPTED"}) {
             assertTrue(an.contains(code + ":"), "결과 화면이 실패 코드 " + code + " 의 안내문을 갖고 있지 않다");
         }
+        // 2.7.4 — 소견의 근거 줄·연관 소견·종합 진단·옛 결과 재분석 안내
+        assertTrue(an.contains("(f.basis || [])") && an.contains("(f.related || [])"), "옛 결과(basis·related 키 없음)를 방어하지 않는다");
+        assertTrue(an.contains("return threadLinkAt(t, snap);"), "소견의 스레드 링크가 소견의 스냅샷으로 열리지 않는다");
+        assertFalse(an.contains(".map(threadLinkAt)"), "map 에 그대로 넘기면 배열 인덱스가 스냅샷 번호로 들어간다");
+        assertTrue(an.contains("R.meta.ruleset == null") && an.contains("!HEAP_MODE && THD_FILE_EXISTS"), "옛 규칙 결과의 재분석 안내 조건이 바뀌었다");
+        assertTrue(an.contains("var v = R.verdict"), "배너가 종합 진단을 쓰지 않는다");
+        assertTrue(an.contains("window.thdShowFinding = thdShowFinding;"), "연관 소견 링크의 처리기가 전역에 없다");
         List<String> missing = new ArrayList<>();
         String tpl = resource("/templates/thread-dump/analyze.html");
+        assertTrue(tpl.contains("id=\"thdRulesetNote\""), "재분석 안내 요소가 템플릿에 없다");
         java.util.regex.Matcher m = java.util.regex.Pattern.compile("byId\\('(thd[A-Za-z]+)'\\)").matcher(an);
         while (m.find()) if (!tpl.contains("id=\"" + m.group(1) + "\"") && !an.contains("id=\"" + m.group(1) + "\"")) missing.add(m.group(1));
         assertTrue(missing.isEmpty(), "스크립트가 찾는 요소가 템플릿에 없다: " + missing);

@@ -424,5 +424,55 @@
         global.setTimeout(fin, timeoutMs);
     };
 
+    /*
+     * ── 프록시 접두사 (2026-11-27, CLAUDE.md 함정 92) ─────────────
+     * 내부망 프록시는 /dump/* 를 앱으로 넘기며 접두사를 떼므로 서버는 접두사를 모른다.
+     * 기존 경로(/gc-log 등)는 프록시가 보정해 주지만 /thread-dump 는 보정 대상이 아니라,
+     * 화면 경로는 브라우저가 지금 주소로 접두사를 판별해 붙인다. 직접 접속이면 접두사 없음.
+     */
+    var PROXY_PREFIXES = ['/dump'];
+    Common.APP_PREFIX = (function () {
+        var p = (global.location && global.location.pathname) || '';
+        for (var i = 0; i < PROXY_PREFIXES.length; i++) {
+            var px = PROXY_PREFIXES[i];
+            if (p === px || p.indexOf(px + '/') === 0) return px;
+        }
+        return '';
+    })();
+
+    /** 루트 기준 화면 경로에 프록시 접두사를 붙인다. 이미 붙어 있으면(프록시가 본문을 고친 경우) 그대로 둔다. */
+    Common.appPath = function (path) {
+        var px = Common.APP_PREFIX;
+        if (!px || typeof path !== 'string' || path.charAt(0) !== '/') return path;
+        if (path === px || path.indexOf(px + '/') === 0) return path;
+        return px + path;
+    };
+
+    /** 접두사를 뗀 경로 — 메뉴 활성 표시처럼 루트 기준으로 비교할 때 쓴다. */
+    Common.stripAppPrefix = function (path) {
+        var px = Common.APP_PREFIX;
+        if (px && typeof path === 'string' && (path === px || path.indexOf(px + '/') === 0)) {
+            return path.substring(px.length) || '/';
+        }
+        return path;
+    };
+
+    /** 접두사를 붙여야 하는 화면 경로(프록시가 보정하지 않는 것). 템플릿의 고정 링크는 아래에서 한 번에 고친다. */
+    var PREFIXED_PAGES = ['/thread-dump'];
+    function prefixStaticLinks() {
+        if (!Common.APP_PREFIX || !global.document) return;
+        PREFIXED_PAGES.forEach(function (base) {
+            var nodes = global.document.querySelectorAll('a[href^="' + base + '"], [data-href^="' + base + '"]');
+            Array.prototype.forEach.call(nodes, function (el) {
+                if (el.hasAttribute('href')) el.setAttribute('href', Common.appPath(el.getAttribute('href')));
+                if (el.hasAttribute('data-href')) el.setAttribute('data-href', Common.appPath(el.getAttribute('data-href')));
+            });
+        });
+    }
+    if (global.document) {
+        if (global.document.readyState === 'loading') global.document.addEventListener('DOMContentLoaded', prefixStaticLinks);
+        else prefixStaticLinks();
+    }
+
     global.Common = Common;
 })(typeof window !== 'undefined' ? window : this);

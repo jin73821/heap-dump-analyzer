@@ -120,6 +120,7 @@ public class AdminController {
             java.time.LocalDateTime pExpiresAt = passwordPolicy.expiresAt(u);
             m.put("passwordExpiresAt", pExpiresAt != null
                     ? pExpiresAt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : null);
+            m.put("passwordChangeRequired", u.isPasswordChangeRequiredFlag());   // 관리자 '비밀번호 초기화' 뒤 변경 대기
             m.put("passwordChangedAt", u.getPasswordChangedAt() != null
                     ? u.getPasswordChangedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) : null);
             // 최근 접속 = 마지막 로그인 성공(login_history). 기록이 없으면 null — 화면은 '기록 없음'
@@ -200,15 +201,41 @@ public class AdminController {
         }
     }
 
+    /** 비밀번호 수정 — 관리자가 새 비밀번호를 직접 정한다(강제 변경 없음, '초기화' 표시도 해제). */
     @PostMapping("/api/admin/users/{id}/reset-password")
     @ResponseBody
     public ResponseEntity<Map<String, Object>> resetPassword(@PathVariable Long id,
-                                                             @RequestBody Map<String, String> body) {
+                                                             @RequestBody Map<String, String> body,
+                                                             org.springframework.security.core.Authentication auth) {
         Map<String, Object> result = new HashMap<>();
         try {
             String newPassword = body.get("password");
             userService.resetPassword(id, newPassword);
+            logger.info("[User] action=password-set target={} by={}",
+                    userService.findById(id).map(User::getUsername).orElse(String.valueOf(id)), who(auth));
             result.put("success", true);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", e.getMessage());
+            return ResponseEntity.badRequest().body(result);
+        }
+    }
+
+    /**
+     * 비밀번호 초기화 (2026-11-27) — 비밀번호는 그대로 두고 '새 비밀번호를 직접 정해야 함' 표시만 남긴다.
+     * 다음 로그인 때 강제 변경 모달(새 + 확인), 접속 중이면 배너 모달(현재 + 새 + 확인)이 뜬다.
+     */
+    @PostMapping("/api/admin/users/{id}/require-password-change")
+    @ResponseBody
+    public ResponseEntity<Map<String, Object>> requirePasswordChange(@PathVariable Long id,
+                                                                     org.springframework.security.core.Authentication auth) {
+        Map<String, Object> result = new HashMap<>();
+        try {
+            User user = userService.requirePasswordChange(id);
+            logger.info("[User] action=password-reset-required target={} by={}", user.getUsername(), who(auth));
+            result.put("success", true);
+            result.put("username", user.getUsername());
             return ResponseEntity.ok(result);
         } catch (Exception e) {
             result.put("success", false);

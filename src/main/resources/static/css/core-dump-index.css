@@ -98,26 +98,29 @@
     --cf-slot-accent: var(--cf-blue);
     position: relative; min-width: 0; min-height: 70px; box-sizing: border-box; padding: 12px 14px;
     display: flex; align-items: center; gap: 12px;
-    background: #fff; border: 1px solid var(--cf-line-strong); border-radius: 8px; cursor: pointer;
+    background: #EEF3FD; border: 1px solid #C7D6F5; border-radius: 8px; cursor: pointer;
     transition: border-color .15s, background-color .15s;
 }
-.cf-slot:hover { border-color: #93B4F5; background: #F8FAFF; }
+/* 버튼 배경색(2026-11-27 사용자 요청) — 두 버튼 모두 옅은 파랑으로 칠해 흰 카드 위에서 누르는 자리로 읽히게 한다.
+   회색으로 칠하면 옆의 비활성 'GDB 분석 시작'(회색)과 같은 꼴이라 눌리지 않는 버튼처럼 보였다(시안 확인).
+   선택 사항(실행 파일)은 아이콘 색만 한 단계 조용하다. 아이콘 타일·'파일 선택' 은 흰 바탕이라 칠한 면 위에서 떠 보인다 */
+.cf-slot:hover { border-color: #93B4F5; background: #E3ECFC; }
 .cf-slot:focus-within { outline: 2px solid var(--cf-focus); outline-offset: 1px; }
-.cf-slot.dragover { border-style: dashed; border-color: var(--cf-blue); background: #F1F6FF; }
-.cf-slot.is-flash { border-color: var(--cf-blue); background: #F1F6FF; }
+.cf-slot.dragover { border-style: dashed; border-color: var(--cf-blue); background: #DCE7FB; }
+.cf-slot.is-flash { border-color: var(--cf-blue); background: #DCE7FB; }
 .cf-slot input[type=file] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
 
 /* 아이콘 타일 — 비었을 때 파일 종류 아이콘(옅은 파랑), 고르면 체크(옅은 초록) */
 .cf-slot-ic {
     flex-shrink: 0; width: 40px; height: 40px; border-radius: 8px;
     display: flex; align-items: center; justify-content: center;
-    background: #EEF3FD; color: #2F5FD0; transition: background-color .15s, color .15s;
+    background: #fff; color: #2F5FD0; transition: background-color .15s, color .15s;
 }
 .cf-slot-ic > span { display: flex; }
 .cf-slot-ic-ok { display: none !important; }
 /* 선택 사항은 한 단계 조용하게 — 마우스·끌어 올림·고른 뒤에는 코어 칸과 같은 색(id 우선순위가 그 규칙들을 덮지 않게 :not 으로 한정) */
-#execDropZone:not(:hover):not(.dragover):not(.has-file) .cf-slot-ic { background: #F1F2F4; color: #4B5563; }
-.cf-slot:hover .cf-slot-ic, .cf-slot.dragover .cf-slot-ic { background: #DDE8FC; color: #1D4ED8; }
+#execDropZone:not(:hover):not(.dragover):not(.has-file) .cf-slot-ic { background: #fff; color: #4B5563; }
+.cf-slot:hover .cf-slot-ic, .cf-slot.dragover .cf-slot-ic { background: #fff; color: #1D4ED8; }
 
 .cf-slot-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .cf-slot-lbl { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 13px; font-weight: 700; color: var(--cf-text); white-space: nowrap; }
@@ -152,9 +155,9 @@
 .cf-slot-clear:hover { background: #FDECEC; color: var(--cf-red-t); }
 
 /* 고른 뒤 */
-.cf-slot.has-file { border-color: #A7D7BF; background: #FBFEFC; }
-.cf-slot.has-file:hover { border-color: #6FC09A; background: #F4FBF7; }
-.cf-slot.has-file .cf-slot-ic, .cf-slot.has-file:hover .cf-slot-ic { background: #E3F4EA; color: #047857; }
+.cf-slot.has-file { border-color: #A7D7BF; background: #EAF7F0; }
+.cf-slot.has-file:hover { border-color: #6FC09A; background: #DFF2E8; }
+.cf-slot.has-file .cf-slot-ic, .cf-slot.has-file:hover .cf-slot-ic { background: #fff; color: #047857; }
 .cf-slot.has-file .cf-slot-ic-idle { display: none; }
 .cf-slot.has-file .cf-slot-ic-ok { display: flex !important; }
 .cf-slot.has-file .cf-slot-empty, .cf-slot.has-file .cf-slot-pick { display: none; }
@@ -210,11 +213,11 @@
 
 .cf-toolbar {
     display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
-    padding: 0 12px; min-height: 48px; border-bottom: 1px solid var(--cf-line);
+    padding: 0 12px; min-height: 56px; border-bottom: 1px solid var(--cf-line);   /* 48 → 56px (2026-11-27 사용자 요청) */
 }
 .cf-tabs { display: flex; flex-wrap: wrap; gap: 2px; align-self: stretch; }
 .cf-tab {
-    display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 0 10px; margin-bottom: -1px;
+    display: flex; align-items: center; gap: 6px; min-height: 56px; padding: 0 10px; margin-bottom: -1px;
     background: none; border: 0; border-bottom: 2px solid transparent;
     font: inherit; font-size: 13px; font-weight: 500; color: var(--cf-text-3); cursor: pointer;
 }
@@ -223,7 +226,7 @@
 .cf-tab-n { font-size: 12px; font-weight: 500; color: var(--cf-text-3); font-variant-numeric: tabular-nums; }
 
 /* .hi-controls/.hi-date 는 core-dump.css 기본값 위에 이 도구줄 모양만 덧씌운다(테스트 계약: 클래스·id 유지) */
-.cf-toolbar .hi-controls { margin: 0 0 0 auto; gap: 8px 14px; padding: 8px 0; }
+.cf-toolbar .hi-controls { margin: 0 0 0 auto; gap: 8px 14px; padding: 12px 0; }
 .cf-check { display: flex; align-items: center; gap: 6px; min-height: 32px; font-size: 12.5px; color: var(--cf-text-2); white-space: nowrap; cursor: pointer; }
 .cf-check input { margin: 0; }
 .cf-search { position: relative; display: flex; align-items: center; }
@@ -251,7 +254,7 @@
 .cf-c-sig  { width: 92px; }
 .cf-c-exec { width: 130px; }
 .cf-c-size { width: 84px; }
-.cf-c-up   { width: 120px; }
+.cf-c-up   { width: 132px; }   /* 'yyyy-MM-dd HH:mm' 이 한 줄에 들어가는 폭 */
 .cf-c-act  { width: 84px; }   /* 아이콘 버튼 2개(26 + 3 + 26) + 칸 여백 */
 .cf-table thead th { padding: 10px 12px; font-size: 11px; }   /* 색·대문자·자간·아랫선은 .ftable th */
 .cf-table th.cf-c-chev, .cf-table td.cf-td-chev { padding: 0 0 0 8px; }

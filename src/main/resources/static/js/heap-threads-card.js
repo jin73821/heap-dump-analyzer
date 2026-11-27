@@ -6,6 +6,8 @@
     'use strict';
     var TAG = '[HeapThreadsCard]';
     function byId(id) { return document.getElementById(id); }
+    /** 스레드 덤프 화면 경로 — 프록시(/dump) 경유면 접두사를 붙인다(CLAUDE.md 함정 92). */
+    function tdPath(p) { return window.Common && Common.appPath ? Common.appPath(p) : p; }
     var esc = function (s) { return window.Common ? Common.escHtml(String(s == null ? '' : s)) : String(s == null ? '' : s); };
     function fmtNum(n) { return n == null ? '–' : Number(n).toLocaleString('en-US'); }
     var STATE_KO = { RUNNABLE: 'RUNNABLE', BLOCKED: 'BLOCKED', WAITING: 'WAITING', TIMED_WAITING: 'TIMED_WAITING', UNKNOWN: '알 수 없음' };
@@ -54,7 +56,7 @@
         }
         var links = d.linkedThreadDumps || [];
         h += '<div class="htc-links">' + (links.length
-            ? '연결된 스레드 덤프: ' + links.map(function (l) { return '<a href="/thread-dump/analyze/' + encodeURIComponent(l.filename) + '">' + esc(l.filename) + '</a>'; }).join(', ')
+            ? '연결된 스레드 덤프: ' + links.map(function (l) { return '<a href="' + tdPath('/thread-dump/analyze/' + encodeURIComponent(l.filename)) + '">' + esc(l.filename) + '</a>'; }).join(', ')
             : '같은 시점의 스레드 덤프가 있으면 스레드 덤프 결과 화면의 ‘힙 덤프’ 칩에서 이 힙 덤프를 연결하세요. 스냅샷 비교·락 관계까지 함께 볼 수 있습니다.') + '</div>';
         body.innerHTML = h;
     }
@@ -76,7 +78,7 @@
         el.hidden = !html;
     }
     function listLink(name) {
-        return '<a href="/thread-dump?file=' + encodeURIComponent(name) + '">스레드 덤프 목록에서 보기</a>';
+        return '<a href="' + tdPath('/thread-dump?file=' + encodeURIComponent(name)) + '">스레드 덤프 목록에서 보기</a>';
     }
     function htcExport(newName) {
         if (_exporting || typeof FILENAME === 'undefined') return;
@@ -88,7 +90,7 @@
         Common.fetchJSON('/api/thread-dump/heap/' + encodeURIComponent(FILENAME) + '/export' + (newName ? '?newName=true' : ''), { method: 'POST' })
             .then(function (d) {
                 done();
-                var tail = listLink(d.filename) + ' · <a href="/thread-dump/analyze/' + encodeURIComponent(d.filename) + '">결과 보기</a>';
+                var tail = listLink(d.filename) + ' · <a href="' + tdPath('/thread-dump/analyze/' + encodeURIComponent(d.filename)) + '">결과 보기</a>';
                 var head = '<b>' + esc(d.filename) + '</b> (스레드 ' + fmtNum(d.threads) + '개)';
                 if (d.status === 'SUCCESS') msg('ok', '내보내고 분석까지 마쳤습니다 — ' + head + '. 스레드 덤프 목록에 완료 상태로 올라갔습니다. ' + tail);
                 else if (d.status === 'ERROR') msg('warn', '파일은 내보냈지만 분석에 실패했습니다 — ' + head + '. ' + esc(d.analysisError || '') + ' ' + tail);

@@ -321,6 +321,7 @@ public class HeapThreadService {
             ThreadDumpResult.Snapshot s = r.getSnapshots().get(0);
             StringBuilder sb = new StringBuilder("== 스레드 상태 (힙 덤프 시점) ==\n");
             sb.append("스레드 ").append(s.getThreads()).append("개 ").append(s.getStates()).append('\n');
+            if (r.getVerdict() != null && r.getVerdict().getHeadline() != null) sb.append("종합: ").append(r.getVerdict().getHeadline()).append('\n');
             for (ThreadDumpResult.Finding f : r.getFindings()) {
                 if ("Info".equals(f.getSeverity())) continue;
                 sb.append("- [").append(f.getSeverity()).append("] ").append(f.getTitle()).append('\n');

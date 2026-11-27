@@ -207,9 +207,10 @@ public class TwoFactorService {
         historyRecorder.recordSuccess(username, req);
 
         User user = userRepository.findByUsername(username).orElse(null);
-        if (user != null && passwordPolicy.isExpired(user)) {
+        if (passwordPolicy.mustChangeAtLogin(user)) {   // 만료 또는 관리자 '비밀번호 초기화' 표시
             establishPasswordExpiredContext(username, req, res);
-            logger.info("[TwoFactor] action=verify-success user={} pwdExpired=true → 강제 변경", username);
+            logger.info("[TwoFactor] action=verify-success user={} pwdChange={} → 강제 변경", username,
+                    user.isPasswordChangeRequiredFlag() ? "reset" : "expired");
             return LoginCompletion.PWD_EXPIRED;
         }
 
@@ -233,11 +234,12 @@ public class TwoFactorService {
      */
     public boolean forcePasswordChangeIfExpired(String username, HttpServletRequest req, HttpServletResponse res) {
         User user = userRepository.findByUsername(username).orElse(null);
-        if (user == null || !passwordPolicy.isExpired(user)) {
+        if (!passwordPolicy.mustChangeAtLogin(user)) {
             return false;
         }
         establishPasswordExpiredContext(username, req, res);
-        logger.info("[PwdPolicy] password expired at login — forcing change: user={}", username);
+        logger.info("[PwdPolicy] password change required at login — forcing change: user={} reason={}",
+                username, user.isPasswordChangeRequiredFlag() ? "reset" : "expired");
         return true;
     }
 

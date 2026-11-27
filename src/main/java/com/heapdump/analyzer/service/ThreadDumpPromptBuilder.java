@@ -16,6 +16,9 @@ public final class ThreadDumpPromptBuilder {
 
     static final int MAX_CHARS = 12_000;
     private static final int FRAMES_PER_STACK = 10;
+    static final int FINDINGS_MAX = 20;
+    static final int FINDINGS_CHARS = 3_000;
+    private static final int BASIS_PER_FINDING = 3;
 
     public static String build(ThreadDumpResult r, ThreadDumpAnalysisEntity e) {
         return build(r, e.getFilename(), e.getServerName(), null);
@@ -58,14 +61,16 @@ public final class ThreadDumpPromptBuilder {
         sb.append("요약: 교착 ").append(k.getDeadlocks()).append("건, 최대 BLOCKED ").append(k.getBlockedMax())
                 .append(", 정체 스레드 ").append(k.getStuck()).append(", 한 락의 최대 대기자 ").append(k.getTopLockWaiters()).append('\n');
 
-        sb.append("\n== 이상 징후 (규칙 기반) ==\n");
-        boolean any = false;
-        for (ThreadDumpResult.Finding f : r.getFindings()) {
-            if ("Info".equals(f.getSeverity())) continue;
-            any = true;
-            sb.append("- [").append(f.getSeverity()).append("] ").append(f.getTitle()).append(": ").append(f.getDetail()).append('\n');
+        // 종합 진단(2.7.4) — 규칙이 소견을 원인·결과로 이은 것. 옛 결과에는 없다
+        ThreadDumpResult.Verdict v = r.getVerdict();
+        if (v != null && v.getHeadline() != null) {
+            sb.append("\n== 종합 진단 (규칙이 소견을 원인·결과로 이은 것) ==\n");
+            sb.append(clip(v.getHeadline(), 300)).append('\n');
+            if (v.getPoints() != null) for (String p : v.getPoints()) sb.append("  → ").append(clip(p, 300)).append('\n');
         }
-        if (!any) sb.append("(없음)\n");
+
+        sb.append("\n== 이상 징후 (규칙 기반) ==\n");
+        appendFindings(sb, r);
 
         if (!r.getDeadlocks().isEmpty()) {
             sb.append("\n== 교착 사슬 ==\n");
@@ -145,6 +150,39 @@ public final class ThreadDumpPromptBuilder {
         int tail = out.lastIndexOf("\n다음 JSON 형식으로만 답하세요:");
         String instr = tail >= 0 ? out.substring(tail) : "";
         return out.substring(0, Math.max(0, MAX_CHARS - instr.length() - 20)) + "\n...(truncated)" + instr;
+    }
+
+    /**
+     * 소견 섹션 — 등급 높은 순으로 {@link #FINDINGS_MAX}건·{@link #FINDINGS_CHARS}자까지. 상한이 없으면 소견이 많은 덤프에서
+     * 뒤의 교착 사슬·락·스택 섹션이 12,000자 절단에 통째로 밀려난다. 소견마다 코드·근거 줄(≤3)·연관 소견을 함께 싣는다.
+     */
+    private static void appendFindings(StringBuilder sb, ThreadDumpResult r) {
+        int start = sb.length(), total = 0, shown = 0;
+        for (ThreadDumpResult.Finding f : r.getFindings()) if (!"Info".equals(f.getSeverity())) total++;
+        for (ThreadDumpResult.Finding f : r.getFindings()) {
+            if ("Info".equals(f.getSeverity())) continue;
+            StringBuilder one = new StringBuilder(256);
+            one.append("- [").append(f.getSeverity()).append("] (").append(f.getCode()).append(") ").append(clip(f.getTitle(), 160))
+                    .append(": ").append(clip(f.getDetail(), 400)).append('\n');
+            if (f.getBasis() != null) {
+                int n = 0;
+                for (String b : f.getBasis()) {
+                    if (n++ >= BASIS_PER_FINDING) break;
+                    one.append("    근거: ").append(clip(b, 220)).append('\n');
+                }
+            }
+            if (f.getRelated() != null && !f.getRelated().isEmpty()) one.append("    연관 소견: ").append(String.join(", ", f.getRelated())).append('\n');
+            if (shown >= FINDINGS_MAX || sb.length() - start + one.length() > FINDINGS_CHARS) break;
+            sb.append(one);
+            shown++;
+        }
+        if (total == 0) sb.append("(없음)\n");
+        else if (shown < total) sb.append("  …외 ").append(total - shown).append("건(등급이 낮은 쪽을 생략)\n");
+    }
+
+    private static String clip(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, max - 1) + "…";
     }
 
     private static String nameOf(ThreadDumpResult r, int track) {

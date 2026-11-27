@@ -674,7 +674,7 @@
 
         <div class="mobile-sidebar-header">
             <div class="ms-title">Heap Dump Analyzer</div>
-            <div class="ms-sub">v2.7.3 · MAT CLI Edition</div>
+            <div class="ms-sub">v2.7.7 · MAT CLI Edition</div>
         </div>
 
         <div class="sidebar-section">
@@ -1163,7 +1163,7 @@ var DASHBOARD_DETECT_DAYS = /*[[${dashboardDetectDays}]]*/ 14;
 /*]]>*/
 </script>
 <script src="/js/upload-queue.js?v=2026-11-27"></script>
-<script src="/js/analyze-confirm.js?v=2026-09-26"></script>
+<script src="/js/analyze-confirm.js?v=2026-11-27p"></script>
 <script src="/js/alert-bell.js?v=2026-09-26"></script>
 <script src="/js/live-refresh.js?v=2026-09-26"></script>
 <script src="/js/krds-tooltip.js?v=2026-10-31"></script>
@@ -1393,7 +1393,7 @@ window.onUploadQueueDone = function() {
     if (doneTd.length > 0 && doneHeap.length === 0 && doneCore.length === 0 && doneGc.length === 0) {
         var turl = '/thread-dump';
         if (doneTd.length === 1) turl += '?file=' + encodeURIComponent(doneTd[0].filename);
-        window.location.href = turl;
+        window.location.href = window.Common && Common.appPath ? Common.appPath(turl) : turl;   // 프록시(/dump) 경유면 접두사(함정 92)
         return;
     }
     if (doneCore.length > 0 && doneHeap.length === 0 && doneGc.length === 0) {

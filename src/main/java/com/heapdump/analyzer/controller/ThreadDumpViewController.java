@@ -29,6 +29,17 @@ public class ThreadDumpViewController {
 
     private static final Logger logger = LoggerFactory.getLogger(ThreadDumpViewController.class);
 
+    /*
+     * 리다이렉트는 상대 경로로 보낸다(2026-11-27, CLAUDE.md 함정 92) — 내부망 프록시는 /dump 접두사를 떼고 넘겨
+     * 서버가 접두사를 모르므로, 루트 기준(/thread-dump…)으로 보내면 프록시 경유 시 접두사가 빠진다.
+     * 상대 경로는 브라우저가 지금 주소(/dump/thread-dump/… 포함)를 기준으로 푼다. Tomcat 기본(useRelativeRedirects)은 그대로 내보낸다.
+     * 기준 경로: /thread-dump/heap/{fn} · /thread-dump/{heap|analyze}/{fn}/print-html — 파일명에 '/' 는 없다(validateFilename).
+     */
+    /** /thread-dump/heap/{fn} → /thread-dump */
+    static final String REDIRECT_LIST_FROM_ITEM = "redirect:../../thread-dump";
+    /** /thread-dump/heap/{fn}/print-html → /thread-dump */
+    static final String REDIRECT_LIST_FROM_PRINT = "redirect:../../../thread-dump";
+
     private final ThreadDumpAnalyzerService service;
     private final ThreadDumpPdfReportService pdfReportService;
 
@@ -82,7 +93,7 @@ public class ThreadDumpViewController {
      */
     @GetMapping("/heap/{filename:.+}")
     public String heapAnalyze(@PathVariable String filename, Model model) {
-        if (heapThreads == null) return "redirect:/thread-dump";
+        if (heapThreads == null) return REDIRECT_LIST_FROM_ITEM;
         String safe = heapThreads.validateFilename(filename);
         var he = heapThreads.entity(safe).orElse(null);
         model.addAttribute("filename", safe);
@@ -100,14 +111,14 @@ public class ThreadDumpViewController {
 
     @GetMapping("/heap/{filename:.+}/print-html")
     public String heapPrintHtml(@PathVariable String filename, Model model) {
-        if (heapThreads == null) return "redirect:/thread-dump";
+        if (heapThreads == null) return REDIRECT_LIST_FROM_PRINT;
         String safe = heapThreads.validateFilename(filename);
         com.heapdump.analyzer.service.HeapThreadService.Loaded l;
         try {
             l = heapThreads.load(safe);
         } catch (com.heapdump.analyzer.parser.threaddump.ThreadDumpException e) {
             logger.warn("[HeapThreads-PDF] action=print-html result=FAIL file={} code={} — {}", safe, e.code(), e.getMessage());
-            return "redirect:/thread-dump/heap/" + HttpHeaderValues.pathSegment(safe);
+            return "redirect:../" + HttpHeaderValues.pathSegment(safe);   // …/heap/{fn}/print-html → …/heap/{fn}
         }
         Map<String, Object> ai = null;
         try {
@@ -124,7 +135,7 @@ public class ThreadDumpViewController {
     public String printHtml(@PathVariable String filename, Model model) {
         String safe = service.validateFilename(filename);
         ThreadDumpResult result = service.loadResult(safe).orElse(null);
-        if (result == null) return "redirect:/thread-dump/analyze/" + HttpHeaderValues.pathSegment(safe);
+        if (result == null) return "redirect:../" + HttpHeaderValues.pathSegment(safe);   // …/analyze/{fn}/print-html → …/analyze/{fn}
         Map<String, Object> ai = null;
         try {
             ai = service.loadAiInsight(ThreadDumpAnalyzerService.insightKey(safe));

@@ -122,7 +122,7 @@ class ThreadDumpUploadContractTest {
     void confirmModalDashboardBanner() throws IOException {
         String ac = read("src/main/resources/static/js/analyze-confirm.js");
         assertTrue(ac.contains("threaddump: '스레드 덤프'"), "KIND_LABEL");
-        assertTrue(ac.contains("if (kind === 'threaddump') return '/thread-dump/analyze/' + encodeURIComponent(filename) + '?start=1';"),
+        assertTrue(ac.contains("if (kind === 'threaddump') return appPath('/thread-dump/analyze/' + encodeURIComponent(filename) + '?start=1');"),
                 "?start=1 이 없으면 실패한 파일에서 '분석'을 눌러도 옛 오류만 보인다");
         assertTrue(ac.contains(".ac-kind.threaddump{"), "유형 배지 색");
 
@@ -133,6 +133,6 @@ class ThreadDumpUploadContractTest {
         String banner = read("src/main/resources/templates/fragments/banner.html");
         assertTrue(banner.contains("href=\"/thread-dump\" class=\"gb-nav-link\" id=\"gbNavThreadDump\""), "메뉴 링크");
         assertTrue(banner.contains("href=\"/thread-dump\" class=\"gb-ci\" title=\"스레드 덤프\""), "접힌 배너 아이콘");
-        assertTrue(banner.contains("if (path.startsWith('/thread-dump')) {"), "활성 표시");
+        assertTrue(banner.contains("Common.stripAppPrefix(path) : path).startsWith('/thread-dump')) {"), "활성 표시(프록시 접두사 제거 후 비교, 함정 92)");
     }
 }

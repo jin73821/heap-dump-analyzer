@@ -10,7 +10,7 @@
     <link rel="stylesheet" th:href="@{/css/common.css?v=2026-09-20}">
     <link rel="stylesheet" th:href="@{/css/core-dump.css?v=2026-09-20}">
     <link rel="stylesheet" th:href="@{/css/gc-log.css?v=2026-11-25}">
-    <link rel="stylesheet" th:href="@{/css/thread-dump.css?v=2026-11-27}">
+    <link rel="stylesheet" th:href="@{/css/thread-dump.css?v=2026-11-27b}">
     <script th:src="@{/js/lib/chart.umd.min.js}"></script>
 </head>
 <body>
@@ -154,6 +154,8 @@
                     소견
                     <span class="title-count" id="thdFindingsCount"></span>
                 </div>
+                <!-- 옛 규칙(2.7.3 이전)으로 분석된 결과에만 보인다 — thread-dump-analyze.js renderFindings -->
+                <div class="thd-ruleset-note" id="thdRulesetNote" style="display:none">이전 규칙으로 분석된 결과입니다. 재분석하면 소견마다 근거와 원인 연결이 함께 나오고, 바뀐 판정 기준이 적용됩니다.</div>
                 <div class="gcl-findings" id="thdFindings"></div>
             </div>
 
@@ -477,7 +479,7 @@
     var THD_MODE = /*[[${hm} ? 'heap' : 'dump']]*/ 'dump';
 </script>
 <script th:src="@{/js/table-grid.js?v=2026-09-20}"></script>
-<script th:src="@{/js/thread-dump-analyze.js?v=2026-11-26f}"></script>
+<script th:src="@{/js/thread-dump-analyze.js?v=2026-11-27p}"></script>
 
 </body>
 </html>

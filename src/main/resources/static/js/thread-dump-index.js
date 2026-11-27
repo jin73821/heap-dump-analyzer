@@ -168,12 +168,12 @@
         }
         if (ok.length === 1) {
             // 한 개면 바로 결과 화면으로 — 미분석 파일을 열면 분석이 시작된다
-            window.location.href = '/thread-dump/analyze/' + encodeURIComponent(ok[0].name);
+            window.location.href = Common.appPath('/thread-dump/analyze/' + encodeURIComponent(ok[0].name));
             return;
         }
         Common.flashToast ? Common.flashToast(ok.length + '개 파일을 올렸습니다. 목록에서 분석을 시작하세요.', 'success') : null;
         rememberSuggest(ok.map(function (r) { return r.name; }));
-        window.location.href = '/thread-dump';
+        window.location.href = Common.appPath('/thread-dump');
     }
 
     function initUpload() {
@@ -288,7 +288,7 @@
         Common.fetchJSON('/api/thread-dump/' + encodeURIComponent(_deleteTarget) + '?deleteFile=' + deleteFile, { method: 'DELETE' })
             .then(function () {
                 if (Common.flashToast) Common.flashToast('삭제했습니다: ' + _deleteTarget, 'success');
-                window.location.href = '/thread-dump';
+                window.location.href = Common.appPath('/thread-dump');
             })
             .catch(function (e) {
                 failed('삭제 실패', e);
@@ -364,7 +364,7 @@
         if (!_combineNames) return;
         var btn = byId('thdCombineConfirmBtn'); btn.disabled = true;
         Common.fetchJSON('/api/thread-dump/combine', { method: 'POST', body: JSON.stringify({ filenames: _combineNames }) })
-            .then(function (d) { window.location.href = '/thread-dump/analyze/' + encodeURIComponent(d.representative); })
+            .then(function (d) { window.location.href = Common.appPath('/thread-dump/analyze/' + encodeURIComponent(d.representative)); })
             .catch(function (e) {
                 failed('이어 붙이기 실패', e);
                 btn.disabled = false;
@@ -410,8 +410,8 @@
         var reps = [];
         var next = function (i) {
             if (i >= picks.length) {
-                if (reps.length === 1) window.location.href = '/thread-dump/analyze/' + encodeURIComponent(reps[0]);
-                else { if (Common.flashToast) Common.flashToast(reps.length + '개 묶음의 분석을 시작했습니다.', 'success'); window.location.href = '/thread-dump'; }
+                if (reps.length === 1) window.location.href = Common.appPath('/thread-dump/analyze/' + encodeURIComponent(reps[0]));
+                else { if (Common.flashToast) Common.flashToast(reps.length + '개 묶음의 분석을 시작했습니다.', 'success'); window.location.href = Common.appPath('/thread-dump'); }
                 return;
             }
             Common.fetchJSON('/api/thread-dump/combine', { method: 'POST', body: JSON.stringify({ filenames: picks[i].files }) })

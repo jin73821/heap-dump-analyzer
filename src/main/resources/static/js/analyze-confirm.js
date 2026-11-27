@@ -36,6 +36,8 @@
  */
 (function (global) {
     'use strict';
+    /** 화면 경로에 프록시 접두사(/dump)를 붙인다 — common.js 가 없으면 그대로(CLAUDE.md 함정 92). */
+    function appPath(p) { return global.Common && global.Common.appPath ? global.Common.appPath(p) : p; }
 
     function ignored(tag, e) { if (global.Common) global.Common.logIgnored('[AnalyzeConfirm] ' + tag, e); }
     function failed(tag, e) { if (global.Common) global.Common.logError('[AnalyzeConfirm] ' + tag, e); }
@@ -259,7 +261,8 @@
         // (2026-09-14: 실패 행에서 '분석'을 눌러도 옛 오류만 다시 보이고 요청이 나가지 않았다).
         if (kind === 'core') return '/core-dump/progress/' + encodeURIComponent(filename);
         if (kind === 'gclog') return '/gc-log/analyze/' + encodeURIComponent(filename) + '?start=1';
-        if (kind === 'threaddump') return '/thread-dump/analyze/' + encodeURIComponent(filename) + '?start=1';
+        // 스레드 덤프 화면은 프록시가 보정하지 않아 접두사(/dump)를 직접 붙인다(CLAUDE.md 함정 92)
+        if (kind === 'threaddump') return appPath('/thread-dump/analyze/' + encodeURIComponent(filename) + '?start=1');
         return '/analyze/' + encodeURIComponent(filename);
     }
 

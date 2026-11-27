@@ -26,6 +26,7 @@ import java.util.Map;
 @Service
 public class ThreadDumpPdfReportService {
 
+    static final int BASIS_MAX = 4;
     static final int FINDINGS_MAX = 30, DEADLOCKS_MAX = 10, LOCKS_MAX = 15, POOLS_MAX = 20, STUCK_MAX = 30,
             GROUPS_MAX = 10, GROUP_FRAMES = 12, SNAPSHOTS_MAX = 60, CPU_MAX = 10, DEADLOCK_FRAMES = 6;
     private static final DateTimeFormatter DT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -111,10 +112,24 @@ public class ThreadDumpPdfReportService {
             if ("Info".equals(f.getSeverity())) { infoTitles.add(PdfReportService.clip(f.getTitle(), 80)); continue; }
             findingTotal++;
             if (findings.size() >= FINDINGS_MAX) continue;
+            // 근거 줄(2.7.4) — 옛 결과에는 없다. 템플릿이 isEmpty() 를 부르므로 null 이 아니라 반드시 리스트로 넣는다
+            List<String> basis = new ArrayList<>();
+            if (f.getBasis() != null) {
+                for (String b : f.getBasis()) {
+                    if (basis.size() >= BASIS_MAX) break;
+                    basis.add(PdfReportService.clip(b, 200));
+                }
+            }
             findings.add(row("severity", sevLabel(f.getSeverity()), "sevClass", sevClass(f.getSeverity()),
                     "title", PdfReportService.clip(f.getTitle(), 120), "detail", PdfReportService.clip(f.getDetail(), 600),
-                    "advice", blankToNull(PdfReportService.clip(f.getAdvice(), 400))));
+                    "advice", blankToNull(PdfReportService.clip(f.getAdvice(), 400)), "basis", basis));
         }
+        // 종합 진단(2.7.4) — 이어진 소견이 있을 때만. 없으면 null 이고 템플릿이 블록을 그리지 않는다
+        ThreadDumpResult.Verdict v = r.getVerdict();
+        List<String> verdictPoints = new ArrayList<>();
+        if (v != null && v.getPoints() != null) for (String p : v.getPoints()) verdictPoints.add(PdfReportService.clip(p, 220));
+        m.put("verdictHeadline", v == null ? null : blankToNull(PdfReportService.clip(v.getHeadline(), 220)));
+        m.put("verdictPoints", verdictPoints);
         m.put("findings", findings);
         m.put("findingOverflow", Math.max(0, findingTotal - findings.size()));
         m.put("infoTitles", PdfReportService.limit(infoTitles, 12));

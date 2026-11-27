@@ -23,7 +23,7 @@ HotSpot 계열 JVM 의 `jstack` · `kill -3` · `jcmd Thread.print` 출력을 �
   - 스냅샷 경계: `Full thread dump … VM (` 줄 ~ `JNI global ref…` 트레일러(+ JVM 데드락 섹션, `kill -3` 의 `Heap` 섹션). 헤더 없는 조각은 스레드가 3개 이상일 때만 스냅샷으로 받는다. 스레드 구간에서 문법 밖 줄이 30줄 이어지면 `INTERRUPTED_BY_LOG` 로 닫고 그 줄들을 잡음으로 되돌린다. `max-snapshots` 를 넘으면 **마지막 N개**를 남긴다.
   - 줄 앞 접두는 k8s CRI(`<ts> stdout F `)·journald 두 형태만 뗀다. 그 밖의 접두는 해석 못 한 줄로 드러낸다.
   - 스택은 `StackTable` 로 사전화한다 — 메모리가 파일 크기가 아니라 서로 다른 스택 수에 비례한다. 프레임의 `module@version/` 접두는 떼고 저장한다.
-- **소견 코드**(`Critical|High|Medium|Low|Info`, 종합은 Info 를 뺀 최댓값): `DEADLOCK` · `LOCK_CONTENTION` · `LOCK_OWNER_STUCK` · `BLOCKED_RATIO_HIGH` · `STUCK_THREADS` · `HOT_THREAD_CPU` · `VM_THREAD_CPU_HIGH` · `POOL_NO_IDLE` · `CONN_POOL_WAIT` · `DB_WAIT_CLUSTER` · `REMOTE_CALL_WAIT_CLUSTER` · `THREAD_COUNT_HIGH` · `THREAD_COUNT_GROWTH` · `EXECUTOR_LEAK_SUSPECT` · `FINALIZER_BLOCKED` · `WLS_STUCK_THREADS` · `OOM_IN_LOG`. 진단류: `SNAPSHOT_TRUNCATED` · `FILE_READ_INCOMPLETE` · `SNAPSHOT_LIMIT_HIT` · `THREAD_LIMIT_HIT` · `LINES_UNPARSED` · `NO_TIMESTAMP` · `SINGLE_SNAPSHOT` · `NO_LOCK_OWNER_INFO` · `RESTART_BETWEEN_SNAPSHOTS` · `RULE_FAILED` · `RESULT_TRIMMED`. 시그니처(유휴·수신 대기·소켓 읽기·커넥션 풀·JDBC·HTTP 클라이언트·요청 풀 이름)는 `ThreadDumpRules` 한 곳.
+- **소견 코드**(`Critical|High|Medium|Low|Info`, 종합은 Info 를 뺀 최댓값): `DEADLOCK` · `LOCK_CONTENTION` · `LOCK_OWNER_STUCK` · `BLOCKED_RATIO_HIGH` · `STUCK_THREADS` · **`BUSY_LOOP_SUSPECT`** · `HOT_THREAD_CPU` · `VM_THREAD_CPU_HIGH` · `POOL_NO_IDLE` · `CONN_POOL_WAIT` · `DB_WAIT_CLUSTER` · `REMOTE_CALL_WAIT_CLUSTER` · **`SOCKET_WAIT_CLUSTER`** · **`CONNECT_WAIT`** · `THREAD_COUNT_HIGH` · `THREAD_COUNT_GROWTH` · `EXECUTOR_LEAK_SUSPECT` · `FINALIZER_BLOCKED` · `WLS_STUCK_THREADS` · `OOM_IN_LOG`(굵은 3종은 2.7.4). 진단류: `SNAPSHOT_TRUNCATED` · `FILE_READ_INCOMPLETE` · `MEMBER_NO_DUMP` · `SNAPSHOT_LIMIT_HIT` · `THREAD_LIMIT_HIT` · `LINES_UNPARSED` · `HEAP_DERIVED` · `NO_TIMESTAMP` · `SINGLE_SNAPSHOT` · `NO_LOCK_OWNER_INFO` · `RESTART_BETWEEN_SNAPSHOTS` · `RULE_FAILED` · `RESULT_TRIMMED`. 시그니처(유휴·수신 대기·소켓 읽기·연결·DNS·커넥션 풀 종류·JDBC·HTTP 클라이언트·요청 풀 이름·락 종류·호출 지점)는 `ThreadDumpRules` 한 곳. 발동 조건·근거·원인 연결은 아래 "소견 점검·고도화" 절.
 - **결과 JSON 은 사전화돼 있다**(`ThreadDumpResult`, schema 1): `tracks`(스냅샷을 가로지르는 스레드) → `stacks`(프레임 인덱스 열, 저장 깊이 64) → `frames`, 이름은 `names`. 소견·락·교착·정체·CPU·스택 묶음이 스레드 **인덱스**를 참조한다. 스레드 3,000개 × 스냅샷 4개가 약 0.7MB.
 - **실패 코드**(`status=ERROR`, `error_code`, `error_message="CODE: 설명"`): `NOT_THREAD_DUMP` · `UNSUPPORTED_FORMAT` · `EMPTY` · `TOO_LARGE` · `TIMEOUT` · `CANCELLED` · `FILE_MISSING` · `IO_ERROR` · `OUT_OF_MEMORY` · `INTERNAL` · `INTERRUPTED`. 결과 화면 `thread-dump-analyze.js` 의 `ERROR_HINTS` 가 코드별 안내문을 갖는다(`ThreadDumpTemplateSmokeTest` 가 목록을 대조 — 코드를 추가하면 두 곳을 함께 고칠 것).
 - **실패시키지 않고 보완하는 것**은 `diagnostics` 에 세고 화면·PDF 의 "파싱 진단" 카드로 보인다: 잘린 스냅샷·스레드, 해석 못 한 줄(건수 + 앞 20건), 잘라 낸 긴 줄, 치환한 깨진 문자, 지운 제어문자, 상한 도달, 시각 줄 없음, 미지의 상태·락 줄, 건너뛴 규칙.
@@ -31,8 +31,8 @@ HotSpot 계열 JVM 의 `jstack` · `kill -3` · `jcmd Thread.print` 출력을 �
 - **API 오류 본문은 `{success:false, code, error}`.** 컨트롤러의 `Exception` 핸들러는 스프링이 상태를 정해 둔 예외(`ErrorResponse`)의 상태를 지키고, DB 장애는 전역 계약(503 + `Retry-After` + `DB_UNAVAILABLE`)을 그대로 낸다.
 - **리포트:** `ThreadDumpPdfReportService.buildPrintModel` → `Map` 을 PDF(`PdfReportService.renderPdf`)와 HTML 미리보기가 공유한다. 템플릿 `thread-dump/analyze-print.html`. 행은 맵이고 표시 문자열·막대 폭·상한 초과 건수까지 Java 에서 계산한다. 요약 문서라 스레드 전체 표는 넣지 않는다. 엔드포인트 `GET /thread-dump/analyze/{fn}/print-pdf?mode=download|inline` · `…/print-html`.
 - **AI:** `ThreadDumpPromptBuilder.build`(≤12,000자, 형식 지시는 잘리지 않게 끝에 다시 붙인다) → `callLlmAnalysis(prompt, TD_SYSTEM_PROMPT)` → `ThreadDumpAiResponseNormalizer` → `ai_insights` 키 `__threaddump__:{fn}`. 덤프 원문은 보내지 않는다(소견·교착 사슬·상위 락·정체 스레드·상위 스택 묶음만). 재분석하면 AI 해석을 지운다(새 결과와 맞지 않는다). 응답 키: `summary` · `rootCause` · `recommendations` · `severity` · `severityDesc` · `codeAdvice`.
-- **화면:** `templates/thread-dump/{index,analyze}.html` + `static/js/thread-dump-{index,analyze}.js` + `static/css/thread-dump.css`(로드 순서 common → core-dump → gc-log → thread-dump, 레이아웃·모달·KPI·소견은 `.gcl-*` 재사용). 결과는 페이지에 싣지 않고 `GET /api/thread-dump/{fn}/result` 로 받는다(저장본 그대로 — 파싱에 실패하면 재분석을 안내). 탭 4개: 요약 / 락·정체 / 스레드 / 리포트. 스레드 표는 `TableGrid` detach 다.
-- **테스트 127건**, 픽스처는 `src/test/resources/threaddump/`(이 호스트의 JDK 8·21 로 받은 실측 덤프 — 데모 프로그램: 모니터 교착 2 + synchronized 경합 6 + ReentrantLock 경합 3 + 풀 유휴 4·활성 2 + busy loop + Object.wait). ⚠ 픽스처는 `.txt`/`.gz` 로만 둘 것 — `.gitignore` 가 `*.log`·`*.out` 을 무시한다. 운영 덤프는 넣지 않는다(저장소가 public).
+- **화면:** `templates/thread-dump/{index,analyze}.html` + `static/js/thread-dump-{index,analyze}.js` + `static/css/thread-dump.css`(로드 순서 common → core-dump → gc-log → thread-dump, 레이아웃·모달·KPI·소견은 `.gcl-*` 재사용). 결과는 페이지에 싣지 않고 `GET /api/thread-dump/{fn}/result` 로 받는다(저장본 그대로 — 파싱에 실패하면 재분석을 안내). 탭 5개: 요약 / 락·정체 / 스레드 / AI 분석 / 리포트. 스레드 표는 `TableGrid` detach 다.
+- **테스트 204건**(영역별 내역은 `TEST_INVENTORY.md`), 픽스처는 `src/test/resources/threaddump/`(이 호스트의 JDK 8·21 로 받은 실측 덤프 — 데모 프로그램: 모니터 교착 2 + synchronized 경합 6 + ReentrantLock 경합 3 + 풀 유휴 4·활성 2 + busy loop + Object.wait). ⚠ 픽스처는 `.txt`/`.gz` 로만 둘 것 — `.gitignore` 가 `*.log`·`*.out` 을 무시한다. 운영 덤프는 넣지 않는다(저장소가 public).
 
 ## 힙 덤프 연계 · 이어 붙이기 (2026-11-26 v2.7.1)
 
@@ -61,6 +61,50 @@ HotSpot 계열 JVM 의 `jstack` · `kill -3` · `jcmd Thread.print` 출력을 �
 - **요약 탭 배치:** 스냅샷이 1개면(힙 모드는 항상) 추이 차트가 없으므로 '스냅샷별 추이' 카드를 제목 한 줄(`.thd-trend-compact`)로 줄이고, **AI 분석 카드(`#thdAiCard`)를 그 아래(`#thdSide`)로 옮긴다**(`thread-dump-analyze.js` `placeAiCard` — DOM 노드째 옮겨 id·내용이 따라간다. 스냅샷이 여럿이면 `#thdAiHome` 앞 원래 자리). 왼쪽 상태 분포 카드는 오른쪽 칸 높이까지 늘고 차트가 채운다(canvas absolute — 크기 되먹임 방지). 옆 칸의 AI 카드는 남은 높이를 채운다.
 - **미들웨어(WAS)는 판정하지 않는다.** 스레드 덤프에는 System Properties 가 없어 스택 패키지 이름으로 짐작할 수밖에 없다 — 확정되지 않은 값은 화면(헤더·JVM KPI)·PDF·AI 프롬프트 어디에도 싣지 않는다. 분석기의 `middleware` 규칙을 없앴고 `thread_dump_analysis.middleware` 는 null 로 저장한다(옛 결과 JSON 의 `meta.middleware` 는 읽기 호환용으로만 남고 화면에 쓰지 않는다).
 
+## 소견 점검 · 고도화 (2026-11-27 v2.7.4)
+
+현행 규칙을 코드로 점검해 틀리게 말하던 것 8건·놓치던 것 8건을 고치고, 소견마다 **근거 줄**과 **원인 연결**을 붙였다. 원칙은 그대로다 — 덤프 글자로 확인되는 것만 말하고, 세어서 나온 추정에는 "의심" 을 붙인다.
+
+- **활동 분류는 한 곳**(`ThreadDumpAnalyzer.activityOf` — `Activity` 12종). 정체 분류(`stuckCategory`)·풀 분해·I/O 묶음·원인 연결이 같은 분류를 쓴다. 판정 순서가 규칙이다:
+  - BLOCKED → (풀의 synchronized borrow 면 `CONN_POOL_WAIT`) `LOCK_WAIT`
+  - RUNNABLE → `LISTEN` → `CONNECT_WAIT`(연결·DNS) → `DB_WAIT`(소켓 읽기+JDBC) → `REMOTE_WAIT`(소켓 읽기+HTTP 클라이언트) → `REQUEST_READ` → `SOCKET_WAIT` → `RUNNING`
+  - WAITING/TIMED → `CONN_POOL_WAIT` → `IDLE` → `LOCK_WAIT`(ReentrantLock park) → `SLEEP` / `WAIT_OTHER`
+  - **`REQUEST_READ`(요청 수신 대기)** = RMI 연결 스레드가 다음 호출을 기다리는 읽기(`TCPTransport.handleMessages` 가 상위 12프레임 안), 또는 요청 처리 풀 스레드가 서블릿(`HttpServlet.service`)·필터(`.doFilter(`) 프레임 없이 소켓을 읽는 것. **유휴로 센다**(풀 유휴 수·`Track.idle`·정체 제외·"작업 중" 분모 제외).
+  - `Stuck.category` 문자열(`blocked`·`lock-wait`·`pool-wait`·`io`·`running`·`sleeping`·`waiting`)은 바꾸지 않았다 — 화면 `CATEGORY_KO`·PDF `categoryLabel` 이 이 값을 쓴다.
+- **결과 JSON 추가 필드**(schema 는 1 그대로, 전부 null 기본 — 옛 결과에는 키가 없다):
+  - `Finding.basis`(근거 줄 ≤8) · `Finding.related`(이어진 소견 **코드**) · `verdict{headline, points[], codes[]}`(종합 진단) · `meta.ruleset`(=2).
+  - ⚠ `basis`·`verdict` 에 스레드·스택 **인덱스를 넣지 말 것** — 코덱의 줄이기·재색인(`retainTracks`)은 `Finding.tracks` 만 고친다. 이름·주소·수치만 문장으로 넣는다.
+  - `verdict` 는 기존 `diagnostics`(파싱 진단)와 헷갈리지 않게 지은 이름이다.
+- **원인 연결**(`correlate` — 문제 규칙 뒤·`ruleDiagnostics` 앞, `runRule` 격리): 규칙이 남긴 `poolHits`·`lockHits` 로 대상을 찾아 겹침만 센다.
+  - 풀 → 작업 중 스레드의 활동 분해(근거 첫 줄). 한 활동이 절반을 넘으면 그 소견과 잇는다(락 대기면 그 풀 스레드가 가장 많이 기다리는 락).
+  - 락 → 소유·사슬 끝 스레드의 활동, 교착에 묶였는지.
+  - DB 커넥션 풀 대기 → 같은 스냅샷에서 JDBC 를 쓰는 스레드 수. 0개면 "반납 누락 의심".
+  - 정체 ↔ 분류별 원인, 무한 루프 ↔ CPU, OOM(native thread) ↔ 스레드 수 소견.
+  - **종합 진단의 머리는 최고 등급 소견**이다(함정 91). 이어진 소견이 없으면 `verdict` 를 만들지 않고 화면·PDF 가 최상위 소견으로 대신한다. 소견 목록은 등급 내림차순, 같은 등급은 종합 진단의 흐름 순.
+- **규칙별 바뀐 점**(임계값은 `ThreadDumpAnalyzer` 상단 상수 — 런타임 설정 없음):
+
+| 소견 | 2.7.4 |
+|---|---|
+| `LOCK_CONTENTION` | 비율 기준에 절대 상한: High `≥ min(max(20, Java×25%), 100)`, Medium `≥ min(max(5, Java×10%), 30)`. 근거에 대기 지점·락 종류(콘솔·로깅·클래스 로딩·DNS·JDBC 객체)·소유자 활동, 종류별 권고 |
+| `LOCK_OWNER_STUCK` | 근거에 지속 시간. 10초 미만이면 "관측 구간이 짧음"(등급은 그대로) |
+| `STUCK_THREADS` | 지속을 알고 10초 미만이면 High 로 올리지 않는다. `running` 인데 그 구간 CPU 5% 미만이면 "네이티브·파일 I/O 대기로 보임" |
+| `BUSY_LOOP_SUSPECT`(신규, High) | `running` 정체 + 그 구간 CPU ≥80%(JDK 11+). 최상단이 `HashMap`·`java.util.regex` 면 근거에 알린다. `STUCK`·`HOT` 의 tracks 에서 빼지 않고 코드만 잇는다 |
+| `HOT_THREAD_CPU` | 스냅샷 1개면 `cpu= ÷ elapsed= ≥ 80%` + `elapsed ≥ 30초` 로 **생성 이후 평균** 판정(Medium 고정, `evidence.basis=lifetime`) |
+| `VM_THREAD_CPU_HIGH` | 상태 줄이 있는 JVM 스레드(C1/C2 CompilerThread)도 포함. GC·컴파일러·기타로 나눠 권고, GC 가 두 구간 연속이면 High |
+| `POOL_NO_IDLE` | "최대 크기는 덤프에 없다" 고 밝힌다. 크기 ≥20·유휴 ≤5% 는 Medium "유휴 스레드 거의 없음"(유휴 0 의 연속 계산과 분리) |
+| `CONN_POOL_WAIT` | 풀 종류별(`evidence.poolKind` = db/http/object) 소견·문구. commons-pool 은 DBCP 프레임이나 JDBC 드라이버가 있을 때만 db |
+| `DB_/REMOTE_CALL_WAIT_CLUSTER` | 세기·관련 스레드·지속 판정이 같은 목록(`ioMembers`). 근거에 호출 지점(JDK·드라이버·풀 라이브러리 밖 첫 프레임)·같은 스택 최대 개수 |
+| `SOCKET_WAIT_CLUSTER`(신규) | JDBC·HTTP 가 아닌 소켓 응답 대기. **요청 처리 풀 스레드이거나 같은 스택 5개 이상 묶음**만 센다 |
+| `CONNECT_WAIT`(신규) | 연결 수립·DNS 에서 멈춘 스레드 ≥3 Medium, 인접 스냅샷 지속 또는 ≥10 High |
+| `FINALIZER_BLOCKED` | 같은 스택 지속은 정체와 같은 기준(3개 또는 30초) |
+| `DEADLOCK` | 근거에 출처(JVM 보고·그래프)·지속·**교착 뒤에 막힌 스레드 수** |
+| `THREAD_COUNT_HIGH`·`GROWTH` | Java 스레드 기준임을 밝히고 전체 수와의 차이를 근거로. 증가는 늘어난 이름 줄기 상위 3 |
+| `OOM_IN_LOG` | 종류별 권고 |
+
+- **소비 쪽:** 화면(`thread-dump-analyze.js` `renderFindings` — 근거 줄 `ul.thd-basis`·연관 소견 링크 `thdShowFinding`, `threadLinkAt` 이 소견의 `snapshotIdx` 로 스레드를 연다, `renderBanner` 가 `verdict` 를 쓴다) · PDF(`buildPrintModel` 의 `basis`(항상 리스트)·`verdictHeadline`·`verdictPoints`) · AI 프롬프트(`== 종합 진단 ==` + 소견 줄에 코드·근거 ≤3·연관 소견, 소견 섹션 상한 20건·3,000자).
+- **옛 결과:** `meta.ruleset` 이 없으면 소견 카드 머리에 재분석 안내(`#thdRulesetNote` — 원본 파일이 있고 힙 모드가 아닐 때). 화면은 DB 원문 JSON 을 그대로 받으므로 JS 가 `(f.basis || [])` 로 방어한다. 일괄 재분석은 없다 — 파일마다 재분석해야 새 판정이 적용된다.
+- **실측한 것 / 못 한 것:** 연결(`PlainSocketImpl.socketConnect`·`Net.connect0`·`NioSocketImpl.timedFinishConnect`)·DNS(`Inet4/6AddressImpl.lookupAllHostAddr`)·콘솔 락·JUL 락·RMI 대기 프레임은 이 호스트 JDK 8·21 데모 덤프로 확인했다. **WebLogic Muxer 와 연결당 스레드 방식 WAS(JEUS/WebtoB 등)의 요청 수신 대기는 실측 덤프가 없어 합성 텍스트로만 검증했다**(함정 91). `SOCKET_WAIT_CLUSTER` 의 묶음 기준(5)도 운영 덤프로 보정이 필요할 수 있다.
+
 ## 함정
 
 72. **`Object.wait()` 중인 스레드도 `- locked <X>` 를 찍는다 — 같은 스택에 `waiting on <X>` 가 있으면 소유자가 아니다 (2026-11-26)** — `wait()` 는 모니터를 놓고 기다리는데 jstack 은 그 스레드가 과거에 잡았던 지점에 `locked` 를 그대로 출력한다. `locked` 만 보고 소유자를 정하면 **락을 놓고 쉬는 스레드를 범인으로 지목**하고, 그 스레드를 깨우려고 기다리는 스레드들과 묶여 가짜 경합·가짜 교착이 나온다. `ThreadDumpAnalyzer.buildLocks` 는 스레드마다 `waiting on` 주소 집합을 먼저 모으고 그 주소의 `locked` 는 건너뛴다. 대기 간선도 마찬가지로 가려야 한다 — `parking to wait for` 는 클래스가 `ReentrantLock`·`ReentrantReadWriteLock` 의 `Sync` 일 때만 락 경합이다(`ConditionObject`·`SynchronousQueue`·`CountDownLatch` 대기는 정상적인 대기다). j.u.c. 락의 소유자는 `Locked ownable synchronizers` 가 있을 때만 알 수 있으므로(`jstack -l`) 없으면 `owner=-1` + `NO_LOCK_OWNER_INFO` 로 알린다.
@@ -80,3 +124,7 @@ HotSpot 계열 JVM 의 `jstack` · `kill -3` · `jcmd Thread.print` 출력을 �
 79. **409 는 전용 예외로만 낸다 — `IllegalStateException` 을 통째로 409 로 매핑하면 내부 오류 메시지가 사용자에게 샌다 (2026-11-26)** — `ThreadDumpApiController` 의 `Exception` 핸들러는 예상 못 한 예외를 500 + 일반 문구로 숨긴다(`ThreadDumpEndpointTest.errorContract` — `IllegalStateException("secret internal detail")` 가 새면 실패). "분석 중인 파일은 묶을 수 없다" 같은 상태 충돌은 `ThreadDumpAnalyzerService.BusyException` 으로 던지고 그것만 409 `CONFLICT` 로 매핑한다.
 
 80. **템플릿의 모드 플래그는 `<html th:with>` 에서 한 번 boolean 으로 만든다 — `${!heapMode}` 는 변수가 없으면 SpEL 오류로 페이지가 중간에 끊긴다 (2026-11-26)** — `thread-dump/analyze.html` 은 스레드 덤프 모드와 힙 모드를 함께 그린다. 컨트롤러가 `heapMode` 를 넣지 않는 경로(기존 스모크 테스트·다른 화면에서 같은 템플릿 사용)에서 `!heapMode`·`fileExists and !heapMode` 가 null 을 만나 `TemplateProcessingException` 이 나고, 운영에서는 chunked 응답이 잘린 빈 화면으로 보인다(함정 23). `<html th:with="hm=${heapMode == true}">` 로 정규화하고 본문은 `${hm}` 만 쓴다.
+
+90. **커넥션 풀 대기는 유휴 시그니처에도 맞는다 — 유휴 판정을 먼저 하면 풀이 커넥션 대기로 꽉 찬 것을 "전부 유휴" 로 읽는다 (2026-11-27)** — HikariCP 는 `ConcurrentBag.borrow` 안에서 `SynchronousQueue` 로 기다리는데, `SynchronousQueue` 는 스레드 풀이 일거리를 기다릴 때도 쓰여 유휴 목록에 있다. 2.7.3 까지는 `traitsOf` 가 `idle` 과 `connPoolWait` 를 따로 켜고 `isIdle`·`stuckCategory` 가 `idle` 을 먼저 봐서, 커넥션을 기다리는 요청 스레드가 **풀 유휴 수·화면의 '유휴' 태그에 들어가고 정체(`pool-wait`)·I/O 분모에서 빠졌다** — 요청 풀 200개가 전부 커넥션 대기여도 `POOL_NO_IDLE` 이 나지 않았다(테스트 주석은 "유휴가 아니다" 라고 적어 놓고 단언은 없었다). `traitsOf` 끝에서 `connPoolWait` 면 `idle=false` 로 내리고, `activityOf` 도 `CONN_POOL_WAIT` 를 `IDLE` 보다 먼저 본다. 같은 부류: 시그니처 목록을 늘릴 때는 **더 특정적인 판정이 일반 판정에 가려지지 않는지**(연결 대기 vs 소켓 읽기 — JDK 21 은 꼭대기가 둘 다 `sun.nio.ch.Net.poll` 이라 그 프레임은 어느 목록에도 넣지 않는다, DB 대기 vs 요청 수신 대기) 순서를 먼저 정할 것. `threadLink` 에 둘째 인자를 붙이면 안 되는 것도 같은 종류의 함정이다 — 여러 곳이 `.map(threadLink)` 로 불러 배열 인덱스가 스냅샷 번호로 들어간다(소견용은 `threadLinkAt`).
+
+91. **종합 진단의 머리는 최고 등급 소견이어야 한다 · 실측하지 못한 WAS 패턴은 이름으로만 가른다 (2026-11-27)** — ① 처음에는 "이어진 소견이 있는 것 중 가장 심각한 것" 을 머리로 골랐더니, 교착(Critical, 이어진 소견 없음)과 락 경합(High, 이어진 소견 있음)이 함께 있는 덤프에서 **화면 배너가 교착을 제쳐 두고 락 경합을 말했다**. `buildVerdict` 는 최고 등급 소견들 안에서만 머리를 고르고, 그중 이어진 것이 없으면 `verdict` 를 만들지 않는다(배너·PDF 가 최상위 소견으로 대신). ② WebLogic Muxer(`ExecuteThread … for queue: 'weblogic.socket.Muxer'`)는 이름이 요청 풀 규칙에 맞고 바닥에 실행기 프레임(`weblogic.work.ExecuteThread.run`)도 있어 요청 처리 풀로 올라갔다 — 평생 같은 스택이고 서로의 락을 기다리는 모습이 정상인데 정체·유휴 없음 대상이 됐다. **프레임 이름은 버전마다 달라 이름으로만 가른다**(`ThreadDumpRules.isMuxerName` — `isWorkerStem`·`buildPools` 의 승격·`activityOf` 세 곳). 연결당 스레드 방식 WAS 의 유휴(서블릿·필터 진입 전 소켓 읽기)도 같은 이유로 "요청 처리 풀 + 서블릿·필터 프레임 없음" 이라는 구조 조건으로만 판정한다. **둘 다 실측 WebLogic·JEUS 덤프로는 확인하지 못했다** — 실측 덤프가 생기면 `ThreadDumpFindingInsightTest` 의 합성 케이스를 실측 프레임으로 바꾸고, 오탐·미탐이 보이면 조건을 고칠 것(필터가 아닌 밸브·인터셉터 단계에서 소켓을 읽는 WAS 는 유휴로 잘못 셀 수 있다).

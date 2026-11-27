@@ -1213,6 +1213,8 @@ public class ThreadDumpAnalyzerService {
             if (e.getSnapshotCount() != null) sb.append(')');
             sb.append('\n');
             loadResult(e.getFilename()).ifPresent(r -> {
+                // 종합 진단이 있으면 소견 목록보다 먼저 — 900자 상한에 잘려도 원인 연결 한 줄은 남는다
+                if (r.getVerdict() != null && r.getVerdict().getHeadline() != null) sb.append("종합: ").append(r.getVerdict().getHeadline()).append('\n');
                 for (ThreadDumpResult.Finding f : r.getFindings()) {
                     if ("Info".equals(f.getSeverity())) continue;
                     sb.append("- [").append(f.getSeverity()).append("] ").append(f.getTitle()).append('\n');
@@ -1294,6 +1296,7 @@ public class ThreadDumpAnalyzerService {
     static final String TD_SYSTEM_PROMPT = "당신은 JVM 스레드 덤프 분석 전문가입니다. 주어진 스레드 덤프 분석 결과(스냅샷별 상태 분포·교착·락 경합·"
             + "여러 스냅샷에 걸쳐 같은 스택에 머문 스레드·스레드 풀·규칙 기반 이상 징후)를 해석해 근본 원인과 조치를 제시하세요. "
             + "수치와 스레드·클래스 이름은 주어진 값만 인용하고 없는 값을 만들지 마세요. "
+            + "'근거'·'종합 진단'·'연관 소견'은 규칙이 덤프에서 직접 세어 이은 것이니 그대로 근거로 삼되, '의심'이라고 적힌 것은 가능성으로만 다루세요. "
             + "RUNNABLE 이라도 소켓 읽기·accept·select 에 있는 스레드는 CPU 를 쓰는 것이 아니라 상대를 기다리는 것입니다. "
             + "Object.wait() 중인 스레드는 락을 쥐고 있지 않습니다. 스냅샷이 1개뿐이면 '멈춰 있다'고 단정하지 마세요. "
             + "recommendations 는 우선순위가 높은 3개까지, codeAdvice 에는 스택에서 보이는 클래스·메서드를 짚어 고칠 지점을 적으세요. "

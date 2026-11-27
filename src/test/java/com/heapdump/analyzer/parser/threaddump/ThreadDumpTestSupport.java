@@ -128,7 +128,27 @@ final class ThreadDumpTestSupport {
             return this;
         }
 
+        /** 스레드마다 다른 {@code cpu=}/{@code elapsed=} 를 주는 Java 스레드(JDK 11+ 헤더 전용) — 생성 이후 평균 CPU 규칙용. */
+        Dump threadAt(String name, String state, double cpuMs, double elapsedSec, String... body) {
+            int n = num++;
+            sb.append('"').append(name).append("\" #").append(n).append(" prio=5 os_prio=0 cpu=").append(String.format("%.2f", cpuMs))
+                    .append("ms elapsed=").append(String.format("%.2f", elapsedSec)).append("s tid=0x00007f00").append(String.format("%08x", 0x1000 * n))
+                    .append(" nid=0x").append(Integer.toHexString(0x100 + n)).append(" ").append(nativeStatus(state)).append(" [0x00007f0000000000]\n");
+            sb.append("   java.lang.Thread.State: ").append(state).append('\n');
+            for (String l : body) sb.append(l).append('\n');
+            sb.append('\n');
+            return this;
+        }
+
         Dump raw(String line) { sb.append(line).append('\n'); return this; }
+
+        /** {@code cpu=} 가 찍힌 JVM 내부 스레드(상태 줄 없음). tid 를 스레드마다 달리 줘야 스냅샷 사이에 같은 스레드로 이어진다. */
+        Dump vmThread(String name, int id, double cpuMs) {
+            sb.append('"').append(name).append("\" os_prio=0 cpu=").append(String.format("%.2f", cpuMs)).append("ms elapsed=")
+                    .append(String.format("%.2f", elapsed + 10)).append("s tid=0x00007f00fff").append(String.format("%05x", id))
+                    .append(" nid=0x").append(Integer.toHexString(0x900 + id)).append(" runnable  \n\n");
+            return this;
+        }
 
         Dump vmThread(String name) {
             sb.append('"').append(name).append("\" os_prio=0 tid=0x00007f00ffff0000 nid=0x99 runnable \n\n");
@@ -151,6 +171,21 @@ final class ThreadDumpTestSupport {
     static String at(String frame) { return "\tat " + frame; }
     static String locked(String addr, String cls) { return "\t- locked <" + addr + "> (a " + cls + ")"; }
     static String waitingToLock(String addr, String cls) { return "\t- waiting to lock <" + addr + "> (a " + cls + ")"; }
+    /** {@code jstack -l} 의 소유 정보 — 스레드 본문 끝에 붙인다. */
+    static String[] owns(String addr, String cls) {
+        return new String[]{"", "   Locked ownable synchronizers:", "\t- <" + addr + "> (a " + cls + ")"};
+    }
+
+    /** 본문 줄 배열 여러 개를 이어 붙인다. */
+    static String[] body(Object... parts) {
+        List<String> out = new ArrayList<>();
+        for (Object p : parts) {
+            if (p instanceof String s) out.add(s);
+            else for (String s : (String[]) p) out.add(s);
+        }
+        return out.toArray(new String[0]);
+    }
+
     static String parking(String addr, String cls) { return "\t- parking to wait for  <" + addr + "> (a " + cls + ")"; }
 
     static final String[] IDLE_BODY = {

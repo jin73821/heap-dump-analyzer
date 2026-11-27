@@ -46,9 +46,7 @@ public final class CoreFileListBuilder {
             Pattern.compile("^(#\\d+)\\s+(?:(0x[0-9a-fA-F]+)\\s+in\\s+)?(.*?)(?:\\s+at\\s+(\\S+:\\d+))?\\s*$");
 
     private static final DateTimeFormatter MD = DateTimeFormatter.ofPattern("MM-dd");
-    private static final DateTimeFormatter HM = DateTimeFormatter.ofPattern("HH:mm");
-    private static final DateTimeFormatter MD_HM = DateTimeFormatter.ofPattern("MM-dd HH:mm");
-    private static final DateTimeFormatter YMD = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter YMD_HM = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     /** Linux x86_64 시그널 번호 — 표시용. */
     private static final Map<String, Integer> SIG_NO = Map.ofEntries(
@@ -208,14 +206,13 @@ public final class CoreFileListBuilder {
         return out;
     }
 
-    /** 업로드 시각 — 오늘 14:32 / 어제 22:47 / 11-24 11:20(올해) / 2025-11-24(지난해 이전). */
+    /**
+     * 업로드 시각 — 항상 연도까지 {@code 2026-11-24 11:20}(2026-11-27 사용자 요청). 종전의 오늘/어제/MM-dd 상대 표기는
+     * 연도가 빠져 해를 넘긴 코어와 섞이면 읽기 어려웠다. today 는 호출부 호환용으로 남긴다(쓰지 않음).
+     */
     static String relativeLabel(LocalDateTime t, LocalDate today) {
         if (t == null) return null;
-        LocalDate d = t.toLocalDate();
-        if (today != null && d.equals(today)) return "오늘 " + t.format(HM);
-        if (today != null && d.equals(today.minusDays(1))) return "어제 " + t.format(HM);
-        if (today != null && d.getYear() != today.getYear()) return t.format(YMD);
-        return t.format(MD_HM);
+        return t.format(YMD_HM);
     }
 
     /** 분석 소요 시간 — 2분 41초 / 58초 / 1초 미만. */

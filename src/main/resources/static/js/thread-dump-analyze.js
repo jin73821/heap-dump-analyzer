@@ -287,6 +287,15 @@
         if (t == null || t < 0 || !R.tracks[t]) return '<span class="hi-muted">알 수 없음</span>';
         return '<button type="button" class="thd-link" data-track="' + t + '" onclick="thdShowThread(+this.dataset.track)">' + esc(nameOf(t)) + '</button>';
     }
+    /**
+     * 소견의 스레드 링크 — 그 소견이 본 스냅샷(snapshotIdx)으로 연다. ⚠ threadLink 에 둘째 인자를 붙이지 말 것:
+     * 여러 곳이 .map(threadLink) 로 부르고 있어 배열 인덱스가 스냅샷 번호로 들어간다.
+     */
+    function threadLinkAt(t, snap) {
+        if (t == null || t < 0 || !R.tracks[t]) return '<span class="hi-muted">알 수 없음</span>';
+        return '<button type="button" class="thd-link" data-track="' + t + '" data-snap="' + (snap == null ? '' : snap)
+            + '" onclick="thdShowThread(+this.dataset.track, this.dataset.snap === \'\' ? null : +this.dataset.snap)">' + esc(nameOf(t)) + '</button>';
+    }
     function shortClass(cls) { if (!cls) return '?'; var i = cls.lastIndexOf('.'); return i < 0 ? cls : cls.substring(i + 1); }
 
     function loadAndRender() {
@@ -346,12 +355,21 @@
             el.className = 'thd-banner ok';
             title = '주의가 필요한 징후를 찾지 못했습니다';
             text = HEAP_MODE ? '힙 덤프를 만든 순간의 스레드 ' + fmtNum(k.threadsLast) + '개를 분석했습니다. 스냅샷 비교·CPU·synchronized 락 관계는 힙 덤프에 없어 판정하지 않았습니다.'
-                : (R.snapshots.length === 1 ? '스냅샷이 1개뿐이라 멈춘 스레드·CPU·증가 추세는 판정하지 못했습니다. ' : '')
+                : (R.snapshots.length === 1 ? '스냅샷이 1개뿐이라 멈춘 스레드·증가 추세는 판정하지 못했습니다. ' : '')
                 + '스레드 ' + fmtNum(k.threadsLast) + '개를 분석했습니다.';
         } else {
             el.className = 'thd-banner sev-' + sev;
             title = real[0].title + (real.length > 1 ? ' 외 ' + (real.length - 1) + '건' : '');
             text = real[0].detail || '';
+        }
+        // 종합 진단(2.7.4) — 분석기가 소견을 원인·결과로 이었으면 그것을 머리로 쓴다. 옛 결과·이어진 소견이 없는 결과는 위의 최상위 소견 그대로
+        var v = R.verdict, points = '';
+        if (real.length && v && v.headline) {
+            var rest = real.length - (v.codes || []).length;
+            title = v.headline;
+            text = '';
+            points = (v.points || []).map(function (p) { return '<div class="thd-banner-text thd-verdict-point"><span class="thd-verdict-arrow">→</span> ' + esc(p) + '</div>'; }).join('')
+                + (rest > 0 ? '<div class="thd-banner-text" style="color:#6B7280">그 밖의 소견 ' + rest + '건</div>' : '');
         }
         var span = '';
         if (R.snapshots.length > 1) span = '스냅샷 ' + R.snapshots.length + '개' + (m.spanSec != null ? ' · ' + fmtSec(m.spanSec) : '')
@@ -359,7 +377,7 @@
         if (m.files && m.files.length) span = (span ? span + ' · ' : '') + '구성 파일 ' + m.files.length + '개를 이어 붙임';
         el.innerHTML = '<span class="thd-sev sev-' + esc(sev) + '">' + esc(sev) + '</span>'
             + '<div class="thd-banner-main"><div class="thd-banner-title">' + esc(title) + '</div>'
-            + '<div class="thd-banner-text">' + esc(text) + '</div>'
+            + (text ? '<div class="thd-banner-text">' + esc(text) + '</div>' : '') + points
             + (span ? '<div class="thd-banner-text" style="color:#6B7280">' + esc(span) + '</div>' : '') + '</div>';
     }
 
@@ -441,16 +459,43 @@
         var fs = R.findings || [];
         var real = fs.filter(function (f) { return f.severity !== 'Info'; });
         byId('thdFindingsCount').textContent = real.length + '건' + (fs.length > real.length ? ' (+참고 ' + (fs.length - real.length) + ')' : '');
+        // 근거 줄·원인 연결이 없던 옛 규칙의 결과(meta.ruleset 없음)면 재분석을 안내한다 — 힙 모드는 매번 새로 만들므로 해당 없다
+        var note = byId('thdRulesetNote');
+        if (note) note.style.display = (!HEAP_MODE && THD_FILE_EXISTS && R.meta && R.meta.ruleset == null) ? '' : 'none';
         if (!fs.length) { box.innerHTML = '<div class="gcl-empty">규칙 기반 이상 징후가 없습니다.</div>'; return; }
+        var titleOf = {};
+        fs.forEach(function (f) { if (!titleOf[f.code]) titleOf[f.code] = f.title; });
         box.innerHTML = fs.map(function (f) {
-            var who = (f.tracks || []).slice(0, 8).map(threadLink).join(', ');
+            var snap = f.snapshotIdx == null ? null : f.snapshotIdx;
+            var who = (f.tracks || []).slice(0, 8).map(function (t) { return threadLinkAt(t, snap); }).join(', ');
             var more = (f.tracks || []).length > 8 ? ' 외 ' + ((f.tracks || []).length - 8) + '개' : '';
-            return '<div class="gcl-finding sev-' + esc(f.severity) + '"><div class="gcl-finding-head"><span class="gcl-finding-sev">' + esc(f.severity) + '</span>'
+            // 옛 결과에는 basis·related 가 없다(키 자체가 없음)
+            var basis = (f.basis || []).map(function (b) { return '<li>' + esc(b) + '</li>'; }).join('');
+            var rel = (f.related || []).filter(function (c) { return titleOf[c]; }).map(function (c) {
+                return '<button type="button" class="thd-link" data-code="' + esc(c) + '" onclick="thdShowFinding(this.dataset.code)">' + esc(titleOf[c]) + '</button>';
+            }).join(' · ');
+            return '<div class="gcl-finding sev-' + esc(f.severity) + '" data-code="' + esc(f.code) + '"><div class="gcl-finding-head"><span class="gcl-finding-sev">' + esc(f.severity) + '</span>'
                 + '<span class="gcl-finding-title">' + esc(f.title) + '</span><span class="gcl-finding-code">' + esc(f.code) + '</span></div>'
                 + (f.detail ? '<div class="gcl-finding-detail">' + esc(f.detail) + '</div>' : '')
+                + (basis ? '<ul class="thd-basis" aria-label="근거">' + basis + '</ul>' : '')
                 + (f.advice ? '<div class="gcl-finding-advice">' + esc(f.advice) + '</div>' : '')
+                + (rel ? '<div class="gcl-finding-detail thd-related">연관 소견: ' + rel + '</div>' : '')
                 + (who ? '<div class="gcl-finding-detail" style="font-size:12px;color:#6B7280">관련 스레드: ' + who + esc(more) + '</div>' : '') + '</div>';
         }).join('');
+    }
+
+    /** 연관 소견 링크 — 그 코드의 첫 카드로 가서 잠깐 강조한다. 같은 코드가 여러 건이면 등급이 가장 높은 첫 카드다. */
+    function thdShowFinding(code) {
+        var cards = byId('thdFindings').querySelectorAll('.gcl-finding'), el = null;
+        for (var i = 0; i < cards.length && !el; i++) if (cards[i].getAttribute('data-code') === code) el = cards[i];
+        if (!el) return;
+        var calm = Common.reduceMotion && Common.reduceMotion();
+        el.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+        el.classList.remove('thd-finding-flash');
+        void el.offsetWidth;        // 같은 카드를 연달아 눌러도 강조가 다시 돈다
+        el.classList.add('thd-finding-flash');
+        // 동작 줄이기에서는 연출 대신 테두리로 강조하므로 직접 걷어 낸다
+        setTimeout(function () { el.classList.remove('thd-finding-flash'); }, 1500);
     }
 
     function renderDiagnostics() {
@@ -769,7 +814,7 @@
     }
 
     /** 다른 카드의 스레드 이름을 눌렀다 — 스레드 탭으로 가서 그 스레드의 스택을 편다. */
-    function thdShowThread(t) {
+    function thdShowThread(t, wantSnap) {
         if (!R || !R.tracks[t]) return;
         thdTab('threads');
         _stateSel = {};
@@ -777,7 +822,9 @@
         byId('thdHideSys').checked = false;
         byId('thdPoolSelect').value = '';
         byId('thdThreadSearch').value = nameOf(t);
-        var snap = stateAt(t, _snap) !== '-' ? _snap : R.tracks[t].first;
+        // 소견에서 왔으면 그 소견이 본 스냅샷으로 연다(2.7.4) — 예전에는 표에 떠 있던 스냅샷으로 열어 소견과 다른 스택이 보였다
+        var snap = (wantSnap != null && wantSnap >= 0 && wantSnap < R.snapshots.length && stateAt(t, wantSnap) !== '-') ? wantSnap
+            : (stateAt(t, _snap) !== '-' ? _snap : R.tracks[t].first);
         if (snap !== _snap) { byId('thdSnapSelect').value = String(snap); loadThreadSnapshot(snap); }
         else { renderStateChips(); applyThreadFilter(); }
         var row = null;
@@ -833,7 +880,7 @@
     var _reportMode = null;
     var _reportTimer = null;
     function reportUrl(mode) {
-        return '/thread-dump/' + (HEAP_MODE ? 'heap/' : 'analyze/') + encodeURIComponent(THD_FILENAME) + (mode === 'pdf' ? '/print-pdf?mode=inline' : '/print-html');
+        return Common.appPath('/thread-dump/' + (HEAP_MODE ? 'heap/' : 'analyze/') + encodeURIComponent(THD_FILENAME) + (mode === 'pdf' ? '/print-pdf?mode=inline' : '/print-html'));
     }
     function thdReportMode(mode, auto) {
         var frame = byId('thdReportFrame');
@@ -1040,7 +1087,7 @@
         var deleteFile = chk ? chk.checked : true;
         var btn = byId('thdDeleteBtn'); btn.disabled = true;
         Common.fetchJSON(api('') + '?deleteFile=' + deleteFile, { method: 'DELETE' })
-            .then(function () { window.location.href = '/thread-dump'; })
+            .then(function () { window.location.href = Common.appPath('/thread-dump'); })
             .catch(function (e) { btn.disabled = false; var err = byId('thdDeleteErr'); if (err) { err.textContent = errMsg(e, '삭제하지 못했습니다.'); err.classList.add('show'); } });
     }
 
@@ -1175,7 +1222,7 @@
     function thdConfirmUngroup() {
         var btn = byId('thdUngroupBtn'); btn.disabled = true;
         Common.fetchJSON(api('/ungroup'), { method: 'POST' })
-            .then(function () { window.location.href = '/thread-dump'; })
+            .then(function () { window.location.href = Common.appPath('/thread-dump'); })
             .catch(function (e) { btn.disabled = false; thdCloseUngroup(); toast('묶음 해제 실패: ' + errMsg(e, ''), 'danger'); });
     }
 
@@ -1210,7 +1257,7 @@
     var _exporting = false;
     function tdUrl(kind, name) {
         var enc = encodeURIComponent(name);
-        return kind === 'list' ? '/thread-dump?file=' + enc : '/thread-dump/analyze/' + enc;
+        return Common.appPath(kind === 'list' ? '/thread-dump?file=' + enc : '/thread-dump/analyze/' + enc);
     }
     function exportState(state, msg, name) {
         var box = byId('thdExportMsg');
@@ -1281,6 +1328,7 @@
     window.thdCloseReanalyze = thdCloseReanalyze;
     window.thdConfirmReanalyze = thdConfirmReanalyze;
     window.thdShowThread = thdShowThread;
+    window.thdShowFinding = thdShowFinding;
     window.thdDetailSnap = thdDetailSnap;
     window.thdToggleState = thdToggleState;
     window.thdToggleGroup = thdToggleGroup;

@@ -489,11 +489,53 @@ class ThreadDumpAnalyzerServiceTest {
             f.setDetail("상세 ".repeat(20));
             r.getFindings().add(f);
         }
-        ThreadDumpAnalysisEntity e = new ThreadDumpAnalysisEntity();
-        e.setFilename("big.txt");
-        String p = ThreadDumpPromptBuilder.build(r, e);
+        // 소견이 아무리 많아도 소견 섹션은 상한(20건·3,000자) 안에서 끝난다 — 뒤 섹션을 밀어내지 않는다(2.7.4)
+        String p = ThreadDumpPromptBuilder.build(r, "big.txt", null, null);
         assertTrue(p.length() <= ThreadDumpPromptBuilder.MAX_CHARS, "" + p.length());
-        assertTrue(p.contains("...(truncated)"));
-        assertTrue(p.trim().endsWith("\"codeAdvice\": \"스택에서 보이는 클래스·메서드 기준의 수정 지점\"}"));
+        assertFalse(p.contains("...(truncated)"), "소견만으로는 전체 절단까지 가지 않는다");
+        assertTrue(p.contains("(X0) 제목 0"), "소견 줄에 코드가 들어간다");
+        assertFalse(p.contains("제목 " + ThreadDumpPromptBuilder.FINDINGS_MAX + ":"), "상한을 넘는 소견은 싣지 않는다");
+        assertTrue(p.contains("…외 "), "생략한 건수를 밝힌다");
+        int section = p.indexOf("\n다음 JSON 형식으로만 답하세요:") - p.indexOf("== 이상 징후");
+        assertTrue(section <= ThreadDumpPromptBuilder.FINDINGS_CHARS + 200, "소견 섹션 길이: " + section);
+
+        // 전체가 길어지면(긴 부가 섹션) 본문을 자르되 형식 지시는 끝에 남긴다
+        String cut = ThreadDumpPromptBuilder.build(r, "big.txt", null, "== 연결된 힙 덤프 ==\n" + "x".repeat(20_000));
+        assertTrue(cut.length() <= ThreadDumpPromptBuilder.MAX_CHARS, "" + cut.length());
+        assertTrue(cut.contains("...(truncated)"));
+        assertTrue(cut.trim().endsWith("\"codeAdvice\": \"스택에서 보이는 클래스·메서드 기준의 수정 지점\"}"));
+    }
+
+    @Test
+    void 프롬프트에_종합_진단과_근거_연관_소견이_들어간다() {
+        ThreadDumpResult r = new ThreadDumpResult();
+        ThreadDumpResult.Finding f = new ThreadDumpResult.Finding();
+        f.setCode("POOL_NO_IDLE");
+        f.setSeverity("High");
+        f.setTitle("요청 처리 풀에 유휴 스레드 없음");
+        f.setDetail("풀의 스레드 200개가 모두 작업 중입니다.");
+        f.setBasis(new java.util.ArrayList<>(List.of("풀 작업 중 200개: 락 대기 142", "그중 142개가 락 0x01 대기", "셋째 근거", "넷째 근거")));
+        f.setRelated(new java.util.ArrayList<>(List.of("LOCK_CONTENTION")));
+        r.getFindings().add(f);
+        ThreadDumpResult.Verdict v = new ThreadDumpResult.Verdict();
+        v.setHeadline("요청 처리 풀에 유휴 스레드 없음 — 풀 작업 중 200개: 락 대기 142");
+        v.getPoints().add("락 경합 — 142개 스레드가 같은 락 대기");
+        r.setVerdict(v);
+        String p = ThreadDumpPromptBuilder.build(r, "a.txt", null, null);
+        int verdict = p.indexOf("== 종합 진단"), findings = p.indexOf("== 이상 징후");
+        assertTrue(verdict > 0 && verdict < findings, "종합 진단이 소견보다 앞에 온다");
+        assertTrue(p.contains("  → 락 경합 — 142개 스레드가 같은 락 대기"));
+        assertTrue(p.contains("- [High] (POOL_NO_IDLE) 요청 처리 풀에 유휴 스레드 없음: 풀의 스레드 200개가 모두 작업 중입니다."));
+        assertTrue(p.contains("    근거: 그중 142개가 락 0x01 대기"));
+        assertFalse(p.contains("넷째 근거"), "근거는 소견마다 3줄까지");
+        assertTrue(p.contains("    연관 소견: LOCK_CONTENTION"));
+
+        // 옛 결과(근거·종합 진단 없음)도 그대로 만들어진다
+        f.setBasis(null);
+        f.setRelated(null);
+        r.setVerdict(null);
+        String old = ThreadDumpPromptBuilder.build(r, "a.txt", null, null);
+        assertFalse(old.contains("== 종합 진단") || old.contains("근거:") || old.contains("연관 소견"));
+        assertTrue(ThreadDumpAnalyzerService.TD_SYSTEM_PROMPT.contains("의심"), "추정으로 표시된 근거는 가능성으로만 다루라고 지시한다");
     }
 }

@@ -59,6 +59,10 @@ public class HeapSystemApiController {
     private final AccountLockPolicyConfigService accountLockPolicyConfig;
     private final com.heapdump.analyzer.service.DbHealthService dbHealth;
 
+    /** 접속 중 사용자의 '비밀번호 초기화' 표시 조회(2026-11-27) — 선택 주입. */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    com.heapdump.analyzer.service.UserService userService;
+
     public HeapSystemApiController(HeapDumpAnalyzerService analyzerService,
                                    LlmConfigService llmConfig,
                                    LlmRateLimitService llmRateLimitService,
@@ -511,7 +515,7 @@ public class HeapSystemApiController {
 
     @GetMapping("/api/system/status")
     @ResponseBody
-    public ResponseEntity<Map<String, Object>> getSystemStatus() {
+    public ResponseEntity<Map<String, Object>> getSystemStatus(org.springframework.security.core.Authentication auth) {
         Map<String, Object> resp = new LinkedHashMap<>();
 
         resp.put("matCliReady", config.isMatCliReady());
@@ -543,6 +547,18 @@ public class HeapSystemApiController {
         resp.put("dbUp", db.up());
         resp.put("dbError", db.error());
         resp.put("dbDownSince", db.downSince() != null ? db.downSince().toString() : null);
+
+        // 관리자가 이 계정의 비밀번호를 초기화했으면 배너가 변경 모달(현재 + 새 + 확인)을 띄운다(2026-11-27).
+        // DB 가 내려가 있으면 묻지 않는다 — 상태 응답 자체가 실패하면 배너의 DB 장애 표시까지 잃는다
+        boolean pwChange = false;
+        if (db.up() && userService != null && auth != null) {
+            try {
+                pwChange = userService.isPasswordChangeRequired(auth.getName());
+            } catch (RuntimeException e) {
+                logger.debug("[Status] 비밀번호 초기화 표시 조회 실패: {}", e.toString());
+            }
+        }
+        resp.put("passwordChangeRequired", pwChange);
 
         return ResponseEntity.ok(resp);
     }

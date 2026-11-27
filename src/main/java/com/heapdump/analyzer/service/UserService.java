@@ -152,7 +152,48 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setPasswordChangedAt(LocalDateTime.now());   // 관리자 초기화 → 만료 카운트 리셋
         user.setPasswordFailCount(0);                     // 새 비밀번호 → 반복 실패 누적도 리셋
+        user.setPasswordChangeRequired(null);             // 관리자가 비밀번호를 정했다 → '초기화' 표시 해제
         userRepository.save(user);
+    }
+
+    /**
+     * 관리자 '비밀번호 초기화' (2026-11-27) — 비밀번호는 바꾸지 않고 '새 비밀번호를 직접 정해야 함' 표시만 남긴다.
+     * 사용자는 기존 비밀번호(·OTP)로 로그인한 뒤 강제 변경 모달에서 새 비밀번호를 정한다.
+     * 비밀번호를 잊은 사용자는 관리자가 '비밀번호 수정'({@link #resetPassword})으로 직접 정한다.
+     */
+    public User requirePasswordChange(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다: " + id));
+        user.setPasswordChangeRequired(Boolean.TRUE);
+        return userRepository.save(user);
+    }
+
+    /**
+     * 초기화 표시가 있는 계정이 로그인 직후 강제 변경 모달에서 새 비밀번호를 정한다 — 현재 비밀번호는 묻지 않는다
+     * (방금 1차·OTP 인증을 통과한 부분 인증 세션에서만 호출된다, {@code PasswordChangeController}).
+     * 표시가 없으면 거부한다 — 이 경로가 현재 비밀번호 확인을 건너뛰는 우회로가 되지 않게.
+     */
+    public void setNewPasswordAfterReset(String username, String newPassword) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        if (!user.isPasswordChangeRequiredFlag()) {
+            throw new IllegalArgumentException("비밀번호 초기화 상태가 아닙니다. 다시 로그인하세요.");
+        }
+        validatePassword(newPassword);
+        if (passwordEncoder.matches(newPassword, user.getPassword())) {
+            throw new IllegalArgumentException("새 비밀번호는 기존 비밀번호와 달라야 합니다.");
+        }
+        user.setPassword(passwordEncoder.encode(newPassword));
+        user.setPasswordChangedAt(LocalDateTime.now());
+        user.setPasswordFailCount(0);
+        user.setPasswordChangeRequired(null);
+        userRepository.save(user);
+        logger.info("[UserService] 비밀번호 변경 (초기화 후 첫 로그인): {}", username);
+    }
+
+    /** 초기화 표시 여부 — 배너 상태 폴링이 접속 중인 사용자에게 변경 모달을 띄울 때 쓴다. */
+    public boolean isPasswordChangeRequired(String username) {
+        return userRepository.findByUsername(username).map(User::isPasswordChangeRequiredFlag).orElse(false);
     }
 
     public void deleteUser(Long id) {
@@ -211,6 +252,7 @@ public class UserService {
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setPasswordChangedAt(LocalDateTime.now());   // 만료 카운트 리셋 (강제 변경 포함)
         user.setPasswordFailCount(0);                     // 새 비밀번호 → 반복 실패 누적도 리셋
+        user.setPasswordChangeRequired(null);             // 관리자 '초기화' 표시도 해제 (접속 중 배너 모달 경로)
         userRepository.save(user);
         logger.info("[UserService] 비밀번호 변경 (self): {}", username);
     }

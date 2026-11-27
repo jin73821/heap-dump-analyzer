@@ -48,6 +48,20 @@ public class User {
     @Column(name = "password_changed_at")
     private LocalDateTime passwordChangedAt;
 
+    /**
+     * 관리자 '비밀번호 초기화' 표시 (2026-11-27) — 비밀번호는 그대로 두고 사용자가 새 비밀번호를 직접 정하게 한다.
+     * 다음 로그인(1차·OTP 통과 뒤) 강제 변경 모달은 새 비밀번호 + 확인만, 이미 접속 중이면 배너 모달이
+     * 현재 + 새 + 확인으로 받는다. 본인 변경·관리자 '비밀번호 수정' 이 끝나면 해제된다.
+     * null = 표시 없음(기존 계정 무중단 — ddl-auto 가 nullable 로 추가).
+     */
+    @Column(name = "password_change_required")
+    private Boolean passwordChangeRequired;
+
+    /** 초기화 표시가 있어 새 비밀번호를 정해야 하는가. */
+    public boolean isPasswordChangeRequiredFlag() {
+        return Boolean.TRUE.equals(passwordChangeRequired);
+    }
+
     @Column(name = "memo", columnDefinition = "MEDIUMTEXT")
     private String memo;
 

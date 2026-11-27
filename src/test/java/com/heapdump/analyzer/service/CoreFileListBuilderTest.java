@@ -83,7 +83,7 @@ class CoreFileListBuilderTest {
         assertEquals("잘못된 메모리 접근", httpd.getSignalMeaning());
         assertEquals("fatal", httpd.getSignalTone());
         assertEquals("2분 41초", httpd.getFormattedAnalysisTime());
-        assertEquals("오늘 14:32", httpd.getUploadedLabel());
+        assertEquals("2026-11-26 14:32", httpd.getUploadedLabel());
 
         CoreFileRow sshd = m.get("core.sshd.3391");
         assertTrue(sshd.isNotAnalyzed(), "이력이 없는 코어는 미분석");
@@ -166,10 +166,11 @@ class CoreFileListBuilderTest {
         assertEquals("2분 41초", CoreFileListBuilder.formatDuration(161_000L));
         assertEquals("1시간 5분", CoreFileListBuilder.formatDuration(3_900_000L));
 
-        assertEquals("오늘 09:05", CoreFileListBuilder.relativeLabel(LocalDateTime.of(2026, 11, 26, 9, 5), TODAY));
-        assertEquals("어제 22:47", CoreFileListBuilder.relativeLabel(LocalDateTime.of(2026, 11, 25, 22, 47), TODAY));
-        assertEquals("11-24 11:20", CoreFileListBuilder.relativeLabel(LocalDateTime.of(2026, 11, 24, 11, 20), TODAY));
-        assertEquals("2025-11-24", CoreFileListBuilder.relativeLabel(LocalDateTime.of(2025, 11, 24, 11, 20), TODAY));
+        // 업로드 시각은 항상 연도까지(2026-11-27) — 오늘·어제·올해·지난해 모두 같은 형식
+        assertEquals("2026-11-26 09:05", CoreFileListBuilder.relativeLabel(LocalDateTime.of(2026, 11, 26, 9, 5), TODAY));
+        assertEquals("2026-11-25 22:47", CoreFileListBuilder.relativeLabel(LocalDateTime.of(2026, 11, 25, 22, 47), TODAY));
+        assertEquals("2026-11-24 11:20", CoreFileListBuilder.relativeLabel(LocalDateTime.of(2026, 11, 24, 11, 20), TODAY));
+        assertEquals("2025-11-24 11:20", CoreFileListBuilder.relativeLabel(LocalDateTime.of(2025, 11, 24, 11, 20), TODAY));
         assertNull(CoreFileListBuilder.relativeLabel(null, TODAY));
     }
 

@@ -38,7 +38,7 @@ public class CoreFileRow {
     private String formattedSize;
 
     private LocalDateTime uploadedAt;
-    private String uploadedLabel;      // 오늘 14:32 / 어제 22:47 / 11-24 11:20 / 2025-11-24
+    private String uploadedLabel;      // 2026-11-24 11:20 (항상 연도까지)
     private String uploadedBy;
     private LocalDateTime analyzedAt;
     private String formattedAnalysisTime;

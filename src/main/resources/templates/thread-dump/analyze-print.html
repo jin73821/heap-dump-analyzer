@@ -80,6 +80,15 @@
         .finding .fd { font-size: 8pt; color: #374151; margin-top: 0.7mm; line-height: 1.35; word-break: break-all; }
         .finding .fa { font-size: 7.8pt; color: #4B5563; margin-top: 0.7mm; line-height: 1.35; }
         .finding .fa strong { color: #1F2937; }
+        /* 근거 줄·종합 진단(2.7.4) — 좌측 색 띠 없이 옅은 배경과 가는 테두리만 */
+        .finding .fb { margin-top: 0.8mm; padding: 0.8mm 1.6mm; background: #FFFFFF; border: 0.2mm solid #E5E7EB; border-radius: 1mm; }
+        .finding .fb-row { font-size: 7.6pt; color: #374151; line-height: 1.4; word-break: break-all; }
+        .finding .fb-dot { color: #9CA3AF; }
+        .verdict { border: 0.3mm solid #D1D5DB; border-radius: 1.5mm; background: #F9FAFB; padding: 1.8mm 2.6mm; margin-top: 1.2mm; page-break-inside: avoid; }
+        .verdict .vh { font-size: 8.8pt; font-weight: 700; color: #111827; line-height: 1.4; word-break: break-all; }
+        .verdict .vl { font-size: 7.4pt; font-weight: 700; color: #4B5563; border: 0.2mm solid #9CA3AF; border-radius: 0.8mm; padding: 0 1.2mm; margin-right: 1.2mm; }
+        .verdict .vp { font-size: 8pt; color: #374151; margin-top: 0.6mm; line-height: 1.4; word-break: break-all; }
+        .verdict .va { color: #6B7280; }
         .more { font-size: 7.3pt; color: #9CA3AF; margin-top: 0.8mm; }
         .info-list { font-size: 7.8pt; color: #6B7280; margin-top: 1.2mm; line-height: 1.4; }
 
@@ -226,10 +235,17 @@
 
     <!-- 소견 -->
     <div class="sec-title">분석 소견 <span class="sec-note">규칙 기반</span></div>
+    <div class="verdict" th:if="${verdictHeadline != null}">
+        <div class="vh"><span class="vl">종합 진단</span> <span th:text="${verdictHeadline}">headline</span></div>
+        <div class="vp" th:each="p : ${verdictPoints}"><span class="va">&#8594;</span> <span th:text="${p}">point</span></div>
+    </div>
     <div class="empty-box" th:if="${findings.isEmpty()}">주의가 필요한 징후를 찾지 못했습니다</div>
     <div class="finding" th:each="f : ${findings}" th:classappend="${f.sevClass}">
         <div class="ft"><span class="sev" th:classappend="${f.sevClass}" th:text="${f.severity}">높음</span><span th:text="${f.title}">title</span></div>
         <div class="fd" th:text="${f.detail}">detail</div>
+        <div class="fb" th:if="${!f.basis.isEmpty()}">
+            <div class="fb-row" th:each="b : ${f.basis}"><span class="fb-dot">&#8226;</span> <span th:text="${b}">근거</span></div>
+        </div>
         <div class="fa" th:if="${f.advice != null}"><strong>조치 &#183;</strong> <span th:text="${f.advice}">advice</span></div>
     </div>
     <div class="more" th:if="${findingOverflow > 0}" th:text="'외 ' + ${findingOverflow} + '건 — 웹 화면 참조'"></div>

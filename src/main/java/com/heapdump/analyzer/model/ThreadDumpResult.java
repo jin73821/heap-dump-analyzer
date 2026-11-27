@@ -45,6 +45,12 @@ public class ThreadDumpResult {
     private List<CpuTop> cpuTop = new ArrayList<>();
     private Diagnostics diagnostics = new Diagnostics();
     private RawSample rawSample = new RawSample();
+    /**
+     * 종합 진단(2.7.4) — 소견들을 원인·결과로 이은 한 줄 + 근거. 이어지는 소견이 없으면 null(화면·PDF 는 최상위 소견으로 대신한다).
+     * 이름이 {@link #diagnostics}(파싱 진단)와 비슷해 헷갈리지 않게 verdict 로 둔다. ⚠ 초기화하지 말 것 — 옛 결과는 이 키가 없다(함정 58 규약).
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private Verdict verdict;
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -84,6 +90,11 @@ public class ThreadDumpResult {
         private String heapFilename;
         /** 이어 붙여 분석한 구성 파일(분석 순서). 파일 하나짜리 분석이면 null. */
         private List<String> files;
+        /**
+         * 소견 규칙 세대(2.7.4 = 2). null 이면 근거 줄·원인 연결이 없던 옛 규칙의 결과다 — 화면이 재분석을 안내한다.
+         * ⚠ 초기화하지 말 것(분석기가 넣는다).
+         */
+        private Integer ruleset;
     }
 
     @Data
@@ -139,6 +150,25 @@ public class ThreadDumpResult {
         private Integer snapshotIdx;
         /** 관련 스레드({@link ThreadDumpResult#getTracks()} 인덱스, ≤20). */
         private List<Integer> tracks = new ArrayList<>();
+        /**
+         * 근거 줄(2.7.4) — 규칙이 센 수치를 사람이 읽는 문장으로. 화면·PDF·AI 프롬프트가 그대로 싣는다.
+         * ⚠ 스레드·스택 <b>인덱스를 넣지 말 것</b> — 코덱의 줄이기·재색인은 {@link #tracks} 만 고친다. 옛 결과는 null.
+         */
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private List<String> basis;
+        /** 원인·결과로 이어진 소견 코드(2.7.4). 같은 코드가 여러 건이면 화면은 첫 카드로 간다. 옛 결과는 null. */
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private List<String> related;
+    }
+
+    /** 종합 진단 — {@link ThreadDumpResult#getVerdict()}. */
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Verdict {
+        private String headline;
+        private List<String> points = new ArrayList<>();
+        /** 이어진 소견 코드(앞이 결과, 뒤가 원인 쪽). */
+        private List<String> codes = new ArrayList<>();
     }
 
     /** 스택 하나 — 프레임 인덱스 열(위가 top). {@code cut} 은 저장 깊이 상한으로 잘라 낸 프레임 수. */
