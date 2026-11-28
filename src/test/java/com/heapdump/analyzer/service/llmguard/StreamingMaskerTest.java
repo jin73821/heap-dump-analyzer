@@ -48,6 +48,12 @@ class StreamingMaskerTest {
         assertEverySplit(s, pre + "주민번호는 900101-1234567 입니다. " + FILLER, "900101-1234567");
         assertEverySplit(s, pre + "카드 4111-1111-1111-1111 결제 " + FILLER, "4111-1111-1111-1111");
         assertEverySplit(s, pre + "담당 abcde@corp.com 회신 " + FILLER, "abcde@corp.com");
+        // 2026-11-28 고도화 — 앞 단어가 일치 구간 안에 있어 단어와 숫자 사이에서 잘리지 않는다(함정 94)
+        assertEverySplit(s, pre + "입금 계좌번호: 110123456789 로 보내세요 " + FILLER, "110123456789");
+        assertEverySplit(s, pre + "주민번호 9001011234567 확인 " + FILLER, "9001011234567");
+        assertEverySplit(s, pre + "카드 CVC 123 유효기간 12/27 " + FILLER, "12/27");
+        assertEverySplit(s, pre + "카카오뱅크 3333-01-1234567 " + FILLER, "3333-01-1234567");
+        assertEverySplit(s, pre + "카드 6212 3456 7890 1234 569 " + FILLER, "6212 3456 7890 1234 569");
         // 짧은 응답(홀드백보다 짧음)도 flush 로 전부 나온다
         assertEverySplit(s, "메일 abcde@corp.com", "abcde@corp.com");
     }

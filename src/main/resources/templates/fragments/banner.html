@@ -213,7 +213,10 @@ body.banner-collapsed .gb-collapsed-icons { display: flex; }
 }
 /* ── 페이지 로드 시 transition 비활성화 ───────── */
 body.banner-no-transition .g-banner,
-body.banner-no-transition .gb-header { transition: none !important; }
+body.banner-no-transition .gb-header,
+body.banner-no-transition .gb-nav-sub { transition: none !important; }
+/* ↑ .gb-nav-sub 포함 이유(2026-11-28): 현재 경로의 서브 메뉴가 0→200px 로 애니메이션되며 펼쳐지는 동안
+     배너 높이가 모자라 복원한 스크롤 위치(restoreBannerScroll)가 위로 잘린다. 로드 시엔 즉시 펼친다. */
 
 /* ── Mobile hamburger button (shared across pages) ── */
 .gb-menu-btn {
@@ -332,7 +335,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
         </div>
         <div class="gb-header-text">
             <div class="gb-header-title">Heap Dump Analyzer</div>
-            <div class="gb-header-sub">v2.7.7 · MAT CLI</div>
+            <div class="gb-header-sub">v2.7.8 · MAT CLI</div>
         </div>
     </a>
 
@@ -565,6 +568,7 @@ body.banner-no-transition .gb-header { transition: none !important; }
 <script>
 /* ── Banner toggle + system status ─────────── */
 var _GB_CACHE_KEY = 'bannerStatusCache';
+var _GB_SCROLL_KEY = 'bannerScroll';   // 배너 스크롤 위치(sessionStorage) — 아래 IIFE 보다 먼저 선언돼야 한다
 // 갱신 주기 — Settings > General 의 '화면 자동 갱신 주기'(10/30/60초). 모델 누락 시 60초 폴백.
 var _GB_INTERVAL = (window.UI_REFRESH_SECONDS > 0 ? window.UI_REFRESH_SECONDS : 60) * 1000;
 var _gbStatusPoll = null; // managedInterval 핸들 — 열린 탭에서 주기를 바꾸는 후속 작업을 위해 보관
@@ -606,6 +610,10 @@ var _gbStatusPoll = null; // managedInterval 핸들 — 열린 탭에서 주기�
         applyBannerStatus(cached);
     }
 
+    // 배너 스크롤 위치 복원 — 서브 메뉴 펼침·캐시 상태 반영으로 높이가 확정된 뒤에 한다.
+    restoreBannerScroll();
+    window.addEventListener('pagehide', saveBannerScroll);
+
     // 캐시가 60초 이상 오래됐으면 API 호출, 아니면 다음 주기까지 대기
     var age = getCacheAge();
     if (age < 0 || age >= _GB_INTERVAL) {
@@ -621,6 +629,39 @@ var _gbStatusPoll = null; // managedInterval 핸들 — 열린 탭에서 주기�
         setInterval(fetchBannerStatus, _GB_INTERVAL);
     }
 })();
+
+/* ── 배너 스크롤 위치 유지 (2026-11-28) ─────────
+   배너는 페이지마다 새로 그려져 이동하면 스크롤이 맨 위로 돌아갔다. 창이 낮아 메뉴 아래쪽을
+   스크롤해 누르면 새 페이지에서 메뉴가 다시 위로 튀었다. 떠날 때(pagehide) 저장하고 그릴 때 복원한다.
+   - 스크롤 컨테이너는 데스크탑 .g-banner, 모바일 드로어 #gbBody(.gb-tab-content) — 둘 다 저장한다.
+   - sessionStorage: 탭마다 따로 유지되고 새 탭은 맨 위에서 시작한다.
+   - 대상 페이지가 더 짧으면(서브 메뉴 닫힘 등) 브라우저가 최대값으로 자른다. */
+function saveBannerScroll() {
+    var banner = document.getElementById('gBanner');
+    var body = document.getElementById('gbBody');
+    if (!banner) return;
+    try {
+        sessionStorage.setItem(_GB_SCROLL_KEY, JSON.stringify({
+            b: banner.scrollTop, n: body ? body.scrollTop : 0
+        }));
+    } catch (err) {
+        if (window.Common) window.Common.logIgnored('[Banner] 스크롤 위치 저장 실패(sessionStorage 차단)', err);
+    }
+}
+function restoreBannerScroll() {
+    var saved = null;
+    try {
+        var raw = sessionStorage.getItem(_GB_SCROLL_KEY);
+        if (raw) saved = JSON.parse(raw);
+    } catch (err) {
+        if (window.Common) window.Common.logIgnored('[Banner] 스크롤 위치 복원 실패', err);
+    }
+    if (!saved) return;
+    var banner = document.getElementById('gBanner');
+    var body = document.getElementById('gbBody');
+    if (banner && saved.b > 0) banner.scrollTop = saved.b;
+    if (body && saved.n > 0) body.scrollTop = saved.n;
+}
 
 /* ── 페이지 로딩 스피너 ─────────────────────── */
 var _GB_LOADING_DELAY_MS = 100;   // 100ms 안에 페이지 전환되면 스피너 미표시 (flash 방지)

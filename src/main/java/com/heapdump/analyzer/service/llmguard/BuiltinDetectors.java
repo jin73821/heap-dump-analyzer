@@ -2,6 +2,10 @@ package com.heapdump.analyzer.service.llmguard;
 
 import com.heapdump.analyzer.model.entity.LlmGuardRule;
 
+import java.time.LocalDate;
+import java.time.Year;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -36,6 +40,7 @@ public final class BuiltinDetectors {
 
     public static final String RRN = "RRN";
     public static final String CARD = "CARD";
+    public static final String CARD_CVC = "CARD_CVC";
     public static final String ACCOUNT = "ACCOUNT";
     public static final String MOBILE = "MOBILE";
     public static final String EMAIL = "EMAIL";
@@ -88,12 +93,21 @@ public final class BuiltinDetectors {
     private static final String CONFIRM = LlmGuardRule.ACTION_CONFIRM;
 
     public static final List<Def> DEFAULTS = Collections.unmodifiableList(Arrays.asList(
-        new Def(RRN, "주민·외국인등록번호", CAT_ID, B, "YYMMDD-[1-8]NNNNNN (생년월일 유효성 검증, 하이픈 선택)",
-                BLOCK, true, "생년월일이 유효하지 않은 13자리 숫자는 제외합니다.", 10),
-        new Def(CARD, "신용카드번호", CAT_CREDIT, B, "NNNN-NNNN-NNNN-NNNN / Amex 15자리 (Luhn 검증)",
-                BLOCK, true, "Luhn 검증을 통과하고 카드사 번호대(2·3·4·5·6·9)로 시작하는 번호만 잡습니다.", 20),
-        new Def(ACCOUNT, "계좌번호", CAT_CREDIT, B, "하이픈 구분 숫자 10~14자리 (전화번호·날짜·주민번호·사업자번호 모양 제외)",
-                CONFIRM, true, "하이픈이 없는 숫자열은 다른 번호와 구분할 수 없어 잡지 않습니다.", 30),
+        new Def(RRN, "주민·외국인등록번호", CAT_ID, B,
+                "YYMMDD-GNNNNNN (구분자 하이픈·대시·공백·없음 / 생년월일·성별자리 검증, 붙여 쓰면 검증번호 또는 앞 단어 필요)",
+                BLOCK, true, "날짜(윤년 포함)와 성별자리의 출생 연대가 맞아야 하고 미래 출생은 제외합니다. "
+                        + "하이픈 없이 붙인 13자리는 검증번호가 맞거나 앞에 주민번호·외국인등록번호 같은 단어가 있을 때만 잡습니다(로그 타임스탬프 오탐 방지).", 10),
+        new Def(CARD, "신용카드번호", CAT_CREDIT, B,
+                "14·15·16·19자리 (구분자 하이픈·공백·점·없음 / Luhn·카드사 번호대 검증)",
+                BLOCK, true, "Luhn 검증과 길이별 카드사 번호대(16자리 2·3·4·5·6·9, Amex 34·37, Diners 30·36·38·39, 19자리 4·5·6)를 봅니다. "
+                        + "영문·밑줄에 붙은 숫자열(해시·ID)은 제외합니다.", 20),
+        new Def(CARD_CVC, "카드 보안코드·유효기간", CAT_CREDIT, B,
+                "CVC·CVV·보안코드 뒤 3~4자리 / 유효기간·만료일·EXP 뒤 MM/YY",
+                BLOCK, true, "단어 바로 뒤의 값만 가립니다. 유효기간은 MM/YY(MM/YYYY) 형태만 봅니다.", 25),
+        new Def(ACCOUNT, "계좌번호", CAT_CREDIT, B,
+                "하이픈 구분 10~14자리 / 계좌·입금·송금·이체·은행명·account 뒤 10~14자리",
+                CONFIRM, true, "하이픈 없는 숫자열은 앞 15자 안에 계좌·입금·송금·이체·은행명·account 가 있을 때만 잡습니다. "
+                        + "전화번호(국제전화 포함)·날짜·주민번호·사업자번호 모양과 금액·건수 단위가 붙은 숫자는 제외합니다.", 30),
         new Def(MOBILE, "휴대전화번호", CAT_ID, B, "01[016789]-NNN(N)-NNNN (구분자 -, ., 공백 또는 없음)",
                 CONFIRM, true, null, 40),
         new Def(EMAIL, "이메일", CAT_ID, B, "local@domain.tld (example.com·.test 등 예시 도메인 제외)",
@@ -116,6 +130,7 @@ public final class BuiltinDetectors {
     static {
         DETECTORS.put(RRN, new RrnDetector());
         DETECTORS.put(CARD, new CardDetector());
+        DETECTORS.put(CARD_CVC, new CardCvcDetector());
         DETECTORS.put(ACCOUNT, new AccountDetector());
         DETECTORS.put(MOBILE, new MobileDetector());
         DETECTORS.put(EMAIL, new EmailDetector());
@@ -162,6 +177,36 @@ public final class BuiltinDetectors {
         return s.charAt(0) + maskAlnum(s.substring(1));
     }
 
+    /** 정규식 한 개로 {@code [from,to)} 를 투명 경계로 훑는 매처. */
+    static Matcher regionMatcher(Pattern p, CharSequence text, int from, int to) {
+        Matcher m = p.matcher(text);
+        m.region(from, to);
+        m.useTransparentBounds(true);
+        m.useAnchoringBounds(false);
+        return m;
+    }
+
+    /**
+     * 한 판정기의 여러 패턴이 같은 값을 잡으면 입력 건수가 두 번 센다({@code LlmGuardService.evaluate} 는 hit 마다 센다).
+     * 다른 유효 일치의 치환 구간 안에 들고 전체 구간이 더 짧은 유효 일치는 경계(replacement=null)로 낮춘다.
+     * 경계로 남겨야 스트림 자르기가 그 구간 안에 들어가지 않는다.
+     */
+    static void dropContained(List<Hit> local, List<Hit> out) {
+        for (Hit h : local) {
+            boolean inner = false;
+            if (h.replacement != null) {
+                for (Hit o : local) {
+                    if (o == h || o.replacement == null) continue;
+                    if (o.replStart <= h.replStart && h.replEnd <= o.replEnd && (o.end - o.start) > (h.end - h.start)) {
+                        inner = true;
+                        break;
+                    }
+                }
+            }
+            out.add(inner ? new Hit(h.rule, h.start, h.end, h.start, h.start, null) : h);
+        }
+    }
+
     // ── 정규식 판정기 공통 ─────────────────────────────────────────
 
     abstract static class RegexDetector implements Detector {
@@ -194,17 +239,68 @@ public final class BuiltinDetectors {
 
     // ── 주민·외국인등록번호 ────────────────────────────────────────
 
+    /**
+     * 2026-11-28 고도화.
+     * <ul>
+     *   <li>구분자는 하이픈·유니코드 대시·전각 하이픈(앞뒤 공백 허용)·공백 하나·없음을 본다.</li>
+     *   <li>성별자리로 출생 연대를 정한다(1·2·5·6 → 1900년대, 3·4·7·8 → 2000년대). 윤년과 미래 출생까지 검증한다.</li>
+     *   <li>하이픈류 구분이 없으면(붙임·공백) 검증번호가 맞거나 앞 단어(주민·외국인·등록번호·RRN 등)가 있어야 한다.
+     *       epoch 밀리초(예: 2024년 {@code 1704067200000})가 날짜로 읽혀 입력이 차단되던 오탐을 막는다.
+     *       2020-10 이후 발급 번호는 검증번호가 없어, 하이픈 형태에서는 검증번호를 요구하지 않는다.</li>
+     * </ul>
+     * ⚠ 앞 단어는 <b>일치 구간 안</b>에 넣는다(Hit.start = 단어 시작) — 일치 밖 문맥을 따로 읽으면 스트림(앞 16자만 봄)과
+     * 전문 결과가 갈린다(함정 94).
+     */
     static final class RrnDetector extends RegexDetector {
-        RrnDetector() { super(Pattern.compile("(?<![0-9])([0-9]{2})([0-9]{2})([0-9]{2})(-?)([1-8])([0-9]{6})(?![0-9])")); }
+        private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
+
+        RrnDetector() {
+            super(Pattern.compile("(?:(?<kw>주민|외국인|등록번호|거소|(?i:\\bRRN|\\bSSN))[^0-9\\r\\n]{0,12})?"
+                    + "(?<![0-9])(?<yy>[0-9]{2})(?<mm>[0-9]{2})(?<dd>[0-9]{2})"
+                    + "(?<sep>[ \\t]?[-\\u2010-\\u2015\\uFF0D][ \\t]?|[ \\t])?"
+                    + "(?<g>[1-8])(?<rest>[0-9]{6})(?![0-9])"));
+        }
 
         @Override
         Hit toHit(CompiledRule rule, Matcher m) {
-            int mm = Integer.parseInt(m.group(2));
-            int dd = Integer.parseInt(m.group(3));
-            if (!validMonthDay(mm, dd)) return null;
-            String rep = m.group(1) + m.group(2) + m.group(3) + m.group(4) + m.group(5) + "******";
-            return whole(rule, m, rep);
+            int yy = Integer.parseInt(m.group("yy"));
+            int mm = Integer.parseInt(m.group("mm"));
+            int dd = Integer.parseInt(m.group("dd"));
+            int g = m.group("g").charAt(0) - '0';
+            if (!validBirth(yy, mm, dd, g)) return null;
+            String sep = m.group("sep") == null ? "" : m.group("sep");
+            boolean hyphen = !sep.trim().isEmpty();
+            if (!hyphen && m.group("kw") == null) {
+                String digits = m.group("yy") + m.group("mm") + m.group("dd") + m.group("g") + m.group("rest");
+                if (!rrnChecksum(digits)) return null;
+            }
+            String rep = m.group("yy") + m.group("mm") + m.group("dd") + sep + m.group("g") + "******";
+            return new Hit(rule, m.start(), m.end(), m.start("yy"), m.end(), rep);
         }
+
+        /** 성별자리로 정한 출생 연대에서 날짜가 실제로 있고(윤년 포함) 오늘 이전인가. */
+        static boolean validBirth(int yy, int mm, int dd, int g) {
+            if (!validMonthDay(mm, dd)) return false;
+            int year = (g == 1 || g == 2 || g == 5 || g == 6 ? 1900 : 2000) + yy;
+            if (mm == 2 && dd == 29 && !Year.isLeap(year)) return false;
+            return !LocalDate.of(year, mm, dd).isAfter(LocalDate.now(SEOUL));
+        }
+    }
+
+    private static final int[] RRN_WEIGHTS = {2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5};
+
+    /**
+     * 13자리 검증번호. 주민: {@code (11 − s%11) % 10}. 외국인(성별자리 5~8): 주민 공식 또는 {@code (13 − s%11) % 10}
+     * (외국인등록번호 공식 — 발급 시기에 따라 두 공식이 섞여 있어 둘 다 받는다).
+     */
+    static boolean rrnChecksum(String d) {
+        if (d.length() != 13) return false;
+        int s = 0;
+        for (int i = 0; i < 12; i++) s += (d.charAt(i) - '0') * RRN_WEIGHTS[i];
+        int last = d.charAt(12) - '0';
+        if ((11 - s % 11) % 10 == last) return true;
+        int g = d.charAt(6) - '0';
+        return g >= 5 && (13 - s % 11) % 10 == last;
     }
 
     static boolean validMonthDay(int mm, int dd) {
@@ -215,30 +311,57 @@ public final class BuiltinDetectors {
 
     // ── 신용카드 ──────────────────────────────────────────────────
 
+    /**
+     * 2026-11-28 고도화 — 14(Diners 4-6-4)·15(Amex 4-6-5)·16(4-4-4-4)·19(4-4-4-4-3)자리, 구분자 하이픈·공백·점(한 가지만)·없음.
+     * 앞뒤가 영문·밑줄이면 제외한다(해시·hex·식별자 안의 숫자열). 16자리를 품은 19자리처럼 같은 값을 두 패턴이 잡으면
+     * 긴 쪽만 센다({@link #dropContained}).
+     */
     static final class CardDetector implements Detector {
+        private static final String L = "(?<![0-9A-Za-z_])";
+        private static final String R = "(?![0-9A-Za-z_])";
         private static final Pattern P16 = Pattern.compile(
-                "(?<![0-9])([0-9]{4})([- ]?)([0-9]{4})\\2([0-9]{4})\\2([0-9]{4})(?![0-9])");
+                L + "[0-9]{4}([- .]?)[0-9]{4}\\1[0-9]{4}\\1[0-9]{4}" + R);
+        private static final Pattern P19 = Pattern.compile(
+                L + "[0-9]{4}([- .]?)[0-9]{4}\\1[0-9]{4}\\1[0-9]{4}\\1[0-9]{3}" + R);
         private static final Pattern P15 = Pattern.compile(
-                "(?<![0-9])(3[47][0-9]{2})([- ]?)([0-9]{6})\\2([0-9]{5})(?![0-9])");
+                L + "3[47][0-9]{2}([- .]?)[0-9]{6}\\1[0-9]{5}" + R);
+        private static final Pattern P14 = Pattern.compile(
+                L + "3[0689][0-9]{2}([- .]?)[0-9]{6}\\1[0-9]{4}" + R);
 
         @Override
         public int scan(CompiledRule rule, CharSequence text, int from, int to, boolean atEnd, List<Hit> out) {
-            scanOne(P16, rule, text, from, to, out);
-            scanOne(P15, rule, text, from, to, out);
+            List<Hit> local = new ArrayList<>();
+            scanOne(P16, rule, text, from, to, local);
+            scanOne(P19, rule, text, from, to, local);
+            scanOne(P15, rule, text, from, to, local);
+            scanOne(P14, rule, text, from, to, local);
+            dropContained(local, out);
             return -1;
         }
 
         private static void scanOne(Pattern p, CompiledRule rule, CharSequence text, int from, int to, List<Hit> out) {
-            Matcher m = p.matcher(text);
-            m.region(from, to);
-            m.useTransparentBounds(true);
-            m.useAnchoringBounds(false);
+            Matcher m = regionMatcher(p, text, from, to);
             while (m.find()) {
                 String s = m.group();
                 String digits = s.replaceAll("[^0-9]", "");
-                boolean ok = issuerPrefix(digits) && luhn(digits) && !allSame(digits);
                 out.add(new Hit(rule, m.start(), m.end(), m.start(), m.end(),
-                        ok ? maskDigitsExceptLast(s, 4) : null));
+                        validCard(digits) ? maskDigitsExceptLast(s, 4) : null));
+            }
+        }
+
+        /** 길이별 카드사 번호대 + Luhn + 같은 숫자 반복 제외. */
+        static boolean validCard(String d) {
+            if (allSame(d) || !luhn(d)) return false;
+            int p2 = Integer.parseInt(d.substring(0, 2));
+            switch (d.length()) {
+                case 14: {
+                    int p3 = Integer.parseInt(d.substring(0, 3));
+                    return (p3 >= 300 && p3 <= 305) || p3 == 309 || p2 == 36 || p2 == 38 || p2 == 39;
+                }
+                case 15: return p2 == 34 || p2 == 37;
+                case 16: return issuerPrefix(d);
+                case 19: { char c = d.charAt(0); return c == '4' || c == '5' || c == '6'; }
+                default: return false;
             }
         }
 
@@ -272,7 +395,22 @@ public final class BuiltinDetectors {
 
     // ── 계좌번호 ──────────────────────────────────────────────────
 
-    static final class AccountDetector extends RegexDetector {
+    /**
+     * 2026-11-28 고도화 — (a) 하이픈 형태(국제전화 {@code +82-…}·{@code 82-10-…} 제외 추가) + (b) 문맥 형태:
+     * 앞 15자 안에 계좌·입금·송금·이체·은행명·account 가 있으면 붙임·공백 구분 10~14자리도 잡는다(금액·건수 단위가 붙으면 제외).
+     * (b)는 단어를 일치 구간 안에 넣는다(함정 94). 같은 값을 (a)·(b)가 모두 잡으면 (b)만 센다.
+     */
+    static final class AccountDetector implements Detector {
+        private static final Pattern HYPHEN = Pattern.compile("(?<![0-9+-])[0-9]{2,6}(?:-[0-9]{1,7}){1,3}(?![0-9-])");
+        private static final Pattern CONTEXT = Pattern.compile(
+                "(?:계좌|입금|송금|이체|은행|뱅크|농협|신협|수협|새마을금고|우체국|신한|IBK|SC제일|씨티|(?i:\\baccount|\\bacct))"
+                + "[^0-9\\r\\n]{0,15}(?<v>[0-9](?:[- ]?[0-9]){9,13})(?![- ]?[0-9])"
+                + "(?![ \\t]?(?:원|건|개|회|명|초|분|바이트|(?i:bytes?|ms|kb|mb|gb)))");
+        private static final Pattern INTL_PHONE = Pattern.compile(
+                "82-0?(?:1[016789]|[2-6][0-9]?)-[0-9]{3,4}-[0-9]{4}");
+        private static final Pattern COMPACT_PHONE = Pattern.compile("01[016789][0-9]{7,8}|0[2-6][0-9]{7,9}");
+        private static final Pattern COMPACT_DATE = Pattern.compile(
+                "(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])[0-9]*");
         private static final Pattern PHONE = Pattern.compile("0[0-9]{1,2}-[0-9]{3,4}-[0-9]{4}");
         private static final Pattern DATE_START = Pattern.compile(
                 "(?:19|20)[0-9]{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])(?:-.*)?");
@@ -282,22 +420,81 @@ public final class BuiltinDetectors {
         private static final Pattern COMPACT_DATE_START = Pattern.compile(
                 "(?:19|20)[0-9]{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12][0-9]|3[01])-.*");
 
-        AccountDetector() { super(Pattern.compile("(?<![0-9-])[0-9]{2,6}(?:-[0-9]{1,7}){1,3}(?![0-9-])")); }
-
         @Override
-        Hit toHit(CompiledRule rule, Matcher m) {
-            String s = m.group();
+        public int scan(CompiledRule rule, CharSequence text, int from, int to, boolean atEnd, List<Hit> out) {
+            List<Hit> local = new ArrayList<>();
+            Matcher m = regionMatcher(HYPHEN, text, from, to);
+            while (m.find()) {
+                String s = m.group();
+                local.add(new Hit(rule, m.start(), m.end(), m.start(), m.end(),
+                        hyphenAccount(s) ? maskAccount(s) : null));
+            }
+            Matcher c = regionMatcher(CONTEXT, text, from, to);
+            while (c.find()) {
+                String v = c.group("v");
+                local.add(new Hit(rule, c.start(), c.end(), c.start("v"), c.end("v"),
+                        contextAccount(v) ? maskAccount(v) : null));
+            }
+            dropContained(local, out);
+            return -1;
+        }
+
+        /** 하이픈 형태 — 10~14자리, 전화·날짜·주민·운전면허·사업자·국제전화 모양 제외. */
+        static boolean hyphenAccount(String s) {
             int digits = 0;
             for (int i = 0; i < s.length(); i++) if (Character.isDigit(s.charAt(i))) digits++;
-            if (digits < 10 || digits > 14) return null;
-            if (PHONE.matcher(s).matches() || DATE_START.matcher(s).matches()
+            if (digits < 10 || digits > 14) return false;
+            return !(PHONE.matcher(s).matches() || DATE_START.matcher(s).matches()
                     || RRN_SHAPE.matcher(s).matches() || DRIVER_SHAPE.matcher(s).matches()
-                    || BIZ_SHAPE.matcher(s).matches() || COMPACT_DATE_START.matcher(s).matches()) {
-                return null;
+                    || BIZ_SHAPE.matcher(s).matches() || COMPACT_DATE_START.matcher(s).matches()
+                    || INTL_PHONE.matcher(s).matches());
+        }
+
+        /** 문맥 형태 — 하이픈이 있으면 하이픈 형태 규칙, 붙임·공백이면 전화·날짜로 시작하는 모양 제외. */
+        static boolean contextAccount(String v) {
+            if (v.indexOf('-') >= 0 && v.indexOf(' ') < 0) return hyphenAccount(v);
+            String d = v.replaceAll("[^0-9]", "");
+            return !(COMPACT_PHONE.matcher(d).matches() || COMPACT_DATE.matcher(d).matches());
+        }
+    }
+
+    /** 계좌 가림 — 첫 구분자(하이픈·공백) 앞 묶음은 보존, 나머지는 끝 3자리만 남긴다. 붙인 값은 끝 3자리만. */
+    static String maskAccount(String s) {
+        int sep = -1;
+        for (int i = 0; i < s.length(); i++) {
+            char ch = s.charAt(i);
+            if (ch == '-' || ch == ' ') { sep = i; break; }
+        }
+        if (sep < 0) return maskDigitsExceptLast(s, 3);
+        return s.substring(0, sep) + maskDigitsExceptLast(s.substring(sep), 3);
+    }
+
+    // ── 카드 보안코드·유효기간 ─────────────────────────────────────
+
+    /**
+     * 2026-11-28 신규 — 단어(CVC·CVV·보안코드·카드 인증번호 / 유효기간·만료일·EXP·valid thru) 바로 뒤의 값만 가린다.
+     * 유효기간은 MM/YY(MM/YYYY) 슬래시 형태만 본다(인증서 2027-12·JWT exp 값 제외). 영문 단어는 단어 경계를 둔다
+     * ({@code expected 10/12} 의 exp 오인 방지). 단어는 일치 구간 안에 둔다(함정 94).
+     */
+    static final class CardCvcDetector implements Detector {
+        private static final Pattern CVC = Pattern.compile(
+                "(?:(?i:\\bCVC2?\\b|\\bCVV2?\\b)|카드[ ]?보안[ ]?코드|보안[ ]?코드|카드[ ]?인증[ ]?번호)"
+                + "[^0-9\\r\\n]{0,6}(?<v>[0-9]{3,4})(?![0-9])");
+        private static final Pattern EXP = Pattern.compile(
+                "(?:유효[ ]?기간|만료[ ]?일|(?i:\\bexp(?:iry|iration)?(?:[ ]?date)?\\b|\\bvalid[ ]?thru\\b))"
+                + "[^0-9\\r\\n]{0,12}(?<v>(?:0[1-9]|1[0-2])[ ]?/[ ]?(?:20)?[0-9]{2})(?![0-9/])");
+
+        @Override
+        public int scan(CompiledRule rule, CharSequence text, int from, int to, boolean atEnd, List<Hit> out) {
+            Matcher m = regionMatcher(CVC, text, from, to);
+            while (m.find()) {
+                out.add(new Hit(rule, m.start(), m.end(), m.start("v"), m.end("v"), "*".repeat(m.group("v").length())));
             }
-            int firstDash = s.indexOf('-');
-            String rep = s.substring(0, firstDash) + maskDigitsExceptLast(s.substring(firstDash), 3);
-            return whole(rule, m, rep);
+            Matcher e = regionMatcher(EXP, text, from, to);
+            while (e.find()) {
+                out.add(new Hit(rule, e.start(), e.end(), e.start("v"), e.end("v"), maskAlnum(e.group("v"))));
+            }
+            return -1;
         }
     }
 

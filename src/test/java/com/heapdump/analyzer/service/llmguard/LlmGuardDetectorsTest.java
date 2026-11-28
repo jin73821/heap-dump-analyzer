@@ -24,7 +24,8 @@ class LlmGuardDetectorsTest {
     @DisplayName("주민번호 — 유효 날짜만, 하이픈 선택, 뒤 6자리 가림")
     void rrn() {
         assertEquals(List.of("900101-1234567=>900101-1******"), builtinHits(BuiltinDetectors.RRN, "번호 900101-1234567 입니다"));
-        assertEquals(List.of("9001015234567=>9001015******"), builtinHits(BuiltinDetectors.RRN, "9001015234567"));
+        // 2026-11-28: 붙여 쓴 13자리는 검증번호가 맞아야 잡는다(앞 단어가 없을 때) — LlmGuardDetectorsAdvancedTest
+        assertEquals(List.of("9001011234568=>9001011******"), builtinHits(BuiltinDetectors.RRN, "9001011234568"));
         assertTrue(builtinHits(BuiltinDetectors.RRN, "901301-1234567").isEmpty(), "13월은 주민번호가 아니다");
         assertTrue(builtinHits(BuiltinDetectors.RRN, "900230-1234567").isEmpty(), "2월 30일은 주민번호가 아니다");
         assertTrue(builtinHits(BuiltinDetectors.RRN, "900101-9234567").isEmpty(), "성별 자리 9 는 제외");
